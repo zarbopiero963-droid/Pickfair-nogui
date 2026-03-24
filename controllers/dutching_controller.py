@@ -1,607 +1,622 @@
-"""
-DutchingController - Orchestratore unificato per dutching
-Coordina UI -> validazioni -> AI -> dutching -> EventBus (RiskGate)
-Entry point unico per tutto il flusso di dutching.
-Zero esecuzione ordini diretta: solo validazione, calcolo, preflight e publish REQ_PLACE_DUTCHING.
-"""
+from __future__ import annotations
 
+import hashlib
+import json
 import logging
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
-from ai.ai_guardrail import get_guardrail
-from ai.ai_pattern_engine import AIPatternEngine
-from ai.wom_engine import get_wom_engine
-from automation_engine import AutomationEngine
-from dutching import calculate_dutching_stakes, calculate_mixed_dutching
-from market_validator import MarketValidator
-from safe_mode import get_safe_mode_manager
-from safety_logger import get_safety_logger
-from trading_config import (
-    BOOK_BLOCK,
-    BOOK_WARNING,
-    LIQUIDITY_GUARD_ENABLED,
-    LIQUIDITY_MULTIPLIER,
-    LIQUIDITY_WARNING_ONLY,
-    MAX_SPREAD_TICKS,
-    MAX_STAKE_PCT,
-    MIN_LIQUIDITY,
-    MIN_LIQUIDITY_ABSOLUTE,
-    MIN_PRICE,
-    MIN_STAKE,
-)
+from dutching import calculate_dutching
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class PreflightResult:
-    is_valid: bool = True
-    warnings: List[str] = field(default_factory=list)
-    errors: List[str] = field(default_factory=list)
-    liquidity_ok: bool = True
-    liquidity_guard_ok: bool = True
-    spread_ok: bool = True
-    stake_ok: bool = True
-    price_ok: bool = True
-    book_ok: bool = True
-    details: Dict = field(default_factory=dict)
-
-
 class DutchingController:
-    def __init__(self, broker=None, pnl_engine=None, bus=None, simulation: bool = False):
-        self.broker = broker
-        self.pnl_engine = pnl_engine
+    """
+    Controller headless per dutching.
+
+    Obiettivi:
+    - compatibile con dutching.py reale
+    - niente dipendenze GUI
+    - publish ordini su EventBus
+    - anti-duplicazione hard
+    - precheck esposizione batch
+    - integrazione con RuntimeController / Roserpina
+    """
+
+    def __init__(self, bus, runtime_controller):
         self.bus = bus
-        self.simulation = bool(simulation)
-        self.auto_green_enabled = True
-        self.ai_enabled = True
-        self.preset_stake_pct = 1.0
+        self.runtime = runtime_controller
+        self._recent_batches: Dict[str, float] = {}
+        self._batch_ttl_seconds = 6 * 60 * 60
 
-        self.ai_engine = AIPatternEngine()
-        self.wom_engine = get_wom_engine()
-        self.guardrail = get_guardrail()
-        self.market_validator = MarketValidator()
-        self.automation = AutomationEngine(controller=self)
-        self.safety_logger = get_safety_logger()
-        self.safe_mode = get_safe_mode_manager()
+    # =========================================================
+    # HELPERS
+    # =========================================================
+    def _cleanup_batches(self) -> None:
+        now = time.time()
+        expired = [
+            batch_id
+            for batch_id, ts in self._recent_batches.items()
+            if now - ts > self._batch_ttl_seconds
+        ]
+        for batch_id in expired:
+            self._recent_batches.pop(batch_id, None)
 
-        self.current_event_name = ""
-        self.current_market_name = ""
-        self.client = None
-
-    def _safe_float(self, value, default: float = 0.0) -> float:
-        try:
-            if value in (None, ""):
-                return float(default)
-            return float(value)
-        except Exception:
-            return float(default)
-
-    def _safe_int(self, value, default: int = 0) -> int:
-        try:
-            if value in (None, ""):
-                return int(default)
-            return int(value)
-        except Exception:
-            return int(default)
-
-    def _normalize_mode(self, mode: str) -> str:
-        value = str(mode or "BACK").upper().strip()
-        return value if value in {"BACK", "LAY", "MIXED"} else "BACK"
-
-    def _safe_event_name(self) -> str:
-        return str(getattr(self, "current_event_name", "") or "Event")
-
-    def _safe_market_name(self) -> str:
-        return str(getattr(self, "current_market_name", "") or "Market")
-
-    def submit_dutching(
-        self,
-        market_id: str,
-        market_type: str,
-        selections: List[Dict],
-        total_stake: float,
-        mode: str = "BACK",
-        event_name: Optional[str] = None,
-        market_name: Optional[str] = None,
-        ai_enabled: bool = False,
-        ai_wom_enabled: bool = False,
-        auto_green: bool = False,
-        commission: float = 4.5,
-        use_best_price: bool = False,
-        stop_loss: Optional[float] = None,
-        take_profit: Optional[float] = None,
-        trailing: Optional[float] = None,
-        dry_run: bool = False,
-        **kwargs,
-    ) -> Dict:
-        market_id = str(market_id or "").strip()
-        market_type = str(market_type or "").strip()
-        selections = list(selections or [])
-        total_stake = self._safe_float(total_stake, 0.0)
-        commission = self._safe_float(commission, 4.5)
-        mode = self._normalize_mode(mode)
-
-        # Salva i valori runtime per event_name e market_name
-        if event_name is not None:
-            self.current_event_name = str(event_name)
-
-        if market_name is not None:
-            self.current_market_name = str(market_name)
-
-        if self.safe_mode.is_safe_mode_active:
-            raise RuntimeError("SAFE MODE attivo: dutching bloccato")
-
-        if not market_id:
-            raise ValueError("market_id mancante")
-
-        validation_errors = self.validate_selections(selections)
-        if validation_errors:
-            return {
-                "status": "VALIDATION_FAILED",
-                "orders": [],
-                "errors": validation_errors,
-                "simulation": self.simulation,
-                "mode": mode,
-                "dry_run": bool(dry_run),
-            }
-
-        if ai_enabled or ai_wom_enabled:
-            tick_count = 10
-            wom_confidence = 0.5
-            volatility = 0.0
-
-            if selections and hasattr(self, "wom_engine") and self.wom_engine:
-                first_sel_id = selections[0].get("selectionId")
-                if first_sel_id:
-                    wom_result = self.wom_engine.calculate_enhanced_wom(first_sel_id)
-                    if wom_result:
-                        tick_count = self._safe_int(
-                            getattr(wom_result, "tick_count", 10), 10
-                        )
-                        wom_confidence = self._safe_float(
-                            getattr(wom_result, "confidence", 0.5), 0.5
-                        )
-                        volatility = self._safe_float(
-                            getattr(wom_result, "volatility", 0.0), 0.0
-                        )
-
-            guardrail_result = self.check_guardrail(
-                market_type=market_type,
-                tick_count=tick_count,
-                wom_confidence=wom_confidence,
-                volatility=volatility,
-            )
-            if not guardrail_result.get("can_proceed", True):
-                return {
-                    "status": "GUARDRAIL_BLOCKED",
-                    "orders": [],
-                    "simulation": self.simulation,
-                    "mode": mode,
-                    "guardrail": guardrail_result,
-                    "dry_run": bool(dry_run),
-                }
-
-        if ai_enabled:
-            if not self.market_validator.is_dutching_ready(market_type):
-                raise ValueError(f"Mercato {market_type} non compatibile")
-
-            ai_sides = self.ai_engine.decide(selections) or {}
-            for sel in selections:
-                side = str(ai_sides.get(sel.get("selectionId"), "BACK")).upper().strip()
-                if side not in {"BACK", "LAY"}:
-                    side = "BACK"
-                sel["side"] = side
-                sel["effectiveType"] = side
-            mode = "MIXED"
-
-        try:
-            if mode == "MIXED":
-                results, profit, implied_prob = calculate_mixed_dutching(
-                    selections,
-                    total_stake,
-                    commission=commission,
-                )
-            else:
-                results, profit, implied_prob = calculate_dutching_stakes(
-                    selections,
-                    total_stake,
-                    bet_type=mode,
-                    commission=commission,
-                )
-        except Exception as e:
-            try:
-                self.safe_mode.report_error("DutchingCalcError", str(e), market_id)
-            except Exception:
-                logger.exception("Errore report_error safe_mode")
-            raise
-
-        try:
-            self.safe_mode.report_success()
-        except Exception:
-            logger.exception("Errore report_success safe_mode")
-
-        preflight = self.preflight_check(selections, total_stake, mode)
-
-        for r in results:
-            stake = self._safe_float(r.get("stake", 0), 0.0)
-            side = str(r.get("side", r.get("effectiveType", mode))).upper().strip()
-            price = self._safe_float(r.get("price", 0), 0.0)
-
-            if side == "BACK" and stake < MIN_STAKE:
-                preflight.is_valid = False
-                preflight.stake_ok = False
-                preflight.errors.append(
-                    f"{r.get('runnerName', 'Runner')}: stake BACK sotto minimo"
-                )
-
-            if side == "LAY" and stake * max(price - 1.0, 0.0) < MIN_STAKE:
-                preflight.is_valid = False
-                preflight.stake_ok = False
-                preflight.errors.append(
-                    f"{r.get('runnerName', 'Runner')}: liability LAY sotto minimo"
-                )
-
-        results_with_ladders = self._merge_ladders_to_results(results, selections)
-        liq_ok, liq_msgs = self._check_liquidity_guard(
-            results_with_ladders,
-            mode,
-            market_id,
-        )
-        if not liq_ok:
-            preflight.liquidity_guard_ok = False
-            preflight.is_valid = False
-            preflight.errors.extend(liq_msgs)
-
-        if not preflight.is_valid and not dry_run:
-            return {
-                "status": "PREFLIGHT_FAILED",
-                "orders": [],
-                "preflight": {
-                    "is_valid": False,
-                    "errors": preflight.errors,
-                    "warnings": preflight.warnings,
-                    "details": preflight.details,
-                },
-            }
-
-        payload = {
-            "source": "DUTCHING_CONTROLLER",
-            "market_id": market_id,
-            "market_type": market_type,
-            "event_name": self._safe_event_name(),
-            "market_name": self._safe_market_name(),
-            "results": results,
-            "bet_type": mode,
-            "total_stake": total_stake,
-            "use_best_price": bool(use_best_price),
-            "simulation_mode": bool(self.simulation),
-            "auto_green": bool(auto_green),
-            "stop_loss": stop_loss,
-            "take_profit": take_profit,
-            "trailing": trailing,
-            "preflight": {
-                "is_valid": preflight.is_valid,
-                "warnings": preflight.warnings,
-                "errors": preflight.errors,
-                "details": preflight.details,
-            },
-            "analytics": {
-                "potential_profit": profit,
-                "implied_probability": implied_prob,
-            },
-        }
-
-        if dry_run:
-            placed = [
+    def _build_batch_id(self, payload: Dict[str, Any], results: List[Dict[str, Any]]) -> str:
+        normalized = {
+            "market_id": str(payload.get("market_id") or ""),
+            "event_name": str(payload.get("event_name") or ""),
+            "market_name": str(payload.get("market_name") or ""),
+            "simulation_mode": bool(payload.get("simulation_mode", False)),
+            "legs": [
                 {
-                    "betId": f"DRY_{r['selectionId']}",
-                    "selectionId": r["selectionId"],
-                    "side": r.get("side", r.get("effectiveType", mode)),
-                    "price": r["price"],
-                    "size": r["stake"],
-                    "status": "DRY_RUN",
-                    "dry_run": True,
+                    "selectionId": int(item["selectionId"]),
+                    "price": float(item["price"]),
+                    "stake": float(item["stake"]),
+                    "side": str(item.get("side", "BACK")).upper(),
                 }
-                for r in results
-            ]
+                for item in results
+            ],
+        }
+        raw = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _build_event_key(self, payload: Dict[str, Any], results: List[Dict[str, Any]]) -> str:
+        market_id = str(payload.get("market_id") or "")
+        event_name = str(payload.get("event_name") or "")
+        market_name = str(payload.get("market_name") or "")
+        selection_part = ",".join(
+            str(int(item["selectionId"])) for item in sorted(results, key=lambda x: int(x["selectionId"]))
+        )
+        base = f"dutching|{market_id}|{event_name}|{market_name}|{selection_part}"
+        return hashlib.sha1(base.encode("utf-8")).hexdigest()
+
+    def _duplication_guard(self):
+        return getattr(self.runtime, "duplication_guard", None)
+
+    def _table_manager(self):
+        return getattr(self.runtime, "table_manager", None)
+
+    def _config(self):
+        return getattr(self.runtime, "config", None)
+
+    def _mode(self):
+        return getattr(self.runtime, "mode", None)
+
+    def _risk_desk(self):
+        return getattr(self.runtime, "risk_desk", None)
+
+    def _table_total_exposure(self) -> float:
+        table_manager = self._table_manager()
+        if table_manager and hasattr(table_manager, "total_exposure"):
+            try:
+                return float(table_manager.total_exposure() or 0.0)
+            except Exception:
+                return 0.0
+        return 0.0
+
+    def _event_current_exposure(self, event_key: str) -> float:
+        table_manager = self._table_manager()
+        if table_manager and hasattr(table_manager, "find_by_event_key"):
+            try:
+                table = table_manager.find_by_event_key(event_key)
+                if table:
+                    return float(getattr(table, "current_exposure", 0.0) or 0.0)
+            except Exception:
+                return 0.0
+        return 0.0
+
+    def _bankroll_current(self) -> float:
+        risk_desk = self._risk_desk()
+        if risk_desk:
+            return float(getattr(risk_desk, "bankroll_current", 0.0) or 0.0)
+        return 0.0
+
+    def _compute_order_exposure(self, item: Dict[str, Any]) -> float:
+        """
+        Conservativo:
+        - BACK: usa stake
+        - LAY: se presente liability usa quella, altrimenti stake * (price - 1)
+        """
+        side = str(item.get("side", "BACK")).upper()
+        stake = float(item.get("stake", 0.0) or 0.0)
+        price = float(item.get("price", 0.0) or 0.0)
+
+        if side == "LAY":
+            if "liability" in item:
+                return max(0.0, float(item.get("liability", 0.0) or 0.0))
+            return max(0.0, stake * max(0.0, price - 1.0))
+
+        return max(0.0, stake)
+
+    def _compute_batch_exposure(self, results: List[Dict[str, Any]]) -> float:
+        return sum(self._compute_order_exposure(item) for item in results)
+
+    def _allocate_table(self, event_key: str, batch_exposure: float, meta: Dict[str, Any]) -> Optional[int]:
+        table_manager = self._table_manager()
+        config = self._config()
+
+        if table_manager is None:
+            return None
+
+        allow_recovery = bool(getattr(config, "allow_recovery", True)) if config else True
+
+        table = None
+        if hasattr(table_manager, "allocate"):
+            table = table_manager.allocate(event_key=event_key, allow_recovery=allow_recovery)
+
+        if table is None:
+            return None
+
+        if hasattr(table_manager, "activate"):
+            table_manager.activate(
+                table_id=table.table_id,
+                event_key=event_key,
+                exposure=float(batch_exposure),
+                market_id=str(meta.get("market_id") or ""),
+                selection_id=None,
+                meta=meta,
+            )
+
+        return int(table.table_id)
+
+    def _release_table_and_key(self, table_id: Optional[int], event_key: str) -> None:
+        duplication_guard = self._duplication_guard()
+        table_manager = self._table_manager()
+
+        if duplication_guard and event_key:
+            try:
+                duplication_guard.release(event_key)
+            except Exception:
+                logger.exception("Errore release duplication key")
+
+        if table_manager and table_id:
+            try:
+                table_manager.force_unlock(int(table_id))
+            except Exception:
+                logger.exception("Errore force_unlock table")
+
+    def _runtime_active(self) -> bool:
+        mode = self._mode()
+        return bool(mode and str(getattr(mode, "value", mode)) == "ACTIVE")
+
+    def _publish_audit(self, event_name: str, payload: Dict[str, Any]) -> None:
+        try:
+            self.bus.publish(event_name, payload)
+        except Exception:
+            logger.exception("Errore publish audit event %s", event_name)
+
+    # =========================================================
+    # VALIDAZIONE
+    # =========================================================
+    def validate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            if not isinstance(payload, dict):
+                return {"ok": False, "error": "Payload non valido"}
+
+            market_id = payload.get("market_id")
+            selections = payload.get("selections", [])
+            total_stake = float(payload.get("total_stake", 0) or 0)
+
+            if not market_id:
+                return {"ok": False, "error": "market_id mancante"}
+
+            if not isinstance(selections, list) or not selections:
+                return {"ok": False, "error": "Nessuna selezione"}
+
+            seen_selection_ids = set()
+
+            for idx, selection in enumerate(selections, start=1):
+                if not isinstance(selection, dict):
+                    return {"ok": False, "error": f"Selezione #{idx} non valida"}
+
+                if "selectionId" not in selection:
+                    return {"ok": False, "error": f"selectionId mancante alla selezione #{idx}"}
+
+                if "price" not in selection:
+                    return {"ok": False, "error": f"price mancante alla selezione #{idx}"}
+
+                try:
+                    selection_id = int(selection["selectionId"])
+                except Exception:
+                    return {"ok": False, "error": f"selectionId non valido alla selezione #{idx}"}
+
+                if selection_id in seen_selection_ids:
+                    return {"ok": False, "error": f"selectionId duplicato: {selection_id}"}
+                seen_selection_ids.add(selection_id)
+
+                try:
+                    price = float(selection["price"])
+                except Exception:
+                    return {"ok": False, "error": f"price non valido alla selezione #{idx}"}
+
+                if price <= 1.01:
+                    return {"ok": False, "error": f"Quota non valida alla selezione #{idx}: {price}"}
+
+                if "side" in selection:
+                    side = str(selection.get("side", "BACK")).upper()
+                    if side not in {"BACK", "LAY"}:
+                        return {"ok": False, "error": f"side non valido alla selezione #{idx}: {side}"}
+
+            if total_stake <= 0:
+                return {"ok": False, "error": "total_stake non valido"}
+
+            return {"ok": True}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    # =========================================================
+    # PREVIEW
+    # =========================================================
+    def preview(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            validation = self.validate(payload)
+            if not validation["ok"]:
+                return validation
+
+            results, avg_profit, book_pct = calculate_dutching(
+                payload["selections"],
+                float(payload["total_stake"]),
+            )
+
+            event_key = self._build_event_key(payload, results)
+            batch_exposure = self._compute_batch_exposure(results)
+
             return {
-                "status": "DRY_RUN",
-                "orders": placed,
-                "payload": payload,
+                "ok": True,
+                "results": results,
+                "avg_profit": avg_profit,
+                "book_pct": book_pct,
+                "event_key": event_key,
+                "batch_exposure": round(batch_exposure, 2),
             }
+        except Exception as exc:
+            logger.exception("Errore preview dutching")
+            return {"ok": False, "error": str(exc)}
 
-        if not self.bus:
-            raise RuntimeError("EventBus mancante nel DutchingController")
+    # =========================================================
+    # PRECHECK RISCHIO / DUPLICATI
+    # =========================================================
+    def precheck(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        validation = self.validate(payload)
+        if not validation["ok"]:
+            return validation
 
-        self.bus.publish("REQ_PLACE_DUTCHING", payload)
+        if not self._runtime_active():
+            return {"ok": False, "error": "Runtime non attivo"}
+
+        try:
+            results, avg_profit, book_pct = calculate_dutching(
+                payload["selections"],
+                float(payload["total_stake"]),
+            )
+        except Exception as exc:
+            logger.exception("Errore calculate_dutching in precheck")
+            return {"ok": False, "error": str(exc)}
+
+        if not results:
+            return {"ok": False, "error": "Dutching vuoto"}
+
+        event_key = self._build_event_key(payload, results)
+        batch_id = self._build_batch_id(payload, results)
+        batch_exposure = self._compute_batch_exposure(results)
+
+        self._cleanup_batches()
+        if batch_id in self._recent_batches:
+            return {"ok": False, "error": "Batch già inviato (idempotency guard)", "batch_id": batch_id}
+
+        duplication_guard = self._duplication_guard()
+        config = self._config()
+        bankroll = self._bankroll_current()
+        current_total_exposure = self._table_total_exposure()
+        event_current_exposure = self._event_current_exposure(event_key)
+
+        if duplication_guard and bool(getattr(config, "anti_duplication_enabled", True)):
+            try:
+                if duplication_guard.is_duplicate(event_key):
+                    return {"ok": False, "error": "Duplicato bloccato", "event_key": event_key}
+            except Exception:
+                logger.exception("Errore duplication_guard.is_duplicate")
+
+        if bankroll > 0 and config is not None:
+            max_total_exposure = bankroll * (float(getattr(config, "max_total_exposure_pct", 35.0)) / 100.0)
+            max_event_exposure = bankroll * (float(getattr(config, "max_event_exposure_pct", 18.0)) / 100.0)
+            max_single_bet = bankroll * (float(getattr(config, "max_single_bet_pct", 18.0)) / 100.0)
+
+            if current_total_exposure + batch_exposure > max_total_exposure + 1e-9:
+                return {
+                    "ok": False,
+                    "error": "Esposizione globale oltre limite",
+                    "batch_exposure": round(batch_exposure, 2),
+                    "current_total_exposure": round(current_total_exposure, 2),
+                    "max_total_exposure": round(max_total_exposure, 2),
+                }
+
+            if event_current_exposure + batch_exposure > max_event_exposure + 1e-9:
+                return {
+                    "ok": False,
+                    "error": "Esposizione evento oltre limite",
+                    "batch_exposure": round(batch_exposure, 2),
+                    "event_current_exposure": round(event_current_exposure, 2),
+                    "max_event_exposure": round(max_event_exposure, 2),
+                }
+
+            too_large = [
+                {
+                    "selectionId": int(item["selectionId"]),
+                    "stake": round(float(item["stake"]), 2),
+                    "limit": round(max_single_bet, 2),
+                }
+                for item in results
+                if self._compute_order_exposure(item) > max_single_bet + 1e-9
+            ]
+            if too_large:
+                return {
+                    "ok": False,
+                    "error": "Una o più gambe superano max_single_bet",
+                    "violations": too_large,
+                }
+
         return {
-            "status": "SUBMITTED",
-            "async": True,
-            "orders": [],
-            "preflight": {
-                "is_valid": preflight.is_valid,
-                "warnings": preflight.warnings,
-                "errors": preflight.errors,
-                "details": preflight.details,
-            },
+            "ok": True,
+            "results": results,
+            "avg_profit": avg_profit,
+            "book_pct": book_pct,
+            "event_key": event_key,
+            "batch_id": batch_id,
+            "batch_exposure": batch_exposure,
         }
 
-    def validate_selections(self, selections: List[Dict]) -> List[str]:
-        errors = []
-        selections = list(selections or [])
+    # =========================================================
+    # EXECUTE
+    # =========================================================
+    def execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Flusso blindato:
+        1. validate
+        2. precheck rischio / duplicazione
+        3. allocate table (se disponibile)
+        4. register duplication key
+        5. publish ordini
+        6. rollback lock/table se publish fallisce
+        """
+        pre = self.precheck(payload)
+        if not pre["ok"]:
+            self._publish_audit(
+                "DUTCHING_BATCH_REJECTED",
+                {
+                    "payload": payload,
+                    "reason": pre["error"],
+                },
+            )
+            return pre
 
-        if not selections:
-            return ["Nessuna selezione"]
+        results: List[Dict[str, Any]] = pre["results"]
+        avg_profit = pre["avg_profit"]
+        book_pct = pre["book_pct"]
+        event_key = pre["event_key"]
+        batch_id = pre["batch_id"]
+        batch_exposure = float(pre["batch_exposure"] or 0.0)
 
-        for sel in selections:
-            runner_name = sel.get("runnerName", "Runner")
-            price = self._safe_float(sel.get("price"), 0.0)
-            selection_id = sel.get("selectionId")
+        duplication_guard = self._duplication_guard()
 
-            if price <= 1.0:
-                errors.append(f"{runner_name}: prezzo non valido")
+        table_id = payload.get("table_id")
+        allocated_here = False
 
-            if not selection_id:
-                errors.append(f"{runner_name}: selectionId mancante")
+        if not table_id:
+            table_id = self._allocate_table(
+                event_key=event_key,
+                batch_exposure=batch_exposure,
+                meta={
+                    "market_id": payload.get("market_id"),
+                    "event_name": payload.get("event_name", ""),
+                    "market_name": payload.get("market_name", ""),
+                    "type": "dutching_batch",
+                    "batch_id": batch_id,
+                },
+            )
+            allocated_here = table_id is not None
 
-        return errors
+        if table_id is None and self._table_manager() is not None:
+            msg = "Nessun tavolo disponibile per batch dutching"
+            self._publish_audit("DUTCHING_BATCH_REJECTED", {"payload": payload, "reason": msg})
+            return {"ok": False, "error": msg}
 
-    def set_simulation(self, enabled: bool):
-        self.simulation = bool(enabled)
+        if duplication_guard:
+            try:
+                duplication_guard.register(event_key)
+            except Exception:
+                logger.exception("Errore duplication_guard.register")
+                if allocated_here:
+                    self._release_table_and_key(table_id, event_key)
+                return {"ok": False, "error": "Errore registrazione anti-duplicazione"}
 
-    def get_ai_analysis(self, selections: List[Dict]) -> List[Dict]:
+        orders = []
+        published_orders = []
+
         try:
-            return self.ai_engine.get_wom_analysis(selections or [])
-        except Exception:
-            logger.exception("Errore get_ai_analysis")
-            return []
+            for idx, item in enumerate(results, start=1):
+                order = {
+                    "market_id": str(payload["market_id"]),
+                    "selection_id": int(item["selectionId"]),
+                    "bet_type": str(item.get("side", "BACK")).upper(),
+                    "price": float(item["price"]),
+                    "stake": float(item["stake"]),
+                    "event_name": payload.get("event_name", ""),
+                    "market_name": payload.get("market_name", ""),
+                    "runner_name": item.get("runnerName", ""),
+                    "simulation_mode": bool(payload.get("simulation_mode", False)),
+                    "table_id": table_id,
+                    "event_key": event_key,
+                    "batch_id": batch_id,
+                    "batch_size": len(results),
+                    "batch_leg_index": idx,
+                    "batch_avg_profit": float(avg_profit),
+                    "batch_book_pct": float(book_pct),
+                    "batch_exposure": float(batch_exposure),
+                }
+                orders.append(order)
 
-    def preflight_check(
-        self,
-        selections: List[Dict],
-        total_stake: float,
-        mode: str = "BACK",
-    ) -> PreflightResult:
-        result = PreflightResult()
-        selections = list(selections or [])
-        total_stake = self._safe_float(total_stake, 0.0)
-        mode = self._normalize_mode(mode)
-
-        num_selections = len(selections)
-        if num_selections == 0:
-            result.is_valid = False
-            result.errors.append("Nessuna selezione")
-            return result
-
-        min_total = MIN_STAKE * num_selections
-        if total_stake < min_total:
-            result.is_valid = False
-            result.stake_ok = False
-            result.errors.append(
-                f"Stake totale €{total_stake:.2f} insufficiente (min €{min_total:.2f})"
+            self._publish_audit(
+                "DUTCHING_BATCH_APPROVED",
+                {
+                    "batch_id": batch_id,
+                    "event_key": event_key,
+                    "table_id": table_id,
+                    "count": len(orders),
+                    "avg_profit": avg_profit,
+                    "book_pct": book_pct,
+                    "batch_exposure": round(batch_exposure, 2),
+                    "payload": payload,
+                },
             )
 
-        total_liquidity = 0.0
-        total_implied_prob = 0.0
+            for order in orders:
+                self.bus.publish("CMD_QUICK_BET", order)
+                published_orders.append(order)
 
-        for sel in selections:
-            runner_name = sel.get("runnerName", f"ID {sel.get('selectionId', '?')}")
-            price = self._safe_float(sel.get("price", 0), 0.0)
-            back_ladder = list(sel.get("back_ladder", []) or [])
-            lay_ladder = list(sel.get("lay_ladder", []) or [])
+            self._recent_batches[batch_id] = time.time()
 
-            if 0 < price < MIN_PRICE:
-                result.price_ok = False
-                result.warnings.append(
-                    f"{runner_name}: quota {price:.2f} troppo bassa (min {MIN_PRICE:.2f})"
-                )
+            return {
+                "ok": True,
+                "batch_id": batch_id,
+                "event_key": event_key,
+                "table_id": table_id,
+                "orders": orders,
+                "published_count": len(published_orders),
+                "count": len(orders),
+                "avg_profit": avg_profit,
+                "book_pct": book_pct,
+                "batch_exposure": round(batch_exposure, 2),
+            }
 
-            if price > 1:
-                total_implied_prob += 1.0 / price
+        except Exception as exc:
+            logger.exception("Errore execute dutching batch")
 
-            back_liq = sum(self._safe_float(p.get("size", 0), 0.0) for p in back_ladder)
-            lay_liq = sum(self._safe_float(p.get("size", 0), 0.0) for p in lay_ladder)
-            side = str(sel.get("side", sel.get("effectiveType", mode))).upper().strip()
-            relevant_liq = back_liq if side == "BACK" else lay_liq
-            total_liquidity += relevant_liq
-
-            if relevant_liq < MIN_LIQUIDITY:
-                result.liquidity_ok = False
-                result.warnings.append(
-                    f"{runner_name}: liquidità {side} bassa (€{relevant_liq:.0f})"
-                )
-
-            if back_ladder and lay_ladder:
-                best_back = self._safe_float(back_ladder[0].get("price", 0), 0.0)
-                best_lay = self._safe_float(lay_ladder[0].get("price", 0), 0.0)
-
-                if best_back > 0 and best_lay > 0:
-                    spread = best_lay - best_back
-                    tick_size = 0.02 if best_back < 2 else 0.05 if best_back < 4 else 0.1
-                    spread_ticks = spread / tick_size if tick_size > 0 else 0.0
-
-                    if spread_ticks > MAX_SPREAD_TICKS:
-                        result.spread_ok = False
-                        result.warnings.append(
-                            f"{runner_name}: spread largo ({spread_ticks:.0f} tick)"
-                        )
-
-                    result.details[sel.get("selectionId")] = {
-                        "back_liq": back_liq,
-                        "lay_liq": lay_liq,
-                        "best_back": best_back,
-                        "best_lay": best_lay,
-                        "spread_ticks": spread_ticks,
-                    }
-
-        if total_liquidity > 0:
-            stake_pct = total_stake / total_liquidity
-            if stake_pct > MAX_STAKE_PCT:
-                result.warnings.append(
-                    f"Stake alto rispetto a liquidità ({stake_pct * 100:.0f}% > {MAX_STAKE_PCT * 100:.0f}%)"
-                )
-
-        book_pct = total_implied_prob * 100
-        if book_pct > BOOK_BLOCK:
-            result.book_ok = False
-            result.is_valid = False
-            result.errors.append(
-                f"Book {book_pct:.1f}% troppo alto (blocco a {BOOK_BLOCK:.0f}%)"
-            )
-        elif book_pct > BOOK_WARNING:
-            result.book_ok = False
-            result.warnings.append(
-                f"Book {book_pct:.1f}% elevato (warning a {BOOK_WARNING:.0f}%)"
+            self._publish_audit(
+                "DUTCHING_BATCH_PARTIAL_FAILURE",
+                {
+                    "batch_id": batch_id,
+                    "event_key": event_key,
+                    "table_id": table_id,
+                    "published_count": len(published_orders),
+                    "total_count": len(orders),
+                    "error": str(exc),
+                },
             )
 
-        result.details["book_pct"] = book_pct
-        if result.errors:
-            result.is_valid = False
-        return result
+            if allocated_here:
+                self._release_table_and_key(table_id, event_key)
+            elif duplication_guard:
+                try:
+                    duplication_guard.release(event_key)
+                except Exception:
+                    logger.exception("Errore release duplication key after failure")
 
-    def _check_liquidity_guard(
-        self,
-        selections: List[Dict],
-        mode: str = "BACK",
-        market_id: str = "",
-    ) -> Tuple[bool, List[str]]:
-        if not LIQUIDITY_GUARD_ENABLED:
-            return True, []
+            return {
+                "ok": False,
+                "error": str(exc),
+                "batch_id": batch_id,
+                "event_key": event_key,
+                "table_id": table_id,
+                "published_count": len(published_orders),
+                "total_count": len(orders),
+            }
 
-        messages = []
-        mode = self._normalize_mode(mode)
-
-        for sel in selections or []:
-            selection_id = sel.get("selectionId", 0)
-            runner_name = sel.get("runnerName", f"ID {selection_id}")
-
-            stake = self._safe_float(sel.get("stake", 0), 0.0)
-            price = self._safe_float(sel.get("price", 1), 1.0)
-            side = str(sel.get("side", sel.get("effectiveType", mode))).upper().strip()
-
-            back_ladder = sel.get("back_ladder")
-            lay_ladder = sel.get("lay_ladder")
-
-            if back_ladder is None and lay_ladder is None:
-                continue
-
-            back_ladder = back_ladder or []
-            lay_ladder = lay_ladder or []
-
-            back_liq = sum(self._safe_float(p.get("size", 0), 0.0) for p in back_ladder)
-            lay_liq = sum(self._safe_float(p.get("size", 0), 0.0) for p in lay_ladder)
-
-            if side == "BACK":
-                available = back_liq
-                required = stake * LIQUIDITY_MULTIPLIER
-            else:
-                liability = stake * (price - 1) if price > 1 else stake
-                available = lay_liq
-                required = liability * LIQUIDITY_MULTIPLIER
-
-            if available < MIN_LIQUIDITY_ABSOLUTE:
-                return False, [
-                    f"{runner_name}: liquidità troppo bassa (€{available:.0f} < €{MIN_LIQUIDITY_ABSOLUTE:.0f})"
-                ]
-
-            if available < required:
-                messages.append(
-                    f"{runner_name}: liquidità insufficiente (€{available:.0f} < €{required:.0f} richiesti)"
-                )
-                if not LIQUIDITY_WARNING_ONLY:
-                    return False, messages
-
-        return len(messages) == 0, messages
-
-    def _merge_ladders_to_results(
-        self,
-        results: List[Dict],
-        selections: List[Dict],
-    ) -> List[Dict]:
-        sel_by_id = {s.get("selectionId"): s for s in (selections or [])}
-        merged = []
-
-        for r in results or []:
-            original = sel_by_id.get(r.get("selectionId"), {})
-            merged_item = dict(r)
-
-            if "back_ladder" in original:
-                merged_item["back_ladder"] = list(original.get("back_ladder") or [])
-            else:
-                merged_item["back_ladder"] = None
-
-            if "lay_ladder" in original:
-                merged_item["lay_ladder"] = list(original.get("lay_ladder") or [])
-            else:
-                merged_item["lay_ladder"] = None
-
-            merged.append(merged_item)
-
-        return merged
-
-    def record_market_tick(
-        self,
-        selection_id: int,
-        back_price: float,
-        back_volume: float,
-        lay_price: float,
-        lay_volume: float,
-    ):
-        self.wom_engine.record_tick(
-            selection_id,
-            back_price,
-            back_volume,
-            lay_price,
-            lay_volume,
-        )
-
-    def get_wom_analysis(
-        self,
-        selections: List[Dict],
-        use_historical: bool = True,
-    ) -> List[Dict]:
+    # =========================================================
+    # MANUAL BET
+    # =========================================================
+    def manual_bet(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            if use_historical:
-                return self.ai_engine.get_enhanced_analysis(
-                    selections or [],
-                    self.wom_engine,
-                )
-            return self.ai_engine.get_wom_analysis(selections or [])
-        except Exception:
-            logger.exception("Errore get_wom_analysis")
-            return []
+            required = ["market_id", "selection_id", "price", "stake"]
+            for key in required:
+                if key not in payload:
+                    return {"ok": False, "error": f"{key} mancante"}
 
-    def get_wom_stats(self) -> Dict:
+            if not self._runtime_active():
+                return {"ok": False, "error": "Runtime non attivo"}
+
+            market_id = str(payload["market_id"])
+            selection_id = int(payload["selection_id"])
+            price = float(payload["price"])
+            stake = float(payload["stake"])
+
+            if price <= 1.01:
+                return {"ok": False, "error": "Quota non valida"}
+            if stake <= 0:
+                return {"ok": False, "error": "Stake non valido"}
+
+            event_key = str(payload.get("event_key") or f"manual_{market_id}_{selection_id}")
+            duplication_guard = self._duplication_guard()
+            config = self._config()
+
+            if duplication_guard and bool(getattr(config, "anti_duplication_enabled", True)):
+                if duplication_guard.is_duplicate(event_key):
+                    return {"ok": False, "error": "Duplicato bloccato"}
+
+            bankroll = self._bankroll_current()
+            if bankroll > 0 and config is not None:
+                exposure = stake
+                current_total_exposure = self._table_total_exposure()
+                max_total_exposure = bankroll * (float(getattr(config, "max_total_exposure_pct", 35.0)) / 100.0)
+                max_single_bet = bankroll * (float(getattr(config, "max_single_bet_pct", 18.0)) / 100.0)
+
+                if exposure > max_single_bet + 1e-9:
+                    return {"ok": False, "error": "Stake oltre max_single_bet"}
+
+                if current_total_exposure + exposure > max_total_exposure + 1e-9:
+                    return {"ok": False, "error": "Esposizione globale oltre limite"}
+
+            if duplication_guard:
+                duplication_guard.register(event_key)
+
+            order = {
+                "market_id": market_id,
+                "selection_id": selection_id,
+                "bet_type": str(payload.get("bet_type", "BACK")).upper(),
+                "price": price,
+                "stake": stake,
+                "event_name": payload.get("event_name", ""),
+                "market_name": payload.get("market_name", ""),
+                "runner_name": payload.get("runner_name", ""),
+                "simulation_mode": bool(payload.get("simulation_mode", False)),
+                "table_id": payload.get("table_id"),
+                "event_key": event_key,
+            }
+
+            try:
+                self.bus.publish("CMD_QUICK_BET", order)
+            except Exception:
+                if duplication_guard:
+                    duplication_guard.release(event_key)
+                raise
+
+            self._publish_audit(
+                "MANUAL_BET_APPROVED",
+                {
+                    "order": order,
+                },
+            )
+
+            return {"ok": True, "order": order}
+
+        except Exception as exc:
+            logger.exception("Errore manual_bet")
+            return {"ok": False, "error": str(exc)}
+
+    # =========================================================
+    # SOFT CHECK
+    # =========================================================
+    def check_duplicate(self, payload: Dict[str, Any]) -> bool:
         try:
-            return self.wom_engine.get_stats()
+            pre = self.preview(payload)
+            if not pre.get("ok"):
+                return False
+            event_key = pre.get("event_key", "")
+            duplication_guard = self._duplication_guard()
+            if duplication_guard and event_key:
+                return bool(duplication_guard.is_duplicate(event_key))
+            return False
         except Exception:
-            logger.exception("Errore get_wom_stats")
-            return {}
-
-    def check_guardrail(
-        self,
-        market_type: str,
-        tick_count: int = 10,
-        wom_confidence: float = 0.5,
-        volatility: float = 0.0,
-    ) -> Dict:
-        return self.guardrail.full_check(
-            market_type=market_type,
-            tick_count=tick_count,
-            wom_confidence=wom_confidence,
-            volatility=volatility,
-        )
-
-    def check_auto_green_ready(self, bet_id: str):
-        return self.guardrail.check_auto_green_grace(bet_id)
-
-    def register_for_auto_green(self, bet_id: str):
-        self.guardrail.register_order_for_auto_green(bet_id)
-
-    def get_time_window_signal(self, selection_id: int) -> Dict:
-        return self.wom_engine.get_time_window_signal(selection_id)
-
-    def get_guardrail_status(self) -> Dict:
-        return self.guardrail.get_status()
+            return False
