@@ -1,0 +1,562 @@
+import logging
+import tkinter as tk
+from tkinter import messagebox, simpledialog
+
+from theme import COLORS
+from services.telegram_signal_processor import TelegramSignalProcessor
+
+logger = logging.getLogger(__name__)
+
+
+class TelegramModule:
+    def _get_signal_processor(self):
+        processor = getattr(self, "_telegram_signal_processor", None)
+        if processor is None:
+            processor = TelegramSignalProcessor()
+            self._telegram_signal_processor = processor
+        return processor
+
+    def _safe_refresh_telegram_signals_tree(self):
+        try:
+            if hasattr(self, "_refresh_telegram_signals_tree"):
+                self._refresh_telegram_signals_tree()
+        except Exception as e:
+            logger.exception(
+                "[TelegramModule] Errore refresh telegram signals tree: %s", e
+            )
+
+    def _safe_refresh_telegram_chats_tree(self):
+        try:
+            if hasattr(self, "_refresh_telegram_chats_tree"):
+                self._refresh_telegram_chats_tree()
+        except Exception as e:
+            logger.exception(
+                "[TelegramModule] Errore refresh telegram chats tree: %s", e
+            )
+
+    def _safe_db_save_received_signal(
+        self,
+        selection,
+        action,
+        price,
+        stake,
+        status,
+    ):
+        if not hasattr(self, "db") or self.db is None:
+            return
+        if not hasattr(self.db, "save_received_signal"):
+            return
+
+        try:
+            self.db.save_received_signal(
+                selection=selection,
+                action=action,
+                price=float(price or 0.0),
+                stake=float(stake or 0.0),
+                status=str(status or ""),
+            )
+        except Exception as e:
+            logger.exception(
+                "[TelegramModule] Errore save_received_signal status=%s: %s",
+                status,
+                e,
+            )
+
+    def _safe_parse_stake(self):
+        try:
+            raw = self.tg_auto_stake_var.get()
+            if isinstance(raw, str):
+                raw = raw.replace(",", ".").strip()
+            stake = float(raw)
+            if stake <= 0:
+                return 1.0
+            return stake
+        except Exception:
+            return 1.0
+
+    def _start_telegram_listener(self):
+        """Start the Telegram listener background thread."""
+        try:
+            settings = self.db.get_telegram_settings() if hasattr(self, "db") else {}
+            settings = settings or {}
+        except Exception as e:
+            logger.exception(
+                "[TelegramModule] Errore lettura telegram settings: %s", e
+            )
+            settings = {}
+
+        if not settings.get("api_id") or not settings.get("api_hash"):
+            messagebox.showwarning(
+                "Attenzione",
+                "Configura e salva le credenziali Telegram prima di avviare il listener.",
+            )
+            return
+
+        existing_listener = getattr(self, "telegram_listener", None)
+        if existing_listener and getattr(existing_listener, "running", False):
+            messagebox.showinfo("Info", "Listener già in esecuzione")
+            return
+
+        try:
+            from telegram_listener import TelegramListener
+
+            api_id = int(settings["api_id"])
+            api_hash = str(settings["api_hash"]).strip()
+            session_string = settings.get("session_string")
+
+            listener = TelegramListener(
+                api_id=api_id,
+                api_hash=api_hash,
+                session_string=session_string,
+            )
+
+            monitored_chats = []
+            try:
+                chats = self.db.get_telegram_chats() if hasattr(self, "db") else []
+                chats = chats or []
+            except Exception as e:
+                logger.exception(
+                    "[TelegramModule] Errore lettura telegram chats: %s", e
+                )
+                chats = []
+
+            for chat in chats:
+                if not chat.get("is_active", True):
+                    continue
+                try:
+                    monitored_chats.append(int(chat["chat_id"]))
+                except Exception:
+                    logger.warning(
+                        "[TelegramModule] chat_id non valido ignorato: %s",
+                        chat,
+                    )
+
+            if not monitored_chats:
+                messagebox.showwarning(
+                    "Attenzione",
+                    "Nessuna chat monitorata attiva. Aggiungine almeno una.",
+                )
+                return
+
+            listener.set_monitored_chats(monitored_chats)
+            listener.set_database(self.db)
+
+            listener.set_callbacks(
+                on_signal=lambda sig: self._handle_telegram_signal(sig),
+                on_message=None,
+                on_status=lambda st, msg: self.bus.publish(
+                    "TELEGRAM_STATUS",
+                    {"status": st, "message": msg},
+                ),
+            )
+
+            self.telegram_listener = listener
+            self.telegram_listener.start()
+            self.telegram_status = "LISTENING"
+
+            if hasattr(self, "tg_status_label") and self.tg_status_label.winfo_exists():
+                self.tg_status_label.configure(
+                    text=f"Stato: {self.telegram_status}",
+                    text_color=COLORS["success"],
+                )
+
+            messagebox.showinfo("Successo", "Telegram Listener avviato")
+
+        except Exception as e:
+            logger.exception("[TelegramModule] Impossibile avviare listener: %s", e)
+            messagebox.showerror(
+                "Errore",
+                f"Impossibile avviare listener: {str(e)}",
+            )
+
+    def _stop_telegram_listener(self):
+        listener = getattr(self, "telegram_listener", None)
+        if listener and getattr(listener, "running", False):
+            try:
+                listener.stop()
+            except Exception as e:
+                logger.exception("[TelegramModule] Errore stop listener: %s", e)
+
+            self.telegram_status = "STOPPED"
+
+            if hasattr(self, "tg_status_label") and self.tg_status_label.winfo_exists():
+                self.tg_status_label.configure(
+                    text=f"Stato: {self.telegram_status}",
+                    text_color=COLORS["error"],
+                )
+
+            messagebox.showinfo("Info", "Telegram Listener fermato")
+
+    def _handle_telegram_signal(self, signal):
+        """
+        Riceve il segnale dal listener e lo processa nel main thread.
+        Ora inoltra al runtime headless tramite SIGNAL_RECEIVED.
+        Forced execution attiva di default:
+        - BACK -> 1.01
+        - LAY  -> 1000.0
+        """
+
+        def safe_process_signal():
+            signal = signal or {}
+            processor = self._get_signal_processor()
+
+            action = processor.normalize_action(signal)
+            selection_id = processor.parse_selection_id(signal)
+            market_id = processor.parse_market_id(signal)
+            original_price = processor.parse_price(signal)
+            selection_name = processor.parse_selection_name(signal, selection_id)
+            stake = self._safe_parse_stake()
+
+            if original_price is None:
+                logger.error("[TelegramModule] Segnale ignorato: price non valido.")
+                self._safe_db_save_received_signal(
+                    selection=selection_name,
+                    action=action,
+                    price=0.0,
+                    stake=0.0,
+                    status="ERROR",
+                )
+                self._safe_refresh_telegram_signals_tree()
+                return
+
+            self._safe_db_save_received_signal(
+                selection=selection_name,
+                action=action,
+                price=original_price,
+                stake=stake,
+                status="RECEIVED",
+            )
+            self._safe_refresh_telegram_signals_tree()
+
+            auto_bet_enabled = bool(
+                hasattr(self, "tg_auto_bet_var")
+                and self.tg_auto_bet_var is not None
+                and self.tg_auto_bet_var.get()
+            )
+            confirm_enabled = bool(
+                hasattr(self, "tg_confirm_var")
+                and self.tg_confirm_var is not None
+                and self.tg_confirm_var.get()
+            )
+
+            if not auto_bet_enabled:
+                if confirm_enabled:
+                    msg = (
+                        f"Segnale ricevuto:\n"
+                        f"{selection_name}\n"
+                        f"Tipo: {action}\n"
+                        f"Quota Master: {original_price:.2f}\n\n"
+                        f"Inviare il segnale al runtime?"
+                    )
+                    if not messagebox.askyesno("Nuovo Segnale Telegram", msg):
+                        self._safe_db_save_received_signal(
+                            selection=selection_name,
+                            action=action,
+                            price=original_price,
+                            stake=stake,
+                            status="IGNORED",
+                        )
+                        self._safe_refresh_telegram_signals_tree()
+                        return
+                else:
+                    self._safe_db_save_received_signal(
+                        selection=selection_name,
+                        action=action,
+                        price=original_price,
+                        stake=stake,
+                        status="IGNORED",
+                    )
+                    self._safe_refresh_telegram_signals_tree()
+                    return
+
+            if selection_id is None or not market_id:
+                logger.error(
+                    "[TelegramModule] Segnale ignorato: market_id o selection_id mancanti."
+                )
+                self._safe_db_save_received_signal(
+                    selection=selection_name,
+                    action=action,
+                    price=original_price,
+                    stake=stake,
+                    status="ERROR",
+                )
+                self._safe_refresh_telegram_signals_tree()
+                return
+
+            payload = processor.build_runtime_signal(
+                signal=signal,
+                stake=stake,
+                simulation_mode=bool(getattr(self, "simulation_mode", False)),
+            )
+
+            if not payload:
+                logger.error("[TelegramModule] Segnale ignorato: payload runtime nullo.")
+                self._safe_db_save_received_signal(
+                    selection=selection_name,
+                    action=action,
+                    price=original_price,
+                    stake=stake,
+                    status="ERROR",
+                )
+                self._safe_refresh_telegram_signals_tree()
+                return
+
+            logger.info(
+                "[TelegramModule] Inoltro segnale al runtime via SIGNAL_RECEIVED: %s",
+                payload,
+            )
+
+            try:
+                self.bus.publish("SIGNAL_RECEIVED", payload)
+            except Exception as e:
+                logger.exception(
+                    "[TelegramModule] Errore publish SIGNAL_RECEIVED: %s", e
+                )
+                self._safe_db_save_received_signal(
+                    selection=selection_name,
+                    action=action,
+                    price=original_price,
+                    stake=stake,
+                    status="ERROR",
+                )
+                self._safe_refresh_telegram_signals_tree()
+                return
+
+            self._safe_db_save_received_signal(
+                selection=selection_name,
+                action=action,
+                price=original_price,
+                stake=stake,
+                status="SUBMITTED",
+            )
+            self._safe_refresh_telegram_signals_tree()
+
+        if hasattr(self, "uiq") and self.uiq:
+            self.uiq.post(safe_process_signal)
+        else:
+            safe_process_signal()
+
+    def _update_telegram_status(self, status, message):
+        self.telegram_status = status
+        color = COLORS["success"] if status == "LISTENING" else COLORS["error"]
+
+        if hasattr(self, "tg_status_label") and self.tg_status_label.winfo_exists():
+            self.tg_status_label.configure(
+                text=f"Stato: {status} - {message}",
+                text_color=color,
+            )
+
+    def _refresh_telegram_chats_tree(self):
+        if not hasattr(self, "tg_chats_tree") or not self.tg_chats_tree.winfo_exists():
+            return
+
+        self.tg_chats_tree.delete(*self.tg_chats_tree.get_children())
+        chats = self.db.get_telegram_chats()
+
+        for chat in chats:
+            state = "Sì" if chat.get("is_active") else "No"
+            title = (
+                chat.get("title")
+                or chat.get("username")
+                or str(chat.get("chat_id"))
+            )
+            self.tg_chats_tree.insert(
+                "",
+                tk.END,
+                iid=str(chat["chat_id"]),
+                values=(title, state),
+            )
+
+    def _remove_telegram_chat(self):
+        selected = getattr(self, "tg_chats_tree", None) and self.tg_chats_tree.selection()
+        if not selected:
+            return
+
+        chats = self.db.get_telegram_chats()
+        updated_chats = [c for c in chats if str(c["chat_id"]) not in selected]
+        self.db.replace_telegram_chats(updated_chats)
+        self._safe_refresh_telegram_chats_tree()
+
+    def _add_selected_available_chats(self):
+        selected = getattr(self, "tg_available_tree", None) and self.tg_available_tree.selection()
+        if not selected:
+            return
+
+        for item_id in selected:
+            item = self.tg_available_tree.item(item_id)
+            values = item.get("values", [])
+            name = values[2] if len(values) > 2 else str(item_id)
+            self.db.save_telegram_chat(
+                chat_id=item_id,
+                title=name,
+                is_active=True,
+            )
+
+        self._safe_refresh_telegram_chats_tree()
+        messagebox.showinfo("Successo", "Chat aggiunte al monitoraggio.")
+
+    def _refresh_rules_tree(self):
+        if not hasattr(self, "rules_tree") or not self.rules_tree.winfo_exists():
+            return
+
+        self.rules_tree.delete(*self.rules_tree.get_children())
+        rules = self.db.get_signal_patterns()
+
+        for rule in rules:
+            state = "Sì" if rule.get("enabled") else "No"
+            self.rules_tree.insert(
+                "",
+                tk.END,
+                iid=str(rule["id"]),
+                values=(
+                    state,
+                    rule.get("label", ""),
+                    "MATCH_ODDS",
+                    rule.get("pattern", ""),
+                ),
+            )
+
+    def _add_signal_pattern(self):
+        label = simpledialog.askstring("Nuova Regola", "Nome della regola:")
+        if not label:
+            return
+
+        pattern = simpledialog.askstring("Nuova Regola", "Pattern Regex:")
+        if not pattern:
+            return
+
+        self.db.save_signal_pattern(
+            pattern=pattern,
+            label=label,
+            enabled=True,
+        )
+        self._refresh_rules_tree()
+
+    def _edit_signal_pattern(self):
+        if not hasattr(self, "rules_tree") or not self.rules_tree.winfo_exists():
+            return
+
+        selected = self.rules_tree.selection()
+        if not selected:
+            messagebox.showwarning("Attenzione", "Seleziona una regola da modificare.")
+            return
+
+        pattern_id = selected[0]
+        rules = self.db.get_signal_patterns()
+        current = next((r for r in rules if str(r["id"]) == str(pattern_id)), None)
+
+        if not current:
+            messagebox.showerror("Errore", "Regola non trovata nel database.")
+            return
+
+        new_label = simpledialog.askstring(
+            "Modifica Regola",
+            "Nome della regola:",
+            initialvalue=current.get("label", ""),
+        )
+        if new_label is None:
+            return
+
+        new_pattern = simpledialog.askstring(
+            "Modifica Regola",
+            "Pattern Regex:",
+            initialvalue=current.get("pattern", ""),
+        )
+        if new_pattern is None:
+            return
+
+        try:
+            self.db.update_signal_pattern(
+                pattern_id=pattern_id,
+                pattern=new_pattern,
+                label=new_label,
+            )
+            self._refresh_rules_tree()
+            messagebox.showinfo("Successo", "Regola aggiornata correttamente.")
+        except Exception as e:
+            messagebox.showerror(
+                "Errore",
+                f"Impossibile aggiornare la regola: {e}",
+            )
+
+    def _delete_signal_pattern(self):
+        if not hasattr(self, "rules_tree") or not self.rules_tree.winfo_exists():
+            return
+
+        selected = self.rules_tree.selection()
+        if not selected:
+            messagebox.showwarning("Attenzione", "Seleziona una regola da eliminare.")
+            return
+
+        pattern_id = selected[0]
+
+        if not messagebox.askyesno(
+            "Conferma eliminazione",
+            "Vuoi davvero eliminare la regola selezionata?",
+        ):
+            return
+
+        try:
+            self.db.delete_signal_pattern(pattern_id)
+            self._refresh_rules_tree()
+            messagebox.showinfo("Successo", "Regola eliminata.")
+        except Exception as e:
+            messagebox.showerror(
+                "Errore",
+                f"Impossibile eliminare la regola: {e}",
+            )
+
+    def _toggle_signal_pattern(self):
+        if not hasattr(self, "rules_tree") or not self.rules_tree.winfo_exists():
+            return
+
+        selected = self.rules_tree.selection()
+        if not selected:
+            messagebox.showwarning(
+                "Attenzione",
+                "Seleziona una regola da attivare/disattivare.",
+            )
+            return
+
+        pattern_id = selected[0]
+
+        try:
+            new_state = self.db.toggle_signal_pattern(pattern_id)
+            self._refresh_rules_tree()
+            stato_txt = "attivata" if new_state else "disattivata"
+            messagebox.showinfo("Successo", f"Regola {stato_txt}.")
+        except Exception as e:
+            messagebox.showerror(
+                "Errore",
+                f"Impossibile cambiare stato della regola: {e}",
+            )
+
+    def _refresh_telegram_signals_tree(self):
+        """Aggiorna la tabella visiva leggendo dallo storico salvato nel DB."""
+        if not hasattr(self, "tg_signals_tree") or not self.tg_signals_tree.winfo_exists():
+            return
+
+        self.tg_signals_tree.delete(*self.tg_signals_tree.get_children())
+
+        if hasattr(self.db, "get_received_signals"):
+            signals = self.db.get_received_signals(limit=50)
+            for sig in signals:
+                date_str = str(sig.get("received_at", ""))[:16]
+                sel = sig.get("selection", "")
+                action = sig.get("action", "")
+                price = f"{float(sig.get('price', 0) or 0):.2f}"
+                stake = f"{float(sig.get('stake', 0) or 0):.2f}"
+                status = sig.get("status", "")
+
+                tag = ""
+                if status in ("RECEIVED", "SUBMITTED"):
+                    tag = "success"
+                elif status in ("ERROR", "IGNORED"):
+                    tag = "failed"
+
+                self.tg_signals_tree.insert(
+                    "",
+                    tk.END,
+                    values=(date_str, sel, action, price, stake, status),
+                    tags=(tag,) if tag else (),
+                )
