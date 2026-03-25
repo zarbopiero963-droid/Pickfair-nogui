@@ -5,10 +5,13 @@ from datetime import datetime
 from typing import Optional
 
 from core.duplication_guard import DuplicationGuard
+from core.dutching_batch_manager import DutchingBatchManager
 from core.money_management import RoserpinaMoneyManagement
+from core.reconciliation_engine import ReconciliationEngine
 from core.risk_desk import RiskDesk
 from core.system_state import DeskMode, RuntimeMode
 from core.table_manager import TableManager
+
 
 logger = logging.getLogger(__name__)
 
@@ -37,13 +40,35 @@ class RuntimeController:
         self.risk_desk = RiskDesk()
         self.mm = RoserpinaMoneyManagement(self.config)
 
+        self.batch_manager = DutchingBatchManager(db, bus=bus)
+        self.reconciliation_engine = ReconciliationEngine(
+            db=db,
+            bus=bus,
+            batch_manager=self.batch_manager,
+            betfair_service=betfair_service,
+            table_manager=self.table_manager,
+            duplication_guard=self.duplication_guard,
+        )
+
         self.mode = RuntimeMode.STOPPED
         self.last_error = ""
         self.last_signal_at = ""
 
         self.bus.subscribe("SIGNAL_RECEIVED", self._on_signal_received)
         self.bus.subscribe("QUICK_BET_FAILED", self._on_quick_bet_failed)
+        self.bus.subscribe("QUICK_BET_ACCEPTED", self._on_quick_bet_accepted)
+        self.bus.subscribe("QUICK_BET_PARTIAL", self._on_quick_bet_partial)
+        self.bus.subscribe("QUICK_BET_FILLED", self._on_quick_bet_filled)
+        self.bus.subscribe("QUICK_BET_ROLLBACK_DONE", self._on_quick_bet_rollback_done)
         self.bus.subscribe("RUNTIME_CLOSE_POSITION", self._on_close_position)
+
+    # =========================================================
+    # MODE / CONFIG
+    # =========================================================
+    def reload_config(self) -> None:
+        self.config = self.settings_service.load_roserpina_config()
+        self.mm = RoserpinaMoneyManagement(self.config)
+        self.table_manager = TableManager(table_count=self.config.table_count)
 
     def _desk_mode(self) -> DeskMode:
         return self.mm.determine_desk_mode(
@@ -51,11 +76,15 @@ class RuntimeController:
             equity_peak=self.risk_desk.equity_peak,
         )
 
-    def reload_config(self) -> None:
-        self.config = self.settings_service.load_roserpina_config()
-        self.mm = RoserpinaMoneyManagement(self.config)
-        self.table_manager = TableManager(table_count=self.config.table_count)
+    def force_lockdown(self, reason: str = "") -> dict:
+        self.mode = RuntimeMode.LOCKDOWN
+        self.last_error = reason or "LOCKDOWN"
+        self.bus.publish("RUNTIME_LOCKDOWN", self.get_status())
+        return {"locked": True, "status": self.get_status()}
 
+    # =========================================================
+    # START / STOP
+    # =========================================================
     def start(self, password: str | None = None) -> dict:
         self.reload_config()
 
@@ -64,10 +93,12 @@ class RuntimeController:
         self.risk_desk.sync_bankroll(float(funds.get("available", 0.0) or 0.0))
 
         self.telegram_service.start()
+        self.reconciliation_engine.reconcile_all_open_batches()
+
         self.mode = RuntimeMode.ACTIVE
         self.last_error = ""
-
         self.bus.publish("RUNTIME_STARTED", self.get_status())
+
         return {
             "started": True,
             "betfair": session,
@@ -94,18 +125,18 @@ class RuntimeController:
         self.bus.publish("RUNTIME_STOPPED", self.get_status())
         return {"stopped": True, "status": self.get_status()}
 
-    def force_lockdown(self, reason: str = "") -> dict:
-        self.mode = RuntimeMode.LOCKDOWN
-        self.last_error = reason or "LOCKDOWN manuale/automatico"
-        self.bus.publish("RUNTIME_LOCKDOWN", self.get_status())
-        return {"locked": True, "status": self.get_status()}
-
     def reset_cycle(self) -> dict:
         self.table_manager.reset_all()
         self.duplication_guard = DuplicationGuard()
         self.risk_desk.reset_recovery_cycle()
         self.bus.publish("RUNTIME_CYCLE_RESET", self.get_status())
         return {"reset": True, "status": self.get_status()}
+
+    # =========================================================
+    # SIGNAL FLOW
+    # =========================================================
+    def _runtime_active(self) -> bool:
+        return self.mode == RuntimeMode.ACTIVE
 
     def _reject_signal(self, signal: dict, reason: str) -> None:
         self.bus.publish(
@@ -126,7 +157,7 @@ class RuntimeController:
     def _on_signal_received(self, signal: dict) -> None:
         self.last_signal_at = datetime.utcnow().isoformat()
 
-        if self.mode != RuntimeMode.ACTIVE:
+        if not self._runtime_active():
             self._reject_signal(signal, f"runtime_non_attivo:{self.mode.value}")
             return
 
@@ -181,6 +212,7 @@ class RuntimeController:
             "simulation_mode": False,
             "event_key": event_key,
             "table_id": decision.table_id,
+            "batch_id": "",
             "roserpina_reason": decision.reason,
             "roserpina_mode": decision.desk_mode.value,
         }
@@ -216,22 +248,39 @@ class RuntimeController:
         )
         self.bus.publish("CMD_QUICK_BET", payload)
 
-    def _on_quick_bet_failed(self, payload) -> None:
-        event_key = ""
-        table_id: Optional[int] = None
-
-        if isinstance(payload, dict):
-            event_key = str(payload.get("event_key") or "")
-            table_id = payload.get("table_id")
+    # =========================================================
+    # DOWNSTREAM ORDER EVENTS
+    # =========================================================
+    def _release_if_terminal(self, payload: dict) -> None:
+        event_key = str(payload.get("event_key") or "")
+        table_id = payload.get("table_id")
 
         if event_key:
             self.duplication_guard.release(event_key)
 
-        if table_id:
+        if table_id is not None:
             try:
-                self.table_manager.release(int(table_id), pnl=0.0)
+                self.table_manager.force_unlock(int(table_id))
             except Exception:
-                pass
+                logger.exception("Errore force_unlock table_id=%s", table_id)
+
+    def _on_quick_bet_failed(self, payload: dict) -> None:
+        self._release_if_terminal(payload)
+
+    def _on_quick_bet_accepted(self, payload: dict) -> None:
+        # ordine piazzato ma non terminale: non rilasciare subito
+        pass
+
+    def _on_quick_bet_partial(self, payload: dict) -> None:
+        # lascia lock/tavolo; il batch potrebbe richiedere rollback
+        pass
+
+    def _on_quick_bet_filled(self, payload: dict) -> None:
+        # ordine matched; rilascio avverrà su chiusura posizione o batch terminale
+        pass
+
+    def _on_quick_bet_rollback_done(self, payload: dict) -> None:
+        self._release_if_terminal(payload)
 
     def _on_close_position(self, payload: dict) -> None:
         if not isinstance(payload, dict):
@@ -240,14 +289,18 @@ class RuntimeController:
         table_id = payload.get("table_id")
         pnl = float(payload.get("pnl", 0.0) or 0.0)
         event_key = str(payload.get("event_key") or "")
+        batch_id = str(payload.get("batch_id") or "")
 
-        if table_id:
+        if table_id is not None:
             self.table_manager.release(int(table_id), pnl=pnl)
 
         if event_key:
             self.duplication_guard.release(event_key)
 
         self.risk_desk.apply_closed_pnl(pnl)
+
+        if batch_id:
+            self.batch_manager.update_batch_status(batch_id, "EXECUTED", notes="Posizione chiusa")
 
         if self.risk_desk.drawdown_pct() >= self.config.auto_reset_drawdown_pct:
             self.table_manager.reset_all()
@@ -264,6 +317,9 @@ class RuntimeController:
         if self.risk_desk.drawdown_pct() >= self.config.lockdown_drawdown_pct:
             self.force_lockdown("Drawdown oltre soglia lockdown")
 
+    # =========================================================
+    # STATUS
+    # =========================================================
     def get_status(self) -> dict:
         snapshot = self.risk_desk.build_snapshot(
             runtime_mode=self.mode,
