@@ -1,72 +1,57 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from order_manager import OrderManager
-
 
 logger = logging.getLogger(__name__)
 
 
 class TradingEngine:
     """
-    Trading engine headless minimale ma robusto.
-    Gestisce:
-    - CMD_QUICK_BET
-    - wiring con OrderManager
-    - publish eventi runtime
+    Trading engine headless.
+    Mantiene il wiring EventBus + OrderManager.
     """
 
     MIN_EXCHANGE_STAKE = 2.0
     MICRO_MIN_STAKE = 0.10
 
-    def __init__(
-        self,
-        *,
-        bus,
-        db,
-        client_getter=None,
-        executor=None,
-    ):
+    def __init__(self, bus, db, client_getter, executor):
         self.bus = bus
         self.db = db
         self.client_getter = client_getter
         self.executor = executor
+
         self.order_manager = OrderManager(
-            db=db,
             bus=bus,
+            db=db,
             client_getter=client_getter,
         )
 
         self.bus.subscribe("CMD_QUICK_BET", self._handle_quick_bet)
 
-    # =========================================================
-    # HELPERS
-    # =========================================================
     def _submit(self, fn, *args, **kwargs):
         if self.executor and hasattr(self.executor, "submit"):
-            return self.executor.submit("trading_engine", fn, *args, **kwargs)
+            result = self.executor.submit("trading_engine", fn, *args, **kwargs)
+            if hasattr(result, "result"):
+                return result.result()
+            return result
         return fn(*args, **kwargs)
 
     def _normalize_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         normalized = dict(payload or {})
-
         normalized["market_id"] = str(normalized["market_id"])
         normalized["selection_id"] = int(normalized["selection_id"])
         normalized["bet_type"] = str(normalized.get("bet_type", "BACK")).upper()
         normalized["price"] = float(normalized["price"])
         normalized["stake"] = float(normalized["stake"])
-
         return normalized
 
     def _is_microstake(self, stake: float) -> bool:
         return self.MICRO_MIN_STAKE <= float(stake or 0.0) < self.MIN_EXCHANGE_STAKE
 
-    # =========================================================
-    # QUICK BET
-    # =========================================================
-    def _handle_quick_bet(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _handle_quick_bet(self, payload):
         try:
             payload = self._normalize_payload(payload)
 
@@ -79,10 +64,6 @@ class TradingEngine:
             payload["microstake_mode"] = self._is_microstake(payload["stake"])
 
             result = self._submit(self.order_manager.place_order, payload)
-
-            # Se executor.submit restituisce Future-like, prova a risolverlo
-            if hasattr(result, "result"):
-                result = result.result()
 
             if not isinstance(result, dict):
                 raise RuntimeError("Risposta order_manager non valida")
