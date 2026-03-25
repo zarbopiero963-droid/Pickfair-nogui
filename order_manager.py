@@ -14,6 +14,9 @@ class OrderManager:
     - salva saga ordini nel DB
     - pubblica eventi downstream sul bus
     - gestisce customer_ref / batch_id / event_key / table_id
+
+    IMPORTANTE:
+    - contiene una barriera difensiva extra contro simulation_mode=True
     """
 
     TERMINAL_OK = {"SUCCESS", "PROCESSED_WITH_ERRORS", "PROCESSED"}
@@ -60,6 +63,21 @@ class OrderManager:
     # =========================================================
 
     def place_order(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if bool(payload.get("simulation_mode", False)):
+            error = "simulation_mode=True bloccato in OrderManager: live execution non consentita"
+            logger.warning(error)
+
+            failure_payload = dict(payload or {})
+            failure_payload["error"] = error
+            self._publish("QUICK_BET_FAILED", failure_payload)
+
+            return {
+                "ok": False,
+                "status": "FAILED",
+                "error": error,
+                "simulated": True,
+            }
+
         client = self._client()
         if client is None:
             raise RuntimeError("Betfair client non disponibile")
