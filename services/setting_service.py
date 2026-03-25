@@ -2,19 +2,30 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from core.system_state import BetfairConfig, RiskProfile, RoserpinaConfig, TelegramRuntimeConfig
+from core.system_state import (
+    BetfairConfig,
+    RiskProfile,
+    RoserpinaConfig,
+    TelegramRuntimeConfig,
+)
 
 
 class SettingsService:
     def __init__(self, db):
         self.db = db
 
+    # =========================================================
+    # GENERIC SETTINGS
+    # =========================================================
     def get_all_settings(self) -> Dict[str, Any]:
         getter = getattr(self.db, "get_settings", None)
         if callable(getter):
             return getter() or {}
         return {}
 
+    # =========================================================
+    # BETFAIR
+    # =========================================================
     def load_betfair_config(self) -> BetfairConfig:
         data = self.get_all_settings()
         return BetfairConfig(
@@ -24,13 +35,18 @@ class SettingsService:
             private_key=str(data.get("private_key", "") or ""),
         )
 
-    def save_betfair_config(self, config: BetfairConfig, password: str | None = None) -> None:
+    def save_betfair_config(
+        self,
+        config: BetfairConfig,
+        password: str | None = None,
+    ) -> None:
         self.db.save_credentials(
             username=config.username,
             app_key=config.app_key,
             certificate=config.certificate,
             private_key=config.private_key,
         )
+
         if password is not None and hasattr(self.db, "save_password"):
             self.db.save_password(password)
 
@@ -42,9 +58,33 @@ class SettingsService:
         if hasattr(self.db, "save_password"):
             self.db.save_password(password)
 
+    def load_session(self) -> Dict[str, str]:
+        data = self.get_all_settings()
+        return {
+            "session_token": str(data.get("session_token", "") or ""),
+            "session_expiry": str(data.get("session_expiry", "") or ""),
+        }
+
+    def clear_session(self) -> None:
+        if hasattr(self.db, "clear_session"):
+            self.db.clear_session()
+
+    # =========================================================
+    # TELEGRAM
+    # =========================================================
     def load_telegram_config(self) -> TelegramRuntimeConfig:
-        row = self.db.get_telegram_settings() if hasattr(self.db, "get_telegram_settings") else {}
-        chats = self.db.get_telegram_chats() if hasattr(self.db, "get_telegram_chats") else []
+        row = (
+            self.db.get_telegram_settings()
+            if hasattr(self.db, "get_telegram_settings")
+            else {}
+        )
+
+        chats = (
+            self.db.get_telegram_chats()
+            if hasattr(self.db, "get_telegram_chats")
+            else []
+        )
+
         chat_ids = []
         for item in chats or []:
             try:
@@ -80,6 +120,9 @@ class SettingsService:
                 }
             )
 
+    # =========================================================
+    # ROSERPINA
+    # =========================================================
     def load_roserpina_config(self) -> RoserpinaConfig:
         data = self.get_all_settings()
 
@@ -101,7 +144,10 @@ class SettingsService:
                 return value
             return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
-        risk_profile_raw = str(data.get("roserpina.risk_profile", "BALANCED") or "BALANCED").upper()
+        risk_profile_raw = str(
+            data.get("roserpina.risk_profile", "BALANCED") or "BALANCED"
+        ).upper()
+
         if risk_profile_raw not in {p.value for p in RiskProfile}:
             risk_profile_raw = RiskProfile.BALANCED.value
 
@@ -148,4 +194,4 @@ class SettingsService:
                 "roserpina.min_stake": config.min_stake,
                 "roserpina.max_stake_abs": config.max_stake_abs,
             }
-              )
+        )
