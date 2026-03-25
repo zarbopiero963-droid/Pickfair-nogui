@@ -9,19 +9,6 @@ Obiettivi:
 - checker saghe pendenti
 - sanity checks di mercato e ordini
 - API semplice e integrabile senza rompere il repo
-
-Uso tipico:
-    from core.safety_layer import get_safety_layer
-
-    safety = get_safety_layer()
-    safety.validate_quick_bet_request(payload)
-    safety.validate_quick_bet_success(event_payload)
-    safety.watchdog_ping("trading_engine")
-
-Oppure:
-    safety.start_watchdog()
-    ...
-    safety.stop_watchdog()
 """
 
 from __future__ import annotations
@@ -30,6 +17,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -207,6 +195,32 @@ class SafetyLayer:
         except Exception:
             return default
 
+    def _safe_age_seconds(self, created_at: Any, stale_after_sec: float) -> float:
+        if created_at in (None, ""):
+            return stale_after_sec + 1.0
+
+        now = time.time()
+        try:
+            if isinstance(created_at, (int, float)):
+                return max(0.0, now - float(created_at))
+
+            created_str = str(created_at).strip()
+            if not created_str:
+                return stale_after_sec + 1.0
+
+            # prova numerico come stringa
+            try:
+                return max(0.0, now - float(created_str))
+            except Exception:
+                pass
+
+            # normalizza ISO con eventuale Z finale
+            normalized = created_str.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(normalized)
+            return max(0.0, now - dt.timestamp())
+        except Exception:
+            return stale_after_sec + 1.0
+
     # =========================================================
     # GENERIC SCHEMA VALIDATION
     # =========================================================
@@ -304,7 +318,7 @@ class SafetyLayer:
 
     def validate_cashout_success(self, payload: Dict[str, Any]) -> bool:
         self._validate_schema(payload, self.CASHOUT_SUCCESS_SCHEMA, "CASHOUT_SUCCESS")
-        matched = self._safe_float(payload.get("matched"), 0.0)
+        matched = self._safe_float(payload.get("matched"), -1.0)
         if matched < 0:
             raise RiskInvariantError("CASHOUT_SUCCESS: matched < 0")
         return True
@@ -424,20 +438,16 @@ class SafetyLayer:
             logger.error("[SafetyLayer] inspect_pending_sagas DB error: %s", e)
             return rows
 
-        now = time.time()
         for row in raw_rows:
             if not isinstance(row, dict):
                 continue
 
             created_at = row.get("created_at")
-            age_sec = 0.0
-            if created_at:
-                # qui non assumiamo formato iso perfetto
-                try:
-                    # fallback minimale: se created_at è timestamp numerico
-                    age_sec = max(0.0, now - float(created_at))
-                except Exception:
-                    age_sec = stale_after_sec + 1.0
+            age_sec = self._safe_age_seconds(created_at, stale_after_sec)
+
+            raw_payload = row.get("raw_payload")
+            if raw_payload in (None, ""):
+                raw_payload = row.get("payload_json")
 
             rows.append(
                 PendingSagaRecord(
@@ -446,7 +456,7 @@ class SafetyLayer:
                     selection_id=self._safe_str(row.get("selection_id")) or None,
                     status=self._safe_str(row.get("status"), "PENDING"),
                     age_sec=age_sec,
-                    raw_payload=self._safe_str(row.get("raw_payload")) or None,
+                    raw_payload=self._safe_str(raw_payload) or None,
                 )
             )
 
@@ -556,11 +566,6 @@ class SafetyLayer:
 
                 age = now - state.last_ping
                 if age > state.timeout_sec:
-                    # FIX #20: only fire the callback the FIRST time the
-                    # component is detected as timed-out.  The old code set
-                    # state.triggered = True but then appended to to_notify
-                    # unconditionally on every watchdog cycle, causing the
-                    # callback to fire repeatedly for the same event.
                     if not state.triggered:
                         state.triggered = True
                         state.last_error = (
@@ -632,18 +637,6 @@ _global_safety_layer_lock = threading.Lock()
 
 
 def get_safety_layer() -> SafetyLayer:
-    """
-    FIX #20: thread-safe singleton initialisation.
-
-    Old code used a bare check-then-act pattern without a lock:
-        if _global_safety_layer is None:
-            _global_safety_layer = SafetyLayer()
-    Two threads could both see None, both call SafetyLayer(), and each get a
-    different instance — losing state accumulated by the other.
-
-    Fixed with a double-checked locking pattern to avoid lock contention on
-    the hot path once the singleton exists.
-    """
     global _global_safety_layer
     if _global_safety_layer is None:
         with _global_safety_layer_lock:
