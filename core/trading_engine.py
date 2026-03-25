@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any, Dict
 
 from order_manager import OrderManager
@@ -12,6 +13,10 @@ class TradingEngine:
     """
     Trading engine headless.
     Mantiene il wiring EventBus + OrderManager.
+
+    IMPORTANTE:
+    - simulation_mode=True => dry-run sicuro, nessuna chiamata live a Betfair
+    - simulation_mode=False => esecuzione reale tramite OrderManager
     """
 
     MIN_EXCHANGE_STAKE = 2.0
@@ -59,6 +64,55 @@ class TradingEngine:
     def _is_microstake(self, stake: float) -> bool:
         return self.MICRO_MIN_STAKE <= float(stake or 0.0) < self.MIN_EXCHANGE_STAKE
 
+    def _publish_simulated_flow(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Dry-run sicuro:
+        - nessuna chiamata a Betfair
+        - ordine accettato/fill simulato
+        - chiusura immediata a pnl 0 per non lasciare tavoli bloccati
+        """
+        sim_payload = dict(payload)
+        sim_payload["sim"] = True
+        sim_payload["micro"] = bool(sim_payload.get("microstake_mode", False))
+        sim_payload["status"] = "DRY_RUN"
+        sim_payload["matched"] = float(sim_payload["stake"])
+        sim_payload["bet_id"] = f"SIM-{int(datetime.utcnow().timestamp() * 1000)}"
+        sim_payload["response"] = {
+            "status": "DRY_RUN",
+            "simulated": True,
+            "placed_at": datetime.utcnow().isoformat(),
+        }
+
+        self.bus.publish("QUICK_BET_ACCEPTED", dict(sim_payload))
+        self.bus.publish("QUICK_BET_FILLED", dict(sim_payload))
+
+        self.bus.publish(
+            "RUNTIME_CLOSE_POSITION",
+            {
+                "table_id": sim_payload.get("table_id"),
+                "event_key": sim_payload.get("event_key"),
+                "batch_id": sim_payload.get("batch_id", ""),
+                "pnl": 0.0,
+                "simulated": True,
+                "reason": "dry_run_simulation",
+            },
+        )
+
+        logger.info(
+            "Simulazione dry-run eseguita senza live order: market_id=%s selection_id=%s stake=%.2f",
+            sim_payload.get("market_id"),
+            sim_payload.get("selection_id"),
+            sim_payload.get("stake", 0.0),
+        )
+
+        return {
+            "ok": True,
+            "status": "SIMULATED",
+            "simulated": True,
+            "matched": float(sim_payload["stake"]),
+            "bet_id": sim_payload["bet_id"],
+        }
+
     def _handle_quick_bet(self, payload):
         try:
             payload = self._normalize_payload(payload)
@@ -71,11 +125,15 @@ class TradingEngine:
 
             payload["microstake_mode"] = self._is_microstake(payload["stake"])
 
+            if payload["simulation_mode"]:
+                return self._publish_simulated_flow(payload)
+
             self._submit(self.order_manager.place_order, payload)
 
             return {
                 "ok": True,
                 "status": "ACCEPTED_FOR_PROCESSING",
+                "simulated": False,
             }
 
         except Exception as exc:
