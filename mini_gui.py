@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import tkinter as tk
 from tkinter import ttk, messagebox
 
@@ -76,9 +77,9 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-    # =========================
+    # =========================================================
     # CORE BOOTSTRAP
-    # =========================
+    # =========================================================
     def _build_core(self):
         self.db = Database()
         self.bus = EventBus()
@@ -88,34 +89,125 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
         self.settings_service = SettingsService(self.db)
         self.betfair_service = BetfairService(self.settings_service)
-        self.telegram_service = TelegramService(self.settings_service, self.db, self.bus)
-
-        self.trading_engine = TradingEngine(
-            bus=self.bus,
-            db=self.db,
-            client_getter=self.betfair_service.get_client,
-            executor=self.executor,
+        self.telegram_service = TelegramService(
+            self.settings_service,
+            self.db,
+            self.bus,
         )
 
-        self.runtime = RuntimeController(
-            bus=self.bus,
-            db=self.db,
-            settings_service=self.settings_service,
-            betfair_service=self.betfair_service,
-            telegram_service=self.telegram_service,
-            executor=self.executor,
-        )
+        self.trading_engine = self._create_trading_engine()
+        self.runtime = self._create_runtime_controller()
 
         self.telegram_controller = TelegramController(self)
 
-        self.shutdown.register("telegram_stop", self.telegram_service.stop, priority=10)
-        self.shutdown.register("betfair_disconnect", self.betfair_service.disconnect, priority=20)
-        self.shutdown.register("db_close", self.db.close_all_connections, priority=30)
-        self.shutdown.register("executor_shutdown", self.executor.shutdown, priority=40)
+        self._register_shutdown_hook("telegram_stop", self.telegram_service.stop, priority=10)
+        self._register_shutdown_hook("betfair_disconnect", self.betfair_service.disconnect, priority=20)
+        self._register_shutdown_hook("db_close", self.db.close_all_connections, priority=30)
+        self._register_shutdown_hook("executor_shutdown", self.executor.shutdown, priority=40)
 
-    # =========================
+    def _create_trading_engine(self):
+        """
+        Prova più firme compatibili del TradingEngine.
+        """
+        candidates = [
+            {
+                "bus": self.bus,
+                "db": self.db,
+                "client_getter": self.betfair_service.get_client,
+                "executor": self.executor,
+            },
+            {
+                "bus": self.bus,
+                "db": self.db,
+                "client": self.betfair_service.get_client(),
+                "executor": self.executor,
+            },
+            {
+                "bus": self.bus,
+                "db": self.db,
+            },
+        ]
+
+        last_exc = None
+        for kwargs in candidates:
+            try:
+                return TradingEngine(**kwargs)
+            except TypeError as exc:
+                last_exc = exc
+                continue
+
+        raise RuntimeError(f"Impossibile inizializzare TradingEngine: {last_exc}")
+
+    def _create_runtime_controller(self):
+        """
+        Prova più firme compatibili del RuntimeController.
+        """
+        candidates = [
+            {
+                "bus": self.bus,
+                "db": self.db,
+                "settings_service": self.settings_service,
+                "betfair_service": self.betfair_service,
+                "telegram_service": self.telegram_service,
+                "executor": self.executor,
+                "trading_engine": self.trading_engine,
+            },
+            {
+                "bus": self.bus,
+                "db": self.db,
+                "settings_service": self.settings_service,
+                "betfair_service": self.betfair_service,
+                "telegram_service": self.telegram_service,
+                "executor": self.executor,
+            },
+            {
+                "bus": self.bus,
+                "db": self.db,
+                "settings_service": self.settings_service,
+                "betfair_service": self.betfair_service,
+                "telegram_service": self.telegram_service,
+            },
+        ]
+
+        last_exc = None
+        for kwargs in candidates:
+            try:
+                return RuntimeController(**kwargs)
+            except TypeError as exc:
+                last_exc = exc
+                continue
+
+        raise RuntimeError(f"Impossibile inizializzare RuntimeController: {last_exc}")
+
+    def _register_shutdown_hook(self, name, fn, priority=100):
+        """
+        Compatibile con diverse implementazioni di ShutdownManager.
+        """
+        if hasattr(self.shutdown, "register"):
+            try:
+                self.shutdown.register(name, fn, priority=priority)
+                return
+            except TypeError:
+                try:
+                    self.shutdown.register(name, fn)
+                    return
+                except TypeError:
+                    pass
+
+        if hasattr(self.shutdown, "register_shutdown_hook"):
+            try:
+                self.shutdown.register_shutdown_hook(name, fn, priority=priority)
+                return
+            except TypeError:
+                try:
+                    self.shutdown.register_shutdown_hook(fn)
+                    return
+                except TypeError:
+                    pass
+
+    # =========================================================
     # TK VARS
-    # =========================
+    # =========================================================
     def _build_vars(self):
         # Betfair
         self.bf_username_var = tk.StringVar()
@@ -159,9 +251,9 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.status_last_error_var = tk.StringVar(value="-")
         self.sim_label_var = tk.StringVar(value="SIMULAZIONE")
 
-    # =========================
+    # =========================================================
     # UI
-    # =========================
+    # =========================================================
     def _build_ui(self):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
@@ -240,8 +332,16 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             c = idx % 4
             card = ctk.CTkFrame(frame)
             card.grid(row=r, column=c, sticky="nsew", padx=8, pady=8)
-            ctk.CTkLabel(card, text=label, font=("Segoe UI", 12)).pack(anchor="w", padx=12, pady=(10, 4))
-            ctk.CTkLabel(card, textvariable=var, font=("Segoe UI", 16, "bold")).pack(anchor="w", padx=12, pady=(0, 10))
+            ctk.CTkLabel(
+                card,
+                text=label,
+                font=("Segoe UI", 12),
+            ).pack(anchor="w", padx=12, pady=(10, 4))
+            ctk.CTkLabel(
+                card,
+                textvariable=var,
+                font=("Segoe UI", 16, "bold"),
+            ).pack(anchor="w", padx=12, pady=(0, 10))
 
         controls = ctk.CTkFrame(frame)
         controls.grid(row=2, column=0, columnspan=4, sticky="ew", padx=8, pady=8)
@@ -256,7 +356,11 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         err = ctk.CTkFrame(frame)
         err.grid(row=3, column=0, columnspan=4, sticky="ew", padx=8, pady=8)
         ctk.CTkLabel(err, text="Ultimo Errore", font=("Segoe UI", 12)).pack(anchor="w", padx=12, pady=(10, 4))
-        ctk.CTkLabel(err, textvariable=self.status_last_error_var, wraplength=1200).pack(anchor="w", padx=12, pady=(0, 10))
+        ctk.CTkLabel(
+            err,
+            textvariable=self.status_last_error_var,
+            wraplength=1200,
+        ).pack(anchor="w", padx=12, pady=(0, 10))
 
     def _build_settings_tab(self):
         frame = self.tab_settings
@@ -271,7 +375,11 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
         btns = ctk.CTkFrame(box, fg_color="transparent")
         btns.pack(fill=tk.X, padx=12, pady=12)
-        ctk.CTkButton(btns, text="Salva Impostazioni Betfair", command=self._save_betfair_settings).pack(side=tk.LEFT, padx=6)
+        ctk.CTkButton(
+            btns,
+            text="Salva Impostazioni Betfair",
+            command=self._save_betfair_settings,
+        ).pack(side=tk.LEFT, padx=6)
 
     def _build_telegram_tab(self):
         TelegramTabUI(self.tab_telegram, self)
@@ -309,10 +417,22 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
         cb = ctk.CTkFrame(outer)
         cb.pack(fill=tk.X, padx=12, pady=6)
-        ctk.CTkCheckBox(cb, text="Allow Recovery", variable=self.rs_allow_recovery_var).pack(side=tk.LEFT, padx=8, pady=8)
-        ctk.CTkCheckBox(cb, text="Anti Duplication Enabled", variable=self.rs_anti_dup_var).pack(side=tk.LEFT, padx=8, pady=8)
+        ctk.CTkCheckBox(
+            cb,
+            text="Allow Recovery",
+            variable=self.rs_allow_recovery_var,
+        ).pack(side=tk.LEFT, padx=8, pady=8)
+        ctk.CTkCheckBox(
+            cb,
+            text="Anti Duplication Enabled",
+            variable=self.rs_anti_dup_var,
+        ).pack(side=tk.LEFT, padx=8, pady=8)
 
-        ctk.CTkButton(outer, text="Salva Roserpina", command=self._save_roserpina_settings).pack(anchor="w", padx=12, pady=12)
+        ctk.CTkButton(
+            outer,
+            text="Salva Roserpina",
+            command=self._save_roserpina_settings,
+        ).pack(anchor="w", padx=12, pady=12)
 
     def _build_risk_tab(self):
         frame = self.tab_risk
@@ -340,7 +460,11 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
         btns = ctk.CTkFrame(frame, fg_color="transparent")
         btns.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 12))
-        ctk.CTkButton(btns, text="Refresh Risk Desk", command=self._refresh_runtime_status).pack(side=tk.LEFT, padx=6)
+        ctk.CTkButton(
+            btns,
+            text="Refresh Risk Desk",
+            command=self._refresh_runtime_status,
+        ).pack(side=tk.LEFT, padx=6)
 
     def _build_log_tab(self):
         frame = self.tab_log
@@ -353,18 +477,16 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         ctk.CTkLabel(row, text=label, width=220, anchor="w").pack(side=tk.LEFT, padx=8, pady=8)
         ctk.CTkEntry(row, textvariable=variable, width=width, show=show).pack(side=tk.LEFT, padx=8, pady=8)
 
-    # =========================
+    # =========================================================
     # SETTINGS LOAD / SAVE
-    # =========================
+    # =========================================================
     def _load_initial_settings(self):
-        # Betfair
         bf = self.settings_service.load_betfair_config()
         self.bf_username_var.set(bf.username)
         self.bf_app_key_var.set(bf.app_key)
         self.bf_cert_var.set(bf.certificate)
         self.bf_key_var.set(bf.private_key)
 
-        # Roserpina
         rs = self.settings_service.load_roserpina_config()
         self.rs_target_var.set(str(rs.target_profit_cycle_pct))
         self.rs_max_single_var.set(str(rs.max_single_bet_pct))
@@ -394,7 +516,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             certificate=self.bf_cert_var.get().strip(),
             private_key=self.bf_key_var.get().strip(),
         )
-        self.settings_service.save_betfair_config(cfg, password=self.bf_password_var.get())
+        self.settings_service.save_betfair_config(
+            cfg,
+            password=self.bf_password_var.get(),
+        )
         messagebox.showinfo("OK", "Impostazioni Betfair salvate.")
 
     def _save_roserpina_settings(self):
@@ -421,20 +546,21 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             max_stake_abs=float(self.rs_max_abs_var.get()),
         )
         self.settings_service.save_roserpina_config(cfg)
-        self.runtime.reload_config()
+        if hasattr(self.runtime, "reload_config"):
+            self.runtime.reload_config()
         messagebox.showinfo("OK", "Configurazione Roserpina salvata.")
 
-    # =========================
+    # =========================================================
     # LIVE / SIM SWITCH
-    # =========================
+    # =========================================================
     def _toggle_simulation_mode(self):
         self.simulation_mode = bool(self.simulation_mode_var.get())
         self.sim_label_var.set("SIMULAZIONE" if self.simulation_mode else "LIVE")
         self._log(f"Modalità cambiata: {self.sim_label_var.get()}")
 
-    # =========================
+    # =========================================================
     # RUNTIME COMMANDS
-    # =========================
+    # =========================================================
     def _runtime_start(self):
         result = self.runtime.start(password=self.bf_password_var.get() or None)
         self._log(f"START -> {result}")
@@ -460,9 +586,9 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._log(f"RESET -> {result}")
         self._refresh_runtime_status()
 
-    # =========================
+    # =========================================================
     # BUS EVENTS
-    # =========================
+    # =========================================================
     def _wire_bus(self):
         self.bus.subscribe("TELEGRAM_STATUS", self._on_telegram_status)
         self.bus.subscribe("SIGNAL_RECEIVED", self._on_signal_received)
@@ -475,7 +601,13 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.bus.subscribe("RUNTIME_LOCKDOWN", lambda payload: self.uiq.post(self._refresh_runtime_status))
 
     def _on_telegram_status(self, payload):
+        payload = payload or {}
         self.uiq.post(self._log, f"TELEGRAM_STATUS -> {payload}")
+        self.uiq.post(
+            self._update_telegram_status,
+            payload.get("status", "UNKNOWN"),
+            payload.get("message", ""),
+        )
         self.uiq.post(self._refresh_runtime_status)
 
     def _on_signal_received(self, payload):
@@ -490,9 +622,9 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.uiq.post(self._log, f"SIGNAL_APPROVED -> {payload}")
         self.uiq.post(self._refresh_runtime_status)
 
-    # =========================
+    # =========================================================
     # STATUS / LOG
-    # =========================
+    # =========================================================
     def _refresh_runtime_status(self):
         try:
             status = self.runtime.get_status()
@@ -501,8 +633,12 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             return
 
         self.status_mode_var.set(str(status.get("mode", "-")))
-        self.status_betfair_var.set("CONNECTED" if self.betfair_service.status().get("connected") else "DISCONNECTED")
-        self.status_telegram_var.set("LISTENING" if self.telegram_service.status().get("connected") else "STOPPED")
+        self.status_betfair_var.set(
+            "CONNECTED" if self.betfair_service.status().get("connected") else "DISCONNECTED"
+        )
+        self.status_telegram_var.set(
+            "LISTENING" if self.telegram_service.status().get("connected") else "STOPPED"
+        )
         self.status_bankroll_var.set(str(status.get("bankroll_current", "0.00")))
         self.status_drawdown_var.set(str(status.get("drawdown_pct", "0.00")))
         self.status_exposure_var.set(str(status.get("total_exposure", "0.00")))
@@ -536,7 +672,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
     def _on_close(self):
         try:
-            self.shutdown.shutdown()
+            if hasattr(self.shutdown, "shutdown"):
+                self.shutdown.shutdown()
+            elif hasattr(self.shutdown, "run"):
+                self.shutdown.run()
         finally:
             self.destroy()
 
