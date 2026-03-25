@@ -136,4 +136,5 @@ class BetfairService:
             "connected": bool(self.connected and self.client is not None),
             "last_error": self.last_error,
             "has_client": self.client is not None,
+            "live_execution_only": True,
         }
