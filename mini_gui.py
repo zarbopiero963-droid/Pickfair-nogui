@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 import tkinter as tk
 from tkinter import ttk, messagebox
 
@@ -11,7 +10,7 @@ from event_bus import EventBus
 from executor_manager import ExecutorManager
 from shutdown_manager import ShutdownManager
 
-from services.settings_service import SettingsService
+from services.setting_service import SettingsService
 from services.betfair_service import BetfairService
 from services.telegram_service import TelegramService
 
@@ -100,15 +99,28 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
         self.telegram_controller = TelegramController(self)
 
-        self._register_shutdown_hook("telegram_stop", self.telegram_service.stop, priority=10)
-        self._register_shutdown_hook("betfair_disconnect", self.betfair_service.disconnect, priority=20)
-        self._register_shutdown_hook("db_close", self.db.close_all_connections, priority=30)
-        self._register_shutdown_hook("executor_shutdown", self.executor.shutdown, priority=40)
+        self._register_shutdown_hook(
+            "telegram_stop",
+            self.telegram_service.stop,
+            priority=10,
+        )
+        self._register_shutdown_hook(
+            "betfair_disconnect",
+            self.betfair_service.disconnect,
+            priority=20,
+        )
+        self._register_shutdown_hook(
+            "db_close",
+            self.db.close_all_connections,
+            priority=30,
+        )
+        self._register_shutdown_hook(
+            "executor_shutdown",
+            self.executor.shutdown,
+            priority=40,
+        )
 
     def _create_trading_engine(self):
-        """
-        Prova più firme compatibili del TradingEngine.
-        """
         candidates = [
             {
                 "bus": self.bus,
@@ -139,9 +151,6 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         raise RuntimeError(f"Impossibile inizializzare TradingEngine: {last_exc}")
 
     def _create_runtime_controller(self):
-        """
-        Prova più firme compatibili del RuntimeController.
-        """
         candidates = [
             {
                 "bus": self.bus,
@@ -180,9 +189,6 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         raise RuntimeError(f"Impossibile inizializzare RuntimeController: {last_exc}")
 
     def _register_shutdown_hook(self, name, fn, priority=100):
-        """
-        Compatibile con diverse implementazioni di ShutdownManager.
-        """
         if hasattr(self.shutdown, "register"):
             try:
                 self.shutdown.register(name, fn, priority=priority)
@@ -209,14 +215,12 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
     # TK VARS
     # =========================================================
     def _build_vars(self):
-        # Betfair
         self.bf_username_var = tk.StringVar()
         self.bf_password_var = tk.StringVar()
         self.bf_app_key_var = tk.StringVar()
         self.bf_cert_var = tk.StringVar()
         self.bf_key_var = tk.StringVar()
 
-        # Roserpina
         self.rs_target_var = tk.StringVar(value="3.0")
         self.rs_max_single_var = tk.StringVar(value="18.0")
         self.rs_max_total_var = tk.StringVar(value="35.0")
@@ -236,10 +240,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.rs_anti_dup_var = tk.BooleanVar(value=True)
         self.rs_risk_profile_var = tk.StringVar(value="BALANCED")
 
-        # Live / simulation
         self.simulation_mode_var = tk.BooleanVar(value=True)
 
-        # Status vars
         self.status_mode_var = tk.StringVar(value="STOPPED")
         self.status_betfair_var = tk.StringVar(value="DISCONNECTED")
         self.status_telegram_var = tk.StringVar(value="STOPPED")
