@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 logger = logging.getLogger("OrderManager")
 
@@ -46,7 +46,8 @@ class OrderManager:
         return None
 
     def _extract_customer_ref(self, payload: Dict[str, Any]) -> str:
-        return str(payload.get("customer_ref") or uuid.uuid4().hex)
+        ref = payload.get("customer_ref")
+        return str(ref) if ref else uuid.uuid4().hex
 
     def _extract_instruction_report(self, response: Dict[str, Any]) -> Dict[str, Any]:
         reports = response.get("instructionReports") or response.get("instruction_reports") or []
@@ -191,7 +192,13 @@ class OrderManager:
                 status="ROLLBACK_PENDING",
                 error_text=reason,
             )
-        saga = self.db.get_order_saga(customer_ref) if self.db and hasattr(self.db, "get_order_saga") else None
+
+        saga = (
+            self.db.get_order_saga(customer_ref)
+            if self.db and hasattr(self.db, "get_order_saga")
+            else None
+        )
+
         self._publish(
             "QUICK_BET_ROLLBACK_PENDING",
             {
@@ -208,7 +215,13 @@ class OrderManager:
                 status="ROLLED_BACK",
                 error_text=reason,
             )
-        saga = self.db.get_order_saga(customer_ref) if self.db and hasattr(self.db, "get_order_saga") else None
+
+        saga = (
+            self.db.get_order_saga(customer_ref)
+            if self.db and hasattr(self.db, "get_order_saga")
+            else None
+        )
+
         self._publish(
             "QUICK_BET_ROLLBACK_DONE",
             {
