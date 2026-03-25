@@ -5,10 +5,13 @@ from typing import Any, Dict, Optional
 
 class TelegramSignalProcessor:
     """
-    Processore puro, senza GUI.
-    Converte un segnale Telegram grezzo in un payload pulito per il runtime.
+    Processore puro (NO GUI).
+    Converte segnali Telegram in payload pulito per il runtime.
     """
 
+    # =========================================================
+    # PARSING BASE
+    # =========================================================
     def normalize_action(self, signal: Dict[str, Any]) -> str:
         action = (
             signal.get("action")
@@ -17,21 +20,27 @@ class TelegramSignalProcessor:
             or "BACK"
         )
         action = str(action).upper().strip()
+
         if action not in ("BACK", "LAY"):
             action = "BACK"
+
         return action
 
     def parse_price(self, signal: Dict[str, Any]) -> Optional[float]:
         raw = signal.get("price", signal.get("odds", 2.0))
+
         try:
+            if isinstance(raw, str):
+                raw = raw.replace(",", ".").strip()
             return float(raw)
         except Exception:
             return None
 
     def parse_selection_id(self, signal: Dict[str, Any]) -> Optional[int]:
         raw = signal.get("selection_id", signal.get("selectionId"))
+
         try:
-            if raw in (None, ""):
+            if raw in (None, "", "null"):
                 return None
             return int(raw)
         except Exception:
@@ -39,13 +48,18 @@ class TelegramSignalProcessor:
 
     def parse_market_id(self, signal: Dict[str, Any]) -> Optional[str]:
         raw = signal.get("market_id", signal.get("marketId"))
-        if raw in (None, ""):
+
+        if raw in (None, "", "null"):
             return None
+
         try:
             return str(raw).strip()
         except Exception:
             return None
 
+    # =========================================================
+    # TEXT PARSING
+    # =========================================================
     def parse_event_name(self, signal: Dict[str, Any]) -> str:
         return str(
             signal.get("match")
@@ -64,7 +78,11 @@ class TelegramSignalProcessor:
     def parse_market_type(self, signal: Dict[str, Any]) -> str:
         return str(signal.get("market_type") or "MATCH_ODDS")
 
-    def parse_selection_name(self, signal: Dict[str, Any], selection_id: Optional[int]) -> str:
+    def parse_selection_name(
+        self,
+        signal: Dict[str, Any],
+        selection_id: Optional[int],
+    ) -> str:
         return str(
             signal.get("selection")
             or signal.get("runner_name")
@@ -73,12 +91,16 @@ class TelegramSignalProcessor:
             or "Unknown"
         )
 
+    # =========================================================
+    # BUILD PAYLOAD
+    # =========================================================
     def build_runtime_signal(
         self,
         signal: Dict[str, Any],
         stake: float,
         simulation_mode: bool = False,
     ) -> Optional[Dict[str, Any]]:
+
         action = self.normalize_action(signal)
         selection_id = self.parse_selection_id(signal)
         market_id = self.parse_market_id(signal)
@@ -92,26 +114,43 @@ class TelegramSignalProcessor:
         market_name = self.parse_market_name(signal)
         market_type = self.parse_market_type(signal)
 
+        # ⚠️ FORCED EXECUTION MODE
         forced_price = 1.01 if action == "BACK" else 1000.0
 
         return {
+            # MARKET
             "market_id": market_id,
+            "marketId": market_id,
             "market_type": market_type,
+
+            # EVENT
             "event_name": event_name,
             "event": event_name,
+
+            # MARKET NAME
             "market_name": market_name,
             "market": market_name,
+
+            # SELECTION
             "selection_id": int(selection_id),
             "selectionId": int(selection_id),
             "runner_name": selection_name,
             "runnerName": selection_name,
             "selection": selection_name,
+
+            # BET
             "bet_type": action,
             "action": action,
-            "price": float(forced_price),
-            "odds": float(original_price),
+
+            # PRICES
+            "price": float(forced_price),          # esecuzione garantita
+            "odds": float(original_price),         # quota reale segnale
             "master_price": float(original_price),
+
+            # STAKE
             "stake": float(stake),
+
+            # FLAGS
             "simulation_mode": bool(simulation_mode),
             "source": "TELEGRAM",
             "forced_execution": True,
