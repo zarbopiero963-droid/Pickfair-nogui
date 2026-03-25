@@ -12,7 +12,7 @@ from core.trading_engine import TradingEngine
 from core.runtime_controller import RuntimeController
 
 from services.betfair_service import BetfairService
-from services.settings_service import SettingsService
+from services.setting_service import SettingsService
 from services.telegram_service import TelegramService
 
 
