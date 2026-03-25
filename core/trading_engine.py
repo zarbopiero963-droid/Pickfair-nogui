@@ -32,20 +32,28 @@ class TradingEngine:
         self.bus.subscribe("CMD_QUICK_BET", self._handle_quick_bet)
 
     def _submit(self, fn, *args, **kwargs):
+        """
+        Esegue via executor senza bloccare il consumer EventBus.
+        """
         if self.executor and hasattr(self.executor, "submit"):
-            result = self.executor.submit("trading_engine", fn, *args, **kwargs)
-            if hasattr(result, "result"):
-                return result.result()
-            return result
+            return self.executor.submit("trading_engine", fn, *args, **kwargs)
         return fn(*args, **kwargs)
 
     def _normalize_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         normalized = dict(payload or {})
+
+        required = ("market_id", "selection_id", "price", "stake")
+        missing = [k for k in required if k not in normalized or normalized.get(k) in (None, "")]
+        if missing:
+            raise ValueError(f"Payload mancante di: {', '.join(missing)}")
+
         normalized["market_id"] = str(normalized["market_id"])
         normalized["selection_id"] = int(normalized["selection_id"])
         normalized["bet_type"] = str(normalized.get("bet_type", "BACK")).upper()
         normalized["price"] = float(normalized["price"])
         normalized["stake"] = float(normalized["stake"])
+        normalized["simulation_mode"] = bool(normalized.get("simulation_mode", False))
+
         return normalized
 
     def _is_microstake(self, stake: float) -> bool:
@@ -63,17 +71,18 @@ class TradingEngine:
 
             payload["microstake_mode"] = self._is_microstake(payload["stake"])
 
-            result = self._submit(self.order_manager.place_order, payload)
+            self._submit(self.order_manager.place_order, payload)
 
-            if not isinstance(result, dict):
-                raise RuntimeError("Risposta order_manager non valida")
-
-            return result
+            return {
+                "ok": True,
+                "status": "ACCEPTED_FOR_PROCESSING",
+            }
 
         except Exception as exc:
             fail_payload = dict(payload or {})
             fail_payload["error"] = str(exc)
             self.bus.publish("QUICK_BET_FAILED", fail_payload)
+            logger.error("Errore _handle_quick_bet: %s", exc)
             return {
                 "ok": False,
                 "status": "FAILED",
