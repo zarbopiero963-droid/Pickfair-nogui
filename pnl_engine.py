@@ -1,235 +1,258 @@
-"""
-PnL Engine - Calcolo P&L live per selezione
+from __future__ import annotations
 
-Questo modulo calcola il profitto/perdita in tempo reale per ogni selezione,
-utilizzando le quote live e la formula di cashout dinamico.
-"""
+from dataclasses import dataclass, asdict
+from typing import Any, Dict, Optional
 
-import logging
-from typing import Dict, Optional
 
-from dutching import dynamic_cashout_single
+@dataclass
+class PnLResult:
+    market_id: str
+    selection_id: int
+    side: str
+    entry_price: float
+    exit_price: float
+    size: float
+    gross_pnl: float
+    commission_pct: float
+    commission_amount: float
+    net_pnl: float
 
-logger = logging.getLogger(__name__)
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
 
 
 class PnLEngine:
-    """Engine per calcolo P&L live per selezione."""
+    """
+    Motore P&L unificato.
 
-    def __init__(self, commission: float = 4.5):
-        """
-        Args:
-            commission: Commissione Betfair (default 4.5% Italia)
-        """
-        self.commission = commission
+    Supporta:
+    - BACK
+    - LAY
+    - calcolo chiusura trade
+    - commissione exchange
+    - output coerente live/sim
 
-    def calculate_back_pnl(self, order: Dict, best_lay_price: float) -> float:
-        """
-        Calcola P&L live per una posizione BACK.
+    NON gestisce:
+    - matching
+    - ordini
+    - stato tavoli
+    """
 
-        Args:
-            order: Dict con 'side', 'stake'/'sizeMatched', 'price'/'averagePriceMatched'
-            best_lay_price: Miglior quota LAY live
+    def __init__(self, commission_pct: float = 4.5):
+        self.commission_pct = float(commission_pct or 0.0)
 
-        Returns:
-            P&L netto arrotondato a 2 decimali
-        """
-        # FIX: Normalize side for consistency
-        side = str(order.get("side", "") or "").upper().strip()
-        if side != "BACK":
+    # =========================================================
+    # HELPERS
+    # =========================================================
+    def _safe_side(self, side: Any) -> str:
+        value = str(side or "BACK").upper().strip()
+        if value not in {"BACK", "LAY"}:
+            return "BACK"
+        return value
+
+    def _commission_amount(self, gross_pnl: float, commission_pct: Optional[float] = None) -> float:
+        pct = self.commission_pct if commission_pct is None else float(commission_pct or 0.0)
+        if gross_pnl <= 0:
             return 0.0
+        return gross_pnl * (pct / 100.0)
 
-        # FIX: Cast to float for robustness
-        stake = float(order.get("sizeMatched", order.get("stake", 0)) or 0)
-        price = float(order.get("averagePriceMatched", order.get("price", 0)) or 0)
-        best_lay_price = float(best_lay_price or 0)
-
-        if stake <= 0 or price <= 1 or best_lay_price <= 1:
-            return 0.0
-
-        try:
-            result = dynamic_cashout_single(
-                back_stake=stake,
-                back_price=price,
-                lay_price=best_lay_price,
-                commission=self.commission,
-            )
-            return round(result.get("net_profit", 0), 2)
-        except Exception as e:
-            logger.error(f"Errore calcolo P&L BACK: {e}")
-            return 0.0
-
-    def calculate_lay_pnl(self, order: Dict, best_back_price: float) -> float:
+    # =========================================================
+    # SINGLE POSITION PNL
+    # =========================================================
+    def calculate_position_pnl(
+        self,
+        *,
+        market_id: str,
+        selection_id: int,
+        side: str,
+        entry_price: float,
+        exit_price: float,
+        size: float,
+        commission_pct: Optional[float] = None,
+    ) -> PnLResult:
         """
-        Calcola P&L live per una posizione LAY.
-        
-        Formula corretta per LAY green-up:
-        - LAY a prezzo P, stake S
-        - Liability = S * (P - 1)
-        - Per chiudere, BACK a prezzo B
-        - BACK stake = Liability / (B - 1) per green completo
-        
-        P&L = S - (S * P / B) = S * (1 - P/B)
-        Se B >= P (price salito): profitto positivo
-        Se B < P (price sceso): perdita
+        Calcolo P&L chiusura posizione semplice.
 
-        Args:
-            order: Dict con 'side', 'stake'/'sizeMatched', 'price'/'averagePriceMatched'
-            best_back_price: Miglior quota BACK live
+        BACK:
+            gross = stake * (exit_price - entry_price) / entry_price
 
-        Returns:
-            P&L netto arrotondato a 2 decimali
+        LAY:
+            gross = stake * (entry_price - exit_price) / entry_price
+
+        Nota:
+        questo è un modello di trading P&L continuo,
+        non un settlement finale binario win/lose.
         """
-        # FIX: Normalize side for consistency
-        side = str(order.get("side", "") or "").upper().strip()
-        if side != "LAY":
-            return 0.0
+        market_id = str(market_id or "")
+        selection_id = int(selection_id)
+        side = self._safe_side(side)
+        entry_price = float(entry_price or 0.0)
+        exit_price = float(exit_price or 0.0)
+        size = float(size or 0.0)
 
-        # FIX: Cast to float for robustness
-        stake = float(order.get("sizeMatched", order.get("stake", 0)) or 0)
-        price = float(order.get("averagePriceMatched", order.get("price", 0)) or 0)
-        best_back_price = float(best_back_price or 0)
-
-        if stake <= 0 or price <= 1 or best_back_price <= 1:
-            return 0.0
-
-        try:
-            # FIX: Formula corretta per LAY P&L
-            # P&L = stake * (1 - price/best_back_price)
-            profit = stake * (1 - price / best_back_price)
-
-            # Commissione applicata solo sul profitto
-            commission_mult = 1 - (self.commission / 100.0)
-            if profit > 0:
-                net_profit = profit * commission_mult
-            else:
-                # Perdita: nessuna commissione
-                net_profit = profit
-
-            return round(net_profit, 2)
-        except Exception as e:
-            logger.error(f"Errore calcolo P&L LAY: {e}")
-            return 0.0
-
-    def calculate_order_pnl(
-        self, order: Dict, best_back: float, best_lay: float
-    ) -> float:
-        """
-        Calcola P&L per qualsiasi ordine (BACK o LAY).
-
-        Args:
-            order: Ordine con side, stake, price
-            best_back: Miglior BACK live
-            best_lay: Miglior LAY live
-
-        Returns:
-            P&L netto
-        """
-        # FIX: Normalize side
-        side = str(order.get("side", "") or "").upper().strip()
+        if entry_price <= 1.0:
+            raise ValueError("entry_price non valido")
+        if exit_price <= 1.0:
+            raise ValueError("exit_price non valido")
+        if size <= 0.0:
+            raise ValueError("size non valido")
 
         if side == "BACK":
-            return self.calculate_back_pnl(order, best_lay)
-        elif side == "LAY":
-            return self.calculate_lay_pnl(order, best_back)
-
-        return 0.0
-
-    def calculate_selection_pnl(
-        self, orders: list, best_back: float, best_lay: float
-    ) -> float:
-        """
-        Calcola P&L totale per una selezione (somma tutti gli ordini matched).
-
-        Args:
-            orders: Lista di ordini per la selezione
-            best_back: Miglior BACK live
-            best_lay: Miglior LAY live
-
-        Returns:
-            P&L totale per la selezione
-        """
-        total_pnl = 0.0
-        for order in orders:
-            total_pnl += self.calculate_order_pnl(order, best_back, best_lay)
-        return round(total_pnl, 2)
-
-    @staticmethod
-    def is_auto_green_eligible(
-        order: Dict, current_time: Optional[float] = None
-    ) -> bool:
-        """
-        Verifica se un ordine è idoneo per auto-green.
-
-        Requisiti:
-        - Ordine ha flag auto_green=True
-        - Non è in modalità simulazione
-        - È passato il grace period (AUTO_GREEN_DELAY_SEC)
-
-        Args:
-            order: Dict con metadata ordine
-            current_time: Timestamp corrente (default: time.time())
-
-        Returns:
-            True se l'ordine può essere auto-greened
-        """
-        import time
-
-        from trading_config import AUTO_GREEN_DELAY_SEC
-
-        if not order.get("auto_green", False):
-            return False
-
-        if order.get("simulation", False):
-            return False
-
-        placed_at = order.get("placed_at", 0)
-        if not placed_at:
-            return False
-
-        now = current_time or time.time()
-        elapsed = now - placed_at
-
-        if elapsed < AUTO_GREEN_DELAY_SEC:
-            logger.debug(
-                f"Auto-green: {elapsed:.1f}s < {AUTO_GREEN_DELAY_SEC}s grace period"
-            )
-            return False
-
-        return True
-
-    def calculate_preview(self, selection: Dict, side: str = "BACK") -> float:
-        """
-        Calcola P&L preview per un singolo runner (prima del piazzamento).
-        
-        Mostra il profitto/perdita stimato PER SCENARIO:
-        - Se side == BACK: profitto se la selezione vince
-        - Se side == LAY: profitto se la selezione perde
-
-        Args:
-            selection: Dict con stake, price
-            side: 'BACK' o 'LAY'
-
-        Returns:
-            P&L stimato per lo scenario favorevole
-        """
-        # FIX: Convert to float for robustness
-        stake = float(selection.get("stake", selection.get("presetStake", 5.0)) or 0)
-        price = float(selection.get("price", 2.0) or 0)
-        side = str(side or "BACK").upper().strip()
-        
-        commission_pct = self.commission / 100.0
-
-        if price <= 1:
-            return 0.0
-
-        if side == "BACK":
-            # BACK: profitto = stake * (price - 1) se vinci
-            gross_profit = stake * (price - 1)
-            net_profit = gross_profit * (1 - commission_pct)
+            gross = size * (exit_price - entry_price) / entry_price
         else:
-            # LAY: profitto = stake se perdi (price non sale)
-            # La tua puntata vince quando la selezione perde
-            net_profit = stake * (1 - commission_pct)
+            gross = size * (entry_price - exit_price) / entry_price
 
-        return round(net_profit, 2)
+        commission_amount = self._commission_amount(gross, commission_pct)
+        net = gross - commission_amount
+
+        return PnLResult(
+            market_id=market_id,
+            selection_id=selection_id,
+            side=side,
+            entry_price=entry_price,
+            exit_price=exit_price,
+            size=size,
+            gross_pnl=float(gross),
+            commission_pct=float(self.commission_pct if commission_pct is None else commission_pct),
+            commission_amount=float(commission_amount),
+            net_pnl=float(net),
+        )
+
+    # =========================================================
+    # SETTLEMENT PNL
+    # =========================================================
+    def calculate_settlement_pnl(
+        self,
+        *,
+        side: str,
+        price: float,
+        size: float,
+        won: bool,
+        commission_pct: Optional[float] = None,
+    ) -> Dict[str, float]:
+        """
+        P&L settlement finale stile exchange.
+
+        BACK:
+            win  -> gross = size * (price - 1)
+            lose -> gross = -size
+
+        LAY:
+            win  -> gross = size
+            lose -> gross = -(size * (price - 1))
+        """
+        side = self._safe_side(side)
+        price = float(price or 0.0)
+        size = float(size or 0.0)
+
+        if price <= 1.0:
+            raise ValueError("price non valido")
+        if size <= 0.0:
+            raise ValueError("size non valido")
+
+        if side == "BACK":
+            gross = size * (price - 1.0) if won else -size
+        else:
+            gross = size if won else -(size * (price - 1.0))
+
+        commission_amount = self._commission_amount(gross, commission_pct)
+        net = gross - commission_amount
+
+        return {
+            "gross_pnl": float(gross),
+            "commission_pct": float(self.commission_pct if commission_pct is None else commission_pct),
+            "commission_amount": float(commission_amount),
+            "net_pnl": float(net),
+        }
+
+    # =========================================================
+    # GREEN-UP / CASHOUT HELPERS
+    # =========================================================
+    def calculate_green_up_size(
+        self,
+        *,
+        entry_side: str,
+        entry_price: float,
+        entry_size: float,
+        hedge_price: float,
+    ) -> float:
+        """
+        Calcola size hedge per green-up base.
+
+        BACK entry + LAY hedge:
+            lay_size = (back_price * back_stake) / lay_price
+
+        LAY entry + BACK hedge:
+            back_size = (lay_price * lay_stake) / back_price
+        """
+        entry_side = self._safe_side(entry_side)
+        entry_price = float(entry_price or 0.0)
+        entry_size = float(entry_size or 0.0)
+        hedge_price = float(hedge_price or 0.0)
+
+        if entry_price <= 1.0:
+            raise ValueError("entry_price non valido")
+        if hedge_price <= 1.0:
+            raise ValueError("hedge_price non valido")
+        if entry_size <= 0.0:
+            raise ValueError("entry_size non valido")
+
+        return float((entry_price * entry_size) / hedge_price)
+
+    def calculate_cashout_pnl(
+        self,
+        *,
+        entry_side: str,
+        entry_price: float,
+        entry_size: float,
+        hedge_price: float,
+        commission_pct: Optional[float] = None,
+    ) -> Dict[str, float]:
+        """
+        Calcola pnl stimato da cashout/green-up.
+        """
+        hedge_size = self.calculate_green_up_size(
+            entry_side=entry_side,
+            entry_price=entry_price,
+            entry_size=entry_size,
+            hedge_price=hedge_price,
+        )
+
+        pnl = self.calculate_position_pnl(
+            market_id="",
+            selection_id=0,
+            side=entry_side,
+            entry_price=entry_price,
+            exit_price=hedge_price,
+            size=entry_size,
+            commission_pct=commission_pct,
+        )
+
+        return {
+            "hedge_size": float(hedge_size),
+            "gross_pnl": float(pnl.gross_pnl),
+            "commission_amount": float(pnl.commission_amount),
+            "net_pnl": float(pnl.net_pnl),
+        }
+
+    # =========================================================
+    # SNAPSHOT HELPERS
+    # =========================================================
+    def mark_to_market_pnl(
+        self,
+        *,
+        side: str,
+        entry_price: float,
+        current_price: float,
+        size: float,
+    ) -> float:
+        result = self.calculate_position_pnl(
+            market_id="",
+            selection_id=0,
+            side=side,
+            entry_price=entry_price,
+            exit_price=current_price,
+            size=size,
+            commission_pct=0.0,
+        )
+        return float(result.gross_pnl)
