@@ -16,21 +16,19 @@ class SimulationPosition:
     size: float
     matched_size: float = 0.0
     avg_price_matched: float = 0.0
-    status: str = "EXECUTABLE"
+    status: str = "EXECUTABLE"  # EXECUTABLE / PARTIAL / EXECUTION_COMPLETE / CANCELLED / SETTLED / FAILED
+    customer_ref: str = ""
     event_key: str = ""
     table_id: Optional[int] = None
     batch_id: str = ""
     event_name: str = ""
     market_name: str = ""
     runner_name: str = ""
+    realized_pnl: float = 0.0
+    unrealized_pnl: float = 0.0
+    notes: Dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
-
-    def remaining_size(self) -> float:
-        return max(0.0, float(self.size or 0.0) - float(self.matched_size or 0.0))
-
-    def is_complete(self) -> bool:
-        return float(self.matched_size or 0.0) >= float(self.size or 0.0) and float(self.size or 0.0) > 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -46,7 +44,6 @@ class SimulationSnapshot:
     equity_current: float
     equity_peak: float
     open_positions_count: int
-    open_positions: List[Dict[str, Any]]
     updated_at: str
 
     def to_dict(self) -> Dict[str, Any]:
@@ -55,213 +52,297 @@ class SimulationSnapshot:
 
 class SimulationState:
     """
-    Stato centrale del paper trading.
+    Stato centrale del broker simulato.
 
-    Tiene traccia di:
-    - bankroll simulato disponibile
-    - esposizione corrente
-    - pnl realizzato
+    Tiene:
+    - bankroll iniziale
+    - bankroll disponibile
+    - esposizione aperta
+    - pnl realizzato / unrealizzato
     - equity peak
-    - posizioni aperte
-
-    Questo file NON fa matching.
-    Tiene solo lo stato economico e delle posizioni.
+    - posizioni simulate
     """
 
-    def __init__(self, starting_balance: float = 1000.0):
+    def __init__(
+        self,
+        *,
+        starting_balance: float = 1000.0,
+        commission_pct: float = 4.5,
+    ):
         self._lock = RLock()
 
-        self.bankroll_start = float(starting_balance or 0.0)
+        self.starting_balance = float(starting_balance or 0.0)
         self.bankroll_available = float(starting_balance or 0.0)
         self.exposure_open = 0.0
         self.realized_pnl = 0.0
         self.unrealized_pnl = 0.0
         self.equity_peak = float(starting_balance or 0.0)
-
-        self.positions: Dict[str, SimulationPosition] = {}
+        self.commission_pct = float(commission_pct or 0.0)
         self.updated_at = datetime.utcnow().isoformat()
+
+        self._positions: Dict[str, SimulationPosition] = {}
 
     # =========================================================
     # INTERNAL
     # =========================================================
     def _touch(self) -> None:
         self.updated_at = datetime.utcnow().isoformat()
-        equity = self.equity_current()
-        if equity > self.equity_peak:
-            self.equity_peak = equity
+        current_equity = self.equity_current()
+        if current_equity > self.equity_peak:
+            self.equity_peak = current_equity
 
-    def _reserve_needed(self, *, side: str, price: float, size: float) -> float:
+    def _calc_liability(self, side: str, price: float, size: float) -> float:
         side = str(side or "BACK").upper()
         price = float(price or 0.0)
         size = float(size or 0.0)
 
         if side == "LAY":
-            return max(0.0, size * max(0.0, price - 1.0))
+            return max(0.0, size * max(price - 1.0, 0.0))
         return max(0.0, size)
 
-    # =========================================================
-    # BALANCE / EQUITY
-    # =========================================================
-    def equity_current(self) -> float:
-        return float(self.bankroll_available) + float(self.exposure_open) + float(self.realized_pnl) + float(self.unrealized_pnl)
+    def _recompute_exposure(self) -> None:
+        exposure = 0.0
+        for pos in self._positions.values():
+            if pos.status in {"EXECUTABLE", "PARTIAL", "EXECUTION_COMPLETE"} and pos.matched_size > 0:
+                exposure += self._calc_liability(pos.side, pos.avg_price_matched or pos.price, pos.matched_size)
+            elif pos.status in {"EXECUTABLE", "PARTIAL"} and pos.matched_size <= 0:
+                exposure += self._calc_liability(pos.side, pos.price, pos.size)
+        self.exposure_open = float(exposure)
 
-    def can_reserve(self, *, side: str, price: float, size: float) -> bool:
-        reserve = self._reserve_needed(side=side, price=price, size=size)
-        return reserve <= self.bankroll_available
-
-    def reserve_for_order(self, *, side: str, price: float, size: float) -> float:
-        with self._lock:
-            reserve = self._reserve_needed(side=side, price=price, size=size)
-            if reserve > self.bankroll_available:
-                raise RuntimeError("Saldo simulato insufficiente")
-
-            self.bankroll_available -= reserve
-            self.exposure_open += reserve
-            self._touch()
-            return reserve
-
-    def release_reserved(self, *, side: str, price: float, size: float) -> float:
-        with self._lock:
-            release = self._reserve_needed(side=side, price=price, size=size)
-            self.bankroll_available += release
-            self.exposure_open = max(0.0, self.exposure_open - release)
-            self._touch()
-            return release
-
-    def apply_realized_pnl(self, pnl: float) -> None:
-        with self._lock:
-            self.realized_pnl += float(pnl or 0.0)
-            self._touch()
-
-    def set_unrealized_pnl(self, pnl: float) -> None:
-        with self._lock:
-            self.unrealized_pnl = float(pnl or 0.0)
-            self._touch()
-
-    def reset(self, starting_balance: Optional[float] = None) -> None:
-        with self._lock:
-            if starting_balance is not None:
-                self.bankroll_start = float(starting_balance or 0.0)
-
-            self.bankroll_available = float(self.bankroll_start)
-            self.exposure_open = 0.0
-            self.realized_pnl = 0.0
-            self.unrealized_pnl = 0.0
-            self.equity_peak = float(self.bankroll_start)
-            self.positions = {}
-            self._touch()
+    def _recompute_bankroll_available(self) -> None:
+        self.bankroll_available = float(self.starting_balance + self.realized_pnl - self.exposure_open)
 
     # =========================================================
-    # POSITIONS
+    # POSITION CRUD
     # =========================================================
-    def add_position(self, position: SimulationPosition) -> None:
+    def add_position(
+        self,
+        *,
+        bet_id: str,
+        market_id: str,
+        selection_id: int,
+        side: str,
+        price: float,
+        size: float,
+        customer_ref: str = "",
+        event_key: str = "",
+        table_id: Optional[int] = None,
+        batch_id: str = "",
+        event_name: str = "",
+        market_name: str = "",
+        runner_name: str = "",
+    ) -> SimulationPosition:
         with self._lock:
-            position.updated_at = datetime.utcnow().isoformat()
-            self.positions[position.bet_id] = position
+            pos = SimulationPosition(
+                bet_id=str(bet_id),
+                market_id=str(market_id),
+                selection_id=int(selection_id),
+                side=str(side).upper(),
+                price=float(price),
+                size=float(size),
+                customer_ref=str(customer_ref or ""),
+                event_key=str(event_key or ""),
+                table_id=table_id,
+                batch_id=str(batch_id or ""),
+                event_name=str(event_name or ""),
+                market_name=str(market_name or ""),
+                runner_name=str(runner_name or ""),
+                notes={"customer_ref": str(customer_ref or "")},
+            )
+            self._positions[pos.bet_id] = pos
+            self._recompute_exposure()
+            self._recompute_bankroll_available()
             self._touch()
+            return SimulationPosition(**pos.to_dict())
 
     def get_position(self, bet_id: str) -> Optional[SimulationPosition]:
         with self._lock:
-            return self.positions.get(str(bet_id))
-
-    def update_position(
-        self,
-        bet_id: str,
-        *,
-        matched_size: Optional[float] = None,
-        avg_price_matched: Optional[float] = None,
-        status: Optional[str] = None,
-    ) -> Optional[SimulationPosition]:
-        with self._lock:
-            pos = self.positions.get(str(bet_id))
-            if not pos:
-                return None
-
-            if matched_size is not None:
-                pos.matched_size = float(matched_size)
-            if avg_price_matched is not None:
-                pos.avg_price_matched = float(avg_price_matched)
-            if status is not None:
-                pos.status = str(status)
-
-            pos.updated_at = datetime.utcnow().isoformat()
-            self._touch()
-            return pos
-
-    def remove_position(self, bet_id: str) -> Optional[SimulationPosition]:
-        with self._lock:
-            pos = self.positions.pop(str(bet_id), None)
-            self._touch()
-            return pos
+            pos = self._positions.get(str(bet_id))
+            return SimulationPosition(**pos.to_dict()) if pos else None
 
     def list_positions(self) -> List[SimulationPosition]:
         with self._lock:
-            return list(self.positions.values())
+            return [SimulationPosition(**p.to_dict()) for p in self._positions.values()]
 
     def list_open_positions(self) -> List[SimulationPosition]:
         with self._lock:
-            return [
-                pos
-                for pos in self.positions.values()
-                if pos.status not in {"CANCELLED", "EXECUTION_COMPLETE", "SETTLED", "CLOSED"}
-            ]
+            out = []
+            for pos in self._positions.values():
+                if pos.status in {"EXECUTABLE", "PARTIAL", "EXECUTION_COMPLETE"}:
+                    out.append(SimulationPosition(**pos.to_dict()))
+            return out
 
     # =========================================================
-    # SNAPSHOT / SERIALIZATION
+    # MATCHING / UPDATE
     # =========================================================
+    def update_match(
+        self,
+        *,
+        bet_id: str,
+        matched_size: float,
+        avg_price_matched: float,
+        status: str,
+    ) -> Optional[SimulationPosition]:
+        with self._lock:
+            pos = self._positions.get(str(bet_id))
+            if not pos:
+                return None
+
+            pos.matched_size = float(matched_size or 0.0)
+            pos.avg_price_matched = float(avg_price_matched or 0.0)
+            pos.status = str(status or pos.status)
+            pos.updated_at = datetime.utcnow().isoformat()
+
+            self._recompute_exposure()
+            self._recompute_bankroll_available()
+            self._touch()
+            return SimulationPosition(**pos.to_dict())
+
+    def cancel_position(self, bet_id: str) -> Optional[SimulationPosition]:
+        with self._lock:
+            pos = self._positions.get(str(bet_id))
+            if not pos:
+                return None
+
+            if pos.matched_size > 0:
+                pos.status = "EXECUTION_COMPLETE"
+            else:
+                pos.status = "CANCELLED"
+
+            pos.updated_at = datetime.utcnow().isoformat()
+
+            self._recompute_exposure()
+            self._recompute_bankroll_available()
+            self._touch()
+            return SimulationPosition(**pos.to_dict())
+
+    def settle_position(self, bet_id: str, pnl: float) -> Optional[SimulationPosition]:
+        with self._lock:
+            pos = self._positions.get(str(bet_id))
+            if not pos:
+                return None
+
+            pnl = float(pnl or 0.0)
+            commission = 0.0
+            if pnl > 0 and self.commission_pct > 0:
+                commission = pnl * (self.commission_pct / 100.0)
+
+            net_pnl = pnl - commission
+
+            pos.realized_pnl = float(net_pnl)
+            pos.unrealized_pnl = 0.0
+            pos.status = "SETTLED"
+            pos.updated_at = datetime.utcnow().isoformat()
+
+            self.realized_pnl += float(net_pnl)
+
+            self._recompute_exposure()
+            self._recompute_bankroll_available()
+            self._touch()
+            return SimulationPosition(**pos.to_dict())
+
+    def set_unrealized_pnl(self, bet_id: str, pnl: float) -> Optional[SimulationPosition]:
+        with self._lock:
+            pos = self._positions.get(str(bet_id))
+            if not pos:
+                return None
+
+            pos.unrealized_pnl = float(pnl or 0.0)
+            pos.updated_at = datetime.utcnow().isoformat()
+
+            self._recompute_unrealized_pnl()
+            self._touch()
+            return SimulationPosition(**pos.to_dict())
+
+    def _recompute_unrealized_pnl(self) -> None:
+        self.unrealized_pnl = float(sum(p.unrealized_pnl for p in self._positions.values() if p.status != "SETTLED"))
+
+    # =========================================================
+    # METRICS
+    # =========================================================
+    def equity_current(self) -> float:
+        return float(self.bankroll_available + self.exposure_open + self.unrealized_pnl)
+
     def snapshot(self) -> SimulationSnapshot:
         with self._lock:
-            open_positions = [pos.to_dict() for pos in self.list_open_positions()]
+            self._recompute_exposure()
+            self._recompute_bankroll_available()
+            self._recompute_unrealized_pnl()
+
             return SimulationSnapshot(
-                bankroll_start=float(self.bankroll_start),
+                bankroll_start=float(self.starting_balance),
                 bankroll_available=float(self.bankroll_available),
                 exposure_open=float(self.exposure_open),
                 realized_pnl=float(self.realized_pnl),
                 unrealized_pnl=float(self.unrealized_pnl),
                 equity_current=float(self.equity_current()),
                 equity_peak=float(self.equity_peak),
-                open_positions_count=len(open_positions),
-                open_positions=open_positions,
+                open_positions_count=len(
+                    [
+                        p for p in self._positions.values()
+                        if p.status in {"EXECUTABLE", "PARTIAL", "EXECUTION_COMPLETE"}
+                    ]
+                ),
                 updated_at=self.updated_at,
             )
 
+    # =========================================================
+    # RESET / SERIALIZATION
+    # =========================================================
+    def reset(
+        self,
+        *,
+        starting_balance: Optional[float] = None,
+        commission_pct: Optional[float] = None,
+    ) -> None:
+        with self._lock:
+            if starting_balance is not None:
+                self.starting_balance = float(starting_balance or 0.0)
+            if commission_pct is not None:
+                self.commission_pct = float(commission_pct or 0.0)
+
+            self.bankroll_available = float(self.starting_balance)
+            self.exposure_open = 0.0
+            self.realized_pnl = 0.0
+            self.unrealized_pnl = 0.0
+            self.equity_peak = float(self.starting_balance)
+            self._positions.clear()
+            self._touch()
+
     def to_dict(self) -> Dict[str, Any]:
-        snap = self.snapshot()
-        return snap.to_dict()
+        with self._lock:
+            return {
+                "starting_balance": float(self.starting_balance),
+                "bankroll_available": float(self.bankroll_available),
+                "exposure_open": float(self.exposure_open),
+                "realized_pnl": float(self.realized_pnl),
+                "unrealized_pnl": float(self.unrealized_pnl),
+                "equity_peak": float(self.equity_peak),
+                "commission_pct": float(self.commission_pct),
+                "updated_at": self.updated_at,
+                "positions": [p.to_dict() for p in self._positions.values()],
+            }
 
     def load_from_dict(self, data: Dict[str, Any]) -> None:
         with self._lock:
-            self.bankroll_start = float(data.get("bankroll_start", 1000.0) or 1000.0)
-            self.bankroll_available = float(data.get("bankroll_available", self.bankroll_start) or self.bankroll_start)
+            self.starting_balance = float(data.get("starting_balance", 0.0) or 0.0)
+            self.bankroll_available = float(data.get("bankroll_available", self.starting_balance) or self.starting_balance)
             self.exposure_open = float(data.get("exposure_open", 0.0) or 0.0)
             self.realized_pnl = float(data.get("realized_pnl", 0.0) or 0.0)
             self.unrealized_pnl = float(data.get("unrealized_pnl", 0.0) or 0.0)
-            self.equity_peak = float(data.get("equity_peak", self.bankroll_start) or self.bankroll_start)
+            self.equity_peak = float(data.get("equity_peak", self.starting_balance) or self.starting_balance)
+            self.commission_pct = float(data.get("commission_pct", 4.5) or 4.5)
+            self.updated_at = str(data.get("updated_at") or datetime.utcnow().isoformat())
 
-            self.positions = {}
-            for item in data.get("open_positions", []) or []:
+            self._positions.clear()
+            for item in data.get("positions", []) or []:
                 try:
-                    pos = SimulationPosition(
-                        bet_id=str(item["bet_id"]),
-                        market_id=str(item["market_id"]),
-                        selection_id=int(item["selection_id"]),
-                        side=str(item.get("side", "BACK")),
-                        price=float(item.get("price", 0.0) or 0.0),
-                        size=float(item.get("size", 0.0) or 0.0),
-                        matched_size=float(item.get("matched_size", 0.0) or 0.0),
-                        avg_price_matched=float(item.get("avg_price_matched", 0.0) or 0.0),
-                        status=str(item.get("status", "EXECUTABLE")),
-                        event_key=str(item.get("event_key", "") or ""),
-                        table_id=item.get("table_id"),
-                        batch_id=str(item.get("batch_id", "") or ""),
-                        event_name=str(item.get("event_name", "") or ""),
-                        market_name=str(item.get("market_name", "") or ""),
-                        runner_name=str(item.get("runner_name", "") or ""),
-                        created_at=str(item.get("created_at", datetime.utcnow().isoformat())),
-                        updated_at=str(item.get("updated_at", datetime.utcnow().isoformat())),
-                    )
-                    self.positions[pos.bet_id] = pos
+                    pos = SimulationPosition(**item)
+                    self._positions[pos.bet_id] = pos
                 except Exception:
                     continue
 
+            self._recompute_exposure()
+            self._recompute_bankroll_available()
+            self._recompute_unrealized_pnl()
             self._touch()
