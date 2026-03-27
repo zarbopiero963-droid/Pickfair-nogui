@@ -1,138 +1,225 @@
 from __future__ import annotations
 
-import time
-from typing import Dict, List, Optional
+from dataclasses import dataclass, asdict
+from datetime import datetime
+from threading import RLock
+from typing import Any, Dict, List, Optional
 
-from core.system_state import TableState, TableStatus
+
+@dataclass
+class TableState:
+    table_id: int
+    status: str = "FREE"  # FREE / ACTIVE / RECOVERY / LOCKED
+    current_event_key: str = ""
+    current_exposure: float = 0.0
+    loss_amount: float = 0.0
+    in_recovery: bool = False
+    market_id: str = ""
+    selection_id: str = ""
+    meta: Dict[str, Any] = None
+    updated_at: str = ""
+
+    def __post_init__(self):
+        if self.meta is None:
+            self.meta = {}
+        if not self.updated_at:
+            self.updated_at = datetime.utcnow().isoformat()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
 
 
 class TableManager:
+    """
+    Gestione tavoli Roserpina.
+
+    Regole:
+    - ogni tavolo può essere FREE / ACTIVE / RECOVERY / LOCKED
+    - ogni tavolo mantiene la propria memoria perdite
+    - l'allocazione preferisce:
+        1) tavolo FREE
+        2) tavolo già in recovery se allow_recovery=True
+    """
+
     def __init__(self, table_count: int = 5):
-        self.tables: List[TableState] = [
-            TableState(table_id=i + 1) for i in range(max(1, int(table_count)))
-        ]
+        self._lock = RLock()
+        self.table_count = max(1, int(table_count or 1))
+        self._tables: Dict[int, TableState] = {
+            idx: TableState(table_id=idx)
+            for idx in range(1, self.table_count + 1)
+        }
 
-    def reset_all(self) -> None:
-        for table in self.tables:
-            table.status = TableStatus.FREE
-            table.loss_amount = 0.0
-            table.current_exposure = 0.0
-            table.current_event_key = ""
-            table.market_id = ""
-            table.selection_id = None
-            table.opened_at_ts = None
-            table.meta = {}
+    # =========================================================
+    # INTERNAL
+    # =========================================================
+    def _touch(self, table: TableState) -> None:
+        table.updated_at = datetime.utcnow().isoformat()
 
-    def get(self, table_id: int) -> Optional[TableState]:
-        for table in self.tables:
-            if table.table_id == table_id:
-                return table
-        return None
+    def _get(self, table_id: int) -> Optional[TableState]:
+        return self._tables.get(int(table_id))
 
-    def find_by_event_key(self, event_key: str) -> Optional[TableState]:
-        for table in self.tables:
-            if table.current_event_key == event_key:
-                return table
-        return None
+    # =========================================================
+    # ALLOCATION
+    # =========================================================
+    def allocate(self, *, event_key: str, allow_recovery: bool = True) -> Optional[TableState]:
+        with self._lock:
+            # 1) tavolo libero
+            for table in self._tables.values():
+                if table.status == "FREE":
+                    return TableState(**table.to_dict())
 
-    def active_tables(self) -> List[TableState]:
-        return [t for t in self.tables if t.status == TableStatus.ACTIVE]
+            # 2) recovery consentito
+            if allow_recovery:
+                recovery_candidates = [
+                    t for t in self._tables.values()
+                    if t.status in {"RECOVERY", "LOCKED"} or t.in_recovery
+                ]
+                if recovery_candidates:
+                    recovery_candidates.sort(key=lambda t: (t.loss_amount, t.table_id))
+                    return TableState(**recovery_candidates[0].to_dict())
 
-    def recovery_tables(self) -> List[TableState]:
-        return [t for t in self.tables if t.status == TableStatus.RECOVERY]
-
-    def total_exposure(self) -> float:
-        return sum(float(t.current_exposure or 0.0) for t in self.tables)
-
-    def allocate(self, event_key: str, allow_recovery: bool = True) -> Optional[TableState]:
-        existing = self.find_by_event_key(event_key)
-        if existing:
             return None
-
-        free_tables = [t for t in self.tables if t.status == TableStatus.FREE]
-        if free_tables:
-            return free_tables[0]
-
-        if allow_recovery:
-            recovery_tables = sorted(
-                [t for t in self.tables if t.status == TableStatus.RECOVERY],
-                key=lambda x: x.loss_amount,
-            )
-            if recovery_tables:
-                return recovery_tables[0]
-
-        return None
 
     def activate(
         self,
+        *,
         table_id: int,
         event_key: str,
         exposure: float,
-        market_id: str = "",
-        selection_id: Optional[int] = None,
-        meta: Optional[Dict] = None,
-    ) -> TableState:
-        table = self.get(table_id)
-        if table is None:
-            raise ValueError(f"table_id non valido: {table_id}")
+        market_id: str,
+        selection_id: Any,
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        with self._lock:
+            table = self._get(table_id)
+            if not table:
+                raise RuntimeError(f"Tavolo non trovato: {table_id}")
 
-        table.status = TableStatus.ACTIVE
-        table.current_event_key = str(event_key or "")
-        table.current_exposure = float(exposure or 0.0)
-        table.market_id = str(market_id or "")
-        table.selection_id = selection_id
-        table.opened_at_ts = time.time()
-        table.meta = dict(meta or {})
-        return table
+            table.current_event_key = str(event_key or "")
+            table.current_exposure = float(exposure or 0.0)
+            table.market_id = str(market_id or "")
+            table.selection_id = str(selection_id or "")
+            table.meta = dict(meta or {})
 
-    def release(self, table_id: int, pnl: float = 0.0) -> TableState:
-        table = self.get(table_id)
-        if table is None:
-            raise ValueError(f"table_id non valido: {table_id}")
+            if table.loss_amount > 0.0 or table.in_recovery:
+                table.status = "RECOVERY"
+                table.in_recovery = True
+            else:
+                table.status = "ACTIVE"
+                table.in_recovery = False
 
-        pnl = float(pnl or 0.0)
+            self._touch(table)
 
-        if pnl < 0:
-            table.loss_amount += abs(pnl)
-            table.status = TableStatus.RECOVERY if table.loss_amount > 0 else TableStatus.FREE
-        else:
-            table.loss_amount = max(0.0, table.loss_amount - pnl)
-            table.status = TableStatus.RECOVERY if table.loss_amount > 0 else TableStatus.FREE
+    # =========================================================
+    # RELEASE / PNL
+    # =========================================================
+    def release(self, table_id: int, *, pnl: float = 0.0) -> None:
+        with self._lock:
+            table = self._get(table_id)
+            if not table:
+                return
 
-        table.current_exposure = 0.0
-        table.current_event_key = ""
-        table.market_id = ""
-        table.selection_id = None
-        table.opened_at_ts = None
-        table.meta = {}
-        return table
+            pnl = float(pnl or 0.0)
 
-    def force_unlock(self, table_id: int) -> TableState:
-        table = self.get(table_id)
-        if table is None:
-            raise ValueError(f"table_id non valido: {table_id}")
+            if pnl < 0:
+                table.loss_amount += abs(pnl)
+                table.in_recovery = True
+                table.status = "RECOVERY"
+            else:
+                # profitto usato per assorbire recovery
+                if table.loss_amount > 0:
+                    table.loss_amount = max(0.0, table.loss_amount - pnl)
 
-        table.status = TableStatus.FREE
-        table.current_exposure = 0.0
-        table.current_event_key = ""
-        table.market_id = ""
-        table.selection_id = None
-        table.opened_at_ts = None
-        table.meta = {}
-        return table
+                if table.loss_amount <= 0.0:
+                    table.loss_amount = 0.0
+                    table.in_recovery = False
+                    table.status = "FREE"
+                else:
+                    table.in_recovery = True
+                    table.status = "RECOVERY"
 
-    def snapshot(self) -> List[dict]:
-        return [
-            {
-                "table_id": t.table_id,
-                "status": t.status.value,
-                "loss_amount": round(float(t.loss_amount or 0.0), 2),
-                "current_exposure": round(float(t.current_exposure or 0.0), 2),
-                "current_event_key": t.current_event_key,
-                "market_id": t.market_id,
-                "selection_id": t.selection_id,
-                "opened_at_ts": t.opened_at_ts,
-                "meta": dict(t.meta or {}),
-            }
-            for t in self.tables
-        ]
+            table.current_event_key = ""
+            table.current_exposure = 0.0
+            table.market_id = ""
+            table.selection_id = ""
+            table.meta = {}
+            self._touch(table)
+
+    def force_unlock(self, table_id: int) -> None:
+        with self._lock:
+            table = self._get(table_id)
+            if not table:
+                return
+
+            table.current_event_key = ""
+            table.current_exposure = 0.0
+            table.market_id = ""
+            table.selection_id = ""
+            table.meta = {}
+
+            if table.loss_amount > 0.0:
+                table.status = "RECOVERY"
+                table.in_recovery = True
+            else:
+                table.status = "FREE"
+                table.in_recovery = False
+
+            self._touch(table)
+
+    # =========================================================
+    # LOOKUPS
+    # =========================================================
+    def find_by_event_key(self, event_key: str) -> Optional[TableState]:
+        with self._lock:
+            event_key = str(event_key or "")
+            for table in self._tables.values():
+                if table.current_event_key == event_key:
+                    return TableState(**table.to_dict())
+            return None
+
+    def get_table(self, table_id: int) -> Optional[TableState]:
+        with self._lock:
+            table = self._get(table_id)
+            if not table:
+                return None
+            return TableState(**table.to_dict())
+
+    def active_tables(self) -> List[TableState]:
+        with self._lock:
+            return [
+                TableState(**t.to_dict())
+                for t in self._tables.values()
+                if t.status in {"ACTIVE", "RECOVERY", "LOCKED"} and t.current_event_key
+            ]
+
+    def recovery_tables(self) -> List[TableState]:
+        with self._lock:
+            return [
+                TableState(**t.to_dict())
+                for t in self._tables.values()
+                if t.in_recovery or t.loss_amount > 0.0 or t.status == "RECOVERY"
+            ]
+
+    def total_exposure(self) -> float:
+        with self._lock:
+            return float(sum(t.current_exposure for t in self._tables.values()))
+
+    # =========================================================
+    # RESET / SNAPSHOT
+    # =========================================================
+    def reset_all(self) -> None:
+        with self._lock:
+            for table in self._tables.values():
+                table.status = "FREE"
+                table.current_event_key = ""
+                table.current_exposure = 0.0
+                table.loss_amount = 0.0
+                table.in_recovery = False
+                table.market_id = ""
+                table.selection_id = ""
+                table.meta = {}
+                self._touch(table)
+
+    def snapshot(self) -> List[Dict[str, Any]]:
+        with self._lock:
+            return [t.to_dict() for t in self._tables.values()]
