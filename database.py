@@ -83,14 +83,6 @@ class Database:
                 return cur.fetchall()
             return cur
 
-    def _safe_json_loads(self, raw: Any, default: Any) -> Any:
-        if raw in (None, ""):
-            return default
-        try:
-            return json.loads(raw)
-        except Exception:
-            return default
-
     def close_all_connections(self) -> None:
         conn = getattr(self._local, "conn", None)
         if conn is not None:
@@ -126,23 +118,28 @@ class Database:
 
             conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS received_signals (
+                CREATE TABLE IF NOT EXISTS signal_patterns (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    signal_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+                    pattern TEXT NOT NULL,
+                    label TEXT DEFAULT '',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 )
                 """
             )
 
             conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS signal_patterns (
+                CREATE TABLE IF NOT EXISTS received_signals (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    pattern TEXT NOT NULL,
-                    label TEXT NOT NULL DEFAULT '',
-                    enabled INTEGER NOT NULL DEFAULT 1,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    selection TEXT DEFAULT '',
+                    action TEXT DEFAULT '',
+                    price REAL NOT NULL DEFAULT 0.0,
+                    stake REAL NOT NULL DEFAULT 0.0,
+                    status TEXT DEFAULT '',
+                    signal_json TEXT NOT NULL,
+                    received_at TEXT NOT NULL
                 )
                 """
             )
@@ -236,6 +233,42 @@ class Database:
             )
 
             conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS simulation_state (
+                    state_key TEXT PRIMARY KEY,
+                    state_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS simulation_bets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bet_id TEXT NOT NULL UNIQUE,
+                    market_id TEXT NOT NULL,
+                    selection_id TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    price REAL NOT NULL DEFAULT 0.0,
+                    size REAL NOT NULL DEFAULT 0.0,
+                    matched_size REAL NOT NULL DEFAULT 0.0,
+                    avg_price_matched REAL NOT NULL DEFAULT 0.0,
+                    status TEXT NOT NULL DEFAULT 'EXECUTABLE',
+                    event_key TEXT DEFAULT '',
+                    table_id INTEGER,
+                    batch_id TEXT DEFAULT '',
+                    event_name TEXT DEFAULT '',
+                    market_name TEXT DEFAULT '',
+                    runner_name TEXT DEFAULT '',
+                    payload_json TEXT DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+
+            conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_order_saga_status ON order_saga(status)"
             )
             conn.execute(
@@ -251,10 +284,13 @@ class Database:
                 "CREATE INDEX IF NOT EXISTS idx_dutching_legs_batch_id ON dutching_batch_legs(batch_id)"
             )
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_received_signals_created_at ON received_signals(created_at DESC)"
+                "CREATE INDEX IF NOT EXISTS idx_received_signals_received_at ON received_signals(received_at DESC)"
             )
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_signal_patterns_enabled ON signal_patterns(enabled)"
+                "CREATE INDEX IF NOT EXISTS idx_simulation_bets_market_id ON simulation_bets(market_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_simulation_bets_status ON simulation_bets(status)"
             )
 
     # =========================================================
@@ -341,19 +377,11 @@ class Database:
         return {
             "api_id": settings.get("telegram.api_id", settings.get("api_id", "")),
             "api_hash": settings.get("telegram.api_hash", settings.get("api_hash", "")),
-            "session_string": settings.get(
-                "telegram.session_string",
-                settings.get("session_string", ""),
-            ),
-            "phone_number": settings.get(
-                "telegram.phone_number",
-                settings.get("phone_number", ""),
-            ),
-            "enabled": str(settings.get("telegram.enabled", "0")) in {"1", "true", "True"},
-            "auto_bet": str(settings.get("telegram.auto_bet", "0")) in {"1", "true", "True"},
-            "require_confirmation": str(
-                settings.get("telegram.require_confirmation", "1")
-            ) in {"1", "true", "True"},
+            "session_string": settings.get("telegram.session_string", settings.get("session_string", "")),
+            "phone_number": settings.get("telegram.phone_number", settings.get("phone_number", "")),
+            "enabled": str(settings.get("telegram.enabled", "0")).lower() in {"1", "true"},
+            "auto_bet": str(settings.get("telegram.auto_bet", "0")).lower() in {"1", "true"},
+            "require_confirmation": str(settings.get("telegram.require_confirmation", "1")).lower() in {"1", "true"},
             "auto_stake": float(settings.get("telegram.auto_stake", 1.0) or 1.0),
         }
 
@@ -366,9 +394,7 @@ class Database:
                 "telegram.phone_number": payload.get("phone_number", ""),
                 "telegram.enabled": int(bool(payload.get("enabled", False))),
                 "telegram.auto_bet": int(bool(payload.get("auto_bet", False))),
-                "telegram.require_confirmation": int(
-                    bool(payload.get("require_confirmation", True))
-                ),
+                "telegram.require_confirmation": int(bool(payload.get("require_confirmation", True))),
                 "telegram.auto_stake": payload.get("auto_stake", 1.0),
             }
         )
@@ -388,12 +414,7 @@ class Database:
             for row in (rows or [])
         ]
 
-    def save_telegram_chat(
-        self,
-        chat_id: str,
-        title: str,
-        is_active: bool = True,
-    ) -> None:
+    def save_telegram_chat(self, chat_id: str, title: str, is_active: bool = True) -> None:
         self._execute(
             """
             INSERT INTO telegram_chats(chat_id, title, is_active)
@@ -421,79 +442,19 @@ class Database:
                     ),
                 )
 
-    def save_received_signal(self, signal: Optional[Dict[str, Any]] = None, **kwargs) -> None:
-        """
-        Compatibile con entrambe le forme:
-        - save_received_signal({...})
-        - save_received_signal(selection=..., action=..., ...)
-        """
-        payload = dict(signal or {})
-        if kwargs:
-            payload.update(kwargs)
-
-        if "received_at" not in payload:
-            payload["received_at"] = datetime.utcnow().isoformat()
-
-        self._execute(
-            """
-            INSERT INTO received_signals(signal_json, created_at)
-            VALUES (?, ?)
-            """,
-            (
-                json.dumps(payload, ensure_ascii=False),
-                datetime.utcnow().isoformat(),
-            ),
-        )
-
-    def get_received_signals(self, limit: int = 50) -> List[Dict[str, Any]]:
-        rows = self._execute(
-            """
-            SELECT id, signal_json, created_at
-            FROM received_signals
-            ORDER BY id DESC
-            LIMIT ?
-            """,
-            (int(limit),),
-            fetch=True,
-            commit=False,
-        )
-        result: List[Dict[str, Any]] = []
-        for row in rows or []:
-            payload = self._safe_json_loads(row["signal_json"], {})
-            if not isinstance(payload, dict):
-                payload = {}
-            payload["id"] = row["id"]
-            payload.setdefault("created_at", row["created_at"])
-            payload.setdefault("received_at", row["created_at"])
-            result.append(payload)
-        return result
-
     # =========================================================
     # SIGNAL PATTERNS
     # =========================================================
-    def get_signal_patterns(self, enabled_only: bool = False) -> List[Dict[str, Any]]:
-        if enabled_only:
-            rows = self._execute(
-                """
-                SELECT id, pattern, label, enabled, created_at, updated_at
-                FROM signal_patterns
-                WHERE enabled = 1
-                ORDER BY id ASC
-                """,
-                fetch=True,
-                commit=False,
-            )
-        else:
-            rows = self._execute(
-                """
-                SELECT id, pattern, label, enabled, created_at, updated_at
-                FROM signal_patterns
-                ORDER BY id ASC
-                """,
-                fetch=True,
-                commit=False,
-            )
-
+    def get_signal_patterns(self) -> List[Dict[str, Any]]:
+        rows = self._execute(
+            """
+            SELECT id, pattern, label, enabled, created_at, updated_at
+            FROM signal_patterns
+            ORDER BY id ASC
+            """,
+            fetch=True,
+            commit=False,
+        )
         return [
             {
                 "id": row["id"],
@@ -506,48 +467,25 @@ class Database:
             for row in (rows or [])
         ]
 
-    def save_signal_pattern(
-        self,
-        *,
-        pattern: str,
-        label: str,
-        enabled: bool = True,
-    ) -> int:
+    def save_signal_pattern(self, pattern: str, label: str = "", enabled: bool = True) -> int:
         now = datetime.utcnow().isoformat()
         cur = self._execute(
             """
             INSERT INTO signal_patterns(pattern, label, enabled, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (
-                str(pattern or ""),
-                str(label or ""),
-                int(bool(enabled)),
-                now,
-                now,
-            ),
+            (str(pattern), str(label or ""), int(bool(enabled)), now, now),
         )
         return int(cur.lastrowid)
 
-    def update_signal_pattern(
-        self,
-        *,
-        pattern_id: int,
-        pattern: str,
-        label: str,
-    ) -> None:
+    def update_signal_pattern(self, pattern_id: int, pattern: str, label: str = "") -> None:
         self._execute(
             """
             UPDATE signal_patterns
             SET pattern = ?, label = ?, updated_at = ?
             WHERE id = ?
             """,
-            (
-                str(pattern or ""),
-                str(label or ""),
-                datetime.utcnow().isoformat(),
-                int(pattern_id),
-            ),
+            (str(pattern), str(label or ""), datetime.utcnow().isoformat(), int(pattern_id)),
         )
 
     def delete_signal_pattern(self, pattern_id: int) -> None:
@@ -564,7 +502,7 @@ class Database:
             commit=False,
         )
         if not row:
-            raise ValueError(f"Pattern non trovato: {pattern_id}")
+            raise RuntimeError("Pattern non trovato")
 
         new_state = not bool(row["enabled"])
         self._execute(
@@ -573,43 +511,51 @@ class Database:
             SET enabled = ?, updated_at = ?
             WHERE id = ?
             """,
-            (
-                int(new_state),
-                datetime.utcnow().isoformat(),
-                int(pattern_id),
-            ),
+            (int(new_state), datetime.utcnow().isoformat(), int(pattern_id)),
         )
         return new_state
 
     # =========================================================
-    # TELEGRAM OUTBOX LOG
+    # RECEIVED SIGNALS
     # =========================================================
-    def save_telegram_outbox_log(
-        self,
-        *,
-        chat_id: str = "",
-        message_text: str = "",
-        status: str = "",
-    ) -> int:
-        cur = self._execute(
+    def save_received_signal(self, signal: Optional[Dict[str, Any]] = None, **kwargs) -> None:
+        signal = dict(signal or {})
+        if kwargs:
+            signal.update(kwargs)
+
+        received_at = str(
+            signal.get("received_at")
+            or signal.get("created_at")
+            or datetime.utcnow().isoformat()
+        )
+
+        selection = str(signal.get("selection") or signal.get("runner_name") or signal.get("runnerName") or "")
+        action = str(signal.get("action") or signal.get("bet_type") or signal.get("side") or "")
+        price = float(signal.get("price", 0.0) or 0.0)
+        stake = float(signal.get("stake", 0.0) or 0.0)
+        status = str(signal.get("status") or "")
+
+        self._execute(
             """
-            INSERT INTO telegram_outbox_log(chat_id, message_text, status, created_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO received_signals(selection, action, price, stake, status, signal_json, received_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                str(chat_id or ""),
-                str(message_text or ""),
-                str(status or ""),
-                datetime.utcnow().isoformat(),
+                selection,
+                action,
+                price,
+                stake,
+                status,
+                json.dumps(signal, ensure_ascii=False),
+                received_at,
             ),
         )
-        return int(cur.lastrowid)
 
-    def get_telegram_outbox_log(self, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_received_signals(self, limit: int = 50) -> List[Dict[str, Any]]:
         rows = self._execute(
             """
-            SELECT id, chat_id, message_text, status, created_at
-            FROM telegram_outbox_log
+            SELECT id, selection, action, price, stake, status, signal_json, received_at
+            FROM received_signals
             ORDER BY id DESC
             LIMIT ?
             """,
@@ -617,7 +563,23 @@ class Database:
             fetch=True,
             commit=False,
         )
-        return [dict(row) for row in (rows or [])]
+        out: List[Dict[str, Any]] = []
+        for row in rows or []:
+            item = {
+                "id": row["id"],
+                "selection": row["selection"],
+                "action": row["action"],
+                "price": row["price"],
+                "stake": row["stake"],
+                "status": row["status"],
+                "received_at": row["received_at"],
+            }
+            try:
+                item["signal"] = json.loads(row["signal_json"] or "{}")
+            except Exception:
+                item["signal"] = {}
+            out.append(item)
+        return out
 
     # =========================================================
     # ORDER SAGA
@@ -726,227 +688,184 @@ class Database:
     # =========================================================
     # DUTCHING BATCHES
     # =========================================================
-    def create_dutching_batch(
-        self,
-        *,
-        batch_id: str,
-        event_key: str,
-        market_id: str,
-        event_name: str = "",
-        market_name: str = "",
-        table_id: Optional[int] = None,
-        strategy: str = "DUTCHING",
-        total_legs: int = 0,
-        batch_exposure: float = 0.0,
-        avg_profit: float = 0.0,
-        book_pct: float = 0.0,
-        payload: Optional[Dict[str, Any]] = None,
-        notes: str = "",
-        status: str = "PENDING",
-    ) -> None:
+    def create_dutching_batch(self, batch: Dict[str, Any]) -> None:
         now = datetime.utcnow().isoformat()
         self._execute(
             """
             INSERT OR REPLACE INTO dutching_batches(
                 batch_id, event_key, market_id, event_name, market_name, table_id,
-                strategy, status, total_legs, batch_exposure, avg_profit, book_pct,
-                payload_json, notes, created_at, updated_at
+                strategy, status, total_legs, placed_legs, matched_legs, failed_legs,
+                cancelled_legs, batch_exposure, avg_profit, book_pct, payload_json,
+                notes, created_at, updated_at, closed_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                str(batch_id),
-                str(event_key),
-                str(market_id),
-                str(event_name or ""),
-                str(market_name or ""),
-                table_id,
-                str(strategy or "DUTCHING"),
-                str(status or "PENDING"),
-                int(total_legs or 0),
-                float(batch_exposure or 0.0),
-                float(avg_profit or 0.0),
-                float(book_pct or 0.0),
-                json.dumps(payload or {}, ensure_ascii=False),
-                str(notes or ""),
+                str(batch.get("batch_id", "")),
+                str(batch.get("event_key", "")),
+                str(batch.get("market_id", "")),
+                str(batch.get("event_name", "")),
+                str(batch.get("market_name", "")),
+                batch.get("table_id"),
+                str(batch.get("strategy", "DUTCHING")),
+                str(batch.get("status", "PENDING")),
+                int(batch.get("total_legs", 0) or 0),
+                int(batch.get("placed_legs", 0) or 0),
+                int(batch.get("matched_legs", 0) or 0),
+                int(batch.get("failed_legs", 0) or 0),
+                int(batch.get("cancelled_legs", 0) or 0),
+                float(batch.get("batch_exposure", 0.0) or 0.0),
+                float(batch.get("avg_profit", 0.0) or 0.0),
+                float(batch.get("book_pct", 0.0) or 0.0),
+                json.dumps(batch.get("payload", {}), ensure_ascii=False),
+                str(batch.get("notes", "")),
+                str(batch.get("created_at") or now),
                 now,
-                now,
+                batch.get("closed_at"),
             ),
         )
 
-    def update_dutching_batch(
-        self,
-        *,
-        batch_id: str,
-        status: Optional[str] = None,
-        placed_legs: Optional[int] = None,
-        matched_legs: Optional[int] = None,
-        failed_legs: Optional[int] = None,
-        cancelled_legs: Optional[int] = None,
-        notes: Optional[str] = None,
-        closed: bool = False,
-    ) -> None:
-        updates = []
-        params: List[Any] = []
-
-        if status is not None:
-            updates.append("status = ?")
-            params.append(str(status))
-        if placed_legs is not None:
-            updates.append("placed_legs = ?")
-            params.append(int(placed_legs))
-        if matched_legs is not None:
-            updates.append("matched_legs = ?")
-            params.append(int(matched_legs))
-        if failed_legs is not None:
-            updates.append("failed_legs = ?")
-            params.append(int(failed_legs))
-        if cancelled_legs is not None:
-            updates.append("cancelled_legs = ?")
-            params.append(int(cancelled_legs))
-        if notes is not None:
-            updates.append("notes = ?")
-            params.append(str(notes))
-        if closed:
-            updates.append("closed_at = ?")
-            params.append(datetime.utcnow().isoformat())
-
-        updates.append("updated_at = ?")
-        params.append(datetime.utcnow().isoformat())
-        params.append(str(batch_id))
-
+    def update_dutching_batch_status(self, batch_id: str, status: str, notes: str = "") -> None:
+        closed_at = datetime.utcnow().isoformat() if status in {"EXECUTED", "FAILED", "CANCELLED"} else None
         self._execute(
-            f"""
+            """
             UPDATE dutching_batches
-            SET {", ".join(updates)}
+            SET status = ?, notes = ?, updated_at = ?, closed_at = COALESCE(?, closed_at)
             WHERE batch_id = ?
             """,
-            tuple(params),
+            (str(status), str(notes or ""), datetime.utcnow().isoformat(), closed_at, str(batch_id)),
         )
 
-    def get_dutching_batch(self, batch_id: str) -> Optional[Dict[str, Any]]:
+    # =========================================================
+    # SIMULATION STATE
+    # =========================================================
+    def save_simulation_state(self, state_key: str, state: Dict[str, Any]) -> None:
+        self._execute(
+            """
+            INSERT INTO simulation_state(state_key, state_json, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(state_key) DO UPDATE SET
+                state_json = excluded.state_json,
+                updated_at = excluded.updated_at
+            """,
+            (
+                str(state_key),
+                json.dumps(state or {}, ensure_ascii=False),
+                datetime.utcnow().isoformat(),
+            ),
+        )
+
+    def get_simulation_state(self, state_key: str = "default") -> Dict[str, Any]:
         row = self._execute(
-            "SELECT * FROM dutching_batches WHERE batch_id = ? LIMIT 1",
-            (str(batch_id),),
+            "SELECT state_json FROM simulation_state WHERE state_key = ?",
+            (str(state_key),),
             fetchone=True,
             commit=False,
         )
         if not row:
-            return None
-        data = dict(row)
-        data["payload"] = self._safe_json_loads(data.pop("payload_json", "{}"), {})
-        return data
+            return {}
+        try:
+            return json.loads(row["state_json"] or "{}")
+        except Exception:
+            return {}
 
-    def get_open_dutching_batches(self) -> List[Dict[str, Any]]:
-        rows = self._execute(
-            """
-            SELECT *
-            FROM dutching_batches
-            WHERE status IN ('PENDING', 'SUBMITTED', 'PARTIAL', 'OPEN')
-            ORDER BY created_at ASC, id ASC
-            """,
-            fetch=True,
-            commit=False,
+    def clear_simulation_state(self, state_key: str = "default") -> None:
+        self._execute(
+            "DELETE FROM simulation_state WHERE state_key = ?",
+            (str(state_key),),
         )
-        result = []
-        for row in rows or []:
-            data = dict(row)
-            data["payload"] = self._safe_json_loads(data.pop("payload_json", "{}"), {})
-            result.append(data)
-        return result
 
     # =========================================================
-    # DUTCHING LEGS
+    # SIMULATION BETS
     # =========================================================
-    def create_dutching_leg(
-        self,
-        *,
-        batch_id: str,
-        leg_index: int,
-        customer_ref: str = "",
-        market_id: str,
-        selection_id: Any,
-        side: str = "BACK",
-        price: float = 0.0,
-        stake: float = 0.0,
-        liability: float = 0.0,
-        status: str = "CREATED",
-        raw_response: Optional[Dict[str, Any]] = None,
-        error_text: str = "",
-    ) -> None:
+    def save_simulation_bet(self, payload: Dict[str, Any]) -> None:
         now = datetime.utcnow().isoformat()
         self._execute(
             """
-            INSERT OR REPLACE INTO dutching_batch_legs(
-                batch_id, leg_index, customer_ref, market_id, selection_id, side,
-                price, stake, liability, status, raw_response_json, error_text,
-                created_at, updated_at
+            INSERT INTO simulation_bets(
+                bet_id, market_id, selection_id, side, price, size, matched_size,
+                avg_price_matched, status, event_key, table_id, batch_id,
+                event_name, market_name, runner_name, payload_json, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(bet_id) DO UPDATE SET
+                matched_size = excluded.matched_size,
+                avg_price_matched = excluded.avg_price_matched,
+                status = excluded.status,
+                event_key = excluded.event_key,
+                table_id = excluded.table_id,
+                batch_id = excluded.batch_id,
+                event_name = excluded.event_name,
+                market_name = excluded.market_name,
+                runner_name = excluded.runner_name,
+                payload_json = excluded.payload_json,
+                updated_at = excluded.updated_at
             """,
             (
-                str(batch_id),
-                int(leg_index),
-                str(customer_ref or ""),
-                str(market_id),
-                str(selection_id),
-                str(side or "BACK"),
-                float(price or 0.0),
-                float(stake or 0.0),
-                float(liability or 0.0),
-                str(status or "CREATED"),
-                json.dumps(raw_response or {}, ensure_ascii=False),
-                str(error_text or ""),
-                now,
+                str(payload.get("bet_id", "")),
+                str(payload.get("market_id", "")),
+                str(payload.get("selection_id", "")),
+                str(payload.get("side", "")),
+                float(payload.get("price", 0.0) or 0.0),
+                float(payload.get("size", 0.0) or 0.0),
+                float(payload.get("matched_size", 0.0) or 0.0),
+                float(payload.get("avg_price_matched", 0.0) or 0.0),
+                str(payload.get("status", "EXECUTABLE")),
+                str(payload.get("event_key", "")),
+                payload.get("table_id"),
+                str(payload.get("batch_id", "")),
+                str(payload.get("event_name", "")),
+                str(payload.get("market_name", "")),
+                str(payload.get("runner_name", "")),
+                json.dumps(payload or {}, ensure_ascii=False),
+                str(payload.get("created_at") or now),
                 now,
             ),
         )
 
-    def update_dutching_leg(
-        self,
-        *,
-        batch_id: str,
-        leg_index: int,
-        status: str,
-        bet_id: str = "",
-        error_text: str = "",
-        raw_response: Optional[Dict[str, Any]] = None,
-    ) -> None:
+    def get_simulation_bets(self, market_id: str | None = None) -> List[Dict[str, Any]]:
+        if market_id:
+            rows = self._execute(
+                """
+                SELECT *
+                FROM simulation_bets
+                WHERE market_id = ?
+                ORDER BY created_at ASC, id ASC
+                """,
+                (str(market_id),),
+                fetch=True,
+                commit=False,
+            )
+        else:
+            rows = self._execute(
+                """
+                SELECT *
+                FROM simulation_bets
+                ORDER BY created_at ASC, id ASC
+                """,
+                fetch=True,
+                commit=False,
+            )
+        return [dict(row) for row in (rows or [])]
+
+    def update_simulation_bet_status(self, bet_id: str, status: str) -> None:
         self._execute(
             """
-            UPDATE dutching_batch_legs
-            SET status = ?, bet_id = ?, error_text = ?, raw_response_json = ?, updated_at = ?
-            WHERE batch_id = ? AND leg_index = ?
+            UPDATE simulation_bets
+            SET status = ?, updated_at = ?
+            WHERE bet_id = ?
             """,
-            (
-                str(status),
-                str(bet_id or ""),
-                str(error_text or ""),
-                json.dumps(raw_response or {}, ensure_ascii=False),
-                datetime.utcnow().isoformat(),
-                str(batch_id),
-                int(leg_index),
-            ),
+            (str(status), datetime.utcnow().isoformat(), str(bet_id)),
         )
 
-    def get_dutching_legs(self, batch_id: str) -> List[Dict[str, Any]]:
-        rows = self._execute(
-            """
-            SELECT *
-            FROM dutching_batch_legs
-            WHERE batch_id = ?
-            ORDER BY leg_index ASC
-            """,
-            (str(batch_id),),
-            fetch=True,
-            commit=False,
-        )
-        result = []
-        for row in rows or []:
-            data = dict(row)
-            data["raw_response"] = self._safe_json_loads(
-                data.pop("raw_response_json", "{}"),
-                {},
-            )
-            result.append(data)
-        return result
+    # =========================================================
+    # OPTIONAL LEGACY HELPERS
+    # =========================================================
+    def save_bet(self, payload: Dict[str, Any]) -> None:
+        logger.info("save_bet placeholder called: %s", payload)
+
+    def save_cashout_transaction(self, payload: Dict[str, Any]) -> None:
+        logger.info("save_cashout_transaction placeholder called: %s", payload)
+
+    def save_simulation_bet_runtime(self, payload: Dict[str, Any]) -> None:
+        self.save_simulation_bet(payload)
