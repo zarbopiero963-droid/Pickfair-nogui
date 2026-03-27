@@ -164,6 +164,7 @@ class BetfairService:
                 commission_pct=float(sim_cfg.get("commission_pct", 4.5) or 4.5),
                 partial_fill_enabled=bool(sim_cfg.get("partial_fill_enabled", True)),
                 consume_liquidity=bool(sim_cfg.get("consume_liquidity", True)),
+                db=getattr(self.settings_service, "db", None),
             )
 
             if bool(sim_cfg.get("persist_state", True)):
