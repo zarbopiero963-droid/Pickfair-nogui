@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 import tkinter as tk
 from tkinter import messagebox, simpledialog
@@ -16,13 +18,17 @@ class TelegramModule:
             self._telegram_signal_processor = processor
         return processor
 
+    # =========================================================
+    # SAFE HELPERS
+    # =========================================================
     def _safe_refresh_telegram_signals_tree(self):
         try:
             if hasattr(self, "_refresh_telegram_signals_tree"):
                 self._refresh_telegram_signals_tree()
         except Exception as e:
             logger.exception(
-                "[TelegramModule] Errore refresh telegram signals tree: %s", e
+                "[TelegramModule] Errore refresh telegram signals tree: %s",
+                e,
             )
 
     def _safe_refresh_telegram_chats_tree(self):
@@ -31,16 +37,19 @@ class TelegramModule:
                 self._refresh_telegram_chats_tree()
         except Exception as e:
             logger.exception(
-                "[TelegramModule] Errore refresh telegram chats tree: %s", e
+                "[TelegramModule] Errore refresh telegram chats tree: %s",
+                e,
             )
 
     def _safe_db_save_received_signal(
         self,
+        *,
         selection,
         action,
         price,
         stake,
         status,
+        signal=None,
     ):
         if not hasattr(self, "db") or self.db is None:
             return
@@ -48,13 +57,17 @@ class TelegramModule:
             return
 
         try:
-            self.db.save_received_signal(
-                selection=selection,
-                action=action,
-                price=float(price or 0.0),
-                stake=float(stake or 0.0),
-                status=str(status or ""),
+            payload = dict(signal or {})
+            payload.update(
+                {
+                    "selection": selection,
+                    "action": action,
+                    "price": float(price or 0.0),
+                    "stake": float(stake or 0.0),
+                    "status": str(status or ""),
+                }
             )
+            self.db.save_received_signal(payload)
         except Exception as e:
             logger.exception(
                 "[TelegramModule] Errore save_received_signal status=%s: %s",
@@ -74,6 +87,17 @@ class TelegramModule:
         except Exception:
             return 1.0
 
+    def _safe_simulation_mode(self) -> bool:
+        try:
+            if hasattr(self, "simulation_mode_var"):
+                return bool(self.simulation_mode_var.get())
+        except Exception:
+            pass
+        return bool(getattr(self, "simulation_mode", False))
+
+    # =========================================================
+    # LISTENER LIFECYCLE
+    # =========================================================
     def _start_telegram_listener(self):
         """Start the Telegram listener background thread."""
         try:
@@ -81,7 +105,8 @@ class TelegramModule:
             settings = settings or {}
         except Exception as e:
             logger.exception(
-                "[TelegramModule] Errore lettura telegram settings: %s", e
+                "[TelegramModule] Errore lettura telegram settings: %s",
+                e,
             )
             settings = {}
 
@@ -116,7 +141,8 @@ class TelegramModule:
                 chats = chats or []
             except Exception as e:
                 logger.exception(
-                    "[TelegramModule] Errore lettura telegram chats: %s", e
+                    "[TelegramModule] Errore lettura telegram chats: %s",
+                    e,
                 )
                 chats = []
 
@@ -187,27 +213,34 @@ class TelegramModule:
 
             messagebox.showinfo("Info", "Telegram Listener fermato")
 
+    # =========================================================
+    # SIGNAL FLOW
+    # =========================================================
     def _handle_telegram_signal(self, signal):
         """
         Riceve il segnale dal listener e lo processa nel main thread.
-        Ora inoltra al runtime headless tramite SIGNAL_RECEIVED.
-        Forced execution attiva di default:
-        - BACK -> 1.01
-        - LAY  -> 1000.0
+
+        Flusso:
+        - parse pulito
+        - salva storico DB
+        - inoltra al runtime via SIGNAL_RECEIVED
+        - rispetta simulation_mode attuale
+        - NON forza quote fake
         """
 
         def safe_process_signal():
-            signal = signal or {}
+            raw_signal = dict(signal or {})
             processor = self._get_signal_processor()
 
-            action = processor.normalize_action(signal)
-            selection_id = processor.parse_selection_id(signal)
-            market_id = processor.parse_market_id(signal)
-            original_price = processor.parse_price(signal)
-            selection_name = processor.parse_selection_name(signal, selection_id)
+            action = processor.normalize_action(raw_signal)
+            selection_id = processor.parse_selection_id(raw_signal)
+            market_id = processor.parse_market_id(raw_signal)
+            original_price = processor.parse_price(raw_signal)
+            selection_name = processor.parse_selection_name(raw_signal, selection_id)
             stake = self._safe_parse_stake()
+            simulation_mode = self._safe_simulation_mode()
 
-            if original_price is None:
+            if original_price is None or float(original_price or 0.0) <= 1.0:
                 logger.error("[TelegramModule] Segnale ignorato: price non valido.")
                 self._safe_db_save_received_signal(
                     selection=selection_name,
@@ -215,6 +248,7 @@ class TelegramModule:
                     price=0.0,
                     stake=0.0,
                     status="ERROR",
+                    signal=raw_signal,
                 )
                 self._safe_refresh_telegram_signals_tree()
                 return
@@ -225,6 +259,7 @@ class TelegramModule:
                 price=original_price,
                 stake=stake,
                 status="RECEIVED",
+                signal=raw_signal,
             )
             self._safe_refresh_telegram_signals_tree()
 
@@ -241,11 +276,14 @@ class TelegramModule:
 
             if not auto_bet_enabled:
                 if confirm_enabled:
+                    mode_txt = "SIMULAZIONE" if simulation_mode else "LIVE"
                     msg = (
                         f"Segnale ricevuto:\n"
                         f"{selection_name}\n"
                         f"Tipo: {action}\n"
-                        f"Quota Master: {original_price:.2f}\n\n"
+                        f"Quota: {float(original_price):.2f}\n"
+                        f"Stake: {float(stake):.2f}\n"
+                        f"Modalità: {mode_txt}\n\n"
                         f"Inviare il segnale al runtime?"
                     )
                     if not messagebox.askyesno("Nuovo Segnale Telegram", msg):
@@ -255,6 +293,7 @@ class TelegramModule:
                             price=original_price,
                             stake=stake,
                             status="IGNORED",
+                            signal=raw_signal,
                         )
                         self._safe_refresh_telegram_signals_tree()
                         return
@@ -265,6 +304,7 @@ class TelegramModule:
                         price=original_price,
                         stake=stake,
                         status="IGNORED",
+                        signal=raw_signal,
                     )
                     self._safe_refresh_telegram_signals_tree()
                     return
@@ -279,14 +319,15 @@ class TelegramModule:
                     price=original_price,
                     stake=stake,
                     status="ERROR",
+                    signal=raw_signal,
                 )
                 self._safe_refresh_telegram_signals_tree()
                 return
 
-            payload = processor.build_runtime_signal(
-                signal=signal,
+            payload = processor.safe_build_runtime_signal(
+                signal=raw_signal,
                 stake=stake,
-                simulation_mode=bool(getattr(self, "simulation_mode", False)),
+                simulation_mode=simulation_mode,
             )
 
             if not payload:
@@ -297,6 +338,7 @@ class TelegramModule:
                     price=original_price,
                     stake=stake,
                     status="ERROR",
+                    signal=raw_signal,
                 )
                 self._safe_refresh_telegram_signals_tree()
                 return
@@ -310,7 +352,8 @@ class TelegramModule:
                 self.bus.publish("SIGNAL_RECEIVED", payload)
             except Exception as e:
                 logger.exception(
-                    "[TelegramModule] Errore publish SIGNAL_RECEIVED: %s", e
+                    "[TelegramModule] Errore publish SIGNAL_RECEIVED: %s",
+                    e,
                 )
                 self._safe_db_save_received_signal(
                     selection=selection_name,
@@ -318,6 +361,7 @@ class TelegramModule:
                     price=original_price,
                     stake=stake,
                     status="ERROR",
+                    signal=raw_signal,
                 )
                 self._safe_refresh_telegram_signals_tree()
                 return
@@ -328,6 +372,7 @@ class TelegramModule:
                 price=original_price,
                 stake=stake,
                 status="SUBMITTED",
+                signal=payload,
             )
             self._safe_refresh_telegram_signals_tree()
 
@@ -336,6 +381,9 @@ class TelegramModule:
         else:
             safe_process_signal()
 
+    # =========================================================
+    # STATUS UI
+    # =========================================================
     def _update_telegram_status(self, status, message):
         self.telegram_status = status
         color = COLORS["success"] if status == "LISTENING" else COLORS["error"]
@@ -346,6 +394,9 @@ class TelegramModule:
                 text_color=color,
             )
 
+    # =========================================================
+    # CHATS TREE
+    # =========================================================
     def _refresh_telegram_chats_tree(self):
         if not hasattr(self, "tg_chats_tree") or not self.tg_chats_tree.winfo_exists():
             return
@@ -395,6 +446,9 @@ class TelegramModule:
         self._safe_refresh_telegram_chats_tree()
         messagebox.showinfo("Successo", "Chat aggiunte al monitoraggio.")
 
+    # =========================================================
+    # RULES TREE
+    # =========================================================
     def _refresh_rules_tree(self):
         if not hasattr(self, "rules_tree") or not self.rules_tree.winfo_exists():
             return
@@ -531,6 +585,9 @@ class TelegramModule:
                 f"Impossibile cambiare stato della regola: {e}",
             )
 
+    # =========================================================
+    # SIGNALS TREE
+    # =========================================================
     def _refresh_telegram_signals_tree(self):
         """Aggiorna la tabella visiva leggendo dallo storico salvato nel DB."""
         if not hasattr(self, "tg_signals_tree") or not self.tg_signals_tree.winfo_exists():
