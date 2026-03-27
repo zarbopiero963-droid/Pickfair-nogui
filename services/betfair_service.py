@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from betfair_client import BetfairClient
 from simulation_broker import SimulationBroker
@@ -41,11 +41,6 @@ class BetfairService:
     # BROKER GETTERS
     # =========================================================
     def get_client(self):
-        """
-        Restituisce il broker attivo:
-        - SimulationBroker se simulation_mode=True
-        - BetfairClient se simulation_mode=False
-        """
         if self.simulation_mode:
             return self.simulation_broker
         return self.client
@@ -274,20 +269,29 @@ class BetfairService:
     def status(self) -> dict:
         broker = self.get_client()
         has_client = broker is not None
+        simulated = bool(self.simulation_mode)
 
         return {
             "connected": bool(self.connected and has_client),
             "last_error": self.last_error,
             "has_client": has_client,
-            "simulated": bool(self.simulation_mode),
-            "broker_type": "SIMULATION" if self.simulation_mode else "LIVE",
-            "live_execution_only": not bool(self.simulation_mode),
+            "simulated": simulated,
+            "simulation_mode": simulated,  # compatibilità con market_tracker e vecchio codice
+            "broker_type": "SIMULATION" if simulated else "LIVE",
+            "live_execution_only": not simulated,
         }
 
     # =========================================================
     # SIMULATION MARKET FEED
     # =========================================================
-    def update_simulation_market_book(self, market_id: str, market_book: dict) -> dict:
+    def update_simulation_market_book(self, *args, **kwargs) -> dict:
+        """
+        Firma compatibile con entrambi gli stili:
+        - update_simulation_market_book(market_book)
+        - update_simulation_market_book(market_id, market_book)
+
+        Questo chiude il mismatch trovato nel repository.
+        """
         if not self.simulation_mode or not self.simulation_broker:
             return {
                 "ok": False,
@@ -295,8 +299,47 @@ class BetfairService:
                 "simulated": False,
             }
 
+        market_id = ""
+        market_book: Dict[str, Any] = {}
+
+        # stile nuovo: (market_book,)
+        if len(args) == 1 and isinstance(args[0], dict):
+            market_book = dict(args[0] or {})
+            market_id = str(
+                market_book.get("marketId")
+                or market_book.get("market_id")
+                or ""
+            ).strip()
+
+        # stile vecchio: (market_id, market_book)
+        elif len(args) >= 2:
+            market_id = str(args[0] or "").strip()
+            market_book = dict(args[1] or {})
+
+        # kwargs fallback
+        if not market_book:
+            market_book = dict(kwargs.get("market_book") or {})
+        if not market_id:
+            market_id = str(
+                kwargs.get("market_id")
+                or market_book.get("marketId")
+                or market_book.get("market_id")
+                or ""
+            ).strip()
+
+        if not market_id or not isinstance(market_book, dict):
+            return {
+                "ok": False,
+                "reason": "invalid_market_book",
+                "simulated": True,
+            }
+
+        normalized = dict(market_book)
+        normalized["marketId"] = market_id
+        normalized["market_id"] = market_id
+
         try:
-            result = self.simulation_broker.update_market_book(market_id, market_book)
+            result = self.simulation_broker.update_market_book(market_id, normalized)
             self._persist_simulation_state_if_needed()
             return result
         except Exception as exc:
