@@ -10,6 +10,16 @@ logger = logging.getLogger(__name__)
 
 
 class TelegramService:
+    """
+    Service Telegram runtime-safe.
+
+    Responsabilità:
+    - avvio / stop listener
+    - inoltro segnali al bus
+    - preserva simulation_mode nei payload
+    - non contiene logica di trading
+    """
+
     def __init__(self, settings_service, db, bus):
         self.settings_service = settings_service
         self.db = db
@@ -18,9 +28,15 @@ class TelegramService:
         self.connected = False
         self.last_error = ""
 
+    # =========================================================
+    # INTERNAL CALLBACKS
+    # =========================================================
     def _handle_signal(self, signal: dict) -> None:
         signal = dict(signal or {})
         signal["received_at"] = datetime.utcnow().isoformat()
+
+        # conserva eventuale flag simulation_mode già presente
+        signal["simulation_mode"] = bool(signal.get("simulation_mode", False))
 
         if hasattr(self.db, "save_received_signal"):
             try:
@@ -32,7 +48,7 @@ class TelegramService:
 
     def _handle_status(self, *args) -> None:
         """
-        Compatibile con callback tipo:
+        Compatibile con callback:
         - on_status(message)
         - on_status(status, message)
         """
@@ -54,6 +70,9 @@ class TelegramService:
             },
         )
 
+    # =========================================================
+    # LIFECYCLE
+    # =========================================================
     def start(self) -> dict:
         cfg = self.settings_service.load_telegram_config()
 
@@ -118,6 +137,9 @@ class TelegramService:
         self.stop()
         return self.start()
 
+    # =========================================================
+    # STATUS
+    # =========================================================
     def status(self) -> dict:
         running = bool(self.listener and getattr(self.listener, "running", False))
         return {
