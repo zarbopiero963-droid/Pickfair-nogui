@@ -5,9 +5,7 @@ from datetime import datetime
 from typing import Optional
 
 from core.duplication_guard import DuplicationGuard
-from core.dutching_batch_manager import DutchingBatchManager
 from core.money_management import RoserpinaMoneyManagement
-from core.reconciliation_engine import ReconciliationEngine
 from core.risk_desk import RiskDesk
 from core.system_state import DeskMode, RuntimeMode
 from core.table_manager import TableManager
@@ -16,6 +14,20 @@ logger = logging.getLogger(__name__)
 
 
 class RuntimeController:
+    """
+    Runtime controller centrale.
+
+    Responsabilità:
+    - start/stop/pause/resume runtime
+    - selezione live/simulation broker
+    - routing dei segnali verso CMD_QUICK_BET
+    - coordinamento Roserpina / tavoli / anti-duplicazione
+    - snapshot stato runtime
+
+    Non esegue direttamente gli ordini:
+    pubblica sul bus e lascia il lavoro a TradingEngine / OrderManager.
+    """
+
     def __init__(
         self,
         *,
@@ -41,21 +53,17 @@ class RuntimeController:
         self.risk_desk = RiskDesk()
         self.mm = RoserpinaMoneyManagement(self.config)
 
-        self.batch_manager = DutchingBatchManager(db, bus=bus)
-        self.reconciliation_engine = ReconciliationEngine(
-            db=db,
-            bus=bus,
-            batch_manager=self.batch_manager,
-            betfair_service=betfair_service,
-            table_manager=self.table_manager,
-            duplication_guard=self.duplication_guard,
-        )
-
         self.mode = RuntimeMode.STOPPED
         self.last_error = ""
         self.last_signal_at = ""
         self.simulation_mode = False
 
+        self._subscribe_bus()
+
+    # =========================================================
+    # BUS
+    # =========================================================
+    def _subscribe_bus(self) -> None:
         self.bus.subscribe("SIGNAL_RECEIVED", self._on_signal_received)
         self.bus.subscribe("QUICK_BET_FAILED", self._on_quick_bet_failed)
         self.bus.subscribe("QUICK_BET_ACCEPTED", self._on_quick_bet_accepted)
@@ -65,20 +73,7 @@ class RuntimeController:
         self.bus.subscribe("RUNTIME_CLOSE_POSITION", self._on_close_position)
 
     # =========================================================
-    # INTERNAL REBUILD HELPERS
-    # =========================================================
-    def _rebuild_reconciliation_engine(self) -> None:
-        self.reconciliation_engine = ReconciliationEngine(
-            db=self.db,
-            bus=self.bus,
-            batch_manager=self.batch_manager,
-            betfair_service=self.betfair_service,
-            table_manager=self.table_manager,
-            duplication_guard=self.duplication_guard,
-        )
-
-    # =========================================================
-    # CONFIG / MODE
+    # MODE / CONFIG
     # =========================================================
     def set_simulation_mode(self, enabled: bool) -> None:
         self.simulation_mode = bool(enabled)
@@ -88,8 +83,11 @@ class RuntimeController:
     def reload_config(self) -> None:
         self.config = self.settings_service.load_roserpina_config()
         self.mm = RoserpinaMoneyManagement(self.config)
-        self.table_manager = TableManager(table_count=self.config.table_count)
-        self._rebuild_reconciliation_engine()
+
+        current_snapshot = self.table_manager.snapshot()
+        current_count = len(current_snapshot) if current_snapshot else 0
+        if current_count != int(self.config.table_count):
+            self.table_manager = TableManager(table_count=self.config.table_count)
 
     def _desk_mode(self) -> DeskMode:
         return self.mm.determine_desk_mode(
@@ -103,14 +101,15 @@ class RuntimeController:
     def force_lockdown(self, reason: str = "") -> dict:
         self.mode = RuntimeMode.LOCKDOWN
         self.last_error = reason or "LOCKDOWN"
-        self.bus.publish("RUNTIME_LOCKDOWN", self.get_status())
+        status = self.get_status()
+        self.bus.publish("RUNTIME_LOCKDOWN", status)
         return {
             "locked": True,
-            "status": self.get_status(),
+            "status": status,
         }
 
     # =========================================================
-    # START / STOP
+    # LIFECYCLE
     # =========================================================
     def start(
         self,
@@ -122,7 +121,6 @@ class RuntimeController:
         if simulation_mode is not None:
             self.set_simulation_mode(simulation_mode)
         else:
-            # mantiene stato attuale, ma lo propaga al service
             self.set_simulation_mode(self.simulation_mode)
 
         session = self.betfair_service.connect(
@@ -133,26 +131,28 @@ class RuntimeController:
         funds = self.betfair_service.get_account_funds()
         self.risk_desk.sync_bankroll(float(funds.get("available", 0.0) or 0.0))
 
-        self.telegram_service.start()
-        self.reconciliation_engine.reconcile_all_open_batches()
+        telegram_result = self.telegram_service.start()
 
         self.mode = RuntimeMode.ACTIVE
         self.last_error = ""
-        self.bus.publish("RUNTIME_STARTED", self.get_status())
+        status = self.get_status()
+        self.bus.publish("RUNTIME_STARTED", status)
 
         return {
             "started": True,
             "betfair": session,
             "funds": funds,
-            "status": self.get_status(),
+            "telegram": telegram_result,
+            "status": status,
         }
 
     def pause(self) -> dict:
         self.mode = RuntimeMode.PAUSED
-        self.bus.publish("RUNTIME_PAUSED", self.get_status())
+        status = self.get_status()
+        self.bus.publish("RUNTIME_PAUSED", status)
         return {
             "paused": True,
-            "status": self.get_status(),
+            "status": status,
         }
 
     def resume(self) -> dict:
@@ -164,27 +164,28 @@ class RuntimeController:
             }
 
         self.mode = RuntimeMode.ACTIVE
-        self.bus.publish("RUNTIME_RESUMED", self.get_status())
+        status = self.get_status()
+        self.bus.publish("RUNTIME_RESUMED", status)
         return {
             "resumed": True,
-            "status": self.get_status(),
+            "status": status,
         }
 
     def stop(self) -> dict:
         self.telegram_service.stop()
         self.betfair_service.disconnect()
         self.mode = RuntimeMode.STOPPED
-        self.bus.publish("RUNTIME_STOPPED", self.get_status())
+        status = self.get_status()
+        self.bus.publish("RUNTIME_STOPPED", status)
         return {
             "stopped": True,
-            "status": self.get_status(),
+            "status": status,
         }
 
     def reset_cycle(self) -> dict:
         self.table_manager.reset_all()
-        self.duplication_guard = DuplicationGuard()
+        self.duplication_guard.clear()
         self.risk_desk.reset_recovery_cycle()
-        self._rebuild_reconciliation_engine()
 
         if self.simulation_mode and hasattr(self.betfair_service, "reset_simulation"):
             try:
@@ -192,14 +193,15 @@ class RuntimeController:
             except Exception:
                 logger.exception("Errore reset_simulation")
 
-        self.bus.publish("RUNTIME_CYCLE_RESET", self.get_status())
+        status = self.get_status()
+        self.bus.publish("RUNTIME_CYCLE_RESET", status)
         return {
             "reset": True,
-            "status": self.get_status(),
+            "status": status,
         }
 
     # =========================================================
-    # SIGNAL PROCESSING
+    # SIGNAL FLOW
     # =========================================================
     def _reject_signal(self, signal: dict, reason: str) -> None:
         self.bus.publish(
@@ -226,7 +228,7 @@ class RuntimeController:
             return
 
         required = ["market_id", "selection_id"]
-        missing = [k for k in required if not signal.get(k)]
+        missing = [k for k in required if signal.get(k) in (None, "")]
         if missing:
             self._reject_signal(signal, f"campi_mancanti:{','.join(missing)}")
             return
@@ -281,7 +283,7 @@ class RuntimeController:
             "simulation_mode": bool(signal.get("simulation_mode", self.simulation_mode)),
             "event_key": event_key,
             "table_id": decision.table_id,
-            "batch_id": "",
+            "batch_id": str(signal.get("batch_id") or ""),
             "roserpina_reason": decision.reason,
             "roserpina_mode": decision.desk_mode.value,
         }
@@ -339,15 +341,17 @@ class RuntimeController:
         self._release_if_terminal(payload)
 
     def _on_quick_bet_accepted(self, payload: dict) -> None:
-        pass
+        # Ordine accettato ma non ancora chiuso: il tavolo resta attivo.
+        return
 
     def _on_quick_bet_partial(self, payload: dict) -> None:
-        pass
+        # Parziale: il tavolo resta attivo.
+        return
 
     def _on_quick_bet_filled(self, payload: dict) -> None:
-        pass
+        # Filled: il tavolo resta attivo finché non arriva la chiusura posizione.
+        return
 
-    # noqa: payload currently used only for terminal release path
     def _on_quick_bet_rollback_done(self, payload: dict) -> None:
         self._release_if_terminal(payload)
 
@@ -371,19 +375,21 @@ class RuntimeController:
 
         self.risk_desk.apply_closed_pnl(pnl)
 
-        if batch_id:
-            self.batch_manager.update_batch_status(
-                batch_id,
-                "EXECUTED",
-                notes="Posizione chiusa",
-            )
-
         current_drawdown = self.risk_desk.drawdown_pct()
+
+        if batch_id:
+            self.bus.publish(
+                "BATCH_POSITION_CLOSED",
+                {
+                    "batch_id": batch_id,
+                    "pnl": pnl,
+                    "event_key": event_key,
+                },
+            )
 
         if current_drawdown >= self.config.auto_reset_drawdown_pct:
             self.table_manager.reset_all()
-            self.duplication_guard = DuplicationGuard()
-            self._rebuild_reconciliation_engine()
+            self.duplication_guard.clear()
             self.risk_desk.reset_recovery_cycle()
 
             self.bus.publish(
@@ -402,7 +408,10 @@ class RuntimeController:
     # =========================================================
     def get_status(self) -> dict:
         funds = self.betfair_service.get_account_funds()
-        bankroll_current = float(funds.get("available", self.risk_desk.bankroll_current) or self.risk_desk.bankroll_current)
+        bankroll_current = float(
+            funds.get("available", self.risk_desk.bankroll_current) or self.risk_desk.bankroll_current
+        )
+
         if bankroll_current != float(self.risk_desk.bankroll_current):
             self.risk_desk.sync_bankroll(bankroll_current)
 
