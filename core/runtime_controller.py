@@ -12,7 +12,7 @@ from core.risk_desk import RiskDesk
 from core.system_state import DeskMode, RuntimeMode
 from core.table_manager import TableManager
 
-# 🔥 NUOVI IMPORT
+# 🔥 AGGIUNTE OBBLIGATORIE
 from core.pnl_engine import PnLEngine
 from core.market_tracker import MarketTracker
 
@@ -37,10 +37,19 @@ class RuntimeController:
         self.telegram_service = telegram_service
         self.trading_engine = trading_engine
 
+        # =========================================================
+        # CONFIG
+        # =========================================================
         self.config = self.settings_service.load_roserpina_config()
 
+        # =========================================================
+        # CORE COMPONENTS
+        # =========================================================
         self.table_manager = TableManager(table_count=self.config.table_count)
+
+        # 🔥 importantissimo: reset ad ogni start runtime
         self.duplication_guard = DuplicationGuard()
+
         self.risk_desk = RiskDesk()
         self.mm = RoserpinaMoneyManagement(self.config)
 
@@ -55,7 +64,9 @@ class RuntimeController:
             duplication_guard=self.duplication_guard,
         )
 
-        # 🔥 AGGIUNTE CORE
+        # =========================================================
+        # 🔥 NUOVI COMPONENTI
+        # =========================================================
         self.pnl_engine = PnLEngine(bus=self.bus)
 
         self.market_tracker = MarketTracker(
@@ -63,12 +74,15 @@ class RuntimeController:
             betfair_service=self.betfair_service,
         )
 
+        # =========================================================
+        # STATE
+        # =========================================================
         self.mode = RuntimeMode.STOPPED
         self.last_error = ""
         self.last_signal_at = ""
 
         # =========================================================
-        # BUS EVENTS
+        # EVENT BUS
         # =========================================================
         self.bus.subscribe("SIGNAL_RECEIVED", self._on_signal_received)
         self.bus.subscribe("QUICK_BET_FAILED", self._on_quick_bet_failed)
@@ -101,8 +115,11 @@ class RuntimeController:
     # =========================================================
     # CONTROL
     # =========================================================
-    def start(self, password: str | None = None) -> dict:
+    def start(self, password: Optional[str] = None) -> dict:
         self.reload_config()
+
+        # 🔥 reset duplication guard ad ogni start
+        self.duplication_guard = DuplicationGuard()
 
         session = self.betfair_service.connect(password=password)
         funds = self.betfair_service.get_account_funds()
@@ -216,7 +233,7 @@ class RuntimeController:
         self._release(payload)
 
     # =========================================================
-    # CLOSE POSITION
+    # CLOSE POSITION (PnL Engine)
     # =========================================================
     def _on_close_position(self, payload: dict) -> None:
         table_id = payload.get("table_id")
