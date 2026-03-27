@@ -11,6 +11,20 @@ logger = logging.getLogger(__name__)
 
 
 class TelegramModule:
+    """
+    Mixin Telegram per MiniPickfairGUI.
+
+    Responsabilità:
+    - avvio/stop listener
+    - gestione segnale Telegram
+    - CRUD chat monitorate
+    - CRUD pattern avanzati
+    - refresh trees UI
+
+    Obiettivo:
+    - listener -> _handle_telegram_signal -> bus -> runtime/order flow
+    """
+
     # =========================================================
     # INTERNAL HELPERS
     # =========================================================
@@ -48,9 +62,7 @@ class TelegramModule:
             if isinstance(raw, str):
                 raw = raw.replace(",", ".").strip()
             stake = float(raw)
-            if stake <= 0:
-                return 1.0
-            return stake
+            return stake if stake > 0 else 1.0
         except Exception:
             return 1.0
 
@@ -94,14 +106,39 @@ class TelegramModule:
             )
             self.db.save_received_signal(payload)
         except Exception as e:
-            logger.exception(
-                "[TelegramModule] Errore save_received_signal status=%s: %s",
-                status,
-                e,
-            )
+            logger.exception("[TelegramModule] Errore save_received_signal status=%s: %s", status, e)
+
+    def _bus_has_subscriber(self, event_name: str) -> bool:
+        """
+        Compatibilità: prova a capire se l'EventBus espone un dict subscribers.
+        """
+        try:
+            subscribers = getattr(self.bus, "subscribers", None)
+            if isinstance(subscribers, dict):
+                return bool(subscribers.get(event_name))
+        except Exception:
+            pass
+        return False
+
+    def _publish_order_signal(self, payload: dict) -> None:
+        """
+        Compatibilità con repository vecchi/nuovi:
+        - preferisce REQ_QUICK_BET se presente
+        - altrimenti SIGNAL_RECEIVED
+        - fallback su REQ_QUICK_BET
+        """
+        if self._bus_has_subscriber("REQ_QUICK_BET"):
+            self.bus.publish("REQ_QUICK_BET", payload)
+            return
+
+        if self._bus_has_subscriber("SIGNAL_RECEIVED"):
+            self.bus.publish("SIGNAL_RECEIVED", payload)
+            return
+
+        self.bus.publish("REQ_QUICK_BET", payload)
 
     # =========================================================
-    # LISTENER CONTROL
+    # START / STOP LISTENER
     # =========================================================
     def _start_telegram_listener(self):
         try:
@@ -223,8 +260,7 @@ class TelegramModule:
     # =========================================================
     def _handle_telegram_signal(self, signal):
         """
-        Riceve il segnale dal listener e lo processa nel main thread.
-        Pubblica SIGNAL_RECEIVED verso il runtime.
+        Listener -> handler -> build payload -> publish order signal.
         """
 
         def safe_process_signal():
@@ -304,19 +340,6 @@ class TelegramModule:
                     self._safe_refresh_telegram_signals_tree()
                     return
 
-            if selection_id is None or not market_id:
-                logger.error("[TelegramModule] Segnale ignorato: market_id o selection_id mancanti.")
-                self._safe_db_save_received_signal(
-                    selection=selection_name,
-                    action=action,
-                    price=original_price,
-                    stake=stake,
-                    status="ERROR",
-                    signal=signal_data,
-                )
-                self._safe_refresh_telegram_signals_tree()
-                return
-
             payload = processor.build_runtime_signal(
                 signal=signal_data,
                 stake=stake,
@@ -336,15 +359,15 @@ class TelegramModule:
                 self._safe_refresh_telegram_signals_tree()
                 return
 
-            logger.info(
-                "[TelegramModule] Inoltro segnale al runtime via SIGNAL_RECEIVED: %s",
-                payload,
-            )
+            # Manteniamo anche il raw signal per debug/strategia futura
+            payload["raw_signal"] = signal_data
+
+            logger.info("[TelegramModule] Inoltro segnale betting: %s", payload)
 
             try:
-                self.bus.publish("SIGNAL_RECEIVED", payload)
+                self._publish_order_signal(payload)
             except Exception as e:
-                logger.exception("[TelegramModule] Errore publish SIGNAL_RECEIVED: %s", e)
+                logger.exception("[TelegramModule] Errore publish ordine: %s", e)
                 self._safe_db_save_received_signal(
                     selection=selection_name,
                     action=action,
@@ -526,7 +549,7 @@ class TelegramModule:
         if priority_txt is None:
             return None
 
-        payload = {
+        return {
             "label": str(label).strip(),
             "pattern": str(pattern).strip(),
             "market_type": str(market_type or "MATCH_ODDS").strip() or "MATCH_ODDS",
@@ -540,7 +563,6 @@ class TelegramModule:
             "priority": self._safe_parse_int_optional(priority_txt) or 100,
             "enabled": bool(current.get("enabled", True)),
         }
-        return payload
 
     def _minute_range_text(self, rule):
         a = rule.get("min_minute")
@@ -652,10 +674,7 @@ class TelegramModule:
             messagebox.showinfo("Successo", "Regola aggiornata correttamente.")
         except Exception as e:
             logger.exception("[TelegramModule] Errore edit_signal_pattern: %s", e)
-            messagebox.showerror(
-                "Errore",
-                f"Impossibile aggiornare la regola: {e}",
-            )
+            messagebox.showerror("Errore", f"Impossibile aggiornare la regola: {e}")
 
     def _delete_signal_pattern(self):
         if not hasattr(self, "rules_tree") or not self.rules_tree.winfo_exists():
@@ -668,10 +687,7 @@ class TelegramModule:
 
         pattern_id = selected[0]
 
-        if not messagebox.askyesno(
-            "Conferma eliminazione",
-            "Vuoi davvero eliminare la regola selezionata?",
-        ):
+        if not messagebox.askyesno("Conferma eliminazione", "Vuoi davvero eliminare la regola selezionata?"):
             return
 
         try:
@@ -680,10 +696,7 @@ class TelegramModule:
             messagebox.showinfo("Successo", "Regola eliminata.")
         except Exception as e:
             logger.exception("[TelegramModule] Errore delete_signal_pattern: %s", e)
-            messagebox.showerror(
-                "Errore",
-                f"Impossibile eliminare la regola: {e}",
-            )
+            messagebox.showerror("Errore", f"Impossibile eliminare la regola: {e}")
 
     def _toggle_signal_pattern(self):
         if not hasattr(self, "rules_tree") or not self.rules_tree.winfo_exists():
@@ -691,10 +704,7 @@ class TelegramModule:
 
         selected = self.rules_tree.selection()
         if not selected:
-            messagebox.showwarning(
-                "Attenzione",
-                "Seleziona una regola da attivare/disattivare.",
-            )
+            messagebox.showwarning("Attenzione", "Seleziona una regola da attivare/disattivare.")
             return
 
         pattern_id = selected[0]
@@ -706,10 +716,7 @@ class TelegramModule:
             messagebox.showinfo("Successo", f"Regola {stato_txt}.")
         except Exception as e:
             logger.exception("[TelegramModule] Errore toggle_signal_pattern: %s", e)
-            messagebox.showerror(
-                "Errore",
-                f"Impossibile cambiare stato della regola: {e}",
-            )
+            messagebox.showerror("Errore", f"Impossibile cambiare stato della regola: {e}")
 
     # =========================================================
     # SIGNALS TREE
