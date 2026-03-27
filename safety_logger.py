@@ -1,15 +1,21 @@
+from __future__ import annotations
+
 """
 Safety Logger - Logging automatico per errori di sicurezza
 
-Registra automaticamente su file .txt tutti gli eventi critici:
-- MixedDutchingError (errori calcolo dutching)
+Registra automaticamente su file .log tutti gli eventi critici:
+- MixedDutchingError
 - AI bloccata per mercato non compatibile
-- Auto-green negato (con motivo specifico)
+- Auto-green negato
+- Safe mode
+- Profit validation
+- Market validation
+- Liquidity block / warning
 
-I log sono salvati in %APPDATA%/Pickfair/logs/safety_YYYYMMDD.log
+I log sono salvati in:
+- Windows: %APPDATA%/Pickfair/logs/
+- Linux/macOS: ~/.config/Pickfair/logs/
 """
-
-from __future__ import annotations
 
 import logging
 import os
@@ -21,8 +27,6 @@ from typing import Any, Dict, Optional
 
 
 class SafetyEventType(Enum):
-    """Tipi di eventi di sicurezza loggati."""
-
     MIXED_DUTCHING_ERROR = "MIXED_DUTCH_ERR"
     AI_BLOCKED_MARKET = "AI_BLOCKED"
     AUTO_GREEN_DENIED = "AUTO_GREEN_DENIED"
@@ -41,33 +45,37 @@ class SafetyLogger:
     """
 
     _instance: Optional["SafetyLogger"] = None
-    _lock = threading.Lock()
+    _instance_lock = threading.Lock()
 
     def __new__(cls) -> "SafetyLogger":
         if cls._instance is None:
-            with cls._lock:
+            with cls._instance_lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
                     cls._instance._initialized = False
         return cls._instance
 
     def __init__(self):
-        if self._initialized:
+        if getattr(self, "_initialized", False):
             return
 
         self._initialized = True
-        self._log_lock = threading.Lock()
+        self._log_lock = threading.RLock()
         self._log_dir = self._get_log_directory()
         self._current_date: Optional[str] = None
         self._file_handler: Optional[logging.FileHandler] = None
-        self._logger = logging.getLogger("pickfair.safety")
+
+        logger_name = "pickfair.safety"
+        self._logger = logging.getLogger(logger_name)
         self._logger.setLevel(logging.INFO)
         self._logger.propagate = False
 
         self._setup_logger()
 
+    # =========================================================
+    # PATH / SETUP
+    # =========================================================
     def _get_log_directory(self) -> Path:
-        """Ottiene la directory per i log di sicurezza."""
         if os.name == "nt":
             base = Path(os.environ.get("APPDATA", "."))
         else:
@@ -78,77 +86,85 @@ class SafetyLogger:
         return log_dir
 
     def _get_log_filename(self) -> str:
-        """Genera nome file con data corrente."""
         return f"safety_{datetime.now().strftime('%Y%m%d')}.log"
 
-    def _setup_logger(self):
-        """Configura il logger con handler file."""
+    def _setup_logger(self) -> None:
         today = datetime.now().strftime("%Y%m%d")
 
-        if self._current_date == today and self._file_handler:
+        if self._current_date == today and self._file_handler is not None:
             return
 
-        if self._file_handler:
-            self._logger.removeHandler(self._file_handler)
-            self._file_handler.close()
+        if self._file_handler is not None:
+            try:
+                self._logger.removeHandler(self._file_handler)
+            except Exception:
+                pass
+            try:
+                self._file_handler.close()
+            except Exception:
+                pass
 
         log_path = self._log_dir / self._get_log_filename()
-        self._file_handler = logging.FileHandler(log_path, encoding="utf-8")
-        self._file_handler.setLevel(logging.INFO)
+        handler = logging.FileHandler(log_path, encoding="utf-8")
+        handler.setLevel(logging.INFO)
 
         formatter = logging.Formatter(
             "%(asctime)s | %(levelname)s | %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
-        self._file_handler.setFormatter(formatter)
-        self._logger.addHandler(self._file_handler)
+        handler.setFormatter(formatter)
+
+        self._file_handler = handler
+        self._logger.addHandler(handler)
         self._current_date = today
 
-    def _rotate_if_needed(self):
-        """Ruota il file di log se è cambiato il giorno."""
+    def _rotate_if_needed(self) -> None:
         today = datetime.now().strftime("%Y%m%d")
         if self._current_date != today:
             self._setup_logger()
 
+    # =========================================================
+    # CORE LOG
+    # =========================================================
     def log_event(
         self,
         event_type: SafetyEventType,
         message: str,
         details: Optional[Dict[str, Any]] = None,
-    ):
-        """
-        Registra un evento di sicurezza.
-
-        Args:
-            event_type: Tipo di evento (da SafetyEventType)
-            message: Messaggio descrittivo
-            details: Dettagli aggiuntivi (dict opzionale)
-        """
+    ) -> None:
         with self._log_lock:
             self._rotate_if_needed()
 
             detail_str = ""
             if details:
-                detail_str = " | " + " | ".join(f"{k}={v}" for k, v in details.items())
+                parts = []
+                for key, value in details.items():
+                    try:
+                        parts.append(f"{key}={value}")
+                    except Exception:
+                        parts.append(f"{key}=<unprintable>")
+                detail_str = " | " + " | ".join(parts)
 
             log_line = f"[{event_type.value}] {message}{detail_str}"
             self._logger.info(log_line)
 
+    # =========================================================
+    # SPECIALIZED HELPERS
+    # =========================================================
     def log_mixed_dutching_error(
         self,
         error_message: str,
         market_id: Optional[str] = None,
         stake: Optional[float] = None,
         selections_count: Optional[int] = None,
-    ):
-        """Logga errore MixedDutchingError."""
+    ) -> None:
         self.log_event(
             SafetyEventType.MIXED_DUTCHING_ERROR,
             error_message,
             {
                 "market_id": market_id or "N/A",
-                "stake": f"€{stake:.2f}" if stake else "N/A",
-                "selections": selections_count or 0,
+                "stake": f"EUR{float(stake):.2f}" if stake is not None else "N/A",
+                "selections": int(selections_count or 0),
             },
         )
 
@@ -157,12 +173,14 @@ class SafetyLogger:
         market_type: str,
         market_id: Optional[str] = None,
         reason: str = "Mercato non compatibile con AI Mixed",
-    ):
-        """Logga AI bloccata per mercato non compatibile."""
+    ) -> None:
         self.log_event(
             SafetyEventType.AI_BLOCKED_MARKET,
             reason,
-            {"market_type": market_type, "market_id": market_id or "N/A"},
+            {
+                "market_type": market_type,
+                "market_id": market_id or "N/A",
+            },
         )
 
     def log_auto_green_denied(
@@ -171,23 +189,27 @@ class SafetyLogger:
         order_id: Optional[str] = None,
         market_status: Optional[str] = None,
         elapsed_seconds: Optional[float] = None,
-    ):
-        """Logga auto-green negato con motivo."""
+    ) -> None:
         details = {"order_id": order_id or "N/A"}
-
         if market_status:
             details["market_status"] = market_status
         if elapsed_seconds is not None:
-            details["elapsed_sec"] = f"{elapsed_seconds:.2f}"
+            details["elapsed_sec"] = f"{float(elapsed_seconds):.2f}"
 
-        self.log_event(SafetyEventType.AUTO_GREEN_DENIED, reason, details)
+        self.log_event(
+            SafetyEventType.AUTO_GREEN_DENIED,
+            reason,
+            details,
+        )
 
-    def log_safe_mode_triggered(self, consecutive_errors: int, last_error: str):
-        """Logga attivazione Safe Mode."""
+    def log_safe_mode_triggered(self, consecutive_errors: int, last_error: str) -> None:
         self.log_event(
             SafetyEventType.SAFE_MODE_TRIGGERED,
             "Safe Mode attivato - AI disabilitata",
-            {"consecutive_errors": consecutive_errors, "last_error": last_error},
+            {
+                "consecutive_errors": int(consecutive_errors),
+                "last_error": last_error,
+            },
         )
 
     def log_profit_validation_failed(
@@ -195,24 +217,26 @@ class SafetyLogger:
         variance: float,
         threshold: float,
         market_id: Optional[str] = None,
-    ):
-        """Logga fallimento validazione profitto uniforme."""
+    ) -> None:
         self.log_event(
             SafetyEventType.PROFIT_VALIDATION_FAILED,
-            f"Varianza profitto {variance:.2f} supera soglia {threshold:.2f}",
-            {"market_id": market_id or "N/A"},
+            f"Varianza profitto {float(variance):.2f} supera soglia {float(threshold):.2f}",
+            {
+                "market_id": market_id or "N/A",
+            },
         )
 
     def log_market_validation_failed(
         self,
         market_type: str,
         market_id: Optional[str] = None,
-    ):
-        """Logga fallimento validazione mercato."""
+    ) -> None:
         self.log_event(
             SafetyEventType.MARKET_VALIDATION_FAILED,
             f"Mercato {market_type} non valido per dutching",
-            {"market_id": market_id or "N/A"},
+            {
+                "market_id": market_id or "N/A",
+            },
         )
 
     def log_liquidity_block(
@@ -226,24 +250,19 @@ class SafetyLogger:
         side: str,
         reason: str = "INSUFFICIENT_LIQUIDITY",
         simulation: bool = False,
-    ):
-        """
-        Logga blocco ordine per liquidita insufficiente.
-
-        Telemetria completa per analisi e tuning soglie.
-        """
+    ) -> None:
         self.log_event(
             SafetyEventType.LIQUIDITY_BLOCK,
             f"Ordine bloccato - {runner_name}",
             {
                 "market_id": market_id,
-                "selection_id": selection_id,
-                "stake": f"EUR{stake:.2f}",
-                "available": f"EUR{available_liquidity:.2f}",
-                "required": f"EUR{required_liquidity:.2f}",
+                "selection_id": int(selection_id),
+                "stake": f"EUR{float(stake):.2f}",
+                "available": f"EUR{float(available_liquidity):.2f}",
+                "required": f"EUR{float(required_liquidity):.2f}",
                 "side": side,
                 "reason": reason,
-                "simulation": simulation,
+                "simulation": bool(simulation),
             },
         )
 
@@ -257,24 +276,25 @@ class SafetyLogger:
         required_liquidity: float,
         side: str,
         simulation: bool = False,
-    ):
-        """Logga warning liquidita (quando in warning-only mode)."""
+    ) -> None:
         self.log_event(
             SafetyEventType.LIQUIDITY_WARNING,
             f"Warning liquidita - {runner_name}",
             {
                 "market_id": market_id,
-                "selection_id": selection_id,
-                "stake": f"EUR{stake:.2f}",
-                "available": f"EUR{available_liquidity:.2f}",
-                "required": f"EUR{required_liquidity:.2f}",
+                "selection_id": int(selection_id),
+                "stake": f"EUR{float(stake):.2f}",
+                "available": f"EUR{float(available_liquidity):.2f}",
+                "required": f"EUR{float(required_liquidity):.2f}",
                 "side": side,
-                "simulation": simulation,
+                "simulation": bool(simulation),
             },
         )
 
+    # =========================================================
+    # INFO
+    # =========================================================
     def get_log_path(self) -> Path:
-        """Restituisce il path del file log corrente."""
         return self._log_dir / self._get_log_filename()
 
 
@@ -282,7 +302,6 @@ _safety_logger: Optional[SafetyLogger] = None
 
 
 def get_safety_logger() -> SafetyLogger:
-    """Ottiene l'istanza singleton del SafetyLogger."""
     global _safety_logger
     if _safety_logger is None:
         _safety_logger = SafetyLogger()
@@ -290,8 +309,6 @@ def get_safety_logger() -> SafetyLogger:
 
 
 class LiquidityStatus:
-    """Status liquidita per UI indicator."""
-
     OK = "OK"
     BORDERLINE = "BORDERLINE"
     DRY = "DRY"
@@ -309,30 +326,18 @@ def evaluate_runner_liquidity(
     """
     Valuta lo status liquidita di un runner per UI indicator.
 
-    Logica ALLINEATA con Liquidity Guard - usa stesse soglie.
-
-    Args:
-        stake: Stake richiesto
-        available_liquidity: Liquidita disponibile sul ladder
-        side: BACK o LAY
-        price: Prezzo (per calcolo liability LAY)
-        multiplier: Soglia moltiplicatore (None = usa config)
-        min_absolute: Minimo assoluto (None = usa config)
-        warning_only: Se True, insufficiente = BORDERLINE; se False = DRY (None = usa config)
-
-    Returns:
-        Dict con:
-            - status: OK / BORDERLINE / DRY
-            - ratio: Rapporto liquidita/richiesto (considerando multiplier)
-            - color: Colore per UI (#4CAF50 / #FFC107 / #F44336)
-            - tooltip: Testo descrittivo
-            - will_block: True se il guard bloccherebbe questo ordine
+    Allineata a trading_config quando disponibile.
     """
-    from trading_config import (
-        LIQUIDITY_MULTIPLIER,
-        LIQUIDITY_WARNING_ONLY,
-        MIN_LIQUIDITY_ABSOLUTE,
-    )
+    try:
+        from trading_config import (
+            LIQUIDITY_MULTIPLIER,
+            LIQUIDITY_WARNING_ONLY,
+            MIN_LIQUIDITY_ABSOLUTE,
+        )
+    except Exception:
+        LIQUIDITY_MULTIPLIER = 1.0
+        LIQUIDITY_WARNING_ONLY = False
+        MIN_LIQUIDITY_ABSOLUTE = 0.0
 
     if multiplier is None:
         multiplier = LIQUIDITY_MULTIPLIER
@@ -340,6 +345,11 @@ def evaluate_runner_liquidity(
         min_absolute = MIN_LIQUIDITY_ABSOLUTE
     if warning_only is None:
         warning_only = LIQUIDITY_WARNING_ONLY
+
+    stake = float(stake or 0.0)
+    available_liquidity = float(available_liquidity or 0.0)
+    price = float(price or 0.0)
+    side = str(side or "BACK").upper()
 
     if stake <= 0:
         return {
@@ -351,18 +361,18 @@ def evaluate_runner_liquidity(
         }
 
     if side == "LAY":
-        base_required = stake * (price - 1) if price > 1 else stake
+        base_required = stake * (price - 1.0) if price > 1.0 else stake
     else:
         base_required = stake
 
-    required_with_multiplier = base_required * multiplier
+    required_with_multiplier = float(base_required) * float(multiplier or 1.0)
 
-    if available_liquidity < min_absolute:
+    if available_liquidity < float(min_absolute or 0.0):
         return {
             "status": LiquidityStatus.DRY,
             "ratio": 0.0,
             "color": "#F44336",
-            "tooltip": f"Liquidita: EUR{available_liquidity:.0f} < min EUR{min_absolute:.0f}",
+            "tooltip": f"Liquidita: EUR{available_liquidity:.0f} < min EUR{float(min_absolute):.0f}",
             "will_block": True,
         }
 
@@ -375,7 +385,7 @@ def evaluate_runner_liquidity(
             "will_block": True,
         }
 
-    ratio = available_liquidity / required_with_multiplier
+    ratio = available_liquidity / required_with_multiplier if required_with_multiplier > 0 else float("inf")
 
     if ratio >= 1.0:
         status = LiquidityStatus.OK
