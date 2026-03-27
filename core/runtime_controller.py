@@ -54,6 +54,7 @@ class RuntimeController:
         self.mode = RuntimeMode.STOPPED
         self.last_error = ""
         self.last_signal_at = ""
+        self.simulation_mode = False
 
         self.bus.subscribe("SIGNAL_RECEIVED", self._on_signal_received)
         self.bus.subscribe("QUICK_BET_FAILED", self._on_quick_bet_failed)
@@ -77,8 +78,13 @@ class RuntimeController:
         )
 
     # =========================================================
-    # CONFIG / STATE
+    # CONFIG / MODE
     # =========================================================
+    def set_simulation_mode(self, enabled: bool) -> None:
+        self.simulation_mode = bool(enabled)
+        if hasattr(self.betfair_service, "set_simulation_mode"):
+            self.betfair_service.set_simulation_mode(self.simulation_mode)
+
     def reload_config(self) -> None:
         self.config = self.settings_service.load_roserpina_config()
         self.mm = RoserpinaMoneyManagement(self.config)
@@ -106,10 +112,24 @@ class RuntimeController:
     # =========================================================
     # START / STOP
     # =========================================================
-    def start(self, password: str | None = None) -> dict:
+    def start(
+        self,
+        password: str | None = None,
+        simulation_mode: bool | None = None,
+    ) -> dict:
         self.reload_config()
 
-        session = self.betfair_service.connect(password=password)
+        if simulation_mode is not None:
+            self.set_simulation_mode(simulation_mode)
+        else:
+            # mantiene stato attuale, ma lo propaga al service
+            self.set_simulation_mode(self.simulation_mode)
+
+        session = self.betfair_service.connect(
+            password=password,
+            simulation_mode=self.simulation_mode,
+        )
+
         funds = self.betfair_service.get_account_funds()
         self.risk_desk.sync_bankroll(float(funds.get("available", 0.0) or 0.0))
 
@@ -165,6 +185,12 @@ class RuntimeController:
         self.duplication_guard = DuplicationGuard()
         self.risk_desk.reset_recovery_cycle()
         self._rebuild_reconciliation_engine()
+
+        if self.simulation_mode and hasattr(self.betfair_service, "reset_simulation"):
+            try:
+                self.betfair_service.reset_simulation()
+            except Exception:
+                logger.exception("Errore reset_simulation")
 
         self.bus.publish("RUNTIME_CYCLE_RESET", self.get_status())
         return {
@@ -252,7 +278,7 @@ class RuntimeController:
             "event_name": signal.get("event") or signal.get("match") or signal.get("event_name") or "",
             "market_name": signal.get("market") or signal.get("market_name") or signal.get("market_type") or "",
             "runner_name": signal.get("selection") or signal.get("runner_name") or signal.get("runnerName") or "",
-            "simulation_mode": bool(signal.get("simulation_mode", False)),
+            "simulation_mode": bool(signal.get("simulation_mode", self.simulation_mode)),
             "event_key": event_key,
             "table_id": decision.table_id,
             "batch_id": "",
@@ -313,17 +339,15 @@ class RuntimeController:
         self._release_if_terminal(payload)
 
     def _on_quick_bet_accepted(self, payload: dict) -> None:
-        # ordine accettato, nessuna azione terminale
         pass
 
     def _on_quick_bet_partial(self, payload: dict) -> None:
-        # parziale, non rilasciare il lock
         pass
 
     def _on_quick_bet_filled(self, payload: dict) -> None:
-        # filled, la posizione resta aperta finché non arriva RUNTIME_CLOSE_POSITION
         pass
 
+    # noqa: payload currently used only for terminal release path
     def _on_quick_bet_rollback_done(self, payload: dict) -> None:
         self._release_if_terminal(payload)
 
@@ -354,7 +378,9 @@ class RuntimeController:
                 notes="Posizione chiusa",
             )
 
-        if self.risk_desk.drawdown_pct() >= self.config.auto_reset_drawdown_pct:
+        current_drawdown = self.risk_desk.drawdown_pct()
+
+        if current_drawdown >= self.config.auto_reset_drawdown_pct:
             self.table_manager.reset_all()
             self.duplication_guard = DuplicationGuard()
             self._rebuild_reconciliation_engine()
@@ -364,17 +390,22 @@ class RuntimeController:
                 "ROSERPINA_AUTO_RESET",
                 {
                     "reason": "drawdown_limit",
-                    "drawdown_pct": self.risk_desk.drawdown_pct(),
+                    "drawdown_pct": current_drawdown,
                 },
             )
 
-        if self.risk_desk.drawdown_pct() >= self.config.lockdown_drawdown_pct:
+        if current_drawdown >= self.config.lockdown_drawdown_pct:
             self.force_lockdown("Drawdown oltre soglia lockdown")
 
     # =========================================================
     # STATUS
     # =========================================================
     def get_status(self) -> dict:
+        funds = self.betfair_service.get_account_funds()
+        bankroll_current = float(funds.get("available", self.risk_desk.bankroll_current) or self.risk_desk.bankroll_current)
+        if bankroll_current != float(self.risk_desk.bankroll_current):
+            self.risk_desk.sync_bankroll(bankroll_current)
+
         snapshot = self.risk_desk.build_snapshot(
             runtime_mode=self.mode,
             desk_mode=self._desk_mode(),
@@ -390,4 +421,15 @@ class RuntimeController:
         data = self.risk_desk.as_dict(snapshot)
         data["tables"] = self.table_manager.snapshot()
         data["duplication_guard"] = self.duplication_guard.snapshot()
+        data["simulation_mode"] = bool(self.simulation_mode)
+        data["broker_status"] = self.betfair_service.status()
+        data["account_funds"] = funds
+
+        if self.simulation_mode and hasattr(self.betfair_service, "simulation_snapshot"):
+            try:
+                data["simulation_snapshot"] = self.betfair_service.simulation_snapshot()
+            except Exception:
+                logger.exception("Errore simulation_snapshot")
+                data["simulation_snapshot"] = {}
+
         return data
