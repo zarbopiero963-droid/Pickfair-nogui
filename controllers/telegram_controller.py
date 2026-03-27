@@ -100,19 +100,29 @@ class TelegramController:
         def task():
             try:
                 from telethon import TelegramClient
+                from telethon.sessions import StringSession
 
                 async def run():
-                    client = TelegramClient(
-                        self._get_session_path(),
-                        int(api_id),
-                        api_hash,
-                    )
+                    session_string = self._get_settings().get("session_string") or ""
+                    if session_string:
+                        client = TelegramClient(
+                            StringSession(session_string),
+                            int(api_id),
+                            api_hash,
+                        )
+                    else:
+                        client = TelegramClient(
+                            self._get_session_path(),
+                            int(api_id),
+                            api_hash,
+                        )
+
                     await client.connect()
 
                     if await client.is_user_authorized():
-                        session_string = client.session.save()
+                        new_session_string = client.session.save()
                         await client.disconnect()
-                        return True, session_string, "Già autenticato. Nessun codice necessario."
+                        return True, new_session_string, "Già autenticato. Nessun codice necessario."
 
                     await client.send_code_request(phone)
                     await client.disconnect()
@@ -132,6 +142,11 @@ class TelegramController:
                             "session_string": session_string,
                             "phone_number": phone,
                             "enabled": True,
+                            "auto_bet": bool(self.app.tg_auto_bet_var.get()),
+                            "require_confirmation": bool(self.app.tg_confirm_var.get()),
+                            "auto_stake": float(
+                                str(self.app.tg_auto_stake_var.get()).replace(",", ".")
+                            ),
                         }
                     )
                     if getattr(self.app.db, "save_telegram_settings", None):
@@ -176,17 +191,27 @@ class TelegramController:
             try:
                 from telethon import TelegramClient
                 from telethon.errors import SessionPasswordNeededError
+                from telethon.sessions import StringSession
 
                 async def run():
-                    client = TelegramClient(
-                        self._get_session_path(),
-                        int(api_id),
-                        api_hash,
-                    )
+                    session_string = self._get_settings().get("session_string") or ""
+                    if session_string:
+                        client = TelegramClient(
+                            StringSession(session_string),
+                            int(api_id),
+                            api_hash,
+                        )
+                    else:
+                        client = TelegramClient(
+                            self._get_session_path(),
+                            int(api_id),
+                            api_hash,
+                        )
+
                     await client.connect()
 
                     try:
-                        await client.sign_in(phone, code)
+                        await client.sign_in(phone=phone, code=code)
                     except SessionPasswordNeededError:
                         if not password:
                             await client.disconnect()
