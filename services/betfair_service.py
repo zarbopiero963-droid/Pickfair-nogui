@@ -117,6 +117,7 @@ class BetfairService:
             session_info = client.login(password=password)
 
             self.client = client
+            self.simulation_broker = None
             self.connected = True
             self.last_error = ""
             self.simulation_mode = False
@@ -156,15 +157,23 @@ class BetfairService:
                 pass
 
         try:
-            starting_balance = self._load_simulation_starting_balance()
-            commission_pct = self._load_simulation_commission_pct()
+            sim_cfg = self._load_simulation_config()
 
             broker = SimulationBroker(
-                starting_balance=starting_balance,
-                commission_pct=commission_pct,
-                partial_fill_enabled=True,
-                consume_liquidity=True,
+                starting_balance=float(sim_cfg.get("starting_balance", 1000.0) or 1000.0),
+                commission_pct=float(sim_cfg.get("commission_pct", 4.5) or 4.5),
+                partial_fill_enabled=bool(sim_cfg.get("partial_fill_enabled", True)),
+                consume_liquidity=bool(sim_cfg.get("consume_liquidity", True)),
             )
+
+            if bool(sim_cfg.get("persist_state", True)):
+                persisted_state = self._load_persisted_simulation_state()
+                if persisted_state:
+                    try:
+                        broker.state.load_from_dict(persisted_state)
+                    except Exception:
+                        logger.exception("Errore load persisted simulation state")
+
             session_info = broker.login(password="SIMULATION")
 
             self.simulation_broker = broker
@@ -177,8 +186,11 @@ class BetfairService:
                 "connected": True,
                 "session": session_info,
                 "simulated": True,
-                "starting_balance": float(starting_balance),
-                "commission_pct": float(commission_pct),
+                "starting_balance": float(sim_cfg.get("starting_balance", 1000.0) or 1000.0),
+                "commission_pct": float(sim_cfg.get("commission_pct", 4.5) or 4.5),
+                "partial_fill_enabled": bool(sim_cfg.get("partial_fill_enabled", True)),
+                "consume_liquidity": bool(sim_cfg.get("consume_liquidity", True)),
+                "persist_state": bool(sim_cfg.get("persist_state", True)),
             }
 
         except Exception as exc:
@@ -189,6 +201,8 @@ class BetfairService:
             raise
 
     def disconnect(self) -> None:
+        self._persist_simulation_state_if_needed()
+
         if self.simulation_broker:
             try:
                 self.simulation_broker.logout()
@@ -281,7 +295,9 @@ class BetfairService:
             }
 
         try:
-            return self.simulation_broker.update_market_book(market_id, market_book)
+            result = self.simulation_broker.update_market_book(market_id, market_book)
+            self._persist_simulation_state_if_needed()
+            return result
         except Exception as exc:
             self.last_error = str(exc)
             logger.exception("Errore update_simulation_market_book: %s", exc)
@@ -320,7 +336,9 @@ class BetfairService:
             }
 
         try:
-            return self.simulation_broker.reset(starting_balance=starting_balance)
+            result = self.simulation_broker.reset(starting_balance=starting_balance)
+            self._persist_simulation_state_if_needed(force=True)
+            return result
         except Exception as exc:
             self.last_error = str(exc)
             logger.exception("Errore reset_simulation: %s", exc)
@@ -333,16 +351,42 @@ class BetfairService:
     # =========================================================
     # INTERNAL SETTINGS HELPERS
     # =========================================================
-    def _load_simulation_starting_balance(self) -> float:
-        try:
-            roserpina = self.settings_service.load_roserpina_config()
-            return float(getattr(roserpina, "max_stake_abs", 1000.0) or 1000.0)
-        except Exception:
-            return 1000.0
+    def _load_simulation_config(self) -> dict:
+        if hasattr(self.settings_service, "load_simulation_config"):
+            try:
+                return self.settings_service.load_simulation_config() or {}
+            except Exception:
+                logger.exception("Errore load_simulation_config")
+        return {
+            "enabled": True,
+            "starting_balance": 1000.0,
+            "commission_pct": 4.5,
+            "partial_fill_enabled": True,
+            "consume_liquidity": True,
+            "persist_state": True,
+        }
 
-    def _load_simulation_commission_pct(self) -> float:
-        try:
-            roserpina = self.settings_service.load_roserpina_config()
-            return float(getattr(roserpina, "commission_pct", 4.5) or 4.5)
-        except Exception:
-            return 4.5
+    def _persist_simulation_state_if_needed(self, force: bool = False) -> None:
+        if not self.simulation_broker:
+            return
+
+        sim_cfg = self._load_simulation_config()
+        if not force and not bool(sim_cfg.get("persist_state", True)):
+            return
+
+        if hasattr(self.settings_service, "save_simulation_state"):
+            try:
+                self.settings_service.save_simulation_state(
+                    self.simulation_broker.state.to_dict(),
+                    state_key="default",
+                )
+            except Exception:
+                logger.exception("Errore save_simulation_state")
+
+    def _load_persisted_simulation_state(self) -> dict:
+        if hasattr(self.settings_service, "load_simulation_state"):
+            try:
+                return self.settings_service.load_simulation_state(state_key="default") or {}
+            except Exception:
+                logger.exception("Errore load_simulation_state")
+        return {}
