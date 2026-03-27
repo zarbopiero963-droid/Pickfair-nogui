@@ -186,4 +186,4 @@ class PnLEngine:
         return {
             "open_positions": len(self._positions),
             "positions": list(self._positions.values()),
-        }
+        } 
