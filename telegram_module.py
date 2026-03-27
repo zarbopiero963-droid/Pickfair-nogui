@@ -6,6 +6,7 @@ from tkinter import messagebox, simpledialog
 
 from theme import COLORS
 from services.telegram_signal_processor import TelegramSignalProcessor
+from services.telegram_bet_resolver import TelegramBetResolver
 
 logger = logging.getLogger(__name__)
 
@@ -14,15 +15,13 @@ class TelegramModule:
     """
     Mixin Telegram per MiniPickfairGUI.
 
-    Responsabilità:
-    - avvio/stop listener
-    - gestione segnale Telegram
-    - CRUD chat monitorate
+    Funzioni:
+    - start/stop listener
+    - gestione chat monitorate
     - CRUD pattern avanzati
-    - refresh trees UI
-
-    Obiettivo:
-    - listener -> _handle_telegram_signal -> bus -> runtime/order flow
+    - gestione segnali Telegram
+    - se il segnale ha già market_id/selection_id -> usa TelegramSignalProcessor
+    - se NON li ha -> prova a risolvere automaticamente via TelegramBetResolver
     """
 
     # =========================================================
@@ -34,6 +33,24 @@ class TelegramModule:
             processor = TelegramSignalProcessor()
             self._telegram_signal_processor = processor
         return processor
+
+    def _get_bet_resolver(self):
+        resolver = getattr(self, "_telegram_bet_resolver", None)
+        if resolver is None:
+            client_getter = None
+
+            # preferisci il service broker
+            if hasattr(self, "betfair_service") and self.betfair_service is not None:
+                client_getter = self.betfair_service.get_client
+            elif hasattr(self, "runtime") and getattr(self.runtime, "betfair_service", None) is not None:
+                client_getter = self.runtime.betfair_service.get_client
+            elif hasattr(self, "betfair_client"):
+                client_getter = lambda: getattr(self, "betfair_client", None)
+
+            resolver = TelegramBetResolver(client_getter=client_getter)
+            self._telegram_bet_resolver = resolver
+
+        return resolver
 
     def _safe_refresh_telegram_signals_tree(self):
         try:
@@ -109,9 +126,6 @@ class TelegramModule:
             logger.exception("[TelegramModule] Errore save_received_signal status=%s: %s", status, e)
 
     def _bus_has_subscriber(self, event_name: str) -> bool:
-        """
-        Compatibilità: prova a capire se l'EventBus espone un dict subscribers.
-        """
         try:
             subscribers = getattr(self.bus, "subscribers", None)
             if isinstance(subscribers, dict):
@@ -122,10 +136,7 @@ class TelegramModule:
 
     def _publish_order_signal(self, payload: dict) -> None:
         """
-        Compatibilità con repository vecchi/nuovi:
-        - preferisce REQ_QUICK_BET se presente
-        - altrimenti SIGNAL_RECEIVED
-        - fallback su REQ_QUICK_BET
+        Compatibilità vecchio/nuovo flow.
         """
         if self._bus_has_subscriber("REQ_QUICK_BET"):
             self.bus.publish("REQ_QUICK_BET", payload)
@@ -136,6 +147,40 @@ class TelegramModule:
             return
 
         self.bus.publish("REQ_QUICK_BET", payload)
+
+    def _needs_resolution(self, signal_data: dict) -> bool:
+        market_id = signal_data.get("market_id") or signal_data.get("marketId")
+        selection_id = signal_data.get("selection_id") or signal_data.get("selectionId")
+        return not market_id or not selection_id
+
+    def _resolve_signal_to_payload(self, signal_data: dict, stake: float):
+        """
+        Se il segnale ha già market_id/selection_id usa il normalizzatore standard.
+        Se non li ha, usa il resolver automatico over successivo / linea esplicita.
+        """
+        processor = self._get_signal_processor()
+
+        if not self._needs_resolution(signal_data):
+            payload = processor.build_runtime_signal(
+                signal=signal_data,
+                stake=stake,
+                simulation_mode=bool(getattr(self, "simulation_mode", False)),
+            )
+            return payload, "DIRECT"
+
+        resolver = self._get_bet_resolver()
+        resolved = resolver.resolve(signal_data, aggressive_best_price=True)
+        if not resolved:
+            return None, "UNRESOLVED"
+
+        payload = resolved.to_order_payload(
+            stake=stake,
+            simulation_mode=bool(getattr(self, "simulation_mode", False)),
+        )
+
+        payload["raw_signal"] = dict(signal_data or {})
+        payload["resolution_mode"] = "AUTO_RESOLVED"
+        return payload, "AUTO_RESOLVED"
 
     # =========================================================
     # START / STOP LISTENER
@@ -232,10 +277,7 @@ class TelegramModule:
 
         except Exception as e:
             logger.exception("[TelegramModule] Impossibile avviare listener: %s", e)
-            messagebox.showerror(
-                "Errore",
-                f"Impossibile avviare listener: {str(e)}",
-            )
+            messagebox.showerror("Errore", f"Impossibile avviare listener: {str(e)}")
 
     def _stop_telegram_listener(self):
         listener = getattr(self, "telegram_listener", None)
@@ -260,7 +302,7 @@ class TelegramModule:
     # =========================================================
     def _handle_telegram_signal(self, signal):
         """
-        Listener -> handler -> build payload -> publish order signal.
+        Listener -> handler -> direct payload or resolver -> publish order signal
         """
 
         def safe_process_signal():
@@ -275,17 +317,7 @@ class TelegramModule:
             stake = self._safe_parse_stake()
 
             if original_price is None:
-                logger.error("[TelegramModule] Segnale ignorato: price non valido.")
-                self._safe_db_save_received_signal(
-                    selection=selection_name,
-                    action=action,
-                    price=0.0,
-                    stake=0.0,
-                    status="ERROR",
-                    signal=signal_data,
-                )
-                self._safe_refresh_telegram_signals_tree()
-                return
+                original_price = 0.0
 
             self._safe_db_save_received_signal(
                 selection=selection_name,
@@ -312,9 +344,9 @@ class TelegramModule:
                 if confirm_enabled:
                     msg = (
                         f"Segnale ricevuto:\n"
-                        f"{selection_name}\n"
+                        f"{selection_name or signal_data.get('event_name', 'Segnale Telegram')}\n"
                         f"Tipo: {action}\n"
-                        f"Quota Master: {original_price:.2f}\n\n"
+                        f"Quota Master: {float(original_price or 0.0):.2f}\n\n"
                         f"Inviare il segnale al runtime?"
                     )
                     if not messagebox.askyesno("Nuovo Segnale Telegram", msg):
@@ -340,14 +372,10 @@ class TelegramModule:
                     self._safe_refresh_telegram_signals_tree()
                     return
 
-            payload = processor.build_runtime_signal(
-                signal=signal_data,
-                stake=stake,
-                simulation_mode=bool(getattr(self, "simulation_mode", False)),
-            )
+            payload, resolution_mode = self._resolve_signal_to_payload(signal_data, stake=stake)
 
             if not payload:
-                logger.error("[TelegramModule] Segnale ignorato: payload runtime nullo.")
+                logger.error("[TelegramModule] Segnale non risolvibile: %s", signal_data)
                 self._safe_db_save_received_signal(
                     selection=selection_name,
                     action=action,
@@ -359,10 +387,10 @@ class TelegramModule:
                 self._safe_refresh_telegram_signals_tree()
                 return
 
-            # Manteniamo anche il raw signal per debug/strategia futura
-            payload["raw_signal"] = signal_data
+            payload["raw_signal"] = dict(signal_data or {})
+            payload["resolution_mode"] = resolution_mode
 
-            logger.info("[TelegramModule] Inoltro segnale betting: %s", payload)
+            logger.info("[TelegramModule] Inoltro segnale betting (%s): %s", resolution_mode, payload)
 
             try:
                 self._publish_order_signal(payload)
@@ -380,12 +408,12 @@ class TelegramModule:
                 return
 
             self._safe_db_save_received_signal(
-                selection=selection_name,
-                action=action,
-                price=original_price,
-                stake=stake,
+                selection=payload.get("runner_name", selection_name),
+                action=payload.get("bet_type", action),
+                price=payload.get("price", original_price),
+                stake=payload.get("stake", stake),
                 status="SUBMITTED",
-                signal=signal_data,
+                signal={**signal_data, "resolved_payload": payload},
             )
             self._safe_refresh_telegram_signals_tree()
 
@@ -456,7 +484,7 @@ class TelegramModule:
         messagebox.showinfo("Successo", "Chat aggiunte al monitoraggio.")
 
     # =========================================================
-    # SIGNAL PATTERN DIALOG HELPERS
+    # ADVANCED SIGNAL PATTERNS
     # =========================================================
     def _prompt_signal_pattern_payload(self, current=None):
         current = current or {}
@@ -578,9 +606,6 @@ class TelegramModule:
             return "-"
         return f"{'' if a is None else a}-{'' if b is None else b}"
 
-    # =========================================================
-    # RULES TREE
-    # =========================================================
     def _refresh_rules_tree(self):
         if not hasattr(self, "rules_tree") or not self.rules_tree.winfo_exists():
             return
