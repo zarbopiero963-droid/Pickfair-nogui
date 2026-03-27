@@ -21,18 +21,27 @@ def run_gui() -> int:
 def run_headless() -> int:
     from headless_main import main as headless_main
 
-    return int(headless_main() or 0)
+    result = headless_main()
+    return int(result or 0)
 
 
 def main() -> int:
-    args = [str(x).strip().lower() for x in sys.argv[1:]]
+    try:
+        args = [str(x).strip().lower() for x in sys.argv[1:]]
 
-    if "--headless" in args or "headless" in args:
-        logger.info("Avvio Pickfair in modalità HEADLESS")
-        return run_headless()
+        if "--headless" in args or "headless" in args:
+            logger.info("Avvio Pickfair in modalità HEADLESS")
+            return run_headless()
 
-    logger.info("Avvio Pickfair in modalità MINI GUI")
-    return run_gui()
+        logger.info("Avvio Pickfair in modalità MINI GUI")
+        return run_gui()
+
+    except KeyboardInterrupt:
+        logger.info("Arresto richiesto dall'utente")
+        return 130
+    except Exception as exc:
+        logger.exception("Errore fatale in main: %s", exc)
+        return 1
 
 
 if __name__ == "__main__":
