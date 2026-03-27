@@ -22,6 +22,7 @@ class BetfairClient:
         - list_live_soccer_events
         - list_event_markets
         - get_market_book
+    - cashout / green-up helper corretto
     """
 
     IDENTITY_URL = "https://identitysso.betfair.it/api/certlogin"
@@ -195,6 +196,65 @@ class BetfairClient:
             "exposure": float(exposure),
             "total": float(total),
             "simulated": False,
+        }
+
+    # =========================================================
+    # CASHOUT / GREEN-UP
+    # =========================================================
+    def calculate_cashout(
+        self,
+        original_stake: float,
+        original_odds: float,
+        current_odds: float,
+        side: str = "BACK",
+    ) -> Dict[str, float]:
+        """
+        Calcola il cashout (green-up) con profitto/perdita quanto più possibile
+        uniforme su tutti gli esiti.
+
+        - side="BACK": posizione iniziale BACK, hedge con LAY
+        - side="LAY":  posizione iniziale LAY, hedge con BACK
+        """
+        original_stake = self._safe_float(original_stake, 0.0)
+        original_odds = self._safe_float(original_odds, 0.0)
+        current_odds = self._safe_float(current_odds, 0.0)
+        side_mode = self._safe_side(side)
+
+        if original_stake <= 0.0 or original_odds <= 1.0 or current_odds <= 1.0:
+            return {
+                "cashout_stake": 0.0,
+                "profit_if_win": 0.0,
+                "profit_if_lose": 0.0,
+                "guaranteed_profit": 0.0,
+                "side_to_place": "LAY" if side_mode == "BACK" else "BACK",
+            }
+
+        # Formula universale green-up
+        cashout_stake = round((original_stake * original_odds) / current_odds, 2)
+
+        if side_mode == "BACK":
+            profit_if_win = (original_stake * (original_odds - 1.0)) - (
+                cashout_stake * (current_odds - 1.0)
+            )
+            profit_if_lose = cashout_stake - original_stake
+            side_to_place = "LAY"
+        else:
+            profit_if_win = (cashout_stake * (current_odds - 1.0)) - (
+                original_stake * (original_odds - 1.0)
+            )
+            profit_if_lose = original_stake - cashout_stake
+            side_to_place = "BACK"
+
+        profit_if_win = round(profit_if_win, 2)
+        profit_if_lose = round(profit_if_lose, 2)
+        guaranteed_profit = round(min(profit_if_win, profit_if_lose), 2)
+
+        return {
+            "cashout_stake": cashout_stake,
+            "profit_if_win": profit_if_win,
+            "profit_if_lose": profit_if_lose,
+            "guaranteed_profit": guaranteed_profit,
+            "side_to_place": side_to_place,
         }
 
     # =========================================================
@@ -378,9 +438,6 @@ class BetfairClient:
     # TELEGRAM RESOLVER SUPPORT
     # =========================================================
     def list_live_soccer_events(self) -> List[Dict[str, Any]]:
-        """
-        Restituisce eventi calcio live in formato semplice per il resolver.
-        """
         params = {
             "filter": {
                 "eventTypeIds": [self.SOCCER_EVENT_TYPE_ID],
@@ -422,9 +479,6 @@ class BetfairClient:
         return events
 
     def list_event_markets(self, event_id: Any) -> List[Dict[str, Any]]:
-        """
-        Restituisce i mercati di un evento.
-        """
         params = {
             "filter": {
                 "eventIds": [str(event_id)],
@@ -456,9 +510,6 @@ class BetfairClient:
         return markets
 
     def get_market_book(self, market_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Restituisce market book in formato comodo per il resolver.
-        """
         params = {
             "marketIds": [str(market_id)],
             "priceProjection": {
@@ -485,7 +536,7 @@ class BetfairClient:
             runners.append(
                 {
                     "selectionId": self._safe_int(r.get("selectionId")),
-                    "runnerName": "",  # valorizzato dopo merge con catalogue se necessario
+                    "runnerName": "",
                     "status": str(r.get("status") or ""),
                     "ex": {
                         "availableToBack": ex.get("availableToBack") or [],
@@ -494,7 +545,6 @@ class BetfairClient:
                 }
             )
 
-        # arricchimento runnerName da catalogue
         runner_names = self._get_runner_names_for_market(market_id)
 
         for rr in runners:
@@ -590,66 +640,6 @@ class BetfairClient:
 
     def list_market_book(self, market_id: str) -> Optional[Dict[str, Any]]:
         return self.get_market_book(market_id=market_id)
-
-
-    def calculate_cashout(
-        self,
-        original_stake,
-        original_odds,
-        current_odds,
-        side="BACK",
-    ):
-        """
-        Calcola il vero green-up (equal profit) per una posizione singola.
-
-        - side="BACK": posizione iniziale BACK, cashout via LAY
-        - side="LAY":  posizione iniziale LAY, cashout via BACK
-        """
-        try:
-            os_ = float(original_stake or 0.0)
-            oo = float(original_odds or 0.0)
-            co = float(current_odds or 0.0)
-            side_mode = str(side or "BACK").upper().strip()
-        except Exception:
-            return {
-                "cashout_stake": 0.0,
-                "profit_if_win": 0.0,
-                "profit_if_lose": 0.0,
-                "guaranteed_profit": 0.0,
-                "side_to_place": "LAY",
-            }
-
-        if os_ <= 0.0 or oo <= 1.0 or co <= 1.0:
-            return {
-                "cashout_stake": 0.0,
-                "profit_if_win": 0.0,
-                "profit_if_lose": 0.0,
-                "guaranteed_profit": 0.0,
-                "side_to_place": "LAY" if side_mode == "BACK" else "BACK",
-            }
-
-        cashout_stake = round((os_ * oo) / co, 2)
-
-        if side_mode == "BACK":
-            profit_if_win = (os_ * (oo - 1.0)) - (cashout_stake * (co - 1.0))
-            profit_if_lose = cashout_stake - os_
-            side_to_place = "LAY"
-        else:
-            profit_if_win = (cashout_stake * (co - 1.0)) - (os_ * (oo - 1.0))
-            profit_if_lose = os_ - cashout_stake
-            side_to_place = "BACK"
-
-        profit_if_win = round(profit_if_win, 2)
-        profit_if_lose = round(profit_if_lose, 2)
-        guaranteed_profit = round(min(profit_if_win, profit_if_lose), 2)
-
-        return {
-            "cashout_stake": cashout_stake,
-            "profit_if_win": profit_if_win,
-            "profit_if_lose": profit_if_lose,
-            "guaranteed_profit": guaranteed_profit if guaranteed_profit > 0 else 0.0,
-            "side_to_place": side_to_place,
-        }
 
     # =========================================================
     # STATUS
