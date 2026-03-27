@@ -13,26 +13,22 @@ logger = logging.getLogger(__name__)
 
 class BetfairClient:
     """
-    Client Betfair compatibile con il resto del runtime Pickfair.
-
-    Obiettivi:
+    Client Betfair compatibile con:
     - login/logout
     - get_account_funds
-    - place_bet
-    - place_orders
-    - list_current_orders
-    - cancel_orders
-
-    Note:
-    - è pensato per l'exchange API
-    - mantiene anche compatibilità con la simulation pipeline,
-      nel senso che OrderManager può chiamare place_bet(...) con kwargs extra
-      e questo client li ignora senza rompersi
+    - place_bet / place_orders
+    - list_current_orders / cancel_orders
+    - resolver Telegram:
+        - list_live_soccer_events
+        - list_event_markets
+        - get_market_book
     """
 
     IDENTITY_URL = "https://identitysso.betfair.it/api/certlogin"
     BETTING_URL = "https://api.betfair.com/exchange/betting/json-rpc/v1"
     ACCOUNT_URL = "https://api.betfair.com/exchange/account/json-rpc/v1"
+
+    SOCCER_EVENT_TYPE_ID = "1"
 
     def __init__(
         self,
@@ -70,7 +66,7 @@ class BetfairClient:
         try:
             if value in (None, ""):
                 return int(default)
-            return int(value)
+            return int(float(value))
         except Exception:
             return int(default)
 
@@ -242,10 +238,6 @@ class BetfairClient:
         market_name: str = "",
         runner_name: str = "",
     ) -> Dict[str, Any]:
-        """
-        I kwargs extra servono solo per compatibilità con OrderManager/Simulation flow.
-        Qui lato live non vengono usati dalla API Betfair e quindi sono ignorati.
-        """
         _ = event_key, table_id, batch_id, event_name, market_name, runner_name
 
         params = {
@@ -381,6 +373,223 @@ class BetfairClient:
             "instructionReports": result.get("instructionReports") or [],
             "simulated": False,
         }
+
+    # =========================================================
+    # TELEGRAM RESOLVER SUPPORT
+    # =========================================================
+    def list_live_soccer_events(self) -> List[Dict[str, Any]]:
+        """
+        Restituisce eventi calcio live in formato semplice per il resolver.
+        """
+        params = {
+            "filter": {
+                "eventTypeIds": [self.SOCCER_EVENT_TYPE_ID],
+                "inPlayOnly": True,
+            },
+            "marketProjection": ["EVENT"],
+            "maxResults": "200",
+        }
+
+        result = self._post_jsonrpc(
+            self.BETTING_URL,
+            "SportsAPING/v1.0/listMarketCatalogue",
+            params,
+        )
+
+        events: List[Dict[str, Any]] = []
+        seen = set()
+
+        for item in result or []:
+            event = item.get("event") or {}
+            event_id = str(event.get("id") or "").strip()
+            event_name = str(event.get("name") or "").strip()
+
+            if not event_id or not event_name:
+                continue
+
+            key = (event_id, event_name)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            events.append(
+                {
+                    "event_id": event_id,
+                    "event_name": event_name,
+                }
+            )
+
+        return events
+
+    def list_event_markets(self, event_id: Any) -> List[Dict[str, Any]]:
+        """
+        Restituisce i mercati di un evento.
+        """
+        params = {
+            "filter": {
+                "eventIds": [str(event_id)],
+                "eventTypeIds": [self.SOCCER_EVENT_TYPE_ID],
+                "inPlayOnly": True,
+            },
+            "marketProjection": ["EVENT", "RUNNER_DESCRIPTION"],
+            "maxResults": "200",
+        }
+
+        result = self._post_jsonrpc(
+            self.BETTING_URL,
+            "SportsAPING/v1.0/listMarketCatalogue",
+            params,
+        )
+
+        markets: List[Dict[str, Any]] = []
+        for item in result or []:
+            markets.append(
+                {
+                    "market_id": str(item.get("marketId") or ""),
+                    "market_name": str(item.get("marketName") or ""),
+                    "event_id": str((item.get("event") or {}).get("id") or ""),
+                    "event_name": str((item.get("event") or {}).get("name") or ""),
+                    "runners": item.get("runners") or [],
+                }
+            )
+
+        return markets
+
+    def get_market_book(self, market_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Restituisce market book in formato comodo per il resolver.
+        """
+        params = {
+            "marketIds": [str(market_id)],
+            "priceProjection": {
+                "priceData": ["EX_BEST_OFFERS"]
+            },
+            "orderProjection": "ALL",
+            "matchProjection": "ROLLED_UP_BY_AVG_PRICE",
+        }
+
+        result = self._post_jsonrpc(
+            self.BETTING_URL,
+            "SportsAPING/v1.0/listMarketBook",
+            params,
+        )
+
+        if not result:
+            return None
+
+        raw = result[0]
+
+        runners: List[Dict[str, Any]] = []
+        for r in raw.get("runners") or []:
+            ex = r.get("ex") or {}
+            runners.append(
+                {
+                    "selectionId": self._safe_int(r.get("selectionId")),
+                    "runnerName": "",  # valorizzato dopo merge con catalogue se necessario
+                    "status": str(r.get("status") or ""),
+                    "ex": {
+                        "availableToBack": ex.get("availableToBack") or [],
+                        "availableToLay": ex.get("availableToLay") or [],
+                    },
+                }
+            )
+
+        # arricchimento runnerName da catalogue
+        runner_names = self._get_runner_names_for_market(market_id)
+
+        for rr in runners:
+            sel_id = rr.get("selectionId")
+            rr["runnerName"] = runner_names.get(sel_id, "")
+
+        return {
+            "marketId": str(raw.get("marketId") or market_id),
+            "status": str(raw.get("status") or ""),
+            "inplay": bool(raw.get("inplay", False)),
+            "runners": runners,
+        }
+
+    def _get_runner_names_for_market(self, market_id: str) -> Dict[int, str]:
+        try:
+            params = {
+                "filter": {
+                    "marketIds": [str(market_id)],
+                },
+                "marketProjection": ["RUNNER_DESCRIPTION"],
+                "maxResults": "1",
+            }
+
+            result = self._post_jsonrpc(
+                self.BETTING_URL,
+                "SportsAPING/v1.0/listMarketCatalogue",
+                params,
+            )
+
+            if not result:
+                return {}
+
+            market = result[0]
+            mapping: Dict[int, str] = {}
+            for runner in market.get("runners") or []:
+                sel_id = self._safe_int(runner.get("selectionId"))
+                name = str(runner.get("runnerName") or "")
+                if sel_id:
+                    mapping[sel_id] = name
+            return mapping
+        except Exception:
+            logger.exception("Errore recupero runner names market_id=%s", market_id)
+            return {}
+
+    # =========================================================
+    # OPTIONAL COMPAT HELPERS
+    # =========================================================
+    def list_soccer_events(self, live_only: bool = True) -> List[Dict[str, Any]]:
+        if live_only:
+            return self.list_live_soccer_events()
+
+        params = {
+            "filter": {
+                "eventTypeIds": [self.SOCCER_EVENT_TYPE_ID],
+            },
+            "marketProjection": ["EVENT"],
+            "maxResults": "200",
+        }
+
+        result = self._post_jsonrpc(
+            self.BETTING_URL,
+            "SportsAPING/v1.0/listMarketCatalogue",
+            params,
+        )
+
+        events: List[Dict[str, Any]] = []
+        seen = set()
+
+        for item in result or []:
+            event = item.get("event") or {}
+            event_id = str(event.get("id") or "").strip()
+            event_name = str(event.get("name") or "").strip()
+
+            if not event_id or not event_name:
+                continue
+
+            key = (event_id, event_name)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            events.append(
+                {
+                    "event_id": event_id,
+                    "event_name": event_name,
+                }
+            )
+
+        return events
+
+    def list_markets_for_event(self, event_id: Any) -> List[Dict[str, Any]]:
+        return self.list_event_markets(event_id=event_id)
+
+    def list_market_book(self, market_id: str) -> Optional[Dict[str, Any]]:
+        return self.get_market_book(market_id=market_id)
 
     # =========================================================
     # STATUS
