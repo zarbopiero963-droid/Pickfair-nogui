@@ -1,9 +1,3 @@
-"""
-Telegram Tab UI
-Disegna solo i widget e collega i comandi ai metodi dell'app/controller.
-Nessuna logica di trading qui.
-"""
-
 from __future__ import annotations
 
 __all__ = ["TelegramTabUI"]
@@ -66,14 +60,7 @@ class TelegramTabUI:
 
         settings = self._safe_settings()
 
-        # =========================================================
-        # CONFIG TELEGRAM
-        # =========================================================
-        config_frame = ctk.CTkFrame(
-            left_frame,
-            fg_color=COLORS["bg_panel"],
-            corner_radius=8,
-        )
+        config_frame = ctk.CTkFrame(left_frame, fg_color=COLORS["bg_panel"], corner_radius=8)
         config_frame.pack(fill=tk.X, pady=(0, 5), padx=5)
 
         ctk.CTkLabel(
@@ -93,23 +80,13 @@ class TelegramTabUI:
         self.app.tg_api_id_var = tk.StringVar(value=settings.get("api_id", ""))
         self.app.tg_api_hash_var = tk.StringVar(value=settings.get("api_hash", ""))
         self.app.tg_phone_var = tk.StringVar(value=settings.get("phone_number", ""))
-        self.app.tg_auto_stake_var = tk.StringVar(
-            value=str(settings.get("auto_stake", "1.0"))
-        )
-        self.app.tg_auto_bet_var = tk.BooleanVar(
-            value=bool(settings.get("auto_bet", False))
-        )
-        self.app.tg_confirm_var = tk.BooleanVar(
-            value=bool(settings.get("require_confirmation", True))
-        )
+        self.app.tg_auto_stake_var = tk.StringVar(value=str(settings.get("auto_stake", "1.0")))
+        self.app.tg_auto_bet_var = tk.BooleanVar(value=bool(settings.get("auto_bet", False)))
+        self.app.tg_confirm_var = tk.BooleanVar(value=bool(settings.get("require_confirmation", True)))
         self.app.tg_code_var = tk.StringVar()
         self.app.tg_2fa_var = tk.StringVar()
 
-        ctk.CTkLabel(
-            config_frame,
-            text="API ID:",
-            text_color=COLORS["text_secondary"],
-        ).pack(anchor=tk.W, padx=10, pady=(5, 0))
+        ctk.CTkLabel(config_frame, text="API ID:", text_color=COLORS["text_secondary"]).pack(anchor=tk.W, padx=10, pady=(5, 0))
         ctk.CTkEntry(
             config_frame,
             textvariable=self.app.tg_api_id_var,
@@ -118,11 +95,7 @@ class TelegramTabUI:
             border_color=COLORS["border"],
         ).pack(anchor=tk.W, padx=10)
 
-        ctk.CTkLabel(
-            config_frame,
-            text="API Hash:",
-            text_color=COLORS["text_secondary"],
-        ).pack(anchor=tk.W, padx=10, pady=(5, 0))
+        ctk.CTkLabel(config_frame, text="API Hash:", text_color=COLORS["text_secondary"]).pack(anchor=tk.W, padx=10, pady=(5, 0))
         ctk.CTkEntry(
             config_frame,
             textvariable=self.app.tg_api_hash_var,
@@ -131,11 +104,7 @@ class TelegramTabUI:
             border_color=COLORS["border"],
         ).pack(anchor=tk.W, padx=10)
 
-        ctk.CTkLabel(
-            config_frame,
-            text="Numero di Telefono (+39...)",
-            text_color=COLORS["text_secondary"],
-        ).pack(anchor=tk.W, padx=10, pady=(5, 0))
+        ctk.CTkLabel(config_frame, text="Numero di Telefono (+39...)", text_color=COLORS["text_secondary"]).pack(anchor=tk.W, padx=10, pady=(5, 0))
         ctk.CTkEntry(
             config_frame,
             textvariable=self.app.tg_phone_var,
@@ -144,11 +113,7 @@ class TelegramTabUI:
             border_color=COLORS["border"],
         ).pack(anchor=tk.W, padx=10)
 
-        ctk.CTkLabel(
-            config_frame,
-            text="Stake Automatico (EUR)",
-            text_color=COLORS["text_secondary"],
-        ).pack(anchor=tk.W, padx=10, pady=(5, 0))
+        ctk.CTkLabel(config_frame, text="Stake Automatico (EUR)", text_color=COLORS["text_secondary"]).pack(anchor=tk.W, padx=10, pady=(5, 0))
         ctk.CTkEntry(
             config_frame,
             textvariable=self.app.tg_auto_stake_var,
@@ -178,11 +143,7 @@ class TelegramTabUI:
         auth_frame = ctk.CTkFrame(config_frame, fg_color="transparent")
         auth_frame.pack(fill=tk.X, padx=10, pady=(5, 0))
 
-        ctk.CTkLabel(
-            auth_frame,
-            text="Codice:",
-            text_color=COLORS["text_secondary"],
-        ).pack(side=tk.LEFT)
+        ctk.CTkLabel(auth_frame, text="Codice:", text_color=COLORS["text_secondary"]).pack(side=tk.LEFT)
         ctk.CTkEntry(
             auth_frame,
             textvariable=self.app.tg_code_var,
@@ -191,11 +152,7 @@ class TelegramTabUI:
             border_color=COLORS["border"],
         ).pack(side=tk.LEFT, padx=4)
 
-        ctk.CTkLabel(
-            auth_frame,
-            text="2FA:",
-            text_color=COLORS["text_secondary"],
-        ).pack(side=tk.LEFT, padx=(10, 0))
+        ctk.CTkLabel(auth_frame, text="2FA:", text_color=COLORS["text_secondary"]).pack(side=tk.LEFT, padx=(10, 0))
         ctk.CTkEntry(
             auth_frame,
             textvariable=self.app.tg_2fa_var,
@@ -275,14 +232,7 @@ class TelegramTabUI:
             width=70,
         ).pack(side=tk.LEFT, padx=2)
 
-        # =========================================================
-        # CHATS MONITORATE
-        # =========================================================
-        chats_frame = ctk.CTkFrame(
-            left_frame,
-            fg_color=COLORS["bg_panel"],
-            corner_radius=8,
-        )
+        chats_frame = ctk.CTkFrame(left_frame, fg_color=COLORS["bg_panel"], corner_radius=8)
         chats_frame.pack(fill=tk.X, pady=(0, 5), padx=5)
 
         ctk.CTkLabel(
@@ -320,14 +270,7 @@ class TelegramTabUI:
         if hasattr(self.app, "_refresh_telegram_chats_tree"):
             self.app._refresh_telegram_chats_tree()
 
-        # =========================================================
-        # CHAT DISPONIBILI
-        # =========================================================
-        available_frame = ctk.CTkFrame(
-            left_frame,
-            fg_color=COLORS["bg_panel"],
-            corner_radius=8,
-        )
+        available_frame = ctk.CTkFrame(left_frame, fg_color=COLORS["bg_panel"], corner_radius=8)
         available_frame.pack(fill=tk.X, pady=(0, 5), padx=5)
 
         ctk.CTkLabel(
@@ -384,25 +327,14 @@ class TelegramTabUI:
         self.app.tg_available_tree.column("type", width=60)
         self.app.tg_available_tree.column("name", width=220)
 
-        avail_scroll = ttk.Scrollbar(
-            avail_tree_container,
-            orient=tk.VERTICAL,
-            command=self.app.tg_available_tree.yview,
-        )
+        avail_scroll = ttk.Scrollbar(avail_tree_container, orient=tk.VERTICAL, command=self.app.tg_available_tree.yview)
         self.app.tg_available_tree.configure(yscrollcommand=avail_scroll.set)
         self.app.tg_available_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         avail_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
         self.app.available_chats_data = []
 
-        # =========================================================
-        # REGOLE PARSING AVANZATE
-        # =========================================================
-        rules_frame = ctk.CTkFrame(
-            left_frame,
-            fg_color=COLORS["bg_panel"],
-            corner_radius=8,
-        )
+        rules_frame = ctk.CTkFrame(left_frame, fg_color=COLORS["bg_panel"], corner_radius=8)
         rules_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 5), padx=5)
 
         ctk.CTkLabel(
@@ -504,11 +436,7 @@ class TelegramTabUI:
         self.app.rules_tree.column("priority", width=50, anchor="center")
         self.app.rules_tree.column("pattern", width=220)
 
-        rules_scroll = ttk.Scrollbar(
-            rules_tree_container,
-            orient=tk.VERTICAL,
-            command=self.app.rules_tree.yview,
-        )
+        rules_scroll = ttk.Scrollbar(rules_tree_container, orient=tk.VERTICAL, command=self.app.rules_tree.yview)
         self.app.rules_tree.configure(yscrollcommand=rules_scroll.set)
         self.app.rules_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         rules_scroll.pack(side=tk.RIGHT, fill=tk.Y)
@@ -516,14 +444,7 @@ class TelegramTabUI:
         if hasattr(self.app, "_refresh_rules_tree"):
             self.app._refresh_rules_tree()
 
-        # =========================================================
-        # SIGNALS RICEVUTI
-        # =========================================================
-        signals_frame = ctk.CTkFrame(
-            right_frame,
-            fg_color=COLORS["bg_panel"],
-            corner_radius=8,
-        )
+        signals_frame = ctk.CTkFrame(right_frame, fg_color=COLORS["bg_panel"], corner_radius=8)
         signals_frame.pack(fill=tk.BOTH, expand=True)
 
         ctk.CTkLabel(
@@ -558,11 +479,7 @@ class TelegramTabUI:
         self.app.tg_signals_tree.tag_configure("success", foreground=COLORS["success"])
         self.app.tg_signals_tree.tag_configure("failed", foreground=COLORS["loss"])
 
-        scrollbar = ttk.Scrollbar(
-            signals_tree_container,
-            orient=tk.VERTICAL,
-            command=self.app.tg_signals_tree.yview,
-        )
+        scrollbar = ttk.Scrollbar(signals_tree_container, orient=tk.VERTICAL, command=self.app.tg_signals_tree.yview)
         self.app.tg_signals_tree.configure(yscrollcommand=scrollbar.set)
         self.app.tg_signals_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
