@@ -1,386 +1,257 @@
-"""
-Market Tracker - Cache + Delta Detection per Market Data.
-
-Features:
-    - Cache market book con TTL configurabile
-    - Delta detection: aggiorna solo se cambiato
-    - Riduce chiamate API Betfair
-    - Metriche: hit rate, API calls risparmiate
-    - Thread-safe
-"""
+from __future__ import annotations
 
 import logging
 import threading
 import time
-from collections import defaultdict
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional
 
 logger = logging.getLogger(__name__)
 
 
-class MarketCache:
-    """
-    Cache per market book con TTL e delta detection.
-
-    Riduce chiamate API Betfair cachando i dati recenti.
-    """
-
-    def __init__(self, ttl: float = 1.0, max_size: int = 100):
-        """
-        Args:
-            ttl: Time-to-live in secondi (default 1.0s)
-            max_size: Numero massimo di market in cache
-        """
-        self._cache: Dict[str, Dict] = {}
-        self._timestamps: Dict[str, float] = {}
-        self._lock = threading.RLock()
-        self.ttl = ttl
-        self.max_size = max_size
-
-        self._hits = 0
-        self._misses = 0
-        self._api_calls_saved = 0
-
-    def get(self, market_id: str) -> Optional[Dict]:
-        """
-        Recupera market book dalla cache se valido.
-
-        Returns:
-            Market book dict o None se scaduto/non presente
-        """
-        with self._lock:
-            if market_id not in self._cache:
-                self._misses += 1
-                return None
-
-            ts = self._timestamps.get(market_id, 0)
-            if time.time() - ts > self.ttl:
-                del self._cache[market_id]
-                del self._timestamps[market_id]
-                self._misses += 1
-                return None
-
-            self._hits += 1
-            self._api_calls_saved += 1
-            return self._cache[market_id].copy()
-
-    def set(self, market_id: str, data: Dict):
-        """Salva market book in cache."""
-        with self._lock:
-            # FIX #29: evict only when the key is NEW and would push the cache
-            # past its capacity.  The old condition `len >= max_size` triggered
-            # on every update of an EXISTING key, evicting a different entry
-            # even though the size had not actually grown.
-            is_new_key = market_id not in self._cache
-            if is_new_key and len(self._cache) >= self.max_size and self._timestamps:
-                oldest_key = min(self._timestamps, key=self._timestamps.get)
-                self._cache.pop(oldest_key, None)
-                self._timestamps.pop(oldest_key, None)
-
-            self._cache[market_id] = data.copy()
-            self._timestamps[market_id] = time.time()
-
-    def invalidate(self, market_id: str):
-        """Invalida entry specifica."""
-        with self._lock:
-            self._cache.pop(market_id, None)
-            self._timestamps.pop(market_id, None)
-
-    def clear(self):
-        """Svuota cache."""
-        with self._lock:
-            self._cache.clear()
-            self._timestamps.clear()
-
-    def get_stats(self) -> Dict:
-        """Statistiche cache."""
-        with self._lock:
-            total = self._hits + self._misses
-            hit_rate = round(self._hits / max(1, total) * 100, 1)
-            return {
-                "hits": self._hits,
-                "misses": self._misses,
-                "hit_rate": hit_rate,
-                "api_calls_saved": self._api_calls_saved,
-                "cache_size": len(self._cache),
-                "max_size": self.max_size,
-                "ttl": self.ttl,
-            }
-
-    def reset_stats(self):
-        """Reset statistiche."""
-        with self._lock:
-            self._hits = 0
-            self._misses = 0
-            self._api_calls_saved = 0
-
-
-class DeltaDetector:
-    """
-    Rileva cambiamenti significativi nei prezzi.
-
-    Evita aggiornamenti UI/logica per variazioni minime.
-    """
-
-    def __init__(self, min_price_change: float = 0.01, min_volume_change: float = 1.0):
-        """
-        Args:
-            min_price_change: Variazione minima prezzo per trigger (default 1 tick)
-            min_volume_change: Variazione minima volume (default 1 unita)
-        """
-        self._last_prices: Dict[str, Dict[int, Dict]] = defaultdict(dict)
-        self._lock = threading.RLock()
-        self.min_price_change = min_price_change
-        self.min_volume_change = min_volume_change
-
-        self._changes_detected = 0
-        self._changes_skipped = 0
-
-    def has_changed(
-        self,
-        market_id: str,
-        selection_id: int,
-        back_price: float,
-        lay_price: float,
-        back_size: float = 0,
-        lay_size: float = 0,
-    ) -> Tuple[bool, str]:
-        """
-        Verifica se i prezzi sono cambiati significativamente.
-
-        Returns:
-            (changed, reason)
-        """
-        with self._lock:
-            key = f"{market_id}_{selection_id}"
-            last = self._last_prices.get(market_id, {}).get(selection_id, {})
-
-            if not last:
-                self._last_prices[market_id][selection_id] = {
-                    "back": back_price,
-                    "lay": lay_price,
-                    "back_size": back_size,
-                    "lay_size": lay_size,
-                    "ts": time.time(),
-                }
-                self._changes_detected += 1
-                return True, "Prima lettura"
-
-            back_diff = abs(back_price - last.get("back", 0))
-            lay_diff = abs(lay_price - last.get("lay", 0))
-            back_vol_diff = abs(back_size - last.get("back_size", 0))
-            lay_vol_diff = abs(lay_size - last.get("lay_size", 0))
-
-            price_changed = (
-                back_diff >= self.min_price_change or lay_diff >= self.min_price_change
-            )
-            volume_changed = (
-                back_vol_diff >= self.min_volume_change
-                or lay_vol_diff >= self.min_volume_change
-            )
-
-            if price_changed or volume_changed:
-                self._last_prices[market_id][selection_id] = {
-                    "back": back_price,
-                    "lay": lay_price,
-                    "back_size": back_size,
-                    "lay_size": lay_size,
-                    "ts": time.time(),
-                }
-                self._changes_detected += 1
-
-                if price_changed:
-                    return True, f"Prezzo: BACK Δ{back_diff:.2f}, LAY Δ{lay_diff:.2f}"
-                return (
-                    True,
-                    f"Volume: BACK Δ{back_vol_diff:.1f}, LAY Δ{lay_vol_diff:.1f}",
-                )
-
-            self._changes_skipped += 1
-            return False, "Nessun cambiamento significativo"
-
-    def get_last_price(self, market_id: str, selection_id: int) -> Optional[Dict]:
-        """Ultimo prezzo registrato."""
-        with self._lock:
-            return self._last_prices.get(market_id, {}).get(selection_id)
-
-    def clear_market(self, market_id: str):
-        """Pulisce dati per un market."""
-        with self._lock:
-            self._last_prices.pop(market_id, None)
-
-    def get_stats(self) -> Dict:
-        """Statistiche delta detection."""
-        total = self._changes_detected + self._changes_skipped
-        return {
-            "changes_detected": self._changes_detected,
-            "changes_skipped": self._changes_skipped,
-            "skip_rate": round(self._changes_skipped / max(1, total) * 100, 1),
-            "markets_tracked": len(self._last_prices),
-        }
-
-    def reset_stats(self):
-        """Reset statistiche."""
-        self._changes_detected = 0
-        self._changes_skipped = 0
-
-
 class MarketTracker:
     """
-    Tracker completo per market con cache e delta detection.
+    Market tracker unificato.
 
-    Combina MarketCache + DeltaDetector per ottimizzare
-    sia le chiamate API che gli aggiornamenti UI.
+    Responsabilità:
+    - mantiene snapshot locali dei market book
+    - aggiorna cache per market_id
+    - inoltra i market book al SimulationBroker quando simulation_mode è attivo
+    - pubblica eventi sul bus senza contenere logica di trading
+
+    Eventi pubblicati:
+    - MARKET_BOOK_UPDATED
+    - MARKET_TRACKER_ERROR
     """
 
     def __init__(
-        self, betfair_client, cache_ttl: float = 1.0, min_price_change: float = 0.01
+        self,
+        bus=None,
+        betfair_service=None,
+        *,
+        max_cache_size: int = 500,
     ):
-        self.client = betfair_client
-        self.cache = MarketCache(ttl=cache_ttl)
-        self.delta = DeltaDetector(min_price_change=min_price_change)
+        self.bus = bus
+        self.betfair_service = betfair_service
+        self.max_cache_size = max(10, int(max_cache_size or 500))
+
         self._lock = threading.RLock()
+        self._market_books: Dict[str, Dict[str, Any]] = {}
+        self._market_order: List[str] = []
+        self._last_update_ts: Dict[str, float] = {}
 
-        self._active_markets: Dict[str, Dict] = {}
-        self._last_refresh: Dict[str, float] = {}
-
-    def get_market_book(
-        self, market_id: str, force_refresh: bool = False
-    ) -> Optional[Dict]:
-        """
-        Recupera market book con caching intelligente.
-
-        Args:
-            market_id: ID mercato
-            force_refresh: Forza refresh dalla API
-
-        Returns:
-            Market book dict o None se errore
-        """
-        if not force_refresh:
-            cached = self.cache.get(market_id)
-            if cached:
-                return cached
-
+    # =========================================================
+    # INTERNAL
+    # =========================================================
+    def _publish(self, event_name: str, payload: Dict[str, Any]) -> None:
+        if not self.bus:
+            return
         try:
-            data = self.client.get_market_book(market_id)
-            if data:
-                self.cache.set(market_id, data)
-                self._last_refresh[market_id] = time.time()
-            return data
-        except Exception as e:
-            logger.error(f"[MARKET_TRACKER] Error fetching {market_id}: {e}")
-            return None
+            self.bus.publish(event_name, payload)
+        except Exception:
+            logger.exception("Errore publish %s", event_name)
 
-    def get_best_prices(self, market_id: str) -> Dict[int, Dict]:
+    def _normalize_market_id(self, market_id: Any) -> str:
+        return str(market_id or "").strip()
+
+    def _extract_market_id(self, market_book: Dict[str, Any]) -> str:
+        return self._normalize_market_id(
+            market_book.get("market_id")
+            or market_book.get("marketId")
+            or market_book.get("id")
+            or ""
+        )
+
+    def _trim_cache_if_needed(self) -> None:
+        while len(self._market_order) > self.max_cache_size:
+            oldest = self._market_order.pop(0)
+            self._market_books.pop(oldest, None)
+            self._last_update_ts.pop(oldest, None)
+
+    def _touch_market(self, market_id: str) -> None:
+        if market_id in self._market_order:
+            self._market_order.remove(market_id)
+        self._market_order.append(market_id)
+        self._last_update_ts[market_id] = time.time()
+        self._trim_cache_if_needed()
+
+    # =========================================================
+    # PUBLIC CACHE API
+    # =========================================================
+    def update_market_book(self, market_book: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Estrae best back/lay per ogni selezione.
-
-        Returns:
-            {selection_id: {'back': price, 'lay': price, 'back_size': size, 'lay_size': size}}
+        Aggiorna cache locale e, se simulation attiva, inoltra il book al SimulationBroker.
         """
-        book = self.get_market_book(market_id)
-        if not book:
-            return {}
+        market_book = dict(market_book or {})
+        market_id = self._extract_market_id(market_book)
 
-        prices = {}
-        runners = book.get("runners", [])
-
-        for runner in runners:
-            sel_id = runner.get("selectionId")
-
-            back_prices = runner.get("ex", {}).get("availableToBack", [])
-            lay_prices = runner.get("ex", {}).get("availableToLay", [])
-
-            best_back = back_prices[0] if back_prices else {"price": 0, "size": 0}
-            best_lay = lay_prices[0] if lay_prices else {"price": 0, "size": 0}
-
-            prices[sel_id] = {
-                "back": best_back.get("price", 0),
-                "lay": best_lay.get("price", 0),
-                "back_size": best_back.get("size", 0),
-                "lay_size": best_lay.get("size", 0),
-            }
-
-        return prices
-
-    def get_changed_prices(self, market_id: str) -> Dict[int, Dict]:
-        """
-        Recupera solo i prezzi che sono cambiati significativamente.
-
-        Usa delta detection per filtrare variazioni minime.
-        """
-        all_prices = self.get_best_prices(market_id)
-        changed = {}
-
-        for sel_id, price_data in all_prices.items():
-            has_changed, reason = self.delta.has_changed(
-                market_id,
-                sel_id,
-                price_data["back"],
-                price_data["lay"],
-                price_data["back_size"],
-                price_data["lay_size"],
+        if not market_id:
+            error = "market_id mancante nel market_book"
+            self._publish(
+                "MARKET_TRACKER_ERROR",
+                {
+                    "error": error,
+                    "market_book": market_book,
+                },
             )
-            if has_changed:
-                changed[sel_id] = {**price_data, "change_reason": reason}
-
-        return changed
-
-    def track_market(self, market_id: str, metadata: Dict = None):
-        """Inizia tracking di un market."""
-        with self._lock:
-            self._active_markets[market_id] = {
-                "added": time.time(),
-                "metadata": metadata or {},
+            return {
+                "ok": False,
+                "error": error,
             }
 
-    def untrack_market(self, market_id: str):
-        """Ferma tracking di un market."""
         with self._lock:
-            self._active_markets.pop(market_id, None)
-            self.cache.invalidate(market_id)
-            self.delta.clear_market(market_id)
+            self._market_books[market_id] = market_book
+            self._touch_market(market_id)
 
-    def get_active_markets(self) -> List[str]:
-        """Lista market attivi."""
-        with self._lock:
-            return list(self._active_markets.keys())
+        simulation_forward = None
+        if self.betfair_service and hasattr(self.betfair_service, "update_simulation_market_book"):
+            try:
+                simulation_forward = self.betfair_service.update_simulation_market_book(
+                    market_id,
+                    market_book,
+                )
+            except Exception as exc:
+                logger.exception("Errore update_simulation_market_book: %s", exc)
+                simulation_forward = {
+                    "ok": False,
+                    "reason": str(exc),
+                    "simulated": False,
+                }
 
-    def get_stats(self) -> Dict:
-        """Statistiche complete tracker."""
+        payload = {
+            "market_id": market_id,
+            "market_book": market_book,
+            "simulation_forward": simulation_forward,
+            "updated_at": time.time(),
+        }
+        self._publish("MARKET_BOOK_UPDATED", payload)
+
         return {
-            "cache": self.cache.get_stats(),
-            "delta": self.delta.get_stats(),
-            "active_markets": len(self._active_markets),
-            "last_refresh": dict(self._last_refresh),
+            "ok": True,
+            "market_id": market_id,
+            "simulation_forward": simulation_forward,
         }
 
-    def reset(self):
-        """Reset completo tracker."""
-        self.cache.clear()
-        self.cache.reset_stats()
-        self.delta.reset_stats()
-        self._active_markets.clear()
-        self._last_refresh.clear()
+    def bulk_update_market_books(self, market_books: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+        updated = 0
+        failed = 0
+        last_error = ""
 
+        for book in market_books or []:
+            try:
+                result = self.update_market_book(book)
+                if result.get("ok"):
+                    updated += 1
+                else:
+                    failed += 1
+                    last_error = str(result.get("error", ""))
+            except Exception as exc:
+                failed += 1
+                last_error = str(exc)
+                logger.exception("Errore bulk update market book: %s", exc)
 
-_global_cache = None
-_global_delta = None
+        return {
+            "ok": failed == 0,
+            "updated": updated,
+            "failed": failed,
+            "last_error": last_error,
+        }
 
+    def get_market_book(self, market_id: str) -> Optional[Dict[str, Any]]:
+        market_id = self._normalize_market_id(market_id)
+        with self._lock:
+            market_book = self._market_books.get(market_id)
+            return dict(market_book) if market_book else None
 
-def get_market_cache(ttl: float = 1.0) -> MarketCache:
-    """Singleton cache globale."""
-    global _global_cache
-    if _global_cache is None:
-        _global_cache = MarketCache(ttl=ttl)
-    return _global_cache
+    def get_all_market_books(self) -> Dict[str, Dict[str, Any]]:
+        with self._lock:
+            return {mid: dict(book) for mid, book in self._market_books.items()}
 
+    def get_last_update_age_sec(self, market_id: str) -> Optional[float]:
+        market_id = self._normalize_market_id(market_id)
+        with self._lock:
+            ts = self._last_update_ts.get(market_id)
+            if ts is None:
+                return None
+            return max(0.0, time.time() - ts)
 
-def get_delta_detector() -> DeltaDetector:
-    """Singleton delta detector globale."""
-    global _global_delta
-    if _global_delta is None:
-        _global_delta = DeltaDetector()
-    return _global_delta
+    def has_market(self, market_id: str) -> bool:
+        market_id = self._normalize_market_id(market_id)
+        with self._lock:
+            return market_id in self._market_books
 
+    def clear_market(self, market_id: str) -> None:
+        market_id = self._normalize_market_id(market_id)
+        with self._lock:
+            self._market_books.pop(market_id, None)
+            self._last_update_ts.pop(market_id, None)
+            if market_id in self._market_order:
+                self._market_order.remove(market_id)
+
+    def clear_all(self) -> None:
+        with self._lock:
+            self._market_books.clear()
+            self._last_update_ts.clear()
+            self._market_order.clear()
+
+    # =========================================================
+    # RUNNER HELPERS
+    # =========================================================
+    def get_runner_book(self, market_id: str, selection_id: int) -> Optional[Dict[str, Any]]:
+        market_book = self.get_market_book(market_id)
+        if not market_book:
+            return None
+
+        for runner in market_book.get("runners", []) or []:
+            try:
+                if int(runner.get("selectionId")) == int(selection_id):
+                    return dict(runner)
+            except Exception:
+                continue
+        return None
+
+    def get_best_back(self, market_id: str, selection_id: int) -> Optional[Dict[str, float]]:
+        runner = self.get_runner_book(market_id, selection_id)
+        if not runner:
+            return None
+
+        ladder = ((runner.get("ex") or {}).get("availableToBack") or [])
+        if not ladder:
+            return None
+
+        level = ladder[0] or {}
+        try:
+            return {
+                "price": float(level.get("price", 0.0) or 0.0),
+                "size": float(level.get("size", 0.0) or 0.0),
+            }
+        except Exception:
+            return None
+
+    def get_best_lay(self, market_id: str, selection_id: int) -> Optional[Dict[str, float]]:
+        runner = self.get_runner_book(market_id, selection_id)
+        if not runner:
+            return None
+
+        ladder = ((runner.get("ex") or {}).get("availableToLay") or [])
+        if not ladder:
+            return None
+
+        level = ladder[0] or {}
+        try:
+            return {
+                "price": float(level.get("price", 0.0) or 0.0),
+                "size": float(level.get("size", 0.0) or 0.0),
+            }
+        except Exception:
+            return None
+
+    # =========================================================
+    # DEBUG / SNAPSHOT
+    # =========================================================
+    def snapshot(self) -> Dict[str, Any]:
+        with self._lock:
+            return {
+                "markets_cached": len(self._market_books),
+                "market_ids": list(self._market_order),
+                "last_update_ts": dict(self._last_update_ts),
+            }
