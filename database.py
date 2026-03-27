@@ -75,13 +75,13 @@ class Database:
                     return rows
                 conn.commit()
                 return cur
-        else:
-            cur = conn.execute(sql, tuple(params))
-            if fetchone:
-                return cur.fetchone()
-            if fetch:
-                return cur.fetchall()
-            return cur
+
+        cur = conn.execute(sql, tuple(params))
+        if fetchone:
+            return cur.fetchone()
+        if fetch:
+            return cur.fetchall()
+        return cur
 
     def close_all_connections(self) -> None:
         conn = getattr(self._local, "conn", None)
@@ -91,6 +91,41 @@ class Database:
             except Exception:
                 pass
             self._local.conn = None
+
+    # =========================================================
+    # SAFE HELPERS
+    # =========================================================
+    def _utc_now(self) -> str:
+        return datetime.utcnow().isoformat()
+
+    def _safe_float(self, value: Any, default: float = 0.0) -> float:
+        try:
+            if value in (None, ""):
+                return float(default)
+            return float(value)
+        except Exception:
+            return float(default)
+
+    def _safe_int(self, value: Any, default: int = 0) -> int:
+        try:
+            if value in (None, ""):
+                return int(default)
+            return int(value)
+        except Exception:
+            return int(default)
+
+    def _safe_bool_int(self, value: Any, default: bool = False) -> int:
+        if value is None:
+            return int(bool(default))
+        if isinstance(value, bool):
+            return int(value)
+        return int(str(value).strip().lower() in {"1", "true", "yes", "on"})
+
+    def _safe_json_dumps(self, value: Any) -> str:
+        try:
+            return json.dumps(value if value is not None else {}, ensure_ascii=False)
+        except Exception:
+            return "{}"
 
     # =========================================================
     # INIT SCHEMA
@@ -118,19 +153,6 @@ class Database:
 
             conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS signal_patterns (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    pattern TEXT NOT NULL,
-                    label TEXT DEFAULT '',
-                    enabled INTEGER NOT NULL DEFAULT 1,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-                """
-            )
-
-            conn.execute(
-                """
                 CREATE TABLE IF NOT EXISTS received_signals (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     selection TEXT DEFAULT '',
@@ -138,8 +160,9 @@ class Database:
                     price REAL NOT NULL DEFAULT 0.0,
                     stake REAL NOT NULL DEFAULT 0.0,
                     status TEXT DEFAULT '',
-                    signal_json TEXT NOT NULL,
-                    received_at TEXT NOT NULL
+                    signal_json TEXT NOT NULL DEFAULT '{}',
+                    received_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL
                 )
                 """
             )
@@ -152,6 +175,64 @@ class Database:
                     message_text TEXT,
                     status TEXT DEFAULT '',
                     created_at TEXT NOT NULL
+                )
+                """
+            )
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS signal_patterns (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    label TEXT NOT NULL DEFAULT '',
+                    pattern TEXT NOT NULL DEFAULT '',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    bet_side TEXT DEFAULT '',
+                    market_type TEXT DEFAULT 'MATCH_ODDS',
+                    selection_template TEXT DEFAULT '',
+                    min_minute INTEGER,
+                    max_minute INTEGER,
+                    min_score INTEGER,
+                    max_score INTEGER,
+                    live_only INTEGER NOT NULL DEFAULT 0,
+                    priority INTEGER NOT NULL DEFAULT 100,
+                    extra_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS simulation_state (
+                    state_key TEXT PRIMARY KEY,
+                    state_json TEXT NOT NULL DEFAULT '{}',
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS simulation_bets (
+                    bet_id TEXT PRIMARY KEY,
+                    market_id TEXT NOT NULL,
+                    selection_id TEXT NOT NULL,
+                    side TEXT NOT NULL DEFAULT 'BACK',
+                    price REAL NOT NULL DEFAULT 0.0,
+                    size REAL NOT NULL DEFAULT 0.0,
+                    matched_size REAL NOT NULL DEFAULT 0.0,
+                    avg_price_matched REAL NOT NULL DEFAULT 0.0,
+                    status TEXT NOT NULL DEFAULT 'EXECUTABLE',
+                    event_key TEXT DEFAULT '',
+                    table_id INTEGER,
+                    batch_id TEXT DEFAULT '',
+                    event_name TEXT DEFAULT '',
+                    market_name TEXT DEFAULT '',
+                    runner_name TEXT DEFAULT '',
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 )
                 """
             )
@@ -233,41 +314,11 @@ class Database:
             )
 
             conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS simulation_state (
-                    state_key TEXT PRIMARY KEY,
-                    state_json TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-                """
+                "CREATE INDEX IF NOT EXISTS idx_received_signals_created_at ON received_signals(created_at DESC)"
             )
-
             conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS simulation_bets (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    bet_id TEXT NOT NULL UNIQUE,
-                    market_id TEXT NOT NULL,
-                    selection_id TEXT NOT NULL,
-                    side TEXT NOT NULL,
-                    price REAL NOT NULL DEFAULT 0.0,
-                    size REAL NOT NULL DEFAULT 0.0,
-                    matched_size REAL NOT NULL DEFAULT 0.0,
-                    avg_price_matched REAL NOT NULL DEFAULT 0.0,
-                    status TEXT NOT NULL DEFAULT 'EXECUTABLE',
-                    event_key TEXT DEFAULT '',
-                    table_id INTEGER,
-                    batch_id TEXT DEFAULT '',
-                    event_name TEXT DEFAULT '',
-                    market_name TEXT DEFAULT '',
-                    runner_name TEXT DEFAULT '',
-                    payload_json TEXT DEFAULT '{}',
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-                """
+                "CREATE INDEX IF NOT EXISTS idx_signal_patterns_enabled_priority ON signal_patterns(enabled, priority, id)"
             )
-
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_order_saga_status ON order_saga(status)"
             )
@@ -282,15 +333,6 @@ class Database:
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_dutching_legs_batch_id ON dutching_batch_legs(batch_id)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_received_signals_received_at ON received_signals(received_at DESC)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_simulation_bets_market_id ON simulation_bets(market_id)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_simulation_bets_status ON simulation_bets(status)"
             )
 
     # =========================================================
@@ -370,7 +412,7 @@ class Database:
         )
 
     # =========================================================
-    # TELEGRAM
+    # TELEGRAM SETTINGS / CHATS
     # =========================================================
     def get_telegram_settings(self) -> Dict[str, Any]:
         settings = self.get_settings()
@@ -379,10 +421,10 @@ class Database:
             "api_hash": settings.get("telegram.api_hash", settings.get("api_hash", "")),
             "session_string": settings.get("telegram.session_string", settings.get("session_string", "")),
             "phone_number": settings.get("telegram.phone_number", settings.get("phone_number", "")),
-            "enabled": str(settings.get("telegram.enabled", "0")).lower() in {"1", "true"},
-            "auto_bet": str(settings.get("telegram.auto_bet", "0")).lower() in {"1", "true"},
-            "require_confirmation": str(settings.get("telegram.require_confirmation", "1")).lower() in {"1", "true"},
-            "auto_stake": float(settings.get("telegram.auto_stake", 1.0) or 1.0),
+            "enabled": str(settings.get("telegram.enabled", "0")).lower() in {"1", "true", "yes", "on"},
+            "auto_bet": str(settings.get("telegram.auto_bet", "0")).lower() in {"1", "true", "yes", "on"},
+            "require_confirmation": str(settings.get("telegram.require_confirmation", "1")).lower() in {"1", "true", "yes", "on"},
+            "auto_stake": self._safe_float(settings.get("telegram.auto_stake", 1.0), 1.0),
         }
 
     def save_telegram_settings(self, payload: Dict[str, Any]) -> None:
@@ -392,10 +434,10 @@ class Database:
                 "telegram.api_hash": payload.get("api_hash", ""),
                 "telegram.session_string": payload.get("session_string", ""),
                 "telegram.phone_number": payload.get("phone_number", ""),
-                "telegram.enabled": int(bool(payload.get("enabled", False))),
-                "telegram.auto_bet": int(bool(payload.get("auto_bet", False))),
-                "telegram.require_confirmation": int(bool(payload.get("require_confirmation", True))),
-                "telegram.auto_stake": payload.get("auto_stake", 1.0),
+                "telegram.enabled": self._safe_bool_int(payload.get("enabled", False)),
+                "telegram.auto_bet": self._safe_bool_int(payload.get("auto_bet", False)),
+                "telegram.require_confirmation": self._safe_bool_int(payload.get("require_confirmation", True)),
+                "telegram.auto_stake": self._safe_float(payload.get("auto_stake", 1.0), 1.0),
             }
         )
 
@@ -443,49 +485,258 @@ class Database:
                 )
 
     # =========================================================
-    # SIGNAL PATTERNS
+    # RECEIVED SIGNALS
     # =========================================================
-    def get_signal_patterns(self) -> List[Dict[str, Any]]:
+    def save_received_signal(self, signal: Optional[Dict[str, Any]] = None, **kwargs) -> None:
+        payload = dict(signal or {})
+        payload.update(kwargs)
+
+        selection = str(
+            payload.get("selection")
+            or payload.get("selection_name")
+            or payload.get("runner_name")
+            or payload.get("runnerName")
+            or ""
+        )
+        action = str(
+            payload.get("action")
+            or payload.get("bet_type")
+            or payload.get("side")
+            or ""
+        ).upper()
+        price = self._safe_float(payload.get("price", payload.get("odds")), 0.0)
+        stake = self._safe_float(payload.get("stake"), 0.0)
+        status = str(payload.get("status") or "")
+        received_at = str(payload.get("received_at") or self._utc_now())
+        created_at = self._utc_now()
+
+        self._execute(
+            """
+            INSERT INTO received_signals(
+                selection, action, price, stake, status,
+                signal_json, received_at, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                selection,
+                action,
+                price,
+                stake,
+                status,
+                self._safe_json_dumps(payload),
+                received_at,
+                created_at,
+            ),
+        )
+
+    def get_received_signals(self, limit: int = 50) -> List[Dict[str, Any]]:
         rows = self._execute(
             """
-            SELECT id, pattern, label, enabled, created_at, updated_at
-            FROM signal_patterns
-            ORDER BY id ASC
+            SELECT id, selection, action, price, stake, status,
+                   signal_json, received_at, created_at
+            FROM received_signals
+            ORDER BY id DESC
+            LIMIT ?
             """,
+            (max(1, int(limit or 50)),),
             fetch=True,
             commit=False,
         )
-        return [
-            {
+
+        out: List[Dict[str, Any]] = []
+        for row in rows or []:
+            try:
+                signal_json = json.loads(row["signal_json"] or "{}")
+            except Exception:
+                signal_json = {}
+
+            out.append(
+                {
+                    "id": row["id"],
+                    "selection": row["selection"],
+                    "action": row["action"],
+                    "price": self._safe_float(row["price"], 0.0),
+                    "stake": self._safe_float(row["stake"], 0.0),
+                    "status": row["status"],
+                    "received_at": row["received_at"],
+                    "created_at": row["created_at"],
+                    "signal": signal_json,
+                }
+            )
+        return out
+
+    # =========================================================
+    # SIGNAL PATTERNS (FULL ADVANCED SUPPORT)
+    # =========================================================
+    def get_signal_patterns(self, enabled_only: bool = False) -> List[Dict[str, Any]]:
+        sql = """
+            SELECT *
+            FROM signal_patterns
+        """
+        params: List[Any] = []
+        if enabled_only:
+            sql += " WHERE enabled = 1"
+        sql += " ORDER BY priority ASC, id ASC"
+
+        rows = self._execute(
+            sql,
+            tuple(params),
+            fetch=True,
+            commit=False,
+        )
+
+        out: List[Dict[str, Any]] = []
+        for row in rows or []:
+            try:
+                extra = json.loads(row["extra_json"] or "{}")
+            except Exception:
+                extra = {}
+
+            item = {
                 "id": row["id"],
-                "pattern": row["pattern"],
                 "label": row["label"],
+                "pattern": row["pattern"],
                 "enabled": bool(row["enabled"]),
+                "bet_side": row["bet_side"] or "",
+                "market_type": row["market_type"] or "MATCH_ODDS",
+                "selection_template": row["selection_template"] or "",
+                "min_minute": row["min_minute"],
+                "max_minute": row["max_minute"],
+                "min_score": row["min_score"],
+                "max_score": row["max_score"],
+                "live_only": bool(row["live_only"]),
+                "priority": self._safe_int(row["priority"], 100),
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
             }
-            for row in (rows or [])
-        ]
+            item.update(extra if isinstance(extra, dict) else {})
+            out.append(item)
 
-    def save_signal_pattern(self, pattern: str, label: str = "", enabled: bool = True) -> int:
-        now = datetime.utcnow().isoformat()
+        return out
+
+    def save_signal_pattern(
+        self,
+        *,
+        pattern: str,
+        label: str,
+        enabled: bool = True,
+        bet_side: str = "",
+        market_type: str = "MATCH_ODDS",
+        selection_template: str = "",
+        min_minute: Optional[int] = None,
+        max_minute: Optional[int] = None,
+        min_score: Optional[int] = None,
+        max_score: Optional[int] = None,
+        live_only: bool = False,
+        priority: int = 100,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        now = self._utc_now()
+
         cur = self._execute(
             """
-            INSERT INTO signal_patterns(pattern, label, enabled, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO signal_patterns(
+                label, pattern, enabled, bet_side, market_type,
+                selection_template, min_minute, max_minute,
+                min_score, max_score, live_only, priority,
+                extra_json, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (str(pattern), str(label or ""), int(bool(enabled)), now, now),
+            (
+                str(label or ""),
+                str(pattern or ""),
+                int(bool(enabled)),
+                str(bet_side or ""),
+                str(market_type or "MATCH_ODDS"),
+                str(selection_template or ""),
+                None if min_minute in (None, "") else int(min_minute),
+                None if max_minute in (None, "") else int(max_minute),
+                None if min_score in (None, "") else int(min_score),
+                None if max_score in (None, "") else int(max_score),
+                int(bool(live_only)),
+                self._safe_int(priority, 100),
+                self._safe_json_dumps(extra or {}),
+                now,
+                now,
+            ),
         )
         return int(cur.lastrowid)
 
-    def update_signal_pattern(self, pattern_id: int, pattern: str, label: str = "") -> None:
+    def update_signal_pattern(
+        self,
+        pattern_id: int,
+        *,
+        pattern: Optional[str] = None,
+        label: Optional[str] = None,
+        enabled: Optional[bool] = None,
+        bet_side: Optional[str] = None,
+        market_type: Optional[str] = None,
+        selection_template: Optional[str] = None,
+        min_minute: Any = None,
+        max_minute: Any = None,
+        min_score: Any = None,
+        max_score: Any = None,
+        live_only: Optional[bool] = None,
+        priority: Optional[int] = None,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        current = self._execute(
+            "SELECT * FROM signal_patterns WHERE id = ? LIMIT 1",
+            (int(pattern_id),),
+            fetchone=True,
+            commit=False,
+        )
+        if not current:
+            raise RuntimeError("Signal pattern non trovato")
+
+        try:
+            current_extra = json.loads(current["extra_json"] or "{}")
+        except Exception:
+            current_extra = {}
+
+        merged_extra = current_extra
+        if extra is not None:
+            merged_extra = dict(current_extra)
+            merged_extra.update(extra)
+
         self._execute(
             """
             UPDATE signal_patterns
-            SET pattern = ?, label = ?, updated_at = ?
+            SET label = ?,
+                pattern = ?,
+                enabled = ?,
+                bet_side = ?,
+                market_type = ?,
+                selection_template = ?,
+                min_minute = ?,
+                max_minute = ?,
+                min_score = ?,
+                max_score = ?,
+                live_only = ?,
+                priority = ?,
+                extra_json = ?,
+                updated_at = ?
             WHERE id = ?
             """,
-            (str(pattern), str(label or ""), datetime.utcnow().isoformat(), int(pattern_id)),
+            (
+                str(current["label"] if label is None else label),
+                str(current["pattern"] if pattern is None else pattern),
+                int(current["enabled"] if enabled is None else bool(enabled)),
+                str(current["bet_side"] if bet_side is None else bet_side),
+                str(current["market_type"] if market_type is None else market_type),
+                str(current["selection_template"] if selection_template is None else selection_template),
+                current["min_minute"] if min_minute is None else (None if min_minute == "" else int(min_minute)),
+                current["max_minute"] if max_minute is None else (None if max_minute == "" else int(max_minute)),
+                current["min_score"] if min_score is None else (None if min_score == "" else int(min_score)),
+                current["max_score"] if max_score is None else (None if max_score == "" else int(max_score)),
+                int(current["live_only"] if live_only is None else bool(live_only)),
+                self._safe_int(current["priority"] if priority is None else priority, 100),
+                self._safe_json_dumps(merged_extra),
+                self._utc_now(),
+                int(pattern_id),
+            ),
         )
 
     def delete_signal_pattern(self, pattern_id: int) -> None:
@@ -496,13 +747,13 @@ class Database:
 
     def toggle_signal_pattern(self, pattern_id: int) -> bool:
         row = self._execute(
-            "SELECT enabled FROM signal_patterns WHERE id = ?",
+            "SELECT enabled FROM signal_patterns WHERE id = ? LIMIT 1",
             (int(pattern_id),),
             fetchone=True,
             commit=False,
         )
         if not row:
-            raise RuntimeError("Pattern non trovato")
+            raise RuntimeError("Signal pattern non trovato")
 
         new_state = not bool(row["enabled"])
         self._execute(
@@ -511,75 +762,100 @@ class Database:
             SET enabled = ?, updated_at = ?
             WHERE id = ?
             """,
-            (int(new_state), datetime.utcnow().isoformat(), int(pattern_id)),
+            (int(new_state), self._utc_now(), int(pattern_id)),
         )
         return new_state
 
     # =========================================================
-    # RECEIVED SIGNALS
+    # SIMULATION STATE / BETS
     # =========================================================
-    def save_received_signal(self, signal: Optional[Dict[str, Any]] = None, **kwargs) -> None:
-        signal = dict(signal or {})
-        if kwargs:
-            signal.update(kwargs)
-
-        received_at = str(
-            signal.get("received_at")
-            or signal.get("created_at")
-            or datetime.utcnow().isoformat()
-        )
-
-        selection = str(signal.get("selection") or signal.get("runner_name") or signal.get("runnerName") or "")
-        action = str(signal.get("action") or signal.get("bet_type") or signal.get("side") or "")
-        price = float(signal.get("price", 0.0) or 0.0)
-        stake = float(signal.get("stake", 0.0) or 0.0)
-        status = str(signal.get("status") or "")
-
+    def save_simulation_state(self, state_key: str, state: Dict[str, Any]) -> None:
         self._execute(
             """
-            INSERT INTO received_signals(selection, action, price, stake, status, signal_json, received_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO simulation_state(state_key, state_json, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(state_key) DO UPDATE SET
+                state_json = excluded.state_json,
+                updated_at = excluded.updated_at
             """,
             (
-                selection,
-                action,
-                price,
-                stake,
-                status,
-                json.dumps(signal, ensure_ascii=False),
-                received_at,
+                str(state_key or "default"),
+                self._safe_json_dumps(state or {}),
+                self._utc_now(),
             ),
         )
 
-    def get_received_signals(self, limit: int = 50) -> List[Dict[str, Any]]:
-        rows = self._execute(
-            """
-            SELECT id, selection, action, price, stake, status, signal_json, received_at
-            FROM received_signals
-            ORDER BY id DESC
-            LIMIT ?
-            """,
-            (int(limit),),
-            fetch=True,
+    def get_simulation_state(self, state_key: str = "default") -> Dict[str, Any]:
+        row = self._execute(
+            "SELECT state_json FROM simulation_state WHERE state_key = ? LIMIT 1",
+            (str(state_key or "default"),),
+            fetchone=True,
             commit=False,
         )
-        out: List[Dict[str, Any]] = []
-        for row in rows or []:
-            item = {
-                "id": row["id"],
-                "selection": row["selection"],
-                "action": row["action"],
-                "price": row["price"],
-                "stake": row["stake"],
-                "status": row["status"],
-                "received_at": row["received_at"],
-            }
-            try:
-                item["signal"] = json.loads(row["signal_json"] or "{}")
-            except Exception:
-                item["signal"] = {}
-            out.append(item)
-        return out
+        if not row:
+            return {}
+        try:
+            return json.loads(row["state_json"] or "{}")
+        except Exception:
+            return {}
+
+    def load_simulation_state(self, state_key: str = "default") -> Dict[str, Any]:
+        return self.get_simulation_state(state_key=state_key)
+
+    def save_simulation_bet(self, payload: Dict[str, Any]) -> None:
+        now = self._utc_now()
+        bet_id = str(payload.get("bet_id") or "")
+        if not bet_id:
+            raise RuntimeError("bet_id mancante")
+
+        self._execute(
+            """
+            INSERT INTO simulation_bets(
+                bet_id, market_id, selection_id, side, price, size,
+                matched_size, avg_price_matched, status, event_key,
+                table_id, batch_id, event_name, market_name, runner_name,
+                payload_json, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(bet_id) DO UPDATE SET
+                market_id = excluded.market_id,
+                selection_id = excluded.selection_id,
+                side = excluded.side,
+                price = excluded.price,
+                size = excluded.size,
+                matched_size = excluded.matched_size,
+                avg_price_matched = excluded.avg_price_matched,
+                status = excluded.status,
+                event_key = excluded.event_key,
+                table_id = excluded.table_id,
+                batch_id = excluded.batch_id,
+                event_name = excluded.event_name,
+                market_name = excluded.market_name,
+                runner_name = excluded.runner_name,
+                payload_json = excluded.payload_json,
+                updated_at = excluded.updated_at
+            """,
+            (
+                bet_id,
+                str(payload.get("market_id") or ""),
+                str(payload.get("selection_id") or ""),
+                str(payload.get("side") or payload.get("bet_type") or "BACK"),
+                self._safe_float(payload.get("price"), 0.0),
+                self._safe_float(payload.get("size", payload.get("stake")), 0.0),
+                self._safe_float(payload.get("matched_size"), 0.0),
+                self._safe_float(payload.get("avg_price_matched"), 0.0),
+                str(payload.get("status") or "EXECUTABLE"),
+                str(payload.get("event_key") or ""),
+                None if payload.get("table_id") in (None, "") else int(payload.get("table_id")),
+                str(payload.get("batch_id") or ""),
+                str(payload.get("event_name") or ""),
+                str(payload.get("market_name") or ""),
+                str(payload.get("runner_name") or ""),
+                self._safe_json_dumps(payload),
+                str(payload.get("created_at") or now),
+                now,
+            ),
+        )
 
     # =========================================================
     # ORDER SAGA
@@ -599,7 +875,7 @@ class Database:
         payload: Dict[str, Any],
         status: str = "PENDING",
     ) -> None:
-        now = datetime.utcnow().isoformat()
+        now = self._utc_now()
         self._execute(
             """
             INSERT OR REPLACE INTO order_saga(
@@ -620,7 +896,7 @@ class Database:
                 float(price or 0.0),
                 float(stake or 0.0),
                 str(status),
-                json.dumps(payload or {}, ensure_ascii=False),
+                self._safe_json_dumps(payload or {}),
                 now,
                 now,
             ),
@@ -644,7 +920,7 @@ class Database:
                 str(status),
                 str(bet_id or ""),
                 str(error_text or ""),
-                datetime.utcnow().isoformat(),
+                self._utc_now(),
                 str(customer_ref),
             ),
         )
@@ -669,7 +945,15 @@ class Database:
             fetch=True,
             commit=False,
         )
-        return [dict(row) for row in (rows or [])]
+        out: List[Dict[str, Any]] = []
+        for row in rows or []:
+            item = dict(row)
+            try:
+                item["payload"] = json.loads(item.get("payload_json") or "{}")
+            except Exception:
+                item["payload"] = {}
+            out.append(item)
+        return out
 
     def get_batch_sagas(self, batch_id: str) -> List[Dict[str, Any]]:
         rows = self._execute(
@@ -684,188 +968,3 @@ class Database:
             commit=False,
         )
         return [dict(row) for row in (rows or [])]
-
-    # =========================================================
-    # DUTCHING BATCHES
-    # =========================================================
-    def create_dutching_batch(self, batch: Dict[str, Any]) -> None:
-        now = datetime.utcnow().isoformat()
-        self._execute(
-            """
-            INSERT OR REPLACE INTO dutching_batches(
-                batch_id, event_key, market_id, event_name, market_name, table_id,
-                strategy, status, total_legs, placed_legs, matched_legs, failed_legs,
-                cancelled_legs, batch_exposure, avg_profit, book_pct, payload_json,
-                notes, created_at, updated_at, closed_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                str(batch.get("batch_id", "")),
-                str(batch.get("event_key", "")),
-                str(batch.get("market_id", "")),
-                str(batch.get("event_name", "")),
-                str(batch.get("market_name", "")),
-                batch.get("table_id"),
-                str(batch.get("strategy", "DUTCHING")),
-                str(batch.get("status", "PENDING")),
-                int(batch.get("total_legs", 0) or 0),
-                int(batch.get("placed_legs", 0) or 0),
-                int(batch.get("matched_legs", 0) or 0),
-                int(batch.get("failed_legs", 0) or 0),
-                int(batch.get("cancelled_legs", 0) or 0),
-                float(batch.get("batch_exposure", 0.0) or 0.0),
-                float(batch.get("avg_profit", 0.0) or 0.0),
-                float(batch.get("book_pct", 0.0) or 0.0),
-                json.dumps(batch.get("payload", {}), ensure_ascii=False),
-                str(batch.get("notes", "")),
-                str(batch.get("created_at") or now),
-                now,
-                batch.get("closed_at"),
-            ),
-        )
-
-    def update_dutching_batch_status(self, batch_id: str, status: str, notes: str = "") -> None:
-        closed_at = datetime.utcnow().isoformat() if status in {"EXECUTED", "FAILED", "CANCELLED"} else None
-        self._execute(
-            """
-            UPDATE dutching_batches
-            SET status = ?, notes = ?, updated_at = ?, closed_at = COALESCE(?, closed_at)
-            WHERE batch_id = ?
-            """,
-            (str(status), str(notes or ""), datetime.utcnow().isoformat(), closed_at, str(batch_id)),
-        )
-
-    # =========================================================
-    # SIMULATION STATE
-    # =========================================================
-    def save_simulation_state(self, state_key: str, state: Dict[str, Any]) -> None:
-        self._execute(
-            """
-            INSERT INTO simulation_state(state_key, state_json, updated_at)
-            VALUES (?, ?, ?)
-            ON CONFLICT(state_key) DO UPDATE SET
-                state_json = excluded.state_json,
-                updated_at = excluded.updated_at
-            """,
-            (
-                str(state_key),
-                json.dumps(state or {}, ensure_ascii=False),
-                datetime.utcnow().isoformat(),
-            ),
-        )
-
-    def get_simulation_state(self, state_key: str = "default") -> Dict[str, Any]:
-        row = self._execute(
-            "SELECT state_json FROM simulation_state WHERE state_key = ?",
-            (str(state_key),),
-            fetchone=True,
-            commit=False,
-        )
-        if not row:
-            return {}
-        try:
-            return json.loads(row["state_json"] or "{}")
-        except Exception:
-            return {}
-
-    def clear_simulation_state(self, state_key: str = "default") -> None:
-        self._execute(
-            "DELETE FROM simulation_state WHERE state_key = ?",
-            (str(state_key),),
-        )
-
-    # =========================================================
-    # SIMULATION BETS
-    # =========================================================
-    def save_simulation_bet(self, payload: Dict[str, Any]) -> None:
-        now = datetime.utcnow().isoformat()
-        self._execute(
-            """
-            INSERT INTO simulation_bets(
-                bet_id, market_id, selection_id, side, price, size, matched_size,
-                avg_price_matched, status, event_key, table_id, batch_id,
-                event_name, market_name, runner_name, payload_json, created_at, updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(bet_id) DO UPDATE SET
-                matched_size = excluded.matched_size,
-                avg_price_matched = excluded.avg_price_matched,
-                status = excluded.status,
-                event_key = excluded.event_key,
-                table_id = excluded.table_id,
-                batch_id = excluded.batch_id,
-                event_name = excluded.event_name,
-                market_name = excluded.market_name,
-                runner_name = excluded.runner_name,
-                payload_json = excluded.payload_json,
-                updated_at = excluded.updated_at
-            """,
-            (
-                str(payload.get("bet_id", "")),
-                str(payload.get("market_id", "")),
-                str(payload.get("selection_id", "")),
-                str(payload.get("side", "")),
-                float(payload.get("price", 0.0) or 0.0),
-                float(payload.get("size", 0.0) or 0.0),
-                float(payload.get("matched_size", 0.0) or 0.0),
-                float(payload.get("avg_price_matched", 0.0) or 0.0),
-                str(payload.get("status", "EXECUTABLE")),
-                str(payload.get("event_key", "")),
-                payload.get("table_id"),
-                str(payload.get("batch_id", "")),
-                str(payload.get("event_name", "")),
-                str(payload.get("market_name", "")),
-                str(payload.get("runner_name", "")),
-                json.dumps(payload or {}, ensure_ascii=False),
-                str(payload.get("created_at") or now),
-                now,
-            ),
-        )
-
-    def get_simulation_bets(self, market_id: str | None = None) -> List[Dict[str, Any]]:
-        if market_id:
-            rows = self._execute(
-                """
-                SELECT *
-                FROM simulation_bets
-                WHERE market_id = ?
-                ORDER BY created_at ASC, id ASC
-                """,
-                (str(market_id),),
-                fetch=True,
-                commit=False,
-            )
-        else:
-            rows = self._execute(
-                """
-                SELECT *
-                FROM simulation_bets
-                ORDER BY created_at ASC, id ASC
-                """,
-                fetch=True,
-                commit=False,
-            )
-        return [dict(row) for row in (rows or [])]
-
-    def update_simulation_bet_status(self, bet_id: str, status: str) -> None:
-        self._execute(
-            """
-            UPDATE simulation_bets
-            SET status = ?, updated_at = ?
-            WHERE bet_id = ?
-            """,
-            (str(status), datetime.utcnow().isoformat(), str(bet_id)),
-        )
-
-    # =========================================================
-    # OPTIONAL LEGACY HELPERS
-    # =========================================================
-    def save_bet(self, payload: Dict[str, Any]) -> None:
-        logger.info("save_bet placeholder called: %s", payload)
-
-    def save_cashout_transaction(self, payload: Dict[str, Any]) -> None:
-        logger.info("save_cashout_transaction placeholder called: %s", payload)
-
-    def save_simulation_bet_runtime(self, payload: Dict[str, Any]) -> None:
-        self.save_simulation_bet(payload)
