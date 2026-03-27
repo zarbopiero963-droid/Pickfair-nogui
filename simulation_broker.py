@@ -39,6 +39,7 @@ class SimulationBroker:
         commission_pct: float = 4.5,
         partial_fill_enabled: bool = True,
         consume_liquidity: bool = True,
+        db=None,
     ):
         self._lock = RLock()
 
@@ -46,6 +47,7 @@ class SimulationBroker:
         self.commission_pct = float(commission_pct or 0.0)
         self.partial_fill_enabled = bool(partial_fill_enabled)
         self.consume_liquidity = bool(consume_liquidity)
+        self.db = db
 
         self.connected = False
         self.session_token = f"SIM-{uuid.uuid4().hex}"
@@ -60,11 +62,62 @@ class SimulationBroker:
         )
 
     # =========================================================
+    # INTERNAL DB HELPERS
+    # =========================================================
+    def _persist_state(self) -> None:
+        if self.db and hasattr(self.db, "save_simulation_state"):
+            try:
+                self.db.save_simulation_state("default", self.state.to_dict())
+            except Exception:
+                pass
+
+    def _persist_position(self, bet_id: str) -> None:
+        if not self.db or not hasattr(self.db, "save_simulation_bet"):
+            return
+
+        pos = self.state.get_position(bet_id)
+        if not pos:
+            return
+
+        payload = {
+            "bet_id": pos.bet_id,
+            "market_id": pos.market_id,
+            "selection_id": pos.selection_id,
+            "side": pos.side,
+            "price": pos.price,
+            "size": pos.size,
+            "matched_size": pos.matched_size,
+            "avg_price_matched": pos.avg_price_matched,
+            "status": pos.status,
+            "event_key": pos.event_key,
+            "table_id": pos.table_id,
+            "batch_id": pos.batch_id,
+            "event_name": pos.event_name,
+            "market_name": pos.market_name,
+            "runner_name": pos.runner_name,
+            "created_at": pos.created_at,
+            "updated_at": pos.updated_at,
+        }
+
+        try:
+            self.db.save_simulation_bet(payload)
+        except Exception:
+            pass
+
+    def _persist_all_open_positions(self) -> None:
+        if not self.db or not hasattr(self.db, "save_simulation_bet"):
+            return
+
+        for pos in self.state.list_positions():
+            self._persist_position(pos.bet_id)
+
+    # =========================================================
     # SESSION
     # =========================================================
     def login(self, password: str = "") -> Dict[str, Any]:
         with self._lock:
             self.connected = True
+            self._persist_state()
             return {
                 "session_token": self.session_token,
                 "expiry": "",
@@ -73,6 +126,8 @@ class SimulationBroker:
 
     def logout(self) -> None:
         with self._lock:
+            self._persist_all_open_positions()
+            self._persist_state()
             self.connected = False
 
     # =========================================================
@@ -108,6 +163,14 @@ class SimulationBroker:
         with self._lock:
             self.order_book.update_market_book(str(market_id), market_book or {})
             reprocessed = self.matching_engine.reprocess_open_orders(str(market_id))
+
+            for item in reprocessed.get("results", []) or []:
+                bet_id = str(item.get("bet_id") or "")
+                if bet_id:
+                    self._persist_position(bet_id)
+
+            self._persist_state()
+
             return {
                 "ok": True,
                 "market_id": str(market_id),
@@ -158,6 +221,9 @@ class SimulationBroker:
                 market_name=str(market_name or ""),
                 runner_name=str(runner_name or ""),
             )
+
+            self._persist_position(bet_id)
+            self._persist_state()
 
             instruction_status = "SUCCESS" if result.status != "FAILURE" else "FAILURE"
 
@@ -238,6 +304,8 @@ class SimulationBroker:
 
             overall_ok = all(r.get("status") == "SUCCESS" for r in reports) if reports else False
 
+            self._persist_state()
+
             return {
                 "status": "SUCCESS" if overall_ok else "FAILURE",
                 "instructionReports": reports,
@@ -271,6 +339,8 @@ class SimulationBroker:
                         continue
 
                     result = self.matching_engine.cancel_order(bet_id)
+                    self._persist_position(bet_id)
+
                     reports.append(
                         {
                             "status": "SUCCESS" if result.get("ok") else "FAILURE",
@@ -281,13 +351,14 @@ class SimulationBroker:
                         }
                     )
             else:
-                # cancella tutti gli ordini aperti del mercato
                 target_market = str(market_id or "")
                 for pos in self.state.list_open_positions():
                     if target_market and str(pos.market_id) != target_market:
                         continue
 
                     result = self.matching_engine.cancel_order(pos.bet_id)
+                    self._persist_position(pos.bet_id)
+
                     reports.append(
                         {
                             "status": "SUCCESS" if result.get("ok") else "FAILURE",
@@ -299,6 +370,7 @@ class SimulationBroker:
                     )
 
             overall_ok = all(r.get("status") == "SUCCESS" for r in reports) if reports else False
+            self._persist_state()
 
             return {
                 "status": "SUCCESS" if overall_ok else "FAILURE",
@@ -349,6 +421,9 @@ class SimulationBroker:
     def settle_bet(self, *, bet_id: str, pnl: float) -> Dict[str, Any]:
         with self._lock:
             result = self.matching_engine.settle_position(str(bet_id), float(pnl or 0.0))
+            self._persist_position(str(bet_id))
+            self._persist_state()
+
             result["settled_at"] = datetime.utcnow().isoformat()
             result["simulated"] = True
             return result
@@ -362,7 +437,10 @@ class SimulationBroker:
 
                 pnl = float(pnl_by_bet_id.get(pos.bet_id, 0.0) or 0.0)
                 result = self.matching_engine.settle_position(pos.bet_id, pnl)
+                self._persist_position(pos.bet_id)
                 reports.append(result)
+
+            self._persist_state()
 
             return {
                 "market_id": str(market_id),
@@ -397,6 +475,8 @@ class SimulationBroker:
                 partial_fill_enabled=self.partial_fill_enabled,
                 consume_liquidity=self.consume_liquidity,
             )
+
+            self._persist_state()
 
             return {
                 "ok": True,
