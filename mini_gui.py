@@ -20,6 +20,7 @@ from core.runtime_controller import RuntimeController
 from controllers.telegram_controller import TelegramController
 from telegram_module import TelegramModule
 from telegram_tab_ui import TelegramTabUI
+from theme import COLORS, FONTS
 
 
 class SimpleUIQueue:
@@ -28,30 +29,6 @@ class SimpleUIQueue:
 
     def post(self, fn, *args, **kwargs):
         self.root.after(0, lambda: fn(*args, **kwargs))
-
-
-COLORS = {
-    "bg_dark": "#111827",
-    "bg_panel": "#1f2937",
-    "bg_card": "#374151",
-    "bg_hover": "#4b5563",
-    "border": "#6b7280",
-    "text_primary": "#f9fafb",
-    "text_secondary": "#d1d5db",
-    "text_tertiary": "#9ca3af",
-    "success": "#22c55e",
-    "error": "#ef4444",
-    "loss": "#ef4444",
-    "back": "#2563eb",
-    "back_hover": "#1d4ed8",
-    "button_primary": "#2563eb",
-    "button_secondary": "#475569",
-    "button_success": "#16a34a",
-    "button_danger": "#dc2626",
-}
-FONTS = {
-    "heading": ("Segoe UI", 14, "bold"),
-}
 
 
 class MiniPickfairGUI(ctk.CTk, TelegramModule):
@@ -95,8 +72,23 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self.bus,
         )
 
-        self.trading_engine = self._create_trading_engine()
-        self.runtime = self._create_runtime_controller()
+        self.trading_engine = TradingEngine(
+            bus=self.bus,
+            db=self.db,
+            client_getter=self.betfair_service.get_client,
+            executor=self.executor,
+        )
+
+        self.runtime = RuntimeController(
+            bus=self.bus,
+            db=self.db,
+            settings_service=self.settings_service,
+            betfair_service=self.betfair_service,
+            telegram_service=self.telegram_service,
+            trading_engine=self.trading_engine,
+            executor=self.executor,
+        )
+
         self.telegram_controller = TelegramController(self)
 
         self._register_shutdown_hook(
@@ -119,74 +111,6 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self.executor.shutdown,
             priority=40,
         )
-
-    def _create_trading_engine(self):
-        candidates = [
-            {
-                "bus": self.bus,
-                "db": self.db,
-                "client_getter": self.betfair_service.get_client,
-                "executor": self.executor,
-            },
-            {
-                "bus": self.bus,
-                "db": self.db,
-                "client": self.betfair_service.get_client(),
-                "executor": self.executor,
-            },
-            {
-                "bus": self.bus,
-                "db": self.db,
-            },
-        ]
-
-        last_exc = None
-        for kwargs in candidates:
-            try:
-                return TradingEngine(**kwargs)
-            except TypeError as exc:
-                last_exc = exc
-                continue
-
-        raise RuntimeError(f"Impossibile inizializzare TradingEngine: {last_exc}")
-
-    def _create_runtime_controller(self):
-        candidates = [
-            {
-                "bus": self.bus,
-                "db": self.db,
-                "settings_service": self.settings_service,
-                "betfair_service": self.betfair_service,
-                "telegram_service": self.telegram_service,
-                "executor": self.executor,
-                "trading_engine": self.trading_engine,
-            },
-            {
-                "bus": self.bus,
-                "db": self.db,
-                "settings_service": self.settings_service,
-                "betfair_service": self.betfair_service,
-                "telegram_service": self.telegram_service,
-                "executor": self.executor,
-            },
-            {
-                "bus": self.bus,
-                "db": self.db,
-                "settings_service": self.settings_service,
-                "betfair_service": self.betfair_service,
-                "telegram_service": self.telegram_service,
-            },
-        ]
-
-        last_exc = None
-        for kwargs in candidates:
-            try:
-                return RuntimeController(**kwargs)
-            except TypeError as exc:
-                last_exc = exc
-                continue
-
-        raise RuntimeError(f"Impossibile inizializzare RuntimeController: {last_exc}")
 
     def _register_shutdown_hook(self, name, fn, priority=100):
         if hasattr(self.shutdown, "register"):
@@ -213,8 +137,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
     def _apply_simulation_mode_to_runtime(self):
         self.simulation_mode = bool(self.simulation_mode_var.get())
-        if hasattr(self.betfair_service, "set_simulation_mode"):
-            self.betfair_service.set_simulation_mode(self.simulation_mode)
+        self.betfair_service.set_simulation_mode(self.simulation_mode)
         if hasattr(self.runtime, "set_simulation_mode"):
             self.runtime.set_simulation_mode(self.simulation_mode)
 
@@ -222,12 +145,14 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
     # TK VARS
     # =========================================================
     def _build_vars(self):
+        # Betfair
         self.bf_username_var = tk.StringVar()
         self.bf_password_var = tk.StringVar()
         self.bf_app_key_var = tk.StringVar()
         self.bf_cert_var = tk.StringVar()
         self.bf_key_var = tk.StringVar()
 
+        # Roserpina
         self.rs_target_var = tk.StringVar(value="3.0")
         self.rs_max_single_var = tk.StringVar(value="18.0")
         self.rs_max_total_var = tk.StringVar(value="35.0")
@@ -247,8 +172,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.rs_anti_dup_var = tk.BooleanVar(value=True)
         self.rs_risk_profile_var = tk.StringVar(value="BALANCED")
 
+        # Live / simulation
         self.simulation_mode_var = tk.BooleanVar(value=True)
 
+        # Status vars
         self.status_mode_var = tk.StringVar(value="STOPPED")
         self.status_betfair_var = tk.StringVar(value="DISCONNECTED")
         self.status_telegram_var = tk.StringVar(value="STOPPED")
@@ -518,6 +445,22 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.rs_anti_dup_var.set(bool(rs.anti_duplication_enabled))
         self.rs_risk_profile_var.set(rs.risk_profile.value)
 
+        self._load_simulation_settings()
+
+    def _load_simulation_settings(self):
+        if not hasattr(self.settings_service, "load_simulation_config"):
+            return
+        try:
+            sim = self.settings_service.load_simulation_config()
+        except Exception:
+            sim = {}
+
+        enabled = bool(sim.get("enabled", True))
+        self.simulation_mode_var.set(enabled)
+        self.simulation_mode = enabled
+        self.sim_label_var.set("SIMULAZIONE" if enabled else "LIVE")
+        self.status_broker_var.set("SIMULATION" if enabled else "LIVE")
+
     def _save_betfair_settings(self):
         from core.system_state import BetfairConfig
 
@@ -568,6 +511,18 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._apply_simulation_mode_to_runtime()
         self.sim_label_var.set("SIMULAZIONE" if self.simulation_mode else "LIVE")
         self.status_broker_var.set("SIMULATION" if self.simulation_mode else "LIVE")
+
+        if hasattr(self.settings_service, "save_simulation_config"):
+            try:
+                current = self.settings_service.load_simulation_config()
+            except Exception:
+                current = {}
+            current["enabled"] = bool(self.simulation_mode)
+            try:
+                self.settings_service.save_simulation_config(current)
+            except Exception:
+                pass
+
         self._log(f"Modalità cambiata: {self.sim_label_var.get()}")
         self._refresh_runtime_status()
 
@@ -575,31 +530,51 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
     # RUNTIME COMMANDS
     # =========================================================
     def _runtime_start(self):
-        result = self.runtime.start(
-            password=self.bf_password_var.get() or None,
-            simulation_mode=self.simulation_mode,
-        )
-        self._log(f"START -> {result}")
+        try:
+            result = self.runtime.start(
+                password=self.bf_password_var.get() or None,
+                simulation_mode=self.simulation_mode,
+            )
+            self._log(f"START -> {result}")
+        except Exception as exc:
+            self._log(f"START ERROR -> {exc}")
+            messagebox.showerror("Errore avvio", str(exc))
         self._refresh_runtime_status()
 
     def _runtime_pause(self):
-        result = self.runtime.pause()
-        self._log(f"PAUSE -> {result}")
+        try:
+            result = self.runtime.pause()
+            self._log(f"PAUSE -> {result}")
+        except Exception as exc:
+            self._log(f"PAUSE ERROR -> {exc}")
+            messagebox.showerror("Errore pausa", str(exc))
         self._refresh_runtime_status()
 
     def _runtime_resume(self):
-        result = self.runtime.resume()
-        self._log(f"RESUME -> {result}")
+        try:
+            result = self.runtime.resume()
+            self._log(f"RESUME -> {result}")
+        except Exception as exc:
+            self._log(f"RESUME ERROR -> {exc}")
+            messagebox.showerror("Errore resume", str(exc))
         self._refresh_runtime_status()
 
     def _runtime_stop(self):
-        result = self.runtime.stop()
-        self._log(f"STOP -> {result}")
+        try:
+            result = self.runtime.stop()
+            self._log(f"STOP -> {result}")
+        except Exception as exc:
+            self._log(f"STOP ERROR -> {exc}")
+            messagebox.showerror("Errore stop", str(exc))
         self._refresh_runtime_status()
 
     def _runtime_reset(self):
-        result = self.runtime.reset_cycle()
-        self._log(f"RESET -> {result}")
+        try:
+            result = self.runtime.reset_cycle()
+            self._log(f"RESET -> {result}")
+        except Exception as exc:
+            self._log(f"RESET ERROR -> {exc}")
+            messagebox.showerror("Errore reset", str(exc))
         self._refresh_runtime_status()
 
     # =========================================================
@@ -652,7 +627,14 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         funds = status.get("account_funds", {}) or {}
 
         self.status_mode_var.set(str(status.get("mode", "-")))
-        self.status_broker_var.set(str(broker_status.get("broker_type", "SIMULATION" if self.simulation_mode else "LIVE")))
+        self.status_broker_var.set(
+            str(
+                broker_status.get(
+                    "broker_type",
+                    "SIMULATION" if self.simulation_mode else "LIVE",
+                )
+            )
+        )
         self.status_betfair_var.set(
             "CONNECTED" if self.betfair_service.status().get("connected") else "DISCONNECTED"
         )
