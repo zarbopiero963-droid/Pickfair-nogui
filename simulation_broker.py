@@ -21,15 +21,9 @@ class SimulationBroker:
     - place_bet / place_orders
     - list_current_orders
     - cancel_orders
-    - settle_bet
+    - settle_bet / settle_market
 
-    Internamente usa:
-    - SimulationOrderBook
-    - SimulationMatchingEngine
-    - SimulationState
-
-    IMPORTANTE:
-    questo broker NON usa denaro reale e NON chiama Betfair.
+    Non usa denaro reale e non chiama Betfair.
     """
 
     def __init__(
@@ -53,7 +47,10 @@ class SimulationBroker:
         self.session_token = f"SIM-{uuid.uuid4().hex}"
 
         self.order_book = SimulationOrderBook()
-        self.state = SimulationState(starting_balance=self.starting_balance)
+        self.state = SimulationState(
+            starting_balance=self.starting_balance,
+            commission_pct=self.commission_pct,
+        )
         self.matching_engine = SimulationMatchingEngine(
             order_book=self.order_book,
             state=self.state,
@@ -104,7 +101,7 @@ class SimulationBroker:
         except Exception:
             pass
 
-    def _persist_all_open_positions(self) -> None:
+    def _persist_all_positions(self) -> None:
         if not self.db or not hasattr(self.db, "save_simulation_bet"):
             return
 
@@ -126,7 +123,7 @@ class SimulationBroker:
 
     def logout(self) -> None:
         with self._lock:
-            self._persist_all_open_positions()
+            self._persist_all_positions()
             self._persist_state()
             self.connected = False
 
@@ -263,9 +260,7 @@ class SimulationBroker:
             reports: List[Dict[str, Any]] = []
 
             for instr in instructions or []:
-                selection_id = int(
-                    instr.get("selection_id", instr.get("selectionId"))
-                )
+                selection_id = int(instr.get("selection_id", instr.get("selectionId")))
                 side = str(
                     instr.get("side")
                     or instr.get("bet_type")
@@ -280,11 +275,7 @@ class SimulationBroker:
                     or instr.get("selection")
                     or ""
                 )
-                local_customer_ref = str(
-                    instr.get("customer_ref")
-                    or customer_ref
-                    or ""
-                )
+                local_customer_ref = str(instr.get("customer_ref") or customer_ref or "")
 
                 single = self.place_bet(
                     market_id=str(market_id),
@@ -467,7 +458,10 @@ class SimulationBroker:
             if starting_balance is not None:
                 self.starting_balance = float(starting_balance or 0.0)
 
-            self.state.reset(starting_balance=self.starting_balance)
+            self.state.reset(
+                starting_balance=self.starting_balance,
+                commission_pct=self.commission_pct,
+            )
             self.order_book = SimulationOrderBook()
             self.matching_engine = SimulationMatchingEngine(
                 order_book=self.order_book,
