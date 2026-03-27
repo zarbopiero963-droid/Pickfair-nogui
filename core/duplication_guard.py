@@ -1,73 +1,108 @@
 from __future__ import annotations
 
-import time
-from typing import Dict, Optional
+from datetime import datetime
+from threading import RLock
+from typing import Any, Dict, List, Set
 
 
 class DuplicationGuard:
-    def __init__(self, ttl_seconds: int = 6 * 60 * 60):
-        self.ttl_seconds = int(ttl_seconds)
-        self._active: Dict[str, float] = {}
+    """
+    Anti-duplicazione ordini/eventi.
 
-    def cleanup(self) -> None:
-        now = time.time()
-        expired = [
-            key for key, ts in self._active.items()
-            if now - ts > self.ttl_seconds
-        ]
-        for key in expired:
-            self._active.pop(key, None)
+    Scopo:
+    - impedire doppia esposizione tossica sullo stesso evento/runner
+    - registrare event_key attivi
+    - rilasciare la chiave quando l'ordine/posizione termina
 
-    def build_event_key(self, signal: dict) -> str:
-        event = str(
-            signal.get("event")
-            or signal.get("match")
-            or signal.get("event_name")
-            or ""
-        ).strip().lower()
+    La chiave base è costruita da:
+    - market_id
+    - selection_id
+    - bet_type
 
-        market_id = str(signal.get("market_id") or signal.get("marketId") or "").strip()
-        market = str(
-            signal.get("market")
-            or signal.get("market_name")
-            or signal.get("marketName")
-            or signal.get("market_type")
-            or ""
-        ).strip().lower()
+    Se vuoi più ampiezza puoi passare event_key già calcolato dal runtime.
+    """
 
-        selection_id = str(
-            signal.get("selection_id")
-            or signal.get("selectionId")
+    def __init__(self):
+        self._lock = RLock()
+        self._active_keys: Set[str] = set()
+        self._registered_at: Dict[str, str] = {}
+
+    # =========================================================
+    # KEY BUILD
+    # =========================================================
+    def build_event_key(self, payload: Dict[str, Any]) -> str:
+        payload = dict(payload or {})
+
+        market_id = str(
+            payload.get("market_id")
+            or payload.get("marketId")
             or ""
         ).strip()
 
-        selection = str(signal.get("selection") or signal.get("runner_name") or "").strip().lower()
-        side = str(signal.get("bet_type") or signal.get("side") or signal.get("action") or "BACK").strip().upper()
+        selection_id = str(
+            payload.get("selection_id")
+            or payload.get("selectionId")
+            or ""
+        ).strip()
 
-        parts = [
-            event,
-            market_id or market,
-            selection_id or selection,
-            side,
-        ]
-        return "|".join([p for p in parts if p])
+        bet_type = str(
+            payload.get("bet_type")
+            or payload.get("side")
+            or payload.get("action")
+            or "BACK"
+        ).upper().strip()
 
-    def is_duplicate(self, event_key: str) -> bool:
-        self.cleanup()
-        return bool(event_key and event_key in self._active)
+        return f"{market_id}:{selection_id}:{bet_type}"
 
+    # =========================================================
+    # REGISTER / CHECK / RELEASE
+    # =========================================================
     def register(self, event_key: str) -> None:
-        if event_key:
-            self._active[event_key] = time.time()
+        key = str(event_key or "").strip()
+        if not key:
+            return
+
+        with self._lock:
+            self._active_keys.add(key)
+            self._registered_at[key] = datetime.utcnow().isoformat()
 
     def release(self, event_key: str) -> None:
-        if event_key:
-            self._active.pop(event_key, None)
+        key = str(event_key or "").strip()
+        if not key:
+            return
 
-    def snapshot(self) -> dict:
-        self.cleanup()
-        return {
-            "active_keys": list(self._active.keys()),
-            "count": len(self._active),
-            "ttl_seconds": self.ttl_seconds,
-        }
+        with self._lock:
+            self._active_keys.discard(key)
+            self._registered_at.pop(key, None)
+
+    def is_duplicate(self, event_key: str) -> bool:
+        key = str(event_key or "").strip()
+        if not key:
+            return False
+
+        with self._lock:
+            return key in self._active_keys
+
+    def clear(self) -> None:
+        with self._lock:
+            self._active_keys.clear()
+            self._registered_at.clear()
+
+    # =========================================================
+    # SNAPSHOT
+    # =========================================================
+    def snapshot(self) -> Dict[str, Any]:
+        with self._lock:
+            keys: List[Dict[str, str]] = []
+            for key in sorted(self._active_keys):
+                keys.append(
+                    {
+                        "event_key": key,
+                        "registered_at": self._registered_at.get(key, ""),
+                    }
+                )
+
+            return {
+                "active_count": len(self._active_keys),
+                "active_keys": keys,
+            }
