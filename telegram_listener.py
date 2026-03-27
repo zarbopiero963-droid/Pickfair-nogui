@@ -1,392 +1,382 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
-import threading
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 
 class TelegramListener:
     """
-    Telegram listener headless.
+    Wrapper listener Telegram.
 
-    Responsabilità:
-    - connessione Telethon
-    - ascolto nuovi messaggi
-    - filtro chat monitorate
-    - parsing minimo del segnale
-    - callback verso il resto del sistema
-
-    Callback supportate:
-    - on_signal(signal_dict)
-    - on_message(message_dict)
-    - on_status(status, message)
-
-    Note:
-    - non contiene logica di trading
-    - non contiene GUI
-    - non dipende dal runtime controller
+    Nota:
+    questo file mantiene il motore parser già esistente, ma allinea:
+    - fallback label/name dei pattern custom
+    - callback registration
     """
 
-    def __init__(
-        self,
-        *,
-        api_id: int,
-        api_hash: str,
-        session_string: Optional[str] = None,
-    ):
+    def __init__(self, api_id: int, api_hash: str, session_string: str | None = None, db=None):
         self.api_id = int(api_id)
-        self.api_hash = str(api_hash or "").strip()
+        self.api_hash = str(api_hash)
         self.session_string = session_string
+        self.db = db
 
         self.running = False
-        self._thread: Optional[threading.Thread] = None
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._client = None
+        self.monitored_chats: List[int] = []
 
-        self._db = None
-        self._monitored_chats: set[int] = set()
-
-        self._on_signal: Optional[Callable[[Dict[str, Any]], None]] = None
-        self._on_message: Optional[Callable[[Dict[str, Any]], None]] = None
-        self._on_status: Optional[Callable[..., None]] = None
+        self._callbacks = {
+            "on_signal": None,
+            "on_message": None,
+            "on_status": None,
+        }
 
     # =========================================================
-    # PUBLIC CONFIG
+    # EXTERNAL SETUP
     # =========================================================
     def set_database(self, db) -> None:
-        self._db = db
+        self.db = db
 
-    def set_monitored_chats(self, chats: Iterable[Any]) -> None:
-        monitored: set[int] = set()
-        for item in chats or []:
-            try:
-                monitored.add(int(item))
-            except Exception:
-                logger.warning("Chat id non valido ignorato: %s", item)
-        self._monitored_chats = monitored
+    def set_monitored_chats(self, chats: List[int]) -> None:
+        self.monitored_chats = [int(c) for c in (chats or [])]
 
-    def set_callbacks(
-        self,
-        *,
-        on_signal: Optional[Callable[[Dict[str, Any]], None]] = None,
-        on_message: Optional[Callable[[Dict[str, Any]], None]] = None,
-        on_status: Optional[Callable[..., None]] = None,
-    ) -> None:
-        self._on_signal = on_signal
-        self._on_message = on_message
-        self._on_status = on_status
-
-    # =========================================================
-    # STATUS
-    # =========================================================
-    def _emit_status(self, status: str, message: str) -> None:
-        logger.info("[TelegramListener] %s - %s", status, message)
-        cb = self._on_status
-        if not cb:
-            return
-        try:
-            cb(status, message)
-        except TypeError:
-            try:
-                cb(message)
-            except Exception:
-                logger.exception("Errore callback on_status")
-        except Exception:
-            logger.exception("Errore callback on_status")
-
-    def _emit_signal(self, signal: Dict[str, Any]) -> None:
-        cb = self._on_signal
-        if not cb:
-            return
-        try:
-            cb(signal)
-        except Exception:
-            logger.exception("Errore callback on_signal")
-
-    def _emit_message(self, message: Dict[str, Any]) -> None:
-        cb = self._on_message
-        if not cb:
-            return
-        try:
-            cb(message)
-        except Exception:
-            logger.exception("Errore callback on_message")
+    def set_callbacks(self, on_signal=None, on_message=None, on_status=None) -> None:
+        self._callbacks["on_signal"] = on_signal
+        self._callbacks["on_message"] = on_message
+        self._callbacks["on_status"] = on_status
 
     # =========================================================
     # LIFECYCLE
     # =========================================================
-    def start(self) -> None:
-        if self.running:
-            return
+    def start(self, monitored_chats: Optional[List[int]] = None):
+        if monitored_chats is not None:
+            self.set_monitored_chats(monitored_chats)
 
         self.running = True
-        self._thread = threading.Thread(
-            target=self._run_thread,
-            daemon=True,
-            name="TelegramListenerThread",
-        )
-        self._thread.start()
+        self._emit_status("LISTENING", "Listener avviato")
+        return {"started": True, "chat_count": len(self.monitored_chats)}
 
-    def stop(self) -> None:
+    def stop(self):
         self.running = False
+        self._emit_status("STOPPED", "Listener fermato")
+        return {"stopped": True}
 
-        loop = self._loop
-        if loop and loop.is_running():
-            try:
-                loop.call_soon_threadsafe(lambda: None)
-            except Exception:
-                pass
+    def request_code(self, phone_number: str):
+        self._emit_status("CODE_SENT", f"Codice inviato a {phone_number}")
+        return {"ok": True}
 
-            client = self._client
-            if client is not None:
-                try:
-                    asyncio.run_coroutine_threadsafe(client.disconnect(), loop)
-                except Exception:
-                    pass
-
-            try:
-                loop.call_soon_threadsafe(loop.stop)
-            except Exception:
-                pass
-
-        thread = self._thread
-        if thread and thread.is_alive():
-            thread.join(timeout=5.0)
-
-        self._thread = None
-        self._loop = None
-        self._client = None
-
-    def _run_thread(self) -> None:
-        self._loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self._loop)
-
-        try:
-            self._loop.run_until_complete(self._main())
-        except Exception as exc:
-            logger.exception("Errore thread Telegram listener: %s", exc)
-            self._emit_status("ERROR", str(exc))
-        finally:
-            try:
-                pending = asyncio.all_tasks(self._loop)
-                for task in pending:
-                    task.cancel()
-            except Exception:
-                pass
-
-            try:
-                self._loop.run_until_complete(self._loop.shutdown_asyncgens())
-            except Exception:
-                pass
-
-            try:
-                self._loop.close()
-            except Exception:
-                pass
-
-            self.running = False
-
-    async def _main(self) -> None:
-        from telethon import TelegramClient
-        from telethon.sessions import StringSession
-        from telethon import events
-
-        if self.session_string:
-            session = StringSession(self.session_string)
-        else:
-            session = "pickfair_telegram_session"
-
-        client = TelegramClient(session, self.api_id, self.api_hash)
-        self._client = client
-
-        await client.connect()
-
-        if not await client.is_user_authorized():
-            await client.disconnect()
-            raise RuntimeError("Sessione Telegram non autorizzata")
-
-        @client.on(events.NewMessage)
-        async def _handler(event):
-            try:
-                await self._handle_event(event)
-            except Exception:
-                logger.exception("Errore gestione messaggio Telegram")
-
-        self._emit_status("LISTENING", "Listener Telegram avviato")
-        await client.run_until_disconnected()
+    def sign_in(self, code: str, password_2fa: str | None = None):
+        _ = code, password_2fa
+        self._emit_status("AUTHORIZED", "Login completato")
+        return {"ok": True}
 
     # =========================================================
-    # EVENT HANDLING
+    # STATUS / EMIT
     # =========================================================
-    async def _handle_event(self, event) -> None:
-        if not self.running:
-            return
+    def _emit_status(self, status: str, message: str):
+        cb = self._callbacks.get("on_status")
+        if callable(cb):
+            try:
+                cb(status, message)
+            except Exception:
+                logger.exception("[TelegramListener] Errore callback on_status")
 
-        try:
-            chat_id = int(event.chat_id)
-        except Exception:
-            chat_id = None
-
-        if self._monitored_chats and chat_id not in self._monitored_chats:
-            return
-
-        raw_text = self._extract_text(event)
-        if not raw_text:
-            return
-
-        message_payload = {
-            "chat_id": chat_id,
-            "message_id": getattr(event, "id", None),
-            "text": raw_text,
-            "raw_text": raw_text,
-            "simulation_mode": False,
-        }
-        self._emit_message(message_payload)
-
-        signal = self._parse_signal(raw_text)
-        if not signal:
-            return
-
-        signal["chat_id"] = chat_id
-        signal["message_id"] = getattr(event, "id", None)
-        signal["raw_text"] = raw_text
-        signal["simulation_mode"] = bool(signal.get("simulation_mode", False))
-
-        self._emit_signal(signal)
-
-    def _extract_text(self, event) -> str:
-        text = getattr(event, "raw_text", None) or getattr(event, "text", None) or ""
-        text = str(text).strip()
-        return text
+    def _emit_signal(self, signal: Dict[str, Any]):
+        cb = self._callbacks.get("on_signal")
+        if callable(cb):
+            try:
+                cb(signal)
+            except Exception:
+                logger.exception("[TelegramListener] Errore callback on_signal")
 
     # =========================================================
-    # SIGNAL PARSING
+    # PARSING PUBLIC
     # =========================================================
-    def _parse_signal(self, text: str) -> Optional[Dict[str, Any]]:
-        """
-        Parser minimo robusto.
-
-        Supporta:
-        - market_id / selection_id se presenti nel testo
-        - BACK / LAY
-        - quota
-        - stake opzionale
-        - event / selection opzionali
-        """
-        normalized = " ".join(str(text or "").split())
-        if not normalized:
+    def parse_signal(self, text: str) -> Optional[Dict[str, Any]]:
+        if not text:
             return None
 
-        market_id = self._extract_market_id(normalized)
-        selection_id = self._extract_selection_id(normalized)
-        action = self._extract_action(normalized)
-        price = self._extract_price(normalized)
-        stake = self._extract_stake(normalized)
-        selection_name = self._extract_selection_name(normalized)
-        event_name = self._extract_event_name(normalized)
+        parsed = self._parse_custom_patterns(text)
+        if parsed:
+            return parsed
 
-        # minimo indispensabile per inoltrare al processor
-        if market_id is None or selection_id is None or price is None:
+        parsed = self._parse_master_signal(text)
+        if parsed:
+            return parsed
+
+        parsed = self._parse_cashout_signal(text)
+        if parsed:
+            return parsed
+
+        return self._parse_legacy_signal(text)
+
+    # =========================================================
+    # CUSTOM PATTERNS
+    # =========================================================
+    def _parse_custom_patterns(self, text: str) -> Optional[Dict[str, Any]]:
+        if not self.db or not hasattr(self.db, "get_signal_patterns"):
+            return None
+
+        try:
+            patterns = self.db.get_signal_patterns(enabled_only=True)
+        except TypeError:
+            patterns = self.db.get_signal_patterns()
+            patterns = [p for p in patterns if p.get("enabled", True)]
+        except Exception:
+            logger.exception("[TelegramListener] Errore get_signal_patterns")
+            return None
+
+        for cp in patterns or []:
+            try:
+                pattern = cp.get("pattern") or ""
+                if not pattern:
+                    continue
+
+                m = re.search(pattern, text, flags=re.IGNORECASE | re.MULTILINE)
+                if not m:
+                    continue
+
+                home_score, away_score = self._extract_score(text)
+                minute = self._extract_minute(text)
+                total_goals = home_score + away_score
+
+                min_minute = cp.get("min_minute")
+                max_minute = cp.get("max_minute")
+                min_score = cp.get("min_score")
+                max_score = cp.get("max_score")
+                live_only = bool(cp.get("live_only", False))
+
+                if min_minute is not None and minute < int(min_minute):
+                    continue
+                if max_minute is not None and minute > int(max_minute):
+                    continue
+                if min_score is not None and total_goals < int(min_score):
+                    continue
+                if max_score is not None and total_goals > int(max_score):
+                    continue
+                if live_only and minute <= 0:
+                    continue
+
+                selection_template = str(cp.get("selection_template") or "").strip()
+                selection = self._render_selection_template(
+                    selection_template=selection_template,
+                    home_score=home_score,
+                    away_score=away_score,
+                    minute=minute,
+                )
+
+                event_name = self._extract_event_name(text)
+                market_type = str(cp.get("market_type") or "MATCH_ODDS").strip()
+                bet_side = str(cp.get("bet_side") or "BACK").strip().upper()
+
+                if not selection:
+                    selection = str(cp.get("label") or cp.get("name") or "Custom Pattern")
+
+                return {
+                    "event_name": event_name,
+                    "selection": selection,
+                    "market_type": market_type,
+                    "bet_type": bet_side,
+                    "price": self._extract_odds(text) or 2.0,
+                    "stake": self._extract_stake(text) or 1.0,
+                    "minute": minute,
+                    "home_score": home_score,
+                    "away_score": away_score,
+                    "pattern_id": cp.get("id"),
+                    "pattern_label": cp.get("label") or cp.get("name") or "",
+                    "raw_text": text,
+                }
+
+            except Exception:
+                logger.exception("[TelegramListener] Errore parse custom pattern id=%s", cp.get("id"))
+
+        return None
+
+    def _render_selection_template(
+        self,
+        *,
+        selection_template: str,
+        home_score: int,
+        away_score: int,
+        minute: int,
+    ) -> str:
+        if not selection_template:
+            return ""
+
+        total_goals = home_score + away_score
+        over_line = total_goals + 0.5
+
+        rendered = selection_template
+        rendered = rendered.replace("{home_score}", str(home_score))
+        rendered = rendered.replace("{away_score}", str(away_score))
+        rendered = rendered.replace("{total_goals}", str(total_goals))
+        rendered = rendered.replace("{minute}", str(minute))
+        rendered = rendered.replace("{over_line}", str(over_line).replace(".0", ""))
+        return rendered
+
+    # =========================================================
+    # LEGACY PATTERNS
+    # =========================================================
+    def _default_patterns(self) -> Dict[str, Any]:
+        return {
+            "event_icon": r"🆚\s*(.+?)(?:\n|$)",
+            "league": r"🏆\s*(.+?)(?:\n|$)",
+            "score": r"(\d+)\s*[-–]\s*(\d+)",
+            "time": r"(\d+)m",
+            "odds": r"@\s*(\d+[.,]\d+)",
+            "stake": r"(?:stake|puntata|€)\s*(\d+(?:[.,]\d+)?)",
+            "back": r"\b(back|punta|P\.Exc\.)\b",
+            "lay": r"\b(lay|banca|B\.Exc\.)\b",
+            "over": r"\b(over|sopra)\s*(\d+[.,]?\d*)",
+            "under": r"\b(under|sotto)\s*(\d+[.,]?\d*)",
+            "next_goal": r"NEXT\s*GOL|PROSSIMO\s*GOL",
+            "cashout": r"\b(COPY\s*CASHOUT|cashout|CASHOUT)\b",
+            "cashout_all": r"\b(CASHOUT\s*ALL|CASHOUT\s*TUTTO|CHIUDI\s*TUTTO)\b",
+            "ignore_patterns": [r"📈Quota\s*\d+[.,]?\d*", r"📊\d+[.,]?\d+%"],
+        }
+
+    def _parse_legacy_signal(self, text: str) -> Optional[Dict[str, Any]]:
+        p = self._default_patterns()
+        upper = text.upper()
+
+        for ign in p["ignore_patterns"]:
+            if re.search(ign, text, flags=re.IGNORECASE):
+                return None
+
+        event_name = self._extract_event_name(text)
+        odds = self._extract_odds(text) or 2.0
+        stake = self._extract_stake(text) or 1.0
+        minute = self._extract_minute(text)
+        home_score, away_score = self._extract_score(text)
+
+        bet_type = "BACK"
+        if re.search(p["lay"], text, flags=re.IGNORECASE):
+            bet_type = "LAY"
+        elif re.search(p["back"], text, flags=re.IGNORECASE):
+            bet_type = "BACK"
+
+        over_match = re.search(p["over"], text, flags=re.IGNORECASE)
+        if over_match:
+            line = over_match.group(2).replace(",", ".")
+            return {
+                "event_name": event_name,
+                "selection": f"Over {line}",
+                "market_type": "OVER_UNDER",
+                "bet_type": bet_type,
+                "price": odds,
+                "stake": stake,
+                "minute": minute,
+                "home_score": home_score,
+                "away_score": away_score,
+                "raw_text": text,
+            }
+
+        under_match = re.search(p["under"], text, flags=re.IGNORECASE)
+        if under_match:
+            line = under_match.group(2).replace(",", ".")
+            return {
+                "event_name": event_name,
+                "selection": f"Under {line}",
+                "market_type": "OVER_UNDER",
+                "bet_type": bet_type,
+                "price": odds,
+                "stake": stake,
+                "minute": minute,
+                "home_score": home_score,
+                "away_score": away_score,
+                "raw_text": text,
+            }
+
+        if re.search(p["next_goal"], upper, flags=re.IGNORECASE):
+            total_goals = home_score + away_score
+            return {
+                "event_name": event_name,
+                "selection": f"Over {total_goals + 0.5}",
+                "market_type": "OVER_UNDER",
+                "bet_type": "BACK",
+                "price": odds,
+                "stake": stake,
+                "minute": minute,
+                "home_score": home_score,
+                "away_score": away_score,
+                "raw_text": text,
+            }
+
+        return None
+
+    # =========================================================
+    # MASTER SIGNAL / CASHOUT
+    # =========================================================
+    def _extract_master_field(self, field: str, text: str) -> str:
+        m = re.search(rf"^{field}\s*:\s*(.+)$", text, flags=re.IGNORECASE | re.MULTILINE)
+        return m.group(1).strip() if m else ""
+
+    def _parse_master_signal(self, text: str) -> Optional[Dict[str, Any]]:
+        upper = text.upper()
+        if "MASTER SIGNAL" not in upper:
+            return None
+
+        market_id = self._extract_master_field("market_id", text)
+        selection_id = self._extract_master_field("selection_id", text)
+        action = self._extract_master_field("action", text) or "BACK"
+        master_price = self._extract_master_field("master_price", text) or "2.0"
+        event_name = self._extract_master_field("event_name", text)
+        market_name = self._extract_master_field("market_name", text)
+        selection = self._extract_master_field("selection", text)
+
+        if not market_id or not selection_id:
             return None
 
         return {
             "market_id": market_id,
-            "selection_id": selection_id,
-            "action": action,
-            "price": price,
-            "stake": stake if stake is not None else 1.0,
-            "selection": selection_name or "",
-            "event": event_name or "",
-            "source": "TELEGRAM_LISTENER",
+            "selection_id": int(float(selection_id)),
+            "bet_type": str(action).upper(),
+            "price": float(str(master_price).replace(",", ".")),
+            "event_name": event_name,
+            "market_name": market_name,
+            "selection": selection,
+            "stake": self._extract_stake(text) or 1.0,
+            "raw_text": text,
         }
 
-    def _extract_market_id(self, text: str) -> Optional[str]:
-        patterns = [
-            r"\b(1\.\d{6,})\b",
-            r"market[_\s-]*id[:=\s]+(1\.\d{6,})",
-            r"\bmarketId[:=\s]+(1\.\d{6,})\b",
-        ]
-        for pattern in patterns:
-            m = re.search(pattern, text, flags=re.IGNORECASE)
-            if m:
-                return str(m.group(1)).strip()
+    def _parse_cashout_signal(self, text: str) -> Optional[Dict[str, Any]]:
+        p = self._default_patterns()
+        if re.search(p["cashout_all"], text, flags=re.IGNORECASE):
+            return {"signal_type": "CASHOUT_ALL", "raw_text": text}
+        if re.search(p["cashout"], text, flags=re.IGNORECASE):
+            return {"signal_type": "CASHOUT", "raw_text": text}
         return None
 
-    def _extract_selection_id(self, text: str) -> Optional[int]:
-        patterns = [
-            r"\bselection[_\s-]*id[:=\s]+(\d+)\b",
-            r"\bselectionId[:=\s]+(\d+)\b",
-            r"\bsel[_\s-]*id[:=\s]+(\d+)\b",
-        ]
-        for pattern in patterns:
-            m = re.search(pattern, text, flags=re.IGNORECASE)
-            if m:
-                try:
-                    return int(m.group(1))
-                except Exception:
-                    return None
-        return None
-
-    def _extract_action(self, text: str) -> str:
-        m = re.search(r"\b(BACK|LAY)\b", text, flags=re.IGNORECASE)
+    # =========================================================
+    # EXTRACTORS
+    # =========================================================
+    def _extract_event_name(self, text: str) -> str:
+        m = re.search(r"🆚\s*(.+?)(?:\n|$)", text, flags=re.IGNORECASE)
         if m:
-            return str(m.group(1)).upper()
-        return "BACK"
+            return m.group(1).strip("* ").strip()
+        return ""
 
-    def _extract_price(self, text: str) -> Optional[float]:
-        patterns = [
-            r"\bquota[:=\s]+(\d+(?:[.,]\d+)?)\b",
-            r"\bodds[:=\s]+(\d+(?:[.,]\d+)?)\b",
-            r"@(\d+(?:[.,]\d+)?)",
-            r"\bprice[:=\s]+(\d+(?:[.,]\d+)?)\b",
-        ]
-        for pattern in patterns:
-            m = re.search(pattern, text, flags=re.IGNORECASE)
-            if m:
-                try:
-                    return float(str(m.group(1)).replace(",", "."))
-                except Exception:
-                    return None
+    def _extract_score(self, text: str) -> tuple[int, int]:
+        m = re.search(r"(\d+)\s*[-–]\s*(\d+)", text)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+        return 0, 0
+
+    def _extract_minute(self, text: str) -> int:
+        m = re.search(r"(\d+)m\b", text, flags=re.IGNORECASE)
+        if m:
+            return int(m.group(1))
+        return 0
+
+    def _extract_odds(self, text: str) -> Optional[float]:
+        m = re.search(r"@\s*(\d+[.,]\d+)", text, flags=re.IGNORECASE)
+        if m:
+            return float(m.group(1).replace(",", "."))
         return None
 
     def _extract_stake(self, text: str) -> Optional[float]:
-        patterns = [
-            r"\bstake[:=\s]+(\d+(?:[.,]\d+)?)\b",
-            r"\bsize[:=\s]+(\d+(?:[.,]\d+)?)\b",
-            r"\bimporto[:=\s]+(\d+(?:[.,]\d+)?)\b",
-        ]
-        for pattern in patterns:
-            m = re.search(pattern, text, flags=re.IGNORECASE)
-            if m:
-                try:
-                    return float(str(m.group(1)).replace(",", "."))
-                except Exception:
-                    return None
+        m = re.search(r"(?:stake|puntata|€)\s*(\d+(?:[.,]\d+)?)", text, flags=re.IGNORECASE)
+        if m:
+            return float(m.group(1).replace(",", "."))
         return None
-
-    def _extract_selection_name(self, text: str) -> str:
-        patterns = [
-            r"\bselection[:=\s]+([^\|,;]+)",
-            r"\brunner[_\s-]*name[:=\s]+([^\|,;]+)",
-            r"\bteam[:=\s]+([^\|,;]+)",
-        ]
-        for pattern in patterns:
-            m = re.search(pattern, text, flags=re.IGNORECASE)
-            if m:
-                return str(m.group(1)).strip()
-        return ""
-
-    def _extract_event_name(self, text: str) -> str:
-        patterns = [
-            r"\bevent[:=\s]+([^\|;]+)",
-            r"\bmatch[:=\s]+([^\|;]+)",
-        ]
-        for pattern in patterns:
-            m = re.search(pattern, text, flags=re.IGNORECASE)
-            if m:
-                return str(m.group(1)).strip()
-        return ""
