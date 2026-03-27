@@ -35,7 +35,7 @@ class TelegramTabUI:
         main_frame = ctk.CTkFrame(self.parent, fg_color="transparent")
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        left_container = ctk.CTkFrame(main_frame, fg_color="transparent", width=450)
+        left_container = ctk.CTkFrame(main_frame, fg_color="transparent", width=530)
         left_container.pack(side=tk.LEFT, fill=tk.BOTH, expand=False, padx=(0, 10))
         left_container.pack_propagate(False)
 
@@ -276,7 +276,7 @@ class TelegramTabUI:
         ).pack(side=tk.LEFT, padx=2)
 
         # =========================================================
-        # CHAT MONITORATE
+        # CHATS MONITORATE
         # =========================================================
         chats_frame = ctk.CTkFrame(
             left_frame,
@@ -396,14 +396,14 @@ class TelegramTabUI:
         self.app.available_chats_data = []
 
         # =========================================================
-        # REGOLE PARSING
+        # REGOLE PARSING AVANZATE
         # =========================================================
         rules_frame = ctk.CTkFrame(
             left_frame,
             fg_color=COLORS["bg_panel"],
             corner_radius=8,
         )
-        rules_frame.pack(fill=tk.X, pady=(0, 5), padx=5)
+        rules_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 5), padx=5)
 
         ctk.CTkLabel(
             rules_frame,
@@ -414,7 +414,7 @@ class TelegramTabUI:
 
         ctk.CTkLabel(
             rules_frame,
-            text="Definisci pattern regex per riconoscere i segnali",
+            text="Regex + market/side/template + filtri minuto/score/live/priority",
             font=("Segoe UI", 8),
             text_color=COLORS["text_tertiary"],
         ).pack(anchor=tk.W, padx=10)
@@ -459,7 +459,7 @@ class TelegramTabUI:
             fg_color=COLORS["button_secondary"],
             hover_color=COLORS["bg_hover"],
             corner_radius=6,
-            width=110,
+            width=120,
         ).pack(side=tk.LEFT, padx=2)
 
         rules_tree_container = ctk.CTkFrame(rules_frame, fg_color="transparent")
@@ -467,18 +467,42 @@ class TelegramTabUI:
 
         self.app.rules_tree = ttk.Treeview(
             rules_tree_container,
-            columns=("enabled", "name", "market", "pattern"),
+            columns=(
+                "enabled",
+                "name",
+                "market",
+                "side",
+                "template",
+                "minute",
+                "score",
+                "live",
+                "priority",
+                "pattern",
+            ),
             show="headings",
-            height=6,
+            height=10,
         )
         self.app.rules_tree.heading("enabled", text="ON")
         self.app.rules_tree.heading("name", text="Nome")
         self.app.rules_tree.heading("market", text="Mercato")
+        self.app.rules_tree.heading("side", text="Side")
+        self.app.rules_tree.heading("template", text="Template")
+        self.app.rules_tree.heading("minute", text="Minuti")
+        self.app.rules_tree.heading("score", text="Score")
+        self.app.rules_tree.heading("live", text="Live")
+        self.app.rules_tree.heading("priority", text="Prio")
         self.app.rules_tree.heading("pattern", text="Pattern")
-        self.app.rules_tree.column("enabled", width=40)
-        self.app.rules_tree.column("name", width=120)
-        self.app.rules_tree.column("market", width=100)
-        self.app.rules_tree.column("pattern", width=180)
+
+        self.app.rules_tree.column("enabled", width=40, anchor="center")
+        self.app.rules_tree.column("name", width=110)
+        self.app.rules_tree.column("market", width=110)
+        self.app.rules_tree.column("side", width=55, anchor="center")
+        self.app.rules_tree.column("template", width=140)
+        self.app.rules_tree.column("minute", width=70, anchor="center")
+        self.app.rules_tree.column("score", width=70, anchor="center")
+        self.app.rules_tree.column("live", width=50, anchor="center")
+        self.app.rules_tree.column("priority", width=50, anchor="center")
+        self.app.rules_tree.column("pattern", width=220)
 
         rules_scroll = ttk.Scrollbar(
             rules_tree_container,
@@ -493,7 +517,7 @@ class TelegramTabUI:
             self.app._refresh_rules_tree()
 
         # =========================================================
-        # STORICO SEGNALI
+        # SIGNALS RICEVUTI
         # =========================================================
         signals_frame = ctk.CTkFrame(
             right_frame,
@@ -508,16 +532,6 @@ class TelegramTabUI:
             font=FONTS["heading"],
             text_color=COLORS["text_primary"],
         ).pack(anchor=tk.W, padx=10, pady=(10, 5))
-
-        mode_label = ctk.CTkLabel(
-            signals_frame,
-            text="Le quote inoltrate al runtime restano reali; la modalità LIVE/SIM dipende dallo switch principale.",
-            font=("Segoe UI", 9),
-            text_color=COLORS["text_tertiary"],
-            wraplength=700,
-            justify="left",
-        )
-        mode_label.pack(anchor=tk.W, padx=10, pady=(0, 8))
 
         signals_tree_container = ctk.CTkFrame(signals_frame, fg_color="transparent")
         signals_tree_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
@@ -553,17 +567,14 @@ class TelegramTabUI:
         self.app.tg_signals_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        bottom_btns = ctk.CTkFrame(signals_frame, fg_color="transparent")
-        bottom_btns.pack(fill=tk.X, padx=10, pady=(0, 10))
-
         ctk.CTkButton(
-            bottom_btns,
+            signals_frame,
             text="Aggiorna Segnali",
             command=self.app._refresh_telegram_signals_tree,
             fg_color=COLORS["button_primary"],
             hover_color=COLORS["back_hover"],
             corner_radius=6,
-        ).pack(side=tk.LEFT)
+        ).pack(pady=10)
 
         if hasattr(self.app, "_refresh_telegram_signals_tree"):
             self.app._refresh_telegram_signals_tree()
