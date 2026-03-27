@@ -9,14 +9,11 @@ logger = logging.getLogger("OrderManager")
 
 class OrderManager:
     """
-    Order Manager headless reale.
-    - usa il client Betfair tramite client_getter
-    - salva saga ordini nel DB
-    - pubblica eventi downstream sul bus
-    - gestisce customer_ref / batch_id / event_key / table_id
+    Order Manager unificato:
+    - LIVE: usa BetfairClient
+    - SIM : usa SimulationBroker
 
-    IMPORTANTE:
-    - contiene una barriera difensiva extra contro simulation_mode=True
+    Il routing dipende dal broker restituito da client_getter().
     """
 
     TERMINAL_OK = {"SUCCESS", "PROCESSED_WITH_ERRORS", "PROCESSED"}
@@ -32,7 +29,6 @@ class OrderManager:
     # =========================================================
     # HELPERS
     # =========================================================
-
     def _publish(self, event_name: str, payload: Dict[str, Any]) -> None:
         if not self.bus:
             return
@@ -58,35 +54,26 @@ class OrderManager:
             return {}
         return reports[0] or {}
 
+    def _is_simulated_response(self, response: Dict[str, Any]) -> bool:
+        if bool(response.get("simulated", False)):
+            return True
+        report = self._extract_instruction_report(response)
+        return bool(report.get("simulated", False))
+
     # =========================================================
     # MAIN API
     # =========================================================
-
     def place_order(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        if bool(payload.get("simulation_mode", False)):
-            error = "simulation_mode=True bloccato in OrderManager: live execution non consentita"
-            logger.warning(error)
-
-            failure_payload = dict(payload or {})
-            failure_payload["error"] = error
-            self._publish("QUICK_BET_FAILED", failure_payload)
-
-            return {
-                "ok": False,
-                "status": "FAILED",
-                "error": error,
-                "simulated": True,
-            }
-
         client = self._client()
         if client is None:
-            raise RuntimeError("Betfair client non disponibile")
+            raise RuntimeError("Broker client non disponibile")
 
         market_id = str(payload["market_id"])
         selection_id = int(payload["selection_id"])
         bet_type = str(payload.get("bet_type", "BACK")).upper()
         price = float(payload["price"])
         stake = float(payload["stake"])
+        simulation_mode = bool(payload.get("simulation_mode", False))
 
         customer_ref = self._extract_customer_ref(payload)
         batch_id = str(payload.get("batch_id") or "")
@@ -126,7 +113,43 @@ class OrderManager:
                 side=bet_type,
                 price=price,
                 size=stake,
+                customer_ref=customer_ref,
+                event_key=event_key,
+                table_id=table_id,
+                batch_id=batch_id,
+                event_name=str(payload.get("event_name") or ""),
+                market_name=str(payload.get("market_name") or ""),
+                runner_name=str(payload.get("runner_name") or ""),
             )
+        except TypeError:
+            # fallback compatibilità BetfairClient reale
+            try:
+                response = client.place_bet(
+                    market_id=market_id,
+                    selection_id=selection_id,
+                    side=bet_type,
+                    price=price,
+                    size=stake,
+                )
+            except Exception as exc:
+                if self.db and hasattr(self.db, "update_order_saga"):
+                    self.db.update_order_saga(
+                        customer_ref=customer_ref,
+                        status="FAILED",
+                        error_text=str(exc),
+                    )
+                failure_payload = {
+                    **saga_payload,
+                    "customer_ref": customer_ref,
+                    "error": str(exc),
+                }
+                self._publish("QUICK_BET_FAILED", failure_payload)
+                return {
+                    "ok": False,
+                    "status": "FAILED",
+                    "customer_ref": customer_ref,
+                    "error": str(exc),
+                }
         except Exception as exc:
             if self.db and hasattr(self.db, "update_order_saga"):
                 self.db.update_order_saga(
@@ -151,6 +174,8 @@ class OrderManager:
         leg_status = str(instruction_report.get("status") or "").upper()
         bet_id = str(instruction_report.get("betId") or "")
         size_matched = float(instruction_report.get("sizeMatched", 0.0) or 0.0)
+        avg_matched = float(instruction_report.get("averagePriceMatched", 0.0) or 0.0)
+        simulated_response = self._is_simulated_response(response) or simulation_mode
 
         if leg_status in self.LEG_OK:
             if size_matched > 0 and size_matched < stake:
@@ -168,8 +193,15 @@ class OrderManager:
         else:
             overall_status = str(response.get("status") or "").upper()
             if overall_status in self.TERMINAL_OK:
-                saga_status = "PLACED"
-                event_name = "QUICK_BET_ACCEPTED"
+                if size_matched > 0 and size_matched < stake:
+                    saga_status = "PARTIAL"
+                    event_name = "QUICK_BET_PARTIAL"
+                elif size_matched >= stake and stake > 0:
+                    saga_status = "MATCHED"
+                    event_name = "QUICK_BET_FILLED"
+                else:
+                    saga_status = "PLACED"
+                    event_name = "QUICK_BET_ACCEPTED"
             else:
                 saga_status = "FAILED"
                 event_name = "QUICK_BET_FAILED"
@@ -188,6 +220,9 @@ class OrderManager:
             "bet_id": bet_id,
             "response": response,
             "order_status": saga_status,
+            "matched": float(size_matched),
+            "average_price_matched": float(avg_matched),
+            "sim": bool(simulated_response),
         }
         self._publish(event_name, out_payload)
 
@@ -197,12 +232,12 @@ class OrderManager:
             "customer_ref": customer_ref,
             "bet_id": bet_id,
             "response": response,
+            "simulated": bool(simulated_response),
         }
 
     # =========================================================
     # ROLLBACK STATE HELPERS
     # =========================================================
-
     def mark_rollback_pending(self, customer_ref: str, reason: str = "") -> None:
         if self.db and hasattr(self.db, "update_order_saga"):
             self.db.update_order_saga(
