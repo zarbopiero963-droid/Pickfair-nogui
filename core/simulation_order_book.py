@@ -1,362 +1,253 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from copy import deepcopy
 from threading import RLock
-from typing import Any, Dict, List, Optional, Tuple
-
-
-@dataclass
-class LadderLevel:
-    price: float
-    size: float
-
-    def to_dict(self) -> Dict[str, float]:
-        return {
-            "price": float(self.price),
-            "size": float(self.size),
-        }
-
-
-@dataclass
-class RunnerBook:
-    selection_id: int
-    available_to_back: List[LadderLevel] = field(default_factory=list)
-    available_to_lay: List[LadderLevel] = field(default_factory=list)
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "selectionId": int(self.selection_id),
-            "ex": {
-                "availableToBack": [lvl.to_dict() for lvl in self.available_to_back],
-                "availableToLay": [lvl.to_dict() for lvl in self.available_to_lay],
-            },
-        }
+from typing import Any, Dict, List, Optional
 
 
 class SimulationOrderBook:
     """
-    Order book simulato alimentato da snapshot di mercato live.
+    Order book simulato per market books live/sim.
 
     Responsabilità:
-    - memorizzare il ladder per market_id / selection_id
-    - offrire accesso ai livelli back/lay
-    - determinare se un ordine è matchabile
-    - calcolare fill completo o parziale contro il lato opposto del ladder
+    - memorizzare market book per market_id
+    - leggere ladder BACK / LAY di un runner
+    - opzionalmente consumare liquidità quando un ordine viene matchato
+    - restituire snapshot sicuri copiati
 
-    NON gestisce:
-    - bankroll
-    - pnl
-    - stato posizioni
-    - persistenza
+    Struttura attesa market_book:
+    {
+        "marketId" / "market_id": "...",
+        "runners": [
+            {
+                "selectionId": 123,
+                "ex": {
+                    "availableToBack": [{"price": 2.0, "size": 100.0}, ...],
+                    "availableToLay":  [{"price": 2.02, "size": 80.0}, ...],
+                }
+            }
+        ]
+    }
     """
 
     def __init__(self):
         self._lock = RLock()
-        self._books: Dict[str, Dict[int, RunnerBook]] = {}
+        self._books: Dict[str, Dict[str, Any]] = {}
 
     # =========================================================
-    # UPDATE / SNAPSHOT
+    # INTERNAL HELPERS
     # =========================================================
-    def update_market_book(self, market_id: str, market_book: Dict[str, Any]) -> None:
-        market_id = str(market_id)
-        parsed = self._parse_market_book(market_book)
+    def _normalize_market_id(self, market_id: Any) -> str:
+        return str(market_id or "").strip()
 
-        with self._lock:
-            self._books[market_id] = parsed
-
-    def get_market_book(self, market_id: str) -> Dict[str, Any]:
-        market_id = str(market_id)
-
-        with self._lock:
-            runners = self._books.get(market_id, {})
-            return {
-                "marketId": market_id,
-                "runners": [runner.to_dict() for runner in runners.values()],
-            }
-
-    def has_market(self, market_id: str) -> bool:
-        with self._lock:
-            return str(market_id) in self._books
-
-    # =========================================================
-    # ACCESS HELPERS
-    # =========================================================
-    def get_runner(self, market_id: str, selection_id: int) -> Optional[RunnerBook]:
-        market_id = str(market_id)
-        selection_id = int(selection_id)
-
-        with self._lock:
-            return self._books.get(market_id, {}).get(selection_id)
-
-    def get_best_back(self, market_id: str, selection_id: int) -> Optional[Tuple[float, float]]:
-        runner = self.get_runner(market_id, selection_id)
-        if not runner or not runner.available_to_back:
-            return None
-        lvl = runner.available_to_back[0]
-        return float(lvl.price), float(lvl.size)
-
-    def get_best_lay(self, market_id: str, selection_id: int) -> Optional[Tuple[float, float]]:
-        runner = self.get_runner(market_id, selection_id)
-        if not runner or not runner.available_to_lay:
-            return None
-        lvl = runner.available_to_lay[0]
-        return float(lvl.price), float(lvl.size)
-
-    # =========================================================
-    # MATCH EVALUATION
-    # =========================================================
-    def is_matchable(
-        self,
-        *,
-        market_id: str,
-        selection_id: int,
-        side: str,
-        price: float,
-    ) -> bool:
-        matched_size, _ = self.preview_match(
-            market_id=market_id,
-            selection_id=selection_id,
-            side=side,
-            price=price,
-            size=0.01,
-            partial_fill_enabled=True,
-        )
-        return matched_size > 0
-
-    def preview_match(
-        self,
-        *,
-        market_id: str,
-        selection_id: int,
-        side: str,
-        price: float,
-        size: float,
-        partial_fill_enabled: bool = True,
-    ) -> Tuple[float, float]:
-        """
-        Ritorna:
-        - matched_size
-        - average_matched_price
-
-        BACK order:
-            matcha contro available_to_lay se lay_price <= wanted_price
-
-        LAY order:
-            matcha contro available_to_back se back_price >= wanted_price
-        """
-        side = str(side or "BACK").upper()
-        market_id = str(market_id)
-        selection_id = int(selection_id)
-        wanted_price = float(price or 0.0)
-        wanted_size = float(size or 0.0)
-
-        if wanted_price <= 0 or wanted_size <= 0:
-            return 0.0, 0.0
-
-        runner = self.get_runner(market_id, selection_id)
-        if not runner:
-            return 0.0, 0.0
-
-        if side == "BACK":
-            ladder = runner.available_to_lay
-            return self._consume_cross_ladder(
-                wanted_price=wanted_price,
-                wanted_size=wanted_size,
-                cross_ladder=ladder,
-                is_back_order=True,
-                partial_fill_enabled=partial_fill_enabled,
-            )
-
-        ladder = runner.available_to_back
-        return self._consume_cross_ladder(
-            wanted_price=wanted_price,
-            wanted_size=wanted_size,
-            cross_ladder=ladder,
-            is_back_order=False,
-            partial_fill_enabled=partial_fill_enabled,
+    def _extract_market_id(self, market_book: Dict[str, Any]) -> str:
+        return self._normalize_market_id(
+            market_book.get("market_id")
+            or market_book.get("marketId")
+            or market_book.get("id")
+            or ""
         )
 
-    def apply_virtual_fill(
-        self,
-        *,
-        market_id: str,
-        selection_id: int,
-        side: str,
-        price: float,
-        size: float,
-        partial_fill_enabled: bool = True,
-    ) -> Tuple[float, float]:
-        """
-        Consuma virtualmente liquidità dal ladder simulato.
-        Utile se vuoi che gli ordini simulati impattino l'order book locale.
-
-        Ritorna:
-        - matched_size
-        - average_matched_price
-        """
-        side = str(side or "BACK").upper()
-        market_id = str(market_id)
-        selection_id = int(selection_id)
-        wanted_price = float(price or 0.0)
-        wanted_size = float(size or 0.0)
-
-        if wanted_price <= 0 or wanted_size <= 0:
-            return 0.0, 0.0
-
-        with self._lock:
-            runner = self._books.get(market_id, {}).get(selection_id)
-            if not runner:
-                return 0.0, 0.0
-
-            if side == "BACK":
-                ladder = runner.available_to_lay
-                return self._consume_and_mutate_ladder(
-                    wanted_price=wanted_price,
-                    wanted_size=wanted_size,
-                    cross_ladder=ladder,
-                    is_back_order=True,
-                    partial_fill_enabled=partial_fill_enabled,
-                )
-
-            ladder = runner.available_to_back
-            return self._consume_and_mutate_ladder(
-                wanted_price=wanted_price,
-                wanted_size=wanted_size,
-                cross_ladder=ladder,
-                is_back_order=False,
-                partial_fill_enabled=partial_fill_enabled,
-            )
-
-    # =========================================================
-    # INTERNAL PARSING
-    # =========================================================
-    def _parse_market_book(self, market_book: Dict[str, Any]) -> Dict[int, RunnerBook]:
-        result: Dict[int, RunnerBook] = {}
-
-        for runner in (market_book or {}).get("runners", []) or []:
+    def _safe_runner_selection_id(self, runner: Dict[str, Any]) -> Optional[int]:
+        try:
+            return int(runner.get("selectionId"))
+        except Exception:
             try:
-                selection_id = int(runner.get("selectionId"))
+                return int(runner.get("selection_id"))
             except Exception:
-                continue
+                return None
 
-            ex = runner.get("ex", {}) or {}
-            back_ladder = self._parse_ladder(ex.get("availableToBack", []) or [])
-            lay_ladder = self._parse_ladder(ex.get("availableToLay", []) or [])
+    def _safe_ladder(self, runner: Dict[str, Any], key: str) -> List[Dict[str, float]]:
+        ex = runner.get("ex") or {}
+        ladder = ex.get(key) or []
+        out: List[Dict[str, float]] = []
 
-            result[selection_id] = RunnerBook(
-                selection_id=selection_id,
-                available_to_back=back_ladder,
-                available_to_lay=lay_ladder,
-            )
-
-        return result
-
-    def _parse_ladder(self, ladder: List[Dict[str, Any]]) -> List[LadderLevel]:
-        parsed: List[LadderLevel] = []
-        for level in ladder or []:
+        for level in ladder:
             try:
                 price = float(level.get("price", 0.0) or 0.0)
                 size = float(level.get("size", 0.0) or 0.0)
+                if price > 0.0 and size >= 0.0:
+                    out.append({"price": price, "size": size})
             except Exception:
                 continue
+        return out
 
-            if price <= 0 or size <= 0:
+    def _get_runner_ref(self, market_id: str, selection_id: int) -> Optional[Dict[str, Any]]:
+        book = self._books.get(market_id)
+        if not book:
+            return None
+
+        runners = book.get("runners") or []
+        for runner in runners:
+            try:
+                if self._safe_runner_selection_id(runner) == int(selection_id):
+                    return runner
+            except Exception:
                 continue
-
-            parsed.append(LadderLevel(price=price, size=size))
-
-        return parsed
+        return None
 
     # =========================================================
-    # INTERNAL MATCH LOGIC
+    # PUBLIC API
     # =========================================================
-    def _consume_cross_ladder(
+    def update_market_book(self, market_id: str, market_book: Dict[str, Any]) -> None:
+        with self._lock:
+            incoming = deepcopy(market_book or {})
+            resolved_market_id = self._normalize_market_id(market_id) or self._extract_market_id(incoming)
+            if not resolved_market_id:
+                raise ValueError("market_id mancante")
+
+            incoming["market_id"] = resolved_market_id
+            if "marketId" not in incoming:
+                incoming["marketId"] = resolved_market_id
+
+            self._books[resolved_market_id] = incoming
+
+    def get_market_book(self, market_id: str) -> Dict[str, Any]:
+        with self._lock:
+            market_id = self._normalize_market_id(market_id)
+            book = self._books.get(market_id)
+            return deepcopy(book) if book else {}
+
+    def has_market(self, market_id: str) -> bool:
+        with self._lock:
+            return self._normalize_market_id(market_id) in self._books
+
+    def clear_market(self, market_id: str) -> None:
+        with self._lock:
+            self._books.pop(self._normalize_market_id(market_id), None)
+
+    def clear_all(self) -> None:
+        with self._lock:
+            self._books.clear()
+
+    # =========================================================
+    # RUNNER / LADDER ACCESS
+    # =========================================================
+    def get_runner(self, market_id: str, selection_id: int) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            runner = self._get_runner_ref(self._normalize_market_id(market_id), int(selection_id))
+            return deepcopy(runner) if runner else None
+
+    def get_available_to_back(self, market_id: str, selection_id: int) -> List[Dict[str, float]]:
+        with self._lock:
+            runner = self._get_runner_ref(self._normalize_market_id(market_id), int(selection_id))
+            if not runner:
+                return []
+            return deepcopy(self._safe_ladder(runner, "availableToBack"))
+
+    def get_available_to_lay(self, market_id: str, selection_id: int) -> List[Dict[str, float]]:
+        with self._lock:
+            runner = self._get_runner_ref(self._normalize_market_id(market_id), int(selection_id))
+            if not runner:
+                return []
+            return deepcopy(self._safe_ladder(runner, "availableToLay"))
+
+    def get_best_back(self, market_id: str, selection_id: int) -> Optional[Dict[str, float]]:
+        ladder = self.get_available_to_back(market_id, selection_id)
+        return ladder[0] if ladder else None
+
+    def get_best_lay(self, market_id: str, selection_id: int) -> Optional[Dict[str, float]]:
+        ladder = self.get_available_to_lay(market_id, selection_id)
+        return ladder[0] if ladder else None
+
+    def get_opposite_ladder(self, market_id: str, selection_id: int, order_side: str) -> List[Dict[str, float]]:
+        """
+        Per un ordine:
+        - BACK matcha contro availableToLay
+        - LAY  matcha contro availableToBack
+        """
+        side = str(order_side or "BACK").upper().strip()
+        if side == "BACK":
+            return self.get_available_to_lay(market_id, selection_id)
+        return self.get_available_to_back(market_id, selection_id)
+
+    # =========================================================
+    # LIQUIDITY CONSUMPTION
+    # =========================================================
+    def consume_liquidity(
         self,
-        *,
-        wanted_price: float,
-        wanted_size: float,
-        cross_ladder: List[LadderLevel],
-        is_back_order: bool,
-        partial_fill_enabled: bool,
-    ) -> Tuple[float, float]:
-        remaining = float(wanted_size)
-        matched_total = 0.0
-        weighted_sum = 0.0
+        market_id: str,
+        selection_id: int,
+        order_side: str,
+        matched_price: float,
+        matched_size: float,
+    ) -> Dict[str, Any]:
+        """
+        Consuma liquidità dal lato opposto del book:
+        - BACK consuma availableToLay
+        - LAY consuma availableToBack
+        """
+        with self._lock:
+            market_id = self._normalize_market_id(market_id)
+            selection_id = int(selection_id)
+            side = str(order_side or "BACK").upper().strip()
+            matched_price = float(matched_price or 0.0)
+            matched_size = float(matched_size or 0.0)
 
-        for level in cross_ladder:
-            level_price = float(level.price)
-            level_size = float(level.size)
+            if matched_price <= 0.0 or matched_size <= 0.0:
+                return {
+                    "ok": False,
+                    "reason": "invalid_match_values",
+                }
 
-            if level_price <= 0 or level_size <= 0:
-                continue
+            runner = self._get_runner_ref(market_id, selection_id)
+            if not runner:
+                return {
+                    "ok": False,
+                    "reason": "runner_not_found",
+                }
 
-            if is_back_order:
-                if level_price > wanted_price:
-                    continue
-            else:
-                if level_price < wanted_price:
-                    continue
+            ex = runner.setdefault("ex", {})
+            book_key = "availableToLay" if side == "BACK" else "availableToBack"
+            ladder = ex.get(book_key) or []
 
-            take = min(remaining, level_size)
+            remaining = matched_size
+            consumed = 0.0
 
-            if take < remaining and not partial_fill_enabled and matched_total == 0.0:
-                return 0.0, 0.0
-
-            matched_total += take
-            weighted_sum += take * level_price
-            remaining -= take
-
-            if remaining <= 0:
-                break
-
-        if matched_total <= 0:
-            return 0.0, 0.0
-
-        avg_price = weighted_sum / matched_total
-        return matched_total, avg_price
-
-    def _consume_and_mutate_ladder(
-        self,
-        *,
-        wanted_price: float,
-        wanted_size: float,
-        cross_ladder: List[LadderLevel],
-        is_back_order: bool,
-        partial_fill_enabled: bool,
-    ) -> Tuple[float, float]:
-        preview_matched, preview_avg = self._consume_cross_ladder(
-            wanted_price=wanted_price,
-            wanted_size=wanted_size,
-            cross_ladder=cross_ladder,
-            is_back_order=is_back_order,
-            partial_fill_enabled=partial_fill_enabled,
-        )
-
-        if preview_matched <= 0:
-            return 0.0, 0.0
-
-        remaining = float(preview_matched)
-
-        for level in cross_ladder:
-            if remaining <= 0:
-                break
-
-            level_price = float(level.price)
-            level_size = float(level.size)
-
-            if is_back_order:
-                if level_price > wanted_price:
-                    continue
-            else:
-                if level_price < wanted_price:
+            for level in ladder:
+                try:
+                    level_price = float(level.get("price", 0.0) or 0.0)
+                    level_size = float(level.get("size", 0.0) or 0.0)
+                except Exception:
                     continue
 
-            if level_size <= 0:
-                continue
+                if level_price != matched_price:
+                    continue
+                if level_size <= 0.0:
+                    continue
 
-            take = min(remaining, level_size)
-            level.size = max(0.0, level.size - take)
-            remaining -= take
+                take = min(level_size, remaining)
+                level["size"] = max(0.0, level_size - take)
+                consumed += take
+                remaining -= take
 
-        cross_ladder[:] = [lvl for lvl in cross_ladder if lvl.size > 0]
-        return preview_matched, preview_avg
+                if remaining <= 0.0:
+                    break
+
+            # pulizia livelli a zero
+            ex[book_key] = [
+                {
+                    "price": float(level.get("price", 0.0) or 0.0),
+                    "size": float(level.get("size", 0.0) or 0.0),
+                }
+                for level in ladder
+                if float(level.get("size", 0.0) or 0.0) > 0.0
+            ]
+
+            return {
+                "ok": consumed > 0.0,
+                "consumed": float(consumed),
+                "requested": float(matched_size),
+                "remaining_unfilled": float(max(0.0, matched_size - consumed)),
+                "book_key": book_key,
+            }
+
+    # =========================================================
+    # SNAPSHOT
+    # =========================================================
+    def snapshot(self) -> Dict[str, Any]:
+        with self._lock:
+            return {
+                "markets_cached": len(self._books),
+                "market_ids": list(self._books.keys()),
+            }
