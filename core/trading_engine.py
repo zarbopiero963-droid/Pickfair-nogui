@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from typing import Any, Dict
 
 from order_manager import OrderManager
@@ -12,11 +11,14 @@ logger = logging.getLogger(__name__)
 class TradingEngine:
     """
     Trading engine headless.
-    Mantiene il wiring EventBus + OrderManager.
 
-    IMPORTANTE:
-    - simulation_mode=True => dry-run sicuro, nessuna chiamata live a Betfair
-    - simulation_mode=False => esecuzione reale tramite OrderManager
+    Ruolo:
+    - ascolta CMD_QUICK_BET
+    - normalizza payload
+    - applica validazioni minime
+    - instrada verso OrderManager
+    - supporta sia LIVE che SIMULATION tramite il broker attivo
+      restituito da client_getter()
     """
 
     MIN_EXCHANGE_STAKE = 2.0
@@ -36,6 +38,9 @@ class TradingEngine:
 
         self.bus.subscribe("CMD_QUICK_BET", self._handle_quick_bet)
 
+    # =========================================================
+    # HELPERS
+    # =========================================================
     def _submit(self, fn, *args, **kwargs):
         """
         Esegue via executor senza bloccare il consumer EventBus.
@@ -48,101 +53,98 @@ class TradingEngine:
         normalized = dict(payload or {})
 
         required = ("market_id", "selection_id", "price", "stake")
-        missing = [k for k in required if k not in normalized or normalized.get(k) in (None, "")]
+        missing = [
+            key
+            for key in required
+            if key not in normalized or normalized.get(key) in (None, "")
+        ]
         if missing:
             raise ValueError(f"Payload mancante di: {', '.join(missing)}")
 
         normalized["market_id"] = str(normalized["market_id"])
         normalized["selection_id"] = int(normalized["selection_id"])
-        normalized["bet_type"] = str(normalized.get("bet_type", "BACK")).upper()
+        normalized["bet_type"] = str(
+            normalized.get("bet_type")
+            or normalized.get("side")
+            or normalized.get("action")
+            or "BACK"
+        ).upper()
         normalized["price"] = float(normalized["price"])
         normalized["stake"] = float(normalized["stake"])
         normalized["simulation_mode"] = bool(normalized.get("simulation_mode", False))
+        normalized["batch_id"] = str(normalized.get("batch_id") or "")
+        normalized["event_key"] = str(normalized.get("event_key") or "")
+        normalized["event_name"] = str(normalized.get("event_name") or normalized.get("event") or "")
+        normalized["market_name"] = str(
+            normalized.get("market_name")
+            or normalized.get("market")
+            or normalized.get("market_type")
+            or ""
+        )
+        normalized["runner_name"] = str(
+            normalized.get("runner_name")
+            or normalized.get("runnerName")
+            or normalized.get("selection")
+            or ""
+        )
 
         return normalized
 
     def _is_microstake(self, stake: float) -> bool:
         return self.MICRO_MIN_STAKE <= float(stake or 0.0) < self.MIN_EXCHANGE_STAKE
 
-    def _publish_simulated_flow(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Dry-run sicuro:
-        - nessuna chiamata a Betfair
-        - ordine accettato/fill simulato
-        - chiusura immediata a pnl 0 per non lasciare tavoli bloccati
-        """
-        sim_payload = dict(payload)
-        sim_payload["sim"] = True
-        sim_payload["micro"] = bool(sim_payload.get("microstake_mode", False))
-        sim_payload["status"] = "DRY_RUN"
-        sim_payload["matched"] = float(sim_payload["stake"])
-        sim_payload["bet_id"] = f"SIM-{int(datetime.utcnow().timestamp() * 1000)}"
-        sim_payload["response"] = {
-            "status": "DRY_RUN",
-            "simulated": True,
-            "placed_at": datetime.utcnow().isoformat(),
-        }
+    def _validate_payload(self, payload: Dict[str, Any]) -> None:
+        if payload["bet_type"] not in {"BACK", "LAY"}:
+            raise ValueError("bet_type non valido")
 
-        self.bus.publish("QUICK_BET_ACCEPTED", dict(sim_payload))
-        self.bus.publish("QUICK_BET_FILLED", dict(sim_payload))
+        if payload["price"] <= 1.0:
+            raise ValueError("Quota non valida")
 
-        self.bus.publish(
-            "RUNTIME_CLOSE_POSITION",
-            {
-                "table_id": sim_payload.get("table_id"),
-                "event_key": sim_payload.get("event_key"),
-                "batch_id": sim_payload.get("batch_id", ""),
-                "pnl": 0.0,
-                "simulated": True,
-                "reason": "dry_run_simulation",
-            },
-        )
+        if payload["stake"] < self.MICRO_MIN_STAKE:
+            raise ValueError("Stake sotto MICRO_MIN_STAKE")
 
-        logger.info(
-            "Simulazione dry-run eseguita senza live order: market_id=%s selection_id=%s stake=%.2f",
-            sim_payload.get("market_id"),
-            sim_payload.get("selection_id"),
-            sim_payload.get("stake", 0.0),
-        )
+        selection_id = payload["selection_id"]
+        if not isinstance(selection_id, int):
+            raise ValueError("selection_id non valido")
+
+        market_id = str(payload["market_id"]).strip()
+        if not market_id:
+            raise ValueError("market_id vuoto")
+
+    def _publish_failure(self, payload: Dict[str, Any], error: str) -> Dict[str, Any]:
+        fail_payload = dict(payload or {})
+        fail_payload["error"] = str(error)
+
+        self.bus.publish("QUICK_BET_FAILED", fail_payload)
+        logger.error("Errore _handle_quick_bet: %s", error)
 
         return {
-            "ok": True,
-            "status": "SIMULATED",
-            "simulated": True,
-            "matched": float(sim_payload["stake"]),
-            "bet_id": sim_payload["bet_id"],
+            "ok": False,
+            "status": "FAILED",
+            "error": str(error),
         }
 
+    # =========================================================
+    # MAIN EVENT HANDLER
+    # =========================================================
     def _handle_quick_bet(self, payload):
         try:
             payload = self._normalize_payload(payload)
-
-            if payload["price"] <= 1.01:
-                raise ValueError("Quota non valida")
-
-            if payload["stake"] < self.MICRO_MIN_STAKE:
-                raise ValueError("Stake sotto MICRO_MIN_STAKE")
+            self._validate_payload(payload)
 
             payload["microstake_mode"] = self._is_microstake(payload["stake"])
 
-            if payload["simulation_mode"]:
-                return self._publish_simulated_flow(payload)
-
+            # NB:
+            # non blocchiamo l'EventBus. LIVE e SIM vengono gestiti
+            # internamente da OrderManager tramite il broker attivo.
             self._submit(self.order_manager.place_order, payload)
 
             return {
                 "ok": True,
                 "status": "ACCEPTED_FOR_PROCESSING",
-                "simulated": False,
+                "simulated": bool(payload.get("simulation_mode", False)),
+                "microstake_mode": bool(payload.get("microstake_mode", False)),
             }
 
         except Exception as exc:
-            fail_payload = dict(payload or {})
-            fail_payload["error"] = str(exc)
-            self.bus.publish("QUICK_BET_FAILED", fail_payload)
-            logger.error("Errore _handle_quick_bet: %s", exc)
-            return {
-                "ok": False,
-                "status": "FAILED",
-                "error": str(exc),
-            }
+            return self._publish_failure(dict(payload or {}), str(exc))
