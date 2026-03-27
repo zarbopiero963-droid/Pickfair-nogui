@@ -67,7 +67,7 @@ class TelegramTabUI:
         settings = self._safe_settings()
 
         # =========================================================
-        # CONFIGURAZIONE TELEGRAM
+        # CONFIG TELEGRAM
         # =========================================================
         config_frame = ctk.CTkFrame(
             left_frame,
@@ -396,7 +396,7 @@ class TelegramTabUI:
         self.app.available_chats_data = []
 
         # =========================================================
-        # REGOLE DI PARSING
+        # REGOLE PARSING
         # =========================================================
         rules_frame = ctk.CTkFrame(
             left_frame,
@@ -493,7 +493,7 @@ class TelegramTabUI:
             self.app._refresh_rules_tree()
 
         # =========================================================
-        # SEGNALI RICEVUTI
+        # STORICO SEGNALI
         # =========================================================
         signals_frame = ctk.CTkFrame(
             right_frame,
@@ -508,6 +508,16 @@ class TelegramTabUI:
             font=FONTS["heading"],
             text_color=COLORS["text_primary"],
         ).pack(anchor=tk.W, padx=10, pady=(10, 5))
+
+        mode_label = ctk.CTkLabel(
+            signals_frame,
+            text="Le quote inoltrate al runtime restano reali; la modalità LIVE/SIM dipende dallo switch principale.",
+            font=("Segoe UI", 9),
+            text_color=COLORS["text_tertiary"],
+            wraplength=700,
+            justify="left",
+        )
+        mode_label.pack(anchor=tk.W, padx=10, pady=(0, 8))
 
         signals_tree_container = ctk.CTkFrame(signals_frame, fg_color="transparent")
         signals_tree_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
@@ -543,14 +553,17 @@ class TelegramTabUI:
         self.app.tg_signals_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
+        bottom_btns = ctk.CTkFrame(signals_frame, fg_color="transparent")
+        bottom_btns.pack(fill=tk.X, padx=10, pady=(0, 10))
+
         ctk.CTkButton(
-            signals_frame,
+            bottom_btns,
             text="Aggiorna Segnali",
             command=self.app._refresh_telegram_signals_tree,
             fg_color=COLORS["button_primary"],
             hover_color=COLORS["back_hover"],
             corner_radius=6,
-        ).pack(pady=10)
+        ).pack(side=tk.LEFT)
 
         if hasattr(self.app, "_refresh_telegram_signals_tree"):
             self.app._refresh_telegram_signals_tree()
