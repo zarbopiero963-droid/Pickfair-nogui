@@ -4,25 +4,84 @@ import logging
 from typing import Optional
 
 from betfair_client import BetfairClient
+from simulation_broker import SimulationBroker
 
 logger = logging.getLogger(__name__)
 
 
 class BetfairService:
+    """
+    Service unificato broker:
+    - LIVE  -> BetfairClient
+    - SIM   -> SimulationBroker
+
+    Il broker attivo dipende da simulation_mode.
+    """
+
     def __init__(self, settings_service):
         self.settings_service = settings_service
+
         self.client: Optional[BetfairClient] = None
+        self.simulation_broker: Optional[SimulationBroker] = None
+
         self.connected = False
         self.last_error = ""
+        self.simulation_mode = False
 
-    def connect(self, password: str | None = None, force: bool = False) -> dict:
-        if self.connected and self.client and not force:
+    # =========================================================
+    # MODE
+    # =========================================================
+    def set_simulation_mode(self, enabled: bool) -> None:
+        self.simulation_mode = bool(enabled)
+
+    def is_simulation_mode(self) -> bool:
+        return bool(self.simulation_mode)
+
+    # =========================================================
+    # BROKER GETTERS
+    # =========================================================
+    def get_client(self):
+        """
+        Restituisce il broker attivo:
+        - SimulationBroker se simulation_mode=True
+        - BetfairClient se simulation_mode=False
+        """
+        if self.simulation_mode:
+            return self.simulation_broker
+        return self.client
+
+    def get_live_client(self) -> Optional[BetfairClient]:
+        return self.client
+
+    def get_simulation_broker(self) -> Optional[SimulationBroker]:
+        return self.simulation_broker
+
+    # =========================================================
+    # CONNECT / DISCONNECT
+    # =========================================================
+    def connect(
+        self,
+        password: str | None = None,
+        force: bool = False,
+        simulation_mode: bool | None = None,
+    ) -> dict:
+        if simulation_mode is not None:
+            self.set_simulation_mode(simulation_mode)
+
+        if self.simulation_mode:
+            return self._connect_simulation(force=force)
+
+        return self._connect_live(password=password, force=force)
+
+    def _connect_live(self, password: str | None = None, force: bool = False) -> dict:
+        if self.connected and self.client and not force and not self.simulation_mode:
             return {
                 "connected": True,
                 "reason": "already_connected",
+                "simulated": False,
             }
 
-        if force and self.client:
+        if force:
             try:
                 self.disconnect()
             except Exception:
@@ -60,6 +119,7 @@ class BetfairService:
             self.client = client
             self.connected = True
             self.last_error = ""
+            self.simulation_mode = False
 
             db = getattr(self.settings_service, "db", None)
             if db and hasattr(db, "save_session"):
@@ -71,22 +131,77 @@ class BetfairService:
             return {
                 "connected": True,
                 "session": session_info,
+                "simulated": False,
             }
 
         except Exception as exc:
             self.client = None
             self.connected = False
             self.last_error = str(exc)
-            logger.exception("Errore connect Betfair: %s", exc)
+            logger.exception("Errore connect LIVE Betfair: %s", exc)
+            raise
+
+    def _connect_simulation(self, force: bool = False) -> dict:
+        if self.connected and self.simulation_broker and not force and self.simulation_mode:
+            return {
+                "connected": True,
+                "reason": "already_connected",
+                "simulated": True,
+            }
+
+        if force:
+            try:
+                self.disconnect()
+            except Exception:
+                pass
+
+        try:
+            starting_balance = self._load_simulation_starting_balance()
+            commission_pct = self._load_simulation_commission_pct()
+
+            broker = SimulationBroker(
+                starting_balance=starting_balance,
+                commission_pct=commission_pct,
+                partial_fill_enabled=True,
+                consume_liquidity=True,
+            )
+            session_info = broker.login(password="SIMULATION")
+
+            self.simulation_broker = broker
+            self.client = None
+            self.connected = True
+            self.last_error = ""
+            self.simulation_mode = True
+
+            return {
+                "connected": True,
+                "session": session_info,
+                "simulated": True,
+                "starting_balance": float(starting_balance),
+                "commission_pct": float(commission_pct),
+            }
+
+        except Exception as exc:
+            self.simulation_broker = None
+            self.connected = False
+            self.last_error = str(exc)
+            logger.exception("Errore connect SIMULATION broker: %s", exc)
             raise
 
     def disconnect(self) -> None:
+        if self.simulation_broker:
+            try:
+                self.simulation_broker.logout()
+            except Exception as exc:
+                logger.warning("Errore logout SimulationBroker: %s", exc)
+
         if self.client:
             try:
                 self.client.logout()
             except Exception as exc:
                 logger.warning("Errore logout Betfair: %s", exc)
 
+        self.simulation_broker = None
         self.client = None
         self.connected = False
 
@@ -97,30 +212,39 @@ class BetfairService:
             except Exception:
                 pass
 
-    def get_client(self) -> Optional[BetfairClient]:
-        return self.client
+    def ensure_connected(
+        self,
+        password: str | None = None,
+        simulation_mode: bool | None = None,
+    ):
+        broker = self.get_client()
+        if self.connected and broker is not None:
+            if simulation_mode is None or bool(simulation_mode) == self.simulation_mode:
+                return broker
 
-    def ensure_connected(self, password: str | None = None) -> Optional[BetfairClient]:
-        if self.connected and self.client:
-            return self.client
+        self.connect(password=password, simulation_mode=simulation_mode)
+        return self.get_client()
 
-        self.connect(password=password)
-        return self.client
-
+    # =========================================================
+    # ACCOUNT FUNDS / STATUS
+    # =========================================================
     def get_account_funds(self) -> dict:
-        if not self.client:
+        broker = self.get_client()
+        if not broker:
             return {
                 "available": 0.0,
                 "exposure": 0.0,
                 "total": 0.0,
+                "simulated": bool(self.simulation_mode),
             }
 
         try:
-            funds = self.client.get_account_funds() or {}
+            funds = broker.get_account_funds() or {}
             return {
                 "available": float(funds.get("available", 0.0) or 0.0),
                 "exposure": float(funds.get("exposure", 0.0) or 0.0),
                 "total": float(funds.get("total", 0.0) or 0.0),
+                "simulated": bool(funds.get("simulated", self.simulation_mode)),
             }
         except Exception as exc:
             self.last_error = str(exc)
@@ -129,12 +253,96 @@ class BetfairService:
                 "available": 0.0,
                 "exposure": 0.0,
                 "total": 0.0,
+                "simulated": bool(self.simulation_mode),
             }
 
     def status(self) -> dict:
+        broker = self.get_client()
+        has_client = broker is not None
+
         return {
-            "connected": bool(self.connected and self.client is not None),
+            "connected": bool(self.connected and has_client),
             "last_error": self.last_error,
-            "has_client": self.client is not None,
-            "live_execution_only": True,
+            "has_client": has_client,
+            "simulated": bool(self.simulation_mode),
+            "broker_type": "SIMULATION" if self.simulation_mode else "LIVE",
+            "live_execution_only": not bool(self.simulation_mode),
         }
+
+    # =========================================================
+    # SIMULATION MARKET FEED
+    # =========================================================
+    def update_simulation_market_book(self, market_id: str, market_book: dict) -> dict:
+        if not self.simulation_mode or not self.simulation_broker:
+            return {
+                "ok": False,
+                "reason": "simulation_not_active",
+                "simulated": False,
+            }
+
+        try:
+            return self.simulation_broker.update_market_book(market_id, market_book)
+        except Exception as exc:
+            self.last_error = str(exc)
+            logger.exception("Errore update_simulation_market_book: %s", exc)
+            return {
+                "ok": False,
+                "reason": str(exc),
+                "simulated": True,
+            }
+
+    def simulation_snapshot(self) -> dict:
+        if not self.simulation_broker:
+            return {
+                "connected": False,
+                "simulated": True,
+                "state": {},
+            }
+
+        try:
+            return self.simulation_broker.snapshot()
+        except Exception as exc:
+            self.last_error = str(exc)
+            logger.exception("Errore simulation_snapshot: %s", exc)
+            return {
+                "connected": False,
+                "simulated": True,
+                "state": {},
+                "error": str(exc),
+            }
+
+    def reset_simulation(self, starting_balance: float | None = None) -> dict:
+        if not self.simulation_broker:
+            return {
+                "ok": False,
+                "reason": "simulation_not_initialized",
+                "simulated": True,
+            }
+
+        try:
+            return self.simulation_broker.reset(starting_balance=starting_balance)
+        except Exception as exc:
+            self.last_error = str(exc)
+            logger.exception("Errore reset_simulation: %s", exc)
+            return {
+                "ok": False,
+                "reason": str(exc),
+                "simulated": True,
+            }
+
+    # =========================================================
+    # INTERNAL SETTINGS HELPERS
+    # =========================================================
+    def _load_simulation_starting_balance(self) -> float:
+        try:
+            roserpina = self.settings_service.load_roserpina_config()
+            return float(getattr(roserpina, "max_stake_abs", 1000.0) or 1000.0)
+        except Exception:
+            return 1000.0
+
+    def _load_simulation_commission_pct(self) -> float:
+        try:
+            roserpina = self.settings_service.load_roserpina_config()
+            return float(getattr(roserpina, "commission_pct", 4.5) or 4.5)
+        except Exception:
+            return 4.5
