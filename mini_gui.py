@@ -72,6 +72,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._build_ui()
         self._load_initial_settings()
         self._wire_bus()
+        self._apply_simulation_mode_to_runtime()
         self._start_polling()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -96,7 +97,6 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
         self.trading_engine = self._create_trading_engine()
         self.runtime = self._create_runtime_controller()
-
         self.telegram_controller = TelegramController(self)
 
         self._register_shutdown_hook(
@@ -211,6 +211,13 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 except TypeError:
                     pass
 
+    def _apply_simulation_mode_to_runtime(self):
+        self.simulation_mode = bool(self.simulation_mode_var.get())
+        if hasattr(self.betfair_service, "set_simulation_mode"):
+            self.betfair_service.set_simulation_mode(self.simulation_mode)
+        if hasattr(self.runtime, "set_simulation_mode"):
+            self.runtime.set_simulation_mode(self.simulation_mode)
+
     # =========================================================
     # TK VARS
     # =========================================================
@@ -252,6 +259,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.status_last_signal_var = tk.StringVar(value="-")
         self.status_last_error_var = tk.StringVar(value="-")
         self.sim_label_var = tk.StringVar(value="SIMULAZIONE")
+        self.status_broker_var = tk.StringVar(value="SIMULATION")
 
     # =========================================================
     # UI
@@ -320,6 +328,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
         cards = [
             ("Runtime", self.status_mode_var),
+            ("Broker", self.status_broker_var),
             ("Betfair", self.status_betfair_var),
             ("Telegram", self.status_telegram_var),
             ("Bankroll", self.status_bankroll_var),
@@ -346,7 +355,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             ).pack(anchor="w", padx=12, pady=(0, 10))
 
         controls = ctk.CTkFrame(frame)
-        controls.grid(row=2, column=0, columnspan=4, sticky="ew", padx=8, pady=8)
+        controls.grid(row=3, column=0, columnspan=4, sticky="ew", padx=8, pady=8)
 
         ctk.CTkButton(controls, text="Avvia", command=self._runtime_start).pack(side=tk.LEFT, padx=6, pady=10)
         ctk.CTkButton(controls, text="Pausa", command=self._runtime_pause).pack(side=tk.LEFT, padx=6, pady=10)
@@ -356,7 +365,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         ctk.CTkButton(controls, text="Refresh", command=self._refresh_runtime_status).pack(side=tk.LEFT, padx=6, pady=10)
 
         err = ctk.CTkFrame(frame)
-        err.grid(row=3, column=0, columnspan=4, sticky="ew", padx=8, pady=8)
+        err.grid(row=4, column=0, columnspan=4, sticky="ew", padx=8, pady=8)
         ctk.CTkLabel(err, text="Ultimo Errore", font=("Segoe UI", 12)).pack(anchor="w", padx=12, pady=(10, 4))
         ctk.CTkLabel(
             err,
@@ -556,15 +565,20 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
     # LIVE / SIM SWITCH
     # =========================================================
     def _toggle_simulation_mode(self):
-        self.simulation_mode = bool(self.simulation_mode_var.get())
+        self._apply_simulation_mode_to_runtime()
         self.sim_label_var.set("SIMULAZIONE" if self.simulation_mode else "LIVE")
+        self.status_broker_var.set("SIMULATION" if self.simulation_mode else "LIVE")
         self._log(f"Modalità cambiata: {self.sim_label_var.get()}")
+        self._refresh_runtime_status()
 
     # =========================================================
     # RUNTIME COMMANDS
     # =========================================================
     def _runtime_start(self):
-        result = self.runtime.start(password=self.bf_password_var.get() or None)
+        result = self.runtime.start(
+            password=self.bf_password_var.get() or None,
+            simulation_mode=self.simulation_mode,
+        )
         self._log(f"START -> {result}")
         self._refresh_runtime_status()
 
@@ -634,16 +648,20 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self._log(f"STATUS ERROR -> {exc}")
             return
 
+        broker_status = status.get("broker_status", {}) or {}
+        funds = status.get("account_funds", {}) or {}
+
         self.status_mode_var.set(str(status.get("mode", "-")))
+        self.status_broker_var.set(str(broker_status.get("broker_type", "SIMULATION" if self.simulation_mode else "LIVE")))
         self.status_betfair_var.set(
             "CONNECTED" if self.betfair_service.status().get("connected") else "DISCONNECTED"
         )
         self.status_telegram_var.set(
             "LISTENING" if self.telegram_service.status().get("connected") else "STOPPED"
         )
-        self.status_bankroll_var.set(str(status.get("bankroll_current", "0.00")))
+        self.status_bankroll_var.set(str(funds.get("available", status.get("bankroll_current", "0.00"))))
         self.status_drawdown_var.set(str(status.get("drawdown_pct", "0.00")))
-        self.status_exposure_var.set(str(status.get("total_exposure", "0.00")))
+        self.status_exposure_var.set(str(funds.get("exposure", status.get("total_exposure", "0.00"))))
         self.status_tables_var.set(str(status.get("active_tables", 0)))
         self.status_last_signal_var.set(str(status.get("last_signal_at", "-")))
         self.status_last_error_var.set(str(status.get("last_error", "-")))
