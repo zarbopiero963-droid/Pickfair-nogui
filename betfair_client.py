@@ -591,6 +591,66 @@ class BetfairClient:
     def list_market_book(self, market_id: str) -> Optional[Dict[str, Any]]:
         return self.get_market_book(market_id=market_id)
 
+
+    def calculate_cashout(
+        self,
+        original_stake,
+        original_odds,
+        current_odds,
+        side="BACK",
+    ):
+        """
+        Calcola il vero green-up (equal profit) per una posizione singola.
+
+        - side="BACK": posizione iniziale BACK, cashout via LAY
+        - side="LAY":  posizione iniziale LAY, cashout via BACK
+        """
+        try:
+            os_ = float(original_stake or 0.0)
+            oo = float(original_odds or 0.0)
+            co = float(current_odds or 0.0)
+            side_mode = str(side or "BACK").upper().strip()
+        except Exception:
+            return {
+                "cashout_stake": 0.0,
+                "profit_if_win": 0.0,
+                "profit_if_lose": 0.0,
+                "guaranteed_profit": 0.0,
+                "side_to_place": "LAY",
+            }
+
+        if os_ <= 0.0 or oo <= 1.0 or co <= 1.0:
+            return {
+                "cashout_stake": 0.0,
+                "profit_if_win": 0.0,
+                "profit_if_lose": 0.0,
+                "guaranteed_profit": 0.0,
+                "side_to_place": "LAY" if side_mode == "BACK" else "BACK",
+            }
+
+        cashout_stake = round((os_ * oo) / co, 2)
+
+        if side_mode == "BACK":
+            profit_if_win = (os_ * (oo - 1.0)) - (cashout_stake * (co - 1.0))
+            profit_if_lose = cashout_stake - os_
+            side_to_place = "LAY"
+        else:
+            profit_if_win = (cashout_stake * (co - 1.0)) - (os_ * (oo - 1.0))
+            profit_if_lose = os_ - cashout_stake
+            side_to_place = "BACK"
+
+        profit_if_win = round(profit_if_win, 2)
+        profit_if_lose = round(profit_if_lose, 2)
+        guaranteed_profit = round(min(profit_if_win, profit_if_lose), 2)
+
+        return {
+            "cashout_stake": cashout_stake,
+            "profit_if_win": profit_if_win,
+            "profit_if_lose": profit_if_lose,
+            "guaranteed_profit": guaranteed_profit if guaranteed_profit > 0 else 0.0,
+            "side_to_place": side_to_place,
+        }
+
     # =========================================================
     # STATUS
     # =========================================================
