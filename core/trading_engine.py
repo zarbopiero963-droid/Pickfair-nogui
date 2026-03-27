@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from order_manager import OrderManager
 
@@ -12,19 +12,23 @@ class TradingEngine:
     """
     Trading engine headless.
 
-    Ruolo:
+    Responsabilità:
     - ascolta CMD_QUICK_BET
     - normalizza payload
-    - applica validazioni minime
-    - instrada verso OrderManager
-    - supporta sia LIVE che SIMULATION tramite il broker attivo
-      restituito da client_getter()
+    - decide il routing verso OrderManager
+    - supporta LIVE e SIMULATION
+    - non blocca l'EventBus con attese inutili
+
+    Non contiene:
+    - logica UI
+    - money management
+    - parsing Telegram
     """
 
     MIN_EXCHANGE_STAKE = 2.0
     MICRO_MIN_STAKE = 0.10
 
-    def __init__(self, bus, db, client_getter, executor):
+    def __init__(self, bus, db, client_getter, executor=None):
         self.bus = bus
         self.db = db
         self.client_getter = client_getter
@@ -39,42 +43,92 @@ class TradingEngine:
         self.bus.subscribe("CMD_QUICK_BET", self._handle_quick_bet)
 
     # =========================================================
-    # HELPERS
+    # INTERNAL HELPERS
     # =========================================================
+    def _publish(self, event_name: str, payload: Dict[str, Any]) -> None:
+        try:
+            self.bus.publish(event_name, payload)
+        except Exception:
+            logger.exception("Errore publish %s", event_name)
+
     def _submit(self, fn, *args, **kwargs):
         """
-        Esegue via executor senza bloccare il consumer EventBus.
+        Esegue via executor senza bloccare il consumer dell'EventBus.
         """
         if self.executor and hasattr(self.executor, "submit"):
-            return self.executor.submit("trading_engine", fn, *args, **kwargs)
+            try:
+                return self.executor.submit("trading_engine", fn, *args, **kwargs)
+            except TypeError:
+                try:
+                    return self.executor.submit(fn, *args, **kwargs)
+                except Exception:
+                    logger.exception("Executor submit fallita, fallback sync")
         return fn(*args, **kwargs)
 
+    def _safe_side(self, value: Any) -> str:
+        side = str(value or "BACK").upper().strip()
+        return side if side in {"BACK", "LAY"} else "BACK"
+
+    def _safe_bool(self, value: Any, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+    def _safe_float(self, value: Any, default: float = 0.0) -> float:
+        try:
+            if value in (None, ""):
+                return float(default)
+            return float(value)
+        except Exception:
+            return float(default)
+
+    def _safe_int(self, value: Any, default: int = 0) -> int:
+        try:
+            if value in (None, ""):
+                return int(default)
+            return int(value)
+        except Exception:
+            return int(default)
+
+    # =========================================================
+    # NORMALIZATION
+    # =========================================================
     def _normalize_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         normalized = dict(payload or {})
 
-        required = ("market_id", "selection_id", "price", "stake")
-        missing = [
-            key
-            for key in required
-            if key not in normalized or normalized.get(key) in (None, "")
-        ]
-        if missing:
-            raise ValueError(f"Payload mancante di: {', '.join(missing)}")
+        market_id = normalized.get("market_id", normalized.get("marketId"))
+        selection_id = normalized.get("selection_id", normalized.get("selectionId"))
+        price_raw = normalized.get("price", normalized.get("odds"))
+        stake_raw = normalized.get("stake", normalized.get("size"))
 
-        normalized["market_id"] = str(normalized["market_id"])
-        normalized["selection_id"] = int(normalized["selection_id"])
-        normalized["bet_type"] = str(
+        if market_id in (None, ""):
+            raise ValueError("Payload mancante di market_id")
+        if selection_id in (None, ""):
+            raise ValueError("Payload mancante di selection_id")
+        if price_raw in (None, ""):
+            raise ValueError("Payload mancante di price")
+        if stake_raw in (None, ""):
+            raise ValueError("Payload mancante di stake")
+
+        normalized["market_id"] = str(market_id).strip()
+        normalized["selection_id"] = self._safe_int(selection_id)
+        normalized["bet_type"] = self._safe_side(
             normalized.get("bet_type")
             or normalized.get("side")
             or normalized.get("action")
             or "BACK"
-        ).upper()
-        normalized["price"] = float(normalized["price"])
-        normalized["stake"] = float(normalized["stake"])
-        normalized["simulation_mode"] = bool(normalized.get("simulation_mode", False))
-        normalized["batch_id"] = str(normalized.get("batch_id") or "")
-        normalized["event_key"] = str(normalized.get("event_key") or "")
-        normalized["event_name"] = str(normalized.get("event_name") or normalized.get("event") or "")
+        )
+        normalized["price"] = self._safe_float(price_raw)
+        normalized["stake"] = self._safe_float(stake_raw)
+
+        normalized["event_name"] = str(
+            normalized.get("event_name")
+            or normalized.get("event")
+            or normalized.get("match")
+            or ""
+        )
         normalized["market_name"] = str(
             normalized.get("market_name")
             or normalized.get("market")
@@ -88,63 +142,87 @@ class TradingEngine:
             or ""
         )
 
+        normalized["simulation_mode"] = self._safe_bool(
+            normalized.get("simulation_mode", False),
+            default=False,
+        )
+        normalized["event_key"] = str(normalized.get("event_key") or "")
+        normalized["batch_id"] = str(normalized.get("batch_id") or "")
+        normalized["customer_ref"] = str(normalized.get("customer_ref") or "")
+        normalized["roserpina_reason"] = str(normalized.get("roserpina_reason") or "")
+        normalized["roserpina_mode"] = str(normalized.get("roserpina_mode") or "")
+        normalized["source"] = str(normalized.get("source") or "")
+        normalized["table_id"] = (
+            None if normalized.get("table_id") in (None, "") else self._safe_int(normalized.get("table_id"))
+        )
+
         return normalized
 
     def _is_microstake(self, stake: float) -> bool:
-        return self.MICRO_MIN_STAKE <= float(stake or 0.0) < self.MIN_EXCHANGE_STAKE
+        stake = float(stake or 0.0)
+        return self.MICRO_MIN_STAKE <= stake < self.MIN_EXCHANGE_STAKE
 
     def _validate_payload(self, payload: Dict[str, Any]) -> None:
+        if not payload["market_id"]:
+            raise ValueError("market_id non valido")
+
+        if int(payload["selection_id"]) <= 0:
+            raise ValueError("selection_id non valido")
+
+        if float(payload["price"]) <= 1.0:
+            raise ValueError("Quota non valida")
+
+        if float(payload["stake"]) < self.MICRO_MIN_STAKE:
+            raise ValueError("Stake sotto MICRO_MIN_STAKE")
+
         if payload["bet_type"] not in {"BACK", "LAY"}:
             raise ValueError("bet_type non valido")
 
-        if payload["price"] <= 1.0:
-            raise ValueError("Quota non valida")
-
-        if payload["stake"] < self.MICRO_MIN_STAKE:
-            raise ValueError("Stake sotto MICRO_MIN_STAKE")
-
-        selection_id = payload["selection_id"]
-        if not isinstance(selection_id, int):
-            raise ValueError("selection_id non valido")
-
-        market_id = str(payload["market_id"]).strip()
-        if not market_id:
-            raise ValueError("market_id vuoto")
-
-    def _publish_failure(self, payload: Dict[str, Any], error: str) -> Dict[str, Any]:
-        fail_payload = dict(payload or {})
-        fail_payload["error"] = str(error)
-
-        self.bus.publish("QUICK_BET_FAILED", fail_payload)
-        logger.error("Errore _handle_quick_bet: %s", error)
-
-        return {
-            "ok": False,
-            "status": "FAILED",
-            "error": str(error),
-        }
-
     # =========================================================
-    # MAIN EVENT HANDLER
+    # MAIN HANDLER
     # =========================================================
     def _handle_quick_bet(self, payload):
+        fail_payload: Dict[str, Any] = dict(payload or {})
+
         try:
-            payload = self._normalize_payload(payload)
-            self._validate_payload(payload)
+            normalized = self._normalize_payload(payload)
+            self._validate_payload(normalized)
 
-            payload["microstake_mode"] = self._is_microstake(payload["stake"])
+            normalized["microstake_mode"] = self._is_microstake(normalized["stake"])
 
-            # NB:
-            # non blocchiamo l'EventBus. LIVE e SIM vengono gestiti
-            # internamente da OrderManager tramite il broker attivo.
-            self._submit(self.order_manager.place_order, payload)
+            # Ack presa in carico
+            self._publish(
+                "QUICK_BET_ROUTED",
+                {
+                    **normalized,
+                    "status": "ACCEPTED_FOR_PROCESSING",
+                },
+            )
+
+            # Dispatch non bloccante
+            self._submit(self.order_manager.place_order, normalized)
 
             return {
                 "ok": True,
                 "status": "ACCEPTED_FOR_PROCESSING",
-                "simulated": bool(payload.get("simulation_mode", False)),
-                "microstake_mode": bool(payload.get("microstake_mode", False)),
+                "simulation_mode": bool(normalized.get("simulation_mode", False)),
             }
 
         except Exception as exc:
-            return self._publish_failure(dict(payload or {}), str(exc))
+            fail_payload["error"] = str(exc)
+            self._publish("QUICK_BET_FAILED", fail_payload)
+            logger.exception("Errore _handle_quick_bet: %s", exc)
+            return {
+                "ok": False,
+                "status": "FAILED",
+                "error": str(exc),
+            }
+
+    # =========================================================
+    # OPTIONAL EXTENSIONS
+    # =========================================================
+    def submit_quick_bet(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        API diretta opzionale oltre al bus.
+        """
+        return self._handle_quick_bet(payload)
