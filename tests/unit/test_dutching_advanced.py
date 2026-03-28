@@ -8,12 +8,13 @@ from dutching import calculate_cashout, calculate_dutching_stakes, dynamic_casho
 @pytest.mark.invariant
 def test_dutching_five_outcomes_exact_score_style_spread():
     odds = [6.0, 7.0, 8.0, 9.0, 10.0]
-    result = calculate_dutching_stakes(odds, 20)
+    result = calculate_dutching_stakes(odds, 20, commission=4.5)
 
     assert len(result["stakes"]) == 5
     assert len(result["profits"]) == 5
+    assert len(result["net_profits"]) == 5
     assert abs(sum(result["stakes"]) - 20.0) < 0.02
-    assert max(result["profits"]) - min(result["profits"]) < 0.15
+    assert max(result["net_profits"]) - min(result["net_profits"]) < 0.10
 
 
 @pytest.mark.unit
