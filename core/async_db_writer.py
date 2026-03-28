@@ -1,183 +1,179 @@
 import logging
 import threading
 import time
-from collections import deque
-
+from queue import Queue, Empty
 
 logger = logging.getLogger(__name__)
 
 
 class AsyncDBWriter:
     """
-    Non-blocking DB writer.
+    Async DB Writer PRO
 
-    Ensures trading engine never blocks on DB I/O.
-
-    Versione robusta:
-    - no silent data loss
-    - shutdown con drain della queue
-    - retry automatico sui write failure
-    - no deque(maxlen=...) auto-drop silenzioso
-    - no busy wait aggressivo
+    - queue thread-safe (no lock manuale)
+    - worker loop stabile
+    - retry con backoff
+    - no starvation
+    - support batching
     """
 
     def __init__(
         self,
         db,
-        maxlen: int = 5000,
-        sleep_idle: float = 0.1,
+        maxsize: int = 5000,
+        workers: int = 1,
+        batch_size: int = 10,
         max_retries: int = 3,
         retry_delay: float = 0.25,
     ):
         self.db = db
-        self.queue = deque()
-        self.maxlen = int(maxlen)
 
+        self.queue = Queue(maxsize=maxsize)
         self.running = False
-        self.thread = None
 
-        self.sleep_idle = float(sleep_idle)
-        self.max_retries = int(max_retries)
-        self.retry_delay = float(retry_delay)
+        self.workers = workers
+        self.batch_size = batch_size
 
-        self._lock = threading.Lock()
-        self._event = threading.Event()
-        self._dropped_count = 0
-        self._failed_count = 0
-        self._written_count = 0
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
 
+        self._threads = []
+
+        # stats
+        self._written = 0
+        self._failed = 0
+        self._dropped = 0
+
+    # =========================================================
+    # START / STOP
+    # =========================================================
     def start(self):
         if self.running:
             return
 
         self.running = True
-        self._event.clear()
 
-        self.thread = threading.Thread(
-            target=self._loop,
-            daemon=True,
-            name="AsyncDBWriter",
-        )
-        self.thread.start()
+        for i in range(self.workers):
+            t = threading.Thread(
+                target=self._worker_loop,
+                daemon=True,
+                name=f"AsyncDBWriter-{i}",
+            )
+            t.start()
+            self._threads.append(t)
 
     def stop(self):
-        """
-        Ferma il writer ma drena prima la queue residua.
-        """
         self.running = False
-        self._event.set()
 
-        if self.thread:
-            self.thread.join(timeout=10)
+        for t in self._threads:
+            t.join(timeout=5)
 
+    # =========================================================
+    # SUBMIT
+    # =========================================================
     def submit(self, kind: str, payload: dict):
-        """
-        Accoda un item in modo thread-safe.
-
-        Returns:
-            True se accodato, False se scartato per queue piena.
-        """
-        with self._lock:
-            if len(self.queue) >= self.maxlen:
-                self._dropped_count += 1
-                logger.error(
-                    "[AsyncDBWriter] Queue piena (%s). Item scartato kind=%s dropped=%s",
-                    self.maxlen,
-                    kind,
-                    self._dropped_count,
-                )
-                return False
-
-            self.queue.append(
+        try:
+            self.queue.put_nowait(
                 {
                     "kind": kind,
                     "payload": dict(payload or {}),
                     "retries": 0,
-                    "submitted_at": time.time(),
                 }
             )
+            return True
 
-        self._event.set()
-        return True
+        except Exception:
+            self._dropped += 1
+            logger.error(
+                "[AsyncDBWriter] Queue piena. dropped=%s kind=%s",
+                self._dropped,
+                kind,
+            )
+            return False
 
-    def stats(self):
-        with self._lock:
-            return {
-                "queued": len(self.queue),
-                "written": self._written_count,
-                "failed": self._failed_count,
-                "dropped": self._dropped_count,
-                "running": self.running,
-            }
+    # =========================================================
+    # WORKER LOOP
+    # =========================================================
+    def _worker_loop(self):
+        while self.running or not self.queue.empty():
 
-    def _write_item(self, kind: str, payload: dict):
-        if kind == "bet":
-            self.db.save_bet(**payload)
-        elif kind == "cashout":
-            self.db.save_cashout_transaction(**payload)
-        elif kind == "simulation_bet":
-            self.db.save_simulation_bet(**payload)
-        else:
-            raise ValueError(f"Unknown async db write kind: {kind}")
-
-    def _requeue_front(self, item: dict):
-        with self._lock:
-            self.queue.appendleft(item)
-        self._event.set()
-
-    def _pop_left(self):
-        with self._lock:
-            if not self.queue:
-                return None
-            return self.queue.popleft()
-
-    def _has_pending_items(self):
-        with self._lock:
-            return bool(self.queue)
-
-    def _loop(self):
-        """
-        Continua finché running=True oppure finché restano item in queue.
-        Così stop() non perde gli ultimi eventi.
-        """
-        while self.running or self._has_pending_items():
-            item = self._pop_left()
-
-            if item is None:
-                self._event.wait(timeout=self.sleep_idle)
-                self._event.clear()
-                continue
-
-            kind = item["kind"]
-            payload = item["payload"]
-            retries = int(item.get("retries", 0))
+            batch = []
 
             try:
-                self._write_item(kind, payload)
-                with self._lock:
-                    self._written_count += 1
+                item = self.queue.get(timeout=0.5)
+                batch.append(item)
+            except Empty:
+                continue
 
-            except Exception as e:
-                with self._lock:
-                    self._failed_count += 1
+            # batching
+            while len(batch) < self.batch_size:
+                try:
+                    batch.append(self.queue.get_nowait())
+                except Empty:
+                    break
 
-                if retries < self.max_retries:
-                    item["retries"] = retries + 1
-                    logger.warning(
-                        "[AsyncDBWriter] Write fallita kind=%s retry=%s/%s error=%s",
-                        kind,
-                        item["retries"],
-                        self.max_retries,
-                        e,
-                    )
-                    # FIX: requeue e attendi PRIMA di riprovare
-                    self._requeue_front(item)
-                    self._event.wait(timeout=self.retry_delay)
-                    self._event.clear()
-                else:
-                    logger.exception(
-                        "[AsyncDBWriter] Write persa definitivamente kind=%s dopo %s tentativi: %s",
-                        kind,
-                        self.max_retries,
-                        e,
-                    )
+            for item in batch:
+                self._process_item(item)
+
+                self.queue.task_done()
+
+    # =========================================================
+    # PROCESS
+    # =========================================================
+    def _process_item(self, item):
+        kind = item["kind"]
+        payload = item["payload"]
+        retries = item["retries"]
+
+        try:
+            self._write(kind, payload)
+            self._written += 1
+
+        except Exception as e:
+            self._failed += 1
+
+            if retries < self.max_retries:
+                item["retries"] += 1
+
+                time.sleep(self.retry_delay)
+
+                try:
+                    self.queue.put_nowait(item)
+                except Exception:
+                    self._dropped += 1
+                    logger.error("Drop retry item")
+
+            else:
+                logger.exception(
+                    "[AsyncDBWriter] write fallita definitivamente kind=%s error=%s",
+                    kind,
+                    e,
+                )
+
+    # =========================================================
+    # WRITE ROUTER
+    # =========================================================
+    def _write(self, kind, payload):
+        if kind == "bet":
+            self.db.save_bet(**payload)
+
+        elif kind == "cashout":
+            self.db.save_cashout_transaction(**payload)
+
+        elif kind == "simulation_bet":
+            self.db.save_simulation_bet(**payload)
+
+        else:
+            raise ValueError(f"Unknown kind: {kind}")
+
+    # =========================================================
+    # STATS
+    # =========================================================
+    def stats(self):
+        return {
+            "queued": self.queue.qsize(),
+            "written": self._written,
+            "failed": self._failed,
+            "dropped": self._dropped,
+            "running": self.running,
+        }
