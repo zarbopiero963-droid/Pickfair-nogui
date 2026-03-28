@@ -8,13 +8,14 @@ from dutching import calculate_cashout, calculate_dutching_stakes, dynamic_casho
 @pytest.mark.invariant
 def test_many_outcomes_under_rounding_pressure_stay_consistent():
     odds = [2.11, 3.37, 4.89, 6.43, 8.77, 12.25, 15.9]
-    result = calculate_dutching_stakes(odds, 123.45)
+    result = calculate_dutching_stakes(odds, 123.45, commission=4.5)
 
     assert len(result["stakes"]) == len(odds)
+    assert len(result["net_profits"]) == len(odds)
     assert abs(sum(result["stakes"]) - 123.45) < 0.02
 
-    spread = max(result["profits"]) - min(result["profits"])
-    assert spread < 0.25, f"spread profitti troppo alto: {spread}"
+    spread = max(result["net_profits"]) - min(result["net_profits"])
+    assert spread < 0.15, f"spread net profits troppo alto: {spread}"
 
 
 @pytest.mark.chaos
