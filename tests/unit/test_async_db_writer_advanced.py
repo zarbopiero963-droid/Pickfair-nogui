@@ -153,4 +153,4 @@ def test_async_db_writer_stop_drains_queue():
     finally:
         writer.stop()
 
-    assert len(db.saved_bets) == 10, "stop deve drenare la queue residua"
+    assert len(db.saved_bets) == 10, "stop deve drenare la queue residua" 
