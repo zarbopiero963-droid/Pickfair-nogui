@@ -1,48 +1,118 @@
 """
-EventBus (Pub/Sub)
-Il sistema nervoso centrale dell'applicazione.
-Permette ai moduli di comunicare senza conoscersi (Decoupling totale).
+EventBus PRO
+- Thread-safe
+- Non bloccante
+- Worker pool (alta performance)
+- Isolamento errori
+- Debug opzionale
 """
 
 __all__ = ["EventBus"]
 
 import logging
 import threading
+from collections import defaultdict
+from queue import Queue, Empty
+import time
 
 logger = logging.getLogger(__name__)
 
 
 class EventBus:
-    def __init__(self):
-        self._subscribers = {}
+    def __init__(self, workers: int = 4, debug: bool = False):
+        self._subscribers = defaultdict(list)
         self._lock = threading.Lock()
 
+        self._queue = Queue()
+        self._workers = []
+        self._running = True
+
+        self.debug = debug
+
+        # 🔥 avvio worker pool
+        for _ in range(max(1, workers)):
+            t = threading.Thread(target=self._worker_loop, daemon=True)
+            t.start()
+            self._workers.append(t)
+
+    # =========================================================
+    # SUBSCRIBE
+    # =========================================================
     def subscribe(self, event_type: str, callback: callable):
-        """Iscrive una funzione a un determinato tipo di evento."""
         with self._lock:
-            if event_type not in self._subscribers:
-                self._subscribers[event_type] = []
             if callback not in self._subscribers[event_type]:
                 self._subscribers[event_type].append(callback)
 
+    # =========================================================
+    # UNSUBSCRIBE
+    # =========================================================
     def unsubscribe(self, event_type: str, callback: callable):
-        """Rimuove l'iscrizione di una funzione a un evento."""
         with self._lock:
             if event_type in self._subscribers:
                 if callback in self._subscribers[event_type]:
                     self._subscribers[event_type].remove(callback)
 
+                if not self._subscribers[event_type]:
+                    del self._subscribers[event_type]
+
+    # =========================================================
+    # PUBLISH (NON BLOCCANTE)
+    # =========================================================
     def publish(self, event_type: str, data=None):
-        """Pubblica un evento. Tutti gli iscritti riceveranno i dati."""
         with self._lock:
-            # Creiamo una copia della lista per evitare blocchi o modifiche durante l'iterazione
             callbacks = self._subscribers.get(event_type, []).copy()
 
-        for callback in callbacks:
-            try:
-                callback(data)
-            except Exception as e:
-                logger.error(
-                    f"[EventBus] Errore nell'esecuzione del subscriber {callback.__name__} per l'evento '{event_type}': {e}"
-                )
+        if not callbacks:
+            return
 
+        if self.debug:
+            logger.debug(f"[EventBus] publish → {event_type}")
+
+        for cb in callbacks:
+            self._queue.put((event_type, cb, data))
+
+    # =========================================================
+    # WORKER LOOP
+    # =========================================================
+    def _worker_loop(self):
+        while self._running:
+            try:
+                event_type, callback, data = self._queue.get(timeout=1)
+
+                self._safe_execute(event_type, callback, data)
+
+                self._queue.task_done()
+
+            except Empty:
+                continue
+            except Exception:
+                logger.exception("Errore worker EventBus")
+
+    # =========================================================
+    # SAFE EXECUTION
+    # =========================================================
+    def _safe_execute(self, event_type, callback, data):
+        try:
+            callback(data)
+
+        except Exception:
+            logger.exception(
+                f"[EventBus] errore subscriber {callback.__name__} evento '{event_type}'"
+            )
+
+    # =========================================================
+    # SHUTDOWN
+    # =========================================================
+    def stop(self):
+        self._running = False
+
+    # =========================================================
+    # METRICS (utile debug)
+    # =========================================================
+    def stats(self):
+        return {
+            "queue_size": self._queue.qsize(),
+            "subscribers": {
+                k: len(v) for k, v in self._subscribers.items()
+            },
+        }
