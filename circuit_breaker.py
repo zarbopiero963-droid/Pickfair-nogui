@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 import threading
 import time
@@ -38,6 +40,9 @@ class CircuitBreaker:
         else:
             self.max_failures = 3
 
+        if self.max_failures <= 0:
+            raise ValueError("max_failures must be > 0")
+
         if recovery_time is not None:
             self.reset_timeout = float(recovery_time)
         elif recovery_timeout is not None:
@@ -45,9 +50,12 @@ class CircuitBreaker:
         else:
             self.reset_timeout = float(reset_timeout)
 
+        if self.reset_timeout < 0:
+            raise ValueError("reset_timeout must be >= 0")
+
         self.state = State.CLOSED
         self.failures = 0
-        self.opened_at = None
+        self.opened_at: float | None = None
 
         self._lock = threading.RLock()
         self._half_open_in_flight = False
@@ -130,6 +138,18 @@ class CircuitBreaker:
             self._is_open_unlocked()
             return self.state == State.HALF_OPEN
 
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            self._is_open_unlocked()
+            return {
+                "state": self.state.value,
+                "failures": self.failures,
+                "opened_at": self.opened_at,
+                "half_open_in_flight": self._half_open_in_flight,
+                "max_failures": self.max_failures,
+                "reset_timeout": self.reset_timeout,
+            }
+
     # ---------------- FAILURE ---------------- #
 
     def record_failure(self, error: Exception | None = None):
@@ -153,19 +173,12 @@ class CircuitBreaker:
             if self.failures >= self.max_failures:
                 self.state = State.OPEN
                 self.opened_at = time.time()
-                logger.error(
-                    "[CB] OPEN for %.2fs",
-                    self.reset_timeout,
-                )
+                logger.error("[CB] OPEN for %.2fs", self.reset_timeout)
 
     # ---------------- SUCCESS ---------------- #
 
     def _on_success(self):
         with self._lock:
-            # FIX #8: only transition to CLOSED from HALF_OPEN, not from OPEN.
-            # A probe call can only succeed while in HALF_OPEN; if we are still
-            # OPEN (e.g. the single probe call was bypassed by the in-flight
-            # guard) we must not silently reset to CLOSED.
             if self.state == State.OPEN:
                 return
             if self.state == State.HALF_OPEN:
