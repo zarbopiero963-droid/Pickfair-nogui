@@ -1,31 +1,31 @@
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from threading import RLock
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List
 
 
 class DuplicationGuard:
     """
-    Anti-duplicazione ordini/eventi.
+    Duplication Guard PRO
 
-    Scopo:
-    - impedire doppia esposizione tossica sullo stesso evento/runner
-    - registrare event_key attivi
-    - rilasciare la chiave quando l'ordine/posizione termina
-
-    La chiave base è costruita da:
-    - market_id
-    - selection_id
-    - bet_type
-
-    Se vuoi più ampiezza puoi passare event_key già calcolato dal runtime.
+    - check + register atomico
+    - TTL automatico
+    - evita memory leak
+    - supporta strategie diverse
     """
 
-    def __init__(self):
+    def __init__(self, ttl_seconds: int = 120):
         self._lock = RLock()
-        self._active_keys: Set[str] = set()
+
+        # key -> timestamp
+        self._active: Dict[str, float] = {}
+
+        # metadata debug
         self._registered_at: Dict[str, str] = {}
+
+        self.ttl = int(ttl_seconds)
 
     # =========================================================
     # KEY BUILD
@@ -48,61 +48,96 @@ class DuplicationGuard:
         bet_type = str(
             payload.get("bet_type")
             or payload.get("side")
-            or payload.get("action")
             or "BACK"
         ).upper().strip()
 
-        return f"{market_id}:{selection_id}:{bet_type}"
+        strategy = str(
+            payload.get("strategy")
+            or payload.get("source")
+            or "default"
+        ).lower().strip()
+
+        return f"{market_id}:{selection_id}:{bet_type}:{strategy}"
 
     # =========================================================
-    # REGISTER / CHECK / RELEASE
+    # ATOMIC CHECK + REGISTER
     # =========================================================
-    def register(self, event_key: str) -> None:
+    def acquire(self, event_key: str) -> bool:
+        """
+        True → puoi eseguire ordine
+        False → duplicato
+        """
         key = str(event_key or "").strip()
         if not key:
-            return
+            return False
+
+        now = time.time()
 
         with self._lock:
-            self._active_keys.add(key)
+            self._cleanup_locked(now)
+
+            if key in self._active:
+                return False
+
+            self._active[key] = now
             self._registered_at[key] = datetime.utcnow().isoformat()
 
+            return True
+
+    # =========================================================
+    # RELEASE
+    # =========================================================
     def release(self, event_key: str) -> None:
         key = str(event_key or "").strip()
         if not key:
             return
 
         with self._lock:
-            self._active_keys.discard(key)
+            self._active.pop(key, None)
             self._registered_at.pop(key, None)
 
-    def is_duplicate(self, event_key: str) -> bool:
-        key = str(event_key or "").strip()
-        if not key:
-            return False
+    # =========================================================
+    # CLEANUP TTL
+    # =========================================================
+    def _cleanup_locked(self, now: float):
+        if not self._active:
+            return
 
-        with self._lock:
-            return key in self._active_keys
+        expired = [
+            k for k, ts in self._active.items()
+            if (now - ts) > self.ttl
+        ]
 
-    def clear(self) -> None:
-        with self._lock:
-            self._active_keys.clear()
-            self._registered_at.clear()
+        for k in expired:
+            self._active.pop(k, None)
+            self._registered_at.pop(k, None)
 
     # =========================================================
     # SNAPSHOT
     # =========================================================
     def snapshot(self) -> Dict[str, Any]:
+        now = time.time()
+
         with self._lock:
+            self._cleanup_locked(now)
+
             keys: List[Dict[str, str]] = []
-            for key in sorted(self._active_keys):
-                keys.append(
-                    {
-                        "event_key": key,
-                        "registered_at": self._registered_at.get(key, ""),
-                    }
-                )
+
+            for key in sorted(self._active):
+                keys.append({
+                    "event_key": key,
+                    "registered_at": self._registered_at.get(key, ""),
+                })
 
             return {
-                "active_count": len(self._active_keys),
+                "active_count": len(self._active),
                 "active_keys": keys,
             }
+
+    # =========================================================
+    # CLEAR
+    # =========================================================
+    def clear(self):
+        with self._lock:
+            self._active.clear()
+            self._registered_at.clear()
