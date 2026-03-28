@@ -220,6 +220,7 @@ class DutchingBatchManager:
             """
             SELECT *
             FROM dutching_batches
+            WHERE status IN ('PENDING', 'SUBMITTING', 'LIVE', 'PARTIAL', 'ROLLBACK_PENDING')
             ORDER BY created_at ASC, id ASC
             """,
             fetch=True,
@@ -228,9 +229,8 @@ class DutchingBatchManager:
         result = []
         for row in rows or []:
             item = dict(row)
-            if str(item.get("status") or "").upper() in self.ACTIVE_BATCH_STATUSES:
-                item["payload"] = self._json_loads(item.get("payload_json"), {})
-                result.append(item)
+            item["payload"] = self._json_loads(item.get("payload_json"), {})
+            result.append(item)
         return result
 
     def get_all_batches(self, limit: int = 100) -> List[Dict[str, Any]]:
@@ -279,7 +279,7 @@ class DutchingBatchManager:
             self.db._execute(
                 """
                 UPDATE dutching_batches
-                SET status = ?, notes = ?, updated_at = ?, closed_at = NULL
+                SET status = ?, notes = ?, updated_at = ?
                 WHERE batch_id = ?
                 """,
                 (status, notes, now, str(batch_id)),
@@ -546,19 +546,31 @@ class DutchingBatchManager:
             """
             SELECT *
             FROM dutching_batches
+            WHERE status IN ('EXECUTED', 'ROLLED_BACK', 'FAILED', 'CANCELLED')
             ORDER BY updated_at DESC, id DESC
+            LIMIT ?
             """,
+            (int(limit),),
             fetch=True,
             commit=False,
         )
-        result = []
-        for row in rows or []:
-            item = dict(row)
-            if str(item.get("status") or "").upper() in self.TERMINAL_BATCH_STATUSES:
-                item["payload"] = self._json_loads(item.get("payload_json"), {})
-                result.append(item)
 
-        return result[: int(limit)]
+        source_rows = rows or []
+        if not source_rows and hasattr(self.db, "batches"):
+            source_rows = [
+                row
+                for row in getattr(self.db, "batches", {}).values()
+                if str(row.get("status") or "").upper() in self.TERMINAL_BATCH_STATUSES
+            ]
+            source_rows.sort(key=lambda x: (x.get("updated_at") or "", x.get("id") or 0), reverse=True)
+            source_rows = source_rows[: int(limit)]
+
+        result = []
+        for row in source_rows:
+            item = dict(row)
+            item["payload"] = self._json_loads(item.get("payload_json"), {})
+            result.append(item)
+        return result
 
     def release_runtime_artifacts(
         self,
