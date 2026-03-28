@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 
 
 TWOPLACES = Decimal("0.01")
+EPS = Decimal("0.0000001")
 
 
 def _d(value: Any, default: str = "0") -> Decimal:
@@ -29,27 +30,136 @@ def _apply_commission(profit: Decimal, commission: float | Decimal = 4.5) -> Dec
     return profit * (Decimal("1") - (commission_d / Decimal("100")))
 
 
+def _profit_for_outcome(
+    stakes: List[Decimal],
+    odds_d: List[Decimal],
+    winner_idx: int,
+) -> Decimal:
+    gross_return = stakes[winner_idx] * odds_d[winner_idx]
+    gross_profit = gross_return - sum(stakes)
+    return gross_profit
+
+
+def _net_profit_for_outcome(
+    stakes: List[Decimal],
+    odds_d: List[Decimal],
+    winner_idx: int,
+    commission: Decimal,
+) -> Decimal:
+    gross_profit = _profit_for_outcome(stakes, odds_d, winner_idx)
+    return _apply_commission(gross_profit, commission)
+
+
+def _equalize_stakes_post_rounding(
+    stakes: List[Decimal],
+    odds_d: List[Decimal],
+    total_stake_d: Decimal,
+    commission: Decimal,
+    iterations: int = 500,
+) -> List[Decimal]:
+    """
+    Equalizzazione post-rounding:
+    - mantiene la somma stake uguale al totale
+    - riduce lo spread dei profitti netti
+    - usa micro-aggiustamenti da 0.01
+    """
+    if not stakes or len(stakes) != len(odds_d):
+        return stakes
+
+    stakes = list(stakes)
+
+    def profit_spread(current: List[Decimal]) -> Decimal:
+        profits = [
+            _net_profit_for_outcome(current, odds_d, i, commission)
+            for i in range(len(current))
+        ]
+        return max(profits) - min(profits)
+
+    current_spread = profit_spread(stakes)
+
+    for _ in range(iterations):
+        profits = [
+            _net_profit_for_outcome(stakes, odds_d, i, commission)
+            for i in range(len(stakes))
+        ]
+        min_idx = profits.index(min(profits))
+        max_idx = profits.index(max(profits))
+
+        improved = False
+
+        # Prova a spostare 0.01 dalla stake che genera profitto più alto
+        # verso quella che genera profitto più basso.
+        candidate = list(stakes)
+        if candidate[max_idx] > TWOPLACES:
+            candidate[max_idx] = _round_step(candidate[max_idx] - TWOPLACES)
+            candidate[min_idx] = _round_step(candidate[min_idx] + TWOPLACES)
+
+            # riallinea total stake
+            diff = total_stake_d - sum(candidate)
+            if diff != Decimal("0"):
+                candidate[min_idx] = _round_step(candidate[min_idx] + diff)
+
+            if all(s > Decimal("0") for s in candidate):
+                new_spread = profit_spread(candidate)
+                if new_spread + EPS < current_spread:
+                    stakes = candidate
+                    current_spread = new_spread
+                    improved = True
+
+        if not improved:
+            break
+
+    # sicurezza finale sul totale
+    diff = total_stake_d - sum(stakes)
+    if stakes and diff != Decimal("0"):
+        stakes[-1] = _round_step(stakes[-1] + diff)
+
+    return stakes
+
+
 def calculate_dutching_stakes(
     odds: List[float],
     total_stake: float,
+    commission: float = 0.0,
+    equalize: bool = True,
+    commission_aware: bool = True,
 ) -> Dict[str, Any]:
+    """
+    Dutching pro:
+    - stake distribution corretta
+    - equalizzazione post-rounding
+    - commission-aware opzionale
+
+    Ritorna:
+    - stakes
+    - profits (lordi)
+    - net_profits
+    - book_pct
+    - avg_profit
+    - avg_net_profit
+    """
     odds_d = [_d(x, "0") for x in (odds or [])]
     total_stake_d = _d(total_stake, "0")
+    commission_d = _d(commission, "0")
 
     if not odds_d or total_stake_d <= Decimal("0"):
         return {
             "stakes": [],
             "profits": [],
+            "net_profits": [],
             "book_pct": 0.0,
             "avg_profit": 0.0,
+            "avg_net_profit": 0.0,
         }
 
     if any(o <= Decimal("1.0") for o in odds_d):
         return {
             "stakes": [],
             "profits": [],
+            "net_profits": [],
             "book_pct": 0.0,
             "avg_profit": 0.0,
+            "avg_net_profit": 0.0,
             "error": "Invalid odds <= 1.0",
         }
 
@@ -58,35 +168,57 @@ def calculate_dutching_stakes(
         return {
             "stakes": [],
             "profits": [],
+            "net_profits": [],
             "book_pct": 0.0,
             "avg_profit": 0.0,
+            "avg_net_profit": 0.0,
             "error": "Invalid inverse odds sum",
         }
 
+    # Base dutching
     stakes: List[Decimal] = []
     for odd in odds_d:
         stake = total_stake_d * ((Decimal("1") / odd) / inv_sum)
         stakes.append(_round_step(stake))
 
-    total_alloc = sum(stakes)
-    diff = total_stake_d - total_alloc
+    # riallinea totale
+    diff = total_stake_d - sum(stakes)
     if stakes:
         stakes[-1] = _round_step(stakes[-1] + diff)
 
+    # Equalizzazione pro
+    if equalize and len(stakes) >= 2:
+        stakes = _equalize_stakes_post_rounding(
+            stakes=stakes,
+            odds_d=odds_d,
+            total_stake_d=total_stake_d,
+            commission=commission_d if commission_aware else Decimal("0"),
+        )
+
     profits: List[Decimal] = []
-    for stake, odd in zip(stakes, odds_d):
-        gross_return = stake * odd
-        gross_profit = gross_return - total_stake_d
-        profits.append(_round_step(gross_profit))
+    net_profits: List[Decimal] = []
+
+    for idx in range(len(stakes)):
+        gross_profit = _round_step(_profit_for_outcome(stakes, odds_d, idx))
+        net_profit = _round_step(_apply_commission(gross_profit, commission_d))
+        profits.append(gross_profit)
+        net_profits.append(net_profit)
 
     avg_profit = sum(profits) / Decimal(len(profits)) if profits else Decimal("0")
+    avg_net_profit = (
+        sum(net_profits) / Decimal(len(net_profits))
+        if net_profits
+        else Decimal("0")
+    )
     book_pct = inv_sum * Decimal("100")
 
     return {
         "stakes": [float(s) for s in stakes],
         "profits": [float(p) for p in profits],
+        "net_profits": [float(p) for p in net_profits],
         "book_pct": float(_round_step(book_pct)),
         "avg_profit": float(_round_step(avg_profit)),
+        "avg_net_profit": float(_round_step(avg_net_profit)),
     }
 
 
@@ -98,19 +230,6 @@ def dynamic_cashout_single(
     side: str = "BACK",
     **kwargs,
 ) -> dict:
-    """
-    Calculate green-up (cashout) stake and resulting equal profit.
-
-    Supporta sia:
-    - BACK iniziale -> cashout con LAY
-    - LAY iniziale  -> cashout con BACK
-
-    Compatibilità legacy:
-    - BACK:
-        back_stake, back_price, lay_price
-    - LAY:
-        lay_stake, lay_price, back_price
-    """
     side_mode = str(side).upper().strip()
     if side_mode not in {"BACK", "LAY"}:
         side_mode = "BACK"
@@ -195,12 +314,6 @@ def calculate_cashout(
     current_odds: float,
     side: str = "BACK",
 ) -> Dict[str, float]:
-    """
-    Calcola cashout / green-up equal profit.
-
-    - side="BACK": scommessa iniziale BACK, uscita con LAY
-    - side="LAY": scommessa iniziale LAY, uscita con BACK
-    """
     original_stake_d = _d(original_stake, "0")
     original_odds_d = _d(original_odds, "0")
     current_odds_d = _d(current_odds, "0")
