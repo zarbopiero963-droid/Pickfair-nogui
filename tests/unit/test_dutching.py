@@ -36,10 +36,11 @@ def test_apply_commission_only_on_positive_profit():
 @pytest.mark.unit
 @pytest.mark.guardrail
 def test_calculate_dutching_stakes_equalized_profit_basic():
-    result = calculate_dutching_stakes([2.0, 4.0], 100)
+    result = calculate_dutching_stakes([2.0, 4.0], 100, commission=0)
 
     assert len(result["stakes"]) == 2
     assert len(result["profits"]) == 2
+    assert len(result["net_profits"]) == 2
     assert abs(sum(result["stakes"]) - 100.0) < 0.01
     assert abs(result["profits"][0] - result["profits"][1]) < 0.05
 
@@ -51,6 +52,7 @@ def test_calculate_dutching_invalid_odds():
 
     assert result["stakes"] == []
     assert result["profits"] == []
+    assert result["net_profits"] == []
     assert result["error"] == "Invalid odds <= 1.0"
 
 
@@ -61,8 +63,10 @@ def test_calculate_dutching_invalid_total_stake():
 
     assert result["stakes"] == []
     assert result["profits"] == []
+    assert result["net_profits"] == []
     assert result["book_pct"] == 0.0
     assert result["avg_profit"] == 0.0
+    assert result["avg_net_profit"] == 0.0
 
 
 @pytest.mark.unit
@@ -97,3 +101,15 @@ def test_calculate_cashout_invalid_inputs():
     assert result["profit_if_win"] == 0.0
     assert result["profit_if_lose"] == 0.0
     assert result["guaranteed_profit"] == 0.0
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_dutching_commission_reduces_net_profits_only():
+    result = calculate_dutching_stakes([2.5, 3.5, 4.5], 60, commission=4.5)
+
+    assert len(result["profits"]) == 3
+    assert len(result["net_profits"]) == 3
+
+    for gross, net in zip(result["profits"], result["net_profits"]):
+        assert net <= gross + 1e-9
