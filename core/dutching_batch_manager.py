@@ -10,35 +10,6 @@ logger = logging.getLogger(__name__)
 
 
 class DutchingBatchManager:
-    """
-    Gestisce batch dutching persistenti su SQLite.
-
-    Tabelle:
-    - dutching_batches
-    - dutching_batch_legs
-
-    Stati batch consigliati:
-    - PENDING
-    - SUBMITTING
-    - LIVE
-    - EXECUTED
-    - PARTIAL
-    - ROLLBACK_PENDING
-    - ROLLED_BACK
-    - FAILED
-    - CANCELLED
-
-    Stati leg:
-    - CREATED
-    - SUBMITTED
-    - PLACED
-    - MATCHED
-    - PARTIAL
-    - FAILED
-    - CANCELLED
-    - ROLLED_BACK
-    """
-
     TERMINAL_BATCH_STATUSES = {"EXECUTED", "ROLLED_BACK", "FAILED", "CANCELLED"}
     ACTIVE_BATCH_STATUSES = {"PENDING", "SUBMITTING", "LIVE", "PARTIAL", "ROLLBACK_PENDING"}
     OPEN_LEG_STATUSES = {"CREATED", "SUBMITTED", "PLACED", "PARTIAL"}
@@ -50,9 +21,6 @@ class DutchingBatchManager:
         self.bus = bus
         self._ensure_schema()
 
-    # =========================================================
-    # SCHEMA
-    # =========================================================
     def _ensure_schema(self) -> None:
         self.db._execute(
             """
@@ -120,9 +88,6 @@ class DutchingBatchManager:
             "CREATE INDEX IF NOT EXISTS idx_dutching_legs_customer_ref ON dutching_batch_legs(customer_ref)"
         )
 
-    # =========================================================
-    # HELPERS
-    # =========================================================
     def _now(self) -> str:
         return datetime.utcnow().isoformat()
 
@@ -148,9 +113,6 @@ class DutchingBatchManager:
         except Exception:
             logger.exception("Errore publish %s", event_name)
 
-    # =========================================================
-    # CRUD BATCH
-    # =========================================================
     def create_batch(
         self,
         *,
@@ -169,16 +131,30 @@ class DutchingBatchManager:
         legs: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         now = self._now()
+        total_legs_value = len(legs) if legs is not None else int(total_legs or 0)
 
         self.db._execute(
             """
-            INSERT OR REPLACE INTO dutching_batches (
+            INSERT INTO dutching_batches (
                 batch_id, event_key, market_id, event_name, market_name,
                 table_id, strategy, status, total_legs,
                 batch_exposure, avg_profit, book_pct,
                 payload_json, created_at, updated_at
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(batch_id) DO UPDATE SET
+                event_key = excluded.event_key,
+                market_id = excluded.market_id,
+                event_name = excluded.event_name,
+                market_name = excluded.market_name,
+                table_id = excluded.table_id,
+                strategy = excluded.strategy,
+                total_legs = excluded.total_legs,
+                batch_exposure = excluded.batch_exposure,
+                avg_profit = excluded.avg_profit,
+                book_pct = excluded.book_pct,
+                payload_json = excluded.payload_json,
+                updated_at = excluded.updated_at
             """,
             (
                 str(batch_id),
@@ -189,7 +165,7 @@ class DutchingBatchManager:
                 table_id,
                 str(strategy or "DUTCHING"),
                 "PENDING",
-                int(total_legs or 0),
+                int(total_legs_value),
                 float(batch_exposure or 0.0),
                 float(avg_profit or 0.0),
                 float(book_pct or 0.0),
@@ -268,6 +244,16 @@ class DutchingBatchManager:
 
     def update_batch_status(self, batch_id: str, status: str, notes: str = "") -> None:
         now = self._now()
+        current = self.get_batch(batch_id)
+        if not current:
+            return
+
+        status = str(status)
+        notes = str(notes or "")
+
+        if current.get("status") == status and current.get("notes", "") == notes:
+            return
+
         closed_at = now if status in self.TERMINAL_BATCH_STATUSES else None
 
         if closed_at:
@@ -277,7 +263,7 @@ class DutchingBatchManager:
                 SET status = ?, notes = ?, updated_at = ?, closed_at = ?
                 WHERE batch_id = ?
                 """,
-                (str(status), str(notes or ""), now, closed_at, str(batch_id)),
+                (status, notes, now, closed_at, str(batch_id)),
             )
         else:
             self.db._execute(
@@ -286,7 +272,7 @@ class DutchingBatchManager:
                 SET status = ?, notes = ?, updated_at = ?
                 WHERE batch_id = ?
                 """,
-                (str(status), str(notes or ""), now, str(batch_id)),
+                (status, notes, now, str(batch_id)),
             )
 
         self._recount_batch(batch_id)
@@ -305,9 +291,6 @@ class DutchingBatchManager:
     def mark_batch_cancelled(self, batch_id: str, reason: str = "") -> None:
         self.update_batch_status(batch_id, "CANCELLED", notes=reason)
 
-    # =========================================================
-    # CRUD LEGS
-    # =========================================================
     def create_leg(
         self,
         *,
@@ -325,12 +308,22 @@ class DutchingBatchManager:
         now = self._now()
         self.db._execute(
             """
-            INSERT OR REPLACE INTO dutching_batch_legs (
+            INSERT INTO dutching_batch_legs (
                 batch_id, leg_index, customer_ref, market_id, selection_id,
                 side, price, stake, liability, status,
                 created_at, updated_at
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(batch_id, leg_index) DO UPDATE SET
+                customer_ref = excluded.customer_ref,
+                market_id = excluded.market_id,
+                selection_id = excluded.selection_id,
+                side = excluded.side,
+                price = excluded.price,
+                stake = excluded.stake,
+                liability = excluded.liability,
+                status = excluded.status,
+                updated_at = excluded.updated_at
             """,
             (
                 str(batch_id),
@@ -451,9 +444,6 @@ class DutchingBatchManager:
             },
         )
 
-    # =========================================================
-    # COUNTERS / STATUS
-    # =========================================================
     def _recount_batch(self, batch_id: str) -> None:
         legs = self.get_batch_legs(batch_id)
 
@@ -491,27 +481,34 @@ class DutchingBatchManager:
             return self.get_batch(batch_id)
 
         statuses = {str(leg["status"]).upper() for leg in legs}
+        target_status = batch.get("status")
+        notes = batch.get("notes", "")
 
         if statuses.issubset({"MATCHED", "PLACED"}):
-            self.update_batch_status(batch_id, "EXECUTED", notes="Tutte le legs eseguite")
+            target_status = "EXECUTED"
+            notes = "Tutte le legs eseguite"
         elif "PARTIAL" in statuses and not statuses.intersection({"FAILED", "CANCELLED", "ROLLED_BACK"}):
-            self.update_batch_status(batch_id, "PARTIAL", notes="Leg almeno parzialmente eseguita")
+            target_status = "PARTIAL"
+            notes = "Leg almeno parzialmente eseguita"
         elif statuses.intersection({"FAILED"}) and statuses.intersection({"PLACED", "MATCHED", "PARTIAL", "SUBMITTED"}):
-            self.update_batch_status(batch_id, "PARTIAL", notes="Batch sbilanciato / failure parziale")
+            target_status = "PARTIAL"
+            notes = "Batch sbilanciato / failure parziale"
         elif statuses.issubset({"FAILED"}):
-            self.update_batch_status(batch_id, "FAILED", notes="Tutte le legs fallite")
+            target_status = "FAILED"
+            notes = "Tutte le legs fallite"
         elif statuses.issubset({"CANCELLED", "ROLLED_BACK"}):
-            self.update_batch_status(batch_id, "ROLLED_BACK", notes="Batch rollbackato")
+            target_status = "ROLLED_BACK"
+            notes = "Batch rollbackato"
         elif statuses.intersection({"SUBMITTED", "CREATED"}):
-            self.update_batch_status(batch_id, "SUBMITTING", notes="Batch ancora in submit")
+            target_status = "SUBMITTING"
+            notes = "Batch ancora in submit"
         else:
-            self.update_batch_status(batch_id, "LIVE", notes="Batch live/non terminale")
+            target_status = "LIVE"
+            notes = "Batch live/non terminale"
 
+        self.update_batch_status(batch_id, target_status, notes=notes)
         return self.get_batch(batch_id)
 
-    # =========================================================
-    # QUERY UTILI
-    # =========================================================
     def get_active_customer_refs(self, batch_id: str) -> List[str]:
         legs = self.get_batch_legs(batch_id)
         result = []
@@ -534,11 +531,13 @@ class DutchingBatchManager:
             fetch=True,
             commit=False,
         )
-        return [dict(row) for row in rows or []]
+        result = []
+        for row in rows or []:
+            item = dict(row)
+            item["payload"] = self._json_loads(item.get("payload_json"), {})
+            result.append(item)
+        return result
 
-    # =========================================================
-    # HOOKS DI SISTEMA
-    # =========================================================
     def release_runtime_artifacts(
         self,
         *,
@@ -560,9 +559,8 @@ class DutchingBatchManager:
             except Exception:
                 logger.exception("Errore release duplication guard batch=%s", batch_id)
 
-        if table_manager and table_id:
+        if table_manager and table_id is not None:
             try:
-                # se hai pnl noto, usa release; altrimenti force_unlock
                 if pnl != 0.0 and hasattr(table_manager, "release"):
                     table_manager.release(int(table_id), pnl=float(pnl))
                 elif hasattr(table_manager, "force_unlock"):
@@ -570,9 +568,6 @@ class DutchingBatchManager:
             except Exception:
                 logger.exception("Errore release table batch=%s table_id=%s", batch_id, table_id)
 
-    # =========================================================
-    # HELPER ALTO LIVELLO
-    # =========================================================
     def register_new_batch_from_results(
         self,
         *,
@@ -611,4 +606,4 @@ class DutchingBatchManager:
             book_pct=float(book_pct or 0.0),
             payload=payload,
             legs=legs,
-                )
+        )
