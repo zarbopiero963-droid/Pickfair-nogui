@@ -32,24 +32,66 @@ class Database:
     def _get_connection(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
         if conn is None:
-            conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            conn = sqlite3.connect(
+                self.db_path,
+                check_same_thread=False,
+                timeout=30.0,
+            )
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA foreign_keys=ON")
             conn.execute("PRAGMA synchronous=NORMAL")
             self._local.conn = conn
+            self._local.tx_depth = 0
         return conn
+
+    def _get_tx_depth(self) -> int:
+        return int(getattr(self._local, "tx_depth", 0) or 0)
+
+    def _set_tx_depth(self, value: int) -> None:
+        self._local.tx_depth = int(value)
+
+    def _in_transaction(self) -> bool:
+        return self._get_tx_depth() > 0
 
     @contextmanager
     def transaction(self):
         conn = self._get_connection()
+
         with self._write_lock:
+            depth = self._get_tx_depth()
+            savepoint_name = None
+
             try:
-                conn.execute("BEGIN")
+                if depth == 0:
+                    conn.execute("BEGIN")
+                else:
+                    savepoint_name = f"sp_{depth}"
+                    conn.execute(f"SAVEPOINT {savepoint_name}")
+
+                self._set_tx_depth(depth + 1)
                 yield conn
-                conn.commit()
+
+                new_depth = self._get_tx_depth() - 1
+                self._set_tx_depth(new_depth)
+
+                if savepoint_name:
+                    conn.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+                elif new_depth == 0:
+                    conn.commit()
+
             except Exception:
-                conn.rollback()
+                current_depth = max(0, self._get_tx_depth() - 1)
+                self._set_tx_depth(current_depth)
+
+                try:
+                    if savepoint_name:
+                        conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name}")
+                        conn.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+                    else:
+                        conn.rollback()
+                except Exception:
+                    logger.exception("Errore rollback transaction")
                 raise
 
     def _execute(
@@ -62,25 +104,23 @@ class Database:
         commit: bool = True,
     ):
         conn = self._get_connection()
-        if commit:
-            with self._write_lock:
-                cur = conn.execute(sql, tuple(params))
-                if fetchone:
-                    row = cur.fetchone()
-                    conn.commit()
-                    return row
-                if fetch:
-                    rows = cur.fetchall()
-                    conn.commit()
-                    return rows
-                conn.commit()
-                return cur
-
         cur = conn.execute(sql, tuple(params))
+
         if fetchone:
-            return cur.fetchone()
+            row = cur.fetchone()
+            if commit and not self._in_transaction():
+                conn.commit()
+            return row
+
         if fetch:
-            return cur.fetchall()
+            rows = cur.fetchall()
+            if commit and not self._in_transaction():
+                conn.commit()
+            return rows
+
+        if commit and not self._in_transaction():
+            conn.commit()
+
         return cur
 
     def close_all_connections(self) -> None:
@@ -89,8 +129,13 @@ class Database:
             try:
                 conn.close()
             except Exception:
-                pass
+                logger.exception("Errore chiusura connessione SQLite")
             self._local.conn = None
+            self._local.tx_depth = 0
+
+    def reopen(self) -> None:
+        self.close_all_connections()
+        self._get_connection()
 
     # =========================================================
     # SAFE HELPERS
@@ -110,7 +155,7 @@ class Database:
         try:
             if value in (None, ""):
                 return int(default)
-            return int(value)
+            return int(float(value))
         except Exception:
             return int(default)
 
@@ -126,6 +171,14 @@ class Database:
             return json.dumps(value if value is not None else {}, ensure_ascii=False)
         except Exception:
             return "{}"
+
+    def _safe_json_loads(self, value: Any, default):
+        if not value:
+            return default
+        try:
+            return json.loads(value)
+        except Exception:
+            return default
 
     # =========================================================
     # INIT SCHEMA
@@ -546,10 +599,7 @@ class Database:
 
         out: List[Dict[str, Any]] = []
         for row in rows or []:
-            try:
-                signal_json = json.loads(row["signal_json"] or "{}")
-            except Exception:
-                signal_json = {}
+            signal_json = self._safe_json_loads(row["signal_json"], {})
 
             out.append(
                 {
@@ -567,32 +617,19 @@ class Database:
         return out
 
     # =========================================================
-    # SIGNAL PATTERNS (FULL ADVANCED SUPPORT)
+    # SIGNAL PATTERNS
     # =========================================================
     def get_signal_patterns(self, enabled_only: bool = False) -> List[Dict[str, Any]]:
-        sql = """
-            SELECT *
-            FROM signal_patterns
-        """
-        params: List[Any] = []
+        sql = "SELECT * FROM signal_patterns"
         if enabled_only:
             sql += " WHERE enabled = 1"
         sql += " ORDER BY priority ASC, id ASC"
 
-        rows = self._execute(
-            sql,
-            tuple(params),
-            fetch=True,
-            commit=False,
-        )
+        rows = self._execute(sql, fetch=True, commit=False)
 
         out: List[Dict[str, Any]] = []
         for row in rows or []:
-            try:
-                extra = json.loads(row["extra_json"] or "{}")
-            except Exception:
-                extra = {}
-
+            extra = self._safe_json_loads(row["extra_json"], {})
             item = {
                 "id": row["id"],
                 "label": row["label"],
@@ -610,9 +647,9 @@ class Database:
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
             }
-            item.update(extra if isinstance(extra, dict) else {})
+            if isinstance(extra, dict):
+                item.update(extra)
             out.append(item)
-
         return out
 
     def save_signal_pattern(
@@ -691,14 +728,9 @@ class Database:
         if not current:
             raise RuntimeError("Signal pattern non trovato")
 
-        try:
-            current_extra = json.loads(current["extra_json"] or "{}")
-        except Exception:
-            current_extra = {}
-
-        merged_extra = current_extra
+        current_extra = self._safe_json_loads(current["extra_json"], {})
+        merged_extra = dict(current_extra) if isinstance(current_extra, dict) else {}
         if extra is not None:
-            merged_extra = dict(current_extra)
             merged_extra.update(extra)
 
         self._execute(
@@ -794,10 +826,7 @@ class Database:
         )
         if not row:
             return {}
-        try:
-            return json.loads(row["state_json"] or "{}")
-        except Exception:
-            return {}
+        return self._safe_json_loads(row["state_json"], {})
 
     def load_simulation_state(self, state_key: str = "default") -> Dict[str, Any]:
         return self.get_simulation_state(state_key=state_key)
@@ -878,12 +907,24 @@ class Database:
         now = self._utc_now()
         self._execute(
             """
-            INSERT OR REPLACE INTO order_saga(
+            INSERT INTO order_saga(
                 customer_ref, batch_id, event_key, table_id,
                 market_id, selection_id, bet_type, price, stake,
                 status, payload_json, created_at, updated_at
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(customer_ref) DO UPDATE SET
+                batch_id = excluded.batch_id,
+                event_key = excluded.event_key,
+                table_id = excluded.table_id,
+                market_id = excluded.market_id,
+                selection_id = excluded.selection_id,
+                bet_type = excluded.bet_type,
+                price = excluded.price,
+                stake = excluded.stake,
+                status = excluded.status,
+                payload_json = excluded.payload_json,
+                updated_at = excluded.updated_at
             """,
             (
                 str(customer_ref),
@@ -932,7 +973,11 @@ class Database:
             fetchone=True,
             commit=False,
         )
-        return dict(row) if row else None
+        if not row:
+            return None
+        item = dict(row)
+        item["payload"] = self._safe_json_loads(item.get("payload_json"), {})
+        return item
 
     def get_pending_sagas(self) -> List[Dict[str, Any]]:
         rows = self._execute(
@@ -948,10 +993,7 @@ class Database:
         out: List[Dict[str, Any]] = []
         for row in rows or []:
             item = dict(row)
-            try:
-                item["payload"] = json.loads(item.get("payload_json") or "{}")
-            except Exception:
-                item["payload"] = {}
+            item["payload"] = self._safe_json_loads(item.get("payload_json"), {})
             out.append(item)
         return out
 
@@ -967,4 +1009,9 @@ class Database:
             fetch=True,
             commit=False,
         )
-        return [dict(row) for row in (rows or [])]
+        out: List[Dict[str, Any]] = []
+        for row in rows or []:
+            item = dict(row)
+            item["payload"] = self._safe_json_loads(item.get("payload_json"), {})
+            out.append(item)
+        return out
