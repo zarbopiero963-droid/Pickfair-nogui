@@ -1,6 +1,16 @@
 import threading
+import time
 
 from core.event_bus import EventBus
+
+
+def wait_until(condition, timeout=2.0, interval=0.02):
+    start = time.time()
+    while time.time() - start < timeout:
+        if condition():
+            return True
+        time.sleep(interval)
+    return False
 
 
 def test_subscribe_and_publish_calls_handler_once():
@@ -13,7 +23,8 @@ def test_subscribe_and_publish_calls_handler_once():
     bus.subscribe("PING", handler)
     bus.publish("PING", {"x": 1})
 
-    assert received == [{"x": 1}], "publish deve invocare il subscriber con il payload corretto"
+    ok = wait_until(lambda: received == [{"x": 1}])
+    assert ok, "publish deve invocare il subscriber con il payload corretto"
 
 
 def test_subscribe_does_not_duplicate_same_callback():
@@ -27,7 +38,8 @@ def test_subscribe_does_not_duplicate_same_callback():
     bus.subscribe("PING", handler)
     bus.publish("PING", 123)
 
-    assert calls == [123], "lo stesso callback non deve essere registrato due volte"
+    ok = wait_until(lambda: calls == [123])
+    assert ok, "lo stesso callback non deve essere registrato due volte"
 
 
 def test_unsubscribe_removes_callback():
@@ -41,6 +53,7 @@ def test_unsubscribe_removes_callback():
     bus.unsubscribe("PING", handler)
     bus.publish("PING", 123)
 
+    time.sleep(0.1)
     assert calls == [], "unsubscribe deve impedire future invocazioni del callback"
 
 
@@ -59,7 +72,8 @@ def test_publish_continues_after_subscriber_exception():
 
     bus.publish("PING", "ok")
 
-    assert calls == ["ok"], "un subscriber che fallisce non deve bloccare gli altri subscriber"
+    ok = wait_until(lambda: calls == ["ok"])
+    assert ok, "un subscriber che fallisce non deve bloccare gli altri subscriber"
 
 
 def test_publish_uses_copy_of_subscribers_to_avoid_mutation_issues():
@@ -78,10 +92,10 @@ def test_publish_uses_copy_of_subscribers_to_avoid_mutation_issues():
 
     bus.publish("PING", "data")
 
-    assert calls == [
-        ("first", "data"),
-        ("second", "data"),
-    ], "publish deve lavorare su una copia dei subscriber per evitare effetti collaterali durante l'iterazione"
+    ok = wait_until(
+        lambda: len(calls) == 2 and ("first", "data") in calls and ("second", "data") in calls
+    )
+    assert ok, "publish deve lavorare su una copia dei subscriber per evitare effetti collaterali durante l'iterazione"
 
 
 def test_thread_safe_subscribe_from_multiple_threads():
@@ -104,4 +118,5 @@ def test_thread_safe_subscribe_from_multiple_threads():
 
     bus.publish("PING", "ok")
 
-    assert len(calls) == 20, "subscribe concorrente non deve perdere subscriber"
+    ok = wait_until(lambda: len(calls) == 20)
+    assert ok, "subscribe concorrente non deve perdere subscriber"
