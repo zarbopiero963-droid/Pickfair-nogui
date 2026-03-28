@@ -1,0 +1,14 @@
+from betfair_client import BetfairClient
+
+
+def test_boot():
+    c = BetfairClient(
+        username="u",
+        app_key="k",
+        cert_pem="c",
+        key_pem="k"
+    )
+
+    s = c.status()
+
+    assert s["connected"] is False
