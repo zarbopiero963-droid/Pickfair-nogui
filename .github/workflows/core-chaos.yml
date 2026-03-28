@@ -24,16 +24,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-test.txt
 
-      - name: Run core chaos tests
+      - name: Run chaos tests
         env:
           PYTHONPATH: .
         run: |
-          pytest tests/unit -q \
+          pytest tests/unit tests/chaos -q \
             -m "chaos" \
             --maxfail=1 \
             --disable-warnings
 
-      - name: Run core invariant/failure/concurrency focused subset
+      - name: Run core invariant/failure/concurrency subset
         env:
           PYTHONPATH: .
         run: |
