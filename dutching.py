@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 
 TWOPLACES = Decimal("0.01")
@@ -19,8 +19,7 @@ def _d(value: Any, default: str = "0") -> Decimal:
 def _round_step(value: Decimal, step: Decimal = TWOPLACES) -> Decimal:
     if step <= 0:
         return value
-    quant = step
-    return value.quantize(quant, rounding=ROUND_HALF_UP)
+    return value.quantize(step, rounding=ROUND_HALF_UP)
 
 
 def _apply_commission(profit: Decimal, commission: float | Decimal = 4.5) -> Decimal:
@@ -64,9 +63,9 @@ def calculate_dutching_stakes(
             "error": "Invalid inverse odds sum",
         }
 
-    stakes = []
-    for o in odds_d:
-        stake = total_stake_d * ((Decimal("1") / o) / inv_sum)
+    stakes: List[Decimal] = []
+    for odd in odds_d:
+        stake = total_stake_d * ((Decimal("1") / odd) / inv_sum)
         stakes.append(_round_step(stake))
 
     total_alloc = sum(stakes)
@@ -74,14 +73,14 @@ def calculate_dutching_stakes(
     if stakes:
         stakes[-1] = _round_step(stakes[-1] + diff)
 
-    profits = []
+    profits: List[Decimal] = []
     for stake, odd in zip(stakes, odds_d):
         gross_return = stake * odd
         gross_profit = gross_return - total_stake_d
         profits.append(_round_step(gross_profit))
 
     avg_profit = sum(profits) / Decimal(len(profits)) if profits else Decimal("0")
-    book_pct = (inv_sum * Decimal("100"))
+    book_pct = inv_sum * Decimal("100")
 
     return {
         "stakes": [float(s) for s in stakes],
@@ -154,16 +153,13 @@ def dynamic_cashout_single(
             "back_stake": 0.0 if side_mode == "LAY" else None,
         }
 
-    # Formula universale green-up
     cashout_stake = _round_step((ms * mp) / cp)
 
     if side_mode == "BACK":
-        # Uscita con LAY
         profit_if_win = ms * (mp - Decimal("1")) - cashout_stake * (cp - Decimal("1"))
         profit_if_lose = cashout_stake - ms
         side_to_place = "LAY"
     else:
-        # Uscita con BACK
         profit_if_win = cashout_stake * (cp - Decimal("1")) - ms * (mp - Decimal("1"))
         profit_if_lose = ms - cashout_stake
         side_to_place = "BACK"
@@ -171,7 +167,6 @@ def dynamic_cashout_single(
     profit_if_win = _round_step(profit_if_win)
     profit_if_lose = _round_step(profit_if_lose)
 
-    # idealmente uguali; usiamo la media per green-up lordo
     raw_green = _round_step((profit_if_win + profit_if_lose) / Decimal("2"))
     net_green = _round_step(_apply_commission(raw_green, commission))
 
@@ -186,7 +181,6 @@ def dynamic_cashout_single(
         "back_stake": None,
     }
 
-    # compatibilità con vecchi caller
     if side_mode == "BACK":
         result["lay_stake"] = float(cashout_stake)
     else:
