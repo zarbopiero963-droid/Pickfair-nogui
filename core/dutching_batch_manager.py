@@ -15,6 +15,16 @@ class DutchingBatchManager:
     OPEN_LEG_STATUSES = {"CREATED", "SUBMITTED", "PLACED", "PARTIAL"}
     SUCCESS_LEG_STATUSES = {"PLACED", "MATCHED", "PARTIAL"}
     FAILURE_LEG_STATUSES = {"FAILED", "CANCELLED", "ROLLED_BACK"}
+    KNOWN_LEG_STATUSES = {
+        "CREATED",
+        "SUBMITTED",
+        "PLACED",
+        "MATCHED",
+        "PARTIAL",
+        "FAILED",
+        "CANCELLED",
+        "ROLLED_BACK",
+    }
 
     def __init__(self, db, bus=None):
         self.db = db
@@ -335,7 +345,7 @@ class DutchingBatchManager:
                 float(price or 0.0),
                 float(stake or 0.0),
                 float(liability or 0.0),
-                str(status),
+                str(status).upper(),
                 now,
                 now,
             ),
@@ -416,6 +426,8 @@ class DutchingBatchManager:
         raw_response: Optional[Dict[str, Any]] = None,
     ) -> None:
         now = self._now()
+        normalized_status = str(status).upper()
+
         self.db._execute(
             """
             UPDATE dutching_batch_legs
@@ -423,7 +435,7 @@ class DutchingBatchManager:
             WHERE batch_id = ? AND leg_index = ?
             """,
             (
-                str(status),
+                normalized_status,
                 str(bet_id or ""),
                 str(error_text or ""),
                 self._json_dumps(raw_response or {}),
@@ -439,7 +451,7 @@ class DutchingBatchManager:
             {
                 "batch_id": batch_id,
                 "leg_index": leg_index,
-                "status": status,
+                "status": normalized_status,
                 "batch_status": batch.get("status") if batch else None,
             },
         )
@@ -448,10 +460,12 @@ class DutchingBatchManager:
         legs = self.get_batch_legs(batch_id)
 
         total_legs = len(legs)
-        placed_legs = sum(1 for leg in legs if leg["status"] in {"PLACED", "MATCHED", "PARTIAL"})
-        matched_legs = sum(1 for leg in legs if leg["status"] == "MATCHED")
-        failed_legs = sum(1 for leg in legs if leg["status"] == "FAILED")
-        cancelled_legs = sum(1 for leg in legs if leg["status"] in {"CANCELLED", "ROLLED_BACK"})
+        placed_legs = sum(1 for leg in legs if str(leg["status"]).upper() in {"PLACED", "MATCHED", "PARTIAL"})
+        matched_legs = sum(1 for leg in legs if str(leg["status"]).upper() == "MATCHED")
+        failed_legs = sum(1 for leg in legs if str(leg["status"]).upper() == "FAILED")
+        cancelled_legs = sum(
+            1 for leg in legs if str(leg["status"]).upper() in {"CANCELLED", "ROLLED_BACK"}
+        )
 
         self.db._execute(
             """
@@ -481,16 +495,23 @@ class DutchingBatchManager:
             return self.get_batch(batch_id)
 
         statuses = {str(leg["status"]).upper() for leg in legs}
+        unknown_statuses = statuses - self.KNOWN_LEG_STATUSES
+
         target_status = batch.get("status")
         notes = batch.get("notes", "")
 
-        if statuses.issubset({"MATCHED", "PLACED"}):
+        if unknown_statuses:
+            target_status = "LIVE"
+            notes = f"Stati sconosciuti rilevati: {', '.join(sorted(unknown_statuses))}"
+        elif statuses.issubset({"MATCHED", "PLACED"}):
             target_status = "EXECUTED"
             notes = "Tutte le legs eseguite"
         elif "PARTIAL" in statuses and not statuses.intersection({"FAILED", "CANCELLED", "ROLLED_BACK"}):
             target_status = "PARTIAL"
             notes = "Leg almeno parzialmente eseguita"
-        elif statuses.intersection({"FAILED"}) and statuses.intersection({"PLACED", "MATCHED", "PARTIAL", "SUBMITTED"}):
+        elif statuses.intersection({"FAILED"}) and statuses.intersection(
+            {"PLACED", "MATCHED", "PARTIAL", "SUBMITTED"}
+        ):
             target_status = "PARTIAL"
             notes = "Batch sbilanciato / failure parziale"
         elif statuses.issubset({"FAILED"}):
@@ -499,7 +520,7 @@ class DutchingBatchManager:
         elif statuses.issubset({"CANCELLED", "ROLLED_BACK"}):
             target_status = "ROLLED_BACK"
             notes = "Batch rollbackato"
-        elif statuses.intersection({"SUBMITTED", "CREATED"}):
+        elif statuses.issubset({"SUBMITTED", "CREATED"}):
             target_status = "SUBMITTING"
             notes = "Batch ancora in submit"
         else:
@@ -512,9 +533,11 @@ class DutchingBatchManager:
     def get_active_customer_refs(self, batch_id: str) -> List[str]:
         legs = self.get_batch_legs(batch_id)
         result = []
+        active_statuses = self.OPEN_LEG_STATUSES.union(self.SUCCESS_LEG_STATUSES)
         for leg in legs:
             ref = str(leg.get("customer_ref") or "").strip()
-            if ref and leg["status"] in self.OPEN_LEG_STATUSES.union(self.SUCCESS_LEG_STATUSES):
+            status = str(leg.get("status") or "").upper()
+            if ref and status in active_statuses:
                 result.append(ref)
         return result
 
