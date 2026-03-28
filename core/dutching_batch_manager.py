@@ -557,9 +557,8 @@ class DutchingBatchManager:
             if str(item.get("status") or "").upper() in self.TERMINAL_BATCH_STATUSES:
                 item["payload"] = self._json_loads(item.get("payload_json"), {})
                 result.append(item)
-                if len(result) >= int(limit):
-                    break
-        return result
+
+        return result[: int(limit)]
 
     def release_runtime_artifacts(
         self,
