@@ -1,0 +1,52 @@
+name: Core Invariants
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  core-invariants:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements-test.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-test.txt
+
+      - name: Run core advanced tests
+        env:
+          PYTHONPATH: .
+        run: |
+          pytest tests/unit -q \
+            -m "core or concurrency or failure or invariant" \
+            --maxfail=1 \
+            --disable-warnings \
+            --cov=core \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --cov-report=html
+
+      - name: Upload coverage html
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-coverage-html
+          path: htmlcov/
+
+      - name: Upload coverage xml
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-coverage-xml
+          path: coverage.xml
