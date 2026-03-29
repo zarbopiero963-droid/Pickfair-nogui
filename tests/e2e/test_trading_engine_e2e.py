@@ -1,3 +1,6 @@
+import threading
+import time
+
 import pytest
 
 
@@ -5,33 +8,42 @@ class FakeBus:
     def __init__(self):
         self.events = []
         self.subscriptions = {}
+        self.lock = threading.Lock()
 
     def subscribe(self, event_name, handler):
         self.subscriptions[event_name] = handler
 
     def publish(self, event_name, payload=None):
-        self.events.append((event_name, payload))
+        with self.lock:
+            self.events.append((event_name, payload))
 
 
 class FakeDB:
     def __init__(self):
         self.saved = []
+        self.lock = threading.Lock()
 
     def save_bet(self, **kwargs):
-        self.saved.append(kwargs)
+        with self.lock:
+            self.saved.append(kwargs)
 
 
-class SyncExecutor:
-    def submit(self, _name, fn, *args, **kwargs):
-        return fn(*args, **kwargs)
+class AsyncExecutor:
+    def submit(self, _name, fn=None, *args, **kwargs):
+        target = fn if fn is not None else _name
+        t = threading.Thread(target=target, args=args, kwargs=kwargs, daemon=True)
+        t.start()
+        return t
 
 
 class CapturingOrderManager:
     def __init__(self):
         self.payloads = []
+        self.lock = threading.Lock()
 
     def place_order(self, payload):
-        self.payloads.append(dict(payload))
+        with self.lock:
+            self.payloads.append(dict(payload))
         return {"status": "SUCCESS"}
 
 
@@ -44,7 +56,7 @@ class ReconcileHook:
 
 
 @pytest.mark.e2e
-def test_full_quick_bet_lifecycle_with_hooks():
+def test_full_quick_bet_lifecycle_with_hooks_async():
     from core.trading_engine import TradingEngine
 
     bus = FakeBus()
@@ -55,7 +67,7 @@ def test_full_quick_bet_lifecycle_with_hooks():
         bus=bus,
         db=db,
         client_getter=lambda: None,
-        executor=SyncExecutor(),
+        executor=AsyncExecutor(),
         reconciliation_engine=reconcile,
     )
 
@@ -78,9 +90,14 @@ def test_full_quick_bet_lifecycle_with_hooks():
     assert result["ok"] is True
     assert result["status"] == "ACCEPTED_FOR_PROCESSING"
     assert result["simulation_mode"] is True
+
+    time.sleep(0.2)
+
     assert len(om.payloads) == 1
     assert len(db.saved) == 1
     assert len(reconcile.calls) == 1
 
     names = [x[0] for x in bus.events]
     assert "QUICK_BET_ROUTED" in names
+    assert "QUICK_BET_EXECUTION_STARTED" in names
+    assert "QUICK_BET_EXECUTION_FINISHED" in names
