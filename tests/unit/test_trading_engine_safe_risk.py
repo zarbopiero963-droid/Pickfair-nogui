@@ -1,3 +1,6 @@
+import threading
+import time
+
 import pytest
 
 
@@ -5,21 +8,26 @@ class FakeBus:
     def __init__(self):
         self.events = []
         self.subscriptions = {}
+        self.lock = threading.Lock()
 
     def subscribe(self, event_name, handler):
         self.subscriptions[event_name] = handler
 
     def publish(self, event_name, payload=None):
-        self.events.append((event_name, payload))
+        with self.lock:
+            self.events.append((event_name, payload))
 
 
 class FakeDB:
     pass
 
 
-class SyncExecutor:
-    def submit(self, _name, fn, *args, **kwargs):
-        return fn(*args, **kwargs)
+class AsyncExecutor:
+    def submit(self, _name, fn=None, *args, **kwargs):
+        target = fn if fn is not None else _name
+        t = threading.Thread(target=target, args=args, kwargs=kwargs, daemon=True)
+        t.start()
+        return t
 
 
 class SafeModeOn:
@@ -42,9 +50,11 @@ class RiskMutator:
 class CapturingOrderManager:
     def __init__(self):
         self.payloads = []
+        self.lock = threading.Lock()
 
     def place_order(self, payload):
-        self.payloads.append(dict(payload))
+        with self.lock:
+            self.payloads.append(dict(payload))
         return {"ok": True}
 
 
@@ -58,7 +68,7 @@ def test_safe_mode_blocks_order():
         bus=bus,
         db=FakeDB(),
         client_getter=lambda: None,
-        executor=SyncExecutor(),
+        executor=AsyncExecutor(),
         safe_mode=SafeModeOn(),
     )
 
@@ -87,7 +97,7 @@ def test_risk_middleware_can_block_order():
         bus=bus,
         db=FakeDB(),
         client_getter=lambda: None,
-        executor=SyncExecutor(),
+        executor=AsyncExecutor(),
         risk_middleware=RiskBlocker(),
     )
 
@@ -107,7 +117,7 @@ def test_risk_middleware_can_block_order():
 
 @pytest.mark.unit
 @pytest.mark.invariant
-def test_risk_middleware_can_mutate_payload_before_order():
+def test_risk_middleware_can_mutate_payload_before_async_order():
     from core.trading_engine import TradingEngine
 
     bus = FakeBus()
@@ -117,7 +127,7 @@ def test_risk_middleware_can_mutate_payload_before_order():
         bus=bus,
         db=FakeDB(),
         client_getter=lambda: None,
-        executor=SyncExecutor(),
+        executor=AsyncExecutor(),
         risk_middleware=RiskMutator(),
     )
     engine.order_manager = order_manager
@@ -134,4 +144,8 @@ def test_risk_middleware_can_mutate_payload_before_order():
     )
 
     assert result["ok"] is True
+    assert result["status"] == "ACCEPTED_FOR_PROCESSING"
+
+    time.sleep(0.2)
+
     assert order_manager.payloads[0]["stake"] == 12.5
