@@ -18,8 +18,12 @@ class DummyDB:
 
 
 class DummyExecutor:
-    def submit(self, _name, fn, *args, **kwargs):
-        return fn(*args, **kwargs)
+    def submit(self, _name, fn=None, *args, **kwargs):
+        if fn is None and _name is not None and callable(_name):
+            return _name(*args, **kwargs)
+        if fn is not None:
+            return fn(*args, **kwargs)
+        raise RuntimeError("bad executor call")
 
 
 @pytest.mark.unit
