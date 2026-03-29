@@ -27,4 +27,4 @@ def test_trading_engine_basic_bootstrap():
         executor=None,
     )
 
-    assert engine is not None
+    assert engine is not None 
