@@ -1,3 +1,6 @@
+import threading
+import time
+
 import pytest
 
 
@@ -20,23 +23,30 @@ class FakeDB:
 class FakeAsyncWriter:
     def __init__(self):
         self.items = []
+        self.lock = threading.Lock()
 
     def submit(self, kind, payload):
-        self.items.append((kind, dict(payload)))
+        with self.lock:
+            self.items.append((kind, dict(payload)))
         return True
 
 
-class SyncExecutor:
-    def submit(self, _name, fn, *args, **kwargs):
-        return fn(*args, **kwargs)
+class AsyncExecutor:
+    def submit(self, _name, fn=None, *args, **kwargs):
+        target = fn if fn is not None else _name
+        t = threading.Thread(target=target, args=args, kwargs=kwargs, daemon=True)
+        t.start()
+        return t
 
 
 class CapturingOrderManager:
     def __init__(self):
         self.calls = 0
+        self.lock = threading.Lock()
 
     def place_order(self, payload):
-        self.calls += 1
+        with self.lock:
+            self.calls += 1
         return {"ok": True}
 
 
@@ -51,7 +61,7 @@ def test_db_writer_integration_prefers_async_writer():
         bus=bus,
         db=FakeDB(),
         client_getter=lambda: None,
-        executor=SyncExecutor(),
+        executor=AsyncExecutor(),
         async_db_writer=writer,
     )
     engine.order_manager = CapturingOrderManager()
@@ -68,5 +78,9 @@ def test_db_writer_integration_prefers_async_writer():
     )
 
     assert result["ok"] is True
+    assert result["status"] == "ACCEPTED_FOR_PROCESSING"
+
+    time.sleep(0.2)
+
     assert writer.items[0][0] == "bet"
     assert writer.items[0][1]["customer_ref"] == "DBW1"
