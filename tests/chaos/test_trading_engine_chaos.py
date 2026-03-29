@@ -1,4 +1,5 @@
 import threading
+import time
 
 import pytest
 
@@ -27,9 +28,12 @@ class FakeDB:
             self.saved.append(kwargs)
 
 
-class SyncExecutor:
-    def submit(self, _name, fn, *args, **kwargs):
-        return fn(*args, **kwargs)
+class AsyncExecutor:
+    def submit(self, _name, fn=None, *args, **kwargs):
+        target = fn if fn is not None else _name
+        t = threading.Thread(target=target, args=args, kwargs=kwargs, daemon=True)
+        t.start()
+        return t
 
 
 class CountingOrderManager:
@@ -56,7 +60,7 @@ def test_many_parallel_quick_bets_do_not_crash_engine():
         bus=bus,
         db=db,
         client_getter=lambda: None,
-        executor=SyncExecutor(),
+        executor=AsyncExecutor(),
     )
     om = CountingOrderManager()
     engine.order_manager = om
@@ -73,6 +77,7 @@ def test_many_parallel_quick_bets_do_not_crash_engine():
         }
         result = engine.submit_quick_bet(payload)
         assert result["ok"] is True
+        assert result["status"] == "ACCEPTED_FOR_PROCESSING"
 
     threads = [threading.Thread(target=worker, args=(i,)) for i in range(20)]
 
@@ -80,6 +85,8 @@ def test_many_parallel_quick_bets_do_not_crash_engine():
         t.start()
     for t in threads:
         t.join()
+
+    time.sleep(0.3)
 
     assert om.calls == 20
     assert len(db.saved) == 20
@@ -98,7 +105,7 @@ def test_duplicate_burst_only_one_inflight_accepts_when_same_key_locked():
         bus=bus,
         db=db,
         client_getter=lambda: None,
-        executor=SyncExecutor(),
+        executor=AsyncExecutor(),
     )
     om = CountingOrderManager()
     engine.order_manager = om
