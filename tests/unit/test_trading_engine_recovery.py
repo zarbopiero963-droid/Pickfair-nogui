@@ -1,3 +1,6 @@
+import threading
+import time
+
 import pytest
 
 
@@ -17,9 +20,12 @@ class DummyDB:
     pass
 
 
-class DummyExecutor:
-    def submit(self, _name, fn, *args, **kwargs):
-        return fn(*args, **kwargs)
+class AsyncExecutor:
+    def submit(self, _name, fn=None, *args, **kwargs):
+        target = fn if fn is not None else _name
+        t = threading.Thread(target=target, args=args, kwargs=kwargs, daemon=True)
+        t.start()
+        return t
 
 
 class RecoveryHook:
@@ -49,13 +55,13 @@ def test_engine_can_be_recreated_after_failure():
         bus=DummyBus(),
         db=DummyDB(),
         client_getter=lambda: None,
-        executor=DummyExecutor(),
+        executor=AsyncExecutor(),
     )
     e2 = TradingEngine(
         bus=DummyBus(),
         db=DummyDB(),
         client_getter=lambda: None,
-        executor=DummyExecutor(),
+        executor=AsyncExecutor(),
     )
 
     assert e1 is not None
@@ -74,7 +80,7 @@ def test_recover_after_restart_triggers_recovery_and_reconcile():
         bus=DummyBus(),
         db=DummyDB(),
         client_getter=lambda: None,
-        executor=DummyExecutor(),
+        executor=AsyncExecutor(),
         reconciliation_engine=reconcile,
         state_recovery=recovery,
     )
@@ -83,5 +89,8 @@ def test_recover_after_restart_triggers_recovery_and_reconcile():
 
     assert result["ok"] is True
     assert result["status"] == "RECOVERY_TRIGGERED"
+
+    time.sleep(0.2)
+
     assert recovery.calls[0][0] == "recover_pending"
     assert reconcile.calls[0][0] == "run_once"
