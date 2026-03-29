@@ -17,9 +17,10 @@ class FakeDB:
     pass
 
 
-class SyncExecutor:
-    def submit(self, _name, fn, *args, **kwargs):
-        return fn(*args, **kwargs)
+class InlineExecutor:
+    def submit(self, _name, fn=None, *args, **kwargs):
+        target = fn if fn is not None else _name
+        return target(*args, **kwargs)
 
 
 class CountingOrderManager:
@@ -40,7 +41,7 @@ def test_duplicate_request_is_blocked():
         bus=bus,
         db=FakeDB(),
         client_getter=lambda: None,
-        executor=SyncExecutor(),
+        executor=InlineExecutor(),
     )
 
     om = CountingOrderManager()
