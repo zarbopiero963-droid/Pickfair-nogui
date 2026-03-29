@@ -1,3 +1,6 @@
+import threading
+import time
+
 import pytest
 
 
@@ -5,21 +8,26 @@ class FakeBus:
     def __init__(self):
         self.events = []
         self.subscriptions = {}
+        self.lock = threading.Lock()
 
     def subscribe(self, event_name, handler):
         self.subscriptions[event_name] = handler
 
     def publish(self, event_name, payload=None):
-        self.events.append((event_name, payload))
+        with self.lock:
+            self.events.append((event_name, payload))
 
 
 class FakeDB:
     pass
 
 
-class SyncExecutor:
-    def submit(self, _name, fn, *args, **kwargs):
-        return fn(*args, **kwargs)
+class AsyncExecutor:
+    def submit(self, _name, fn=None, *args, **kwargs):
+        target = fn if fn is not None else _name
+        t = threading.Thread(target=target, args=args, kwargs=kwargs, daemon=True)
+        t.start()
+        return t
 
 
 class ExplodingOrderManager:
@@ -37,7 +45,7 @@ def test_invalid_payload_is_rejected_without_crash():
         bus=bus,
         db=FakeDB(),
         client_getter=lambda: None,
-        executor=SyncExecutor(),
+        executor=AsyncExecutor(),
     )
 
     handler = bus.subscriptions["REQ_QUICK_BET"]
@@ -51,7 +59,7 @@ def test_invalid_payload_is_rejected_without_crash():
 
 @pytest.mark.unit
 @pytest.mark.failure
-def test_crash_mid_order_publishes_failure_and_rollback_required():
+def test_crash_mid_order_publishes_async_failure_and_rollback_required():
     from core.trading_engine import TradingEngine
 
     bus = FakeBus()
@@ -59,7 +67,7 @@ def test_crash_mid_order_publishes_failure_and_rollback_required():
         bus=bus,
         db=FakeDB(),
         client_getter=lambda: None,
-        executor=SyncExecutor(),
+        executor=AsyncExecutor(),
     )
     engine.order_manager = ExplodingOrderManager()
 
@@ -75,14 +83,19 @@ def test_crash_mid_order_publishes_failure_and_rollback_required():
     )
 
     assert result["ok"] is True
+    assert result["status"] == "ACCEPTED_FOR_PROCESSING"
+
+    time.sleep(0.2)
+
     event_names = [name for name, _ in bus.events]
     assert "QUICK_BET_ROUTED" in event_names
     assert "QUICK_BET_ROLLBACK_REQUIRED" in event_names
+    assert "QUICK_BET_FAILED" in event_names
 
 
 @pytest.mark.unit
 @pytest.mark.failure
-def test_failed_path_releases_inflight_key():
+def test_failed_async_path_releases_inflight_key():
     from core.trading_engine import TradingEngine
 
     bus = FakeBus()
@@ -90,7 +103,7 @@ def test_failed_path_releases_inflight_key():
         bus=bus,
         db=FakeDB(),
         client_getter=lambda: None,
-        executor=SyncExecutor(),
+        executor=AsyncExecutor(),
     )
     engine.order_manager = ExplodingOrderManager()
 
@@ -104,7 +117,10 @@ def test_failed_path_releases_inflight_key():
     }
     dedup_key = "REL1"
 
-    engine.submit_quick_bet(payload)
+    result = engine.submit_quick_bet(payload)
+    assert result["ok"] is True
+
+    time.sleep(0.2)
 
     with engine._lock:
         assert dedup_key not in engine._inflight_keys
