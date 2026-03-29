@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import logging
 import threading
-from typing import Any, Dict, Set
+from datetime import datetime
+from typing import Any, Dict, Optional, Set
 
 from order_manager import OrderManager
 
@@ -11,23 +13,36 @@ logger = logging.getLogger(__name__)
 
 class TradingEngine:
     """
-    Trading engine headless (ASYNC ACCEPTANCE MODEL).
+    Trading engine headless (ASYNC ACCEPTANCE + SAGA/OUTBOX READY).
 
-    Principi:
-    - acceptance separata dall'esecuzione reale
-    - duplicate block / idempotenza
-    - integrazione OrderManager
+    Responsabilità:
+    - entry point orchestration
+    - dedup avanzato / idempotenza
+    - integrazione saga/outbox
+    - gestione inflight + recovery hook
     - hook opzionali: safe mode / risk middleware / reconciliation / recovery
     - fail-safe totale
     - non blocca il caller/EventBus sul placement reale
 
     Semantica:
     - _handle_quick_bet() conferma la presa in carico della richiesta
-    - gli errori durante il placement reale vengono gestiti come eventi async
+    - l'esecuzione reale avviene async
+    - gli errori operativi diventano eventi async + stato persistente
     """
 
     MIN_EXCHANGE_STAKE = 2.0
     MICRO_MIN_STAKE = 0.10
+
+    SAGA_PENDING = "PENDING"
+    SAGA_ACCEPTED = "ACCEPTED"
+    SAGA_EXECUTING = "EXECUTING"
+    SAGA_PLACED = "PLACED"
+    SAGA_FAILED = "FAILED"
+    SAGA_ROLLBACK_REQUIRED = "ROLLBACK_REQUIRED"
+
+    OUTBOX_PENDING = "PENDING"
+    OUTBOX_DONE = "DONE"
+    OUTBOX_FAILED = "FAILED"
 
     def __init__(
         self,
@@ -89,6 +104,9 @@ class TradingEngine:
     # =========================================================
     # INTERNAL HELPERS
     # =========================================================
+    def _now(self) -> str:
+        return datetime.utcnow().isoformat()
+
     def _publish(self, event_name: str, payload: Dict[str, Any]) -> None:
         try:
             self.bus.publish(event_name, payload)
@@ -153,6 +171,12 @@ class TradingEngine:
         except Exception:
             return int(default)
 
+    def _safe_json_dumps(self, value: Any) -> str:
+        try:
+            return json.dumps(value if value is not None else {}, ensure_ascii=False)
+        except Exception:
+            return "{}"
+
     def _build_dedup_key(self, payload: Dict[str, Any]) -> str:
         customer_ref = str(payload.get("customer_ref") or "").strip()
         if customer_ref:
@@ -177,6 +201,13 @@ class TradingEngine:
     def _release_inflight(self, dedup_key: str) -> None:
         with self._lock:
             self._inflight_keys.discard(dedup_key)
+
+    def _mark_inflight(self, dedup_key: str) -> bool:
+        with self._lock:
+            if dedup_key in self._inflight_keys:
+                return False
+            self._inflight_keys.add(dedup_key)
+            return True
 
     # =========================================================
     # NORMALIZATION
@@ -302,6 +333,106 @@ class TradingEngine:
         except Exception as exc:
             raise RuntimeError(str(exc)) from exc
 
+    def _call_reconciliation_hook(self, payload: Dict[str, Any]) -> None:
+        if self.reconciliation_engine is None:
+            return
+
+        try:
+            if hasattr(self.reconciliation_engine, "on_order_submitted"):
+                self.reconciliation_engine.on_order_submitted(payload)
+            elif hasattr(self.reconciliation_engine, "enqueue"):
+                self.reconciliation_engine.enqueue(payload)
+        except Exception:
+            logger.exception("Errore hook reconciliation")
+
+    # =========================================================
+    # SAGA / OUTBOX
+    # =========================================================
+    def _create_saga_record(self, payload: Dict[str, Any], dedup_key: str) -> Dict[str, Any]:
+        return {
+            "customer_ref": payload.get("customer_ref") or dedup_key,
+            "batch_id": payload.get("batch_id", ""),
+            "event_key": payload.get("event_key", ""),
+            "table_id": payload.get("table_id"),
+            "market_id": payload.get("market_id", ""),
+            "selection_id": payload.get("selection_id", 0),
+            "bet_type": payload.get("bet_type", "BACK"),
+            "price": payload.get("price", 0.0),
+            "stake": payload.get("stake", 0.0),
+            "status": self.SAGA_ACCEPTED,
+            "payload": dict(payload),
+        }
+
+    def _persist_saga_create(self, payload: Dict[str, Any], dedup_key: str) -> None:
+        saga = self._create_saga_record(payload, dedup_key)
+
+        try:
+            if hasattr(self.db, "create_order_saga"):
+                self.db.create_order_saga(
+                    customer_ref=saga["customer_ref"],
+                    batch_id=saga["batch_id"],
+                    event_key=saga["event_key"],
+                    table_id=saga["table_id"],
+                    market_id=saga["market_id"],
+                    selection_id=saga["selection_id"],
+                    bet_type=saga["bet_type"],
+                    price=saga["price"],
+                    stake=saga["stake"],
+                    payload=saga["payload"],
+                    status=saga["status"],
+                )
+        except Exception:
+            logger.exception("Errore create_order_saga")
+
+    def _persist_saga_update(
+        self,
+        *,
+        dedup_key: str,
+        status: str,
+        bet_id: str = "",
+        error_text: str = "",
+    ) -> None:
+        customer_ref = str(dedup_key or "")
+        if not customer_ref:
+            return
+
+        try:
+            if hasattr(self.db, "update_order_saga"):
+                self.db.update_order_saga(
+                    customer_ref=customer_ref,
+                    status=status,
+                    bet_id=bet_id,
+                    error_text=error_text,
+                )
+        except Exception:
+            logger.exception("Errore update_order_saga")
+
+    def _persist_outbox_event(
+        self,
+        *,
+        event_type: str,
+        payload: Dict[str, Any],
+        dedup_key: str,
+        status: str = OUTBOX_PENDING,
+    ) -> None:
+        record = {
+            "event_type": str(event_type),
+            "dedup_key": str(dedup_key or ""),
+            "payload_json": self._safe_json_dumps(payload),
+            "status": str(status),
+            "created_at": self._now(),
+        }
+
+        try:
+            if self.async_db_writer and hasattr(self.async_db_writer, "submit"):
+                self.async_db_writer.submit("outbox", record)
+                return
+
+            if hasattr(self.db, "save_outbox_event"):
+                self.db.save_outbox_event(**record)
+        except Exception:
+            logger.exception("Errore persist outbox")
+
     def _db_log_submission(self, payload: Dict[str, Any], dedup_key: str) -> None:
         record = {
             "customer_ref": payload.get("customer_ref") or dedup_key,
@@ -329,23 +460,24 @@ class TradingEngine:
         except Exception:
             logger.exception("Errore DB writer integration")
 
-    def _call_reconciliation_hook(self, payload: Dict[str, Any]) -> None:
-        if self.reconciliation_engine is None:
-            return
-
-        try:
-            if hasattr(self.reconciliation_engine, "on_order_submitted"):
-                self.reconciliation_engine.on_order_submitted(payload)
-            elif hasattr(self.reconciliation_engine, "enqueue"):
-                self.reconciliation_engine.enqueue(payload)
-        except Exception:
-            logger.exception("Errore hook reconciliation")
-
     # =========================================================
     # EXECUTION PATH
     # =========================================================
+    def _extract_bet_id(self, result: Any) -> str:
+        try:
+            if isinstance(result, dict):
+                reports = result.get("instructionReports") or []
+                if reports and isinstance(reports[0], dict):
+                    return str(reports[0].get("betId") or "")
+                return str(result.get("bet_id") or result.get("betId") or "")
+        except Exception:
+            return ""
+        return ""
+
     def _execute_quick_bet(self, normalized: Dict[str, Any], dedup_key: str) -> None:
         try:
+            self._persist_saga_update(dedup_key=dedup_key, status=self.SAGA_EXECUTING)
+
             self._publish(
                 "QUICK_BET_EXECUTION_STARTED",
                 {
@@ -356,6 +488,25 @@ class TradingEngine:
             )
 
             result = self.order_manager.place_order(normalized)
+            bet_id = self._extract_bet_id(result)
+
+            self._persist_saga_update(
+                dedup_key=dedup_key,
+                status=self.SAGA_PLACED,
+                bet_id=bet_id,
+            )
+
+            self._persist_outbox_event(
+                event_type="QUICK_BET_EXECUTION_FINISHED",
+                payload={
+                    **normalized,
+                    "status": "EXECUTION_FINISHED",
+                    "dedup_key": dedup_key,
+                    "result": result,
+                },
+                dedup_key=dedup_key,
+                status=self.OUTBOX_DONE,
+            )
 
             self._publish(
                 "QUICK_BET_EXECUTION_FINISHED",
@@ -368,24 +519,47 @@ class TradingEngine:
             )
 
         except Exception as exc:
-            self._publish(
-                "QUICK_BET_ROLLBACK_REQUIRED",
-                {
-                    **normalized,
-                    "status": "ROLLBACK_REQUIRED",
-                    "dedup_key": dedup_key,
-                    "error": str(exc),
-                },
+            error_text = str(exc)
+
+            self._persist_saga_update(
+                dedup_key=dedup_key,
+                status=self.SAGA_ROLLBACK_REQUIRED,
+                error_text=error_text,
             )
 
-            self._publish(
-                "QUICK_BET_FAILED",
-                {
-                    **normalized,
-                    "status": "FAILED",
-                    "dedup_key": dedup_key,
-                    "error": str(exc),
-                },
+            rollback_payload = {
+                **normalized,
+                "status": "ROLLBACK_REQUIRED",
+                "dedup_key": dedup_key,
+                "error": error_text,
+            }
+            failed_payload = {
+                **normalized,
+                "status": "FAILED",
+                "dedup_key": dedup_key,
+                "error": error_text,
+            }
+
+            self._persist_outbox_event(
+                event_type="QUICK_BET_ROLLBACK_REQUIRED",
+                payload=rollback_payload,
+                dedup_key=dedup_key,
+                status=self.OUTBOX_DONE,
+            )
+            self._persist_outbox_event(
+                event_type="QUICK_BET_FAILED",
+                payload=failed_payload,
+                dedup_key=dedup_key,
+                status=self.OUTBOX_DONE,
+            )
+
+            self._publish("QUICK_BET_ROLLBACK_REQUIRED", rollback_payload)
+            self._publish("QUICK_BET_FAILED", failed_payload)
+
+            self._persist_saga_update(
+                dedup_key=dedup_key,
+                status=self.SAGA_FAILED,
+                error_text=error_text,
             )
 
             logger.exception("Errore async quick bet execution: %s", exc)
@@ -409,37 +583,44 @@ class TradingEngine:
 
             dedup_key = self._build_dedup_key(normalized)
 
-            with self._lock:
-                if dedup_key in self._inflight_keys:
-                    self._publish(
-                        "QUICK_BET_DUPLICATE_BLOCKED",
-                        {
-                            **normalized,
-                            "status": "DUPLICATE_BLOCKED",
-                            "dedup_key": dedup_key,
-                        },
-                    )
-                    return {
-                        "ok": True,
-                        "status": "DUPLICATE_BLOCKED",
-                        "dedup_key": dedup_key,
-                    }
-
-                self._inflight_keys.add(dedup_key)
+            if not self._mark_inflight(dedup_key):
+                duplicate_payload = {
+                    **normalized,
+                    "status": "DUPLICATE_BLOCKED",
+                    "dedup_key": dedup_key,
+                }
+                self._persist_outbox_event(
+                    event_type="QUICK_BET_DUPLICATE_BLOCKED",
+                    payload=duplicate_payload,
+                    dedup_key=dedup_key,
+                    status=self.OUTBOX_DONE,
+                )
+                self._publish("QUICK_BET_DUPLICATE_BLOCKED", duplicate_payload)
+                return {
+                    "ok": True,
+                    "status": "DUPLICATE_BLOCKED",
+                    "dedup_key": dedup_key,
+                }
 
             normalized["microstake_mode"] = self._is_microstake(normalized["stake"])
             normalized["dedup_key"] = dedup_key
 
-            self._publish(
-                "QUICK_BET_ROUTED",
-                {
-                    **normalized,
-                    "status": "ACCEPTED_FOR_PROCESSING",
-                },
-            )
-
+            self._persist_saga_create(normalized, dedup_key)
             self._db_log_submission(normalized, dedup_key)
             self._call_reconciliation_hook(normalized)
+
+            routed_payload = {
+                **normalized,
+                "status": "ACCEPTED_FOR_PROCESSING",
+            }
+
+            self._persist_outbox_event(
+                event_type="QUICK_BET_ROUTED",
+                payload=routed_payload,
+                dedup_key=dedup_key,
+                status=self.OUTBOX_DONE,
+            )
+            self._publish("QUICK_BET_ROUTED", routed_payload)
 
             self._run_in_background(
                 self._execute_quick_bet,
@@ -462,6 +643,12 @@ class TradingEngine:
             if dedup_key:
                 fail_payload["dedup_key"] = dedup_key
 
+            self._persist_outbox_event(
+                event_type="QUICK_BET_FAILED",
+                payload=fail_payload,
+                dedup_key=dedup_key,
+                status=self.OUTBOX_FAILED,
+            )
             self._publish("QUICK_BET_FAILED", fail_payload)
             logger.exception("Errore _handle_quick_bet: %s", exc)
 
@@ -474,6 +661,27 @@ class TradingEngine:
     # =========================================================
     # RECOVERY / RECONCILIATION
     # =========================================================
+    def _recover_inflight_from_db(self) -> int:
+        """
+        Ripristina le chiavi inflight da saghe pendenti al restart.
+        """
+        count = 0
+        try:
+            if not hasattr(self.db, "get_pending_sagas"):
+                return 0
+
+            pending = self.db.get_pending_sagas() or []
+            with self._lock:
+                for item in pending:
+                    customer_ref = str(item.get("customer_ref") or "").strip()
+                    if not customer_ref:
+                        continue
+                    self._inflight_keys.add(customer_ref)
+                    count += 1
+        except Exception:
+            logger.exception("Errore recovery inflight da DB")
+        return count
+
     def _handle_reconcile_now(self, payload=None):
         try:
             if self.reconciliation_engine and hasattr(self.reconciliation_engine, "run_once"):
@@ -489,6 +697,8 @@ class TradingEngine:
 
     def _handle_recover_pending(self, payload=None):
         try:
+            self._recover_inflight_from_db()
+
             if self.state_recovery and hasattr(self.state_recovery, "recover_pending"):
                 return self._run_in_background(self.state_recovery.recover_pending, payload)
 
@@ -505,9 +715,14 @@ class TradingEngine:
         API diretta per recovery esplicita al riavvio.
         """
         try:
+            restored = self._recover_inflight_from_db()
             self._handle_recover_pending({"source": "recover_after_restart"})
             self._handle_reconcile_now({"source": "recover_after_restart"})
-            return {"ok": True, "status": "RECOVERY_TRIGGERED"}
+            return {
+                "ok": True,
+                "status": "RECOVERY_TRIGGERED",
+                "restored_inflight": restored,
+            }
         except Exception as exc:
             logger.exception("Errore recover_after_restart: %s", exc)
             return {"ok": False, "status": "RECOVERY_FAILED", "error": str(exc)}
@@ -516,4 +731,4 @@ class TradingEngine:
     # OPTIONAL EXTENSIONS
     # =========================================================
     def submit_quick_bet(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return self._handle_quick_bet(payload) 
+        return self._handle_quick_bet(payload)
