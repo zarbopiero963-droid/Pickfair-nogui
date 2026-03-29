@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Set
 
 from order_manager import OrderManager
 
@@ -11,15 +11,19 @@ logger = logging.getLogger(__name__)
 
 class TradingEngine:
     """
-    Trading engine headless (HARDENED).
+    Trading engine headless (ASYNC ACCEPTANCE MODEL).
 
-    Responsabilità:
-    - subscribe bus
-    - quick bet routing
+    Principi:
+    - acceptance separata dall'esecuzione reale
     - duplicate block / idempotenza
     - integrazione OrderManager
     - hook opzionali: safe mode / risk middleware / reconciliation / recovery
     - fail-safe totale
+    - non blocca il caller/EventBus sul placement reale
+
+    Semantica:
+    - _handle_quick_bet() conferma la presa in carico della richiesta
+    - gli errori durante il placement reale vengono gestiti come eventi async
     """
 
     MIN_EXCHANGE_STAKE = 2.0
@@ -70,7 +74,6 @@ class TradingEngine:
         self.bus.subscribe("CMD_QUICK_BET", self._handle_quick_bet)
         self.bus.subscribe("REQ_QUICK_BET", self._handle_quick_bet)
 
-        # Hook opzionale recovery/reconcile
         try:
             self.bus.subscribe("RECONCILE_NOW", self._handle_reconcile_now)
         except Exception:
@@ -92,22 +95,36 @@ class TradingEngine:
         except Exception:
             logger.exception("Errore publish %s", event_name)
 
-    def _submit(self, fn, *args, **kwargs):
+    def _run_in_background(self, fn, *args, **kwargs):
         """
-        Esegue via executor senza bloccare il consumer dell'EventBus.
-        Fallback sync se executor non disponibile o fallisce.
+        Esegue in background in modo fail-safe.
+        Non deve mai propagare eccezioni al caller di _handle_quick_bet().
         """
+        def _wrapped():
+            try:
+                return fn(*args, **kwargs)
+            except Exception:
+                logger.exception("Errore worker TradingEngine")
+                return None
+
         if self.executor and hasattr(self.executor, "submit"):
             try:
-                return self.executor.submit("trading_engine", fn, *args, **kwargs)
+                return self.executor.submit("trading_engine", _wrapped)
             except TypeError:
                 try:
-                    return self.executor.submit(fn, *args, **kwargs)
+                    return self.executor.submit(_wrapped)
                 except Exception:
-                    logger.exception("Executor submit fallita, fallback sync")
+                    logger.exception("Executor submit fallita, fallback thread")
             except Exception:
-                logger.exception("Executor submit fallita, fallback sync")
-        return fn(*args, **kwargs)
+                logger.exception("Executor submit fallita, fallback thread")
+
+        t = threading.Thread(
+            target=_wrapped,
+            name="TradingEngineAsync",
+            daemon=True,
+        )
+        t.start()
+        return t
 
     def _safe_side(self, value: Any) -> str:
         side = str(value or "BACK").upper().strip()
@@ -255,8 +272,10 @@ class TradingEngine:
         try:
             if hasattr(self.safe_mode, "is_enabled") and self.safe_mode.is_enabled():
                 raise RuntimeError("Safe mode attivo")
+
             if hasattr(self.safe_mode, "enabled") and bool(getattr(self.safe_mode, "enabled")):
                 raise RuntimeError("Safe mode attivo")
+
             if hasattr(self.safe_mode, "assert_can_trade"):
                 self.safe_mode.assert_can_trade(payload)
         except Exception as exc:
@@ -323,6 +342,58 @@ class TradingEngine:
             logger.exception("Errore hook reconciliation")
 
     # =========================================================
+    # EXECUTION PATH
+    # =========================================================
+    def _execute_quick_bet(self, normalized: Dict[str, Any], dedup_key: str) -> None:
+        try:
+            self._publish(
+                "QUICK_BET_EXECUTION_STARTED",
+                {
+                    **normalized,
+                    "status": "EXECUTION_STARTED",
+                    "dedup_key": dedup_key,
+                },
+            )
+
+            result = self.order_manager.place_order(normalized)
+
+            self._publish(
+                "QUICK_BET_EXECUTION_FINISHED",
+                {
+                    **normalized,
+                    "status": "EXECUTION_FINISHED",
+                    "dedup_key": dedup_key,
+                    "result": result,
+                },
+            )
+
+        except Exception as exc:
+            self._publish(
+                "QUICK_BET_ROLLBACK_REQUIRED",
+                {
+                    **normalized,
+                    "status": "ROLLBACK_REQUIRED",
+                    "dedup_key": dedup_key,
+                    "error": str(exc),
+                },
+            )
+
+            self._publish(
+                "QUICK_BET_FAILED",
+                {
+                    **normalized,
+                    "status": "FAILED",
+                    "dedup_key": dedup_key,
+                    "error": str(exc),
+                },
+            )
+
+            logger.exception("Errore async quick bet execution: %s", exc)
+
+        finally:
+            self._release_inflight(dedup_key)
+
+    # =========================================================
     # MAIN HANDLER
     # =========================================================
     def _handle_quick_bet(self, payload):
@@ -370,23 +441,11 @@ class TradingEngine:
             self._db_log_submission(normalized, dedup_key)
             self._call_reconciliation_hook(normalized)
 
-            def _execute():
-                try:
-                    return self.order_manager.place_order(normalized)
-                except Exception:
-                    self._publish(
-                        "QUICK_BET_ROLLBACK_REQUIRED",
-                        {
-                            **normalized,
-                            "status": "ROLLBACK_REQUIRED",
-                            "dedup_key": dedup_key,
-                        },
-                    )
-                    raise
-                finally:
-                    self._release_inflight(dedup_key)
-
-            self._submit(_execute)
+            self._run_in_background(
+                self._execute_quick_bet,
+                normalized,
+                dedup_key,
+            )
 
             return {
                 "ok": True,
@@ -405,6 +464,7 @@ class TradingEngine:
 
             self._publish("QUICK_BET_FAILED", fail_payload)
             logger.exception("Errore _handle_quick_bet: %s", exc)
+
             return {
                 "ok": False,
                 "status": "FAILED",
@@ -417,9 +477,11 @@ class TradingEngine:
     def _handle_reconcile_now(self, payload=None):
         try:
             if self.reconciliation_engine and hasattr(self.reconciliation_engine, "run_once"):
-                return self._submit(self.reconciliation_engine.run_once, payload)
+                return self._run_in_background(self.reconciliation_engine.run_once, payload)
+
             if self.reconciliation_engine and hasattr(self.reconciliation_engine, "reconcile"):
-                return self._submit(self.reconciliation_engine.reconcile, payload)
+                return self._run_in_background(self.reconciliation_engine.reconcile, payload)
+
             return None
         except Exception:
             logger.exception("Errore reconcile hook")
@@ -428,9 +490,11 @@ class TradingEngine:
     def _handle_recover_pending(self, payload=None):
         try:
             if self.state_recovery and hasattr(self.state_recovery, "recover_pending"):
-                return self._submit(self.state_recovery.recover_pending, payload)
+                return self._run_in_background(self.state_recovery.recover_pending, payload)
+
             if self.state_recovery and hasattr(self.state_recovery, "run"):
-                return self._submit(self.state_recovery.run, payload)
+                return self._run_in_background(self.state_recovery.run, payload)
+
             return None
         except Exception:
             logger.exception("Errore recovery hook")
@@ -452,7 +516,4 @@ class TradingEngine:
     # OPTIONAL EXTENSIONS
     # =========================================================
     def submit_quick_bet(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        API diretta opzionale oltre al bus.
-        """
-        return self._handle_quick_bet(payload)
+        return self._handle_quick_bet(payload) 
