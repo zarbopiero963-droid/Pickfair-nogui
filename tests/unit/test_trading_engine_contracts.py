@@ -17,8 +17,10 @@ class FakeDB:
     pass
 
 
-class FakeExecutor:
-    def submit(self, _name, fn, *args, **kwargs):
+class InlineExecutor:
+    def submit(self, _name, fn=None, *args, **kwargs):
+        if fn is None and callable(_name):
+            return _name(*args, **kwargs)
         return fn(*args, **kwargs)
 
 
@@ -32,7 +34,7 @@ def test_engine_subscribes_expected_events():
         bus=bus,
         db=FakeDB(),
         client_getter=lambda: None,
-        executor=FakeExecutor(),
+        executor=InlineExecutor(),
     )
 
     names = set(bus.subscriptions.keys())
@@ -53,7 +55,7 @@ def test_quick_bet_result_contract_on_failure():
         bus=bus,
         db=FakeDB(),
         client_getter=lambda: None,
-        executor=FakeExecutor(),
+        executor=InlineExecutor(),
     )
 
     result = engine.submit_quick_bet({"market_id": "1.1"})
@@ -73,7 +75,7 @@ def test_quick_bet_duplicate_contract_shape():
         bus=bus,
         db=FakeDB(),
         client_getter=lambda: None,
-        executor=FakeExecutor(),
+        executor=InlineExecutor(),
     )
 
     key = "dup-key"
