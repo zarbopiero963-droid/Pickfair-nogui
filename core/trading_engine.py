@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+import threading
+from typing import Any, Dict, Optional, Set
 
 from order_manager import OrderManager
 
@@ -10,29 +11,42 @@ logger = logging.getLogger(__name__)
 
 class TradingEngine:
     """
-    Trading engine headless.
+    Trading engine headless (HARDENED).
 
     Responsabilità:
-    - ascolta CMD_QUICK_BET
-    - normalizza payload
-    - decide il routing verso OrderManager
-    - supporta LIVE e SIMULATION
-    - non blocca l'EventBus con attese inutili
-
-    Non contiene:
-    - logica UI
-    - money management
-    - parsing Telegram
+    - subscribe bus
+    - quick bet routing
+    - duplicate block / idempotenza
+    - integrazione OrderManager
+    - hook opzionali: safe mode / risk middleware / reconciliation / recovery
+    - fail-safe totale
     """
 
     MIN_EXCHANGE_STAKE = 2.0
     MICRO_MIN_STAKE = 0.10
 
-    def __init__(self, bus, db, client_getter, executor=None):
+    def __init__(
+        self,
+        bus,
+        db,
+        client_getter,
+        executor=None,
+        safe_mode=None,
+        risk_middleware=None,
+        reconciliation_engine=None,
+        state_recovery=None,
+        async_db_writer=None,
+    ):
         self.bus = bus
         self.db = db
         self.client_getter = client_getter
         self.executor = executor
+
+        self.safe_mode = safe_mode
+        self.risk_middleware = risk_middleware
+        self.reconciliation_engine = reconciliation_engine
+        self.state_recovery = state_recovery
+        self.async_db_writer = async_db_writer
 
         self.order_manager = OrderManager(
             bus=bus,
@@ -40,7 +54,34 @@ class TradingEngine:
             client_getter=client_getter,
         )
 
+        self._lock = threading.RLock()
+        self._inflight_keys: Set[str] = set()
+        self._started = False
+
+        self._subscribe_bus()
+
+    # =========================================================
+    # BUS SUBSCRIPTION
+    # =========================================================
+    def _subscribe_bus(self) -> None:
+        if self._started:
+            return
+
         self.bus.subscribe("CMD_QUICK_BET", self._handle_quick_bet)
+        self.bus.subscribe("REQ_QUICK_BET", self._handle_quick_bet)
+
+        # Hook opzionale recovery/reconcile
+        try:
+            self.bus.subscribe("RECONCILE_NOW", self._handle_reconcile_now)
+        except Exception:
+            logger.exception("Errore subscribe RECONCILE_NOW")
+
+        try:
+            self.bus.subscribe("RECOVER_PENDING", self._handle_recover_pending)
+        except Exception:
+            logger.exception("Errore subscribe RECOVER_PENDING")
+
+        self._started = True
 
     # =========================================================
     # INTERNAL HELPERS
@@ -54,6 +95,7 @@ class TradingEngine:
     def _submit(self, fn, *args, **kwargs):
         """
         Esegue via executor senza bloccare il consumer dell'EventBus.
+        Fallback sync se executor non disponibile o fallisce.
         """
         if self.executor and hasattr(self.executor, "submit"):
             try:
@@ -63,6 +105,8 @@ class TradingEngine:
                     return self.executor.submit(fn, *args, **kwargs)
                 except Exception:
                     logger.exception("Executor submit fallita, fallback sync")
+            except Exception:
+                logger.exception("Executor submit fallita, fallback sync")
         return fn(*args, **kwargs)
 
     def _safe_side(self, value: Any) -> str:
@@ -91,6 +135,31 @@ class TradingEngine:
             return int(value)
         except Exception:
             return int(default)
+
+    def _build_dedup_key(self, payload: Dict[str, Any]) -> str:
+        customer_ref = str(payload.get("customer_ref") or "").strip()
+        if customer_ref:
+            return customer_ref
+
+        event_key = str(payload.get("event_key") or "").strip()
+        if event_key:
+            return event_key
+
+        return (
+            f"{payload.get('market_id', '')}:"
+            f"{payload.get('selection_id', '')}:"
+            f"{payload.get('bet_type', 'BACK')}:"
+            f"{payload.get('price', 0)}:"
+            f"{payload.get('stake', 0)}"
+        )
+
+    def _is_microstake(self, stake: float) -> bool:
+        stake = float(stake or 0.0)
+        return self.MICRO_MIN_STAKE <= stake < self.MIN_EXCHANGE_STAKE
+
+    def _release_inflight(self, dedup_key: str) -> None:
+        with self._lock:
+            self._inflight_keys.discard(dedup_key)
 
     # =========================================================
     # NORMALIZATION
@@ -153,14 +222,12 @@ class TradingEngine:
         normalized["roserpina_mode"] = str(normalized.get("roserpina_mode") or "")
         normalized["source"] = str(normalized.get("source") or "")
         normalized["table_id"] = (
-            None if normalized.get("table_id") in (None, "") else self._safe_int(normalized.get("table_id"))
+            None
+            if normalized.get("table_id") in (None, "")
+            else self._safe_int(normalized.get("table_id"))
         )
 
         return normalized
-
-    def _is_microstake(self, stake: float) -> bool:
-        stake = float(stake or 0.0)
-        return self.MICRO_MIN_STAKE <= stake < self.MIN_EXCHANGE_STAKE
 
     def _validate_payload(self, payload: Dict[str, Any]) -> None:
         if not payload["market_id"]:
@@ -179,18 +246,119 @@ class TradingEngine:
             raise ValueError("bet_type non valido")
 
     # =========================================================
+    # OPTIONAL HOOKS
+    # =========================================================
+    def _safe_mode_allows(self, payload: Dict[str, Any]) -> None:
+        if self.safe_mode is None:
+            return
+
+        try:
+            if hasattr(self.safe_mode, "is_enabled") and self.safe_mode.is_enabled():
+                raise RuntimeError("Safe mode attivo")
+            if hasattr(self.safe_mode, "enabled") and bool(getattr(self.safe_mode, "enabled")):
+                raise RuntimeError("Safe mode attivo")
+            if hasattr(self.safe_mode, "assert_can_trade"):
+                self.safe_mode.assert_can_trade(payload)
+        except Exception as exc:
+            raise RuntimeError(str(exc)) from exc
+
+    def _risk_allows(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if self.risk_middleware is None:
+            return payload
+
+        try:
+            if hasattr(self.risk_middleware, "process_request"):
+                result = self.risk_middleware.process_request(payload)
+                if result is None:
+                    raise RuntimeError("Risk middleware ha rifiutato la richiesta")
+                return result
+
+            if hasattr(self.risk_middleware, "allow"):
+                allowed = self.risk_middleware.allow(payload)
+                if not allowed:
+                    raise RuntimeError("Risk middleware ha bloccato la richiesta")
+                return payload
+
+            return payload
+        except Exception as exc:
+            raise RuntimeError(str(exc)) from exc
+
+    def _db_log_submission(self, payload: Dict[str, Any], dedup_key: str) -> None:
+        record = {
+            "customer_ref": payload.get("customer_ref") or dedup_key,
+            "market_id": payload.get("market_id", ""),
+            "selection_id": payload.get("selection_id", 0),
+            "bet_type": payload.get("bet_type", "BACK"),
+            "price": payload.get("price", 0.0),
+            "stake": payload.get("stake", 0.0),
+            "event_key": payload.get("event_key", ""),
+            "batch_id": payload.get("batch_id", ""),
+            "event_name": payload.get("event_name", ""),
+            "market_name": payload.get("market_name", ""),
+            "runner_name": payload.get("runner_name", ""),
+            "simulation_mode": payload.get("simulation_mode", False),
+            "status": "SUBMITTED",
+        }
+
+        try:
+            if self.async_db_writer and hasattr(self.async_db_writer, "submit"):
+                self.async_db_writer.submit("bet", record)
+                return
+
+            if hasattr(self.db, "save_bet"):
+                self.db.save_bet(**record)
+        except Exception:
+            logger.exception("Errore DB writer integration")
+
+    def _call_reconciliation_hook(self, payload: Dict[str, Any]) -> None:
+        if self.reconciliation_engine is None:
+            return
+
+        try:
+            if hasattr(self.reconciliation_engine, "on_order_submitted"):
+                self.reconciliation_engine.on_order_submitted(payload)
+            elif hasattr(self.reconciliation_engine, "enqueue"):
+                self.reconciliation_engine.enqueue(payload)
+        except Exception:
+            logger.exception("Errore hook reconciliation")
+
+    # =========================================================
     # MAIN HANDLER
     # =========================================================
     def _handle_quick_bet(self, payload):
         fail_payload: Dict[str, Any] = dict(payload or {})
+        dedup_key = ""
 
         try:
             normalized = self._normalize_payload(payload)
             self._validate_payload(normalized)
 
-            normalized["microstake_mode"] = self._is_microstake(normalized["stake"])
+            self._safe_mode_allows(normalized)
+            normalized = self._risk_allows(normalized)
 
-            # Ack presa in carico
+            dedup_key = self._build_dedup_key(normalized)
+
+            with self._lock:
+                if dedup_key in self._inflight_keys:
+                    self._publish(
+                        "QUICK_BET_DUPLICATE_BLOCKED",
+                        {
+                            **normalized,
+                            "status": "DUPLICATE_BLOCKED",
+                            "dedup_key": dedup_key,
+                        },
+                    )
+                    return {
+                        "ok": True,
+                        "status": "DUPLICATE_BLOCKED",
+                        "dedup_key": dedup_key,
+                    }
+
+                self._inflight_keys.add(dedup_key)
+
+            normalized["microstake_mode"] = self._is_microstake(normalized["stake"])
+            normalized["dedup_key"] = dedup_key
+
             self._publish(
                 "QUICK_BET_ROUTED",
                 {
@@ -199,17 +367,42 @@ class TradingEngine:
                 },
             )
 
-            # Dispatch non bloccante
-            self._submit(self.order_manager.place_order, normalized)
+            self._db_log_submission(normalized, dedup_key)
+            self._call_reconciliation_hook(normalized)
+
+            def _execute():
+                try:
+                    return self.order_manager.place_order(normalized)
+                except Exception:
+                    self._publish(
+                        "QUICK_BET_ROLLBACK_REQUIRED",
+                        {
+                            **normalized,
+                            "status": "ROLLBACK_REQUIRED",
+                            "dedup_key": dedup_key,
+                        },
+                    )
+                    raise
+                finally:
+                    self._release_inflight(dedup_key)
+
+            self._submit(_execute)
 
             return {
                 "ok": True,
                 "status": "ACCEPTED_FOR_PROCESSING",
                 "simulation_mode": bool(normalized.get("simulation_mode", False)),
+                "dedup_key": dedup_key,
             }
 
         except Exception as exc:
+            if dedup_key:
+                self._release_inflight(dedup_key)
+
             fail_payload["error"] = str(exc)
+            if dedup_key:
+                fail_payload["dedup_key"] = dedup_key
+
             self._publish("QUICK_BET_FAILED", fail_payload)
             logger.exception("Errore _handle_quick_bet: %s", exc)
             return {
@@ -217,6 +410,43 @@ class TradingEngine:
                 "status": "FAILED",
                 "error": str(exc),
             }
+
+    # =========================================================
+    # RECOVERY / RECONCILIATION
+    # =========================================================
+    def _handle_reconcile_now(self, payload=None):
+        try:
+            if self.reconciliation_engine and hasattr(self.reconciliation_engine, "run_once"):
+                return self._submit(self.reconciliation_engine.run_once, payload)
+            if self.reconciliation_engine and hasattr(self.reconciliation_engine, "reconcile"):
+                return self._submit(self.reconciliation_engine.reconcile, payload)
+            return None
+        except Exception:
+            logger.exception("Errore reconcile hook")
+            return None
+
+    def _handle_recover_pending(self, payload=None):
+        try:
+            if self.state_recovery and hasattr(self.state_recovery, "recover_pending"):
+                return self._submit(self.state_recovery.recover_pending, payload)
+            if self.state_recovery and hasattr(self.state_recovery, "run"):
+                return self._submit(self.state_recovery.run, payload)
+            return None
+        except Exception:
+            logger.exception("Errore recovery hook")
+            return None
+
+    def recover_after_restart(self) -> Dict[str, Any]:
+        """
+        API diretta per recovery esplicita al riavvio.
+        """
+        try:
+            self._handle_recover_pending({"source": "recover_after_restart"})
+            self._handle_reconcile_now({"source": "recover_after_restart"})
+            return {"ok": True, "status": "RECOVERY_TRIGGERED"}
+        except Exception as exc:
+            logger.exception("Errore recover_after_restart: %s", exc)
+            return {"ok": False, "status": "RECOVERY_FAILED", "error": str(exc)}
 
     # =========================================================
     # OPTIONAL EXTENSIONS
