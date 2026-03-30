@@ -1,0 +1,26 @@
+[
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "status": "SUCCESS",
+      "marketId": "1.23456789",
+      "instructionReports": [
+        {
+          "status": "FAILURE",
+          "errorCode": "INSUFFICIENT_FUNDS",
+          "instruction": {
+            "selectionId": 101,
+            "side": "BACK",
+            "orderType": "LIMIT",
+            "limitOrder": {
+              "size": 5000.0,
+              "price": 2.0,
+              "persistenceType": "LAPSE"
+            }
+          }
+        }
+      ]
+    },
+    "id": 1
+  }
+]
