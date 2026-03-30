@@ -1,0 +1,30 @@
+[
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "customerRef": "ORDER-REF-1",
+      "status": "SUCCESS",
+      "marketId": "1.23456789",
+      "instructionReports": [
+        {
+          "status": "SUCCESS",
+          "instruction": {
+            "selectionId": 101,
+            "side": "BACK",
+            "orderType": "LIMIT",
+            "limitOrder": {
+              "size": 5.0,
+              "price": 2.0,
+              "persistenceType": "LAPSE"
+            }
+          },
+          "betId": "9876543210",
+          "placedDate": "2030-01-01T00:00:00.000Z",
+          "averagePriceMatched": 0.0,
+          "sizeMatched": 0.0
+        }
+      ]
+    },
+    "id": 1
+  }
+]
