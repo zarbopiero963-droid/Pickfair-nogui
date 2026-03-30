@@ -1,0 +1,23 @@
+[
+  {
+    "jsonrpc": "2.0",
+    "result": [
+      {
+        "marketId": "1.23456789",
+        "status": "OPEN",
+        "runners": [
+          {
+            "selectionId": 101,
+            "status": "ACTIVE",
+            "ex": {}
+          },
+          {
+            "selectionId": 202,
+            "status": "ACTIVE"
+          }
+        ]
+      }
+    ],
+    "id": 1
+  }
+]
