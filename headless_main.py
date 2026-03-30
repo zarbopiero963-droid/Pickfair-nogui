@@ -7,7 +7,7 @@ import time
 from typing import Optional
 
 from database import Database
-from event_bus import EventBus
+from core.event_bus import EventBus
 from executor_manager import ExecutorManager
 from shutdown_manager import ShutdownManager
 
@@ -34,6 +34,7 @@ class HeadlessApp:
     Responsabilità:
     - inizializza core/services/runtime
     - avvia runtime live o simulation
+    - esegue recovery/reconcile al boot
     - gestisce shutdown pulito
     - resta in loop senza GUI
     """
@@ -52,67 +53,179 @@ class HeadlessApp:
         self.runtime: Optional[RuntimeController] = None
 
         self._running = False
+        self._built = False
+        self._signal_handlers_installed = False
+
+    # =========================================================
+    # INTERNAL STATE
+    # =========================================================
+    def _reset_runtime_refs(self) -> None:
+        self.db = None
+        self.bus = None
+        self.executor = None
+        self.shutdown = None
+
+        self.settings_service = None
+        self.betfair_service = None
+        self.telegram_service = None
+
+        self.trading_engine = None
+        self.runtime = None
+
+        self._built = False
+        self._running = False
+
+    def _cleanup_partial_build(self) -> None:
+        """
+        Cleanup difensivo se build() fallisce a metà.
+        Deve essere sempre safe/idempotente.
+        """
+        try:
+            if self.telegram_service is not None:
+                try:
+                    self.telegram_service.stop()
+                except Exception:
+                    logger.exception("Errore cleanup telegram_service")
+        finally:
+            try:
+                if self.betfair_service is not None:
+                    try:
+                        self.betfair_service.disconnect()
+                    except Exception:
+                        logger.exception("Errore cleanup betfair_service")
+            finally:
+                try:
+                    if self.executor is not None:
+                        try:
+                            self.executor.shutdown(wait=False, cancel_futures=True)
+                        except TypeError:
+                            try:
+                                self.executor.shutdown(wait=False)
+                            except Exception:
+                                logger.exception("Errore cleanup executor")
+                        except Exception:
+                            logger.exception("Errore cleanup executor")
+                finally:
+                    try:
+                        if self.db is not None:
+                            try:
+                                self.db.close_all_connections()
+                            except Exception:
+                                logger.exception("Errore cleanup db")
+                    finally:
+                        self._reset_runtime_refs()
+
+    def _ensure_built_components(self) -> None:
+        if self.db is None:
+            raise RuntimeError("Database non inizializzato")
+        if self.bus is None:
+            raise RuntimeError("EventBus non inizializzato")
+        if self.executor is None:
+            raise RuntimeError("Executor non inizializzato")
+        if self.shutdown is None:
+            raise RuntimeError("ShutdownManager non inizializzato")
+        if self.settings_service is None:
+            raise RuntimeError("SettingsService non inizializzato")
+        if self.betfair_service is None:
+            raise RuntimeError("BetfairService non inizializzato")
+        if self.telegram_service is None:
+            raise RuntimeError("TelegramService non inizializzato")
+        if self.trading_engine is None:
+            raise RuntimeError("TradingEngine non inizializzato")
+        if self.runtime is None:
+            raise RuntimeError("RuntimeController non inizializzato")
 
     # =========================================================
     # BOOTSTRAP
     # =========================================================
     def build(self) -> None:
-        self.db = Database()
-        self.bus = EventBus()
-        self.executor = ExecutorManager(max_workers=4, default_timeout=30)
-        self.shutdown = ShutdownManager()
+        """
+        Costruzione completa dei componenti.
+        Safe anche dopo un precedente stop/build fallito.
+        """
+        if self._built:
+            return
 
-        self.settings_service = SettingsService(self.db)
-        self.betfair_service = BetfairService(self.settings_service)
-        self.telegram_service = TelegramService(
-            self.settings_service,
-            self.db,
-            self.bus,
-        )
+        self._reset_runtime_refs()
 
-        self.trading_engine = TradingEngine(
-            bus=self.bus,
-            db=self.db,
-            client_getter=self.betfair_service.get_client,
-            executor=self.executor,
-        )
+        try:
+            self.db = Database()
+            self.bus = EventBus()
+            self.executor = ExecutorManager(max_workers=4, default_timeout=30)
+            self.shutdown = ShutdownManager()
 
-        self.runtime = RuntimeController(
-            bus=self.bus,
-            db=self.db,
-            settings_service=self.settings_service,
-            betfair_service=self.betfair_service,
-            telegram_service=self.telegram_service,
-            trading_engine=self.trading_engine,
-            executor=self.executor,
-        )
+            self.settings_service = SettingsService(self.db)
+            self.betfair_service = BetfairService(self.settings_service)
+            self.telegram_service = TelegramService(
+                self.settings_service,
+                self.db,
+                self.bus,
+            )
 
-        self._wire_bus()
-        self._register_shutdown_hooks()
+            self.trading_engine = TradingEngine(
+                bus=self.bus,
+                db=self.db,
+                client_getter=self.betfair_service.get_client,
+                executor=self.executor,
+            )
+
+            self.runtime = RuntimeController(
+                bus=self.bus,
+                db=self.db,
+                settings_service=self.settings_service,
+                betfair_service=self.betfair_service,
+                telegram_service=self.telegram_service,
+                trading_engine=self.trading_engine,
+                executor=self.executor,
+            )
+
+            self._wire_bus()
+            self._register_shutdown_hooks()
+            self._ensure_built_components()
+
+            self._built = True
+
+        except Exception:
+            logger.exception("Errore durante build headless")
+            self._cleanup_partial_build()
+            raise
 
     def _register_shutdown_hooks(self) -> None:
-        self._register_shutdown_hook(
-            "telegram_stop",
-            self.telegram_service.stop,
-            priority=10,
-        )
-        self._register_shutdown_hook(
-            "betfair_disconnect",
-            self.betfair_service.disconnect,
-            priority=20,
-        )
-        self._register_shutdown_hook(
-            "db_close",
-            self.db.close_all_connections,
-            priority=30,
-        )
-        self._register_shutdown_hook(
-            "executor_shutdown",
-            self.executor.shutdown,
-            priority=40,
-        )
+        if not self.shutdown:
+            return
+
+        if self.telegram_service is not None:
+            self._register_shutdown_hook(
+                "telegram_stop",
+                self.telegram_service.stop,
+                priority=10,
+            )
+
+        if self.betfair_service is not None:
+            self._register_shutdown_hook(
+                "betfair_disconnect",
+                self.betfair_service.disconnect,
+                priority=20,
+            )
+
+        if self.db is not None:
+            self._register_shutdown_hook(
+                "db_close",
+                self.db.close_all_connections,
+                priority=30,
+            )
+
+        if self.executor is not None:
+            self._register_shutdown_hook(
+                "executor_shutdown",
+                self.executor.shutdown,
+                priority=40,
+            )
 
     def _register_shutdown_hook(self, name, fn, priority=100):
+        if self.shutdown is None or fn is None:
+            return
+
         if hasattr(self.shutdown, "register"):
             try:
                 self.shutdown.register(name, fn, priority=priority)
@@ -136,6 +249,9 @@ class HeadlessApp:
                     pass
 
     def _wire_bus(self) -> None:
+        if self.bus is None:
+            return
+
         self.bus.subscribe("RUNTIME_STARTED", self._on_runtime_started)
         self.bus.subscribe("RUNTIME_PAUSED", self._on_runtime_paused)
         self.bus.subscribe("RUNTIME_RESUMED", self._on_runtime_resumed)
@@ -211,12 +327,22 @@ class HeadlessApp:
         simulation_mode = True
         if "--live" in args or "live" in args:
             simulation_mode = False
-        elif "--simulation" in args or "simulation" in args or "--sim" in args or "sim" in args:
+        elif (
+            "--simulation" in args
+            or "simulation" in args
+            or "--sim" in args
+            or "sim" in args
+        ):
             simulation_mode = True
         else:
             try:
-                sim_cfg = self.settings_service.load_simulation_config()
-                simulation_mode = bool(sim_cfg.get("enabled", True))
+                if self.settings_service is not None and hasattr(
+                    self.settings_service, "load_simulation_config"
+                ):
+                    sim_cfg = self.settings_service.load_simulation_config()
+                    simulation_mode = bool(sim_cfg.get("enabled", True))
+                else:
+                    simulation_mode = True
             except Exception:
                 simulation_mode = True
 
@@ -233,26 +359,73 @@ class HeadlessApp:
         }
 
     # =========================================================
+    # RECOVERY / HEALTH
+    # =========================================================
+    def _run_boot_recovery(self) -> None:
+        if self.trading_engine is None:
+            return
+
+        try:
+            result = self.trading_engine.recover_after_restart()
+            logger.info("Boot recovery -> %s", result)
+            if isinstance(result, dict) and result.get("ok") is False:
+                raise RuntimeError(result.get("error") or "recover_after_restart fallita")
+        except Exception:
+            logger.exception("Errore boot recovery")
+            raise
+
+    def _validate_runtime_start_result(self, result: Any) -> None:
+        if result is None:
+            raise RuntimeError("Runtime.start() ha restituito None")
+
+        if isinstance(result, dict):
+            if result.get("ok") is False:
+                raise RuntimeError(
+                    result.get("error")
+                    or result.get("reason")
+                    or "Runtime.start() fallita"
+                )
+
+        if self.runtime is None:
+            raise RuntimeError("Runtime non disponibile dopo start")
+
+    # =========================================================
     # RUN
     # =========================================================
     def start(self) -> int:
-        self.build()
-        args = self._parse_args()
+        if self._running:
+            logger.warning("HeadlessApp già in esecuzione")
+            return 0
 
+        try:
+            self.build()
+            self._run_boot_recovery()
+        except Exception as exc:
+            logger.exception("Errore bootstrap headless: %s", exc)
+            return 1
+
+        args = self._parse_args()
         simulation_mode = bool(args["simulation_mode"])
         password = args["password"]
 
         mode_txt = "SIMULATION" if simulation_mode else "LIVE"
         logger.info("Avvio runtime headless in modalità %s", mode_txt)
 
+        if self.runtime is None:
+            logger.error("Runtime non disponibile dopo build")
+            self._cleanup_partial_build()
+            return 1
+
         try:
             result = self.runtime.start(
                 password=password,
                 simulation_mode=simulation_mode,
             )
+            self._validate_runtime_start_result(result)
             logger.info("Runtime avviato -> %s", result)
         except Exception as exc:
             logger.exception("Errore avvio runtime: %s", exc)
+            self.stop()
             return 1
 
         self._running = True
@@ -269,6 +442,11 @@ class HeadlessApp:
         return 0
 
     def stop(self) -> None:
+        """
+        Stop idempotente.
+        Deve lasciare lo stato pulito per eventuale nuovo build/start.
+        """
+        was_running = self._running
         self._running = False
 
         try:
@@ -279,18 +457,26 @@ class HeadlessApp:
                     logger.exception("Errore stop runtime")
         finally:
             try:
-                if hasattr(self.shutdown, "shutdown"):
-                    self.shutdown.shutdown()
-                elif hasattr(self.shutdown, "run"):
-                    self.shutdown.run()
+                if self.shutdown is not None:
+                    if hasattr(self.shutdown, "shutdown"):
+                        self.shutdown.shutdown()
+                    elif hasattr(self.shutdown, "run"):
+                        self.shutdown.run()
             except Exception:
                 logger.exception("Errore shutdown manager")
+            finally:
+                if was_running or self._built:
+                    self._reset_runtime_refs()
 
     # =========================================================
     # SIGNAL HANDLERS
     # =========================================================
     def _install_signal_handlers(self) -> None:
+        if self._signal_handlers_installed:
+            return
+
         def _handler(signum, frame):
+            _ = frame
             logger.info("Segnale ricevuto: %s", signum)
             self._running = False
 
@@ -303,6 +489,8 @@ class HeadlessApp:
             signal.signal(signal.SIGTERM, _handler)
         except Exception:
             pass
+
+        self._signal_handlers_installed = True
 
 
 def main() -> int:
