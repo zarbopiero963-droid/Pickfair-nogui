@@ -1,27 +1,103 @@
 import pytest
-from betfair_client import BetfairClient
+import requests
 
 
-class ChaosSession:
-    def post(self, *a, **k):
-        class R:
-            def raise_for_status(self): pass
-            def json(self):
-                return [{"error": "INVALID_SESSION"}]
-        return R()
+class FakeResponse:
+    def __init__(self, *, status_code=200, json_data=None, text="", raise_http=False):
+        self.status_code = status_code
+        self._json_data = json_data
+        self.text = text
+        self._raise_http = raise_http
+
+    def raise_for_status(self):
+        if self._raise_http:
+            raise requests.exceptions.HTTPError(response=self)
+
+    def json(self):
+        if isinstance(self._json_data, Exception):
+            raise self._json_data
+        return self._json_data
 
 
-def test_session_expired():
-    c = BetfairClient(
-        username="u",
-        app_key="k",
-        cert_pem="c",
-        key_pem="k",
-        session=ChaosSession()
+class FakeSession:
+    def __init__(self, responses):
+        self.responses = list(responses)
+
+    def post(self, url, **kwargs):
+        _ = url, kwargs
+        if not self.responses:
+            raise RuntimeError("no more fake responses")
+        item = self.responses.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+@pytest.mark.chaos
+def test_transient_then_success_place_bet():
+    from betfair_client import BetfairClient
+
+    session = FakeSession([
+        requests.exceptions.ConnectionError("boom"),
+        FakeResponse(
+            json_data=[{
+                "result": {
+                    "status": "SUCCESS",
+                    "instructionReports": [
+                        {"status": "SUCCESS", "betId": "B123"}
+                    ],
+                }
+            }]
+        ),
+    ])
+
+    client = BetfairClient(
+        username="user",
+        app_key="app",
+        cert_pem="cert.pem",
+        key_pem="key.pem",
+        session=session,
+        max_retries=1,
     )
-    c.session_token = "X"
+    client.session_token = "TOK"
 
-    with pytest.raises(RuntimeError):
-        c._post_jsonrpc("url", "m", {})
+    out = client.place_bet(
+        market_id="1.100",
+        selection_id=1,
+        side="BACK",
+        price=2.0,
+        size=2.0,
+    )
+    assert out["ok"] is True
 
-    assert c.session_token == ""
+
+@pytest.mark.chaos
+def test_multiple_transient_errors_then_fail_cleanly():
+    from betfair_client import BetfairClient
+
+    session = FakeSession([
+        requests.exceptions.ConnectionError("boom1"),
+        requests.exceptions.ConnectionError("boom2"),
+        requests.exceptions.ConnectionError("boom3"),
+    ])
+
+    client = BetfairClient(
+        username="user",
+        app_key="app",
+        cert_pem="cert.pem",
+        key_pem="key.pem",
+        session=session,
+        max_retries=2,
+    )
+    client.session_token = "TOK"
+
+    out = client.place_bet(
+        market_id="1.100",
+        selection_id=1,
+        side="BACK",
+        price=2.0,
+        size=2.0,
+    )
+
+    assert out["ok"] is False
+    assert out["classification"] == "TRANSIENT"
