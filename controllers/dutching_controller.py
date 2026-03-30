@@ -4,24 +4,58 @@ import hashlib
 import json
 import logging
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-from dutching import calculate_dutching
+try:
+    from dutching import calculate_dutching
+except ImportError:
+    # compat legacy guardrail
+    from dutching import calculate_dutching_stakes as _calculate_dutching_stakes
+
+    def calculate_dutching(selections, total_stake):
+        odds = [float(s["price"]) for s in selections]
+        res = _calculate_dutching_stakes(odds, float(total_stake))
+        stakes = res.get("stakes", []) or []
+        profits = res.get("profits", []) or []
+        avg_profit = float(res.get("avg_profit", 0.0) or 0.0)
+        book_pct = float(res.get("book_pct", 0.0) or 0.0)
+
+        results = []
+        for idx, selection in enumerate(selections):
+            side = str(selection.get("side") or selection.get("effectiveType") or "BACK").upper()
+            item = {
+                "selectionId": int(selection["selectionId"]),
+                "price": float(selection["price"]),
+                "stake": float(stakes[idx]) if idx < len(stakes) else 0.0,
+                "side": side,
+                "runnerName": selection.get("runnerName", ""),
+                "profitIfWins": float(profits[idx]) if idx < len(profits) else 0.0,
+            }
+            if side == "LAY":
+                item["liability"] = round(
+                    float(item["stake"]) * max(0.0, float(item["price"]) - 1.0),
+                    2,
+                )
+            results.append(item)
+
+        return results, avg_profit, book_pct
+
 
 logger = logging.getLogger(__name__)
 
 
 class DutchingController:
     """
-    Controller headless per dutching.
+    Controller headless per dutching, con contract stabile.
 
-    Obiettivi:
-    - compatibile con dutching.py reale
-    - niente dipendenze GUI
-    - publish ordini su EventBus
-    - anti-duplicazione hard
-    - precheck esposizione batch
-    - integrazione con RuntimeController / Roserpina
+    API pubbliche:
+    - validate(payload)
+    - preview(payload)
+    - precheck(payload)
+    - submit_dutching(payload, dry_run=False, preflight=False)
+    - execute(payload)  # alias compatibile
+    - manual_bet(payload)
+    - check_duplicate(payload)
     """
 
     def __init__(self, bus, runtime_controller):
@@ -33,6 +67,27 @@ class DutchingController:
     # =========================================================
     # HELPERS
     # =========================================================
+    def _ok(self, **kwargs) -> Dict[str, Any]:
+        out = {"ok": True}
+        out.update(kwargs)
+        return out
+
+    def _fail(self, error: str, **kwargs) -> Dict[str, Any]:
+        out = {"ok": False, "error": str(error)}
+        out.update(kwargs)
+        return out
+
+    def _safe_publish(self, event_name: str, payload: Dict[str, Any]) -> None:
+        if self.bus is None or not hasattr(self.bus, "publish"):
+            return
+        self.bus.publish(event_name, payload)
+
+    def _publish_audit(self, event_name: str, payload: Dict[str, Any]) -> None:
+        try:
+            self._safe_publish(event_name, payload)
+        except Exception:
+            logger.exception("Errore publish audit event %s", event_name)
+
     def _cleanup_batches(self) -> None:
         now = time.time()
         expired = [
@@ -67,7 +122,8 @@ class DutchingController:
         event_name = str(payload.get("event_name") or "")
         market_name = str(payload.get("market_name") or "")
         selection_part = ",".join(
-            str(int(item["selectionId"])) for item in sorted(results, key=lambda x: int(x["selectionId"]))
+            str(int(item["selectionId"]))
+            for item in sorted(results, key=lambda x: int(x["selectionId"]))
         )
         base = f"dutching|{market_id}|{event_name}|{market_name}|{selection_part}"
         return hashlib.sha1(base.encode("utf-8")).hexdigest()
@@ -86,6 +142,9 @@ class DutchingController:
 
     def _risk_desk(self):
         return getattr(self.runtime, "risk_desk", None)
+
+    def _batch_manager(self):
+        return getattr(self.runtime, "dutching_batch_manager", None)
 
     def _table_total_exposure(self) -> float:
         table_manager = self._table_manager()
@@ -114,11 +173,6 @@ class DutchingController:
         return 0.0
 
     def _compute_order_exposure(self, item: Dict[str, Any]) -> float:
-        """
-        Conservativo:
-        - BACK: usa stake
-        - LAY: se presente liability usa quella, altrimenti stake * (price - 1)
-        """
         side = str(item.get("side", "BACK")).upper()
         stake = float(item.get("stake", 0.0) or 0.0)
         price = float(item.get("price", 0.0) or 0.0)
@@ -133,7 +187,12 @@ class DutchingController:
     def _compute_batch_exposure(self, results: List[Dict[str, Any]]) -> float:
         return sum(self._compute_order_exposure(item) for item in results)
 
-    def _allocate_table(self, event_key: str, batch_exposure: float, meta: Dict[str, Any]) -> Optional[int]:
+    def _allocate_table(
+        self,
+        event_key: str,
+        batch_exposure: float,
+        meta: Dict[str, Any],
+    ) -> Optional[int]:
         table_manager = self._table_manager()
         config = self._config()
 
@@ -173,7 +232,8 @@ class DutchingController:
 
         if table_manager and table_id:
             try:
-                table_manager.force_unlock(int(table_id))
+                if hasattr(table_manager, "force_unlock"):
+                    table_manager.force_unlock(int(table_id))
             except Exception:
                 logger.exception("Errore force_unlock table")
 
@@ -181,11 +241,51 @@ class DutchingController:
         mode = self._mode()
         return bool(mode and str(getattr(mode, "value", mode)) == "ACTIVE")
 
-    def _publish_audit(self, event_name: str, payload: Dict[str, Any]) -> None:
-        try:
-            self.bus.publish(event_name, payload)
-        except Exception:
-            logger.exception("Errore publish audit event %s", event_name)
+    def _bus_available(self) -> bool:
+        return self.bus is not None and hasattr(self.bus, "publish")
+
+    def _normalize_side(self, value: Any) -> str:
+        side = str(value or "BACK").upper().strip()
+        return side if side in {"BACK", "LAY"} else "BACK"
+
+    def _batch_manager_create(
+        self,
+        batch_id: str,
+        event_key: str,
+        payload: Dict[str, Any],
+        orders: List[Dict[str, Any]],
+    ) -> None:
+        batch_manager = self._batch_manager()
+        if batch_manager is None:
+            return
+
+        if hasattr(batch_manager, "create_batch"):
+            batch_manager.create_batch(
+                batch_id=batch_id,
+                event_key=event_key,
+                market_id=str(payload.get("market_id") or ""),
+                legs=[
+                    {
+                        "selectionId": int(o["selection_id"]),
+                        "price": float(o["price"]),
+                        "stake": float(o["stake"]),
+                        "side": str(o["bet_type"]).upper(),
+                    }
+                    for o in orders
+                ],
+            )
+
+    def _batch_manager_mark_failed(self, batch_id: str, error: str) -> None:
+        batch_manager = self._batch_manager()
+        if batch_manager is None:
+            return
+
+        if hasattr(batch_manager, "mark_batch_failed"):
+            batch_manager.mark_batch_failed(batch_id=batch_id, error=error)
+            return
+
+        if hasattr(batch_manager, "fail_batch"):
+            batch_manager.fail_batch(batch_id=batch_id, error=error)
 
     # =========================================================
     # VALIDAZIONE
@@ -193,61 +293,61 @@ class DutchingController:
     def validate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         try:
             if not isinstance(payload, dict):
-                return {"ok": False, "error": "Payload non valido"}
+                return self._fail("Payload non valido")
 
             market_id = payload.get("market_id")
             selections = payload.get("selections", [])
             total_stake = float(payload.get("total_stake", 0) or 0)
 
             if not market_id:
-                return {"ok": False, "error": "market_id mancante"}
+                return self._fail("market_id mancante")
 
             if not isinstance(selections, list) or not selections:
-                return {"ok": False, "error": "Nessuna selezione"}
+                return self._fail("Nessuna selezione")
 
             seen_selection_ids = set()
 
             for idx, selection in enumerate(selections, start=1):
                 if not isinstance(selection, dict):
-                    return {"ok": False, "error": f"Selezione #{idx} non valida"}
+                    return self._fail(f"Selezione #{idx} non valida")
 
                 if "selectionId" not in selection:
-                    return {"ok": False, "error": f"selectionId mancante alla selezione #{idx}"}
+                    return self._fail(f"selectionId mancante alla selezione #{idx}")
 
                 if "price" not in selection:
-                    return {"ok": False, "error": f"price mancante alla selezione #{idx}"}
+                    return self._fail(f"price mancante alla selezione #{idx}")
 
                 try:
                     selection_id = int(selection["selectionId"])
                 except Exception:
-                    return {"ok": False, "error": f"selectionId non valido alla selezione #{idx}"}
+                    return self._fail(f"selectionId non valido alla selezione #{idx}")
 
                 if selection_id in seen_selection_ids:
-                    return {"ok": False, "error": f"selectionId duplicato: {selection_id}"}
+                    return self._fail(f"selectionId duplicato: {selection_id}")
                 seen_selection_ids.add(selection_id)
 
                 try:
                     price = float(selection["price"])
                 except Exception:
-                    return {"ok": False, "error": f"price non valido alla selezione #{idx}"}
+                    return self._fail(f"price non valido alla selezione #{idx}")
 
                 if price <= 1.01:
-                    return {"ok": False, "error": f"Quota non valida alla selezione #{idx}: {price}"}
+                    return self._fail(f"Quota non valida alla selezione #{idx}: {price}")
 
                 if "side" in selection:
-                    side = str(selection.get("side", "BACK")).upper()
+                    side = self._normalize_side(selection.get("side", "BACK"))
                     if side not in {"BACK", "LAY"}:
-                        return {"ok": False, "error": f"side non valido alla selezione #{idx}: {side}"}
+                        return self._fail(f"side non valido alla selezione #{idx}: {side}")
 
             if total_stake <= 0:
-                return {"ok": False, "error": "total_stake non valido"}
+                return self._fail("total_stake non valido")
 
-            return {"ok": True}
+            return self._ok()
         except Exception as exc:
-            return {"ok": False, "error": str(exc)}
+            return self._fail(str(exc))
 
     # =========================================================
-    # PREVIEW
+    # PREVIEW / DRY RUN
     # =========================================================
     def preview(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -260,20 +360,26 @@ class DutchingController:
                 float(payload["total_stake"]),
             )
 
+            if not isinstance(results, list):
+                return self._fail("Risultato dutching non valido")
+
             event_key = self._build_event_key(payload, results)
+            batch_id = self._build_batch_id(payload, results)
             batch_exposure = self._compute_batch_exposure(results)
 
-            return {
-                "ok": True,
-                "results": results,
-                "avg_profit": avg_profit,
-                "book_pct": book_pct,
-                "event_key": event_key,
-                "batch_exposure": round(batch_exposure, 2),
-            }
+            return self._ok(
+                dry_run=True,
+                preflight=False,
+                results=results,
+                avg_profit=float(avg_profit),
+                book_pct=float(book_pct),
+                event_key=event_key,
+                batch_id=batch_id,
+                batch_exposure=round(batch_exposure, 2),
+            )
         except Exception as exc:
             logger.exception("Errore preview dutching")
-            return {"ok": False, "error": str(exc)}
+            return self._fail(str(exc))
 
     # =========================================================
     # PRECHECK RISCHIO / DUPLICATI
@@ -284,7 +390,7 @@ class DutchingController:
             return validation
 
         if not self._runtime_active():
-            return {"ok": False, "error": "Runtime non attivo"}
+            return self._fail("Runtime non attivo")
 
         try:
             results, avg_profit, book_pct = calculate_dutching(
@@ -293,10 +399,10 @@ class DutchingController:
             )
         except Exception as exc:
             logger.exception("Errore calculate_dutching in precheck")
-            return {"ok": False, "error": str(exc)}
+            return self._fail(str(exc))
 
         if not results:
-            return {"ok": False, "error": "Dutching vuoto"}
+            return self._fail("Dutching vuoto")
 
         event_key = self._build_event_key(payload, results)
         batch_id = self._build_batch_id(payload, results)
@@ -304,7 +410,10 @@ class DutchingController:
 
         self._cleanup_batches()
         if batch_id in self._recent_batches:
-            return {"ok": False, "error": "Batch già inviato (idempotency guard)", "batch_id": batch_id}
+            return self._fail(
+                "Batch già inviato (idempotency guard)",
+                batch_id=batch_id,
+            )
 
         duplication_guard = self._duplication_guard()
         config = self._config()
@@ -315,32 +424,36 @@ class DutchingController:
         if duplication_guard and bool(getattr(config, "anti_duplication_enabled", True)):
             try:
                 if duplication_guard.is_duplicate(event_key):
-                    return {"ok": False, "error": "Duplicato bloccato", "event_key": event_key}
+                    return self._fail("Duplicato bloccato", event_key=event_key)
             except Exception:
                 logger.exception("Errore duplication_guard.is_duplicate")
 
         if bankroll > 0 and config is not None:
-            max_total_exposure = bankroll * (float(getattr(config, "max_total_exposure_pct", 35.0)) / 100.0)
-            max_event_exposure = bankroll * (float(getattr(config, "max_event_exposure_pct", 18.0)) / 100.0)
-            max_single_bet = bankroll * (float(getattr(config, "max_single_bet_pct", 18.0)) / 100.0)
+            max_total_exposure = bankroll * (
+                float(getattr(config, "max_total_exposure_pct", 35.0)) / 100.0
+            )
+            max_event_exposure = bankroll * (
+                float(getattr(config, "max_event_exposure_pct", 18.0)) / 100.0
+            )
+            max_single_bet = bankroll * (
+                float(getattr(config, "max_single_bet_pct", 18.0)) / 100.0
+            )
 
             if current_total_exposure + batch_exposure > max_total_exposure + 1e-9:
-                return {
-                    "ok": False,
-                    "error": "Esposizione globale oltre limite",
-                    "batch_exposure": round(batch_exposure, 2),
-                    "current_total_exposure": round(current_total_exposure, 2),
-                    "max_total_exposure": round(max_total_exposure, 2),
-                }
+                return self._fail(
+                    "Esposizione globale oltre limite",
+                    batch_exposure=round(batch_exposure, 2),
+                    current_total_exposure=round(current_total_exposure, 2),
+                    max_total_exposure=round(max_total_exposure, 2),
+                )
 
             if event_current_exposure + batch_exposure > max_event_exposure + 1e-9:
-                return {
-                    "ok": False,
-                    "error": "Esposizione evento oltre limite",
-                    "batch_exposure": round(batch_exposure, 2),
-                    "event_current_exposure": round(event_current_exposure, 2),
-                    "max_event_exposure": round(max_event_exposure, 2),
-                }
+                return self._fail(
+                    "Esposizione evento oltre limite",
+                    batch_exposure=round(batch_exposure, 2),
+                    event_current_exposure=round(event_current_exposure, 2),
+                    max_event_exposure=round(max_event_exposure, 2),
+                )
 
             too_large = [
                 {
@@ -352,35 +465,60 @@ class DutchingController:
                 if self._compute_order_exposure(item) > max_single_bet + 1e-9
             ]
             if too_large:
-                return {
-                    "ok": False,
-                    "error": "Una o più gambe superano max_single_bet",
-                    "violations": too_large,
-                }
+                return self._fail(
+                    "Una o più gambe superano max_single_bet",
+                    violations=too_large,
+                )
 
-        return {
-            "ok": True,
-            "results": results,
-            "avg_profit": avg_profit,
-            "book_pct": book_pct,
-            "event_key": event_key,
-            "batch_id": batch_id,
-            "batch_exposure": batch_exposure,
-        }
+        return self._ok(
+            preflight=True,
+            dry_run=False,
+            results=results,
+            avg_profit=float(avg_profit),
+            book_pct=float(book_pct),
+            event_key=event_key,
+            batch_id=batch_id,
+            batch_exposure=float(batch_exposure),
+        )
+
+    # =========================================================
+    # API FINALE
+    # =========================================================
+    def submit_dutching(
+        self,
+        payload: Dict[str, Any],
+        dry_run: bool = False,
+        preflight: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        API finale pubblica stabile.
+
+        Path:
+        - dry_run=True  -> preview
+        - preflight=True -> precheck
+        - default -> execute reale
+        """
+        if dry_run:
+            out = self.preview(payload)
+            out.setdefault("dry_run", True)
+            out.setdefault("preflight", False)
+            return out
+
+        if preflight:
+            out = self.precheck(payload)
+            out.setdefault("dry_run", False)
+            out.setdefault("preflight", True)
+            return out
+
+        return self._execute_impl(payload)
+
+    def execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self.submit_dutching(payload, dry_run=False, preflight=False)
 
     # =========================================================
     # EXECUTE
     # =========================================================
-    def execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Flusso blindato:
-        1. validate
-        2. precheck rischio / duplicazione
-        3. allocate table (se disponibile)
-        4. register duplication key
-        5. publish ordini
-        6. rollback lock/table se publish fallisce
-        """
+    def _execute_impl(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         pre = self.precheck(payload)
         if not pre["ok"]:
             self._publish_audit(
@@ -390,7 +528,18 @@ class DutchingController:
                     "reason": pre["error"],
                 },
             )
+            pre.setdefault("dry_run", False)
+            pre.setdefault("preflight", False)
             return pre
+
+        if not self._bus_available():
+            return self._fail(
+                "EventBus non disponibile",
+                dry_run=False,
+                preflight=False,
+                batch_id=pre.get("batch_id"),
+                event_key=pre.get("event_key"),
+            )
 
         results: List[Dict[str, Any]] = pre["results"]
         avg_profit = pre["avg_profit"]
@@ -400,7 +549,6 @@ class DutchingController:
         batch_exposure = float(pre["batch_exposure"] or 0.0)
 
         duplication_guard = self._duplication_guard()
-
         table_id = payload.get("table_id")
         allocated_here = False
 
@@ -421,7 +569,13 @@ class DutchingController:
         if table_id is None and self._table_manager() is not None:
             msg = "Nessun tavolo disponibile per batch dutching"
             self._publish_audit("DUTCHING_BATCH_REJECTED", {"payload": payload, "reason": msg})
-            return {"ok": False, "error": msg}
+            return self._fail(
+                msg,
+                dry_run=False,
+                preflight=False,
+                batch_id=batch_id,
+                event_key=event_key,
+            )
 
         if duplication_guard:
             try:
@@ -430,10 +584,18 @@ class DutchingController:
                 logger.exception("Errore duplication_guard.register")
                 if allocated_here:
                     self._release_table_and_key(table_id, event_key)
-                return {"ok": False, "error": "Errore registrazione anti-duplicazione"}
+                return self._fail(
+                    "Errore registrazione anti-duplicazione",
+                    dry_run=False,
+                    preflight=False,
+                    batch_id=batch_id,
+                    event_key=event_key,
+                    table_id=table_id,
+                )
 
         orders = []
         published_orders = []
+        batch_created = False
 
         try:
             for idx, item in enumerate(results, start=1):
@@ -458,6 +620,9 @@ class DutchingController:
                 }
                 orders.append(order)
 
+            self._batch_manager_create(batch_id, event_key, payload, orders)
+            batch_created = True
+
             self._publish_audit(
                 "DUTCHING_BATCH_APPROVED",
                 {
@@ -478,18 +643,20 @@ class DutchingController:
 
             self._recent_batches[batch_id] = time.time()
 
-            return {
-                "ok": True,
-                "batch_id": batch_id,
-                "event_key": event_key,
-                "table_id": table_id,
-                "orders": orders,
-                "published_count": len(published_orders),
-                "count": len(orders),
-                "avg_profit": avg_profit,
-                "book_pct": book_pct,
-                "batch_exposure": round(batch_exposure, 2),
-            }
+            return self._ok(
+                dry_run=False,
+                preflight=False,
+                status="SUBMITTED",
+                batch_id=batch_id,
+                event_key=event_key,
+                table_id=table_id,
+                orders=orders,
+                published_count=len(published_orders),
+                count=len(orders),
+                avg_profit=float(avg_profit),
+                book_pct=float(book_pct),
+                batch_exposure=round(batch_exposure, 2),
+            )
 
         except Exception as exc:
             logger.exception("Errore execute dutching batch")
@@ -506,6 +673,9 @@ class DutchingController:
                 },
             )
 
+            if batch_created:
+                self._batch_manager_mark_failed(batch_id=batch_id, error=str(exc))
+
             if allocated_here:
                 self._release_table_and_key(table_id, event_key)
             elif duplication_guard:
@@ -514,15 +684,16 @@ class DutchingController:
                 except Exception:
                     logger.exception("Errore release duplication key after failure")
 
-            return {
-                "ok": False,
-                "error": str(exc),
-                "batch_id": batch_id,
-                "event_key": event_key,
-                "table_id": table_id,
-                "published_count": len(published_orders),
-                "total_count": len(orders),
-            }
+            return self._fail(
+                str(exc),
+                dry_run=False,
+                preflight=False,
+                batch_id=batch_id,
+                event_key=event_key,
+                table_id=table_id,
+                published_count=len(published_orders),
+                total_count=len(orders),
+            )
 
     # =========================================================
     # MANUAL BET
@@ -532,10 +703,13 @@ class DutchingController:
             required = ["market_id", "selection_id", "price", "stake"]
             for key in required:
                 if key not in payload:
-                    return {"ok": False, "error": f"{key} mancante"}
+                    return self._fail(f"{key} mancante")
 
             if not self._runtime_active():
-                return {"ok": False, "error": "Runtime non attivo"}
+                return self._fail("Runtime non attivo")
+
+            if not self._bus_available():
+                return self._fail("EventBus non disponibile")
 
             market_id = str(payload["market_id"])
             selection_id = int(payload["selection_id"])
@@ -543,9 +717,9 @@ class DutchingController:
             stake = float(payload["stake"])
 
             if price <= 1.01:
-                return {"ok": False, "error": "Quota non valida"}
+                return self._fail("Quota non valida")
             if stake <= 0:
-                return {"ok": False, "error": "Stake non valido"}
+                return self._fail("Stake non valido")
 
             event_key = str(payload.get("event_key") or f"manual_{market_id}_{selection_id}")
             duplication_guard = self._duplication_guard()
@@ -553,20 +727,24 @@ class DutchingController:
 
             if duplication_guard and bool(getattr(config, "anti_duplication_enabled", True)):
                 if duplication_guard.is_duplicate(event_key):
-                    return {"ok": False, "error": "Duplicato bloccato"}
+                    return self._fail("Duplicato bloccato")
 
             bankroll = self._bankroll_current()
             if bankroll > 0 and config is not None:
                 exposure = stake
                 current_total_exposure = self._table_total_exposure()
-                max_total_exposure = bankroll * (float(getattr(config, "max_total_exposure_pct", 35.0)) / 100.0)
-                max_single_bet = bankroll * (float(getattr(config, "max_single_bet_pct", 18.0)) / 100.0)
+                max_total_exposure = bankroll * (
+                    float(getattr(config, "max_total_exposure_pct", 35.0)) / 100.0
+                )
+                max_single_bet = bankroll * (
+                    float(getattr(config, "max_single_bet_pct", 18.0)) / 100.0
+                )
 
                 if exposure > max_single_bet + 1e-9:
-                    return {"ok": False, "error": "Stake oltre max_single_bet"}
+                    return self._fail("Stake oltre max_single_bet")
 
                 if current_total_exposure + exposure > max_total_exposure + 1e-9:
-                    return {"ok": False, "error": "Esposizione globale oltre limite"}
+                    return self._fail("Esposizione globale oltre limite")
 
             if duplication_guard:
                 duplication_guard.register(event_key)
@@ -574,7 +752,7 @@ class DutchingController:
             order = {
                 "market_id": market_id,
                 "selection_id": selection_id,
-                "bet_type": str(payload.get("bet_type", "BACK")).upper(),
+                "bet_type": self._normalize_side(payload.get("bet_type", "BACK")),
                 "price": price,
                 "stake": stake,
                 "event_name": payload.get("event_name", ""),
@@ -592,18 +770,12 @@ class DutchingController:
                     duplication_guard.release(event_key)
                 raise
 
-            self._publish_audit(
-                "MANUAL_BET_APPROVED",
-                {
-                    "order": order,
-                },
-            )
-
-            return {"ok": True, "order": order}
+            self._publish_audit("MANUAL_BET_APPROVED", {"order": order})
+            return self._ok(order=order)
 
         except Exception as exc:
             logger.exception("Errore manual_bet")
-            return {"ok": False, "error": str(exc)}
+            return self._fail(str(exc))
 
     # =========================================================
     # SOFT CHECK
