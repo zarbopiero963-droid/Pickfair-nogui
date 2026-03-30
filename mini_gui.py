@@ -92,7 +92,6 @@ except Exception:  # pragma: no cover
         def add(self, name: str):
             frame = tk.Frame(self)
             self._tabs[name] = frame
-            frame.pack(fill=tk.BOTH, expand=True)
             return frame
 
     class _FallbackModule:
@@ -144,9 +143,13 @@ try:
 except Exception:  # pragma: no cover
     class TelegramTabUI:
         def __init__(self, parent, app):
+            _ = app
             frame = ctk.CTkFrame(parent)
-            frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
-            ctk.CTkLabel(frame, text="Telegram UI non disponibile").pack(anchor="w", padx=12, pady=12)
+            if hasattr(frame, "pack"):
+                frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+            label = ctk.CTkLabel(frame, text="Telegram UI non disponibile")
+            if hasattr(label, "pack"):
+                label.pack(anchor="w", padx=12, pady=12)
 
 try:
     from theme import COLORS, FONTS
@@ -155,8 +158,99 @@ except Exception:  # pragma: no cover
     FONTS = {}
 
 
+class _HeadlessBoolVar:
+    def __init__(self, value: bool = False):
+        self._value = bool(value)
+
+    def get(self):
+        return self._value
+
+    def set(self, value):
+        self._value = bool(value)
+
+
+class _HeadlessStringVar:
+    def __init__(self, value: str = ""):
+        self._value = str(value)
+
+    def get(self):
+        return self._value
+
+    def set(self, value):
+        self._value = str(value)
+
+
+class _HeadlessRoot:
+    def after(self, _delay, fn=None):
+        if callable(fn):
+            try:
+                fn()
+            except Exception:
+                pass
+        return None
+
+    def destroy(self):
+        return None
+
+    def protocol(self, *_args, **_kwargs):
+        return None
+
+    def withdraw(self):
+        return None
+
+    def title(self, *_args, **_kwargs):
+        return None
+
+    def geometry(self, *_args, **_kwargs):
+        return None
+
+    def grid_columnconfigure(self, *_args, **_kwargs):
+        return None
+
+    def grid_rowconfigure(self, *_args, **_kwargs):
+        return None
+
+
+class _DummyButton:
+    def __init__(self, fn):
+        self._fn = fn
+
+    def cget(self, name):
+        if name == "command":
+            return self._fn
+        return None
+
+
+class _DummyTree:
+    def __init__(self):
+        self.rows = []
+
+    def delete(self, *_args, **_kwargs):
+        self.rows = []
+
+    def get_children(self):
+        return list(range(len(self.rows)))
+
+    def insert(self, *_args, **kwargs):
+        self.rows.append(kwargs.get("values"))
+
+
+class _DummyLog:
+    def __init__(self):
+        self.lines = []
+
+    def insert(self, *_args, **kwargs):
+        if len(args) >= 2:
+            self.lines.append(args[1])
+        elif "text" in kwargs:
+            self.lines.append(kwargs["text"])
+
+    def see(self, *_args, **_kwargs):
+        return None
+
+
 class SimpleUIQueue:
-    def __init__(self, root: tk.Misc):
+    def __init__(self, root):
         self.root = root
 
     def post(self, fn: Callable, *args, **kwargs):
@@ -168,9 +262,16 @@ class SimpleUIQueue:
 
 class MiniPickfairGUI(ctk.CTk, TelegramModule):
     def __init__(self, test_mode: bool = False):
-        super().__init__()
-
         self._test_mode = bool(test_mode)
+
+        # FIX CRITICO: non creare Tk in ambiente headless di test
+        if not self._test_mode:
+            super().__init__()
+            self._headless_root = None
+        else:
+            self._headless_root = _HeadlessRoot()
+            self.tk = None
+            self._w = "."
 
         self.title("Pickfair Mini GUI")
         self.geometry("1420x900")
@@ -201,6 +302,49 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self._start_polling()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    # =========================================================
+    # ROOT / HEADLESS HELPERS
+    # =========================================================
+    def after(self, delay_ms, fn=None):
+        if self._test_mode:
+            return self._headless_root.after(delay_ms, fn)
+        return super().after(delay_ms, fn)
+
+    def protocol(self, name, func):
+        if self._test_mode:
+            return self._headless_root.protocol(name, func)
+        return super().protocol(name, func)
+
+    def destroy(self):
+        if self._test_mode:
+            return self._headless_root.destroy()
+        return super().destroy()
+
+    def withdraw(self):
+        if self._test_mode:
+            return self._headless_root.withdraw()
+        return super().withdraw()
+
+    def title(self, text):
+        if self._test_mode:
+            return self._headless_root.title(text)
+        return super().title(text)
+
+    def geometry(self, value):
+        if self._test_mode:
+            return self._headless_root.geometry(value)
+        return super().geometry(value)
+
+    def grid_columnconfigure(self, *args, **kwargs):
+        if self._test_mode:
+            return self._headless_root.grid_columnconfigure(*args, **kwargs)
+        return super().grid_columnconfigure(*args, **kwargs)
+
+    def grid_rowconfigure(self, *args, **kwargs):
+        if self._test_mode:
+            return self._headless_root.grid_rowconfigure(*args, **kwargs)
+        return super().grid_rowconfigure(*args, **kwargs)
 
     # =========================================================
     # CORE BOOTSTRAP
@@ -285,50 +429,78 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
     # =========================================================
     # VARS
     # =========================================================
+    def _make_string_var(self, value: str = ""):
+        if self._test_mode:
+            return _HeadlessStringVar(value)
+        return tk.StringVar(value=value)
+
+    def _make_bool_var(self, value: bool = False):
+        if self._test_mode:
+            return _HeadlessBoolVar(value)
+        return tk.BooleanVar(value=value)
+
     def _build_vars(self):
-        self.bf_username_var = tk.StringVar()
-        self.bf_password_var = tk.StringVar()
-        self.bf_app_key_var = tk.StringVar()
-        self.bf_cert_var = tk.StringVar()
-        self.bf_key_var = tk.StringVar()
+        self.bf_username_var = self._make_string_var()
+        self.bf_password_var = self._make_string_var()
+        self.bf_app_key_var = self._make_string_var()
+        self.bf_cert_var = self._make_string_var()
+        self.bf_key_var = self._make_string_var()
 
-        self.rs_target_var = tk.StringVar(value="3.0")
-        self.rs_max_single_var = tk.StringVar(value="18.0")
-        self.rs_max_total_var = tk.StringVar(value="35.0")
-        self.rs_max_event_var = tk.StringVar(value="18.0")
-        self.rs_auto_reset_var = tk.StringVar(value="15.0")
-        self.rs_defense_var = tk.StringVar(value="7.5")
-        self.rs_lockdown_var = tk.StringVar(value="20.0")
-        self.rs_expansion_profit_var = tk.StringVar(value="5.0")
-        self.rs_expansion_mult_var = tk.StringVar(value="1.10")
-        self.rs_defense_mult_var = tk.StringVar(value="0.80")
-        self.rs_table_count_var = tk.StringVar(value="5")
-        self.rs_recovery_tables_var = tk.StringVar(value="2")
-        self.rs_commission_var = tk.StringVar(value="4.5")
-        self.rs_min_stake_var = tk.StringVar(value="0.10")
-        self.rs_max_abs_var = tk.StringVar(value="10000.0")
-        self.rs_allow_recovery_var = tk.BooleanVar(value=True)
-        self.rs_anti_dup_var = tk.BooleanVar(value=True)
-        self.rs_risk_profile_var = tk.StringVar(value="BALANCED")
+        self.rs_target_var = self._make_string_var("3.0")
+        self.rs_max_single_var = self._make_string_var("18.0")
+        self.rs_max_total_var = self._make_string_var("35.0")
+        self.rs_max_event_var = self._make_string_var("18.0")
+        self.rs_auto_reset_var = self._make_string_var("15.0")
+        self.rs_defense_var = self._make_string_var("7.5")
+        self.rs_lockdown_var = self._make_string_var("20.0")
+        self.rs_expansion_profit_var = self._make_string_var("5.0")
+        self.rs_expansion_mult_var = self._make_string_var("1.10")
+        self.rs_defense_mult_var = self._make_string_var("0.80")
+        self.rs_table_count_var = self._make_string_var("5")
+        self.rs_recovery_tables_var = self._make_string_var("2")
+        self.rs_commission_var = self._make_string_var("4.5")
+        self.rs_min_stake_var = self._make_string_var("0.10")
+        self.rs_max_abs_var = self._make_string_var("10000.0")
+        self.rs_allow_recovery_var = self._make_bool_var(True)
+        self.rs_anti_dup_var = self._make_bool_var(True)
+        self.rs_risk_profile_var = self._make_string_var("BALANCED")
 
-        self.simulation_mode_var = tk.BooleanVar(value=True)
+        self.simulation_mode_var = self._make_bool_var(True)
 
-        self.status_mode_var = tk.StringVar(value="STOPPED")
-        self.status_betfair_var = tk.StringVar(value="DISCONNECTED")
-        self.status_telegram_var = tk.StringVar(value="STOPPED")
-        self.status_bankroll_var = tk.StringVar(value="0.00")
-        self.status_drawdown_var = tk.StringVar(value="0.00")
-        self.status_exposure_var = tk.StringVar(value="0.00")
-        self.status_tables_var = tk.StringVar(value="0")
-        self.status_last_signal_var = tk.StringVar(value="-")
-        self.status_last_error_var = tk.StringVar(value="-")
-        self.sim_label_var = tk.StringVar(value="SIMULAZIONE")
-        self.status_broker_var = tk.StringVar(value="SIMULATION")
+        self.status_mode_var = self._make_string_var("STOPPED")
+        self.status_betfair_var = self._make_string_var("DISCONNECTED")
+        self.status_telegram_var = self._make_string_var("STOPPED")
+        self.status_bankroll_var = self._make_string_var("0.00")
+        self.status_drawdown_var = self._make_string_var("0.00")
+        self.status_exposure_var = self._make_string_var("0.00")
+        self.status_tables_var = self._make_string_var("0")
+        self.status_last_signal_var = self._make_string_var("-")
+        self.status_last_error_var = self._make_string_var("-")
+        self.sim_label_var = self._make_string_var("SIMULAZIONE")
+        self.status_broker_var = self._make_string_var("SIMULATION")
 
     # =========================================================
     # UI
     # =========================================================
     def _build_ui(self):
+        if self._test_mode:
+            self.tabs = object()
+            self.tab_dashboard = object()
+            self.tab_settings = object()
+            self.tab_telegram = object()
+            self.tab_roserpina = object()
+            self.tab_risk = object()
+            self.tab_log = object()
+
+            self._build_topbar()
+            self._build_dashboard_tab()
+            self._build_settings_tab()
+            self._build_telegram_tab()
+            self._build_roserpina_tab()
+            self._build_risk_tab()
+            self._build_log_tab()
+            return
+
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
 
@@ -352,6 +524,11 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._build_log_tab()
 
     def _build_topbar(self):
+        if self._test_mode:
+            self.live_sim_switch = object()
+            self.live_sim_label = object()
+            return
+
         top = ctk.CTkFrame(self, fg_color="transparent")
         top.grid(row=0, column=0, sticky="ew", padx=12, pady=12)
         try:
@@ -390,6 +567,15 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.live_sim_label.pack(side=tk.LEFT, padx=10)
 
     def _build_dashboard_tab(self):
+        if self._test_mode:
+            self.btn_start = _DummyButton(self._runtime_start)
+            self.btn_pause = _DummyButton(self._runtime_pause)
+            self.btn_resume = _DummyButton(self._runtime_resume)
+            self.btn_stop = _DummyButton(self._runtime_stop)
+            self.btn_reset = _DummyButton(self._runtime_reset)
+            self.btn_refresh = _DummyButton(self._refresh_runtime_status)
+            return
+
         frame = self.tab_dashboard
         try:
             frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
@@ -435,6 +621,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         ctk.CTkLabel(err, textvariable=self.status_last_error_var, wraplength=1200).pack(anchor="w", padx=12, pady=(0, 10))
 
     def _build_settings_tab(self):
+        if self._test_mode:
+            self.btn_save_betfair = _DummyButton(self._save_betfair_settings)
+            return
+
         frame = self.tab_settings
         box = ctk.CTkFrame(frame)
         box.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
@@ -455,9 +645,15 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.btn_save_betfair.pack(side=tk.LEFT, padx=6)
 
     def _build_telegram_tab(self):
+        if self._test_mode:
+            return
         TelegramTabUI(self.tab_telegram, self)
 
     def _build_roserpina_tab(self):
+        if self._test_mode:
+            self.btn_save_roserpina = _DummyButton(self._save_roserpina_settings)
+            return
+
         frame = self.tab_roserpina
         outer = ctk.CTkScrollableFrame(frame)
         outer.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
@@ -501,6 +697,11 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.btn_save_roserpina.pack(anchor="w", padx=12, pady=12)
 
     def _build_risk_tab(self):
+        if self._test_mode:
+            self.risk_tree = _DummyTree()
+            self.btn_refresh_risk = _DummyButton(self._refresh_runtime_status)
+            return
+
         frame = self.tab_risk
         try:
             frame.grid_rowconfigure(0, weight=1)
@@ -537,11 +738,17 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.btn_refresh_risk.pack(side=tk.LEFT, padx=6)
 
     def _build_log_tab(self):
+        if self._test_mode:
+            self.log_text = _DummyLog()
+            return
+
         frame = self.tab_log
         self.log_text = ctk.CTkTextbox(frame)
         self.log_text.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
 
     def _labeled_entry(self, parent, label, variable, width=320, show=None):
+        if self._test_mode:
+            return
         row = ctk.CTkFrame(parent, fg_color="transparent")
         row.pack(fill=tk.X, padx=12, pady=6)
         ctk.CTkLabel(row, text=label, width=220, anchor="w").pack(side=tk.LEFT, padx=8, pady=8)
