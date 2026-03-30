@@ -34,6 +34,7 @@ class FakeSession:
 
 
 @pytest.mark.integration
+@pytest.mark.net
 def test_network_error_then_success_recovers_for_market_book():
     from betfair_client import BetfairClient
 
@@ -63,6 +64,7 @@ def test_network_error_then_success_recovers_for_market_book():
 
 
 @pytest.mark.integration
+@pytest.mark.net
 def test_network_error_then_success_recovers_for_place_bet():
     from betfair_client import BetfairClient
 
