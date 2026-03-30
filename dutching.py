@@ -87,14 +87,11 @@ def _equalize_stakes_post_rounding(
 
         improved = False
 
-        # Prova a spostare 0.01 dalla stake che genera profitto più alto
-        # verso quella che genera profitto più basso.
         candidate = list(stakes)
         if candidate[max_idx] > TWOPLACES:
             candidate[max_idx] = _round_step(candidate[max_idx] - TWOPLACES)
             candidate[min_idx] = _round_step(candidate[min_idx] + TWOPLACES)
 
-            # riallinea total stake
             diff = total_stake_d - sum(candidate)
             if diff != Decimal("0"):
                 candidate[min_idx] = _round_step(candidate[min_idx] + diff)
@@ -109,7 +106,6 @@ def _equalize_stakes_post_rounding(
         if not improved:
             break
 
-    # sicurezza finale sul totale
     diff = total_stake_d - sum(stakes)
     if stakes and diff != Decimal("0"):
         stakes[-1] = _round_step(stakes[-1] + diff)
@@ -117,7 +113,7 @@ def _equalize_stakes_post_rounding(
     return stakes
 
 
-def calculate_dutching_stakes(
+def _calculate_dutching_stakes_advanced(
     odds: List[float],
     total_stake: float,
     commission: float = 0.0,
@@ -175,18 +171,15 @@ def calculate_dutching_stakes(
             "error": "Invalid inverse odds sum",
         }
 
-    # Base dutching
     stakes: List[Decimal] = []
     for odd in odds_d:
         stake = total_stake_d * ((Decimal("1") / odd) / inv_sum)
         stakes.append(_round_step(stake))
 
-    # riallinea totale
     diff = total_stake_d - sum(stakes)
     if stakes:
         stakes[-1] = _round_step(stakes[-1] + diff)
 
-    # Equalizzazione pro
     if equalize and len(stakes) >= 2:
         stakes = _equalize_stakes_post_rounding(
             stakes=stakes,
@@ -220,6 +213,23 @@ def calculate_dutching_stakes(
         "avg_profit": float(_round_step(avg_profit)),
         "avg_net_profit": float(_round_step(avg_net_profit)),
     }
+
+
+def calculate_dutching_stakes(
+    odds: List[float],
+    total_stake: float,
+) -> Dict[str, Any]:
+    """
+    API pubblica compatibile con i guardrails.
+    Mantiene la firma storica a 2 parametri.
+    """
+    return _calculate_dutching_stakes_advanced(
+        odds=odds,
+        total_stake=total_stake,
+        commission=0.0,
+        equalize=True,
+        commission_aware=True,
+    )
 
 
 def dynamic_cashout_single(
