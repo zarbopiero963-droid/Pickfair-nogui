@@ -1,0 +1,64 @@
+[
+  {
+    "jsonrpc": "2.0",
+    "result": [
+      {
+        "marketId": "1.23456789",
+        "status": "OPEN",
+        "isMarketDataDelayed": false,
+        "totalMatched": 15432.18,
+        "runners": [
+          {
+            "selectionId": 101,
+            "status": "ACTIVE",
+            "lastPriceTraded": 2.02,
+            "totalMatched": 9342.5,
+            "ex": {
+              "availableToBack": [
+                {
+                  "price": 2.0,
+                  "size": 120.55
+                },
+                {
+                  "price": 1.99,
+                  "size": 80.12
+                }
+              ],
+              "availableToLay": [
+                {
+                  "price": 2.02,
+                  "size": 140.77
+                },
+                {
+                  "price": 2.04,
+                  "size": 95.11
+                }
+              ]
+            }
+          },
+          {
+            "selectionId": 202,
+            "status": "ACTIVE",
+            "lastPriceTraded": 3.45,
+            "totalMatched": 6090.1,
+            "ex": {
+              "availableToBack": [
+                {
+                  "price": 3.4,
+                  "size": 88.5
+                }
+              ],
+              "availableToLay": [
+                {
+                  "price": 3.45,
+                  "size": 92.2
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "id": 1
+  }
+]
