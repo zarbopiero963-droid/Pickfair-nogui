@@ -2,11 +2,125 @@ from __future__ import annotations
 
 import tkinter as tk
 from tkinter import ttk, messagebox
+from typing import Callable
 
-import customtkinter as ctk
+try:
+    import customtkinter as ctk
+except Exception:  # pragma: no cover
+    class _FallbackCTk(tk.Tk):
+        pass
+
+    class _FallbackFrame(tk.Frame):
+        def __init__(self, master=None, fg_color=None, **kwargs):
+            super().__init__(master, **kwargs)
+
+    class _FallbackLabel(tk.Label):
+        def __init__(
+            self,
+            master=None,
+            text="",
+            textvariable=None,
+            font=None,
+            anchor=None,
+            wraplength=None,
+            width=None,
+            **kwargs,
+        ):
+            super().__init__(
+                master,
+                text=text,
+                textvariable=textvariable,
+                font=font,
+                anchor=anchor,
+                wraplength=wraplength,
+                width=width,
+                **kwargs,
+            )
+
+    class _FallbackButton(tk.Button):
+        def __init__(self, master=None, text="", command=None, **kwargs):
+            super().__init__(master, text=text, command=command, **kwargs)
+
+    class _FallbackEntry(tk.Entry):
+        def __init__(self, master=None, textvariable=None, width=None, show=None, **kwargs):
+            super().__init__(master, textvariable=textvariable, show=show, **kwargs)
+
+    class _FallbackCheckBox(tk.Checkbutton):
+        def __init__(self, master=None, text="", variable=None, **kwargs):
+            super().__init__(master, text=text, variable=variable, **kwargs)
+
+    class _FallbackSwitch(tk.Checkbutton):
+        def __init__(
+            self,
+            master=None,
+            text="",
+            variable=None,
+            command=None,
+            onvalue=True,
+            offvalue=False,
+            **kwargs,
+        ):
+            super().__init__(
+                master,
+                text=text,
+                variable=variable,
+                command=command,
+                onvalue=onvalue,
+                offvalue=offvalue,
+                **kwargs,
+            )
+
+        def select(self):
+            return None
+
+    class _FallbackComboBox(ttk.Combobox):
+        def __init__(self, master=None, variable=None, values=None, width=None, **kwargs):
+            super().__init__(master, textvariable=variable, values=values or [], width=width, **kwargs)
+
+    class _FallbackText(tk.Text):
+        pass
+
+    class _FallbackScrollableFrame(tk.Frame):
+        def __init__(self, master=None, **kwargs):
+            super().__init__(master, **kwargs)
+
+    class _FallbackTabview(tk.Frame):
+        def __init__(self, master=None, **kwargs):
+            super().__init__(master, **kwargs)
+            self._tabs: dict[str, tk.Frame] = {}
+
+        def add(self, name: str):
+            frame = tk.Frame(self)
+            self._tabs[name] = frame
+            frame.pack(fill=tk.BOTH, expand=True)
+            return frame
+
+    class _FallbackModule:
+        CTk = _FallbackCTk
+        CTkFrame = _FallbackFrame
+        CTkLabel = _FallbackLabel
+        CTkButton = _FallbackButton
+        CTkEntry = _FallbackEntry
+        CTkCheckBox = _FallbackCheckBox
+        CTkSwitch = _FallbackSwitch
+        CTkComboBox = _FallbackComboBox
+        CTkTextbox = _FallbackText
+        CTkScrollableFrame = _FallbackScrollableFrame
+        CTkTabview = _FallbackTabview
+
+        @staticmethod
+        def set_appearance_mode(_mode: str):
+            return None
+
+        @staticmethod
+        def set_default_color_theme(_theme: str):
+            return None
+
+    ctk = _FallbackModule()
+
 
 from database import Database
-from event_bus import EventBus
+from core.event_bus import EventBus
 from executor_manager import ExecutorManager
 from shutdown_manager import ShutdownManager
 
@@ -18,28 +132,60 @@ from core.trading_engine import TradingEngine
 from core.runtime_controller import RuntimeController
 
 from controllers.telegram_controller import TelegramController
-from telegram_module import TelegramModule
-from telegram_tab_ui import TelegramTabUI
-from theme import COLORS, FONTS
+
+try:
+    from telegram_module import TelegramModule
+except Exception:  # pragma: no cover
+    class TelegramModule:
+        pass
+
+try:
+    from telegram_tab_ui import TelegramTabUI
+except Exception:  # pragma: no cover
+    class TelegramTabUI:
+        def __init__(self, parent, app):
+            frame = ctk.CTkFrame(parent)
+            frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+            ctk.CTkLabel(frame, text="Telegram UI non disponibile").pack(anchor="w", padx=12, pady=12)
+
+try:
+    from theme import COLORS, FONTS
+except Exception:  # pragma: no cover
+    COLORS = {}
+    FONTS = {}
 
 
 class SimpleUIQueue:
     def __init__(self, root: tk.Misc):
         self.root = root
 
-    def post(self, fn, *args, **kwargs):
-        self.root.after(0, lambda: fn(*args, **kwargs))
+    def post(self, fn: Callable, *args, **kwargs):
+        if hasattr(self.root, "after"):
+            self.root.after(0, lambda: fn(*args, **kwargs))
+        else:
+            fn(*args, **kwargs)
 
 
 class MiniPickfairGUI(ctk.CTk, TelegramModule):
-    def __init__(self):
+    def __init__(self, test_mode: bool = False):
         super().__init__()
+
+        self._test_mode = bool(test_mode)
 
         self.title("Pickfair Mini GUI")
         self.geometry("1420x900")
 
-        ctk.set_appearance_mode("dark")
-        ctk.set_default_color_theme("blue")
+        try:
+            ctk.set_appearance_mode("dark")
+            ctk.set_default_color_theme("blue")
+        except Exception:
+            pass
+
+        if self._test_mode:
+            try:
+                self.withdraw()
+            except Exception:
+                pass
 
         self.simulation_mode = True
         self.telegram_status = "STOPPED"
@@ -50,7 +196,9 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._load_initial_settings()
         self._wire_bus()
         self._apply_simulation_mode_to_runtime()
-        self._start_polling()
+
+        if not self._test_mode:
+            self._start_polling()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -91,26 +239,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
         self.telegram_controller = TelegramController(self)
 
-        self._register_shutdown_hook(
-            "telegram_stop",
-            self.telegram_service.stop,
-            priority=10,
-        )
-        self._register_shutdown_hook(
-            "betfair_disconnect",
-            self.betfair_service.disconnect,
-            priority=20,
-        )
-        self._register_shutdown_hook(
-            "db_close",
-            self.db.close_all_connections,
-            priority=30,
-        )
-        self._register_shutdown_hook(
-            "executor_shutdown",
-            self.executor.shutdown,
-            priority=40,
-        )
+        self._register_shutdown_hook("telegram_stop", self.telegram_service.stop, priority=10)
+        self._register_shutdown_hook("betfair_disconnect", self.betfair_service.disconnect, priority=20)
+        self._register_shutdown_hook("db_close", self.db.close_all_connections, priority=30)
+        self._register_shutdown_hook("executor_shutdown", self.executor.shutdown, priority=40)
 
     def _register_shutdown_hook(self, name, fn, priority=100):
         if hasattr(self.shutdown, "register"):
@@ -137,22 +269,29 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
     def _apply_simulation_mode_to_runtime(self):
         self.simulation_mode = bool(self.simulation_mode_var.get())
-        self.betfair_service.set_simulation_mode(self.simulation_mode)
+
+        if hasattr(self.betfair_service, "set_simulation_mode"):
+            try:
+                self.betfair_service.set_simulation_mode(self.simulation_mode)
+            except Exception:
+                pass
+
         if hasattr(self.runtime, "set_simulation_mode"):
-            self.runtime.set_simulation_mode(self.simulation_mode)
+            try:
+                self.runtime.set_simulation_mode(self.simulation_mode)
+            except Exception:
+                pass
 
     # =========================================================
-    # TK VARS
+    # VARS
     # =========================================================
     def _build_vars(self):
-        # Betfair
         self.bf_username_var = tk.StringVar()
         self.bf_password_var = tk.StringVar()
         self.bf_app_key_var = tk.StringVar()
         self.bf_cert_var = tk.StringVar()
         self.bf_key_var = tk.StringVar()
 
-        # Roserpina
         self.rs_target_var = tk.StringVar(value="3.0")
         self.rs_max_single_var = tk.StringVar(value="18.0")
         self.rs_max_total_var = tk.StringVar(value="35.0")
@@ -172,10 +311,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.rs_anti_dup_var = tk.BooleanVar(value=True)
         self.rs_risk_profile_var = tk.StringVar(value="BALANCED")
 
-        # Live / simulation
         self.simulation_mode_var = tk.BooleanVar(value=True)
 
-        # Status vars
         self.status_mode_var = tk.StringVar(value="STOPPED")
         self.status_betfair_var = tk.StringVar(value="DISCONNECTED")
         self.status_telegram_var = tk.StringVar(value="STOPPED")
@@ -217,13 +354,12 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
     def _build_topbar(self):
         top = ctk.CTkFrame(self, fg_color="transparent")
         top.grid(row=0, column=0, sticky="ew", padx=12, pady=12)
-        top.grid_columnconfigure(1, weight=1)
+        try:
+            top.grid_columnconfigure(1, weight=1)
+        except Exception:
+            pass
 
-        title = ctk.CTkLabel(
-            top,
-            text="Pickfair Mini Control Panel",
-            font=("Segoe UI", 18, "bold"),
-        )
+        title = ctk.CTkLabel(top, text="Pickfair Mini Control Panel", font=("Segoe UI", 18, "bold"))
         title.grid(row=0, column=0, sticky="w")
 
         center = ctk.CTkFrame(top, fg_color="transparent")
@@ -240,7 +376,11 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             offvalue=False,
         )
         self.live_sim_switch.pack(side=tk.LEFT, padx=6)
-        self.live_sim_switch.select()
+        if hasattr(self.live_sim_switch, "select"):
+            try:
+                self.live_sim_switch.select()
+            except Exception:
+                pass
 
         self.live_sim_label = ctk.CTkLabel(
             center,
@@ -251,7 +391,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
     def _build_dashboard_tab(self):
         frame = self.tab_dashboard
-        frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
+        try:
+            frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
+        except Exception:
+            pass
 
         cards = [
             ("Runtime", self.status_mode_var),
@@ -270,35 +413,26 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             c = idx % 4
             card = ctk.CTkFrame(frame)
             card.grid(row=r, column=c, sticky="nsew", padx=8, pady=8)
-            ctk.CTkLabel(
-                card,
-                text=label,
-                font=("Segoe UI", 12),
-            ).pack(anchor="w", padx=12, pady=(10, 4))
-            ctk.CTkLabel(
-                card,
-                textvariable=var,
-                font=("Segoe UI", 16, "bold"),
-            ).pack(anchor="w", padx=12, pady=(0, 10))
+            ctk.CTkLabel(card, text=label, font=("Segoe UI", 12)).pack(anchor="w", padx=12, pady=(10, 4))
+            ctk.CTkLabel(card, textvariable=var, font=("Segoe UI", 16, "bold")).pack(anchor="w", padx=12, pady=(0, 10))
 
         controls = ctk.CTkFrame(frame)
         controls.grid(row=3, column=0, columnspan=4, sticky="ew", padx=8, pady=8)
 
-        ctk.CTkButton(controls, text="Avvia", command=self._runtime_start).pack(side=tk.LEFT, padx=6, pady=10)
-        ctk.CTkButton(controls, text="Pausa", command=self._runtime_pause).pack(side=tk.LEFT, padx=6, pady=10)
-        ctk.CTkButton(controls, text="Resume", command=self._runtime_resume).pack(side=tk.LEFT, padx=6, pady=10)
-        ctk.CTkButton(controls, text="Stop", command=self._runtime_stop).pack(side=tk.LEFT, padx=6, pady=10)
-        ctk.CTkButton(controls, text="Reset Ciclo", command=self._runtime_reset).pack(side=tk.LEFT, padx=6, pady=10)
-        ctk.CTkButton(controls, text="Refresh", command=self._refresh_runtime_status).pack(side=tk.LEFT, padx=6, pady=10)
+        self.btn_start = ctk.CTkButton(controls, text="Avvia", command=self._runtime_start)
+        self.btn_pause = ctk.CTkButton(controls, text="Pausa", command=self._runtime_pause)
+        self.btn_resume = ctk.CTkButton(controls, text="Resume", command=self._runtime_resume)
+        self.btn_stop = ctk.CTkButton(controls, text="Stop", command=self._runtime_stop)
+        self.btn_reset = ctk.CTkButton(controls, text="Reset Ciclo", command=self._runtime_reset)
+        self.btn_refresh = ctk.CTkButton(controls, text="Refresh", command=self._refresh_runtime_status)
+
+        for btn in [self.btn_start, self.btn_pause, self.btn_resume, self.btn_stop, self.btn_reset, self.btn_refresh]:
+            btn.pack(side=tk.LEFT, padx=6, pady=10)
 
         err = ctk.CTkFrame(frame)
         err.grid(row=4, column=0, columnspan=4, sticky="ew", padx=8, pady=8)
         ctk.CTkLabel(err, text="Ultimo Errore", font=("Segoe UI", 12)).pack(anchor="w", padx=12, pady=(10, 4))
-        ctk.CTkLabel(
-            err,
-            textvariable=self.status_last_error_var,
-            wraplength=1200,
-        ).pack(anchor="w", padx=12, pady=(0, 10))
+        ctk.CTkLabel(err, textvariable=self.status_last_error_var, wraplength=1200).pack(anchor="w", padx=12, pady=(0, 10))
 
     def _build_settings_tab(self):
         frame = self.tab_settings
@@ -313,11 +447,12 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
         btns = ctk.CTkFrame(box, fg_color="transparent")
         btns.pack(fill=tk.X, padx=12, pady=12)
-        ctk.CTkButton(
+        self.btn_save_betfair = ctk.CTkButton(
             btns,
             text="Salva Impostazioni Betfair",
             command=self._save_betfair_settings,
-        ).pack(side=tk.LEFT, padx=6)
+        )
+        self.btn_save_betfair.pack(side=tk.LEFT, padx=6)
 
     def _build_telegram_tab(self):
         TelegramTabUI(self.tab_telegram, self)
@@ -355,27 +490,23 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
         cb = ctk.CTkFrame(outer)
         cb.pack(fill=tk.X, padx=12, pady=6)
-        ctk.CTkCheckBox(
-            cb,
-            text="Allow Recovery",
-            variable=self.rs_allow_recovery_var,
-        ).pack(side=tk.LEFT, padx=8, pady=8)
-        ctk.CTkCheckBox(
-            cb,
-            text="Anti Duplication Enabled",
-            variable=self.rs_anti_dup_var,
-        ).pack(side=tk.LEFT, padx=8, pady=8)
+        ctk.CTkCheckBox(cb, text="Allow Recovery", variable=self.rs_allow_recovery_var).pack(side=tk.LEFT, padx=8, pady=8)
+        ctk.CTkCheckBox(cb, text="Anti Duplication Enabled", variable=self.rs_anti_dup_var).pack(side=tk.LEFT, padx=8, pady=8)
 
-        ctk.CTkButton(
+        self.btn_save_roserpina = ctk.CTkButton(
             outer,
             text="Salva Roserpina",
             command=self._save_roserpina_settings,
-        ).pack(anchor="w", padx=12, pady=12)
+        )
+        self.btn_save_roserpina.pack(anchor="w", padx=12, pady=12)
 
     def _build_risk_tab(self):
         frame = self.tab_risk
-        frame.grid_rowconfigure(0, weight=1)
-        frame.grid_columnconfigure(0, weight=1)
+        try:
+            frame.grid_rowconfigure(0, weight=1)
+            frame.grid_columnconfigure(0, weight=1)
+        except Exception:
+            pass
 
         self.risk_tree = ttk.Treeview(
             frame,
@@ -398,11 +529,12 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
         btns = ctk.CTkFrame(frame, fg_color="transparent")
         btns.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 12))
-        ctk.CTkButton(
+        self.btn_refresh_risk = ctk.CTkButton(
             btns,
             text="Refresh Risk Desk",
             command=self._refresh_runtime_status,
-        ).pack(side=tk.LEFT, padx=6)
+        )
+        self.btn_refresh_risk.pack(side=tk.LEFT, padx=6)
 
     def _build_log_tab(self):
         frame = self.tab_log
@@ -419,31 +551,41 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
     # SETTINGS LOAD / SAVE
     # =========================================================
     def _load_initial_settings(self):
-        bf = self.settings_service.load_betfair_config()
-        self.bf_username_var.set(bf.username)
-        self.bf_app_key_var.set(bf.app_key)
-        self.bf_cert_var.set(bf.certificate)
-        self.bf_key_var.set(bf.private_key)
+        try:
+            if hasattr(self.settings_service, "load_betfair_config"):
+                bf = self.settings_service.load_betfair_config()
+                self.bf_username_var.set(getattr(bf, "username", ""))
+                self.bf_app_key_var.set(getattr(bf, "app_key", ""))
+                self.bf_cert_var.set(getattr(bf, "certificate", ""))
+                self.bf_key_var.set(getattr(bf, "private_key", ""))
+        except Exception:
+            pass
 
-        rs = self.settings_service.load_roserpina_config()
-        self.rs_target_var.set(str(rs.target_profit_cycle_pct))
-        self.rs_max_single_var.set(str(rs.max_single_bet_pct))
-        self.rs_max_total_var.set(str(rs.max_total_exposure_pct))
-        self.rs_max_event_var.set(str(rs.max_event_exposure_pct))
-        self.rs_auto_reset_var.set(str(rs.auto_reset_drawdown_pct))
-        self.rs_defense_var.set(str(rs.defense_drawdown_pct))
-        self.rs_lockdown_var.set(str(rs.lockdown_drawdown_pct))
-        self.rs_expansion_profit_var.set(str(rs.expansion_profit_pct))
-        self.rs_expansion_mult_var.set(str(rs.expansion_multiplier))
-        self.rs_defense_mult_var.set(str(rs.defense_multiplier))
-        self.rs_table_count_var.set(str(rs.table_count))
-        self.rs_recovery_tables_var.set(str(rs.max_recovery_tables))
-        self.rs_commission_var.set(str(rs.commission_pct))
-        self.rs_min_stake_var.set(str(rs.min_stake))
-        self.rs_max_abs_var.set(str(rs.max_stake_abs))
-        self.rs_allow_recovery_var.set(bool(rs.allow_recovery))
-        self.rs_anti_dup_var.set(bool(rs.anti_duplication_enabled))
-        self.rs_risk_profile_var.set(rs.risk_profile.value)
+        try:
+            if hasattr(self.settings_service, "load_roserpina_config"):
+                rs = self.settings_service.load_roserpina_config()
+                self.rs_target_var.set(str(getattr(rs, "target_profit_cycle_pct", self.rs_target_var.get())))
+                self.rs_max_single_var.set(str(getattr(rs, "max_single_bet_pct", self.rs_max_single_var.get())))
+                self.rs_max_total_var.set(str(getattr(rs, "max_total_exposure_pct", self.rs_max_total_var.get())))
+                self.rs_max_event_var.set(str(getattr(rs, "max_event_exposure_pct", self.rs_max_event_var.get())))
+                self.rs_auto_reset_var.set(str(getattr(rs, "auto_reset_drawdown_pct", self.rs_auto_reset_var.get())))
+                self.rs_defense_var.set(str(getattr(rs, "defense_drawdown_pct", self.rs_defense_var.get())))
+                self.rs_lockdown_var.set(str(getattr(rs, "lockdown_drawdown_pct", self.rs_lockdown_var.get())))
+                self.rs_expansion_profit_var.set(str(getattr(rs, "expansion_profit_pct", self.rs_expansion_profit_var.get())))
+                self.rs_expansion_mult_var.set(str(getattr(rs, "expansion_multiplier", self.rs_expansion_mult_var.get())))
+                self.rs_defense_mult_var.set(str(getattr(rs, "defense_multiplier", self.rs_defense_mult_var.get())))
+                self.rs_table_count_var.set(str(getattr(rs, "table_count", self.rs_table_count_var.get())))
+                self.rs_recovery_tables_var.set(str(getattr(rs, "max_recovery_tables", self.rs_recovery_tables_var.get())))
+                self.rs_commission_var.set(str(getattr(rs, "commission_pct", self.rs_commission_var.get())))
+                self.rs_min_stake_var.set(str(getattr(rs, "min_stake", self.rs_min_stake_var.get())))
+                self.rs_max_abs_var.set(str(getattr(rs, "max_stake_abs", self.rs_max_abs_var.get())))
+                self.rs_allow_recovery_var.set(bool(getattr(rs, "allow_recovery", self.rs_allow_recovery_var.get())))
+                self.rs_anti_dup_var.set(bool(getattr(rs, "anti_duplication_enabled", self.rs_anti_dup_var.get())))
+                risk_profile = getattr(rs, "risk_profile", None)
+                risk_profile_value = getattr(risk_profile, "value", self.rs_risk_profile_var.get())
+                self.rs_risk_profile_var.set(str(risk_profile_value))
+        except Exception:
+            pass
 
         self._load_simulation_settings()
 
@@ -461,51 +603,72 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.sim_label_var.set("SIMULAZIONE" if enabled else "LIVE")
         self.status_broker_var.set("SIMULATION" if enabled else "LIVE")
 
-    def _save_betfair_settings(self):
-        from core.system_state import BetfairConfig
+    def _safe_show_info(self, title: str, msg: str):
+        if self._test_mode:
+            self._log(f"INFO {title}: {msg}")
+            return
+        try:
+            messagebox.showinfo(title, msg)
+        except Exception:
+            self._log(f"INFO {title}: {msg}")
 
-        cfg = BetfairConfig(
-            username=self.bf_username_var.get().strip(),
-            app_key=self.bf_app_key_var.get().strip(),
-            certificate=self.bf_cert_var.get().strip(),
-            private_key=self.bf_key_var.get().strip(),
-        )
-        self.settings_service.save_betfair_config(
-            cfg,
-            password=self.bf_password_var.get(),
-        )
-        messagebox.showinfo("OK", "Impostazioni Betfair salvate.")
+    def _safe_show_error(self, title: str, msg: str):
+        if self._test_mode:
+            self._log(f"ERROR {title}: {msg}")
+            return
+        try:
+            messagebox.showerror(title, msg)
+        except Exception:
+            self._log(f"ERROR {title}: {msg}")
+
+    def _save_betfair_settings(self):
+        try:
+            from core.system_state import BetfairConfig
+
+            cfg = BetfairConfig(
+                username=self.bf_username_var.get().strip(),
+                app_key=self.bf_app_key_var.get().strip(),
+                certificate=self.bf_cert_var.get().strip(),
+                private_key=self.bf_key_var.get().strip(),
+            )
+            self.settings_service.save_betfair_config(cfg, password=self.bf_password_var.get())
+            self._safe_show_info("OK", "Impostazioni Betfair salvate.")
+        except Exception as exc:
+            self._safe_show_error("Errore salvataggio Betfair", str(exc))
 
     def _save_roserpina_settings(self):
-        from core.system_state import RoserpinaConfig, RiskProfile
+        try:
+            from core.system_state import RoserpinaConfig, RiskProfile
 
-        cfg = RoserpinaConfig(
-            target_profit_cycle_pct=float(self.rs_target_var.get()),
-            max_single_bet_pct=float(self.rs_max_single_var.get()),
-            max_total_exposure_pct=float(self.rs_max_total_var.get()),
-            max_event_exposure_pct=float(self.rs_max_event_var.get()),
-            auto_reset_drawdown_pct=float(self.rs_auto_reset_var.get()),
-            defense_drawdown_pct=float(self.rs_defense_var.get()),
-            lockdown_drawdown_pct=float(self.rs_lockdown_var.get()),
-            expansion_profit_pct=float(self.rs_expansion_profit_var.get()),
-            expansion_multiplier=float(self.rs_expansion_mult_var.get()),
-            defense_multiplier=float(self.rs_defense_mult_var.get()),
-            risk_profile=RiskProfile(self.rs_risk_profile_var.get()),
-            table_count=int(self.rs_table_count_var.get()),
-            max_recovery_tables=int(self.rs_recovery_tables_var.get()),
-            allow_recovery=bool(self.rs_allow_recovery_var.get()),
-            anti_duplication_enabled=bool(self.rs_anti_dup_var.get()),
-            commission_pct=float(self.rs_commission_var.get()),
-            min_stake=float(self.rs_min_stake_var.get()),
-            max_stake_abs=float(self.rs_max_abs_var.get()),
-        )
-        self.settings_service.save_roserpina_config(cfg)
-        if hasattr(self.runtime, "reload_config"):
-            self.runtime.reload_config()
-        messagebox.showinfo("OK", "Configurazione Roserpina salvata.")
+            cfg = RoserpinaConfig(
+                target_profit_cycle_pct=float(self.rs_target_var.get()),
+                max_single_bet_pct=float(self.rs_max_single_var.get()),
+                max_total_exposure_pct=float(self.rs_max_total_var.get()),
+                max_event_exposure_pct=float(self.rs_max_event_var.get()),
+                auto_reset_drawdown_pct=float(self.rs_auto_reset_var.get()),
+                defense_drawdown_pct=float(self.rs_defense_var.get()),
+                lockdown_drawdown_pct=float(self.rs_lockdown_var.get()),
+                expansion_profit_pct=float(self.rs_expansion_profit_var.get()),
+                expansion_multiplier=float(self.rs_expansion_mult_var.get()),
+                defense_multiplier=float(self.rs_defense_mult_var.get()),
+                risk_profile=RiskProfile(self.rs_risk_profile_var.get()),
+                table_count=int(self.rs_table_count_var.get()),
+                max_recovery_tables=int(self.rs_recovery_tables_var.get()),
+                allow_recovery=bool(self.rs_allow_recovery_var.get()),
+                anti_duplication_enabled=bool(self.rs_anti_dup_var.get()),
+                commission_pct=float(self.rs_commission_var.get()),
+                min_stake=float(self.rs_min_stake_var.get()),
+                max_stake_abs=float(self.rs_max_abs_var.get()),
+            )
+            self.settings_service.save_roserpina_config(cfg)
+            if hasattr(self.runtime, "reload_config"):
+                self.runtime.reload_config()
+            self._safe_show_info("OK", "Configurazione Roserpina salvata.")
+        except Exception as exc:
+            self._safe_show_error("Errore salvataggio Roserpina", str(exc))
 
     # =========================================================
-    # LIVE / SIM SWITCH
+    # LIVE / SIM
     # =========================================================
     def _toggle_simulation_mode(self):
         self._apply_simulation_mode_to_runtime()
@@ -538,7 +701,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self._log(f"START -> {result}")
         except Exception as exc:
             self._log(f"START ERROR -> {exc}")
-            messagebox.showerror("Errore avvio", str(exc))
+            self._safe_show_error("Errore avvio", str(exc))
         self._refresh_runtime_status()
 
     def _runtime_pause(self):
@@ -547,7 +710,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self._log(f"PAUSE -> {result}")
         except Exception as exc:
             self._log(f"PAUSE ERROR -> {exc}")
-            messagebox.showerror("Errore pausa", str(exc))
+            self._safe_show_error("Errore pausa", str(exc))
         self._refresh_runtime_status()
 
     def _runtime_resume(self):
@@ -556,7 +719,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self._log(f"RESUME -> {result}")
         except Exception as exc:
             self._log(f"RESUME ERROR -> {exc}")
-            messagebox.showerror("Errore resume", str(exc))
+            self._safe_show_error("Errore resume", str(exc))
         self._refresh_runtime_status()
 
     def _runtime_stop(self):
@@ -565,7 +728,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self._log(f"STOP -> {result}")
         except Exception as exc:
             self._log(f"STOP ERROR -> {exc}")
-            messagebox.showerror("Errore stop", str(exc))
+            self._safe_show_error("Errore stop", str(exc))
         self._refresh_runtime_status()
 
     def _runtime_reset(self):
@@ -574,7 +737,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self._log(f"RESET -> {result}")
         except Exception as exc:
             self._log(f"RESET ERROR -> {exc}")
-            messagebox.showerror("Errore reset", str(exc))
+            self._safe_show_error("Errore reset", str(exc))
         self._refresh_runtime_status()
 
     # =========================================================
@@ -594,11 +757,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
     def _on_telegram_status(self, payload):
         payload = payload or {}
         self.uiq.post(self._log, f"TELEGRAM_STATUS -> {payload}")
-        self.uiq.post(
-            self._update_telegram_status,
-            payload.get("status", "UNKNOWN"),
-            payload.get("message", ""),
-        )
+        self.uiq.post(self._update_telegram_status, payload.get("status", "UNKNOWN"), payload.get("message", ""))
         self.uiq.post(self._refresh_runtime_status)
 
     def _on_signal_received(self, payload):
@@ -613,60 +772,79 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.uiq.post(self._log, f"SIGNAL_APPROVED -> {payload}")
         self.uiq.post(self._refresh_runtime_status)
 
+    def _update_telegram_status(self, status: str, message: str = ""):
+        self.telegram_status = str(status or "UNKNOWN")
+        self.status_telegram_var.set(self.telegram_status)
+        if message:
+            self.status_last_error_var.set(str(message))
+
     # =========================================================
     # STATUS / LOG
     # =========================================================
     def _refresh_runtime_status(self):
         try:
-            status = self.runtime.get_status()
+            status = self.runtime.get_status() if hasattr(self.runtime, "get_status") else {}
         except Exception as exc:
             self._log(f"STATUS ERROR -> {exc}")
-            return
+            status = {}
 
         broker_status = status.get("broker_status", {}) or {}
         funds = status.get("account_funds", {}) or {}
 
-        self.status_mode_var.set(str(status.get("mode", "-")))
+        try:
+            betfair_status = self.betfair_service.status() if hasattr(self.betfair_service, "status") else {}
+        except Exception:
+            betfair_status = {}
+
+        try:
+            telegram_status = self.telegram_service.status() if hasattr(self.telegram_service, "status") else {}
+        except Exception:
+            telegram_status = {}
+
+        self.status_mode_var.set(str(status.get("mode", "STOPPED")))
         self.status_broker_var.set(
-            str(
-                broker_status.get(
-                    "broker_type",
-                    "SIMULATION" if self.simulation_mode else "LIVE",
-                )
-            )
+            str(broker_status.get("broker_type", "SIMULATION" if self.simulation_mode else "LIVE"))
         )
-        self.status_betfair_var.set(
-            "CONNECTED" if self.betfair_service.status().get("connected") else "DISCONNECTED"
-        )
-        self.status_telegram_var.set(
-            "LISTENING" if self.telegram_service.status().get("connected") else "STOPPED"
-        )
+        self.status_betfair_var.set("CONNECTED" if betfair_status.get("connected") else "DISCONNECTED")
+        self.status_telegram_var.set("LISTENING" if telegram_status.get("connected") else self.telegram_status)
         self.status_bankroll_var.set(str(funds.get("available", status.get("bankroll_current", "0.00"))))
         self.status_drawdown_var.set(str(status.get("drawdown_pct", "0.00")))
         self.status_exposure_var.set(str(funds.get("exposure", status.get("total_exposure", "0.00"))))
         self.status_tables_var.set(str(status.get("active_tables", 0)))
         self.status_last_signal_var.set(str(status.get("last_signal_at", "-")))
-        self.status_last_error_var.set(str(status.get("last_error", "-")))
+        self.status_last_error_var.set(str(status.get("last_error", self.status_last_error_var.get() or "-")))
 
-        self.risk_tree.delete(*self.risk_tree.get_children())
-        for table in status.get("tables", []):
-            self.risk_tree.insert(
-                "",
-                tk.END,
-                values=(
-                    table.get("table_id"),
-                    table.get("status"),
-                    table.get("loss_amount"),
-                    table.get("current_exposure"),
-                    table.get("current_event_key"),
-                    table.get("market_id"),
-                    table.get("selection_id"),
-                ),
-            )
+        if hasattr(self, "risk_tree"):
+            try:
+                self.risk_tree.delete(*self.risk_tree.get_children())
+            except Exception:
+                pass
+
+            for table in status.get("tables", []) or []:
+                try:
+                    self.risk_tree.insert(
+                        "",
+                        tk.END,
+                        values=(
+                            table.get("table_id"),
+                            table.get("status"),
+                            table.get("loss_amount"),
+                            table.get("current_exposure"),
+                            table.get("current_event_key"),
+                            table.get("market_id"),
+                            table.get("selection_id"),
+                        ),
+                    )
+                except Exception:
+                    continue
 
     def _log(self, text: str):
-        self.log_text.insert("end", f"{text}\n")
-        self.log_text.see("end")
+        if hasattr(self, "log_text"):
+            try:
+                self.log_text.insert("end", f"{text}\n")
+                self.log_text.see("end")
+            except Exception:
+                pass
 
     def _start_polling(self):
         self._refresh_runtime_status()
@@ -679,7 +857,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             elif hasattr(self.shutdown, "run"):
                 self.shutdown.run()
         finally:
-            self.destroy()
+            try:
+                self.destroy()
+            except Exception:
+                pass
 
 
 def main():
