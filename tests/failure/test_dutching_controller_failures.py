@@ -1,16 +1,36 @@
 import pytest
 
 
-class ExplodingBus:
+class ExplodingBusOnFirstQuickBet:
     def __init__(self):
         self.events = []
         self.calls = 0
+        self.quick_bet_calls = 0
 
     def publish(self, event_name, payload=None):
         self.calls += 1
         self.events.append((event_name, payload))
-        if event_name == "CMD_QUICK_BET" and self.calls >= 2:
-            raise RuntimeError("publish exploded")
+
+        if event_name == "CMD_QUICK_BET":
+            self.quick_bet_calls += 1
+            if self.quick_bet_calls >= 1:
+                raise RuntimeError("publish exploded on first quick bet")
+
+
+class ExplodingBusOnSecondQuickBet:
+    def __init__(self):
+        self.events = []
+        self.calls = 0
+        self.quick_bet_calls = 0
+
+    def publish(self, event_name, payload=None):
+        self.calls += 1
+        self.events.append((event_name, payload))
+
+        if event_name == "CMD_QUICK_BET":
+            self.quick_bet_calls += 1
+            if self.quick_bet_calls >= 2:
+                raise RuntimeError("publish exploded on second quick bet")
 
 
 class FakeMode:
@@ -92,10 +112,19 @@ class FakeRuntime:
         self.dutching_batch_manager = FakeBatchManager()
 
 
-@pytest.mark.failure
-def test_rollback_clean_on_intermediate_failure(monkeypatch):
-    from controllers.dutching_controller import DutchingController
+def _payload():
+    return {
+        "market_id": "1.300",
+        "total_stake": 100.0,
+        "simulation_mode": True,
+        "selections": [
+            {"selectionId": 1, "price": 2.0, "side": "BACK"},
+            {"selectionId": 2, "price": 3.0, "side": "BACK"},
+        ],
+    }
 
+
+def _patch_calc(monkeypatch):
     def fake_calculate_dutching(selections, total_stake):
         _ = selections, total_stake
         return (
@@ -112,21 +141,43 @@ def test_rollback_clean_on_intermediate_failure(monkeypatch):
         fake_calculate_dutching,
     )
 
-    payload = {
-        "market_id": "1.300",
-        "total_stake": 100.0,
-        "simulation_mode": True,
-        "selections": [
-            {"selectionId": 1, "price": 2.0, "side": "BACK"},
-            {"selectionId": 2, "price": 3.0, "side": "BACK"},
-        ],
-    }
 
-    bus = ExplodingBus()
+@pytest.mark.failure
+def test_rollback_clean_on_first_publish_failure(monkeypatch):
+    from controllers.dutching_controller import DutchingController
+
+    _patch_calc(monkeypatch)
+
+    bus = ExplodingBusOnFirstQuickBet()
     runtime = FakeRuntime()
     controller = DutchingController(bus=bus, runtime_controller=runtime)
 
-    result = controller.submit_dutching(payload)
+    result = controller.submit_dutching(_payload())
+
+    assert result["ok"] is False
+    assert result["published_count"] == 0
+    assert result["total_count"] == 2
+    assert runtime.table_manager.unlocked == [9]
+    assert len(runtime.dutching_batch_manager.failed) == 1
+    assert len(runtime.duplication_guard.released) == 1
+
+    event_names = [name for name, _ in bus.events]
+    assert "DUTCHING_BATCH_APPROVED" in event_names
+    assert event_names.count("CMD_QUICK_BET") == 1
+    assert "DUTCHING_BATCH_PARTIAL_FAILURE" in event_names
+
+
+@pytest.mark.failure
+def test_rollback_clean_on_intermediate_failure(monkeypatch):
+    from controllers.dutching_controller import DutchingController
+
+    _patch_calc(monkeypatch)
+
+    bus = ExplodingBusOnSecondQuickBet()
+    runtime = FakeRuntime()
+    controller = DutchingController(bus=bus, runtime_controller=runtime)
+
+    result = controller.submit_dutching(_payload())
 
     assert result["ok"] is False
     assert result["published_count"] == 1
@@ -134,6 +185,11 @@ def test_rollback_clean_on_intermediate_failure(monkeypatch):
     assert runtime.table_manager.unlocked == [9]
     assert len(runtime.dutching_batch_manager.failed) == 1
     assert len(runtime.duplication_guard.released) == 1
+
+    event_names = [name for name, _ in bus.events]
+    assert "DUTCHING_BATCH_APPROVED" in event_names
+    assert event_names.count("CMD_QUICK_BET") == 2
+    assert "DUTCHING_BATCH_PARTIAL_FAILURE" in event_names
 
 
 @pytest.mark.failure
@@ -158,7 +214,10 @@ def test_error_contract_is_coherent(monkeypatch):
         ],
     }
 
-    controller = DutchingController(bus=ExplodingBus(), runtime_controller=FakeRuntime())
+    controller = DutchingController(
+        bus=ExplodingBusOnFirstQuickBet(),
+        runtime_controller=FakeRuntime(),
+    )
     result = controller.submit_dutching(payload, dry_run=True)
 
     assert result["ok"] is False
