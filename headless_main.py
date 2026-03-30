@@ -4,7 +4,7 @@ import logging
 import signal
 import sys
 import time
-from typing import Optional
+from typing import Any, Optional
 
 from database import Database
 from core.event_bus import EventBus
@@ -31,12 +31,18 @@ class HeadlessApp:
     """
     Bootstrap headless Pickfair.
 
-    Responsabilità:
-    - inizializza core/services/runtime
-    - avvia runtime live o simulation
-    - esegue recovery/reconcile al boot
-    - gestisce shutdown pulito
-    - resta in loop senza GUI
+    Perimetro di questo file:
+    - wiring componenti
+    - bootstrap robusto
+    - start/stop idempotenti
+    - recovery bootstrap trigger
+    - cleanup sicuro su failure parziale
+    - loop headless senza GUI
+
+    Non decide la correttezza business di:
+    - recovery reale degli ordini
+    - reconciliation con exchange
+    - money management
     """
 
     def __init__(self):
@@ -78,7 +84,7 @@ class HeadlessApp:
     def _cleanup_partial_build(self) -> None:
         """
         Cleanup difensivo se build() fallisce a metà.
-        Deve essere sempre safe/idempotente.
+        Sempre safe/idempotente.
         """
         try:
             if self.telegram_service is not None:
@@ -141,7 +147,7 @@ class HeadlessApp:
     def build(self) -> None:
         """
         Costruzione completa dei componenti.
-        Safe anche dopo un precedente stop/build fallito.
+        Safe anche dopo uno stop o un build fallito.
         """
         if self._built:
             return
@@ -222,7 +228,7 @@ class HeadlessApp:
                 priority=40,
             )
 
-    def _register_shutdown_hook(self, name, fn, priority=100):
+    def _register_shutdown_hook(self, name: str, fn: Any, priority: int = 100) -> None:
         if self.shutdown is None or fn is None:
             return
 
@@ -341,8 +347,6 @@ class HeadlessApp:
                 ):
                     sim_cfg = self.settings_service.load_simulation_config()
                     simulation_mode = bool(sim_cfg.get("enabled", True))
-                else:
-                    simulation_mode = True
             except Exception:
                 simulation_mode = True
 
@@ -378,13 +382,12 @@ class HeadlessApp:
         if result is None:
             raise RuntimeError("Runtime.start() ha restituito None")
 
-        if isinstance(result, dict):
-            if result.get("ok") is False:
-                raise RuntimeError(
-                    result.get("error")
-                    or result.get("reason")
-                    or "Runtime.start() fallita"
-                )
+        if isinstance(result, dict) and result.get("ok") is False:
+            raise RuntimeError(
+                result.get("error")
+                or result.get("reason")
+                or "Runtime.start() fallita"
+            )
 
         if self.runtime is None:
             raise RuntimeError("Runtime non disponibile dopo start")
