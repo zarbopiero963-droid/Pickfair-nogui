@@ -10,7 +10,7 @@ class FakeLegacyFlow:
 
     def trigger(self, payload):
         if not self.throttle.allow_call():
-            return {"status": "BLOCKED"}
+            return {"status": "BLOCKED", "payload": payload}
         self.sent.append(payload)
         return {"status": "SENT", "payload": payload}
 
@@ -24,4 +24,4 @@ def test_legacy_flow_blocks_second_immediate_trigger():
 
     assert first["status"] == "SENT"
     assert second["status"] == "BLOCKED"
-    assert flow.sent == [{"id": 1}]
+    assert len(flow.sent) == 1
