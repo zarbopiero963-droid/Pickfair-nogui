@@ -264,19 +264,19 @@ class BetfairClient:
     # =========================================================
     def calculate_cashout(
         self,
-        stake: Any,
-        odds: Any,
+        original_stake: Any,
+        original_odds: Any,
         current_odds: Any,
         side: str = "BACK",
     ) -> Dict[str, Any]:
-        stake_f = self._safe_float(stake, 0.0)
-        odds_f = self._safe_float(odds, 0.0)
+        original_stake_f = self._safe_float(original_stake, 0.0)
+        original_odds_f = self._safe_float(original_odds, 0.0)
         current_odds_f = self._safe_float(current_odds, 0.0)
         safe_side = self._safe_side(side)
 
         default_side = "LAY" if safe_side == "BACK" else "BACK"
 
-        if stake_f <= 0.0 or odds_f <= 1.0 or current_odds_f <= 1.0:
+        if original_stake_f <= 0.0 or original_odds_f <= 1.0 or current_odds_f <= 1.0:
             return {
                 "cashout_stake": 0.0,
                 "profit_if_win": 0.0,
@@ -284,21 +284,27 @@ class BetfairClient:
                 "side_to_place": default_side,
             }
 
-        cashout = round((stake_f * odds_f) / current_odds_f, 2)
+        cashout = round((original_stake_f * original_odds_f) / current_odds_f, 2)
 
         if safe_side == "BACK":
-            profit_win = stake_f * (odds_f - 1.0) - cashout * (current_odds_f - 1.0)
-            profit_lose = cashout - stake_f
+            profit_if_win = (
+                original_stake_f * (original_odds_f - 1.0)
+                - cashout * (current_odds_f - 1.0)
+            )
+            profit_if_lose = cashout - original_stake_f
             side_to_place = "LAY"
         else:
-            profit_win = cashout * (current_odds_f - 1.0) - stake_f * (odds_f - 1.0)
-            profit_lose = stake_f - cashout
+            profit_if_win = (
+                cashout * (current_odds_f - 1.0)
+                - original_stake_f * (original_odds_f - 1.0)
+            )
+            profit_if_lose = original_stake_f - cashout
             side_to_place = "BACK"
 
         return {
             "cashout_stake": cashout,
-            "profit_if_win": round(profit_win, 2),
-            "profit_if_lose": round(profit_lose, 2),
+            "profit_if_win": round(profit_if_win, 2),
+            "profit_if_lose": round(profit_if_lose, 2),
             "side_to_place": side_to_place,
         }
 
