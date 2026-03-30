@@ -6,7 +6,7 @@ import os
 from typing import Any, Dict, Optional
 
 import requests
-from requests.exceptions import RequestException, Timeout, HTTPError
+from requests.exceptions import HTTPError, RequestException, Timeout
 
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ class BetfairClient:
         self.key_pem = str(key_pem or "").strip()
 
         self.timeout = float(timeout or 20.0)
-        self.max_retries = int(max_retries)
+        self.max_retries = max(0, int(max_retries))
 
         self.session = session or requests.Session()
 
@@ -50,43 +50,43 @@ class BetfairClient:
     # =========================================================
     # SAFE UTILS
     # =========================================================
-    def _safe_float(self, v, d=0.0):
+    def _safe_float(self, v: Any, d: float = 0.0) -> float:
         try:
             return float(v)
         except Exception:
             return float(d)
 
-    def _safe_int(self, v, d=0):
+    def _safe_int(self, v: Any, d: int = 0) -> int:
         try:
             return int(float(v))
         except Exception:
             return int(d)
 
-    def _safe_side(self, v):
-        s = str(v or "BACK").upper()
+    def _safe_side(self, v: Any) -> str:
+        s = str(v or "BACK").upper().strip()
         return s if s in {"BACK", "LAY"} else "BACK"
 
-    def _cert_tuple(self):
+    def _cert_tuple(self) -> tuple[str, str]:
         if not os.path.exists(self.cert_pem):
             raise RuntimeError("CERT_MISSING")
         if not os.path.exists(self.key_pem):
             raise RuntimeError("KEY_MISSING")
         return (self.cert_pem, self.key_pem)
 
-    def _headers(self):
-        h = {
+    def _headers(self) -> Dict[str, str]:
+        headers = {
             "X-Application": self.app_key,
             "Content-Type": "application/json",
         }
         if self.session_token:
-            h["X-Authentication"] = self.session_token
-        return h
+            headers["X-Authentication"] = self.session_token
+        return headers
 
-    def _parse_json(self, response, err_code: str):
+    def _parse_json(self, response: Any, err_code: str) -> Any:
         try:
             return response.json()
-        except Exception:
-            raise RuntimeError(err_code)
+        except Exception as exc:
+            raise RuntimeError(err_code) from exc
 
     # =========================================================
     # ERROR CLASSIFICATION
@@ -109,6 +109,9 @@ class BetfairClient:
         if "INVALID_JSON" in e:
             return "PERMANENT"
 
+        if "INVALID_JSON_RPC" in e:
+            return "PERMANENT"
+
         if "API_ERROR" in e:
             return "PERMANENT"
 
@@ -117,7 +120,7 @@ class BetfairClient:
     # =========================================================
     # CORE JSON-RPC
     # =========================================================
-    def _post_jsonrpc(self, url: str, method: str, params: Dict[str, Any]):
+    def _post_jsonrpc(self, url: str, method: str, params: Dict[str, Any]) -> Any:
         if not self.session_token:
             raise RuntimeError("NOT_AUTHENTICATED")
 
@@ -125,23 +128,23 @@ class BetfairClient:
             "jsonrpc": "2.0",
             "method": method,
             "params": params,
-            "id": 1
+            "id": 1,
         }]
 
-        last_error = None
+        last_error: Optional[str] = None
 
         for attempt in range(self.max_retries + 1):
             try:
-                r = self.session.post(
+                response = self.session.post(
                     url,
                     headers=self._headers(),
                     data=json.dumps(payload),
-                    timeout=self.timeout
+                    timeout=self.timeout,
                 )
 
-                r.raise_for_status()
+                response.raise_for_status()
 
-                data = self._parse_json(r, "INVALID_JSON")
+                data = self._parse_json(response, "INVALID_JSON")
 
                 if not isinstance(data, list) or not data:
                     raise RuntimeError("INVALID_JSON_RPC")
@@ -154,6 +157,7 @@ class BetfairClient:
                     if "INVALID_SESSION" in err or "NO_SESSION" in err:
                         self.connected = False
                         self.session_token = ""
+                        self.session_expiry = ""
                         raise RuntimeError("SESSION_EXPIRED")
 
                     raise RuntimeError(f"API_ERROR: {err}")
@@ -162,32 +166,32 @@ class BetfairClient:
 
             except Timeout:
                 last_error = "TIMEOUT"
-                logger.warning("timeout attempt=%s", attempt)
+                logger.warning("timeout attempt=%s method=%s", attempt, method)
 
-            except HTTPError as e:
-                code = getattr(e.response, "status_code", "UNKNOWN")
+            except HTTPError as exc:
+                code = getattr(exc.response, "status_code", "UNKNOWN")
                 last_error = f"HTTP_{code}"
-                logger.warning("http error attempt=%s code=%s", attempt, code)
+                logger.warning("http error attempt=%s method=%s code=%s", attempt, method, code)
 
-            except RequestException as e:
-                last_error = f"NETWORK_ERROR: {e}"
-                logger.warning("network error attempt=%s error=%s", attempt, e)
+            except RequestException as exc:
+                last_error = f"NETWORK_ERROR: {exc}"
+                logger.warning("network error attempt=%s method=%s error=%s", attempt, method, exc)
 
             except RuntimeError:
                 raise
 
-            except Exception as e:
-                last_error = f"UNKNOWN_ERROR: {e}"
-                logger.warning("unknown error attempt=%s error=%s", attempt, e)
+            except Exception as exc:
+                last_error = f"UNKNOWN_ERROR: {exc}"
+                logger.warning("unknown error attempt=%s method=%s error=%s", attempt, method, exc)
 
         raise RuntimeError(f"REQUEST_FAILED: {last_error}")
 
     # =========================================================
-    # LOGIN
+    # LOGIN / LOGOUT
     # =========================================================
     def login(self, password: str) -> Dict[str, Any]:
         try:
-            r = self.session.post(
+            response = self.session.post(
                 self.IDENTITY_URL,
                 headers={
                     "X-Application": self.app_key,
@@ -195,38 +199,35 @@ class BetfairClient:
                 },
                 data={"username": self.username, "password": password},
                 cert=self._cert_tuple(),
-                timeout=self.timeout
+                timeout=self.timeout,
             )
 
-            r.raise_for_status()
+            response.raise_for_status()
 
-            data = self._parse_json(r, "INVALID_LOGIN_JSON")
+            data = self._parse_json(response, "INVALID_LOGIN_JSON")
 
             if str(data.get("loginStatus")) != "SUCCESS":
                 raise RuntimeError(f"LOGIN_FAILED: {data}")
 
-            self.session_token = data.get("sessionToken", "")
-            self.session_expiry = data.get("sessionExpiryTime", "")
-            self.connected = True
+            self.session_token = str(data.get("sessionToken") or "")
+            self.session_expiry = str(data.get("sessionExpiryTime") or "")
+            self.connected = bool(self.session_token)
 
             return {
-                "connected": True,
+                "connected": self.connected,
                 "session_token": bool(self.session_token),
                 "expiry": self.session_expiry,
             }
 
-        except Timeout:
-            raise RuntimeError("LOGIN_TIMEOUT")
+        except Timeout as exc:
+            raise RuntimeError("LOGIN_TIMEOUT") from exc
 
-        except HTTPError as e:
-            raise RuntimeError(f"LOGIN_HTTP_ERROR: {e}")
+        except HTTPError as exc:
+            raise RuntimeError(f"LOGIN_HTTP_ERROR: {exc}") from exc
 
-        except RequestException as e:
-            raise RuntimeError(f"LOGIN_NETWORK_ERROR: {e}")
+        except RequestException as exc:
+            raise RuntimeError(f"LOGIN_NETWORK_ERROR: {exc}") from exc
 
-    # =========================================================
-    # LOGOUT (FIX GUARDRAIL)
-    # =========================================================
     def logout(self) -> Dict[str, Any]:
         self.session_token = ""
         self.session_expiry = ""
@@ -237,13 +238,78 @@ class BetfairClient:
         }
 
     # =========================================================
-    # MARKET BOOK (SAFE)
+    # ACCOUNT
     # =========================================================
-    def get_market_book(self, market_id: str):
+    def get_account_funds(self) -> Dict[str, Any]:
+        result = self._post_jsonrpc(
+            self.ACCOUNT_URL,
+            "AccountAPING/v1.0/getAccountFunds",
+            {},
+        )
+
+        if not isinstance(result, dict):
+            raise RuntimeError("INVALID_ACCOUNT_FUNDS")
+
+        return {
+            "available": self._safe_float(result.get("availableToBetBalance"), 0.0),
+            "exposure": self._safe_float(result.get("exposure"), 0.0),
+            "retained_commission": self._safe_float(result.get("retainedCommission"), 0.0),
+            "exposure_limit": self._safe_float(result.get("exposureLimit"), 0.0),
+            "discount_rate": self._safe_float(result.get("discountRate"), 0.0),
+            "points_balance": self._safe_float(result.get("pointsBalance"), 0.0),
+        }
+
+    # =========================================================
+    # CASHOUT
+    # =========================================================
+    def calculate_cashout(
+        self,
+        stake: Any,
+        odds: Any,
+        current_odds: Any,
+        side: str = "BACK",
+    ) -> Dict[str, Any]:
+        stake_f = self._safe_float(stake, 0.0)
+        odds_f = self._safe_float(odds, 0.0)
+        current_odds_f = self._safe_float(current_odds, 0.0)
+        safe_side = self._safe_side(side)
+
+        default_side = "LAY" if safe_side == "BACK" else "BACK"
+
+        if stake_f <= 0.0 or odds_f <= 1.0 or current_odds_f <= 1.0:
+            return {
+                "cashout_stake": 0.0,
+                "profit_if_win": 0.0,
+                "profit_if_lose": 0.0,
+                "side_to_place": default_side,
+            }
+
+        cashout = round((stake_f * odds_f) / current_odds_f, 2)
+
+        if safe_side == "BACK":
+            profit_win = stake_f * (odds_f - 1.0) - cashout * (current_odds_f - 1.0)
+            profit_lose = cashout - stake_f
+            side_to_place = "LAY"
+        else:
+            profit_win = cashout * (current_odds_f - 1.0) - stake_f * (odds_f - 1.0)
+            profit_lose = stake_f - cashout
+            side_to_place = "BACK"
+
+        return {
+            "cashout_stake": cashout,
+            "profit_if_win": round(profit_win, 2),
+            "profit_if_lose": round(profit_lose, 2),
+            "side_to_place": side_to_place,
+        }
+
+    # =========================================================
+    # MARKET BOOK
+    # =========================================================
+    def get_market_book(self, market_id: str) -> Optional[Dict[str, Any]]:
         result = self._post_jsonrpc(
             self.BETTING_URL,
             "SportsAPING/v1.0/listMarketBook",
-            {"marketIds": [market_id]}
+            {"marketIds": [market_id]},
         )
 
         if not result:
@@ -254,36 +320,68 @@ class BetfairClient:
         except Exception:
             return None
 
-        # 🔴 HARDEN: quote mancanti
         runners = book.get("runners") or []
-        for r in runners:
-            ex = r.get("ex") or {}
-            r["availableToBack"] = ex.get("availableToBack") or []
-            r["availableToLay"] = ex.get("availableToLay") or []
+        for runner in runners:
+            ex = runner.get("ex") or {}
+            runner["availableToBack"] = ex.get("availableToBack") or []
+            runner["availableToLay"] = ex.get("availableToLay") or []
 
         return book
 
     # =========================================================
-    # PLACE BET (ENTERPRISE SAFE)
+    # ORDERS
     # =========================================================
-    def place_bet(self, *, market_id, selection_id, side, price, size):
+    def place_bet(
+        self,
+        *,
+        market_id: Any,
+        selection_id: Any,
+        side: Any,
+        price: Any,
+        size: Any,
+    ) -> Dict[str, Any]:
+        market_id_s = str(market_id or "").strip()
+        if not market_id_s:
+            raise RuntimeError("INVALID_MARKET_ID")
+
+        try:
+            selection_id_i = int(selection_id)
+        except Exception as exc:
+            raise RuntimeError("INVALID_SELECTION_ID") from exc
+        if selection_id_i <= 0:
+            raise RuntimeError("INVALID_SELECTION_ID")
+
+        try:
+            price_f = float(price)
+        except Exception as exc:
+            raise RuntimeError("INVALID_PRICE") from exc
+        if price_f <= 1.0:
+            raise RuntimeError("INVALID_PRICE")
+
+        try:
+            size_f = float(size)
+        except Exception as exc:
+            raise RuntimeError("INVALID_SIZE") from exc
+        if size_f <= 0.0:
+            raise RuntimeError("INVALID_SIZE")
+
         try:
             result = self._post_jsonrpc(
                 self.BETTING_URL,
                 "SportsAPING/v1.0/placeOrders",
                 {
-                    "marketId": market_id,
+                    "marketId": market_id_s,
                     "instructions": [{
-                        "selectionId": int(selection_id),
+                        "selectionId": selection_id_i,
                         "side": self._safe_side(side),
                         "orderType": "LIMIT",
                         "limitOrder": {
-                            "size": float(size),
-                            "price": float(price),
-                            "persistenceType": "LAPSE"
-                        }
-                    }]
-                }
+                            "size": size_f,
+                            "price": price_f,
+                            "persistenceType": "LAPSE",
+                        },
+                    }],
+                },
             )
 
             status = str(result.get("status") or "").upper()
@@ -295,29 +393,28 @@ class BetfairClient:
             if not reports:
                 raise RuntimeError("BET_NO_REPORT")
 
-            for r in reports:
-                if str(r.get("status")).upper() not in {"SUCCESS", "PLACED"}:
-                    raise RuntimeError(f"BET_REJECTED: {r}")
+            for report in reports:
+                if str(report.get("status") or "").upper() not in {"SUCCESS", "PLACED"}:
+                    raise RuntimeError(f"BET_REJECTED: {report}")
 
             return {
                 "ok": True,
-                "result": result
+                "result": result,
             }
 
-        except RuntimeError as e:
-            classification = self._classify_error(str(e))
-
+        except RuntimeError as exc:
+            error_text = str(exc)
             return {
                 "ok": False,
-                "error": str(e),
-                "classification": classification,
-                "order_unknown": "TIMEOUT" in str(e)
+                "error": error_text,
+                "classification": self._classify_error(error_text),
+                "order_unknown": "TIMEOUT" in error_text.upper(),
             }
 
     # =========================================================
     # STATUS
     # =========================================================
-    def status(self):
+    def status(self) -> Dict[str, Any]:
         return {
             "connected": bool(self.session_token),
             "expiry": self.session_expiry,
