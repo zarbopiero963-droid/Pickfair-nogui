@@ -1,0 +1,10 @@
+[
+  {
+    "jsonrpc": "2.0",
+    "error": {
+      "code": -32099,
+      "message": "INVALID_SESSION"
+    },
+    "id": 1
+  }
+]
