@@ -1,0 +1,160 @@
+import math
+import random
+import pytest
+
+
+@pytest.mark.invariant
+def test_core_pnl_position_repeat_same_input_is_stable():
+    from core.pnl_engine import PnLEngine
+
+    engine = PnLEngine(commission_pct=4.5)
+
+    results = [
+        engine.calculate_position_pnl(
+            market_id="1.300",
+            selection_id=10,
+            side="BACK",
+            entry_price=2.5,
+            exit_price=2.0,
+            size=100.0,
+        )
+        for _ in range(5000)
+    ]
+
+    first = results[0]
+    for r in results:
+        assert math.isfinite(r.gross_pnl)
+        assert math.isfinite(r.commission_amount)
+        assert math.isfinite(r.net_pnl)
+        assert r.to_dict() == first.to_dict()
+
+
+@pytest.mark.invariant
+def test_core_pnl_settlement_repeat_same_input_is_stable():
+    from core.pnl_engine import PnLEngine
+
+    engine = PnLEngine(commission_pct=4.5)
+
+    values = [
+        engine.calculate_settlement_pnl(
+            side="BACK",
+            price=3.0,
+            size=100.0,
+            won=True,
+        )
+        for _ in range(5000)
+    ]
+
+    first = values[0]
+    assert all(v == first for v in values)
+
+
+@pytest.mark.chaos
+def test_core_pnl_numeric_stress_extreme_ranges_are_finite():
+    from core.pnl_engine import PnLEngine
+
+    engine = PnLEngine(commission_pct=4.5)
+
+    cases = [
+        ("BACK", 1.01, 1000.0, 1e-6),
+        ("BACK", 1000.0, 1.01, 1e6),
+        ("LAY", 1.01, 1000.0, 1e6),
+        ("LAY", 1000.0, 1.01, 1e-6),
+    ]
+
+    for side, entry, exit_price, size in cases:
+        result = engine.calculate_position_pnl(
+            market_id="1.301",
+            selection_id=11,
+            side=side,
+            entry_price=entry,
+            exit_price=exit_price,
+            size=size,
+        )
+
+        assert math.isfinite(result.gross_pnl)
+        assert math.isfinite(result.commission_amount)
+        assert math.isfinite(result.net_pnl)
+
+
+@pytest.mark.chaos
+def test_core_pnl_randomized_stress_position_model_stays_finite():
+    from core.pnl_engine import PnLEngine
+
+    engine = PnLEngine(commission_pct=4.5)
+    rng = random.Random(9001)
+
+    for _ in range(20000):
+        side = "BACK" if rng.random() < 0.5 else "LAY"
+        entry_price = rng.uniform(1.01, 1000.0)
+        exit_price = rng.uniform(1.01, 1000.0)
+        size = rng.uniform(1e-6, 1e6)
+
+        result = engine.calculate_position_pnl(
+            market_id="1.302",
+            selection_id=12,
+            side=side,
+            entry_price=entry_price,
+            exit_price=exit_price,
+            size=size,
+        )
+
+        assert math.isfinite(result.gross_pnl)
+        assert math.isfinite(result.commission_amount)
+        assert math.isfinite(result.net_pnl)
+
+
+@pytest.mark.invariant
+def test_core_pnl_green_up_and_cashout_are_finite_under_extremes():
+    from core.pnl_engine import PnLEngine
+
+    engine = PnLEngine(commission_pct=4.5)
+
+    cases = [
+        ("BACK", 2.5, 100.0, 2.0),
+        ("LAY", 3.0, 250.0, 2.2),
+        ("BACK", 1000.0, 1e6, 1.01),
+        ("LAY", 1.02, 1e-3, 1000.0),
+    ]
+
+    for side, entry_price, entry_size, hedge_price in cases:
+        hedge_size = engine.calculate_green_up_size(
+            entry_side=side,
+            entry_price=entry_price,
+            entry_size=entry_size,
+            hedge_price=hedge_price,
+        )
+        cashout = engine.calculate_cashout_pnl(
+            entry_side=side,
+            entry_price=entry_price,
+            entry_size=entry_size,
+            hedge_price=hedge_price,
+        )
+
+        assert math.isfinite(hedge_size)
+        assert hedge_size > 0.0
+        assert math.isfinite(cashout["hedge_size"])
+        assert math.isfinite(cashout["gross_pnl"])
+        assert math.isfinite(cashout["commission_amount"])
+        assert math.isfinite(cashout["net_pnl"])
+
+
+@pytest.mark.invariant
+def test_core_pnl_mark_to_market_repeat_read_is_stable():
+    from core.pnl_engine import PnLEngine
+
+    engine = PnLEngine(commission_pct=4.5)
+
+    values = [
+        engine.mark_to_market_pnl(
+            side="BACK",
+            entry_price=2.5,
+            current_price=2.2,
+            size=100.0,
+        )
+        for _ in range(5000)
+    ]
+
+    first = values[0]
+    assert all(math.isfinite(v) for v in values)
+    assert all(abs(v - first) < 1e-12 for v in values)
