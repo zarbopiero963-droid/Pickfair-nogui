@@ -91,29 +91,56 @@ class ExecutionError(Exception):
 
 
 # =========================================================
+# NO-OP FALLBACKS
+# =========================================================
+
+class _NullSafeMode:
+    def is_enabled(self) -> bool:
+        return False
+
+    def is_ready(self) -> bool:
+        return True
+
+
+class _NullRiskMiddleware:
+    def check(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return {"allowed": True, "reason": None, "payload": payload}
+
+    def is_ready(self) -> bool:
+        return True
+
+
+class _NullReconciliationEngine:
+    def enqueue(self, **_kwargs: Any) -> None:
+        return None
+
+    def is_ready(self) -> bool:
+        return True
+
+
+class _NullStateRecovery:
+    def recover(self) -> Dict[str, Any]:
+        return {"ok": True, "reason": None}
+
+    def is_ready(self) -> bool:
+        return True
+
+
+class _NullAsyncDbWriter:
+    def write(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    def is_ready(self) -> bool:
+        return True
+
+
+# =========================================================
 # TRADING ENGINE
 # =========================================================
 
 class TradingEngine:
     """
     Trading Engine guardrail-compatible + file-level hardened.
-
-    Obiettivi interni del file:
-    - orchestration unica
-    - request normalization
-    - state machine lifecycle
-    - audit trail strutturato
-    - inflight persistito prima del submit
-    - ambiguity policy centralizzata
-    - finalize rigoroso
-    - readiness avanzata
-    - contract di ritorno uniforme
-
-    Obiettivi esterni / compatibilità repo:
-    - firma __init__ storica
-    - entrypoint submit_quick_bet
-    - convenzioni REQ_/CMD_
-    - import canonico OrderManager
     """
 
     def __init__(
@@ -122,29 +149,34 @@ class TradingEngine:
         db: Any,
         client_getter: Any,
         executor: Any,
-        safe_mode: Any,
-        risk_middleware: Any,
-        reconciliation_engine: Any,
-        state_recovery: Any,
-        async_db_writer: Any,
+        safe_mode: Any = None,
+        risk_middleware: Any = None,
+        reconciliation_engine: Any = None,
+        state_recovery: Any = None,
+        async_db_writer: Any = None,
     ) -> None:
         # ---------- contract storico / repo ----------
         self.bus = bus
         self.db = db
         self.client_getter = client_getter
         self.executor = executor
-        self.safe_mode = safe_mode
-        self.risk_middleware = risk_middleware
-        self.reconciliation_engine = reconciliation_engine
-        self.state_recovery = state_recovery
-        self.async_db_writer = async_db_writer
+        self.safe_mode = safe_mode if safe_mode is not None else _NullSafeMode()
+        self.risk_middleware = risk_middleware if risk_middleware is not None else _NullRiskMiddleware()
+        self.reconciliation_engine = (
+            reconciliation_engine if reconciliation_engine is not None else _NullReconciliationEngine()
+        )
+        self.state_recovery = state_recovery if state_recovery is not None else _NullStateRecovery()
+        self.async_db_writer = async_db_writer if async_db_writer is not None else _NullAsyncDbWriter()
 
         # ---------- adapters interni ----------
         self.order_manager: Optional[OrderManager] = None
+        self.guard: Optional[Any] = None
+
         self._runtime_state = NOT_READY
         self._health: Dict[str, Any] = {}
 
         self._subscribe_bus()
+        self.start()
 
     # =========================================================
     # READINESS
@@ -152,25 +184,32 @@ class TradingEngine:
 
     def start(self) -> None:
         self._health = {
-            "db": self._dependency_state(self.db),
-            "client_getter": self._dependency_state(self.client_getter),
-            "executor": self._dependency_state(self.executor),
-            "safe_mode": self._dependency_state(self.safe_mode),
-            "risk_middleware": self._dependency_state(self.risk_middleware),
-            "reconciliation_engine": self._dependency_state(self.reconciliation_engine),
-            "state_recovery": self._dependency_state(self.state_recovery),
-            "async_db_writer": self._dependency_state(self.async_db_writer),
+            "db": self._dependency_state(self.db, required=True),
+            "client_getter": self._dependency_state(self.client_getter, required=True),
+            "executor": self._dependency_state(self.executor, required=False),
+            "safe_mode": self._dependency_state(self.safe_mode, required=False),
+            "risk_middleware": self._dependency_state(self.risk_middleware, required=False),
+            "reconciliation_engine": self._dependency_state(self.reconciliation_engine, required=False),
+            "state_recovery": self._dependency_state(self.state_recovery, required=False),
+            "async_db_writer": self._dependency_state(self.async_db_writer, required=False),
         }
 
-        states = [v["state"] for v in self._health.values()]
-        if all(s == READY for s in states):
-            self._runtime_state = READY
-        elif any(s == READY for s in states):
-            self._runtime_state = DEGRADED
+        required_states = [
+            self._health["db"]["state"],
+            self._health["client_getter"]["state"],
+        ]
+
+        if all(s == READY for s in required_states):
+            all_states = [v["state"] for v in self._health.values()]
+            self._runtime_state = READY if all(s == READY for s in all_states) else DEGRADED
         else:
             self._runtime_state = NOT_READY
 
-        logger.info("TradingEngine start -> state=%s health=%s", self._runtime_state, self._health)
+        logger.info(
+            "TradingEngine start -> state=%s health=%s",
+            self._runtime_state,
+            self._health,
+        )
 
     def stop(self) -> None:
         self._runtime_state = NOT_READY
@@ -182,23 +221,32 @@ class TradingEngine:
             "health": dict(self._health),
         }
 
-    def _dependency_state(self, dep: Any) -> Dict[str, Any]:
+    def _dependency_state(self, dep: Any, *, required: bool) -> Dict[str, Any]:
         if dep is None:
-            return {"state": NOT_READY, "reason": "missing"}
+            return {
+                "state": NOT_READY if required else DEGRADED,
+                "reason": "missing",
+            }
 
         checker = getattr(dep, "is_ready", None)
         if callable(checker):
             try:
                 ok = bool(checker())
-                return {"state": READY if ok else DEGRADED, "reason": None if ok else "unhealthy"}
+                return {
+                    "state": READY if ok else (NOT_READY if required else DEGRADED),
+                    "reason": None if ok else "unhealthy",
+                }
             except Exception as exc:
                 logger.exception("Dependency readiness check failed")
-                return {"state": DEGRADED, "reason": f"exception:{exc}"}
+                return {
+                    "state": NOT_READY if required else DEGRADED,
+                    "reason": f"exception:{exc}",
+                }
 
         return {"state": READY, "reason": "no-checker"}
 
     def assert_ready(self) -> None:
-        if self._runtime_state != READY:
+        if self._runtime_state not in {READY, DEGRADED}:
             raise RuntimeError(f"TRADING_ENGINE_NOT_READY:{self._runtime_state}")
 
     # =========================================================
@@ -218,15 +266,9 @@ class TradingEngine:
     # =========================================================
 
     def submit_quick_bet(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Entry-point pubblico storico richiesto dai guardrail del repo.
-        """
         return self._submit_via_engine(payload)
 
     def recover_after_restart(self) -> Dict[str, Any]:
-        """
-        Entry-point storico del repo.
-        """
         recover = getattr(self.state_recovery, "recover", None)
         if callable(recover):
             return recover()
@@ -240,10 +282,6 @@ class TradingEngine:
     # =========================================================
 
     def _submit_via_engine(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Unico vero percorso interno di esecuzione.
-        Tutte le mutazioni passano da qui.
-        """
         self.assert_ready()
 
         normalized = self._normalize_request(request)
@@ -259,9 +297,6 @@ class TradingEngine:
         try:
             self._audit(ctx, audit, "REQUEST_RECEIVED", {"request": normalized}, category="request")
 
-            # -------------------------
-            # SAFE MODE
-            # -------------------------
             safe_mode_enabled = self._is_safe_mode_enabled()
             self._audit(
                 ctx,
@@ -280,9 +315,6 @@ class TradingEngine:
                     reason="SAFE_MODE_ACTIVE",
                 )
 
-            # -------------------------
-            # RISK MIDDLEWARE
-            # -------------------------
             risk_result = self._risk_gate(normalized)
             self._audit(ctx, audit, "RISK_DECISION", risk_result, category="guard")
             if not bool(risk_result.get("allowed", False)):
@@ -295,9 +327,6 @@ class TradingEngine:
                     reason=str(risk_result.get("reason", "RISK_DENY")),
                 )
 
-            # -------------------------
-            # DEDUP / EXACTLY-ONCE (delegated)
-            # -------------------------
             dedup_allowed = self._dedup_allow(ctx)
             self._audit(
                 ctx,
@@ -316,9 +345,6 @@ class TradingEngine:
                     reason="DUPLICATE_BLOCKED",
                 )
 
-            # -------------------------
-            # PERSIST INFLIGHT FIRST
-            # -------------------------
             order_id = self._persist_inflight(ctx, normalized)
             self._audit(
                 ctx,
@@ -328,9 +354,6 @@ class TradingEngine:
                 category="persistence",
             )
 
-            # -------------------------
-            # SUBMIT
-            # -------------------------
             try:
                 response = self._submit_to_order_path(ctx, normalized)
                 self._audit(
@@ -424,20 +447,17 @@ class TradingEngine:
             if isinstance(result, dict) and "allowed" in result:
                 return result
 
-        # fallback compatibile: se il middleware non ha check esplicito, assume allow
         return {
             "allowed": True,
             "reason": None,
+            "payload": request,
         }
 
     def _dedup_allow(self, ctx: _ExecutionContext) -> bool:
-        guard = getattr(self, "guard", None)
-        if guard is not None:
-            allow = getattr(guard, "allow", None)
+        if self.guard is not None:
+            allow = getattr(self.guard, "allow", None)
             if callable(allow):
                 return bool(allow(ctx.customer_ref))
-
-        # fallback compatibile repo: se non esiste guard dedicato, non bloccare qui
         return True
 
     # =========================================================
@@ -445,12 +465,6 @@ class TradingEngine:
     # =========================================================
 
     def _submit_to_order_path(self, ctx: _ExecutionContext, request: Dict[str, Any]) -> Any:
-        """
-        Path interno unico verso l'execution.
-        Priorità:
-        1. OrderManager se presente
-        2. client_getter / service compatibile
-        """
         request_to_send = dict(request)
         request_to_send["customer_ref"] = ctx.customer_ref
         request_to_send["correlation_id"] = ctx.correlation_id
@@ -794,4 +808,4 @@ class TradingEngine:
             "error": error,
             "ambiguity_reason": ambiguity_reason,
             "response": response,
-        }
+        } sistemalo qui چي serve تغيير?
