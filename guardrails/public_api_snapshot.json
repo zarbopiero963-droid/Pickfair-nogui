@@ -139,7 +139,13 @@
   },
   "dutching": {
     "functions": {
-      "calculate_dutching_stakes": ["odds", "total_stake"],
+      "calculate_dutching_stakes": [
+        "odds",
+        "total_stake",
+        "commission",
+        "equalize",
+        "commission_aware"
+      ],
       "dynamic_cashout_single": [
         "matched_stake",
         "matched_price",
