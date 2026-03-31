@@ -170,6 +170,12 @@ class TradingEngine:
         self.order_manager: Optional[OrderManager] = None
         self.guard:         Optional[Any]          = None
 
+        # Dedup fallback in-memory: attivo SOLO quando self.guard è None.
+        # Traccia i correlation_id già visti in questa sessione del processo.
+        # Non è distribuito né persistito, ma garantisce il requisito file-level
+        # senza dipendenze esterne. Protetto dallo stesso self._lock del path critico.
+        self._seen_correlation_ids: Set[str] = set()
+
         # FIX #3 – _lock richiesto dai test di concorrenza/invariant
         self._lock = threading.Lock()
 
@@ -514,10 +520,21 @@ class TradingEngine:
         return {"allowed": True, "reason": None, "payload": request}
 
     def _dedup_allow(self, ctx: _ExecutionContext) -> bool:
+        # Priorità 1: guard esterno configurato (policy distribuita/persistita)
         if self.guard is not None:
             allow = getattr(self.guard, "allow", None)
             if callable(allow):
                 return bool(allow(ctx.customer_ref))
+
+        # Priorità 2: fallback in-memory su correlation_id (file-level guarantee).
+        # Già dentro self._lock quando chiamato da _submit_via_engine.
+        # Usa correlation_id (univoco per richiesta) invece di customer_ref
+        # (univoco per cliente) per non bloccare ordini legittimi successivi
+        # dello stesso cliente.
+        cid = ctx.correlation_id
+        if cid in self._seen_correlation_ids:
+            return False
+        self._seen_correlation_ids.add(cid)
         return True
 
     # ------------------------------------------------------------------
@@ -705,26 +722,35 @@ class TradingEngine:
 
     def _safe_mark_failed(
         self,
-        ctx:      _ExecutionContext,
-        audit:    Dict[str, Any],
-        order_id: Any,
-        reason:   str,
-        error:    str,
+        ctx:         _ExecutionContext,
+        audit:       Dict[str, Any],
+        order_id:    Any,
+        reason:      str,
+        error:       str,
+        from_status: str = STATUS_INFLIGHT,
     ) -> None:
+        """
+        Marca un ordine come FAILED passando SEMPRE da _transition_order.
+        Non scrive mai 'status' direttamente nel DB.
+        from_status deve riflettere lo stato reale dell'ordine al momento
+        della chiamata. Se la transizione non è legale viene loggata ma
+        non propagata (best-effort nel fatal path).
+        """
         try:
-            update_order = getattr(self.db, "update_order", None)
-            if callable(update_order):
-                update_order(order_id, {
-                    "status":         STATUS_FAILED,
-                    "updated_at":     time.time(),
-                    "failure_reason": reason,
-                    "last_error":     error,
-                })
+            self._transition_order(
+                ctx, audit, order_id,
+                from_status, STATUS_FAILED,
+                extra={"failure_reason": reason, "last_error": error},
+            )
             self._emit(ctx, audit, "SAFE_MARK_FAILED",
                        {"order_id": order_id, "reason": reason, "error": error},
                        category="failure")
         except Exception:
-            logger.exception("Failed to mark order as failed")
+            logger.exception(
+                "safe_mark_failed: could not transition order_id=%s "
+                "from %s -> FAILED (reason=%s)",
+                order_id, from_status, reason,
+            )
 
     # ------------------------------------------------------------------
     # AUDIT
