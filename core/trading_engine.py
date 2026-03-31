@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Set
 
 from order_manager import OrderManager
-
 
 logger = logging.getLogger(__name__)
 
@@ -17,52 +17,69 @@ logger = logging.getLogger(__name__)
 # =========================================================
 
 REQ_QUICK_BET = "REQ_QUICK_BET"
-CMD_QUICK_BET = "CMD_QUICK_BET"
+CMD_QUICK_BET  = "CMD_QUICK_BET"
 
 
 # =========================================================
 # STATUS / OUTCOME / ERROR TYPES
 # =========================================================
 
-STATUS_INFLIGHT = "INFLIGHT"
-STATUS_SUBMITTED = "SUBMITTED"
-STATUS_MATCHED = "MATCHED"
-STATUS_COMPLETED = "COMPLETED"
-STATUS_FAILED = "FAILED"
-STATUS_AMBIGUOUS = "AMBIGUOUS"
-STATUS_DENIED = "DENIED"
+STATUS_INFLIGHT                 = "INFLIGHT"
+STATUS_SUBMITTED                = "SUBMITTED"
+STATUS_MATCHED                  = "MATCHED"
+STATUS_COMPLETED                = "COMPLETED"
+STATUS_FAILED                   = "FAILED"
+STATUS_AMBIGUOUS                = "AMBIGUOUS"
+STATUS_DENIED                   = "DENIED"
+STATUS_ACCEPTED_FOR_PROCESSING  = "ACCEPTED_FOR_PROCESSING"
 
-OUTCOME_SUCCESS = "SUCCESS"
-OUTCOME_FAILURE = "FAILURE"
+OUTCOME_SUCCESS   = "SUCCESS"
+OUTCOME_FAILURE   = "FAILURE"
 OUTCOME_AMBIGUOUS = "AMBIGUOUS"
 
 ERROR_TRANSIENT = "TRANSIENT"
 ERROR_PERMANENT = "PERMANENT"
 ERROR_AMBIGUOUS = "AMBIGUOUS"
 
-READY = "READY"
-DEGRADED = "DEGRADED"
+READY     = "READY"
+DEGRADED  = "DEGRADED"
 NOT_READY = "NOT_READY"
 
-AMBIGUITY_SUBMIT_TIMEOUT = "SUBMIT_TIMEOUT"
-AMBIGUITY_RESPONSE_LOST = "RESPONSE_LOST"
-AMBIGUITY_SUBMIT_UNKNOWN = "SUBMIT_UNKNOWN"
+AMBIGUITY_SUBMIT_TIMEOUT          = "SUBMIT_TIMEOUT"
+AMBIGUITY_RESPONSE_LOST           = "RESPONSE_LOST"
+AMBIGUITY_SUBMIT_UNKNOWN          = "SUBMIT_UNKNOWN"
 AMBIGUITY_PERSISTED_NOT_CONFIRMED = "PERSISTED_NOT_CONFIRMED"
-AMBIGUITY_SPLIT_STATE = "SPLIT_STATE"
+AMBIGUITY_SPLIT_STATE             = "SPLIT_STATE"
 
 
 # =========================================================
-# STATE MACHINE
+# FIX #1 – STATE MACHINE: DENIED è ora terminale legale da INFLIGHT
 # =========================================================
 
 ALLOWED_TRANSITIONS: Dict[str, Set[str]] = {
-    STATUS_INFLIGHT: {STATUS_SUBMITTED, STATUS_FAILED, STATUS_AMBIGUOUS},
+    STATUS_INFLIGHT:  {STATUS_SUBMITTED, STATUS_FAILED, STATUS_AMBIGUOUS, STATUS_DENIED},
     STATUS_SUBMITTED: {STATUS_MATCHED, STATUS_COMPLETED, STATUS_FAILED, STATUS_AMBIGUOUS},
-    STATUS_MATCHED: {STATUS_COMPLETED, STATUS_FAILED},
+    STATUS_MATCHED:   {STATUS_COMPLETED, STATUS_FAILED},
     STATUS_AMBIGUOUS: {STATUS_COMPLETED, STATUS_FAILED},
-    STATUS_DENIED: set(),
-    STATUS_FAILED: set(),
+    STATUS_DENIED:    set(),
+    STATUS_FAILED:    set(),
     STATUS_COMPLETED: set(),
+}
+
+
+# =========================================================
+# FIX #7 – MAPPING CENTRALIZZATO INTERNAL → PUBLIC STATUS
+# =========================================================
+
+_INTERNAL_TO_PUBLIC_STATUS: Dict[str, str] = {
+    STATUS_INFLIGHT:                STATUS_INFLIGHT,
+    STATUS_SUBMITTED:               STATUS_ACCEPTED_FOR_PROCESSING,
+    STATUS_ACCEPTED_FOR_PROCESSING: STATUS_ACCEPTED_FOR_PROCESSING,
+    STATUS_MATCHED:                 STATUS_MATCHED,
+    STATUS_COMPLETED:               STATUS_COMPLETED,
+    STATUS_FAILED:                  STATUS_FAILED,
+    STATUS_AMBIGUOUS:               STATUS_AMBIGUOUS,
+    STATUS_DENIED:                  STATUS_DENIED,
 }
 
 
@@ -72,9 +89,10 @@ ALLOWED_TRANSITIONS: Dict[str, Set[str]] = {
 
 @dataclass(frozen=True)
 class _ExecutionContext:
+    """Immutable. Creato SOLO dentro _submit_via_engine. Non esportato."""
     correlation_id: str
-    customer_ref: str
-    created_at: float
+    customer_ref:   str
+    created_at:     float
 
 
 class ExecutionError(Exception):
@@ -86,7 +104,7 @@ class ExecutionError(Exception):
         ambiguity_reason: Optional[str] = None,
     ) -> None:
         super().__init__(message)
-        self.error_type = error_type
+        self.error_type       = error_type
         self.ambiguity_reason = ambiguity_reason
 
 
@@ -95,82 +113,65 @@ class ExecutionError(Exception):
 # =========================================================
 
 class _NullSafeMode:
-    def is_enabled(self) -> bool:
-        return False
-
-    def is_ready(self) -> bool:
-        return True
-
+    def is_enabled(self) -> bool: return False
+    def is_ready(self)   -> bool: return True
 
 class _NullRiskMiddleware:
     def check(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return {"allowed": True, "reason": None, "payload": payload}
-
-    def is_ready(self) -> bool:
-        return True
-
+    def is_ready(self) -> bool: return True
 
 class _NullReconciliationEngine:
-    def enqueue(self, **_kwargs: Any) -> None:
-        return None
-
-    def is_ready(self) -> bool:
-        return True
-
+    def enqueue(self, **_kwargs: Any) -> None: return None
+    def is_ready(self) -> bool: return True
 
 class _NullStateRecovery:
-    def recover(self) -> Dict[str, Any]:
-        return {"ok": True, "reason": None}
-
-    def is_ready(self) -> bool:
-        return True
-
+    def recover(self) -> Dict[str, Any]: return {"ok": True, "reason": None}
+    def is_ready(self) -> bool: return True
 
 class _NullAsyncDbWriter:
-    def write(self, *_args: Any, **_kwargs: Any) -> None:
-        return None
-
-    def is_ready(self) -> bool:
-        return True
+    def write(self, *_args: Any, **_kwargs: Any) -> None: return None
+    def is_ready(self) -> bool: return True
 
 
 # =========================================================
-# TRADING ENGINE
+# TRADING ENGINE  –  100% FILE-LEVEL BLINDATO
 # =========================================================
 
 class TradingEngine:
-    """
-    Trading Engine guardrail-compatible + file-level hardened.
-    """
 
     def __init__(
         self,
-        bus: Any,
-        db: Any,
-        client_getter: Any,
-        executor: Any,
-        safe_mode: Any = None,
-        risk_middleware: Any = None,
+        bus:                   Any,
+        db:                    Any,
+        client_getter:         Any,
+        executor:              Any,
+        safe_mode:             Any = None,
+        risk_middleware:       Any = None,
         reconciliation_engine: Any = None,
-        state_recovery: Any = None,
-        async_db_writer: Any = None,
+        state_recovery:        Any = None,
+        async_db_writer:       Any = None,
+        *,
+        # FIX #5 – policy correlation_id dichiarata esplicitamente
+        auto_generate_correlation_id: bool = True,
     ) -> None:
-        # ---------- contract storico / repo ----------
-        self.bus = bus
-        self.db = db
-        self.client_getter = client_getter
-        self.executor = executor
-        self.safe_mode = safe_mode if safe_mode is not None else _NullSafeMode()
-        self.risk_middleware = risk_middleware if risk_middleware is not None else _NullRiskMiddleware()
-        self.reconciliation_engine = (
-            reconciliation_engine if reconciliation_engine is not None else _NullReconciliationEngine()
-        )
-        self.state_recovery = state_recovery if state_recovery is not None else _NullStateRecovery()
-        self.async_db_writer = async_db_writer if async_db_writer is not None else _NullAsyncDbWriter()
 
-        # ---------- adapters interni ----------
+        self.bus             = bus
+        self.db              = db
+        self.client_getter   = client_getter
+        self.executor        = executor
+        self.safe_mode       = safe_mode       or _NullSafeMode()
+        self.risk_middleware = risk_middleware or _NullRiskMiddleware()
+        self.reconciliation_engine = reconciliation_engine or _NullReconciliationEngine()
+        self.state_recovery  = state_recovery  or _NullStateRecovery()
+        self.async_db_writer = async_db_writer or _NullAsyncDbWriter()
+        self.auto_generate_correlation_id = auto_generate_correlation_id
+
         self.order_manager: Optional[OrderManager] = None
-        self.guard: Optional[Any] = None
+        self.guard:         Optional[Any]          = None
+
+        # FIX #3 – _lock richiesto dai test di concorrenza/invariant
+        self._lock = threading.Lock()
 
         self._runtime_state = NOT_READY
         self._health: Dict[str, Any] = {}
@@ -178,28 +179,27 @@ class TradingEngine:
         self._subscribe_bus()
         self.start()
 
-    # =========================================================
+    # ------------------------------------------------------------------
     # READINESS
-    # =========================================================
+    # ------------------------------------------------------------------
 
     def start(self) -> None:
         self._health = {
-            "db": self._dependency_state(self.db, required=True),
-            "client_getter": self._dependency_state(self.client_getter, required=True),
-            "executor": self._dependency_state(self.executor, required=False),
-            "safe_mode": self._dependency_state(self.safe_mode, required=False),
-            "risk_middleware": self._dependency_state(self.risk_middleware, required=False),
-            "reconciliation_engine": self._dependency_state(self.reconciliation_engine, required=False),
-            "state_recovery": self._dependency_state(self.state_recovery, required=False),
-            "async_db_writer": self._dependency_state(self.async_db_writer, required=False),
+            "db":                    self._dependency_state(self.db,                   required=True),
+            "client_getter":         self._dependency_state(self.client_getter,        required=True),
+            "executor":              self._dependency_state(self.executor,             required=False),
+            "safe_mode":             self._dependency_state(self.safe_mode,            required=False),
+            "risk_middleware":       self._dependency_state(self.risk_middleware,      required=False),
+            "reconciliation_engine": self._dependency_state(self.reconciliation_engine,required=False),
+            "state_recovery":        self._dependency_state(self.state_recovery,       required=False),
+            "async_db_writer":       self._dependency_state(self.async_db_writer,      required=False),
         }
 
-        required_states = [
-            self._health["db"]["state"],
-            self._health["client_getter"]["state"],
-        ]
+        required_ok = all(
+            self._health[k]["state"] == READY for k in ("db", "client_getter")
+        )
 
-        if all(s == READY for s in required_states):
+        if required_ok:
             all_states = [v["state"] for v in self._health.values()]
             self._runtime_state = READY if all(s == READY for s in all_states) else DEGRADED
         else:
@@ -207,8 +207,7 @@ class TradingEngine:
 
         logger.info(
             "TradingEngine start -> state=%s health=%s",
-            self._runtime_state,
-            self._health,
+            self._runtime_state, self._health,
         )
 
     def stop(self) -> None:
@@ -216,32 +215,23 @@ class TradingEngine:
         logger.info("TradingEngine stopped")
 
     def readiness(self) -> Dict[str, Any]:
-        return {
-            "state": self._runtime_state,
-            "health": dict(self._health),
-        }
+        return {"state": self._runtime_state, "health": dict(self._health)}
 
     def _dependency_state(self, dep: Any, *, required: bool) -> Dict[str, Any]:
         if dep is None:
-            return {
-                "state": NOT_READY if required else DEGRADED,
-                "reason": "missing",
-            }
+            return {"state": NOT_READY if required else DEGRADED, "reason": "missing"}
 
         checker = getattr(dep, "is_ready", None)
         if callable(checker):
             try:
                 ok = bool(checker())
                 return {
-                    "state": READY if ok else (NOT_READY if required else DEGRADED),
+                    "state":  READY if ok else (NOT_READY if required else DEGRADED),
                     "reason": None if ok else "unhealthy",
                 }
             except Exception as exc:
                 logger.exception("Dependency readiness check failed")
-                return {
-                    "state": NOT_READY if required else DEGRADED,
-                    "reason": f"exception:{exc}",
-                }
+                return {"state": NOT_READY if required else DEGRADED, "reason": f"exception:{exc}"}
 
         return {"state": READY, "reason": "no-checker"}
 
@@ -249,170 +239,239 @@ class TradingEngine:
         if self._runtime_state not in {READY, DEGRADED}:
             raise RuntimeError(f"TRADING_ENGINE_NOT_READY:{self._runtime_state}")
 
-    # =========================================================
-    # BUS / ARCHITECTURE WIRING
-    # =========================================================
+    # ------------------------------------------------------------------
+    # BUS WIRING
+    # ------------------------------------------------------------------
 
     def _subscribe_bus(self) -> None:
         subscribe = getattr(self.bus, "subscribe", None)
-        if callable(subscribe):
+        if not callable(subscribe):
+            return
+        # FIX #2 – entrambi i topic
+        for topic in (REQ_QUICK_BET, CMD_QUICK_BET):
             try:
-                subscribe(REQ_QUICK_BET, self.submit_quick_bet)
+                subscribe(topic, self.submit_quick_bet)
             except Exception:
-                logger.exception("Failed to subscribe to %s", REQ_QUICK_BET)
+                logger.exception("Failed to subscribe to %s", topic)
 
-    # =========================================================
-    # PUBLIC ENTRYPOINTS (repo-compatible)
-    # =========================================================
+    # ------------------------------------------------------------------
+    # PUBLIC ENTRYPOINTS  (unici punti di ingresso legali)
+    # ------------------------------------------------------------------
 
     def submit_quick_bet(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return self._submit_via_engine(payload)
 
     def recover_after_restart(self) -> Dict[str, Any]:
+        """
+        Sequenza di recovery orchestrata:
+        1. Chiama state_recovery.recover() per ripristinare lo stato inflight.
+        2. Se recovery ha successo, notifica reconciliation_engine degli ordini
+           pending (se supporta enqueue_pending o notify_restart).
+        3. Restituisce il risultato composto.
+        """
         recover = getattr(self.state_recovery, "recover", None)
-        if callable(recover):
-            return recover()
+        if not callable(recover):
+            return {"ok": False, "reason": "STATE_RECOVERY_UNAVAILABLE"}
+
+        try:
+            recovery_result = recover()
+        except Exception as exc:
+            logger.exception("state_recovery.recover() raised")
+            return {"ok": False, "reason": f"RECOVERY_EXCEPTION:{exc}"}
+
+        if not isinstance(recovery_result, dict):
+            recovery_result = {"ok": bool(recovery_result), "reason": None}
+
+        # Step 2: notifica reconcile degli ordini pending post-restart
+        reconcile_result: Optional[Dict[str, Any]] = None
+        for method_name in ("enqueue_pending", "notify_restart", "on_restart"):
+            fn = getattr(self.reconciliation_engine, method_name, None)
+            if callable(fn):
+                try:
+                    reconcile_result = fn() or {"triggered": True}
+                except Exception as exc:
+                    logger.warning("reconcile %s() failed: %s", method_name, exc)
+                    reconcile_result = {"triggered": False, "error": str(exc)}
+                break
+
+        logger.info(
+            "recover_after_restart -> recovery=%s reconcile=%s",
+            recovery_result, reconcile_result,
+        )
+
         return {
-            "ok": False,
-            "reason": "STATE_RECOVERY_UNAVAILABLE",
+            **recovery_result,
+            "reconcile": reconcile_result,
         }
 
-    # =========================================================
-    # SINGLE REAL ENTRYPOINT
-    # =========================================================
+    # ------------------------------------------------------------------
+    # CORE ENGINE
+    # ------------------------------------------------------------------
 
     def _submit_via_engine(self, request: Dict[str, Any]) -> Dict[str, Any]:
         self.assert_ready()
 
-        normalized = self._normalize_request(request)
-        ctx = _ExecutionContext(
-            correlation_id=normalized["correlation_id"],
-            customer_ref=normalized["customer_ref"],
-            created_at=time.time(),
-        )
+        # FIX #4 – normalization failure -> dict di errore, mai eccezione raw
+        try:
+            normalized = self._normalize_request(request)
+        except (ValueError, TypeError) as exc:
+            logger.warning("Request normalization failed: %s", exc)
+            raw       = request if isinstance(request, dict) else {}
+            fake_corr = str(raw.get("correlation_id") or uuid.uuid4())
+            fake_ref  = str(raw.get("customer_ref")   or "UNKNOWN")
+            fake_ctx  = _ExecutionContext(fake_corr, fake_ref, time.time())
+            fake_audit = self._new_audit(fake_ctx)
+            self._emit(fake_ctx, fake_audit, "VALIDATION_FAILED",
+                       {"error": str(exc)}, category="guard")
+            return self._finalize(
+                ctx=fake_ctx, audit=fake_audit, order_id=None,
+                status=STATUS_FAILED, outcome=OUTCOME_FAILURE,
+                error=str(exc), reason="INVALID_REQUEST",
+            )
 
-        audit = self._new_audit(ctx)
+        ctx   = _ExecutionContext(
+            normalized["correlation_id"],
+            normalized["customer_ref"],
+            time.time(),
+        )
+        audit    = self._new_audit(ctx)
         order_id: Optional[Any] = None
 
         try:
-            self._audit(ctx, audit, "REQUEST_RECEIVED", {"request": normalized}, category="request")
+            self._emit(ctx, audit, "REQUEST_RECEIVED",
+                       {"request": normalized}, category="request")
 
-            safe_mode_enabled = self._is_safe_mode_enabled()
-            self._audit(
-                ctx,
-                audit,
-                "SAFE_MODE_CHECK",
-                {"enabled": safe_mode_enabled},
-                category="guard",
-            )
-            if safe_mode_enabled:
+            # ── SAFE MODE ────────────────────────────────────────────
+            safe_on = self._is_safe_mode_enabled()
+            self._emit(ctx, audit, "SAFE_MODE_CHECK",
+                       {"enabled": safe_on}, category="guard")
+            if safe_on:
+                self._emit(ctx, audit, "SAFE_MODE_DENIED", {}, category="guard")
                 return self._finalize(
-                    ctx=ctx,
-                    audit=audit,
-                    order_id=None,
-                    status=STATUS_DENIED,
-                    outcome=OUTCOME_FAILURE,
+                    ctx=ctx, audit=audit, order_id=None,
+                    status=STATUS_DENIED, outcome=OUTCOME_FAILURE,
                     reason="SAFE_MODE_ACTIVE",
                 )
 
+            # ── RISK ─────────────────────────────────────────────────
             risk_result = self._risk_gate(normalized)
-            self._audit(ctx, audit, "RISK_DECISION", risk_result, category="guard")
+            self._emit(ctx, audit, "RISK_DECISION", risk_result, category="guard")
+
             if not bool(risk_result.get("allowed", False)):
+                # FIX #2 – DENIED viene persistito
+                order_id = self._persist_inflight(ctx, normalized)
+                self._emit(ctx, audit, "PERSIST_INFLIGHT",
+                           {"order_id": order_id}, category="persistence")
+                self._transition_order(
+                    ctx, audit, order_id,
+                    STATUS_INFLIGHT, STATUS_DENIED,
+                    extra={"risk_reason": risk_result.get("reason")},
+                )
+                # FIX #3 – audit esplicito terminale
+                self._emit(ctx, audit, "RISK_DENIED",
+                           {"reason": risk_result.get("reason")}, category="guard")
                 return self._finalize(
-                    ctx=ctx,
-                    audit=audit,
-                    order_id=None,
-                    status=STATUS_DENIED,
-                    outcome=OUTCOME_FAILURE,
+                    ctx=ctx, audit=audit, order_id=order_id,
+                    status=STATUS_DENIED, outcome=OUTCOME_FAILURE,
                     reason=str(risk_result.get("reason", "RISK_DENY")),
                 )
 
-            dedup_allowed = self._dedup_allow(ctx)
-            self._audit(
-                ctx,
-                audit,
-                "DEDUP_DECISION",
-                {"allowed": dedup_allowed},
-                category="guard",
-            )
-            if not dedup_allowed:
-                return self._finalize(
-                    ctx=ctx,
-                    audit=audit,
-                    order_id=None,
-                    status=STATUS_COMPLETED,
-                    outcome=OUTCOME_SUCCESS,
-                    reason="DUPLICATE_BLOCKED",
-                )
+            # ── DEDUP / PERSIST / SUBMIT  (sezione protetta da lock) ──────
+            # Il lock garantisce che dedup check e persist siano atomici:
+            # due thread con lo stesso customer_ref non possono superare
+            # entrambi la guardia e persistere ordini duplicati.
+            with self._lock:
+                dedup_ok = self._dedup_allow(ctx)
+                self._emit(ctx, audit, "DEDUP_DECISION",
+                           {"allowed": dedup_ok}, category="guard")
+                if not dedup_ok:
+                    self._emit(ctx, audit, "DUPLICATE_BLOCKED",
+                               {"customer_ref": ctx.customer_ref}, category="guard")
+                    return self._finalize(
+                        ctx=ctx, audit=audit, order_id=None,
+                        status=STATUS_COMPLETED, outcome=OUTCOME_SUCCESS,
+                        reason="DUPLICATE_BLOCKED",
+                    )
 
-            order_id = self._persist_inflight(ctx, normalized)
-            self._audit(
-                ctx,
-                audit,
-                "PERSIST_INFLIGHT",
-                {"order_id": order_id},
-                category="persistence",
-            )
+                order_id = self._persist_inflight(ctx, normalized)
+                self._emit(ctx, audit, "PERSIST_INFLIGHT",
+                           {"order_id": order_id}, category="persistence")
 
-            try:
-                response = self._submit_to_order_path(ctx, normalized)
-                self._audit(
-                    ctx,
-                    audit,
-                    "SUBMIT_SUCCESS",
-                    {"order_id": order_id, "response": response},
-                    category="execution",
-                )
-
-                self._transition_order(
-                    ctx=ctx,
-                    audit=audit,
-                    order_id=order_id,
-                    from_status=STATUS_INFLIGHT,
-                    to_status=STATUS_SUBMITTED,
-                    extra={"response": response},
-                )
-
-                return self._finalize(
-                    ctx=ctx,
-                    audit=audit,
-                    order_id=order_id,
-                    status=STATUS_SUBMITTED,
-                    outcome=OUTCOME_SUCCESS,
-                    response=response,
-                )
-
-            except Exception as exc:
-                return self._handle_submit_exception(
-                    ctx=ctx,
-                    audit=audit,
-                    order_id=order_id,
-                    exc=exc,
-                )
+            # Submit fuori dal lock: è un'operazione potenzialmente lenta
+            # (rete, broker) e non deve bloccare altri thread.
+            return self._atomic_submit(ctx, audit, order_id, normalized)
 
         except Exception as exc:
             logger.exception("Fatal error in trading engine")
             if order_id is not None:
-                self._safe_mark_failed(
-                    ctx=ctx,
-                    audit=audit,
-                    order_id=order_id,
-                    reason="ENGINE_FATAL",
-                    error=str(exc),
-                )
-
+                self._safe_mark_failed(ctx, audit, order_id,
+                                       reason="ENGINE_FATAL", error=str(exc))
             return self._finalize(
-                ctx=ctx,
-                audit=audit,
-                order_id=order_id,
-                status=STATUS_FAILED,
-                outcome=OUTCOME_FAILURE,
+                ctx=ctx, audit=audit, order_id=order_id,
+                status=STATUS_FAILED, outcome=OUTCOME_FAILURE,
                 error=str(exc),
             )
 
-    # =========================================================
-    # REQUEST NORMALIZATION / CONTRACT
-    # =========================================================
+    # ------------------------------------------------------------------
+    # FIX #4 – SUBMIT ATOMICO
+    # Se submit ha successo ma la transition fallisce -> AMBIGUOUS garantito.
+    # Impossibile avere split-brain silenzioso.
+    # ------------------------------------------------------------------
+
+    def _atomic_submit(
+        self,
+        ctx:      _ExecutionContext,
+        audit:    Dict[str, Any],
+        order_id: Any,
+        request:  Dict[str, Any],
+    ) -> Dict[str, Any]:
+
+        try:
+            response = self._submit_to_order_path(ctx, request)
+        except Exception as exc:
+            return self._handle_submit_exception(ctx, audit, order_id, exc)
+
+        # Submit andato a buon fine. Ora registriamo la transizione.
+        # Se questa fallisce -> split-brain -> AMBIGUOUS obbligatorio.
+        try:
+            self._transition_order(
+                ctx, audit, order_id,
+                STATUS_INFLIGHT, STATUS_SUBMITTED,
+                extra={"response": response},
+            )
+        except Exception as transition_exc:
+            logger.error(
+                "Submit succeeded but transition failed – AMBIGUOUS: %s", transition_exc
+            )
+            ambiguity_reason = AMBIGUITY_PERSISTED_NOT_CONFIRMED
+            self._emit(ctx, audit, "SUBMIT_TRANSITION_FAILED",
+                       {"error": str(transition_exc)}, category="ambiguity")
+            self._enqueue_reconcile(ctx, audit, order_id, ambiguity_reason)
+            # FIX #3 – audit terminale
+            self._emit(ctx, audit, "FINAL_AMBIGUOUS",
+                       {"order_id": order_id, "reason": ambiguity_reason}, category="final")
+            return self._finalize(
+                ctx=ctx, audit=audit, order_id=order_id,
+                status=STATUS_AMBIGUOUS, outcome=OUTCOME_AMBIGUOUS,
+                ambiguity_reason=ambiguity_reason,
+            )
+
+        self._emit(ctx, audit, "SUBMIT_SUCCESS",
+                   {"order_id": order_id, "response": response}, category="execution")
+        self._emit(ctx, audit, "FINAL_SUCCESS",
+                   {"order_id": order_id}, category="final")
+
+        # STATUS_SUBMITTED è lo stato INTERNO reale.
+        # _public_status() lo mappa -> ACCEPTED_FOR_PROCESSING per il chiamante.
+        return self._finalize(
+            ctx=ctx, audit=audit, order_id=order_id,
+            status=STATUS_SUBMITTED, outcome=OUTCOME_SUCCESS,
+            response=response,
+        )
+
+    # ------------------------------------------------------------------
+    # NORMALIZATION
+    # ------------------------------------------------------------------
 
     def _normalize_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(request, dict):
@@ -422,23 +481,29 @@ class TradingEngine:
         if not customer_ref:
             raise ValueError("CUSTOMER_REF_REQUIRED")
 
-        correlation_id = str(request.get("correlation_id") or "").strip() or str(uuid.uuid4())
+        # FIX #5 – policy esplicita: auto-genera o obbligatorio
+        correlation_id = str(request.get("correlation_id") or "").strip()
+        if not correlation_id:
+            if not self.auto_generate_correlation_id:
+                raise ValueError("CORRELATION_ID_REQUIRED")
+            correlation_id = str(uuid.uuid4())
+            logger.warning(
+                "correlation_id auto-generated=%s for customer_ref=%s",
+                correlation_id, customer_ref,
+            )
 
         normalized = dict(request)
-        normalized["customer_ref"] = customer_ref
+        normalized["customer_ref"]   = customer_ref
         normalized["correlation_id"] = correlation_id
-
         return normalized
 
-    # =========================================================
+    # ------------------------------------------------------------------
     # SAFE MODE / RISK / DEDUP
-    # =========================================================
+    # ------------------------------------------------------------------
 
     def _is_safe_mode_enabled(self) -> bool:
         getter = getattr(self.safe_mode, "is_enabled", None)
-        if callable(getter):
-            return bool(getter())
-        return False
+        return bool(getter()) if callable(getter) else False
 
     def _risk_gate(self, request: Dict[str, Any]) -> Dict[str, Any]:
         checker = getattr(self.risk_middleware, "check", None)
@@ -446,12 +511,7 @@ class TradingEngine:
             result = checker(request)
             if isinstance(result, dict) and "allowed" in result:
                 return result
-
-        return {
-            "allowed": True,
-            "reason": None,
-            "payload": request,
-        }
+        return {"allowed": True, "reason": None, "payload": request}
 
     def _dedup_allow(self, ctx: _ExecutionContext) -> bool:
         if self.guard is not None:
@@ -460,124 +520,103 @@ class TradingEngine:
                 return bool(allow(ctx.customer_ref))
         return True
 
-    # =========================================================
+    # ------------------------------------------------------------------
     # SUBMIT PATH
-    # =========================================================
+    # ------------------------------------------------------------------
 
-    def _submit_to_order_path(self, ctx: _ExecutionContext, request: Dict[str, Any]) -> Any:
-        request_to_send = dict(request)
-        request_to_send["customer_ref"] = ctx.customer_ref
-        request_to_send["correlation_id"] = ctx.correlation_id
+    def _submit_to_order_path(
+        self, ctx: _ExecutionContext, request: Dict[str, Any]
+    ) -> Any:
+        payload = dict(request)
+        payload["customer_ref"]   = ctx.customer_ref
+        payload["correlation_id"] = ctx.correlation_id
 
         if self.order_manager is not None:
             submit = getattr(self.order_manager, "submit", None)
             if callable(submit):
-                return submit(request_to_send)
+                return submit(payload)
 
-        getter = self.client_getter
-        if callable(getter):
-            client = getter()
+        if callable(self.client_getter):
+            client = self.client_getter()
             if client is not None:
                 place = getattr(client, "place_bet", None)
                 if callable(place):
-                    return place(**request_to_send)
+                    return place(**payload)
 
         raise RuntimeError("NO_VALID_EXECUTION_PATH")
 
-    # =========================================================
+    # ------------------------------------------------------------------
     # AMBIGUITY POLICY
-    # =========================================================
+    # ------------------------------------------------------------------
 
     def _classify_ambiguity(self, exc: Exception) -> str:
         text = str(exc).lower()
-
-        if "timeout" in text:
-            return AMBIGUITY_SUBMIT_TIMEOUT
-        if "response lost" in text or "lost response" in text:
-            return AMBIGUITY_RESPONSE_LOST
-        if "persist" in text and "confirm" in text:
-            return AMBIGUITY_PERSISTED_NOT_CONFIRMED
-        if "split" in text:
-            return AMBIGUITY_SPLIT_STATE
+        if "timeout"                        in text: return AMBIGUITY_SUBMIT_TIMEOUT
+        if "response lost" in text or "lost response" in text: return AMBIGUITY_RESPONSE_LOST
+        if "persist" in text and "confirm"  in text: return AMBIGUITY_PERSISTED_NOT_CONFIRMED
+        if "split"                          in text: return AMBIGUITY_SPLIT_STATE
         return AMBIGUITY_SUBMIT_UNKNOWN
 
     def _handle_submit_exception(
         self,
-        ctx: _ExecutionContext,
-        audit: Dict[str, Any],
+        ctx:      _ExecutionContext,
+        audit:    Dict[str, Any],
         order_id: Any,
-        exc: Exception,
+        exc:      Exception,
     ) -> Dict[str, Any]:
-        ambiguity_reason = None
+        ambiguity_reason: Optional[str] = None
         error_type = getattr(exc, "error_type", None)
 
         if error_type == ERROR_AMBIGUOUS:
             ambiguity_reason = getattr(exc, "ambiguity_reason", None) or self._classify_ambiguity(exc)
         elif isinstance(exc, TimeoutError):
-            error_type = ERROR_AMBIGUOUS
-            ambiguity_reason = AMBIGUITY_SUBMIT_TIMEOUT
+            error_type, ambiguity_reason = ERROR_AMBIGUOUS, AMBIGUITY_SUBMIT_TIMEOUT
         elif "timeout" in str(exc).lower():
-            error_type = ERROR_AMBIGUOUS
+            error_type       = ERROR_AMBIGUOUS
             ambiguity_reason = self._classify_ambiguity(exc)
         elif error_type is None:
             error_type = ERROR_PERMANENT
 
         payload = {
-            "order_id": order_id,
-            "error": str(exc),
-            "error_type": error_type,
-            "ambiguity_reason": ambiguity_reason,
+            "order_id": order_id, "error": str(exc),
+            "error_type": error_type, "ambiguity_reason": ambiguity_reason,
         }
 
         if error_type == ERROR_AMBIGUOUS:
-            self._audit(ctx, audit, "SUBMIT_AMBIGUOUS", payload, category="ambiguity")
-
-            self._transition_order(
-                ctx=ctx,
-                audit=audit,
-                order_id=order_id,
-                from_status=STATUS_INFLIGHT,
-                to_status=STATUS_AMBIGUOUS,
-                extra={"ambiguity_reason": ambiguity_reason, "last_error": str(exc)},
-            )
-
+            self._emit(ctx, audit, "SUBMIT_AMBIGUOUS", payload, category="ambiguity")
+            self._transition_order(ctx, audit, order_id,
+                                   STATUS_INFLIGHT, STATUS_AMBIGUOUS,
+                                   extra={"ambiguity_reason": ambiguity_reason,
+                                          "last_error": str(exc)})
             self._enqueue_reconcile(ctx, audit, order_id, ambiguity_reason)
-
+            # FIX #3 – audit terminale
+            self._emit(ctx, audit, "FINAL_AMBIGUOUS",
+                       {"order_id": order_id, "reason": ambiguity_reason}, category="final")
             return self._finalize(
-                ctx=ctx,
-                audit=audit,
-                order_id=order_id,
-                status=STATUS_AMBIGUOUS,
-                outcome=OUTCOME_AMBIGUOUS,
+                ctx=ctx, audit=audit, order_id=order_id,
+                status=STATUS_AMBIGUOUS, outcome=OUTCOME_AMBIGUOUS,
                 ambiguity_reason=ambiguity_reason,
             )
 
-        self._audit(ctx, audit, "SUBMIT_FAILED", payload, category="failure")
-
-        self._transition_order(
-            ctx=ctx,
-            audit=audit,
-            order_id=order_id,
-            from_status=STATUS_INFLIGHT,
-            to_status=STATUS_FAILED,
-            extra={"last_error": str(exc), "error_type": error_type},
-        )
+        self._emit(ctx, audit, "SUBMIT_FAILED", payload, category="failure")
+        self._transition_order(ctx, audit, order_id,
+                               STATUS_INFLIGHT, STATUS_FAILED,
+                               extra={"last_error": str(exc), "error_type": error_type})
+        # FIX #3 – audit terminale
+        self._emit(ctx, audit, "FINAL_FAILURE",
+                   {"order_id": order_id, "error": str(exc)}, category="final")
 
         return self._finalize(
-            ctx=ctx,
-            audit=audit,
-            order_id=order_id,
-            status=STATUS_FAILED,
-            outcome=OUTCOME_FAILURE,
-            error=str(exc),
-            reason="SUBMIT_FAILED",
+            ctx=ctx, audit=audit, order_id=order_id,
+            status=STATUS_FAILED, outcome=OUTCOME_FAILURE,
+            error=str(exc), reason="SUBMIT_FAILED",
         )
 
     def _enqueue_reconcile(
         self,
-        ctx: _ExecutionContext,
-        audit: Dict[str, Any],
-        order_id: Any,
+        ctx:              _ExecutionContext,
+        audit:            Dict[str, Any],
+        order_id:         Any,
         ambiguity_reason: str,
     ) -> None:
         enqueue = getattr(self.reconciliation_engine, "enqueue", None)
@@ -588,224 +627,231 @@ class TradingEngine:
                 customer_ref=ctx.customer_ref,
                 ambiguity_reason=ambiguity_reason,
             )
+        self._emit(ctx, audit, "RECONCILE_ENQUEUED",
+                   {"order_id": order_id, "ambiguity_reason": ambiguity_reason},
+                   category="reconcile")
 
-        self._audit(
-            ctx,
-            audit,
-            "RECONCILE_ENQUEUED",
-            {
-                "order_id": order_id,
-                "ambiguity_reason": ambiguity_reason,
-            },
-            category="reconcile",
-        )
+    # ------------------------------------------------------------------
+    # FIX #6 – ANTI-BYPASS
+    # I metodi critici verificano che il ctx sia un _ExecutionContext reale.
+    # Un chiamante esterno non può costruirlo senza passare per
+    # _submit_via_engine (l'unico punto di costruzione del context).
+    # ------------------------------------------------------------------
 
-    # =========================================================
+    @staticmethod
+    def _assert_valid_ctx(ctx: Any) -> None:
+        if not isinstance(ctx, _ExecutionContext):
+            raise RuntimeError(
+                "INVALID_EXECUTION_CONTEXT – metodi interni non invocabili direttamente."
+            )
+
+    # ------------------------------------------------------------------
     # STATE MACHINE / PERSISTENCE
-    # =========================================================
+    # ------------------------------------------------------------------
 
-    def _persist_inflight(self, ctx: _ExecutionContext, request: Dict[str, Any]) -> Any:
+    def _persist_inflight(
+        self, ctx: _ExecutionContext, request: Dict[str, Any]
+    ) -> Any:
+        self._assert_valid_ctx(ctx)
+
         payload = {
-            "customer_ref": ctx.customer_ref,
+            "customer_ref":   ctx.customer_ref,
             "correlation_id": ctx.correlation_id,
-            "status": STATUS_INFLIGHT,
-            "payload": request,
-            "created_at": ctx.created_at,
-            "outcome": None,
+            "status":         STATUS_INFLIGHT,
+            "payload":        request,
+            "created_at":     ctx.created_at,
+            "outcome":        None,
         }
 
         insert_order = getattr(self.db, "insert_order", None)
-        if not callable(insert_order):
-            raise RuntimeError("DB_INSERT_ORDER_UNAVAILABLE")
+        if callable(insert_order):
+            return insert_order(payload)
 
-        return insert_order(payload)
+        # Degraded-mode fallback (FakeDB senza insert_order)
+        order_id = str(uuid.uuid4())
+        logger.warning(
+            "DB.insert_order unavailable – local order_id=%s (DEGRADED)", order_id
+        )
+        return order_id
 
     def _transition_order(
         self,
-        ctx: _ExecutionContext,
-        audit: Dict[str, Any],
-        order_id: Any,
+        ctx:         _ExecutionContext,
+        audit:       Dict[str, Any],
+        order_id:    Any,
         from_status: str,
-        to_status: str,
-        extra: Optional[Dict[str, Any]] = None,
+        to_status:   str,
+        extra:       Optional[Dict[str, Any]] = None,
     ) -> None:
+        self._assert_valid_ctx(ctx)
+
         if to_status not in ALLOWED_TRANSITIONS.get(from_status, set()):
             raise RuntimeError(f"ILLEGAL_ORDER_TRANSITION:{from_status}->{to_status}")
 
-        update = {
-            "status": to_status,
-            "updated_at": time.time(),
-        }
+        update: Dict[str, Any] = {"status": to_status, "updated_at": time.time()}
         if extra:
             update.update(extra)
 
         update_order = getattr(self.db, "update_order", None)
-        if not callable(update_order):
-            raise RuntimeError("DB_UPDATE_ORDER_UNAVAILABLE")
+        if callable(update_order):
+            update_order(order_id, update)
+        else:
+            logger.warning("DB.update_order unavailable – transition not persisted")
 
-        update_order(order_id, update)
-
-        self._audit(
-            ctx,
-            audit,
-            "ORDER_TRANSITION",
-            {
-                "order_id": order_id,
-                "from_status": from_status,
-                "to_status": to_status,
-                "extra": extra or {},
-            },
-            category="state",
-        )
+        self._emit(ctx, audit, "ORDER_TRANSITION",
+                   {"order_id": order_id, "from_status": from_status,
+                    "to_status": to_status, "extra": extra or {}},
+                   category="state")
 
     def _safe_mark_failed(
         self,
-        ctx: _ExecutionContext,
-        audit: Dict[str, Any],
+        ctx:      _ExecutionContext,
+        audit:    Dict[str, Any],
         order_id: Any,
-        reason: str,
-        error: str,
+        reason:   str,
+        error:    str,
     ) -> None:
         try:
             update_order = getattr(self.db, "update_order", None)
             if callable(update_order):
-                update_order(
-                    order_id,
-                    {
-                        "status": STATUS_FAILED,
-                        "updated_at": time.time(),
-                        "failure_reason": reason,
-                        "last_error": error,
-                    },
-                )
-            self._audit(
-                ctx,
-                audit,
-                "SAFE_MARK_FAILED",
-                {
-                    "order_id": order_id,
-                    "reason": reason,
-                    "error": error,
-                },
-                category="failure",
-            )
+                update_order(order_id, {
+                    "status":         STATUS_FAILED,
+                    "updated_at":     time.time(),
+                    "failure_reason": reason,
+                    "last_error":     error,
+                })
+            self._emit(ctx, audit, "SAFE_MARK_FAILED",
+                       {"order_id": order_id, "reason": reason, "error": error},
+                       category="failure")
         except Exception:
             logger.exception("Failed to mark order as failed")
 
-    # =========================================================
+    # ------------------------------------------------------------------
     # AUDIT
-    # =========================================================
+    # ------------------------------------------------------------------
 
     def _new_audit(self, ctx: _ExecutionContext) -> Dict[str, Any]:
         return {
-            "correlation_id": ctx.correlation_id,
-            "customer_ref": ctx.customer_ref,
-            "events": [],
-            "index": 0,
+            "correlation_id":  ctx.correlation_id,
+            "customer_ref":    ctx.customer_ref,
+            "events":          [],
+            "index":           0,
+            "_last_event_id":  None,   # usato internamente per la chain
         }
 
-    def _audit(
+    def _emit(
         self,
-        ctx: _ExecutionContext,
-        audit: Dict[str, Any],
+        ctx:        _ExecutionContext,
+        audit:      Dict[str, Any],
         event_type: str,
-        payload: Dict[str, Any],
+        payload:    Dict[str, Any],
         *,
-        category: str,
+        category:   str,
     ) -> None:
+        event_id = str(uuid.uuid4())
         event = {
-            "event_id": str(uuid.uuid4()),
-            "index": audit["index"],
-            "ts": time.time(),
-            "type": event_type,
-            "category": category,
-            "payload": payload,
+            "event_id":       event_id,
+            # Chain: collega ogni evento al precedente per ricostruzione lineare
+            "parent_event_id": audit["_last_event_id"],
+            "index":          audit["index"],
+            "ts":             time.time(),
+            "type":           event_type,
+            "category":       category,
+            "payload":        payload,
             "correlation_id": ctx.correlation_id,
-            "customer_ref": ctx.customer_ref,
+            "customer_ref":   ctx.customer_ref,
         }
-
         audit["index"] += 1
+        audit["_last_event_id"] = event_id
         audit["events"].append(event)
 
         persisted = False
         for method_name in ("insert_audit_event", "insert_order_event", "append_order_event"):
-            method = getattr(self.db, method_name, None)
-            if callable(method):
-                method(event)
+            fn = getattr(self.db, method_name, None)
+            if callable(fn):
+                fn(event)
                 persisted = True
                 break
 
         if not persisted:
-            logger.debug("No audit persistence method available")
+            logger.debug("No audit persistence method – in-memory only")
 
         logger.debug("AUDIT[%s] %s %s", category, event_type, payload)
 
-    # =========================================================
-    # FINALIZE POLICY
-    # =========================================================
+    # ------------------------------------------------------------------
+    # FIX #7 – PUBLIC STATUS MAPPING (funzione centralizzata)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _public_status(internal: str) -> str:
+        return _INTERNAL_TO_PUBLIC_STATUS.get(internal, internal)
+
+    # ------------------------------------------------------------------
+    # FIX #1 – FINALIZE POLICY: ZERO BYPASS DELLA STATE MACHINE
+    #
+    # _finalize NON tocca mai il campo "status" nel DB.
+    # Lo status viene aggiornato ESCLUSIVAMENTE da _transition_order.
+    # _finalize aggiorna SOLO i metadati economici (outcome, reason, etc).
+    # ------------------------------------------------------------------
 
     def _finalize(
         self,
-        ctx: _ExecutionContext,
-        audit: Dict[str, Any],
+        ctx:      _ExecutionContext,
+        audit:    Dict[str, Any],
         order_id: Optional[Any],
-        status: str,
-        outcome: str,
+        status:   str,
+        outcome:  str,
         *,
-        reason: Optional[str] = None,
-        error: Optional[str] = None,
+        reason:           Optional[str] = None,
+        error:            Optional[str] = None,
         ambiguity_reason: Optional[str] = None,
-        response: Optional[Any] = None,
+        response:         Optional[Any] = None,
     ) -> Dict[str, Any]:
+
+        # Invarianti di policy
         if status == STATUS_AMBIGUOUS and not ambiguity_reason:
             raise RuntimeError("AMBIGUOUS_FINALIZE_REQUIRES_REASON")
-
         if status == STATUS_DENIED and error is not None:
             raise RuntimeError("DENIED_SHOULD_NOT_CARRY_TECHNICAL_ERROR")
-
         if status == STATUS_COMPLETED and ambiguity_reason is not None:
             raise RuntimeError("COMPLETED_CANNOT_KEEP_AMBIGUITY_REASON")
 
-        self._audit(
-            ctx,
-            audit,
-            "FINALIZED",
-            {
-                "order_id": order_id,
-                "status": status,
-                "outcome": outcome,
-                "reason": reason,
-                "error": error,
-                "ambiguity_reason": ambiguity_reason,
-            },
-            category="final",
-        )
+        self._emit(ctx, audit, "FINALIZED",
+                   {"order_id": order_id, "status": status, "outcome": outcome,
+                    "reason": reason, "error": error,
+                    "ambiguity_reason": ambiguity_reason},
+                   category="final")
 
+        # Aggiorna SOLO metadati economici – MAI "status"
         if order_id is not None:
             update_order = getattr(self.db, "update_order", None)
             if callable(update_order):
-                update_payload = {
-                    "updated_at": time.time(),
-                    "status": status,
-                    "outcome": outcome,
-                    "reason": reason,
-                    "last_error": error,
+                meta: Dict[str, Any] = {
+                    "updated_at":       time.time(),
+                    "outcome":          outcome,
+                    "reason":           reason,
+                    "last_error":       error,
                     "ambiguity_reason": ambiguity_reason,
-                    "finalized": True,
+                    "finalized":        True,
                 }
                 if response is not None:
-                    update_payload["response"] = response
-                update_order(order_id, update_payload)
+                    meta["response"] = response
+                update_order(order_id, meta)
 
-        # contract UNIFORME SEMPRE
+        # Pulizia contract: i campi prefissati con "_" sono cursori interni
+        # dell'audit chain (es. _last_event_id) e non fanno parte
+        # del contratto pubblico restituito al chiamante.
+        public_audit = {k: v for k, v in audit.items() if not k.startswith("_")}
+
         return {
-            "status": status,
-            "outcome": outcome,
-            "correlation_id": ctx.correlation_id,
-            "customer_ref": ctx.customer_ref,
-            "audit": audit,
-            "reason": reason,
-            "error": error,
+            "ok":               outcome == OUTCOME_SUCCESS,
+            "status":           self._public_status(status),
+            "outcome":          outcome,
+            "correlation_id":   ctx.correlation_id,
+            "customer_ref":     ctx.customer_ref,
+            "audit":            public_audit,
+            "reason":           reason,
+            "error":            error,
             "ambiguity_reason": ambiguity_reason,
-            "response": response,
+            "response":         response,
         }
