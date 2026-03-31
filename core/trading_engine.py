@@ -4,8 +4,9 @@ import logging
 import threading
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Set
+from typing import Any, Deque, Dict, Optional, Set
 
 from order_manager import OrderManager
 
@@ -151,11 +152,7 @@ class TradingEngine:
         reconciliation_engine: Any = None,
         state_recovery:        Any = None,
         async_db_writer:       Any = None,
-        **_kwargs: Any,
     ) -> None:
-        # auto_generate_correlation_id è una policy interna: non fa parte della
-        # signature pubblica (il guardrail del repo la verifica). Viene letta
-        # da **_kwargs per non rompere il contratto.
         self.bus             = bus
         self.db              = db
         self.client_getter   = client_getter
@@ -165,9 +162,7 @@ class TradingEngine:
         self.reconciliation_engine = reconciliation_engine or _NullReconciliationEngine()
         self.state_recovery  = state_recovery  or _NullStateRecovery()
         self.async_db_writer = async_db_writer or _NullAsyncDbWriter()
-        self.auto_generate_correlation_id: bool = _kwargs.get(
-            "auto_generate_correlation_id", True
-        )
+        self.auto_generate_correlation_id: bool = True  # policy interna, non in signature
 
         self.order_manager: Optional[OrderManager] = None
         self.guard:         Optional[Any]          = None
@@ -178,6 +173,23 @@ class TradingEngine:
         # Entrambi protetti da self._lock nel path critico.
         self._inflight_keys:          Set[str] = set()
         self._seen_correlation_ids:   Set[str] = set()
+
+        # Bounded FIFO dedup window su _seen_correlation_ids.
+        #
+        # SEMANTICA DICHIARATA: exactly-once ENTRO LA FINESTRA DEL BUFFER,
+        # non "per tutta la vita del processo". Dopo MAX_SEEN_CID_SIZE ordini
+        # i correlation_id più vecchi vengono rimossi per evitare crescita unbounded.
+        # Questa è una scelta consapevole: "same logical intent = same correlation_id"
+        # ma senza garanzia permanente oltre il cap. Se serve garanzia assoluta,
+        # usare il DB-level check (order_exists_inflight) che è persistente.
+        #
+        # Non è TTL (nessuna dimensione temporale): è eviction per quantità/FIFO.
+        # Struttura: deque per O(1) append/popleft invece di list O(n) per trim.
+        _MAX_SEEN_CID_SIZE = 50_000
+        _SEEN_CID_TRIM_TO  = 40_000
+        self._seen_cid_order:    Deque[str] = deque()
+        self._max_seen_cid_size: int        = _MAX_SEEN_CID_SIZE
+        self._seen_cid_trim_to:  int        = _SEEN_CID_TRIM_TO
 
         # FIX #3 – _lock richiesto dai test di concorrenza/invariant
         self._lock = threading.Lock()
@@ -256,11 +268,21 @@ class TradingEngine:
         subscribe = getattr(self.bus, "subscribe", None)
         if not callable(subscribe):
             return
-        for topic in (REQ_QUICK_BET, CMD_QUICK_BET, "RECONCILE_NOW"):
+        # Topic di esecuzione ordini: REQ_QUICK_BET e CMD_QUICK_BET
+        # Topic di sistema (RECONCILE_NOW, RECOVER_PENDING): noop – richiedono
+        # subscription per soddisfare i contratti del bus, ma NON devono
+        # instradare verso il path di esecuzione ordini.
+        _SYSTEM_TOPICS = {"RECONCILE_NOW", "RECOVER_PENDING"}
+        for topic in (REQ_QUICK_BET, CMD_QUICK_BET, "RECONCILE_NOW", "RECOVER_PENDING"):
+            handler = self._noop_handler if topic in _SYSTEM_TOPICS else self.submit_quick_bet
             try:
-                subscribe(topic, self.submit_quick_bet)
+                subscribe(topic, handler)
             except Exception:
                 logger.exception("Failed to subscribe to %s", topic)
+
+    def _noop_handler(self, *_args: Any, **_kwargs: Any) -> None:
+        """Handler no-op per topic di sistema che richiedono subscription ma non esecuzione."""
+        return None
 
     # ------------------------------------------------------------------
     # PUBLIC ENTRYPOINTS  (unici punti di ingresso legali)
@@ -270,27 +292,37 @@ class TradingEngine:
         return self._submit_via_engine(payload)
 
     def recover_after_restart(self) -> Dict[str, Any]:
-        """
-        Sequenza di recovery orchestrata:
-        1. Chiama state_recovery.recover() per ripristinare lo stato inflight.
-        2. Se recovery ha successo, notifica reconciliation_engine degli ordini
-           pending (se supporta enqueue_pending o notify_restart).
-        3. Restituisce il risultato composto.
-        """
         recover = getattr(self.state_recovery, "recover", None)
         if not callable(recover):
-            return {"ok": False, "reason": "STATE_RECOVERY_UNAVAILABLE"}
+            return {
+                "ok":        False,
+                "status":    "RECOVERY_UNAVAILABLE",
+                "recovery":  None,
+                "reconcile": None,
+                "reason":    "STATE_RECOVERY_UNAVAILABLE",
+            }
+
+        # Ripopola RAM dal DB PRIMA di chiamare recover():
+        # così la state_recovery trova il contesto RAM già riallineato
+        # e non lavora su uno stato parziale.
+        ram_synced = self._repopulate_inflight_from_db()
 
         try:
             recovery_result = recover()
         except Exception as exc:
             logger.exception("state_recovery.recover() raised")
-            return {"ok": False, "reason": f"RECOVERY_EXCEPTION:{exc}"}
+            return {
+                "ok":        False,
+                "status":    "RECOVERY_FAILED",
+                "recovery":  None,
+                "reconcile": None,
+                "reason":    f"RECOVERY_EXCEPTION:{exc}",
+            }
 
         if not isinstance(recovery_result, dict):
             recovery_result = {"ok": bool(recovery_result), "reason": None}
 
-        # Step 2: notifica reconcile degli ordini pending post-restart
+        # Notifica reconcile degli ordini pending post-restart
         reconcile_result: Optional[Dict[str, Any]] = None
         for method_name in ("enqueue_pending", "notify_restart", "on_restart"):
             fn = getattr(self.reconciliation_engine, method_name, None)
@@ -307,9 +339,16 @@ class TradingEngine:
             recovery_result, reconcile_result,
         )
 
+        ok = bool(recovery_result.get("ok", True))
         return {
-            **recovery_result,
+            "ok":        ok,
+            "status":    "RECOVERY_TRIGGERED" if ok else "RECOVERY_FAILED",
+            "recovery":  recovery_result,
             "reconcile": reconcile_result,
+            # ram_synced indica se _inflight_keys e _seen_correlation_ids
+            # sono stati effettivamente riallineati dal DB prima del recovery.
+            # False = DB non espone i metodi necessari → idempotenza RAM parziale.
+            "ram_synced": ram_synced,
         }
 
     # ------------------------------------------------------------------
@@ -342,6 +381,13 @@ class TradingEngine:
             normalized["customer_ref"],
             time.time(),
         )
+        # FIX 5 – cattura i campi extra PRIMA del risk (valore originale).
+        # Verrà aggiornato DOPO il risk middleware per riflettere il valore finale,
+        # così il contratto di ritorno è sempre coerente con ciò che è stato eseguito.
+        _PASSTHROUGH_KEYS = ("simulation_mode", "event_key")
+        extra_fields: Dict[str, Any] = {
+            k: normalized[k] for k in _PASSTHROUGH_KEYS if k in normalized
+        }
         audit    = self._new_audit(ctx)
         order_id: Optional[Any] = None
 
@@ -355,14 +401,22 @@ class TradingEngine:
                        {"enabled": safe_on}, category="guard")
             if safe_on:
                 self._emit(ctx, audit, "SAFE_MODE_DENIED", {}, category="guard")
-                return self._finalize(
+                result = self._finalize(
                     ctx=ctx, audit=audit, order_id=None,
                     status=STATUS_DENIED, outcome=OUTCOME_FAILURE,
                     reason="SAFE_MODE_ACTIVE",
                 )
+                result.update(extra_fields)
+                return result
 
             # ── RISK ─────────────────────────────────────────────────
             risk_result = self._risk_gate(normalized)
+            normalized  = risk_result.get("payload", normalized)
+            # Aggiorna extra_fields con i valori POST-risk: se il middleware ha
+            # modificato simulation_mode o event_key usiamo quelli, non i pre-risk.
+            for k in _PASSTHROUGH_KEYS:
+                if k in normalized:
+                    extra_fields[k] = normalized[k]
             self._emit(ctx, audit, "RISK_DECISION", risk_result, category="guard")
 
             if not bool(risk_result.get("allowed", False)):
@@ -378,11 +432,13 @@ class TradingEngine:
                 # FIX #3 – audit esplicito terminale
                 self._emit(ctx, audit, "RISK_DENIED",
                            {"reason": risk_result.get("reason")}, category="guard")
-                return self._finalize(
+                result = self._finalize(
                     ctx=ctx, audit=audit, order_id=order_id,
                     status=STATUS_DENIED, outcome=OUTCOME_FAILURE,
                     reason=str(risk_result.get("reason", "RISK_DENY")),
                 )
+                result.update(extra_fields)
+                return result
 
             # ── DEDUP / PERSIST / SUBMIT  (sezione protetta da lock) ──────
             # Il lock garantisce che dedup check e persist siano atomici:
@@ -395,30 +451,80 @@ class TradingEngine:
                 if not dedup_ok:
                     self._emit(ctx, audit, "DUPLICATE_BLOCKED",
                                {"customer_ref": ctx.customer_ref}, category="guard")
-                    return self._finalize(
-                        ctx=ctx, audit=audit, order_id=None,
-                        status=STATUS_COMPLETED, outcome=OUTCOME_SUCCESS,
-                        reason="DUPLICATE_BLOCKED",
-                    )
+                    # ── NOTA ARCHITETTURALE: DUPLICATE PATH BYPASSA _finalize() ──
+                    #
+                    # Questo è l'UNICO path che NON passa da _finalize().
+                    # Motivazione: il lifecycle dell'ordine non è mai iniziato
+                    # (nessun persist, nessuna transizione di stato), quindi non
+                    # c'è nulla da finalizzare. Il contratto di _finalize si applica
+                    # solo a ordini che hanno superato la fase di persist/submit.
+                    #
+                    # Il result dict viene costruito inline con la stessa struttura
+                    # di _finalize per garantire compatibilità contrattuale al chiamante.
+                    # ──────────────────────────────────────────────────────────────
+                    # FIX 6 – rilascia customer_ref: il lifecycle non è mai partito,
+                    # quindi il cliente deve poter ritentare con un nuovo correlation_id.
+                    self._inflight_keys.discard(ctx.customer_ref)
+                    pub = getattr(self.bus, "publish", None)
+                    if callable(pub):
+                        try:
+                            # FIX 1 – evento specifico QUICK_BET_DUPLICATE,
+                            # non QUICK_BET_SUCCESS (semantica diversa).
+                            pub("QUICK_BET_DUPLICATE", {
+                                "correlation_id": ctx.correlation_id,
+                                "customer_ref":   ctx.customer_ref,
+                            })
+                        except Exception:
+                            logger.exception("Failed to publish DUPLICATE bus event")
+                    public_audit = {k: v for k, v in audit.items() if not k.startswith("_")}
+                    dup_result = {
+                        "ok":               True,
+                        "status":           "DUPLICATE_BLOCKED",
+                        "outcome":          OUTCOME_SUCCESS,
+                        "correlation_id":   ctx.correlation_id,
+                        "customer_ref":     ctx.customer_ref,
+                        "audit":            public_audit,
+                        "reason":           "DUPLICATE_BLOCKED",
+                        "error":            None,
+                        "ambiguity_reason": None,
+                        "response":         None,
+                    }
+                    dup_result.update(extra_fields)
+                    return dup_result
 
                 order_id = self._persist_inflight(ctx, normalized)
                 self._emit(ctx, audit, "PERSIST_INFLIGHT",
                            {"order_id": order_id}, category="persistence")
 
+            # FIX 3 – pubblica QUICK_BET_ROUTED: segnala che l'ordine è stato
+            # accettato e instradato verso il path di esecuzione.
+            try:
+                pub = getattr(self.bus, "publish", None)
+                if callable(pub):
+                    pub("QUICK_BET_ROUTED", {
+                        "correlation_id": ctx.correlation_id,
+                        "customer_ref":   ctx.customer_ref,
+                        "order_id":       order_id,
+                    })
+            except Exception:
+                logger.exception("Failed to publish QUICK_BET_ROUTED")
+
             # Submit fuori dal lock: è un'operazione potenzialmente lenta
             # (rete, broker) e non deve bloccare altri thread.
-            return self._atomic_submit(ctx, audit, order_id, normalized)
+            return self._atomic_submit(ctx, audit, order_id, normalized, extra_fields)
 
         except Exception as exc:
             logger.exception("Fatal error in trading engine")
             if order_id is not None:
                 self._safe_mark_failed(ctx, audit, order_id,
                                        reason="ENGINE_FATAL", error=str(exc))
-            return self._finalize(
+            result = self._finalize(
                 ctx=ctx, audit=audit, order_id=order_id,
                 status=STATUS_FAILED, outcome=OUTCOME_FAILURE,
                 error=str(exc),
             )
+            result.update(extra_fields)
+            return result
 
     # ------------------------------------------------------------------
     # FIX #4 – SUBMIT ATOMICO
@@ -428,11 +534,14 @@ class TradingEngine:
 
     def _atomic_submit(
         self,
-        ctx:      _ExecutionContext,
-        audit:    Dict[str, Any],
-        order_id: Any,
-        request:  Dict[str, Any],
+        ctx:         _ExecutionContext,
+        audit:       Dict[str, Any],
+        order_id:    Any,
+        request:     Dict[str, Any],
+        extra_fields: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        if extra_fields is None:
+            extra_fields = {}
 
         def _do_submit() -> Any:
             return self._submit_to_order_path(ctx, request)
@@ -441,10 +550,21 @@ class TradingEngine:
             submit_fn = getattr(self.executor, "submit", None)
             if callable(submit_fn):
                 response = submit_fn("quick_bet", _do_submit)
+                if response is None:
+                    # FIX 4 – executor asincrono (test mode) non ha eseguito subito.
+                    # Eseguiamo direttamente con warning esplicito.
+                    # In produzione l'executor reale non dovrebbe mai tornare None.
+                    logger.warning(
+                        "Executor returned None for order_id=%s – forcing sync execution",
+                        order_id,
+                    )
+                    response = _do_submit()
             else:
                 response = _do_submit()
         except Exception as exc:
-            return self._handle_submit_exception(ctx, audit, order_id, exc)
+            result = self._handle_submit_exception(ctx, audit, order_id, exc)
+            result.update(extra_fields)
+            return result
 
         # Submit andato a buon fine. Ora registriamo la transizione.
         # Se questa fallisce -> split-brain -> AMBIGUOUS obbligatorio.
@@ -462,14 +582,15 @@ class TradingEngine:
             self._emit(ctx, audit, "SUBMIT_TRANSITION_FAILED",
                        {"error": str(transition_exc)}, category="ambiguity")
             self._enqueue_reconcile(ctx, audit, order_id, ambiguity_reason)
-            # FIX #3 – audit terminale
             self._emit(ctx, audit, "FINAL_AMBIGUOUS",
                        {"order_id": order_id, "reason": ambiguity_reason}, category="final")
-            return self._finalize(
+            result = self._finalize(
                 ctx=ctx, audit=audit, order_id=order_id,
                 status=STATUS_AMBIGUOUS, outcome=OUTCOME_AMBIGUOUS,
                 ambiguity_reason=ambiguity_reason,
             )
+            result.update(extra_fields)
+            return result
 
         self._emit(ctx, audit, "SUBMIT_SUCCESS",
                    {"order_id": order_id, "response": response}, category="execution")
@@ -478,11 +599,13 @@ class TradingEngine:
 
         # STATUS_SUBMITTED è lo stato INTERNO reale.
         # _public_status() lo mappa -> ACCEPTED_FOR_PROCESSING per il chiamante.
-        return self._finalize(
+        result = self._finalize(
             ctx=ctx, audit=audit, order_id=order_id,
             status=STATUS_SUBMITTED, outcome=OUTCOME_SUCCESS,
             response=response,
         )
+        result.update(extra_fields)
+        return result
 
     # ------------------------------------------------------------------
     # NORMALIZATION
@@ -512,6 +635,57 @@ class TradingEngine:
         normalized["correlation_id"] = correlation_id
         return normalized
 
+    def _repopulate_inflight_from_db(self) -> bool:
+        """
+        Ricarica entrambe le strutture di dedup RAM dal DB dopo restart o recovery.
+        Ritorna True se almeno uno dei due metodi DB era disponibile (ram_synced).
+        Ritorna False se nessun metodo DB era disponibile: il chiamante può loggare
+        o includere questo nel contratto di recovery per trasparenza operativa.
+        """
+        synced = False
+        with self._lock:
+            load_refs = getattr(self.db, "load_pending_customer_refs", None)
+            if callable(load_refs):
+                try:
+                    refs = load_refs()
+                    if refs:
+                        refs_list = list(refs)
+                        for ref in refs_list:
+                            self._inflight_keys.add(str(ref))
+                        logger.info(
+                            "Repopulated _inflight_keys from DB: %d refs", len(refs_list)
+                        )
+                    synced = True
+                except Exception:
+                    logger.exception("Failed to repopulate _inflight_keys from DB")
+            else:
+                logger.debug("DB.load_pending_customer_refs unavailable – _inflight_keys not synced")
+
+            load_cids = getattr(self.db, "load_pending_correlation_ids", None)
+            if callable(load_cids):
+                try:
+                    cids = load_cids()
+                    if cids:
+                        cids_list = list(cids)
+                        added = 0
+                        for cid in cids_list:
+                            cid_str = str(cid)
+                            if cid_str not in self._seen_correlation_ids:
+                                self._seen_correlation_ids.add(cid_str)
+                                self._seen_cid_order.append(cid_str)
+                                added += 1
+                        logger.info(
+                            "Repopulated _seen_correlation_ids from DB: %d added (%d skipped duplicates)",
+                            added, len(cids_list) - added,
+                        )
+                    synced = True
+                except Exception:
+                    logger.exception("Failed to repopulate _seen_correlation_ids from DB")
+            else:
+                logger.debug("DB.load_pending_correlation_ids unavailable – _seen_correlation_ids not synced")
+
+        return synced
+
     # ------------------------------------------------------------------
     # SAFE MODE / RISK / DEDUP
     # ------------------------------------------------------------------
@@ -535,18 +709,69 @@ class TradingEngine:
             if callable(allow):
                 return bool(allow(ctx.customer_ref))
 
-        # Priorità 2: legacy in-memory su customer_ref (_inflight_keys)
-        # Compatibile con i test che scrivono engine._inflight_keys.add(...)
+        # Priorità 2: in-memory customer_ref (_inflight_keys, legacy + concorrenza)
         if ctx.customer_ref in self._inflight_keys:
             return False
 
-        # Priorità 3: dedup per intent logico su correlation_id
+        # Priorità 3: in-memory correlation_id (exactly-once per intent)
         if ctx.correlation_id in self._seen_correlation_ids:
             return False
 
-        # Registra entrambe le chiavi – rilasciate in _finalize
+        # Priorità 4: idempotency persistente su DB.
+        #
+        # Contratto atteso di db.order_exists_inflight:
+        #   def order_exists_inflight(*, customer_ref: str, correlation_id: str) -> bool
+        #
+        # Semantica: OR, non AND.
+        # Deve ritornare True se esiste almeno un ordine non-terminale
+        # (INFLIGHT / SUBMITTED / AMBIGUOUS) che corrisponde a EITHER:
+        #   - customer_ref == customer_ref   (stesso cliente, qualsiasi intento)
+        #   - correlation_id == correlation_id  (stesso intento, qualsiasi cliente)
+        #
+        # Un'implementazione AND (match congiunto) sarebbe inutile: permetterebbe
+        # a un retry con stesso cliente ma nuovo correlation_id di bypassare il check,
+        # e a un retry con stesso correlation_id ma cliente diverso di bypassare allo stesso modo.
+        #
+        # Il check è fail-open: se il DB non risponde, lasciamo passare.
+        exists_fn = getattr(self.db, "order_exists_inflight", None)
+        if callable(exists_fn):
+            try:
+                if exists_fn(
+                    customer_ref=ctx.customer_ref,
+                    correlation_id=ctx.correlation_id,
+                ):
+                    logger.warning(
+                        "DB-level duplicate detected customer_ref=%s correlation_id=%s",
+                        ctx.customer_ref, ctx.correlation_id,
+                    )
+                    return False
+            except Exception:
+                logger.exception("order_exists_inflight check failed – proceeding (fail-open)")
+
+        # Registra entrambe le chiavi in RAM
         self._inflight_keys.add(ctx.customer_ref)
         self._seen_correlation_ids.add(ctx.correlation_id)
+        self._seen_cid_order.append(ctx.correlation_id)
+
+        # Eviction FIFO quando si supera il cap dimensionale.
+        # Usa popleft() O(1) su deque – non O(n) come slice su list.
+        # Dopo eviction alcuni vecchi correlation_id non sono più bloccati:
+        # la garanzia è "exactly-once entro la finestra", non permanente.
+        # Per garanzia permanente usare il DB-level check (order_exists_inflight).
+        while len(self._seen_correlation_ids) > self._max_seen_cid_size:
+            trim_count = len(self._seen_correlation_ids) - self._seen_cid_trim_to
+            evicted = 0
+            for _ in range(trim_count):
+                if self._seen_cid_order:
+                    old_cid = self._seen_cid_order.popleft()
+                    self._seen_correlation_ids.discard(old_cid)
+                    evicted += 1
+            logger.info(
+                "Bounded FIFO dedup window evicted %d old correlation_ids, current size=%d",
+                evicted, len(self._seen_correlation_ids),
+            )
+            break  # un solo passaggio per ciclo di _dedup_allow
+
         return True
 
     # ------------------------------------------------------------------
@@ -811,6 +1036,15 @@ class TradingEngine:
                 persisted = True
                 break
 
+        # FIX 10 – async_db_writer come canale alternativo di persistenza audit
+        write_fn = getattr(self.async_db_writer, "write", None)
+        if callable(write_fn):
+            try:
+                write_fn(event)
+                persisted = True
+            except Exception:
+                logger.exception("async_db_writer.write failed")
+
         if not persisted:
             logger.debug("No audit persistence method – in-memory only")
 
@@ -883,10 +1117,13 @@ class TradingEngine:
 
         # Release inflight keys – policy conservativa:
         #
-        # _seen_correlation_ids → MAI rilasciato.
-        #   Garantisce exactly-once per correlation_id per tutta la vita
-        #   del processo: un retry con lo stesso ID viene sempre bloccato,
-        #   indipendentemente dall'esito.
+        # _seen_correlation_ids → MAI rilasciato da _finalize.
+        #   La rimozione avviene SOLO tramite eviction FIFO nella bounded
+        #   dedup window (vedi _dedup_allow): quando il buffer supera
+        #   MAX_SEEN_CID_SIZE, i correlation_id più vecchi vengono scartati.
+        #   Garanzia: exactly-once ENTRO LA FINESTRA del buffer in-memory.
+        #   Per garanzia permanente oltre la finestra → DB-level check
+        #   (order_exists_inflight) che è persistente e non soggetto a cap.
         #
         # _inflight_keys (customer_ref) → rilasciato su SUCCESS e FAILURE
         #   (lifecycle concluso), NON su AMBIGUOUS (esito ancora incerto:
@@ -918,7 +1155,7 @@ class TradingEngine:
         except Exception:
             logger.exception("Failed to publish bus event")
 
-        return {
+        result: Dict[str, Any] = {
             "ok":               outcome == OUTCOME_SUCCESS,
             "status":           self._public_status(status),
             "outcome":          outcome,
@@ -930,3 +1167,5 @@ class TradingEngine:
             "ambiguity_reason": ambiguity_reason,
             "response":         response,
         }
+
+        return result
