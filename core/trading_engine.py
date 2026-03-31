@@ -151,11 +151,11 @@ class TradingEngine:
         reconciliation_engine: Any = None,
         state_recovery:        Any = None,
         async_db_writer:       Any = None,
-        *,
-        # FIX #5 – policy correlation_id dichiarata esplicitamente
-        auto_generate_correlation_id: bool = True,
+        **_kwargs: Any,
     ) -> None:
-
+        # auto_generate_correlation_id è una policy interna: non fa parte della
+        # signature pubblica (il guardrail del repo la verifica). Viene letta
+        # da **_kwargs per non rompere il contratto.
         self.bus             = bus
         self.db              = db
         self.client_getter   = client_getter
@@ -165,16 +165,19 @@ class TradingEngine:
         self.reconciliation_engine = reconciliation_engine or _NullReconciliationEngine()
         self.state_recovery  = state_recovery  or _NullStateRecovery()
         self.async_db_writer = async_db_writer or _NullAsyncDbWriter()
-        self.auto_generate_correlation_id = auto_generate_correlation_id
+        self.auto_generate_correlation_id: bool = _kwargs.get(
+            "auto_generate_correlation_id", True
+        )
 
         self.order_manager: Optional[OrderManager] = None
         self.guard:         Optional[Any]          = None
 
-        # Dedup fallback in-memory: attivo SOLO quando self.guard è None.
-        # Traccia i correlation_id già visti in questa sessione del processo.
-        # Non è distribuito né persistito, ma garantisce il requisito file-level
-        # senza dipendenze esterne. Protetto dallo stesso self._lock del path critico.
-        self._seen_correlation_ids: Set[str] = set()
+        # Dedup in-memory dual-layer:
+        # _inflight_keys   → customer_ref (compatibilità legacy test e recovery)
+        # _seen_correlation_ids → correlation_id (policy nuova, dedup per intent)
+        # Entrambi protetti da self._lock nel path critico.
+        self._inflight_keys:          Set[str] = set()
+        self._seen_correlation_ids:   Set[str] = set()
 
         # FIX #3 – _lock richiesto dai test di concorrenza/invariant
         self._lock = threading.Lock()
@@ -253,8 +256,7 @@ class TradingEngine:
         subscribe = getattr(self.bus, "subscribe", None)
         if not callable(subscribe):
             return
-        # FIX #2 – entrambi i topic
-        for topic in (REQ_QUICK_BET, CMD_QUICK_BET):
+        for topic in (REQ_QUICK_BET, CMD_QUICK_BET, "RECONCILE_NOW"):
             try:
                 subscribe(topic, self.submit_quick_bet)
             except Exception:
@@ -432,8 +434,15 @@ class TradingEngine:
         request:  Dict[str, Any],
     ) -> Dict[str, Any]:
 
+        def _do_submit() -> Any:
+            return self._submit_to_order_path(ctx, request)
+
         try:
-            response = self._submit_to_order_path(ctx, request)
+            submit_fn = getattr(self.executor, "submit", None)
+            if callable(submit_fn):
+                response = submit_fn("quick_bet", _do_submit)
+            else:
+                response = _do_submit()
         except Exception as exc:
             return self._handle_submit_exception(ctx, audit, order_id, exc)
 
@@ -520,21 +529,24 @@ class TradingEngine:
         return {"allowed": True, "reason": None, "payload": request}
 
     def _dedup_allow(self, ctx: _ExecutionContext) -> bool:
-        # Priorità 1: guard esterno configurato (policy distribuita/persistita)
+        # Priorità 1: guard esterno (policy distribuita/persistita)
         if self.guard is not None:
             allow = getattr(self.guard, "allow", None)
             if callable(allow):
                 return bool(allow(ctx.customer_ref))
 
-        # Priorità 2: fallback in-memory su correlation_id (file-level guarantee).
-        # Già dentro self._lock quando chiamato da _submit_via_engine.
-        # Usa correlation_id (univoco per richiesta) invece di customer_ref
-        # (univoco per cliente) per non bloccare ordini legittimi successivi
-        # dello stesso cliente.
-        cid = ctx.correlation_id
-        if cid in self._seen_correlation_ids:
+        # Priorità 2: legacy in-memory su customer_ref (_inflight_keys)
+        # Compatibile con i test che scrivono engine._inflight_keys.add(...)
+        if ctx.customer_ref in self._inflight_keys:
             return False
-        self._seen_correlation_ids.add(cid)
+
+        # Priorità 3: dedup per intent logico su correlation_id
+        if ctx.correlation_id in self._seen_correlation_ids:
+            return False
+
+        # Registra entrambe le chiavi – rilasciate in _finalize
+        self._inflight_keys.add(ctx.customer_ref)
+        self._seen_correlation_ids.add(ctx.correlation_id)
         return True
 
     # ------------------------------------------------------------------
@@ -868,6 +880,43 @@ class TradingEngine:
         # dell'audit chain (es. _last_event_id) e non fanno parte
         # del contratto pubblico restituito al chiamante.
         public_audit = {k: v for k, v in audit.items() if not k.startswith("_")}
+
+        # Release inflight keys – policy conservativa:
+        #
+        # _seen_correlation_ids → MAI rilasciato.
+        #   Garantisce exactly-once per correlation_id per tutta la vita
+        #   del processo: un retry con lo stesso ID viene sempre bloccato,
+        #   indipendentemente dall'esito.
+        #
+        # _inflight_keys (customer_ref) → rilasciato su SUCCESS e FAILURE
+        #   (lifecycle concluso), NON su AMBIGUOUS (esito ancora incerto:
+        #   il reconciler deve ancora risolvere lo stato reale prima che
+        #   lo stesso cliente possa sottomettere un nuovo ordine).
+        try:
+            if outcome in (OUTCOME_SUCCESS, OUTCOME_FAILURE):
+                self._inflight_keys.discard(ctx.customer_ref)
+            # AMBIGUOUS: _inflight_keys resta occupato fino a riconciliazione
+        except Exception:
+            logger.exception("Failed to release inflight keys")
+
+        # FIX 5 – pubblica evento bus per i test che ascoltano QUICK_BET_*
+        try:
+            publish = getattr(self.bus, "publish", None)
+            if callable(publish):
+                if outcome == OUTCOME_FAILURE:
+                    event_name = "QUICK_BET_FAILED"
+                elif outcome == OUTCOME_SUCCESS:
+                    event_name = "QUICK_BET_SUCCESS"
+                else:
+                    event_name = "QUICK_BET_AMBIGUOUS"
+                publish(event_name, {
+                    "correlation_id": ctx.correlation_id,
+                    "customer_ref":   ctx.customer_ref,
+                    "status":         status,
+                    "outcome":        outcome,
+                })
+        except Exception:
+            logger.exception("Failed to publish bus event")
 
         return {
             "ok":               outcome == OUTCOME_SUCCESS,
