@@ -113,7 +113,7 @@ def _equalize_stakes_post_rounding(
     return stakes
 
 
-def _calculate_dutching_stakes_advanced(
+def calculate_dutching_stakes(
     odds: List[float],
     total_stake: float,
     commission: float = 0.0,
@@ -213,23 +213,6 @@ def _calculate_dutching_stakes_advanced(
         "avg_profit": float(_round_step(avg_profit)),
         "avg_net_profit": float(_round_step(avg_net_profit)),
     }
-
-
-def calculate_dutching_stakes(
-    odds: List[float],
-    total_stake: float,
-) -> Dict[str, Any]:
-    """
-    API pubblica compatibile con i guardrails.
-    Mantiene la firma storica a 2 parametri.
-    """
-    return _calculate_dutching_stakes_advanced(
-        odds=odds,
-        total_stake=total_stake,
-        commission=0.0,
-        equalize=True,
-        commission_aware=True,
-    )
 
 
 def dynamic_cashout_single(
