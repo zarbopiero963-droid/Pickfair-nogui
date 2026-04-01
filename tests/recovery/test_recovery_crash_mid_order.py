@@ -1,6 +1,3 @@
-import threading
-import time
-
 import pytest
 
 
@@ -8,83 +5,56 @@ class FakeBus:
     def __init__(self):
         self.events = []
         self.subscriptions = {}
-        self.lock = threading.Lock()
 
     def subscribe(self, event_name, handler):
         self.subscriptions[event_name] = handler
 
     def publish(self, event_name, payload=None):
-        with self.lock:
-            self.events.append((event_name, payload))
+        self.events.append((event_name, payload))
 
 
 class FakeDB:
     def __init__(self):
-        self.sagas = {}
-        self.outbox = []
-        self.saved_bets = []
+        self.orders = {}
+        self.audit_events = []
+        self.seq = 0
 
-    def create_order_saga(
-        self,
-        *,
-        customer_ref,
-        batch_id,
-        event_key,
-        table_id,
-        market_id,
-        selection_id,
-        bet_type,
-        price,
-        stake,
-        payload,
-        status="PENDING",
-    ):
-        self.sagas[customer_ref] = {
-            "customer_ref": customer_ref,
-            "batch_id": batch_id,
-            "event_key": event_key,
-            "table_id": table_id,
-            "market_id": market_id,
-            "selection_id": selection_id,
-            "bet_type": bet_type,
-            "price": price,
-            "stake": stake,
-            "payload": payload,
-            "status": status,
-            "bet_id": "",
-            "error_text": "",
-        }
+    def is_ready(self):
+        return True
 
-    def update_order_saga(self, *, customer_ref, status, bet_id="", error_text=""):
-        if customer_ref in self.sagas:
-            self.sagas[customer_ref]["status"] = status
-            self.sagas[customer_ref]["bet_id"] = bet_id
-            self.sagas[customer_ref]["error_text"] = error_text
+    def insert_order(self, payload):
+        self.seq += 1
+        oid = f"ORD-{self.seq}"
+        self.orders[oid] = dict(payload)
+        return oid
 
-    def get_pending_sagas(self):
-        pending = []
-        for row in self.sagas.values():
-            if row["status"] in {"PENDING", "ACCEPTED", "EXECUTING", "ROLLBACK_REQUIRED"}:
-                pending.append(dict(row))
-        return pending
+    def update_order(self, order_id, update):
+        self.orders.setdefault(order_id, {})
+        self.orders[order_id].update(update)
 
-    def save_outbox_event(self, **kwargs):
-        self.outbox.append(kwargs)
+    def insert_audit_event(self, event):
+        self.audit_events.append(event)
 
-    def save_bet(self, **kwargs):
-        self.saved_bets.append(kwargs)
+    def load_pending_customer_refs(self):
+        return []
+
+    def load_pending_correlation_ids(self):
+        return []
+
+    def order_exists_inflight(self, *, customer_ref, correlation_id):
+        return False
 
 
-class AsyncExecutor:
-    def submit(self, _name, fn=None, *args, **kwargs):
-        target = fn if fn is not None else _name
-        t = threading.Thread(target=target, args=args, kwargs=kwargs, daemon=True)
-        t.start()
-        return t
+class InlineExecutor:
+    def is_ready(self):
+        return True
+
+    def submit(self, _name, fn):
+        return fn()
 
 
 class ExplodingOrderManager:
-    def place_order(self, payload):
+    def submit(self, payload):
         raise RuntimeError("mid-order crash")
 
 
@@ -100,7 +70,7 @@ def test_crash_mid_order_marks_saga_and_publishes_recovery_events():
         bus=bus,
         db=db,
         client_getter=lambda: None,
-        executor=AsyncExecutor(),
+        executor=InlineExecutor(),
     )
     engine.order_manager = ExplodingOrderManager()
 
@@ -115,15 +85,15 @@ def test_crash_mid_order_marks_saga_and_publishes_recovery_events():
         }
     )
 
-    assert result["ok"] is True
-    assert result["status"] == "ACCEPTED_FOR_PROCESSING"
+    assert result["ok"] is False
+    assert result["status"] == "FAILED"
 
-    time.sleep(0.2)
-
-    assert db.sagas["CRASH-1"]["status"] == "FAILED"
-    assert "mid-order crash" in db.sagas["CRASH-1"]["error_text"]
+    assert len(db.orders) == 1
+    order = next(iter(db.orders.values()))
+    assert order["status"] == "FAILED"
+    assert order["customer_ref"] == "CRASH-1"
+    assert "mid-order crash" in order["last_error"]
 
     names = [x[0] for x in bus.events]
     assert "QUICK_BET_ROUTED" in names
-    assert "QUICK_BET_ROLLBACK_REQUIRED" in names
     assert "QUICK_BET_FAILED" in names
