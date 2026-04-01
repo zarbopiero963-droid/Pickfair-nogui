@@ -1,0 +1,56 @@
+name: order-manager
+
+on:
+  push:
+    paths:
+      - "order_manager.py"
+      - "tests/invariant/test_order_manager_state_machine.py"
+      - "tests/integration/test_order_manager_idempotency.py"
+      - "tests/failure/test_order_manager_failures.py"
+      - "tests/integration/test_order_manager_betfair_mapping.py"
+      - "tests/integration/test_order_manager_cancel_replace.py"
+      - "tests/unit/test_order_manager_contracts.py"
+      - "tests/recovery/test_order_manager_restart_persistence.py"
+      - ".github/workflows/order-manager.yml"
+  pull_request:
+    paths:
+      - "order_manager.py"
+      - "tests/invariant/test_order_manager_state_machine.py"
+      - "tests/integration/test_order_manager_idempotency.py"
+      - "tests/failure/test_order_manager_failures.py"
+      - "tests/integration/test_order_manager_betfair_mapping.py"
+      - "tests/integration/test_order_manager_cancel_replace.py"
+      - "tests/unit/test_order_manager_contracts.py"
+      - "tests/recovery/test_order_manager_restart_persistence.py"
+      - ".github/workflows/order-manager.yml"
+  workflow_dispatch:
+
+jobs:
+  order-manager:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install pytest
+
+      - name: Run order manager suite
+        run: |
+          pytest -q \
+            tests/invariant/test_order_manager_state_machine.py \
+            tests/integration/test_order_manager_idempotency.py \
+            tests/failure/test_order_manager_failures.py \
+            tests/integration/test_order_manager_betfair_mapping.py \
+            tests/integration/test_order_manager_cancel_replace.py \
+            tests/unit/test_order_manager_contracts.py \
+            tests/recovery/test_order_manager_restart_persistence.py
