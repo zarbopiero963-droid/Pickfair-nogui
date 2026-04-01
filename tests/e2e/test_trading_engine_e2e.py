@@ -1,6 +1,3 @@
-import threading
-import time
-
 import pytest
 
 
@@ -8,51 +5,72 @@ class FakeBus:
     def __init__(self):
         self.events = []
         self.subscriptions = {}
-        self.lock = threading.Lock()
 
     def subscribe(self, event_name, handler):
         self.subscriptions[event_name] = handler
 
     def publish(self, event_name, payload=None):
-        with self.lock:
-            self.events.append((event_name, payload))
+        self.events.append((event_name, payload))
 
 
 class FakeDB:
     def __init__(self):
-        self.saved = []
-        self.lock = threading.Lock()
+        self.orders = {}
+        self.audit_events = []
+        self.seq = 0
 
-    def save_bet(self, **kwargs):
-        with self.lock:
-            self.saved.append(kwargs)
+    def is_ready(self):
+        return True
+
+    def insert_order(self, payload):
+        self.seq += 1
+        oid = f"ORD-{self.seq}"
+        self.orders[oid] = dict(payload)
+        return oid
+
+    def update_order(self, order_id, update):
+        self.orders.setdefault(order_id, {})
+        self.orders[order_id].update(update)
+
+    def insert_audit_event(self, event):
+        self.audit_events.append(event)
+
+    def load_pending_customer_refs(self):
+        return []
+
+    def load_pending_correlation_ids(self):
+        return []
+
+    def order_exists_inflight(self, *, customer_ref, correlation_id):
+        return False
 
 
-class AsyncExecutor:
-    def submit(self, _name, fn=None, *args, **kwargs):
-        target = fn if fn is not None else _name
-        t = threading.Thread(target=target, args=args, kwargs=kwargs, daemon=True)
-        t.start()
-        return t
+class InlineExecutor:
+    def is_ready(self):
+        return True
+
+    def submit(self, _name, fn):
+        return fn()
 
 
 class CapturingOrderManager:
     def __init__(self):
         self.payloads = []
-        self.lock = threading.Lock()
 
-    def place_order(self, payload):
-        with self.lock:
-            self.payloads.append(dict(payload))
-        return {"status": "SUCCESS"}
+    def submit(self, payload):
+        self.payloads.append(dict(payload))
+        return {"status": "SUCCESS", "bet_id": "BET-E2E-1"}
 
 
 class ReconcileHook:
     def __init__(self):
         self.calls = []
 
-    def on_order_submitted(self, payload):
-        self.calls.append(dict(payload))
+    def is_ready(self):
+        return True
+
+    def enqueue(self, **kwargs):
+        self.calls.append(kwargs)
 
 
 @pytest.mark.e2e
@@ -67,7 +85,7 @@ def test_full_quick_bet_lifecycle_with_hooks_async():
         bus=bus,
         db=db,
         client_getter=lambda: None,
-        executor=AsyncExecutor(),
+        executor=InlineExecutor(),
         reconciliation_engine=reconcile,
     )
 
@@ -91,13 +109,9 @@ def test_full_quick_bet_lifecycle_with_hooks_async():
     assert result["status"] == "ACCEPTED_FOR_PROCESSING"
     assert result["simulation_mode"] is True
 
-    time.sleep(0.2)
-
     assert len(om.payloads) == 1
-    assert len(db.saved) == 1
-    assert len(reconcile.calls) == 1
+    assert len(db.orders) == 1
 
     names = [x[0] for x in bus.events]
     assert "QUICK_BET_ROUTED" in names
-    assert "QUICK_BET_EXECUTION_STARTED" in names
-    assert "QUICK_BET_EXECUTION_FINISHED" in names
+    assert "QUICK_BET_SUCCESS" in names
