@@ -91,9 +91,11 @@ _INTERNAL_TO_PUBLIC_STATUS: Dict[str, str] = {
 @dataclass(frozen=True)
 class _ExecutionContext:
     """Immutable. Creato SOLO dentro _submit_via_engine. Non esportato."""
-    correlation_id: str
-    customer_ref:   str
-    created_at:     float
+    correlation_id:  str
+    customer_ref:    str
+    created_at:      float
+    event_key:       Optional[str]  = None
+    simulation_mode: Optional[bool] = None
 
 
 class ExecutionError(Exception):
@@ -377,9 +379,11 @@ class TradingEngine:
             )
 
         ctx   = _ExecutionContext(
-            normalized["correlation_id"],
-            normalized["customer_ref"],
-            time.time(),
+            correlation_id=normalized["correlation_id"],
+            customer_ref=normalized["customer_ref"],
+            created_at=time.time(),
+            event_key=normalized.get("event_key"),
+            simulation_mode=normalized.get("simulation_mode"),
         )
         # FIX 5 – cattura i campi extra PRIMA del risk (valore originale).
         # Verrà aggiornato DOPO il risk middleware per riflettere il valore finale,
@@ -786,9 +790,12 @@ class TradingEngine:
         payload["correlation_id"] = ctx.correlation_id
 
         if self.order_manager is not None:
-            submit = getattr(self.order_manager, "submit", None)
-            if callable(submit):
-                return submit(payload)
+            # Compatibilità: OrderManager può esporre submit() o place_order().
+            # submit() ha priorità (contratto nuovo), place_order() è fallback legacy.
+            for method_name in ("submit", "place_order"):
+                fn = getattr(self.order_manager, method_name, None)
+                if callable(fn):
+                    return fn(payload)
 
         if callable(self.client_getter):
             client = self.client_getter()
