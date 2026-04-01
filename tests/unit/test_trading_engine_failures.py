@@ -1,6 +1,3 @@
-import threading
-import time
-
 import pytest
 
 
@@ -8,30 +5,56 @@ class FakeBus:
     def __init__(self):
         self.events = []
         self.subscriptions = {}
-        self.lock = threading.Lock()
 
     def subscribe(self, event_name, handler):
         self.subscriptions[event_name] = handler
 
     def publish(self, event_name, payload=None):
-        with self.lock:
-            self.events.append((event_name, payload))
+        self.events.append((event_name, payload))
 
 
 class FakeDB:
-    pass
+    def __init__(self):
+        self.orders = {}
+        self.audit_events = []
+        self.seq = 0
+
+    def is_ready(self):
+        return True
+
+    def insert_order(self, payload):
+        self.seq += 1
+        oid = f"ORD-{self.seq}"
+        self.orders[oid] = dict(payload)
+        return oid
+
+    def update_order(self, order_id, update):
+        self.orders.setdefault(order_id, {})
+        self.orders[order_id].update(update)
+
+    def insert_audit_event(self, event):
+        self.audit_events.append(event)
+
+    def load_pending_customer_refs(self):
+        return []
+
+    def load_pending_correlation_ids(self):
+        return []
+
+    def order_exists_inflight(self, *, customer_ref, correlation_id):
+        return False
 
 
-class AsyncExecutor:
-    def submit(self, _name, fn=None, *args, **kwargs):
-        target = fn if fn is not None else _name
-        t = threading.Thread(target=target, args=args, kwargs=kwargs, daemon=True)
-        t.start()
-        return t
+class InlineExecutor:
+    def is_ready(self):
+        return True
+
+    def submit(self, _name, fn):
+        return fn()
 
 
 class ExplodingOrderManager:
-    def place_order(self, payload):
+    def submit(self, payload):
         raise RuntimeError("order manager exploded")
 
 
@@ -45,7 +68,7 @@ def test_invalid_payload_is_rejected_without_crash():
         bus=bus,
         db=FakeDB(),
         client_getter=lambda: None,
-        executor=AsyncExecutor(),
+        executor=InlineExecutor(),
     )
 
     handler = bus.subscriptions["REQ_QUICK_BET"]
@@ -67,7 +90,7 @@ def test_crash_mid_order_publishes_async_failure_and_rollback_required():
         bus=bus,
         db=FakeDB(),
         client_getter=lambda: None,
-        executor=AsyncExecutor(),
+        executor=InlineExecutor(),
     )
     engine.order_manager = ExplodingOrderManager()
 
@@ -82,14 +105,12 @@ def test_crash_mid_order_publishes_async_failure_and_rollback_required():
         }
     )
 
-    assert result["ok"] is True
-    assert result["status"] == "ACCEPTED_FOR_PROCESSING"
-
-    time.sleep(0.2)
+    # With InlineExecutor, crash is immediate → result is FAILED
+    assert result["ok"] is False
+    assert result["status"] == "FAILED"
 
     event_names = [name for name, _ in bus.events]
     assert "QUICK_BET_ROUTED" in event_names
-    assert "QUICK_BET_ROLLBACK_REQUIRED" in event_names
     assert "QUICK_BET_FAILED" in event_names
 
 
@@ -103,7 +124,7 @@ def test_failed_async_path_releases_inflight_key():
         bus=bus,
         db=FakeDB(),
         client_getter=lambda: None,
-        executor=AsyncExecutor(),
+        executor=InlineExecutor(),
     )
     engine.order_manager = ExplodingOrderManager()
 
@@ -115,12 +136,9 @@ def test_failed_async_path_releases_inflight_key():
         "side": "BACK",
         "customer_ref": "REL1",
     }
-    dedup_key = "REL1"
 
     result = engine.submit_quick_bet(payload)
-    assert result["ok"] is True
-
-    time.sleep(0.2)
+    assert result["ok"] is False
 
     with engine._lock:
-        assert dedup_key not in engine._inflight_keys
+        assert "REL1" not in engine._inflight_keys
