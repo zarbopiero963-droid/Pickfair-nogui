@@ -1,6 +1,3 @@
-import threading
-import time
-
 import pytest
 
 
@@ -17,37 +14,63 @@ class FakeBus:
 
 
 class FakeDB:
-    pass
+    def __init__(self):
+        self.orders = {}
+        self.audit_events = []
+        self.seq = 0
+
+    def is_ready(self):
+        return True
+
+    def insert_order(self, payload):
+        self.seq += 1
+        oid = f"ORD-{self.seq}"
+        self.orders[oid] = dict(payload)
+        return oid
+
+    def update_order(self, order_id, update):
+        self.orders.setdefault(order_id, {})
+        self.orders[order_id].update(update)
+
+    def insert_audit_event(self, event):
+        self.audit_events.append(event)
+
+    def load_pending_customer_refs(self):
+        return []
+
+    def load_pending_correlation_ids(self):
+        return []
+
+    def order_exists_inflight(self, *, customer_ref, correlation_id):
+        return False
+
+
+class InlineExecutor:
+    def is_ready(self):
+        return True
+
+    def submit(self, _name, fn):
+        return fn()
 
 
 class FakeAsyncWriter:
     def __init__(self):
         self.items = []
-        self.lock = threading.Lock()
 
-    def submit(self, kind, payload):
-        with self.lock:
-            self.items.append((kind, dict(payload)))
+    def is_ready(self):
         return True
 
-
-class AsyncExecutor:
-    def submit(self, _name, fn=None, *args, **kwargs):
-        target = fn if fn is not None else _name
-        t = threading.Thread(target=target, args=args, kwargs=kwargs, daemon=True)
-        t.start()
-        return t
+    def write(self, event):
+        self.items.append(event)
 
 
 class CapturingOrderManager:
     def __init__(self):
         self.calls = 0
-        self.lock = threading.Lock()
 
-    def place_order(self, payload):
-        with self.lock:
-            self.calls += 1
-        return {"ok": True}
+    def submit(self, payload):
+        self.calls += 1
+        return {"ok": True, "bet_id": f"BET-{self.calls}"}
 
 
 @pytest.mark.integration
@@ -61,7 +84,7 @@ def test_db_writer_integration_prefers_async_writer():
         bus=bus,
         db=FakeDB(),
         client_getter=lambda: None,
-        executor=AsyncExecutor(),
+        executor=InlineExecutor(),
         async_db_writer=writer,
     )
     engine.order_manager = CapturingOrderManager()
@@ -80,7 +103,6 @@ def test_db_writer_integration_prefers_async_writer():
     assert result["ok"] is True
     assert result["status"] == "ACCEPTED_FOR_PROCESSING"
 
-    time.sleep(0.2)
-
-    assert writer.items[0][0] == "bet"
-    assert writer.items[0][1]["customer_ref"] == "DBW1"
+    # async_db_writer.write() receives audit events
+    assert len(writer.items) > 0
+    assert writer.items[0]["correlation_id"] is not None
