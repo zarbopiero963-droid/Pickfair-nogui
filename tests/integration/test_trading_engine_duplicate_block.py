@@ -14,20 +14,50 @@ class FakeBus:
 
 
 class FakeDB:
-    pass
+    def __init__(self):
+        self.orders = {}
+        self.audit_events = []
+        self.seq = 0
+
+    def is_ready(self):
+        return True
+
+    def insert_order(self, payload):
+        self.seq += 1
+        oid = f"ORD-{self.seq}"
+        self.orders[oid] = dict(payload)
+        return oid
+
+    def update_order(self, order_id, update):
+        self.orders.setdefault(order_id, {})
+        self.orders[order_id].update(update)
+
+    def insert_audit_event(self, event):
+        self.audit_events.append(event)
+
+    def load_pending_customer_refs(self):
+        return []
+
+    def load_pending_correlation_ids(self):
+        return []
+
+    def order_exists_inflight(self, *, customer_ref, correlation_id):
+        return False
 
 
 class InlineExecutor:
-    def submit(self, _name, fn=None, *args, **kwargs):
-        target = fn if fn is not None else _name
-        return target(*args, **kwargs)
+    def is_ready(self):
+        return True
+
+    def submit(self, _name, fn):
+        return fn()
 
 
 class CountingOrderManager:
     def __init__(self):
         self.calls = 0
 
-    def place_order(self, payload):
+    def submit(self, payload):
         self.calls += 1
         return {"ok": True}
 
@@ -67,4 +97,4 @@ def test_duplicate_request_is_blocked():
     assert om.calls == 0
 
     event_names = [x[0] for x in bus.events]
-    assert "QUICK_BET_DUPLICATE_BLOCKED" in event_names
+    assert "QUICK_BET_DUPLICATE" in event_names
