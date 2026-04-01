@@ -1,6 +1,3 @@
-import threading
-import time
-
 import pytest
 
 
@@ -17,34 +14,55 @@ class FakeBus:
 
 
 class FakeDB:
-    def get_pending_sagas(self):
+    def __init__(self):
+        self.orders = {}
+
+    def is_ready(self):
+        return True
+
+    def load_pending_customer_refs(self):
         return []
+
+    def load_pending_correlation_ids(self):
+        return []
+
+    def order_exists_inflight(self, *, customer_ref, correlation_id):
+        return False
+
+
+class InlineExecutor:
+    def is_ready(self):
+        return True
+
+    def submit(self, _name, fn):
+        return fn()
 
 
 class ReconcileHook:
     def __init__(self):
-        self.calls = []
+        self.calls = 0
 
-    def run_once(self, payload=None):
-        self.calls.append(payload)
-        return {"ok": True, "reconciled": 3}
+    def notify_restart(self):
+        self.calls += 1
+        return {"triggered": True}
+
+    def is_ready(self):
+        return True
+
+    def enqueue(self, **kwargs):
+        pass
 
 
 class RecoveryHook:
     def __init__(self):
-        self.calls = []
+        self.calls = 0
 
-    def recover_pending(self, payload=None):
-        self.calls.append(payload)
-        return {"ok": True, "recovered": 2}
+    def recover(self):
+        self.calls += 1
+        return {"ok": True, "reason": None}
 
-
-class AsyncExecutor:
-    def submit(self, _name, fn=None, *args, **kwargs):
-        target = fn if fn is not None else _name
-        t = threading.Thread(target=target, args=args, kwargs=kwargs, daemon=True)
-        t.start()
-        return t
+    def is_ready(self):
+        return True
 
 
 @pytest.mark.recovery
@@ -61,7 +79,7 @@ def test_restart_triggers_recovery_then_reconcile_hooks():
         bus=bus,
         db=db,
         client_getter=lambda: None,
-        executor=AsyncExecutor(),
+        executor=InlineExecutor(),
         reconciliation_engine=reconcile,
         state_recovery=recovery,
     )
@@ -69,10 +87,6 @@ def test_restart_triggers_recovery_then_reconcile_hooks():
     result = engine.recover_after_restart()
 
     assert result["ok"] is True
-
-    time.sleep(0.2)
-
-    assert len(recovery.calls) == 1
-    assert len(reconcile.calls) == 1
-    assert recovery.calls[0]["source"] == "recover_after_restart"
-    assert reconcile.calls[0]["source"] == "recover_after_restart"
+    assert result["status"] == "RECOVERY_TRIGGERED"
+    assert recovery.calls == 1
+    assert reconcile.calls == 1
