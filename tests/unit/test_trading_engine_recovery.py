@@ -1,6 +1,3 @@
-import threading
-import time
-
 import pytest
 
 
@@ -17,33 +14,55 @@ class DummyBus:
 
 
 class DummyDB:
-    pass
+    def __init__(self):
+        self.orders = {}
+
+    def is_ready(self):
+        return True
+
+    def load_pending_customer_refs(self):
+        return []
+
+    def load_pending_correlation_ids(self):
+        return []
+
+    def order_exists_inflight(self, *, customer_ref, correlation_id):
+        return False
 
 
-class AsyncExecutor:
-    def submit(self, _name, fn=None, *args, **kwargs):
-        target = fn if fn is not None else _name
-        t = threading.Thread(target=target, args=args, kwargs=kwargs, daemon=True)
-        t.start()
-        return t
+class InlineExecutor:
+    def is_ready(self):
+        return True
+
+    def submit(self, _name, fn):
+        return fn()
 
 
 class RecoveryHook:
     def __init__(self):
-        self.calls = []
+        self.calls = 0
 
-    def recover_pending(self, payload=None):
-        self.calls.append(("recover_pending", payload))
-        return {"ok": True}
+    def recover(self):
+        self.calls += 1
+        return {"ok": True, "reason": None}
+
+    def is_ready(self):
+        return True
 
 
 class ReconcileHook:
     def __init__(self):
-        self.calls = []
+        self.calls = 0
 
-    def run_once(self, payload=None):
-        self.calls.append(("run_once", payload))
-        return {"ok": True}
+    def notify_restart(self):
+        self.calls += 1
+        return {"triggered": True}
+
+    def is_ready(self):
+        return True
+
+    def enqueue(self, **kwargs):
+        pass
 
 
 @pytest.mark.unit
@@ -55,13 +74,13 @@ def test_engine_can_be_recreated_after_failure():
         bus=DummyBus(),
         db=DummyDB(),
         client_getter=lambda: None,
-        executor=AsyncExecutor(),
+        executor=InlineExecutor(),
     )
     e2 = TradingEngine(
         bus=DummyBus(),
         db=DummyDB(),
         client_getter=lambda: None,
-        executor=AsyncExecutor(),
+        executor=InlineExecutor(),
     )
 
     assert e1 is not None
@@ -80,7 +99,7 @@ def test_recover_after_restart_triggers_recovery_and_reconcile():
         bus=DummyBus(),
         db=DummyDB(),
         client_getter=lambda: None,
-        executor=AsyncExecutor(),
+        executor=InlineExecutor(),
         reconciliation_engine=reconcile,
         state_recovery=recovery,
     )
@@ -89,8 +108,6 @@ def test_recover_after_restart_triggers_recovery_and_reconcile():
 
     assert result["ok"] is True
     assert result["status"] == "RECOVERY_TRIGGERED"
-
-    time.sleep(0.2)
-
-    assert recovery.calls[0][0] == "recover_pending"
-    assert reconcile.calls[0][0] == "run_once"
+    assert "ram_synced" in result
+    assert recovery.calls == 1
+    assert reconcile.calls == 1
