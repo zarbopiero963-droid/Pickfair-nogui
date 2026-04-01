@@ -14,14 +14,43 @@ class FakeBus:
 
 
 class FakeDB:
-    pass
+    def __init__(self):
+        self.orders = {}
+        self.audit_events = []
+        self.seq = 0
+
+    def is_ready(self):
+        return True
+
+    def insert_order(self, payload):
+        self.seq += 1
+        oid = f"ORD-{self.seq}"
+        self.orders[oid] = dict(payload)
+        return oid
+
+    def update_order(self, order_id, update):
+        self.orders.setdefault(order_id, {})
+        self.orders[order_id].update(update)
+
+    def insert_audit_event(self, event):
+        self.audit_events.append(event)
+
+    def load_pending_customer_refs(self):
+        return []
+
+    def load_pending_correlation_ids(self):
+        return []
+
+    def order_exists_inflight(self, *, customer_ref, correlation_id):
+        return False
 
 
 class InlineExecutor:
-    def submit(self, _name, fn=None, *args, **kwargs):
-        if fn is None and callable(_name):
-            return _name(*args, **kwargs)
-        return fn(*args, **kwargs)
+    def is_ready(self):
+        return True
+
+    def submit(self, _name, fn):
+        return fn()
 
 
 @pytest.mark.unit
@@ -95,4 +124,6 @@ def test_quick_bet_duplicate_contract_shape():
 
     assert result["ok"] is True
     assert result["status"] == "DUPLICATE_BLOCKED"
-    assert result["dedup_key"] == key
+    assert result["reason"] == "DUPLICATE_BLOCKED"
+    assert result["error"] is None
+    assert result["ambiguity_reason"] is None
