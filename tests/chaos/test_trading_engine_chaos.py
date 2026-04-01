@@ -1,5 +1,4 @@
 import threading
-import time
 
 import pytest
 
@@ -20,20 +19,45 @@ class FakeBus:
 
 class FakeDB:
     def __init__(self):
-        self.saved = []
+        self.orders = {}
+        self.audit_events = []
+        self.seq = 0
         self.lock = threading.Lock()
 
-    def save_bet(self, **kwargs):
+    def is_ready(self):
+        return True
+
+    def insert_order(self, payload):
         with self.lock:
-            self.saved.append(kwargs)
+            self.seq += 1
+            oid = f"ORD-{self.seq}"
+            self.orders[oid] = dict(payload)
+            return oid
+
+    def update_order(self, order_id, update):
+        with self.lock:
+            self.orders.setdefault(order_id, {})
+            self.orders[order_id].update(update)
+
+    def insert_audit_event(self, event):
+        self.audit_events.append(event)
+
+    def load_pending_customer_refs(self):
+        return []
+
+    def load_pending_correlation_ids(self):
+        return []
+
+    def order_exists_inflight(self, *, customer_ref, correlation_id):
+        return False
 
 
-class AsyncExecutor:
-    def submit(self, _name, fn=None, *args, **kwargs):
-        target = fn if fn is not None else _name
-        t = threading.Thread(target=target, args=args, kwargs=kwargs, daemon=True)
-        t.start()
-        return t
+class InlineExecutor:
+    def is_ready(self):
+        return True
+
+    def submit(self, _name, fn):
+        return fn()
 
 
 class CountingOrderManager:
@@ -41,10 +65,10 @@ class CountingOrderManager:
         self.calls = 0
         self.lock = threading.Lock()
 
-    def place_order(self, payload):
+    def submit(self, payload):
         with self.lock:
             self.calls += 1
-        return {"ok": True}
+        return {"ok": True, "bet_id": f"BET-{self.calls}"}
 
 
 @pytest.mark.chaos
@@ -60,7 +84,7 @@ def test_many_parallel_quick_bets_do_not_crash_engine():
         bus=bus,
         db=db,
         client_getter=lambda: None,
-        executor=AsyncExecutor(),
+        executor=InlineExecutor(),
     )
     om = CountingOrderManager()
     engine.order_manager = om
@@ -86,10 +110,8 @@ def test_many_parallel_quick_bets_do_not_crash_engine():
     for t in threads:
         t.join()
 
-    time.sleep(0.3)
-
     assert om.calls == 20
-    assert len(db.saved) == 20
+    assert len(db.orders) == 20
 
 
 @pytest.mark.chaos
@@ -105,7 +127,7 @@ def test_duplicate_burst_only_one_inflight_accepts_when_same_key_locked():
         bus=bus,
         db=db,
         client_getter=lambda: None,
-        executor=AsyncExecutor(),
+        executor=InlineExecutor(),
     )
     om = CountingOrderManager()
     engine.order_manager = om
@@ -117,11 +139,14 @@ def test_duplicate_burst_only_one_inflight_accepts_when_same_key_locked():
         "size": 5.0,
         "side": "BACK",
         "customer_ref": "SAMEKEY",
+        "correlation_id": "SAME-CID",
         "event_key": "1.900:90:BACK",
     }
 
     with engine._lock:
         engine._inflight_keys.add("SAMEKEY")
+        engine._seen_correlation_ids.add("SAME-CID")
+        engine._seen_cid_order.append("SAME-CID")
 
     results = []
 
