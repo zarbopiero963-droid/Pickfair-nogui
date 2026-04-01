@@ -1,6 +1,3 @@
-import threading
-import time
-
 import pytest
 
 
@@ -8,54 +5,89 @@ class FakeBus:
     def __init__(self):
         self.events = []
         self.subscriptions = {}
-        self.lock = threading.Lock()
 
     def subscribe(self, event_name, handler):
         self.subscriptions[event_name] = handler
 
     def publish(self, event_name, payload=None):
-        with self.lock:
-            self.events.append((event_name, payload))
+        self.events.append((event_name, payload))
 
 
 class FakeDB:
-    pass
+    def __init__(self):
+        self.orders = {}
+        self.audit_events = []
+        self.seq = 0
+
+    def is_ready(self):
+        return True
+
+    def insert_order(self, payload):
+        self.seq += 1
+        oid = f"ORD-{self.seq}"
+        self.orders[oid] = dict(payload)
+        return oid
+
+    def update_order(self, order_id, update):
+        self.orders.setdefault(order_id, {})
+        self.orders[order_id].update(update)
+
+    def insert_audit_event(self, event):
+        self.audit_events.append(event)
+
+    def load_pending_customer_refs(self):
+        return []
+
+    def load_pending_correlation_ids(self):
+        return []
+
+    def order_exists_inflight(self, *, customer_ref, correlation_id):
+        return False
 
 
-class AsyncExecutor:
-    def submit(self, _name, fn=None, *args, **kwargs):
-        target = fn if fn is not None else _name
-        t = threading.Thread(target=target, args=args, kwargs=kwargs, daemon=True)
-        t.start()
-        return t
+class InlineExecutor:
+    def is_ready(self):
+        return True
+
+    def submit(self, _name, fn):
+        return fn()
 
 
 class SafeModeOn:
     def is_enabled(self):
         return True
 
+    def is_ready(self):
+        return True
+
 
 class RiskBlocker:
-    def allow(self, payload):
-        return False
+    """Risk middleware that blocks all orders."""
+    def check(self, payload):
+        return {"allowed": False, "reason": "RISK_BLOCKED", "payload": payload}
+
+    def is_ready(self):
+        return True
 
 
 class RiskMutator:
-    def process_request(self, payload):
+    """Risk middleware that mutates stake to 12.5."""
+    def check(self, payload):
         out = dict(payload)
         out["stake"] = 12.5
-        return out
+        return {"allowed": True, "reason": None, "payload": out}
+
+    def is_ready(self):
+        return True
 
 
 class CapturingOrderManager:
     def __init__(self):
         self.payloads = []
-        self.lock = threading.Lock()
 
-    def place_order(self, payload):
-        with self.lock:
-            self.payloads.append(dict(payload))
-        return {"ok": True}
+    def submit(self, payload):
+        self.payloads.append(dict(payload))
+        return {"ok": True, "bet_id": "BET-RISK-1"}
 
 
 @pytest.mark.unit
@@ -68,7 +100,7 @@ def test_safe_mode_blocks_order():
         bus=bus,
         db=FakeDB(),
         client_getter=lambda: None,
-        executor=AsyncExecutor(),
+        executor=InlineExecutor(),
         safe_mode=SafeModeOn(),
     )
 
@@ -79,12 +111,13 @@ def test_safe_mode_blocks_order():
             "price": 2.0,
             "stake": 5.0,
             "side": "BACK",
+            "customer_ref": "SM1",
         }
     )
 
     assert result["ok"] is False
-    assert result["status"] == "FAILED"
-    assert any(name == "QUICK_BET_FAILED" for name, _ in bus.events)
+    assert result["status"] == "DENIED"
+    assert result["reason"] == "SAFE_MODE_ACTIVE"
 
 
 @pytest.mark.unit
@@ -97,7 +130,7 @@ def test_risk_middleware_can_block_order():
         bus=bus,
         db=FakeDB(),
         client_getter=lambda: None,
-        executor=AsyncExecutor(),
+        executor=InlineExecutor(),
         risk_middleware=RiskBlocker(),
     )
 
@@ -108,11 +141,12 @@ def test_risk_middleware_can_block_order():
             "price": 2.0,
             "stake": 5.0,
             "side": "BACK",
+            "customer_ref": "RB1",
         }
     )
 
     assert result["ok"] is False
-    assert result["status"] == "FAILED"
+    assert result["status"] == "DENIED"
 
 
 @pytest.mark.unit
@@ -127,7 +161,7 @@ def test_risk_middleware_can_mutate_payload_before_async_order():
         bus=bus,
         db=FakeDB(),
         client_getter=lambda: None,
-        executor=AsyncExecutor(),
+        executor=InlineExecutor(),
         risk_middleware=RiskMutator(),
     )
     engine.order_manager = order_manager
@@ -146,6 +180,5 @@ def test_risk_middleware_can_mutate_payload_before_async_order():
     assert result["ok"] is True
     assert result["status"] == "ACCEPTED_FOR_PROCESSING"
 
-    time.sleep(0.2)
-
+    assert len(order_manager.payloads) == 1
     assert order_manager.payloads[0]["stake"] == 12.5
