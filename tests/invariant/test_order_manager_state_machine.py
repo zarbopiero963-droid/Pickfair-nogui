@@ -9,7 +9,6 @@ from unittest.mock import MagicMock
 from order_manager import (
     OrderManager,
     OrderStatus,
-    ReasonCode,
     VALID_TRANSITIONS,
     TERMINAL_STATES,
     validate_transition,
@@ -180,3 +179,6 @@ class TestLifecycleAndPartial:
         saga = db.get_order_saga("AMB-TERM-1")
         assert saga is not None
         assert saga["status"] == OrderStatus.AMBIGUOUS.value
+
+        with pytest.raises(InvalidTransitionError):
+            om.mark_rollback_pending("AMB-TERM-1")
