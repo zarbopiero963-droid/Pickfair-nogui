@@ -1,10 +1,11 @@
+from __future__ import annotations
+
 import time
+
 import pytest
 
+from core.reconciliation_engine import ReconciliationEngine, ReasonCode
 
-# =========================================================
-# FIXTURE MINIME REALI (no mocking fragile)
-# =========================================================
 
 class FakeDB:
     def __init__(self):
@@ -33,7 +34,7 @@ class FakeBatchManager:
         self.batches[batch_id] = {
             "batch_id": batch_id,
             "status": "LIVE",
-            "market_id": "1.100"
+            "market_id": "1.100",
         }
         self.legs[batch_id] = [
             {
@@ -43,7 +44,7 @@ class FakeBatchManager:
                 "bet_id": None,
                 "selection_id": "1",
                 "market_id": "1.100",
-                "created_at_ts": time.time()
+                "created_at_ts": time.time(),
             }
         ]
 
@@ -55,6 +56,9 @@ class FakeBatchManager:
 
     def update_leg_status(self, batch_id, leg_index, status, **kwargs):
         self.legs[batch_id][leg_index]["status"] = status
+        for k, v in kwargs.items():
+            if v is not None:
+                self.legs[batch_id][leg_index][k] = v
 
     def recompute_batch_status(self, batch_id):
         return self.batches[batch_id]
@@ -79,14 +83,8 @@ class FakeClient:
         return []
 
 
-# =========================================================
-# FIXTURE ENGINE
-# =========================================================
-
 @pytest.fixture
 def engine():
-    from core.reconciliation_engine import ReconciliationEngine
-
     db = FakeDB()
     bm = FakeBatchManager()
     bm.create_batch("B1")
@@ -105,36 +103,24 @@ def batch(engine):
     return {"batch_id": "B1"}
 
 
-# =========================================================
-# 🔥 TEST 1 — CONVERGENZA REALE (mutation killer)
-# =========================================================
-
 def test_convergence_requires_no_changes(engine, batch):
     calls = {"count": 0}
-
     original = engine._apply_merge_policy
 
     def fake_apply(*args, **kwargs):
         calls["count"] += 1
-
-        # prima iterazione cambia stato
         if calls["count"] == 1:
-            return "MATCHED", engine.ReasonCode.EXCHANGE_WINS_MATCHED, "EXCHANGE"
-
-        # dopo stabilizza
-        return None, engine.ReasonCode.CONVERGED, "NONE"
+            return "MATCHED", ReasonCode.EXCHANGE_WINS_MATCHED, "EXCHANGE"
+        return None, ReasonCode.CONVERGED, "NONE"
 
     engine._apply_merge_policy = fake_apply
+    try:
+        engine.reconcile_batch(batch["batch_id"])
+    finally:
+        engine._apply_merge_policy = original
 
-    engine.reconcile_batch(batch["batch_id"])
-
-    # DEVE fare almeno 2 cicli
     assert calls["count"] >= 2
 
-
-# =========================================================
-# 🔥 TEST 2 — AUDIT FAIL-CLOSED (soldi veri)
-# =========================================================
 
 def test_audit_fail_closed_blocks_state_change(engine, batch):
     engine.cfg.audit_fail_closed = True
@@ -144,18 +130,14 @@ def test_audit_fail_closed_blocks_state_change(engine, batch):
 
     engine._persist_decision_immediate = fail_persist
 
-    with pytest.raises(RuntimeError):
-        engine.reconcile_batch(batch["batch_id"])
+    result = engine.reconcile_batch(batch["batch_id"])
+
+    assert result["ok"] is False
+    assert result["reason_code"] == ReasonCode.AUDIT_PERSIST_FAILED.value
 
     legs = engine.batch_manager.get_batch_legs(batch["batch_id"])
-
-    # stato NON deve cambiare
     assert all(l["status"] != "MATCHED" for l in legs)
 
-
-# =========================================================
-# 🔥 TEST 3 — RETRY LOOP (no recursion)
-# =========================================================
 
 def test_retry_does_not_stack_overflow(engine):
     engine.client_getter = lambda: FakeClient(fail=True)
@@ -163,25 +145,15 @@ def test_retry_does_not_stack_overflow(engine):
 
     orders, reason = engine._fetch_current_orders_by_market("1.100")
 
-    assert reason == engine.ReasonCode.TRANSIENT_ERROR
+    assert orders == []
+    assert reason == ReasonCode.TRANSIENT_ERROR
 
-
-# =========================================================
-# 🔥 TEST 4 — RECOVERY TTL (no zombie lock)
-# =========================================================
 
 def test_recovery_marker_expires(engine):
     now = time.time()
-
     engine.db.set_reconcile_marker("B1", now - 1000)
-    engine.db.get_reconcile_marker = lambda b: now - 1000
+    assert engine._is_recovery_marker_stale("B1") is True
 
-    assert engine._has_recovery_marker("B1") is False
-
-
-# =========================================================
-# 🔥 TEST 5 — GHOST FALSE POSITIVE (soldi veri)
-# =========================================================
 
 def test_no_false_ghost_on_replaced_order(engine, batch):
     legs = engine.batch_manager.get_batch_legs(batch["batch_id"])
@@ -201,75 +173,49 @@ def test_no_false_ghost_on_replaced_order(engine, batch):
         remote_orders,
         by_ref,
         by_bet,
-        by_sel
+        by_sel,
     )
 
     assert len(ghosts) == 0
 
 
-# =========================================================
-# 🔥 TEST 6 — IDEMPOTENCY HARD
-# =========================================================
-
 def test_idempotent_second_run(engine, batch):
     engine.reconcile_batch(batch["batch_id"])
-
     first = engine._reconcile_fingerprints[batch["batch_id"]]
 
     result = engine.reconcile_batch(batch["batch_id"])
-
     second = engine._reconcile_fingerprints[batch["batch_id"]]
 
     assert first == second
-    assert result["reason_code"] == "IDEMPOTENT_SKIP"
+    assert result["reason_code"] == ReasonCode.IDEMPOTENT_SKIP.value
 
-
-# =========================================================
-# 🔥 TEST 7 — NO INVALID TRANSITION
-# =========================================================
 
 def test_no_invalid_status_transition(engine, batch):
     leg = engine.batch_manager.get_batch_legs(batch["batch_id"])[0]
     leg["status"] = "MATCHED"
 
-    result = engine.reconcile_batch(batch["batch_id"])
+    engine.reconcile_batch(batch["batch_id"])
 
-    # non deve tornare indietro
     assert leg["status"] == "MATCHED"
 
-
-# =========================================================
-# 🔥 TEST 8 — DECISION LOG CONSISTENTE
-# =========================================================
 
 def test_decision_log_written(engine, batch):
     engine.reconcile_batch(batch["batch_id"])
 
-    log = engine.get_decision_log(batch["batch_id"])
+    # dopo flush il log in-memory può essere vuoto; verifichiamo persistenza DB
+    assert isinstance(engine.db.decisions, list)
+    assert all("reason_code" in e for e in engine.db.decisions)
 
-    assert isinstance(log, list)
-    assert all("reason_code" in e for e in log)
-
-
-# =========================================================
-# 🔥 TEST 9 — LOCK CONCURRENCY
-# =========================================================
 
 def test_reconcile_lock(engine, batch):
-    engine._lock_mgr._batch_locks["B1"] = engine._lock_mgr._get_lock("B1")
+    lock = engine._lock_mgr._get_lock("B1")
+    lock.acquire()
+    try:
+        result = engine.reconcile_batch("B1")
+        assert result["reason_code"] == ReasonCode.RECONCILE_ALREADY_RUNNING.value
+    finally:
+        lock.release()
 
-    engine._lock_mgr._batch_locks["B1"].acquire()
-
-    result = engine.reconcile_batch("B1")
-
-    assert result["reason_code"] == "RECONCILE_ALREADY_RUNNING"
-
-    engine._lock_mgr._batch_locks["B1"].release()
-
-
-# =========================================================
-# 🔥 TEST 10 — UNKNOWN RESOLUTION
-# =========================================================
 
 def test_unknown_resolves_to_failed(engine, batch):
     leg = engine.batch_manager.get_batch_legs(batch["batch_id"])[0]
