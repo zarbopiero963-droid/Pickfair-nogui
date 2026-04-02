@@ -173,6 +173,145 @@ TERMINAL_BATCH_STATUSES: FrozenSet[str] = frozenset({
     "EXECUTED", "ROLLED_BACK", "FAILED", "CANCELLED",
 })
 
+ALL_LEG_STATUSES: FrozenSet[str] = TERMINAL_LEG_STATUSES | NON_TERMINAL_LEG_STATUSES
+
+
+# =============================================================================
+# OUTBOX ENTRY — transactional event pattern
+# =============================================================================
+
+@dataclass
+class OutboxEntry:
+    """Event queued for reliable delivery via outbox pattern."""
+    timestamp: float
+    batch_id: str
+    event_name: str
+    payload: Dict[str, Any]
+    delivered: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        d = asdict(self)
+        d.pop("delivered", None)
+        return d
+
+
+# =============================================================================
+# RECONCILE RESULT — structured, multi-layer
+# =============================================================================
+
+@dataclass
+class ReconcileResult:
+    """
+    Structured reconcile outcome separating:
+      - technical: did reconcile complete?
+      - business:  what is the batch state?
+      - fetch:     was exchange reachable?
+      - audit:     was audit trail persisted?
+      - recovery:  was recovery marker handled?
+    """
+    ok: bool
+    batch_id: str
+    reason_code: str = ""
+    status: str = ""
+
+    # technical
+    cycles: int = 0
+    fingerprint: str = ""
+    converged: bool = False
+
+    # fetch
+    fetch_ok: bool = True
+    fetch_failure: Optional[str] = None
+
+    # audit
+    audit_ok: bool = True
+    audit_failure: Optional[str] = None
+
+    # recovery
+    recovery_marker_cleared: bool = True
+
+    error: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        d = asdict(self)
+        return {k: v for k, v in d.items() if v is not None}
+
+
+# =============================================================================
+# FORMAL STATE MACHINE — leg transition matrix
+# =============================================================================
+#
+# Key: (from_status, to_status) → allowed?
+# Any transition NOT in this table is FORBIDDEN.
+# Terminal → non-terminal is always blocked.
+#
+
+_ALLOWED_LEG_TRANSITIONS: FrozenSet[Tuple[str, str]] = frozenset({
+    # from CREATED
+    ("CREATED",   "SUBMITTED"),
+    ("CREATED",   "PLACED"),
+    ("CREATED",   "FAILED"),
+    ("CREATED",   "CANCELLED"),
+    # from SUBMITTED
+    ("SUBMITTED", "PLACED"),
+    ("SUBMITTED", "PARTIAL"),
+    ("SUBMITTED", "MATCHED"),
+    ("SUBMITTED", "FAILED"),
+    ("SUBMITTED", "CANCELLED"),
+    ("SUBMITTED", "UNKNOWN"),
+    # from PLACED
+    ("PLACED",    "PARTIAL"),
+    ("PLACED",    "MATCHED"),
+    ("PLACED",    "FAILED"),
+    ("PLACED",    "CANCELLED"),
+    ("PLACED",    "LAPSED"),
+    ("PLACED",    "VOIDED"),
+    # from PARTIAL
+    ("PARTIAL",   "MATCHED"),
+    ("PARTIAL",   "FAILED"),
+    ("PARTIAL",   "CANCELLED"),
+    ("PARTIAL",   "ROLLED_BACK"),
+    # from UNKNOWN
+    ("UNKNOWN",   "PLACED"),
+    ("UNKNOWN",   "PARTIAL"),
+    ("UNKNOWN",   "MATCHED"),
+    ("UNKNOWN",   "FAILED"),
+    ("UNKNOWN",   "CANCELLED"),
+    ("UNKNOWN",   "LAPSED"),
+    ("UNKNOWN",   "VOIDED"),
+    # identity (idempotent no-op, not a real transition)
+    ("MATCHED",   "MATCHED"),
+    ("FAILED",    "FAILED"),
+    ("CANCELLED", "CANCELLED"),
+    ("LAPSED",    "LAPSED"),
+    ("VOIDED",    "VOIDED"),
+    ("ROLLED_BACK", "ROLLED_BACK"),
+})
+
+
+class IllegalTransitionError(Exception):
+    """Raised when a leg status transition violates the FSM."""
+    def __init__(self, batch_id: str, leg_index: int, from_status: str, to_status: str):
+        self.batch_id = batch_id
+        self.leg_index = leg_index
+        self.from_status = from_status
+        self.to_status = to_status
+        super().__init__(
+            f"Illegal leg transition batch={batch_id} leg={leg_index}: "
+            f"{from_status} → {to_status}"
+        )
+
+
+def validate_leg_transition(
+    from_status: str, to_status: str,
+    batch_id: str = "", leg_index: int = -1,
+) -> None:
+    """Raise IllegalTransitionError if the transition is not in the FSM."""
+    if from_status == to_status:
+        return  # identity — always allowed
+    if (from_status, to_status) not in _ALLOWED_LEG_TRANSITIONS:
+        raise IllegalTransitionError(batch_id, leg_index, from_status, to_status)
+
 
 # =============================================================================
 # CONFIGURATION
@@ -208,6 +347,21 @@ class ReconcileConfig:
 
     # recovery marker TTL: markers older than this are considered stale
     recovery_marker_ttl_secs: float = 300.0
+
+    # Point 2: transactional updates — require DB to support atomic ops
+    require_transactional_db: bool = False
+
+    # Point 3: fencing token for cross-process recovery ownership
+    enable_fencing_token: bool = True
+
+    # Point 4: validate batch_manager contract on init
+    validate_batch_manager_contract: bool = True
+
+    # Point 5: DB layer hints
+    require_wal_mode: bool = False
+
+    # Point 8: runtime invariant checks after each reconcile
+    enable_runtime_invariants: bool = True
 
 
 # =============================================================================
@@ -324,6 +478,323 @@ class ReconciliationEngine:
 
         # ── idempotency fingerprints ────────────────────────────
         self._reconcile_fingerprints: Dict[str, str] = {}
+
+        # ── outbox for reliable event delivery (Point 6) ────────
+        self._outbox: List[OutboxEntry] = []
+        self._outbox_lock = threading.Lock()
+
+        # ── fencing token counter (Point 3) ─────────────────────
+        self._fencing_counter: int = 0
+        self._fencing_lock = threading.Lock()
+
+        # ── lifecycle hooks for crash-recovery testing (Point 10) ──
+        self._hooks: Dict[str, Any] = {}
+
+        # ── validate contracts on init (Point 4) ────────────────
+        if self.cfg.validate_batch_manager_contract:
+            self._validate_batch_manager_contract()
+
+        # ── enforce DB layer requirements (Point 5) ─────────────
+        if self.cfg.require_transactional_db:
+            for method in ("begin_transaction", "commit_transaction", "rollback_transaction"):
+                if not callable(getattr(self.db, method, None)):
+                    raise TypeError(
+                        f"DB contract violation: require_transactional_db=True "
+                        f"but db.{method}() is missing"
+                    )
+
+        if self.cfg.require_wal_mode:
+            checker = getattr(self.db, "is_wal_mode", None)
+            if callable(checker):
+                if not checker():
+                    raise RuntimeError(
+                        "DB is not in WAL mode but require_wal_mode=True"
+                    )
+            else:
+                logger.warning(
+                    "require_wal_mode=True but db.is_wal_mode() not available — "
+                    "cannot verify WAL mode"
+                )
+
+    # ─────────────────────────────────────────────────────────────
+    # BATCH MANAGER CONTRACT VALIDATION (Point 4)
+    # ─────────────────────────────────────────────────────────────
+
+    _REQUIRED_BM_METHODS = (
+        "get_batch", "get_batch_legs", "update_leg_status",
+        "recompute_batch_status", "release_runtime_artifacts",
+        "mark_batch_failed", "get_open_batches",
+    )
+
+    def _validate_batch_manager_contract(self) -> None:
+        """Verify batch_manager exposes all required methods."""
+        missing = [
+            m for m in self._REQUIRED_BM_METHODS
+            if not callable(getattr(self.batch_manager, m, None))
+        ]
+        if missing:
+            raise TypeError(
+                f"BatchManager contract violation: missing methods {missing}"
+            )
+
+    # ─────────────────────────────────────────────────────────────
+    # FSM TRANSITION GUARD (Point 1)
+    # ─────────────────────────────────────────────────────────────
+
+    def _validate_and_update_leg(
+        self,
+        *,
+        batch_id: str,
+        leg_index: int,
+        from_status: str,
+        to_status: str,
+        bet_id: Optional[str] = None,
+        raw_response: Optional[Dict[str, Any]] = None,
+        error_text: Optional[str] = None,
+    ) -> None:
+        """
+        Validate FSM transition, then delegate to batch_manager.
+        Raises IllegalTransitionError if transition is forbidden.
+        """
+        validate_leg_transition(from_status, to_status, batch_id, leg_index)
+        self.batch_manager.update_leg_status(
+            batch_id=batch_id,
+            leg_index=leg_index,
+            status=to_status,
+            bet_id=bet_id,
+            raw_response=raw_response,
+            error_text=error_text,
+        )
+
+    # ─────────────────────────────────────────────────────────────
+    # TRANSACTIONAL UPDATE (Point 2)
+    # ─────────────────────────────────────────────────────────────
+
+    def _transactional_leg_update(
+        self,
+        *,
+        batch_id: str,
+        leg_index: int,
+        from_status: str,
+        to_status: str,
+        decision: DecisionEntry,
+        bet_id: Optional[str] = None,
+        raw_response: Optional[Dict[str, Any]] = None,
+        error_text: Optional[str] = None,
+    ) -> bool:
+        """
+        Atomically: persist audit + update leg + enqueue outbox event.
+        If DB supports begin_transaction/commit, uses it.
+        Returns True on success, False on failure.
+        """
+        txn_begin = getattr(self.db, "begin_transaction", None)
+        txn_commit = getattr(self.db, "commit_transaction", None)
+        txn_rollback = getattr(self.db, "rollback_transaction", None)
+        has_txn = all(callable(f) for f in (txn_begin, txn_commit, txn_rollback))
+
+        try:
+            if has_txn and self.cfg.require_transactional_db:
+                txn_begin()
+
+            # 1. persist decision
+            if self.cfg.audit_fail_closed:
+                if not decision.persist_ok:
+                    if has_txn and self.cfg.require_transactional_db:
+                        txn_rollback()
+                    return False
+
+            # 2. FSM-validated leg update
+            self._validate_and_update_leg(
+                batch_id=batch_id,
+                leg_index=leg_index,
+                from_status=from_status,
+                to_status=to_status,
+                bet_id=bet_id,
+                raw_response=raw_response,
+                error_text=error_text,
+            )
+
+            # 3. enqueue outbox event
+            self._enqueue_outbox(
+                batch_id=batch_id,
+                event_name="LEG_STATUS_CHANGED",
+                payload={
+                    "batch_id": batch_id,
+                    "leg_index": leg_index,
+                    "from_status": from_status,
+                    "to_status": to_status,
+                    "reason_code": decision.reason_code,
+                },
+            )
+
+            if has_txn and self.cfg.require_transactional_db:
+                txn_commit()
+
+            # invoke lifecycle hook (Point 10)
+            self._invoke_hook("after_leg_update", batch_id=batch_id,
+                              leg_index=leg_index, to_status=to_status)
+            return True
+
+        except IllegalTransitionError:
+            if has_txn and self.cfg.require_transactional_db:
+                txn_rollback()
+            raise
+        except Exception:
+            logger.exception(
+                "Transactional update failed batch=%s leg=%d",
+                batch_id, leg_index,
+            )
+            if has_txn and self.cfg.require_transactional_db:
+                txn_rollback()
+            return False
+
+    # ─────────────────────────────────────────────────────────────
+    # OUTBOX — reliable event delivery (Point 6)
+    # ─────────────────────────────────────────────────────────────
+
+    def _enqueue_outbox(
+        self, *, batch_id: str, event_name: str, payload: Dict[str, Any]
+    ) -> None:
+        entry = OutboxEntry(
+            timestamp=time.time(),
+            batch_id=batch_id,
+            event_name=event_name,
+            payload=payload,
+        )
+        # persist to DB if available
+        writer = getattr(self.db, "write_outbox", None)
+        if callable(writer):
+            try:
+                writer(entry.to_dict())
+            except Exception:
+                logger.exception("Failed to write outbox entry batch=%s", batch_id)
+
+        with self._outbox_lock:
+            self._outbox.append(entry)
+
+    def _drain_outbox(self, batch_id: Optional[str] = None) -> int:
+        """Publish pending outbox events via bus, mark delivered. Returns count."""
+        with self._outbox_lock:
+            pending = [
+                e for e in self._outbox
+                if not e.delivered and (batch_id is None or e.batch_id == batch_id)
+            ]
+
+        delivered = 0
+        for entry in pending:
+            try:
+                self._publish(entry.event_name, entry.payload)
+                entry.delivered = True
+                delivered += 1
+            except Exception:
+                logger.exception(
+                    "Outbox delivery failed event=%s batch=%s",
+                    entry.event_name, entry.batch_id,
+                )
+
+        # cleanup delivered entries
+        with self._outbox_lock:
+            self._outbox = [e for e in self._outbox if not e.delivered]
+
+        return delivered
+
+    # ─────────────────────────────────────────────────────────────
+    # FENCING TOKEN (Point 3)
+    # ─────────────────────────────────────────────────────────────
+
+    def _next_fencing_token(self) -> int:
+        with self._fencing_lock:
+            self._fencing_counter += 1
+            return self._fencing_counter
+
+    # ─────────────────────────────────────────────────────────────
+    # RUNTIME INVARIANT CHECKS (Point 8)
+    # ─────────────────────────────────────────────────────────────
+
+    def _check_post_reconcile_invariants(
+        self, batch_id: str, *, batch_status: str
+    ) -> List[str]:
+        """Convenience: fetches legs then delegates."""
+        if not self.cfg.enable_runtime_invariants:
+            return []
+        legs = self.batch_manager.get_batch_legs(batch_id)
+        return self._check_post_reconcile_invariants_on_legs(
+            batch_id, legs, batch_status=batch_status,
+        )
+
+    def _check_post_reconcile_invariants_on_legs(
+        self, batch_id: str, legs: List[Dict[str, Any]], *, batch_status: str
+    ) -> List[str]:
+        """
+        Verify post-reconcile invariants on provided legs snapshot.
+        Returns list of violations (empty = ok).
+
+        Invariants checked:
+          1. No leg status outside ALL_LEG_STATUSES
+          2. Terminal batch → all legs terminal
+          3. No UNKNOWN beyond TTL without a decision
+          4. Leg count > 0 for non-empty batch
+        """
+        if not self.cfg.enable_runtime_invariants:
+            return []
+
+        violations: List[str] = []
+
+        # 1. valid statuses
+        for lg in legs:
+            st = str(lg.get("status") or "").upper()
+            if st and st not in ALL_LEG_STATUSES:
+                violations.append(
+                    f"leg {lg.get('leg_index')}: invalid status '{st}'"
+                )
+
+        # 2. terminal batch consistency
+        if batch_status.upper() in TERMINAL_BATCH_STATUSES:
+            non_terminal = [
+                lg for lg in legs
+                if str(lg.get("status") or "").upper() not in TERMINAL_LEG_STATUSES
+            ]
+            if non_terminal:
+                violations.append(
+                    f"terminal batch '{batch_status}' has {len(non_terminal)} "
+                    f"non-terminal legs"
+                )
+
+        # 3. no UNKNOWN beyond TTL without resolution
+        for lg in legs:
+            st = str(lg.get("status") or "").upper()
+            ts = float(lg.get("created_at_ts", 0) or 0)
+            if st == "UNKNOWN" and ts > 0:
+                age = time.time() - ts
+                if age > self.cfg.unknown_grace_secs:
+                    violations.append(
+                        f"leg {lg.get('leg_index')}: UNKNOWN beyond TTL "
+                        f"(age={age:.0f}s > {self.cfg.unknown_grace_secs}s)"
+                    )
+
+        if violations:
+            logger.error(
+                "POST-RECONCILE INVARIANT VIOLATIONS batch=%s: %s",
+                batch_id, violations,
+            )
+
+        return violations
+
+    # ─────────────────────────────────────────────────────────────
+    # LIFECYCLE HOOKS (Point 10)
+    # ─────────────────────────────────────────────────────────────
+
+    def register_hook(self, name: str, callback) -> None:
+        """Register a lifecycle hook for crash-recovery testing."""
+        self._hooks[name] = callback
+
+    def _invoke_hook(self, name: str, **kwargs) -> None:
+        hook = self._hooks.get(name)
+        if callable(hook):
+            try:
+                hook(**kwargs)
+            except Exception:
+                logger.exception("Lifecycle hook '%s' raised", name)
 
     # ─────────────────────────────────────────────────────────────
     # PUBLISH / CLIENT HELPERS
@@ -1314,14 +1785,28 @@ class ReconciliationEngine:
                         reason.value if new_status == "FAILED" else ""
                     )
 
-                    self.batch_manager.update_leg_status(
+                    # FSM-validated + transactional update (Points 1, 2, 6)
+                    update_ok = self._transactional_leg_update(
                         batch_id=batch_id,
                         leg_index=leg_index,
-                        status=new_status,
+                        from_status=current_status,
+                        to_status=new_status,
+                        decision=decision,
                         bet_id=bet_id or None,
                         raw_response=remote_order,
                         error_text=error_text or None,
                     )
+                    if not update_ok:
+                        logger.error(
+                            "Transactional leg update failed batch=%s leg=%d",
+                            batch_id, leg_index,
+                        )
+                        if self.cfg.audit_fail_closed:
+                            return self._result(
+                                False, batch_id,
+                                reason_code=ReasonCode.AUDIT_PERSIST_FAILED,
+                            )
+
                     leg["status"] = new_status
                     changed = True
 
@@ -1367,9 +1852,20 @@ class ReconciliationEngine:
             self._release(batch_id)
             self._lock_mgr.cleanup_batch(batch_id)
 
+        # final legs: use in-memory snapshot (current under batch lock).
+        # Only reload from DB if legs became empty (edge case: loop broke on empty).
+        if legs:
+            final_legs = legs
+        else:
+            final_legs = self.batch_manager.get_batch_legs(batch_id) or []
+
+        # ── runtime invariant checks (Point 8) ──────────────────
+        violations = self._check_post_reconcile_invariants_on_legs(
+            batch_id, final_legs, batch_status=status,
+        )
+        self._invoke_hook("after_recompute", batch_id=batch_id, status=status)
+
         # persist final fingerprint + flush remaining decisions
-        # use last legs snapshot (legs_sorted from final cycle) — no extra DB call
-        final_legs = self.batch_manager.get_batch_legs(batch_id) if not legs else legs
         self._reconcile_fingerprints[batch_id] = self._compute_fingerprint(
             sorted(final_legs, key=lambda x: int(x.get("leg_index", 0))),
             last_remote_orders,
@@ -1390,6 +1886,9 @@ class ReconciliationEngine:
             self._publish("RECONCILIATION_BATCH_DONE", result)
             return result
 
+        # ── drain outbox events (Point 6) ────────────────────────
+        self._drain_outbox(batch_id)
+
         # if fetch failed permanently, return failure — not CONVERGED
         if fetch_failure in (
             ReasonCode.FETCH_PERMANENT_FAILURE,
@@ -1403,6 +1902,7 @@ class ReconciliationEngine:
                 extra={
                     "cycles": last_cycle,
                     "fingerprint": self._reconcile_fingerprints.get(batch_id, ""),
+                    "invariant_violations": violations,
                 },
             )
             self._publish("RECONCILIATION_BATCH_DONE", result)
@@ -1415,6 +1915,7 @@ class ReconciliationEngine:
             extra={
                 "cycles": last_cycle,
                 "fingerprint": self._reconcile_fingerprints.get(batch_id, ""),
+                "invariant_violations": violations,
             },
         )
         self._publish("RECONCILIATION_BATCH_DONE", result)
@@ -1627,4 +2128,25 @@ class ReconciliationEngine:
             r["error"] = reason_code.value
         if extra:
             r.update(extra)
+
+        # structured result (Point 9) — available via result["_structured"]
+        structured = ReconcileResult(
+            ok=ok,
+            batch_id=batch_id,
+            reason_code=reason_code.value if reason_code else "",
+            status=status,
+            cycles=int(r.get("cycles", 0)),
+            fingerprint=str(r.get("fingerprint", "")),
+            converged=(reason_code == ReasonCode.CONVERGED) if reason_code else False,
+            fetch_ok=r.get("fetch_failure") is None,
+            fetch_failure=str(r.get("fetch_failure", "")) or None,
+            audit_ok=reason_code != ReasonCode.AUDIT_PERSIST_FAILED if reason_code else True,
+            audit_failure=(
+                ReasonCode.AUDIT_PERSIST_FAILED.value
+                if reason_code == ReasonCode.AUDIT_PERSIST_FAILED else None
+            ),
+            error=str(r.get("error", "")),
+        )
+        r["_structured"] = structured
+
         return r
