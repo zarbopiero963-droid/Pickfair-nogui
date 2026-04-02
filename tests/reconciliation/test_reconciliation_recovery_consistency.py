@@ -1,19 +1,25 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any
 
 from core.reconciliation_engine import ReconciliationEngine, ReconcileConfig
 
 
 class FakeDB:
     def __init__(self):
-        self.logs: List[tuple[str, list[dict[str, Any]]]] = []
+        self.logs: list[tuple[str, list[dict[str, Any]]]] = []
 
     def persist_decision_log(self, batch_id, entries):
         self.logs.append((batch_id, entries))
 
     def get_pending_sagas(self):
         return []
+
+    def get_reconcile_marker(self, batch_id):
+        return None
+
+    def set_reconcile_marker(self, batch_id, value):
+        return None
 
 
 class FakeBus:
