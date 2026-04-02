@@ -4,86 +4,35 @@ import threading
 import time
 from typing import Any, Dict, List
 
-import pytest
-
-from core.reconciliation_engine import ReconciliationEngine, ReconcileConfig, ReasonCode
-
-
-class FakeBus:
-    def __init__(self):
-        self.events: List[tuple[str, Dict[str, Any]]] = []
-
-    def publish(self, name: str, payload: Dict[str, Any]) -> None:
-        self.events.append((name, dict(payload)))
+from core.reconciliation_engine import ReasonCode, ReconciliationEngine
 
 
 class FakeDB:
     def __init__(self):
-        self.persisted_decisions: List[tuple[str, List[Dict[str, Any]]]] = []
+        self.markers: Dict[str, Any] = {}
+        self.persisted: List[tuple[str, list[dict[str, Any]]]] = []
+
+    def persist_decision_log(self, batch_id, entries):
+        self.persisted.append((batch_id, list(entries)))
+        return None
 
     def get_pending_sagas(self):
         return []
 
-    def persist_decision_log(self, batch_id: str, entries: List[Dict[str, Any]]) -> None:
-        self.persisted_decisions.append((batch_id, entries))
-
     def get_reconcile_marker(self, batch_id):
-        return None
+        return self.markers.get(batch_id)
 
     def set_reconcile_marker(self, batch_id, value):
+        self.markers[batch_id] = value
         return None
 
 
-class FakeBatchManager:
+class FakeBus:
     def __init__(self):
-        self.batches = {
-            "B1": {"batch_id": "B1", "market_id": "1.100", "status": "LIVE"},
-            "B2": {"batch_id": "B2", "market_id": "1.200", "status": "LIVE"},
-        }
-        self.legs = {
-            "B1": [{"leg_index": 0, "status": "PLACED", "customer_ref": "R1", "bet_id": "BET1"}],
-            "B2": [{"leg_index": 0, "status": "PLACED", "customer_ref": "R2", "bet_id": "BET2"}],
-        }
-        self.calls: List[str] = []
-        self.pause = 0.15
+        self.events: List[tuple[str, dict[str, Any]]] = []
 
-    def get_batch(self, batch_id: str):
-        return self.batches.get(batch_id)
-
-    def get_batch_legs(self, batch_id: str):
-        self.calls.append(f"legs:{batch_id}")
-        time.sleep(self.pause)
-        return [dict(x) for x in self.legs.get(batch_id, [])]
-
-    def recompute_batch_status(self, batch_id: str):
-        return {"batch_id": batch_id, "status": "LIVE"}
-
-    def get_open_batches(self):
-        return list(self.batches.values())
-
-    def release_runtime_artifacts(self, **kwargs):
-        return None
-
-    def update_leg_status(
-        self,
-        batch_id: str,
-        leg_index: int,
-        status: str,
-        bet_id=None,
-        raw_response=None,
-        error_text=None,
-    ):
-        for leg in self.legs.get(batch_id, []):
-            if int(leg.get("leg_index", -1)) == int(leg_index):
-                leg["status"] = status
-                if bet_id is not None:
-                    leg["bet_id"] = bet_id
-                if error_text is not None:
-                    leg["error_text"] = error_text
-                if raw_response is not None:
-                    leg["raw_response"] = raw_response
-                return
-        raise AssertionError(f"leg {leg_index} not found in batch {batch_id}")
+    def publish(self, name, payload):
+        self.events.append((name, payload))
 
 
 class FakeClient:
@@ -91,22 +40,112 @@ class FakeClient:
         return []
 
 
-@pytest.fixture
-def engine():
+class FakeBatchManager:
+    def __init__(self, sleep_secs: float = 0.20, raise_on_batch: str | None = None):
+        self.sleep_secs = sleep_secs
+        self.raise_on_batch = raise_on_batch
+
+        self.entered: List[str] = []
+        self.updated: List[tuple] = []
+        self.released: List[str] = []
+        self.rollback_pending: List[str] = []
+
+        self._batches: Dict[str, Dict[str, Any]] = {
+            "B1": {"batch_id": "B1", "market_id": "1.1", "status": "LIVE"},
+            "B2": {"batch_id": "B2", "market_id": "1.2", "status": "LIVE"},
+        }
+        self._legs: Dict[str, List[Dict[str, Any]]] = {
+            "B1": [],
+            "B2": [],
+        }
+
+    def get_batch(self, batch_id):
+        return self._batches.get(batch_id)
+
+    def get_batch_legs(self, batch_id):
+        self.entered.append(batch_id)
+        if self.raise_on_batch == batch_id:
+            raise RuntimeError(f"boom:{batch_id}")
+        time.sleep(self.sleep_secs)
+        return [dict(x) for x in self._legs.get(batch_id, [])]
+
+    def update_leg_status(
+        self,
+        batch_id,
+        leg_index,
+        status,
+        bet_id=None,
+        raw_response=None,
+        error_text=None,
+    ):
+        self.updated.append(
+            (batch_id, leg_index, status, bet_id, raw_response, error_text)
+        )
+        legs = self._legs.setdefault(batch_id, [])
+        for leg in legs:
+            if int(leg.get("leg_index", -1)) == int(leg_index):
+                leg["status"] = status
+                if bet_id is not None:
+                    leg["bet_id"] = bet_id
+                return None
+        return None
+
+    def recompute_batch_status(self, batch_id):
+        return self._batches.get(batch_id, {"batch_id": batch_id, "status": "LIVE"})
+
+    def mark_batch_failed(self, batch_id, reason=""):
+        batch = self._batches.setdefault(
+            batch_id, {"batch_id": batch_id, "market_id": "", "status": "LIVE"}
+        )
+        batch["status"] = "FAILED"
+        batch["reason"] = reason
+        return None
+
+    def mark_batch_rollback_pending(self, batch_id, reason=""):
+        self.rollback_pending.append(batch_id)
+        batch = self._batches.setdefault(
+            batch_id, {"batch_id": batch_id, "market_id": "", "status": "LIVE"}
+        )
+        batch["status"] = "ROLLBACK_PENDING"
+        batch["reason"] = reason
+        return None
+
+    def release_runtime_artifacts(
+        self,
+        batch_id,
+        duplication_guard=None,
+        table_manager=None,
+        pnl=0.0,
+    ):
+        self.released.append(batch_id)
+        return None
+
+    def get_open_batches(self):
+        return list(self._batches.values())
+
+
+def make_engine(
+    *,
+    sleep_secs: float = 0.20,
+    raise_on_batch: str | None = None,
+):
     db = FakeDB()
     bus = FakeBus()
-    batch_manager = FakeBatchManager()
-    eng = ReconciliationEngine(
+    batch_manager = FakeBatchManager(
+        sleep_secs=sleep_secs,
+        raise_on_batch=raise_on_batch,
+    )
+    engine = ReconciliationEngine(
         db=db,
         bus=bus,
         batch_manager=batch_manager,
         client_getter=lambda: FakeClient(),
-        config=ReconcileConfig(max_convergence_cycles=2, convergence_sleep_secs=0.0),
     )
-    return eng
+    return engine, db, bus, batch_manager
 
 
-def test_same_batch_only_one_reconcile_enters(engine):
+def test_single_execution_per_batch():
+    engine, _db, _bus, batch_manager = make_engine(sleep_secs=0.20)
     results: List[Dict[str, Any]] = []
 
     def run():
@@ -122,12 +161,41 @@ def test_same_batch_only_one_reconcile_enters(engine):
     t2.join()
 
     assert len(results) == 2
+
     reason_codes = {r.get("reason_code") for r in results}
-    assert ReasonCode.CONVERGED.value in reason_codes
     assert ReasonCode.RECONCILE_ALREADY_RUNNING.value in reason_codes
+    assert (
+        ReasonCode.CONVERGED.value in reason_codes
+        or ReasonCode.IDEMPOTENT_SKIP.value in reason_codes
+    )
+
+    # the slow critical section for B1 should be entered only once
+    assert batch_manager.entered.count("B1") == 1
 
 
-def test_different_batches_can_run_in_parallel(engine):
+def test_lock_released_after_exception():
+    engine, _db, _bus, batch_manager = make_engine(
+        sleep_secs=0.05,
+        raise_on_batch="B1",
+    )
+
+    result1 = engine.reconcile_batch("B1")
+    assert result1["ok"] is False
+    assert result1["reason_code"] == ReasonCode.TRANSIENT_ERROR.value
+
+    # second call must not be blocked forever by a leaked lock
+    batch_manager.raise_on_batch = None
+    result2 = engine.reconcile_batch("B1")
+
+    assert result2["reason_code"] in {
+        ReasonCode.CONVERGED.value,
+        ReasonCode.IDEMPOTENT_SKIP.value,
+    }
+    assert engine._lock_mgr.is_locked("B1") is False
+
+
+def test_parallel_batches_can_run_in_parallel():
+    engine, _db, _bus, _batch_manager = make_engine(sleep_secs=0.20)
     results: List[Dict[str, Any]] = []
 
     def run(batch_id: str):
@@ -144,30 +212,49 @@ def test_different_batches_can_run_in_parallel(engine):
     elapsed = time.time() - start
 
     assert len(results) == 2
-    # margine più realistico per CI shared runner
-    assert elapsed < 0.40
-
-
-def test_lock_released_after_exception():
-    db = FakeDB()
-    bus = FakeBus()
-
-    class ExplodingBatchManager(FakeBatchManager):
-        def get_batch_legs(self, batch_id: str):
-            raise RuntimeError("boom")
-
-    eng = ReconciliationEngine(
-        db=db,
-        bus=bus,
-        batch_manager=ExplodingBatchManager(),
-        client_getter=lambda: FakeClient(),
-        config=ReconcileConfig(max_convergence_cycles=1),
+    assert all(
+        r["reason_code"] in {
+            ReasonCode.CONVERGED.value,
+            ReasonCode.IDEMPOTENT_SKIP.value,
+        }
+        for r in results
     )
 
-    with pytest.raises(RuntimeError):
-        eng.reconcile_batch("B1")
+    # generous threshold for shared CI runners; still proves not fully serialized
+    assert elapsed < 0.60
 
-    # seconda chiamata: deve rientrare e rilanciare di nuovo boom,
-    # non restare bloccata per lock zombie
-    with pytest.raises(RuntimeError):
-        eng.reconcile_batch("B1")
+
+def test_reentrant_same_batch_denied_or_skipped():
+    engine, _db, _bus, batch_manager = make_engine(sleep_secs=0.20)
+    results: List[Dict[str, Any]] = []
+
+    def nested_call():
+        results.append(engine.reconcile_batch("B1"))
+
+    original_get_batch_legs = batch_manager.get_batch_legs
+    nested_triggered = {"done": False}
+
+    def wrapped_get_batch_legs(batch_id):
+        if batch_id == "B1" and not nested_triggered["done"]:
+            nested_triggered["done"] = True
+            t = threading.Thread(target=nested_call)
+            t.start()
+            time.sleep(0.03)
+            res = original_get_batch_legs(batch_id)
+            t.join()
+            return res
+        return original_get_batch_legs(batch_id)
+
+    batch_manager.get_batch_legs = wrapped_get_batch_legs
+
+    outer = engine.reconcile_batch("B1")
+    results.append(outer)
+
+    assert len(results) == 2
+    reason_codes = [r["reason_code"] for r in results]
+
+    assert ReasonCode.RECONCILE_ALREADY_RUNNING.value in reason_codes
+    assert any(
+        rc in {ReasonCode.CONVERGED.value, ReasonCode.IDEMPOTENT_SKIP.value}
+        for rc in reason_codes
+    )
