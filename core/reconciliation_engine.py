@@ -1328,11 +1328,12 @@ class ReconciliationEngine:
                 )
 
             if cycle < self.cfg.max_convergence_cycles:
-                time.sleep(self.cfg.convergence_sleep_secs)
-                # reload fresh snapshot for next cycle
-                legs = self.batch_manager.get_batch_legs(batch_id)
-                if not legs:
-                    break
+                # only sleep + reload when state changed (need exchange to settle)
+                if changed:
+                    time.sleep(self.cfg.convergence_sleep_secs)
+                    legs = self.batch_manager.get_batch_legs(batch_id)
+                    if not legs:
+                        break
         else:
             self._log_decision(
                 batch_id=batch_id, leg_index=None,
@@ -1352,11 +1353,27 @@ class ReconciliationEngine:
             self._lock_mgr.cleanup_batch(batch_id)
 
         # persist final fingerprint + flush remaining decisions
+        # use last legs snapshot (legs_sorted from final cycle) — no extra DB call
+        final_legs = self.batch_manager.get_batch_legs(batch_id) if not legs else legs
         self._reconcile_fingerprints[batch_id] = self._compute_fingerprint(
-            self.batch_manager.get_batch_legs(batch_id) or [],
+            sorted(final_legs, key=lambda x: int(x.get("leg_index", 0))),
             last_remote_orders,
         )
-        self._flush_decision_log(batch_id)
+
+        flush_ok = self._flush_decision_log(batch_id)
+        if not flush_ok and self.cfg.audit_fail_closed:
+            result = self._result(
+                False,
+                batch_id,
+                status=status,
+                reason_code=ReasonCode.AUDIT_PERSIST_FAILED,
+                extra={
+                    "cycles": last_cycle,
+                    "fingerprint": self._reconcile_fingerprints.get(batch_id, ""),
+                },
+            )
+            self._publish("RECONCILIATION_BATCH_DONE", result)
+            return result
 
         # if fetch failed permanently, return failure — not CONVERGED
         if fetch_failure in (
