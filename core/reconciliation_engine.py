@@ -148,10 +148,12 @@ class DecisionEntry:
     merge_winner: str                 # "LOCAL" | "EXCHANGE" | "NONE"
     details: Dict[str, Any] = field(default_factory=dict)
     persisted: bool = False           # True if already written to DB
+    persist_ok: Optional[bool] = None # result of last persist attempt
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
-        d.pop("persisted", None)      # internal flag, not for DB
+        d.pop("persisted", None)      # internal flags, not for DB
+        d.pop("persist_ok", None)
         return d
 
 
@@ -214,7 +216,7 @@ class ReconcileConfig:
 
 class _BatchLockManager:
     """
-    Per-batch reentrant lock with zombie protection.
+    Per-batch non-reentrant lock with zombie protection.
 
     Guarantees:
       - Only one reconcile_batch() runs per batch_id at a time
@@ -592,7 +594,7 @@ class ReconciliationEngine:
             if persist_ok:
                 entry.persisted = True
 
-        entry._persist_ok = persist_ok
+        entry.persist_ok = persist_ok
 
         logger.info(
             "DECISION batch=%s leg=%s case=%s reason=%s winner=%s => %s",
@@ -638,22 +640,35 @@ class ReconciliationEngine:
                 if e.batch_id == batch_id and not e.persisted
             ]
             if not pending:
-                # still remove from buffer (already-persisted entries)
                 self._decision_log = [
                     e for e in self._decision_log if e.batch_id != batch_id
                 ]
                 return True
 
         persister = getattr(self.db, "persist_decision_log", None)
-        if callable(persister):
-            try:
-                persister(batch_id, [e.to_dict() for e in pending])
-                for e in pending:
-                    e.persisted = True
-            except Exception:
-                logger.exception("Errore persist_decision_log batch=%s", batch_id)
-                if self.cfg.audit_fail_closed:
-                    return False
+        if not callable(persister):
+            logger.error("persist_decision_log missing for batch=%s", batch_id)
+            if self.cfg.audit_fail_closed:
+                return False
+            with self._decision_log_lock:
+                self._decision_log = [
+                    e for e in self._decision_log if e.batch_id != batch_id
+                ]
+            return True
+
+        try:
+            persister(batch_id, [e.to_dict() for e in pending])
+            for e in pending:
+                e.persisted = True
+        except Exception:
+            logger.exception("Errore persist_decision_log batch=%s", batch_id)
+            if self.cfg.audit_fail_closed:
+                return False
+            with self._decision_log_lock:
+                self._decision_log = [
+                    e for e in self._decision_log if e.batch_id != batch_id
+                ]
+            return True
 
         with self._decision_log_lock:
             self._decision_log = [
@@ -1279,7 +1294,7 @@ class ReconciliationEngine:
                     )
 
                     if self.cfg.audit_fail_closed:
-                        if not getattr(decision, '_persist_ok', True):
+                        if not decision.persist_ok:
                             logger.error(
                                 "ABORT reconcile: audit persist failed "
                                 "batch=%s leg=%d — refusing state change",
