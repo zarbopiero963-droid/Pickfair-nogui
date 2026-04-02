@@ -17,4 +17,4 @@ from core.reconciliation_engine import ReconciliationEngine
 def test_classify_case(local_status, remote_present, remote_status, saga_pending, expected):
     remote = {"status": remote_status} if remote_present else None
     got = ReconciliationEngine._classify_case(local_status, remote, remote_status, saga_pending)
-    assert got == expected
+    assert got == expected 
