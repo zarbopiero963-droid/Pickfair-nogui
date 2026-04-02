@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from core.reconciliation_engine import ReconciliationEngine, ReasonCode
 
 
@@ -11,7 +9,7 @@ class FakeBus:
 
 
 class FakeDB:
-    def __init__(self, fail=False):
+    def __init__(self, fail: bool = False):
         self.fail = fail
         self.logs = []
 
@@ -23,18 +21,43 @@ class FakeDB:
     def get_pending_sagas(self):
         return []
 
+    def get_reconcile_marker(self, batch_id):
+        return None
+
+    def set_reconcile_marker(self, batch_id, value):
+        return None
+
 
 class FakeBatchManager:
     def get_batch(self, batch_id):
         return {"batch_id": batch_id, "market_id": "1.1", "status": "LIVE"}
 
     def get_batch_legs(self, batch_id):
-        return [{"leg_index": 0, "status": "UNKNOWN", "customer_ref": "R1", "bet_id": "", "created_at_ts": 0}]
+        return [
+            {
+                "leg_index": 0,
+                "status": "UNKNOWN",
+                "customer_ref": "R1",
+                "bet_id": "",
+                "created_at_ts": 0,
+            }
+        ]
 
     def recompute_batch_status(self, batch_id):
         return {"batch_id": batch_id, "status": "LIVE"}
 
     def release_runtime_artifacts(self, **kwargs):
+        return None
+
+    def update_leg_status(
+        self,
+        batch_id,
+        leg_index,
+        status,
+        bet_id=None,
+        raw_response=None,
+        error_text=None,
+    ):
         return None
 
 
@@ -51,13 +74,15 @@ def test_decision_log_persisted():
         batch_manager=FakeBatchManager(),
         client_getter=lambda: FakeClient(),
     )
+
     result = eng.reconcile_batch("B1")
+
     assert result["ok"] is True
     assert len(db.logs) >= 1
     assert db.logs[0][0] == "B1"
 
 
-def test_decision_log_persist_failure_raises():
+def test_decision_log_persist_failure_returns_fail_closed_result():
     db = FakeDB(fail=True)
     eng = ReconciliationEngine(
         db=db,
@@ -65,8 +90,12 @@ def test_decision_log_persist_failure_raises():
         batch_manager=FakeBatchManager(),
         client_getter=lambda: FakeClient(),
     )
-    with pytest.raises(RuntimeError):
-        eng._flush_decision_log("B1")
+
+    result = eng.reconcile_batch("B1")
+
+    assert result["ok"] is False
+    assert result["reason_code"] == ReasonCode.AUDIT_PERSIST_FAILED.value
+    assert result["error"] == ReasonCode.AUDIT_PERSIST_FAILED.value
 
 
 def test_logged_reason_codes_machine_readable():
@@ -77,6 +106,7 @@ def test_logged_reason_codes_machine_readable():
         batch_manager=FakeBatchManager(),
         client_getter=lambda: FakeClient(),
     )
+
     eng._log_decision(
         batch_id="B1",
         leg_index=0,
@@ -87,4 +117,5 @@ def test_logged_reason_codes_machine_readable():
         resolved_status="FAILED",
         merge_winner="NONE",
     )
+
     assert eng.get_decision_log("B1")[0]["reason_code"] == ReasonCode.RESOLVED_UNKNOWN_TO_FAILED.value
