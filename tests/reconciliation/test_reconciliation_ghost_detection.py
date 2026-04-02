@@ -8,6 +8,15 @@ class FakeDB:
     def persist_decision_log(self, batch_id, entries):
         return None
 
+    def get_pending_sagas(self):
+        return []
+
+    def get_reconcile_marker(self, batch_id):
+        return None
+
+    def set_reconcile_marker(self, batch_id, value):
+        return None
+
 
 class FakeBus:
     def __init__(self):
