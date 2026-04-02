@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import random
-from typing import Any, Dict, List
 
 import pytest
 
@@ -15,6 +14,12 @@ class FakeDB:
     def persist_decision_log(self, batch_id, entries):
         return None
 
+    def get_reconcile_marker(self, batch_id):
+        return None
+
+    def set_reconcile_marker(self, batch_id, value):
+        return None
+
 
 class FakeBus:
     def publish(self, name, payload):
@@ -24,13 +29,34 @@ class FakeBus:
 class FakeBatchManager:
     def __init__(self, legs):
         self.batch = {"batch_id": "B1", "market_id": "1.111", "status": "LIVE"}
-        self._legs = legs
+        self._legs = [dict(x) for x in legs]
 
     def get_batch(self, batch_id):
         return dict(self.batch)
 
     def get_batch_legs(self, batch_id):
         return [dict(x) for x in self._legs]
+
+    def update_leg_status(
+        self,
+        batch_id,
+        leg_index,
+        status,
+        bet_id=None,
+        raw_response=None,
+        error_text=None,
+    ):
+        for leg in self._legs:
+            if int(leg.get("leg_index", -1)) == int(leg_index):
+                leg["status"] = status
+                if bet_id is not None:
+                    leg["bet_id"] = bet_id
+                if raw_response is not None:
+                    leg["raw_response"] = raw_response
+                if error_text is not None:
+                    leg["error_text"] = error_text
+                return
+        raise AssertionError(f"leg_index {leg_index} not found")
 
     def recompute_batch_status(self, batch_id):
         return {"batch_id": batch_id, "status": "LIVE"}
