@@ -48,15 +48,35 @@ class FakeBatchManager:
         self.entered: List[str] = []
         self.updated: List[tuple] = []
         self.released: List[str] = []
-        self.rollback_pending: List[str] = []
 
         self._batches: Dict[str, Dict[str, Any]] = {
             "B1": {"batch_id": "B1", "market_id": "1.1", "status": "LIVE"},
             "B2": {"batch_id": "B2", "market_id": "1.2", "status": "LIVE"},
         }
         self._legs: Dict[str, List[Dict[str, Any]]] = {
-            "B1": [],
-            "B2": [],
+            # almeno una leg non terminale, così il motore non va in NO_LEGS
+            "B1": [
+                {
+                    "leg_index": 0,
+                    "status": "PLACED",
+                    "customer_ref": "REF_B1",
+                    "bet_id": "BET_B1",
+                    "market_id": "1.1",
+                    "selection_id": "101",
+                    "created_at_ts": time.time(),
+                }
+            ],
+            "B2": [
+                {
+                    "leg_index": 0,
+                    "status": "PLACED",
+                    "customer_ref": "REF_B2",
+                    "bet_id": "BET_B2",
+                    "market_id": "1.2",
+                    "selection_id": "102",
+                    "created_at_ts": time.time(),
+                }
+            ],
         }
 
     def get_batch(self, batch_id):
@@ -101,15 +121,6 @@ class FakeBatchManager:
         batch["reason"] = reason
         return None
 
-    def mark_batch_rollback_pending(self, batch_id, reason=""):
-        self.rollback_pending.append(batch_id)
-        batch = self._batches.setdefault(
-            batch_id, {"batch_id": batch_id, "market_id": "", "status": "LIVE"}
-        )
-        batch["status"] = "ROLLBACK_PENDING"
-        batch["reason"] = reason
-        return None
-
     def release_runtime_artifacts(
         self,
         batch_id,
@@ -124,11 +135,7 @@ class FakeBatchManager:
         return list(self._batches.values())
 
 
-def make_engine(
-    *,
-    sleep_secs: float = 0.20,
-    raise_on_batch: str | None = None,
-):
+def make_engine(*, sleep_secs: float = 0.20, raise_on_batch: str | None = None):
     db = FakeDB()
     bus = FakeBus()
     batch_manager = FakeBatchManager(
@@ -164,12 +171,8 @@ def test_single_execution_per_batch():
 
     reason_codes = {r.get("reason_code") for r in results}
     assert ReasonCode.RECONCILE_ALREADY_RUNNING.value in reason_codes
-    assert (
-        ReasonCode.CONVERGED.value in reason_codes
-        or ReasonCode.IDEMPOTENT_SKIP.value in reason_codes
-    )
+    assert ReasonCode.CONVERGED.value in reason_codes
 
-    # the slow critical section for B1 should be entered only once
     assert batch_manager.entered.count("B1") == 1
 
 
@@ -179,18 +182,15 @@ def test_lock_released_after_exception():
         raise_on_batch="B1",
     )
 
-    result1 = engine.reconcile_batch("B1")
-    assert result1["ok"] is False
-    assert result1["reason_code"] == ReasonCode.TRANSIENT_ERROR.value
+    try:
+        engine.reconcile_batch("B1")
+    except RuntimeError as exc:
+        assert "boom:B1" in str(exc)
 
-    # second call must not be blocked forever by a leaked lock
     batch_manager.raise_on_batch = None
     result2 = engine.reconcile_batch("B1")
 
-    assert result2["reason_code"] in {
-        ReasonCode.CONVERGED.value,
-        ReasonCode.IDEMPOTENT_SKIP.value,
-    }
+    assert result2["reason_code"] == ReasonCode.CONVERGED.value
     assert engine._lock_mgr.is_locked("B1") is False
 
 
@@ -212,15 +212,8 @@ def test_parallel_batches_can_run_in_parallel():
     elapsed = time.time() - start
 
     assert len(results) == 2
-    assert all(
-        r["reason_code"] in {
-            ReasonCode.CONVERGED.value,
-            ReasonCode.IDEMPOTENT_SKIP.value,
-        }
-        for r in results
-    )
+    assert all(r["reason_code"] == ReasonCode.CONVERGED.value for r in results)
 
-    # generous threshold for shared CI runners; still proves not fully serialized
     assert elapsed < 0.60
 
 
@@ -254,7 +247,4 @@ def test_reentrant_same_batch_denied_or_skipped():
     reason_codes = [r["reason_code"] for r in results]
 
     assert ReasonCode.RECONCILE_ALREADY_RUNNING.value in reason_codes
-    assert any(
-        rc in {ReasonCode.CONVERGED.value, ReasonCode.IDEMPOTENT_SKIP.value}
-        for rc in reason_codes
-    )
+    assert ReasonCode.CONVERGED.value in reason_codes
