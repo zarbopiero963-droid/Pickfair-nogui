@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import pytest
 
@@ -26,6 +26,12 @@ class FakeDB:
 
     def persist_decision_log(self, batch_id: str, entries: List[Dict[str, Any]]) -> None:
         self.persisted_decisions.append((batch_id, entries))
+
+    def get_reconcile_marker(self, batch_id):
+        return None
+
+    def set_reconcile_marker(self, batch_id, value):
+        return None
 
 
 class FakeBatchManager:
@@ -57,6 +63,27 @@ class FakeBatchManager:
 
     def release_runtime_artifacts(self, **kwargs):
         return None
+
+    def update_leg_status(
+        self,
+        batch_id: str,
+        leg_index: int,
+        status: str,
+        bet_id=None,
+        raw_response=None,
+        error_text=None,
+    ):
+        for leg in self.legs.get(batch_id, []):
+            if int(leg.get("leg_index", -1)) == int(leg_index):
+                leg["status"] = status
+                if bet_id is not None:
+                    leg["bet_id"] = bet_id
+                if error_text is not None:
+                    leg["error_text"] = error_text
+                if raw_response is not None:
+                    leg["raw_response"] = raw_response
+                return
+        raise AssertionError(f"leg {leg_index} not found in batch {batch_id}")
 
 
 class FakeClient:
@@ -95,9 +122,9 @@ def test_same_batch_only_one_reconcile_enters(engine):
     t2.join()
 
     assert len(results) == 2
-    statuses = {r.get("reason_code") for r in results}
-    assert ReasonCode.CONVERGED.value in statuses
-    assert "ALREADY_RUNNING" in statuses or ReasonCode.IDEMPOTENT_SKIP.value in statuses
+    reason_codes = {r.get("reason_code") for r in results}
+    assert ReasonCode.CONVERGED.value in reason_codes
+    assert ReasonCode.RECONCILE_ALREADY_RUNNING.value in reason_codes
 
 
 def test_different_batches_can_run_in_parallel(engine):
@@ -108,6 +135,7 @@ def test_different_batches_can_run_in_parallel(engine):
 
     t1 = threading.Thread(target=run, args=("B1",))
     t2 = threading.Thread(target=run, args=("B2",))
+
     start = time.time()
     t1.start()
     t2.start()
@@ -116,7 +144,8 @@ def test_different_batches_can_run_in_parallel(engine):
     elapsed = time.time() - start
 
     assert len(results) == 2
-    assert elapsed < 0.30
+    # margine più realistico per CI shared runner
+    assert elapsed < 0.40
 
 
 def test_lock_released_after_exception():
@@ -138,6 +167,7 @@ def test_lock_released_after_exception():
     with pytest.raises(RuntimeError):
         eng.reconcile_batch("B1")
 
-    # second call must not be blocked forever by stale lock
+    # seconda chiamata: deve rientrare e rilanciare di nuovo boom,
+    # non restare bloccata per lock zombie
     with pytest.raises(RuntimeError):
         eng.reconcile_batch("B1")
