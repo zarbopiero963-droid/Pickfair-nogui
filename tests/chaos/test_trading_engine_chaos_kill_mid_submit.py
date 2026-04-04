@@ -123,7 +123,10 @@ def test_crash_mid_submit_goes_failed_and_preserves_audit():
     assert "ORDER_TRANSITION" in event_names
 
     audit_types = [e["type"] for e in result["audit"]["events"]]
-    assert "FINALIZED" in audit_types
+    assert "REQUEST_RECEIVED" in audit_types
+    assert "SUBMIT_FAILED" in audit_types
+    assert "ORDER_TRANSITION" in audit_types
+    assert "FINALIZED" not in audit_types
 
     bus_names = [name for name, _ in bus.events]
     assert "QUICK_BET_ROUTED" in bus_names
@@ -184,4 +187,3 @@ def test_timeout_mid_submit_goes_ambiguous_and_enqueues_reconcile():
 
     audit_types = [e["type"] for e in result["audit"]["events"]]
     assert "RECONCILE_ENQUEUED" in audit_types
-    assert "FINALIZED" in audit_types
