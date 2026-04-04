@@ -44,6 +44,9 @@ class FakeDB:
     def order_exists_inflight(self, *, customer_ref, correlation_id):
         return False
 
+    def get_order(self, order_id):
+        return self.orders.get(order_id)
+
 
 class InlineExecutor:
     def is_ready(self):
@@ -108,9 +111,12 @@ def test_full_quick_bet_lifecycle_with_hooks_async():
     assert result["ok"] is True
     assert result["status"] == "ACCEPTED_FOR_PROCESSING"
     assert result["simulation_mode"] is True
+    assert result["is_terminal"] is False
+    assert result["lifecycle_stage"] == "accepted"
 
     assert len(om.payloads) == 1
     assert len(db.orders) == 1
 
     names = [x[0] for x in bus.events]
     assert "QUICK_BET_ROUTED" in names
+    assert "QUICK_BET_SUCCESS" not in names
