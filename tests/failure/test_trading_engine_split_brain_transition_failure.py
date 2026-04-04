@@ -135,4 +135,4 @@ def test_split_brain_submit_success_but_transition_to_submitted_fails_goes_ambig
     audit_types = [event["type"] for event in result["audit"]["events"]]
     assert "SUBMIT_TRANSITION_FAILED" in audit_types
     assert "RECONCILE_ENQUEUED" in audit_types
-    assert "FINALIZED" in audit_types
+    assert "FINALIZED" not in audit_types
