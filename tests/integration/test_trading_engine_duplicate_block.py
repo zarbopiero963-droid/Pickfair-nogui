@@ -44,6 +44,9 @@ class FakeDB:
     def order_exists_inflight(self, *, customer_ref, correlation_id):
         return False
 
+    def find_duplicate_order(self, *, customer_ref, correlation_id):
+        return "ORD-EXISTING"
+
 
 class InlineExecutor:
     def is_ready(self):
@@ -59,7 +62,7 @@ class CountingOrderManager:
 
     def submit(self, payload):
         self.calls += 1
-        return {"ok": True}
+        return {"ok": True, "bet_id": "BET-DUP-1"}
 
 
 @pytest.mark.integration
@@ -97,4 +100,9 @@ def test_duplicate_request_is_blocked():
     assert om.calls == 0
 
     event_names = [x[0] for x in bus.events]
-    assert "QUICK_BET_DUPLICATE" in event_names
+    assert "QUICK_BET_DUPLICATE" not in event_names
+
+    assert len(engine.db.orders) == 1
+    order = next(iter(engine.db.orders.values()))
+    assert order["status"] == "DUPLICATE_BLOCKED"
+    assert order["duplicate_reason"] == "DUPLICATE_BLOCKED"
