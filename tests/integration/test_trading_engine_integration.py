@@ -44,6 +44,9 @@ class FakeDB:
     def order_exists_inflight(self, *, customer_ref, correlation_id):
         return False
 
+    def get_order(self, order_id):
+        return self.orders.get(order_id)
+
 
 class InlineExecutor:
     def is_ready(self):
@@ -118,6 +121,8 @@ def test_quick_bet_happy_path_routes_logs_and_reconciles_async():
 
     assert result["ok"] is True
     assert result["status"] == "ACCEPTED_FOR_PROCESSING"
+    assert result["is_terminal"] is False
+    assert result["lifecycle_stage"] == "accepted"
 
     assert len(om.payloads) == 1
     assert len(db.orders) == 1
@@ -127,3 +132,4 @@ def test_quick_bet_happy_path_routes_logs_and_reconciles_async():
 
     event_names = [x[0] for x in bus.events]
     assert "QUICK_BET_ROUTED" in event_names
+    assert "QUICK_BET_SUCCESS" not in event_names
