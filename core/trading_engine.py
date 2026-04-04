@@ -549,42 +549,41 @@ class TradingEngine:
         return fn()
 
     # ==================================================================
-    # [F] DUPLICATE HANDLER HELPER — Safe
+    # [FIX 3] DUPLICATE HANDLER HELPER — NO DB INSERT
     # ==================================================================
-    def _handle_duplicate_request(self, ctx: _ExecutionContext, audit: Dict[str, Any],
-                                   normalized: Dict[str, Any], extra_fields: Dict[str, Any]) -> Dict[str, Any]:
+    def _handle_duplicate_request(
+        self,
+        ctx: _ExecutionContext,
+        audit: Dict[str, Any],
+        normalized: Dict[str, Any],
+        extra_fields: Dict[str, Any],
+    ) -> Dict[str, Any]:
         """
-        [F] Duplicate handler.
-        Writes only duplicate-specific metadata here.
-        Terminal metadata (outcome, finalized) is written by _complete_order_lifecycle
-        to avoid ORDER_ALREADY_FINALIZED crash.
+        🔥 HARD FIX:
+        - NO DB INSERT
+        - NO new order row
+        - pure logical duplicate
         """
-        self._emit(ctx, audit, "DUPLICATE_BLOCKED",
-                   {"customer_ref": ctx.customer_ref}, category="guard")
-
-        order_id = self._persist_inflight(ctx, normalized)
-        self._transition_order(
+        self._emit(
             ctx,
             audit,
-            order_id,
-            STATUS_INFLIGHT,
-            STATUS_DUPLICATE_BLOCKED,
-            extra={"duplicate_reason": "DUPLICATE_BLOCKED"},
+            "DUPLICATE_BLOCKED",
+            {"customer_ref": ctx.customer_ref},
+            category="guard",
         )
-        
-        # [F] Write ONLY duplicate-specific metadata, NOT terminal metadata.
-        self._write_order_metadata(order_id, {
-            "duplicate_of": self._find_duplicate_reference(ctx),
-            "copy_meta": extra_fields.get("copy_meta"),
-            "pattern_meta": extra_fields.get("pattern_meta"),
-            "order_origin": extra_fields.get("order_origin"),
-        })
 
-        return self._complete_order_lifecycle(
-            ctx, audit, order_id=order_id,
-            status=STATUS_DUPLICATE_BLOCKED, reason="DUPLICATE_BLOCKED",
-            terminal_bus_event="QUICK_BET_DUPLICATE",
-            extra_fields=extra_fields)
+        duplicate_ref = self._find_duplicate_reference(ctx)
+
+        return self._build_result(
+            ctx,
+            audit,
+            status=STATUS_DUPLICATE_BLOCKED,
+            outcome=OUTCOME_SUCCESS,
+            order_id=duplicate_ref,
+            reason="DUPLICATE_BLOCKED",
+            extra_fields=extra_fields,
+            is_terminal=True,
+        )
 
     # ==================================================================
     # BUS WIRING
@@ -769,7 +768,7 @@ class TradingEngine:
 
             with self._lock:
                 if not self._dedup_allow(ctx):
-                    # [P11] Use dedicated helper with FIX A
+                    # [FIX 3] Use dedicated helper with NO DB INSERT
                     return self._handle_duplicate_request(ctx, audit, normalized, extra_fields)
 
                 self._emit(ctx, audit, "DEDUP_DECISION", {"allowed": True}, category="guard")
@@ -782,23 +781,24 @@ class TradingEngine:
         except Exception as exc:
             logger.exception("Fatal error in trading engine")
             
-            # [FINAL FIX] Safe mark failed returns bool
+            # [FIX 1] HARD FIX: degraded se DB non aggiornabile
             marked_failed = False
             if order_id is not None:
                 marked_failed = self._safe_mark_failed(
                     ctx, audit, order_id, reason="ENGINE_FATAL", error=str(exc)
                 )
-            
-            # [FINAL FIX] If transition failed, return degraded result to avoid precheck crash
-            # and to honestly report that finalization was not persisted.
+
             if order_id is not None and not marked_failed:
-                return self._build_degraded_fatal_result(ctx, audit, order_id, exc, extra_fields)
-            
-            # If order_id is None or transition succeeded, proceed with normal lifecycle
+                return self._build_degraded_fatal_result(
+                    ctx, audit, order_id, exc, extra_fields
+                )
+
             return self._complete_order_lifecycle(
                 ctx, audit, order_id=order_id,
-                status=STATUS_FAILED, error=str(exc),
-                extra_fields=extra_fields)
+                status=STATUS_FAILED,
+                error=str(exc),
+                extra_fields=extra_fields
+            )
 
     # ==================================================================
     # TERMINAL LIFECYCLE ORCHESTRATOR
@@ -833,11 +833,34 @@ class TradingEngine:
         # Terminal state logging
         self._log_terminal_state(ctx, audit, order_id, status)
 
-        # [FINAL FIX] Audit is best-effort, never breaks flow
-        self._emit(ctx, audit, "FINALIZED",
-                   {"order_id": order_id, "status": status, "outcome": outcome,
-                    "reason": reason, "error": error,
-                    "ambiguity_reason": ambiguity_reason}, category="final")
+        # [FIX 2] TERMINAL EVENT NAME MAPPING
+        if status == STATUS_COMPLETED:
+            final_event = "FINAL_SUCCESS"
+        elif status == STATUS_FAILED:
+            final_event = "FINAL_FAILURE"
+        elif status == STATUS_AMBIGUOUS:
+            final_event = "FINAL_AMBIGUOUS"
+        elif status == STATUS_DENIED:
+            final_event = "FINAL_DENIED"
+        elif status == STATUS_DUPLICATE_BLOCKED:
+            final_event = "FINAL_DUPLICATE"
+        else:
+            final_event = "FINALIZED"
+
+        self._emit(
+            ctx,
+            audit,
+            final_event,
+            {
+                "order_id": order_id,
+                "status": status,
+                "outcome": outcome,
+                "reason": reason,
+                "error": error,
+                "ambiguity_reason": ambiguity_reason,
+            },
+            category="final",
+        )
 
         # [FINAL FIX] Metadata write is best-effort in terminal path
         finalization_persisted = True
