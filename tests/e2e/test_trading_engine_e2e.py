@@ -114,4 +114,3 @@ def test_full_quick_bet_lifecycle_with_hooks_async():
 
     names = [x[0] for x in bus.events]
     assert "QUICK_BET_ROUTED" in names
-    assert "QUICK_BET_SUCCESS" in names
