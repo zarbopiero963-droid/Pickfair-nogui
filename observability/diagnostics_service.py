@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from .diagnostic_bundle_builder import DiagnosticBundleBuilder
+from .log_tail import tail_text_from_files
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ class DiagnosticsService:
         incidents_manager: Any,
         db: Any = None,
         safe_mode: Any = None,
+        log_paths: Optional[List[str]] = None,
     ) -> None:
         self.builder = builder
         self.probe = probe
@@ -29,6 +31,7 @@ class DiagnosticsService:
         self.incidents_manager = incidents_manager
         self.db = db
         self.safe_mode = safe_mode
+        self.log_paths = list(log_paths or [])
 
     def export_bundle(self) -> str:
         health = self.health_registry.snapshot()
@@ -88,4 +91,8 @@ class DiagnosticsService:
         return []
 
     def _logs_tail(self) -> str:
-        return ""
+        try:
+            return tail_text_from_files(self.log_paths, max_bytes_per_file=200_000)
+        except Exception:
+            logger.exception("tail_text_from_files failed")
+            return ""

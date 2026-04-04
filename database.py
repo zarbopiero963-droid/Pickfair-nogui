@@ -1151,3 +1151,51 @@ class Database:
                 pass
 
         return []
+
+    def delete_old_observability_snapshots(self, cutoff_ts):
+        execute = getattr(self, "execute", None)
+        if callable(execute):
+            execute(
+                "DELETE FROM observability_snapshots WHERE created_at < ?",
+                (float(cutoff_ts),),
+            )
+            return
+
+        conn = getattr(self, "conn", None)
+        if conn is not None:
+            cur = conn.cursor()
+            cur.execute(
+                "DELETE FROM observability_snapshots WHERE created_at < ?",
+                (float(cutoff_ts),),
+            )
+            conn.commit()
+            return
+
+        self._execute(
+            "DELETE FROM observability_snapshots WHERE created_at < ?",
+            (float(cutoff_ts),),
+        )
+
+    def delete_old_diagnostics_exports(self, cutoff_ts):
+        execute = getattr(self, "execute", None)
+        if callable(execute):
+            execute(
+                "DELETE FROM diagnostics_exports WHERE created_at < ?",
+                (float(cutoff_ts),),
+            )
+            return
+
+        conn = getattr(self, "conn", None)
+        if conn is not None:
+            cur = conn.cursor()
+            cur.execute(
+                "DELETE FROM diagnostics_exports WHERE created_at < ?",
+                (float(cutoff_ts),),
+            )
+            conn.commit()
+            return
+
+        self._execute(
+            "DELETE FROM diagnostics_exports WHERE created_at < ?",
+            (float(cutoff_ts),),
+        )

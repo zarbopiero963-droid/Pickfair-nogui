@@ -27,7 +27,9 @@ from observability import (
     SnapshotService,
     WatchdogService,
 )
+from observability.cleanup_service import CleanupService
 from observability.diagnostic_bundle_builder import DiagnosticBundleBuilder
+from observability.retention_manager import RetentionManager
 
 
 logging.basicConfig(
@@ -76,6 +78,8 @@ class HeadlessApp:
         self.snapshot_service: Optional[SnapshotService] = None
         self.watchdog_service: Optional[WatchdogService] = None
         self.diagnostics_service: Optional[DiagnosticsService] = None
+        self.retention_manager: Optional[RetentionManager] = None
+        self.cleanup_service: Optional[CleanupService] = None
 
         self._running = False
         self._built = False
@@ -104,6 +108,8 @@ class HeadlessApp:
         self.snapshot_service = None
         self.watchdog_service = None
         self.diagnostics_service = None
+        self.retention_manager = None
+        self.cleanup_service = None
 
         self._built = False
         self._running = False
@@ -254,6 +260,25 @@ class HeadlessApp:
                 incidents_manager=self.incidents_manager,
                 db=self.db,
                 safe_mode=None,
+                log_paths=[
+                    "logs/app.log",
+                    "logs/trading.log",
+                    "logs/alerts.log",
+                    "logs/audit.log",
+                    "logs/incidents.log",
+                ],
+            )
+
+            self.retention_manager = RetentionManager(
+                db=self.db,
+                diagnostics_export_dir="diagnostics_exports",
+                snapshots_max_age_days=7,
+                exports_max_age_days=7,
+                exports_keep_last=20,
+            )
+            self.cleanup_service = CleanupService(
+                retention_manager=self.retention_manager,
+                interval_sec=3600.0,
             )
 
             try:
@@ -269,6 +294,7 @@ class HeadlessApp:
                 pass
 
             self.watchdog_service.start()
+            self.cleanup_service.start()
 
             self._wire_bus()
             self._register_shutdown_hooks()
@@ -554,6 +580,11 @@ class HeadlessApp:
                     self.watchdog_service.stop()
                 except Exception:
                     logger.exception("Watchdog stop failed")
+            if self.cleanup_service is not None:
+                try:
+                    self.cleanup_service.stop()
+                except Exception:
+                    logger.exception("CleanupService stop failed")
         finally:
             try:
                 if self.shutdown is not None:
