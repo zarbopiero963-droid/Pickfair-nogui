@@ -125,4 +125,4 @@ def test_successful_async_execution_releases_inflight():
     time.sleep(0.2)
 
     with engine._lock:
-        assert "REL-OK" in engine._inflight_keys
+        assert "REL-OK" in engine._inflight keys 
