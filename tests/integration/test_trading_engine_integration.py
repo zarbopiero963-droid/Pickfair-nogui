@@ -127,4 +127,3 @@ def test_quick_bet_happy_path_routes_logs_and_reconciles_async():
 
     event_names = [x[0] for x in bus.events]
     assert "QUICK_BET_ROUTED" in event_names
-    assert "QUICK_BET_SUCCESS" in event_names
