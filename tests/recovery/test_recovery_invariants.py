@@ -96,7 +96,7 @@ def test_no_duplicate_order_after_restart_when_key_already_restored():
 
 @pytest.mark.recovery
 @pytest.mark.invariant
-def test_successful_async_execution_releases_inflight():
+def test_non_normalized_async_executor_keeps_inflight_key():
     from core.trading_engine import TradingEngine
 
     bus = FakeBus()
@@ -125,4 +125,4 @@ def test_successful_async_execution_releases_inflight():
     time.sleep(0.2)
 
     with engine._lock:
-        assert "REL-OK" in engine._inflight keys 
+        assert "REL-OK" in engine._inflight_keys
