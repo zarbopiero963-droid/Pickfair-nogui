@@ -1,0 +1,39 @@
+name: trading-engine-hard-tests
+
+on:
+  push:
+    paths:
+      - "core/trading_engine.py"
+      - "tests/core/test_trading_engine.py"
+      - "tests/core/test_trading_engine_internal_contracts.py"
+      - ".github/workflows/trading-engine-hard-tests.yml"
+  pull_request:
+    paths:
+      - "core/trading_engine.py"
+      - "tests/core/test_trading_engine.py"
+      - "tests/core/test_trading_engine_internal_contracts.py"
+      - ".github/workflows/trading-engine-hard-tests.yml"
+
+jobs:
+  trading-engine-hard-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pytest
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+
+      - name: Run trading engine hard tests
+        run: |
+          pytest -q \
+            tests/core/test_trading_engine.py \
+            tests/core/test_trading_engine_internal_contracts.py
