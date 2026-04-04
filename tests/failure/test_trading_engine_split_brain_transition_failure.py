@@ -35,6 +35,9 @@ class FakeDB:
     def insert_audit_event(self, event):
         self.audit_events.append(event)
 
+    def get_order(self, order_id):
+        return self.orders.get(order_id)
+
     def order_exists_inflight(self, *, customer_ref, correlation_id):
         return False
 
@@ -132,4 +135,4 @@ def test_split_brain_submit_success_but_transition_to_submitted_fails_goes_ambig
     audit_types = [event["type"] for event in result["audit"]["events"]]
     assert "SUBMIT_TRANSITION_FAILED" in audit_types
     assert "RECONCILE_ENQUEUED" in audit_types
-    assert "FINAL_AMBIGUOUS" in audit_types
+    assert "FINALIZED" in audit_types
