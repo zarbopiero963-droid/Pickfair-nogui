@@ -242,7 +242,6 @@ class TradingEngine:
         self._seen_correlation_ids: Set[str] = set()
         self._seen_cid_order: Deque[str] = deque()
         self._max_seen_cid_size: int = 50_000
-        # [FIX] Removed _seen_cid_trim_to (dead config)
 
         self._lock = threading.Lock()
         self._runtime_state = NOT_READY
@@ -791,6 +790,7 @@ class TradingEngine:
                 )
             
             # [FINAL FIX] If transition failed, return degraded result to avoid precheck crash
+            # and to honestly report that finalization was not persisted.
             if order_id is not None and not marked_failed:
                 return self._build_degraded_fatal_result(ctx, audit, order_id, exc, extra_fields)
             
