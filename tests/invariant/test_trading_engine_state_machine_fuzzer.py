@@ -36,6 +36,9 @@ class FakeDB:
         self.orders.setdefault(order_id, {})
         self.orders[order_id].update(update)
 
+    def get_order(self, order_id):
+        return self.orders.get(order_id)
+
 
 class InlineExecutor:
     def is_ready(self):
@@ -53,21 +56,20 @@ class InlineExecutor:
         ("INFLIGHT", "FAILED", True),
         ("INFLIGHT", "AMBIGUOUS", True),
         ("INFLIGHT", "DENIED", True),
+        ("INFLIGHT", "DUPLICATE_BLOCKED", True),
         ("INFLIGHT", "COMPLETED", False),
-        ("SUBMITTED", "MATCHED", True),
         ("SUBMITTED", "COMPLETED", True),
         ("SUBMITTED", "FAILED", True),
         ("SUBMITTED", "AMBIGUOUS", True),
         ("SUBMITTED", "DENIED", False),
-        ("MATCHED", "COMPLETED", True),
-        ("MATCHED", "FAILED", True),
-        ("MATCHED", "AMBIGUOUS", False),
+        ("SUBMITTED", "DUPLICATE_BLOCKED", False),
         ("AMBIGUOUS", "COMPLETED", True),
         ("AMBIGUOUS", "FAILED", True),
         ("AMBIGUOUS", "SUBMITTED", False),
         ("DENIED", "FAILED", False),
         ("FAILED", "COMPLETED", False),
         ("COMPLETED", "FAILED", False),
+        ("DUPLICATE_BLOCKED", "FAILED", False),
     ],
 )
 def test_state_machine_transition_matrix(from_status, to_status, allowed):
@@ -89,6 +91,11 @@ def test_state_machine_transition_matrix(from_status, to_status, allowed):
         created_at=0.0,
     )
     audit = engine._new_audit(ctx)
+
+    db.orders["ORD-FUZZ-1"] = {
+        "status": from_status,
+        "finalized": False,
+    }
 
     if allowed:
         engine._transition_order(
@@ -124,6 +131,11 @@ def test_finalize_rejects_ambiguous_without_reason():
         executor=InlineExecutor(),
     )
 
+    engine.db.orders["ORD-X"] = {
+        "status": "AMBIGUOUS",
+        "finalized": False,
+    }
+
     ctx = _ExecutionContext("CID-X", "REF-X", 0.0)
     audit = engine._new_audit(ctx)
 
@@ -147,6 +159,11 @@ def test_finalize_rejects_denied_with_technical_error():
         client_getter=lambda: None,
         executor=InlineExecutor(),
     )
+
+    engine.db.orders["ORD-Y"] = {
+        "status": "DENIED",
+        "finalized": False,
+    }
 
     ctx = _ExecutionContext("CID-Y", "REF-Y", 0.0)
     audit = engine._new_audit(ctx)
