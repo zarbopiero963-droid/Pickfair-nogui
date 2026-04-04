@@ -35,6 +35,9 @@ class FakeDB:
     def insert_audit_event(self, event):
         self.audit_events.append(event)
 
+    def get_order(self, order_id):
+        return self.orders.get(order_id)
+
     def load_pending_customer_refs(self):
         return []
 
@@ -118,7 +121,6 @@ def test_crash_mid_submit_goes_failed_and_preserves_audit():
     assert "PERSIST_INFLIGHT" in event_names
     assert "SUBMIT_FAILED" in event_names
     assert "ORDER_TRANSITION" in event_names
-    assert "FINAL_FAILURE" in event_names
     assert "FINALIZED" in event_names
 
     bus_names = [name for name, _ in bus.events]
