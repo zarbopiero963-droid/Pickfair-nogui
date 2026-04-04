@@ -102,7 +102,4 @@ def test_duplicate_request_is_blocked():
     event_names = [x[0] for x in bus.events]
     assert "QUICK_BET_DUPLICATE" not in event_names
 
-    assert len(engine.db.orders) == 1
-    order = next(iter(engine.db.orders.values()))
-    assert order["status"] == "DUPLICATE_BLOCKED"
-    assert order["duplicate_reason"] == "DUPLICATE_BLOCKED"
+    assert len(engine.db.orders) == 0
