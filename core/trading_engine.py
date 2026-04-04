@@ -236,6 +236,7 @@ class TradingEngine:
         self.auto_generate_correlation_id: bool = True
         self.order_manager: Optional[OrderManager] = None
         self.guard: Optional[Any] = None
+        self.metrics_registry = None
 
         # Dedup State
         self._inflight_keys: Set[str] = set()
@@ -440,6 +441,7 @@ class TradingEngine:
                    category="execution")
         
         self._log_ack_state(ctx, order_id, status)
+        self._metric_inc("quick_bet_accepted_total")
 
         return self._build_result(
             ctx, audit,
@@ -458,6 +460,14 @@ class TradingEngine:
     # ==================================================================
     def _log_ack_state(self, ctx: _ExecutionContext, order_id: Optional[Any], status: str) -> None:
         logger.debug("ACK_STATE order_id=%s status=%s cid=%s", order_id, status, ctx.correlation_id)
+
+    def _metric_inc(self, name: str, value: int = 1) -> None:
+        reg = getattr(self, "metrics_registry", None)
+        if reg is not None:
+            try:
+                reg.inc(name, value)
+            except Exception:
+                logger.exception("metrics_registry.inc failed")
 
     # ==================================================================
     # [P0] PASSTHROUGH FIELDS MERGE HELPER
@@ -564,6 +574,7 @@ class TradingEngine:
         - NO new order row
         - pure logical duplicate
         """
+        self._metric_inc("duplicate_blocked_total")
         self._emit(
             ctx,
             audit,
@@ -690,6 +701,7 @@ class TradingEngine:
     # ==================================================================
     def _submit_via_engine(self, request: Dict[str, Any]) -> Dict[str, Any]:
         self.assert_ready()
+        self._metric_inc("quick_bet_requests_total")
 
         normalization_error: Optional[Exception] = None
         normalized: Optional[Dict[str, Any]] = None
@@ -899,6 +911,10 @@ class TradingEngine:
         if not finalization_persisted:
             result["lifecycle_stage"] = "degraded"
             result["is_terminal"] = False
+        if not finalization_persisted:
+            self._metric_inc("finalization_degraded_total")
+        else:
+            self._metric_inc("quick_bet_finalized_total")
         
         return result
 
@@ -1020,6 +1036,7 @@ class TradingEngine:
                            trigger_event: str, trigger_error: str,
                            extra_fields: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         self._assert_valid_ctx(ctx)
+        self._metric_inc("quick_bet_ambiguous_total")
         logger.error("Ambiguity: %s – %s", trigger_event, trigger_error)
         self._emit(ctx, audit, trigger_event,
                    {"order_id": order_id, "error": trigger_error,
@@ -1068,6 +1085,7 @@ class TradingEngine:
         self._emit(ctx, audit, "SUBMIT_FAILED", payload, category="failure")
         self._transition_order(ctx, audit, order_id, STATUS_INFLIGHT, STATUS_FAILED,
                                extra={"last_error": str(exc), "error_type": error_type})
+        self._metric_inc("quick_bet_failed_total")
         return self._complete_order_lifecycle(
             ctx, audit, order_id=order_id,
             status=STATUS_FAILED, error=str(exc), reason="SUBMIT_FAILED",
@@ -1457,6 +1475,7 @@ class TradingEngine:
                        event_type: str, payload: Dict[str, Any], *, category: str) -> Dict[str, bool]:
         result = self._emit(ctx, audit, event_type, payload, category=category)
         if result.get("memory_only"):
+            self._metric_inc("audit_memory_only_total")
             logger.warning("CRITICAL audit event %s is memory-only", event_type)
         return result
 

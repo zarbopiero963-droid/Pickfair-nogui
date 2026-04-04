@@ -17,6 +17,17 @@ from services.telegram_service import TelegramService
 
 from core.trading_engine import TradingEngine
 from core.runtime_controller import RuntimeController
+from observability import (
+    AlertsManager,
+    DiagnosticsService,
+    HealthRegistry,
+    IncidentsManager,
+    MetricsRegistry,
+    RuntimeProbe,
+    SnapshotService,
+    WatchdogService,
+)
+from observability.diagnostic_bundle_builder import DiagnosticBundleBuilder
 
 
 logging.basicConfig(
@@ -57,6 +68,14 @@ class HeadlessApp:
 
         self.trading_engine: Optional[TradingEngine] = None
         self.runtime: Optional[RuntimeController] = None
+        self.health_registry: Optional[HealthRegistry] = None
+        self.metrics_registry: Optional[MetricsRegistry] = None
+        self.alerts_manager: Optional[AlertsManager] = None
+        self.incidents_manager: Optional[IncidentsManager] = None
+        self.runtime_probe: Optional[RuntimeProbe] = None
+        self.snapshot_service: Optional[SnapshotService] = None
+        self.watchdog_service: Optional[WatchdogService] = None
+        self.diagnostics_service: Optional[DiagnosticsService] = None
 
         self._running = False
         self._built = False
@@ -77,6 +96,14 @@ class HeadlessApp:
 
         self.trading_engine = None
         self.runtime = None
+        self.health_registry = None
+        self.metrics_registry = None
+        self.alerts_manager = None
+        self.incidents_manager = None
+        self.runtime_probe = None
+        self.snapshot_service = None
+        self.watchdog_service = None
+        self.diagnostics_service = None
 
         self._built = False
         self._running = False
@@ -184,6 +211,64 @@ class HeadlessApp:
                 trading_engine=self.trading_engine,
                 executor=self.executor,
             )
+
+            self.health_registry = HealthRegistry()
+            self.metrics_registry = MetricsRegistry()
+            self.alerts_manager = AlertsManager()
+            self.incidents_manager = IncidentsManager()
+
+            self.runtime_probe = RuntimeProbe(
+                db=self.db,
+                trading_engine=self.trading_engine,
+                runtime_controller=self.runtime if "runtime_controller" in locals() else self.runtime,
+                betfair_service=self.betfair_service if "betfair_service" in locals() else None,
+                safe_mode=None,
+                shutdown_manager=self.shutdown if "shutdown_manager" in locals() else self.shutdown,
+            )
+
+            self.snapshot_service = SnapshotService(
+                db=self.db,
+                probe=self.runtime_probe,
+                health_registry=self.health_registry,
+                metrics_registry=self.metrics_registry,
+                alerts_manager=self.alerts_manager,
+                incidents_manager=self.incidents_manager,
+            )
+
+            self.watchdog_service = WatchdogService(
+                probe=self.runtime_probe,
+                health_registry=self.health_registry,
+                metrics_registry=self.metrics_registry,
+                alerts_manager=self.alerts_manager,
+                incidents_manager=self.incidents_manager,
+                snapshot_service=self.snapshot_service,
+                interval_sec=5.0,
+            )
+
+            self.diagnostics_service = DiagnosticsService(
+                builder=DiagnosticBundleBuilder(export_dir="diagnostics_exports"),
+                probe=self.runtime_probe,
+                health_registry=self.health_registry,
+                metrics_registry=self.metrics_registry,
+                alerts_manager=self.alerts_manager,
+                incidents_manager=self.incidents_manager,
+                db=self.db,
+                safe_mode=None,
+            )
+
+            try:
+                self.trading_engine.metrics_registry = self.metrics_registry
+            except Exception:
+                pass
+
+            try:
+                self.health_registry.set_component("database", "READY", reason="startup")
+                self.health_registry.set_component("trading_engine", "READY", reason="startup")
+                self.health_registry.set_component("watchdog_service", "READY", reason="startup")
+            except Exception:
+                pass
+
+            self.watchdog_service.start()
 
             self._wire_bus()
             self._register_shutdown_hooks()
@@ -458,6 +543,17 @@ class HeadlessApp:
                     self.runtime.stop()
                 except Exception:
                     logger.exception("Errore stop runtime")
+            if self.diagnostics_service is not None:
+                try:
+                    bundle_path = self.diagnostics_service.export_bundle()
+                    logger.info("Diagnostics bundle exported: %s", bundle_path)
+                except Exception:
+                    logger.exception("Diagnostics export failed during shutdown")
+            if self.watchdog_service is not None:
+                try:
+                    self.watchdog_service.stop()
+                except Exception:
+                    logger.exception("Watchdog stop failed")
         finally:
             try:
                 if self.shutdown is not None:
@@ -497,10 +593,27 @@ class HeadlessApp:
 
 
 def main() -> int:
+    app: Optional[HeadlessApp] = None
     try:
         app = HeadlessApp()
         return app.start()
     except Exception as exc:
+        if app is not None and app.alerts_manager is not None and app.incidents_manager is not None:
+            try:
+                app.alerts_manager.upsert_alert(
+                    "HEADLESS_FATAL",
+                    "critical",
+                    "Fatal error in headless_main",
+                    details={"error": str(exc)},
+                )
+                app.incidents_manager.open_incident(
+                    "HEADLESS_FATAL",
+                    "Headless Main Fatal",
+                    "critical",
+                    details={"error": str(exc)},
+                )
+            except Exception:
+                logger.exception("Failed to register fatal observability event")
         logger.exception("Errore fatale in headless_main: %s", exc)
         return 1
 

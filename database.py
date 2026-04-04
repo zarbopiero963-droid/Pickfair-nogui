@@ -4,6 +4,7 @@ import json
 import logging
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -1015,3 +1016,138 @@ class Database:
             item["payload"] = self._safe_json_loads(item.get("payload_json"), {})
             out.append(item)
         return out
+
+    def save_observability_snapshot(self, payload):
+        sql = """
+        INSERT INTO observability_snapshots (created_at, payload_json)
+        VALUES (?, ?)
+        """
+        body = json.dumps(payload, ensure_ascii=False, default=str)
+
+        execute = getattr(self, "execute", None)
+        if callable(execute):
+            execute(sql, (time.time(), body))
+            return
+
+        conn = getattr(self, "conn", None)
+        if conn is not None:
+            cur = conn.cursor()
+            cur.execute(sql, (time.time(), body))
+            conn.commit()
+            return
+
+        self._execute(sql, (time.time(), body))
+
+    def register_diagnostics_export(self, export_path):
+        sql = """
+        INSERT INTO diagnostics_exports (created_at, export_path)
+        VALUES (?, ?)
+        """
+
+        execute = getattr(self, "execute", None)
+        if callable(execute):
+            execute(sql, (time.time(), str(export_path)))
+            return
+
+        conn = getattr(self, "conn", None)
+        if conn is not None:
+            cur = conn.cursor()
+            cur.execute(sql, (time.time(), str(export_path)))
+            conn.commit()
+            return
+
+        self._execute(sql, (time.time(), str(export_path)))
+
+    def get_recent_orders_for_diagnostics(self, limit=200):
+        limit = int(limit)
+
+        sql = """
+        SELECT *
+        FROM orders
+        ORDER BY id DESC
+        LIMIT ?
+        """
+
+        execute_fetchall = getattr(self, "execute_fetchall", None)
+        if callable(execute_fetchall):
+            try:
+                rows = execute_fetchall(sql, (limit,))
+                return rows or []
+            except Exception:
+                return []
+
+        conn = getattr(self, "conn", None)
+        if conn is not None:
+            try:
+                conn.row_factory = getattr(__import__("sqlite3"), "Row")
+            except Exception:
+                pass
+            try:
+                cur = conn.cursor()
+                cur.execute(sql, (limit,))
+                rows = cur.fetchall()
+                out = []
+                for row in rows:
+                    try:
+                        out.append(dict(row))
+                    except Exception:
+                        out.append(row)
+                return out
+            except Exception:
+                return []
+
+        try:
+            rows = self._execute(sql, (limit,), fetch=True, commit=False)
+            return [dict(r) for r in rows or []]
+        except Exception:
+            return []
+
+    def get_recent_audit_events_for_diagnostics(self, limit=500):
+        limit = int(limit)
+
+        table_candidates = [
+            "audit_events",
+            "order_events",
+        ]
+
+        execute_fetchall = getattr(self, "execute_fetchall", None)
+        conn = getattr(self, "conn", None)
+
+        for table_name in table_candidates:
+            sql = f"""
+            SELECT *
+            FROM {table_name}
+            ORDER BY id DESC
+            LIMIT ?
+            """
+
+            if callable(execute_fetchall):
+                try:
+                    rows = execute_fetchall(sql, (limit,))
+                    if rows is not None:
+                        return rows
+                except Exception:
+                    pass
+
+            if conn is not None:
+                try:
+                    cur = conn.cursor()
+                    cur.execute(sql, (limit,))
+                    rows = cur.fetchall()
+                    out = []
+                    for row in rows:
+                        try:
+                            out.append(dict(row))
+                        except Exception:
+                            out.append(row)
+                    return out
+                except Exception:
+                    pass
+
+            try:
+                rows = self._execute(sql, (limit,), fetch=True, commit=False)
+                return [dict(r) for r in rows or []]
+            except Exception:
+                pass
+
+        return []
