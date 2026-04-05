@@ -47,14 +47,9 @@ class RuntimeProbe:
             if seen is not None:
                 metrics["seen_correlation_ids_count"] = float(len(seen))
 
-        try:
-            import resource  # type: ignore
-
-            rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-            rss_mb = rss_kb / 1024.0
+        rss_mb = self._current_rss_mb()
+        if rss_mb is not None:
             metrics["memory_rss_mb"] = float(rss_mb)
-        except Exception:
-            pass
 
         return metrics
 
@@ -170,3 +165,23 @@ class RuntimeProbe:
             except Exception:
                 return False
         return bool(getattr(self.safe_mode, "enabled", False))
+
+    def _current_rss_mb(self) -> float | None:
+        statm_path = f"/proc/{os.getpid()}/statm"
+        try:
+            with open(statm_path, "r", encoding="utf-8") as fp:
+                parts = fp.read().strip().split()
+            if len(parts) >= 2:
+                rss_pages = int(parts[1])
+                page_size = os.sysconf("SC_PAGE_SIZE")
+                return (rss_pages * page_size) / (1024.0 * 1024.0)
+        except Exception:
+            pass
+
+        try:
+            import resource  # type: ignore
+
+            rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            return rss_kb / 1024.0
+        except Exception:
+            return None
