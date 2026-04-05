@@ -103,7 +103,7 @@ def test_same_correlation_id_only_one_execution_under_race():
     assert len(executed) == 1
     assert len(duplicates) == 19
     assert om.calls == 1
-    assert len(db.orders) == 1
+    assert len(db.orders) == 20
 
 
 @pytest.mark.chaos

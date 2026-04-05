@@ -70,6 +70,9 @@ class FakeBatchManager:
     def release_runtime_artifacts(self, **kwargs):
         return None
 
+    def mark_batch_failed(self, *_args, **_kwargs):
+        self._batch["status"] = "FAILED"
+
     def get_open_batches(self):
         return [copy.deepcopy(self._batch)]
 
@@ -80,12 +83,12 @@ class GhostAwareEngine(ReconciliationEngine):
         self._remote_orders = copy.deepcopy(remote_orders or [])
 
     def _fetch_current_orders_by_market(self, market_id: str, *, _attempt: int = 0):
-        return copy.deepcopy(self._remote_orders)
+        return copy.deepcopy(self._remote_orders), None
 
     def _get_pending_saga_refs(self):
         return set()
 
-    def _lookup_remote_order(self, leg, by_ref, by_bet):
+    def _lookup_remote_order(self, leg, by_ref, by_bet, by_sel):
         """
         Test target:
         robust multi-key lookup.
@@ -105,11 +108,9 @@ class GhostAwareEngine(ReconciliationEngine):
         leg_market = str(leg.get("market_id") or "").strip()
         leg_sel = str(leg.get("selection_id") or "").strip()
 
-        for order in list(by_bet.values()) + list(by_ref.values()):
-            order_market = str(order.get("marketId") or order.get("market_id") or "").strip()
-            order_sel = str(order.get("selectionId") or order.get("selection_id") or "").strip()
-            if leg_market and leg_sel and leg_market == order_market and leg_sel == order_sel:
-                return order
+        compound = f"{leg_market}::{leg_sel}"
+        if leg_market and leg_sel and compound in by_sel:
+            return by_sel[compound]
 
         return None
 
@@ -293,7 +294,8 @@ def test_real_ghost_detected():
 
     engine, db, bus, _ = _build_engine(legs, remote_orders)
 
-    ghosts = engine._detect_ghost_orders("B200", legs, remote_orders)
+    by_ref, by_bet, by_sel = engine._build_exchange_indices(remote_orders)
+    ghosts = engine._detect_ghost_orders("B200", legs, remote_orders, by_ref, by_bet, by_sel)
 
     assert len(ghosts) == 1
     assert ghosts[0]["customer_ref"] == "REF-GHOST"
@@ -333,6 +335,7 @@ def test_replace_bet_id_not_ghost():
 
     engine, _, _, _ = _build_engine(legs, remote_orders)
 
-    ghosts = engine._detect_ghost_orders("B200", legs, remote_orders)
+    by_ref, by_bet, by_sel = engine._build_exchange_indices(remote_orders)
+    ghosts = engine._detect_ghost_orders("B200", legs, remote_orders, by_ref, by_bet, by_sel)
 
     assert ghosts == []

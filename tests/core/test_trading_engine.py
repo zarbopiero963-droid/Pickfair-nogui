@@ -1,20 +1,10 @@
 from __future__ import annotations
 
-import sys
 import threading
 import time
-import types
 from typing import Any, Dict, List, Optional
 
 import pytest
-
-# ---------------------------------------------------------------------
-# Shim per import "from order_manager import OrderManager"
-# ---------------------------------------------------------------------
-if "order_manager" not in sys.modules:
-    mod = types.ModuleType("order_manager")
-    mod.OrderManager = object
-    sys.modules["order_manager"] = mod
 
 from core.trading_engine import (
     TradingEngine,
