@@ -113,19 +113,65 @@ class SettingsService:
         )
 
     def save_telegram_config(self, config: TelegramRuntimeConfig) -> None:
+        existing = self.db.get_telegram_settings() if hasattr(self.db, "get_telegram_settings") else {}
+        existing = dict(existing or {})
+
+        existing.update(
+            {
+                "api_id": str(config.api_id or ""),
+                "api_hash": config.api_hash,
+                "session_string": config.session_string,
+                "phone_number": config.phone_number,
+                "enabled": int(bool(config.enabled)),
+                "auto_bet": int(bool(config.auto_bet)),
+                "require_confirmation": int(bool(config.require_confirmation)),
+                "auto_stake": float(config.auto_stake or 1.0),
+            }
+        )
+
         if hasattr(self.db, "save_telegram_settings"):
-            self.db.save_telegram_settings(
-                {
-                    "api_id": str(config.api_id or ""),
-                    "api_hash": config.api_hash,
-                    "session_string": config.session_string,
-                    "phone_number": config.phone_number,
-                    "enabled": int(bool(config.enabled)),
-                    "auto_bet": int(bool(config.auto_bet)),
-                    "require_confirmation": int(bool(config.require_confirmation)),
-                    "auto_stake": float(config.auto_stake or 1.0),
-                }
-            )
+            self.db.save_telegram_settings(existing)
+
+    # =========================================================
+    # TELEGRAM ALERT SETTINGS
+    # =========================================================
+    def load_telegram_config_row(self) -> Dict[str, Any]:
+        row = self.db.get_telegram_settings() if hasattr(self.db, "get_telegram_settings") else {}
+        row = row or {}
+
+        return {
+            "api_id": int(row.get("api_id") or 0),
+            "api_hash": str(row.get("api_hash", "") or ""),
+            "session_string": str(row.get("session_string", "") or ""),
+            "phone_number": str(row.get("phone_number", "") or ""),
+            "enabled": bool(row.get("enabled", False)),
+            "auto_bet": bool(row.get("auto_bet", False)),
+            "require_confirmation": bool(row.get("require_confirmation", True)),
+            "auto_stake": float(row.get("auto_stake", 1.0) or 1.0),
+            "alerts_enabled": bool(row.get("alerts_enabled", False)),
+            "alerts_chat_id": row.get("alerts_chat_id"),
+            "alerts_chat_name": str(row.get("alerts_chat_name", "") or ""),
+            "min_alert_severity": str(row.get("min_alert_severity", "WARNING") or "WARNING").upper(),
+        }
+
+    def save_telegram_alert_settings(
+        self,
+        *,
+        alerts_enabled: bool,
+        alerts_chat_id: Any,
+        alerts_chat_name: str,
+        min_alert_severity: str = "WARNING",
+    ) -> None:
+        row = self.db.get_telegram_settings() if hasattr(self.db, "get_telegram_settings") else {}
+        row = dict(row or {})
+
+        row["alerts_enabled"] = int(bool(alerts_enabled))
+        row["alerts_chat_id"] = str(alerts_chat_id or "")
+        row["alerts_chat_name"] = str(alerts_chat_name or "")
+        row["min_alert_severity"] = str(min_alert_severity or "WARNING").upper()
+
+        if hasattr(self.db, "save_telegram_settings"):
+            self.db.save_telegram_settings(row)
 
     # =========================================================
     # ROSERPINA CONFIG
