@@ -4,6 +4,7 @@ import json
 import logging
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -478,6 +479,10 @@ class Database:
             "auto_bet": str(settings.get("telegram.auto_bet", "0")).lower() in {"1", "true", "yes", "on"},
             "require_confirmation": str(settings.get("telegram.require_confirmation", "1")).lower() in {"1", "true", "yes", "on"},
             "auto_stake": self._safe_float(settings.get("telegram.auto_stake", 1.0), 1.0),
+            "alerts_enabled": str(settings.get("telegram.alerts_enabled", "0")).lower() in {"1", "true", "yes", "on"},
+            "alerts_chat_id": settings.get("telegram.alerts_chat_id", ""),
+            "alerts_chat_name": settings.get("telegram.alerts_chat_name", ""),
+            "min_alert_severity": str(settings.get("telegram.min_alert_severity", "WARNING") or "WARNING").upper(),
         }
 
     def save_telegram_settings(self, payload: Dict[str, Any]) -> None:
@@ -491,6 +496,10 @@ class Database:
                 "telegram.auto_bet": self._safe_bool_int(payload.get("auto_bet", False)),
                 "telegram.require_confirmation": self._safe_bool_int(payload.get("require_confirmation", True)),
                 "telegram.auto_stake": self._safe_float(payload.get("auto_stake", 1.0), 1.0),
+                "telegram.alerts_enabled": self._safe_bool_int(payload.get("alerts_enabled", False)),
+                "telegram.alerts_chat_id": str(payload.get("alerts_chat_id", "") or ""),
+                "telegram.alerts_chat_name": str(payload.get("alerts_chat_name", "") or ""),
+                "telegram.min_alert_severity": str(payload.get("min_alert_severity", "WARNING") or "WARNING").upper(),
             }
         )
 
@@ -1015,3 +1024,166 @@ class Database:
             item["payload"] = self._safe_json_loads(item.get("payload_json"), {})
             out.append(item)
         return out
+
+    def save_observability_snapshot(self, payload):
+        sql = """
+        INSERT INTO observability_snapshots (created_at, payload_json)
+        VALUES (?, ?)
+        """
+        body = json.dumps(payload, ensure_ascii=False, default=str)
+
+        execute = getattr(self, "execute", None)
+        if callable(execute):
+            execute(sql, (time.time(), body))
+            return
+
+        conn = getattr(self, "conn", None)
+        if conn is not None:
+            cur = conn.cursor()
+            cur.execute(sql, (time.time(), body))
+            conn.commit()
+            return
+
+        self._execute(sql, (time.time(), body))
+
+    def register_diagnostics_export(self, export_path):
+        sql = """
+        INSERT INTO diagnostics_exports (created_at, export_path)
+        VALUES (?, ?)
+        """
+
+        execute = getattr(self, "execute", None)
+        if callable(execute):
+            execute(sql, (time.time(), str(export_path)))
+            return
+
+        conn = getattr(self, "conn", None)
+        if conn is not None:
+            cur = conn.cursor()
+            cur.execute(sql, (time.time(), str(export_path)))
+            conn.commit()
+            return
+
+        self._execute(sql, (time.time(), str(export_path)))
+
+    def get_recent_observability_snapshots(self, limit=100):
+        execute_fetchall = getattr(self, "execute_fetchall", None)
+        if callable(execute_fetchall):
+            return execute_fetchall(
+                """
+                SELECT id, created_at, payload_json
+                FROM observability_snapshots
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            )
+
+        conn = getattr(self, "conn", None)
+        if conn is not None:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT id, created_at, payload_json
+                FROM observability_snapshots
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            )
+            rows = cur.fetchall()
+            out = []
+            for row in rows:
+                out.append(
+                    {
+                        "id": row[0],
+                        "created_at": row[1],
+                        "payload_json": row[2],
+                    }
+                )
+            return out
+
+        return []
+
+    def get_recent_orders_for_diagnostics(self, limit=200):
+        execute_fetchall = getattr(self, "execute_fetchall", None)
+        if callable(execute_fetchall):
+            try:
+                return execute_fetchall(
+                    """
+                    SELECT *
+                    FROM orders
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (int(limit),),
+                )
+            except Exception:
+                return []
+        return []
+
+    def get_recent_audit_events_for_diagnostics(self, limit=500):
+        execute_fetchall = getattr(self, "execute_fetchall", None)
+        if callable(execute_fetchall):
+            for table_name in ("audit_events", "order_events"):
+                try:
+                    return execute_fetchall(
+                        f"""
+                        SELECT *
+                        FROM {table_name}
+                        ORDER BY ts DESC
+                        LIMIT ?
+                        """,
+                        (int(limit),),
+                    )
+                except Exception:
+                    continue
+        return []
+
+    def delete_old_observability_snapshots(self, cutoff_ts):
+        execute = getattr(self, "execute", None)
+        if callable(execute):
+            execute(
+                "DELETE FROM observability_snapshots WHERE created_at < ?",
+                (float(cutoff_ts),),
+            )
+            return
+
+        conn = getattr(self, "conn", None)
+        if conn is not None:
+            cur = conn.cursor()
+            cur.execute(
+                "DELETE FROM observability_snapshots WHERE created_at < ?",
+                (float(cutoff_ts),),
+            )
+            conn.commit()
+            return
+
+        self._execute(
+            "DELETE FROM observability_snapshots WHERE created_at < ?",
+            (float(cutoff_ts),),
+        )
+
+    def delete_old_diagnostics_exports(self, cutoff_ts):
+        execute = getattr(self, "execute", None)
+        if callable(execute):
+            execute(
+                "DELETE FROM diagnostics_exports WHERE created_at < ?",
+                (float(cutoff_ts),),
+            )
+            return
+
+        conn = getattr(self, "conn", None)
+        if conn is not None:
+            cur = conn.cursor()
+            cur.execute(
+                "DELETE FROM diagnostics_exports WHERE created_at < ?",
+                (float(cutoff_ts),),
+            )
+            conn.commit()
+            return
+
+        self._execute(
+            "DELETE FROM diagnostics_exports WHERE created_at < ?",
+            (float(cutoff_ts),),
+        )
