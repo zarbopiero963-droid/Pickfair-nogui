@@ -479,6 +479,10 @@ class Database:
             "auto_bet": str(settings.get("telegram.auto_bet", "0")).lower() in {"1", "true", "yes", "on"},
             "require_confirmation": str(settings.get("telegram.require_confirmation", "1")).lower() in {"1", "true", "yes", "on"},
             "auto_stake": self._safe_float(settings.get("telegram.auto_stake", 1.0), 1.0),
+            "alerts_enabled": str(settings.get("telegram.alerts_enabled", "0")).lower() in {"1", "true", "yes", "on"},
+            "alerts_chat_id": settings.get("telegram.alerts_chat_id", ""),
+            "alerts_chat_name": settings.get("telegram.alerts_chat_name", ""),
+            "min_alert_severity": str(settings.get("telegram.min_alert_severity", "WARNING") or "WARNING").upper(),
         }
 
     def save_telegram_settings(self, payload: Dict[str, Any]) -> None:
@@ -492,6 +496,10 @@ class Database:
                 "telegram.auto_bet": self._safe_bool_int(payload.get("auto_bet", False)),
                 "telegram.require_confirmation": self._safe_bool_int(payload.get("require_confirmation", True)),
                 "telegram.auto_stake": self._safe_float(payload.get("auto_stake", 1.0), 1.0),
+                "telegram.alerts_enabled": self._safe_bool_int(payload.get("alerts_enabled", False)),
+                "telegram.alerts_chat_id": str(payload.get("alerts_chat_id", "") or ""),
+                "telegram.alerts_chat_name": str(payload.get("alerts_chat_name", "") or ""),
+                "telegram.min_alert_severity": str(payload.get("min_alert_severity", "WARNING") or "WARNING").upper(),
             }
         )
 

@@ -13,7 +13,7 @@ import logging
 import threading
 from dataclasses import dataclass
 from queue import Empty, Queue
-from typing import Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger("TG_SENDER")
 
@@ -302,6 +302,31 @@ class TelegramSender:
             )
         finally:
             loop.close()
+
+    def send_alert_message(self, chat_id: Any, text: str) -> Any:
+        """
+        Wrapper stabile per invio alert.
+        Riusa il normale canale di invio messaggi.
+        """
+        send_message_sync = getattr(self, "send_message_sync", None)
+        if callable(send_message_sync):
+            try:
+                return send_message_sync(chat_id, text, message_type="ALERT")
+            except TypeError:
+                pass
+
+        send_message = getattr(self, "send_message", None)
+        if callable(send_message):
+            try:
+                return send_message(chat_id, text)
+            except TypeError:
+                return send_message(chat_id=chat_id, text=text)
+
+        enqueue_message = getattr(self, "enqueue_message", None)
+        if callable(enqueue_message):
+            return enqueue_message(chat_id=chat_id, text=text, message_type="ALERT")
+
+        raise RuntimeError("send_alert_message unavailable")
 
     def queue_message(
         self,

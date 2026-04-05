@@ -13,6 +13,7 @@ from shutdown_manager import ShutdownManager
 
 from services.setting_service import SettingsService
 from services.betfair_service import BetfairService
+from services.telegram_alerts_service import TelegramAlertsService
 from services.telegram_service import TelegramService
 
 from core.trading_engine import TradingEngine
@@ -80,6 +81,7 @@ class HeadlessApp:
         self.diagnostics_service: Optional[DiagnosticsService] = None
         self.retention_manager: Optional[RetentionManager] = None
         self.cleanup_service: Optional[CleanupService] = None
+        self.telegram_alerts_service: Optional[TelegramAlertsService] = None
 
         self._running = False
         self._built = False
@@ -110,6 +112,7 @@ class HeadlessApp:
         self.diagnostics_service = None
         self.retention_manager = None
         self.cleanup_service = None
+        self.telegram_alerts_service = None
 
         self._built = False
         self._running = False
@@ -222,6 +225,32 @@ class HeadlessApp:
             self.metrics_registry = MetricsRegistry()
             self.alerts_manager = AlertsManager()
             self.incidents_manager = IncidentsManager()
+
+            try:
+                telegram_sender = None
+
+                getter = getattr(self.telegram_service, "get_sender", None)
+                if callable(getter):
+                    telegram_sender = getter()
+
+                if telegram_sender is None:
+                    telegram_sender = getattr(self.telegram_service, "sender", None)
+
+                if telegram_sender is None:
+                    telegram_sender = self.telegram_service
+
+                self.telegram_alerts_service = TelegramAlertsService(
+                    settings_service=self.settings_service,
+                    telegram_sender=telegram_sender,
+                )
+
+                if self.alerts_manager is not None:
+                    register = getattr(self.alerts_manager, "register_notifier", None)
+                    if callable(register):
+                        register(self.telegram_alerts_service.notify_alert)
+
+            except Exception:
+                logger.exception("Impossibile inizializzare TelegramAlertsService")
 
             self.runtime_probe = RuntimeProbe(
                 db=self.db,

@@ -147,3 +147,6 @@ class TelegramService:
             "running": running,
             "last_error": self.last_error,
         }
+
+    def get_sender(self):
+        return getattr(self, "sender", None)
