@@ -123,6 +123,16 @@ class HeadlessApp:
         Sempre safe/idempotente.
         """
         try:
+            if self.watchdog_service is not None:
+                try:
+                    self.watchdog_service.stop()
+                except Exception:
+                    logger.exception("Errore cleanup watchdog_service")
+            if self.cleanup_service is not None:
+                try:
+                    self.cleanup_service.stop()
+                except Exception:
+                    logger.exception("Errore cleanup cleanup_service")
             if self.telegram_service is not None:
                 try:
                     self.telegram_service.stop()
@@ -236,18 +246,26 @@ class HeadlessApp:
                 if telegram_sender is None:
                     telegram_sender = getattr(self.telegram_service, "sender", None)
 
-                if telegram_sender is None:
-                    telegram_sender = self.telegram_service
+                has_sender_method = any(
+                    callable(getattr(telegram_sender, name, None))
+                    for name in ("send_alert_message", "send_message", "enqueue_message", "send")
+                ) if telegram_sender is not None else False
 
-                self.telegram_alerts_service = TelegramAlertsService(
-                    settings_service=self.settings_service,
-                    telegram_sender=telegram_sender,
-                )
+                if has_sender_method:
+                    self.telegram_alerts_service = TelegramAlertsService(
+                        settings_service=self.settings_service,
+                        telegram_sender=telegram_sender,
+                    )
 
-                if self.alerts_manager is not None:
-                    register = getattr(self.alerts_manager, "register_notifier", None)
-                    if callable(register):
-                        register(self.telegram_alerts_service.notify_alert)
+                    if self.alerts_manager is not None:
+                        register = getattr(self.alerts_manager, "register_notifier", None)
+                        if callable(register):
+                            register(self.telegram_alerts_service.notify_alert)
+                else:
+                    logger.warning(
+                        "TelegramAlertsService non inizializzato: sender non valido "
+                        "(metodi richiesti: send_alert_message/send_message/enqueue_message/send)"
+                    )
 
             except Exception:
                 logger.exception("Impossibile inizializzare TelegramAlertsService")
