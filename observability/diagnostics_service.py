@@ -3,7 +3,9 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
+from .db_diagnostics_adapter import DbDiagnosticsAdapter
 from .diagnostic_bundle_builder import DiagnosticBundleBuilder
+from .export_helpers import ExportHelpers
 from .log_tail import tail_text_from_files
 
 logger = logging.getLogger(__name__)
@@ -32,6 +34,8 @@ class DiagnosticsService:
         self.db = db
         self.safe_mode = safe_mode
         self.log_paths = list(log_paths or [])
+        self.db_adapter = DbDiagnosticsAdapter(db) if db is not None else None
+        self.export_helpers = ExportHelpers(export_dir=str(builder.export_dir))
 
     def export_bundle(self) -> str:
         health = self.health_registry.snapshot()
@@ -65,6 +69,18 @@ class DiagnosticsService:
 
         return path
 
+    def export_health_json(self) -> str:
+        return self.export_helpers.export_json("health_snapshot", self.health_registry.snapshot())
+
+    def export_alerts_json(self) -> str:
+        return self.export_helpers.export_json("alerts_snapshot", self.alerts_manager.snapshot())
+
+    def export_incidents_json(self) -> str:
+        return self.export_helpers.export_json("incidents_snapshot", self.incidents_manager.snapshot())
+
+    def export_recent_audit_json(self) -> str:
+        return self.export_helpers.export_json("audit_recent", self._recent_audit())
+
     def _safe_mode_state(self) -> Dict[str, Any]:
         if self.safe_mode is None:
             return {"enabled": False}
@@ -73,22 +89,14 @@ class DiagnosticsService:
         return {"enabled": enabled}
 
     def _recent_orders(self) -> Any:
-        getter = getattr(self.db, "get_recent_orders_for_diagnostics", None)
-        if callable(getter):
-            try:
-                return getter(limit=200)
-            except Exception:
-                logger.exception("get_recent_orders_for_diagnostics failed")
-        return []
+        if self.db_adapter is None:
+            return []
+        return self.db_adapter.get_recent_orders(limit=200)
 
     def _recent_audit(self) -> Any:
-        getter = getattr(self.db, "get_recent_audit_events_for_diagnostics", None)
-        if callable(getter):
-            try:
-                return getter(limit=500)
-            except Exception:
-                logger.exception("get_recent_audit_events_for_diagnostics failed")
-        return []
+        if self.db_adapter is None:
+            return []
+        return self.db_adapter.get_recent_audit(limit=500)
 
     def _logs_tail(self) -> str:
         try:

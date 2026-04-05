@@ -1058,98 +1058,78 @@ class Database:
 
         self._execute(sql, (time.time(), str(export_path)))
 
-    def get_recent_orders_for_diagnostics(self, limit=200):
-        limit = int(limit)
-
-        sql = """
-        SELECT *
-        FROM orders
-        ORDER BY id DESC
-        LIMIT ?
-        """
-
+    def get_recent_observability_snapshots(self, limit=100):
         execute_fetchall = getattr(self, "execute_fetchall", None)
         if callable(execute_fetchall):
-            try:
-                rows = execute_fetchall(sql, (limit,))
-                return rows or []
-            except Exception:
-                return []
+            return execute_fetchall(
+                """
+                SELECT id, created_at, payload_json
+                FROM observability_snapshots
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            )
 
         conn = getattr(self, "conn", None)
         if conn is not None:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT id, created_at, payload_json
+                FROM observability_snapshots
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            )
+            rows = cur.fetchall()
+            out = []
+            for row in rows:
+                out.append(
+                    {
+                        "id": row[0],
+                        "created_at": row[1],
+                        "payload_json": row[2],
+                    }
+                )
+            return out
+
+        return []
+
+    def get_recent_orders_for_diagnostics(self, limit=200):
+        execute_fetchall = getattr(self, "execute_fetchall", None)
+        if callable(execute_fetchall):
             try:
-                conn.row_factory = getattr(__import__("sqlite3"), "Row")
-            except Exception:
-                pass
-            try:
-                cur = conn.cursor()
-                cur.execute(sql, (limit,))
-                rows = cur.fetchall()
-                out = []
-                for row in rows:
-                    try:
-                        out.append(dict(row))
-                    except Exception:
-                        out.append(row)
-                return out
+                return execute_fetchall(
+                    """
+                    SELECT *
+                    FROM orders
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (int(limit),),
+                )
             except Exception:
                 return []
-
-        try:
-            rows = self._execute(sql, (limit,), fetch=True, commit=False)
-            return [dict(r) for r in rows or []]
-        except Exception:
-            return []
+        return []
 
     def get_recent_audit_events_for_diagnostics(self, limit=500):
-        limit = int(limit)
-
-        table_candidates = [
-            "audit_events",
-            "order_events",
-        ]
-
         execute_fetchall = getattr(self, "execute_fetchall", None)
-        conn = getattr(self, "conn", None)
-
-        for table_name in table_candidates:
-            sql = f"""
-            SELECT *
-            FROM {table_name}
-            ORDER BY id DESC
-            LIMIT ?
-            """
-
-            if callable(execute_fetchall):
+        if callable(execute_fetchall):
+            for table_name in ("audit_events", "order_events"):
                 try:
-                    rows = execute_fetchall(sql, (limit,))
-                    if rows is not None:
-                        return rows
+                    return execute_fetchall(
+                        f"""
+                        SELECT *
+                        FROM {table_name}
+                        ORDER BY ts DESC
+                        LIMIT ?
+                        """,
+                        (int(limit),),
+                    )
                 except Exception:
-                    pass
-
-            if conn is not None:
-                try:
-                    cur = conn.cursor()
-                    cur.execute(sql, (limit,))
-                    rows = cur.fetchall()
-                    out = []
-                    for row in rows:
-                        try:
-                            out.append(dict(row))
-                        except Exception:
-                            out.append(row)
-                    return out
-                except Exception:
-                    pass
-
-            try:
-                rows = self._execute(sql, (limit,), fetch=True, commit=False)
-                return [dict(r) for r in rows or []]
-            except Exception:
-                pass
-
+                    continue
         return []
 
     def delete_old_observability_snapshots(self, cutoff_ts):
