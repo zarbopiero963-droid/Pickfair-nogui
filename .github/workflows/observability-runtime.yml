@@ -68,6 +68,12 @@ jobs:
             tests/core/test_trading_engine_metrics_smoke.py \
             tests/services/test_telegram_alert_pipeline.py
 
+      - name: Run runtime invariants and anomaly-signal tests
+        run: |
+          pytest -q -x \
+            tests/observability/test_runtime_invariants.py \
+            tests/observability/test_anomaly_signals.py
+
       - name: Observability unit tests
         run: pytest -q tests/observability -x
 
