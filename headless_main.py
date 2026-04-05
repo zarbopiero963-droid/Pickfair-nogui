@@ -256,7 +256,7 @@ class HeadlessApp:
                 db=self.db,
                 trading_engine=self.trading_engine,
                 runtime_controller=self.runtime if "runtime_controller" in locals() else self.runtime,
-                betfair_service=self.betfair_service if "betfair_service" in locals() else None,
+                betfair_service=self.betfair_service,
                 safe_mode=None,
                 shutdown_manager=self.shutdown if "shutdown_manager" in locals() else self.shutdown,
             )

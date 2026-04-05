@@ -368,6 +368,26 @@ class Database:
             )
 
             conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS observability_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at REAL NOT NULL,
+                    payload_json TEXT NOT NULL DEFAULT '{}'
+                )
+                """
+            )
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS diagnostics_exports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at REAL NOT NULL,
+                    export_path TEXT NOT NULL
+                )
+                """
+            )
+
+            conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_received_signals_created_at ON received_signals(created_at DESC)"
             )
             conn.execute(
@@ -387,6 +407,12 @@ class Database:
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_dutching_legs_batch_id ON dutching_batch_legs(batch_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_observability_snapshots_created_at ON observability_snapshots(created_at DESC)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_diagnostics_exports_created_at ON diagnostics_exports(created_at DESC)"
             )
 
     # =========================================================
@@ -1067,75 +1093,54 @@ class Database:
         self._execute(sql, (time.time(), str(export_path)))
 
     def get_recent_observability_snapshots(self, limit=100):
-        execute_fetchall = getattr(self, "execute_fetchall", None)
-        if callable(execute_fetchall):
-            return execute_fetchall(
-                """
-                SELECT id, created_at, payload_json
-                FROM observability_snapshots
-                ORDER BY created_at DESC
-                LIMIT ?
-                """,
-                (int(limit),),
-            )
-
-        conn = getattr(self, "conn", None)
-        if conn is not None:
-            cur = conn.cursor()
-            cur.execute(
-                """
-                SELECT id, created_at, payload_json
-                FROM observability_snapshots
-                ORDER BY created_at DESC
-                LIMIT ?
-                """,
-                (int(limit),),
-            )
-            rows = cur.fetchall()
-            out = []
-            for row in rows:
-                out.append(
-                    {
-                        "id": row[0],
-                        "created_at": row[1],
-                        "payload_json": row[2],
-                    }
-                )
-            return out
-
-        return []
+        rows = self._execute(
+            """
+            SELECT id, created_at, payload_json
+            FROM observability_snapshots
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (int(limit),),
+            fetch=True,
+            commit=False,
+        ) or []
+        return [dict(row) for row in rows]
 
     def get_recent_orders_for_diagnostics(self, limit=200):
-        execute_fetchall = getattr(self, "execute_fetchall", None)
-        if callable(execute_fetchall):
+        for table_name in ("orders", "order_saga"):
             try:
-                return execute_fetchall(
-                    """
+                rows = self._execute(
+                    f"""
                     SELECT *
-                    FROM orders
+                    FROM {table_name}
                     ORDER BY created_at DESC
                     LIMIT ?
                     """,
                     (int(limit),),
-                )
+                    fetch=True,
+                    commit=False,
+                ) or []
+                return [dict(row) for row in rows]
             except Exception:
-                return []
+                continue
         return []
 
     def get_recent_audit_events_for_diagnostics(self, limit=500):
-        execute_fetchall = getattr(self, "execute_fetchall", None)
-        if callable(execute_fetchall):
-            for table_name in ("audit_events", "order_events"):
+        for table_name in ("audit_events", "order_events", "telegram_outbox_log"):
+            for ts_col in ("ts", "created_at"):
                 try:
-                    return execute_fetchall(
+                    rows = self._execute(
                         f"""
                         SELECT *
                         FROM {table_name}
-                        ORDER BY ts DESC
+                        ORDER BY {ts_col} DESC
                         LIMIT ?
                         """,
                         (int(limit),),
-                    )
+                        fetch=True,
+                        commit=False,
+                    ) or []
+                    return [dict(row) for row in rows]
                 except Exception:
                     continue
         return []
