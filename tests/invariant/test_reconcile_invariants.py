@@ -134,6 +134,9 @@ class FakeBatchManager:
         self.batches[batch_id]["status"] = "FAILED"
         self.batches[batch_id]["reason"] = reason
 
+    def get_open_batches(self) -> List[Dict[str, Any]]:
+        return [deepcopy(v) for v in self.batches.values()]
+
     def mark_batch_rollback_pending(self, batch_id: str, reason: str = "") -> None:
         self.batches[batch_id]["status"] = "ROLLBACK_PENDING"
         self.batches[batch_id]["reason"] = reason

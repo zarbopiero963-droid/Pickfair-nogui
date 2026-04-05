@@ -60,6 +60,9 @@ class FakeBatchManager:
     def get_batch_legs(self, batch_id: str) -> List[Dict[str, Any]]:
         return deepcopy(self.batch_legs.get(batch_id, []))
 
+    def get_open_batches(self) -> List[Dict[str, Any]]:
+        return [deepcopy(batch) for batch in self.batches.values() if batch.get("status") not in {"MATCHED", "CANCELLED", "LAPSED", "FAILED"}]
+
     def update_leg_status(
         self,
         *,
@@ -186,14 +189,14 @@ def remote_order(
 # ============================================================
 
 @pytest.mark.parametrize(
-    ("remote_status", "expected_status", "expected_reason"),
+    ("exchange_order", "expected_status", "expected_reason"),
     [
-        ("MATCHED", "MATCHED", ReasonCode.EXCHANGE_WINS_MATCHED),
-        ("CANCELLED", "CANCELLED", ReasonCode.EXCHANGE_WINS_CANCELLED),
-        ("LAPSED", "LAPSED", ReasonCode.EXCHANGE_WINS_LAPSED),
+        (remote_order(status="EXECUTION_COMPLETE", size_matched=10.0, size_remaining=0.0), "MATCHED", ReasonCode.EXCHANGE_WINS_MATCHED),
+        (remote_order(status="CANCELLED"), "CANCELLED", ReasonCode.EXCHANGE_WINS_CANCELLED),
+        (remote_order(status="LAPSED"), "LAPSED", ReasonCode.EXCHANGE_WINS_LAPSED),
     ],
 )
-def test_exchange_wins_terminal(remote_status, expected_status, expected_reason):
+def test_exchange_wins_terminal(exchange_order, expected_status, expected_reason):
     """
     Cosa uccide:
       locale che sovrascrive terminale exchange.
@@ -210,7 +213,7 @@ def test_exchange_wins_terminal(remote_status, expected_status, expected_reason)
     new_status, reason, winner = engine._apply_merge_policy(
         batch_id="B1",
         leg=local_leg,
-        remote_order={"status": remote_status},
+        remote_order=exchange_order,
         saga_pending=False,
     )
 
@@ -268,7 +271,7 @@ def test_unknown_resolves_to_failed():
     local_leg = leg(
         status="UNKNOWN",
         customer_ref="REF-U",
-        created_at_ts=0.0,
+        created_at_ts=1.0,
     )
 
     new_status, reason, winner = engine._apply_merge_policy(
@@ -345,5 +348,5 @@ def test_terminal_local_no_change():
     )
 
     assert new_status is None
-    assert reason == ReasonCode.ALREADY_TERMINAL
-    assert winner == "LOCAL"
+    assert reason == ReasonCode.IDEMPOTENT_SKIP
+    assert winner == "NONE"

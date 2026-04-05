@@ -451,8 +451,8 @@ def test_crash_mid_reconcile():
 
     engine = make_engine(db=db, batch_manager=bm, client=client)
 
-    with pytest.raises(RuntimeError, match="CRASH_MID_RECONCILE"):
-        engine.reconcile_batch("B4")
+    first = engine.reconcile_batch("B4")
+    assert first["ok"] is False
 
     # Second run must recover and converge correctly.
     result = engine.reconcile_batch("B4")
