@@ -56,7 +56,6 @@ def rule_finalized_without_audit_evidence(context: Dict[str, Any], state: Dict[s
 
 
 def rule_event_without_expected_side_effect(context: Dict[str, Any], state: Dict[str, Any]) -> ForensicFinding | None:
-    _ = state
     orders = context.get("recent_orders") or []
     audit = context.get("recent_audit") or []
     metrics = context.get("metrics") or {}
@@ -80,22 +79,27 @@ def rule_event_without_expected_side_effect(context: Dict[str, Any], state: Dict
             )
     counters = metrics.get("counters") or {}
     finalized_total = int(counters.get("quick_bet_finalized_total", 0) or 0)
-    if finalized_total > 0:
-        has_finalized_order = any(
-            str(o.get("status", "") or "").upper() in {"FINALIZED", "SETTLED", "COMPLETED", "SUCCESS"}
-            for o in orders
+    prev_total = state.get("prev_quick_bet_finalized_total")
+    state["prev_quick_bet_finalized_total"] = finalized_total
+    if prev_total is None:
+        return None
+    delta = finalized_total - int(prev_total)
+
+    has_successful_finalize = any(
+        str(o.get("status", "")).upper() in {"FINALIZED", "SETTLED", "MATCHED", "COMPLETED"}
+        for o in orders
+    ) or any(
+        str(a.get("type", "")).upper() in {"ORDER_FINALIZED", "FINALIZED", "MATCHED", "SETTLED"}
+        for a in audit
+    )
+
+    if delta > 0 and not has_successful_finalize:
+        return _finding(
+            "EVENT_WITHOUT_EXPECTED_SIDE_EFFECT",
+            "warning",
+            "Finalization metric increased but no matching runtime side effect evidence",
+            {"quick_bet_finalized_total": finalized_total},
         )
-        has_finalized_audit = any(
-            str(a.get("type", "") or "").upper() in {"ORDER_FINALIZED", "FINALIZED"}
-            for a in audit
-        )
-        if not has_finalized_order and not has_finalized_audit:
-            return _finding(
-                "EVENT_WITHOUT_EXPECTED_SIDE_EFFECT",
-                "warning",
-                "Finalization metric increased but no matching runtime side effect evidence found",
-                {"quick_bet_finalized_total": finalized_total},
-            )
     return None
 
 
