@@ -1,30 +1,35 @@
 # AGENTS.md
 
-## Branch policy
-- Always branch from `main`
-- Never target `Codex` as base branch
-- Never reuse task branches
+## HARD RULES
+
+- Always create a NEW branch from `main`
+- Never work on `main`
+- Never target `Codex`
+- Never reuse existing branches
+- Never continue work on old `codex/analyze-*` branches
+
+## PR RULES
+
 - One task = one branch = one PR
+- If another open PR touches the same files → STOP
+- Always target `main`
 
-## Conflict prevention
-- If an open PR already modifies the same files, stop and report conflict risk
-- Do not open parallel PRs on the same files
-- Do not stack follow-up PRs for the same fix
+## FILE SCOPE
 
-## Scope lock
-- Modify only the requested files
-- Do not refactor unrelated code
-- Do not reformat unrelated files
-- If additional files seem required, stop and report
+- Modify ONLY allowlisted files
+- If any unrelated file changes → revert it
+- Do NOT refactor
+- Do NOT touch production code unless explicitly required
 
-## Merge discipline
-- Prefer one clean PR over many partial PRs
-- After merge, always restart from fresh `main`
+## FAILURE CONDITIONS
 
-## Output discipline
-Always report:
-- branch used
-- changed files
-- scope respected
-- tests run
-- push status
+Abort immediately if:
+- branch is not freshly created from `main`
+- more files than expected are modified
+- Codex tries to reuse an old branch
+
+## STYLE
+
+- Small atomic patches
+- Deterministic tests
+- Prefer invariants over implementation details
