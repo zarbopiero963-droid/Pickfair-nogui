@@ -46,6 +46,15 @@ class DiagnosticsService:
         safe_mode_state = self._safe_mode_state()
         recent_orders = self._recent_orders()
         recent_audit = self._recent_audit()
+        forensics_review = self._forensics_review(
+            health=health,
+            metrics=metrics,
+            alerts=alerts,
+            incidents=incidents,
+            runtime_state=runtime_state,
+            recent_orders=recent_orders,
+            recent_audit=recent_audit,
+        )
         logs_tail_text = self._logs_tail()
 
         path = self.builder.build(
@@ -57,6 +66,7 @@ class DiagnosticsService:
             safe_mode_state=safe_mode_state,
             recent_orders=recent_orders,
             recent_audit=recent_audit,
+            forensics_review=forensics_review,
             logs_tail_text=logs_tail_text,
         )
 
@@ -104,3 +114,23 @@ class DiagnosticsService:
         except Exception:
             logger.exception("tail_text_from_files failed")
             return ""
+
+    def _forensics_review(
+        self,
+        *,
+        health: Dict[str, Any],
+        metrics: Dict[str, Any],
+        alerts: Dict[str, Any],
+        incidents: Dict[str, Any],
+        runtime_state: Dict[str, Any],
+        recent_orders: Any,
+        recent_audit: Any,
+    ) -> Dict[str, Any]:
+        return {
+            "health_status": health.get("overall_status"),
+            "active_alerts": alerts.get("active_count"),
+            "open_incidents": incidents.get("open_count"),
+            "forensics": runtime_state.get("forensics", {}),
+            "orders_count": len(recent_orders or []),
+            "audit_count": len(recent_audit or []),
+        }

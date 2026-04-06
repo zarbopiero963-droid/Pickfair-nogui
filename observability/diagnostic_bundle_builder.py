@@ -4,6 +4,7 @@ import json
 import sys
 import threading
 import time
+import uuid
 import zipfile
 from pathlib import Path
 from typing import Any, Dict
@@ -27,10 +28,12 @@ class DiagnosticBundleBuilder:
         safe_mode_state: Dict[str, Any],
         recent_orders: Any,
         recent_audit: Any,
+        forensics_review: Any = None,
         logs_tail_text: str = "",
     ) -> str:
         ts = time.strftime("%Y%m%d_%H%M%S")
-        out_path = self.export_dir / f"diagnostics_bundle_{ts}.zip"
+        uid = uuid.uuid4().hex[:8]
+        out_path = self.export_dir / f"diagnostics_bundle_{ts}_{uid}.zip"
 
         manifest = {
             "generated_at": time.time(),
@@ -46,6 +49,7 @@ class DiagnosticBundleBuilder:
                 "safe_mode.json",
                 "recent_orders.json",
                 "recent_audit.json",
+                "forensics_review.json",
                 "thread_dump.txt",
                 "logs_tail.txt",
             ],
@@ -63,6 +67,7 @@ class DiagnosticBundleBuilder:
             self._write_json(zf, "safe_mode.json", sanitize_value(safe_mode_state))
             self._write_json(zf, "recent_orders.json", sanitize_value(recent_orders))
             self._write_json(zf, "recent_audit.json", sanitize_value(recent_audit))
+            self._write_json(zf, "forensics_review.json", sanitize_value(forensics_review or {}))
             zf.writestr("thread_dump.txt", thread_dump)
             zf.writestr("logs_tail.txt", logs_tail_text or "")
 
