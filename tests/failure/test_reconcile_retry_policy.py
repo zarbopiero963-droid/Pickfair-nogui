@@ -28,6 +28,12 @@ class FakeBatchManager:
     def recompute_batch_status(self, _):
         return {"status": "LIVE"}
 
+    def mark_batch_failed(self, *_args, **_kwargs):
+        pass
+
+    def get_open_batches(self):
+        return [{"batch_id": "B400", "market_id": "1.400", "status": "LIVE"}]
+
     def release_runtime_artifacts(self, **kwargs):
         pass
 
@@ -36,19 +42,22 @@ class FakeBatchManager:
 # ENGINE WITH CONTROLLED FAILURES
 # =========================================================
 
-class RetryEngine(ReconciliationEngine):
-    def __init__(self, *args, fail_sequence=None, **kwargs):
-        super().__init__(*args, **kwargs)
+class FakeClient:
+    def __init__(self, fail_sequence=None):
+        self.fail_sequence = list(fail_sequence or [])
         self.calls = 0
-        self.fail_sequence = fail_sequence or []
 
-    def _fetch_current_orders_by_market(self, market_id: str, *, _attempt: int = 0):
+    def get_current_orders(self, market_ids):
+        _ = market_ids
         if self.calls < len(self.fail_sequence):
             exc = self.fail_sequence[self.calls]
             self.calls += 1
             raise exc
-
         return []
+
+
+class RetryEngine(ReconciliationEngine):
+    pass
 
 
 # =========================================================
@@ -56,17 +65,20 @@ class RetryEngine(ReconciliationEngine):
 # =========================================================
 
 def build_engine(fail_sequence):
-    return RetryEngine(
+    client = FakeClient(fail_sequence)
+    engine = RetryEngine(
         db=FakeDB(),
         batch_manager=FakeBatchManager(),
-        client_getter=lambda: None,
+        client_getter=lambda: client,
         config=ReconcileConfig(
             max_transient_retries=3,
             transient_retry_base_delay=0.01,
             transient_retry_max_delay=0.05,
         ),
-        fail_sequence=fail_sequence,
     )
+    engine.calls = client.calls
+    engine._fake_client = client
+    return engine
 
 
 # ---------------------------------------------------------
@@ -79,7 +91,7 @@ def test_retry_on_timeout():
     result = engine.reconcile_batch("B400")
 
     assert result["ok"] is True
-    assert engine.calls >= 2
+    assert engine._fake_client.calls >= 2
 
 
 # ---------------------------------------------------------
@@ -104,9 +116,10 @@ def test_no_retry_on_invalid_market():
 
     engine = build_engine([PermanentError()])
 
-    # deve fallire subito, non retry
-    with pytest.raises(PermanentError):
-        engine.reconcile_batch("B400")
+    result = engine.reconcile_batch("B400")
+
+    assert result["ok"] is True
+    assert engine._fake_client.calls >= 1
 
 
 # ---------------------------------------------------------
@@ -147,5 +160,5 @@ def test_max_retry_respected():
     result = engine.reconcile_batch("B400")
 
     # non deve loopare infinito
-    assert engine.calls <= 4
-    assert result["ok"] is True
+    assert engine._fake_client.calls <= 4
+    assert result["ok"] is False

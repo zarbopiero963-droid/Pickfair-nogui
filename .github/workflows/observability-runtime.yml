@@ -1,0 +1,106 @@
+name: observability-runtime
+
+on:
+  pull_request:
+    paths:
+      - 'headless_main.py'
+      - 'observability/**'
+      - 'services/telegram_alerts_service.py'
+      - 'services/telegram_service.py'
+      - 'telegram_sender.py'
+      - 'database.py'
+      - 'tests/observability/**'
+      - 'tests/smoke/test_headless_boot_smoke.py'
+      - 'tests/smoke/test_observability_full_flow.py'
+      - 'tests/core/test_trading_engine_metrics_smoke.py'
+      - 'tests/services/test_telegram_alert_pipeline.py'
+      - '.github/workflows/observability-runtime.yml'
+  push:
+    branches:
+      - main
+      - Codex
+    paths:
+      - 'headless_main.py'
+      - 'observability/**'
+      - 'services/telegram_alerts_service.py'
+      - 'services/telegram_service.py'
+      - 'telegram_sender.py'
+      - 'database.py'
+      - 'tests/observability/**'
+      - 'tests/smoke/test_headless_boot_smoke.py'
+      - 'tests/smoke/test_observability_full_flow.py'
+      - 'tests/core/test_trading_engine_metrics_smoke.py'
+      - 'tests/services/test_telegram_alert_pipeline.py'
+      - '.github/workflows/observability-runtime.yml'
+
+jobs:
+  observability-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          pip install pytest
+
+      - name: py_compile sanity check
+        run: |
+          python -m compileall -q \
+            headless_main.py \
+            observability \
+            services/telegram_alerts_service.py \
+            services/telegram_service.py \
+            telegram_sender.py \
+            tests/observability \
+            tests/smoke/test_headless_boot_smoke.py \
+            tests/smoke/test_observability_full_flow.py \
+            tests/core/test_trading_engine_metrics_smoke.py \
+            tests/services/test_telegram_alert_pipeline.py
+
+      - name: Run runtime invariants and anomaly-signal tests
+        run: |
+          pytest -q -x \
+            tests/observability/test_runtime_invariants.py \
+            tests/observability/test_anomaly_signals.py
+
+      - name: Observability unit tests
+        run: pytest -q tests/observability -x
+
+      - name: Smoke runtime tests
+        run: |
+          pytest -q tests/smoke/test_headless_boot_smoke.py -x
+          pytest -q tests/smoke/test_observability_full_flow.py -x
+
+      - name: Trading engine metrics smoke
+        run: pytest -q tests/core/test_trading_engine_metrics_smoke.py -x
+
+      - name: Telegram alert pipeline smoke
+        run: pytest -q tests/services/test_telegram_alert_pipeline.py -x
+
+      - name: Full observability runtime bundle smoke
+        run: pytest -q tests/observability/test_diagnostics_export_smoke.py -x
+
+      - name: Upload diagnostics artifacts (if present)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: observability-artifacts
+          if-no-files-found: ignore
+          path: |
+            diagnostics_exports/**
+            **/diagnostics_bundle_*.zip
+            **/health_snapshot_*.json
+            **/alerts_snapshot_*.json
+            **/incidents_snapshot_*.json
+            **/metrics_snapshot_*.json

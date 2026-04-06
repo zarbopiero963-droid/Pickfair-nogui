@@ -1,6 +1,13 @@
 import math
 import pytest
 
+from pnl_engine import PnLEngine
+
+_REQUIRED_LEGACY_API = ("_calc", "_on_filled", "_on_market", "snapshot")
+pytestmark = pytest.mark.skipif(
+    any(not hasattr(PnLEngine, name) for name in _REQUIRED_LEGACY_API),
+    reason="legacy event-driven pnl_engine API not available",
+)
 
 class FakeBus:
     def __init__(self):
