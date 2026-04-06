@@ -4,6 +4,9 @@ import logging
 import threading
 from typing import Any
 
+from .anomaly_engine import AnomalyEngine
+from .anomaly_rules import DEFAULT_ANOMALY_RULES
+
 logger = logging.getLogger(__name__)
 
 
@@ -17,6 +20,8 @@ class WatchdogService:
         alerts_manager: Any,
         incidents_manager: Any,
         snapshot_service: Any,
+        anomaly_engine: Any = None,
+        anomaly_context_provider: Any = None,
         interval_sec: float = 5.0,
     ) -> None:
         self.probe = probe
@@ -25,6 +30,8 @@ class WatchdogService:
         self.alerts_manager = alerts_manager
         self.incidents_manager = incidents_manager
         self.snapshot_service = snapshot_service
+        self.anomaly_engine = anomaly_engine or AnomalyEngine(DEFAULT_ANOMALY_RULES)
+        self.anomaly_context_provider = anomaly_context_provider
         self.interval_sec = float(interval_sec)
 
         self._stop_event = threading.Event()
@@ -74,6 +81,7 @@ class WatchdogService:
             self.metrics_registry.set_gauge(name, value)
 
         self._evaluate_alerts()
+        self._evaluate_anomalies()
         self.snapshot_service.collect_and_store()
 
     def _evaluate_alerts(self) -> None:
@@ -121,3 +129,50 @@ class WatchdogService:
             )
         else:
             self.alerts_manager.resolve_alert("INFLIGHT_HIGH")
+
+    def _evaluate_anomalies(self) -> None:
+        if self.anomaly_engine is None:
+            return
+
+        runtime_state = {}
+        collector = getattr(self.probe, "collect_runtime_state", None)
+        if callable(collector):
+            try:
+                runtime_state = collector() or {}
+            except Exception:
+                logger.exception("collect_runtime_state failed during anomaly review")
+
+        context = {
+            "health": self.health_registry.snapshot(),
+            "metrics": self.metrics_registry.snapshot(),
+            "alerts": self.alerts_manager.snapshot(),
+            "incidents": self.incidents_manager.snapshot(),
+            "runtime_state": runtime_state,
+        }
+
+        if callable(self.anomaly_context_provider):
+            try:
+                extra = self.anomaly_context_provider() or {}
+                if isinstance(extra, dict):
+                    context.update(extra)
+            except Exception:
+                logger.exception("anomaly_context_provider failed")
+
+        for anomaly in self.anomaly_engine.evaluate(context):
+            code = str(anomaly.get("code", "") or "")
+            if not code:
+                continue
+            severity = str(anomaly.get("severity", "warning") or "warning").lower()
+            message = str(anomaly.get("message", code) or code)
+            details = anomaly.get("details") or {}
+
+            self.alerts_manager.upsert_alert(
+                code,
+                severity,
+                message,
+                source="anomaly_reviewer",
+                title=code,
+                details=details,
+            )
+            if severity in {"critical", "error"}:
+                self.incidents_manager.open_incident(code, code, severity, details=details)
