@@ -128,9 +128,20 @@ class DiagnosticsService:
     ) -> Dict[str, Any]:
         return {
             "health_status": health.get("overall_status"),
+            "degraded_or_not_ready": str(health.get("overall_status")) in {"DEGRADED", "NOT_READY"},
             "active_alerts": alerts.get("active_count"),
             "open_incidents": incidents.get("open_count"),
             "forensics": runtime_state.get("forensics", {}),
             "orders_count": len(recent_orders or []),
             "audit_count": len(recent_audit or []),
+            "required_evidence_sections": [
+                "health.json",
+                "metrics.json",
+                "alerts.json",
+                "incidents.json",
+                "runtime_state.json",
+                "recent_orders.json",
+                "recent_audit.json",
+                "forensics_review.json",
+            ],
         }
