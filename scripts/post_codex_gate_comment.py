@@ -60,6 +60,11 @@ def _find_existing_comment_id(comments: List[Dict[str, Any]]) -> int | None:
     return None
 
 
+def _is_permission_error(exc: RuntimeError) -> bool:
+    msg = str(exc)
+    return "Resource not accessible by integration" in msg or "HTTP 403" in msg
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         raise SystemExit("Usage: post_codex_gate_comment.py <comment_markdown_file>")
@@ -76,11 +81,41 @@ def main() -> int:
     existing_id = _find_existing_comment_id(comments)
 
     if existing_id is None:
-        _run(["gh", "api", f"/repos/{repo}/issues/{pr_number}/comments", "-f", f"body={final_body}"])
-        print("Created PR comment.")
+        try:
+            _run(
+                [
+                    "gh",
+                    "api",
+                    f"/repos/{repo}/issues/{pr_number}/comments",
+                    "-f",
+                    f"body={final_body}",
+                ]
+            )
+            print("Created PR comment.")
+        except RuntimeError as exc:
+            if _is_permission_error(exc):
+                print("Skipping PR comment: insufficient permissions (likely fork PR).")
+                return 0
+            raise
     else:
-        _run(["gh", "api", f"/repos/{repo}/issues/comments/{existing_id}", "-X", "PATCH", "-f", f"body={final_body}"])
-        print("Updated existing PR comment.")
+        try:
+            _run(
+                [
+                    "gh",
+                    "api",
+                    f"/repos/{repo}/issues/comments/{existing_id}",
+                    "-X",
+                    "PATCH",
+                    "-f",
+                    f"body={final_body}",
+                ]
+            )
+            print("Updated existing PR comment.")
+        except RuntimeError as exc:
+            if _is_permission_error(exc):
+                print("Skipping PR comment update: insufficient permissions (likely fork PR).")
+                return 0
+            raise
 
     return 0
 
