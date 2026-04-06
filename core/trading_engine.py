@@ -236,6 +236,7 @@ class TradingEngine:
         self.auto_generate_correlation_id: bool = True
         self.order_manager: Optional[OrderManager] = None
         self.guard: Optional[Any] = None
+        self.metrics_registry = None
 
         # Dedup State
         self._inflight_keys: Set[str] = set()
@@ -440,6 +441,7 @@ class TradingEngine:
                    category="execution")
         
         self._log_ack_state(ctx, order_id, status)
+        self._metric_inc("quick_bet_accepted_total")
 
         return self._build_result(
             ctx, audit,
@@ -458,6 +460,14 @@ class TradingEngine:
     # ==================================================================
     def _log_ack_state(self, ctx: _ExecutionContext, order_id: Optional[Any], status: str) -> None:
         logger.debug("ACK_STATE order_id=%s status=%s cid=%s", order_id, status, ctx.correlation_id)
+
+    def _metric_inc(self, name: str, value: int = 1) -> None:
+        reg = getattr(self, "metrics_registry", None)
+        if reg is not None:
+            try:
+                reg.inc(name, value)
+            except Exception:
+                logger.exception("metrics_registry.inc failed")
 
     # ==================================================================
     # [P0] PASSTHROUGH FIELDS MERGE HELPER
@@ -549,7 +559,7 @@ class TradingEngine:
         return fn()
 
     # ==================================================================
-    # [FIX 3] DUPLICATE HANDLER HELPER — NO DB INSERT
+    # [FIX 3] DUPLICATE HANDLER HELPER
     # ==================================================================
     def _handle_duplicate_request(
         self,
@@ -558,12 +568,8 @@ class TradingEngine:
         normalized: Dict[str, Any],
         extra_fields: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """
-        🔥 HARD FIX:
-        - NO DB INSERT
-        - NO new order row
-        - pure logical duplicate
-        """
+        """Handle duplicate by persisting a dedicated duplicate-blocked row."""
+        self._metric_inc("duplicate_blocked_total")
         self._emit(
             ctx,
             audit,
@@ -573,16 +579,47 @@ class TradingEngine:
         )
 
         duplicate_ref = self._find_duplicate_reference(ctx)
-
-        return self._build_result(
+        duplicate_order_id = self._persist_inflight(ctx, normalized)
+        self._emit_critical(
             ctx,
             audit,
+            "PERSIST_INFLIGHT",
+            {"order_id": duplicate_order_id},
+            category="persistence",
+        )
+        self._transition_order(
+            ctx,
+            audit,
+            duplicate_order_id,
+            STATUS_INFLIGHT,
+            STATUS_DUPLICATE_BLOCKED,
+            extra={"duplicate_of": duplicate_ref},
+        )
+
+        duplicate_meta: Dict[str, Any] = {"duplicate_of": duplicate_ref}
+        for key in ("copy_meta", "pattern_meta", "order_origin"):
+            if key in extra_fields:
+                duplicate_meta[key] = extra_fields[key]
+            elif key in normalized:
+                duplicate_meta[key] = normalized[key]
+        self._safe_write_order_metadata(duplicate_order_id, duplicate_meta)
+
+        duplicate_extra_fields = dict(extra_fields)
+        duplicate_extra_fields["duplicate_of"] = duplicate_ref
+        self._publish_bus_event(
+            ctx,
+            "QUICK_BET_DUPLICATE",
+            order_id=duplicate_order_id,
+            duplicate_of=duplicate_ref,
+        )
+
+        return self._complete_order_lifecycle(
+            ctx,
+            audit,
+            order_id=duplicate_order_id,
             status=STATUS_DUPLICATE_BLOCKED,
-            outcome=OUTCOME_SUCCESS,
-            order_id=duplicate_ref,
             reason="DUPLICATE_BLOCKED",
-            extra_fields=extra_fields,
-            is_terminal=True,
+            extra_fields=duplicate_extra_fields,
         )
 
     # ==================================================================
@@ -690,6 +727,7 @@ class TradingEngine:
     # ==================================================================
     def _submit_via_engine(self, request: Dict[str, Any]) -> Dict[str, Any]:
         self.assert_ready()
+        self._metric_inc("quick_bet_requests_total")
 
         normalization_error: Optional[Exception] = None
         normalized: Optional[Dict[str, Any]] = None
@@ -899,6 +937,10 @@ class TradingEngine:
         if not finalization_persisted:
             result["lifecycle_stage"] = "degraded"
             result["is_terminal"] = False
+        if not finalization_persisted:
+            self._metric_inc("finalization_degraded_total")
+        else:
+            self._metric_inc("quick_bet_finalized_total")
         
         return result
 
@@ -1020,6 +1062,7 @@ class TradingEngine:
                            trigger_event: str, trigger_error: str,
                            extra_fields: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         self._assert_valid_ctx(ctx)
+        self._metric_inc("quick_bet_ambiguous_total")
         logger.error("Ambiguity: %s – %s", trigger_event, trigger_error)
         self._emit(ctx, audit, trigger_event,
                    {"order_id": order_id, "error": trigger_error,
@@ -1066,8 +1109,16 @@ class TradingEngine:
 
         payload = {"order_id": order_id, "error": str(exc), "error_type": error_type}
         self._emit(ctx, audit, "SUBMIT_FAILED", payload, category="failure")
-        self._transition_order(ctx, audit, order_id, STATUS_INFLIGHT, STATUS_FAILED,
-                               extra={"last_error": str(exc), "error_type": error_type})
+        marked_failed = self._safe_mark_failed(
+            ctx,
+            audit,
+            order_id,
+            reason="SUBMIT_FAILED",
+            error=str(exc),
+        )
+        if not marked_failed:
+            return self._build_degraded_fatal_result(ctx, audit, order_id, exc, extra_fields)
+        self._metric_inc("quick_bet_failed_total")
         return self._complete_order_lifecycle(
             ctx, audit, order_id=order_id,
             status=STATUS_FAILED, error=str(exc), reason="SUBMIT_FAILED",
@@ -1457,6 +1508,7 @@ class TradingEngine:
                        event_type: str, payload: Dict[str, Any], *, category: str) -> Dict[str, bool]:
         result = self._emit(ctx, audit, event_type, payload, category=category)
         if result.get("memory_only"):
+            self._metric_inc("audit_memory_only_total")
             logger.warning("CRITICAL audit event %s is memory-only", event_type)
         return result
 

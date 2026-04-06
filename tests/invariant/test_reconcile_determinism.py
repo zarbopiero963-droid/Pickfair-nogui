@@ -82,6 +82,9 @@ class FakeBatchManager:
     def get_open_batches(self):
         return [copy.deepcopy(self._batch)]
 
+    def mark_batch_failed(self, *_args, **_kwargs):
+        self._batch["status"] = "FAILED"
+
 
 class DeterministicEngine(ReconciliationEngine):
     """
@@ -96,11 +99,11 @@ class DeterministicEngine(ReconciliationEngine):
 
     def _fetch_current_orders_by_market(self, market_id: str, *, _attempt: int = 0):
         if not self._remote_cycles:
-            return []
+            return [], None
         idx = min(self._remote_idx, len(self._remote_cycles) - 1)
         payload = copy.deepcopy(self._remote_cycles[idx])
         self._remote_idx += 1
-        return payload
+        return payload, None
 
     def _get_pending_saga_refs(self):
         return set(self._pending_refs)
@@ -320,7 +323,7 @@ def test_convergence_not_early_break():
             "bet_id": "",
             "selection_id": 99,
             "market_id": "1.100",
-            "created_at_ts": 1000.0,
+            "created_at_ts": 9999999999.0,
         }
     ]
 
