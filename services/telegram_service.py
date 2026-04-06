@@ -147,3 +147,11 @@ class TelegramService:
             "running": running,
             "last_error": self.last_error,
         }
+
+    def get_sender(self):
+        sender = getattr(self, "sender", None)
+        if sender is not None:
+            return sender
+        if callable(getattr(self, "send_alert_message", None)):
+            return self
+        return None

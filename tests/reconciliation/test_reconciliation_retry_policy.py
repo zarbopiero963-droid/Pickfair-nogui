@@ -38,6 +38,12 @@ class FakeBatchManager:
     def recompute_batch_status(self, batch_id):
         return {"batch_id": batch_id, "status": "LIVE"}
 
+    def mark_batch_failed(self, batch_id, reason=""):
+        return None
+
+    def get_open_batches(self):
+        return []
+
     def release_runtime_artifacts(self, **kwargs):
         return None
 
