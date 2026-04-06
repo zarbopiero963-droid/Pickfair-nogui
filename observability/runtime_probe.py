@@ -246,7 +246,22 @@ class RuntimeProbe:
         if callable(getter):
             try:
                 rows = getter(limit=1) or []
-                snapshot_recent = bool(rows)
+                snapshot_recent = False
+                if rows:
+                    row = rows[0]
+                    ts = None
+
+                    if isinstance(row, dict):
+                        ts = row.get("timestamp") or row.get("ts")
+                    elif hasattr(row, "timestamp"):
+                        ts = getattr(row, "timestamp", None)
+
+                    try:
+                        now = time.time()
+                        if ts is not None:
+                            snapshot_recent = (now - float(ts)) <= 60
+                    except Exception:
+                        snapshot_recent = False
             except Exception:
                 snapshot_recent = False
         orders_getter = getattr(self.db, "get_recent_orders_for_diagnostics", None)

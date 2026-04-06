@@ -4,6 +4,7 @@ import json
 import sys
 import threading
 import time
+import uuid
 import zipfile
 from pathlib import Path
 from typing import Any, Dict
@@ -31,7 +32,8 @@ class DiagnosticBundleBuilder:
         logs_tail_text: str = "",
     ) -> str:
         ts = time.strftime("%Y%m%d_%H%M%S")
-        out_path = self.export_dir / f"diagnostics_bundle_{ts}.zip"
+        uid = uuid.uuid4().hex[:8]
+        out_path = self.export_dir / f"diagnostics_bundle_{ts}_{uid}.zip"
 
         manifest = {
             "generated_at": time.time(),
