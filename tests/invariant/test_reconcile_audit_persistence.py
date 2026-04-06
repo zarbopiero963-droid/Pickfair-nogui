@@ -45,13 +45,19 @@ class FakeBatchManager:
     def recompute_batch_status(self, batch_id):
         return self.batch
 
+    def mark_batch_failed(self, *_args, **_kwargs):
+        self.batch["status"] = "FAILED"
+
+    def get_open_batches(self):
+        return [self.batch]
+
     def release_runtime_artifacts(self, **kwargs):
         pass
 
 
 class AuditEngine(ReconciliationEngine):
     def _fetch_current_orders_by_market(self, *args, **kwargs):
-        return []
+        return [], None
 
     def _get_pending_saga_refs(self):
         return set()
@@ -95,8 +101,9 @@ def test_decision_logged_every_transition():
 def test_persist_failure_blocks_reconcile():
     engine, _ = build_engine(fail=True)
 
-    with pytest.raises(RuntimeError):
-        engine.reconcile_batch("B300")
+    result = engine.reconcile_batch("B300")
+    assert result["ok"] is False
+    assert result["reason_code"] == ReasonCode.AUDIT_PERSIST_FAILED.value
 
 
 # ---------------------------------------------------------

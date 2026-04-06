@@ -40,6 +40,10 @@ class FakeBatchManager:
     def get_open_batches(self):
         return list(self._batches.values())
 
+    def mark_batch_failed(self, batch_id, reason=""):
+        self._batches[batch_id]["status"] = "FAILED"
+        self._batches[batch_id]["reason"] = reason
+
     def update_leg_status(self, **kwargs):
         pass
 
