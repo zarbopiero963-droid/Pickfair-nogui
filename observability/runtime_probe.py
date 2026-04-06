@@ -272,9 +272,9 @@ class RuntimeProbe:
                     ts = None
 
                     if isinstance(row, dict):
-                        ts = row.get("timestamp") or row.get("ts")
+                        ts = row.get("timestamp") or row.get("ts") or row.get("created_at")
                     elif hasattr(row, "timestamp"):
-                        ts = getattr(row, "timestamp", None)
+                        ts = getattr(row, "timestamp", None) or getattr(row, "created_at", None)
 
                     try:
                         now = time.time()
