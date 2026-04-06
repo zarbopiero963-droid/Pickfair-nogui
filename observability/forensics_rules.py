@@ -77,12 +77,15 @@ def rule_event_without_expected_side_effect(context: Dict[str, Any], state: Dict
                 "Audit event has no expected order side effect",
                 {"event_type": ev_type, "event_key": key},
             )
+
     counters = metrics.get("counters") or {}
     finalized_total = int(counters.get("quick_bet_finalized_total", 0) or 0)
     prev_total = state.get("prev_quick_bet_finalized_total")
     state["prev_quick_bet_finalized_total"] = finalized_total
+
     if prev_total is None:
         return None
+
     delta = finalized_total - int(prev_total)
     if delta <= 0:
         return None
@@ -94,6 +97,7 @@ def rule_event_without_expected_side_effect(context: Dict[str, Any], state: Dict
         str(a.get("type", "")).upper() in {"ORDER_FINALIZED", "FINALIZED", "MATCHED", "SETTLED"}
         for a in audit
     )
+
     if has_successful_finalize:
         return None
 
@@ -104,6 +108,7 @@ def rule_event_without_expected_side_effect(context: Dict[str, Any], state: Dict
         str(a.get("type", "")).upper() in {"ORDER_FAILED", "FAILED", "ERROR", "REJECTED", "AMBIGUOUS"}
         for a in audit
     )
+
     if has_non_success_terminal:
         return None
 
@@ -121,7 +126,7 @@ def rule_snapshot_without_runtime_evidence(context: Dict[str, Any], state: Dict[
     metrics = context.get("metrics") or {}
     forensics = runtime_state.get("forensics") or {}
     snapshot_recent = bool(forensics.get("observability_snapshot_recent", False))
-    gauges = (metrics.get("gauges") or {})
+    gauges = metrics.get("gauges") or {}
     runtime_readiness = runtime_state.get("trading_engine_readiness")
 
     if snapshot_recent and runtime_readiness in (None, {}, "") and not gauges:
@@ -157,6 +162,7 @@ def rule_diagnostics_bundle_evidence_gap(context: Dict[str, Any], state: Dict[st
         "recent_audit.json",
         "forensics_review.json",
     }
+
     if (overall in {"DEGRADED", "NOT_READY"} or active_alerts > 0 or open_incidents > 0) and not orders and not audit:
         return _finding(
             "DIAGNOSTICS_BUNDLE_EVIDENCE_GAP",
@@ -164,6 +170,7 @@ def rule_diagnostics_bundle_evidence_gap(context: Dict[str, Any], state: Dict[st
             "Diagnostics evidence missing during degraded/alerted runtime",
             {"overall_status": overall, "active_alerts": active_alerts, "open_incidents": open_incidents},
         )
+
     if (overall in {"DEGRADED", "NOT_READY"} or active_alerts > 0 or open_incidents > 0) and manifest_files:
         missing = sorted(required_files.difference(manifest_files))
         if missing:
@@ -173,6 +180,7 @@ def rule_diagnostics_bundle_evidence_gap(context: Dict[str, Any], state: Dict[st
                 "Diagnostics bundle manifest is missing required evidence sections",
                 {"missing_files": missing},
             )
+
     return None
 
 
