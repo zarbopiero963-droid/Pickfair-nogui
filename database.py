@@ -4,6 +4,7 @@ import json
 import logging
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -367,6 +368,26 @@ class Database:
             )
 
             conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS observability_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at REAL NOT NULL,
+                    payload_json TEXT NOT NULL DEFAULT '{}'
+                )
+                """
+            )
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS diagnostics_exports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at REAL NOT NULL,
+                    export_path TEXT NOT NULL
+                )
+                """
+            )
+
+            conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_received_signals_created_at ON received_signals(created_at DESC)"
             )
             conn.execute(
@@ -386,6 +407,12 @@ class Database:
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_dutching_legs_batch_id ON dutching_batch_legs(batch_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_observability_snapshots_created_at ON observability_snapshots(created_at DESC)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_diagnostics_exports_created_at ON diagnostics_exports(created_at DESC)"
             )
 
     # =========================================================
@@ -478,6 +505,15 @@ class Database:
             "auto_bet": str(settings.get("telegram.auto_bet", "0")).lower() in {"1", "true", "yes", "on"},
             "require_confirmation": str(settings.get("telegram.require_confirmation", "1")).lower() in {"1", "true", "yes", "on"},
             "auto_stake": self._safe_float(settings.get("telegram.auto_stake", 1.0), 1.0),
+            "alerts_enabled": str(settings.get("telegram.alerts_enabled", "0")).lower() in {"1", "true", "yes", "on"},
+            "alerts_chat_id": settings.get("telegram.alerts_chat_id", ""),
+            "alerts_chat_name": settings.get("telegram.alerts_chat_name", ""),
+            "min_alert_severity": str(settings.get("telegram.min_alert_severity", "WARNING") or "WARNING").upper(),
+            "alert_cooldown_sec": int(settings.get("telegram.alert_cooldown_sec", 0) or 0),
+            "alert_dedup_enabled": str(settings.get("telegram.alert_dedup_enabled", "0")).lower()
+            in {"1", "true", "yes", "on"},
+            "alert_format_rich": str(settings.get("telegram.alert_format_rich", "0")).lower()
+            in {"1", "true", "yes", "on"},
         }
 
     def save_telegram_settings(self, payload: Dict[str, Any]) -> None:
@@ -491,6 +527,13 @@ class Database:
                 "telegram.auto_bet": self._safe_bool_int(payload.get("auto_bet", False)),
                 "telegram.require_confirmation": self._safe_bool_int(payload.get("require_confirmation", True)),
                 "telegram.auto_stake": self._safe_float(payload.get("auto_stake", 1.0), 1.0),
+                "telegram.alerts_enabled": self._safe_bool_int(payload.get("alerts_enabled", False)),
+                "telegram.alerts_chat_id": str(payload.get("alerts_chat_id", "") or ""),
+                "telegram.alerts_chat_name": str(payload.get("alerts_chat_name", "") or ""),
+                "telegram.min_alert_severity": str(payload.get("min_alert_severity", "WARNING") or "WARNING").upper(),
+                "telegram.alert_cooldown_sec": int(payload.get("alert_cooldown_sec", 0) or 0),
+                "telegram.alert_dedup_enabled": self._safe_bool_int(payload.get("alert_dedup_enabled", False)),
+                "telegram.alert_format_rich": self._safe_bool_int(payload.get("alert_format_rich", False)),
             }
         )
 
@@ -1015,3 +1058,145 @@ class Database:
             item["payload"] = self._safe_json_loads(item.get("payload_json"), {})
             out.append(item)
         return out
+
+    def save_observability_snapshot(self, payload):
+        sql = """
+        INSERT INTO observability_snapshots (created_at, payload_json)
+        VALUES (?, ?)
+        """
+        body = json.dumps(payload, ensure_ascii=False, default=str)
+
+        execute = getattr(self, "execute", None)
+        if callable(execute):
+            execute(sql, (time.time(), body))
+            return
+
+        conn = getattr(self, "conn", None)
+        if conn is not None:
+            cur = conn.cursor()
+            cur.execute(sql, (time.time(), body))
+            conn.commit()
+            return
+
+        self._execute(sql, (time.time(), body))
+
+    def register_diagnostics_export(self, export_path):
+        sql = """
+        INSERT INTO diagnostics_exports (created_at, export_path)
+        VALUES (?, ?)
+        """
+
+        execute = getattr(self, "execute", None)
+        if callable(execute):
+            execute(sql, (time.time(), str(export_path)))
+            return
+
+        conn = getattr(self, "conn", None)
+        if conn is not None:
+            cur = conn.cursor()
+            cur.execute(sql, (time.time(), str(export_path)))
+            conn.commit()
+            return
+
+        self._execute(sql, (time.time(), str(export_path)))
+
+    def get_recent_observability_snapshots(self, limit=100):
+        rows = self._execute(
+            """
+            SELECT id, created_at, payload_json
+            FROM observability_snapshots
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (int(limit),),
+            fetch=True,
+            commit=False,
+        ) or []
+        return [dict(row) for row in rows]
+
+    def get_recent_orders_for_diagnostics(self, limit=200):
+        for table_name in ("orders", "order_saga"):
+            try:
+                rows = self._execute(
+                    f"""
+                    SELECT *
+                    FROM {table_name}
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (int(limit),),
+                    fetch=True,
+                    commit=False,
+                ) or []
+                return [dict(row) for row in rows]
+            except Exception:
+                continue
+        return []
+
+    def get_recent_audit_events_for_diagnostics(self, limit=500):
+        for table_name in ("audit_events", "order_events", "telegram_outbox_log"):
+            for ts_col in ("ts", "created_at"):
+                try:
+                    rows = self._execute(
+                        f"""
+                        SELECT *
+                        FROM {table_name}
+                        ORDER BY {ts_col} DESC
+                        LIMIT ?
+                        """,
+                        (int(limit),),
+                        fetch=True,
+                        commit=False,
+                    ) or []
+                    return [dict(row) for row in rows]
+                except Exception:
+                    continue
+        return []
+
+    def delete_old_observability_snapshots(self, cutoff_ts):
+        execute = getattr(self, "execute", None)
+        if callable(execute):
+            execute(
+                "DELETE FROM observability_snapshots WHERE created_at < ?",
+                (float(cutoff_ts),),
+            )
+            return
+
+        conn = getattr(self, "conn", None)
+        if conn is not None:
+            cur = conn.cursor()
+            cur.execute(
+                "DELETE FROM observability_snapshots WHERE created_at < ?",
+                (float(cutoff_ts),),
+            )
+            conn.commit()
+            return
+
+        self._execute(
+            "DELETE FROM observability_snapshots WHERE created_at < ?",
+            (float(cutoff_ts),),
+        )
+
+    def delete_old_diagnostics_exports(self, cutoff_ts):
+        execute = getattr(self, "execute", None)
+        if callable(execute):
+            execute(
+                "DELETE FROM diagnostics_exports WHERE created_at < ?",
+                (float(cutoff_ts),),
+            )
+            return
+
+        conn = getattr(self, "conn", None)
+        if conn is not None:
+            cur = conn.cursor()
+            cur.execute(
+                "DELETE FROM diagnostics_exports WHERE created_at < ?",
+                (float(cutoff_ts),),
+            )
+            conn.commit()
+            return
+
+        self._execute(
+            "DELETE FROM diagnostics_exports WHERE created_at < ?",
+            (float(cutoff_ts),),
+        )
