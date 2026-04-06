@@ -321,7 +321,9 @@ def test_local_absent_exchange_present():
     )
 
     engine = make_engine(db=db, batch_manager=bm, client=client)
-    ghosts = engine._detect_ghost_orders("C3", [], client.get_current_orders(["1.702"]))
+    remote_orders = client.get_current_orders(["1.702"])
+    by_ref, by_bet, by_sel = engine._build_exchange_indices(remote_orders)
+    ghosts = engine._detect_ghost_orders("C3", [], remote_orders, by_ref, by_bet, by_sel)
 
     assert len(ghosts) == 1
     assert ghosts[0]["customer_ref"] == "REF-GHOST"
