@@ -32,6 +32,16 @@ def test_forensics_engine_returns_correlated_findings():
     findings = engine.evaluate(context)
     codes = {f["code"] for f in findings}
 
+        ],
+        "recent_audit": [{"type": "REQUEST_RECEIVED", "correlation_id": "C1"}],
+        "diagnostics_export": {"manifest_files": ["health.json"]},
+    }
+
+    findings = engine.evaluate(context)
+    codes = {f["code"] for f in findings}
+
+    assert "FAILED_BUT_REMOTE_EXISTS" in codes
+    assert "FINALIZED_WITHOUT_AUDIT_EVIDENCE" in codes
     assert "EVENT_WITHOUT_EXPECTED_SIDE_EFFECT" in codes
     assert "INCIDENT_WITHOUT_SUPPORTING_ALERT" in codes
     assert "DIAGNOSTICS_BUNDLE_EVIDENCE_GAP" in codes

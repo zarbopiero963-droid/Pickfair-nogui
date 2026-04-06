@@ -56,6 +56,7 @@ def rule_finalized_without_audit_evidence(context: Dict[str, Any], state: Dict[s
 
 
 def rule_event_without_expected_side_effect(context: Dict[str, Any], state: Dict[str, Any]) -> ForensicFinding | None:
+    _ = state
     orders = context.get("recent_orders") or []
     audit = context.get("recent_audit") or []
     metrics = context.get("metrics") or {}
@@ -84,6 +85,7 @@ def rule_event_without_expected_side_effect(context: Dict[str, Any], state: Dict
     if previous_total is None:
         return None
     if finalized_total > int(previous_total):
+    if finalized_total > 0:
         has_finalized_order = any(
             str(o.get("status", "") or "").upper() in {"FINALIZED", "SETTLED", "COMPLETED", "SUCCESS"}
             for o in orders
