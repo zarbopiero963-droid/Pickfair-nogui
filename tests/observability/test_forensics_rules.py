@@ -36,6 +36,16 @@ def test_event_without_side_effect_snapshot_gap_and_bundle_gap_rules():
     )
     assert event_gap and event_gap["code"] == "EVENT_WITHOUT_EXPECTED_SIDE_EFFECT"
 
+    metric_gap = rule_event_without_expected_side_effect(
+        {
+            "metrics": {"counters": {"quick_bet_finalized_total": 2}},
+            "recent_orders": [],
+            "recent_audit": [],
+        },
+        {},
+    )
+    assert metric_gap and metric_gap["code"] == "EVENT_WITHOUT_EXPECTED_SIDE_EFFECT"
+
     snap_gap = rule_snapshot_without_runtime_evidence(
         {
             "runtime_state": {"forensics": {"observability_snapshot_recent": True}},
