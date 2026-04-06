@@ -78,6 +78,29 @@ class RuntimeProbe:
 
         return state
 
+    def collect_forensics_evidence(self) -> Dict[str, Any]:
+        recent_orders = []
+        recent_audit = []
+
+        orders_getter = getattr(self.db, "get_recent_orders_for_diagnostics", None)
+        if callable(orders_getter):
+            try:
+                recent_orders = orders_getter(limit=100) or []
+            except Exception:
+                recent_orders = []
+
+        audit_getter = getattr(self.db, "get_recent_audit_events_for_diagnostics", None)
+        if callable(audit_getter):
+            try:
+                recent_audit = audit_getter(limit=200) or []
+            except Exception:
+                recent_audit = []
+
+        return {
+            "recent_orders": recent_orders,
+            "recent_audit": recent_audit,
+        }
+
     def _probe_ready_component(self, obj: Any, name: str) -> Dict[str, Any]:
         if obj is None:
             return {"name": name, "status": "NOT_READY", "reason": "missing", "details": {}}
@@ -217,11 +240,44 @@ class RuntimeProbe:
 
     def _forensics_state(self) -> Dict[str, Any]:
         snapshot_recent = True
+        recent_orders_count = 0
+        recent_audit_count = 0
         getter = getattr(self.db, "get_recent_observability_snapshots", None)
         if callable(getter):
             try:
                 rows = getter(limit=1) or []
-                snapshot_recent = bool(rows)
+                snapshot_recent = False
+                if rows:
+                    row = rows[0]
+                    ts = None
+
+                    if isinstance(row, dict):
+                        ts = row.get("timestamp") or row.get("ts")
+                    elif hasattr(row, "timestamp"):
+                        ts = getattr(row, "timestamp", None)
+
+                    try:
+                        now = time.time()
+                        if ts is not None:
+                            snapshot_recent = (now - float(ts)) <= 60
+                    except Exception:
+                        snapshot_recent = False
             except Exception:
                 snapshot_recent = False
-        return {"observability_snapshot_recent": snapshot_recent}
+        orders_getter = getattr(self.db, "get_recent_orders_for_diagnostics", None)
+        if callable(orders_getter):
+            try:
+                recent_orders_count = len(orders_getter(limit=20) or [])
+            except Exception:
+                recent_orders_count = 0
+        audit_getter = getattr(self.db, "get_recent_audit_events_for_diagnostics", None)
+        if callable(audit_getter):
+            try:
+                recent_audit_count = len(audit_getter(limit=20) or [])
+            except Exception:
+                recent_audit_count = 0
+        return {
+            "observability_snapshot_recent": snapshot_recent,
+            "recent_orders_count": recent_orders_count,
+            "recent_audit_count": recent_audit_count,
+        }

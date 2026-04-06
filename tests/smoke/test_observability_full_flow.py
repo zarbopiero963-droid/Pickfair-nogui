@@ -1,4 +1,5 @@
 from pathlib import Path
+import zipfile
 
 import pytest
 
@@ -92,3 +93,5 @@ def test_observability_full_flow_smoke(tmp_path):
     assert Path(bundle).exists()
     assert db.exports and db.exports[-1] == bundle
     assert health.snapshot()["overall_status"] in {"READY", "DEGRADED", "NOT_READY"}
+    with zipfile.ZipFile(bundle, "r") as zf:
+        assert "forensics_review.json" in set(zf.namelist())

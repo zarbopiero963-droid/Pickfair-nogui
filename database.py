@@ -526,6 +526,9 @@ class Database:
                 "telegram.alerts_chat_id": str(payload.get("alerts_chat_id", "") or ""),
                 "telegram.alerts_chat_name": str(payload.get("alerts_chat_name", "") or ""),
                 "telegram.min_alert_severity": str(payload.get("min_alert_severity", "WARNING") or "WARNING").upper(),
+                "telegram.alert_cooldown_sec": int(payload.get("alert_cooldown_sec", 0) or 0),
+                "telegram.alert_dedup_enabled": self._safe_bool_int(payload.get("alert_dedup_enabled", False)),
+                "telegram.alert_format_rich": self._safe_bool_int(payload.get("alert_format_rich", False)),
             }
         )
 

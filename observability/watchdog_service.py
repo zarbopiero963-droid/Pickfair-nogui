@@ -6,6 +6,8 @@ from typing import Any
 
 from .anomaly_engine import AnomalyEngine
 from .anomaly_rules import DEFAULT_ANOMALY_RULES
+from .forensics_engine import ForensicsEngine
+from .forensics_rules import DEFAULT_FORENSICS_RULES
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +23,7 @@ class WatchdogService:
         incidents_manager: Any,
         snapshot_service: Any,
         anomaly_engine: Any = None,
+        forensics_engine: Any = None,
         anomaly_context_provider: Any = None,
         interval_sec: float = 5.0,
     ) -> None:
@@ -31,6 +34,7 @@ class WatchdogService:
         self.incidents_manager = incidents_manager
         self.snapshot_service = snapshot_service
         self.anomaly_engine = anomaly_engine or AnomalyEngine(DEFAULT_ANOMALY_RULES)
+        self.forensics_engine = forensics_engine or ForensicsEngine(DEFAULT_FORENSICS_RULES)
         self.anomaly_context_provider = anomaly_context_provider
         self.interval_sec = float(interval_sec)
 
@@ -82,6 +86,7 @@ class WatchdogService:
 
         self._evaluate_alerts()
         self._evaluate_anomalies()
+        self._evaluate_forensics()
         self.snapshot_service.collect_and_store()
 
     def _evaluate_alerts(self) -> None:
@@ -158,10 +163,14 @@ class WatchdogService:
             except Exception:
                 logger.exception("anomaly_context_provider failed")
 
-        for anomaly in self.anomaly_engine.evaluate(context):
+        anomalies = self.anomaly_engine.evaluate(context)
+        current_codes = set()
+
+        for anomaly in anomalies:
             code = str(anomaly.get("code", "") or "")
             if not code:
                 continue
+            current_codes.add(code)
             severity = str(anomaly.get("severity", "warning") or "warning").lower()
             message = str(anomaly.get("message", code) or code)
             details = anomaly.get("details") or {}
@@ -176,3 +185,82 @@ class WatchdogService:
             )
             if severity in {"critical", "error"}:
                 self.incidents_manager.open_incident(code, code, severity, details=details)
+
+        active_alerts = []
+        active_getter = getattr(self.alerts_manager, "active_alerts", None)
+        if callable(active_getter):
+            try:
+                active_alerts = active_getter() or []
+            except Exception:
+                logger.exception("active_alerts failed during anomaly resolution")
+
+        for item in active_alerts:
+            if str(item.get("source", "")) != "anomaly_reviewer":
+                continue
+            code = str(item.get("code", "") or "")
+            if code and code not in current_codes:
+                self.alerts_manager.resolve_alert(code)
+
+    def _evaluate_forensics(self) -> None:
+        if self.forensics_engine is None:
+            return
+
+        runtime_state = {}
+        collector = getattr(self.probe, "collect_runtime_state", None)
+        if callable(collector):
+            try:
+                runtime_state = collector() or {}
+            except Exception:
+                logger.exception("collect_runtime_state failed during forensics review")
+
+        context = {
+            "health": self.health_registry.snapshot(),
+            "metrics": self.metrics_registry.snapshot(),
+            "alerts": self.alerts_manager.snapshot(),
+            "incidents": self.incidents_manager.snapshot(),
+            "runtime_state": runtime_state,
+        }
+
+        evidence_getter = getattr(self.probe, "collect_forensics_evidence", None)
+        if callable(evidence_getter):
+            try:
+                evidence = evidence_getter() or {}
+                if isinstance(evidence, dict):
+                    context.update(evidence)
+            except Exception:
+                logger.exception("collect_forensics_evidence failed")
+
+        findings = self.forensics_engine.evaluate(context)
+        current_codes = set()
+        for finding in findings:
+            code = str(finding.get("code", "") or "")
+            if not code:
+                continue
+            current_codes.add(code)
+            severity = str(finding.get("severity", "warning") or "warning").lower()
+            message = str(finding.get("message", code) or code)
+            details = finding.get("details") or {}
+            self.alerts_manager.upsert_alert(
+                code,
+                severity,
+                message,
+                source="forensics_reviewer",
+                title=code,
+                details=details,
+            )
+            if severity in {"critical", "error"}:
+                self.incidents_manager.open_incident(code, code, severity, details=details)
+
+        active_alerts = []
+        active_getter = getattr(self.alerts_manager, "active_alerts", None)
+        if callable(active_getter):
+            try:
+                active_alerts = active_getter() or []
+            except Exception:
+                logger.exception("active_alerts failed during forensics resolution")
+        for item in active_alerts:
+            if str(item.get("source", "")) != "forensics_reviewer":
+                continue
+            code = str(item.get("code", "") or "")
+            if code and code not in current_codes:
+                self.alerts_manager.resolve_alert(code)

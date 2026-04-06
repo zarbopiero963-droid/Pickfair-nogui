@@ -2,6 +2,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+import json
 
 from observability.alerts_manager import AlertsManager
 from observability.diagnostic_bundle_builder import DiagnosticBundleBuilder
@@ -64,7 +65,13 @@ def test_diagnostics_export_zip_contains_expected_payloads(tmp_path):
         "safe_mode.json",
         "recent_orders.json",
         "recent_audit.json",
+        "forensics_review.json",
         "thread_dump.txt",
         "logs_tail.txt",
     }
     assert expected.issubset(names)
+
+    with zipfile.ZipFile(path, "r") as zf:
+        payload = json.loads(zf.read("forensics_review.json"))
+    assert "health_status" in payload
+    assert "orders_count" in payload
