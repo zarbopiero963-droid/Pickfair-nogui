@@ -41,21 +41,31 @@ jobs:
       - name: Ensure GitHub CLI is available
         run: gh --version
 
+      # ---------------------------------------
+      # 🔹 COLLECT FILES MODIFICATI NELLA PR
+      # ---------------------------------------
       - name: Collect PR changed files
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh api /repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number || github.event.issue.number }}/files?per_page=100 > pr_files_raw.json
+
           python - <<'PY'
           import json
           with open("pr_files_raw.json", "r", encoding="utf-8") as f:
               data = json.load(f)
+
           files = [item["filename"] for item in data if item.get("filename")]
+
           with open("changed_files.json", "w", encoding="utf-8") as f:
               json.dump({"files": files}, f, indent=2)
+
           print(json.dumps({"files": files}, indent=2))
           PY
 
+      # ---------------------------------------
+      # 🔹 PARSE COMMENTI CODEX
+      # ---------------------------------------
       - name: Parse Codex review comments
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -69,6 +79,9 @@ jobs:
           echo "=== codex_findings.json ==="
           cat codex_findings.json || true
 
+      # ---------------------------------------
+      # 🔹 GATE LOGICO
+      # ---------------------------------------
       - name: Run Codex bug gate
         run: |
           python scripts/codex_bug_gate.py \
@@ -86,13 +99,20 @@ jobs:
           echo "=== codex_gate_comment.md ==="
           cat codex_gate_comment.md || true
 
+      # ---------------------------------------
+      # 🔹 COMMENTO PR (SAFE)
+      # ---------------------------------------
       - name: Post/update PR comment
-        if: always()
+        if: always() && (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.fork == false)
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python scripts/post_codex_gate_comment.py codex_gate_comment.md
 
+      # ---------------------------------------
+      # 🔹 ARTIFACT
+      # ---------------------------------------
       - name: Upload findings artifact
         if: always()
         uses: actions/upload-artifact@v4
