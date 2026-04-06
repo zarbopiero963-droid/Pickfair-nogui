@@ -28,14 +28,10 @@ def test_forensics_engine_returns_correlated_findings():
     assert "FAILED_BUT_REMOTE_EXISTS" in baseline_codes
     assert "FINALIZED_WITHOUT_AUDIT_EVIDENCE" in baseline_codes
 
-    # SECOND PASS (delta + no successful finalize evidence)
+    # SECOND PASS (delta + no bounded evidence at all)
     context["metrics"]["counters"]["quick_bet_finalized_total"] = 2
-    context["recent_orders"] = [
-        {"order_id": "O2", "status": "FAILED", "correlation_id": "C2"}
-    ]
-    context["recent_audit"] = [
-        {"type": "ORDER_FAILED", "correlation_id": "C2"}
-    ]
+    context["recent_orders"] = []
+    context["recent_audit"] = []
 
     findings = engine.evaluate(context)
     codes = {f["code"] for f in findings}
