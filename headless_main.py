@@ -277,6 +277,8 @@ class HeadlessApp:
                 betfair_service=self.betfair_service,
                 safe_mode=None,
                 shutdown_manager=self.shutdown if "shutdown_manager" in locals() else self.shutdown,
+                telegram_service=self.telegram_service,
+                settings_service=self.settings_service,
             )
 
             self.snapshot_service = SnapshotService(

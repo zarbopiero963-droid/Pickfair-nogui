@@ -158,10 +158,14 @@ class WatchdogService:
             except Exception:
                 logger.exception("anomaly_context_provider failed")
 
-        for anomaly in self.anomaly_engine.evaluate(context):
+        anomalies = self.anomaly_engine.evaluate(context)
+        current_codes = set()
+
+        for anomaly in anomalies:
             code = str(anomaly.get("code", "") or "")
             if not code:
                 continue
+            current_codes.add(code)
             severity = str(anomaly.get("severity", "warning") or "warning").lower()
             message = str(anomaly.get("message", code) or code)
             details = anomaly.get("details") or {}
@@ -176,3 +180,18 @@ class WatchdogService:
             )
             if severity in {"critical", "error"}:
                 self.incidents_manager.open_incident(code, code, severity, details=details)
+
+        active_alerts = []
+        active_getter = getattr(self.alerts_manager, "active_alerts", None)
+        if callable(active_getter):
+            try:
+                active_alerts = active_getter() or []
+            except Exception:
+                logger.exception("active_alerts failed during anomaly resolution")
+
+        for item in active_alerts:
+            if str(item.get("source", "")) != "anomaly_reviewer":
+                continue
+            code = str(item.get("code", "") or "")
+            if code and code not in current_codes:
+                self.alerts_manager.resolve_alert(code)
