@@ -509,6 +509,11 @@ class Database:
             "alerts_chat_id": settings.get("telegram.alerts_chat_id", ""),
             "alerts_chat_name": settings.get("telegram.alerts_chat_name", ""),
             "min_alert_severity": str(settings.get("telegram.min_alert_severity", "WARNING") or "WARNING").upper(),
+            "alert_cooldown_sec": int(settings.get("telegram.alert_cooldown_sec", 0) or 0),
+            "alert_dedup_enabled": str(settings.get("telegram.alert_dedup_enabled", "0")).lower()
+            in {"1", "true", "yes", "on"},
+            "alert_format_rich": str(settings.get("telegram.alert_format_rich", "0")).lower()
+            in {"1", "true", "yes", "on"},
         }
 
     def save_telegram_settings(self, payload: Dict[str, Any]) -> None:

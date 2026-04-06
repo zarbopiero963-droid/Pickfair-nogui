@@ -75,3 +75,5 @@ def test_diagnostics_export_zip_contains_expected_payloads(tmp_path):
         payload = json.loads(zf.read("forensics_review.json"))
     assert "health_status" in payload
     assert "orders_count" in payload
+    assert "required_evidence_sections" in payload
+    assert "forensics_review.json" in payload["required_evidence_sections"]

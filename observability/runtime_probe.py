@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import time
+import zipfile
+from pathlib import Path
 from typing import Any, Dict
 
 
@@ -81,6 +83,7 @@ class RuntimeProbe:
     def collect_forensics_evidence(self) -> Dict[str, Any]:
         recent_orders = []
         recent_audit = []
+        diagnostics_export: Dict[str, Any] = {}
 
         orders_getter = getattr(self.db, "get_recent_orders_for_diagnostics", None)
         if callable(orders_getter):
@@ -96,9 +99,26 @@ class RuntimeProbe:
             except Exception:
                 recent_audit = []
 
+        try:
+            export_dir = Path("diagnostics_exports")
+            bundles = sorted(export_dir.glob("diagnostics_bundle_*.zip"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if bundles:
+                with zipfile.ZipFile(bundles[0], "r") as zf:
+                    manifest = zf.read("manifest.json").decode("utf-8")
+                import json
+
+                payload = json.loads(manifest)
+                diagnostics_export = {
+                    "bundle_path": str(bundles[0]),
+                    "manifest_files": list(payload.get("files") or []),
+                }
+        except Exception:
+            diagnostics_export = {}
+
         return {
             "recent_orders": recent_orders,
             "recent_audit": recent_audit,
+            "diagnostics_export": diagnostics_export,
         }
 
     def _probe_ready_component(self, obj: Any, name: str) -> Dict[str, Any]:
@@ -252,9 +272,9 @@ class RuntimeProbe:
                     ts = None
 
                     if isinstance(row, dict):
-                        ts = row.get("timestamp") or row.get("ts")
+                        ts = row.get("timestamp") or row.get("ts") or row.get("created_at")
                     elif hasattr(row, "timestamp"):
-                        ts = getattr(row, "timestamp", None)
+                        ts = getattr(row, "timestamp", None) or getattr(row, "created_at", None)
 
                     try:
                         now = time.time()

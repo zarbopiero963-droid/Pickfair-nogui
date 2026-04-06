@@ -36,6 +36,16 @@ def test_event_without_side_effect_snapshot_gap_and_bundle_gap_rules():
     )
     assert event_gap and event_gap["code"] == "EVENT_WITHOUT_EXPECTED_SIDE_EFFECT"
 
+    metric_gap = rule_event_without_expected_side_effect(
+        {
+            "metrics": {"counters": {"quick_bet_finalized_total": 2}},
+            "recent_orders": [],
+            "recent_audit": [],
+        },
+        {},
+    )
+    assert metric_gap and metric_gap["code"] == "EVENT_WITHOUT_EXPECTED_SIDE_EFFECT"
+
     snap_gap = rule_snapshot_without_runtime_evidence(
         {
             "runtime_state": {"forensics": {"observability_snapshot_recent": True}},
@@ -56,6 +66,19 @@ def test_event_without_side_effect_snapshot_gap_and_bundle_gap_rules():
         {},
     )
     assert bundle_gap and bundle_gap["code"] == "DIAGNOSTICS_BUNDLE_EVIDENCE_GAP"
+
+    manifest_gap = rule_diagnostics_bundle_evidence_gap(
+        {
+            "health": {"overall_status": "DEGRADED"},
+            "alerts": {"active_count": 0},
+            "incidents": {"open_count": 0},
+            "recent_orders": [{"id": "O1"}],
+            "recent_audit": [{"id": "A1"}],
+            "diagnostics_export": {"manifest_files": ["health.json", "metrics.json"]},
+        },
+        {},
+    )
+    assert manifest_gap and manifest_gap["code"] == "DIAGNOSTICS_BUNDLE_EVIDENCE_GAP"
 
 
 def test_incident_without_alert_and_alert_without_runtime_context_rules():
