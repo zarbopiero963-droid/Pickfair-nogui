@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ class TelegramAlertsService:
     ) -> None:
         self.settings_service = settings_service
         self.telegram_sender = telegram_sender
+        self._last_sent_at: Dict[str, float] = {}
 
     def notify_alert(self, alert: Dict[str, Any]) -> None:
         try:
@@ -55,8 +57,18 @@ class TelegramAlertsService:
             if not self._should_send(severity, min_severity):
                 return
 
+            dedup_enabled = bool(settings.get("alert_dedup_enabled", True))
+            cooldown_sec = int(settings.get("alert_cooldown_sec", 300) or 300)
+            dedup_key = self._dedup_key(alert)
+            now = time.time()
+            if dedup_enabled and cooldown_sec > 0:
+                last_sent = float(self._last_sent_at.get(dedup_key, 0.0) or 0.0)
+                if (now - last_sent) < cooldown_sec:
+                    return
+
             text = self._format_alert_text(alert, settings)
             self._send_message(chat_id=chat_id, text=text)
+            self._last_sent_at[dedup_key] = now
 
         except Exception:
             logger.exception("TelegramAlertsService.notify_alert failed")
@@ -77,6 +89,9 @@ class TelegramAlertsService:
                     "alerts_chat_id": data.get("telegram.alerts_chat_id"),
                     "alerts_chat_name": data.get("telegram.alerts_chat_name", ""),
                     "min_alert_severity": data.get("telegram.min_alert_severity", "WARNING"),
+                    "alert_cooldown_sec": data.get("telegram.alert_cooldown_sec", 300),
+                    "alert_dedup_enabled": bool(data.get("telegram.alert_dedup_enabled", True)),
+                    "alert_format_rich": bool(data.get("telegram.alert_format_rich", True)),
                 }
             except Exception:
                 logger.exception("get_all_settings failed while reading telegram alert settings")
@@ -122,9 +137,19 @@ class TelegramAlertsService:
             lines.append(f"Description: {description}")
 
         if details:
-            lines.append(f"Details: {details}")
+            if bool(settings.get("alert_format_rich", True)):
+                rendered = ", ".join(f"{k}={v}" for k, v in sorted(dict(details).items()))
+                lines.append(f"Details: {rendered}")
+            else:
+                lines.append(f"Details: {details}")
 
         return "\n".join(lines)
+
+    def _dedup_key(self, alert: Dict[str, Any]) -> str:
+        code = str(alert.get("code", "UNKNOWN_ALERT") or "UNKNOWN_ALERT")
+        severity = str(alert.get("severity", "WARNING") or "WARNING").upper()
+        message = str(alert.get("message") or alert.get("title") or code)
+        return f"{code}|{severity}|{message}"
 
     def _send_message(self, *, chat_id: Any, text: str) -> None:
         """

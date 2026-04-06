@@ -152,6 +152,9 @@ class SettingsService:
             "alerts_chat_id": row.get("alerts_chat_id"),
             "alerts_chat_name": str(row.get("alerts_chat_name", "") or ""),
             "min_alert_severity": str(row.get("min_alert_severity", "WARNING") or "WARNING").upper(),
+            "alert_cooldown_sec": int(row.get("alert_cooldown_sec", 300) or 300),
+            "alert_dedup_enabled": bool(row.get("alert_dedup_enabled", True)),
+            "alert_format_rich": bool(row.get("alert_format_rich", True)),
         }
 
     def save_telegram_alert_settings(
@@ -161,6 +164,9 @@ class SettingsService:
         alerts_chat_id: Any,
         alerts_chat_name: str,
         min_alert_severity: str = "WARNING",
+        alert_cooldown_sec: int = 300,
+        alert_dedup_enabled: bool = True,
+        alert_format_rich: bool = True,
     ) -> None:
         row = self.db.get_telegram_settings() if hasattr(self.db, "get_telegram_settings") else {}
         row = dict(row or {})
@@ -169,6 +175,9 @@ class SettingsService:
         row["alerts_chat_id"] = str(alerts_chat_id or "")
         row["alerts_chat_name"] = str(alerts_chat_name or "")
         row["min_alert_severity"] = str(min_alert_severity or "WARNING").upper()
+        row["alert_cooldown_sec"] = int(alert_cooldown_sec or 300)
+        row["alert_dedup_enabled"] = int(bool(alert_dedup_enabled))
+        row["alert_format_rich"] = int(bool(alert_format_rich))
 
         if hasattr(self.db, "save_telegram_settings"):
             self.db.save_telegram_settings(row)

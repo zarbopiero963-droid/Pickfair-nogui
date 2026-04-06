@@ -15,6 +15,8 @@ class RuntimeProbe:
         betfair_service: Any = None,
         safe_mode: Any = None,
         shutdown_manager: Any = None,
+        telegram_service: Any = None,
+        settings_service: Any = None,
     ) -> None:
         self.db = db
         self.trading_engine = trading_engine
@@ -22,6 +24,8 @@ class RuntimeProbe:
         self.betfair_service = betfair_service
         self.safe_mode = safe_mode
         self.shutdown_manager = shutdown_manager
+        self.telegram_service = telegram_service
+        self.settings_service = settings_service
 
     def collect_health(self) -> Dict[str, Dict[str, Any]]:
         out: Dict[str, Dict[str, Any]] = {}
@@ -69,6 +73,8 @@ class RuntimeProbe:
 
         if self.trading_engine is not None:
             state["trading_engine_readiness"] = getattr(self.trading_engine, "readiness", lambda: None)()
+        state["alert_pipeline"] = self._alert_pipeline_state()
+        state["forensics"] = self._forensics_state()
 
         return state
 
@@ -185,3 +191,37 @@ class RuntimeProbe:
             return rss_kb / 1024.0
         except Exception:
             return None
+
+    def _alert_pipeline_state(self) -> Dict[str, Any]:
+        alerts_enabled = False
+        loader = getattr(self.settings_service, "load_telegram_config_row", None)
+        if callable(loader):
+            try:
+                row = loader() or {}
+                alerts_enabled = bool(row.get("alerts_enabled", False))
+            except Exception:
+                alerts_enabled = False
+
+        sender_available = False
+        getter = getattr(self.telegram_service, "get_sender", None)
+        if callable(getter):
+            try:
+                sender_available = getter() is not None
+            except Exception:
+                sender_available = False
+
+        return {
+            "alerts_enabled": alerts_enabled,
+            "sender_available": sender_available,
+        }
+
+    def _forensics_state(self) -> Dict[str, Any]:
+        snapshot_recent = True
+        getter = getattr(self.db, "get_recent_observability_snapshots", None)
+        if callable(getter):
+            try:
+                rows = getter(limit=1) or []
+                snapshot_recent = bool(rows)
+            except Exception:
+                snapshot_recent = False
+        return {"observability_snapshot_recent": snapshot_recent}
