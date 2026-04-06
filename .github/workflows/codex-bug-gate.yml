@@ -1,0 +1,105 @@
+name: codex-bug-gate
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+  pull_request_review:
+    types:
+      - submitted
+      - edited
+      - dismissed
+  pull_request_review_comment:
+    types:
+      - created
+      - edited
+      - deleted
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+
+jobs:
+  codex-bug-gate:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Ensure GitHub CLI is available
+        run: gh --version
+
+      - name: Collect PR changed files
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api /repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number || github.event.issue.number }}/files?per_page=100 > pr_files_raw.json
+          python - <<'PY'
+          import json
+          with open("pr_files_raw.json", "r", encoding="utf-8") as f:
+              data = json.load(f)
+          files = [item["filename"] for item in data if item.get("filename")]
+          with open("changed_files.json", "w", encoding="utf-8") as f:
+              json.dump({"files": files}, f, indent=2)
+          print(json.dumps({"files": files}, indent=2))
+          PY
+
+      - name: Parse Codex review comments
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/parse_codex_review_comments.py codex_findings.json
+
+      - name: Show parsed findings
+        run: |
+          echo "=== changed_files.json ==="
+          cat changed_files.json || true
+          echo "=== codex_findings.json ==="
+          cat codex_findings.json || true
+
+      - name: Run Codex bug gate
+        run: |
+          python scripts/codex_bug_gate.py \
+            codex_findings.json \
+            --changed-files-json changed_files.json \
+            --output codex_gate_result.json \
+            --comment-output codex_gate_comment.md \
+            --fail-on-real
+
+      - name: Show gate result
+        if: always()
+        run: |
+          echo "=== codex_gate_result.json ==="
+          cat codex_gate_result.json || true
+          echo "=== codex_gate_comment.md ==="
+          cat codex_gate_comment.md || true
+
+      - name: Post/update PR comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/post_codex_gate_comment.py codex_gate_comment.md
+
+      - name: Upload findings artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-bug-gate
+          path: |
+            changed_files.json
+            codex_findings.json
+            codex_gate_result.json
+            codex_gate_comment.md
