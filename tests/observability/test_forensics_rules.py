@@ -36,16 +36,6 @@ def test_event_without_side_effect_snapshot_gap_and_bundle_gap_rules():
     )
     assert event_gap and event_gap["code"] == "EVENT_WITHOUT_EXPECTED_SIDE_EFFECT"
 
-    metric_gap = rule_event_without_expected_side_effect(
-        {
-            "metrics": {"counters": {"quick_bet_finalized_total": 2}},
-            "recent_orders": [],
-            "recent_audit": [],
-        },
-        {},
-    )
-    assert metric_gap and metric_gap["code"] == "EVENT_WITHOUT_EXPECTED_SIDE_EFFECT"
-
     snap_gap = rule_snapshot_without_runtime_evidence(
         {
             "runtime_state": {"forensics": {"observability_snapshot_recent": True}},
@@ -79,6 +69,138 @@ def test_event_without_side_effect_snapshot_gap_and_bundle_gap_rules():
         {},
     )
     assert manifest_gap and manifest_gap["code"] == "DIAGNOSTICS_BUNDLE_EVIDENCE_GAP"
+
+
+def test_finalize_requires_success_not_terminal():
+    state = {}
+    baseline = {"metrics": {"counters": {"quick_bet_finalized_total": 1}}, "recent_orders": [], "recent_audit": []}
+    rule_event_without_expected_side_effect(baseline, state)
+    no_success = rule_event_without_expected_side_effect(
+        {
+            "metrics": {"counters": {"quick_bet_finalized_total": 2}},
+            "recent_orders": [{"status": "FAILED"}],
+            "recent_audit": [{"type": "ORDER_FAILED"}],
+        },
+        state,
+    )
+    assert no_success and no_success["code"] == "EVENT_WITHOUT_EXPECTED_SIDE_EFFECT"
+
+
+def test_finalize_counter_delta_required():
+    state = {}
+    first = rule_event_without_expected_side_effect(
+        {
+            "metrics": {"counters": {"quick_bet_finalized_total": 2}},
+            "recent_orders": [{"status": "FINALIZED"}],
+            "recent_audit": [],
+        },
+        state,
+    )
+    second = rule_event_without_expected_side_effect(
+        {
+            "metrics": {"counters": {"quick_bet_finalized_total": 2}},
+            "recent_orders": [{"status": "FINALIZED"}],
+            "recent_audit": [],
+        },
+        state,
+    )
+    assert first is None
+    assert second is None
+
+
+def test_failed_terminals_do_not_trigger_rule():
+    state = {}
+    rule_event_without_expected_side_effect(
+        {"metrics": {"counters": {"quick_bet_finalized_total": 1}}, "recent_orders": [], "recent_audit": []},
+        state,
+    )
+    item = rule_event_without_expected_side_effect(
+        {
+            "metrics": {"counters": {"quick_bet_finalized_total": 2}},
+            "recent_orders": [{"status": "FAILED"}],
+            "recent_audit": [{"type": "FAILED"}],
+        },
+        state,
+    )
+    assert item and item["code"] == "EVENT_WITHOUT_EXPECTED_SIDE_EFFECT"
+
+
+def test_success_finalize_triggers_check():
+    state = {}
+    rule_event_without_expected_side_effect(
+        {"metrics": {"counters": {"quick_bet_finalized_total": 1}}, "recent_orders": [], "recent_audit": []},
+        state,
+    )
+    triggered = rule_event_without_expected_side_effect(
+        {
+            "metrics": {"counters": {"quick_bet_finalized_total": 2}},
+            "recent_orders": [{"status": "FINALIZED"}],
+            "recent_audit": [],
+        },
+        state,
+    )
+    assert triggered is None
+
+
+def test_success_finalize_without_side_effect_detected():
+    state = {}
+    rule_event_without_expected_side_effect(
+        {"metrics": {"counters": {"quick_bet_finalized_total": 3}}, "recent_orders": [], "recent_audit": []},
+        state,
+    )
+    item = rule_event_without_expected_side_effect(
+        {
+            "metrics": {"counters": {"quick_bet_finalized_total": 4}},
+            "recent_orders": [],
+            "recent_audit": [{"type": "FINALIZED"}],
+        },
+        state,
+    )
+    assert item is None
+
+
+def test_counter_flat_no_retrigger():
+    state = {}
+    rule_event_without_expected_side_effect(
+        {"metrics": {"counters": {"quick_bet_finalized_total": 2}}, "recent_orders": [], "recent_audit": []},
+        state,
+    )
+    flat = rule_event_without_expected_side_effect(
+        {
+            "metrics": {"counters": {"quick_bet_finalized_total": 2}},
+            "recent_orders": [{"status": "FINALIZED"}],
+            "recent_audit": [],
+        },
+        state,
+    )
+    assert flat is None
+
+
+def test_mixed_terminals_only_success_counts():
+    state = {}
+    rule_event_without_expected_side_effect(
+        {"metrics": {"counters": {"quick_bet_finalized_total": 5}}, "recent_orders": [], "recent_audit": []},
+        state,
+    )
+    item = rule_event_without_expected_side_effect(
+        {
+            "metrics": {"counters": {"quick_bet_finalized_total": 6}},
+            "recent_orders": [{"status": "FAILED"}, {"status": "AMBIGUOUS"}, {"status": "COMPLETED"}],
+            "recent_audit": [{"type": "ORDER_FAILED"}],
+        },
+        state,
+    )
+    assert item is None
+
+    failed_only = rule_event_without_expected_side_effect(
+        {
+            "metrics": {"counters": {"quick_bet_finalized_total": 7}},
+            "recent_orders": [{"status": "FAILED"}, {"status": "AMBIGUOUS"}],
+            "recent_audit": [{"type": "ORDER_FAILED"}],
+        },
+        state,
+    )
+    assert failed_only and failed_only["code"] == "EVENT_WITHOUT_EXPECTED_SIDE_EFFECT"
 
 
 def test_incident_without_alert_and_alert_without_runtime_context_rules():
