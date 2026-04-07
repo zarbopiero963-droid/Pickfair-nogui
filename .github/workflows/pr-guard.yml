@@ -1,0 +1,60 @@
+name: PR Guard - Scope Lock
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install gh
+        run: |
+          sudo apt update
+          sudo apt install gh -y
+
+      - name: Authenticate gh
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+
+      - name: Read changed files
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          gh api "repos/${{ github.repository }}/pulls/$PR_NUMBER/files?per_page=100" > pr_files_raw.json
+
+      - name: Enforce allowlist
+        run: |
+          python - <<'PY'
+          import json, sys
+
+          # CHANGE THIS ALLOWLIST PER TASK / PR TYPE
+          ALLOWED = {
+              "tests/integration/test_betfair_timeout_and_ghost_orders.py",
+              "tests/chaos/test_runtime_network_instability.py",
+              "tests/chaos/test_runtime_partial_failure_paths.py",
+              "tests/chaos/test_runtime_reconcile_under_stress.py",
+          }
+
+          with open("pr_files_raw.json", "r", encoding="utf-8") as f:
+              data = json.load(f)
+
+          files = [item["filename"] for item in data if item.get("filename")]
+
+          print("Changed files:")
+          for f in files:
+              print("-", f)
+
+          invalid = [f for f in files if f not in ALLOWED]
+
+          if invalid:
+              print("\nINVALID FILES DETECTED:")
+              for f in invalid:
+                  print("-", f)
+              sys.exit(1)
+
+          print("\nPR scope is valid.")
+          PY
