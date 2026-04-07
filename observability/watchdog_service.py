@@ -34,6 +34,7 @@ class WatchdogService:
         self.incidents_manager = incidents_manager
         self.snapshot_service = snapshot_service
         self.anomaly_engine = anomaly_engine or AnomalyEngine(DEFAULT_ANOMALY_RULES)
+        self.anomaly_enabled = True
         self.forensics_engine = forensics_engine or ForensicsEngine(DEFAULT_FORENSICS_RULES)
         self.anomaly_context_provider = anomaly_context_provider
         self.interval_sec = float(interval_sec)
@@ -136,7 +137,7 @@ class WatchdogService:
             self.alerts_manager.resolve_alert("INFLIGHT_HIGH")
 
     def _evaluate_anomalies(self) -> None:
-        if self.anomaly_engine is None:
+        if not self.anomaly_enabled or self.anomaly_engine is None:
             return
 
         runtime_state = {}
