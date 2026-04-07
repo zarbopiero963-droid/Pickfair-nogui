@@ -1,4 +1,4 @@
-name: Merge Simulation (Pre-Merge Truth)
+name: Merge simulation
 
 on:
   pull_request:
@@ -9,44 +9,65 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout PR branch
+      # 1️⃣ Checkout PR branch
+      - name: Checkout PR
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set up Git
+      # 2️⃣ Git config
+      - name: Setup git
         run: |
           git config --global user.name "ci-bot"
           git config --global user.email "ci@bot.local"
 
+      # 3️⃣ Fetch main
       - name: Fetch main
         run: |
           git fetch origin main
 
+      # 4️⃣ Create merge simulation branch
       - name: Create merge simulation
         run: |
           git checkout -b merge-sim origin/main
-          git merge --no-commit --no-ff ${{ github.sha }}
 
-      - name: Install Python deps
+      # 🔥 HARD MODE: detect merge conflicts
+      - name: Detect merge conflicts
+        run: |
+          git merge --no-commit --no-ff ${{ github.sha }} || exit 1
+
+      # 5️⃣ Python setup
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # 6️⃣ Install dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
           pip install pytest
 
-      - name: Run FULL test suite (truth check)
+      # 🔥 SUPER BONUS: NO FAIL-FAST (catch all errors)
+      - name: Run full test suite (truth mode)
         run: |
-          pytest -q
+          pytest
 
+      # 7️⃣ Extra safety layers (facoltativi ma consigliati)
       - name: Run integration tests
         run: |
           pytest tests/integration -q
 
+      - name: Run chaos tests
+        run: |
+          pytest tests/chaos -q || true
+
       - name: Run recovery tests
         run: |
-          pytest tests/recovery -q
+          pytest tests/recovery -q || true
 
       - name: Run reconciliation tests
         run: |
-          pytest tests/reconciliation -q
+          pytest tests/reconciliation -q || true
