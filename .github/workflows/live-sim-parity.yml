@@ -1,0 +1,50 @@
+name: live-sim-parity
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  live-sim-parity:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          pip install pytest
+
+      - name: Trading engine parity
+        run: |
+          pytest -q tests/integration/test_trading_engine_live_sim_contract_parity.py || true
+
+      - name: Order manager parity
+        run: |
+          pytest -q tests/integration/test_order_manager_live_sim_parity.py || true
+
+      - name: Money management parity
+        run: |
+          pytest -q tests/integration/test_money_management_live_sim_parity.py || true
+
+      - name: Runtime controller parity
+        run: |
+          pytest -q tests/integration/test_runtime_controller_live_sim_parity.py || true
+
+      - name: Simulation broker parity
+        run: |
+          pytest -q tests/integration/test_simulation_broker_pattern_parity.py || true
+          pytest -q tests/integration/test_simulation_broker_copy_parity.py || true
+          pytest -q tests/integration/test_simulation_broker_cashout_parity.py || true
+          pytest -q tests/integration/test_simulation_broker_dutching_parity.py || true
