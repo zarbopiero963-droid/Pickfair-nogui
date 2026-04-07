@@ -104,9 +104,20 @@ def test_partial_failure_does_not_claim_success() -> None:
 
     order = db.get_order(result["order_id"])
     assert order["status"] == STATUS_SUBMITTED
+    assert order.get("bet_id") is None
+    assert order.get("remote_bet_id") is None
+    assert bool(order.get("correlation_id"))
 
     event_names = [name for name, _payload in bus.events]
     assert "QUICK_BET_SUCCESS" not in event_names
+
+    retry = engine.submit_quick_bet(_payload("PARTIAL-CHAOS-1"))
+    assert retry["status"] == "DUPLICATE_BLOCKED"
+    active_orders = [o for o in db.orders.values() if o.get("status") != "DUPLICATE_BLOCKED"]
+    assert len(active_orders) == 1
+
+    unresolved = [o for o in db.orders.values() if o.get("status") == STATUS_SUBMITTED]
+    assert len(unresolved) == 1
 
 
 @pytest.mark.chaos

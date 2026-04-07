@@ -174,6 +174,8 @@ def test_retry_after_timeout_does_not_duplicate_order() -> None:
         o for o in db.orders.values() if o.get("status") not in {STATUS_DUPLICATE_BLOCKED}
     ]
     assert len(accepted_or_ambiguous) == 1
+    effective_exposure = sum(float(order.get("payload", {}).get("size", 0.0)) for order in accepted_or_ambiguous)
+    assert effective_exposure == float(_payload("RETRY-CHAOS-1")["size"])
 
     published_names = [name for name, _payload in bus.events]
     assert "QUICK_BET_DUPLICATE" in published_names
@@ -182,23 +184,23 @@ def test_retry_after_timeout_does_not_duplicate_order() -> None:
 @pytest.mark.chaos
 @pytest.mark.integration
 def test_concurrent_submit_race_is_deduplicated() -> None:
-    engine, db, _bus, _rec = _make_engine(client=FakeClient(error=TimeoutError("submit timeout")))
+    for idx in range(5):
+        engine, db, _bus, _rec = _make_engine(client=FakeClient(error=TimeoutError("submit timeout")))
+        results: List[Dict[str, Any]] = []
 
-    results: List[Dict[str, Any]] = []
+        def worker() -> None:
+            results.append(engine.submit_quick_bet(_payload(f"RACE-CHAOS-{idx}")))
 
-    def worker() -> None:
-        results.append(engine.submit_quick_bet(_payload("RACE-CHAOS-1")))
+        t1 = threading.Thread(target=worker)
+        t2 = threading.Thread(target=worker)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
 
-    t1 = threading.Thread(target=worker)
-    t2 = threading.Thread(target=worker)
-    t1.start()
-    t2.start()
-    t1.join()
-    t2.join()
+        statuses = [r["status"] for r in results]
+        assert STATUS_AMBIGUOUS in statuses
+        assert STATUS_DUPLICATE_BLOCKED in statuses
 
-    statuses = [r["status"] for r in results]
-    assert STATUS_AMBIGUOUS in statuses
-    assert STATUS_DUPLICATE_BLOCKED in statuses
-
-    non_duplicate_orders = [o for o in db.orders.values() if o.get("status") != STATUS_DUPLICATE_BLOCKED]
-    assert len(non_duplicate_orders) == 1
+        non_duplicate_orders = [o for o in db.orders.values() if o.get("status") != STATUS_DUPLICATE_BLOCKED]
+        assert len(non_duplicate_orders) == 1
