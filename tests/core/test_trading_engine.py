@@ -334,6 +334,21 @@ def test_ack_keeps_inflight_lock_until_terminal():
     assert "CUST-1" in engine._inflight_keys
 
 
+def test_semantic_failed_payload_does_not_ack_success():
+    client = FakeClient(response={"ok": False, "status": "FAILED", "error": "BROKER_REJECTED"})
+    engine, db, _, _, _, _, _, _ = make_engine(client=client)
+
+    result = engine.submit_quick_bet(make_payload())
+
+    assert result["status"] == STATUS_FAILED
+    assert result["outcome"] == OUTCOME_FAILURE
+    assert result["is_terminal"] is True
+    assert "DOWNSTREAM_SEMANTIC_FAILURE" in (result["error"] or "")
+
+    order = db.get_order(result["order_id"])
+    assert order["status"] == STATUS_FAILED
+
+
 def test_safe_mode_denies_request_and_finalizes():
     engine, db, _, client, _, _, _, _ = make_engine(safe_mode=FakeSafeMode(enabled=True))
 

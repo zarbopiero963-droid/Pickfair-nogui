@@ -313,6 +313,34 @@ class Database:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS orders (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    customer_ref TEXT NOT NULL,
+                    correlation_id TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'INFLIGHT',
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    response_json TEXT,
+                    outcome TEXT,
+                    reason TEXT,
+                    last_error TEXT,
+                    ambiguity_reason TEXT,
+                    finalized INTEGER NOT NULL DEFAULT 0,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS audit_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts REAL NOT NULL,
+                    event_json TEXT NOT NULL DEFAULT '{}'
+                )
+                """
+            )
 
             conn.execute(
                 """
@@ -395,6 +423,15 @@ class Database:
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_order_saga_status ON order_saga(status)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_orders_customer_ref ON orders(customer_ref)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_orders_correlation_id ON orders(correlation_id)"
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_order_saga_batch_id ON order_saga(batch_id)"
@@ -927,6 +964,161 @@ class Database:
                 str(payload.get("created_at") or now),
                 now,
             ),
+        )
+
+    # =========================================================
+    # TRADING ENGINE ORDERS CONTRACT
+    # =========================================================
+    def insert_order(self, payload: Dict[str, Any]) -> str:
+        customer_ref = str(payload.get("customer_ref") or "")
+        correlation_id = str(payload.get("correlation_id") or "")
+        if not customer_ref or not correlation_id:
+            raise RuntimeError("insert_order requires customer_ref and correlation_id")
+
+        status = str(payload.get("status") or "INFLIGHT")
+        created_at = float(payload.get("created_at") or time.time())
+        updated_at = float(payload.get("updated_at") or created_at)
+
+        cur = self._execute(
+            """
+            INSERT INTO orders(
+                customer_ref, correlation_id, status, payload_json,
+                response_json, outcome, reason, last_error, ambiguity_reason,
+                finalized, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                customer_ref,
+                correlation_id,
+                status,
+                self._safe_json_dumps(payload.get("payload", {})),
+                self._safe_json_dumps(payload.get("response")) if payload.get("response") is not None else None,
+                payload.get("outcome"),
+                payload.get("reason"),
+                payload.get("last_error"),
+                payload.get("ambiguity_reason"),
+                int(bool(payload.get("finalized", False))),
+                created_at,
+                updated_at,
+            ),
+        )
+        return str(cur.lastrowid)
+
+    def update_order(self, order_id: str, update: Dict[str, Any]) -> None:
+        current = self.get_order(order_id)
+        merged = dict(current)
+        merged.update(update or {})
+
+        self._execute(
+            """
+            UPDATE orders
+            SET status = ?,
+                payload_json = ?,
+                response_json = ?,
+                outcome = ?,
+                reason = ?,
+                last_error = ?,
+                ambiguity_reason = ?,
+                finalized = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                str(merged.get("status") or ""),
+                self._safe_json_dumps(merged.get("payload", {})),
+                self._safe_json_dumps(merged.get("response")) if merged.get("response") is not None else None,
+                merged.get("outcome"),
+                merged.get("reason"),
+                merged.get("last_error"),
+                merged.get("ambiguity_reason"),
+                int(bool(merged.get("finalized", False))),
+                float(merged.get("updated_at") or time.time()),
+                int(order_id),
+            ),
+        )
+
+    def get_order(self, order_id: str) -> Dict[str, Any]:
+        row = self._execute(
+            "SELECT * FROM orders WHERE id = ? LIMIT 1",
+            (int(order_id),),
+            fetchone=True,
+            commit=False,
+        )
+        if not row:
+            raise KeyError(str(order_id))
+        item = dict(row)
+        item["payload"] = self._safe_json_loads(item.get("payload_json"), {})
+        item["response"] = self._safe_json_loads(item.get("response_json"), None)
+        item["finalized"] = bool(item.get("finalized"))
+        return item
+
+    def order_exists_inflight(
+        self,
+        customer_ref: Optional[str] = None,
+        correlation_id: Optional[str] = None,
+    ) -> bool:
+        if not customer_ref and not correlation_id:
+            return False
+
+        identity_clauses: List[str] = []
+        params: List[Any] = []
+        if customer_ref:
+            identity_clauses.append("customer_ref = ?")
+            params.append(str(customer_ref))
+        if correlation_id:
+            identity_clauses.append("correlation_id = ?")
+            params.append(str(correlation_id))
+        sql = (
+            "SELECT 1 FROM orders "
+            "WHERE status IN ('INFLIGHT', 'SUBMITTED') "
+            f"AND ({' OR '.join(identity_clauses)}) LIMIT 1"
+        )
+        row = self._execute(sql, tuple(params), fetchone=True, commit=False)
+        return row is not None
+
+    def find_duplicate_order(
+        self,
+        customer_ref: Optional[str] = None,
+        correlation_id: Optional[str] = None,
+    ) -> Optional[str]:
+        row = None
+        if customer_ref:
+            row = self._execute(
+                "SELECT id FROM orders WHERE customer_ref = ? ORDER BY id DESC LIMIT 1",
+                (str(customer_ref),),
+                fetchone=True,
+                commit=False,
+            )
+        if row is None and correlation_id:
+            row = self._execute(
+                "SELECT id FROM orders WHERE correlation_id = ? ORDER BY id DESC LIMIT 1",
+                (str(correlation_id),),
+                fetchone=True,
+                commit=False,
+            )
+        return str(row["id"]) if row else None
+
+    def load_pending_customer_refs(self) -> List[str]:
+        rows = self._execute(
+            "SELECT customer_ref FROM orders WHERE status IN ('INFLIGHT', 'SUBMITTED') ORDER BY id ASC",
+            fetch=True,
+            commit=False,
+        ) or []
+        return [str(row["customer_ref"]) for row in rows if row["customer_ref"]]
+
+    def load_pending_correlation_ids(self) -> List[str]:
+        rows = self._execute(
+            "SELECT correlation_id FROM orders WHERE status IN ('INFLIGHT', 'SUBMITTED') ORDER BY id ASC",
+            fetch=True,
+            commit=False,
+        ) or []
+        return [str(row["correlation_id"]) for row in rows if row["correlation_id"]]
+
+    def insert_audit_event(self, event: Dict[str, Any]) -> None:
+        self._execute(
+            "INSERT INTO audit_events(ts, event_json) VALUES (?, ?)",
+            (float(time.time()), self._safe_json_dumps(event or {})),
         )
 
     # =========================================================
