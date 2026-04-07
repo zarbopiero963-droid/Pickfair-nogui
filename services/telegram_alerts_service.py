@@ -10,6 +10,7 @@ SEVERITY_RANK = {
     "INFO": 10,
     "WARNING": 20,
     "ERROR": 30,
+    "HIGH": 35,
     "CRITICAL": 40,
 }
 
@@ -26,7 +27,7 @@ class TelegramAlertsService:
     - alerts_enabled: bool
     - alerts_chat_id: str | int
     - alerts_chat_name: str
-    - min_alert_severity: INFO | WARNING | ERROR | CRITICAL
+    - min_alert_severity: INFO | WARNING | ERROR | HIGH | CRITICAL
     """
 
     def __init__(
@@ -171,10 +172,15 @@ class TelegramAlertsService:
 
         chat_name = str(settings.get("alerts_chat_name", "") or "").strip()
 
+        lifecycle = str(alert.get("lifecycle") or "").upper()
+        if lifecycle not in {"OPEN", "UPDATED", "RESOLVED"}:
+            lifecycle = ""
+
         icon = {
             "INFO": "ℹ️",
             "WARNING": "⚠️",
             "ERROR": "❌",
+            "HIGH": "🔥",
             "CRITICAL": "🚨",
         }.get(severity, "⚠️")
 
@@ -185,6 +191,9 @@ class TelegramAlertsService:
             f"Title: {title}",
             f"Source: {source}",
         ]
+
+        if lifecycle:
+            lines.append(f"Lifecycle: {lifecycle}")
 
         if chat_name:
             lines.append(f"Channel: {chat_name}")
