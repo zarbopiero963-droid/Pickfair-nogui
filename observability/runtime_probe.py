@@ -19,6 +19,7 @@ class RuntimeProbe:
         shutdown_manager: Any = None,
         telegram_service: Any = None,
         settings_service: Any = None,
+        telegram_alerts_service: Any = None,
     ) -> None:
         self.db = db
         self.trading_engine = trading_engine
@@ -28,6 +29,7 @@ class RuntimeProbe:
         self.shutdown_manager = shutdown_manager
         self.telegram_service = telegram_service
         self.settings_service = settings_service
+        self.telegram_alerts_service = telegram_alerts_service
 
     def collect_health(self) -> Dict[str, Dict[str, Any]]:
         out: Dict[str, Dict[str, Any]] = {}
@@ -70,8 +72,7 @@ class RuntimeProbe:
                 if hasattr(self.runtime_controller, attr):
                     state[attr] = getattr(self.runtime_controller, attr)
 
-        if self.safe_mode is not None:
-            state["safe_mode_enabled"] = self._safe_mode_enabled()
+        state["safe_mode_enabled"] = self._safe_mode_enabled()
 
         if self.trading_engine is not None:
             state["trading_engine_readiness"] = getattr(self.trading_engine, "readiness", lambda: None)()
@@ -194,7 +195,7 @@ class RuntimeProbe:
 
     def _probe_safe_mode(self) -> Dict[str, Any]:
         if self.safe_mode is None:
-            return {"name": "safe_mode", "status": "READY", "reason": "missing_optional", "details": {}}
+            return {"name": "safe_mode", "status": "DEGRADED", "reason": "missing", "details": {"enabled": False}}
 
         enabled = self._safe_mode_enabled()
         return {
@@ -213,6 +214,11 @@ class RuntimeProbe:
                 return bool(getter())
             except Exception:
                 return False
+
+        active_prop = getattr(self.safe_mode, "is_safe_mode_active", None)
+        if isinstance(active_prop, bool):
+            return active_prop
+
         return bool(getattr(self.safe_mode, "enabled", False))
 
     def _current_rss_mb(self) -> float | None:
@@ -237,25 +243,56 @@ class RuntimeProbe:
 
     def _alert_pipeline_state(self) -> Dict[str, Any]:
         alerts_enabled = False
-        loader = getattr(self.settings_service, "load_telegram_config_row", None)
-        if callable(loader):
-            try:
-                row = loader() or {}
-                alerts_enabled = bool(row.get("alerts_enabled", False))
-            except Exception:
-                alerts_enabled = False
-
         sender_available = False
-        getter = getattr(self.telegram_service, "get_sender", None)
-        if callable(getter):
-            try:
-                sender_available = getter() is not None
-            except Exception:
-                sender_available = False
+        deliverable = False
+        reason = None
+        last_delivery_ok = None
+        last_delivery_error = ""
+
+        if self.telegram_alerts_service is not None:
+            availability = getattr(self.telegram_alerts_service, "availability_status", None)
+            if callable(availability):
+                try:
+                    status = availability() or {}
+                    alerts_enabled = bool(status.get("alerts_enabled", False))
+                    sender_available = bool(status.get("sender_available", False))
+                    deliverable = bool(status.get("deliverable", False))
+                    reason = status.get("reason")
+                    last_delivery_ok = status.get("last_delivery_ok")
+                    last_delivery_error = str(status.get("last_delivery_error") or "")
+                except Exception:
+                    pass
+
+        if not alerts_enabled:
+            loader = getattr(self.settings_service, "load_telegram_config_row", None)
+            if callable(loader):
+                try:
+                    row = loader() or {}
+                    alerts_enabled = bool(row.get("alerts_enabled", False))
+                except Exception:
+                    alerts_enabled = False
+
+        if self.telegram_alerts_service is None and not sender_available:
+            getter = getattr(self.telegram_service, "get_sender", None)
+            if callable(getter):
+                try:
+                    sender = getter()
+                    sender_available = sender is not None
+                except Exception:
+                    sender_available = False
+
+        if self.telegram_alerts_service is None and not deliverable:
+            deliverable = alerts_enabled and sender_available
+            if alerts_enabled and not sender_available and reason is None:
+                reason = "sender_unavailable"
 
         return {
             "alerts_enabled": alerts_enabled,
             "sender_available": sender_available,
+            "deliverable": deliverable,
+            "reason": reason,
+            "last_delivery_ok": last_delivery_ok,
+            "last_delivery_error": last_delivery_error,
         }
 
     def _forensics_state(self) -> Dict[str, Any]:

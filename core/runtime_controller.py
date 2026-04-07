@@ -92,6 +92,8 @@ class RuntimeController:
         self.bus.subscribe("QUICK_BET_PARTIAL", self._on_quick_bet_partial)
         self.bus.subscribe("QUICK_BET_FILLED", self._on_quick_bet_filled)
         self.bus.subscribe("QUICK_BET_ROLLBACK_DONE", self._on_quick_bet_rollback_done)
+        self.bus.subscribe("QUICK_BET_SUCCESS", self._on_quick_bet_success)
+        self.bus.subscribe("QUICK_BET_AMBIGUOUS", self._on_quick_bet_ambiguous)
         self.bus.subscribe("RUNTIME_CLOSE_POSITION", self._on_close_position)
 
     # =========================================================
@@ -378,7 +380,13 @@ class RuntimeController:
         return
 
     def _on_quick_bet_filled(self, payload: dict) -> None:
-        return
+        self._release_if_terminal(payload)
+
+    def _on_quick_bet_success(self, payload: dict) -> None:
+        self._release_if_terminal(payload)
+
+    def _on_quick_bet_ambiguous(self, payload: dict) -> None:
+        self._release_if_terminal(payload)
 
     def _on_quick_bet_rollback_done(self, payload: dict) -> None:
         self._release_if_terminal(payload)

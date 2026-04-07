@@ -57,8 +57,9 @@ def test_telegram_alert_pipeline_calls_sender_when_enabled():
     sender = SenderStub()
     svc = TelegramAlertsService(settings_service=SettingsStub(), telegram_sender=sender)
 
-    svc.notify_alert({"severity": "critical", "code": "X1", "message": "boom"})
+    result = svc.notify_alert({"severity": "critical", "code": "X1", "message": "boom"})
 
+    assert result["delivered"] is True
     assert len(sender.calls) == 1
     assert sender.calls[0][0] == "12345"
 
@@ -68,8 +69,9 @@ def test_telegram_alert_pipeline_disabled_path_is_noop():
     sender = SenderStub()
     svc = TelegramAlertsService(settings_service=DisabledSettingsStub(), telegram_sender=sender)
 
-    svc.notify_alert({"severity": "critical", "code": "X1", "message": "boom"})
+    result = svc.notify_alert({"severity": "critical", "code": "X1", "message": "boom"})
 
+    assert result["delivered"] is False
     assert sender.calls == []
 
 
@@ -78,9 +80,11 @@ def test_telegram_alert_pipeline_applies_min_severity_threshold():
     sender = SenderStub()
     svc = TelegramAlertsService(settings_service=StrictSeveritySettingsStub(), telegram_sender=sender)
 
-    svc.notify_alert({"severity": "warning", "code": "X1", "message": "warn"})
-    svc.notify_alert({"severity": "critical", "code": "X2", "message": "crash"})
+    warn = svc.notify_alert({"severity": "warning", "code": "X1", "message": "warn"})
+    crash = svc.notify_alert({"severity": "critical", "code": "X2", "message": "crash"})
 
+    assert warn["delivered"] is False
+    assert crash["delivered"] is True
     assert len(sender.calls) == 1
     assert "Code: X2" in sender.calls[0][1]
 
@@ -91,8 +95,21 @@ def test_telegram_alert_pipeline_dedup_and_cooldown():
     svc = TelegramAlertsService(settings_service=CooldownSettingsStub(), telegram_sender=sender)
 
     payload = {"severity": "critical", "code": "X1", "message": "boom", "details": {"b": 1, "a": 2}}
-    svc.notify_alert(payload)
-    svc.notify_alert(payload)
+    first = svc.notify_alert(payload)
+    second = svc.notify_alert(payload)
 
+    assert first["delivered"] is True
+    assert second["reason"] == "dedup_cooldown"
     assert len(sender.calls) == 1
     assert "Details: a=2, b=1" in sender.calls[0][1]
+
+
+@pytest.mark.smoke
+def test_telegram_alert_pipeline_enabled_but_missing_sender_is_truthful_degraded():
+    svc = TelegramAlertsService(settings_service=SettingsStub(), telegram_sender=None)
+
+    result = svc.notify_alert({"severity": "critical", "code": "X3", "message": "lost"})
+
+    assert result["delivered"] is False
+    assert result["reason"] == "sender_unavailable"
+    assert result["sender_available"] is False

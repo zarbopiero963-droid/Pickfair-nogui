@@ -31,6 +31,7 @@ from observability import (
 from observability.cleanup_service import CleanupService
 from observability.diagnostic_bundle_builder import DiagnosticBundleBuilder
 from observability.retention_manager import RetentionManager
+from safe_mode import get_safe_mode_manager
 
 
 logging.basicConfig(
@@ -82,6 +83,7 @@ class HeadlessApp:
         self.retention_manager: Optional[RetentionManager] = None
         self.cleanup_service: Optional[CleanupService] = None
         self.telegram_alerts_service: Optional[TelegramAlertsService] = None
+        self.safe_mode = None
 
         self._running = False
         self._built = False
@@ -113,6 +115,7 @@ class HeadlessApp:
         self.retention_manager = None
         self.cleanup_service = None
         self.telegram_alerts_service = None
+        self.safe_mode = None
 
         self._built = False
         self._running = False
@@ -214,11 +217,14 @@ class HeadlessApp:
                 self.bus,
             )
 
+            self.safe_mode = get_safe_mode_manager()
+
             self.trading_engine = TradingEngine(
                 bus=self.bus,
                 db=self.db,
                 client_getter=self.betfair_service.get_client,
                 executor=self.executor,
+                safe_mode=self.safe_mode,
             )
 
             self.runtime = RuntimeController(
@@ -275,10 +281,11 @@ class HeadlessApp:
                 trading_engine=self.trading_engine,
                 runtime_controller=self.runtime if "runtime_controller" in locals() else self.runtime,
                 betfair_service=self.betfair_service,
-                safe_mode=None,
+                safe_mode=self.safe_mode,
                 shutdown_manager=self.shutdown if "shutdown_manager" in locals() else self.shutdown,
                 telegram_service=self.telegram_service,
                 settings_service=self.settings_service,
+                telegram_alerts_service=self.telegram_alerts_service,
             )
 
             self.snapshot_service = SnapshotService(
@@ -308,7 +315,7 @@ class HeadlessApp:
                 alerts_manager=self.alerts_manager,
                 incidents_manager=self.incidents_manager,
                 db=self.db,
-                safe_mode=None,
+                safe_mode=self.safe_mode,
                 log_paths=[
                     "logs/app.log",
                     "logs/trading.log",
@@ -435,6 +442,8 @@ class HeadlessApp:
         self.bus.subscribe("QUICK_BET_FILLED", self._on_quick_bet_filled)
         self.bus.subscribe("QUICK_BET_FAILED", self._on_quick_bet_failed)
         self.bus.subscribe("QUICK_BET_ROLLBACK_DONE", self._on_quick_bet_rollback_done)
+        self.bus.subscribe("QUICK_BET_SUCCESS", self._on_quick_bet_success)
+        self.bus.subscribe("QUICK_BET_AMBIGUOUS", self._on_quick_bet_ambiguous)
 
     # =========================================================
     # EVENT LOGGING
@@ -483,6 +492,12 @@ class HeadlessApp:
 
     def _on_quick_bet_rollback_done(self, payload):
         logger.warning("QUICK_BET_ROLLBACK_DONE -> %s", payload)
+
+    def _on_quick_bet_success(self, payload):
+        logger.info("QUICK_BET_SUCCESS -> %s", payload)
+
+    def _on_quick_bet_ambiguous(self, payload):
+        logger.warning("QUICK_BET_AMBIGUOUS -> %s", payload)
 
     # =========================================================
     # ARGUMENTS
