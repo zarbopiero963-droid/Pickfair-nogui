@@ -25,6 +25,7 @@ class WatchdogService:
         anomaly_engine: Any = None,
         forensics_engine: Any = None,
         anomaly_context_provider: Any = None,
+        anomaly_enabled: bool = False,
         interval_sec: float = 5.0,
     ) -> None:
         self.probe = probe
@@ -36,6 +37,7 @@ class WatchdogService:
         self.anomaly_engine = anomaly_engine or AnomalyEngine(DEFAULT_ANOMALY_RULES)
         self.forensics_engine = forensics_engine or ForensicsEngine(DEFAULT_FORENSICS_RULES)
         self.anomaly_context_provider = anomaly_context_provider
+        self.anomaly_enabled = bool(anomaly_enabled)
         self.interval_sec = float(interval_sec)
 
         self._stop_event = threading.Event()
@@ -85,9 +87,20 @@ class WatchdogService:
             self.metrics_registry.set_gauge(name, value)
 
         self._evaluate_alerts()
-        self._evaluate_anomalies()
-        self._evaluate_forensics()
+        if self.anomaly_enabled:
+            self._run_anomaly_hook()
         self.snapshot_service.collect_and_store()
+
+    def _run_anomaly_hook(self) -> None:
+        self._evaluate_anomalies()
+        self._evaluate_invariants()
+        self._evaluate_correlations()
+
+    def _evaluate_invariants(self) -> None:
+        self._evaluate_forensics()
+
+    def _evaluate_correlations(self) -> None:
+        self._evaluate_forensics()
 
     def _evaluate_alerts(self) -> None:
         health = self.health_registry.snapshot()
