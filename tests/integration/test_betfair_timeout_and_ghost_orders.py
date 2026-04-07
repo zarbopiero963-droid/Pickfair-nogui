@@ -248,6 +248,7 @@ def test_ghost_order_resolved_without_duplicate_exposure() -> None:
     assert len(non_duplicate_orders) == 1
     assert non_duplicate_orders[0]["status"] == STATUS_COMPLETED
     assert non_duplicate_orders[0]["remote_bet_id"] == "REMOTE-1"
+    assert non_duplicate_orders[0]["status"] != STATUS_FAILED
 
 
 @pytest.mark.integration
@@ -262,6 +263,7 @@ def test_retry_after_timeout_does_not_duplicate_order() -> None:
 
     non_duplicate_orders = [o for o in db.orders.values() if o.get("status") != STATUS_DUPLICATE_BLOCKED]
     assert len(non_duplicate_orders) == 1
+    assert all(order.get("status") != STATUS_FAILED for order in non_duplicate_orders)
 
     published_names = [name for name, _payload in bus.events]
     assert "QUICK_BET_DUPLICATE" in published_names
