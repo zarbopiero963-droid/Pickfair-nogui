@@ -235,10 +235,13 @@ def test_submit_timeout_becomes_ambiguous_not_failed() -> None:
 
 @pytest.mark.integration
 def test_ghost_order_resolved_without_duplicate_exposure() -> None:
-    engine, db, _bus, _rec = _make_engine(client=FakeClient(error=TimeoutError("submit timeout")))
+    engine, db, bus, _rec = _make_engine(client=FakeClient(error=TimeoutError("submit timeout")))
 
     first = engine.submit_quick_bet(_payload("GHOST-1"))
     assert first["status"] == STATUS_AMBIGUOUS
+    assert first["audit"]["events"]
+    assert any(evt.get("type") == "SUBMIT_AMBIGUOUS" for evt in first["audit"]["events"])
+    assert any(evt.get("type") == "FINAL_AMBIGUOUS" for evt in first["audit"]["events"])
 
     resolver = GhostReconciler(db, {"GHOST-1": {"bet_id": "REMOTE-1"}})
     resolved = resolver.resolve_once(customer_ref="GHOST-1")
@@ -248,7 +251,12 @@ def test_ghost_order_resolved_without_duplicate_exposure() -> None:
     assert len(non_duplicate_orders) == 1
     assert non_duplicate_orders[0]["status"] == STATUS_COMPLETED
     assert non_duplicate_orders[0]["remote_bet_id"] == "REMOTE-1"
+    assert non_duplicate_orders[0]["ambiguity_reason"] == AMBIGUITY_SUBMIT_TIMEOUT
     assert non_duplicate_orders[0]["status"] != STATUS_FAILED
+    ambiguous_events = [payload for name, payload in bus.events if name == "QUICK_BET_AMBIGUOUS"]
+    assert len(ambiguous_events) == 1
+    assert ambiguous_events[0]["order_id"] == first["order_id"]
+    assert ambiguous_events[0]["customer_ref"] == "GHOST-1"
 
 
 @pytest.mark.integration
@@ -263,6 +271,8 @@ def test_retry_after_timeout_does_not_duplicate_order() -> None:
 
     non_duplicate_orders = [o for o in db.orders.values() if o.get("status") != STATUS_DUPLICATE_BLOCKED]
     assert len(non_duplicate_orders) == 1
+    effective_exposure = sum(float(order.get("payload", {}).get("size", 0.0)) for order in non_duplicate_orders)
+    assert effective_exposure == float(_payload("RETRY-1")["size"])
     assert all(order.get("status") != STATUS_FAILED for order in non_duplicate_orders)
 
     published_names = [name for name, _payload in bus.events]
@@ -281,10 +291,24 @@ def test_partial_failure_does_not_claim_success() -> None:
 
     order = db.get_order(result["order_id"])
     assert order["status"] == STATUS_SUBMITTED
+    assert order.get("bet_id") is None
+    assert order.get("remote_bet_id") is None
+    assert bool(order.get("correlation_id"))
     assert len(rec.enqueued) == 0
 
     event_names = [name for name, _payload in bus.events]
     assert "QUICK_BET_SUCCESS" not in event_names
+
+    duplicate_attempt = engine.submit_quick_bet(_payload("PARTIAL-1"))
+    assert duplicate_attempt["status"] == STATUS_DUPLICATE_BLOCKED
+    active_orders = [o for o in db.orders.values() if o.get("status") != STATUS_DUPLICATE_BLOCKED]
+    assert len(active_orders) == 1
+
+    unresolved = GhostReconciler(db, {}).resolve_once(customer_ref="PARTIAL-1")
+    assert unresolved is False
+    unchanged = db.get_order(result["order_id"])
+    assert unchanged["status"] == STATUS_SUBMITTED
+    assert unchanged.get("remote_bet_id") is None
 
 
 @pytest.mark.integration
@@ -309,7 +333,9 @@ def test_reconcile_transient_failure_preserves_ambiguity() -> None:
     second_pass = runner.run_once(customer_ref="RECON-1")
     state_after_second = db.get_order(result["order_id"])
 
+    assert runner.fetcher.calls >= 2
     assert first_pass is False
     assert state_after_first["status"] == STATUS_AMBIGUOUS
+    assert state_after_first["status"] != STATUS_FAILED
     assert second_pass is True
     assert state_after_second["status"] == STATUS_COMPLETED

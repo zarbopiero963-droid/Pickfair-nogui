@@ -39,3 +39,21 @@ def test_forensics_engine_returns_correlated_findings():
     assert "EVENT_WITHOUT_EXPECTED_SIDE_EFFECT" in codes
     assert "INCIDENT_WITHOUT_SUPPORTING_ALERT" in codes
     assert "DIAGNOSTICS_BUNDLE_EVIDENCE_GAP" in codes
+
+
+def test_forensics_engine_flags_missing_diagnostics_evidence():
+    engine = ForensicsEngine(DEFAULT_FORENSICS_RULES)
+    context = {
+        "health": {"overall_status": "DEGRADED"},
+        "metrics": {"gauges": {}, "counters": {"quick_bet_finalized_total": 0}},
+        "alerts": {"active_count": 1, "alerts": [{"code": "ALERT_A", "active": True}]},
+        "incidents": {"open_count": 1, "incidents": [{"code": "INC_A", "status": "OPEN"}]},
+        "runtime_state": {"forensics": {"observability_snapshot_recent": False}},
+        "recent_orders": [],
+        "recent_audit": [],
+        "diagnostics_export": {"manifest_files": []},
+    }
+
+    findings = engine.evaluate(context)
+    codes = {f["code"] for f in findings}
+    assert "DIAGNOSTICS_BUNDLE_EVIDENCE_GAP" in codes

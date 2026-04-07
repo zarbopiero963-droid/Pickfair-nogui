@@ -90,8 +90,10 @@ def test_reconcile_transient_failure_preserves_ambiguity() -> None:
     second_pass = runner.run_once(customer_ref="CHAOS-REC-1")
     state_after_second = db.get_order(result["order_id"])
 
+    assert runner.fetcher.calls >= 2
     assert first_pass is False
     assert state_after_first["status"] == STATUS_AMBIGUOUS
+    assert state_after_first["status"] != "FAILED"
     assert second_pass is True
     assert state_after_second["status"] == STATUS_COMPLETED
 
@@ -130,6 +132,11 @@ def test_diagnostics_bundle_preserves_chaos_evidence(tmp_path: Path) -> None:
             "forensics_review.json",
         }
         assert required.issubset(names)
+        for filename in required:
+            raw = zf.read(filename)
+            assert raw
+            parsed = json.loads(raw)
+            assert isinstance(parsed, (dict, list))
 
         review = json.loads(zf.read("forensics_review.json"))
         assert review.get("degraded_or_not_ready") is True
