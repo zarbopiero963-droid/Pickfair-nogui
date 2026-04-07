@@ -125,6 +125,8 @@ def test_build_wires_all_components(monkeypatch):
     assert app.trading_engine is not None
     assert app.runtime is not None
     assert app._built is True
+    assert app.safe_mode is not None
+    assert app.trading_engine.kwargs["safe_mode"] is app.safe_mode
 
 
 @pytest.mark.integration
@@ -157,3 +159,50 @@ def test_parse_args_live_and_password(monkeypatch):
     args = app._parse_args()
     assert args["simulation_mode"] is False
     assert args["password"] == "secret"
+
+@pytest.mark.integration
+def test_runtime_controller_subscribes_canonical_terminal_lifecycle_events():
+    from core.runtime_controller import RuntimeController
+
+    class Settings:
+        def load_roserpina_config(self):
+            class Cfg:
+                table_count = 2
+                anti_duplication_enabled = False
+                allow_recovery = False
+                auto_reset_drawdown_pct = 99
+                lockdown_drawdown_pct = 100
+            return Cfg()
+
+    class DbStub:
+        def _execute(self, *_args, **_kwargs):
+            return None
+
+    class Betfair:
+        def get_account_funds(self):
+            return {"available": 100.0}
+
+        def status(self):
+            return {"connected": True}
+
+    class Telegram:
+        def status(self):
+            return {"connected": True}
+
+    bus = FakeBus()
+    _ = RuntimeController(
+        bus=bus,
+        db=DbStub(),
+        settings_service=Settings(),
+        betfair_service=Betfair(),
+        telegram_service=Telegram(),
+    )
+
+    for event_name in (
+        "QUICK_BET_FAILED",
+        "QUICK_BET_FILLED",
+        "QUICK_BET_ROLLBACK_DONE",
+        "QUICK_BET_SUCCESS",
+        "QUICK_BET_AMBIGUOUS",
+    ):
+        assert event_name in bus.subscriptions

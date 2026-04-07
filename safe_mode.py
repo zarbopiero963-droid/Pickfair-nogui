@@ -185,6 +185,16 @@ class SafeModeManager:
 
             return True
 
+
+    def is_enabled(self) -> bool:
+        """Compat layer per componenti che aspettano is_enabled()."""
+        return self.is_safe_mode_active
+
+    @property
+    def enabled(self) -> bool:
+        """Compat layer per componenti che leggono attributo enabled."""
+        return self.is_safe_mode_active
+
     def get_status_info(self) -> dict:
         """
         Ottiene informazioni sullo stato corrente.

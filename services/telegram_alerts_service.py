@@ -38,40 +38,90 @@ class TelegramAlertsService:
         self.settings_service = settings_service
         self.telegram_sender = telegram_sender
         self._last_sent_at: Dict[str, float] = {}
+        self.last_delivery_error: str = ""
+        self.last_delivery_ok: bool = False
 
-    def notify_alert(self, alert: Dict[str, Any]) -> None:
+    def notify_alert(self, alert: Dict[str, Any]) -> Dict[str, Any]:
+        settings = self._get_telegram_settings()
+        availability = self.availability_status(settings=settings)
+
+        if not availability["alerts_enabled"]:
+            self.last_delivery_ok = False
+            self.last_delivery_error = "alerts_disabled"
+            return {**availability, "delivered": False, "reason": "alerts_disabled"}
+
+        if not availability["sender_available"]:
+            self.last_delivery_ok = False
+            self.last_delivery_error = "sender_unavailable"
+            logger.warning("Telegram alert skipped: sender unavailable while alerts are enabled")
+            return {**availability, "delivered": False, "reason": "sender_unavailable"}
+
+        chat_id = settings.get("alerts_chat_id")
+        if chat_id in (None, "", 0, "0"):
+            self.last_delivery_ok = False
+            self.last_delivery_error = "alerts_chat_id_missing"
+            logger.warning("Telegram alert skipped: alerts_chat_id missing while alerts are enabled")
+            return {**availability, "delivered": False, "reason": "alerts_chat_id_missing"}
+
+        min_severity = str(settings.get("min_alert_severity", "WARNING") or "WARNING").upper()
+        severity = str(alert.get("severity", "WARNING") or "WARNING").upper()
+
+        if not self._should_send(severity, min_severity):
+            self.last_delivery_ok = False
+            self.last_delivery_error = "below_min_severity"
+            return {**availability, "delivered": False, "reason": "below_min_severity"}
+
+        dedup_enabled = bool(settings.get("alert_dedup_enabled", True))
+        cooldown_sec = int(settings.get("alert_cooldown_sec", 300) or 300)
+        dedup_key = self._dedup_key(alert)
+        now = time.time()
+        if dedup_enabled and cooldown_sec > 0:
+            last_sent = float(self._last_sent_at.get(dedup_key, 0.0) or 0.0)
+            if (now - last_sent) < cooldown_sec:
+                self.last_delivery_ok = False
+                self.last_delivery_error = "dedup_cooldown"
+                return {**availability, "delivered": False, "reason": "dedup_cooldown"}
+
+        text = self._format_alert_text(alert, settings)
+
         try:
-            settings = self._get_telegram_settings()
-
-            if not bool(settings.get("alerts_enabled", False)):
-                return
-
-            chat_id = settings.get("alerts_chat_id")
-            if chat_id in (None, "", 0, "0"):
-                logger.debug("Telegram alert skipped: alerts_chat_id missing")
-                return
-
-            min_severity = str(settings.get("min_alert_severity", "WARNING") or "WARNING").upper()
-            severity = str(alert.get("severity", "WARNING") or "WARNING").upper()
-
-            if not self._should_send(severity, min_severity):
-                return
-
-            dedup_enabled = bool(settings.get("alert_dedup_enabled", True))
-            cooldown_sec = int(settings.get("alert_cooldown_sec", 300) or 300)
-            dedup_key = self._dedup_key(alert)
-            now = time.time()
-            if dedup_enabled and cooldown_sec > 0:
-                last_sent = float(self._last_sent_at.get(dedup_key, 0.0) or 0.0)
-                if (now - last_sent) < cooldown_sec:
-                    return
-
-            text = self._format_alert_text(alert, settings)
             self._send_message(chat_id=chat_id, text=text)
             self._last_sent_at[dedup_key] = now
-
-        except Exception:
+            self.last_delivery_ok = True
+            self.last_delivery_error = ""
+            return {**availability, "delivered": True, "reason": "sent"}
+        except Exception as exc:
+            self.last_delivery_ok = False
+            self.last_delivery_error = str(exc)
             logger.exception("TelegramAlertsService.notify_alert failed")
+            return {**availability, "delivered": False, "reason": "send_failed", "error": str(exc)}
+
+    def availability_status(self, settings: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        settings = settings or self._get_telegram_settings()
+        alerts_enabled = bool(settings.get("alerts_enabled", False))
+        sender_available = self._sender_has_supported_method(self.telegram_sender)
+        deliverable = alerts_enabled and sender_available and settings.get("alerts_chat_id") not in (None, "", 0, "0")
+
+        reason = None
+        if alerts_enabled and not sender_available:
+            reason = "sender_unavailable"
+        elif alerts_enabled and not deliverable:
+            reason = "alerts_chat_id_missing"
+
+        return {
+            "alerts_enabled": alerts_enabled,
+            "sender_available": sender_available,
+            "deliverable": bool(deliverable),
+            "reason": reason,
+            "last_delivery_ok": self.last_delivery_ok,
+            "last_delivery_error": self.last_delivery_error,
+        }
+
+    def _sender_has_supported_method(self, sender: Any) -> bool:
+        return sender is not None and any(
+            callable(getattr(sender, name, None))
+            for name in ("send_alert_message", "send_message", "enqueue_message", "send")
+        )
 
     def _get_telegram_settings(self) -> Dict[str, Any]:
         loader = getattr(self.settings_service, "load_telegram_config_row", None)

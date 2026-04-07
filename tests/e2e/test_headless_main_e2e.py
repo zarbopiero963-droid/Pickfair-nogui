@@ -150,3 +150,62 @@ def test_simulation_mode_flows_into_runtime_start(monkeypatch):
     app._validate_runtime_start_result(result)
 
     assert started["simulation_mode"] is True
+
+
+@pytest.mark.e2e
+def test_safe_mode_blocks_dangerous_submit_path_when_enabled():
+    from core.trading_engine import TradingEngine
+
+    class SafeModeOn:
+        def is_enabled(self):
+            return True
+
+    class InlineExecutor:
+        def submit(self, _name, fn):
+            return fn()
+
+    class DbStub:
+        def is_ready(self):
+            return True
+
+        def insert_order(self, payload):
+            return "ORD-1"
+
+        def update_order(self, order_id, update):
+            _ = (order_id, update)
+
+        def insert_audit_event(self, event):
+            _ = event
+
+        def load_pending_customer_refs(self):
+            return []
+
+        def load_pending_correlation_ids(self):
+            return []
+
+        def order_exists_inflight(self, *, customer_ref, correlation_id):
+            _ = (customer_ref, correlation_id)
+            return False
+
+    bus = FakeBus()
+    engine = TradingEngine(
+        bus=bus,
+        db=DbStub(),
+        client_getter=lambda: None,
+        executor=InlineExecutor(),
+        safe_mode=SafeModeOn(),
+    )
+
+    result = engine.submit_quick_bet(
+        {
+            "market_id": "1.500",
+            "selection_id": 55,
+            "price": 2.0,
+            "stake": 5.0,
+            "side": "BACK",
+            "customer_ref": "SM-E2E",
+        }
+    )
+
+    assert result["ok"] is False
+    assert result["reason"] == "SAFE_MODE_ACTIVE"
