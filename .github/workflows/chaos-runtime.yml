@@ -1,0 +1,39 @@
+name: chaos-runtime
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  chaos-runtime:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          pip install pytest
+
+      - name: Chaos tests
+        run: |
+          if [ -d tests/chaos ]; then pytest tests/chaos -q; else echo "No chaos tests dir"; fi
+
+      - name: Betfair timeout and ghost order integration
+        run: |
+          if [ -f tests/integration/test_betfair_timeout_and_ghost_orders.py ]; then
+            pytest tests/integration/test_betfair_timeout_and_ghost_orders.py -q
+          else
+            echo "No timeout/ghost integration test"
+          fi
