@@ -1,0 +1,44 @@
+{
+  "default": {
+    "max_files": 8,
+    "allow_tests": true
+  },
+  "tasks": {
+    "trading_engine": {
+      "files": [
+        "core/trading_engine.py",
+        "database.py"
+      ],
+      "max_files": 12,
+      "allow_tests": true
+    },
+    "order_manager": {
+      "files": [
+        "order_manager.py"
+      ],
+      "max_files": 8,
+      "allow_tests": true
+    },
+    "reconciliation": {
+      "files": [
+        "core/reconciliation_engine.py"
+      ],
+      "max_files": 6,
+      "allow_tests": true
+    },
+    "database": {
+      "files": [
+        "database.py"
+      ],
+      "max_files": 10,
+      "allow_tests": true
+    },
+    "runtime": {
+      "files": [
+        "core/runtime_controller.py"
+      ],
+      "max_files": 6,
+      "allow_tests": true
+    }
+  }
+}
