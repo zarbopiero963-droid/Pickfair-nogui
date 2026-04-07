@@ -21,10 +21,25 @@ def test_callable_validation_rejects_hasattr_only_false_green():
     ) is False
 
 
-def test_pr_guard_workflow_skips_unknown_task_instead_of_static_blocking():
-    workflow = Path('.github/workflows/pr-guard.yml').read_text(encoding='utf-8')
+def test_pr_guard_workflow_is_fail_closed_for_unknown_or_missing_task():
+    workflow = Path(".github/workflows/pr-guard.yml").read_text(encoding="utf-8")
 
     assert "Install gh CLI" not in workflow
     assert "Authenticate gh" not in workflow
-    assert "if: steps.guard_inputs.outputs.should_run_guard == 'true'" in workflow
-    assert "Skipping scope guard for unknown task" in workflow
+
+    # Old skip-path logic must be gone.
+    assert "if: steps.guard_inputs.outputs.should_run_guard == 'true'" not in workflow
+    assert "Skipping scope guard for unknown task" not in workflow
+    assert "should_run_guard" not in workflow
+    assert "guard_inputs" not in workflow
+
+    # New fail-closed workflow should always fetch PR data and run guardrail.
+    assert "Fetch PR metadata and files" in workflow
+    assert 'pr_meta.json' in workflow
+    assert 'pr_files_raw.json' in workflow
+    assert "Run fail-closed guardrail" in workflow
+    assert "python scripts/guardrail_check.py" in workflow
+
+    # Workflow must read PR metadata/files through GitHub API before checking.
+    assert 'gh api "repos/${{ github.repository }}/pulls/$PR_NUMBER" > pr_meta.json' in workflow
+    assert 'gh api "repos/${{ github.repository }}/pulls/$PR_NUMBER/files?per_page=100" > pr_files_raw.json' in workflow
