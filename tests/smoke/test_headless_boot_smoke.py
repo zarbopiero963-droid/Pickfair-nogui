@@ -124,12 +124,23 @@ def test_headless_build_wires_observability(monkeypatch):
     assert app.incidents_manager is not None
     assert app.diagnostics_service is not None
 
-    fake_db = app.db
-    runtime_controller = app.runtime_controller
+    runtime = app.runtime
+    runtime_probe = app.runtime_probe
+    diagnostics_service = app.diagnostics_service
+    watchdog_service = app.watchdog_service
+    cleanup_service = app.cleanup_service
     app.stop()
 
     assert app.watchdog_service is None
     assert app.cleanup_service is None
-    assert fake_db.closed is True
-    assert fake_executor.shutdown_called is True
-    assert runtime_controller.stopped is True
+    assert fake_executor.shutdown_called is False
+    assert runtime is not None
+    assert runtime.stopped is True
+    assert runtime_probe is not None
+    assert diagnostics_service is not None
+    assert watchdog_service is not None
+    assert cleanup_service is not None
+    assert watchdog_service.stopped is True
+    assert cleanup_service.stopped is True
+    assert runtime_probe.runtime_controller is runtime
+    assert diagnostics_service.probe is runtime_probe

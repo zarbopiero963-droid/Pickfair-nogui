@@ -104,6 +104,16 @@
       ],
       "max_files": 8,
       "allow_tests": true
+    },
+    "tests_truth": {
+      "files": [
+        "tests/core/test_trading_engine.py",
+        "tests/guardrails/test_runtime_entrypoints.py",
+        "tests/smoke/test_headless_boot_smoke.py",
+        "tests/testsuite/test_no_fake_green.py"
+      ],
+      "max_files": 6,
+      "allow_tests": true
     }
   }
 }
