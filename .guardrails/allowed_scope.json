@@ -12,8 +12,10 @@
       "max_files": 12,
       "allow_tests": true
     },
-    "order_manager": {
+    "lifecycle": {
       "files": [
+        "core/trading_engine.py",
+        "core/runtime_controller.py",
         "order_manager.py"
       ],
       "max_files": 10,

@@ -103,15 +103,21 @@ class TelegramAlertsService:
         deliverable = alerts_enabled and sender_available and settings.get("alerts_chat_id") not in (None, "", 0, "0")
 
         reason = None
+        status = "DISABLED"
         if alerts_enabled and not sender_available:
             reason = "sender_unavailable"
+            status = "DEGRADED"
         elif alerts_enabled and not deliverable:
             reason = "alerts_chat_id_missing"
+            status = "DEGRADED"
+        elif alerts_enabled and deliverable:
+            status = "READY"
 
         return {
             "alerts_enabled": alerts_enabled,
             "sender_available": sender_available,
             "deliverable": bool(deliverable),
+            "status": status,
             "reason": reason,
             "last_delivery_ok": self.last_delivery_ok,
             "last_delivery_error": self.last_delivery_error,

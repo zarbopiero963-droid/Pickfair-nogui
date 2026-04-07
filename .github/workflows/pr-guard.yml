@@ -1,4 +1,4 @@
-name: PR Guard (Dynamic Smart)
+name: PR Guard (Fail-Closed)
 
 on:
   pull_request:
@@ -34,14 +34,10 @@ jobs:
           python - <<'PY'
           import json
           import pathlib
-          import re
 
           pr = json.loads(pathlib.Path("pr_meta_full.json").read_text(encoding="utf-8"))
           title = pr.get("title", "") or ""
           body = pr.get("body", "") or ""
-          text = f"{title}\n{body}"
-          match = re.search(r"\[TASK:\s*([^\]]+)\]", text)
-          task = match.group(1).strip() if match else None
 
           pathlib.Path("pr_meta.json").write_text(
               json.dumps(
@@ -52,21 +48,8 @@ jobs:
               ),
               encoding="utf-8",
           )
-          config = json.loads(pathlib.Path(".guardrails/allowed_scope.json").read_text(encoding="utf-8"))
-          known_tasks = set(config.get("tasks", {}).keys())
-          should_run_guard = bool(task and task in known_tasks)
-          if task and task not in known_tasks:
-              print(f"::notice::Skipping scope guard for unknown task '{task}'.")
-          if not task:
-              print("::notice::No [TASK: ...] tag found; skipping scope guard.")
-
-          out = pathlib.Path("${{ github.output }}")
-          with out.open("a", encoding="utf-8") as fh:
-              fh.write(f"should_run_guard={'true' if should_run_guard else 'false'}\n")
           PY
-        id: guard_inputs
 
-      - name: Run dynamic guardrail
-        if: steps.guard_inputs.outputs.should_run_guard == 'true'
+      - name: Run fail-closed guardrail
         run: |
           python scripts/guardrail_check.py
