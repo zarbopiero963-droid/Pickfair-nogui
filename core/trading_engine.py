@@ -7,7 +7,8 @@ import uuid
 from collections import deque
 from dataclasses import dataclass
 from typing import Any, Deque, Dict, Optional, Set, Tuple
-from order_manager import LIFECYCLE_CONTRACT, OrderManager
+from order_manager import OrderManager
+from order_manager import LIFECYCLE_CONTRACT
 
 logger = logging.getLogger(__name__)
 
