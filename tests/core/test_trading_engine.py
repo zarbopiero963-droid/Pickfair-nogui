@@ -91,8 +91,6 @@ class FakeDB:
         customer_ref: Optional[str] = None,
         correlation_id: Optional[str] = None,
     ) -> bool:
-        if self.force_order_exists_inflight:
-            return True
         for row in self.orders.values():
             if row.get("customer_ref") == customer_ref:
                 return True
@@ -107,7 +105,12 @@ class FakeDB:
     ) -> Optional[str]:
         if self.fail_find_duplicate_order:
             raise RuntimeError("DB_FIND_DUPLICATE_FAILED")
-        return "DUP-REF-1"
+        for order_id, row in self.orders.items():
+            if row.get("customer_ref") == customer_ref:
+                return order_id
+            if row.get("correlation_id") == correlation_id:
+                return order_id
+        return None
 
     def load_pending_customer_refs(self) -> List[str]:
         refs = []
@@ -385,7 +388,16 @@ def test_risk_denied_persists_inflight_then_denied():
 
 def test_duplicate_request_from_db_is_blocked_and_finalized():
     db = FakeDB()
-    db.force_order_exists_inflight = True
+    duplicate_order_id = db.insert_order(
+        {
+            "customer_ref": "CUST-1",
+            "correlation_id": "CID-OLD",
+            "status": STATUS_INFLIGHT,
+            "payload": {},
+            "created_at": time.time(),
+            "outcome": None,
+        }
+    )
     engine, _, bus, client, _, _, _, _ = make_engine(db=db)
 
     result = engine.submit_quick_bet(make_payload())
@@ -399,7 +411,7 @@ def test_duplicate_request_from_db_is_blocked_and_finalized():
 
     order = db.get_order(result["order_id"])
     assert order["status"] == STATUS_DUPLICATE_BLOCKED
-    assert order["duplicate_of"] == "DUP-REF-1"
+    assert order["duplicate_of"] == duplicate_order_id
     assert order["finalized"] is True
 
     assert any(name == "QUICK_BET_DUPLICATE" for name, _ in bus.published)
@@ -407,7 +419,16 @@ def test_duplicate_request_from_db_is_blocked_and_finalized():
 
 def test_duplicate_path_preserves_copy_meta_fields():
     db = FakeDB()
-    db.force_order_exists_inflight = True
+    db.insert_order(
+        {
+            "customer_ref": "CUST-1",
+            "correlation_id": "CID-PREV",
+            "status": STATUS_INFLIGHT,
+            "payload": {},
+            "created_at": time.time(),
+            "outcome": None,
+        }
+    )
     engine, _, _, _, _, _, _, _ = make_engine(db=db)
 
     result = engine.submit_quick_bet(
