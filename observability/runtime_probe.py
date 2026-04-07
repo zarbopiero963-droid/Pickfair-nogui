@@ -245,6 +245,7 @@ class RuntimeProbe:
         alerts_enabled = False
         sender_available = False
         deliverable = False
+        status = "DISABLED"
         reason = None
         last_delivery_ok = None
         last_delivery_error = ""
@@ -253,13 +254,14 @@ class RuntimeProbe:
             availability = getattr(self.telegram_alerts_service, "availability_status", None)
             if callable(availability):
                 try:
-                    status = availability() or {}
-                    alerts_enabled = bool(status.get("alerts_enabled", False))
-                    sender_available = bool(status.get("sender_available", False))
-                    deliverable = bool(status.get("deliverable", False))
-                    reason = status.get("reason")
-                    last_delivery_ok = status.get("last_delivery_ok")
-                    last_delivery_error = str(status.get("last_delivery_error") or "")
+                    availability_state = availability() or {}
+                    alerts_enabled = bool(availability_state.get("alerts_enabled", False))
+                    sender_available = bool(availability_state.get("sender_available", False))
+                    deliverable = bool(availability_state.get("deliverable", False))
+                    status = str(availability_state.get("status") or status)
+                    reason = availability_state.get("reason")
+                    last_delivery_ok = availability_state.get("last_delivery_ok")
+                    last_delivery_error = str(availability_state.get("last_delivery_error") or "")
                 except Exception:
                     pass
 
@@ -286,10 +288,24 @@ class RuntimeProbe:
             if alerts_enabled and not sender_available and reason is None:
                 reason = "sender_unavailable"
 
+        if alerts_enabled and not sender_available:
+            status = "DEGRADED"
+            if reason is None:
+                reason = "sender_unavailable"
+        elif alerts_enabled and sender_available and deliverable:
+            status = "READY"
+        elif alerts_enabled and not deliverable:
+            status = "DEGRADED"
+            if reason is None:
+                reason = "not_deliverable"
+        else:
+            status = "DISABLED"
+
         return {
             "alerts_enabled": alerts_enabled,
             "sender_available": sender_available,
             "deliverable": deliverable,
+            "status": status,
             "reason": reason,
             "last_delivery_ok": last_delivery_ok,
             "last_delivery_error": last_delivery_error,
