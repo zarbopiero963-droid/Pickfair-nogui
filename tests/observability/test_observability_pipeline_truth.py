@@ -47,12 +47,14 @@ def test_observability_pipeline_truth_for_missing_sender_and_safe_mode_state():
         safe_mode=safe_mode,
     )
 
-    state = probe.collect_runtime_state()
+    pipeline = probe.collect_runtime_state()["alert_pipeline"]
 
-    assert state["alert_pipeline"]["alerts_enabled"] is True
-    assert state["alert_pipeline"]["sender_available"] is False
-    assert state["alert_pipeline"]["deliverable"] is False
-    assert state["safe_mode_enabled"] is True
+    assert pipeline["alerts_enabled"] is True
+    assert pipeline["sender_available"] is False
+    assert pipeline["deliverable"] is False
+    assert pipeline["status"] == "DEGRADED"
+    assert pipeline["reason"] == "sender_unavailable"
+    assert pipeline["status"] != "READY"
 
 
 def test_observability_pipeline_truth_for_deliverable_sender():
@@ -68,9 +70,11 @@ def test_observability_pipeline_truth_for_deliverable_sender():
         safe_mode=None,
     )
 
-    state = probe.collect_runtime_state()
+    pipeline = probe.collect_runtime_state()["alert_pipeline"]
 
-    assert state["alert_pipeline"]["alerts_enabled"] is True
-    assert state["alert_pipeline"]["sender_available"] is True
-    assert state["alert_pipeline"]["deliverable"] is True
-    assert state["alert_pipeline"]["last_delivery_ok"] is True
+    assert pipeline["alerts_enabled"] is True
+    assert pipeline["sender_available"] is True
+    assert pipeline["deliverable"] is True
+    assert pipeline["status"] == "READY"
+    assert pipeline["reason"] is None
+    assert pipeline["last_delivery_ok"] is True

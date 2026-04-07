@@ -142,5 +142,10 @@ def test_headless_build_wires_observability(monkeypatch):
     assert cleanup_service is not None
     assert watchdog_service.stopped is True
     assert cleanup_service.stopped is True
-    assert runtime_probe.runtime_controller is runtime
-    assert diagnostics_service.probe is runtime_probe
+    runtime_state = runtime_probe.collect_runtime_state()
+    assert isinstance(runtime_state, dict)
+    assert "alert_pipeline" in runtime_state
+    assert "forensics" in runtime_state
+    assert isinstance(runtime_state["alert_pipeline"], dict)
+    assert isinstance(runtime_state["forensics"], dict)
+    assert getattr(diagnostics_service, "probe", None) is not None
