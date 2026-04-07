@@ -42,11 +42,13 @@ def test_telegram_runtime_truth_e2e_sender_missing_is_explicit_degraded_and_not_
 
     state = probe.collect_runtime_state()["alert_pipeline"]
 
+    assert set(("alerts_enabled", "sender_available", "deliverable", "reason")) <= set(state)
     assert state["alerts_enabled"] is True
     assert state["sender_available"] is False
     assert state["deliverable"] is False
     assert state["status"] == "DEGRADED"
     assert state["reason"] == "sender_unavailable"
+    assert state["status"] != "READY"
 
 
 def test_telegram_runtime_truth_e2e_sender_present_is_deliverable_and_ready():
