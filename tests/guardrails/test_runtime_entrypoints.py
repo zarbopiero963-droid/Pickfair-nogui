@@ -28,3 +28,8 @@ def test_database_has_required_recovery_methods():
     assert hasattr(Database, "create_order_saga")
     assert hasattr(Database, "update_order_saga")
     assert hasattr(Database, "get_pending_sagas")
+    assert hasattr(Database, "insert_order")
+    assert hasattr(Database, "update_order")
+    assert hasattr(Database, "get_order")
+    assert hasattr(Database, "order_exists_inflight")
+    assert hasattr(Database, "find_duplicate_order")

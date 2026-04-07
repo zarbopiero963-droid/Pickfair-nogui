@@ -1052,7 +1052,37 @@ class TradingEngine:
                 error_type=ERROR_AMBIGUOUS,
                 ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
             )
+        self._raise_if_failed_semantic_response(response)
         return response
+
+    def _raise_if_failed_semantic_response(self, response: Any) -> None:
+        if not isinstance(response, dict):
+            return
+
+        status = str(response.get("status") or "").upper()
+        reason_code = str(response.get("reason_code") or "").upper()
+        error_class = str(response.get("error_class") or "").upper()
+        has_error = bool(response.get("error"))
+
+        if (
+            error_class == ERROR_AMBIGUOUS
+            or status == STATUS_AMBIGUOUS
+            or reason_code in {"SUBMIT_TIMEOUT", "UNKNOWN"}
+        ):
+            raise ExecutionError(
+                f"DOWNSTREAM_AMBIGUOUS_RESPONSE:{response}",
+                error_type=ERROR_AMBIGUOUS,
+                ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
+            )
+
+        semantic_failure = (
+            response.get("ok") is False
+            or status in {STATUS_FAILED, STATUS_DENIED, "REJECTED", "ERROR", "FAILURE"}
+            or reason_code in {"BROKER_REJECTED", "CANCEL_REJECTED", "REPLACE_REJECTED"}
+            or has_error
+        )
+        if semantic_failure:
+            raise RuntimeError(f"DOWNSTREAM_SEMANTIC_FAILURE:{response}")
 
     # ==================================================================
     # [G] AMBIGUITY RESOLUTION — Single enqueue
