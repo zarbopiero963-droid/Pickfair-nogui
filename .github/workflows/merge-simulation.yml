@@ -1,0 +1,52 @@
+name: Merge Simulation (Pre-Merge Truth)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  simulate-merge:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Git
+        run: |
+          git config --global user.name "ci-bot"
+          git config --global user.email "ci@bot.local"
+
+      - name: Fetch main
+        run: |
+          git fetch origin main
+
+      - name: Create merge simulation
+        run: |
+          git checkout -b merge-sim origin/main
+          git merge --no-commit --no-ff ${{ github.sha }}
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          pip install pytest
+
+      - name: Run FULL test suite (truth check)
+        run: |
+          pytest -q
+
+      - name: Run integration tests
+        run: |
+          pytest tests/integration -q
+
+      - name: Run recovery tests
+        run: |
+          pytest tests/recovery -q
+
+      - name: Run reconciliation tests
+        run: |
+          pytest tests/reconciliation -q
