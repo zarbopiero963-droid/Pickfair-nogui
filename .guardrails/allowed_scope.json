@@ -63,10 +63,13 @@
     },
     "pr_guard": {
       "files": [
-        ".github/workflows/pr-guard.yml"
+        ".github/workflows/pr-guard.yml",
+        "scripts/guardrail_check.py",
+        ".guardrails/allowed_scope.json",
+        "tests/guardrails/test_pr_guard_fail_closed.py"
       ],
-      "max_files": 6,
-      "allow_tests": true
+      "max_files": 4,
+      "allow_tests": false
     },
     "risk_middleware": {
       "files": [
