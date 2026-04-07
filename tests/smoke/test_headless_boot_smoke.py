@@ -107,9 +107,13 @@ def test_headless_build_wires_observability(monkeypatch):
 
     assert app.watchdog_service is not None
     assert app.cleanup_service is not None
+    assert app.watchdog_service.started is True
+    assert app.cleanup_service.started is True
     assert app.metrics_registry is not None
     assert app.alerts_manager is not None
     assert app.incidents_manager is not None
     assert app.diagnostics_service is not None
 
     app.stop()
+    assert app.watchdog_service is None
+    assert app.cleanup_service is None
