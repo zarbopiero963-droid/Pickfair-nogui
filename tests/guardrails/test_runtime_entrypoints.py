@@ -28,3 +28,10 @@ def test_database_has_required_recovery_methods():
     assert hasattr(Database, "create_order_saga")
     assert hasattr(Database, "update_order_saga")
     assert hasattr(Database, "get_pending_sagas")
+
+@pytest.mark.guardrail
+def test_async_db_writer_has_runtime_fallback_write_method():
+    from core.async_db_writer import AsyncDBWriter
+
+    assert hasattr(AsyncDBWriter, "write")
+    assert callable(getattr(AsyncDBWriter, "write"))

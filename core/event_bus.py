@@ -75,7 +75,7 @@ class EventBus:
     # WORKER LOOP
     # =========================================================
     def _worker_loop(self):
-        while self._running:
+        while self._running or not self._queue.empty():
             try:
                 event_type, callback, data = self._queue.get(timeout=1)
 
@@ -105,6 +105,22 @@ class EventBus:
     # =========================================================
     def stop(self):
         self._running = False
+
+        end = time.time() + 5.0
+        while self._queue.unfinished_tasks > 0:
+            if time.time() >= end:
+                break
+            time.sleep(0.01)
+
+        for t in self._workers:
+            t.join(timeout=1)
+
+    def stop_lossy(self):
+        """Explicitly stop workers without draining queued callbacks."""
+        self._running = False
+
+        for t in self._workers:
+            t.join(timeout=1)
 
     # =========================================================
     # METRICS (utile debug)

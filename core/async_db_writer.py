@@ -69,7 +69,7 @@ class AsyncDBWriter:
             t.join(timeout=5)
 
     # =========================================================
-    # SUBMIT
+    # SUBMIT / WRITE
     # =========================================================
     def submit(self, kind: str, payload: dict):
         try:
@@ -90,6 +90,10 @@ class AsyncDBWriter:
                 kind,
             )
             return False
+
+    def write(self, payload: dict):
+        """TradingEngine-compatible API used as async audit persistence fallback."""
+        return self.submit("audit_event", payload or {})
 
     # =========================================================
     # WORKER LOOP
@@ -162,6 +166,14 @@ class AsyncDBWriter:
 
         elif kind == "simulation_bet":
             self.db.save_simulation_bet(**payload)
+
+        elif kind == "audit_event":
+            for mn in ("insert_audit_event", "insert_order_event", "append_order_event"):
+                fn = getattr(self.db, mn, None)
+                if callable(fn):
+                    fn(payload)
+                    return
+            raise ValueError("No audit persistence method available")
 
         else:
             raise ValueError(f"Unknown kind: {kind}")
