@@ -12,8 +12,7 @@ __all__ = ["EventBus"]
 import logging
 import threading
 from collections import defaultdict
-from queue import Queue, Empty
-import time
+from queue import Empty, Queue
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +25,7 @@ class EventBus:
         self._queue = Queue()
         self._workers = []
         self._running = True
+        self._accepting = True
 
         self.debug = debug
 
@@ -60,6 +60,8 @@ class EventBus:
     # =========================================================
     def publish(self, event_type: str, data=None):
         with self._lock:
+            if not self._accepting:
+                return
             callbacks = self._subscribers.get(event_type, []).copy()
 
         if not callbacks:
@@ -75,15 +77,19 @@ class EventBus:
     # WORKER LOOP
     # =========================================================
     def _worker_loop(self):
-        while self._running:
+        while True:
             try:
                 event_type, callback, data = self._queue.get(timeout=1)
+                if callback is None:
+                    self._queue.task_done()
+                    break
 
                 self._safe_execute(event_type, callback, data)
-
                 self._queue.task_done()
 
             except Empty:
+                if not self._running:
+                    break
                 continue
             except Exception:
                 logger.exception("Errore worker EventBus")
@@ -100,11 +106,50 @@ class EventBus:
                 f"[EventBus] errore subscriber {callback.__name__} evento '{event_type}'"
             )
 
+    def _drop_pending(self) -> int:
+        dropped = 0
+        while True:
+            try:
+                self._queue.get_nowait()
+            except Empty:
+                break
+            else:
+                self._queue.task_done()
+                dropped += 1
+        return dropped
+
     # =========================================================
     # SHUTDOWN
     # =========================================================
-    def stop(self):
+    def _shutdown(self, *, drain: bool, timeout: float | None = None) -> dict:
+        with self._lock:
+            if not self._running:
+                return {"drain": drain, "dropped_events": 0}
+            self._accepting = False
+
+        dropped = 0
+        if drain:
+            self._queue.join()
+        else:
+            dropped = self._drop_pending()
+
         self._running = False
+
+        for _ in self._workers:
+            self._queue.put((None, None, None))
+
+        for worker in self._workers:
+            worker.join(timeout=timeout)
+
+        return {"drain": drain, "dropped_events": dropped}
+
+    def stop(self):
+        """Arresta il bus drenando esplicitamente la coda prima dello stop."""
+        return self._shutdown(drain=True)
+
+    def stop_lossy(self, timeout: float | None = None):
+        """Arresta il bus scartando esplicitamente gli eventi ancora in coda."""
+        return self._shutdown(drain=False, timeout=timeout)
 
     # =========================================================
     # METRICS (utile debug)
