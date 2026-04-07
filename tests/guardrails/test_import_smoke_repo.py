@@ -64,3 +64,10 @@ MODULES = [
 def test_module_import_smoke(module_name):
     mod = importlib.import_module(module_name)
     assert mod is not None
+
+
+def test_async_db_writer_runtime_contract_is_explicit():
+    mod = importlib.import_module("core.async_db_writer")
+    writer_cls = getattr(mod, "AsyncDBWriter", None)
+    assert writer_cls is not None
+    assert callable(getattr(writer_cls, "write", None))
