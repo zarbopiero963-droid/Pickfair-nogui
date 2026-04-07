@@ -1,4 +1,11 @@
 from observability.anomaly_rules import (
+    DEFAULT_ANOMALY_RULES,
+    DISABLED_ANOMALY_RULES,
+    db_contention_detected,
+    event_fanout_incomplete,
+    exposure_mismatch,
+    financial_drift,
+    ghost_order_detected,
     rule_alert_pipeline_disabled,
     rule_ambiguous_spike,
     rule_duplicate_block_spike,
@@ -52,3 +59,65 @@ def test_alert_pipeline_disabled_and_forensic_gap_rules():
         {},
     )
     assert forensic and forensic["code"] == "FORENSIC_GAP"
+
+
+def test_new_rules_are_disabled_by_default_but_available_for_opt_in():
+    assert ghost_order_detected not in DEFAULT_ANOMALY_RULES
+    assert exposure_mismatch not in DEFAULT_ANOMALY_RULES
+    assert db_contention_detected not in DEFAULT_ANOMALY_RULES
+    assert event_fanout_incomplete not in DEFAULT_ANOMALY_RULES
+    assert financial_drift not in DEFAULT_ANOMALY_RULES
+    assert DISABLED_ANOMALY_RULES == [
+        ghost_order_detected,
+        exposure_mismatch,
+        db_contention_detected,
+        event_fanout_incomplete,
+        financial_drift,
+    ]
+
+
+def test_ghost_order_detected_rule():
+    assert ghost_order_detected({}, {}) is None
+    anomaly = ghost_order_detected({"runtime_state": {"reconcile": {"ghost_orders_count": 2}}}, {})
+    assert anomaly and anomaly["code"] == "GHOST_ORDER_DETECTED"
+
+
+def test_exposure_mismatch_rule():
+    assert (
+        exposure_mismatch(
+            {"risk": {"expected_exposure": 100.0, "actual_exposure": 100.005, "exposure_tolerance": 0.01}},
+            {},
+        )
+        is None
+    )
+    anomaly = exposure_mismatch(
+        {"risk": {"expected_exposure": 100.0, "actual_exposure": 100.5, "exposure_tolerance": 0.01}},
+        {},
+    )
+    assert anomaly and anomaly["code"] == "EXPOSURE_MISMATCH"
+
+
+def test_db_contention_detected_rule():
+    assert db_contention_detected({"db": {"lock_wait_ms": 50.0, "contention_events": 0}}, {}) is None
+    anomaly_wait = db_contention_detected(
+        {"db": {"lock_wait_ms": 250.0, "contention_events": 0, "lock_wait_threshold_ms": 200.0}},
+        {},
+    )
+    assert anomaly_wait and anomaly_wait["code"] == "DB_CONTENTION_DETECTED"
+    anomaly_events = db_contention_detected({"db": {"lock_wait_ms": 10.0, "contention_events": 1}}, {})
+    assert anomaly_events and anomaly_events["code"] == "DB_CONTENTION_DETECTED"
+
+
+def test_event_fanout_incomplete_rule():
+    assert event_fanout_incomplete({"event_bus": {"expected_fanout": 3, "delivered_fanout": 3}}, {}) is None
+    anomaly = event_fanout_incomplete({"event_bus": {"expected_fanout": 4, "delivered_fanout": 2}}, {})
+    assert anomaly and anomaly["code"] == "EVENT_FANOUT_INCOMPLETE"
+
+
+def test_financial_drift_rule():
+    assert financial_drift({"financials": {"ledger_balance": 100.0, "venue_balance": 100.005}}, {}) is None
+    anomaly = financial_drift(
+        {"financials": {"ledger_balance": 100.0, "venue_balance": 99.0, "drift_threshold": 0.5}},
+        {},
+    )
+    assert anomaly and anomaly["code"] == "FINANCIAL_DRIFT"
