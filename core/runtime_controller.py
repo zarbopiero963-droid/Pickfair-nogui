@@ -12,6 +12,7 @@ from core.reconciliation_engine import ReconciliationEngine
 from core.risk_desk import RiskDesk
 from core.system_state import DeskMode, RuntimeMode
 from core.table_manager import TableManager
+from order_manager import TERMINAL_LIFECYCLE_EVENTS
 
 logger = logging.getLogger(__name__)
 
@@ -356,7 +357,9 @@ class RuntimeController:
     # =========================================================
     # BET LIFECYCLE
     # =========================================================
-    def _release_if_terminal(self, payload: dict) -> None:
+    def _release_if_terminal(self, payload: dict, *, event_name: str) -> None:
+        if event_name not in TERMINAL_LIFECYCLE_EVENTS:
+            return
         payload = dict(payload or {})
         event_key = str(payload.get("event_key") or "")
         table_id = payload.get("table_id")
@@ -371,25 +374,25 @@ class RuntimeController:
                 logger.exception("Errore force_unlock table_id=%s", table_id)
 
     def _on_quick_bet_failed(self, payload: dict) -> None:
-        self._release_if_terminal(payload)
+        self._release_if_terminal(payload, event_name="QUICK_BET_FAILED")
 
     def _on_quick_bet_accepted(self, payload: dict) -> None:
-        return
+        self._release_if_terminal(payload, event_name="QUICK_BET_ACCEPTED")
 
     def _on_quick_bet_partial(self, payload: dict) -> None:
-        return
+        self._release_if_terminal(payload, event_name="QUICK_BET_PARTIAL")
 
     def _on_quick_bet_filled(self, payload: dict) -> None:
-        self._release_if_terminal(payload)
+        self._release_if_terminal(payload, event_name="QUICK_BET_FILLED")
 
     def _on_quick_bet_success(self, payload: dict) -> None:
-        self._release_if_terminal(payload)
+        self._release_if_terminal(payload, event_name="QUICK_BET_SUCCESS")
 
     def _on_quick_bet_ambiguous(self, payload: dict) -> None:
-        self._release_if_terminal(payload)
+        self._release_if_terminal(payload, event_name="QUICK_BET_AMBIGUOUS")
 
     def _on_quick_bet_rollback_done(self, payload: dict) -> None:
-        self._release_if_terminal(payload)
+        self._release_if_terminal(payload, event_name="QUICK_BET_ROLLBACK_DONE")
 
     # =========================================================
     # MANUAL/EXTERNAL CLOSE POSITION

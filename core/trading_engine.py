@@ -7,7 +7,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass
 from typing import Any, Deque, Dict, Optional, Set, Tuple
-from order_manager import OrderManager
+from order_manager import LIFECYCLE_CONTRACT, OrderManager
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +102,7 @@ ALLOWED_TRANSITIONS: Dict[str, Set[str]] = {
 
 _INTERNAL_TO_PUBLIC_STATUS: Dict[str, str] = {
     STATUS_INFLIGHT: STATUS_INFLIGHT,
-    STATUS_SUBMITTED: STATUS_ACCEPTED_FOR_PROCESSING,
+    STATUS_SUBMITTED: LIFECYCLE_CONTRACT["ACCEPTED"]["trading_engine_status"],
     STATUS_ACCEPTED_FOR_PROCESSING: STATUS_ACCEPTED_FOR_PROCESSING,
     STATUS_COMPLETED: STATUS_COMPLETED,
     STATUS_FAILED: STATUS_FAILED,
@@ -112,10 +112,10 @@ _INTERNAL_TO_PUBLIC_STATUS: Dict[str, str] = {
 }
 
 _STATUS_TO_OUTCOME: Dict[str, str] = {
-    STATUS_COMPLETED: OUTCOME_SUCCESS,
-    STATUS_FAILED: OUTCOME_FAILURE,
-    STATUS_DENIED: OUTCOME_FAILURE,
-    STATUS_AMBIGUOUS: OUTCOME_AMBIGUOUS,
+    STATUS_COMPLETED: LIFECYCLE_CONTRACT["FILLED"]["outcome"],
+    STATUS_FAILED: LIFECYCLE_CONTRACT["FAILED"]["outcome"],
+    STATUS_DENIED: LIFECYCLE_CONTRACT["FAILED"]["outcome"],
+    STATUS_AMBIGUOUS: LIFECYCLE_CONTRACT["AMBIGUOUS"]["outcome"],
     STATUS_DUPLICATE_BLOCKED: OUTCOME_SUCCESS,
 }
 

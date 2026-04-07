@@ -8,6 +8,55 @@ from typing import Any, Dict, FrozenSet, Optional, Set, Tuple
 
 logger = logging.getLogger("OrderManager")
 
+# =============================================================
+# 0. CANONICAL LIFECYCLE CONTRACT (cross-module)
+# =============================================================
+LIFECYCLE_CONTRACT: Dict[str, Dict[str, Any]] = {
+    "ACCEPTED": {
+        "order_status": "PLACED",
+        "trading_engine_status": "ACCEPTED_FOR_PROCESSING",
+        "event": "QUICK_BET_ACCEPTED",
+        "terminal": False,
+        "outcome": "SUCCESS",
+    },
+    "PARTIAL": {
+        "order_status": "PARTIALLY_MATCHED",
+        "trading_engine_status": "ACCEPTED_FOR_PROCESSING",
+        "event": "QUICK_BET_PARTIAL",
+        "terminal": False,
+        "outcome": "SUCCESS",
+    },
+    "FILLED": {
+        "order_status": "MATCHED",
+        "trading_engine_status": "COMPLETED",
+        "event": "QUICK_BET_FILLED",
+        "terminal": True,
+        "outcome": "SUCCESS",
+    },
+    "FAILED": {
+        "order_status": "FAILED",
+        "trading_engine_status": "FAILED",
+        "event": "QUICK_BET_FAILED",
+        "terminal": True,
+        "outcome": "FAILURE",
+    },
+    "AMBIGUOUS": {
+        "order_status": "AMBIGUOUS",
+        "trading_engine_status": "AMBIGUOUS",
+        "event": "QUICK_BET_AMBIGUOUS",
+        "terminal": True,
+        "outcome": "AMBIGUOUS",
+    },
+}
+
+ORDER_STATUS_EVENT_MAP: Dict[str, str] = {
+    row["order_status"]: row["event"] for row in LIFECYCLE_CONTRACT.values()
+}
+
+TERMINAL_LIFECYCLE_EVENTS: FrozenSet[str] = frozenset(
+    row["event"] for row in LIFECYCLE_CONTRACT.values() if row["terminal"]
+) | frozenset({"QUICK_BET_SUCCESS", "QUICK_BET_ROLLBACK_DONE"})
+
 
 # =============================================================
 # 1. ORDER STATE MACHINE
@@ -681,14 +730,10 @@ class OrderManager:
             remaining_size=remaining if saga_status == OrderStatus.PARTIALLY_MATCHED else None,
         )
 
-        event_map = {
-            OrderStatus.MATCHED: "QUICK_BET_FILLED",
-            OrderStatus.PARTIALLY_MATCHED: "QUICK_BET_PARTIAL",
-            OrderStatus.PLACED: "QUICK_BET_ACCEPTED",
-            OrderStatus.FAILED: "QUICK_BET_FAILED",
-            OrderStatus.AMBIGUOUS: "QUICK_BET_AMBIGUOUS",
-        }
-        event_name = event_map.get(saga_status, "QUICK_BET_ACCEPTED")
+        event_name = ORDER_STATUS_EVENT_MAP.get(
+            saga_status.value,
+            LIFECYCLE_CONTRACT["ACCEPTED"]["event"],
+        )
 
         out = {
             **payload,
