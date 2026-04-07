@@ -1,0 +1,93 @@
+name: pr-overlap-guard
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  overlap-guard:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install gh CLI
+        run: |
+          sudo apt update
+          sudo apt install gh -y
+
+      - name: Authenticate gh
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+
+      - name: Check overlapping PR files
+        env:
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh api "repos/$GH_REPO/pulls/$PR_NUMBER/files?per_page=100" > current_pr_files.json
+          gh pr list --repo "$GH_REPO" --state open --json number > open_prs.json
+
+          python - <<'PY'
+          import json
+          import subprocess
+          import sys
+          import os
+
+          repo = os.environ["GH_REPO"]
+          current_pr = int(os.environ["PR_NUMBER"])
+
+          with open("current_pr_files.json", "r", encoding="utf-8") as f:
+              current_files = {
+                  x["filename"]
+                  for x in json.load(f)
+                  if "filename" in x and not x["filename"].startswith("tests/")
+              }
+
+          with open("open_prs.json", "r", encoding="utf-8") as f:
+              prs = json.load(f)
+
+          overlaps = []
+
+          for pr in prs:
+              other = pr["number"]
+              if other == current_pr:
+                  continue
+
+              path = f"repos/{repo}/pulls/{other}/files?per_page=100"
+              result = subprocess.run(
+                  ["gh", "api", path],
+                  capture_output=True,
+                  text=True,
+                  check=False,
+              )
+              if result.returncode != 0:
+                  continue
+
+              try:
+                  files = json.loads(result.stdout)
+              except Exception:
+                  continue
+
+              other_files = {
+                  x["filename"]
+                  for x in files
+                  if "filename" in x and not x["filename"].startswith("tests/")
+              }
+
+              common = sorted(current_files & other_files)
+              if common:
+                  overlaps.append((other, common))
+
+          print("Current production files:")
+          for f in sorted(current_files):
+              print("-", f)
+
+          if overlaps:
+              print("\n❌ Overlap detected with open PRs:")
+              for pr_number, files in overlaps:
+                  print(f"PR #{pr_number}")
+                  for f in files:
+                      print("  -", f)
+              sys.exit(1)
+
+          print("\n✅ No overlapping production files with open PRs")
+          PY
