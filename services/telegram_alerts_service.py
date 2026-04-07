@@ -179,25 +179,25 @@ class TelegramAlertsService:
         }.get(severity, "⚠️")
 
         lines = [
-            f"{icon} ALERT PICKFAIR",
-            f"Severity: {severity}",
-            f"Code: {code}",
-            f"Title: {title}",
-            f"Source: {source}",
+            f"{icon} Pickfair Alert",
+            f"• Severity: {severity}",
+            f"• Code: {code}",
+            f"• Title: {title}",
+            f"• Source: {source}",
         ]
 
         if chat_name:
-            lines.append(f"Channel: {chat_name}")
+            lines.append(f"• Channel: {chat_name}")
 
         if description:
-            lines.append(f"Description: {description}")
+            lines.append(f"• Description: {description}")
 
         if details:
             if bool(settings.get("alert_format_rich", True)):
                 rendered = ", ".join(f"{k}={v}" for k, v in sorted(dict(details).items()))
-                lines.append(f"Details: {rendered}")
+                lines.append(f"• Details: {rendered}")
             else:
-                lines.append(f"Details: {details}")
+                lines.append(f"• Details: {details}")
 
         return "\n".join(lines)
 
