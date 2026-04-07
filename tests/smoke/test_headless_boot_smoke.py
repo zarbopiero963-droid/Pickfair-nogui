@@ -8,7 +8,11 @@ def test_headless_build_wires_observability(monkeypatch):
     import headless_main as hm
 
     class FakeDB:
+        def __init__(self):
+            self.closed = False
+
         def close_all_connections(self):
+            self.closed = True
             return None
 
     class FakeBus:
@@ -19,7 +23,11 @@ def test_headless_build_wires_observability(monkeypatch):
             return None
 
     class FakeExecutor:
+        def __init__(self):
+            self.shutdown_called = False
+
         def shutdown(self, **_kwargs):
+            self.shutdown_called = True
             return None
 
     class FakeShutdown:
@@ -63,9 +71,10 @@ def test_headless_build_wires_observability(monkeypatch):
 
     class FakeRuntime:
         def __init__(self, **_kwargs):
-            pass
+            self.stopped = False
 
         def stop(self):
+            self.stopped = True
             return None
 
     class FakeWatchdog:
@@ -92,7 +101,8 @@ def test_headless_build_wires_observability(monkeypatch):
 
     monkeypatch.setattr(hm, "Database", FakeDB)
     monkeypatch.setattr(hm, "EventBus", FakeBus)
-    monkeypatch.setattr(hm, "ExecutorManager", lambda **_k: FakeExecutor())
+    fake_executor = FakeExecutor()
+    monkeypatch.setattr(hm, "ExecutorManager", lambda **_k: fake_executor)
     monkeypatch.setattr(hm, "ShutdownManager", FakeShutdown)
     monkeypatch.setattr(hm, "SettingsService", FakeSettings)
     monkeypatch.setattr(hm, "BetfairService", FakeBetfair)
@@ -114,6 +124,12 @@ def test_headless_build_wires_observability(monkeypatch):
     assert app.incidents_manager is not None
     assert app.diagnostics_service is not None
 
+    fake_db = app.db
+    runtime_controller = app.runtime_controller
     app.stop()
+
     assert app.watchdog_service is None
     assert app.cleanup_service is None
+    assert fake_db.closed is True
+    assert fake_executor.shutdown_called is True
+    assert runtime_controller.stopped is True
