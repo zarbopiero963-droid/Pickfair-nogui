@@ -137,7 +137,7 @@ class WatchdogService:
             self.alerts_manager.resolve_alert("INFLIGHT_HIGH")
 
     def _evaluate_anomalies(self) -> None:
-        if not self.anomaly_enabled or self.anomaly_engine is None:
+        if self.anomaly_engine is None:
             return
 
         runtime_state = {}
@@ -168,35 +168,27 @@ class WatchdogService:
         current_codes = set()
 
         for anomaly in anomalies:
-            code = str(anomaly.get("code", "") or "")
-            if not code:
+            code = anomaly.get("code") or anomaly.get("name") or anomaly.get("type")
+            if code is None:
                 continue
+            code = str(code)
             current_codes.add(code)
-            severity = str(anomaly.get("severity", "warning") or "warning").lower()
-            message = str(anomaly.get("message", code) or code)
+            severity = str(anomaly.get("severity", "warning") or "warning")
+            message = str(anomaly.get("description", "") or "")
             details = anomaly.get("details") or {}
 
             self.alerts_manager.upsert_alert(
                 code,
                 severity,
                 message,
-                source="anomaly_reviewer",
-                title=code,
-                details=details,
+                source="anomaly",
             )
             if severity in {"critical", "error"}:
                 self.incidents_manager.open_incident(code, code, severity, details=details)
 
-        active_alerts = []
-        active_getter = getattr(self.alerts_manager, "active_alerts", None)
-        if callable(active_getter):
-            try:
-                active_alerts = active_getter() or []
-            except Exception:
-                logger.exception("active_alerts failed during anomaly resolution")
-
-        for item in active_alerts:
-            if str(item.get("source", "")) != "anomaly_reviewer":
+        alerts_snapshot = self.alerts_manager.snapshot().get("alerts", [])
+        for item in alerts_snapshot:
+            if str(item.get("source", "")) != "anomaly":
                 continue
             code = str(item.get("code", "") or "")
             if code and code not in current_codes:
