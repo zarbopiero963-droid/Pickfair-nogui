@@ -1,7 +1,8 @@
 import logging
 import threading
 import time
-from queue import Queue, Empty
+from queue import Empty, Queue
+from typing import Any, Callable, Dict
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,14 @@ class AsyncDBWriter:
             )
             return False
 
+    def write(self, event: Dict[str, Any]) -> bool:
+        """Runtime-facing API used by trading engine audit emission."""
+        if not isinstance(event, dict):
+            raise TypeError("AsyncDBWriter.write expects a dict event payload")
+
+        self._resolve_audit_writer()
+        return self.submit("audit_event", event)
+
     # =========================================================
     # WORKER LOOP
     # =========================================================
@@ -153,6 +162,17 @@ class AsyncDBWriter:
     # =========================================================
     # WRITE ROUTER
     # =========================================================
+    def _resolve_audit_writer(self) -> Callable[[Dict[str, Any]], Any]:
+        for method_name in ("insert_audit_event", "insert_order_event", "append_order_event"):
+            method = getattr(self.db, method_name, None)
+            if callable(method):
+                return method
+
+        raise AttributeError(
+            "AsyncDBWriter audit contract mismatch: db must expose one of "
+            "insert_audit_event/insert_order_event/append_order_event"
+        )
+
     def _write(self, kind, payload):
         if kind == "bet":
             self.db.save_bet(**payload)
@@ -162,6 +182,9 @@ class AsyncDBWriter:
 
         elif kind == "simulation_bet":
             self.db.save_simulation_bet(**payload)
+
+        elif kind == "audit_event":
+            self._resolve_audit_writer()(payload)
 
         else:
             raise ValueError(f"Unknown kind: {kind}")
