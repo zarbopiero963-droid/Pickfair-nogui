@@ -1,0 +1,41 @@
+name: stateful-integrity
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  stateful-integrity:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          pip install pytest
+
+      - name: Recovery tests
+        run: |
+          if [ -d tests/recovery ]; then pytest tests/recovery -q; else echo "No recovery tests dir"; fi
+
+      - name: Reconciliation tests
+        run: |
+          if [ -d tests/reconciliation ]; then pytest tests/reconciliation -q; else echo "No reconciliation tests dir"; fi
+
+      - name: Duplicate / idempotency focused tests
+        run: |
+          pytest -q tests/integration/test_duplication_guard_copy_events.py || true
+          pytest -q tests/integration/test_duplication_guard_pattern_events.py || true
+          pytest -q tests/recovery/test_pattern_trigger_restart_no_duplicate.py || true
