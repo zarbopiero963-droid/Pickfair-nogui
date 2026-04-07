@@ -16,29 +16,94 @@
       "files": [
         "order_manager.py"
       ],
-      "max_files": 8,
+      "max_files": 10,
       "allow_tests": true
     },
     "reconciliation": {
       "files": [
         "core/reconciliation_engine.py"
       ],
-      "max_files": 6,
+      "max_files": 8,
+      "allow_tests": true
+    },
+    "state_recovery": {
+      "files": [
+        "core/state_recovery.py"
+      ],
+      "max_files": 8,
       "allow_tests": true
     },
     "database": {
       "files": [
         "database.py"
       ],
-      "max_files": 10,
+      "max_files": 12,
       "allow_tests": true
     },
     "runtime": {
       "files": [
         "core/runtime_controller.py"
       ],
+      "max_files": 10,
+      "allow_tests": true
+    },
+    "eventbus": {
+      "files": [
+        "core/event_bus.py"
+      ],
       "max_files": 6,
+      "allow_tests": true
+    },
+    "async_db_writer": {
+      "files": [
+        "core/async_db_writer.py"
+      ],
+      "max_files": 5,
+      "allow_tests": true
+    },
+    "pr_guard": {
+      "files": [
+        ".github/workflows/pr-guard.yml"
+      ],
+      "max_files": 6,
+      "allow_tests": true
+    },
+    "risk_middleware": {
+      "files": [
+        "core/risk_middleware.py"
+      ],
+      "max_files": 6,
+      "allow_tests": true
+    },
+    "execution_guard": {
+      "files": [
+        "core/execution_guard.py"
+      ],
+      "max_files": 6,
+      "allow_tests": true
+    },
+    "money_management": {
+      "files": [
+        "core/money_management.py"
+      ],
+      "max_files": 8,
+      "allow_tests": true
+    },
+    "telegram": {
+      "files": [
+        "telegram_listener.py",
+        "services/telegram_service.py",
+        "services/telegram_alerts_service.py"
+      ],
+      "max_files": 10,
+      "allow_tests": true
+    },
+    "simulation": {
+      "files": [
+        "simulation_broker.py"
+      ],
+      "max_files": 8,
       "allow_tests": true
     }
   }
-} 
+}
