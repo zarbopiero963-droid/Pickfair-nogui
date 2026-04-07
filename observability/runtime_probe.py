@@ -137,7 +137,7 @@ class RuntimeProbe:
                 }
             except Exception as exc:
                 return {"name": name, "status": "DEGRADED", "reason": str(exc), "details": {}}
-        return {"name": name, "status": "READY", "reason": "no-checker", "details": {}}
+        return self._unknown_probe(name=name, reason="no-checker")
 
     def _probe_trading_engine(self) -> Dict[str, Any]:
         if self.trading_engine is None:
@@ -147,16 +147,29 @@ class RuntimeProbe:
         if callable(readiness):
             try:
                 data = readiness()
+                state = str(data.get("state", "DEGRADED"))
+                health = data.get("health")
+                if state == "READY" and not health:
+                    return self._unknown_probe(
+                        name="trading_engine",
+                        reason="ready_without_health",
+                        details={"health": {}, "reported_state": state},
+                    )
                 return {
                     "name": "trading_engine",
-                    "status": data.get("state", "DEGRADED"),
+                    "status": state,
                     "reason": None,
-                    "details": data.get("health", {}),
+                    "details": health or {},
                 }
             except Exception as exc:
                 return {"name": "trading_engine", "status": "DEGRADED", "reason": str(exc), "details": {}}
 
-        return {"name": "trading_engine", "status": "READY", "reason": "no-readiness", "details": {}}
+        return self._unknown_probe(name="trading_engine", reason="no-readiness")
+
+    def _unknown_probe(self, *, name: str, reason: str, details: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        payload_details = dict(details or {})
+        payload_details.setdefault("fallback_status", "READY")
+        return {"name": name, "status": "UNKNOWN", "reason": reason, "details": payload_details}
 
     def _probe_betfair(self) -> Dict[str, Any]:
         if self.betfair_service is None:
