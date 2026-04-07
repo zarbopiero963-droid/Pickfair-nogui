@@ -106,6 +106,10 @@ class FakeClient:
         return self.response
 
 
+class ReadTimeout(Exception):
+    pass
+
+
 class FakeReconcileQueue:
     def __init__(self) -> None:
         self.enqueued: List[Dict[str, Any]] = []
@@ -216,8 +220,16 @@ def _make_engine(*, client: FakeClient) -> tuple[TradingEngine, FakeDB, FakeBus,
 
 
 @pytest.mark.integration
-def test_submit_timeout_becomes_ambiguous_not_failed() -> None:
-    engine, db, _bus, rec = _make_engine(client=FakeClient(error=TimeoutError("network timeout")))
+@pytest.mark.parametrize(
+    "submit_error",
+    [
+        TimeoutError("network timeout"),
+        ReadTimeout("socket read timeout"),
+        ConnectionError("transient network timeout"),
+    ],
+)
+def test_submit_timeout_becomes_ambiguous_not_failed(submit_error: Exception) -> None:
+    engine, db, _bus, rec = _make_engine(client=FakeClient(error=submit_error))
 
     result = engine.submit_quick_bet(_payload("TIMEOUT-1"))
 
@@ -229,6 +241,7 @@ def test_submit_timeout_becomes_ambiguous_not_failed() -> None:
 
     order = db.get_order(result["order_id"])
     assert order["status"] == STATUS_AMBIGUOUS
+    assert order["status"] != STATUS_FAILED
     assert "TIMEOUT-1" in engine._inflight_keys
     assert len(rec.enqueued) == 1
 
@@ -242,12 +255,15 @@ def test_ghost_order_resolved_without_duplicate_exposure() -> None:
 
     resolver = GhostReconciler(db, {"GHOST-1": {"bet_id": "REMOTE-1"}})
     resolved = resolver.resolve_once(customer_ref="GHOST-1")
+    retry = engine.submit_quick_bet(_payload("GHOST-1"))
 
     assert resolved is True
+    assert retry["status"] == STATUS_DUPLICATE_BLOCKED
     non_duplicate_orders = [o for o in db.orders.values() if o.get("status") != STATUS_DUPLICATE_BLOCKED]
     assert len(non_duplicate_orders) == 1
     assert non_duplicate_orders[0]["status"] == STATUS_COMPLETED
     assert non_duplicate_orders[0]["remote_bet_id"] == "REMOTE-1"
+    assert non_duplicate_orders[0]["status"] != STATUS_FAILED
 
 
 @pytest.mark.integration
@@ -259,6 +275,7 @@ def test_retry_after_timeout_does_not_duplicate_order() -> None:
 
     assert first["status"] == STATUS_AMBIGUOUS
     assert second["status"] == STATUS_DUPLICATE_BLOCKED
+    assert first["status"] != STATUS_DUPLICATE_BLOCKED
 
     non_duplicate_orders = [o for o in db.orders.values() if o.get("status") != STATUS_DUPLICATE_BLOCKED]
     assert len(non_duplicate_orders) == 1
@@ -276,9 +293,11 @@ def test_partial_failure_does_not_claim_success() -> None:
     assert result["status"] == "ACCEPTED_FOR_PROCESSING"
     assert result["is_terminal"] is False
     assert result["status"] != STATUS_COMPLETED
+    assert result["status"] != STATUS_FAILED
 
     order = db.get_order(result["order_id"])
     assert order["status"] == STATUS_SUBMITTED
+    assert order["status"] != STATUS_COMPLETED
     assert len(rec.enqueued) == 0
 
     event_names = [name for name, _payload in bus.events]
@@ -309,5 +328,6 @@ def test_reconcile_transient_failure_preserves_ambiguity() -> None:
 
     assert first_pass is False
     assert state_after_first["status"] == STATUS_AMBIGUOUS
+    assert state_after_first["status"] != STATUS_FAILED
     assert second_pass is True
     assert state_after_second["status"] == STATUS_COMPLETED
