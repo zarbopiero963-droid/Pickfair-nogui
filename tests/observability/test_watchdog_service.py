@@ -3,6 +3,11 @@ from observability.health_registry import HealthRegistry
 from observability.incidents_manager import IncidentsManager
 from observability.metrics_registry import MetricsRegistry
 from observability.watchdog_service import WatchdogService
+from tests.helpers.watchdog_fakes import (
+    FakeAnomalyEngineSequence,
+    get_alert,
+    normalize_alerts_snapshot,
+)
 
 
 class _ProbeStub:
@@ -21,15 +26,9 @@ class _SnapshotStub:
         return None
 
 
-class _AnomalyEngineSequence:
-    def __init__(self):
-        self.calls = 0
-
-    def evaluate(self, context):
-        self.calls += 1
-        if self.calls == 1:
-            return [{"code": "STUCK_INFLIGHT", "severity": "warning", "message": "stuck", "details": {}}]
-        return []
+def _alerts_by_code(alerts: AlertsManager) -> dict[str, dict]:
+    snapshot = normalize_alerts_snapshot(alerts.snapshot())
+    return {a["code"]: a for a in snapshot["alerts"] if "code" in a}
 
 
 def test_watchdog_resolves_stale_anomaly_alert_without_touching_unrelated_alerts():
@@ -43,16 +42,32 @@ def test_watchdog_resolves_stale_anomaly_alert_without_touching_unrelated_alerts
         alerts_manager=alerts,
         incidents_manager=IncidentsManager(),
         snapshot_service=_SnapshotStub(),
-        anomaly_engine=_AnomalyEngineSequence(),
+        anomaly_engine=FakeAnomalyEngineSequence(),
         interval_sec=60.0,
     )
 
     watchdog._evaluate_anomalies()
-    first = {a["code"]: a for a in alerts.snapshot()["alerts"]}
+    first_snapshot = normalize_alerts_snapshot(alerts.snapshot())
+    first = _alerts_by_code(alerts)
+    assert "STUCK_INFLIGHT" in first
     assert first["STUCK_INFLIGHT"]["active"] is True
     assert first["SYSTEM_WARN"]["active"] is True
 
+    first_stuck = get_alert(first_snapshot, "STUCK_INFLIGHT")
+    assert first_stuck is not None
+    assert first_stuck["active"] is True
+
     watchdog._evaluate_anomalies()
-    second = {a["code"]: a for a in alerts.snapshot()["alerts"]}
+    second_snapshot = normalize_alerts_snapshot(alerts.snapshot())
+    second = _alerts_by_code(alerts)
+    assert "STUCK_INFLIGHT" in second
     assert second["STUCK_INFLIGHT"]["active"] is False
     assert second["SYSTEM_WARN"]["active"] is True
+
+    second_stuck = get_alert(second_snapshot, "STUCK_INFLIGHT")
+    assert second_stuck is not None
+    assert second_stuck["active"] is False
+
+    system_warn = get_alert(second_snapshot, "SYSTEM_WARN")
+    assert system_warn is not None
+    assert system_warn["active"] is True
