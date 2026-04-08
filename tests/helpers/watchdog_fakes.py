@@ -15,7 +15,7 @@ class FakeAnomalyEngineSequence:
             return [
                 {
                     "code": "STUCK_INFLIGHT",
-                    "severity": "warning",
+                    "severity": "HIGH",
                     "description": "inflight not progressing",
                     "source": "watchdog",
                 }
@@ -29,15 +29,29 @@ class FakeAnomalyEngineSequence:
 def normalize_alerts_snapshot(snapshot: dict[str, Any] | None) -> dict[str, list[dict[str, Any]]]:
     """Normalize snapshot payload to always expose {'alerts': [...]} shape."""
 
-    normalized = snapshot if isinstance(snapshot, dict) else {}
-    alerts = normalized.get("alerts")
-    if not isinstance(alerts, list):
-        alerts = []
+    raw_snapshot = snapshot if isinstance(snapshot, dict) else {}
+    raw_alerts = raw_snapshot.get("alerts")
+    if not isinstance(raw_alerts, list):
+        raw_alerts = []
 
     normalized_alerts: list[dict[str, Any]] = []
-    for item in alerts:
-        if isinstance(item, dict):
-            normalized_alerts.append(item)
+    for item in raw_alerts:
+        if not isinstance(item, dict):
+            continue
+
+        code = item.get("code")
+        if code is None:
+            continue
+
+        normalized_alerts.append(
+            {
+                **item,
+                "code": str(code),
+                "active": bool(item.get("active", False)),
+                "severity": str(item.get("severity", "")),
+                "description": str(item.get("description", "")),
+            }
+        )
 
     return {"alerts": normalized_alerts}
 
