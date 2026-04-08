@@ -5,6 +5,7 @@ import threading
 from typing import Any
 
 from .anomaly_engine import AnomalyEngine
+from . import anomaly_rules
 from .anomaly_rules import DEFAULT_ANOMALY_RULES
 from .forensics_engine import ForensicsEngine
 from .forensics_rules import DEFAULT_FORENSICS_RULES
@@ -35,10 +36,10 @@ class WatchdogService:
         self.incidents_manager = incidents_manager
         self.snapshot_service = snapshot_service
         self.anomaly_engine = anomaly_engine or AnomalyEngine(DEFAULT_ANOMALY_RULES)
-        self.anomaly_enabled = True
         self.forensics_engine = forensics_engine or ForensicsEngine(DEFAULT_FORENSICS_RULES)
         self.anomaly_context_provider = anomaly_context_provider
         self.anomaly_enabled = bool(anomaly_enabled)
+        self.last_anomalies: list[dict[str, Any]] = []
         self.interval_sec = float(interval_sec)
 
         self._stop_event = threading.Event()
@@ -93,9 +94,79 @@ class WatchdogService:
         self.snapshot_service.collect_and_store()
 
     def _run_anomaly_hook(self) -> None:
-        self._evaluate_anomalies()
-        self._evaluate_invariants()
-        self._evaluate_correlations()
+        try:
+            self.last_anomalies = self._run_anomaly_checks()
+        except Exception:
+            self.last_anomalies = []
+            logger.exception("watchdog anomaly hook failed")
+
+    def _run_anomaly_checks(self) -> list[dict[str, Any]]:
+        context = self._build_anomaly_context()
+        runtime_state = context.get("runtime_state")
+        rule_inputs = context if isinstance(context, dict) else {}
+        collected: list[dict[str, Any]] = []
+
+        for rule_name in (
+            "detect_ghost_order",
+            "ghost_order_detected",
+            "detect_exposure_mismatch",
+            "exposure_mismatch",
+            "detect_db_contention",
+            "db_contention_detected",
+            "detect_event_fanout_failure",
+            "event_fanout_incomplete",
+            "detect_financial_drift",
+            "financial_drift",
+        ):
+            rule_fn = getattr(anomaly_rules, rule_name, None)
+            if not callable(rule_fn):
+                continue
+            try:
+                anomaly = rule_fn(rule_inputs, runtime_state if isinstance(runtime_state, dict) else {})
+            except Exception:
+                logger.exception("anomaly rule %s failed", rule_name)
+                continue
+            if isinstance(anomaly, dict):
+                collected.append(anomaly)
+
+        evaluator = getattr(self.anomaly_engine, "evaluate", None)
+        if callable(evaluator):
+            try:
+                evaluated = evaluator(context) or []
+                for anomaly in evaluated:
+                    if isinstance(anomaly, dict):
+                        collected.append(anomaly)
+            except Exception:
+                logger.exception("anomaly engine evaluate failed")
+
+        if collected:
+            logger.warning("watchdog anomaly hook collected anomalies", extra={"anomalies": collected})
+        return collected
+
+    def _build_anomaly_context(self) -> dict[str, Any]:
+        runtime_state: dict[str, Any] = {}
+        collector = getattr(self.probe, "collect_runtime_state", None)
+        if callable(collector):
+            try:
+                runtime_state = collector() or {}
+            except Exception:
+                logger.exception("collect_runtime_state failed during anomaly review")
+
+        context = {
+            "health": self.health_registry.snapshot(),
+            "metrics": self.metrics_registry.snapshot(),
+            "alerts": self.alerts_manager.snapshot(),
+            "incidents": self.incidents_manager.snapshot(),
+            "runtime_state": runtime_state,
+        }
+        if callable(self.anomaly_context_provider):
+            try:
+                extra = self.anomaly_context_provider() or {}
+                if isinstance(extra, dict):
+                    context.update(extra)
+            except Exception:
+                logger.exception("anomaly_context_provider failed")
+        return context
 
     def _evaluate_invariants(self) -> None:
         self._evaluate_forensics()

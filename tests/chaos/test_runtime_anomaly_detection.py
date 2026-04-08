@@ -7,11 +7,17 @@ from tests.helpers.fake_runtime_state import FakeRuntimeState
 
 
 class _ProbeStub:
+    def __init__(self, runtime_state=None):
+        self.runtime_state = runtime_state
+
     def collect_health(self):
         return {"runtime": {"status": "READY", "reason": "ok", "details": {}}}
 
     def collect_metrics(self):
         return {}
+
+    def collect_runtime_state(self):
+        return self.runtime_state
 
 
 class _SnapshotStub:
@@ -19,45 +25,77 @@ class _SnapshotStub:
         return None
 
 
-def _make_watchdog(*, anomaly_enabled: bool) -> WatchdogService:
+class _EngineStub:
+    def __init__(self, response=None, raises=False):
+        self.response = response if response is not None else []
+        self.raises = raises
+        self.calls = 0
+
+    def evaluate(self, context):
+        del context
+        self.calls += 1
+        if self.raises:
+            raise RuntimeError("boom")
+        return self.response
+
+
+def _make_watchdog(*, anomaly_enabled: bool, runtime_state=None, anomaly_engine=None) -> WatchdogService:
     return WatchdogService(
-        probe=_ProbeStub(),
+        probe=_ProbeStub(runtime_state=runtime_state),
         health_registry=HealthRegistry(),
         metrics_registry=MetricsRegistry(),
         alerts_manager=AlertsManager(),
         incidents_manager=IncidentsManager(),
         snapshot_service=_SnapshotStub(),
+        anomaly_engine=anomaly_engine,
         anomaly_enabled=anomaly_enabled,
         interval_sec=60.0,
     )
 
 
-def test_anomaly_flag_defaults_to_off():
-    watchdog = _make_watchdog(anomaly_enabled=False)
-    assert watchdog.anomaly_enabled is False
-
-
-def test_anomaly_hook_runs_anomaly_invariant_and_correlation_when_enabled(monkeypatch):
-    watchdog = _make_watchdog(anomaly_enabled=True)
-    calls = []
-
-    monkeypatch.setattr(watchdog, "_evaluate_anomalies", lambda: calls.append("anomaly"))
-    monkeypatch.setattr(watchdog, "_evaluate_invariants", lambda: calls.append("invariant"))
-    monkeypatch.setattr(watchdog, "_evaluate_correlations", lambda: calls.append("correlation"))
+def test_anomaly_disabled_no_effect():
+    engine = _EngineStub(response=[{"code": "IGNORED"}])
+    watchdog = _make_watchdog(anomaly_enabled=False, anomaly_engine=engine)
 
     watchdog._tick()
 
-    assert calls == ["anomaly", "invariant", "correlation"]
+    assert engine.calls == 0
+    assert watchdog.last_anomalies == []
 
 
-def test_anomaly_hook_is_skipped_when_flag_disabled(monkeypatch):
-    watchdog = _make_watchdog(anomaly_enabled=False)
+def test_anomaly_enabled_collects_anomalies_and_stays_alive():
+    engine = _EngineStub(response=[{"code": "CONTRADICTION", "severity": "warning", "message": "bad"}])
+    watchdog = _make_watchdog(
+        anomaly_enabled=True,
+        runtime_state={"reconcile": {"ghost_orders_count": 1}},
+        anomaly_engine=engine,
+    )
 
-    def _unexpected_call() -> None:
-        raise AssertionError("anomaly hook must stay disabled by default")
+    watchdog._tick()
 
-    monkeypatch.setattr(watchdog, "_run_anomaly_hook", _unexpected_call)
+    assert engine.calls == 1
+    assert any(item.get("code") == "CONTRADICTION" for item in watchdog.last_anomalies)
+    assert any(item.get("code") == "GHOST_ORDER_DETECTED" for item in watchdog.last_anomalies)
 
+
+def test_anomaly_hook_exception_is_contained():
+    engine = _EngineStub(raises=True)
+    watchdog = _make_watchdog(anomaly_enabled=True, anomaly_engine=engine)
+
+    watchdog._tick()
+
+    assert engine.calls == 1
+    assert watchdog.last_anomalies == []
+
+
+def test_anomaly_enabled_with_empty_runtime_state_is_safe():
+    engine = _EngineStub(response=[])
+    watchdog = _make_watchdog(anomaly_enabled=True, runtime_state={}, anomaly_engine=engine)
+
+    anomalies = watchdog._run_anomaly_checks()
+
+    assert anomalies == []
+    assert watchdog.last_anomalies == []
     watchdog._tick()
 
 
