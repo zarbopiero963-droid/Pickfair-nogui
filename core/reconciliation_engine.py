@@ -1975,6 +1975,34 @@ class ReconciliationEngine:
         self._publish("RECONCILIATION_ALL_DONE", summary)
         return summary
 
+    def fetch_startup_active_orders(self) -> List[Dict[str, Any]]:
+        """
+        Startup hook: snapshot ordini attivi remoti PRIMA del normale intake live.
+        Nessuna chiamata reale in test: i test iniettano un service fake.
+        """
+        fn = getattr(self.betfair_service, "list_active_orders", None)
+        if callable(fn):
+            orders = fn() or []
+            return [o for o in orders if isinstance(o, dict)]
+
+        fn = getattr(self.betfair_service, "list_current_orders", None)
+        if callable(fn):
+            orders = fn() or []
+            return [o for o in orders if isinstance(o, dict)]
+
+        return []
+
+    def merge_startup_active_orders(self, remote_orders: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Normalizza e preserva il payload degli ordini remoti per recovery startup.
+        """
+        normalized: List[Dict[str, Any]] = []
+        for order in list(remote_orders or []):
+            if not isinstance(order, dict):
+                continue
+            normalized.append(dict(order))
+        return {"orders": normalized, "count": len(normalized)}
+
     # ─────────────────────────────────────────────────────────────
     # POLICY HELPERS
     # ─────────────────────────────────────────────────────────────
