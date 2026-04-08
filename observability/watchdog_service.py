@@ -26,6 +26,8 @@ class WatchdogService:
         forensics_engine: Any = None,
         anomaly_context_provider: Any = None,
         anomaly_enabled: bool = False,
+        anomaly_alerts_enabled: bool = False,
+        anomaly_alert_service: Any = None,
         interval_sec: float = 5.0,
     ) -> None:
         self.probe = probe
@@ -39,6 +41,8 @@ class WatchdogService:
         self.forensics_engine = forensics_engine or ForensicsEngine(DEFAULT_FORENSICS_RULES)
         self.anomaly_context_provider = anomaly_context_provider
         self.anomaly_enabled = bool(anomaly_enabled)
+        self.anomaly_alerts_enabled = bool(anomaly_alerts_enabled)
+        self.anomaly_alert_service = anomaly_alert_service
         self.interval_sec = float(interval_sec)
 
         self._stop_event = threading.Event()
@@ -196,6 +200,12 @@ class WatchdogService:
                 message,
                 source="anomaly",
             )
+            self._emit_anomaly_alert(
+                code=code,
+                severity=severity,
+                message=message,
+                details=details,
+            )
             if severity in {"critical", "error"}:
                 self.incidents_manager.open_incident(code, code, severity, details=details)
 
@@ -206,6 +216,29 @@ class WatchdogService:
             code = str(item.get("code", "") or "")
             if code and code not in current_codes:
                 self.alerts_manager.resolve_alert(code)
+
+    def _emit_anomaly_alert(self, *, code: str, severity: str, message: str, details: Any) -> None:
+        if not self.anomaly_alerts_enabled:
+            return
+
+        notify_alert = getattr(self.anomaly_alert_service, "notify_alert", None)
+        if not callable(notify_alert):
+            logger.info("Anomaly alert path unavailable; falling back to logs", extra={"code": code})
+            return
+
+        payload = {
+            "code": code,
+            "severity": str(severity or "warning"),
+            "source": "watchdog_service",
+            "description": str(message or code),
+            "details": details if isinstance(details, dict) else {"details": details},
+            "type": "anomaly",
+        }
+
+        try:
+            notify_alert(payload)
+        except Exception:
+            logger.exception("Anomaly alert emission failed", extra={"code": code})
 
     def _evaluate_forensics(self) -> None:
         if self.forensics_engine is None:
