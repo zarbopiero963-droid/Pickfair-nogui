@@ -26,11 +26,6 @@ class _SnapshotStub:
         return None
 
 
-def _alerts_by_code(alerts: AlertsManager) -> dict[str, dict]:
-    snapshot = normalize_alerts_snapshot(alerts.snapshot())
-    return {a["code"]: a for a in snapshot["alerts"] if "code" in a}
-
-
 def test_watchdog_resolves_stale_anomaly_alert_without_touching_unrelated_alerts():
     alerts = AlertsManager()
     alerts.upsert_alert("SYSTEM_WARN", "warning", "keep me", source="system")
@@ -48,26 +43,25 @@ def test_watchdog_resolves_stale_anomaly_alert_without_touching_unrelated_alerts
 
     watchdog._evaluate_anomalies()
     first_snapshot = normalize_alerts_snapshot(alerts.snapshot())
-    first = _alerts_by_code(alerts)
-    assert "STUCK_INFLIGHT" in first
-    assert first["STUCK_INFLIGHT"]["active"] is True
-    assert first["SYSTEM_WARN"]["active"] is True
 
     first_stuck = get_alert(first_snapshot, "STUCK_INFLIGHT")
     assert first_stuck is not None
     assert first_stuck["active"] is True
+    assert first_stuck["severity"] == "HIGH"
+
+    first_system_warn = get_alert(first_snapshot, "SYSTEM_WARN")
+    assert first_system_warn is not None
+    assert first_system_warn["active"] is True
+    assert first_system_warn.get("source") == "system"
 
     watchdog._evaluate_anomalies()
     second_snapshot = normalize_alerts_snapshot(alerts.snapshot())
-    second = _alerts_by_code(alerts)
-    assert "STUCK_INFLIGHT" in second
-    assert second["STUCK_INFLIGHT"]["active"] is False
-    assert second["SYSTEM_WARN"]["active"] is True
 
     second_stuck = get_alert(second_snapshot, "STUCK_INFLIGHT")
     assert second_stuck is not None
     assert second_stuck["active"] is False
 
-    system_warn = get_alert(second_snapshot, "SYSTEM_WARN")
-    assert system_warn is not None
-    assert system_warn["active"] is True
+    second_system_warn = get_alert(second_snapshot, "SYSTEM_WARN")
+    assert second_system_warn is not None
+    assert second_system_warn["active"] is True
+    assert second_system_warn.get("source") == "system"
