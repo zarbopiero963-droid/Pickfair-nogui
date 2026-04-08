@@ -25,6 +25,7 @@ class WatchdogService:
         anomaly_engine: Any = None,
         forensics_engine: Any = None,
         anomaly_context_provider: Any = None,
+        settings_service: Any = None,
         anomaly_enabled: bool = False,
         interval_sec: float = 5.0,
     ) -> None:
@@ -35,9 +36,9 @@ class WatchdogService:
         self.incidents_manager = incidents_manager
         self.snapshot_service = snapshot_service
         self.anomaly_engine = anomaly_engine or AnomalyEngine(DEFAULT_ANOMALY_RULES)
-        self.anomaly_enabled = True
         self.forensics_engine = forensics_engine or ForensicsEngine(DEFAULT_FORENSICS_RULES)
         self.anomaly_context_provider = anomaly_context_provider
+        self.settings_service = settings_service
         self.anomaly_enabled = bool(anomaly_enabled)
         self.interval_sec = float(interval_sec)
 
@@ -88,9 +89,22 @@ class WatchdogService:
             self.metrics_registry.set_gauge(name, value)
 
         self._evaluate_alerts()
-        if self.anomaly_enabled:
+        if self._is_anomaly_enabled():
             self._run_anomaly_hook()
         self.snapshot_service.collect_and_store()
+
+    def _is_anomaly_enabled(self) -> bool:
+        if self.settings_service is None:
+            return bool(self.anomaly_enabled)
+
+        loader = getattr(self.settings_service, "load_anomaly_enabled", None)
+        if callable(loader):
+            try:
+                return bool(loader())
+            except Exception:
+                logger.exception("load_anomaly_enabled failed, fallback to local flag")
+
+        return bool(self.anomaly_enabled)
 
     def _run_anomaly_hook(self) -> None:
         self._evaluate_anomalies()

@@ -11,7 +11,7 @@ from core.event_bus import EventBus
 from executor_manager import ExecutorManager
 from shutdown_manager import ShutdownManager
 
-from services.setting_service import SettingsService
+from services.settings_service import SettingsService
 from services.betfair_service import BetfairService
 from services.telegram_alerts_service import TelegramAlertsService
 from services.telegram_service import TelegramService
@@ -304,6 +304,7 @@ class HeadlessApp:
                 alerts_manager=self.alerts_manager,
                 incidents_manager=self.incidents_manager,
                 snapshot_service=self.snapshot_service,
+                settings_service=self.settings_service,
                 interval_sec=5.0,
             )
 
