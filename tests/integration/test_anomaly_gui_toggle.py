@@ -36,105 +36,85 @@ class _SnapshotStub:
         return None
 
 
-def _watchdog(settings_service, probe=None):
+class _EngineStub:
+    def __init__(self, anomalies=None):
+        self.anomalies = list(anomalies or [{"code": "GUI", "severity": "warning", "description": "gui-path"}])
+        self.calls = 0
+
+    def evaluate(self, _context):
+        self.calls += 1
+        return list(self.anomalies)
+
+
+def _watchdog(settings_service=None, *, anomaly_enabled=False, anomaly_alerts_enabled=False, anomaly_actions_enabled=False, hook=None):
     return WatchdogService(
-        probe=probe or _ProbeStub(),
-        health_registry=HealthRegistry(),
-        metrics_registry=MetricsRegistry(),
-        alerts_manager=AlertsManager(),
-        incidents_manager=IncidentsManager(),
-        snapshot_service=_SnapshotStub(),
-        settings_service=settings_service,
-        anomaly_enabled=False,
-        interval_sec=60.0,
-    )
-
-
-def test_missing_setting_defaults_to_off_and_skips_anomaly_hook(monkeypatch):
-    svc = SettingsService(_InMemorySettingsDb())
-    watchdog = _watchdog(svc)
-    assert svc.load_anomaly_enabled() is False
-
-    monkeypatch.setattr(watchdog, "_run_anomaly_hook", lambda: (_ for _ in ()).throw(AssertionError()))
-    watchdog._tick()
-
-
-def test_toggle_off_keeps_hook_disabled(monkeypatch):
-    svc = SettingsService(_InMemorySettingsDb())
-    svc.save_anomaly_enabled(False)
-    watchdog = _watchdog(svc)
-    calls = []
-    monkeypatch.setattr(watchdog, "_run_anomaly_hook", lambda: calls.append("hook"))
-    watchdog._tick()
-    assert calls == []
-
-
-def test_toggle_on_runs_hook_without_mutating_runtime_state(monkeypatch):
-    svc = SettingsService(_InMemorySettingsDb())
-    svc.save_anomaly_enabled(True)
-    probe = _ProbeStub()
-    original_state = {"trading_state": dict(probe.runtime_state["trading_state"])}
-    watchdog = _watchdog(svc, probe=probe)
-    calls = []
-    monkeypatch.setattr(watchdog, "_run_anomaly_hook", lambda: calls.append("hook"))
-
-    watchdog._tick()
-
-    assert calls == ["hook"]
-    assert probe.runtime_state == original_state
-
-
-def test_toggle_persistence_across_service_instances():
-    db = _InMemorySettingsDb()
-    first = SettingsService(db)
-    first.save_anomaly_enabled(True)
-    second = SettingsService(db)
-    assert second.load_anomaly_enabled() is True
-
-    second.save_anomaly_enabled(False)
-    third = SettingsService(db)
-    assert third.load_anomaly_enabled() is False
-
-
-def test_headless_safety_without_settings_service(monkeypatch):
-    watchdog = WatchdogService(
         probe=_ProbeStub(),
         health_registry=HealthRegistry(),
         metrics_registry=MetricsRegistry(),
         alerts_manager=AlertsManager(),
         incidents_manager=IncidentsManager(),
         snapshot_service=_SnapshotStub(),
-        anomaly_enabled=False,
+        settings_service=settings_service,
+        anomaly_engine=_EngineStub(),
+        anomaly_enabled=anomaly_enabled,
+        anomaly_alerts_enabled=anomaly_alerts_enabled,
+        anomaly_actions_enabled=anomaly_actions_enabled,
+        anomaly_escalation_hook=hook,
         interval_sec=60.0,
     )
-    calls = []
-    monkeypatch.setattr(watchdog, "_run_anomaly_hook", lambda: calls.append("hook"))
+
+
+def test_missing_setting_defaults_safe_off_and_headless_safe_without_settings():
+    svc = SettingsService(_InMemorySettingsDb())
+    assert svc.load_anomaly_enabled() is False
+    assert svc.load_anomaly_alerts_enabled() is False
+    assert svc.load_anomaly_actions_enabled() is False
+
+    watchdog = _watchdog(settings_service=None, anomaly_enabled=False)
+    watchdog._tick()
+    assert watchdog.last_anomalies == []
+
+
+def test_toggle_off_keeps_hook_disabled():
+    svc = SettingsService(_InMemorySettingsDb())
+    svc.save_anomaly_enabled(True)
+    svc.save_anomaly_alerts_enabled(True)
+    svc.save_anomaly_actions_enabled(False)
+
+    hook_calls = []
+    watchdog = _watchdog(settings_service=svc, hook=lambda payload: hook_calls.append(payload))
 
     watchdog._tick()
-    assert calls == []
-from tests.helpers.fake_settings import FakeSettingsService
+
+    assert watchdog.last_anomalies
+    assert watchdog.escalation_requested is False
+    assert hook_calls == []
 
 
-def test_anomaly_enabled_defaults_false_when_missing():
-    settings = FakeSettingsService()
+def test_toggle_on_enables_safe_hook_path():
+    svc = SettingsService(_InMemorySettingsDb())
+    svc.save_anomaly_enabled(True)
+    svc.save_anomaly_alerts_enabled(True)
+    svc.save_anomaly_actions_enabled(True)
 
-    assert settings.get_bool("anomaly_enabled", default=False) is False
-    assert settings.snapshot() == {}
+    hook_calls = []
+    watchdog = _watchdog(settings_service=svc, hook=lambda payload: hook_calls.append(payload))
+
+    watchdog._tick()
+
+    assert watchdog.escalation_requested is True
+    assert watchdog.last_escalation_event is not None
+    assert hook_calls and hook_calls[0]["escalation_requested"] is True
 
 
-def test_anomaly_enabled_true_persists_across_reload():
-    settings = FakeSettingsService()
-    settings.set_bool("anomaly_enabled", True)
+def test_toggle_persistence_across_service_instances():
+    db = _InMemorySettingsDb()
+    first = SettingsService(db)
+    first.save_anomaly_enabled(True)
+    first.save_anomaly_alerts_enabled(False)
+    first.save_anomaly_actions_enabled(True)
 
-    reloaded = FakeSettingsService.from_state(settings.export_state())
-
-    assert reloaded.get_bool("anomaly_enabled", default=False) is True
-
-
-def test_anomaly_enabled_false_persists_across_reload():
-    settings = FakeSettingsService({"anomaly_enabled": True})
-    settings.set_bool("anomaly_enabled", False)
-
-    reloaded = FakeSettingsService.from_state(settings.export_state())
-
-    assert reloaded.get_bool("anomaly_enabled", default=True) is False
+    second = SettingsService(db)
+    assert second.load_anomaly_enabled() is True
+    assert second.load_anomaly_alerts_enabled() is False
+    assert second.load_anomaly_actions_enabled() is True

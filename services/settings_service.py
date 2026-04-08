@@ -10,6 +10,8 @@ class SettingsService(LegacySettingsService):
     """
 
     ANOMALY_ENABLED_KEY = "anomaly_enabled"
+    ANOMALY_ALERTS_ENABLED_KEY = "anomaly_alerts_enabled"
+    ANOMALY_ACTIONS_ENABLED_KEY = "anomaly_actions_enabled"
 
     def load_anomaly_enabled(self) -> bool:
         data = self.get_all_settings()
@@ -17,3 +19,17 @@ class SettingsService(LegacySettingsService):
 
     def save_anomaly_enabled(self, enabled: bool) -> None:
         self.save_settings({self.ANOMALY_ENABLED_KEY: int(bool(enabled))})
+
+    def load_anomaly_alerts_enabled(self) -> bool:
+        data = self.get_all_settings()
+        return self._b(data, self.ANOMALY_ALERTS_ENABLED_KEY, False)
+
+    def save_anomaly_alerts_enabled(self, enabled: bool) -> None:
+        self.save_settings({self.ANOMALY_ALERTS_ENABLED_KEY: int(bool(enabled))})
+
+    def load_anomaly_actions_enabled(self) -> bool:
+        data = self.get_all_settings()
+        return self._b(data, self.ANOMALY_ACTIONS_ENABLED_KEY, False)
+
+    def save_anomaly_actions_enabled(self, enabled: bool) -> None:
+        self.save_settings({self.ANOMALY_ACTIONS_ENABLED_KEY: int(bool(enabled))})
