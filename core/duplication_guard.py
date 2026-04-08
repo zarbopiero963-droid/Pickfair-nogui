@@ -84,6 +84,18 @@ class DuplicationGuard:
 
             return True
 
+
+    def register_startup_order(self, payload: Dict[str, Any]) -> bool:
+        """
+        Seed della guardia da ordini già vivi su exchange al restart.
+        True se registrato, False se payload insufficiente o già presente.
+        """
+        order = dict(payload or {})
+        event_key = str(order.get("event_key") or "").strip()
+        if not event_key:
+            event_key = self.build_event_key(order)
+        return self.acquire(event_key)
+
     # =========================================================
     # RELEASE
     # =========================================================
