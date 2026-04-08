@@ -190,6 +190,31 @@ class HeadlessApp:
         if self.runtime is None:
             raise RuntimeError("RuntimeController non inizializzato")
 
+    def _load_anomaly_toggles(self) -> dict[str, bool]:
+        defaults = {
+            "anomaly_enabled": False,
+            "anomaly_alerts_enabled": False,
+            "anomaly_actions_enabled": False,
+        }
+        if self.settings_service is None:
+            return defaults
+
+        loader = getattr(self.settings_service, "load_anomaly_toggles", None)
+        if not callable(loader):
+            return defaults
+
+        try:
+            loaded = loader() or {}
+        except Exception:
+            logger.exception("Impossibile caricare anomaly toggles, uso fallback safe")
+            return defaults
+
+        return {
+            "anomaly_enabled": bool(loaded.get("anomaly_enabled", False)),
+            "anomaly_alerts_enabled": bool(loaded.get("anomaly_alerts_enabled", False)),
+            "anomaly_actions_enabled": bool(loaded.get("anomaly_actions_enabled", False)),
+        }
+
     # =========================================================
     # BOOTSTRAP
     # =========================================================
@@ -296,6 +321,7 @@ class HeadlessApp:
                 alerts_manager=self.alerts_manager,
                 incidents_manager=self.incidents_manager,
             )
+            anomaly_toggles = self._load_anomaly_toggles()
 
             self.watchdog_service = WatchdogService(
                 probe=self.runtime_probe,
@@ -304,6 +330,9 @@ class HeadlessApp:
                 alerts_manager=self.alerts_manager,
                 incidents_manager=self.incidents_manager,
                 snapshot_service=self.snapshot_service,
+                anomaly_enabled=anomaly_toggles["anomaly_enabled"],
+                anomaly_alerts_enabled=anomaly_toggles["anomaly_alerts_enabled"],
+                anomaly_actions_enabled=anomaly_toggles["anomaly_actions_enabled"],
                 interval_sec=5.0,
             )
 

@@ -300,3 +300,29 @@ class SettingsService:
     def clear_simulation_state(self, state_key: str = "default") -> None:
         if hasattr(self.db, "clear_simulation_state"):
             self.db.clear_simulation_state(state_key=state_key)
+
+    # =========================================================
+    # ANOMALY ESCALATION TOGGLES
+    # =========================================================
+    def load_anomaly_toggles(self) -> Dict[str, bool]:
+        data = self.get_all_settings()
+        return {
+            "anomaly_enabled": self._b(data, "anomaly_enabled", False),
+            "anomaly_alerts_enabled": self._b(data, "anomaly_alerts_enabled", False),
+            "anomaly_actions_enabled": self._b(data, "anomaly_actions_enabled", False),
+        }
+
+    def save_anomaly_toggles(
+        self,
+        *,
+        anomaly_enabled: bool,
+        anomaly_alerts_enabled: bool,
+        anomaly_actions_enabled: bool,
+    ) -> None:
+        self.save_settings(
+            {
+                "anomaly_enabled": int(bool(anomaly_enabled)),
+                "anomaly_alerts_enabled": int(bool(anomaly_alerts_enabled)),
+                "anomaly_actions_enabled": int(bool(anomaly_actions_enabled)),
+            }
+        )

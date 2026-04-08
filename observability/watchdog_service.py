@@ -26,6 +26,9 @@ class WatchdogService:
         forensics_engine: Any = None,
         anomaly_context_provider: Any = None,
         anomaly_enabled: bool = False,
+        anomaly_alerts_enabled: bool = False,
+        anomaly_actions_enabled: bool = False,
+        anomaly_escalation_hook: Any = None,
         interval_sec: float = 5.0,
     ) -> None:
         self.probe = probe
@@ -35,10 +38,14 @@ class WatchdogService:
         self.incidents_manager = incidents_manager
         self.snapshot_service = snapshot_service
         self.anomaly_engine = anomaly_engine or AnomalyEngine(DEFAULT_ANOMALY_RULES)
-        self.anomaly_enabled = True
         self.forensics_engine = forensics_engine or ForensicsEngine(DEFAULT_FORENSICS_RULES)
         self.anomaly_context_provider = anomaly_context_provider
         self.anomaly_enabled = bool(anomaly_enabled)
+        self.anomaly_alerts_enabled = bool(anomaly_alerts_enabled)
+        self.anomaly_actions_enabled = bool(anomaly_actions_enabled)
+        self.anomaly_escalation_hook = anomaly_escalation_hook
+        self.escalation_requested = False
+        self.last_escalation_event: dict[str, Any] | None = None
         self.interval_sec = float(interval_sec)
 
         self._stop_event = threading.Event()
@@ -93,9 +100,11 @@ class WatchdogService:
         self.snapshot_service.collect_and_store()
 
     def _run_anomaly_hook(self) -> None:
-        self._evaluate_anomalies()
+        anomalies = self._evaluate_anomalies()
         self._evaluate_invariants()
         self._evaluate_correlations()
+        if self.anomaly_actions_enabled:
+            self._handle_anomaly_escalation(anomalies)
 
     def _evaluate_invariants(self) -> None:
         self._evaluate_forensics()
@@ -149,9 +158,9 @@ class WatchdogService:
         else:
             self.alerts_manager.resolve_alert("INFLIGHT_HIGH")
 
-    def _evaluate_anomalies(self) -> None:
+    def _evaluate_anomalies(self) -> list[dict[str, Any]]:
         if self.anomaly_engine is None:
-            return
+            return []
 
         runtime_state = {}
         collector = getattr(self.probe, "collect_runtime_state", None)
@@ -190,14 +199,18 @@ class WatchdogService:
             message = str(anomaly.get("description", "") or "")
             details = anomaly.get("details") or {}
 
-            self.alerts_manager.upsert_alert(
-                code,
-                severity,
-                message,
-                source="anomaly",
-            )
+            if self.anomaly_alerts_enabled:
+                self.alerts_manager.upsert_alert(
+                    code,
+                    severity,
+                    message,
+                    source="anomaly",
+                )
             if severity in {"critical", "error"}:
                 self.incidents_manager.open_incident(code, code, severity, details=details)
+
+        if not self.anomaly_alerts_enabled:
+            return anomalies
 
         alerts_snapshot = self.alerts_manager.snapshot().get("alerts", [])
         for item in alerts_snapshot:
@@ -206,6 +219,29 @@ class WatchdogService:
             code = str(item.get("code", "") or "")
             if code and code not in current_codes:
                 self.alerts_manager.resolve_alert(code)
+        return anomalies
+
+    def _handle_anomaly_escalation(self, anomalies: list[dict[str, Any]]) -> None:
+        if not anomalies:
+            return
+        first = anomalies[0] or {}
+        payload = {
+            "code": str(first.get("code") or first.get("name") or first.get("type") or "UNKNOWN_ANOMALY"),
+            "severity": str(first.get("severity", "warning") or "warning"),
+            "source": str(first.get("source") or "anomaly"),
+            "escalation_requested": True,
+            "reason": str(first.get("description") or first.get("message") or ""),
+            "details": first.get("details") or {},
+        }
+        self.escalation_requested = True
+        self.last_escalation_event = payload
+        logger.warning("Anomaly escalation requested: %s", payload)
+
+        if callable(self.anomaly_escalation_hook):
+            try:
+                self.anomaly_escalation_hook(payload)
+            except Exception:
+                logger.exception("anomaly_escalation_hook failed")
 
     def _evaluate_forensics(self) -> None:
         if self.forensics_engine is None:

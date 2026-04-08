@@ -12,13 +12,30 @@ class _ProbeStub:
     def collect_metrics(self):
         return {}
 
+    def collect_runtime_state(self):
+        return {}
+
 
 class _SnapshotStub:
     def collect_and_store(self):
         return None
 
 
-def _make_watchdog(*, anomaly_enabled: bool) -> WatchdogService:
+class _AnomalyEngineStub:
+    def __init__(self, anomalies):
+        self._anomalies = anomalies
+
+    def evaluate(self, _context):
+        return list(self._anomalies)
+
+
+def _make_watchdog(
+    *,
+    anomaly_enabled: bool,
+    anomaly_alerts_enabled: bool = False,
+    anomaly_actions_enabled: bool = False,
+    anomalies=None,
+) -> WatchdogService:
     return WatchdogService(
         probe=_ProbeStub(),
         health_registry=HealthRegistry(),
@@ -26,7 +43,10 @@ def _make_watchdog(*, anomaly_enabled: bool) -> WatchdogService:
         alerts_manager=AlertsManager(),
         incidents_manager=IncidentsManager(),
         snapshot_service=_SnapshotStub(),
+        anomaly_engine=_AnomalyEngineStub(anomalies or []),
         anomaly_enabled=anomaly_enabled,
+        anomaly_alerts_enabled=anomaly_alerts_enabled,
+        anomaly_actions_enabled=anomaly_actions_enabled,
         interval_sec=60.0,
     )
 
@@ -58,3 +78,48 @@ def test_anomaly_hook_is_skipped_when_flag_disabled(monkeypatch):
     monkeypatch.setattr(watchdog, "_run_anomaly_hook", _unexpected_call)
 
     watchdog._tick()
+
+
+def test_detection_only_runs_without_alert_or_escalation():
+    watchdog = _make_watchdog(
+        anomaly_enabled=True,
+        anomaly_alerts_enabled=False,
+        anomaly_actions_enabled=False,
+        anomalies=[{"code": "ANOM_1", "severity": "warning", "description": "detect only"}],
+    )
+
+    watchdog._tick()
+
+    alerts = watchdog.alerts_manager.snapshot()["alerts"]
+    assert [a for a in alerts if a.get("source") == "anomaly"] == []
+    assert watchdog.escalation_requested is False
+    assert watchdog.last_escalation_event is None
+
+
+def test_detection_with_alerts_and_actions_invokes_safe_escalation_hook():
+    events = []
+    watchdog = WatchdogService(
+        probe=_ProbeStub(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=AlertsManager(),
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        anomaly_engine=_AnomalyEngineStub(
+            [{"code": "ANOM_2", "severity": "critical", "description": "escalate", "details": {"component": "watchdog"}}]
+        ),
+        anomaly_enabled=True,
+        anomaly_alerts_enabled=True,
+        anomaly_actions_enabled=True,
+        anomaly_escalation_hook=lambda payload: events.append(payload),
+        interval_sec=60.0,
+    )
+
+    watchdog._tick()
+
+    anomaly_alerts = [a for a in watchdog.alerts_manager.snapshot()["alerts"] if a.get("source") == "anomaly"]
+    assert len(anomaly_alerts) == 1
+    assert watchdog.escalation_requested is True
+    assert watchdog.last_escalation_event is not None
+    assert watchdog.last_escalation_event["escalation_requested"] is True
+    assert events and events[0]["code"] == "ANOM_2"
