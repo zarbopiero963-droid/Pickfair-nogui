@@ -4,6 +4,7 @@ from copy import deepcopy
 
 from core.duplication_guard import DuplicationGuard
 from core.state_recovery import StateRecovery
+from tests.helpers.fake_exchange import FakeExchange
 
 
 class FakeBus:
@@ -60,7 +61,12 @@ def test_startup_recovers_remote_missing_db_before_acceptance_path():
     guard = DuplicationGuard(ttl_seconds=999999)
     reconcile = FakeReconcile([_ghost_order()])
 
-    recovery = StateRecovery(db=db, bus=bus, reconciliation_engine=reconcile, duplication_guard=guard)
+    recovery = StateRecovery(
+        db=db,
+        bus=bus,
+        reconciliation_engine=reconcile,
+        duplication_guard=guard,
+    )
     result = recovery.recover()
 
     assert reconcile.fetch_calls == 1
@@ -73,18 +79,21 @@ def test_startup_recovers_remote_missing_db_before_acceptance_path():
     assert persisted[0]["order_id"] == "BET-001"
 
 
-
 def test_duplicate_after_restart_is_blocked_by_recovered_ghost_order():
     db = FakeDB()
     guard = DuplicationGuard(ttl_seconds=999999)
     reconcile = FakeReconcile([_ghost_order()])
 
-    recovery = StateRecovery(db=db, bus=FakeBus(), reconciliation_engine=reconcile, duplication_guard=guard)
+    recovery = StateRecovery(
+        db=db,
+        bus=FakeBus(),
+        reconciliation_engine=reconcile,
+        duplication_guard=guard,
+    )
     recovery.recover()
 
     duplicate_key = guard.build_event_key(_ghost_order())
     assert guard.acquire(duplicate_key) is False
-
 
 
 def test_startup_is_not_flat_when_ghost_order_exists():
@@ -100,7 +109,6 @@ def test_startup_is_not_flat_when_ghost_order_exists():
     assert result["ok"] is True
     assert result["startup_mode"] != "LIVE_FLAT"
     assert result["startup_mode"] == "LIVE_WITH_RECOVERED_GHOSTS"
-from tests.helpers.fake_exchange import FakeExchange
 
 
 def test_startup_reconcile_merges_remote_ghost_before_new_submit() -> None:
@@ -124,7 +132,9 @@ def test_startup_reconcile_merges_remote_ghost_before_new_submit() -> None:
     local_orders: dict[str, dict[str, object]] = {}
 
     def startup_reconcile() -> None:
-        for row in exchange.get_current_orders(statuses=["EXECUTABLE", "PARTIALLY_MATCHED", "MATCHED"]):
+        for row in exchange.get_current_orders(
+            statuses=["EXECUTABLE", "PARTIALLY_MATCHED", "MATCHED"]
+        ):
             local_orders[row["customer_ref"]] = {
                 "status": "RECOVERED",
                 "remote_bet_id": row["bet_id"],
