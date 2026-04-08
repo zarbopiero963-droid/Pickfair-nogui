@@ -37,11 +37,15 @@ class SimulationMatchingEngine:
         state: SimulationState,
         partial_fill_enabled: bool = True,
         consume_liquidity: bool = True,
+        queue_ahead_ratio: float = 0.35,
+        slippage_ticks: int = 1,
     ):
         self.order_book = order_book
         self.state = state
         self.partial_fill_enabled = bool(partial_fill_enabled)
         self.consume_liquidity = bool(consume_liquidity)
+        self.queue_ahead_ratio = max(0.0, min(0.95, float(queue_ahead_ratio or 0.0)))
+        self.slippage_ticks = max(0, int(slippage_ticks or 0))
 
     # =========================================================
     # HELPERS
@@ -74,6 +78,30 @@ class SimulationMatchingEngine:
             return 0.0
         weighted = sum(float(x["price"]) * float(x["size"]) for x in fills)
         return weighted / total_size
+
+    def _tick_size(self, price: float) -> float:
+        price = float(price or 0.0)
+        if price < 2.0:
+            return 0.01
+        if price < 3.0:
+            return 0.02
+        if price < 4.0:
+            return 0.05
+        if price < 6.0:
+            return 0.1
+        if price < 10.0:
+            return 0.2
+        return 0.5
+
+    def _apply_pessimistic_slippage(self, side: str, book_price: float) -> float:
+        adjusted = float(book_price)
+        for _ in range(self.slippage_ticks):
+            tick = self._tick_size(adjusted)
+            if side == "BACK":
+                adjusted -= tick
+            else:
+                adjusted += tick
+        return max(1.01, float(adjusted))
 
     # =========================================================
     # CORE MATCH
@@ -110,11 +138,15 @@ class SimulationMatchingEngine:
             if not self._crosses(side=side, order_price=float(price), book_price=level_price):
                 continue
 
-            take = min(remaining, level_size)
+            available_after_queue = max(0.0, level_size * (1.0 - self.queue_ahead_ratio))
+            if available_after_queue <= 0.0:
+                continue
+
+            take = min(remaining, available_after_queue)
             if take <= 0.0:
                 continue
 
-            fills.append({"price": level_price, "size": take})
+            fills.append({"price": self._apply_pessimistic_slippage(side, level_price), "size": take})
             remaining -= take
 
             if remaining <= 0.0:
