@@ -8,7 +8,7 @@ from tests.helpers.fake_runtime_state import FakeRuntimeState
 
 class _ProbeStub:
     def __init__(self, runtime_state=None):
-        self.runtime_state = runtime_state
+        self.runtime_state = runtime_state if runtime_state is not None else {}
 
     def collect_health(self):
         return {"runtime": {"status": "READY", "reason": "ok", "details": {}}}
@@ -26,22 +26,32 @@ class _SnapshotStub:
 
 
 class _SettingsStub:
-    def __init__(self, enabled=False):
+    def __init__(self, enabled=False, alerts=False, actions=False):
         self.enabled = enabled
+        self.alerts = alerts
+        self.actions = actions
 
     def load_anomaly_enabled(self):
         return self.enabled
 
+    def load_anomaly_alerts_enabled(self):
+        return self.alerts
 
-def _make_watchdog(*, anomaly_enabled: bool) -> WatchdogService:
-class _AnomalyEngineStub:
-    def __init__(self, anomalies):
-        self._anomalies = list(anomalies)
+    def load_anomaly_actions_enabled(self):
+        return self.actions
+
+
+class _EngineStub:
+    def __init__(self, anomalies=None, raises=False):
+        self.anomalies = list(anomalies or [])
+        self.raises = raises
         self.calls = 0
 
     def evaluate(self, _context):
         self.calls += 1
-        return list(self._anomalies)
+        if self.raises:
+            raise RuntimeError("boom")
+        return list(self.anomalies)
 
 
 class _AnomalyAlertServiceSpy:
@@ -60,24 +70,14 @@ def _make_watchdog(
     *,
     anomaly_enabled: bool,
     anomaly_alerts_enabled: bool = False,
+    anomaly_actions_enabled: bool = False,
     anomaly_alert_service=None,
     anomaly_engine=None,
+    anomalies=None,
+    runtime_state=None,
+    anomaly_escalation_hook=None,
 ) -> WatchdogService:
-class _EngineStub:
-    def __init__(self, response=None, raises=False):
-        self.response = response if response is not None else []
-        self.raises = raises
-        self.calls = 0
-
-    def evaluate(self, context):
-        del context
-        self.calls += 1
-        if self.raises:
-            raise RuntimeError("boom")
-        return self.response
-
-
-def _make_watchdog(*, anomaly_enabled: bool, runtime_state=None, anomaly_engine=None) -> WatchdogService:
+    engine = anomaly_engine or _EngineStub(anomalies=anomalies)
     return WatchdogService(
         probe=_ProbeStub(runtime_state=runtime_state),
         health_registry=HealthRegistry(),
@@ -85,37 +85,56 @@ def _make_watchdog(*, anomaly_enabled: bool, runtime_state=None, anomaly_engine=
         alerts_manager=AlertsManager(),
         incidents_manager=IncidentsManager(),
         snapshot_service=_SnapshotStub(),
-        anomaly_engine=anomaly_engine,
+        anomaly_engine=engine,
         anomaly_enabled=anomaly_enabled,
         anomaly_alerts_enabled=anomaly_alerts_enabled,
+        anomaly_actions_enabled=anomaly_actions_enabled,
         anomaly_alert_service=anomaly_alert_service,
-        anomaly_engine=anomaly_engine,
+        anomaly_escalation_hook=anomaly_escalation_hook,
         interval_sec=60.0,
     )
 
 
 def test_anomaly_disabled_no_effect():
-    engine = _EngineStub(response=[{"code": "IGNORED"}])
+    engine = _EngineStub(anomalies=[{"code": "IGNORED"}])
     watchdog = _make_watchdog(anomaly_enabled=False, anomaly_engine=engine)
 
     watchdog._tick()
 
     assert engine.calls == 0
     assert watchdog.last_anomalies == []
+    assert watchdog.escalation_requested is False
 
-def test_anomaly_enabled_alerts_disabled_detects_without_delivery():
-    engine = _AnomalyEngineStub([
-        {
-            "code": "GHOST_ORDER",
-            "severity": "warning",
-            "description": "ghost order found",
-            "details": {"order_id": "A1"},
-        }
-    ])
+
+def test_detection_only_runs_without_alert_or_escalation():
+    engine = _EngineStub(anomalies=[{"code": "GHOST_ORDER", "severity": "warning", "description": "ghost"}])
     alert_service = _AnomalyAlertServiceSpy()
+    hook_calls = []
     watchdog = _make_watchdog(
         anomaly_enabled=True,
         anomaly_alerts_enabled=False,
+        anomaly_actions_enabled=False,
+        anomaly_alert_service=alert_service,
+        anomaly_engine=engine,
+        anomaly_escalation_hook=lambda payload: hook_calls.append(payload),
+    )
+
+    watchdog._tick()
+
+    assert engine.calls == 1
+    assert watchdog.last_anomalies and watchdog.last_anomalies[0]["code"] == "GHOST_ORDER"
+    assert alert_service.calls == []
+    assert watchdog.escalation_requested is False
+    assert hook_calls == []
+
+
+def test_detection_and_alerts_emits_alert():
+    engine = _EngineStub(anomalies=[{"code": "EXPOSURE_MISMATCH", "severity": "error", "description": "mismatch"}])
+    alert_service = _AnomalyAlertServiceSpy()
+    watchdog = _make_watchdog(
+        anomaly_enabled=True,
+        anomaly_alerts_enabled=True,
+        anomaly_actions_enabled=False,
         anomaly_alert_service=alert_service,
         anomaly_engine=engine,
     )
@@ -123,75 +142,47 @@ def test_anomaly_enabled_alerts_disabled_detects_without_delivery():
     watchdog._tick()
 
     assert engine.calls == 1
-    assert alert_service.calls == []
+    assert len(alert_service.calls) == 1
+    assert alert_service.calls[0]["code"] == "EXPOSURE_MISMATCH"
+    assert watchdog.escalation_requested is False
 
 
-def test_anomaly_enabled_alerts_enabled_sends_structured_payload():
-    engine = _AnomalyEngineStub([
-        {
-            "code": "EXPOSURE_MISMATCH",
-            "severity": "error",
-            "description": "exposure mismatch",
-            "details": {"symbol": "BTCUSDT", "expected": 1.0, "actual": 0.5},
-        }
-    ])
+def test_detection_alerts_actions_requests_escalation_safely():
+    engine = _EngineStub(anomalies=[{"code": "DB_CONTENTION", "severity": "critical", "description": "db lock"}])
     alert_service = _AnomalyAlertServiceSpy()
+    hook_calls = []
     watchdog = _make_watchdog(
         anomaly_enabled=True,
         anomaly_alerts_enabled=True,
+        anomaly_actions_enabled=True,
         anomaly_alert_service=alert_service,
-
-def test_anomaly_enabled_collects_anomalies_and_stays_alive():
-    engine = _EngineStub(response=[{"code": "CONTRADICTION", "severity": "warning", "message": "bad"}])
-    watchdog = _make_watchdog(
-        anomaly_enabled=True,
-        runtime_state={"reconcile": {"ghost_orders_count": 1}},
         anomaly_engine=engine,
+        anomaly_escalation_hook=lambda payload: hook_calls.append(payload),
     )
 
     watchdog._tick()
 
     assert len(alert_service.calls) == 1
-    payload = alert_service.calls[0]
-    assert payload["code"] == "EXPOSURE_MISMATCH"
-    assert payload["severity"] == "error"
-    assert payload["source"] == "watchdog_service"
-    assert payload["description"] == "exposure mismatch"
-    assert payload["details"]["symbol"] == "BTCUSDT"
-
-
-def test_anomaly_hook_is_skipped_when_flag_disabled():
-    engine = _AnomalyEngineStub([
-        {"code": "DB_CONTENTION", "severity": "warning", "description": "db lock contention"}
-    ])
-    alert_service = _AnomalyAlertServiceSpy()
-    watchdog = _make_watchdog(
-        anomaly_enabled=False,
-        anomaly_alerts_enabled=True,
-        anomaly_alert_service=alert_service,
-        anomaly_engine=engine,
-    )
-
-    watchdog._tick()
-
-    assert engine.calls == 0
-    assert alert_service.calls == []
+    assert watchdog.escalation_requested is True
+    assert watchdog.last_escalation_event is not None
+    assert watchdog.last_escalation_event["code"] == "DB_CONTENTION"
+    assert hook_calls and hook_calls[0]["escalation_requested"] is True
 
 
 def test_anomaly_alert_delivery_failure_is_contained():
-    engine = _AnomalyEngineStub([
-        {"code": "FANOUT_INCOMPLETE", "severity": "warning", "description": "fanout missing"}
-    ])
+    engine = _EngineStub(anomalies=[{"code": "FANOUT_INCOMPLETE", "severity": "warning", "description": "fanout missing"}])
     alert_service = _AnomalyAlertServiceSpy(fail=True)
     watchdog = _make_watchdog(
         anomaly_enabled=True,
         anomaly_alerts_enabled=True,
-        anomaly_alert_service=alert_service,
         anomaly_engine=engine,
+        anomaly_alert_service=alert_service,
     )
+
+    watchdog._tick()
+
     assert engine.calls == 1
-    assert any(item.get("code") == "CONTRADICTION" for item in watchdog.last_anomalies)
-    assert any(item.get("code") == "GHOST_ORDER_DETECTED" for item in watchdog.last_anomalies)
+    assert watchdog.last_anomalies and watchdog.last_anomalies[0]["code"] == "FANOUT_INCOMPLETE"
 
 
 def test_anomaly_hook_exception_is_contained():
@@ -204,19 +195,38 @@ def test_anomaly_hook_exception_is_contained():
     assert watchdog.last_anomalies == []
 
 
+def test_anomaly_hook_exception_from_escalation_hook_is_contained():
+    engine = _EngineStub(anomalies=[{"code": "ANY", "severity": "warning", "description": "x"}])
+
+    def _failing_hook(_payload):
+        raise RuntimeError("hook failed")
+
+    watchdog = _make_watchdog(
+        anomaly_enabled=True,
+        anomaly_alerts_enabled=True,
+        anomaly_actions_enabled=True,
+        anomaly_engine=engine,
+        anomaly_escalation_hook=_failing_hook,
+    )
+
+    watchdog._tick()
+
+    assert engine.calls == 1
+    assert watchdog.escalation_requested is True
+
+
 def test_anomaly_enabled_with_empty_runtime_state_is_safe():
-    engine = _EngineStub(response=[])
+    engine = _EngineStub(anomalies=[])
     watchdog = _make_watchdog(anomaly_enabled=True, runtime_state={}, anomaly_engine=engine)
 
-    anomalies = watchdog._run_anomaly_checks()
-
-    assert anomalies == []
-    assert watchdog.last_anomalies == []
     watchdog._tick()
+
+    assert engine.calls == 1
+    assert watchdog.last_anomalies == []
 
 
 def test_runtime_settings_toggle_controls_anomaly_hook(monkeypatch):
-    settings = _SettingsStub(enabled=False)
+    settings = _SettingsStub(enabled=False, alerts=False, actions=False)
     watchdog = WatchdogService(
         probe=_ProbeStub(),
         health_registry=HealthRegistry(),
@@ -237,6 +247,8 @@ def test_runtime_settings_toggle_controls_anomaly_hook(monkeypatch):
     settings.enabled = True
     watchdog._tick()
     assert calls == ["hook"]
+
+
 def test_runtime_contradictions_are_expressible_deterministically():
     contradiction = (
         FakeRuntimeState.ready()
