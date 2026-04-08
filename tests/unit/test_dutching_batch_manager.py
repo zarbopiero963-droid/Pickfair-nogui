@@ -91,6 +91,13 @@ class FakeDB:
             b["updated_at"] = updated_at
             return []
 
+        if "UPDATE dutching_batches SET payload_json =" in q:
+            payload_json, updated_at, batch_id = params
+            if batch_id in self.batches:
+                self.batches[batch_id]["payload_json"] = payload_json
+                self.batches[batch_id]["updated_at"] = updated_at
+            return []
+
         if "UPDATE dutching_batches SET total_legs =" in q:
             total_legs, placed_legs, matched_legs, failed_legs, cancelled_legs, updated_at, batch_id = params
             b = self.batches[batch_id]
@@ -231,7 +238,8 @@ def test_recompute_batch_status_partial_on_mixed_success_and_failure():
     mgr.create_leg(batch_id="B4", leg_index=2, market_id="1.444", selection_id=2, side="BACK", price=3, stake=10, status="FAILED")
 
     batch = mgr.recompute_batch_status("B4")
-    assert batch["status"] == "PARTIAL"
+    assert batch["status"] == "ROLLBACK_PENDING"
+    assert batch["payload"]["emergency_hedge"]["triggered"] is True
 
 
 @pytest.mark.unit
