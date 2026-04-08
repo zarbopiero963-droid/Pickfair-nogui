@@ -12,7 +12,7 @@ import asyncio
 import logging
 import threading
 from dataclasses import dataclass
-from queue import Empty, Queue
+from queue import Empty, Full, Queue
 from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger("TG_SENDER")
@@ -132,6 +132,7 @@ class TelegramSender:
         event_bus=None,
         default_chat_id: Optional[str] = None,
         db=None,
+        queue_maxsize: int = 1000,
     ):
         self.client = client
         self.bus = event_bus
@@ -141,7 +142,9 @@ class TelegramSender:
         )
 
         self.rate_limiter = AdaptiveRateLimiter(base_delay)
-        self._queue = Queue()
+        safe_maxsize = int(queue_maxsize or 0)
+        self._queue_maxsize = max(1, safe_maxsize)
+        self._queue = Queue(maxsize=self._queue_maxsize)
         self._running = False
         self._worker_thread = None
         # FIX #21: lock used by queue_message to prevent duplicate worker threads
@@ -150,6 +153,8 @@ class TelegramSender:
         self._messages_sent = 0
         self._messages_failed = 0
         self._messages_queued = 0
+        self._messages_dropped = 0
+        self._queue_backpressure = False
 
         if self.bus is not None:
             self.bus.subscribe("QUICK_BET_SUCCESS", self._on_quick_bet_success)
@@ -343,16 +348,28 @@ class TelegramSender:
             callback=callback,
             message_type=message_type,
         )
-        self._queue.put(msg)
-        self._messages_queued += 1
+        queued = True
+        try:
+            self._queue.put_nowait(msg)
+            self._messages_queued += 1
+            self._queue_backpressure = False
+        except Full:
+            queued = False
+            self._messages_dropped += 1
+            self._queue_backpressure = True
+            logger.error(
+                "[TG_SENDER] Queue overflow, dropping message type=%s chat_id=%s",
+                message_type,
+                chat_id,
+            )
 
         self._db_log(
             chat_id=chat_id,
             message_type=message_type,
             text=text,
-            status="QUEUED",
+            status="QUEUED" if queued else "DROPPED_QUEUE_FULL",
             message_id=None,
-            error=None,
+            error=None if queued else "queue_full",
             flood_wait=0,
         )
 
@@ -362,6 +379,7 @@ class TelegramSender:
         with self._worker_lock:
             if not self._running:
                 self.start_worker()
+        return queued
 
     def queue_default_message(
         self,
@@ -553,9 +571,12 @@ class TelegramSender:
         return {
             "rate_limiter": self.rate_limiter.get_stats(),
             "queue_size": self.get_queue_size(),
+            "queue_maxsize": self._queue_maxsize,
             "messages_sent": self._messages_sent,
             "messages_failed": self._messages_failed,
             "messages_queued": self._messages_queued,
+            "messages_dropped": self._messages_dropped,
+            "queue_backpressure": self._queue_backpressure,
             "worker_running": self._running,
         }
 
