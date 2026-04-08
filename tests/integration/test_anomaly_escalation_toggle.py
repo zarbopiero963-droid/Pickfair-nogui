@@ -86,3 +86,30 @@ def test_detection_alerts_and_actions_mode_requests_safe_escalation_only():
     assert payload["severity"] == "warning"
     assert payload["source"] == "anomaly"
     assert payload["escalation_requested"] is True
+from tests.helpers.fake_settings import FakeSettingsService
+
+
+TOGGLES = (
+    "anomaly_enabled",
+    "anomaly_alerts_enabled",
+    "anomaly_actions_enabled",
+)
+
+
+def test_all_anomaly_toggles_persist_across_reload():
+    settings = FakeSettingsService()
+
+    for key in TOGGLES:
+        settings.set_bool(key, True)
+
+    reloaded = FakeSettingsService.from_state(settings.export_state())
+
+    for key in TOGGLES:
+        assert reloaded.get_bool(key, default=False) is True
+
+
+def test_missing_anomaly_toggles_fall_back_false_deterministically():
+    settings = FakeSettingsService()
+
+    for key in TOGGLES:
+        assert settings.get_bool(key, default=False) is False

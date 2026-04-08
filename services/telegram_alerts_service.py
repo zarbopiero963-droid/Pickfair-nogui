@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import Counter
 from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,13 @@ class TelegramAlertsService:
         self.settings_service = settings_service
         self.telegram_sender = telegram_sender
         self._last_sent_at: Dict[str, float] = {}
+        self._aggregation_state: Dict[str, Any] = {
+            "window_start": 0.0,
+            "count": 0,
+            "severity_counter": Counter(),
+            "code_counter": Counter(),
+            "summary_sent": False,
+        }
         self.last_delivery_error: str = ""
         self.last_delivery_ok: bool = False
 
@@ -83,7 +91,13 @@ class TelegramAlertsService:
                 self.last_delivery_error = "dedup_cooldown"
                 return {**availability, "delivered": False, "reason": "dedup_cooldown"}
 
-        text = self._format_alert_text(alert, settings)
+        aggregated = self._maybe_aggregate(alert=alert, settings=settings, now=now)
+        if aggregated["suppress"]:
+            self.last_delivery_ok = False
+            self.last_delivery_error = "alert_aggregation_suppressed"
+            return {**availability, "delivered": False, "reason": "alert_aggregation_suppressed"}
+
+        text = aggregated["text"] or self._format_alert_text(alert, settings)
 
         try:
             self._send_message(chat_id=chat_id, text=text)
@@ -96,6 +110,64 @@ class TelegramAlertsService:
             self.last_delivery_error = str(exc)
             logger.exception("TelegramAlertsService.notify_alert failed")
             return {**availability, "delivered": False, "reason": "send_failed", "error": str(exc)}
+
+    def notify_anomaly_alert(self, anomaly: Dict[str, Any]) -> Dict[str, Any]:
+        payload = {
+            "code": anomaly.get("code", "UNKNOWN_ANOMALY"),
+            "severity": anomaly.get("severity", "warning"),
+            "source": anomaly.get("source", "watchdog_service"),
+            "description": anomaly.get("description") or anomaly.get("message") or anomaly.get("code", "anomaly"),
+            "details": anomaly.get("details") or {},
+            "type": "anomaly",
+            "title": anomaly.get("title") or anomaly.get("code") or "Anomaly detected",
+            "message": anomaly.get("message") or anomaly.get("description") or anomaly.get("code") or "Anomaly detected",
+        }
+        return self.notify_alert(payload)
+    def _maybe_aggregate(self, *, alert: Dict[str, Any], settings: Dict[str, Any], now: float) -> Dict[str, Any]:
+        enabled = bool(settings.get("alert_aggregation_enabled", True))
+        if not enabled:
+            return {"text": None, "suppress": False}
+
+        threshold = int(settings.get("alert_aggregation_threshold", 5) or 5)
+        window_sec = int(settings.get("alert_aggregation_window_sec", 10) or 10)
+        if threshold < 2 or window_sec <= 0:
+            return {"text": None, "suppress": False}
+
+        state = self._aggregation_state
+        if state["window_start"] <= 0 or (now - float(state["window_start"])) > window_sec:
+            state["window_start"] = now
+            state["count"] = 0
+            state["severity_counter"] = Counter()
+            state["code_counter"] = Counter()
+            state["summary_sent"] = False
+
+        severity = str(alert.get("severity", "WARNING") or "WARNING").upper()
+        code = str(alert.get("code", "UNKNOWN_ALERT") or "UNKNOWN_ALERT")
+        state["count"] += 1
+        state["severity_counter"][severity] += 1
+        state["code_counter"][code] += 1
+
+        if state["count"] < threshold:
+            return {"text": None, "suppress": False}
+
+        if state["summary_sent"]:
+            return {"text": None, "suppress": True}
+
+        state["summary_sent"] = True
+        top_codes = ", ".join(
+            f"{code_name}={count}" for code_name, count in state["code_counter"].most_common(3)
+        )
+        severity_mix = ", ".join(
+            f"{sev}={count}" for sev, count in state["severity_counter"].most_common()
+        )
+        summary_text = (
+            "🚨 Pickfair Alert Burst Detected\n"
+            f"• Alerts in {window_sec}s: {state['count']} (threshold={threshold})\n"
+            f"• Severity mix: {severity_mix}\n"
+            f"• Top codes: {top_codes}\n"
+            "• Individual alerts temporarily aggregated to reduce Telegram flood risk."
+        )
+        return {"text": summary_text, "suppress": False}
 
     def availability_status(self, settings: Dict[str, Any] | None = None) -> Dict[str, Any]:
         settings = settings or self._get_telegram_settings()
@@ -169,6 +241,7 @@ class TelegramAlertsService:
         source = str(alert.get("source", "system") or "system")
         description = alert.get("description")
         details = alert.get("details") or alert.get("payload") or {}
+        alert_type = str(alert.get("type", "") or "").lower()
 
         chat_name = str(settings.get("alerts_chat_name", "") or "").strip()
 
@@ -201,6 +274,9 @@ class TelegramAlertsService:
         if description:
             lines.append(f"• Description: {description}")
 
+        if alert_type == "anomaly":
+            lines.append("• Category: ANOMALY")
+
         if details:
             if bool(settings.get("alert_format_rich", True)):
                 rendered = ", ".join(f"{k}={v}" for k, v in sorted(dict(details).items()))
@@ -214,7 +290,8 @@ class TelegramAlertsService:
         code = str(alert.get("code", "UNKNOWN_ALERT") or "UNKNOWN_ALERT")
         severity = str(alert.get("severity", "WARNING") or "WARNING").upper()
         message = str(alert.get("message") or alert.get("title") or code)
-        return f"{code}|{severity}|{message}"
+        source = str(alert.get("source", "system") or "system")
+        return f"{source}|{code}|{severity}|{message}"
 
     def _send_message(self, *, chat_id: Any, text: str) -> None:
         """

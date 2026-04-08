@@ -11,7 +11,7 @@ from core.event_bus import EventBus
 from executor_manager import ExecutorManager
 from shutdown_manager import ShutdownManager
 
-from services.setting_service import SettingsService
+from services.settings_service import SettingsService
 from services.betfair_service import BetfairService
 from services.telegram_alerts_service import TelegramAlertsService
 from services.telegram_service import TelegramService
@@ -333,6 +333,7 @@ class HeadlessApp:
                 anomaly_enabled=anomaly_toggles["anomaly_enabled"],
                 anomaly_alerts_enabled=anomaly_toggles["anomaly_alerts_enabled"],
                 anomaly_actions_enabled=anomaly_toggles["anomaly_actions_enabled"],
+                settings_service=self.settings_service,
                 interval_sec=5.0,
             )
 
