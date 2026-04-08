@@ -4,7 +4,7 @@ from tests.helpers.fake_exchange import FakeExchange
 
 
 def test_reconcile_converges_over_multiple_passes_with_explicit_state_advances() -> None:
-    exchange = FakeExchange()
+    exchange = FakeExchange(duplicate_mode="return_existing")
     remote = exchange.place_order(
         {
             "market_id": "1.300",
@@ -15,6 +15,19 @@ def test_reconcile_converges_over_multiple_passes_with_explicit_state_advances()
             "customer_ref": "RECON-PASS-1",
         }
     )
+
+    # duplicate customer_ref returns the same remote order and keeps single exposure
+    duplicate = exchange.place_order(
+        {
+            "market_id": "1.300",
+            "selection_id": 7,
+            "price": 2.0,
+            "size": 10.0,
+            "side": "LAY",
+            "customer_ref": "RECON-PASS-1",
+        }
+    )
+    assert duplicate["bet_id"] == remote["bet_id"]
 
     local_state = {"status": "AMBIGUOUS", "matched_size": 0.0, "remote_bet_id": None}
 
