@@ -300,15 +300,39 @@ def test_partial_fill_simulation_cancel_replace_and_reconcile_convergence() -> N
     replaced = exchange.get_current_orders(customer_ref="PARTIAL-1")[0]
     assert replaced["price"] == 2.2
 
-    exchange.cancel_order(order_id)
-    cancelled = exchange.get_current_orders(customer_ref="PARTIAL-1")[0]
-    assert cancelled["status"] == "CANCELLED"
-
     exchange.advance_fill(order_id, new_status="MATCHED")
     matched = exchange.get_current_orders(customer_ref="PARTIAL-1")[0]
     assert matched["status"] == "MATCHED"
     assert matched["matched_size"] == pytest.approx(5.0)
 
+    with pytest.raises(RuntimeError):
+        exchange.replace_order(order_id, new_price=1.8)
+
+    exchange.cancel_order(order_id)
+    still_matched = exchange.get_current_orders(customer_ref="PARTIAL-1")[0]
+    assert still_matched["status"] == "MATCHED"
+
     persisted = [row for row in db.orders.values() if row.get("customer_ref") == "PARTIAL-1"]
     assert len(persisted) == 1
     assert persisted[0]["status"] != STATUS_FAILED
+
+
+@pytest.mark.integration
+def test_liquidity_is_step_driven_not_optimistically_instant() -> None:
+    exchange = FakeExchange()
+    exchange.seed_liquidity(market_id="1.100", selection_id=10, side="LAY", size=2.0)
+
+    first = exchange.place_order(_payload("STEP-LIQ-1"))
+    assert first["status"] == "PARTIALLY_MATCHED"
+    assert first["matched_size"] == pytest.approx(2.0)
+
+    second = exchange.place_order(_payload("STEP-LIQ-2"))
+    assert second["status"] == "EXECUTABLE"
+    assert second["matched_size"] == pytest.approx(0.0)
+
+    exchange.seed_liquidity(market_id="1.100", selection_id=10, side="LAY", size=10.0)
+    exchange.advance_all_with_liquidity()
+
+    progressed = exchange.get_current_orders(customer_ref="STEP-LIQ-2")[0]
+    assert progressed["status"] == "MATCHED"
+    assert progressed["matched_size"] == pytest.approx(5.0)
