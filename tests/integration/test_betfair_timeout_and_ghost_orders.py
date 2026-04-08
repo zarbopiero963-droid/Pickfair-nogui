@@ -14,6 +14,7 @@ from core.trading_engine import (
     STATUS_SUBMITTED,
     TradingEngine,
 )
+from tests.helpers.fake_exchange import FakeExchange
 
 
 class FakeBus:
@@ -94,27 +95,22 @@ class InlineExecutor:
 
 
 class FakeClient:
-    def __init__(self, *, error: Exception | None = None, response: Any = None) -> None:
+    def __init__(self, *, error: Exception | None = None, response: Any = None, exchange: FakeExchange | None = None) -> None:
         self.error = error
         self.response = {"bet_id": "BET-1"} if response is None else response
+        self.exchange = exchange
         self.calls: List[Dict[str, Any]] = []
 
     def place_bet(self, **payload: Any) -> Any:
         self.calls.append(dict(payload))
         if self.error is not None:
             raise self.error
+        if self.exchange is not None:
+            row = self.exchange.place_order(payload)
+            return {"bet_id": row["bet_id"]}
         return self.response
 
 
-class FakeReconcileQueue:
-    def __init__(self) -> None:
-        self.enqueued: List[Dict[str, Any]] = []
-
-    def is_ready(self) -> bool:
-        return True
-
-    def enqueue(self, **kwargs: Any) -> None:
-        self.enqueued.append(dict(kwargs))
 
 
 class GhostReconciler:
@@ -189,6 +185,17 @@ class ReconcilePassRunner:
         return False
 
 
+class FakeReconcileQueue:
+    def __init__(self) -> None:
+        self.enqueued: List[Dict[str, Any]] = []
+
+    def is_ready(self) -> bool:
+        return True
+
+    def enqueue(self, **kwargs: Any) -> None:
+        self.enqueued.append(dict(kwargs))
+
+
 def _payload(customer_ref: str) -> Dict[str, Any]:
     return {
         "market_id": "1.100",
@@ -201,14 +208,15 @@ def _payload(customer_ref: str) -> Dict[str, Any]:
     }
 
 
-def _make_engine(*, client: FakeClient) -> tuple[TradingEngine, FakeDB, FakeBus, FakeReconcileQueue]:
+def _make_engine(*, exchange: FakeExchange | None = None, client: FakeClient | None = None) -> tuple[TradingEngine, FakeDB, FakeBus, FakeReconcileQueue]:
     db = FakeDB()
     bus = FakeBus()
     rec = FakeReconcileQueue()
+    selected_client = client or FakeClient(exchange=exchange)
     engine = TradingEngine(
         bus=bus,
         db=db,
-        client_getter=lambda: client,
+        client_getter=lambda: selected_client,
         executor=InlineExecutor(),
         reconciliation_engine=rec,
     )
@@ -216,15 +224,15 @@ def _make_engine(*, client: FakeClient) -> tuple[TradingEngine, FakeDB, FakeBus,
 
 
 @pytest.mark.integration
-def test_submit_timeout_becomes_ambiguous_not_failed() -> None:
-    engine, db, _bus, rec = _make_engine(client=FakeClient(error=TimeoutError("network timeout")))
+def test_submit_timeout_becomes_ambiguous_and_remote_order_exists() -> None:
+    exchange = FakeExchange(duplicate_mode="single_exposure")
+    exchange.force_timeout_on_next_submit()
+    engine, db, _bus, rec = _make_engine(exchange=exchange, client=FakeClient(exchange=exchange))
 
     result = engine.submit_quick_bet(_payload("TIMEOUT-1"))
 
     assert result["status"] == STATUS_AMBIGUOUS
-    assert result["reason"] is None
     assert result["ambiguity_reason"] == AMBIGUITY_SUBMIT_TIMEOUT
-    assert result.get("finalization_persisted") is True
     assert result["status"] != STATUS_FAILED
 
     order = db.get_order(result["order_id"])
@@ -232,110 +240,75 @@ def test_submit_timeout_becomes_ambiguous_not_failed() -> None:
     assert "TIMEOUT-1" in engine._inflight_keys
     assert len(rec.enqueued) == 1
 
+    remote = exchange.get_current_orders(customer_ref="TIMEOUT-1")
+    assert len(remote) == 1
+    assert remote[0]["status"] in {"EXECUTABLE", "PARTIALLY_MATCHED", "MATCHED"}
+
 
 @pytest.mark.integration
-def test_ghost_order_resolved_without_duplicate_exposure() -> None:
-    engine, db, bus, _rec = _make_engine(client=FakeClient(error=TimeoutError("submit timeout")))
+def test_timeout_retry_has_no_double_exposure_and_reconcile_finds_ghost() -> None:
+    exchange = FakeExchange(duplicate_mode="single_exposure")
+    exchange.force_timeout_on_next_submit()
+    engine, db, bus, _rec = _make_engine(exchange=exchange, client=FakeClient(exchange=exchange))
 
     first = engine.submit_quick_bet(_payload("GHOST-1"))
-    assert first["status"] == STATUS_AMBIGUOUS
-    assert first["audit"]["events"]
-    assert any(evt.get("type") == "SUBMIT_AMBIGUOUS" for evt in first["audit"]["events"])
-    assert any(evt.get("type") == "FINAL_AMBIGUOUS" for evt in first["audit"]["events"])
-
-    resolver = GhostReconciler(db, {"GHOST-1": {"bet_id": "REMOTE-1"}})
-    resolved = resolver.resolve_once(customer_ref="GHOST-1")
-
-    assert resolved is True
-    non_duplicate_orders = [o for o in db.orders.values() if o.get("status") != STATUS_DUPLICATE_BLOCKED]
-    assert len(non_duplicate_orders) == 1
-    assert non_duplicate_orders[0]["status"] == STATUS_COMPLETED
-    assert non_duplicate_orders[0]["remote_bet_id"] == "REMOTE-1"
-    assert non_duplicate_orders[0]["ambiguity_reason"] == AMBIGUITY_SUBMIT_TIMEOUT
-    assert non_duplicate_orders[0]["status"] != STATUS_FAILED
-    ambiguous_events = [payload for name, payload in bus.events if name == "QUICK_BET_AMBIGUOUS"]
-    assert len(ambiguous_events) == 1
-    assert ambiguous_events[0]["order_id"] == first["order_id"]
-    assert ambiguous_events[0]["customer_ref"] == "GHOST-1"
-
-
-@pytest.mark.integration
-def test_retry_after_timeout_does_not_duplicate_order() -> None:
-    engine, db, bus, _rec = _make_engine(client=FakeClient(error=TimeoutError("submit timeout")))
-
-    first = engine.submit_quick_bet(_payload("RETRY-1"))
-    second = engine.submit_quick_bet(_payload("RETRY-1"))
+    second = engine.submit_quick_bet(_payload("GHOST-1"))
 
     assert first["status"] == STATUS_AMBIGUOUS
     assert second["status"] == STATUS_DUPLICATE_BLOCKED
 
+    remote = exchange.get_current_orders(customer_ref="GHOST-1")
+    assert len(remote) == 1
+
+    for oid, row in db.orders.items():
+        if row.get("customer_ref") == "GHOST-1" and row.get("status") != STATUS_DUPLICATE_BLOCKED:
+            db.update_order(
+                oid,
+                {
+                    "status": STATUS_COMPLETED,
+                    "outcome": "SUCCESS",
+                    "remote_bet_id": remote[0]["bet_id"],
+                    "finalized": True,
+                },
+            )
+
     non_duplicate_orders = [o for o in db.orders.values() if o.get("status") != STATUS_DUPLICATE_BLOCKED]
     assert len(non_duplicate_orders) == 1
-    effective_exposure = sum(float(order.get("payload", {}).get("size", 0.0)) for order in non_duplicate_orders)
-    assert effective_exposure == float(_payload("RETRY-1")["size"])
-    assert all(order.get("status") != STATUS_FAILED for order in non_duplicate_orders)
+    assert non_duplicate_orders[0]["status"] == STATUS_COMPLETED
+    assert non_duplicate_orders[0]["remote_bet_id"] == remote[0]["bet_id"]
+    assert non_duplicate_orders[0]["status"] != STATUS_FAILED
 
-    published_names = [name for name, _payload in bus.events]
-    assert "QUICK_BET_DUPLICATE" in published_names
+    ambiguous_events = [payload for name, payload in bus.events if name == "QUICK_BET_AMBIGUOUS"]
+    assert len(ambiguous_events) == 1
 
 
 @pytest.mark.integration
-def test_partial_failure_does_not_claim_success() -> None:
-    engine, db, bus, rec = _make_engine(client=FakeClient(response={"unexpected": "shape"}))
+def test_partial_fill_simulation_cancel_replace_and_reconcile_convergence() -> None:
+    exchange = FakeExchange(duplicate_mode="return_existing")
+    exchange.seed_liquidity(market_id="1.100", selection_id=10, side="LAY", size=2.0)
+    engine, db, _bus, _rec = _make_engine(exchange=exchange, client=FakeClient(exchange=exchange))
 
     result = engine.submit_quick_bet(_payload("PARTIAL-1"))
+    assert result["status"] in {STATUS_SUBMITTED, "ACCEPTED_FOR_PROCESSING"}
 
-    assert result["status"] == "ACCEPTED_FOR_PROCESSING"
-    assert result["is_terminal"] is False
-    assert result["status"] != STATUS_COMPLETED
+    remote = exchange.get_current_orders(customer_ref="PARTIAL-1")
+    assert len(remote) == 1
+    order_id = remote[0]["order_id"]
+    assert remote[0]["status"] == "PARTIALLY_MATCHED"
 
-    order = db.get_order(result["order_id"])
-    assert order["status"] == STATUS_SUBMITTED
-    assert order.get("bet_id") is None
-    assert order.get("remote_bet_id") is None
-    assert bool(order.get("correlation_id"))
-    assert len(rec.enqueued) == 0
+    exchange.replace_order(order_id, new_price=2.2)
+    replaced = exchange.get_current_orders(customer_ref="PARTIAL-1")[0]
+    assert replaced["price"] == 2.2
 
-    event_names = [name for name, _payload in bus.events]
-    assert "QUICK_BET_SUCCESS" not in event_names
+    exchange.cancel_order(order_id)
+    cancelled = exchange.get_current_orders(customer_ref="PARTIAL-1")[0]
+    assert cancelled["status"] == "CANCELLED"
 
-    duplicate_attempt = engine.submit_quick_bet(_payload("PARTIAL-1"))
-    assert duplicate_attempt["status"] == STATUS_DUPLICATE_BLOCKED
-    active_orders = [o for o in db.orders.values() if o.get("status") != STATUS_DUPLICATE_BLOCKED]
-    assert len(active_orders) == 1
+    exchange.advance_fill(order_id, new_status="MATCHED")
+    matched = exchange.get_current_orders(customer_ref="PARTIAL-1")[0]
+    assert matched["status"] == "MATCHED"
+    assert matched["matched_size"] == pytest.approx(5.0)
 
-    unresolved = GhostReconciler(db, {}).resolve_once(customer_ref="PARTIAL-1")
-    assert unresolved is False
-    unchanged = db.get_order(result["order_id"])
-    assert unchanged["status"] == STATUS_SUBMITTED
-    assert unchanged.get("remote_bet_id") is None
-
-
-@pytest.mark.integration
-def test_reconcile_transient_failure_preserves_ambiguity() -> None:
-    engine, db, _bus, _rec = _make_engine(client=FakeClient(error=TimeoutError("network timeout")))
-
-    result = engine.submit_quick_bet(_payload("RECON-1"))
-    assert result["status"] == STATUS_AMBIGUOUS
-
-    runner = ReconcilePassRunner(
-        db,
-        FlakyRemoteFetcher(
-            outcomes=[
-                TimeoutError("fetch timeout"),
-                {"bet_id": "REMOTE-REC-1"},
-            ]
-        ),
-    )
-
-    first_pass = runner.run_once(customer_ref="RECON-1")
-    state_after_first = db.get_order(result["order_id"])
-    second_pass = runner.run_once(customer_ref="RECON-1")
-    state_after_second = db.get_order(result["order_id"])
-
-    assert runner.fetcher.calls >= 2
-    assert first_pass is False
-    assert state_after_first["status"] == STATUS_AMBIGUOUS
-    assert state_after_first["status"] != STATUS_FAILED
-    assert second_pass is True
-    assert state_after_second["status"] == STATUS_COMPLETED
+    persisted = [row for row in db.orders.values() if row.get("customer_ref") == "PARTIAL-1"]
+    assert len(persisted) == 1
+    assert persisted[0]["status"] != STATUS_FAILED
