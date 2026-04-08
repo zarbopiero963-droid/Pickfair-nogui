@@ -16,139 +16,203 @@ class FakeDB:
         self.batches = {}
         self.legs = []
 
+    def _normalize_query(self, query):
+        return " ".join(str(query).split()).strip().lower()
+
     def _execute(self, query, params=(), fetch=False, commit=True):
-        q = " ".join(query.split())
+        normalized = self._normalize_query(query)
 
-        if q.startswith("CREATE TABLE") or q.startswith("CREATE INDEX"):
+        if normalized.startswith("create table") or normalized.startswith("create index"):
             return []
 
-        if "INSERT INTO dutching_batches" in q:
-            (
-                batch_id, event_key, market_id, event_name, market_name,
-                table_id, strategy, status, total_legs,
-                batch_exposure, avg_profit, book_pct,
-                payload_json, created_at, updated_at
-            ) = params
-            existing = self.batches.get(batch_id, {})
-            self.batches[batch_id] = {
-                **existing,
-                "id": existing.get("id", len(self.batches) + 1),
-                "batch_id": batch_id,
-                "event_key": event_key,
-                "market_id": market_id,
-                "event_name": event_name,
-                "market_name": market_name,
-                "table_id": table_id,
-                "strategy": strategy,
-                "status": existing.get("status", status),
-                "total_legs": total_legs,
-                "placed_legs": existing.get("placed_legs", 0),
-                "matched_legs": existing.get("matched_legs", 0),
-                "failed_legs": existing.get("failed_legs", 0),
-                "cancelled_legs": existing.get("cancelled_legs", 0),
-                "batch_exposure": batch_exposure,
-                "avg_profit": avg_profit,
-                "book_pct": book_pct,
-                "payload_json": payload_json,
-                "notes": existing.get("notes", ""),
-                "created_at": existing.get("created_at", created_at),
-                "updated_at": updated_at,
-                "closed_at": existing.get("closed_at"),
-            }
-            return []
+        if normalized.startswith("insert into dutching_batches"):
+            return self._handle_insert_dutching_batches(params)
 
-        if "SELECT * FROM dutching_batches WHERE batch_id =" in q:
-            batch_id = params[0]
-            row = self.batches.get(batch_id)
-            return [row] if row else []
+        if normalized.startswith("update dutching_batches"):
+            return self._handle_update_dutching_batches(normalized, params)
 
-        if "SELECT * FROM dutching_batches WHERE status IN ('PENDING', 'SUBMITTING', 'LIVE', 'PARTIAL', 'ROLLBACK_PENDING')" in q:
-            return [b for b in self.batches.values() if b["status"] in {"PENDING", "SUBMITTING", "LIVE", "PARTIAL", "ROLLBACK_PENDING"}]
+        if "from dutching_batches" in normalized:
+            return self._handle_select_dutching_batches(normalized, params)
 
-        if "SELECT * FROM dutching_batches WHERE status IN ('EXECUTED', 'ROLLED_BACK', 'FAILED', 'CANCELLED')" in q:
-            limit = params[0]
-            rows = [b for b in self.batches.values() if b["status"] in {"EXECUTED", "ROLLED_BACK", "FAILED", "CANCELLED"}]
-            return rows[:limit]
+        if normalized.startswith("insert into dutching_batch_legs"):
+            return self._handle_insert_dutching_batch_legs(params)
 
-        if "SELECT * FROM dutching_batches ORDER BY created_at DESC, id DESC LIMIT ?" in q:
-            limit = params[0]
-            return list(self.batches.values())[:limit]
+        if normalized.startswith("update dutching_batch_legs"):
+            return self._handle_update_dutching_batch_legs(normalized, params)
 
-        if "UPDATE dutching_batches SET status =" in q and "closed_at" in q:
+        if "from dutching_batch_legs" in normalized:
+            return self._handle_select_dutching_batch_legs(normalized, params)
+
+        raise AssertionError(f"Unsupported fake DB query (normalized): {normalized}")
+
+    def _handle_insert_dutching_batches(self, params):
+        (
+            batch_id,
+            event_key,
+            market_id,
+            event_name,
+            market_name,
+            table_id,
+            strategy,
+            status,
+            total_legs,
+            batch_exposure,
+            avg_profit,
+            book_pct,
+            payload_json,
+            created_at,
+            updated_at,
+        ) = params
+        existing = self.batches.get(batch_id, {})
+        self.batches[batch_id] = {
+            **existing,
+            "id": existing.get("id", len(self.batches) + 1),
+            "batch_id": batch_id,
+            "event_key": event_key,
+            "market_id": market_id,
+            "event_name": event_name,
+            "market_name": market_name,
+            "table_id": table_id,
+            "strategy": strategy,
+            "status": existing.get("status", status),
+            "total_legs": total_legs,
+            "placed_legs": existing.get("placed_legs", 0),
+            "matched_legs": existing.get("matched_legs", 0),
+            "failed_legs": existing.get("failed_legs", 0),
+            "cancelled_legs": existing.get("cancelled_legs", 0),
+            "batch_exposure": batch_exposure,
+            "avg_profit": avg_profit,
+            "book_pct": book_pct,
+            "payload_json": payload_json,
+            "notes": existing.get("notes", ""),
+            "created_at": existing.get("created_at", created_at),
+            "updated_at": updated_at,
+            "closed_at": existing.get("closed_at"),
+        }
+        return []
+
+    def _handle_update_dutching_batches(self, normalized, params):
+        if "set status =" in normalized and "closed_at =" in normalized:
             status, notes, updated_at, closed_at, batch_id = params
-            b = self.batches[batch_id]
-            b["status"] = status
-            b["notes"] = notes
-            b["updated_at"] = updated_at
-            b["closed_at"] = closed_at
+            batch = self.batches[batch_id]
+            batch["status"] = status
+            batch["notes"] = notes
+            batch["updated_at"] = updated_at
+            batch["closed_at"] = closed_at
             return []
 
-        if "UPDATE dutching_batches SET status =" in q and "closed_at" not in q:
+        if "set status =" in normalized:
             status, notes, updated_at, batch_id = params
-            b = self.batches[batch_id]
-            b["status"] = status
-            b["notes"] = notes
-            b["updated_at"] = updated_at
+            batch = self.batches[batch_id]
+            batch["status"] = status
+            batch["notes"] = notes
+            batch["updated_at"] = updated_at
             return []
 
-        if "UPDATE dutching_batches SET payload_json =" in q:
+        if "set payload_json =" in normalized and "where batch_id = ?" in normalized:
             payload_json, updated_at, batch_id = params
             if batch_id in self.batches:
                 self.batches[batch_id]["payload_json"] = payload_json
                 self.batches[batch_id]["updated_at"] = updated_at
             return []
 
-        if "UPDATE dutching_batches SET total_legs =" in q:
+        if "set total_legs =" in normalized:
             total_legs, placed_legs, matched_legs, failed_legs, cancelled_legs, updated_at, batch_id = params
-            b = self.batches[batch_id]
-            b["total_legs"] = total_legs
-            b["placed_legs"] = placed_legs
-            b["matched_legs"] = matched_legs
-            b["failed_legs"] = failed_legs
-            b["cancelled_legs"] = cancelled_legs
-            b["updated_at"] = updated_at
+            batch = self.batches[batch_id]
+            batch["total_legs"] = total_legs
+            batch["placed_legs"] = placed_legs
+            batch["matched_legs"] = matched_legs
+            batch["failed_legs"] = failed_legs
+            batch["cancelled_legs"] = cancelled_legs
+            batch["updated_at"] = updated_at
             return []
 
-        if "INSERT INTO dutching_batch_legs" in q:
-            (
-                batch_id, leg_index, customer_ref, market_id, selection_id,
-                side, price, stake, liability, status, created_at, updated_at
-            ) = params
-            existing = next((x for x in self.legs if x["batch_id"] == batch_id and x["leg_index"] == leg_index), None)
-            row = {
-                "id": existing["id"] if existing else len(self.legs) + 1,
-                "batch_id": batch_id,
-                "leg_index": leg_index,
-                "customer_ref": customer_ref,
-                "market_id": market_id,
-                "selection_id": str(selection_id),
-                "side": side,
-                "price": price,
-                "stake": stake,
-                "liability": liability,
-                "bet_id": existing["bet_id"] if existing else "",
-                "status": status,
-                "error_text": existing["error_text"] if existing else "",
-                "raw_response_json": existing["raw_response_json"] if existing else "{}",
-                "created_at": existing["created_at"] if existing else created_at,
-                "updated_at": updated_at,
-            }
-            if existing:
-                self.legs = [row if x["batch_id"] == batch_id and x["leg_index"] == leg_index else x for x in self.legs]
-            else:
-                self.legs.append(row)
+        if "set updated_at = ?" in normalized and "where batch_id = ?" in normalized:
+            updated_at, batch_id = params
+            if batch_id in self.batches:
+                self.batches[batch_id]["updated_at"] = updated_at
             return []
 
-        if "SELECT * FROM dutching_batch_legs WHERE batch_id =" in q:
+        raise AssertionError(f"Unsupported dutching_batches UPDATE query (normalized): {normalized}")
+
+    def _handle_select_dutching_batches(self, normalized, params):
+        if "where batch_id = ?" in normalized:
             batch_id = params[0]
-            return [x for x in self.legs if x["batch_id"] == batch_id]
+            row = self.batches.get(batch_id)
+            return [row] if row else []
 
-        if "SELECT * FROM dutching_batch_legs WHERE customer_ref =" in q:
-            customer_ref = params[0]
-            rows = [x for x in self.legs if x["customer_ref"] == customer_ref]
-            return rows[-1:] if rows else []
+        if "where status in ('pending', 'submitting', 'live', 'partial', 'rollback_pending')" in normalized:
+            return [
+                batch
+                for batch in self.batches.values()
+                if batch["status"] in {"PENDING", "SUBMITTING", "LIVE", "PARTIAL", "ROLLBACK_PENDING"}
+            ]
 
-        if "UPDATE dutching_batch_legs SET customer_ref =" in q:
+        if "where status in ('executed', 'rolled_back', 'failed', 'cancelled')" in normalized:
+            limit = int(params[0])
+            rows = [
+                batch
+                for batch in self.batches.values()
+                if batch["status"] in {"EXECUTED", "ROLLED_BACK", "FAILED", "CANCELLED"}
+            ]
+            return rows[:limit]
+
+        if "order by created_at desc, id desc limit ?" in normalized:
+            limit = int(params[0])
+            rows = list(self.batches.values())
+            rows.sort(key=lambda x: ((x.get("created_at") or ""), (x.get("id") or 0)), reverse=True)
+            return rows[:limit]
+
+        raise AssertionError(f"Unsupported dutching_batches SELECT query (normalized): {normalized}")
+
+    def _handle_insert_dutching_batch_legs(self, params):
+        (
+            batch_id,
+            leg_index,
+            customer_ref,
+            market_id,
+            selection_id,
+            side,
+            price,
+            stake,
+            liability,
+            status,
+            created_at,
+            updated_at,
+        ) = params
+        existing = next(
+            (item for item in self.legs if item["batch_id"] == batch_id and item["leg_index"] == leg_index),
+            None,
+        )
+        row = {
+            "id": existing["id"] if existing else len(self.legs) + 1,
+            "batch_id": batch_id,
+            "leg_index": leg_index,
+            "customer_ref": customer_ref,
+            "market_id": market_id,
+            "selection_id": str(selection_id),
+            "side": side,
+            "price": price,
+            "stake": stake,
+            "liability": liability,
+            "bet_id": existing["bet_id"] if existing else "",
+            "status": status,
+            "error_text": existing["error_text"] if existing else "",
+            "raw_response_json": existing["raw_response_json"] if existing else "{}",
+            "created_at": existing["created_at"] if existing else created_at,
+            "updated_at": updated_at,
+        }
+        if existing:
+            self.legs = [
+                row if item["batch_id"] == batch_id and item["leg_index"] == leg_index else item
+                for item in self.legs
+            ]
+        else:
+            self.legs.append(row)
+        return []
+
+    def _handle_update_dutching_batch_legs(self, normalized, params):
+        if "set customer_ref =" in normalized:
             customer_ref, raw_response_json, updated_at, batch_id, leg_index = params
             for leg in self.legs:
                 if leg["batch_id"] == batch_id and leg["leg_index"] == leg_index:
@@ -158,7 +222,7 @@ class FakeDB:
                     leg["updated_at"] = updated_at
             return []
 
-        if "UPDATE dutching_batch_legs SET status =" in q:
+        if "set status =" in normalized and "bet_id =" in normalized:
             status, bet_id, error_text, raw_response_json, updated_at, batch_id, leg_index = params
             for leg in self.legs:
                 if leg["batch_id"] == batch_id and leg["leg_index"] == leg_index:
@@ -169,7 +233,22 @@ class FakeDB:
                     leg["updated_at"] = updated_at
             return []
 
-        raise AssertionError(f"Query non gestita nel fake DB: {q}")
+        raise AssertionError(f"Unsupported dutching_batch_legs UPDATE query (normalized): {normalized}")
+
+    def _handle_select_dutching_batch_legs(self, normalized, params):
+        if "where batch_id = ?" in normalized:
+            batch_id = params[0]
+            rows = [item for item in self.legs if item["batch_id"] == batch_id]
+            rows.sort(key=lambda x: (x.get("leg_index") or 0, x.get("id") or 0))
+            return rows
+
+        if "where customer_ref = ?" in normalized:
+            customer_ref = params[0]
+            rows = [item for item in self.legs if item["customer_ref"] == customer_ref]
+            rows.sort(key=lambda x: x.get("id") or 0, reverse=True)
+            return rows[:1]
+
+        raise AssertionError(f"Unsupported dutching_batch_legs SELECT query (normalized): {normalized}")
 
 
 @pytest.mark.unit
@@ -270,3 +349,49 @@ def test_release_runtime_artifacts_uses_table_id_zero_too():
     mgr.release_runtime_artifacts(batch_id="B5", duplication_guard=g, table_manager=t)
     assert g.released == ["EK5"]
     assert t.unlocked == [0]
+
+
+@pytest.mark.unit
+def test_fakedb_normalizes_payload_update_query_shape():
+    db = FakeDB()
+    mgr = DutchingBatchManager(db)
+    mgr.create_batch(batch_id="B6", event_key="E6", market_id="1.666")
+
+    db._execute(
+        """
+        UPDATE dutching_batches
+        SET payload_json = ?, updated_at = ?
+        WHERE batch_id = ?
+        """,
+        ('{"foo": 1}', "2024-01-01T00:00:00", "B6"),
+    )
+
+    assert db.batches["B6"]["payload_json"] == '{"foo": 1}'
+    assert db.batches["B6"]["updated_at"] == "2024-01-01T00:00:00"
+
+
+@pytest.mark.unit
+def test_fakedb_select_after_status_update_consistent():
+    db = FakeDB()
+    mgr = DutchingBatchManager(db)
+    mgr.create_batch(batch_id="B7", event_key="E7", market_id="1.777")
+
+    db._execute(
+        """
+        UPDATE dutching_batches
+        SET status = ?, notes = ?, updated_at = ?
+        WHERE batch_id = ?
+        """,
+        ("LIVE", "ok", "2024-02-01T00:00:00", "B7"),
+    )
+
+    rows = db._execute("SELECT * FROM dutching_batches WHERE batch_id = ? LIMIT 1", ("B7",), fetch=True, commit=False)
+    assert rows[0]["status"] == "LIVE"
+    assert rows[0]["notes"] == "ok"
+
+
+@pytest.mark.unit
+def test_fakedb_unknown_query_fails_loudly_with_normalized_shape():
+    db = FakeDB()
+    with pytest.raises(AssertionError, match="normalized"):
+        db._execute("SELECT count(*) FROM imaginary_table")
