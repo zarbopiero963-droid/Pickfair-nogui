@@ -1,9 +1,5 @@
 from observability.runtime_probe import RuntimeProbe
-
-
-class _SettingsStub:
-    def load_telegram_config_row(self):
-        return {"alerts_enabled": True}
+from tests.helpers.fake_settings import FakeSettingsService
 
 
 class _TelegramStub:
@@ -45,7 +41,7 @@ class _TradingEngineReadyNoHealth:
 def test_runtime_probe_alert_pipeline_state_uses_wired_services():
     probe = RuntimeProbe(
         db=_DbStub(),
-        settings_service=_SettingsStub(),
+        settings_service=FakeSettingsService({"anomaly_alerts_enabled": True}),
         telegram_service=_TelegramStub(),
         telegram_alerts_service=_AlertsSvcStub(),
         safe_mode=_SafeModeStub(),
@@ -79,3 +75,16 @@ def test_collect_health_reports_unknown_for_ready_state_without_health_payload()
     assert engine_health["status"] == "UNKNOWN"
     assert engine_health["reason"] == "ready_without_health"
     assert engine_health["details"]["fallback_status"] == "READY"
+
+
+def test_runtime_probe_alert_pipeline_safe_on_missing_fake_settings_keys():
+    probe = RuntimeProbe(
+        db=_DbStub(),
+        settings_service=FakeSettingsService(),
+        telegram_service=_TelegramStub(),
+    )
+
+    state = probe.collect_runtime_state()
+
+    assert state["alert_pipeline"]["alerts_enabled"] is False
+    assert state["alert_pipeline"]["status"] == "DISABLED"
