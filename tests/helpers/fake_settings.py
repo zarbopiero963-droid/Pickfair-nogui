@@ -13,6 +13,8 @@ class FakeSettingsService:
     """In-memory deterministic fake for settings/config test scenarios."""
 
     def __init__(self, initial_state: Mapping[str, Any] | None = None) -> None:
+        if initial_state is not None and not isinstance(initial_state, Mapping):
+            raise TypeError("initial_state must be a mapping")
         self._store: dict[str, Any] = dict(initial_state or {})
 
     @classmethod
@@ -20,6 +22,10 @@ class FakeSettingsService:
         if not isinstance(state, Mapping):
             raise TypeError("state must be a mapping")
         return cls(initial_state=state)
+
+    @classmethod
+    def from_snapshot(cls, snapshot: Mapping[str, Any]) -> "FakeSettingsService":
+        return cls.from_state(snapshot)
 
     def export_state(self) -> dict[str, Any]:
         return deepcopy(self._store)
