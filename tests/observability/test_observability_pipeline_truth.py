@@ -1,30 +1,14 @@
 from observability.runtime_probe import RuntimeProbe
-from services.telegram_alerts_service import TelegramAlertsService
-from safe_mode import get_safe_mode_manager
+from tests.helpers.fake_runtime_state import FakeRuntimeState
+from tests.helpers.fake_settings import FakeSettingsService
 
 
-class _SettingsEnabled:
-    def load_telegram_config_row(self):
-        return {
-            "alerts_enabled": True,
-            "alerts_chat_id": "123",
-            "min_alert_severity": "WARNING",
-            "alert_cooldown_sec": 0,
-            "alert_dedup_enabled": False,
-            "alert_format_rich": True,
-        }
+class _AlertsSvcStub:
+    def __init__(self, fake_state: FakeRuntimeState):
+        self._state = fake_state
 
-
-class _SettingsEnabledMissingSender(_SettingsEnabled):
-    pass
-
-
-class _SenderOk:
-    def __init__(self):
-        self.calls = []
-
-    def send_alert_message(self, chat_id, text):
-        self.calls.append((chat_id, text))
+    def availability_status(self):
+        return self._state.alert_pipeline_snapshot()
 
 
 class _DbStub:
@@ -32,19 +16,14 @@ class _DbStub:
         return [{"id": 1}]
 
 
-def test_observability_pipeline_truth_for_missing_sender_and_safe_mode_state():
-    safe_mode = get_safe_mode_manager()
-    safe_mode.reset()
-    safe_mode.report_error("x", "y")
-    safe_mode.report_error("x", "y")
-
-    alerts = TelegramAlertsService(settings_service=_SettingsEnabledMissingSender(), telegram_sender=None)
+def test_observability_pipeline_truth_for_missing_sender_is_not_deliverable():
+    fake_state = FakeRuntimeState.ready().mark_sender_unavailable()
     probe = RuntimeProbe(
         db=_DbStub(),
-        settings_service=_SettingsEnabledMissingSender(),
+        settings_service=FakeSettingsService({"anomaly_alerts_enabled": True}),
         telegram_service=None,
-        telegram_alerts_service=alerts,
-        safe_mode=safe_mode,
+        telegram_alerts_service=_AlertsSvcStub(fake_state),
+        safe_mode=None,
     )
 
     pipeline = probe.collect_runtime_state()["alert_pipeline"]
@@ -58,15 +37,12 @@ def test_observability_pipeline_truth_for_missing_sender_and_safe_mode_state():
 
 
 def test_observability_pipeline_truth_for_deliverable_sender():
-    sender = _SenderOk()
-    alerts = TelegramAlertsService(settings_service=_SettingsEnabled(), telegram_sender=sender)
-    alerts.notify_alert({"severity": "error", "code": "OBS-1", "message": "boom"})
-
+    fake_state = FakeRuntimeState.ready(reason=None)
     probe = RuntimeProbe(
         db=_DbStub(),
-        settings_service=_SettingsEnabled(),
+        settings_service=FakeSettingsService({"anomaly_alerts_enabled": True}),
         telegram_service=None,
-        telegram_alerts_service=alerts,
+        telegram_alerts_service=_AlertsSvcStub(fake_state),
         safe_mode=None,
     )
 

@@ -25,6 +25,8 @@ class DutchingBatchManager:
         "CANCELLED",
         "ROLLED_BACK",
     }
+    LIVE_OR_MATCHED_LEG_STATUSES = {"PLACED", "MATCHED", "PARTIAL"}
+    EMERGENCY_FAILURE_STATUSES = {"FAILED", "CANCELLED"}
 
     def __init__(self, db, bus=None):
         self.db = db
@@ -122,6 +124,63 @@ class DutchingBatchManager:
             self.bus.publish(event_name, payload)
         except Exception:
             logger.exception("Errore publish %s", event_name)
+
+    def _is_emergency_hedge_triggered(self, batch: Optional[Dict[str, Any]]) -> bool:
+        if not batch:
+            return False
+        payload = batch.get("payload")
+        if not isinstance(payload, dict):
+            return False
+        hedge = payload.get("emergency_hedge")
+        if not isinstance(hedge, dict):
+            return False
+        return bool(hedge.get("triggered"))
+
+    def trigger_emergency_hedge(
+        self,
+        *,
+        batch_id: str,
+        reason: str,
+        live_leg_indexes: List[int],
+        failed_leg_indexes: List[int],
+    ) -> bool:
+        batch = self.get_batch(batch_id)
+        if not batch:
+            return False
+
+        if self._is_emergency_hedge_triggered(batch):
+            return False
+
+        payload = dict(batch.get("payload") or {})
+        now = self._now()
+        payload["emergency_hedge"] = {
+            "triggered": True,
+            "triggered_at": now,
+            "reason": str(reason),
+            "live_leg_indexes": [int(x) for x in live_leg_indexes],
+            "failed_leg_indexes": [int(x) for x in failed_leg_indexes],
+        }
+
+        self.db._execute(
+            """
+            UPDATE dutching_batches
+            SET payload_json = ?, updated_at = ?
+            WHERE batch_id = ?
+            """,
+            (self._json_dumps(payload), now, str(batch_id)),
+        )
+
+        self.mark_batch_rollback_pending(batch_id, reason=reason)
+
+        event_payload = {
+            "batch_id": str(batch_id),
+            "reason": str(reason),
+            "live_leg_indexes": [int(x) for x in live_leg_indexes],
+            "failed_leg_indexes": [int(x) for x in failed_leg_indexes],
+        }
+        self._publish("DUTCHING_EMERGENCY_HEDGE_TRIGGERED", event_payload)
+        self._publish("CMD_DUTCHING_EMERGENCY_HEDGE", event_payload)
+        return True
 
     def create_batch(
         self,
@@ -496,6 +555,34 @@ class DutchingBatchManager:
 
         statuses = {str(leg["status"]).upper() for leg in legs}
         unknown_statuses = statuses - self.KNOWN_LEG_STATUSES
+
+        if self._is_emergency_hedge_triggered(batch):
+            if str(batch.get("status") or "").upper() != "ROLLBACK_PENDING":
+                self.mark_batch_rollback_pending(
+                    batch_id,
+                    reason="Emergency hedge già attivo",
+                )
+            return self.get_batch(batch_id)
+
+        live_leg_indexes = [
+            int(leg["leg_index"])
+            for leg in legs
+            if str(leg.get("status") or "").upper() in self.LIVE_OR_MATCHED_LEG_STATUSES
+        ]
+        failed_leg_indexes = [
+            int(leg["leg_index"])
+            for leg in legs
+            if str(leg.get("status") or "").upper() in self.EMERGENCY_FAILURE_STATUSES
+        ]
+
+        if live_leg_indexes and failed_leg_indexes:
+            self.trigger_emergency_hedge(
+                batch_id=batch_id,
+                reason="Partial dutching failure: emergency hedge required",
+                live_leg_indexes=live_leg_indexes,
+                failed_leg_indexes=failed_leg_indexes,
+            )
+            return self.get_batch(batch_id)
 
         target_status = batch.get("status")
         notes = batch.get("notes", "")
