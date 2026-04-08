@@ -1,6 +1,7 @@
 from observability.runtime_probe import RuntimeProbe
 from services.telegram_alerts_service import TelegramAlertsService
 from safe_mode import get_safe_mode_manager
+from tests.helpers.fake_runtime_state import FakeRuntimeState
 
 
 class _SettingsEnabled:
@@ -38,6 +39,7 @@ def test_observability_pipeline_truth_for_missing_sender_and_safe_mode_state():
     safe_mode.report_error("x", "y")
     safe_mode.report_error("x", "y")
 
+    fake_state = FakeRuntimeState.ready().mark_sender_unavailable()
     alerts = TelegramAlertsService(settings_service=_SettingsEnabledMissingSender(), telegram_sender=None)
     probe = RuntimeProbe(
         db=_DbStub(),
@@ -53,11 +55,12 @@ def test_observability_pipeline_truth_for_missing_sender_and_safe_mode_state():
     assert pipeline["sender_available"] is False
     assert pipeline["deliverable"] is False
     assert pipeline["status"] == "DEGRADED"
-    assert pipeline["reason"] == "sender_unavailable"
+    assert pipeline["reason"] == fake_state.reason
     assert pipeline["status"] != "READY"
 
 
 def test_observability_pipeline_truth_for_deliverable_sender():
+    fake_state = FakeRuntimeState.ready()
     sender = _SenderOk()
     alerts = TelegramAlertsService(settings_service=_SettingsEnabled(), telegram_sender=sender)
     alerts.notify_alert({"severity": "error", "code": "OBS-1", "message": "boom"})
@@ -75,6 +78,6 @@ def test_observability_pipeline_truth_for_deliverable_sender():
     assert pipeline["alerts_enabled"] is True
     assert pipeline["sender_available"] is True
     assert pipeline["deliverable"] is True
-    assert pipeline["status"] == "READY"
+    assert pipeline["status"] == fake_state.runtime_state_label
     assert pipeline["reason"] is None
     assert pipeline["last_delivery_ok"] is True
