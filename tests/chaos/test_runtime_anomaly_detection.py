@@ -25,6 +25,15 @@ class _SnapshotStub:
         return None
 
 
+class _SettingsStub:
+    def __init__(self, enabled=False):
+        self.enabled = enabled
+
+    def load_anomaly_enabled(self):
+        return self.enabled
+
+
+def _make_watchdog(*, anomaly_enabled: bool) -> WatchdogService:
 class _AnomalyEngineStub:
     def __init__(self, anomalies):
         self._anomalies = list(anomalies)
@@ -206,6 +215,28 @@ def test_anomaly_enabled_with_empty_runtime_state_is_safe():
     watchdog._tick()
 
 
+def test_runtime_settings_toggle_controls_anomaly_hook(monkeypatch):
+    settings = _SettingsStub(enabled=False)
+    watchdog = WatchdogService(
+        probe=_ProbeStub(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=AlertsManager(),
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        settings_service=settings,
+        anomaly_enabled=True,
+        interval_sec=60.0,
+    )
+    calls = []
+    monkeypatch.setattr(watchdog, "_run_anomaly_hook", lambda: calls.append("hook"))
+
+    watchdog._tick()
+    assert calls == []
+
+    settings.enabled = True
+    watchdog._tick()
+    assert calls == ["hook"]
 def test_runtime_contradictions_are_expressible_deterministically():
     contradiction = (
         FakeRuntimeState.ready()
