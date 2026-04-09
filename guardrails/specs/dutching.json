@@ -1,0 +1,14 @@
+{
+  "module": "dutching",
+  "required_functions": [
+    "calculate_dutching_stakes",
+    "validate_market",
+    "compute_profit_distribution"
+  ],
+  "must_balance_book": true,
+  "must_support_sides": [
+    "BACK",
+    "LAY"
+  ],
+  "must_handle_multiple_selections": true
+}
