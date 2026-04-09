@@ -1,9 +1,41 @@
 {
+  "module": "simulation_broker",
+  "description": "Hardcore mutations for live/sim parity, partial fills, and order lifecycle realism.",
   "mutations": [
-    "force_full_match",
-    "ignore_partial_fill",
-    "allow_negative_size",
-    "skip_cancel_logic",
-    "mismatch_live_behavior"
+    {
+      "id": "force_full_match",
+      "type": "state_forcing",
+      "target": "place_order",
+      "forced_state": "MATCHED",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "ignore_partial_fill",
+      "type": "branch_bypass",
+      "target": "match_order",
+      "branch": "partial_fill_path",
+      "expected_failure": "state_model"
+    },
+    {
+      "id": "allow_negative_size",
+      "type": "value_forcing",
+      "target": "place_order",
+      "field": "remaining_size",
+      "forced_value": -1,
+      "expected_failure": "state_model"
+    },
+    {
+      "id": "skip_cancel_logic",
+      "type": "call_remove",
+      "target": "cancel_order",
+      "call_name": "mark_cancelled",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "mismatch_live_behavior",
+      "type": "mode_bypass",
+      "target": "place_order",
+      "expected_failure": "tests"
+    }
   ]
 }
