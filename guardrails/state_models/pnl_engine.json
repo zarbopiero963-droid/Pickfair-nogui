@@ -1,0 +1,16 @@
+{
+  "states": {
+    "OPEN": ["PARTIAL", "CLOSED"],
+    "PARTIAL": ["CLOSED"],
+    "CLOSED": []
+  },
+  "rules": [
+    "closed_position_has_final_pnl",
+    "exposure_zero_when_closed"
+  ],
+  "forbidden": [
+    "closed_to_open",
+    "negative_exposure",
+    "missing_pnl_on_close"
+  ]
+}
