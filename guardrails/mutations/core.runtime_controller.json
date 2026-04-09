@@ -1,9 +1,42 @@
 {
+  "module": "core.runtime_controller",
+  "description": "Hardcore mutations for lifecycle integrity and recovery on boot.",
   "mutations": [
-    "skip_state_transition_check",
-    "allow_invalid_transition",
-    "skip_recovery_on_boot",
-    "force_running_state",
-    "ignore_degraded_state"
+    {
+      "id": "skip_state_transition_check",
+      "type": "call_remove",
+      "target": "transition_state",
+      "call_name": "validate_transition",
+      "expected_failure": "state_model"
+    },
+    {
+      "id": "allow_running_to_init",
+      "type": "state_transition_allow",
+      "target": "transition_state",
+      "from_state": "RUNNING",
+      "to_state": "INIT",
+      "expected_failure": "state_model"
+    },
+    {
+      "id": "force_running_state",
+      "type": "state_forcing",
+      "target": "start",
+      "forced_state": "RUNNING",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "skip_recovery_on_boot",
+      "type": "call_remove",
+      "target": "recover_on_boot",
+      "call_name": "restore_state",
+      "expected_failure": "spec"
+    },
+    {
+      "id": "ignore_degraded_state",
+      "type": "branch_bypass",
+      "target": "transition_state",
+      "branch": "degraded_transition",
+      "expected_failure": "tests"
+    }
   ]
 }
