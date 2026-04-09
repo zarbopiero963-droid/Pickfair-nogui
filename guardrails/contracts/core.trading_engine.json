@@ -1,0 +1,20 @@
+{
+  "return_keys": [
+    "status",
+    "order_id",
+    "correlation_id",
+    "customer_ref",
+    "reason",
+    "timestamp"
+  ],
+  "status_values": [
+    "DENIED",
+    "FAILED",
+    "AMBIGUOUS",
+    "SUCCESS"
+  ],
+  "must_include_on_ambiguous": [
+    "reason",
+    "correlation_id"
+  ]
+}
