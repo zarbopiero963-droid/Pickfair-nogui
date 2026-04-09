@@ -1,0 +1,34 @@
+name: money-management
+
+on:
+  push:
+    paths:
+      - "core/money_management.py"
+      - "guardrails/specs/core.money_management.json"
+      - "guardrails/contracts/core.money_management.json"
+      - "guardrails/state_models/core.money_management.json"
+      - "guardrails/mutations/core.money_management.json"
+      - "tests/integration/test_money_management_copy_sizing.py"
+      - "tests/integration/test_money_management_pattern_sizing.py"
+      - "tests/integration/test_money_management_live_sim_parity.py"
+  pull_request:
+    paths:
+      - "core/money_management.py"
+      - "guardrails/specs/core.money_management.json"
+      - "guardrails/contracts/core.money_management.json"
+      - "guardrails/state_models/core.money_management.json"
+      - "guardrails/mutations/core.money_management.json"
+      - "tests/integration/test_money_management_copy_sizing.py"
+      - "tests/integration/test_money_management_pattern_sizing.py"
+      - "tests/integration/test_money_management_live_sim_parity.py"
+
+jobs:
+  run:
+    uses: ./.github/workflows/_module-ultra-check.yml
+    with:
+      module_path: "core/money_management.py"
+      spec_path: "guardrails/specs/core.money_management.json"
+      contract_path: "guardrails/contracts/core.money_management.json"
+      state_model_path: "guardrails/state_models/core.money_management.json"
+      mutation_path: "guardrails/mutations/core.money_management.json"
+      test_paths: "tests/integration/test_money_management_copy_sizing.py tests/integration/test_money_management_pattern_sizing.py tests/integration/test_money_management_live_sim_parity.py"
