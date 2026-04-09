@@ -1,0 +1,13 @@
+{
+  "return_keys": [
+    "parsed",
+    "signal_type",
+    "payload",
+    "source_chat",
+    "timestamp"
+  ],
+  "constraints": {
+    "parsed_boolean": true,
+    "payload_not_null_when_parsed": true
+  }
+}
