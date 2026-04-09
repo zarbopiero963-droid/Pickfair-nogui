@@ -1,9 +1,102 @@
 {
+  "module": "order_manager",
+  "description": "Hardcore mutations for order lifecycle, idempotency, mapping, partial fill, and restart safety.",
   "mutations": [
-    "skip_idempotency_check",
-    "duplicate_order_insert",
-    "force_success_on_partial",
-    "drop_mapping_external_internal",
-    "ignore_customer_ref"
+    {
+      "id": "skip_idempotency_check",
+      "type": "call_remove",
+      "target": "create_order",
+      "call_name": "check_existing_order",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "allow_duplicate_customer_ref",
+      "type": "branch_forcing",
+      "target": "create_order",
+      "branch": "customer_ref_uniqueness",
+      "forced_outcome": "allow",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "force_success_on_partial",
+      "type": "state_forcing",
+      "target": "handle_partial_fill",
+      "forced_state": "SUCCESS",
+      "expected_failure": "state_model"
+    },
+    {
+      "id": "drop_partial_remaining_size",
+      "type": "field_remove",
+      "target": "handle_partial_fill",
+      "field": "remaining_size",
+      "expected_failure": "contract"
+    },
+    {
+      "id": "map_external_to_wrong_internal",
+      "type": "mapping_corruption",
+      "target": "map_external_to_internal",
+      "mode": "wrong_target",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "drop_master_position_id",
+      "type": "field_remove",
+      "target": "create_order",
+      "field": "master_position_id",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "drop_action_seq",
+      "type": "field_remove",
+      "target": "create_order",
+      "field": "action_seq",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "collapse_copy_and_pattern_source",
+      "type": "value_replace",
+      "target": "create_order",
+      "field": "source_type",
+      "from": "PATTERN",
+      "to": "COPY",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "allow_success_to_inflight",
+      "type": "state_transition_allow",
+      "target": "update_order_status",
+      "from_state": "SUCCESS",
+      "to_state": "INFLIGHT",
+      "expected_failure": "state_model"
+    },
+    {
+      "id": "allow_failed_to_inflight",
+      "type": "state_transition_allow",
+      "target": "update_order_status",
+      "from_state": "FAILED",
+      "to_state": "INFLIGHT",
+      "expected_failure": "state_model"
+    },
+    {
+      "id": "force_retry_without_guard",
+      "type": "retry_policy_corruption",
+      "target": "create_order",
+      "mode": "always_retry",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "drop_reason_on_failed",
+      "type": "field_remove",
+      "target": "update_order_status",
+      "field": "reason",
+      "expected_failure": "contract"
+    },
+    {
+      "id": "ignore_restart_safe_mapping",
+      "type": "call_remove",
+      "target": "restore_from_db",
+      "call_name": "restore_copy_mapping",
+      "expected_failure": "tests"
+    }
   ]
 }
