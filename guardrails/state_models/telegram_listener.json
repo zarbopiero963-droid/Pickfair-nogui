@@ -1,0 +1,17 @@
+{
+  "states": {
+    "DISCONNECTED": ["CONNECTING"],
+    "CONNECTING": ["CONNECTED", "DISCONNECTED"],
+    "CONNECTED": ["DISCONNECTED", "RECONNECTING"],
+    "RECONNECTING": ["CONNECTED", "DISCONNECTED"]
+  },
+  "rules": [
+    "connection_must_recover_on_failure",
+    "no_blocking_calls_in_message_loop"
+  ],
+  "forbidden": [
+    "stuck_in_connecting",
+    "blocking_message_loop",
+    "unhandled_disconnect"
+  ]
+}
