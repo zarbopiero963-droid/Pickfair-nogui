@@ -1,9 +1,42 @@
 {
+  "module": "telegram_listener",
+  "description": "Hardcore mutations for parsing, reconnect, and non-blocking safety.",
   "mutations": [
-    "skip_parse_validation",
-    "accept_invalid_json",
-    "block_event_loop",
-    "disable_reconnect",
-    "drop_messages_randomly"
+    {
+      "id": "skip_parse_validation",
+      "type": "call_remove",
+      "target": "parse_message",
+      "call_name": "validate_signal",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "accept_invalid_json",
+      "type": "branch_forcing",
+      "target": "parse_message",
+      "branch": "invalid_json_reject",
+      "forced_outcome": "accept",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "disable_reconnect",
+      "type": "call_remove",
+      "target": "connect",
+      "call_name": "schedule_reconnect",
+      "expected_failure": "state_model"
+    },
+    {
+      "id": "drop_messages",
+      "type": "logic_replace",
+      "target": "dispatch_signal",
+      "mode": "drop_every_second",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "block_main_loop",
+      "type": "control_flow_inject",
+      "target": "dispatch_signal",
+      "mode": "blocking_wait",
+      "expected_failure": "tests"
+    }
   ]
 }
