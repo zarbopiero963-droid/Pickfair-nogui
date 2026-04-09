@@ -1,0 +1,9 @@
+{
+  "mutations": [
+    "remove_correlation_id",
+    "skip_inflight_persist",
+    "force_success_on_ambiguous",
+    "bypass_reconcile_enqueue",
+    "drop_customer_ref"
+  ]
+}
