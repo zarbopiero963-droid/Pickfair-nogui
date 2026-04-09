@@ -1,9 +1,43 @@
 {
+  "module": "pnl_engine",
+  "description": "Hardcore mutations for PnL integrity, exposure closeout, and sign correctness.",
   "mutations": [
-    "ignore_loss",
-    "invert_profit_sign",
-    "skip_close_update",
-    "keep_exposure_after_close",
-    "force_zero_pnl"
+    {
+      "id": "ignore_loss",
+      "type": "logic_replace",
+      "target": "calculate_pnl",
+      "mode": "clamp_loss_to_zero",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "invert_profit_sign",
+      "type": "math_corruption",
+      "target": "calculate_pnl",
+      "mode": "invert_sign",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "skip_close_update",
+      "type": "call_remove",
+      "target": "close_position",
+      "call_name": "mark_closed",
+      "expected_failure": "state_model"
+    },
+    {
+      "id": "keep_exposure_after_close",
+      "type": "value_forcing",
+      "target": "close_position",
+      "field": "exposure",
+      "forced_value": 1,
+      "expected_failure": "state_model"
+    },
+    {
+      "id": "force_zero_pnl",
+      "type": "value_forcing",
+      "target": "calculate_pnl",
+      "field": "pnl",
+      "forced_value": 0,
+      "expected_failure": "tests"
+    }
   ]
 }
