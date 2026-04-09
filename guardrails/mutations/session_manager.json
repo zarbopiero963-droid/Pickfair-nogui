@@ -1,9 +1,43 @@
 {
+  "module": "session_manager",
+  "description": "Hardcore mutations for Betfair session safety, keepalive, and relogin.",
   "mutations": [
-    "skip_keepalive",
-    "ignore_expiry",
-    "allow_requests_without_session",
-    "disable_relogin",
-    "return_fake_token"
+    {
+      "id": "skip_keepalive",
+      "type": "call_remove",
+      "target": "keep_alive",
+      "call_name": "refresh_session",
+      "expected_failure": "state_model"
+    },
+    {
+      "id": "ignore_expiry",
+      "type": "branch_bypass",
+      "target": "get_session_token",
+      "branch": "session_expired_check",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "allow_requests_without_session",
+      "type": "branch_forcing",
+      "target": "get_session_token",
+      "branch": "active_session_required",
+      "forced_outcome": "allow",
+      "expected_failure": "state_model"
+    },
+    {
+      "id": "disable_relogin",
+      "type": "call_remove",
+      "target": "relogin",
+      "call_name": "login",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "return_fake_token",
+      "type": "value_forcing",
+      "target": "get_session_token",
+      "field": "session_token",
+      "forced_value": "FAKE",
+      "expected_failure": "tests"
+    }
   ]
 }
