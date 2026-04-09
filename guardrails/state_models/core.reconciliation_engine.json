@@ -1,0 +1,7 @@
+{
+  "rules": [
+    "remote_exists_local_missing -> GHOST",
+    "local_failed_remote_exists -> INCONSISTENT",
+    "ambiguous_must_converge -> SUCCESS_or_FAILED"
+  ]
+}
