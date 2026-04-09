@@ -1,0 +1,9 @@
+{
+  "mutations": [
+    "skip_validation",
+    "allow_invalid_price",
+    "allow_zero_size",
+    "drop_required_fields",
+    "bypass_risk_checks"
+  ]
+}
