@@ -1,0 +1,12 @@
+{
+  "return_keys": [
+    "stakes",
+    "total_stake",
+    "expected_profit",
+    "book_percentage"
+  ],
+  "constraints": {
+    "stakes_sum_matches_total": true,
+    "profit_consistent": true
+  }
+}
