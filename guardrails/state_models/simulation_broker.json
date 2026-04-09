@@ -1,0 +1,18 @@
+{
+  "states": {
+    "INFLIGHT": ["PARTIAL", "MATCHED", "CANCELLED"],
+    "PARTIAL": ["MATCHED", "CANCELLED"],
+    "MATCHED": [],
+    "CANCELLED": []
+  },
+  "rules": [
+    "matched_size <= total_size",
+    "remaining_size >= 0",
+    "no_negative_values"
+  ],
+  "forbidden": [
+    "overfilled_order",
+    "negative_remaining",
+    "skip_partial_state"
+  ]
+}
