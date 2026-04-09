@@ -1,0 +1,17 @@
+{
+  "module": "simulation_broker",
+  "required_functions": [
+    "place_order",
+    "cancel_order",
+    "match_order",
+    "simulate_cashout"
+  ],
+  "must_support": [
+    "partial_fill",
+    "cancel",
+    "replace",
+    "cashout",
+    "dutching"
+  ],
+  "must_match_live_contract": true
+}
