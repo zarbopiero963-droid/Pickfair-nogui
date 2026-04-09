@@ -1,0 +1,11 @@
+{
+  "rules": [
+    "same_dedup_key_twice -> DENY",
+    "missing_dedup_key -> DENY",
+    "valid_unique_key -> ALLOW"
+  ],
+  "forbidden": [
+    "allow_duplicate_execution",
+    "missing_dedup_check"
+  ]
+}
