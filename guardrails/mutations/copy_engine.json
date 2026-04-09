@@ -1,0 +1,9 @@
+{
+  "mutations": [
+    "skip_dedup",
+    "allow_duplicate_action_id",
+    "ignore_action_sequence",
+    "drop_master_id",
+    "dispatch_twice"
+  ]
+}
