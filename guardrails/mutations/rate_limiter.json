@@ -1,0 +1,9 @@
+{
+  "mutations": [
+    "disable_throttling",
+    "allow_unlimited_requests",
+    "skip_wait_time",
+    "ignore_burst_limit",
+    "always_allow"
+  ]
+}
