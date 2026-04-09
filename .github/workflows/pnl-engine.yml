@@ -1,0 +1,30 @@
+name: pnl-engine
+
+on:
+  push:
+    paths:
+      - "pnl_engine.py"
+      - "guardrails/specs/pnl_engine.json"
+      - "guardrails/contracts/pnl_engine.json"
+      - "guardrails/state_models/pnl_engine.json"
+      - "guardrails/mutations/pnl_engine.json"
+      - "tests/**/test_*pnl*.py"
+  pull_request:
+    paths:
+      - "pnl_engine.py"
+      - "guardrails/specs/pnl_engine.json"
+      - "guardrails/contracts/pnl_engine.json"
+      - "guardrails/state_models/pnl_engine.json"
+      - "guardrails/mutations/pnl_engine.json"
+      - "tests/**/test_*pnl*.py"
+
+jobs:
+  run:
+    uses: ./.github/workflows/_module-ultra-check.yml
+    with:
+      module_path: "pnl_engine.py"
+      spec_path: "guardrails/specs/pnl_engine.json"
+      contract_path: "guardrails/contracts/pnl_engine.json"
+      state_model_path: "guardrails/state_models/pnl_engine.json"
+      mutation_path: "guardrails/mutations/pnl_engine.json"
+      test_paths: "tests"
