@@ -1,0 +1,9 @@
+{
+  "mutations": [
+    "return_zero_stakes",
+    "swap_back_lay_logic",
+    "incorrect_sum",
+    "ignore_odds",
+    "profit_miscalculation"
+  ]
+}
