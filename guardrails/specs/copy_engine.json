@@ -1,0 +1,22 @@
+{
+  "module": "copy_engine",
+  "required_functions": [
+    "register_master",
+    "subscribe_copier",
+    "dispatch_action",
+    "update_copy_state"
+  ],
+  "must_enforce_dedup": true,
+  "must_support": [
+    "open",
+    "close",
+    "cashout",
+    "dutching"
+  ],
+  "must_propagate_metadata": [
+    "master_id",
+    "action_id",
+    "action_seq",
+    "copy_group_id"
+  ]
+}
