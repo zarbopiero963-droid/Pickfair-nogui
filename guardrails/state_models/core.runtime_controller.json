@@ -1,0 +1,13 @@
+{
+  "states": {
+    "INIT": ["READY"],
+    "READY": ["RUNNING", "STOPPED"],
+    "RUNNING": ["STOPPED", "DEGRADED"],
+    "DEGRADED": ["RUNNING", "STOPPED"],
+    "STOPPED": ["INIT"]
+  },
+  "forbidden_transitions": [
+    ["RUNNING", "INIT"],
+    ["STOPPED", "RUNNING"]
+  ]
+}
