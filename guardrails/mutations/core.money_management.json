@@ -1,9 +1,48 @@
 {
+  "module": "core.money_management",
+  "description": "Hardcore mutations for bankroll safety, exposure limits, and cycle logic.",
   "mutations": [
-    "ignore_bankroll_check",
-    "allow_negative_balance",
-    "skip_exposure_limit",
-    "force_constant_stake",
-    "double_stake_on_loss"
+    {
+      "id": "ignore_bankroll_check",
+      "type": "branch_bypass",
+      "target": "calculate_stake",
+      "branch": "stake_le_bankroll",
+      "expected_failure": "state_model"
+    },
+    {
+      "id": "allow_negative_balance",
+      "type": "value_forcing",
+      "target": "update_bankroll",
+      "field": "bankroll_after",
+      "forced_value": -1,
+      "expected_failure": "state_model"
+    },
+    {
+      "id": "skip_exposure_limit",
+      "type": "branch_bypass",
+      "target": "calculate_stake",
+      "branch": "max_exposure_check",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "force_constant_stake",
+      "type": "logic_replace",
+      "target": "calculate_stake",
+      "mode": "constant_stake",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "double_stake_on_loss",
+      "type": "logic_replace",
+      "target": "apply_cycle_logic",
+      "mode": "martingale_like",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "ignore_live_sim_difference",
+      "type": "mode_bypass",
+      "target": "calculate_stake",
+      "expected_failure": "tests"
+    }
   ]
 }
