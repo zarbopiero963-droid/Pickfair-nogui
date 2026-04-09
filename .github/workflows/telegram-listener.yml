@@ -1,0 +1,30 @@
+name: telegram-listener
+
+on:
+  push:
+    paths:
+      - "telegram_listener.py"
+      - "guardrails/specs/telegram_listener.json"
+      - "guardrails/contracts/telegram_listener.json"
+      - "guardrails/state_models/telegram_listener.json"
+      - "guardrails/mutations/telegram_listener.json"
+      - "tests/integration/test_telegram_listener_copy_protocol.py"
+  pull_request:
+    paths:
+      - "telegram_listener.py"
+      - "guardrails/specs/telegram_listener.json"
+      - "guardrails/contracts/telegram_listener.json"
+      - "guardrails/state_models/telegram_listener.json"
+      - "guardrails/mutations/telegram_listener.json"
+      - "tests/integration/test_telegram_listener_copy_protocol.py"
+
+jobs:
+  run:
+    uses: ./.github/workflows/_module-ultra-check.yml
+    with:
+      module_path: "telegram_listener.py"
+      spec_path: "guardrails/specs/telegram_listener.json"
+      contract_path: "guardrails/contracts/telegram_listener.json"
+      state_model_path: "guardrails/state_models/telegram_listener.json"
+      mutation_path: "guardrails/mutations/telegram_listener.json"
+      test_paths: "tests/integration/test_telegram_listener_copy_protocol.py"
