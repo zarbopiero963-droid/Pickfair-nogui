@@ -1,9 +1,43 @@
 {
+  "module": "dutching",
+  "description": "Hardcore mutations for dutching correctness and balanced book math.",
   "mutations": [
-    "return_zero_stakes",
-    "swap_back_lay_logic",
-    "incorrect_sum",
-    "ignore_odds",
-    "profit_miscalculation"
+    {
+      "id": "return_zero_stakes",
+      "type": "value_forcing",
+      "target": "calculate_dutching_stakes",
+      "field": "stakes",
+      "forced_value": [],
+      "expected_failure": "contract"
+    },
+    {
+      "id": "swap_back_lay_logic",
+      "type": "logic_replace",
+      "target": "calculate_dutching_stakes",
+      "mode": "invert_side_logic",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "incorrect_sum",
+      "type": "math_corruption",
+      "target": "calculate_dutching_stakes",
+      "field": "total_stake",
+      "mode": "off_by_one",
+      "expected_failure": "state_model"
+    },
+    {
+      "id": "ignore_odds",
+      "type": "input_ignore",
+      "target": "calculate_dutching_stakes",
+      "input": "odds",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "profit_miscalculation",
+      "type": "math_corruption",
+      "target": "compute_profit_distribution",
+      "mode": "wrong_formula",
+      "expected_failure": "tests"
+    }
   ]
 }
