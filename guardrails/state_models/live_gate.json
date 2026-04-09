@@ -1,0 +1,14 @@
+{
+  "rules": [
+    "live_disabled -> block",
+    "session_not_active -> block",
+    "active_anomaly -> block",
+    "rate_limit_exceeded -> block",
+    "all_ok -> allow"
+  ],
+  "forbidden": [
+    "allow_live_with_errors",
+    "bypass_safety_checks",
+    "auto_enable_live"
+  ]
+}
