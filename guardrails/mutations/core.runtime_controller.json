@@ -1,0 +1,9 @@
+{
+  "mutations": [
+    "skip_state_transition_check",
+    "allow_invalid_transition",
+    "skip_recovery_on_boot",
+    "force_running_state",
+    "ignore_degraded_state"
+  ]
+}
