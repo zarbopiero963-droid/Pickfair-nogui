@@ -1,0 +1,9 @@
+{
+  "mutations": [
+    "skip_keepalive",
+    "ignore_expiry",
+    "allow_requests_without_session",
+    "disable_relogin",
+    "return_fake_token"
+  ]
+}
