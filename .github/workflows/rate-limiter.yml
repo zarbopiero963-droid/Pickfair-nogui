@@ -1,0 +1,30 @@
+name: rate-limiter
+
+on:
+  push:
+    paths:
+      - "rate_limiter.py"
+      - "guardrails/specs/rate_limiter.json"
+      - "guardrails/contracts/rate_limiter.json"
+      - "guardrails/state_models/rate_limiter.json"
+      - "guardrails/mutations/rate_limiter.json"
+      - "tests/**/test_*rate*limit*.py"
+  pull_request:
+    paths:
+      - "rate_limiter.py"
+      - "guardrails/specs/rate_limiter.json"
+      - "guardrails/contracts/rate_limiter.json"
+      - "guardrails/state_models/rate_limiter.json"
+      - "guardrails/mutations/rate_limiter.json"
+      - "tests/**/test_*rate*limit*.py"
+
+jobs:
+  run:
+    uses: ./.github/workflows/_module-ultra-check.yml
+    with:
+      module_path: "rate_limiter.py"
+      spec_path: "guardrails/specs/rate_limiter.json"
+      contract_path: "guardrails/contracts/rate_limiter.json"
+      state_model_path: "guardrails/state_models/rate_limiter.json"
+      mutation_path: "guardrails/mutations/rate_limiter.json"
+      test_paths: "tests"
