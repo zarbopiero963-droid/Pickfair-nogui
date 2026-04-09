@@ -1,0 +1,9 @@
+{
+  "mutations": [
+    "ignore_loss",
+    "invert_profit_sign",
+    "skip_close_update",
+    "keep_exposure_after_close",
+    "force_zero_pnl"
+  ]
+}
