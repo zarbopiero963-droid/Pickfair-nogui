@@ -1,9 +1,52 @@
 {
+  "module": "core.risk_middleware",
+  "description": "Hardcore mutations for payload validation and hard deny behavior.",
   "mutations": [
-    "skip_validation",
-    "allow_invalid_price",
-    "allow_zero_size",
-    "drop_required_fields",
-    "bypass_risk_checks"
+    {
+      "id": "skip_validation",
+      "type": "call_remove",
+      "target": "validate_request",
+      "call_name": "validate_required_fields",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "allow_invalid_price",
+      "type": "branch_forcing",
+      "target": "validate_request",
+      "branch": "invalid_price_deny",
+      "forced_outcome": "allow",
+      "expected_failure": "contract"
+    },
+    {
+      "id": "allow_zero_size",
+      "type": "branch_forcing",
+      "target": "validate_request",
+      "branch": "invalid_size_deny",
+      "forced_outcome": "allow",
+      "expected_failure": "contract"
+    },
+    {
+      "id": "drop_market_id",
+      "type": "field_remove",
+      "target": "normalize_payload",
+      "field": "market_id",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "rewrite_copy_source_as_normal",
+      "type": "value_replace",
+      "target": "normalize_payload",
+      "field": "source",
+      "from": "COPY",
+      "to": "NORMAL",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "bypass_risk_limit",
+      "type": "branch_bypass",
+      "target": "apply_risk_checks",
+      "branch": "risk_limit_exceeded",
+      "expected_failure": "tests"
+    }
   ]
 }
