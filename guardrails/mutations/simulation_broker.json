@@ -1,0 +1,9 @@
+{
+  "mutations": [
+    "force_full_match",
+    "ignore_partial_fill",
+    "allow_negative_size",
+    "skip_cancel_logic",
+    "mismatch_live_behavior"
+  ]
+}
