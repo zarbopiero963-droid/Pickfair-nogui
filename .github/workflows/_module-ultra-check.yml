@@ -1,0 +1,91 @@
+name: _module-ultra-check
+
+on:
+  workflow_call:
+    inputs:
+      module_path:
+        required: true
+        type: string
+      spec_path:
+        required: false
+        type: string
+        default: ""
+      contract_path:
+        required: false
+        type: string
+        default: ""
+      state_model_path:
+        required: false
+        type: string
+        default: ""
+      mutation_path:
+        required: false
+        type: string
+        default: ""
+      test_paths:
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  ultra-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          pip install pytest pytest-xdist
+
+      - name: Validate target module exists
+        run: |
+          test -f "${{ inputs.module_path }}"
+
+      - name: Validate guardrail files exist when provided
+        run: |
+          if [ -n "${{ inputs.spec_path }}" ]; then test -f "${{ inputs.spec_path }}"; fi
+          if [ -n "${{ inputs.contract_path }}" ]; then test -f "${{ inputs.contract_path }}"; fi
+          if [ -n "${{ inputs.state_model_path }}" ]; then test -f "${{ inputs.state_model_path }}"; fi
+          if [ -n "${{ inputs.mutation_path }}" ]; then test -f "${{ inputs.mutation_path }}"; fi
+
+      - name: Validate guardrail JSON syntax
+        run: |
+          python - <<'PY'
+          import json, os
+          paths = [
+              os.environ.get("SPEC_PATH", ""),
+              os.environ.get("CONTRACT_PATH", ""),
+              os.environ.get("STATE_MODEL_PATH", ""),
+              os.environ.get("MUTATION_PATH", ""),
+          ]
+          for path in paths:
+              if path:
+                  with open(path, "r", encoding="utf-8") as f:
+                      json.load(f)
+                  print(f"OK JSON: {path}")
+          PY
+        env:
+          SPEC_PATH: ${{ inputs.spec_path }}
+          CONTRACT_PATH: ${{ inputs.contract_path }}
+          STATE_MODEL_PATH: ${{ inputs.state_model_path }}
+          MUTATION_PATH: ${{ inputs.mutation_path }}
+
+      - name: Run module-focused tests
+        if: ${{ inputs.test_paths != '' }}
+        run: |
+          pytest -q -x ${{ inputs.test_paths }}
+
+      - name: Run full suite smoke backstop
+        run: |
+          pytest -q
