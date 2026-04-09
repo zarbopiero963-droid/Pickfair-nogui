@@ -1,0 +1,24 @@
+{
+  "module": "core.trading_engine",
+  "required_functions": [
+    "submit_order",
+    "finalize_order",
+    "handle_ambiguous",
+    "enqueue_reconcile",
+    "build_execution_context"
+  ],
+  "required_states": [
+    "DENIED",
+    "FAILED",
+    "AMBIGUOUS",
+    "SUCCESS",
+    "INFLIGHT"
+  ],
+  "must_persist_before_submit": true,
+  "must_propagate_fields": [
+    "correlation_id",
+    "customer_ref",
+    "event_key",
+    "simulation_mode"
+  ]
+}
