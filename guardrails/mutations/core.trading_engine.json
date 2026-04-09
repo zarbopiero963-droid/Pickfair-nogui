@@ -1,9 +1,174 @@
 {
+  "module": "core.trading_engine",
+  "description": "Hardcore mutations for trading engine lifecycle, ambiguity, persistence, dedup, metadata propagation, and parity.",
   "mutations": [
-    "remove_correlation_id",
-    "skip_inflight_persist",
-    "force_success_on_ambiguous",
-    "bypass_reconcile_enqueue",
-    "drop_customer_ref"
+    {
+      "id": "drop_correlation_id",
+      "type": "return_field_remove",
+      "target": "submit_order",
+      "field": "correlation_id",
+      "expected_failure": "contract"
+    },
+    {
+      "id": "drop_customer_ref",
+      "type": "return_field_remove",
+      "target": "submit_order",
+      "field": "customer_ref",
+      "expected_failure": "contract"
+    },
+    {
+      "id": "force_success_on_ambiguous",
+      "type": "state_forcing",
+      "target": "handle_ambiguous",
+      "forced_state": "SUCCESS",
+      "expected_failure": "state_model"
+    },
+    {
+      "id": "force_failed_on_timeout",
+      "type": "state_forcing",
+      "target": "submit_order",
+      "when": "timeout",
+      "forced_state": "FAILED",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "skip_inflight_persist",
+      "type": "call_remove",
+      "target": "submit_order",
+      "call_name": "persist_inflight",
+      "expected_failure": "spec"
+    },
+    {
+      "id": "persist_after_submit",
+      "type": "call_reorder",
+      "target": "submit_order",
+      "before": "exchange_submit",
+      "after": "persist_inflight",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "skip_reconcile_enqueue",
+      "type": "call_remove",
+      "target": "handle_ambiguous",
+      "call_name": "enqueue_reconcile",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "bypass_dedup_ram",
+      "type": "branch_bypass",
+      "target": "submit_order",
+      "branch": "ram_dedup_check",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "bypass_dedup_db",
+      "type": "branch_bypass",
+      "target": "submit_order",
+      "branch": "db_dedup_check",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "allow_duplicate_action_id",
+      "type": "branch_forcing",
+      "target": "submit_order",
+      "branch": "duplicate_action_id_block",
+      "forced_outcome": "allow",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "drop_event_key",
+      "type": "context_field_remove",
+      "target": "build_execution_context",
+      "field": "event_key",
+      "expected_failure": "contract"
+    },
+    {
+      "id": "drop_simulation_mode",
+      "type": "context_field_remove",
+      "target": "build_execution_context",
+      "field": "simulation_mode",
+      "expected_failure": "contract"
+    },
+    {
+      "id": "drop_copy_metadata_master_id",
+      "type": "context_field_remove",
+      "target": "build_execution_context",
+      "field": "master_id",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "drop_copy_metadata_action_id",
+      "type": "context_field_remove",
+      "target": "build_execution_context",
+      "field": "action_id",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "drop_pattern_metadata_pattern_id",
+      "type": "context_field_remove",
+      "target": "build_execution_context",
+      "field": "pattern_id",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "drop_pattern_metadata_market_type",
+      "type": "context_field_remove",
+      "target": "build_execution_context",
+      "field": "market_type",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "remove_parent_event_id",
+      "type": "audit_field_remove",
+      "target": "write_audit_event",
+      "field": "parent_event_id",
+      "expected_failure": "contract"
+    },
+    {
+      "id": "remove_audit_category",
+      "type": "audit_field_remove",
+      "target": "write_audit_event",
+      "field": "category",
+      "expected_failure": "contract"
+    },
+    {
+      "id": "allow_terminal_regression",
+      "type": "state_transition_allow",
+      "target": "finalize_order",
+      "from_state": "SUCCESS",
+      "to_state": "INFLIGHT",
+      "expected_failure": "state_model"
+    },
+    {
+      "id": "merge_denied_into_failed",
+      "type": "reason_code_collapse",
+      "target": "finalize_order",
+      "states": ["DENIED", "FAILED"],
+      "expected_failure": "tests"
+    },
+    {
+      "id": "return_live_only_field_in_sim",
+      "type": "parity_break",
+      "target": "submit_order",
+      "mode": "SIMULATION",
+      "field": "live_only_extra",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "omit_reason_on_ambiguous",
+      "type": "return_field_remove",
+      "target": "handle_ambiguous",
+      "field": "reason",
+      "expected_failure": "contract"
+    },
+    {
+      "id": "change_reason_code_timeout_ambiguous",
+      "type": "value_replace",
+      "target": "handle_ambiguous",
+      "field": "reason",
+      "from": "TIMEOUT_AMBIGUOUS",
+      "to": "UNKNOWN",
+      "expected_failure": "tests"
+    }
   ]
 }
