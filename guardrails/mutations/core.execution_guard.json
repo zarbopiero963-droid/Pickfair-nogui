@@ -1,0 +1,9 @@
+{
+  "mutations": [
+    "skip_dedup_check",
+    "allow_all_requests",
+    "drop_customer_ref_from_key",
+    "ignore_correlation_id",
+    "non_db_dedup_only"
+  ]
+}
