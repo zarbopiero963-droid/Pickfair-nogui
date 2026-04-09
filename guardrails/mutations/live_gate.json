@@ -1,0 +1,9 @@
+{
+  "mutations": [
+    "force_live_enabled",
+    "bypass_all_checks",
+    "ignore_anomalies",
+    "ignore_session_status",
+    "ignore_rate_limit"
+  ]
+}
