@@ -1,0 +1,9 @@
+{
+  "mutations": [
+    "skip_idempotency_check",
+    "duplicate_order_insert",
+    "force_success_on_partial",
+    "drop_mapping_external_internal",
+    "ignore_customer_ref"
+  ]
+}
