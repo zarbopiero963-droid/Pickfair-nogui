@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Database (contains plaintext credentials)
+pickfair.db
+*.db
+*.sqlite
+*.sqlite3
+
+# Secrets and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+.env
+.env.*
+secrets.json
+credentials.json
+
+# Logs and exports
+logs/
+*.log
+diagnostics_exports/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
