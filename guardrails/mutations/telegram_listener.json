@@ -1,0 +1,9 @@
+{
+  "mutations": [
+    "skip_parse_validation",
+    "accept_invalid_json",
+    "block_event_loop",
+    "disable_reconnect",
+    "drop_messages_randomly"
+  ]
+}
