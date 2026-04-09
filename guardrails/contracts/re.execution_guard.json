@@ -2,13 +2,12 @@
   "return_keys": [
     "allowed",
     "reason",
-    "dedup_key",
     "timestamp"
   ],
   "allowed_values": [true, false],
   "deny_reasons": [
-    "DUPLICATE",
-    "INVALID_CONTEXT",
-    "MISSING_KEY"
+    "DUPLICATE_DETECTED",
+    "MISSING_KEY",
+    "INVALID_CONTEXT"
   ]
 }
