@@ -1,0 +1,12 @@
+{
+  "rules": [
+    "invalid_payload -> DENY",
+    "missing_field -> DENY",
+    "valid_payload -> ALLOW"
+  ],
+  "forbidden": [
+    "allow_invalid_price",
+    "allow_missing_fields",
+    "bypass_validation"
+  ]
+}
