@@ -1,0 +1,9 @@
+{
+  "mutations": [
+    "skip_ghost_detection",
+    "force_success_without_check",
+    "ignore_remote_orders",
+    "drop_decision_log",
+    "non_idempotent_reconcile"
+  ]
+}
