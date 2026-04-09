@@ -11,5 +11,6 @@
     "customer_ref",
     "correlation_id",
     "action_id"
-  ]
+  ],
+  "must_fail_on_duplicate": true
 }
