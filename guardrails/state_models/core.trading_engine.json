@@ -1,0 +1,15 @@
+{
+  "states": {
+    "CREATED": ["INFLIGHT", "DENIED"],
+    "INFLIGHT": ["SUCCESS", "FAILED", "AMBIGUOUS"],
+    "AMBIGUOUS": ["SUCCESS", "FAILED"],
+    "SUCCESS": [],
+    "FAILED": [],
+    "DENIED": []
+  },
+  "forbidden_transitions": [
+    ["SUCCESS", "INFLIGHT"],
+    ["FAILED", "INFLIGHT"],
+    ["DENIED", "INFLIGHT"]
+  ]
+}
