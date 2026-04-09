@@ -1,0 +1,13 @@
+{
+  "return_keys": [
+    "reconciled",
+    "decisions",
+    "anomalies",
+    "timestamp"
+  ],
+  "decision_fields": [
+    "order_id",
+    "action",
+    "reason"
+  ]
+}
