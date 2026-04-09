@@ -1,0 +1,32 @@
+name: simulation-broker
+
+on:
+  push:
+    paths:
+      - "simulation_broker.py"
+      - "guardrails/specs/simulation_broker.json"
+      - "guardrails/contracts/simulation_broker.json"
+      - "guardrails/state_models/simulation_broker.json"
+      - "guardrails/mutations/simulation_broker.json"
+      - "tests/integration/test_simulation_broker_copy_parity.py"
+      - "tests/integration/test_simulation_broker_pattern_parity.py"
+  pull_request:
+    paths:
+      - "simulation_broker.py"
+      - "guardrails/specs/simulation_broker.json"
+      - "guardrails/contracts/simulation_broker.json"
+      - "guardrails/state_models/simulation_broker.json"
+      - "guardrails/mutations/simulation_broker.json"
+      - "tests/integration/test_simulation_broker_copy_parity.py"
+      - "tests/integration/test_simulation_broker_pattern_parity.py"
+
+jobs:
+  run:
+    uses: ./.github/workflows/_module-ultra-check.yml
+    with:
+      module_path: "simulation_broker.py"
+      spec_path: "guardrails/specs/simulation_broker.json"
+      contract_path: "guardrails/contracts/simulation_broker.json"
+      state_model_path: "guardrails/state_models/simulation_broker.json"
+      mutation_path: "guardrails/mutations/simulation_broker.json"
+      test_paths: "tests/integration/test_simulation_broker_copy_parity.py tests/integration/test_simulation_broker_pattern_parity.py"
