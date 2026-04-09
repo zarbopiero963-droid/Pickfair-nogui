@@ -1,0 +1,9 @@
+{
+  "mutations": [
+    "ignore_bankroll_check",
+    "allow_negative_balance",
+    "skip_exposure_limit",
+    "force_constant_stake",
+    "double_stake_on_loss"
+  ]
+}
