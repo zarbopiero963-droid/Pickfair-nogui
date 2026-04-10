@@ -130,6 +130,7 @@ from services.telegram_service import TelegramService
 from core.trading_engine import TradingEngine
 from core.runtime_controller import RuntimeController
 from observability import RuntimeProbe
+from safe_mode import get_safe_mode_manager
 
 from controllers.telegram_controller import TelegramController
 
@@ -364,12 +365,14 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self.db,
             self.bus,
         )
+        self.safe_mode = get_safe_mode_manager()
 
         self.trading_engine = TradingEngine(
             bus=self.bus,
             db=self.db,
             client_getter=self.betfair_service.get_client,
             executor=self.executor,
+            safe_mode=self.safe_mode,
         )
 
         self.runtime = RuntimeController(
@@ -380,12 +383,14 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             telegram_service=self.telegram_service,
             trading_engine=self.trading_engine,
             executor=self.executor,
+            safe_mode=self.safe_mode,
         )
         self.runtime_probe = RuntimeProbe(
             db=self.db,
             trading_engine=self.trading_engine,
             runtime_controller=self.runtime,
             betfair_service=self.betfair_service,
+            safe_mode=self.safe_mode,
             shutdown_manager=self.shutdown,
             telegram_service=self.telegram_service,
             settings_service=self.settings_service,
