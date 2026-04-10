@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import shutil
 import sys
 
 WORKFLOWS_DIR = Path(".github/workflows")
@@ -93,13 +94,16 @@ def normalize_file(path: Path) -> tuple[bool, str]:
     if not ON_BLOCK_RE.search(text):
         return False, "missing on: block"
 
+    backup_path = path.with_suffix(path.suffix + ".bak")
+    shutil.copy2(path, backup_path)
+
     new_text = ON_BLOCK_RE.sub(replacement, text, count=1)
 
     if new_text == text:
         return False, "no change"
 
     path.write_text(new_text, encoding="utf-8")
-    return True, replacement.strip().replace("\n", " | ")
+    return True, f"{replacement.strip().replace(chr(10), ' | ')} (backup: {backup_path.name})"
 
 
 def main() -> int:
