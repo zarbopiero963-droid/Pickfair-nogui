@@ -43,6 +43,22 @@ class _SettingsStub:
         return {"alerts_enabled": self._state.alerts_enabled}
 
 
+class _HealthProbeStub(RuntimeProbe):
+    def __init__(self, status):
+        super().__init__()
+        self._status = status
+
+    def collect_health(self):
+        return {
+            "component_a": {
+                "name": "component_a",
+                "status": self._status,
+                "reason": "test_reason",
+                "details": {},
+            }
+        }
+
+
 def test_runtime_probe_alert_pipeline_state_uses_wired_services():
     fake_state = FakeRuntimeState.degraded(reason="sender_unavailable")
     probe = RuntimeProbe(
@@ -117,6 +133,8 @@ def test_fake_runtime_state_builder_variants_are_deterministic():
 def test_live_readiness_unknown_arbitrary_state_is_fail_closed():
     probe = RuntimeProbe()
     probe.collect_health = lambda: {"runtime_controller": {"status": "BROKEN", "reason": "bad_state"}}  # type: ignore[method-assign]
+def test_unknown_status_is_blocker():
+    probe = _HealthProbeStub("BROKEN")
 
     report = probe.get_live_readiness_report()
 
@@ -133,6 +151,13 @@ def test_live_readiness_unknown_arbitrary_state_is_fail_closed():
 def test_live_readiness_starting_state_is_fail_closed():
     probe = RuntimeProbe()
     probe.collect_health = lambda: {"runtime_controller": {"status": "STARTING", "reason": None}}  # type: ignore[method-assign]
+    assert report["ready"] is False
+    assert report["blockers"][0]["name"] == "component_a"
+    assert "UNRECOGNIZED_STATE" in report["blockers"][0]["reason"]
+
+
+def test_starting_status_is_blocker():
+    probe = _HealthProbeStub("STARTING")
 
     report = probe.get_live_readiness_report()
 
@@ -145,6 +170,12 @@ def test_live_readiness_starting_state_is_fail_closed():
 def test_live_readiness_explicit_ready_passes_without_blockers():
     probe = RuntimeProbe()
     probe.collect_health = lambda: {"runtime_controller": {"status": "READY", "reason": None}}  # type: ignore[method-assign]
+    assert report["ready"] is False
+    assert report["blockers"][0]["status"] == "STARTING"
+
+
+def test_ready_still_passes():
+    probe = _HealthProbeStub("READY")
 
     report = probe.get_live_readiness_report()
 
@@ -155,6 +186,12 @@ def test_live_readiness_explicit_ready_passes_without_blockers():
 def test_live_readiness_degraded_remains_degraded_not_blocker():
     probe = RuntimeProbe()
     probe.collect_health = lambda: {"runtime_controller": {"status": "DEGRADED", "reason": "partial"}}  # type: ignore[method-assign]
+    assert report["ready"] is True
+    assert report["blockers"] == []
+
+
+def test_degraded_separated():
+    probe = _HealthProbeStub("DEGRADED")
 
     report = probe.get_live_readiness_report()
 
@@ -172,6 +209,13 @@ def test_live_readiness_degraded_remains_degraded_not_blocker():
 def test_live_readiness_none_status_is_treated_as_unknown_blocker():
     probe = RuntimeProbe()
     probe.collect_health = lambda: {"runtime_controller": {"status": None, "reason": "missing_state"}}  # type: ignore[method-assign]
+    assert report["ready"] is False
+    assert report["blockers"] == []
+    assert report["details"]["degraded"][0]["name"] == "component_a"
+
+
+def test_none_status_fail_closed():
+    probe = _HealthProbeStub(None)
 
     report = probe.get_live_readiness_report()
 
@@ -183,3 +227,5 @@ def test_live_readiness_none_status_is_treated_as_unknown_blocker():
             "reason": "missing_state",
         }
     ]
+    assert report["ready"] is False
+    assert report["blockers"][0]["status"] == "UNKNOWN"
