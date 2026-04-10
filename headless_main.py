@@ -534,6 +534,7 @@ class HeadlessApp:
 
         return {
             "simulation_mode": simulation_mode,
+            "execution_mode": "SIMULATION" if simulation_mode else "LIVE",
             "password": password,
         }
 
@@ -584,6 +585,7 @@ class HeadlessApp:
 
         args = self._parse_args()
         simulation_mode = bool(args["simulation_mode"])
+        execution_mode = str(args.get("execution_mode") or "SIMULATION")
         password = args["password"]
 
         mode_txt = "SIMULATION" if simulation_mode else "LIVE"
@@ -595,6 +597,22 @@ class HeadlessApp:
             return 1
 
         try:
+            if not simulation_mode:
+                readiness_report = {"ready": False, "level": "NOT_READY", "blockers": ["READINESS_SIGNAL_UNKNOWN"]}
+                if self.runtime_probe is not None and self.runtime is not None:
+                    readiness_report = self.runtime_probe.get_live_readiness_report(
+                        runtime_controller=self.runtime,
+                        context={
+                            "execution_mode": execution_mode,
+                            "password": password,
+                        },
+                    )
+                logger.info("Live readiness report -> %s", readiness_report)
+                if not readiness_report.get("ready", False):
+                    logger.error("LIVE readiness gate blocked startup: %s", readiness_report.get("blockers", []))
+                    self.stop()
+                    return 1
+
             result = self.runtime.start(
                 password=password,
                 simulation_mode=simulation_mode,

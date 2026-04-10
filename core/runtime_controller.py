@@ -70,6 +70,8 @@ class RuntimeController:
         self.last_error = ""
         self.last_signal_at = ""
         self.simulation_mode = False
+        self._startup_in_progress = False
+        self._startup_failed = False
 
         self._subscribe_bus()
 
@@ -133,6 +135,9 @@ class RuntimeController:
             "status": status,
         }
 
+    def is_ready(self) -> bool:
+        return not self._startup_in_progress and not self._startup_failed and self.mode != RuntimeMode.LOCKDOWN
+
     # =========================================================
     # LIFECYCLE
     # =========================================================
@@ -141,44 +146,53 @@ class RuntimeController:
         password: Optional[str] = None,
         simulation_mode: Optional[bool] = None,
     ) -> dict:
-        self.reload_config()
-
-        # sincronizzazione da headless_main / mini_gui
-        if simulation_mode is not None:
-            self.set_simulation_mode(simulation_mode)
-        else:
-            self.set_simulation_mode(self.simulation_mode)
-
-        # reset anti-duplicazione a ogni start
-        self.duplication_guard = DuplicationGuard()
-        self.reconciliation_engine = self._build_reconciliation_engine()
-
-        session = self.betfair_service.connect(
-            password=password,
-            simulation_mode=self.simulation_mode,
-        )
-        funds = self.betfair_service.get_account_funds()
-        self.risk_desk.sync_bankroll(float(funds.get("available", 0.0) or 0.0))
-
-        telegram_result = self.telegram_service.start()
-
+        self._startup_in_progress = True
+        self._startup_failed = False
         try:
-            self.reconciliation_engine.reconcile_all_open_batches()
-        except Exception:
-            logger.exception("Errore reconcile_all_open_batches")
+            self.reload_config()
 
-        self.mode = RuntimeMode.ACTIVE
-        self.last_error = ""
-        status = self.get_status()
-        self.bus.publish("RUNTIME_STARTED", status)
+            # sincronizzazione da headless_main / mini_gui
+            if simulation_mode is not None:
+                self.set_simulation_mode(simulation_mode)
+            else:
+                self.set_simulation_mode(self.simulation_mode)
 
-        return {
-            "started": True,
-            "betfair": session,
-            "funds": funds,
-            "telegram": telegram_result,
-            "status": status,
-        }
+            # reset anti-duplicazione a ogni start
+            self.duplication_guard = DuplicationGuard()
+            self.reconciliation_engine = self._build_reconciliation_engine()
+
+            session = self.betfair_service.connect(
+                password=password,
+                simulation_mode=self.simulation_mode,
+            )
+            funds = self.betfair_service.get_account_funds()
+            self.risk_desk.sync_bankroll(float(funds.get("available", 0.0) or 0.0))
+
+            telegram_result = self.telegram_service.start()
+
+            try:
+                self.reconciliation_engine.reconcile_all_open_batches()
+            except Exception:
+                logger.exception("Errore reconcile_all_open_batches")
+
+            self.mode = RuntimeMode.ACTIVE
+            self.last_error = ""
+            status = self.get_status()
+            self.bus.publish("RUNTIME_STARTED", status)
+
+            return {
+                "started": True,
+                "betfair": session,
+                "funds": funds,
+                "telegram": telegram_result,
+                "status": status,
+            }
+        except Exception as exc:
+            self._startup_failed = True
+            self.last_error = str(exc)
+            raise
+        finally:
+            self._startup_in_progress = False
 
     def stop(self) -> dict:
         self.telegram_service.stop()
@@ -482,3 +496,96 @@ class RuntimeController:
                 data["simulation_snapshot"] = {}
 
         return data
+
+    def evaluate_live_readiness(self, *, runtime_probe=None, context: Optional[dict] = None) -> dict:
+        context = dict(context or {})
+        execution_mode = str(context.get("execution_mode") or "").strip().upper()
+        password = context.get("password")
+
+        blockers = []
+        details = {
+            "execution_mode": execution_mode or "UNKNOWN",
+            "runtime_mode": getattr(self.mode, "value", str(self.mode)),
+            "simulation_mode": bool(self.simulation_mode),
+            "startup_in_progress": bool(self._startup_in_progress),
+            "startup_failed": bool(self._startup_failed),
+        }
+
+        runtime_ready = not self._startup_in_progress and not self._startup_failed and self.mode != RuntimeMode.LOCKDOWN
+        details["runtime_state_ok"] = runtime_ready
+        if not runtime_ready:
+            blockers.append("RUNTIME_NOT_INITIALIZED")
+
+        kill_switch_active = self.mode == RuntimeMode.LOCKDOWN
+        details["kill_switch_active"] = kill_switch_active
+        if kill_switch_active:
+            blockers.append("KILL_SWITCH_ACTIVE")
+
+        safe_mode_active = False
+        safe_mode_obj = getattr(getattr(runtime_probe, "safe_mode", None), "is_enabled", None)
+        if callable(safe_mode_obj):
+            try:
+                safe_mode_active = bool(safe_mode_obj())
+            except Exception:
+                safe_mode_active = True
+        policy = {}
+        if self.settings_service is not None and hasattr(self.settings_service, "load_live_readiness_policy"):
+            policy = dict(self.settings_service.load_live_readiness_policy() or {})
+        safe_mode_blocks = bool(policy.get("safe_mode_blocks_live", True))
+        details["safe_mode_active"] = safe_mode_active
+        details["safe_mode_blocks_live"] = safe_mode_blocks
+        if safe_mode_active and safe_mode_blocks:
+            blockers.append("SAFE_MODE_BLOCKING")
+
+        live_dependency_ok = False
+        if self.betfair_service is not None and not bool(self.simulation_mode):
+            has_connect = callable(getattr(self.betfair_service, "connect", None))
+            cfg_ok = False
+            if self.settings_service is not None and hasattr(self.settings_service, "has_live_credentials_configured"):
+                cfg_ok = bool(self.settings_service.has_live_credentials_configured())
+            pwd = password if password is not None else (
+                self.settings_service.load_password() if self.settings_service and hasattr(self.settings_service, "load_password") else ""
+            )
+            pwd_ok = bool(str(pwd or "").strip())
+            details["live_configured"] = cfg_ok
+            details["live_password_available"] = pwd_ok
+            live_dependency_ok = has_connect and cfg_ok and pwd_ok
+        details["live_dependency_ok"] = live_dependency_ok
+        if not live_dependency_ok:
+            blockers.append("LIVE_DEPENDENCY_MISSING")
+
+        probe_health = None
+        probe_ok = False
+        if runtime_probe is not None and hasattr(runtime_probe, "collect_health"):
+            try:
+                probe_health = runtime_probe.collect_health()
+                unknown = any((v or {}).get("status") == "UNKNOWN" for v in (probe_health or {}).values())
+                probe_ok = isinstance(probe_health, dict) and bool(probe_health) and not unknown
+                details["probe_unknown_count"] = sum(1 for v in probe_health.values() if (v or {}).get("status") == "UNKNOWN")
+            except Exception as exc:
+                details["probe_error"] = str(exc)
+                probe_ok = False
+        details["probe_ok"] = probe_ok
+        if not probe_ok:
+            blockers.append("READINESS_SIGNAL_UNKNOWN")
+
+        execution_mode_valid = execution_mode == "LIVE"
+        details["execution_mode_valid_for_live"] = execution_mode_valid
+        if not execution_mode_valid:
+            blockers.append("INVALID_EXECUTION_MODE")
+
+        ready = len(blockers) == 0
+        level = "READY" if ready else "NOT_READY"
+        return {
+            "ready": ready,
+            "level": level,
+            "blockers": blockers,
+            "details": details,
+        }
+
+    def get_live_readiness_report(self, *, runtime_probe=None, context: Optional[dict] = None) -> dict:
+        return self.evaluate_live_readiness(runtime_probe=runtime_probe, context=context)
+
+    def is_live_readiness_ok(self, *, runtime_probe=None, context: Optional[dict] = None) -> bool:
+        report = self.get_live_readiness_report(runtime_probe=runtime_probe, context=context)
+        return bool(report.get("ready", False))

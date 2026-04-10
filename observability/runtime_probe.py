@@ -4,7 +4,7 @@ import os
 import time
 import zipfile
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 
 class RuntimeProbe:
@@ -121,6 +121,51 @@ class RuntimeProbe:
             "recent_audit": recent_audit,
             "diagnostics_export": diagnostics_export,
         }
+
+    def evaluate_live_readiness(
+        self,
+        *,
+        runtime_controller: Any = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        controller = runtime_controller or self.runtime_controller
+        if controller is not None and hasattr(controller, "evaluate_live_readiness"):
+            return controller.evaluate_live_readiness(runtime_probe=self, context=context or {})
+        return {
+            "ready": False,
+            "level": "NOT_READY",
+            "blockers": ["READINESS_SIGNAL_UNKNOWN"],
+            "details": {
+                "reason": "runtime_controller_missing_or_incompatible",
+                "fallback_status": "UNKNOWN",
+            },
+        }
+
+    def get_live_readiness_report(
+        self,
+        *,
+        runtime_controller: Any = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        report = self.evaluate_live_readiness(runtime_controller=runtime_controller, context=context)
+        if not report.get("ready", False):
+            if report.get("blockers"):
+                level = "NOT_READY"
+            else:
+                level = "DEGRADED"
+        else:
+            level = "READY"
+        report["level"] = level
+        return report
+
+    def is_live_readiness_ok(
+        self,
+        *,
+        runtime_controller: Any = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        report = self.get_live_readiness_report(runtime_controller=runtime_controller, context=context)
+        return bool(report.get("ready", False))
 
     def _probe_ready_component(self, obj: Any, name: str) -> Dict[str, Any]:
         if obj is None:

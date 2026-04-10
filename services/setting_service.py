@@ -300,3 +300,19 @@ class SettingsService:
     def clear_simulation_state(self, state_key: str = "default") -> None:
         if hasattr(self.db, "clear_simulation_state"):
             self.db.clear_simulation_state(state_key=state_key)
+
+    # =========================================================
+    # LIVE READINESS
+    # =========================================================
+    def load_live_readiness_policy(self) -> Dict[str, Any]:
+        data = self.get_all_settings()
+        return {
+            "safe_mode_blocks_live": self._b(data, "live_readiness.safe_mode_blocks_live", True),
+        }
+
+    def has_live_credentials_configured(self) -> bool:
+        cfg = self.load_betfair_config()
+        return all(
+            bool(str(value or "").strip())
+            for value in (cfg.username, cfg.app_key, cfg.certificate, cfg.private_key)
+        )
