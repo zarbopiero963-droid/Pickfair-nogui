@@ -517,7 +517,16 @@ class HeadlessApp:
             simulation_mode = True
         else:
             try:
-                if self.settings_service is not None and hasattr(
+                if self.settings_service is not None and hasattr(self.settings_service, "load_live_control_plane"):
+                    cp_cfg = self.settings_service.load_live_control_plane() or {}
+                    execution_mode = str(cp_cfg.get("execution_mode", "SIMULATION") or "SIMULATION").upper()
+                    live_enabled = bool(cp_cfg.get("live_enabled", False))
+                    kill_switch = bool(cp_cfg.get("kill_switch", False))
+                    if execution_mode == "LIVE" and live_enabled and not kill_switch:
+                        simulation_mode = False
+                    else:
+                        simulation_mode = True
+                elif self.settings_service is not None and hasattr(
                     self.settings_service, "load_simulation_config"
                 ):
                     sim_cfg = self.settings_service.load_simulation_config()

@@ -249,6 +249,17 @@ class _DummyLog:
         return None
 
 
+class _DummyListBox:
+    def __init__(self):
+        self.items = []
+
+    def delete(self, *_args, **_kwargs):
+        self.items = []
+
+    def insert(self, _idx, value):
+        self.items.append(value)
+
+
 class SimpleUIQueue:
     def __init__(self, root):
         self.root = root
@@ -478,6 +489,12 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.status_last_error_var = self._make_string_var("-")
         self.sim_label_var = self._make_string_var("SIMULAZIONE")
         self.status_broker_var = self._make_string_var("SIMULATION")
+        self.execution_mode_var = self._make_string_var("SIMULATION")
+        self.live_enabled_var = self._make_bool_var(False)
+        self.kill_switch_var = self._make_bool_var(False)
+        self.readiness_level_var = self._make_string_var("Readiness: UNKNOWN")
+        self.control_plane_summary_var = self._make_string_var("SIMULATION")
+        self.readiness_blockers_var = self._make_string_var("Nessun blocker")
 
     # =========================================================
     # UI
@@ -574,6 +591,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self.btn_stop = _DummyButton(self._runtime_stop)
             self.btn_reset = _DummyButton(self._runtime_reset)
             self.btn_refresh = _DummyButton(self._refresh_runtime_status)
+            self.readiness_blockers_list = _DummyListBox()
             return
 
         frame = self.tab_dashboard
@@ -602,8 +620,49 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             ctk.CTkLabel(card, text=label, font=("Segoe UI", 12)).pack(anchor="w", padx=12, pady=(10, 4))
             ctk.CTkLabel(card, textvariable=var, font=("Segoe UI", 16, "bold")).pack(anchor="w", padx=12, pady=(0, 10))
 
+        control_plane = ctk.CTkFrame(frame)
+        control_plane.grid(row=3, column=0, columnspan=4, sticky="ew", padx=8, pady=(0, 8))
+        ctk.CTkLabel(control_plane, text="Operator Control Plane", font=("Segoe UI", 13, "bold")).pack(
+            anchor="w", padx=12, pady=(10, 6)
+        )
+
+        mode_row = ctk.CTkFrame(control_plane, fg_color="transparent")
+        mode_row.pack(fill=tk.X, padx=12, pady=(0, 6))
+        ctk.CTkLabel(mode_row, text="Execution Mode", width=150, anchor="w").pack(side=tk.LEFT)
+        ctk.CTkComboBox(
+            mode_row,
+            variable=self.execution_mode_var,
+            values=["SIMULATION", "LIVE"],
+            width=180,
+            command=lambda _value: self._on_control_plane_change(),
+        ).pack(side=tk.LEFT, padx=6)
+
+        ctk.CTkSwitch(
+            mode_row,
+            text="Live Gate",
+            variable=self.live_enabled_var,
+            command=self._on_control_plane_change,
+            onvalue=True,
+            offvalue=False,
+        ).pack(side=tk.LEFT, padx=12)
+        ctk.CTkSwitch(
+            mode_row,
+            text="Kill Switch",
+            variable=self.kill_switch_var,
+            command=self._on_control_plane_change,
+            onvalue=True,
+            offvalue=False,
+        ).pack(side=tk.LEFT, padx=12)
+
+        ctk.CTkLabel(control_plane, textvariable=self.control_plane_summary_var, font=("Segoe UI", 12, "bold")).pack(
+            anchor="w", padx=12, pady=(0, 4)
+        )
+        ctk.CTkLabel(control_plane, textvariable=self.readiness_level_var).pack(anchor="w", padx=12, pady=(0, 4))
+        self.readiness_blockers_list = tk.Listbox(control_plane, height=4)
+        self.readiness_blockers_list.pack(fill=tk.X, padx=12, pady=(0, 10))
+
         controls = ctk.CTkFrame(frame)
-        controls.grid(row=3, column=0, columnspan=4, sticky="ew", padx=8, pady=8)
+        controls.grid(row=4, column=0, columnspan=4, sticky="ew", padx=8, pady=8)
 
         self.btn_start = ctk.CTkButton(controls, text="Avvia", command=self._runtime_start)
         self.btn_pause = ctk.CTkButton(controls, text="Pausa", command=self._runtime_pause)
@@ -616,7 +675,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             btn.pack(side=tk.LEFT, padx=6, pady=10)
 
         err = ctk.CTkFrame(frame)
-        err.grid(row=4, column=0, columnspan=4, sticky="ew", padx=8, pady=8)
+        err.grid(row=5, column=0, columnspan=4, sticky="ew", padx=8, pady=8)
         ctk.CTkLabel(err, text="Ultimo Errore", font=("Segoe UI", 12)).pack(anchor="w", padx=12, pady=(10, 4))
         ctk.CTkLabel(err, textvariable=self.status_last_error_var, wraplength=1200).pack(anchor="w", padx=12, pady=(0, 10))
 
@@ -795,6 +854,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             pass
 
         self._load_simulation_settings()
+        self._load_control_plane_settings()
 
     def _load_simulation_settings(self):
         if not hasattr(self.settings_service, "load_simulation_config"):
@@ -809,6 +869,39 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.simulation_mode = enabled
         self.sim_label_var.set("SIMULAZIONE" if enabled else "LIVE")
         self.status_broker_var.set("SIMULATION" if enabled else "LIVE")
+
+    def _load_control_plane_settings(self):
+        cfg = {}
+        if hasattr(self.settings_service, "load_live_control_plane"):
+            try:
+                cfg = self.settings_service.load_live_control_plane() or {}
+            except Exception:
+                cfg = {}
+
+        execution_mode = str(cfg.get("execution_mode", "SIMULATION") or "SIMULATION").upper()
+        if execution_mode not in {"SIMULATION", "LIVE"}:
+            execution_mode = "SIMULATION"
+
+        self.execution_mode_var.set(execution_mode)
+        self.live_enabled_var.set(bool(cfg.get("live_enabled", False)))
+        self.kill_switch_var.set(bool(cfg.get("kill_switch", False)))
+        self.simulation_mode_var.set(execution_mode != "LIVE")
+        self._apply_simulation_mode_to_runtime()
+        self._update_control_plane_display()
+
+    def _persist_control_plane_settings(self):
+        if not hasattr(self.settings_service, "save_live_control_plane"):
+            return
+        try:
+            self.settings_service.save_live_control_plane(
+                {
+                    "execution_mode": self.execution_mode_var.get(),
+                    "live_enabled": bool(self.live_enabled_var.get()),
+                    "kill_switch": bool(self.kill_switch_var.get()),
+                }
+            )
+        except Exception:
+            pass
 
     def _safe_show_info(self, title: str, msg: str):
         if self._test_mode:
@@ -877,10 +970,83 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
     # =========================================================
     # LIVE / SIM
     # =========================================================
-    def _toggle_simulation_mode(self):
-        self._apply_simulation_mode_to_runtime()
+    def _resolve_readiness_report(self, status):
+        status = status or {}
+        report = status.get("live_readiness") or status.get("readiness") or {}
+        if not isinstance(report, dict):
+            report = {}
+
+        level = str(
+            report.get("level")
+            or report.get("status")
+            or status.get("live_readiness_level")
+            or "UNKNOWN"
+        ).upper()
+        if level not in {"READY", "DEGRADED", "NOT_READY", "UNKNOWN"}:
+            level = "UNKNOWN"
+
+        blockers = report.get("blockers")
+        if blockers is None:
+            blockers = status.get("live_readiness_blockers")
+        if not isinstance(blockers, list):
+            blockers = []
+
+        normalized = [str(item).strip() for item in blockers if str(item).strip()]
+        if not normalized and level != "READY":
+            normalized = ["Readiness data unavailable"]
+        return {"level": level, "blockers": normalized}
+
+    def _compute_operator_state(self, readiness_report):
+        mode = str(self.execution_mode_var.get() or "SIMULATION").upper()
+        kill_switch = bool(self.kill_switch_var.get())
+        live_enabled = bool(self.live_enabled_var.get())
+        level = str(readiness_report.get("level", "UNKNOWN"))
+        blockers = readiness_report.get("blockers", [])
+
+        if kill_switch:
+            return "LIVE BLOCCATO (KILL SWITCH)"
+        if mode != "LIVE":
+            return "SIMULATION"
+        if not live_enabled:
+            return "LIVE richiesto ma gate OFF"
+        if level != "READY" or blockers:
+            return "LIVE richiesto ma BLOCCATO"
+        return "LIVE abilitato e READY"
+
+    def _update_control_plane_display(self, status=None):
+        readiness_report = self._resolve_readiness_report(status)
+        self.readiness_level_var.set(f"Readiness: {readiness_report['level']}")
+        blockers = readiness_report.get("blockers", [])
+        self.readiness_blockers_var.set(", ".join(blockers) if blockers else "Nessun blocker")
+        if hasattr(self, "readiness_blockers_list"):
+            try:
+                self.readiness_blockers_list.delete(0, tk.END)
+                if blockers:
+                    for blocker in blockers:
+                        self.readiness_blockers_list.insert(tk.END, blocker)
+                else:
+                    self.readiness_blockers_list.insert(tk.END, "Nessun blocker")
+            except Exception:
+                pass
+
+        self.control_plane_summary_var.set(self._compute_operator_state(readiness_report))
         self.sim_label_var.set("SIMULAZIONE" if self.simulation_mode else "LIVE")
+
+    def _on_control_plane_change(self):
+        mode = str(self.execution_mode_var.get() or "SIMULATION").upper()
+        if mode not in {"SIMULATION", "LIVE"}:
+            mode = "SIMULATION"
+            self.execution_mode_var.set(mode)
+        self.simulation_mode_var.set(mode != "LIVE")
+        self._apply_simulation_mode_to_runtime()
         self.status_broker_var.set("SIMULATION" if self.simulation_mode else "LIVE")
+        self._persist_control_plane_settings()
+        self._update_control_plane_display()
+        self._refresh_runtime_status()
+
+    def _toggle_simulation_mode(self):
+        self.execution_mode_var.set("SIMULATION" if bool(self.simulation_mode_var.get()) else "LIVE")
+        self._on_control_plane_change()
 
         if hasattr(self.settings_service, "save_simulation_config"):
             try:
@@ -894,7 +1060,6 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 pass
 
         self._log(f"Modalità cambiata: {self.sim_label_var.get()}")
-        self._refresh_runtime_status()
 
     # =========================================================
     # RUNTIME COMMANDS
@@ -1009,9 +1174,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             telegram_status = {}
 
         self.status_mode_var.set(str(status.get("mode", "STOPPED")))
-        self.status_broker_var.set(
-            str(broker_status.get("broker_type", "SIMULATION" if self.simulation_mode else "LIVE"))
-        )
+        self.status_broker_var.set(str(broker_status.get("broker_type", self.status_broker_var.get())))
         self.status_betfair_var.set("CONNECTED" if betfair_status.get("connected") else "DISCONNECTED")
         self.status_telegram_var.set("LISTENING" if telegram_status.get("connected") else self.telegram_status)
         self.status_bankroll_var.set(str(funds.get("available", status.get("bankroll_current", "0.00"))))
@@ -1020,6 +1183,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.status_tables_var.set(str(status.get("active_tables", 0)))
         self.status_last_signal_var.set(str(status.get("last_signal_at", "-")))
         self.status_last_error_var.set(str(status.get("last_error", self.status_last_error_var.get() or "-")))
+        self._update_control_plane_display(status)
 
         if hasattr(self, "risk_tree"):
             try:

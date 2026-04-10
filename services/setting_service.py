@@ -55,6 +55,12 @@ class SettingsService:
             return value
         return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
+    def _execution_mode(self, value: Any, default: str = "SIMULATION") -> str:
+        mode = str(value or default).strip().upper()
+        if mode not in {"SIMULATION", "LIVE"}:
+            return str(default).upper()
+        return mode
+
     # =========================================================
     # BETFAIR CONFIG
     # =========================================================
@@ -284,6 +290,30 @@ class SettingsService:
     def load_simulation_persist_state(self) -> bool:
         cfg = self.load_simulation_config()
         return bool(cfg.get("persist_state", True))
+
+    # =========================================================
+    # LIVE CONTROL PLANE
+    # =========================================================
+    def load_live_control_plane(self) -> Dict[str, Any]:
+        data = self.get_all_settings()
+        execution_mode = self._execution_mode(data.get("execution_mode"), "SIMULATION")
+        live_enabled = self._b(data, "live_enabled", False)
+        kill_switch = self._b(data, "kill_switch", False)
+        return {
+            "execution_mode": execution_mode,
+            "live_enabled": bool(live_enabled),
+            "kill_switch": bool(kill_switch),
+        }
+
+    def save_live_control_plane(self, config: Dict[str, Any]) -> None:
+        payload = dict(config or {})
+        self.db.save_settings(
+            {
+                "execution_mode": self._execution_mode(payload.get("execution_mode"), "SIMULATION"),
+                "live_enabled": int(bool(payload.get("live_enabled", False))),
+                "kill_switch": int(bool(payload.get("kill_switch", False))),
+            }
+        )
 
     # =========================================================
     # SIMULATION STATE PERSISTENCE
