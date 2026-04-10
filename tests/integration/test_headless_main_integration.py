@@ -160,6 +160,152 @@ def test_parse_args_live_and_password(monkeypatch):
     assert args["simulation_mode"] is False
     assert args["password"] == "secret"
 
+
+@pytest.mark.integration
+def test_headless_and_mini_gui_explicit_probe_gate_parity(monkeypatch):
+    import headless_main
+    import mini_gui
+
+    class FakeDB:
+        def close_all_connections(self):
+            return None
+
+    class FakeBus:
+        def __init__(self, *_args, **_kwargs):
+            self.subscriptions = {}
+
+        def subscribe(self, event_name, handler):
+            self.subscriptions.setdefault(event_name, []).append(handler)
+
+    class FakeExecutor:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def shutdown(self, **_kwargs):
+            return None
+
+    class FakeShutdown:
+        def register(self, *_args, **_kwargs):
+            return None
+
+    class FakeSettings:
+        def __init__(self, _db):
+            self.contract_path = "services.settings_service.SettingsService"
+
+        def load_anomaly_enabled(self):
+            return False
+
+        def load_anomaly_alerts_enabled(self):
+            return False
+
+        def load_anomaly_actions_enabled(self):
+            return False
+
+    class FakeBetfair:
+        def __init__(self, _settings):
+            pass
+
+        def get_client(self):
+            return None
+
+        def disconnect(self):
+            return None
+
+    class FakeSender:
+        def send_alert_message(self, *_args, **_kwargs):
+            return None
+
+    class FakeTelegram:
+        def __init__(self, _settings, _db, _bus):
+            self.sender = FakeSender()
+
+        def get_sender(self):
+            return self.sender
+
+        def stop(self):
+            return None
+
+    class FakeTradingEngine:
+        def __init__(self, **_kwargs):
+            pass
+
+    class FakeRuntime:
+        def __init__(self, **_kwargs):
+            self.runtime_probe = None
+            self.enforce_probe_readiness_gate = False
+
+    class FakeProbe:
+        def __init__(self, **kwargs):
+            self.settings_service = kwargs.get("settings_service")
+
+    class FakeTelegramController:
+        def __init__(self, _app):
+            return None
+
+    class FakeWatchdog:
+        def start(self):
+            return None
+
+        def stop(self):
+            return None
+
+    class FakeCleanup:
+        def start(self):
+            return None
+
+        def stop(self):
+            return None
+
+    monkeypatch.setattr(headless_main, "Database", FakeDB)
+    monkeypatch.setattr(headless_main, "EventBus", FakeBus)
+    monkeypatch.setattr(headless_main, "ExecutorManager", FakeExecutor)
+    monkeypatch.setattr(headless_main, "ShutdownManager", FakeShutdown)
+    monkeypatch.setattr(headless_main, "SettingsService", FakeSettings)
+    monkeypatch.setattr(headless_main, "BetfairService", FakeBetfair)
+    monkeypatch.setattr(headless_main, "TelegramService", FakeTelegram)
+    monkeypatch.setattr(headless_main, "TradingEngine", FakeTradingEngine)
+    monkeypatch.setattr(headless_main, "RuntimeController", FakeRuntime)
+    monkeypatch.setattr(headless_main, "RuntimeProbe", FakeProbe)
+    monkeypatch.setattr(headless_main, "SnapshotService", lambda **_kwargs: object())
+    monkeypatch.setattr(headless_main, "WatchdogService", lambda **_kwargs: FakeWatchdog())
+    monkeypatch.setattr(headless_main, "DiagnosticsService", lambda **_kwargs: object())
+    monkeypatch.setattr(headless_main, "HealthRegistry", lambda: object())
+    monkeypatch.setattr(headless_main, "MetricsRegistry", lambda: object())
+    monkeypatch.setattr(headless_main, "AlertsManager", lambda: object())
+    monkeypatch.setattr(headless_main, "IncidentsManager", lambda: object())
+    monkeypatch.setattr(headless_main, "DiagnosticBundleBuilder", lambda **_kwargs: object())
+    monkeypatch.setattr(headless_main, "TelegramAlertsService", lambda **_kwargs: object())
+    monkeypatch.setattr(headless_main, "RetentionManager", lambda **_kwargs: object())
+    monkeypatch.setattr(headless_main, "CleanupService", lambda **_kwargs: FakeCleanup())
+
+    monkeypatch.setattr(mini_gui, "Database", FakeDB)
+    monkeypatch.setattr(mini_gui, "EventBus", FakeBus)
+    monkeypatch.setattr(mini_gui, "ExecutorManager", FakeExecutor)
+    monkeypatch.setattr(mini_gui, "ShutdownManager", FakeShutdown)
+    monkeypatch.setattr(mini_gui, "SettingsService", FakeSettings)
+    monkeypatch.setattr(mini_gui, "BetfairService", FakeBetfair)
+    monkeypatch.setattr(mini_gui, "TelegramService", FakeTelegram)
+    monkeypatch.setattr(mini_gui, "TradingEngine", FakeTradingEngine)
+    monkeypatch.setattr(mini_gui, "RuntimeController", FakeRuntime)
+    monkeypatch.setattr(mini_gui, "RuntimeProbe", FakeProbe)
+    monkeypatch.setattr(mini_gui, "TelegramController", FakeTelegramController)
+    monkeypatch.setattr(mini_gui.MiniPickfairGUI, "_build_vars", lambda self: None)
+    monkeypatch.setattr(mini_gui.MiniPickfairGUI, "_build_ui", lambda self: None)
+    monkeypatch.setattr(mini_gui.MiniPickfairGUI, "_load_initial_settings", lambda self: None)
+    monkeypatch.setattr(mini_gui.MiniPickfairGUI, "_wire_bus", lambda self: None)
+    monkeypatch.setattr(mini_gui.MiniPickfairGUI, "_apply_simulation_mode_to_runtime", lambda self: None)
+
+    headless_app = headless_main.HeadlessApp()
+    headless_app.build()
+    gui_app = mini_gui.MiniPickfairGUI(test_mode=True)
+
+    assert headless_app.runtime.enforce_probe_readiness_gate is True
+    assert gui_app.runtime.enforce_probe_readiness_gate is True
+    assert headless_app.runtime.runtime_probe is headless_app.runtime_probe
+    assert gui_app.runtime.runtime_probe is gui_app.runtime_probe
+    assert type(headless_app.settings_service) is type(gui_app.settings_service)
+    assert headless_app.settings_service.contract_path == "services.settings_service.SettingsService"
+
 @pytest.mark.integration
 def test_runtime_controller_subscribes_canonical_terminal_lifecycle_events():
     from core.runtime_controller import RuntimeController
