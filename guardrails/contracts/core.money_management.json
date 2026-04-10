@@ -1,0 +1,14 @@
+{
+  "return_keys": [
+    "stake",
+    "bankroll_after",
+    "exposure",
+    "cycle_id",
+    "timestamp"
+  ],
+  "constraints": {
+    "stake_positive": true,
+    "stake_not_exceed_bankroll": true,
+    "exposure_non_negative": true
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "module": "rate_limiter",
+  "required_functions": [
+    "acquire_token",
+    "release_token",
+    "throttle_request"
+  ],
+  "must_use_algorithm": [
+    "token_bucket",
+    "leaky_bucket"
+  ],
+  "must_limit": [
+    "requests_per_second",
+    "burst_size"
+  ],
+  "must_prevent_spikes": true
+}

@@ -1,0 +1,15 @@
+{
+  "module": "live_gate",
+  "required_functions": [
+    "is_live_enabled",
+    "validate_live_conditions",
+    "block_if_not_ready"
+  ],
+  "must_require": [
+    "invariants_ok",
+    "anomalies_ok",
+    "session_active",
+    "rate_limiter_ok"
+  ],
+  "default_live_enabled": false
+}

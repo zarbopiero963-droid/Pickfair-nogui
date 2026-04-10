@@ -1,0 +1,16 @@
+{
+  "module": "core.runtime_controller",
+  "required_functions": [
+    "start",
+    "stop",
+    "transition_state",
+    "recover_on_boot"
+  ],
+  "required_states": [
+    "INIT",
+    "READY",
+    "RUNNING",
+    "STOPPED"
+  ],
+  "must_support_recovery": true
+}

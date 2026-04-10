@@ -1,0 +1,39 @@
+name: repo-guardrails-extended
+
+on:
+  push:
+    paths:
+      - "guardrails/**"
+      - ".github/workflows/_module-ultra-check.yml"
+      - ".github/workflows/*guardrail*.yml"
+      - ".github/workflows/*guardrails*.yml"
+  pull_request:
+    paths:
+      - "guardrails/**"
+      - ".github/workflows/_module-ultra-check.yml"
+      - ".github/workflows/*guardrail*.yml"
+      - ".github/workflows/*guardrails*.yml"
+
+jobs:
+  validate-all-guardrails:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate all guardrail JSON
+        run: |
+          python - <<'PY'
+          import json
+          import pathlib
+          root = pathlib.Path("guardrails")
+          for path in root.rglob("*.json"):
+              with path.open("r", encoding="utf-8") as f:
+                  json.load(f)
+              print(f"OK {path}")
+          PY

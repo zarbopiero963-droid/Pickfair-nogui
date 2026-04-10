@@ -1,0 +1,19 @@
+{
+  "states": {
+    "RECEIVED": ["DISPATCHED", "SKIPPED"],
+    "DISPATCHED": ["EXECUTED", "FAILED"],
+    "EXECUTED": [],
+    "FAILED": [],
+    "SKIPPED": []
+  },
+  "rules": [
+    "same_action_id_once",
+    "action_seq_must_be_monotonic",
+    "copy_positions_must_be_consistent"
+  ],
+  "forbidden": [
+    "duplicate_execution",
+    "out_of_order_action_seq",
+    "missing_master_reference"
+  ]
+}

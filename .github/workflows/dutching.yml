@@ -1,0 +1,30 @@
+name: dutching
+
+on:
+  push:
+    paths:
+      - "dutching.py"
+      - "guardrails/specs/dutching.json"
+      - "guardrails/contracts/dutching.json"
+      - "guardrails/state_models/dutching.json"
+      - "guardrails/mutations/dutching.json"
+      - "tests/**/test_*dutching*.py"
+  pull_request:
+    paths:
+      - "dutching.py"
+      - "guardrails/specs/dutching.json"
+      - "guardrails/contracts/dutching.json"
+      - "guardrails/state_models/dutching.json"
+      - "guardrails/mutations/dutching.json"
+      - "tests/**/test_*dutching*.py"
+
+jobs:
+  run:
+    uses: ./.github/workflows/_module-ultra-check.yml
+    with:
+      module_path: "dutching.py"
+      spec_path: "guardrails/specs/dutching.json"
+      contract_path: "guardrails/contracts/dutching.json"
+      state_model_path: "guardrails/state_models/dutching.json"
+      mutation_path: "guardrails/mutations/dutching.json"
+      test_paths: "tests"

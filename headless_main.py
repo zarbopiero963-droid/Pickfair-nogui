@@ -298,6 +298,23 @@ class HeadlessApp:
                 incidents_manager=self.incidents_manager,
             )
 
+            anomaly_enabled = False
+            anomaly_alerts_enabled = False
+            anomaly_actions_enabled = False
+            if self.settings_service is not None:
+                try:
+                    anomaly_enabled = bool(self.settings_service.load_anomaly_enabled())
+                except Exception:
+                    logger.exception("Failed loading anomaly_enabled toggle; fallback False")
+                try:
+                    anomaly_alerts_enabled = bool(self.settings_service.load_anomaly_alerts_enabled())
+                except Exception:
+                    logger.exception("Failed loading anomaly_alerts_enabled toggle; fallback False")
+                try:
+                    anomaly_actions_enabled = bool(self.settings_service.load_anomaly_actions_enabled())
+                except Exception:
+                    logger.exception("Failed loading anomaly_actions_enabled toggle; fallback False")
+
             self.watchdog_service = WatchdogService(
                 probe=self.runtime_probe,
                 health_registry=self.health_registry,
@@ -305,6 +322,11 @@ class HeadlessApp:
                 alerts_manager=self.alerts_manager,
                 incidents_manager=self.incidents_manager,
                 snapshot_service=self.snapshot_service,
+                settings_service=self.settings_service,
+                anomaly_enabled=anomaly_enabled,
+                anomaly_alerts_enabled=anomaly_alerts_enabled,
+                anomaly_actions_enabled=anomaly_actions_enabled,
+                anomaly_alert_service=self.telegram_alerts_service,
                 interval_sec=5.0,
             )
 

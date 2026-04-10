@@ -1,0 +1,12 @@
+{
+  "rules": [
+    "requests_rate <= max_limit",
+    "burst_respects_bucket_size",
+    "backoff_on_limit_exceeded"
+  ],
+  "forbidden": [
+    "infinite_requests",
+    "no_throttling",
+    "negative_wait_time"
+  ]
+}

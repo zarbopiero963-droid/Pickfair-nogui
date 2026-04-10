@@ -1,0 +1,15 @@
+{
+  "return_keys": [
+    "allowed",
+    "reason",
+    "normalized_payload",
+    "timestamp"
+  ],
+  "deny_reasons": [
+    "INVALID_PRICE",
+    "INVALID_SIZE",
+    "MISSING_FIELD",
+    "UNSUPPORTED_MARKET",
+    "RISK_LIMIT_EXCEEDED"
+  ]
+}

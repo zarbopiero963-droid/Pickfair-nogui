@@ -1,0 +1,32 @@
+name: risk-middleware
+
+on:
+  push:
+    paths:
+      - "core/risk_middleware.py"
+      - "guardrails/specs/core.risk_middleware.json"
+      - "guardrails/contracts/core.risk_middleware.json"
+      - "guardrails/state_models/core.risk_middleware.json"
+      - "guardrails/mutations/core.risk_middleware.json"
+      - "tests/integration/test_risk_middleware_copy_metadata.py"
+      - "tests/integration/test_risk_middleware_pattern_metadata.py"
+  pull_request:
+    paths:
+      - "core/risk_middleware.py"
+      - "guardrails/specs/core.risk_middleware.json"
+      - "guardrails/contracts/core.risk_middleware.json"
+      - "guardrails/state_models/core.risk_middleware.json"
+      - "guardrails/mutations/core.risk_middleware.json"
+      - "tests/integration/test_risk_middleware_copy_metadata.py"
+      - "tests/integration/test_risk_middleware_pattern_metadata.py"
+
+jobs:
+  run:
+    uses: ./.github/workflows/_module-ultra-check.yml
+    with:
+      module_path: "core/risk_middleware.py"
+      spec_path: "guardrails/specs/core.risk_middleware.json"
+      contract_path: "guardrails/contracts/core.risk_middleware.json"
+      state_model_path: "guardrails/state_models/core.risk_middleware.json"
+      mutation_path: "guardrails/mutations/core.risk_middleware.json"
+      test_paths: "tests/integration/test_risk_middleware_copy_metadata.py tests/integration/test_risk_middleware_pattern_metadata.py"

@@ -1,0 +1,20 @@
+{
+  "states": {
+    "DISCONNECTED": ["CONNECTING"],
+    "CONNECTING": ["ACTIVE", "FAILED"],
+    "ACTIVE": ["EXPIRED", "RELOGIN_REQUIRED"],
+    "EXPIRED": ["RELOGIN_REQUIRED"],
+    "RELOGIN_REQUIRED": ["CONNECTING", "FAILED"],
+    "FAILED": ["CONNECTING"]
+  },
+  "rules": [
+    "expired_session_must_trigger_relogin",
+    "keepalive_resets_expiry",
+    "no_requests_without_active_session"
+  ],
+  "forbidden": [
+    "use_expired_session",
+    "skip_relogin",
+    "silent_session_failure"
+  ]
+}

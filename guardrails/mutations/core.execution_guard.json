@@ -1,0 +1,32 @@
+{
+  "module": "core.execution_guard",
+  "mutations": [
+    {
+      "id": "skip_dedup_check",
+      "type": "call_remove",
+      "target": "check_duplicate",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "always_allow_execution",
+      "type": "branch_forcing",
+      "target": "enforce_exactly_once",
+      "forced_outcome": "allow",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "drop_action_id_from_key",
+      "type": "key_corruption",
+      "target": "build_dedup_key",
+      "field": "action_id",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "use_ram_only_no_db",
+      "type": "storage_bypass",
+      "target": "register_execution",
+      "mode": "ram_only",
+      "expected_failure": "spec"
+    }
+  ]
+}
