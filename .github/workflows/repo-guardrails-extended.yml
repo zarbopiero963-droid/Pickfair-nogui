@@ -4,15 +4,16 @@ on:
   push:
     paths:
       - "guardrails/**"
-      - ".github/workflows/_module-ultra-check.yml"
-      - ".github/workflows/*guardrail*.yml"
-      - ".github/workflows/*guardrails*.yml"
+      - ".github/workflows/**"
+      - "scripts/run_mutation_guardrails.py"
+      - "scripts/generate_missing_guardrail_tests.py"
   pull_request:
     paths:
       - "guardrails/**"
-      - ".github/workflows/_module-ultra-check.yml"
-      - ".github/workflows/*guardrail*.yml"
-      - ".github/workflows/*guardrails*.yml"
+      - ".github/workflows/**"
+      - "scripts/run_mutation_guardrails.py"
+      - "scripts/generate_missing_guardrail_tests.py"
+  workflow_dispatch:
 
 jobs:
   validate-all-guardrails:
@@ -32,8 +33,18 @@ jobs:
           import json
           import pathlib
           root = pathlib.Path("guardrails")
+          if not root.exists():
+              raise SystemExit("guardrails directory missing")
+          count = 0
           for path in root.rglob("*.json"):
               with path.open("r", encoding="utf-8") as f:
                   json.load(f)
               print(f"OK {path}")
+              count += 1
+          print(f"Validated guardrail JSON files: {count}")
           PY
+
+      - name: Validate workflow YAML presence
+        run: |
+          test -d .github/workflows
+          ls -la .github/workflows
