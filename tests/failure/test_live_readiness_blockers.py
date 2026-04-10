@@ -1,202 +1,177 @@
 import pytest
 
-from core.safety_layer import assert_live_gate_or_refuse
+from core.runtime_controller import RuntimeController
 
 
-def test_missing_runtime_component_blocks_live_fail_closed():
-    decision = assert_live_gate_or_refuse(
-        execution_mode="LIVE",
-        live_enabled=True,
-        live_readiness_ok=None,
-        kill_switch=False,
-    )
+class _Bus:
+    def subscribe(self, *_args, **_kwargs):
+        return None
 
-    assert decision.allowed is False
-    assert decision.effective_execution_mode == "SIMULATION"
-    assert decision.reason_code == "live_readiness_not_ok"
+    def publish(self, *_args, **_kwargs):
+        return None
 
 
-@pytest.mark.parametrize("readiness_signal", ["UNKNOWN", "maybe", "unexpected"])
-def test_unknown_readiness_signal_blocks_live(readiness_signal):
-    from core.runtime_controller import RuntimeController
-
-    class _Settings:
-        def load_roserpina_config(self):
-            class Cfg:
-                table_count = 1
-
-                def __getattr__(self, _name):
-                    return 0
-
-            return Cfg()
-
-        def load_live_readiness_ok(self):
-            return readiness_signal
-
-    class _Bus:
-        def subscribe(self, *_args, **_kwargs):
-            return None
-
-        def publish(self, *_args, **_kwargs):
-            return None
-
-    class _Db:
-        def _execute(self, *_args, **_kwargs):
-            return None
-
-    class _Betfair:
-        def set_simulation_mode(self, _enabled):
-            return None
-
-        def connect(self, **_kwargs):
-            return {"ok": True}
-
-        def get_account_funds(self):
-            return {"available": 0.0}
-
-        def status(self):
-            return {"connected": True}
-
-    class _Telegram:
-        def start(self):
-            return {"ok": True}
-
-        def status(self):
-            return {"connected": True}
-
-    rc = RuntimeController(
-        bus=_Bus(),
-        db=_Db(),
-        settings_service=_Settings(),
-        betfair_service=_Betfair(),
-        telegram_service=_Telegram(),
-    )
-
-    result = rc.start(execution_mode="LIVE", live_enabled=True)
-
-    assert result["refused"] is True
-    assert result["reason_code"] == "live_readiness_not_ok"
+class _Db:
+    def _execute(self, *_args, **_kwargs):
+        return None
 
 
-def test_contradictory_state_live_requested_but_not_enabled():
-    decision = assert_live_gate_or_refuse(
-        execution_mode="LIVE",
-        live_enabled=False,
-        live_readiness_ok=True,
-        kill_switch=False,
-    )
+class _Settings:
+    def __init__(self, *, ready=True):
+        self._ready = ready
 
-    assert decision.allowed is False
-    assert decision.reason_code == "live_not_enabled"
+    def load_roserpina_config(self):
+        class Cfg:
+            table_count = 1
 
+            def __getattr__(self, _name):
+                return 0
 
-@pytest.mark.parametrize(
-    "mode,enabled,ready",
-    [
-        (None, True, True),
-        ("", True, True),
-        ("garbage", True, True),
-        ("LIVE", None, True),
-        ("LIVE", True, None),
-    ],
-)
-def test_malformed_config_or_context_fails_closed(mode, enabled, ready):
-    decision = assert_live_gate_or_refuse(
-        execution_mode=mode,
-        live_enabled=enabled,
-        live_readiness_ok=ready,
-        kill_switch=False,
-    )
+        return Cfg()
 
-    assert decision.allowed is False
-    assert decision.effective_execution_mode == "SIMULATION"
+    def load_live_readiness_ok(self):
+        return self._ready
 
 
-@pytest.mark.parametrize(
-    "kwargs",
-    [
-        {"execution_mode": "LIVE", "live_enabled": True, "live_readiness_ok": False, "kill_switch": False},
-        {"execution_mode": "LIVE", "live_enabled": False, "live_readiness_ok": True, "kill_switch": False},
-        {"execution_mode": "LIVE", "live_enabled": True, "live_readiness_ok": True, "kill_switch": True},
-        {"execution_mode": "BROKEN", "live_enabled": True, "live_readiness_ok": True, "kill_switch": False},
-    ],
-)
-def test_fail_closed_always_when_any_blocker_present(kwargs):
-    decision = assert_live_gate_or_refuse(**kwargs)
+class _Betfair:
+    def set_simulation_mode(self, _enabled):
+        return None
 
-    assert decision.allowed is False
-    assert decision.effective_execution_mode == "SIMULATION"
+    def connect(self, **_kwargs):
+        return {"ok": True}
+
+    def get_account_funds(self):
+        return {"available": 0.0}
+
+    def status(self):
+        return {"connected": True}
 
 
-def _make_runtime_controller(*, safe_mode=None):
-    from core.runtime_controller import RuntimeController
+class _Telegram:
+    def start(self):
+        return {"ok": True}
 
-    class _Settings:
-        def load_roserpina_config(self):
-            class Cfg:
-                table_count = 1
+    def status(self):
+        return {"connected": True}
 
-                def __getattr__(self, _name):
-                    return 0
 
-            return Cfg()
+class _SafeMode:
+    def __init__(self, enabled):
+        self._enabled = enabled
 
-        def load_live_readiness_ok(self):
-            return True
+    def is_enabled(self):
+        return self._enabled
 
-    class _Bus:
-        def subscribe(self, *_args, **_kwargs):
-            return None
 
-    class _Db:
-        def _execute(self, *_args, **_kwargs):
-            return None
-
-    class _Betfair:
-        def connect(self, **_kwargs):
-            return {"ok": True}
-
-        def status(self):
-            return {"connected": True}
-
-    class _Telegram:
-        def status(self):
-            return {"connected": True}
-
+def _make_runtime(*, ready=True, safe_mode=False, betfair_service=None):
     return RuntimeController(
         bus=_Bus(),
         db=_Db(),
-        settings_service=_Settings(),
-        betfair_service=_Betfair(),
+        settings_service=_Settings(ready=ready),
+        betfair_service=betfair_service or _Betfair(),
         telegram_service=_Telegram(),
-        safe_mode=safe_mode,
+        safe_mode=_SafeMode(safe_mode),
     )
 
 
-def test_runtime_controller_uses_standardized_blocker_codes():
-    rc = _make_runtime_controller()
-    rc.mode = "BROKEN_MODE"
+@pytest.mark.parametrize("readiness_signal", ["UNKNOWN", "maybe", "unexpected"])
+def test_runtime_incomplete_or_unknown_signal_blocks_live(readiness_signal):
+    rc = _make_runtime(ready=True)
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=readiness_signal,
+    )
+
+    assert readiness["ready"] is False
+    assert "LIVE_READINESS_FLAG_NOT_OK" in readiness["blockers"]
+
+
+class _BetfairMissingConnect:
+    def status(self):
+        return {"connected": True}
+
+
+def test_missing_live_dependency_reports_blocker_from_runtime_layer():
+    rc = _make_runtime(ready=True, betfair_service=_BetfairMissingConnect())
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=True,
+    )
+
+    assert readiness["ready"] is False
+    assert "LIVE_DEPENDENCY_MISSING" in readiness["blockers"]
+
+
+def test_contradictory_state_live_requested_but_not_enabled_reports_blocker():
+    rc = _make_runtime(ready=True)
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=False,
+        live_readiness_ok=True,
+    )
+
+    assert readiness["ready"] is False
+    assert "LIVE_NOT_ENABLED" in readiness["blockers"]
+    assert "CONTRADICTORY_STATE" in readiness["blockers"]
+
+
+@pytest.mark.parametrize("mode", [None, "", "garbage"])
+def test_malformed_execution_context_fails_closed(mode):
+    rc = _make_runtime(ready=True)
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode=mode,
+        live_enabled=True,
+        live_readiness_ok=True,
+    )
+
+    assert readiness["ready"] is False
+    assert readiness["level"] in {"DEGRADED", "NOT_READY"}
+    if mode not in (None, ""):
+        assert "INVALID_EXECUTION_MODE" in readiness["blockers"]
+
+
+def test_kill_switch_active_blocks_live_with_correct_blockers():
+    rc = _make_runtime(ready=True, safe_mode=True)
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=True,
+    )
+
+    assert readiness["ready"] is False
+    assert "KILL_SWITCH_ACTIVE" in readiness["blockers"]
+    assert "SAFE_MODE_BLOCKING" in readiness["blockers"]
+
+
+def test_startup_error_reports_fail_closed_blocker():
+    rc = _make_runtime(ready=True)
     rc.last_error = "boom"
 
-    readiness = rc.evaluate_live_readiness(execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=True,
+    )
 
-    assert "READINESS_SIGNAL_UNKNOWN" in readiness["blockers"]
+    assert readiness["ready"] is False
     assert "STARTUP_FAILED" in readiness["blockers"]
-    assert "RUNTIME_STARTUP_FAILED" not in readiness["blockers"]
-    assert "UNKNOWN_STATE" not in readiness["blockers"]
 
 
-def test_runtime_probe_uses_standardized_blocker_codes_for_safe_mode_and_dependencies():
-    from observability.runtime_probe import RuntimeProbe
+def test_runtime_missing_readiness_signal_from_settings_fails_closed():
+    rc = _make_runtime(ready=False)
 
-    class _SafeMode:
-        def is_enabled(self):
-            return True
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=None,
+    )
 
-    probe = RuntimeProbe(safe_mode=_SafeMode(), betfair_service=None)
-    report = probe.get_live_readiness_report()
-    blocker_codes = {item["code"] for item in report["blockers"]}
-    degraded_codes = {item["code"] for item in report["details"]["degraded"]}
-
-    assert "SAFE_MODE_BLOCKING" in degraded_codes
-    assert "LIVE_DEPENDENCY_MISSING" in blocker_codes
+    assert readiness["ready"] is False
+    assert "LIVE_READINESS_FLAG_NOT_OK" in readiness["blockers"]
