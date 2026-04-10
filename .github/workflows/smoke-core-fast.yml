@@ -1,0 +1,40 @@
+name: smoke-core-fast
+
+on:
+  push:
+    paths:
+      - "core/**"
+      - "order_manager.py"
+      - "tests/**"
+      - ".github/workflows/smoke-core-fast.yml"
+  pull_request:
+    paths:
+      - "core/**"
+      - "order_manager.py"
+      - "tests/**"
+      - ".github/workflows/smoke-core-fast.yml"
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          pip install pytest
+
+      - name: Run unit + smoke if present
+        run: |
+          if [ -d tests/unit ]; then pytest -q -x tests/unit; else echo "No unit tests dir"; fi
+          if [ -d tests/smoke ]; then pytest -q -x tests/smoke; else echo "No smoke tests dir"; fi
