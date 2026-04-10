@@ -138,7 +138,7 @@ def test_unknown_status_is_blocker():
     assert report["level"] == "NOT_READY"
     assert report["ready"] is False
     assert report["blockers"][0]["name"] == "component_a"
-    assert "UNRECOGNIZED_STATE" in report["blockers"][0]["reason"]
+    assert "UNRECOGNIZED_STATE::BROKEN" in report["blockers"][0]["reason"]
 
 
 def test_starting_status_is_blocker():
@@ -148,7 +148,9 @@ def test_starting_status_is_blocker():
 
     assert report["level"] == "NOT_READY"
     assert report["ready"] is False
+    assert report["blockers"][0]["name"] == "component_a"
     assert report["blockers"][0]["status"] == "STARTING"
+    assert "UNRECOGNIZED_STATE::STARTING" in report["blockers"][0]["reason"]
 
 
 def test_ready_still_passes():
@@ -179,4 +181,6 @@ def test_none_status_fail_closed():
 
     assert report["level"] == "NOT_READY"
     assert report["ready"] is False
+    assert report["blockers"][0]["name"] == "component_a"
     assert report["blockers"][0]["status"] == "UNKNOWN"
+    assert report["blockers"][0]["reason"] == "test_reason"
