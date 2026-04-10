@@ -269,13 +269,13 @@ class RuntimeController:
         }
 
         if not runtime_mode_known:
-            blockers.append("UNKNOWN_STATE")
+            blockers.append("READINESS_SIGNAL_UNKNOWN")
         if not runtime_initialized:
             blockers.append("RUNTIME_NOT_INITIALIZED")
         if runtime_half_started:
             blockers.append("RUNTIME_HALF_STARTED")
         if startup_failed and runtime_mode_value != RuntimeMode.ACTIVE.value:
-            blockers.append("RUNTIME_STARTUP_FAILED")
+            blockers.append("STARTUP_FAILED")
 
         kill_switch_active = bool(self._is_kill_switch_active())
         safe_mode_blocks_live = kill_switch_active
@@ -286,7 +286,7 @@ class RuntimeController:
         if kill_switch_active:
             blockers.append("KILL_SWITCH_ACTIVE")
         if safe_mode_blocks_live:
-            blockers.append("SAFE_MODE_BLOCKS_LIVE")
+            blockers.append("SAFE_MODE_BLOCKING")
 
         has_live_dependency = bool(
             getattr(self, "betfair_service", None) is not None
