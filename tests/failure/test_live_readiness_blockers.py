@@ -1,121 +1,128 @@
-from core.runtime_controller import RuntimeController
-from core.system_state import RuntimeMode
+import pytest
+
+from core.safety_layer import assert_live_gate_or_refuse
 
 
-class _Bus:
-    def subscribe(self, *_args, **_kwargs):
-        return None
-
-    def publish(self, *_args, **_kwargs):
-        return None
-
-
-class _Db:
-    def _execute(self, *_args, **_kwargs):
-        return None
-
-
-class _Settings:
-    def __init__(self, live_ready=True):
-        self.live_ready = live_ready
-
-    def load_roserpina_config(self):
-        class _Cfg:
-            table_count = 1
-            anti_duplication_enabled = False
-            allow_recovery = False
-            auto_reset_drawdown_pct = 90
-            defense_drawdown_pct = 7.5
-            lockdown_drawdown_pct = 99
-
-            def __getattr__(self, _name):
-                return 0
-
-        return _Cfg()
-
-    def load_live_enabled(self):
-        return True
-
-    def load_live_readiness_ok(self):
-        return self.live_ready
-
-
-class _Betfair:
-    def __init__(self, connected=True):
-        self.connected = connected
-
-    def connect(self, **_kwargs):
-        return {"ok": True}
-
-    def set_simulation_mode(self, *_args, **_kwargs):
-        return None
-
-    def status(self):
-        return {"connected": self.connected}
-
-    def get_account_funds(self):
-        return {"available": 50.0}
-
-
-class _Telegram:
-    def __init__(self, connected=True):
-        self.connected = connected
-
-    def start(self):
-        return {"ok": True}
-
-    def status(self):
-        return {"connected": self.connected}
-
-
-def _runtime(*, live_ready=True, betfair_connected=True, telegram_connected=True):
-    return RuntimeController(
-        bus=_Bus(),
-        db=_Db(),
-        settings_service=_Settings(live_ready=live_ready),
-        betfair_service=_Betfair(connected=betfair_connected),
-        telegram_service=_Telegram(connected=telegram_connected),
+def test_missing_runtime_component_blocks_live_fail_closed():
+    decision = assert_live_gate_or_refuse(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=None,
+        kill_switch=False,
     )
 
-
-def test_blocker_reporting_is_accurate_for_startup_failure_state():
-    rc = _runtime(live_ready=True)
-    rc.last_error = "startup exploded"
-
-    readiness = rc.evaluate_live_readiness(execution_mode="LIVE", live_enabled=True)
-
-    assert readiness["ready"] is False
-    assert "RUNTIME_STARTUP_FAILED" in readiness["blockers"]
-    assert readiness["details"]["runtime_state"]["startup_failed"] is True
+    assert decision.allowed is False
+    assert decision.effective_execution_mode == "SIMULATION"
+    assert decision.reason_code == "live_readiness_not_ok"
 
 
-def test_unknown_runtime_state_fails_closed():
-    rc = _runtime(live_ready=True)
-    rc.mode = "BROKEN_STATE"
+@pytest.mark.parametrize("readiness_signal", ["UNKNOWN", "maybe", "unexpected"])
+def test_unknown_readiness_signal_blocks_live(readiness_signal):
+    from core.runtime_controller import RuntimeController
 
-    readiness = rc.evaluate_live_readiness(execution_mode="LIVE", live_enabled=True)
+    class _Settings:
+        def load_roserpina_config(self):
+            class Cfg:
+                table_count = 1
 
-    assert readiness["ready"] is False
-    assert readiness["level"] == "NOT_READY"
-    assert "UNKNOWN_STATE" in readiness["blockers"]
+                def __getattr__(self, _name):
+                    return 0
+
+            return Cfg()
+
+        def load_live_readiness_ok(self):
+            return readiness_signal
+
+    class _Bus:
+        def subscribe(self, *_args, **_kwargs):
+            return None
+
+        def publish(self, *_args, **_kwargs):
+            return None
+
+    class _Db:
+        def _execute(self, *_args, **_kwargs):
+            return None
+
+    class _Betfair:
+        def set_simulation_mode(self, _enabled):
+            return None
+
+        def connect(self, **_kwargs):
+            return {"ok": True}
+
+        def get_account_funds(self):
+            return {"available": 0.0}
+
+        def status(self):
+            return {"connected": True}
+
+    class _Telegram:
+        def start(self):
+            return {"ok": True}
+
+        def status(self):
+            return {"connected": True}
+
+    rc = RuntimeController(
+        bus=_Bus(),
+        db=_Db(),
+        settings_service=_Settings(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+
+    result = rc.start(execution_mode="LIVE", live_enabled=True)
+
+    assert result["refused"] is True
+    assert result["reason_code"] == "live_readiness_not_ok"
 
 
-def test_contradictory_runtime_state_fails_closed():
-    rc = _runtime(live_ready=True)
-    rc.mode = RuntimeMode.ACTIVE
-    rc.simulation_mode = True
+def test_contradictory_state_live_requested_but_not_enabled():
+    decision = assert_live_gate_or_refuse(
+        execution_mode="LIVE",
+        live_enabled=False,
+        live_readiness_ok=True,
+        kill_switch=False,
+    )
 
-    readiness = rc.evaluate_live_readiness(execution_mode="LIVE", live_enabled=True)
-
-    assert readiness["ready"] is False
-    assert "CONTRADICTORY_STATE" in readiness["blockers"]
+    assert decision.allowed is False
+    assert decision.reason_code == "live_not_enabled"
 
 
-def test_half_started_state_fails_closed_with_specific_blocker():
-    rc = _runtime(live_ready=True, betfair_connected=False, telegram_connected=True)
-    rc.mode = RuntimeMode.ACTIVE
+@pytest.mark.parametrize(
+    "mode,enabled,ready",
+    [
+        (None, True, True),
+        ("", True, True),
+        ("garbage", True, True),
+        ("LIVE", None, True),
+        ("LIVE", True, None),
+    ],
+)
+def test_malformed_config_or_context_fails_closed(mode, enabled, ready):
+    decision = assert_live_gate_or_refuse(
+        execution_mode=mode,
+        live_enabled=enabled,
+        live_readiness_ok=ready,
+        kill_switch=False,
+    )
 
-    readiness = rc.evaluate_live_readiness(execution_mode="LIVE", live_enabled=True)
+    assert decision.allowed is False
+    assert decision.effective_execution_mode == "SIMULATION"
 
-    assert readiness["ready"] is False
-    assert "RUNTIME_HALF_STARTED" in readiness["blockers"]
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"execution_mode": "LIVE", "live_enabled": True, "live_readiness_ok": False, "kill_switch": False},
+        {"execution_mode": "LIVE", "live_enabled": False, "live_readiness_ok": True, "kill_switch": False},
+        {"execution_mode": "LIVE", "live_enabled": True, "live_readiness_ok": True, "kill_switch": True},
+        {"execution_mode": "BROKEN", "live_enabled": True, "live_readiness_ok": True, "kill_switch": False},
+    ],
+)
+def test_fail_closed_always_when_any_blocker_present(kwargs):
+    decision = assert_live_gate_or_refuse(**kwargs)
+
+    assert decision.allowed is False
+    assert decision.effective_execution_mode == "SIMULATION"
