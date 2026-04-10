@@ -56,14 +56,15 @@ def main() -> int:
             text = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
-        except Exception as exc:
-            print(f"WARNING: could not read {path}: {exc}", file=sys.stderr)
-            continue
 
         lines = text.splitlines()
+
         for lineno, line in enumerate(lines, start=1):
-            if any(marker in line for marker in MARKERS):
-                found.append((path.relative_to(root), lineno, line.strip()))
+            stripped = line.strip()
+
+            # 🔥 FIX: match SOLO se la riga INIZIA con il marker
+            if any(stripped.startswith(marker) for marker in MARKERS):
+                found.append((path.relative_to(root), lineno, stripped))
 
     if found:
         print("Merge conflict markers found:", file=sys.stderr)
