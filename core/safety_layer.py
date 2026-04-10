@@ -75,6 +75,74 @@ class PendingSagaRecord:
     raw_payload: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class LiveExecutionGateDecision:
+    """Esito deterministico dei gate SIM/LIVE."""
+
+    allowed: bool
+    effective_execution_mode: str
+    reason_code: str
+    refusal_message: str = ""
+
+
+def assert_live_gate_or_refuse(
+    *,
+    execution_mode: Any,
+    live_enabled: Any,
+    live_readiness_ok: Any,
+    kill_switch: Any,
+) -> LiveExecutionGateDecision:
+    """
+    Gate hard fail-closed per abilitare LIVE.
+
+    Regole:
+    - default SIMULATION
+    - LIVE solo se requested + live_enabled + readiness_ok + kill_switch non attivo
+    - qualsiasi valore ambiguo/mancante => rifiuto LIVE
+    """
+    mode_raw = str(execution_mode or "").strip().upper()
+    requested_live = mode_raw == "LIVE"
+
+    if bool(kill_switch):
+        return LiveExecutionGateDecision(
+            allowed=False,
+            effective_execution_mode="SIMULATION",
+            reason_code="kill_switch_active",
+            refusal_message="Kill switch attivo: LIVE disabilitato",
+        )
+
+    if not requested_live:
+        # include anche mode mancante/invalido: fail-closed su SIMULATION
+        return LiveExecutionGateDecision(
+            allowed=False,
+            effective_execution_mode="SIMULATION",
+            reason_code=("simulation_mode_forced" if mode_raw == "SIMULATION" else "invalid_or_missing_execution_mode"),
+            refusal_message="Modalità non LIVE: percorso simulation-only",
+        )
+
+    if not bool(live_enabled):
+        return LiveExecutionGateDecision(
+            allowed=False,
+            effective_execution_mode="SIMULATION",
+            reason_code="live_not_enabled",
+            refusal_message="LIVE richiesto ma gate live_enabled=False",
+        )
+
+    if not bool(live_readiness_ok):
+        return LiveExecutionGateDecision(
+            allowed=False,
+            effective_execution_mode="SIMULATION",
+            reason_code="live_readiness_not_ok",
+            refusal_message="LIVE richiesto ma readiness non OK",
+        )
+
+    return LiveExecutionGateDecision(
+        allowed=True,
+        effective_execution_mode="LIVE",
+        reason_code="live_allowed",
+    )
+
+
 # =========================================================
 # SAFETY LAYER
 # =========================================================
