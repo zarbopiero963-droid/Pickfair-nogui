@@ -5,14 +5,16 @@ on:
     paths:
       - "guardrails/**"
       - ".github/workflows/**"
-      - "scripts/run_mutation_guardrails.py"
-      - "scripts/generate_missing_guardrail_tests.py"
+      - "scripts/validate_guardrails.py"
+      - "scripts/check_merge_markers.py"
+      - "scripts/ci_changed_modules.py"
   pull_request:
     paths:
       - "guardrails/**"
       - ".github/workflows/**"
-      - "scripts/run_mutation_guardrails.py"
-      - "scripts/generate_missing_guardrail_tests.py"
+      - "scripts/validate_guardrails.py"
+      - "scripts/check_merge_markers.py"
+      - "scripts/ci_changed_modules.py"
   workflow_dispatch:
 
 jobs:
@@ -29,22 +31,8 @@ jobs:
 
       - name: Validate all guardrail JSON
         run: |
-          python - <<'PY'
-          import json
-          import pathlib
-          root = pathlib.Path("guardrails")
-          if not root.exists():
-              raise SystemExit("guardrails directory missing")
-          count = 0
-          for path in root.rglob("*.json"):
-              with path.open("r", encoding="utf-8") as f:
-                  json.load(f)
-              print(f"OK {path}")
-              count += 1
-          print(f"Validated guardrail JSON files: {count}")
-          PY
+          python scripts/validate_guardrails.py
 
-      - name: Validate workflow YAML presence
+      - name: Check merge markers
         run: |
-          test -d .github/workflows
-          ls -la .github/workflows
+          python scripts/check_merge_markers.py
