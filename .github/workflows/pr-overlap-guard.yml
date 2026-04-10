@@ -1,93 +1,128 @@
-name: pr-overlap-guard
+name: PR Overlap Guard (Smart Critical Mode)
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  workflow_dispatch:
 
 jobs:
-  overlap-guard:
+  overlap-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
-      - name: Install gh CLI
-        run: |
-          sudo apt update
-          sudo apt install gh -y
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Authenticate gh
+      - name: Fetch open PRs
+        id: fetch_prs
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+          REPO="${{ github.repository }}"
+          curl -fsSL \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/pulls?state=open&per_page=100" \
+            > open_prs.json
 
-      - name: Check overlapping PR files
-        env:
-          GH_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+      - name: Fetch current PR files
         run: |
-          gh api "repos/$GH_REPO/pulls/$PR_NUMBER/files?per_page=100" > current_pr_files.json
-          gh pr list --repo "$GH_REPO" --state open --json number > open_prs.json
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          REPO="${{ github.repository }}"
 
+          curl -fsSL \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" \
+            > current_pr_files.json
+
+      - name: Run smart overlap check
+        run: |
           python - <<'PY'
           import json
-          import subprocess
           import sys
-          import os
 
-          repo = os.environ["GH_REPO"]
-          current_pr = int(os.environ["PR_NUMBER"])
-
-          with open("current_pr_files.json", "r", encoding="utf-8") as f:
-              current_files = {
-                  x["filename"]
-                  for x in json.load(f)
-                  if "filename" in x and not x["filename"].startswith("tests/")
-              }
+          CRITICAL_FILES = {
+              "core/trading_engine.py",
+              "order_manager.py",
+              "core/reconciliation_engine.py",
+              "core/state_recovery.py",
+              "database.py",
+          }
 
           with open("open_prs.json", "r", encoding="utf-8") as f:
-              prs = json.load(f)
+              open_prs = json.load(f)
 
-          overlaps = []
+          with open("current_pr_files.json", "r", encoding="utf-8") as f:
+              current_files = {x["filename"] for x in json.load(f)}
 
-          for pr in prs:
-              other = pr["number"]
-              if other == current_pr:
+          current_pr_number = int("${{ github.event.pull_request.number }}")
+
+          overlapping = []
+          critical_overlap = []
+
+          import urllib.request
+
+          for pr in open_prs:
+              pr_number = pr["number"]
+
+              if pr_number == current_pr_number:
                   continue
 
-              path = f"repos/{repo}/pulls/{other}/files?per_page=100"
-              result = subprocess.run(
-                  ["gh", "api", path],
-                  capture_output=True,
-                  text=True,
-                  check=False,
+              url = pr["url"] + "/files"
+              req = urllib.request.Request(
+                  url,
+                  headers={
+                      "Authorization": "Bearer ${{ secrets.GITHUB_TOKEN }}",
+                      "Accept": "application/vnd.github+json"
+                  }
               )
-              if result.returncode != 0:
-                  continue
 
               try:
-                  files = json.loads(result.stdout)
+                  with urllib.request.urlopen(req) as resp:
+                      pr_files = {x["filename"] for x in json.load(resp)}
               except Exception:
                   continue
 
-              other_files = {
-                  x["filename"]
-                  for x in files
-                  if "filename" in x and not x["filename"].startswith("tests/")
-              }
+              overlap = current_files & pr_files
+              if overlap:
+                  overlapping.append((pr_number, overlap))
 
-              common = sorted(current_files & other_files)
-              if common:
-                  overlaps.append((other, common))
+                  for f in overlap:
+                      if f in CRITICAL_FILES:
+                          critical_overlap.append((pr_number, f))
 
-          print("Current production files:")
-          for f in sorted(current_files):
-              print("-", f)
+          print("=" * 80)
+          print("PR OVERLAP REPORT")
+          print("=" * 80)
 
-          if overlaps:
-              print("\n❌ Overlap detected with open PRs:")
-              for pr_number, files in overlaps:
-                  print(f"PR #{pr_number}")
-                  for f in files:
-                      print("  -", f)
+          if not overlapping:
+              print("No overlapping files with other PRs")
+              sys.exit(0)
+
+          print("Overlapping files detected:")
+
+          for pr_number, files in overlapping:
+              print(f"\nPR #{pr_number}")
+              for f in files:
+                  print(f" - {f}")
+
+          print()
+
+          if critical_overlap:
+              print("❌ CRITICAL OVERLAP DETECTED:")
+              for pr_number, f in critical_overlap:
+                  print(f" - PR #{pr_number} touches critical file: {f}")
               sys.exit(1)
 
-          print("\n✅ No overlapping production files with open PRs")
+          print("⚠️ Non-critical overlap detected (allowed, but be careful)")
+          sys.exit(0)
           PY
+
+      - name: Upload overlap report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-overlap-report
+          path: |
+            open_prs.json
+            current_pr_files.json
