@@ -1,0 +1,156 @@
+name: ci-dynamic-intelligent
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      run_trading_engine: ${{ steps.detect.outputs.run_trading_engine }}
+      run_order_manager: ${{ steps.detect.outputs.run_order_manager }}
+      run_execution_guard: ${{ steps.detect.outputs.run_execution_guard }}
+      run_risk_middleware: ${{ steps.detect.outputs.run_risk_middleware }}
+      run_runtime_controller: ${{ steps.detect.outputs.run_runtime_controller }}
+      run_money_management: ${{ steps.detect.outputs.run_money_management }}
+      run_telegram_listener: ${{ steps.detect.outputs.run_telegram_listener }}
+      run_copy_engine: ${{ steps.detect.outputs.run_copy_engine }}
+      run_simulation_broker: ${{ steps.detect.outputs.run_simulation_broker }}
+      run_session_manager: ${{ steps.detect.outputs.run_session_manager }}
+      run_rate_limiter: ${{ steps.detect.outputs.run_rate_limiter }}
+      run_live_gate: ${{ steps.detect.outputs.run_live_gate }}
+      run_chaos_critical: ${{ steps.detect.outputs.run_chaos_critical }}
+      run_mutation_guardrails: ${{ steps.detect.outputs.run_mutation_guardrails }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Detect changed modules
+        id: detect
+        run: |
+          git fetch origin main
+          python scripts/ci_changed_modules.py origin/main > changed_modules.json
+          cat changed_modules.json
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path("changed_modules.json").read_text(encoding="utf-8"))
+
+          mapping = {
+              "run_trading_engine": data.get("run_trading_engine", False),
+              "run_order_manager": data.get("run_order_manager", False),
+              "run_execution_guard": data.get("run_execution_guard", False),
+              "run_risk_middleware": data.get("run_risk_middleware", False),
+              "run_runtime_controller": data.get("run_runtime_controller", False),
+              "run_money_management": data.get("run_money_management", False),
+              "run_telegram_listener": data.get("run_telegram_listener", False),
+              "run_copy_engine": data.get("run_copy_engine", False),
+              "run_simulation_broker": data.get("run_simulation_broker", False),
+              "run_session_manager": data.get("run_session_manager", False),
+              "run_rate_limiter": data.get("run_rate_limiter", False),
+              "run_live_gate": data.get("run_live_gate", False),
+              "run_chaos_critical": data.get("run_chaos_critical", False),
+              "run_mutation_guardrails": data.get("run_mutation_guardrails", False),
+          }
+
+          github_output = Path(__import__("os").environ["GITHUB_OUTPUT"])
+          with github_output.open("a", encoding="utf-8") as f:
+              for key, value in mapping.items():
+                  f.write(f"{key}={'true' if value else 'false'}\n")
+          PY
+
+      - name: Upload changed modules artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: changed-modules
+          path: changed_modules.json
+
+  noise-free-pr-gate:
+    uses: ./.github/workflows/noise-free-pr-gate.yml
+
+  repo-guardrails-extended:
+    uses: ./.github/workflows/repo-guardrails-extended.yml
+
+  trading-engine:
+    needs: detect
+    if: needs.detect.outputs.run_trading_engine == 'true'
+    uses: ./.github/workflows/trading-engine.yml
+
+  order-manager:
+    needs: detect
+    if: needs.detect.outputs.run_order_manager == 'true'
+    uses: ./.github/workflows/order-manager.yml
+
+  execution-guard:
+    needs: detect
+    if: needs.detect.outputs.run_execution_guard == 'true'
+    uses: ./.github/workflows/execution-guard.yml
+
+  risk-middleware:
+    needs: detect
+    if: needs.detect.outputs.run_risk_middleware == 'true'
+    uses: ./.github/workflows/risk-middleware.yml
+
+  runtime-controller:
+    needs: detect
+    if: needs.detect.outputs.run_runtime_controller == 'true'
+    uses: ./.github/workflows/runtime-controller.yml
+
+  money-management:
+    needs: detect
+    if: needs.detect.outputs.run_money_management == 'true'
+    uses: ./.github/workflows/money-management.yml
+
+  telegram-listener:
+    needs: detect
+    if: needs.detect.outputs.run_telegram_listener == 'true'
+    uses: ./.github/workflows/telegram-listener.yml
+
+  copy-engine:
+    needs: detect
+    if: needs.detect.outputs.run_copy_engine == 'true'
+    uses: ./.github/workflows/copy-engine.yml
+
+  simulation-broker:
+    needs: detect
+    if: needs.detect.outputs.run_simulation_broker == 'true'
+    uses: ./.github/workflows/simulation-broker.yml
+
+  session-manager:
+    needs: detect
+    if: needs.detect.outputs.run_session_manager == 'true'
+    uses: ./.github/workflows/session-manager.yml
+
+  rate-limiter:
+    needs: detect
+    if: needs.detect.outputs.run_rate_limiter == 'true'
+    uses: ./.github/workflows/rate-limiter.yml
+
+  live-gate:
+    needs: detect
+    if: needs.detect.outputs.run_live_gate == 'true'
+    uses: ./.github/workflows/live-gate.yml
+
+  chaos-critical:
+    needs: detect
+    if: needs.detect.outputs.run_chaos_critical == 'true'
+    uses: ./.github/workflows/chaos-critical.yml
+
+  mutation-guardrails:
+    needs: detect
+    if: needs.detect.outputs.run_mutation_guardrails == 'true'
+    uses: ./.github/workflows/mutation-guardrails.yml
+
+  merge-simulation-hard:
+    needs:
+      - noise-free-pr-gate
+      - repo-guardrails-extended
+    uses: ./.github/workflows/merge-simulation-hard.yml
