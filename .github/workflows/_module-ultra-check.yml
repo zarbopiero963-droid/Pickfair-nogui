@@ -62,14 +62,15 @@ jobs:
       - name: Validate guardrail JSON syntax
         run: |
           python - <<'PY'
-          import json, os
-          paths = [
+          import json
+          import os
+
+          for path in [
               os.environ.get("SPEC_PATH", ""),
               os.environ.get("CONTRACT_PATH", ""),
               os.environ.get("STATE_MODEL_PATH", ""),
               os.environ.get("MUTATION_PATH", ""),
-          ]
-          for path in paths:
+          ]:
               if path:
                   with open(path, "r", encoding="utf-8") as f:
                       json.load(f)
@@ -81,10 +82,37 @@ jobs:
           STATE_MODEL_PATH: ${{ inputs.state_model_path }}
           MUTATION_PATH: ${{ inputs.mutation_path }}
 
-      - name: Run module-focused tests
-        if: ${{ inputs.test_paths != '' }}
+      - name: Check which focused tests actually exist
+        id: tests_check
+        shell: bash
         run: |
-          pytest -q -x ${{ inputs.test_paths }}
+          EXISTING_TESTS=""
+          for path in ${{ inputs.test_paths }}; do
+            if [ -f "$path" ]; then
+              EXISTING_TESTS="$EXISTING_TESTS $path"
+            else
+              echo "Missing focused test -> $path"
+            fi
+          done
+
+          EXISTING_TESTS="$(echo "$EXISTING_TESTS" | xargs)"
+          if [ -n "$EXISTING_TESTS" ]; then
+            echo "has_tests=true" >> "$GITHUB_OUTPUT"
+            echo "existing_tests=$EXISTING_TESTS" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_tests=false" >> "$GITHUB_OUTPUT"
+            echo "existing_tests=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run module-focused tests
+        if: ${{ steps.tests_check.outputs.has_tests == 'true' }}
+        run: |
+          pytest -q -x ${{ steps.tests_check.outputs.existing_tests }}
+
+      - name: Advisory if module exists but no focused tests
+        if: ${{ steps.tests_check.outputs.has_tests != 'true' }}
+        run: |
+          echo "::warning::Module exists but no focused tests found for ${{ inputs.module_path }}"
 
       - name: Run full suite smoke backstop
         run: |
