@@ -1,0 +1,54 @@
+name: ci-master-gate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  repo-guardrails:
+    uses: ./.github/workflows/repo-guardrails-extended.yml
+
+  trading-engine:
+    uses: ./.github/workflows/trading-engine.yml
+
+  order-manager:
+    uses: ./.github/workflows/order-manager.yml
+
+  execution-guard:
+    uses: ./.github/workflows/execution-guard.yml
+
+  risk-middleware:
+    uses: ./.github/workflows/risk-middleware.yml
+
+  runtime-controller:
+    uses: ./.github/workflows/runtime-controller.yml
+
+  money-management:
+    uses: ./.github/workflows/money-management.yml
+
+  telegram-listener:
+    uses: ./.github/workflows/telegram-listener.yml
+
+  copy-engine:
+    uses: ./.github/workflows/copy-engine.yml
+
+  simulation-broker:
+    uses: ./.github/workflows/simulation-broker.yml
+
+  session-manager:
+    uses: ./.github/workflows/session-manager.yml
+
+  rate-limiter:
+    uses: ./.github/workflows/rate-limiter.yml
+
+  live-gate:
+    uses: ./.github/workflows/live-gate.yml
+
+  chaos-critical:
+    uses: ./.github/workflows/chaos-critical.yml
+
+  mutation-guardrails:
+    uses: ./.github/workflows/mutation-guardrails.yml
+
+  merge-simulation-hard:
+    uses: ./.github/workflows/merge-simulation-hard.yml
