@@ -557,6 +557,13 @@ class HeadlessApp:
         except Exception:
             live_enabled = False
 
+        kill_switch = False
+        try:
+            if self.settings_service is not None and hasattr(self.settings_service, "load_kill_switch"):
+                kill_switch = bool(self.settings_service.load_kill_switch())
+        except Exception:
+            kill_switch = False
+
         live_readiness_ok = False
         try:
             if self.settings_service is not None and hasattr(
@@ -570,6 +577,13 @@ class HeadlessApp:
             live_enabled = True
         if "--live-disabled" in args:
             live_enabled = False
+        if "--kill-switch-on" in args:
+            kill_switch = True
+        if "--kill-switch-off" in args:
+            kill_switch = False
+
+        if kill_switch:
+            live_enabled = False
 
         password = None
         for item in sys.argv[1:]:
@@ -582,6 +596,7 @@ class HeadlessApp:
             "simulation_mode": execution_mode != "LIVE",
             "execution_mode": execution_mode,
             "live_enabled": live_enabled,
+            "kill_switch": kill_switch,
             "live_readiness_ok": live_readiness_ok,
             "password": password,
         }

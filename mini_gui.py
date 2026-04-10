@@ -483,6 +483,12 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.rs_risk_profile_var = self._make_string_var("BALANCED")
 
         self.simulation_mode_var = self._make_bool_var(True)
+        self.execution_mode_var = self._make_string_var("SIMULATION")
+        self.live_enabled_var = self._make_bool_var(False)
+        self.kill_switch_var = self._make_bool_var(False)
+        self.live_readiness_level_var = self._make_string_var("UNKNOWN")
+        self.live_readiness_blockers_var = self._make_string_var("No readiness data.")
+        self.live_control_state_var = self._make_string_var("SIMULATION")
 
         self.status_mode_var = self._make_string_var("STOPPED")
         self.status_betfair_var = self._make_string_var("DISCONNECTED")
@@ -582,6 +588,71 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             font=("Segoe UI", 12, "bold"),
         )
         self.live_sim_label.pack(side=tk.LEFT, padx=10)
+
+        control = ctk.CTkFrame(top, fg_color="transparent")
+        control.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        try:
+            control.grid_columnconfigure(5, weight=1)
+        except Exception:
+            pass
+
+        ctk.CTkLabel(control, text="Execution:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        self.execution_mode_combo = ctk.CTkComboBox(
+            control,
+            variable=self.execution_mode_var,
+            values=["SIMULATION", "LIVE"],
+            width=140,
+            command=self._on_execution_mode_changed,
+        )
+        self.execution_mode_combo.grid(row=0, column=1, sticky="w", padx=(0, 12))
+
+        self.live_gate_switch = ctk.CTkSwitch(
+            control,
+            text="Live Gate",
+            variable=self.live_enabled_var,
+            onvalue=True,
+            offvalue=False,
+            command=self._on_live_gate_toggled,
+        )
+        self.live_gate_switch.grid(row=0, column=2, sticky="w", padx=(0, 12))
+
+        self.kill_switch_toggle = ctk.CTkSwitch(
+            control,
+            text="Kill Switch",
+            variable=self.kill_switch_var,
+            onvalue=True,
+            offvalue=False,
+            command=self._on_kill_switch_toggled,
+        )
+        self.kill_switch_toggle.grid(row=0, column=3, sticky="w", padx=(0, 12))
+
+        ctk.CTkLabel(
+            control,
+            text="Readiness:",
+            font=("Segoe UI", 12, "bold"),
+        ).grid(row=0, column=4, sticky="w", padx=(0, 6))
+        self.live_readiness_label = ctk.CTkLabel(
+            control,
+            textvariable=self.live_readiness_level_var,
+            font=("Segoe UI", 12, "bold"),
+        )
+        self.live_readiness_label.grid(row=0, column=5, sticky="w")
+
+        self.live_control_state_label = ctk.CTkLabel(
+            control,
+            textvariable=self.live_control_state_var,
+            font=("Segoe UI", 12, "bold"),
+        )
+        self.live_control_state_label.grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
+
+        self.live_readiness_blockers_label = ctk.CTkLabel(
+            control,
+            textvariable=self.live_readiness_blockers_var,
+            anchor="w",
+            justify="left",
+            wraplength=880,
+        )
+        self.live_readiness_blockers_label.grid(row=1, column=3, columnspan=3, sticky="w", pady=(6, 0))
 
     def _build_dashboard_tab(self):
         if self._test_mode:
@@ -811,21 +882,75 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         except Exception:
             pass
 
-        self._load_simulation_settings()
+        self._load_execution_control_settings()
 
-    def _load_simulation_settings(self):
-        if not hasattr(self.settings_service, "load_simulation_config"):
+    def _load_execution_control_settings(self):
+        settings = {
+            "execution_mode": "SIMULATION",
+            "live_enabled": False,
+            "kill_switch": False,
+        }
+        if hasattr(self.settings_service, "load_execution_settings"):
+            try:
+                loaded = self.settings_service.load_execution_settings() or {}
+                if isinstance(loaded, dict):
+                    settings.update(loaded)
+            except Exception:
+                pass
+
+        execution_mode = str(settings.get("execution_mode", "SIMULATION") or "SIMULATION").strip().upper()
+        if execution_mode not in {"SIMULATION", "LIVE"}:
+            execution_mode = "SIMULATION"
+        live_enabled = bool(settings.get("live_enabled", False))
+        kill_switch = bool(settings.get("kill_switch", False))
+
+        self.execution_mode_var.set(execution_mode)
+        self.live_enabled_var.set(live_enabled)
+        self.kill_switch_var.set(kill_switch)
+        self._sync_execution_controls_to_runtime()
+        self._refresh_live_control_plane_status({})
+
+    def _save_execution_control_settings(self):
+        if not hasattr(self.settings_service, "save_execution_settings"):
             return
         try:
-            sim = self.settings_service.load_simulation_config()
+            self.settings_service.save_execution_settings(
+                execution_mode=self.execution_mode_var.get(),
+                live_enabled=bool(self.live_enabled_var.get()),
+                kill_switch=bool(self.kill_switch_var.get()),
+            )
+        except TypeError:
+            self.settings_service.save_execution_settings(
+                execution_mode=self.execution_mode_var.get(),
+                live_enabled=bool(self.live_enabled_var.get()),
+            )
         except Exception:
-            sim = {}
+            pass
 
-        enabled = bool(sim.get("enabled", True))
-        self.simulation_mode_var.set(enabled)
-        self.simulation_mode = enabled
-        self.sim_label_var.set("SIMULAZIONE" if enabled else "LIVE")
-        self.status_broker_var.set("SIMULATION" if enabled else "LIVE")
+    def _sync_execution_controls_to_runtime(self):
+        execution_mode = str(self.execution_mode_var.get() or "SIMULATION").strip().upper()
+        if execution_mode not in {"SIMULATION", "LIVE"}:
+            execution_mode = "SIMULATION"
+        is_simulation = execution_mode != "LIVE"
+        self.simulation_mode_var.set(is_simulation)
+        self._apply_simulation_mode_to_runtime()
+        self.sim_label_var.set("SIMULAZIONE" if is_simulation else "LIVE")
+        self.status_broker_var.set("SIMULATION" if is_simulation else "LIVE")
+
+    def _on_execution_mode_changed(self, choice=None):
+        if choice is not None:
+            self.execution_mode_var.set(str(choice))
+        self._sync_execution_controls_to_runtime()
+        self._save_execution_control_settings()
+        self._refresh_runtime_status()
+
+    def _on_live_gate_toggled(self):
+        self._save_execution_control_settings()
+        self._refresh_runtime_status()
+
+    def _on_kill_switch_toggled(self):
+        self._save_execution_control_settings()
+        self._refresh_runtime_status()
 
     def _safe_show_info(self, title: str, msg: str):
         if self._test_mode:
@@ -895,21 +1020,9 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
     # LIVE / SIM
     # =========================================================
     def _toggle_simulation_mode(self):
-        self._apply_simulation_mode_to_runtime()
-        self.sim_label_var.set("SIMULAZIONE" if self.simulation_mode else "LIVE")
-        self.status_broker_var.set("SIMULATION" if self.simulation_mode else "LIVE")
-
-        if hasattr(self.settings_service, "save_simulation_config"):
-            try:
-                current = self.settings_service.load_simulation_config()
-            except Exception:
-                current = {}
-            current["enabled"] = bool(self.simulation_mode)
-            try:
-                self.settings_service.save_simulation_config(current)
-            except Exception:
-                pass
-
+        self.execution_mode_var.set("SIMULATION" if bool(self.simulation_mode_var.get()) else "LIVE")
+        self._sync_execution_controls_to_runtime()
+        self._save_execution_control_settings()
         self._log(f"Modalità cambiata: {self.sim_label_var.get()}")
         self._refresh_runtime_status()
 
@@ -917,22 +1030,20 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
     # RUNTIME COMMANDS
     # =========================================================
     def _runtime_start(self):
-        execution_mode = "SIMULATION" if self.simulation_mode else "LIVE"
-        live_enabled = execution_mode == "LIVE"
-        live_readiness_ok = False
+        self._sync_execution_controls_to_runtime()
+        execution_mode = str(self.execution_mode_var.get() or "SIMULATION").strip().upper()
+        if execution_mode not in {"SIMULATION", "LIVE"}:
+            execution_mode = "SIMULATION"
 
-        if hasattr(self.settings_service, "load_live_readiness_ok"):
-            try:
-                live_readiness_ok = bool(self.settings_service.load_live_readiness_ok())
-            except Exception:
-                live_readiness_ok = False
+        live_enabled = bool(self.live_enabled_var.get())
+        live_readiness_ok = False
 
         try:
             result = self.runtime.start(
                 password=self.bf_password_var.get() or None,
                 simulation_mode=self.simulation_mode,
                 execution_mode=execution_mode,
-                live_enabled=live_enabled,
+                live_enabled=live_enabled and not bool(self.kill_switch_var.get()),
                 live_readiness_ok=live_readiness_ok,
             )
             self._log(f"START -> {result}")
@@ -1050,6 +1161,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.status_tables_var.set(str(status.get("active_tables", 0)))
         self.status_last_signal_var.set(str(status.get("last_signal_at", "-")))
         self.status_last_error_var.set(str(status.get("last_error", self.status_last_error_var.get() or "-")))
+        self._refresh_live_control_plane_status(status)
 
         if hasattr(self, "risk_tree"):
             try:
@@ -1074,6 +1186,58 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                     )
                 except Exception:
                     continue
+
+    def _refresh_live_control_plane_status(self, status: dict):
+        runtime_status = status or {}
+        execution_mode = str(self.execution_mode_var.get() or "SIMULATION").strip().upper()
+        if execution_mode not in {"SIMULATION", "LIVE"}:
+            execution_mode = "SIMULATION"
+        live_enabled = bool(self.live_enabled_var.get())
+        kill_switch = bool(self.kill_switch_var.get())
+
+        readiness = {"level": "UNKNOWN", "ready": False, "blockers": ["READINESS_UNAVAILABLE"]}
+        evaluate = getattr(self.runtime, "evaluate_live_readiness", None)
+        if callable(evaluate):
+            try:
+                readiness = evaluate(
+                    execution_mode=execution_mode,
+                    live_enabled=live_enabled,
+                    live_readiness_ok=runtime_status.get("live_readiness_ok"),
+                ) or readiness
+            except Exception:
+                pass
+
+        level = str(readiness.get("level", "UNKNOWN") or "UNKNOWN").strip().upper()
+        if level not in {"READY", "DEGRADED", "NOT_READY", "UNKNOWN"}:
+            level = "UNKNOWN"
+        blockers = readiness.get("blockers")
+        if not isinstance(blockers, list):
+            blockers = ["READINESS_BLOCKERS_UNKNOWN"]
+
+        if kill_switch and "KILL_SWITCH_ACTIVE" not in blockers:
+            blockers = list(blockers) + ["KILL_SWITCH_ACTIVE"]
+
+        if kill_switch:
+            control_state = "LIVE blocked by kill switch"
+        elif execution_mode != "LIVE":
+            control_state = "SIMULATION"
+        elif not live_enabled:
+            control_state = "LIVE requested but blocked (gate OFF)"
+        elif blockers:
+            control_state = "LIVE requested but blocked"
+        elif level == "READY":
+            control_state = "LIVE enabled and ready"
+        else:
+            control_state = "LIVE requested (readiness unknown)"
+
+        if blockers:
+            blockers_text = ", ".join(str(item) for item in blockers)
+        else:
+            blockers_text = "No blockers."
+
+        self.live_readiness_level_var.set(level)
+        self.live_readiness_blockers_var.set(f"Blockers: {blockers_text}")
+        self.live_control_state_var.set(control_state)
 
     def _log(self, text: str):
         if hasattr(self, "log_text"):

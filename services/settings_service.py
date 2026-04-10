@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any, Dict
+
 from services.setting_service import SettingsService as LegacySettingsService
 
 
@@ -11,15 +13,17 @@ class SettingsService(LegacySettingsService):
         return {
             "execution_mode": execution_mode,
             "live_enabled": self._b(data, "live_enabled", False),
+            "kill_switch": self._b(data, "kill_switch", False),
         }
 
-    def save_execution_settings(self, *, execution_mode: str, live_enabled: bool) -> None:
+    def save_execution_settings(self, *, execution_mode: str, live_enabled: bool, kill_switch: bool = False) -> None:
         mode_raw = str(execution_mode or "SIMULATION").strip().upper()
         mode = mode_raw if mode_raw in {"SIMULATION", "LIVE"} else "SIMULATION"
         self.save_settings(
             {
                 "execution_mode": mode,
                 "live_enabled": int(bool(live_enabled)),
+                "kill_switch": int(bool(kill_switch)),
             }
         )
 
@@ -28,6 +32,9 @@ class SettingsService(LegacySettingsService):
 
     def load_live_enabled(self) -> bool:
         return bool(self.load_execution_settings().get("live_enabled", False))
+
+    def load_kill_switch(self) -> bool:
+        return bool(self.load_execution_settings().get("kill_switch", False))
 
     def load_live_readiness_ok(self) -> bool:
         data = self.get_all_settings()
