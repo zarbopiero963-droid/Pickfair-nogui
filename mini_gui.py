@@ -396,7 +396,6 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             settings_service=self.settings_service,
         )
         self.runtime.runtime_probe = self.runtime_probe
-        self.runtime.enforce_probe_readiness_gate = True
 
         self.telegram_controller = TelegramController(self)
 
