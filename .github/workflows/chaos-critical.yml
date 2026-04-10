@@ -1,20 +1,7 @@
 name: chaos-critical
 
 on:
-  push:
-    paths:
-      - "tests/chaos/**"
-      - "tests/integration/test_betfair_timeout_and_ghost_orders.py"
-      - "core/**"
-      - "order_manager.py"
-      - ".github/workflows/chaos-critical.yml"
-  pull_request:
-    paths:
-      - "tests/chaos/**"
-      - "tests/integration/test_betfair_timeout_and_ghost_orders.py"
-      - "core/**"
-      - "order_manager.py"
-      - ".github/workflows/chaos-critical.yml"
+  workflow_call:
   workflow_dispatch:
 
 jobs:
@@ -36,12 +23,12 @@ jobs:
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
           pip install pytest
 
-      - name: Run critical chaos suite
+      - name: Run critical chaos suite if present
         run: |
           if [ -d tests/chaos ]; then
             pytest -q -x tests/chaos
           else
-            echo "tests/chaos missing -> safe skip"
+            echo "::warning::tests/chaos missing -> safe skip"
           fi
 
       - name: Run timeout/ghost integration if present
@@ -49,5 +36,5 @@ jobs:
           if [ -f tests/integration/test_betfair_timeout_and_ghost_orders.py ]; then
             pytest -q -x tests/integration/test_betfair_timeout_and_ghost_orders.py
           else
-            echo "ghost integration test missing -> safe skip"
+            echo "::warning::ghost integration test missing -> safe skip"
           fi
