@@ -1,0 +1,14 @@
+{
+  "return_keys": [
+    "status",
+    "session_token",
+    "expires_at",
+    "timestamp"
+  ],
+  "status_values": [
+    "ACTIVE",
+    "EXPIRED",
+    "RELOGIN_REQUIRED",
+    "FAILED"
+  ]
+}

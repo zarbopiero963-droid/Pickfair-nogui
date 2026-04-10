@@ -5,6 +5,7 @@ import threading
 from typing import Any
 
 from .anomaly_engine import AnomalyEngine
+from . import anomaly_rules
 from .anomaly_rules import DEFAULT_ANOMALY_RULES
 from .forensics_engine import ForensicsEngine
 from .forensics_rules import DEFAULT_FORENSICS_RULES
@@ -25,7 +26,12 @@ class WatchdogService:
         anomaly_engine: Any = None,
         forensics_engine: Any = None,
         anomaly_context_provider: Any = None,
+        settings_service: Any = None,
         anomaly_enabled: bool = False,
+        anomaly_alerts_enabled: bool = False,
+        anomaly_actions_enabled: bool = False,
+        anomaly_alert_service: Any = None,
+        anomaly_escalation_hook: Any = None,
         interval_sec: float = 5.0,
     ) -> None:
         self.probe = probe
@@ -35,11 +41,20 @@ class WatchdogService:
         self.incidents_manager = incidents_manager
         self.snapshot_service = snapshot_service
         self.anomaly_engine = anomaly_engine or AnomalyEngine(DEFAULT_ANOMALY_RULES)
-        self.anomaly_enabled = True
         self.forensics_engine = forensics_engine or ForensicsEngine(DEFAULT_FORENSICS_RULES)
         self.anomaly_context_provider = anomaly_context_provider
+        self.settings_service = settings_service
         self.anomaly_enabled = bool(anomaly_enabled)
+        self.anomaly_alerts_enabled = bool(anomaly_alerts_enabled)
+        self.anomaly_actions_enabled = bool(anomaly_actions_enabled)
+        self.anomaly_alert_service = anomaly_alert_service
+        self.anomaly_escalation_hook = anomaly_escalation_hook
         self.interval_sec = float(interval_sec)
+
+        self.last_anomalies: list[dict[str, Any]] = []
+        self.escalation_requested = False
+        self.last_escalation_event: dict[str, Any] | None = None
+        self._managed_anomaly_alert_codes: set[str] = set()
 
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -88,14 +103,112 @@ class WatchdogService:
             self.metrics_registry.set_gauge(name, value)
 
         self._evaluate_alerts()
-        if self.anomaly_enabled:
+        if self._is_anomaly_enabled():
             self._run_anomaly_hook()
+        else:
+            self.last_anomalies = []
+            self.escalation_requested = False
+            self.last_escalation_event = None
         self.snapshot_service.collect_and_store()
 
+    def _is_anomaly_enabled(self) -> bool:
+        return self._load_toggle("load_anomaly_enabled", self.anomaly_enabled)
+
+    def _is_anomaly_alerts_enabled(self) -> bool:
+        return self._load_toggle("load_anomaly_alerts_enabled", self.anomaly_alerts_enabled)
+
+    def _is_anomaly_actions_enabled(self) -> bool:
+        return self._load_toggle("load_anomaly_actions_enabled", self.anomaly_actions_enabled)
+
+    def _load_toggle(self, loader_name: str, fallback: bool) -> bool:
+        if self.settings_service is None:
+            return bool(fallback)
+
+        loader = getattr(self.settings_service, loader_name, None)
+        if callable(loader):
+            try:
+                return bool(loader())
+            except Exception:
+                logger.exception("%s failed, fallback to local flag", loader_name)
+
+        return bool(fallback)
+
     def _run_anomaly_hook(self) -> None:
-        self._evaluate_anomalies()
-        self._evaluate_invariants()
-        self._evaluate_correlations()
+        try:
+            self._evaluate_anomalies()
+            self._maybe_run_anomaly_actions(self.last_anomalies)
+        except Exception:
+            self.last_anomalies = []
+            logger.exception("watchdog anomaly hook failed")
+
+    def _run_anomaly_checks(self) -> list[dict[str, Any]]:
+        context = self._build_anomaly_context()
+        runtime_state = context.get("runtime_state")
+        rule_inputs = context if isinstance(context, dict) else {}
+        collected: list[dict[str, Any]] = []
+
+        if self.anomaly_engine is None:
+            for rule_name in (
+                "detect_ghost_order",
+                "ghost_order_detected",
+                "detect_exposure_mismatch",
+                "exposure_mismatch",
+                "detect_db_contention",
+                "db_contention_detected",
+                "detect_event_fanout_failure",
+                "event_fanout_incomplete",
+                "detect_financial_drift",
+                "financial_drift",
+            ):
+                rule_fn = getattr(anomaly_rules, rule_name, None)
+                if not callable(rule_fn):
+                    continue
+                try:
+                    anomaly = rule_fn(rule_inputs, runtime_state if isinstance(runtime_state, dict) else {})
+                except Exception:
+                    logger.exception("anomaly rule %s failed", rule_name)
+                    continue
+                if isinstance(anomaly, dict):
+                    collected.append(anomaly)
+
+        evaluator = getattr(self.anomaly_engine, "evaluate", None)
+        if callable(evaluator):
+            try:
+                evaluated = evaluator(context) or []
+                for anomaly in evaluated:
+                    if isinstance(anomaly, dict):
+                        collected.append(anomaly)
+            except Exception:
+                logger.exception("anomaly engine evaluate failed")
+
+        if collected:
+            logger.warning("watchdog anomaly hook collected anomalies", extra={"anomalies": collected})
+        return collected
+
+    def _build_anomaly_context(self) -> dict[str, Any]:
+        runtime_state: dict[str, Any] = {}
+        collector = getattr(self.probe, "collect_runtime_state", None)
+        if callable(collector):
+            try:
+                runtime_state = collector() or {}
+            except Exception:
+                logger.exception("collect_runtime_state failed during anomaly review")
+
+        context = {
+            "health": self.health_registry.snapshot(),
+            "metrics": self.metrics_registry.snapshot(),
+            "alerts": self.alerts_manager.snapshot(),
+            "incidents": self.incidents_manager.snapshot(),
+            "runtime_state": runtime_state,
+        }
+        if callable(self.anomaly_context_provider):
+            try:
+                extra = self.anomaly_context_provider() or {}
+                if isinstance(extra, dict):
+                    context.update(extra)
+            except Exception:
+                logger.exception("anomaly_context_provider failed")
+        return context
 
     def _evaluate_invariants(self) -> None:
         self._evaluate_forensics()
@@ -120,7 +233,8 @@ class WatchdogService:
             self.alerts_manager.resolve_alert("SYSTEM_NOT_READY")
             self.incidents_manager.close_incident("SYSTEM_NOT_READY")
 
-        memory_rss = float(metrics["gauges"].get("memory_rss_mb", 0.0))
+        gauges = metrics.get("gauges", {}) if isinstance(metrics, dict) else {}
+        memory_rss = float(gauges.get("memory_rss_mb", 0.0))
         if memory_rss >= 800:
             self.alerts_manager.upsert_alert(
                 "MEMORY_HIGH",
@@ -138,7 +252,7 @@ class WatchdogService:
         else:
             self.alerts_manager.resolve_alert("MEMORY_HIGH")
 
-        inflight = float(metrics["gauges"].get("inflight_count", 0.0))
+        inflight = float(gauges.get("inflight_count", 0.0))
         if inflight >= 50:
             self.alerts_manager.upsert_alert(
                 "INFLIGHT_HIGH",
@@ -150,36 +264,10 @@ class WatchdogService:
             self.alerts_manager.resolve_alert("INFLIGHT_HIGH")
 
     def _evaluate_anomalies(self) -> None:
-        if self.anomaly_engine is None:
-            return
+        anomalies = self._run_anomaly_checks()
+        self.last_anomalies = anomalies
 
-        runtime_state = {}
-        collector = getattr(self.probe, "collect_runtime_state", None)
-        if callable(collector):
-            try:
-                runtime_state = collector() or {}
-            except Exception:
-                logger.exception("collect_runtime_state failed during anomaly review")
-
-        context = {
-            "health": self.health_registry.snapshot(),
-            "metrics": self.metrics_registry.snapshot(),
-            "alerts": self.alerts_manager.snapshot(),
-            "incidents": self.incidents_manager.snapshot(),
-            "runtime_state": runtime_state,
-        }
-
-        if callable(self.anomaly_context_provider):
-            try:
-                extra = self.anomaly_context_provider() or {}
-                if isinstance(extra, dict):
-                    context.update(extra)
-            except Exception:
-                logger.exception("anomaly_context_provider failed")
-
-        anomalies = self.anomaly_engine.evaluate(context)
-        current_codes = set()
-
+        current_codes: set[str] = set()
         for anomaly in anomalies:
             code = anomaly.get("code") or anomaly.get("name") or anomaly.get("type")
             if code is None:
@@ -187,25 +275,82 @@ class WatchdogService:
             code = str(code)
             current_codes.add(code)
             severity = str(anomaly.get("severity", "warning") or "warning")
-            message = str(anomaly.get("description", "") or "")
-            details = anomaly.get("details") or {}
+            message = str(anomaly.get("description") or anomaly.get("message") or code)
+            details = anomaly.get("details") if isinstance(anomaly.get("details"), dict) else {}
 
             self.alerts_manager.upsert_alert(
                 code,
                 severity,
                 message,
                 source="anomaly",
+                description=message,
+                details=details,
             )
-            if severity in {"critical", "error"}:
+            self._emit_anomaly_alert(
+                code=code,
+                severity=severity,
+                message=message,
+                details=details,
+            )
+            if str(severity).lower() in {"critical", "error"}:
                 self.incidents_manager.open_incident(code, code, severity, details=details)
 
-        alerts_snapshot = self.alerts_manager.snapshot().get("alerts", [])
-        for item in alerts_snapshot:
-            if str(item.get("source", "")) != "anomaly":
-                continue
-            code = str(item.get("code", "") or "")
-            if code and code not in current_codes:
-                self.alerts_manager.resolve_alert(code)
+        stale_codes = self._managed_anomaly_alert_codes - current_codes
+        for code in stale_codes:
+            self.alerts_manager.resolve_alert(code)
+
+        self._managed_anomaly_alert_codes = current_codes
+
+    def _emit_anomaly_alert(self, *, code: str, severity: str, message: str, details: Any) -> None:
+        if not self._is_anomaly_alerts_enabled():
+            return
+
+        notify_alert = getattr(self.anomaly_alert_service, "notify_alert", None)
+        if not callable(notify_alert):
+            logger.info("Anomaly alert path unavailable; falling back to logs", extra={"code": code})
+            return
+
+        payload = {
+            "code": code,
+            "severity": str(severity or "warning"),
+            "source": "watchdog_service",
+            "description": str(message or code),
+            "details": details if isinstance(details, dict) else {"details": details},
+            "type": "anomaly",
+        }
+
+        try:
+            notify_alert(payload)
+        except Exception:
+            logger.exception("Anomaly alert emission failed", extra={"code": code})
+
+    def _maybe_run_anomaly_actions(self, anomalies: list[dict[str, Any]]) -> None:
+        self.escalation_requested = False
+        self.last_escalation_event = None
+
+        if not anomalies or not self._is_anomaly_actions_enabled():
+            return
+
+        first = anomalies[0]
+        event = {
+            "code": str(first.get("code") or first.get("name") or "UNKNOWN_ANOMALY"),
+            "severity": str(first.get("severity") or "warning"),
+            "source": str(first.get("source") or "watchdog_service"),
+            "escalation_requested": True,
+            "reason": str(first.get("description") or first.get("message") or "anomaly detected"),
+            "details": first.get("details") if isinstance(first.get("details"), dict) else {},
+        }
+
+        self.escalation_requested = True
+        self.last_escalation_event = event
+        logger.warning("Anomaly escalation requested", extra={"event": event})
+
+        hook = getattr(self.anomaly_escalation_hook, "__call__", None)
+        if callable(hook):
+            try:
+                self.anomaly_escalation_hook(dict(event))
+            except Exception:
+                logger.exception("Anomaly escalation hook failed")
 
     def _evaluate_forensics(self) -> None:
         if self.forensics_engine is None:

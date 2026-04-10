@@ -1,0 +1,17 @@
+{
+  "module": "core.risk_middleware",
+  "required_functions": [
+    "validate_request",
+    "normalize_payload",
+    "apply_risk_checks"
+  ],
+  "must_block_invalid_requests": true,
+  "must_normalize_payload": true,
+  "required_fields": [
+    "market_id",
+    "selection_id",
+    "price",
+    "size",
+    "side"
+  ]
+}

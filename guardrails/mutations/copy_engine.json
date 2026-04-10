@@ -1,0 +1,41 @@
+{
+  "module": "copy_engine",
+  "description": "Hardcore mutations for copy dedup, sequencing, and dispatch consistency.",
+  "mutations": [
+    {
+      "id": "skip_dedup",
+      "type": "call_remove",
+      "target": "dispatch_action",
+      "call_name": "check_duplicate_action",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "allow_duplicate_action_id",
+      "type": "branch_forcing",
+      "target": "dispatch_action",
+      "branch": "duplicate_action_block",
+      "forced_outcome": "allow",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "ignore_action_sequence",
+      "type": "branch_bypass",
+      "target": "dispatch_action",
+      "branch": "action_seq_monotonic",
+      "expected_failure": "state_model"
+    },
+    {
+      "id": "drop_master_id",
+      "type": "field_remove",
+      "target": "dispatch_action",
+      "field": "master_id",
+      "expected_failure": "contract"
+    },
+    {
+      "id": "dispatch_twice",
+      "type": "side_effect_duplicate",
+      "target": "dispatch_action",
+      "expected_failure": "tests"
+    }
+  ]
+} 

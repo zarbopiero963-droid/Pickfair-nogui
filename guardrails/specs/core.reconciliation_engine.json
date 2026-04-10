@@ -1,0 +1,14 @@
+{
+  "module": "core.reconciliation_engine",
+  "required_functions": [
+    "reconcile_orders",
+    "detect_ghost_orders",
+    "apply_resolution",
+    "log_decision"
+  ],
+  "must_be_idempotent": true,
+  "must_detect": [
+    "ghost_orders",
+    "exposure_mismatch"
+  ]
+}

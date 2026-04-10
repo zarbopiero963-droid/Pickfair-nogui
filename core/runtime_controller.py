@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from core.duplication_guard import DuplicationGuard
 from core.dutching_batch_manager import DutchingBatchManager
@@ -12,6 +12,7 @@ from core.reconciliation_engine import ReconciliationEngine
 from core.risk_desk import RiskDesk
 from core.system_state import DeskMode, RuntimeMode
 from core.table_manager import TableManager
+from core.safety_layer import assert_live_gate_or_refuse
 from order_manager import TERMINAL_LIFECYCLE_EVENTS
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ class RuntimeController:
         telegram_service,
         trading_engine=None,
         executor=None,
+        safe_mode=None,
     ):
         self.bus = bus
         self.db = db
@@ -51,6 +53,7 @@ class RuntimeController:
         self.telegram_service = telegram_service
         self.trading_engine = trading_engine
         self.executor = executor
+        self.safe_mode = safe_mode
 
         self.config = self.settings_service.load_roserpina_config()
         self.table_manager = TableManager(table_count=self.config.table_count)
@@ -70,6 +73,11 @@ class RuntimeController:
         self.last_error = ""
         self.last_signal_at = ""
         self.simulation_mode = False
+        self.execution_mode = "SIMULATION"
+        self.live_enabled = False
+        self.live_readiness_ok = False
+        self.last_execution_gate_reason = "startup_default"
+        self.enforce_probe_readiness_gate = False
 
         self._subscribe_bus()
 
@@ -108,6 +116,233 @@ class RuntimeController:
         if hasattr(self.betfair_service, "set_simulation_mode"):
             self.betfair_service.set_simulation_mode(self.simulation_mode)
 
+    def _safe_bool(self, value, default: bool = False) -> bool:
+        if value is None:
+            return bool(default)
+        if isinstance(value, bool):
+            return value
+        txt = str(value).strip().lower()
+        if txt in {"1", "true", "yes", "on"}:
+            return True
+        if txt in {"0", "false", "no", "off"}:
+            return False
+        return bool(default)
+
+    def _safe_execution_mode(self, value) -> str:
+        normalized = str(value or "").strip().upper()
+        if normalized in {"SIMULATION", "LIVE"}:
+            return normalized
+        return "SIMULATION"
+
+    def _is_kill_switch_active(self) -> bool:
+        safe_mode = self.safe_mode
+        if safe_mode is None:
+            return False
+
+        getter = getattr(safe_mode, "is_enabled", None)
+        if callable(getter):
+            try:
+                return bool(getter())
+            except Exception:
+                return True
+
+        attr_enabled = getattr(safe_mode, "enabled", None)
+        if attr_enabled is not None:
+            try:
+                return bool(attr_enabled)
+            except Exception:
+                return True
+
+        attr_active = getattr(safe_mode, "is_safe_mode_active", None)
+        if attr_active is not None:
+            try:
+                return bool(attr_active)
+            except Exception:
+                return True
+
+        return False
+
+    def _derive_live_readiness_ok(self, explicit_readiness=None) -> bool:
+        if explicit_readiness is not None:
+            return self._safe_bool(explicit_readiness, default=False)
+
+        if hasattr(self.settings_service, "load_live_readiness_ok"):
+            try:
+                return self._safe_bool(self.settings_service.load_live_readiness_ok(), default=False)
+            except Exception:
+                return False
+
+        return False
+
+    def _get_probe_live_readiness_report(self) -> tuple[bool, str, dict]:
+        probe = getattr(self, "runtime_probe", None)
+        probe_required = bool(getattr(self, "enforce_probe_readiness_gate", False))
+        if probe is None:
+            if probe_required:
+                return False, "probe_unavailable", {}
+            return True, "probe_optional_unavailable", {}
+
+        getter = getattr(probe, "get_live_readiness_report", None)
+        if not callable(getter):
+            if probe_required:
+                return False, "probe_report_getter_missing", {}
+            return True, "probe_optional_getter_missing", {}
+
+        try:
+            report = getter()
+        except Exception:
+            logger.exception("Errore lettura runtime probe live readiness report")
+            return False, "probe_report_exception", {}
+
+        is_valid, reason = self._validate_probe_live_readiness_report(report)
+        if not is_valid:
+            return False, reason, (report if isinstance(report, dict) else {})
+        return True, "probe_ready", report
+
+    def _validate_probe_live_readiness_report(self, report: Any) -> tuple[bool, str]:
+        if not isinstance(report, dict):
+            return False, "probe_report_malformed"
+
+        if "ready" not in report or "level" not in report or "blockers" not in report:
+            return False, "probe_report_missing_required_fields"
+
+        ready = report.get("ready")
+        level = str(report.get("level") or "").strip().upper()
+        blockers = report.get("blockers")
+
+        if not isinstance(ready, bool):
+            return False, "probe_report_ready_not_bool"
+
+        if not isinstance(blockers, list):
+            return False, "probe_report_blockers_not_list"
+
+        if level != "READY":
+            return False, "probe_report_level_not_ready"
+
+        if blockers:
+            return False, "probe_report_has_blockers"
+
+        if not ready:
+            return False, "probe_report_ready_false"
+
+        return True, "probe_report_ready"
+
+    def evaluate_live_readiness(
+        self,
+        *,
+        execution_mode: Optional[str] = None,
+        live_enabled: Optional[bool] = None,
+        live_readiness_ok: Optional[bool] = None,
+    ) -> dict:
+        blockers = []
+        details = {}
+
+        runtime_mode_value = getattr(getattr(self, "mode", None), "value", None)
+        known_runtime_modes = {item.value for item in RuntimeMode}
+        runtime_mode_known = runtime_mode_value in known_runtime_modes
+        runtime_initialized = all(
+            (
+                getattr(self, "config", None) is not None,
+                getattr(self, "table_manager", None) is not None,
+                getattr(self, "duplication_guard", None) is not None,
+                getattr(self, "risk_desk", None) is not None,
+                getattr(self, "reconciliation_engine", None) is not None,
+            )
+        )
+        runtime_half_started = False
+        if runtime_mode_value == RuntimeMode.ACTIVE.value:
+            try:
+                runtime_half_started = not (
+                    bool(self.betfair_service.status().get("connected"))
+                    and bool(self.telegram_service.status().get("connected"))
+                )
+            except Exception:
+                runtime_half_started = True
+        startup_failed = bool(getattr(self, "last_error", ""))
+
+        details["runtime_state"] = {
+            "mode": runtime_mode_value,
+            "mode_known": runtime_mode_known,
+            "initialized": runtime_initialized,
+            "half_started": runtime_half_started,
+            "startup_failed": startup_failed,
+        }
+
+        if not runtime_mode_known:
+            blockers.append("READINESS_SIGNAL_UNKNOWN")
+        if not runtime_initialized:
+            blockers.append("RUNTIME_NOT_INITIALIZED")
+        if runtime_half_started:
+            blockers.append("RUNTIME_HALF_STARTED")
+        if startup_failed and runtime_mode_value != RuntimeMode.ACTIVE.value:
+            blockers.append("STARTUP_FAILED")
+
+        kill_switch_active = bool(self._is_kill_switch_active())
+        safe_mode_blocks_live = kill_switch_active
+        details["safety_state"] = {
+            "kill_switch_active": kill_switch_active,
+            "safe_mode_blocks_live": safe_mode_blocks_live,
+        }
+        if kill_switch_active:
+            blockers.append("KILL_SWITCH_ACTIVE")
+        if safe_mode_blocks_live:
+            blockers.append("SAFE_MODE_BLOCKING")
+
+        has_live_dependency = bool(
+            getattr(self, "betfair_service", None) is not None
+            and callable(getattr(self.betfair_service, "connect", None))
+        )
+        details["live_dependency_state"] = {
+            "betfair_service_present": getattr(self, "betfair_service", None) is not None,
+            "betfair_connect_callable": callable(getattr(getattr(self, "betfair_service", None), "connect", None)),
+            "has_required_live_dependency": has_live_dependency,
+        }
+        if not has_live_dependency:
+            blockers.append("LIVE_DEPENDENCY_MISSING")
+
+        normalized_execution_mode = str(execution_mode if execution_mode is not None else self.execution_mode).strip().upper()
+        effective_live_enabled = self._safe_bool(
+            self.live_enabled if live_enabled is None else live_enabled,
+            default=False,
+        )
+        configured_live_readiness_ok = self._derive_live_readiness_ok(live_readiness_ok)
+        execution_mode_valid = normalized_execution_mode in {"SIMULATION", "LIVE"}
+        contradictory_state = (
+            (normalized_execution_mode == "LIVE" and bool(getattr(self, "simulation_mode", False)))
+            or (normalized_execution_mode == "LIVE" and not effective_live_enabled)
+        )
+        details["execution_state"] = {
+            "execution_mode": normalized_execution_mode,
+            "execution_mode_valid": execution_mode_valid,
+            "live_enabled": effective_live_enabled,
+            "configured_live_readiness_ok": configured_live_readiness_ok,
+            "simulation_mode": bool(getattr(self, "simulation_mode", False)),
+            "contradictory_state": contradictory_state,
+        }
+
+        if not execution_mode_valid:
+            blockers.append("INVALID_EXECUTION_MODE")
+        if normalized_execution_mode == "LIVE" and not effective_live_enabled:
+            blockers.append("LIVE_NOT_ENABLED")
+        if normalized_execution_mode == "LIVE" and not configured_live_readiness_ok:
+            blockers.append("LIVE_READINESS_FLAG_NOT_OK")
+        if contradictory_state:
+            blockers.append("CONTRADICTORY_STATE")
+
+        is_live_request = normalized_execution_mode == "LIVE"
+        unique_blockers = sorted(set(blockers))
+        ready = is_live_request and not unique_blockers
+        level = "READY" if ready else ("DEGRADED" if (not is_live_request and execution_mode_valid) else "NOT_READY")
+        return {
+            "ready": ready,
+            "level": level,
+            "blockers": unique_blockers,
+            "details": details,
+        }
+
+    def is_live_readiness_ok(self, **kwargs) -> bool:
+        return bool(self.evaluate_live_readiness(**kwargs).get("ready", False))
+
     def reload_config(self) -> None:
         self.config = self.settings_service.load_roserpina_config()
         self.mm = RoserpinaMoneyManagement(self.config)
@@ -140,14 +375,97 @@ class RuntimeController:
         self,
         password: Optional[str] = None,
         simulation_mode: Optional[bool] = None,
+        execution_mode: Optional[str] = None,
+        live_enabled: Optional[bool] = None,
+        live_readiness_ok: Optional[bool] = None,
     ) -> dict:
         self.reload_config()
 
-        # sincronizzazione da headless_main / mini_gui
-        if simulation_mode is not None:
-            self.set_simulation_mode(simulation_mode)
+        requested_execution_mode = self._safe_execution_mode(execution_mode)
+        if execution_mode is None and simulation_mode is not None:
+            requested_execution_mode = "SIMULATION" if bool(simulation_mode) else "LIVE"
+
+        requested_live_enabled = False
+        if live_enabled is not None:
+            requested_live_enabled = self._safe_bool(live_enabled, default=False)
         else:
-            self.set_simulation_mode(self.simulation_mode)
+            try:
+                if hasattr(self.settings_service, "load_live_enabled"):
+                    requested_live_enabled = self._safe_bool(
+                        self.settings_service.load_live_enabled(),
+                        default=False,
+                    )
+                else:
+                    data = self.settings_service.get_all_settings()
+                    requested_live_enabled = (
+                        str(data.get("execution_mode", "SIMULATION")).strip().upper() == "LIVE"
+                        or self._safe_bool(data.get("live_enabled"), default=False)
+                    )
+            except Exception:
+                requested_live_enabled = False
+
+        readiness = self.evaluate_live_readiness(
+            execution_mode=requested_execution_mode,
+            live_enabled=requested_live_enabled,
+            live_readiness_ok=live_readiness_ok,
+        )
+        requested_readiness = bool(readiness.get("ready", False))
+        probe_readiness_ok = True
+        probe_readiness_reason = "probe_not_required_for_non_live"
+        probe_readiness_report = {}
+
+        if requested_execution_mode == "LIVE":
+            probe_readiness_ok, probe_readiness_reason, probe_readiness_report = self._get_probe_live_readiness_report()
+            if not probe_readiness_ok:
+                requested_readiness = False
+
+        readiness.setdefault("details", {})
+        readiness["details"]["probe"] = {
+            "ok": probe_readiness_ok,
+            "reason": probe_readiness_reason,
+            "report": probe_readiness_report,
+        }
+        readiness["probe_ok"] = probe_readiness_ok
+
+        gate = assert_live_gate_or_refuse(
+            execution_mode=requested_execution_mode,
+            live_enabled=requested_live_enabled,
+            live_readiness_ok=requested_readiness,
+            kill_switch=self._is_kill_switch_active(),
+        )
+
+        self.execution_mode = gate.effective_execution_mode
+        self.live_enabled = requested_live_enabled
+        self.live_readiness_ok = requested_readiness
+        self.last_execution_gate_reason = gate.reason_code
+
+        if requested_execution_mode == "LIVE" and not gate.allowed:
+            status = self.get_status()
+            self.bus.publish(
+                "LIVE_EXECUTION_REFUSED",
+                {
+                    "reason_code": gate.reason_code,
+                    "message": gate.refusal_message,
+                    "requested_execution_mode": requested_execution_mode,
+                    "effective_execution_mode": gate.effective_execution_mode,
+                    "readiness": readiness,
+                },
+            )
+            return {
+                "ok": False,
+                "started": False,
+                "refused": True,
+                "reason": "live_not_enabled",
+                "reason_code": gate.reason_code,
+                "refusal_message": gate.refusal_message,
+                "requested_execution_mode": requested_execution_mode,
+                "effective_execution_mode": gate.effective_execution_mode,
+                "readiness": readiness,
+                "status": status,
+            }
+
+        # sincronizzazione da headless_main / mini_gui
+        self.set_simulation_mode(self.execution_mode != "LIVE")
 
         # reset anti-duplicazione a ogni start
         self.duplication_guard = DuplicationGuard()
@@ -471,6 +789,11 @@ class RuntimeController:
         data["tables"] = self.table_manager.snapshot()
         data["duplication_guard"] = self.duplication_guard.snapshot()
         data["simulation_mode"] = bool(self.simulation_mode)
+        data["execution_mode"] = str(self.execution_mode)
+        data["live_enabled"] = bool(self.live_enabled)
+        data["live_readiness_ok"] = bool(self.live_readiness_ok)
+        data["kill_switch_active"] = bool(self._is_kill_switch_active())
+        data["execution_gate_reason"] = str(self.last_execution_gate_reason)
         data["broker_status"] = self.betfair_service.status()
         data["account_funds"] = funds
 

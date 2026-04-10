@@ -1,0 +1,12 @@
+{
+  "return_keys": [
+    "pnl",
+    "exposure",
+    "position_status",
+    "timestamp"
+  ],
+  "constraints": {
+    "pnl_numeric": true,
+    "exposure_non_negative": true
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "module": "core.reconciliation_engine",
+  "description": "Hardcore mutations for ghost detection, convergence, idempotency, and decision logging.",
+  "mutations": [
+    {
+      "id": "skip_ghost_detection",
+      "type": "call_remove",
+      "target": "reconcile_orders",
+      "call_name": "detect_ghost_orders",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "ignore_remote_orders",
+      "type": "input_ignore",
+      "target": "reconcile_orders",
+      "input": "remote_orders",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "ignore_local_orders",
+      "type": "input_ignore",
+      "target": "reconcile_orders",
+      "input": "local_orders",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "force_success_without_proof",
+      "type": "state_forcing",
+      "target": "apply_resolution",
+      "forced_state": "SUCCESS",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "drop_decision_log",
+      "type": "call_remove",
+      "target": "reconcile_orders",
+      "call_name": "log_decision",
+      "expected_failure": "contract"
+    },
+    {
+      "id": "non_idempotent_reconcile",
+      "type": "stateful_repeat_side_effect",
+      "target": "reconcile_orders",
+      "expected_failure": "spec"
+    },
+    {
+      "id": "ignore_action_seq_gap",
+      "type": "branch_bypass",
+      "target": "reconcile_copy_positions",
+      "branch": "action_seq_gap_check",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "allow_source_metadata_contamination",
+      "type": "mapping_corruption",
+      "target": "reconcile_orders",
+      "mode": "copy_to_pattern_leak",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "resolve_ambiguous_to_failed_by_default",
+      "type": "state_forcing",
+      "target": "apply_resolution",
+      "when": "ambiguous_missing_proof",
+      "forced_state": "FAILED",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "drop_anomalies_field",
+      "type": "field_remove",
+      "target": "reconcile_orders",
+      "field": "anomalies",
+      "expected_failure": "contract"
+    }
+  ]
+}

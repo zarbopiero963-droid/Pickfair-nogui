@@ -1,0 +1,32 @@
+name: execution-guard
+
+on:
+  push:
+    paths:
+      - "core/execution_guard.py"
+      - "guardrails/specs/core.execution_guard.json"
+      - "guardrails/contracts/core.execution_guard.json"
+      - "guardrails/state_models/core.execution_guard.json"
+      - "guardrails/mutations/core.execution_guard.json"
+      - "tests/integration/test_duplication_guard_copy_events.py"
+      - "tests/integration/test_duplication_guard_pattern_events.py"
+  pull_request:
+    paths:
+      - "core/execution_guard.py"
+      - "guardrails/specs/core.execution_guard.json"
+      - "guardrails/contracts/core.execution_guard.json"
+      - "guardrails/state_models/core.execution_guard.json"
+      - "guardrails/mutations/core.execution_guard.json"
+      - "tests/integration/test_duplication_guard_copy_events.py"
+      - "tests/integration/test_duplication_guard_pattern_events.py"
+
+jobs:
+  run:
+    uses: ./.github/workflows/_module-ultra-check.yml
+    with:
+      module_path: "core/execution_guard.py"
+      spec_path: "guardrails/specs/core.execution_guard.json"
+      contract_path: "guardrails/contracts/core.execution_guard.json"
+      state_model_path: "guardrails/state_models/core.execution_guard.json"
+      mutation_path: "guardrails/mutations/core.execution_guard.json"
+      test_paths: "tests/integration/test_duplication_guard_copy_events.py tests/integration/test_duplication_guard_pattern_events.py"

@@ -1,0 +1,16 @@
+{
+  "module": "telegram_listener",
+  "required_functions": [
+    "connect",
+    "disconnect",
+    "parse_message",
+    "dispatch_signal"
+  ],
+  "must_support": [
+    "JSON_messages",
+    "text_messages"
+  ],
+  "must_be_non_blocking": true,
+  "must_handle_reconnect": true,
+  "must_not_block_main_thread": true
+}

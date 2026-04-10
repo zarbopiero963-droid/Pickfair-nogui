@@ -1,0 +1,15 @@
+{
+  "module": "pnl_engine",
+  "required_functions": [
+    "calculate_pnl",
+    "update_position",
+    "close_position",
+    "compute_exposure"
+  ],
+  "must_support": [
+    "BACK",
+    "LAY",
+    "CASHOUT"
+  ],
+  "must_track_positions": true
+}

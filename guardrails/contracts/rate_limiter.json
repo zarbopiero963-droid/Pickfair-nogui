@@ -1,0 +1,11 @@
+{
+  "return_keys": [
+    "allowed",
+    "wait_time",
+    "timestamp"
+  ],
+  "allowed_values": [true, false],
+  "constraints": {
+    "wait_time_non_negative": true
+  }
+}

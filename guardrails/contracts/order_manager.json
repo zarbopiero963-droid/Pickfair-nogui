@@ -1,0 +1,16 @@
+{
+  "return_keys": [
+    "status",
+    "order_id",
+    "customer_ref",
+    "reason",
+    "updated_at"
+  ],
+  "status_values": [
+    "INFLIGHT",
+    "PARTIAL",
+    "SUCCESS",
+    "FAILED",
+    "AMBIGUOUS"
+  ]
+}

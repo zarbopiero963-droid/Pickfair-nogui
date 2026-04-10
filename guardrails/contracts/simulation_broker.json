@@ -1,0 +1,16 @@
+{
+  "return_keys": [
+    "status",
+    "order_id",
+    "matched_size",
+    "remaining_size",
+    "price",
+    "timestamp"
+  ],
+  "status_values": [
+    "INFLIGHT",
+    "PARTIAL",
+    "MATCHED",
+    "CANCELLED"
+  ]
+}

@@ -11,7 +11,7 @@ from core.event_bus import EventBus
 from executor_manager import ExecutorManager
 from shutdown_manager import ShutdownManager
 
-from services.setting_service import SettingsService
+from services.settings_service import SettingsService
 from services.betfair_service import BetfairService
 from services.telegram_alerts_service import TelegramAlertsService
 from services.telegram_service import TelegramService
@@ -235,6 +235,7 @@ class HeadlessApp:
                 telegram_service=self.telegram_service,
                 trading_engine=self.trading_engine,
                 executor=self.executor,
+                safe_mode=self.safe_mode,
             )
 
             self.health_registry = HealthRegistry()
@@ -287,6 +288,9 @@ class HeadlessApp:
                 settings_service=self.settings_service,
                 telegram_alerts_service=self.telegram_alerts_service,
             )
+            if self.runtime is not None:
+                self.runtime.runtime_probe = self.runtime_probe
+                self.runtime.enforce_probe_readiness_gate = True
 
             self.snapshot_service = SnapshotService(
                 db=self.db,
@@ -297,6 +301,23 @@ class HeadlessApp:
                 incidents_manager=self.incidents_manager,
             )
 
+            anomaly_enabled = False
+            anomaly_alerts_enabled = False
+            anomaly_actions_enabled = False
+            if self.settings_service is not None:
+                try:
+                    anomaly_enabled = bool(self.settings_service.load_anomaly_enabled())
+                except Exception:
+                    logger.exception("Failed loading anomaly_enabled toggle; fallback False")
+                try:
+                    anomaly_alerts_enabled = bool(self.settings_service.load_anomaly_alerts_enabled())
+                except Exception:
+                    logger.exception("Failed loading anomaly_alerts_enabled toggle; fallback False")
+                try:
+                    anomaly_actions_enabled = bool(self.settings_service.load_anomaly_actions_enabled())
+                except Exception:
+                    logger.exception("Failed loading anomaly_actions_enabled toggle; fallback False")
+
             self.watchdog_service = WatchdogService(
                 probe=self.runtime_probe,
                 health_registry=self.health_registry,
@@ -304,6 +325,11 @@ class HeadlessApp:
                 alerts_manager=self.alerts_manager,
                 incidents_manager=self.incidents_manager,
                 snapshot_service=self.snapshot_service,
+                settings_service=self.settings_service,
+                anomaly_enabled=anomaly_enabled,
+                anomaly_alerts_enabled=anomaly_alerts_enabled,
+                anomaly_actions_enabled=anomaly_actions_enabled,
+                anomaly_alert_service=self.telegram_alerts_service,
                 interval_sec=5.0,
             )
 
@@ -505,18 +531,19 @@ class HeadlessApp:
     def _parse_args(self) -> dict:
         args = [str(x).strip().lower() for x in sys.argv[1:]]
 
-        simulation_mode = True
+        execution_mode = "SIMULATION"
         if "--live" in args or "live" in args:
-            simulation_mode = False
+            execution_mode = "LIVE"
         elif (
             "--simulation" in args
             or "simulation" in args
             or "--sim" in args
             or "sim" in args
         ):
-            simulation_mode = True
+            execution_mode = "SIMULATION"
         else:
             try:
+<<<<<<< codex/add-live/sim-control-plane-and-dashboard
                 if self.settings_service is not None and hasattr(self.settings_service, "load_live_control_plane"):
                     cp_cfg = self.settings_service.load_live_control_plane() or {}
                     execution_mode = str(cp_cfg.get("execution_mode", "SIMULATION") or "SIMULATION").upper()
@@ -528,11 +555,35 @@ class HeadlessApp:
                         simulation_mode = True
                 elif self.settings_service is not None and hasattr(
                     self.settings_service, "load_simulation_config"
+=======
+                if self.settings_service is not None and hasattr(
+                    self.settings_service, "load_execution_mode"
+>>>>>>> main
                 ):
-                    sim_cfg = self.settings_service.load_simulation_config()
-                    simulation_mode = bool(sim_cfg.get("enabled", True))
+                    execution_mode = str(self.settings_service.load_execution_mode() or "SIMULATION").upper()
             except Exception:
-                simulation_mode = True
+                execution_mode = "SIMULATION"
+
+        live_enabled = False
+        try:
+            if self.settings_service is not None and hasattr(self.settings_service, "load_live_enabled"):
+                live_enabled = bool(self.settings_service.load_live_enabled())
+        except Exception:
+            live_enabled = False
+
+        live_readiness_ok = False
+        try:
+            if self.settings_service is not None and hasattr(
+                self.settings_service, "load_live_readiness_ok"
+            ):
+                live_readiness_ok = bool(self.settings_service.load_live_readiness_ok())
+        except Exception:
+            live_readiness_ok = False
+
+        if "--live-enabled" in args:
+            live_enabled = True
+        if "--live-disabled" in args:
+            live_enabled = False
 
         password = None
         for item in sys.argv[1:]:
@@ -542,7 +593,10 @@ class HeadlessApp:
                 break
 
         return {
-            "simulation_mode": simulation_mode,
+            "simulation_mode": execution_mode != "LIVE",
+            "execution_mode": execution_mode,
+            "live_enabled": live_enabled,
+            "live_readiness_ok": live_readiness_ok,
             "password": password,
         }
 
@@ -593,6 +647,9 @@ class HeadlessApp:
 
         args = self._parse_args()
         simulation_mode = bool(args["simulation_mode"])
+        execution_mode = str(args.get("execution_mode") or "SIMULATION")
+        live_enabled = bool(args.get("live_enabled", False))
+        live_readiness_ok = bool(args.get("live_readiness_ok", False))
         password = args["password"]
 
         mode_txt = "SIMULATION" if simulation_mode else "LIVE"
@@ -607,6 +664,9 @@ class HeadlessApp:
             result = self.runtime.start(
                 password=password,
                 simulation_mode=simulation_mode,
+                execution_mode=execution_mode,
+                live_enabled=live_enabled,
+                live_readiness_ok=live_readiness_ok,
             )
             self._validate_runtime_start_result(result)
             logger.info("Runtime avviato -> %s", result)

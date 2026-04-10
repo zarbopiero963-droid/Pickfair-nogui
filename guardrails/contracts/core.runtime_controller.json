@@ -1,0 +1,15 @@
+{
+  "return_keys": [
+    "state",
+    "previous_state",
+    "timestamp",
+    "reason"
+  ],
+  "state_values": [
+    "INIT",
+    "READY",
+    "RUNNING",
+    "STOPPED",
+    "DEGRADED"
+  ]
+}

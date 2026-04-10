@@ -123,12 +123,14 @@ from core.event_bus import EventBus
 from executor_manager import ExecutorManager
 from shutdown_manager import ShutdownManager
 
-from services.setting_service import SettingsService
+from services.settings_service import SettingsService
 from services.betfair_service import BetfairService
 from services.telegram_service import TelegramService
 
 from core.trading_engine import TradingEngine
 from core.runtime_controller import RuntimeController
+from observability import RuntimeProbe
+from safe_mode import get_safe_mode_manager
 
 from controllers.telegram_controller import TelegramController
 
@@ -374,12 +376,14 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self.db,
             self.bus,
         )
+        self.safe_mode = get_safe_mode_manager()
 
         self.trading_engine = TradingEngine(
             bus=self.bus,
             db=self.db,
             client_getter=self.betfair_service.get_client,
             executor=self.executor,
+            safe_mode=self.safe_mode,
         )
 
         self.runtime = RuntimeController(
@@ -390,7 +394,20 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             telegram_service=self.telegram_service,
             trading_engine=self.trading_engine,
             executor=self.executor,
+            safe_mode=self.safe_mode,
         )
+        self.runtime_probe = RuntimeProbe(
+            db=self.db,
+            trading_engine=self.trading_engine,
+            runtime_controller=self.runtime,
+            betfair_service=self.betfair_service,
+            safe_mode=self.safe_mode,
+            shutdown_manager=self.shutdown,
+            telegram_service=self.telegram_service,
+            settings_service=self.settings_service,
+        )
+        self.runtime.runtime_probe = self.runtime_probe
+        self.runtime.enforce_probe_readiness_gate = True
 
         self.telegram_controller = TelegramController(self)
 
@@ -1065,10 +1082,23 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
     # RUNTIME COMMANDS
     # =========================================================
     def _runtime_start(self):
+        execution_mode = "SIMULATION" if self.simulation_mode else "LIVE"
+        live_enabled = execution_mode == "LIVE"
+        live_readiness_ok = False
+
+        if hasattr(self.settings_service, "load_live_readiness_ok"):
+            try:
+                live_readiness_ok = bool(self.settings_service.load_live_readiness_ok())
+            except Exception:
+                live_readiness_ok = False
+
         try:
             result = self.runtime.start(
                 password=self.bf_password_var.get() or None,
                 simulation_mode=self.simulation_mode,
+                execution_mode=execution_mode,
+                live_enabled=live_enabled,
+                live_readiness_ok=live_readiness_ok,
             )
             self._log(f"START -> {result}")
         except Exception as exc:

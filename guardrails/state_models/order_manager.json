@@ -1,0 +1,13 @@
+{
+  "states": {
+    "INFLIGHT": ["PARTIAL", "SUCCESS", "FAILED", "AMBIGUOUS"],
+    "PARTIAL": ["SUCCESS", "FAILED"],
+    "AMBIGUOUS": ["SUCCESS", "FAILED"],
+    "SUCCESS": [],
+    "FAILED": []
+  },
+  "forbidden_transitions": [
+    ["SUCCESS", "INFLIGHT"],
+    ["FAILED", "INFLIGHT"]
+  ]
+}
