@@ -123,7 +123,7 @@ from core.event_bus import EventBus
 from executor_manager import ExecutorManager
 from shutdown_manager import ShutdownManager
 
-from services.setting_service import SettingsService
+from services.settings_service import SettingsService
 from services.betfair_service import BetfairService
 from services.telegram_service import TelegramService
 
@@ -396,6 +396,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             settings_service=self.settings_service,
         )
         self.runtime.runtime_probe = self.runtime_probe
+        self.runtime.enforce_probe_readiness_gate = True
 
         self.telegram_controller = TelegramController(self)
 
