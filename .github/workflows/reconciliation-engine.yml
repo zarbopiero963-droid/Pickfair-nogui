@@ -4,53 +4,26 @@ on:
   push:
     paths:
       - "core/reconciliation_engine.py"
-      - "tests/reconciliation/test_reconciliation_batch_lock.py"
-      - "tests/reconciliation/test_reconciliation_determinism.py"
-      - "tests/reconciliation/test_reconciliation_ghost_detection.py"
-      - "tests/reconciliation/test_reconciliation_audit_persistence.py"
-      - "tests/reconciliation/test_reconciliation_retry_policy.py"
-      - "tests/reconciliation/test_reconciliation_recovery_consistency.py"
-      - "tests/reconciliation/test_reconciliation_classification.py"
-      - ".github/workflows/reconciliation-engine.yml"
+      - "tests/reconciliation/*"
   pull_request:
     paths:
       - "core/reconciliation_engine.py"
-      - "tests/reconciliation/test_reconciliation_batch_lock.py"
-      - "tests/reconciliation/test_reconciliation_determinism.py"
-      - "tests/reconciliation/test_reconciliation_ghost_detection.py"
-      - "tests/reconciliation/test_reconciliation_audit_persistence.py"
-      - "tests/reconciliation/test_reconciliation_retry_policy.py"
-      - "tests/reconciliation/test_reconciliation_recovery_consistency.py"
-      - "tests/reconciliation/test_reconciliation_classification.py"
-      - ".github/workflows/reconciliation-engine.yml"
-  workflow_dispatch:
 
 jobs:
-  reconciliation-engine:
+  check:
     runs-on: ubuntu-latest
-
+    outputs:
+      exists: ${{ steps.chk.outputs.exists }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install deps
+      - uses: actions/checkout@v4
+      - id: chk
         run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install pytest
+          [ -f "core/reconciliation_engine.py" ] && echo "exists=true" >> $GITHUB_OUTPUT || echo "exists=false" >> $GITHUB_OUTPUT
 
-      - name: Run reconciliation engine suite
-        run: |
-          pytest -q \
-            tests/reconciliation/test_reconciliation_batch_lock.py \
-            tests/reconciliation/test_reconciliation_determinism.py \
-            tests/reconciliation/test_reconciliation_ghost_detection.py \
-            tests/reconciliation/test_reconciliation_audit_persistence.py \
-            tests/reconciliation/test_reconciliation_retry_policy.py \
-            tests/reconciliation/test_reconciliation_recovery_consistency.py \
-            tests/reconciliation/test_reconciliation_classification.py
+  run:
+    needs: check
+    if: needs.check.outputs.exists == 'true'
+    uses: ./.github/workflows/_module-ultra-check.yml
+    with:
+      module_path: "core/reconciliation_engine.py"
+      test_paths: "tests/reconciliation"
