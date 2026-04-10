@@ -31,6 +31,10 @@ def _make_app(readiness, execution_mode="LIVE", live_enabled=True, kill_switch=F
     app.live_readiness_level_var = FakeVar("UNKNOWN")
     app.live_readiness_blockers_var = FakeVar("")
     app.live_control_state_var = FakeVar("")
+    app.live_requested_mode_var = FakeVar("SIMULATION")
+    app.live_effective_status_var = FakeVar("UNKNOWN")
+    app.live_last_decision_var = FakeVar("Last decision: N/A")
+    app.live_last_reason_var = FakeVar("Last reason: N/A")
     return app
 
 
@@ -43,7 +47,9 @@ def test_ready_state_displays_distinctly():
     mini_gui.MiniPickfairGUI._refresh_live_control_plane_status(app, {})
 
     assert app.live_readiness_level_var.get() == "READY"
-    assert app.live_control_state_var.get() == "LIVE enabled and ready"
+    assert app.live_effective_status_var.get() == "LIVE_ACTIVE"
+    assert app.live_control_state_var.get() == "LIVE active"
+    assert app.live_last_decision_var.get() == "Last decision: GO"
 
 
 @pytest.mark.integration
@@ -56,6 +62,7 @@ def test_non_ready_levels_are_distinguishable(level):
     mini_gui.MiniPickfairGUI._refresh_live_control_plane_status(app, {})
 
     assert app.live_readiness_level_var.get() == level
+    assert app.live_readiness_level_var.get() != "READY"
 
 
 @pytest.mark.integration
@@ -80,5 +87,25 @@ def test_live_requested_with_blockers_shows_blocked_live():
 
     mini_gui.MiniPickfairGUI._refresh_live_control_plane_status(app, {})
 
+    assert app.live_effective_status_var.get() == "LIVE_REQUESTED_BLOCKED"
     assert app.live_control_state_var.get() == "LIVE requested but blocked"
     assert app.live_readiness_level_var.get() == "NOT_READY"
+    assert app.live_last_decision_var.get() == "Last decision: NO-GO"
+    assert app.live_last_reason_var.get() == "Last reason: RUNTIME_NOT_INITIALIZED"
+
+
+@pytest.mark.integration
+def test_simulation_mode_stays_safe_with_na_decision():
+    import mini_gui
+
+    app = _make_app(
+        {"level": "DEGRADED", "ready": False, "blockers": ["SIMULATION_MODE"]},
+        execution_mode="SIMULATION",
+        live_enabled=False,
+    )
+
+    mini_gui.MiniPickfairGUI._refresh_live_control_plane_status(app, {})
+
+    assert app.live_effective_status_var.get() == "SAFE_MODE"
+    assert app.live_last_decision_var.get() == "Last decision: N/A"
+    assert app.live_last_reason_var.get() == "Last reason: SIMULATION_MODE"
