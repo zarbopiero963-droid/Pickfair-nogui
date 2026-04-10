@@ -916,10 +916,23 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
     # RUNTIME COMMANDS
     # =========================================================
     def _runtime_start(self):
+        execution_mode = "SIMULATION" if self.simulation_mode else "LIVE"
+        live_enabled = execution_mode == "LIVE"
+        live_readiness_ok = False
+
+        if hasattr(self.settings_service, "load_live_readiness_ok"):
+            try:
+                live_readiness_ok = bool(self.settings_service.load_live_readiness_ok())
+            except Exception:
+                live_readiness_ok = False
+
         try:
             result = self.runtime.start(
                 password=self.bf_password_var.get() or None,
                 simulation_mode=self.simulation_mode,
+                execution_mode=execution_mode,
+                live_enabled=live_enabled,
+                live_readiness_ok=live_readiness_ok,
             )
             self._log(f"START -> {result}")
         except Exception as exc:
