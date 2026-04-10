@@ -122,6 +122,53 @@ class RuntimeProbe:
             "diagnostics_export": diagnostics_export,
         }
 
+
+    def get_live_readiness_report(self) -> Dict[str, Any]:
+        health = self.collect_health()
+
+        blockers = []
+        degraded = []
+        unknown = []
+
+        for name, component in health.items():
+            status = str(component.get("status", "UNKNOWN"))
+            reason = component.get("reason")
+            if status in ("NOT_READY", "UNKNOWN"):
+                blockers.append({"name": name, "status": status, "reason": reason})
+            elif status == "DEGRADED":
+                degraded.append({"name": name, "status": status, "reason": reason})
+
+            if status == "UNKNOWN":
+                unknown.append(name)
+
+        if blockers:
+            level = "NOT_READY"
+        elif degraded:
+            level = "DEGRADED"
+        else:
+            level = "READY"
+
+        ready = level == "READY"
+
+        if ready and unknown:
+            ready = False
+            level = "NOT_READY"
+            blockers.extend(
+                {"name": name, "status": "UNKNOWN", "reason": "coherence_broken_unknown_promoted"}
+                for name in unknown
+            )
+
+        return {
+            "ready": ready,
+            "level": level,
+            "blockers": blockers,
+            "details": {
+                "degraded": degraded,
+                "components": health,
+                "unknown_components": unknown,
+            },
+        }
+
     def _probe_ready_component(self, obj: Any, name: str) -> Dict[str, Any]:
         if obj is None:
             return {"name": name, "status": "NOT_READY", "reason": "missing", "details": {}}
