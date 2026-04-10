@@ -134,10 +134,29 @@ class RuntimeProbe:
             status = component.get("status", "UNKNOWN")
             reason = component.get("reason")
             normalized = str(status).upper() if status is not None else "UNKNOWN"
+            blocker_code = self._blocker_code_for_component(
+                component_name=name,
+                status=normalized,
+                reason=reason,
+            )
             if normalized in ("NOT_READY", "UNKNOWN"):
-                blockers.append({"name": name, "status": normalized, "reason": reason})
+                blockers.append(
+                    {
+                        "name": name,
+                        "status": normalized,
+                        "reason": reason,
+                        "code": blocker_code,
+                    }
+                )
             elif normalized == "DEGRADED":
-                degraded.append({"name": name, "status": normalized, "reason": reason})
+                degraded.append(
+                    {
+                        "name": name,
+                        "status": normalized,
+                        "reason": reason,
+                        "code": blocker_code,
+                    }
+                )
             elif normalized == "READY":
                 pass
             else:
@@ -146,6 +165,7 @@ class RuntimeProbe:
                         "name": name,
                         "status": normalized,
                         "reason": f"UNRECOGNIZED_STATE::{normalized}",
+                        "code": "READINESS_SIGNAL_UNKNOWN",
                     }
                 )
 
@@ -165,7 +185,12 @@ class RuntimeProbe:
             ready = False
             level = "NOT_READY"
             blockers.extend(
-                {"name": name, "status": "UNKNOWN", "reason": "coherence_broken_unknown_promoted"}
+                {
+                    "name": name,
+                    "status": "UNKNOWN",
+                    "reason": "coherence_broken_unknown_promoted",
+                    "code": "READINESS_SIGNAL_UNKNOWN",
+                }
                 for name in unknown
             )
 
@@ -179,6 +204,40 @@ class RuntimeProbe:
                 "unknown_components": unknown,
             },
         }
+
+    def _blocker_code_for_component(self, *, component_name: str, status: str, reason: Any) -> str:
+        normalized_reason = str(reason or "").strip().lower()
+        normalized_status = str(status or "UNKNOWN").strip().upper()
+
+        if normalized_status not in {"READY", "DEGRADED", "NOT_READY", "UNKNOWN"}:
+            return "READINESS_SIGNAL_UNKNOWN"
+        if normalized_status == "UNKNOWN":
+            return "READINESS_SIGNAL_UNKNOWN"
+
+        if component_name == "safe_mode":
+            if normalized_reason == "active":
+                return "SAFE_MODE_BLOCKING"
+            if normalized_reason == "missing":
+                return "LIVE_DEPENDENCY_MISSING"
+            if normalized_status == "DEGRADED":
+                return "SAFE_MODE_BLOCKING"
+            return "READINESS_SIGNAL_UNKNOWN"
+
+        if component_name == "runtime_controller":
+            if normalized_reason == "missing":
+                return "RUNTIME_NOT_INITIALIZED"
+            if normalized_reason == "unhealthy":
+                return "RUNTIME_HALF_STARTED"
+            return "READINESS_SIGNAL_UNKNOWN"
+
+        if component_name in {"betfair_service", "database", "trading_engine", "shutdown_manager"}:
+            if normalized_reason == "missing":
+                return "LIVE_DEPENDENCY_MISSING"
+            if normalized_status == "DEGRADED":
+                return "LIVE_DEPENDENCY_MISSING"
+            return "READINESS_SIGNAL_UNKNOWN"
+
+        return "READINESS_SIGNAL_UNKNOWN"
 
     def _probe_ready_component(self, obj: Any, name: str) -> Dict[str, Any]:
         if obj is None:
