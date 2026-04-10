@@ -4,88 +4,44 @@ on:
   push:
     paths:
       - "core/trading_engine.py"
-      - "tests/invariant/test_trading_engine_audit_trail.py"
-      - "tests/invariant/test_trading_engine_no_state_loss_on_partial_fail.py"
-      - "tests/failure/test_trading_engine_ambiguous_timeout_forward.py"
-      - "tests/integration/test_trading_engine_reconcile_hook.py"
-      - "tests/chaos/test_trading_engine_concurrency_race.py"
-      - "tests/invariant/test_trading_engine_dedup_window_eviction.py"
-      - "tests/recovery/test_trading_engine_recovery_idempotency.py"
-      - "tests/chaos/test_trading_engine_chaos_kill_mid_submit.py"
-      - "tests/invariant/test_trading_engine_state_machine_fuzzer.py"
-      - "tests/failure/test_trading_engine_atomic_submit_passthrough.py"
-      - "tests/invariant/test_trading_engine_finalize_invariants.py"
-      - "tests/failure/test_trading_engine_split_brain_transition_failure.py"
-      - "tests/property/test_trading_engine_finalize_properties.py"
-      - "tests/property/test_trading_engine_dedup_properties.py"
-      - "tests/mutation/test_trading_engine_mutation_killers.py"
-      - "tests/integration/test_trading_engine_inflight_registration.py"
-      - "tests/invariant/test_trading_engine_ambiguous_inflight_lock.py"
-      - "tests/integration/test_trading_engine_system_topics_are_noop.py"
+      - "guardrails/specs/core.trading_engine.json"
+      - "guardrails/contracts/core.trading_engine.json"
+      - "guardrails/state_models/core.trading_engine.json"
+      - "guardrails/mutations/core.trading_engine.json"
+      - "tests/integration/test_trading_engine*"
       - ".github/workflows/trading-engine.yml"
-
   pull_request:
     paths:
       - "core/trading_engine.py"
-      - "tests/invariant/test_trading_engine_audit_trail.py"
-      - "tests/invariant/test_trading_engine_no_state_loss_on_partial_fail.py"
-      - "tests/failure/test_trading_engine_ambiguous_timeout_forward.py"
-      - "tests/integration/test_trading_engine_reconcile_hook.py"
-      - "tests/chaos/test_trading_engine_concurrency_race.py"
-      - "tests/invariant/test_trading_engine_dedup_window_eviction.py"
-      - "tests/recovery/test_trading_engine_recovery_idempotency.py"
-      - "tests/chaos/test_trading_engine_chaos_kill_mid_submit.py"
-      - "tests/invariant/test_trading_engine_state_machine_fuzzer.py"
-      - "tests/failure/test_trading_engine_atomic_submit_passthrough.py"
-      - "tests/invariant/test_trading_engine_finalize_invariants.py"
-      - "tests/failure/test_trading_engine_split_brain_transition_failure.py"
-      - "tests/property/test_trading_engine_finalize_properties.py"
-      - "tests/property/test_trading_engine_dedup_properties.py"
-      - "tests/mutation/test_trading_engine_mutation_killers.py"
-      - "tests/integration/test_trading_engine_inflight_registration.py"
-      - "tests/invariant/test_trading_engine_ambiguous_inflight_lock.py"
-      - "tests/integration/test_trading_engine_system_topics_are_noop.py"
-      - ".github/workflows/trading-engine.yml"
-
-  workflow_dispatch:
+      - "guardrails/specs/core.trading_engine.json"
+      - "guardrails/contracts/core.trading_engine.json"
+      - "guardrails/state_models/core.trading_engine.json"
+      - "guardrails/mutations/core.trading_engine.json"
+      - "tests/integration/test_trading_engine*"
 
 jobs:
-  trading-engine:
+  check:
     runs-on: ubuntu-latest
-
+    outputs:
+      exists: ${{ steps.chk.outputs.exists }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install deps
+      - uses: actions/checkout@v4
+      - id: chk
         run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install pytest
+          if [ -f "core/trading_engine.py" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Run trading engine suite
-        run: |
-          pytest -q \
-            tests/invariant/test_trading_engine_audit_trail.py \
-            tests/invariant/test_trading_engine_no_state_loss_on_partial_fail.py \
-            tests/failure/test_trading_engine_ambiguous_timeout_forward.py \
-            tests/integration/test_trading_engine_reconcile_hook.py \
-            tests/chaos/test_trading_engine_concurrency_race.py \
-            tests/invariant/test_trading_engine_dedup_window_eviction.py \
-            tests/recovery/test_trading_engine_recovery_idempotency.py \
-            tests/chaos/test_trading_engine_chaos_kill_mid_submit.py \
-            tests/invariant/test_trading_engine_state_machine_fuzzer.py \
-            tests/failure/test_trading_engine_atomic_submit_passthrough.py \
-            tests/invariant/test_trading_engine_finalize_invariants.py \
-            tests/failure/test_trading_engine_split_brain_transition_failure.py \
-            tests/property/test_trading_engine_finalize_properties.py \
-            tests/property/test_trading_engine_dedup_properties.py \
-            tests/mutation/test_trading_engine_mutation_killers.py \
-            tests/integration/test_trading_engine_inflight_registration.py \
-            tests/invariant/test_trading_engine_ambiguous_inflight_lock.py \
-            tests/integration/test_trading_engine_system_topics_are_noop.py
+  run:
+    needs: check
+    if: needs.check.outputs.exists == 'true'
+    uses: ./.github/workflows/_module-ultra-check.yml
+    with:
+      module_path: "core/trading_engine.py"
+      spec_path: "guardrails/specs/core.trading_engine.json"
+      contract_path: "guardrails/contracts/core.trading_engine.json"
+      state_model_path: "guardrails/state_models/core.trading_engine.json"
+      mutation_path: "guardrails/mutations/core.trading_engine.json"
+      test_paths: "tests/integration/test_trading_engine*"
