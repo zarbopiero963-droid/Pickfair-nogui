@@ -221,12 +221,15 @@ class RuntimeController:
         else:
             try:
                 if hasattr(self.settings_service, "load_live_enabled"):
-                    requested_live_enabled = bool(self.settings_service.load_live_enabled())
+                    requested_live_enabled = self._safe_bool(
+                        self.settings_service.load_live_enabled(),
+                        default=False,
+                    )
                 else:
                     data = self.settings_service.get_all_settings()
                     requested_live_enabled = (
                         str(data.get("execution_mode", "SIMULATION")).strip().upper() == "LIVE"
-                        or bool(data.get("live_enabled", False))
+                        or self._safe_bool(data.get("live_enabled"), default=False)
                     )
             except Exception:
                 requested_live_enabled = False
