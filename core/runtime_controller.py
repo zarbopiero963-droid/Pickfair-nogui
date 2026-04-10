@@ -215,10 +215,19 @@ class RuntimeController:
         if execution_mode is None and simulation_mode is not None:
             requested_execution_mode = "SIMULATION" if bool(simulation_mode) else "LIVE"
 
-        requested_live_enabled = self._safe_bool(live_enabled, default=False)
-        if live_enabled is None and hasattr(self.settings_service, "load_live_enabled"):
+        requested_live_enabled = False
+        if live_enabled is not None:
+            requested_live_enabled = self._safe_bool(live_enabled, default=False)
+        else:
             try:
-                requested_live_enabled = self._safe_bool(self.settings_service.load_live_enabled(), default=False)
+                if hasattr(self.settings_service, "load_live_enabled"):
+                    requested_live_enabled = bool(self.settings_service.load_live_enabled())
+                else:
+                    data = self.settings_service.get_all_settings()
+                    requested_live_enabled = (
+                        str(data.get("execution_mode", "SIMULATION")).strip().upper() == "LIVE"
+                        or bool(data.get("live_enabled", False))
+                    )
             except Exception:
                 requested_live_enabled = False
 
@@ -248,10 +257,12 @@ class RuntimeController:
                 },
             )
             return {
+                "ok": False,
                 "started": False,
                 "refused": True,
+                "reason": "live_not_enabled",
                 "reason_code": gate.reason_code,
-                "reason": gate.refusal_message,
+                "refusal_message": gate.refusal_message,
                 "requested_execution_mode": requested_execution_mode,
                 "effective_execution_mode": gate.effective_execution_mode,
                 "status": status,
