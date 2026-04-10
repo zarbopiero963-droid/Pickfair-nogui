@@ -1,0 +1,16 @@
+{
+  "module": "session_manager",
+  "required_functions": [
+    "login",
+    "keep_alive",
+    "relogin",
+    "get_session_token"
+  ],
+  "must_support": [
+    "auto_keepalive",
+    "auto_relogin",
+    "session_expiry_detection"
+  ],
+  "keepalive_interval_seconds": [600, 900],
+  "must_not_block_requests": true
+}

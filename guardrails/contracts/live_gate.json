@@ -1,0 +1,14 @@
+{
+  "return_keys": [
+    "allowed",
+    "reason",
+    "timestamp"
+  ],
+  "deny_reasons": [
+    "LIVE_DISABLED",
+    "INVARIANT_VIOLATION",
+    "ANOMALY_ACTIVE",
+    "SESSION_NOT_READY",
+    "RATE_LIMIT_EXCEEDED"
+  ]
+}

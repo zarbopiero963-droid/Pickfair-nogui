@@ -111,6 +111,18 @@ class TelegramAlertsService:
             logger.exception("TelegramAlertsService.notify_alert failed")
             return {**availability, "delivered": False, "reason": "send_failed", "error": str(exc)}
 
+    def notify_anomaly_alert(self, anomaly: Dict[str, Any]) -> Dict[str, Any]:
+        payload = {
+            "code": anomaly.get("code", "UNKNOWN_ANOMALY"),
+            "severity": anomaly.get("severity", "warning"),
+            "source": anomaly.get("source", "watchdog_service"),
+            "description": anomaly.get("description") or anomaly.get("message") or anomaly.get("code", "anomaly"),
+            "details": anomaly.get("details") or {},
+            "type": "anomaly",
+            "title": anomaly.get("title") or anomaly.get("code") or "Anomaly detected",
+            "message": anomaly.get("message") or anomaly.get("description") or anomaly.get("code") or "Anomaly detected",
+        }
+        return self.notify_alert(payload)
     def _maybe_aggregate(self, *, alert: Dict[str, Any], settings: Dict[str, Any], now: float) -> Dict[str, Any]:
         enabled = bool(settings.get("alert_aggregation_enabled", True))
         if not enabled:
@@ -229,6 +241,7 @@ class TelegramAlertsService:
         source = str(alert.get("source", "system") or "system")
         description = alert.get("description")
         details = alert.get("details") or alert.get("payload") or {}
+        alert_type = str(alert.get("type", "") or "").lower()
 
         chat_name = str(settings.get("alerts_chat_name", "") or "").strip()
 
@@ -261,6 +274,9 @@ class TelegramAlertsService:
         if description:
             lines.append(f"• Description: {description}")
 
+        if alert_type == "anomaly":
+            lines.append("• Category: ANOMALY")
+
         if details:
             if bool(settings.get("alert_format_rich", True)):
                 rendered = ", ".join(f"{k}={v}" for k, v in sorted(dict(details).items()))
@@ -274,7 +290,8 @@ class TelegramAlertsService:
         code = str(alert.get("code", "UNKNOWN_ALERT") or "UNKNOWN_ALERT")
         severity = str(alert.get("severity", "WARNING") or "WARNING").upper()
         message = str(alert.get("message") or alert.get("title") or code)
-        return f"{code}|{severity}|{message}"
+        source = str(alert.get("source", "system") or "system")
+        return f"{source}|{code}|{severity}|{message}"
 
     def _send_message(self, *, chat_id: Any, text: str) -> None:
         """

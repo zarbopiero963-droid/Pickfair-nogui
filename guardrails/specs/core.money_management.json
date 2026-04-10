@@ -1,0 +1,18 @@
+{
+  "module": "core.money_management",
+  "required_functions": [
+    "calculate_stake",
+    "update_bankroll",
+    "apply_cycle_logic",
+    "get_current_exposure"
+  ],
+  "must_use_bankroll": true,
+  "must_enforce_limits": [
+    "max_stake_percentage",
+    "max_exposure"
+  ],
+  "must_support_modes": [
+    "SIMULATION",
+    "LIVE"
+  ]
+}

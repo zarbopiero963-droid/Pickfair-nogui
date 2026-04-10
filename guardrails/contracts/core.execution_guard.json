@@ -1,0 +1,13 @@
+{
+  "return_keys": [
+    "allowed",
+    "reason",
+    "timestamp"
+  ],
+  "allowed_values": [true, false],
+  "deny_reasons": [
+    "DUPLICATE_DETECTED",
+    "MISSING_KEY",
+    "INVALID_CONTEXT"
+  ]
+}

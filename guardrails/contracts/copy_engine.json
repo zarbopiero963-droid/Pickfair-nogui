@@ -1,0 +1,15 @@
+{
+  "return_keys": [
+    "status",
+    "copied",
+    "action_id",
+    "copy_position_id",
+    "timestamp"
+  ],
+  "status_values": [
+    "EXECUTED",
+    "SKIPPED",
+    "DUPLICATE",
+    "FAILED"
+  ]
+}

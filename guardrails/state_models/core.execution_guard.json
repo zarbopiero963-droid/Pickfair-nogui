@@ -1,0 +1,12 @@
+{
+  "rules": [
+    "duplicate_request_must_be_blocked",
+    "missing_dedup_key_must_be_denied",
+    "execution_must_be_registered_once"
+  ],
+  "forbidden": [
+    "duplicate_execution_allowed",
+    "missing_key_allowed",
+    "non_registered_execution"
+  ]
+}

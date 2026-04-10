@@ -34,14 +34,23 @@ class PnLEngine:
         event_key = str(payload.get("event_key") or "")
         if not event_key:
             return
+        matched_price = payload.get("avg_price_matched")
+        if matched_price is None:
+            matched_price = payload.get("matched_price")
+        if matched_price is None:
+            matched_price = payload.get("price")
+
+        matched_size = payload.get("matched_size")
+        if matched_size is None:
+            matched_size = payload.get("stake")
 
         self._positions[event_key] = {
             "event_key": event_key,
             "market_id": payload.get("market_id"),
             "selection_id": payload.get("selection_id"),
             "side": str(payload.get("bet_type", "BACK")),
-            "price": float(payload.get("price") or 0.0),
-            "stake": float(payload.get("stake") or 0.0),
+            "price": float(matched_price or 0.0),
+            "stake": float(matched_size or 0.0),
             "table_id": payload.get("table_id"),
             "batch_id": payload.get("batch_id"),
         }

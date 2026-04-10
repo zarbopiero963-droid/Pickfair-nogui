@@ -1,0 +1,16 @@
+{
+  "module": "core.execution_guard",
+  "required_functions": [
+    "check_duplicate",
+    "register_execution",
+    "enforce_exactly_once"
+  ],
+  "must_enforce_exactly_once": true,
+  "must_use_db_backed_dedup": true,
+  "dedup_keys": [
+    "customer_ref",
+    "correlation_id",
+    "action_id"
+  ],
+  "must_fail_on_duplicate": true
+}

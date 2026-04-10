@@ -1,0 +1,42 @@
+{
+  "module": "live_gate",
+  "description": "Hardcore mutations for safe live activation and kill gate enforcement.",
+  "mutations": [
+    {
+      "id": "force_live_enabled",
+      "type": "value_forcing",
+      "target": "is_live_enabled",
+      "field": "allowed",
+      "forced_value": true,
+      "expected_failure": "tests"
+    },
+    {
+      "id": "bypass_all_checks",
+      "type": "branch_bypass",
+      "target": "validate_live_conditions",
+      "branch": "all_safety_checks",
+      "expected_failure": "state_model"
+    },
+    {
+      "id": "ignore_anomalies",
+      "type": "branch_bypass",
+      "target": "validate_live_conditions",
+      "branch": "active_anomaly_block",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "ignore_session_status",
+      "type": "branch_bypass",
+      "target": "validate_live_conditions",
+      "branch": "session_active_required",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "ignore_rate_limit",
+      "type": "branch_bypass",
+      "target": "validate_live_conditions",
+      "branch": "rate_limit_required",
+      "expected_failure": "tests"
+    }
+  ]
+}

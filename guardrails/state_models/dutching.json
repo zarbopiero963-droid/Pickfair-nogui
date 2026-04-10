@@ -1,0 +1,13 @@
+{
+  "rules": [
+    "sum(stakes) == total_stake",
+    "profit_distribution_consistent",
+    "no_negative_stakes",
+    "book_percentage_valid"
+  ],
+  "forbidden": [
+    "negative_stake",
+    "unbalanced_book",
+    "infinite_profit_bug"
+  ]
+}

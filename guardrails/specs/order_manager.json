@@ -1,0 +1,17 @@
+{
+  "module": "order_manager",
+  "required_functions": [
+    "create_order",
+    "update_order_status",
+    "map_external_to_internal",
+    "handle_partial_fill"
+  ],
+  "required_states": [
+    "INFLIGHT",
+    "PARTIAL",
+    "SUCCESS",
+    "FAILED",
+    "AMBIGUOUS"
+  ],
+  "idempotency_required": true
+}

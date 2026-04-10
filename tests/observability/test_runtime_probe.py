@@ -1,9 +1,6 @@
 from observability.runtime_probe import RuntimeProbe
-
-
-class _SettingsStub:
-    def load_telegram_config_row(self):
-        return {"alerts_enabled": True}
+from tests.helpers.fake_runtime_state import FakeRuntimeState
+from tests.helpers.fake_settings import FakeSettingsService
 
 
 class _TelegramStub:
@@ -12,15 +9,11 @@ class _TelegramStub:
 
 
 class _AlertsSvcStub:
+    def __init__(self, fake_state: FakeRuntimeState):
+        self._state = fake_state
+
     def availability_status(self):
-        return {
-            "alerts_enabled": True,
-            "sender_available": False,
-            "deliverable": False,
-            "reason": "sender_unavailable",
-            "last_delivery_ok": False,
-            "last_delivery_error": "sender_unavailable",
-        }
+        return self._state.alert_pipeline_snapshot()
 
 
 class _SafeModeStub:
@@ -42,20 +35,27 @@ class _TradingEngineReadyNoHealth:
         return {"state": "READY", "health": {}}
 
 
+class _SettingsStub:
+    def __init__(self, fake_state: FakeRuntimeState):
+        self._state = fake_state
+
+    def load_telegram_config_row(self):
+        return {"alerts_enabled": self._state.alerts_enabled}
+
+
 def test_runtime_probe_alert_pipeline_state_uses_wired_services():
+    fake_state = FakeRuntimeState.degraded(reason="sender_unavailable")
     probe = RuntimeProbe(
         db=_DbStub(),
-        settings_service=_SettingsStub(),
+        settings_service=_SettingsStub(fake_state),
         telegram_service=_TelegramStub(),
-        telegram_alerts_service=_AlertsSvcStub(),
+        telegram_alerts_service=_AlertsSvcStub(fake_state),
         safe_mode=_SafeModeStub(),
     )
 
     state = probe.collect_runtime_state()
 
-    assert state["alert_pipeline"]["alerts_enabled"] is True
-    assert state["alert_pipeline"]["sender_available"] is False
-    assert state["alert_pipeline"]["deliverable"] is False
+    assert state["alert_pipeline"] == fake_state.alert_pipeline_snapshot()
     assert state["safe_mode_enabled"] is True
 
 
@@ -79,3 +79,36 @@ def test_collect_health_reports_unknown_for_ready_state_without_health_payload()
     assert engine_health["status"] == "UNKNOWN"
     assert engine_health["reason"] == "ready_without_health"
     assert engine_health["details"]["fallback_status"] == "READY"
+
+
+def test_runtime_probe_alert_pipeline_safe_on_missing_fake_settings_keys():
+    probe = RuntimeProbe(
+        db=_DbStub(),
+        settings_service=FakeSettingsService(),
+        telegram_service=_TelegramStub(),
+    )
+
+    state = probe.collect_runtime_state()
+
+    assert state["alert_pipeline"]["alerts_enabled"] is False
+    assert state["alert_pipeline"]["status"] == "DISABLED"
+
+
+def test_fake_settings_snapshot_reload_round_trip():
+    settings = FakeSettingsService({"anomaly_alerts_enabled": "yes"})
+    settings.set("region", "eu-west")
+
+    reloaded = FakeSettingsService.from_snapshot(settings.snapshot())
+
+    assert reloaded.get_bool("anomaly_alerts_enabled") is True
+    assert reloaded.get("region") == "eu-west"
+
+
+def test_fake_runtime_state_builder_variants_are_deterministic():
+    ready = FakeRuntimeState.ready()
+    unknown = FakeRuntimeState.unknown(reason="no_data")
+
+    assert ready.to_snapshot()["runtime_state_label"] == "READY"
+    assert ready.alert_pipeline_snapshot()["status"] == "READY"
+    assert unknown.to_snapshot()["runtime_state_label"] == "UNKNOWN"
+    assert unknown.alert_pipeline_snapshot()["status"] == "DISABLED"

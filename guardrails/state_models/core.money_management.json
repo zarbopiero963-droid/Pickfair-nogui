@@ -1,0 +1,14 @@
+{
+  "rules": [
+    "bankroll >= 0",
+    "stake <= bankroll",
+    "exposure <= max_allowed",
+    "cycle_profit_target_respected"
+  ],
+  "forbidden": [
+    "negative_bankroll",
+    "stake_exceeds_balance",
+    "infinite_growth",
+    "unbounded_exposure"
+  ]
+}

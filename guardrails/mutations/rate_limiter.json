@@ -1,0 +1,43 @@
+{
+  "module": "rate_limiter",
+  "description": "Hardcore mutations for anti-ban throttling and burst control.",
+  "mutations": [
+    {
+      "id": "disable_throttling",
+      "type": "branch_bypass",
+      "target": "throttle_request",
+      "branch": "rate_limit_check",
+      "expected_failure": "state_model"
+    },
+    {
+      "id": "allow_unlimited_requests",
+      "type": "value_forcing",
+      "target": "acquire_token",
+      "field": "allowed",
+      "forced_value": true,
+      "expected_failure": "tests"
+    },
+    {
+      "id": "skip_wait_time",
+      "type": "value_forcing",
+      "target": "throttle_request",
+      "field": "wait_time",
+      "forced_value": 0,
+      "expected_failure": "contract"
+    },
+    {
+      "id": "ignore_burst_limit",
+      "type": "branch_bypass",
+      "target": "acquire_token",
+      "branch": "burst_size_check",
+      "expected_failure": "tests"
+    },
+    {
+      "id": "always_allow",
+      "type": "logic_replace",
+      "target": "throttle_request",
+      "mode": "always_allow",
+      "expected_failure": "tests"
+    }
+  ]
+}
