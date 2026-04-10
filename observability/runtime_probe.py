@@ -131,14 +131,25 @@ class RuntimeProbe:
         unknown = []
 
         for name, component in health.items():
-            status = str(component.get("status", "UNKNOWN"))
+            status = component.get("status")
+            normalized = str(status).upper() if status is not None else "UNKNOWN"
             reason = component.get("reason")
-            if status in ("NOT_READY", "UNKNOWN"):
-                blockers.append({"name": name, "status": status, "reason": reason})
-            elif status == "DEGRADED":
-                degraded.append({"name": name, "status": status, "reason": reason})
+            if normalized in ("NOT_READY", "UNKNOWN"):
+                blockers.append({"name": name, "status": normalized, "reason": reason})
+            elif normalized == "DEGRADED":
+                degraded.append({"name": name, "status": normalized, "reason": reason})
+            elif normalized == "READY":
+                pass
+            else:
+                blockers.append(
+                    {
+                        "name": name,
+                        "status": normalized,
+                        "reason": f"UNRECOGNIZED_STATE::{normalized}",
+                    }
+                )
 
-            if status == "UNKNOWN":
+            if normalized == "UNKNOWN":
                 unknown.append(name)
 
         if blockers:

@@ -112,3 +112,74 @@ def test_fake_runtime_state_builder_variants_are_deterministic():
     assert ready.alert_pipeline_snapshot()["status"] == "READY"
     assert unknown.to_snapshot()["runtime_state_label"] == "UNKNOWN"
     assert unknown.alert_pipeline_snapshot()["status"] == "DISABLED"
+
+
+def test_live_readiness_unknown_arbitrary_state_is_fail_closed():
+    probe = RuntimeProbe()
+    probe.collect_health = lambda: {"runtime_controller": {"status": "BROKEN", "reason": "bad_state"}}  # type: ignore[method-assign]
+
+    report = probe.get_live_readiness_report()
+
+    assert report["level"] == "NOT_READY"
+    assert report["blockers"] == [
+        {
+            "name": "runtime_controller",
+            "status": "BROKEN",
+            "reason": "UNRECOGNIZED_STATE::BROKEN",
+        }
+    ]
+
+
+def test_live_readiness_starting_state_is_fail_closed():
+    probe = RuntimeProbe()
+    probe.collect_health = lambda: {"runtime_controller": {"status": "STARTING", "reason": None}}  # type: ignore[method-assign]
+
+    report = probe.get_live_readiness_report()
+
+    assert report["level"] == "NOT_READY"
+    assert report["blockers"][0]["name"] == "runtime_controller"
+    assert report["blockers"][0]["status"] == "STARTING"
+    assert report["blockers"][0]["reason"] == "UNRECOGNIZED_STATE::STARTING"
+
+
+def test_live_readiness_explicit_ready_passes_without_blockers():
+    probe = RuntimeProbe()
+    probe.collect_health = lambda: {"runtime_controller": {"status": "READY", "reason": None}}  # type: ignore[method-assign]
+
+    report = probe.get_live_readiness_report()
+
+    assert report["level"] == "READY"
+    assert report["blockers"] == []
+
+
+def test_live_readiness_degraded_remains_degraded_not_blocker():
+    probe = RuntimeProbe()
+    probe.collect_health = lambda: {"runtime_controller": {"status": "DEGRADED", "reason": "partial"}}  # type: ignore[method-assign]
+
+    report = probe.get_live_readiness_report()
+
+    assert report["level"] == "DEGRADED"
+    assert report["blockers"] == []
+    assert report["details"]["degraded"] == [
+        {
+            "name": "runtime_controller",
+            "status": "DEGRADED",
+            "reason": "partial",
+        }
+    ]
+
+
+def test_live_readiness_none_status_is_treated_as_unknown_blocker():
+    probe = RuntimeProbe()
+    probe.collect_health = lambda: {"runtime_controller": {"status": None, "reason": "missing_state"}}  # type: ignore[method-assign]
+
+    report = probe.get_live_readiness_report()
+
+    assert report["level"] == "NOT_READY"
+    assert report["blockers"] == [
+        {
+            "name": "runtime_controller",
+            "status": "UNKNOWN",
+            "reason": "missing_state",
+        }
+    ]
