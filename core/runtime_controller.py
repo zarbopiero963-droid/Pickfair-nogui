@@ -12,6 +12,7 @@ from core.reconciliation_engine import ReconciliationEngine
 from core.risk_desk import RiskDesk
 from core.system_state import DeskMode, RuntimeMode
 from core.table_manager import TableManager
+from core.safety_layer import assert_live_gate_or_refuse
 from order_manager import TERMINAL_LIFECYCLE_EVENTS
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ class RuntimeController:
         telegram_service,
         trading_engine=None,
         executor=None,
+        safe_mode=None,
     ):
         self.bus = bus
         self.db = db
@@ -51,6 +53,7 @@ class RuntimeController:
         self.telegram_service = telegram_service
         self.trading_engine = trading_engine
         self.executor = executor
+        self.safe_mode = safe_mode
 
         self.config = self.settings_service.load_roserpina_config()
         self.table_manager = TableManager(table_count=self.config.table_count)
@@ -70,6 +73,10 @@ class RuntimeController:
         self.last_error = ""
         self.last_signal_at = ""
         self.simulation_mode = False
+        self.execution_mode = "SIMULATION"
+        self.live_enabled = False
+        self.live_readiness_ok = False
+        self.last_execution_gate_reason = "startup_default"
 
         self._subscribe_bus()
 
@@ -108,6 +115,64 @@ class RuntimeController:
         if hasattr(self.betfair_service, "set_simulation_mode"):
             self.betfair_service.set_simulation_mode(self.simulation_mode)
 
+    def _safe_bool(self, value, default: bool = False) -> bool:
+        if value is None:
+            return bool(default)
+        if isinstance(value, bool):
+            return value
+        txt = str(value).strip().lower()
+        if txt in {"1", "true", "yes", "on"}:
+            return True
+        if txt in {"0", "false", "no", "off"}:
+            return False
+        return bool(default)
+
+    def _safe_execution_mode(self, value) -> str:
+        normalized = str(value or "").strip().upper()
+        if normalized in {"SIMULATION", "LIVE"}:
+            return normalized
+        return "SIMULATION"
+
+    def _is_kill_switch_active(self) -> bool:
+        safe_mode = self.safe_mode
+        if safe_mode is None:
+            return False
+
+        getter = getattr(safe_mode, "is_enabled", None)
+        if callable(getter):
+            try:
+                return bool(getter())
+            except Exception:
+                return True
+
+        attr_enabled = getattr(safe_mode, "enabled", None)
+        if attr_enabled is not None:
+            try:
+                return bool(attr_enabled)
+            except Exception:
+                return True
+
+        attr_active = getattr(safe_mode, "is_safe_mode_active", None)
+        if attr_active is not None:
+            try:
+                return bool(attr_active)
+            except Exception:
+                return True
+
+        return False
+
+    def _derive_live_readiness_ok(self, explicit_readiness=None) -> bool:
+        if explicit_readiness is not None:
+            return self._safe_bool(explicit_readiness, default=False)
+
+        if hasattr(self.settings_service, "load_live_readiness_ok"):
+            try:
+                return self._safe_bool(self.settings_service.load_live_readiness_ok(), default=False)
+            except Exception:
+                return False
+
+        return False
+
     def reload_config(self) -> None:
         self.config = self.settings_service.load_roserpina_config()
         self.mm = RoserpinaMoneyManagement(self.config)
@@ -140,14 +205,71 @@ class RuntimeController:
         self,
         password: Optional[str] = None,
         simulation_mode: Optional[bool] = None,
+        execution_mode: Optional[str] = None,
+        live_enabled: Optional[bool] = None,
+        live_readiness_ok: Optional[bool] = None,
     ) -> dict:
         self.reload_config()
 
-        # sincronizzazione da headless_main / mini_gui
-        if simulation_mode is not None:
-            self.set_simulation_mode(simulation_mode)
+        requested_execution_mode = self._safe_execution_mode(execution_mode)
+        if execution_mode is None and simulation_mode is not None:
+            requested_execution_mode = "SIMULATION" if bool(simulation_mode) else "LIVE"
+
+        requested_live_enabled = False
+        if live_enabled is not None:
+            requested_live_enabled = self._safe_bool(live_enabled, default=False)
         else:
-            self.set_simulation_mode(self.simulation_mode)
+            try:
+                if hasattr(self.settings_service, "load_live_enabled"):
+                    requested_live_enabled = bool(self.settings_service.load_live_enabled())
+                else:
+                    data = self.settings_service.get_all_settings()
+                    requested_live_enabled = (
+                        str(data.get("execution_mode", "SIMULATION")).strip().upper() == "LIVE"
+                        or bool(data.get("live_enabled", False))
+                    )
+            except Exception:
+                requested_live_enabled = False
+
+        requested_readiness = self._derive_live_readiness_ok(live_readiness_ok)
+
+        gate = assert_live_gate_or_refuse(
+            execution_mode=requested_execution_mode,
+            live_enabled=requested_live_enabled,
+            live_readiness_ok=requested_readiness,
+            kill_switch=self._is_kill_switch_active(),
+        )
+
+        self.execution_mode = gate.effective_execution_mode
+        self.live_enabled = requested_live_enabled
+        self.live_readiness_ok = requested_readiness
+        self.last_execution_gate_reason = gate.reason_code
+
+        if requested_execution_mode == "LIVE" and not gate.allowed:
+            status = self.get_status()
+            self.bus.publish(
+                "LIVE_EXECUTION_REFUSED",
+                {
+                    "reason_code": gate.reason_code,
+                    "message": gate.refusal_message,
+                    "requested_execution_mode": requested_execution_mode,
+                    "effective_execution_mode": gate.effective_execution_mode,
+                },
+            )
+            return {
+                "ok": False,
+                "started": False,
+                "refused": True,
+                "reason": "live_not_enabled",
+                "reason_code": gate.reason_code,
+                "refusal_message": gate.refusal_message,
+                "requested_execution_mode": requested_execution_mode,
+                "effective_execution_mode": gate.effective_execution_mode,
+                "status": status,
+            }
+
+        # sincronizzazione da headless_main / mini_gui
+        self.set_simulation_mode(self.execution_mode != "LIVE")
 
         # reset anti-duplicazione a ogni start
         self.duplication_guard = DuplicationGuard()
@@ -471,6 +593,11 @@ class RuntimeController:
         data["tables"] = self.table_manager.snapshot()
         data["duplication_guard"] = self.duplication_guard.snapshot()
         data["simulation_mode"] = bool(self.simulation_mode)
+        data["execution_mode"] = str(self.execution_mode)
+        data["live_enabled"] = bool(self.live_enabled)
+        data["live_readiness_ok"] = bool(self.live_readiness_ok)
+        data["kill_switch_active"] = bool(self._is_kill_switch_active())
+        data["execution_gate_reason"] = str(self.last_execution_gate_reason)
         data["broker_status"] = self.betfair_service.status()
         data["account_funds"] = funds
 
