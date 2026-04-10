@@ -205,6 +205,33 @@ class RuntimeProbe:
             },
         }
 
+    def get_deploy_gate_status(self) -> Dict[str, Any]:
+        try:
+            report = self.get_live_readiness_report()
+        except Exception as exc:
+            return {
+                "allowed": False,
+                "reason": "DEPLOY_BLOCKED_NOT_READY",
+                "readiness": "UNKNOWN",
+                "details": {"probe_error": str(exc)},
+            }
+
+        level = str(report.get("level") or "UNKNOWN").upper()
+        blockers = list(report.get("blockers") or [])
+        allowed = bool(report.get("ready")) and level == "READY" and not blockers
+        reason = "DEPLOY_GO_READY" if allowed else (
+            "DEPLOY_BLOCKED_BLOCKERS_PRESENT" if blockers else "DEPLOY_BLOCKED_NOT_READY"
+        )
+        return {
+            "allowed": allowed,
+            "reason": reason,
+            "readiness": level,
+            "details": {
+                "blockers": blockers,
+                "report": report,
+            },
+        }
+
     def _blocker_code_for_component(self, *, component_name: str, status: str, reason: Any) -> str:
         normalized_reason = str(reason or "").strip().lower()
         normalized_status = str(status or "UNKNOWN").strip().upper()

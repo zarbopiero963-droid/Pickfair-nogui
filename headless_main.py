@@ -662,6 +662,18 @@ class HeadlessApp:
             return 1
 
         try:
+            if execution_mode == "LIVE":
+                deploy_gate = self.runtime.enforce_deploy_gate(
+                    execution_mode=execution_mode,
+                    live_enabled=live_enabled,
+                    live_readiness_ok=live_readiness_ok,
+                )
+                if not deploy_gate.get("allowed", False):
+                    logger.warning(
+                        "[DEPLOY GATE] NO-GO: reason=%s",
+                        ",".join(deploy_gate.get("reasons") or [str(deploy_gate.get("reason") or "")]),
+                    )
+
             result = self.runtime.start(
                 password=password,
                 simulation_mode=simulation_mode,
