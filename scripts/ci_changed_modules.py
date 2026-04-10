@@ -27,6 +27,7 @@ MODULE_RULES = [
             "guardrails/state_models/order_manager.json",
             "guardrails/mutations/order_manager.json",
             "tests/integration/test_order_manager",
+            "tests/recovery/test_order_manager",
         ],
     },
     {
@@ -146,6 +147,32 @@ MODULE_RULES = [
             "tests/integration/test_live_gate.py",
         ],
     },
+    {
+        "name": "chaos-critical",
+        "paths": [
+            "tests/chaos/",
+            "tests/integration/test_betfair_timeout_and_ghost_orders.py",
+            "core/reconciliation_engine.py",
+            "core/trading_engine.py",
+            "order_manager.py",
+        ],
+    },
+    {
+        "name": "mutation-guardrails",
+        "paths": [
+            "guardrails/mutations/",
+            "scripts/run_mutation_guardrails.py",
+            "tests/",
+            "core/",
+            "order_manager.py",
+            "telegram_listener.py",
+            "copy_engine.py",
+            "simulation_broker.py",
+            "session_manager.py",
+            "rate_limiter.py",
+            "live_gate.py",
+        ],
+    },
 ]
 
 
@@ -160,30 +187,41 @@ def get_changed_files(base_ref: str) -> list[str]:
 
 def matches_rule(changed_file: str, rule_paths: list[str]) -> bool:
     for path in rule_paths:
-        if changed_file == path:
+        if path.endswith("/"):
+            if changed_file.startswith(path):
+                return True
+        elif changed_file == path:
             return True
-        if path.endswith("/") and changed_file.startswith(path):
-            return True
-        if changed_file.startswith(path):
+        elif changed_file.startswith(path):
             return True
     return False
 
 
-def main() -> int:
-    base_ref = sys.argv[1] if len(sys.argv) > 1 else "origin/main"
+def build_result(base_ref: str) -> dict:
     changed_files = get_changed_files(base_ref)
+    selected_modules: list[str] = []
 
-    selected = []
     for rule in MODULE_RULES:
         if any(matches_rule(changed, rule["paths"]) for changed in changed_files):
-            selected.append(rule["name"])
+            selected_modules.append(rule["name"])
 
     result = {
         "base_ref": base_ref,
         "changed_files": changed_files,
-        "selected_modules": selected,
+        "selected_modules": sorted(set(selected_modules)),
     }
 
+    selected_set = set(result["selected_modules"])
+    for rule in MODULE_RULES:
+        key = rule["name"].replace("-", "_")
+        result[f"run_{key}"] = rule["name"] in selected_set
+
+    return result
+
+
+def main() -> int:
+    base_ref = sys.argv[1] if len(sys.argv) > 1 else "origin/main"
+    result = build_result(base_ref)
     print(json.dumps(result, indent=2))
     return 0
 
