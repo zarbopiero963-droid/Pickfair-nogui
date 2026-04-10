@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from core.duplication_guard import DuplicationGuard
 from core.dutching_batch_manager import DutchingBatchManager
@@ -77,6 +77,7 @@ class RuntimeController:
         self.live_enabled = False
         self.live_readiness_ok = False
         self.last_execution_gate_reason = "startup_default"
+        self.enforce_probe_readiness_gate = False
 
         self._subscribe_bus()
 
@@ -172,6 +173,59 @@ class RuntimeController:
                 return False
 
         return False
+
+    def _get_probe_live_readiness_report(self) -> tuple[bool, str, dict]:
+        probe = getattr(self, "runtime_probe", None)
+        probe_required = bool(getattr(self, "enforce_probe_readiness_gate", False))
+        if probe is None:
+            if probe_required:
+                return False, "probe_unavailable", {}
+            return True, "probe_optional_unavailable", {}
+
+        getter = getattr(probe, "get_live_readiness_report", None)
+        if not callable(getter):
+            if probe_required:
+                return False, "probe_report_getter_missing", {}
+            return True, "probe_optional_getter_missing", {}
+
+        try:
+            report = getter()
+        except Exception:
+            logger.exception("Errore lettura runtime probe live readiness report")
+            return False, "probe_report_exception", {}
+
+        is_valid, reason = self._validate_probe_live_readiness_report(report)
+        if not is_valid:
+            return False, reason, (report if isinstance(report, dict) else {})
+        return True, "probe_ready", report
+
+    def _validate_probe_live_readiness_report(self, report: Any) -> tuple[bool, str]:
+        if not isinstance(report, dict):
+            return False, "probe_report_malformed"
+
+        if "ready" not in report or "level" not in report or "blockers" not in report:
+            return False, "probe_report_missing_required_fields"
+
+        ready = report.get("ready")
+        level = str(report.get("level") or "").strip().upper()
+        blockers = report.get("blockers")
+
+        if not isinstance(ready, bool):
+            return False, "probe_report_ready_not_bool"
+
+        if not isinstance(blockers, list):
+            return False, "probe_report_blockers_not_list"
+
+        if level != "READY":
+            return False, "probe_report_level_not_ready"
+
+        if blockers:
+            return False, "probe_report_has_blockers"
+
+        if not ready:
+            return False, "probe_report_ready_false"
+
+        return True, "probe_report_ready"
 
     def evaluate_live_readiness(
         self,
@@ -356,6 +410,22 @@ class RuntimeController:
             live_readiness_ok=live_readiness_ok,
         )
         requested_readiness = bool(readiness.get("ready", False))
+        probe_readiness_ok = True
+        probe_readiness_reason = "probe_not_required_for_non_live"
+        probe_readiness_report = {}
+
+        if requested_execution_mode == "LIVE":
+            probe_readiness_ok, probe_readiness_reason, probe_readiness_report = self._get_probe_live_readiness_report()
+            if not probe_readiness_ok:
+                requested_readiness = False
+
+        readiness.setdefault("details", {})
+        readiness["details"]["probe"] = {
+            "ok": probe_readiness_ok,
+            "reason": probe_readiness_reason,
+            "report": probe_readiness_report,
+        }
+        readiness["probe_ok"] = probe_readiness_ok
 
         gate = assert_live_gate_or_refuse(
             execution_mode=requested_execution_mode,

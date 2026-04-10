@@ -288,6 +288,9 @@ class HeadlessApp:
                 settings_service=self.settings_service,
                 telegram_alerts_service=self.telegram_alerts_service,
             )
+            if self.runtime is not None:
+                self.runtime.runtime_probe = self.runtime_probe
+                self.runtime.enforce_probe_readiness_gate = True
 
             self.snapshot_service = SnapshotService(
                 db=self.db,
