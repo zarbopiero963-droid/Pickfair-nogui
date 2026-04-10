@@ -129,6 +129,7 @@ from services.telegram_service import TelegramService
 
 from core.trading_engine import TradingEngine
 from core.runtime_controller import RuntimeController
+from observability import RuntimeProbe
 
 from controllers.telegram_controller import TelegramController
 
@@ -380,6 +381,17 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             trading_engine=self.trading_engine,
             executor=self.executor,
         )
+        self.runtime_probe = RuntimeProbe(
+            db=self.db,
+            trading_engine=self.trading_engine,
+            runtime_controller=self.runtime,
+            betfair_service=self.betfair_service,
+            shutdown_manager=self.shutdown,
+            telegram_service=self.telegram_service,
+            settings_service=self.settings_service,
+        )
+        self.runtime.runtime_probe = self.runtime_probe
+        self.runtime.enforce_probe_readiness_gate = True
 
         self.telegram_controller = TelegramController(self)
 
