@@ -86,6 +86,14 @@ class _KillSwitch:
         return self._enabled
 
 
+class _Probe:
+    def __init__(self, report):
+        self._report = report
+
+    def get_live_readiness_report(self):
+        return self._report
+
+
 
 def _make_runtime(*, live_enabled=False, live_ready=False, kill_switch=False, betfair_service=None):
     return RuntimeController(
@@ -174,3 +182,37 @@ def test_invalid_or_missing_execution_mode_context_is_not_approved(bad_mode):
     assert result["started"] is True
     assert rc.execution_mode == "SIMULATION"
     assert rc.last_execution_gate_reason in {"simulation_mode_forced", "invalid_or_missing_execution_mode"}
+
+
+@pytest.mark.parametrize(
+    ("probe_report", "probe_reason"),
+    [
+        (None, "probe_report_malformed"),
+        ("not-a-dict", "probe_report_malformed"),
+        (["also", "not", "a", "dict"], "probe_report_malformed"),
+        ({"level": "READY", "blockers": []}, "probe_report_missing_required_fields"),
+        ({"ready": True, "blockers": []}, "probe_report_missing_required_fields"),
+        ({"ready": "yes", "level": "READY", "blockers": []}, "probe_report_ready_not_bool"),
+        ({"ready": True, "level": "GO", "blockers": []}, "probe_report_level_not_ready"),
+    ],
+)
+def test_live_start_refused_when_probe_report_is_malformed(probe_report, probe_reason):
+    rc = _make_runtime(live_enabled=True, live_ready=True)
+    rc.enforce_probe_readiness_gate = True
+    rc.runtime_probe = _Probe(probe_report)
+
+    first = rc.start(execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)
+    second = rc.start(execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)
+
+    for result in (first, second):
+        assert result["ok"] is False
+        assert result["refused"] is True
+        assert result["started"] is False
+        assert result["reason_code"] == "live_readiness_not_ok"
+        assert result["effective_execution_mode"] == "SIMULATION"
+        assert result["readiness"]["probe_ok"] is False
+        assert result["readiness"]["details"]["probe"]["reason"] == probe_reason
+
+    assert rc.execution_mode == "SIMULATION"
+    assert rc.mode.name == "STOPPED"
+    assert rc.betfair_service.connect_calls == []
