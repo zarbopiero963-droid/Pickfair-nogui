@@ -1,6 +1,7 @@
 name: repo-guardrails-extended
 
 on:
+  workflow_call:
   push:
     paths:
       - "guardrails/**"
