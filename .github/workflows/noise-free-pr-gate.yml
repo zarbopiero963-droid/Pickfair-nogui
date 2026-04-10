@@ -14,24 +14,19 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Check no merge markers
         run: |
-          if grep -R "<<<<<<<\|=======\|>>>>>>>" . --exclude-dir=.git --exclude=*.png --exclude=*.jpg --exclude=*.jpeg; then
-            echo "Merge conflict markers found"
-            exit 1
-          else
-            echo "No merge markers"
-          fi
+          python scripts/check_merge_markers.py
 
-      - name: Check guardrails JSON parse
+      - name: Validate guardrails
         run: |
-          python - <<'PY'
-          import json
-          import pathlib
-          root = pathlib.Path("guardrails")
-          if root.exists():
-              for path in root.rglob("*.json"):
-                  with path.open("r", encoding="utf-8") as f:
-                      json.load(f)
-                  print(f"OK {path}")
-          PY
+          python scripts/validate_guardrails.py
+
+      - name: Show changed modules
+        run: |
+          git fetch origin main
+          python scripts/ci_changed_modules.py origin/main
