@@ -78,6 +78,13 @@ class RuntimeController:
         self.live_readiness_ok = False
         self.last_execution_gate_reason = "startup_default"
         self.enforce_probe_readiness_gate = False
+        self.last_deploy_gate_status = {
+            "allowed": False,
+            "reason": "DEPLOY_BLOCKED_INVALID_STATE",
+            "reasons": ["DEPLOY_BLOCKED_INVALID_STATE"],
+            "readiness": "UNKNOWN",
+            "details": {},
+        }
 
         self._subscribe_bus()
 
@@ -226,6 +233,119 @@ class RuntimeController:
             return False, "probe_report_ready_false"
 
         return True, "probe_report_ready"
+
+    def _coerce_readiness_level(self, probe_report: Any) -> str:
+        if not isinstance(probe_report, dict):
+            return "UNKNOWN"
+        level = str(probe_report.get("level") or "").strip().upper()
+        return level if level in {"READY", "DEGRADED", "NOT_READY", "UNKNOWN"} else "UNKNOWN"
+
+    def _collect_deploy_gate_reasons(self, gate, readiness_level: str, readiness_payload: dict) -> list[str]:
+        reasons: list[str] = []
+        blockers = list(readiness_payload.get("blockers") or [])
+        probe_report = (
+            ((readiness_payload.get("details") or {}).get("probe") or {}).get("report")
+            if isinstance(readiness_payload, dict)
+            else {}
+        )
+        if isinstance(probe_report, dict):
+            blockers.extend(list(probe_report.get("blockers") or []))
+        probe_ok = bool(readiness_payload.get("probe_ok", False))
+
+        if not gate.allowed and str(gate.reason_code) == "kill_switch_active":
+            reasons.append("DEPLOY_BLOCKED_KILL_SWITCH")
+
+        if blockers:
+            reasons.append("DEPLOY_BLOCKED_BLOCKERS_PRESENT")
+
+        if readiness_level != "READY" or not probe_ok or not bool(readiness_payload.get("ready", False)):
+            reasons.append("DEPLOY_BLOCKED_NOT_READY")
+
+        if not reasons and not gate.allowed:
+            reasons.append("DEPLOY_BLOCKED_INVALID_STATE")
+
+        if gate.allowed:
+            return ["DEPLOY_GO_READY"]
+
+        # dedupe preserving order
+        uniq: list[str] = []
+        for item in reasons:
+            if item not in uniq:
+                uniq.append(item)
+        return uniq or ["DEPLOY_BLOCKED_INVALID_STATE"]
+
+    def get_deploy_gate_status(
+        self,
+        *,
+        execution_mode: Optional[str] = None,
+        live_enabled: Optional[bool] = None,
+        live_readiness_ok: Optional[bool] = None,
+    ) -> dict:
+        mode = str(execution_mode if execution_mode is not None else self.execution_mode or "SIMULATION").strip().upper()
+        mode = mode if mode in {"SIMULATION", "LIVE"} else "SIMULATION"
+        enabled = self._safe_bool(self.live_enabled if live_enabled is None else live_enabled, default=False)
+        readiness = self.evaluate_live_readiness(
+            execution_mode=mode,
+            live_enabled=enabled,
+            live_readiness_ok=live_readiness_ok,
+        )
+        probe_ok = True
+        probe_reason = "probe_not_required_for_non_live"
+        probe_report = {}
+
+        if mode == "LIVE":
+            probe_ok, probe_reason, probe_report = self._get_probe_live_readiness_report()
+            if not probe_ok:
+                readiness["ready"] = False
+
+        readiness.setdefault("details", {})
+        readiness["details"]["probe"] = {
+            "ok": probe_ok,
+            "reason": probe_reason,
+            "report": probe_report,
+        }
+        readiness["probe_ok"] = probe_ok
+
+        readiness_level = self._coerce_readiness_level(probe_report)
+        if mode != "LIVE":
+            readiness_level = "READY"
+        elif probe_ok and readiness_level == "UNKNOWN":
+            readiness_level = "READY"
+        gate = assert_live_gate_or_refuse(
+            execution_mode=mode,
+            live_enabled=enabled,
+            live_readiness_ok=(bool(readiness.get("ready", False)) and readiness_level == "READY"),
+            kill_switch=self._is_kill_switch_active(),
+        )
+        reasons = self._collect_deploy_gate_reasons(gate, readiness_level, readiness)
+        return {
+            "allowed": bool(gate.allowed),
+            "reason": reasons[0],
+            "reasons": reasons,
+            "execution_mode": mode,
+            "effective_execution_mode": gate.effective_execution_mode,
+            "readiness": readiness_level,
+            "details": {
+                "gate_reason_code": gate.reason_code,
+                "readiness_payload": readiness,
+            },
+        }
+
+    def is_deploy_allowed(self, **kwargs) -> bool:
+        return bool(self.get_deploy_gate_status(**kwargs).get("allowed", False))
+
+    def enforce_deploy_gate(self, **kwargs) -> dict:
+        status = self.get_deploy_gate_status(**kwargs)
+        self.last_deploy_gate_status = status
+        gate_reason_code = str(((status.get("details") or {}).get("gate_reason_code")) or "")
+        self.last_execution_gate_reason = gate_reason_code or str(status.get("reason") or "DEPLOY_BLOCKED_INVALID_STATE")
+
+        if status["allowed"]:
+            logger.info("[DEPLOY GATE] GO: readiness=READY")
+        else:
+            logger.warning("[DEPLOY GATE] NO-GO: reason=%s", ",".join(status.get("reasons") or [status.get("reason", "")]))
+
+        return status
 
     def evaluate_live_readiness(
         self,
@@ -404,50 +524,28 @@ class RuntimeController:
             except Exception:
                 requested_live_enabled = False
 
-        readiness = self.evaluate_live_readiness(
+        deploy_gate = self.enforce_deploy_gate(
             execution_mode=requested_execution_mode,
             live_enabled=requested_live_enabled,
             live_readiness_ok=live_readiness_ok,
         )
-        requested_readiness = bool(readiness.get("ready", False))
-        probe_readiness_ok = True
-        probe_readiness_reason = "probe_not_required_for_non_live"
-        probe_readiness_report = {}
+        readiness = dict((deploy_gate.get("details") or {}).get("readiness_payload") or {})
 
-        if requested_execution_mode == "LIVE":
-            probe_readiness_ok, probe_readiness_reason, probe_readiness_report = self._get_probe_live_readiness_report()
-            if not probe_readiness_ok:
-                requested_readiness = False
-
-        readiness.setdefault("details", {})
-        readiness["details"]["probe"] = {
-            "ok": probe_readiness_ok,
-            "reason": probe_readiness_reason,
-            "report": probe_readiness_report,
-        }
-        readiness["probe_ok"] = probe_readiness_ok
-
-        gate = assert_live_gate_or_refuse(
-            execution_mode=requested_execution_mode,
-            live_enabled=requested_live_enabled,
-            live_readiness_ok=requested_readiness,
-            kill_switch=self._is_kill_switch_active(),
-        )
-
-        self.execution_mode = gate.effective_execution_mode
+        self.execution_mode = str(deploy_gate.get("effective_execution_mode") or "SIMULATION")
         self.live_enabled = requested_live_enabled
-        self.live_readiness_ok = requested_readiness
-        self.last_execution_gate_reason = gate.reason_code
+        self.live_readiness_ok = bool(readiness.get("ready", False))
 
-        if requested_execution_mode == "LIVE" and not gate.allowed:
+        if requested_execution_mode == "LIVE" and not deploy_gate["allowed"]:
             status = self.get_status()
             self.bus.publish(
                 "LIVE_EXECUTION_REFUSED",
                 {
-                    "reason_code": gate.reason_code,
-                    "message": gate.refusal_message,
+                    "reason_code": (deploy_gate.get("details") or {}).get("gate_reason_code", deploy_gate["reason"]),
+                    "deploy_gate_reason_code": deploy_gate["reason"],
+                    "message": "LIVE richiesto ma deploy gate NO-GO",
                     "requested_execution_mode": requested_execution_mode,
-                    "effective_execution_mode": gate.effective_execution_mode,
+                    "effective_execution_mode": self.execution_mode,
+                    "deploy_gate": deploy_gate,
                     "readiness": readiness,
                 },
             )
@@ -455,11 +553,13 @@ class RuntimeController:
                 "ok": False,
                 "started": False,
                 "refused": True,
-                "reason": "live_not_enabled",
-                "reason_code": gate.reason_code,
-                "refusal_message": gate.refusal_message,
+                "reason": "deploy_gate_no_go",
+                "reason_code": (deploy_gate.get("details") or {}).get("gate_reason_code", deploy_gate["reason"]),
+                "deploy_gate_reason_code": deploy_gate["reason"],
+                "refusal_message": "LIVE richiesto ma deploy gate NO-GO",
                 "requested_execution_mode": requested_execution_mode,
-                "effective_execution_mode": gate.effective_execution_mode,
+                "effective_execution_mode": self.execution_mode,
+                "deploy_gate": deploy_gate,
                 "readiness": readiness,
                 "status": status,
             }
@@ -574,6 +674,28 @@ class RuntimeController:
     def _on_signal_received(self, signal: dict) -> None:
         signal = dict(signal or {})
         self.last_signal_at = datetime.utcnow().isoformat()
+
+        if str(self.execution_mode).upper() == "LIVE":
+            deploy_gate = self.enforce_deploy_gate(
+                execution_mode="LIVE",
+                live_enabled=self.live_enabled,
+                live_readiness_ok=self.live_readiness_ok,
+            )
+            if not deploy_gate["allowed"]:
+                self.execution_mode = "SIMULATION"
+                self.set_simulation_mode(True)
+                self._reject_signal(signal, f"deploy_gate_no_go:{deploy_gate['reason']}")
+                self.bus.publish(
+                    "LIVE_EXECUTION_REFUSED",
+                    {
+                        "reason_code": deploy_gate["reason"],
+                        "reasons": deploy_gate.get("reasons", []),
+                        "requested_execution_mode": "LIVE",
+                        "effective_execution_mode": "SIMULATION",
+                        "deploy_gate": deploy_gate,
+                    },
+                )
+                return
 
         if not self._runtime_active():
             self._reject_signal(signal, f"runtime_non_attivo:{self.mode.value}")
@@ -794,6 +916,7 @@ class RuntimeController:
         data["live_readiness_ok"] = bool(self.live_readiness_ok)
         data["kill_switch_active"] = bool(self._is_kill_switch_active())
         data["execution_gate_reason"] = str(self.last_execution_gate_reason)
+        data["deploy_gate"] = dict(self.last_deploy_gate_status or {})
         data["broker_status"] = self.betfair_service.status()
         data["account_funds"] = funds
 
