@@ -123,6 +123,10 @@ def test_headless_build_wires_observability(monkeypatch):
     assert app.alerts_manager is not None
     assert app.incidents_manager is not None
     assert app.diagnostics_service is not None
+    assert app.runtime is not None
+    assert app.runtime_probe is not None
+    assert app.runtime.runtime_probe is app.runtime_probe
+    assert app.runtime.enforce_probe_readiness_gate is True
 
     runtime = app.runtime
     runtime_probe = app.runtime_probe
