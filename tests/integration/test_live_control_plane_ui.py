@@ -187,6 +187,9 @@ def test_default_ui_state_is_safe(gui):
     assert gui.execution_mode_var.get() == "SIMULATION"
     assert gui.live_enabled_var.get() is False
     assert gui.live_control_state_var.get() == "SIMULATION"
+    assert gui.live_effective_status_var.get() == "SAFE_MODE"
+    assert gui.live_requested_mode_var.get() == "SIMULATION"
+    assert gui.live_last_decision_var.get() == "Last decision: N/A"
 
 
 @pytest.mark.integration
@@ -195,7 +198,9 @@ def test_live_request_reflects_requested_but_not_ready(gui):
     gui._on_execution_mode_changed("LIVE")
 
     assert gui.execution_mode_var.get() == "LIVE"
+    assert gui.live_requested_mode_var.get() == "LIVE"
     assert gui.live_control_state_var.get() == "LIVE requested but blocked (gate OFF)"
+    assert gui.live_effective_status_var.get() == "LIVE_REQUESTED_BLOCKED"
     assert gui.live_readiness_level_var.get() in {"NOT_READY", "UNKNOWN"}
 
 
@@ -207,7 +212,9 @@ def test_kill_switch_overrides_display_state(gui):
     gui._refresh_live_control_plane_status({})
 
     assert gui.live_control_state_var.get() == "LIVE blocked by kill switch"
+    assert gui.live_effective_status_var.get() == "LIVE_BLOCKED"
     assert "KILL_SWITCH_ACTIVE" in gui.live_readiness_blockers_var.get()
+    assert gui.live_last_decision_var.get() == "Last decision: NO-GO"
 
 
 @pytest.mark.integration
@@ -219,3 +226,15 @@ def test_readiness_blockers_are_visible(gui):
 
     assert gui.live_readiness_level_var.get() == "NOT_READY"
     assert "RUNTIME_NOT_INITIALIZED" in gui.live_readiness_blockers_var.get()
+
+
+@pytest.mark.integration
+def test_blocked_live_state_visible_with_gate_on_and_readiness_blocker(gui):
+    gui.execution_mode_var.set("LIVE")
+    gui.live_enabled_var.set(True)
+    gui.kill_switch_var.set(False)
+    gui._refresh_live_control_plane_status({})
+
+    assert gui.live_effective_status_var.get() == "LIVE_REQUESTED_BLOCKED"
+    assert gui.live_control_state_var.get() == "LIVE requested but blocked"
+    assert gui.live_last_reason_var.get() == "Last reason: RUNTIME_NOT_INITIALIZED"

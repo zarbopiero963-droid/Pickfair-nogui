@@ -486,9 +486,13 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.execution_mode_var = self._make_string_var("SIMULATION")
         self.live_enabled_var = self._make_bool_var(False)
         self.kill_switch_var = self._make_bool_var(False)
+        self.live_requested_mode_var = self._make_string_var("SIMULATION")
+        self.live_effective_status_var = self._make_string_var("SAFE_MODE")
         self.live_readiness_level_var = self._make_string_var("UNKNOWN")
         self.live_readiness_blockers_var = self._make_string_var("No readiness data.")
         self.live_control_state_var = self._make_string_var("SIMULATION")
+        self.live_last_decision_var = self._make_string_var("N/A")
+        self.live_last_reason_var = self._make_string_var("N/A")
 
         self.status_mode_var = self._make_string_var("STOPPED")
         self.status_betfair_var = self._make_string_var("DISCONNECTED")
@@ -550,6 +554,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         if self._test_mode:
             self.live_sim_switch = object()
             self.live_sim_label = object()
+            self.btn_apply_control_plane = _DummyButton(self._apply_execution_control_changes)
+            self.btn_refresh_control_plane = _DummyButton(self._refresh_runtime_status)
             return
 
         top = ctk.CTkFrame(self, fg_color="transparent")
@@ -592,11 +598,19 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         control = ctk.CTkFrame(top, fg_color="transparent")
         control.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         try:
-            control.grid_columnconfigure(5, weight=1)
+            control.grid_columnconfigure(7, weight=1)
         except Exception:
             pass
 
-        ctk.CTkLabel(control, text="Execution:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        ctk.CTkLabel(control, text="Requested:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        self.live_requested_mode_label = ctk.CTkLabel(
+            control,
+            textvariable=self.live_requested_mode_var,
+            font=("Segoe UI", 12, "bold"),
+        )
+        self.live_requested_mode_label.grid(row=0, column=1, sticky="w", padx=(0, 12))
+
+        ctk.CTkLabel(control, text="Execution:").grid(row=0, column=2, sticky="w", padx=(0, 6))
         self.execution_mode_combo = ctk.CTkComboBox(
             control,
             variable=self.execution_mode_var,
@@ -604,7 +618,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             width=140,
             command=self._on_execution_mode_changed,
         )
-        self.execution_mode_combo.grid(row=0, column=1, sticky="w", padx=(0, 12))
+        self.execution_mode_combo.grid(row=0, column=3, sticky="w", padx=(0, 12))
 
         self.live_gate_switch = ctk.CTkSwitch(
             control,
@@ -614,7 +628,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             offvalue=False,
             command=self._on_live_gate_toggled,
         )
-        self.live_gate_switch.grid(row=0, column=2, sticky="w", padx=(0, 12))
+        self.live_gate_switch.grid(row=0, column=4, sticky="w", padx=(0, 12))
 
         self.kill_switch_toggle = ctk.CTkSwitch(
             control,
@@ -624,26 +638,53 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             offvalue=False,
             command=self._on_kill_switch_toggled,
         )
-        self.kill_switch_toggle.grid(row=0, column=3, sticky="w", padx=(0, 12))
+        self.kill_switch_toggle.grid(row=0, column=5, sticky="w", padx=(0, 12))
+
+        self.btn_refresh_control_plane = ctk.CTkButton(
+            control,
+            text="Refresh Status",
+            command=self._refresh_runtime_status,
+            width=110,
+        )
+        self.btn_refresh_control_plane.grid(row=0, column=6, sticky="w", padx=(0, 8))
+        self.btn_apply_control_plane = ctk.CTkButton(
+            control,
+            text="Apply",
+            command=self._apply_execution_control_changes,
+            width=90,
+        )
+        self.btn_apply_control_plane.grid(row=0, column=7, sticky="w")
 
         ctk.CTkLabel(
             control,
             text="Readiness:",
             font=("Segoe UI", 12, "bold"),
-        ).grid(row=0, column=4, sticky="w", padx=(0, 6))
+        ).grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(6, 0))
         self.live_readiness_label = ctk.CTkLabel(
             control,
             textvariable=self.live_readiness_level_var,
             font=("Segoe UI", 12, "bold"),
         )
-        self.live_readiness_label.grid(row=0, column=5, sticky="w")
+        self.live_readiness_label.grid(row=1, column=1, sticky="w", pady=(6, 0))
+
+        ctk.CTkLabel(
+            control,
+            text="Effective:",
+            font=("Segoe UI", 12, "bold"),
+        ).grid(row=1, column=2, sticky="w", padx=(0, 6), pady=(6, 0))
+        self.live_effective_status_label = ctk.CTkLabel(
+            control,
+            textvariable=self.live_effective_status_var,
+            font=("Segoe UI", 12, "bold"),
+        )
+        self.live_effective_status_label.grid(row=1, column=3, sticky="w", pady=(6, 0))
 
         self.live_control_state_label = ctk.CTkLabel(
             control,
             textvariable=self.live_control_state_var,
-            font=("Segoe UI", 12, "bold"),
+            font=("Segoe UI", 11),
         )
-        self.live_control_state_label.grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        self.live_control_state_label.grid(row=1, column=4, columnspan=4, sticky="w", pady=(6, 0))
 
         self.live_readiness_blockers_label = ctk.CTkLabel(
             control,
@@ -652,7 +693,20 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             justify="left",
             wraplength=880,
         )
-        self.live_readiness_blockers_label.grid(row=1, column=3, columnspan=3, sticky="w", pady=(6, 0))
+        self.live_readiness_blockers_label.grid(row=2, column=0, columnspan=8, sticky="w", pady=(6, 0))
+
+        self.live_last_decision_label = ctk.CTkLabel(
+            control,
+            textvariable=self.live_last_decision_var,
+            font=("Segoe UI", 11, "bold"),
+        )
+        self.live_last_decision_label.grid(row=3, column=0, sticky="w", pady=(6, 0))
+        self.live_last_reason_label = ctk.CTkLabel(
+            control,
+            textvariable=self.live_last_reason_var,
+            font=("Segoe UI", 11),
+        )
+        self.live_last_reason_label.grid(row=3, column=1, columnspan=7, sticky="w", pady=(6, 0))
 
     def _build_dashboard_tab(self):
         if self._test_mode:
@@ -941,14 +995,15 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         if choice is not None:
             self.execution_mode_var.set(str(choice))
         self._sync_execution_controls_to_runtime()
-        self._save_execution_control_settings()
-        self._refresh_runtime_status()
+        self._apply_execution_control_changes()
 
     def _on_live_gate_toggled(self):
-        self._save_execution_control_settings()
-        self._refresh_runtime_status()
+        self._apply_execution_control_changes()
 
     def _on_kill_switch_toggled(self):
+        self._apply_execution_control_changes()
+
+    def _apply_execution_control_changes(self):
         self._save_execution_control_settings()
         self._refresh_runtime_status()
 
@@ -1194,6 +1249,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             execution_mode = "SIMULATION"
         live_enabled = bool(self.live_enabled_var.get())
         kill_switch = bool(self.kill_switch_var.get())
+        self.live_requested_mode_var.set(execution_mode)
 
         readiness = {"level": "UNKNOWN", "ready": False, "blockers": ["READINESS_UNAVAILABLE"]}
         evaluate = getattr(self.runtime, "evaluate_live_readiness", None)
@@ -1213,31 +1269,94 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         blockers = readiness.get("blockers")
         if not isinstance(blockers, list):
             blockers = ["READINESS_BLOCKERS_UNKNOWN"]
+        blockers = [str(item) for item in blockers if str(item).strip()]
 
         if kill_switch and "KILL_SWITCH_ACTIVE" not in blockers:
             blockers = list(blockers) + ["KILL_SWITCH_ACTIVE"]
+        if execution_mode == "LIVE" and not live_enabled and "LIVE_DISABLED" not in blockers:
+            blockers = list(blockers) + ["LIVE_DISABLED"]
+        if execution_mode == "LIVE" and level == "UNKNOWN" and "READINESS_UNKNOWN" not in blockers:
+            blockers = list(blockers) + ["READINESS_UNKNOWN"]
 
+        effective_status = "UNKNOWN"
+        control_state = "Status unavailable"
+        decision = "N/A"
+        reason_code = "N/A"
         if kill_switch:
+            effective_status = "LIVE_BLOCKED"
             control_state = "LIVE blocked by kill switch"
+            decision = "NO-GO"
+            reason_code = "KILL_SWITCH_ACTIVE"
         elif execution_mode != "LIVE":
+            effective_status = "SAFE_MODE"
             control_state = "SIMULATION"
+            reason_code = "SIMULATION_MODE"
         elif not live_enabled:
+            effective_status = "LIVE_REQUESTED_BLOCKED"
             control_state = "LIVE requested but blocked (gate OFF)"
+            decision = "NO-GO"
+            reason_code = "LIVE_DISABLED"
         elif blockers:
+            effective_status = "LIVE_REQUESTED_BLOCKED"
             control_state = "LIVE requested but blocked"
+            decision = "NO-GO"
+            reason_code = str(blockers[0])
         elif level == "READY":
-            control_state = "LIVE enabled and ready"
+            effective_status = "LIVE_ACTIVE"
+            control_state = "LIVE active"
+            decision = "GO"
+            reason_code = "READY"
         else:
+            effective_status = "UNKNOWN"
             control_state = "LIVE requested (readiness unknown)"
+            decision = "NO-GO"
+            reason_code = "READINESS_UNKNOWN"
 
         if blockers:
             blockers_text = ", ".join(str(item) for item in blockers)
         else:
             blockers_text = "No blockers."
 
+        status_decision = str(runtime_status.get("last_decision", "") or "").strip().upper()
+        if status_decision in {"GO", "NO-GO"}:
+            decision = status_decision
+        status_reason = str(
+            runtime_status.get("last_reason_code", runtime_status.get("last_decision_reason", "")) or ""
+        ).strip().upper()
+        if status_reason:
+            reason_code = status_reason
+
+        self._apply_control_plane_colors(effective_status=effective_status, readiness_level=level)
+
         self.live_readiness_level_var.set(level)
         self.live_readiness_blockers_var.set(f"Blockers: {blockers_text}")
         self.live_control_state_var.set(control_state)
+        self.live_effective_status_var.set(effective_status)
+        self.live_last_decision_var.set(f"Last decision: {decision}")
+        self.live_last_reason_var.set(f"Last reason: {reason_code}")
+
+    def _apply_control_plane_colors(self, *, effective_status: str, readiness_level: str):
+        readiness_colors = {
+            "READY": "#2fa26b",
+            "DEGRADED": "#cc9a06",
+            "NOT_READY": "#d9534f",
+            "UNKNOWN": "#9aa0a6",
+        }
+        effective_colors = {
+            "SAFE_MODE": "#2fa26b",
+            "LIVE_ACTIVE": "#2fa26b",
+            "LIVE_REQUESTED_BLOCKED": "#cc9a06",
+            "LIVE_BLOCKED": "#d9534f",
+            "UNKNOWN": "#9aa0a6",
+        }
+        try:
+            self.live_readiness_label.configure(text_color=readiness_colors.get(readiness_level, "#9aa0a6"))
+        except Exception:
+            pass
+        try:
+            self.live_effective_status_label.configure(text_color=effective_colors.get(effective_status, "#9aa0a6"))
+        except Exception:
+            pass
 
     def _log(self, text: str):
         if hasattr(self, "log_text"):
