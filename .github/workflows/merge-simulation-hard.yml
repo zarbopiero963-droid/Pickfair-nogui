@@ -1,6 +1,7 @@
 name: merge-simulation-hard
 
 on:
+  workflow_call:
   pull_request:
   workflow_dispatch:
 
@@ -14,11 +15,19 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Simulate merge with main
+      - name: Simulate merge with main (fail-closed)
         run: |
+          set -e
           git fetch origin main
           git checkout -b merge-sim-branch
-          git merge --no-ff --no-edit origin/main
+          git merge --no-ff --no-edit origin/main || {
+            echo "❌ MERGE CONFLICT DETECTED"
+            exit 1
+          }
+
+      - name: Check merge markers
+        run: |
+          python scripts/check_merge_markers.py
 
       - uses: actions/setup-python@v5
         with:
@@ -31,19 +40,18 @@ jobs:
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
           pip install pytest pytest-xdist
 
-      - name: Validate all guardrail JSON
+      - name: Validate all guardrail JSON (fail if invalid)
         run: |
-          python - <<'PY'
-          import json
-          import pathlib
-          root = pathlib.Path("guardrails")
-          if root.exists():
-              for path in root.rglob("*.json"):
-                  with path.open("r", encoding="utf-8") as f:
-                      json.load(f)
-                  print(f"OK {path}")
-          PY
+          python scripts/validate_guardrails.py
 
       - name: Run full pytest after merge simulation
         run: |
-          pytest -q
+          pytest -q -x
+
+      - name: Upload pytest logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: merge-simulation-logs
+          path: |
+            .pytest_cache
