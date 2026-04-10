@@ -1,0 +1,37 @@
+name: noise-free-pr-gate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check no merge markers
+        run: |
+          if grep -R "<<<<<<<\|=======\|>>>>>>>" . --exclude-dir=.git --exclude=*.png --exclude=*.jpg --exclude=*.jpeg; then
+            echo "Merge conflict markers found"
+            exit 1
+          else
+            echo "No merge markers"
+          fi
+
+      - name: Check guardrails JSON parse
+        run: |
+          python - <<'PY'
+          import json
+          import pathlib
+          root = pathlib.Path("guardrails")
+          if root.exists():
+              for path in root.rglob("*.json"):
+                  with path.open("r", encoding="utf-8") as f:
+                      json.load(f)
+                  print(f"OK {path}")
+          PY
