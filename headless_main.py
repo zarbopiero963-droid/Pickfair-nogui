@@ -554,6 +554,15 @@ class HeadlessApp:
         except Exception:
             live_enabled = False
 
+        live_readiness_ok = False
+        try:
+            if self.settings_service is not None and hasattr(
+                self.settings_service, "load_live_readiness_ok"
+            ):
+                live_readiness_ok = bool(self.settings_service.load_live_readiness_ok())
+        except Exception:
+            live_readiness_ok = False
+
         if "--live-enabled" in args:
             live_enabled = True
         if "--live-disabled" in args:
@@ -570,6 +579,7 @@ class HeadlessApp:
             "simulation_mode": execution_mode != "LIVE",
             "execution_mode": execution_mode,
             "live_enabled": live_enabled,
+            "live_readiness_ok": live_readiness_ok,
             "password": password,
         }
 
@@ -622,6 +632,7 @@ class HeadlessApp:
         simulation_mode = bool(args["simulation_mode"])
         execution_mode = str(args.get("execution_mode") or "SIMULATION")
         live_enabled = bool(args.get("live_enabled", False))
+        live_readiness_ok = bool(args.get("live_readiness_ok", False))
         password = args["password"]
 
         mode_txt = "SIMULATION" if simulation_mode else "LIVE"
@@ -638,6 +649,7 @@ class HeadlessApp:
                 simulation_mode=simulation_mode,
                 execution_mode=execution_mode,
                 live_enabled=live_enabled,
+                live_readiness_ok=live_readiness_ok,
             )
             self._validate_runtime_start_result(result)
             logger.info("Runtime avviato -> %s", result)

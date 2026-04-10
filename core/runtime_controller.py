@@ -173,6 +173,122 @@ class RuntimeController:
 
         return False
 
+    def evaluate_live_readiness(
+        self,
+        *,
+        execution_mode: Optional[str] = None,
+        live_enabled: Optional[bool] = None,
+        live_readiness_ok: Optional[bool] = None,
+    ) -> dict:
+        blockers = []
+        details = {}
+
+        runtime_mode_value = getattr(getattr(self, "mode", None), "value", None)
+        known_runtime_modes = {item.value for item in RuntimeMode}
+        runtime_mode_known = runtime_mode_value in known_runtime_modes
+        runtime_initialized = all(
+            (
+                getattr(self, "config", None) is not None,
+                getattr(self, "table_manager", None) is not None,
+                getattr(self, "duplication_guard", None) is not None,
+                getattr(self, "risk_desk", None) is not None,
+                getattr(self, "reconciliation_engine", None) is not None,
+            )
+        )
+        runtime_half_started = False
+        if runtime_mode_value == RuntimeMode.ACTIVE.value:
+            try:
+                runtime_half_started = not (
+                    bool(self.betfair_service.status().get("connected"))
+                    and bool(self.telegram_service.status().get("connected"))
+                )
+            except Exception:
+                runtime_half_started = True
+        startup_failed = bool(getattr(self, "last_error", ""))
+
+        details["runtime_state"] = {
+            "mode": runtime_mode_value,
+            "mode_known": runtime_mode_known,
+            "initialized": runtime_initialized,
+            "half_started": runtime_half_started,
+            "startup_failed": startup_failed,
+        }
+
+        if not runtime_mode_known:
+            blockers.append("UNKNOWN_STATE")
+        if not runtime_initialized:
+            blockers.append("RUNTIME_NOT_INITIALIZED")
+        if runtime_half_started:
+            blockers.append("RUNTIME_HALF_STARTED")
+        if startup_failed and runtime_mode_value != RuntimeMode.ACTIVE.value:
+            blockers.append("RUNTIME_STARTUP_FAILED")
+
+        kill_switch_active = bool(self._is_kill_switch_active())
+        safe_mode_blocks_live = kill_switch_active
+        details["safety_state"] = {
+            "kill_switch_active": kill_switch_active,
+            "safe_mode_blocks_live": safe_mode_blocks_live,
+        }
+        if kill_switch_active:
+            blockers.append("KILL_SWITCH_ACTIVE")
+        if safe_mode_blocks_live:
+            blockers.append("SAFE_MODE_BLOCKS_LIVE")
+
+        has_live_dependency = bool(
+            getattr(self, "betfair_service", None) is not None
+            and callable(getattr(self.betfair_service, "connect", None))
+        )
+        details["live_dependency_state"] = {
+            "betfair_service_present": getattr(self, "betfair_service", None) is not None,
+            "betfair_connect_callable": callable(getattr(getattr(self, "betfair_service", None), "connect", None)),
+            "has_required_live_dependency": has_live_dependency,
+        }
+        if not has_live_dependency:
+            blockers.append("LIVE_DEPENDENCY_MISSING")
+
+        normalized_execution_mode = str(execution_mode if execution_mode is not None else self.execution_mode).strip().upper()
+        effective_live_enabled = self._safe_bool(
+            self.live_enabled if live_enabled is None else live_enabled,
+            default=False,
+        )
+        configured_live_readiness_ok = self._derive_live_readiness_ok(live_readiness_ok)
+        execution_mode_valid = normalized_execution_mode in {"SIMULATION", "LIVE"}
+        contradictory_state = (
+            (normalized_execution_mode == "LIVE" and bool(getattr(self, "simulation_mode", False)))
+            or (normalized_execution_mode == "LIVE" and not effective_live_enabled)
+        )
+        details["execution_state"] = {
+            "execution_mode": normalized_execution_mode,
+            "execution_mode_valid": execution_mode_valid,
+            "live_enabled": effective_live_enabled,
+            "configured_live_readiness_ok": configured_live_readiness_ok,
+            "simulation_mode": bool(getattr(self, "simulation_mode", False)),
+            "contradictory_state": contradictory_state,
+        }
+
+        if not execution_mode_valid:
+            blockers.append("INVALID_EXECUTION_MODE")
+        if normalized_execution_mode == "LIVE" and not effective_live_enabled:
+            blockers.append("LIVE_NOT_ENABLED")
+        if normalized_execution_mode == "LIVE" and not configured_live_readiness_ok:
+            blockers.append("LIVE_READINESS_FLAG_NOT_OK")
+        if contradictory_state:
+            blockers.append("CONTRADICTORY_STATE")
+
+        is_live_request = normalized_execution_mode == "LIVE"
+        unique_blockers = sorted(set(blockers))
+        ready = is_live_request and not unique_blockers
+        level = "READY" if ready else ("DEGRADED" if (not is_live_request and execution_mode_valid) else "NOT_READY")
+        return {
+            "ready": ready,
+            "level": level,
+            "blockers": unique_blockers,
+            "details": details,
+        }
+
+    def is_live_readiness_ok(self, **kwargs) -> bool:
+        return bool(self.evaluate_live_readiness(**kwargs).get("ready", False))
+
     def reload_config(self) -> None:
         self.config = self.settings_service.load_roserpina_config()
         self.mm = RoserpinaMoneyManagement(self.config)
@@ -234,7 +350,12 @@ class RuntimeController:
             except Exception:
                 requested_live_enabled = False
 
-        requested_readiness = self._derive_live_readiness_ok(live_readiness_ok)
+        readiness = self.evaluate_live_readiness(
+            execution_mode=requested_execution_mode,
+            live_enabled=requested_live_enabled,
+            live_readiness_ok=live_readiness_ok,
+        )
+        requested_readiness = bool(readiness.get("ready", False))
 
         gate = assert_live_gate_or_refuse(
             execution_mode=requested_execution_mode,
@@ -257,6 +378,7 @@ class RuntimeController:
                     "message": gate.refusal_message,
                     "requested_execution_mode": requested_execution_mode,
                     "effective_execution_mode": gate.effective_execution_mode,
+                    "readiness": readiness,
                 },
             )
             return {
@@ -268,6 +390,7 @@ class RuntimeController:
                 "refusal_message": gate.refusal_message,
                 "requested_execution_mode": requested_execution_mode,
                 "effective_execution_mode": gate.effective_execution_mode,
+                "readiness": readiness,
                 "status": status,
             }
 

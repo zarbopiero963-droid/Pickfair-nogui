@@ -43,6 +43,22 @@ class _SettingsStub:
         return {"alerts_enabled": self._state.alerts_enabled}
 
 
+class _HealthProbeStub(RuntimeProbe):
+    def __init__(self, status):
+        super().__init__()
+        self._status = status
+
+    def collect_health(self):
+        return {
+            "component_a": {
+                "name": "component_a",
+                "status": self._status,
+                "reason": "test_reason",
+                "details": {},
+            }
+        }
+
+
 def test_runtime_probe_alert_pipeline_state_uses_wired_services():
     fake_state = FakeRuntimeState.degraded(reason="sender_unavailable")
     probe = RuntimeProbe(
@@ -112,3 +128,59 @@ def test_fake_runtime_state_builder_variants_are_deterministic():
     assert ready.alert_pipeline_snapshot()["status"] == "READY"
     assert unknown.to_snapshot()["runtime_state_label"] == "UNKNOWN"
     assert unknown.alert_pipeline_snapshot()["status"] == "DISABLED"
+
+
+def test_unknown_status_is_blocker():
+    probe = _HealthProbeStub("BROKEN")
+
+    report = probe.get_live_readiness_report()
+
+    assert report["level"] == "NOT_READY"
+    assert report["ready"] is False
+    assert report["blockers"][0]["name"] == "component_a"
+    assert "UNRECOGNIZED_STATE::BROKEN" in report["blockers"][0]["reason"]
+
+
+def test_starting_status_is_blocker():
+    probe = _HealthProbeStub("STARTING")
+
+    report = probe.get_live_readiness_report()
+
+    assert report["level"] == "NOT_READY"
+    assert report["ready"] is False
+    assert report["blockers"][0]["name"] == "component_a"
+    assert report["blockers"][0]["status"] == "STARTING"
+    assert "UNRECOGNIZED_STATE::STARTING" in report["blockers"][0]["reason"]
+
+
+def test_ready_still_passes():
+    probe = _HealthProbeStub("READY")
+
+    report = probe.get_live_readiness_report()
+
+    assert report["level"] == "READY"
+    assert report["ready"] is True
+    assert report["blockers"] == []
+
+
+def test_degraded_separated():
+    probe = _HealthProbeStub("DEGRADED")
+
+    report = probe.get_live_readiness_report()
+
+    assert report["level"] == "DEGRADED"
+    assert report["ready"] is False
+    assert report["blockers"] == []
+    assert report["details"]["degraded"][0]["name"] == "component_a"
+
+
+def test_none_status_fail_closed():
+    probe = _HealthProbeStub(None)
+
+    report = probe.get_live_readiness_report()
+
+    assert report["level"] == "NOT_READY"
+    assert report["ready"] is False
+    assert report["blockers"][0]["name"] == "component_a"
+    assert report["blockers"][0]["status"] == "UNKNOWN"
+    assert report["blockers"][0]["reason"] == "test_reason"
