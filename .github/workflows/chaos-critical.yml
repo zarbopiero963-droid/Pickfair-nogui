@@ -1,0 +1,53 @@
+name: chaos-critical
+
+on:
+  push:
+    paths:
+      - "tests/chaos/**"
+      - "tests/integration/test_betfair_timeout_and_ghost_orders.py"
+      - "core/**"
+      - "order_manager.py"
+      - ".github/workflows/chaos-critical.yml"
+  pull_request:
+    paths:
+      - "tests/chaos/**"
+      - "tests/integration/test_betfair_timeout_and_ghost_orders.py"
+      - "core/**"
+      - "order_manager.py"
+      - ".github/workflows/chaos-critical.yml"
+  workflow_dispatch:
+
+jobs:
+  chaos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          pip install pytest
+
+      - name: Run critical chaos suite
+        run: |
+          if [ -d tests/chaos ]; then
+            pytest -q -x tests/chaos
+          else
+            echo "tests/chaos missing -> safe skip"
+          fi
+
+      - name: Run timeout/ghost integration if present
+        run: |
+          if [ -f tests/integration/test_betfair_timeout_and_ghost_orders.py ]; then
+            pytest -q -x tests/integration/test_betfair_timeout_and_ghost_orders.py
+          else
+            echo "ghost integration test missing -> safe skip"
+          fi
