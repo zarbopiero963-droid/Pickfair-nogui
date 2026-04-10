@@ -37,3 +37,4 @@ jobs:
           pytest -q \
             tests/core/test_trading_engine.py \
             tests/core/test_trading_engine_internal_contracts.py
+# run-all-workflows: trigger 2026-04-10

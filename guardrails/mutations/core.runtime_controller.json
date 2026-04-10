@@ -38,5 +38,6 @@
       "branch": "degraded_transition",
       "expected_failure": "tests"
     }
-  ]
+  ],
+  "_trigger": "run-all-workflows-2026-04-10"
 }
