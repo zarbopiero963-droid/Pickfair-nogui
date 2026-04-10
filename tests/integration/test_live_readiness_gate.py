@@ -86,12 +86,13 @@ class _KillSwitch:
         return self._enabled
 
 
-def _make_runtime(*, live_enabled=False, live_ready=False, kill_switch=False):
+
+def _make_runtime(*, live_enabled=False, live_ready=False, kill_switch=False, betfair_service=None):
     return RuntimeController(
         bus=_Bus(),
         db=_Db(),
         settings_service=_Settings(live_enabled=live_enabled, live_ready=live_ready),
-        betfair_service=_Betfair(),
+        betfair_service=betfair_service or _Betfair(),
         telegram_service=_Telegram(),
         safe_mode=_KillSwitch(kill_switch),
     )
@@ -118,25 +119,29 @@ def test_runtime_incomplete_readiness_is_false():
     assert rc.execution_mode == "SIMULATION"
 
 
-def test_missing_live_dependency_readiness_loader_fails_closed():
-    class _SettingsNoReadiness(_Settings):
-        pass
+class _BetfairMissingConnect:
+    def set_simulation_mode(self, _enabled):
+        return None
 
-    _SettingsNoReadiness.load_live_readiness_ok = None
-    rc = RuntimeController(
-        bus=_Bus(),
-        db=_Db(),
-        settings_service=_SettingsNoReadiness(live_enabled=True, live_ready=True),
-        betfair_service=_Betfair(),
-        telegram_service=_Telegram(),
-        safe_mode=_KillSwitch(False),
+    def get_account_funds(self):
+        return {"available": 100.0}
+
+    def status(self):
+        return {"connected": True}
+
+
+def test_missing_live_dependency_object_path_fails_closed():
+    rc = _make_runtime(
+        live_enabled=True,
+        live_ready=True,
+        betfair_service=_BetfairMissingConnect(),
     )
 
     result = rc.start(execution_mode="LIVE", live_enabled=True)
 
     assert result["refused"] is True
     assert result["reason_code"] == "live_readiness_not_ok"
-    assert rc.betfair_service.connect_calls == []
+    assert "LIVE_DEPENDENCY_MISSING" in result["readiness"]["blockers"]
 
 
 def test_kill_switch_active_forces_not_ready_for_live():
@@ -160,7 +165,7 @@ def test_valid_live_ready_state_allows_live():
     assert rc.live_readiness_ok is True
 
 
-@pytest.mark.parametrize("bad_mode", [None, "", "paper", "unknown"]) 
+@pytest.mark.parametrize("bad_mode", [None, "", "paper", "unknown"])
 def test_invalid_or_missing_execution_mode_context_is_not_approved(bad_mode):
     rc = _make_runtime(live_enabled=True, live_ready=True)
 
