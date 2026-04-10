@@ -63,6 +63,14 @@ class _SafeMode:
         return self._enabled
 
 
+class _Probe:
+    def __init__(self, report):
+        self._report = report
+
+    def get_live_readiness_report(self):
+        return self._report
+
+
 def _make_runtime(*, ready=True, safe_mode=False, betfair_service=None):
     return RuntimeController(
         bus=_Bus(),
@@ -175,3 +183,28 @@ def test_runtime_missing_readiness_signal_from_settings_fails_closed():
 
     assert readiness["ready"] is False
     assert "LIVE_READINESS_FLAG_NOT_OK" in readiness["blockers"]
+
+
+@pytest.mark.parametrize(
+    ("probe_report", "probe_reason"),
+    [
+        ({"ready": True, "level": "NOPE", "blockers": []}, "probe_report_level_not_ready"),
+        ({"ready": True, "level": "READY", "blockers": ["X"]}, "probe_report_has_blockers"),
+        ({"ready": True, "level": "READY", "blockers": {"bad": "shape"}}, "probe_report_blockers_not_list"),
+        ({"ready": False, "level": "READY", "blockers": []}, "probe_report_ready_false"),
+    ],
+)
+def test_live_start_with_contradictory_or_malformed_probe_payloads_fails_closed(probe_report, probe_reason):
+    rc = _make_runtime(ready=True)
+    rc.enforce_probe_readiness_gate = True
+    rc.runtime_probe = _Probe(probe_report)
+
+    result = rc.start(execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)
+
+    assert result["ok"] is False
+    assert result["started"] is False
+    assert result["refused"] is True
+    assert result["effective_execution_mode"] == "SIMULATION"
+    assert result["readiness"]["probe_ok"] is False
+    assert result["readiness"]["details"]["probe"]["reason"] == probe_reason
+    assert rc.execution_mode == "SIMULATION"

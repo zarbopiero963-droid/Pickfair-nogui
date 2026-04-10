@@ -185,18 +185,35 @@ def test_invalid_or_missing_execution_mode_context_is_not_approved(bad_mode):
 
 
 @pytest.mark.parametrize(
-    ("probe_report", "probe_reason"),
+    ("probe_report", "probe_reason", "_case_id"),
     [
-        (None, "probe_report_malformed"),
-        ("not-a-dict", "probe_report_malformed"),
-        (["also", "not", "a", "dict"], "probe_report_malformed"),
-        ({"level": "READY", "blockers": []}, "probe_report_missing_required_fields"),
-        ({"ready": True, "blockers": []}, "probe_report_missing_required_fields"),
-        ({"ready": "yes", "level": "READY", "blockers": []}, "probe_report_ready_not_bool"),
-        ({"ready": True, "level": "GO", "blockers": []}, "probe_report_level_not_ready"),
+        (None, "probe_report_malformed", "probe-report-none"),
+        ("not-a-dict", "probe_report_malformed", "probe-report-string"),
+        (["also", "not", "a", "dict"], "probe_report_malformed", "probe-report-list"),
+        ({"level": "READY", "blockers": []}, "probe_report_missing_required_fields", "probe-missing-ready"),
+        ({"ready": True, "blockers": []}, "probe_report_missing_required_fields", "probe-missing-level"),
+        ({"ready": "yes", "level": "READY", "blockers": []}, "probe_report_ready_not_bool", "probe-ready-not-bool"),
+        ({"ready": True, "level": "GO", "blockers": []}, "probe_report_level_not_ready", "probe-ready-level-not-ready"),
+        ({"ready": True, "level": "READY", "blockers": "BLOCKER"}, "probe_report_blockers_not_list", "probe-blockers-not-list"),
+        ({"ready": True, "level": "READY", "blockers": ["BLOCKER_X"]}, "probe_report_has_blockers", "probe-level-ready-blockers-present"),
+        (
+            {"ready": True, "level": "READY", "blockers": [{"kind": "MALFORMED_BLOCKER"}]},
+            "probe_report_has_blockers",
+            "probe-ready-true-malformed-blockers-payload",
+        ),
+        (
+            {"ready": False, "level": "READY", "blockers": []},
+            "probe_report_ready_false",
+            "probe-contradictory-ready-false-level-ready",
+        ),
+        (
+            {"ready": False, "level": "READY", "blockers": ["CONTRADICTORY_STATE"]},
+            "probe_report_has_blockers",
+            "probe-contradictory-ready-false-with-blocker",
+        ),
     ],
 )
-def test_live_start_refused_when_probe_report_is_malformed(probe_report, probe_reason):
+def test_live_start_refused_when_probe_report_is_malformed(probe_report, probe_reason, _case_id):
     rc = _make_runtime(live_enabled=True, live_ready=True)
     rc.enforce_probe_readiness_gate = True
     rc.runtime_probe = _Probe(probe_report)
@@ -210,6 +227,9 @@ def test_live_start_refused_when_probe_report_is_malformed(probe_report, probe_r
         assert result["started"] is False
         assert result["reason_code"] == "live_readiness_not_ok"
         assert result["effective_execution_mode"] == "SIMULATION"
+        assert result["readiness"]["details"]["probe"]["report"] == (
+            probe_report if isinstance(probe_report, dict) else {}
+        )
         assert result["readiness"]["probe_ok"] is False
         assert result["readiness"]["details"]["probe"]["reason"] == probe_reason
 
