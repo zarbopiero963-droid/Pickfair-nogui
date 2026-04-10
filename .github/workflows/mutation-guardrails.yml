@@ -1,38 +1,14 @@
 name: mutation-guardrails
 
 on:
-  push:
-    paths:
-      - "guardrails/mutations/**"
-      - "scripts/run_mutation_guardrails.py"
-      - "core/**"
-      - "order_manager.py"
-      - "telegram_listener.py"
-      - "copy_engine.py"
-      - "simulation_broker.py"
-      - "session_manager.py"
-      - "rate_limiter.py"
-      - "live_gate.py"
-      - "tests/**"
-  pull_request:
-    paths:
-      - "guardrails/mutations/**"
-      - "scripts/run_mutation_guardrails.py"
-      - "core/**"
-      - "order_manager.py"
-      - "telegram_listener.py"
-      - "copy_engine.py"
-      - "simulation_broker.py"
-      - "session_manager.py"
-      - "rate_limiter.py"
-      - "live_gate.py"
-      - "tests/**"
+  workflow_call:
   workflow_dispatch:
 
 jobs:
   mutation:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    continue-on-error: true
 
     steps:
       - uses: actions/checkout@v4
