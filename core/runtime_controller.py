@@ -473,21 +473,22 @@ class RuntimeController:
         if not self._safe_bool(self.live_enabled, default=False):
             return False
 
-        readiness_level = "UNKNOWN"
         try:
             deploy_status = self.get_deploy_gate_status(
                 execution_mode="LIVE",
                 live_enabled=self.live_enabled,
                 live_readiness_ok=self.live_readiness_ok,
             )
-            readiness_level = str(deploy_status.get("readiness") or "UNKNOWN").upper()
         except Exception:
-            readiness = self.evaluate_live_readiness(
-                execution_mode="LIVE",
-                live_enabled=self.live_enabled,
-                live_readiness_ok=self.live_readiness_ok,
-            )
-            readiness_level = str(readiness.get("level") or "UNKNOWN").upper()
+            return False
+
+        if not isinstance(deploy_status, dict):
+            return False
+
+        if deploy_status.get("allowed") is not True:
+            return False
+
+        readiness_level = str(deploy_status.get("readiness") or "UNKNOWN").upper()
 
         if readiness_level in {"UNKNOWN", "NOT_READY"}:
             return False

@@ -237,6 +237,9 @@ class HeadlessApp:
                 executor=self.executor,
                 safe_mode=self.safe_mode,
             )
+            self.trading_engine.runtime_controller = self.runtime
+            self.trading_engine.simulation_broker = getattr(self, "simulation_broker", None)
+            self.trading_engine.betfair_client = self.betfair_service.get_client()
 
             self.health_registry = HealthRegistry()
             self.metrics_registry = MetricsRegistry()
