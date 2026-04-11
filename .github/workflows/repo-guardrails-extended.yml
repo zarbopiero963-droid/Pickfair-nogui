@@ -2,20 +2,7 @@ name: repo-guardrails-extended
 
 on:
   workflow_call:
-  push:
-    paths:
-      - "guardrails/**"
-      - ".github/workflows/**"
-      - "scripts/validate_guardrails.py"
-      - "scripts/check_merge_markers.py"
-      - "scripts/ci_changed_modules.py"
   pull_request:
-    paths:
-      - "guardrails/**"
-      - ".github/workflows/**"
-      - "scripts/validate_guardrails.py"
-      - "scripts/check_merge_markers.py"
-      - "scripts/ci_changed_modules.py"
   workflow_dispatch:
 
 jobs:
