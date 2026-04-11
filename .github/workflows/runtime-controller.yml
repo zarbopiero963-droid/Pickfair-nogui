@@ -1,29 +1,28 @@
 name: runtime-controller
 
 on:
-  push:
-    paths:
-      - "core/runtime_controller.py"
-      - "guardrails/specs/core.runtime_controller.json"
-      - "guardrails/contracts/core.runtime_controller.json"
-      - "guardrails/state_models/core.runtime_controller.json"
-      - "guardrails/mutations/core.runtime_controller.json"
-      - "tests/integration/test_runtime_controller_copy_flow.py"
-      - "tests/integration/test_runtime_controller_pattern_flow.py"
-      - "tests/integration/test_runtime_controller_live_sim_parity.py"
-  pull_request:
-    paths:
-      - "core/runtime_controller.py"
-      - "guardrails/specs/core.runtime_controller.json"
-      - "guardrails/contracts/core.runtime_controller.json"
-      - "guardrails/state_models/core.runtime_controller.json"
-      - "guardrails/mutations/core.runtime_controller.json"
-      - "tests/integration/test_runtime_controller_copy_flow.py"
-      - "tests/integration/test_runtime_controller_pattern_flow.py"
-      - "tests/integration/test_runtime_controller_live_sim_parity.py"
+  workflow_call:
+  workflow_dispatch:
 
 jobs:
-  run:
+  check-module:
+    runs-on: ubuntu-latest
+    outputs:
+      exists: ${{ steps.module_check.outputs.exists }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check core/runtime_controller.py presence
+        id: module_check
+        run: |
+          if [ -f "core/runtime_controller.py" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  ultra-check:
+    needs: check-module
+    if: needs.check-module.outputs.exists == 'true'
     uses: ./.github/workflows/_module-ultra-check.yml
     with:
       module_path: "core/runtime_controller.py"
@@ -32,3 +31,10 @@ jobs:
       state_model_path: "guardrails/state_models/core.runtime_controller.json"
       mutation_path: "guardrails/mutations/core.runtime_controller.json"
       test_paths: "tests/integration/test_runtime_controller_copy_flow.py tests/integration/test_runtime_controller_pattern_flow.py tests/integration/test_runtime_controller_live_sim_parity.py"
+
+  skipped-report:
+    needs: check-module
+    if: needs.check-module.outputs.exists != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "core/runtime_controller.py not present yet -> smart skip"
