@@ -1,0 +1,62 @@
+name: bootstrap-next-task
+
+on:
+  workflow_dispatch:
+
+jobs:
+  next-task:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Find next task
+        id: next
+        run: |
+          RESULT=$(python .github/scripts/next_task.py)
+          echo "$RESULT"
+          FOUND=$(python - <<'PY'
+          import json
+          import sys
+          data = json.loads('''$RESULT''')
+          print(str(data.get("found", False)).lower())
+          PY
+          )
+          PATH_VAL=$(python - <<'PY'
+          import json
+          data = json.loads('''$RESULT''')
+          print(data.get("path",""))
+          PY
+          )
+          echo "found=$FOUND" >> "$GITHUB_OUTPUT"
+          echo "task_path=$PATH_VAL" >> "$GITHUB_OUTPUT"
+
+      - name: Build Codex comment
+        if: steps.next.outputs.found == 'true'
+        env:
+          TASK_PATH: ${{ steps.next.outputs.task_path }}
+        run: python .github/scripts/create_next_task_comment.py > codex_comment.txt
+
+      - name: Open issue with next task
+        if: steps.next.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE="Next Codex task ready: ${{ steps.next.outputs.task_path }}"
+          BODY="$(cat codex_comment.txt)"
+          gh issue create --title "$TITLE" --body "$BODY"
+
+      - name: No tasks left
+        if: steps.next.outputs.found != 'true'
+        run: echo "No pending tasks left."
