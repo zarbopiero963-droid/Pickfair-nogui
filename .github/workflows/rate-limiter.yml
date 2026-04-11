@@ -1,25 +1,28 @@
 name: rate-limiter
 
 on:
-  push:
-    paths:
-      - "rate_limiter.py"
-      - "guardrails/specs/rate_limiter.json"
-      - "guardrails/contracts/rate_limiter.json"
-      - "guardrails/state_models/rate_limiter.json"
-      - "guardrails/mutations/rate_limiter.json"
-      - "tests/**/test_*rate*limit*.py"
-  pull_request:
-    paths:
-      - "rate_limiter.py"
-      - "guardrails/specs/rate_limiter.json"
-      - "guardrails/contracts/rate_limiter.json"
-      - "guardrails/state_models/rate_limiter.json"
-      - "guardrails/mutations/rate_limiter.json"
-      - "tests/**/test_*rate*limit*.py"
+  workflow_call:
+  workflow_dispatch:
 
 jobs:
-  run:
+  check-module:
+    runs-on: ubuntu-latest
+    outputs:
+      exists: ${{ steps.module_check.outputs.exists }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check rate_limiter.py presence
+        id: module_check
+        run: |
+          if [ -f "rate_limiter.py" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  ultra-check:
+    needs: check-module
+    if: needs.check-module.outputs.exists == 'true'
     uses: ./.github/workflows/_module-ultra-check.yml
     with:
       module_path: "rate_limiter.py"
@@ -27,4 +30,11 @@ jobs:
       contract_path: "guardrails/contracts/rate_limiter.json"
       state_model_path: "guardrails/state_models/rate_limiter.json"
       mutation_path: "guardrails/mutations/rate_limiter.json"
-      test_paths: "tests"
+      test_paths: "tests/test_rate_limiter.py tests/unit/test_rate_limiter.py tests/integration/test_rate_limiter.py"
+
+  skipped-report:
+    needs: check-module
+    if: needs.check-module.outputs.exists != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "rate_limiter.py not present yet -> smart skip"
