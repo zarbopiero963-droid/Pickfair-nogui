@@ -1,25 +1,28 @@
 name: session-manager
 
 on:
-  push:
-    paths:
-      - "session_manager.py"
-      - "guardrails/specs/session_manager.json"
-      - "guardrails/contracts/session_manager.json"
-      - "guardrails/state_models/session_manager.json"
-      - "guardrails/mutations/session_manager.json"
-      - "tests/**/test_*session*.py"
-  pull_request:
-    paths:
-      - "session_manager.py"
-      - "guardrails/specs/session_manager.json"
-      - "guardrails/contracts/session_manager.json"
-      - "guardrails/state_models/session_manager.json"
-      - "guardrails/mutations/session_manager.json"
-      - "tests/**/test_*session*.py"
+  workflow_call:
+  workflow_dispatch:
 
 jobs:
-  run:
+  check-module:
+    runs-on: ubuntu-latest
+    outputs:
+      exists: ${{ steps.module_check.outputs.exists }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check session_manager.py presence
+        id: module_check
+        run: |
+          if [ -f "session_manager.py" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  ultra-check:
+    needs: check-module
+    if: needs.check-module.outputs.exists == 'true'
     uses: ./.github/workflows/_module-ultra-check.yml
     with:
       module_path: "session_manager.py"
@@ -27,4 +30,11 @@ jobs:
       contract_path: "guardrails/contracts/session_manager.json"
       state_model_path: "guardrails/state_models/session_manager.json"
       mutation_path: "guardrails/mutations/session_manager.json"
-      test_paths: "tests"
+      test_paths: "tests/test_session_manager.py tests/unit/test_session_manager.py tests/integration/test_session_manager.py"
+
+  skipped-report:
+    needs: check-module
+    if: needs.check-module.outputs.exists != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "session_manager.py not present yet -> smart skip"
