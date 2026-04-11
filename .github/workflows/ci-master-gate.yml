@@ -5,8 +5,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  repo-guardrails:
-    uses: ./.github/workflows/repo-guardrails-extended.yml
+  dynamic:
+    uses: ./.github/workflows/ci-dynamic-intelligent.yml
 
   trading-engine:
     uses: ./.github/workflows/trading-engine.yml
