@@ -1,42 +1,28 @@
 name: trading-engine
 
 on:
-  push:
-    paths:
-      - "core/trading_engine.py"
-      - "guardrails/specs/core.trading_engine.json"
-      - "guardrails/contracts/core.trading_engine.json"
-      - "guardrails/state_models/core.trading_engine.json"
-      - "guardrails/mutations/core.trading_engine.json"
-      - "tests/integration/test_trading_engine*"
-      - ".github/workflows/trading-engine.yml"
-  pull_request:
-    paths:
-      - "core/trading_engine.py"
-      - "guardrails/specs/core.trading_engine.json"
-      - "guardrails/contracts/core.trading_engine.json"
-      - "guardrails/state_models/core.trading_engine.json"
-      - "guardrails/mutations/core.trading_engine.json"
-      - "tests/integration/test_trading_engine*"
+  workflow_call:
+  workflow_dispatch:
 
 jobs:
-  check:
+  check-module:
     runs-on: ubuntu-latest
     outputs:
-      exists: ${{ steps.chk.outputs.exists }}
+      exists: ${{ steps.module_check.outputs.exists }}
     steps:
       - uses: actions/checkout@v4
-      - id: chk
+      - name: Check core/trading_engine.py presence
+        id: module_check
         run: |
           if [ -f "core/trading_engine.py" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "exists=true" >> "$GITHUB_OUTPUT"
           else
-            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-  run:
-    needs: check
-    if: needs.check.outputs.exists == 'true'
+  ultra-check:
+    needs: check-module
+    if: needs.check-module.outputs.exists == 'true'
     uses: ./.github/workflows/_module-ultra-check.yml
     with:
       module_path: "core/trading_engine.py"
@@ -45,3 +31,10 @@ jobs:
       state_model_path: "guardrails/state_models/core.trading_engine.json"
       mutation_path: "guardrails/mutations/core.trading_engine.json"
       test_paths: "tests/integration/test_trading_engine*"
+
+  skipped-report:
+    needs: check-module
+    if: needs.check-module.outputs.exists != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "core/trading_engine.py not present yet -> smart skip"
