@@ -33,44 +33,85 @@ jobs:
     timeout-minutes: 25
 
     steps:
+      # =========================================================
+      # CHECKOUT
+      # =========================================================
       - name: Checkout
         uses: actions/checkout@v4
 
+      # =========================================================
+      # PYTHON SETUP
+      # =========================================================
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install deps
+      # =========================================================
+      # INSTALL DEPENDENCIES
+      # =========================================================
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+
+          if [ -f requirements-dev.txt ]; then
+            pip install -r requirements-dev.txt
+          fi
+
           pip install pytest pytest-xdist
 
+      # =========================================================
+      # MODULE EXISTENCE (HARD FAIL)
+      # =========================================================
       - name: Validate target module exists
         run: |
-          test -f "${{ inputs.module_path }}"
+          if [ ! -f "${{ inputs.module_path }}" ]; then
+            echo "❌ Module not found: ${{ inputs.module_path }}"
+            exit 1
+          fi
 
+      # =========================================================
+      # GUARDRAIL FILES EXISTENCE (HARD FAIL IF PROVIDED)
+      # =========================================================
       - name: Validate guardrail files exist when provided
         run: |
-          if [ -n "${{ inputs.spec_path }}" ]; then test -f "${{ inputs.spec_path }}"; fi
-          if [ -n "${{ inputs.contract_path }}" ]; then test -f "${{ inputs.contract_path }}"; fi
-          if [ -n "${{ inputs.state_model_path }}" ]; then test -f "${{ inputs.state_model_path }}"; fi
-          if [ -n "${{ inputs.mutation_path }}" ]; then test -f "${{ inputs.mutation_path }}"; fi
+          if [ -n "${{ inputs.spec_path }}" ]; then
+            test -f "${{ inputs.spec_path }}" || (echo "Missing spec file" && exit 1)
+          fi
 
+          if [ -n "${{ inputs.contract_path }}" ]; then
+            test -f "${{ inputs.contract_path }}" || (echo "Missing contract file" && exit 1)
+          fi
+
+          if [ -n "${{ inputs.state_model_path }}" ]; then
+            test -f "${{ inputs.state_model_path }}" || (echo "Missing state model file" && exit 1)
+          fi
+
+          if [ -n "${{ inputs.mutation_path }}" ]; then
+            test -f "${{ inputs.mutation_path }}" || (echo "Missing mutation file" && exit 1)
+          fi
+
+      # =========================================================
+      # GUARDRAIL JSON VALIDATION (HARD FAIL)
+      # =========================================================
       - name: Validate guardrail JSON syntax
         run: |
           python - <<'PY'
           import json
           import os
 
-          for path in [
+          paths = [
               os.environ.get("SPEC_PATH", ""),
               os.environ.get("CONTRACT_PATH", ""),
               os.environ.get("STATE_MODEL_PATH", ""),
               os.environ.get("MUTATION_PATH", ""),
-          ]:
+          ]
+
+          for path in paths:
               if path:
                   with open(path, "r", encoding="utf-8") as f:
                       json.load(f)
@@ -82,20 +123,25 @@ jobs:
           STATE_MODEL_PATH: ${{ inputs.state_model_path }}
           MUTATION_PATH: ${{ inputs.mutation_path }}
 
-      - name: Check which focused tests actually exist
+      # =========================================================
+      # DETECT EXISTING TEST FILES
+      # =========================================================
+      - name: Detect existing focused tests
         id: tests_check
         shell: bash
         run: |
           EXISTING_TESTS=""
+
           for path in ${{ inputs.test_paths }}; do
             if [ -f "$path" ]; then
               EXISTING_TESTS="$EXISTING_TESTS $path"
             else
-              echo "Missing focused test -> $path"
+              echo "⚠️ Missing focused test -> $path"
             fi
           done
 
           EXISTING_TESTS="$(echo "$EXISTING_TESTS" | xargs)"
+
           if [ -n "$EXISTING_TESTS" ]; then
             echo "has_tests=true" >> "$GITHUB_OUTPUT"
             echo "existing_tests=$EXISTING_TESTS" >> "$GITHUB_OUTPUT"
@@ -104,16 +150,38 @@ jobs:
             echo "existing_tests=" >> "$GITHUB_OUTPUT"
           fi
 
+      # =========================================================
+      # RUN MODULE TESTS (ONLY IF EXIST)
+      # =========================================================
       - name: Run module-focused tests
         if: ${{ steps.tests_check.outputs.has_tests == 'true' }}
         run: |
+          echo "Running focused tests:"
+          echo "${{ steps.tests_check.outputs.existing_tests }}"
+
           pytest -q -x ${{ steps.tests_check.outputs.existing_tests }}
 
+      # =========================================================
+      # WARNING IF NO TESTS
+      # =========================================================
       - name: Advisory if module exists but no focused tests
         if: ${{ steps.tests_check.outputs.has_tests != 'true' }}
         run: |
-          echo "::warning::Module exists but no focused tests found for ${{ inputs.module_path }}"
+          echo "::warning::No focused tests found for module ${{ inputs.module_path }}"
 
-      - name: Run full suite smoke backstop
+      # =========================================================
+      # FULL SUITE BACKSTOP (SEMPRE)
+      # =========================================================
+      - name: Run full test suite (backstop)
         run: |
           pytest -q
+
+      # =========================================================
+      # UPLOAD DEBUG ARTIFACT
+      # =========================================================
+      - name: Upload pytest cache
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ultra-check-cache
+          path: .pytest_cache
