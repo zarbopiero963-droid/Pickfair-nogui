@@ -1,29 +1,40 @@
 name: telegram-listener
 
 on:
-  push:
-    paths:
-      - "telegram_listener.py"
-      - "tests/integration/test_telegram_listener*"
-  pull_request:
-    paths:
-      - "telegram_listener.py"
+  workflow_call:
+  workflow_dispatch:
 
 jobs:
-  check:
+  check-module:
     runs-on: ubuntu-latest
     outputs:
-      exists: ${{ steps.chk.outputs.exists }}
+      exists: ${{ steps.module_check.outputs.exists }}
     steps:
       - uses: actions/checkout@v4
-      - id: chk
+      - name: Check telegram_listener.py presence
+        id: module_check
         run: |
-          [ -f "telegram_listener.py" ] && echo "exists=true" >> $GITHUB_OUTPUT || echo "exists=false" >> $GITHUB_OUTPUT
+          if [ -f "telegram_listener.py" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
 
-  run:
-    needs: check
-    if: needs.check.outputs.exists == 'true'
+  ultra-check:
+    needs: check-module
+    if: needs.check-module.outputs.exists == 'true'
     uses: ./.github/workflows/_module-ultra-check.yml
     with:
       module_path: "telegram_listener.py"
+      spec_path: "guardrails/specs/telegram_listener.json"
+      contract_path: "guardrails/contracts/telegram_listener.json"
+      state_model_path: "guardrails/state_models/telegram_listener.json"
+      mutation_path: "guardrails/mutations/telegram_listener.json"
       test_paths: "tests/integration/test_telegram_listener*"
+
+  skipped-report:
+    needs: check-module
+    if: needs.check-module.outputs.exists != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "telegram_listener.py not present yet -> smart skip"
