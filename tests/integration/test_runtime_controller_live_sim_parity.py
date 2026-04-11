@@ -74,3 +74,37 @@ def test_runtime_controller_pause_block_semantics_same_live_sim():
 
     assert out[0] == out[1]
     assert "SIGNAL_REJECTED" in out[0]
+
+
+@pytest.mark.integration
+def test_is_live_allowed_fail_closed_when_deploy_gate_denies_ready_state():
+    rc = RuntimeController(
+        bus=_Bus(),
+        db=_DB(),
+        settings_service=_Settings(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+    rc.execution_mode = "LIVE"
+    rc.live_enabled = True
+    rc.live_readiness_ok = True
+    rc.get_deploy_gate_status = lambda **_kwargs: {"allowed": False, "readiness": "READY"}
+
+    assert rc.is_live_allowed() is False
+
+
+@pytest.mark.integration
+def test_effective_execution_mode_stays_simulation_when_deploy_gate_denies_ready_state():
+    rc = RuntimeController(
+        bus=_Bus(),
+        db=_DB(),
+        settings_service=_Settings(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+    rc.execution_mode = "LIVE"
+    rc.live_enabled = True
+    rc.live_readiness_ok = True
+    rc.get_deploy_gate_status = lambda **_kwargs: {"allowed": False, "readiness": "READY"}
+
+    assert rc.get_effective_execution_mode() == "SIMULATION"
