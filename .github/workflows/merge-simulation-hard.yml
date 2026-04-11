@@ -40,7 +40,7 @@ jobs:
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
           pip install pytest pytest-xdist
 
-      - name: Validate all guardrail JSON (fail if invalid)
+      - name: Validate all guardrail JSON
         run: |
           python scripts/validate_guardrails.py
 
@@ -53,5 +53,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: merge-simulation-logs
-          path: |
-            .pytest_cache
+          path: .pytest_cache
