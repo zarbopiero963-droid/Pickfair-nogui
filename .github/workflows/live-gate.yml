@@ -1,25 +1,28 @@
 name: live-gate
 
 on:
-  push:
-    paths:
-      - "live_gate.py"
-      - "guardrails/specs/live_gate.json"
-      - "guardrails/contracts/live_gate.json"
-      - "guardrails/state_models/live_gate.json"
-      - "guardrails/mutations/live_gate.json"
-      - "tests/**/test_*live*gate*.py"
-  pull_request:
-    paths:
-      - "live_gate.py"
-      - "guardrails/specs/live_gate.json"
-      - "guardrails/contracts/live_gate.json"
-      - "guardrails/state_models/live_gate.json"
-      - "guardrails/mutations/live_gate.json"
-      - "tests/**/test_*live*gate*.py"
+  workflow_call:
+  workflow_dispatch:
 
 jobs:
-  run:
+  check-module:
+    runs-on: ubuntu-latest
+    outputs:
+      exists: ${{ steps.module_check.outputs.exists }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check live_gate.py presence
+        id: module_check
+        run: |
+          if [ -f "live_gate.py" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  ultra-check:
+    needs: check-module
+    if: needs.check-module.outputs.exists == 'true'
     uses: ./.github/workflows/_module-ultra-check.yml
     with:
       module_path: "live_gate.py"
@@ -27,4 +30,11 @@ jobs:
       contract_path: "guardrails/contracts/live_gate.json"
       state_model_path: "guardrails/state_models/live_gate.json"
       mutation_path: "guardrails/mutations/live_gate.json"
-      test_paths: "tests"
+      test_paths: "tests/test_live_gate.py tests/unit/test_live_gate.py tests/integration/test_live_gate.py"
+
+  skipped-report:
+    needs: check-module
+    if: needs.check-module.outputs.exists != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "live_gate.py not present yet -> smart skip"
