@@ -37,4 +37,4 @@ jobs:
             pytest -q -x tests/integration/test_betfair_timeout_and_ghost_orders.py
           else
             echo "::warning::ghost integration test missing -> safe skip"
-          fi
+          fix 
