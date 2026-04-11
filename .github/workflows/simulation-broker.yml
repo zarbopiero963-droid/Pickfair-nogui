@@ -1,29 +1,40 @@
 name: simulation-broker
 
 on:
-  push:
-    paths:
-      - "simulation_broker.py"
-      - "tests/integration/test_simulation_broker*"
-  pull_request:
-    paths:
-      - "simulation_broker.py"
+  workflow_call:
+  workflow_dispatch:
 
 jobs:
-  check:
+  check-module:
     runs-on: ubuntu-latest
     outputs:
-      exists: ${{ steps.chk.outputs.exists }}
+      exists: ${{ steps.module_check.outputs.exists }}
     steps:
       - uses: actions/checkout@v4
-      - id: chk
+      - name: Check simulation_broker.py presence
+        id: module_check
         run: |
-          [ -f "simulation_broker.py" ] && echo "exists=true" >> $GITHUB_OUTPUT || echo "exists=false" >> $GITHUB_OUTPUT
+          if [ -f "simulation_broker.py" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
 
-  run:
-    needs: check
-    if: needs.check.outputs.exists == 'true'
+  ultra-check:
+    needs: check-module
+    if: needs.check-module.outputs.exists == 'true'
     uses: ./.github/workflows/_module-ultra-check.yml
     with:
       module_path: "simulation_broker.py"
+      spec_path: "guardrails/specs/simulation_broker.json"
+      contract_path: "guardrails/contracts/simulation_broker.json"
+      state_model_path: "guardrails/state_models/simulation_broker.json"
+      mutation_path: "guardrails/mutations/simulation_broker.json"
       test_paths: "tests/integration/test_simulation_broker*"
+
+  skipped-report:
+    needs: check-module
+    if: needs.check-module.outputs.exists != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "simulation_broker.py not present yet -> smart skip"
