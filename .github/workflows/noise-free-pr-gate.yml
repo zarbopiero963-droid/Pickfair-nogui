@@ -1,6 +1,7 @@
 name: noise-free-pr-gate
 
 on:
+  workflow_call:
   pull_request:
   workflow_dispatch:
 
