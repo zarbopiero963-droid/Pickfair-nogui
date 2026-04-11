@@ -90,6 +90,11 @@ def test_live_requested_but_not_enabled_returns_simulation():
 @pytest.mark.integration
 def test_live_enabled_and_ready_returns_live():
     rc = _mk_runtime(execution_mode="LIVE", live_enabled=True, live_ready=True)
+    rc.get_deploy_gate_status = lambda **_kwargs: {
+        "allowed": True,
+        "readiness": "READY",
+        "effective_execution_mode": "LIVE",
+    }
     assert rc.get_effective_execution_mode() == "LIVE"
 
 
@@ -107,4 +112,22 @@ def test_unknown_readiness_forces_simulation():
         "readiness": "UNKNOWN",
         "effective_execution_mode": "LIVE",
     }
+    assert rc.get_effective_execution_mode() == "SIMULATION"
+
+
+@pytest.mark.integration
+def test_allowed_false_ready_forces_simulation():
+    rc = _mk_runtime(execution_mode="LIVE", live_enabled=True, live_ready=True)
+    rc.get_deploy_gate_status = lambda **_kwargs: {
+        "allowed": False,
+        "readiness": "READY",
+        "effective_execution_mode": "SIMULATION",
+    }
+    assert rc.get_effective_execution_mode() == "SIMULATION"
+
+
+@pytest.mark.integration
+def test_malformed_deploy_gate_forces_simulation():
+    rc = _mk_runtime(execution_mode="LIVE", live_enabled=True, live_ready=True)
+    rc.get_deploy_gate_status = lambda **_kwargs: None
     assert rc.get_effective_execution_mode() == "SIMULATION"

@@ -8,21 +8,25 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "guardrail_check.py"
 
 
-def _run_guard(tmp_path: Path, title: str) -> subprocess.CompletedProcess[str]:
+def _run_guard(
+    tmp_path: Path,
+    title: str,
+    *,
+    changed_files: list[dict] | None = None,
+) -> subprocess.CompletedProcess[str]:
     (tmp_path / ".guardrails").mkdir()
     (tmp_path / "pr_meta.json").write_text(
         json.dumps({"title": title, "body": ""}),
         encoding="utf-8",
     )
+    files = changed_files or [
+        {"filename": ".github/workflows/pr-guard.yml"},
+        {"filename": "scripts/guardrail_check.py"},
+        {"filename": ".guardrails/allowed_scope.json"},
+        {"filename": "tests/guardrails/test_pr_guard_fail_closed.py"},
+    ]
     (tmp_path / "pr_files_raw.json").write_text(
-        json.dumps(
-            [
-                {"filename": ".github/workflows/pr-guard.yml"},
-                {"filename": "scripts/guardrail_check.py"},
-                {"filename": ".guardrails/allowed_scope.json"},
-                {"filename": "tests/guardrails/test_pr_guard_fail_closed.py"},
-            ]
-        ),
+        json.dumps(files),
         encoding="utf-8",
     )
     (tmp_path / ".guardrails" / "allowed_scope.json").write_text(
@@ -54,19 +58,28 @@ def _run_guard(tmp_path: Path, title: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_missing_task_fails(tmp_path: Path):
+def test_missing_task_non_critical_warns_and_passes(tmp_path: Path):
     result = _run_guard(tmp_path, title="Guardrail update")
-    assert result.returncode != 0
+    assert result.returncode == 0
     assert "Missing [TASK: ...]" in result.stdout
 
 
-def test_unknown_task_fails(tmp_path: Path):
-    result = _run_guard(tmp_path, title="[TASK: not_real] Guardrail update")
+def test_missing_task_critical_fails(tmp_path: Path):
+    result = _run_guard(
+        tmp_path,
+        title="Critical runtime update",
+        changed_files=[{"filename": "core/runtime_controller.py"}],
+    )
     assert result.returncode != 0
-    assert "Unknown task" in result.stdout
+
+
+def test_unknown_task_non_critical_follows_current_semantics(tmp_path: Path):
+    result = _run_guard(tmp_path, title="[TASK: not_real] Guardrail update")
+    assert result.returncode == 0
+    assert "TASK tag found: not_real" in result.stdout
 
 
 def test_valid_task_passes(tmp_path: Path):
     result = _run_guard(tmp_path, title="[TASK: pr_guard] Guardrail update")
     assert result.returncode == 0
-    assert "✅ Scope valid" in result.stdout
+    assert "✅ PR guard completed" in result.stdout
