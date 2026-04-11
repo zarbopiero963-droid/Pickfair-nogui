@@ -1,33 +1,28 @@
 name: order-manager
 
 on:
-  push:
-    paths:
-      - "order_manager.py"
-      - "guardrails/specs/order_manager.json"
-      - "guardrails/contracts/order_manager.json"
-      - "guardrails/state_models/order_manager.json"
-      - "guardrails/mutations/order_manager.json"
-      - "tests/integration/test_order_manager*"
-  pull_request:
-    paths:
-      - "order_manager.py"
-      - "tests/integration/test_order_manager*"
+  workflow_call:
+  workflow_dispatch:
 
 jobs:
-  check:
+  check-module:
     runs-on: ubuntu-latest
     outputs:
-      exists: ${{ steps.chk.outputs.exists }}
+      exists: ${{ steps.module_check.outputs.exists }}
     steps:
       - uses: actions/checkout@v4
-      - id: chk
+      - name: Check order_manager.py presence
+        id: module_check
         run: |
-          [ -f "order_manager.py" ] && echo "exists=true" >> $GITHUB_OUTPUT || echo "exists=false" >> $GITHUB_OUTPUT
+          if [ -f "order_manager.py" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
 
-  run:
-    needs: check
-    if: needs.check.outputs.exists == 'true'
+  ultra-check:
+    needs: check-module
+    if: needs.check-module.outputs.exists == 'true'
     uses: ./.github/workflows/_module-ultra-check.yml
     with:
       module_path: "order_manager.py"
@@ -35,4 +30,11 @@ jobs:
       contract_path: "guardrails/contracts/order_manager.json"
       state_model_path: "guardrails/state_models/order_manager.json"
       mutation_path: "guardrails/mutations/order_manager.json"
-      test_paths: "tests/integration/test_order_manager*"
+      test_paths: "tests/integration/test_order_manager* tests/recovery/test_order_manager*"
+
+  skipped-report:
+    needs: check-module
+    if: needs.check-module.outputs.exists != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "order_manager.py not present yet -> smart skip"
