@@ -1,0 +1,60 @@
+name: queue-on-pr-closed
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  advance:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Determine current task path from PR body
+        id: prmeta
+        shell: bash
+        run: |
+          BODY_FILE=$(mktemp)
+          cat <<'EOF' > "$BODY_FILE"
+          ${{ github.event.pull_request.body }}
+          EOF
+
+          TASK_PATH=$(python - <<'PY'
+          import re
+          from pathlib import Path
+
+          body = Path("$BODY_FILE").read_text(encoding="utf-8")
+          m = re.search(r"Task-File:\s*(ops/tasks/[^\s]+\.md)", body)
+          print(m.group(1) if m else "")
+          PY
+          )
+          echo "task_path=$TASK_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Move completed task
+        if: steps.prmeta.outputs.task_path != ''
+        env:
+          TASK_PATH: ${{ steps.prmeta.outputs.task_path }}
+        run: python .github/scripts/complete_current_task.py
+
+      - name: Commit queue update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ops/tasks ops/tasks_done
+          git diff --cached --quiet || git commit -m "chore(queue): complete merged task"
+          git push
