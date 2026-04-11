@@ -40,6 +40,13 @@ class SettingsService(LegacySettingsService):
         data = self.get_all_settings()
         return self._b(data, "live_readiness_ok", False)
 
+    def load_live_readiness_level(self) -> str:
+        data = self.get_all_settings()
+        level = str(data.get("live_readiness_level", "UNKNOWN") or "UNKNOWN").strip().upper()
+        if level in {"READY", "DEGRADED", "NOT_READY", "UNKNOWN"}:
+            return level
+        return "UNKNOWN"
+
     def load_anomaly_enabled(self) -> bool:
         data = self.get_all_settings()
         return self._b(data, "anomaly_enabled", False)
