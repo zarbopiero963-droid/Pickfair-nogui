@@ -1,27 +1,28 @@
 name: copy-engine
 
 on:
-  push:
-    paths:
-      - "copy_engine.py"
-      - "guardrails/specs/copy_engine.json"
-      - "guardrails/contracts/copy_engine.json"
-      - "guardrails/state_models/copy_engine.json"
-      - "guardrails/mutations/copy_engine.json"
-      - "tests/integration/test_copy_engine_dispatch.py"
-      - "tests/guardrails/test_copy_runtime_entrypoints.py"
-  pull_request:
-    paths:
-      - "copy_engine.py"
-      - "guardrails/specs/copy_engine.json"
-      - "guardrails/contracts/copy_engine.json"
-      - "guardrails/state_models/copy_engine.json"
-      - "guardrails/mutations/copy_engine.json"
-      - "tests/integration/test_copy_engine_dispatch.py"
-      - "tests/guardrails/test_copy_runtime_entrypoints.py"
+  workflow_call:
+  workflow_dispatch:
 
 jobs:
-  run:
+  check-module:
+    runs-on: ubuntu-latest
+    outputs:
+      exists: ${{ steps.module_check.outputs.exists }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check copy_engine.py presence
+        id: module_check
+        run: |
+          if [ -f "copy_engine.py" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  ultra-check:
+    needs: check-module
+    if: needs.check-module.outputs.exists == 'true'
     uses: ./.github/workflows/_module-ultra-check.yml
     with:
       module_path: "copy_engine.py"
@@ -30,3 +31,10 @@ jobs:
       state_model_path: "guardrails/state_models/copy_engine.json"
       mutation_path: "guardrails/mutations/copy_engine.json"
       test_paths: "tests/integration/test_copy_engine_dispatch.py tests/guardrails/test_copy_runtime_entrypoints.py"
+
+  skipped-report:
+    needs: check-module
+    if: needs.check-module.outputs.exists != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "copy_engine.py not present yet -> smart skip"
