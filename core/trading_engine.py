@@ -234,6 +234,9 @@ class TradingEngine:
         self.reconciliation_engine = reconciliation_engine or _NullReconciliationEngine()
         self.state_recovery = state_recovery or _NullStateRecovery()
         self.async_db_writer = async_db_writer or _NullAsyncDbWriter()
+        self.runtime_controller = None
+        self.simulation_broker = None
+        self.betfair_client = None
         self.auto_generate_correlation_id: bool = True
         self.order_manager: Optional[OrderManager] = None
         self.guard: Optional[Any] = None
@@ -1338,6 +1341,26 @@ class TradingEngine:
         payload = dict(request)
         payload["customer_ref"] = ctx.customer_ref
         payload["correlation_id"] = ctx.correlation_id
+
+        runtime = self.runtime_controller
+        if runtime is not None and callable(getattr(runtime, "get_effective_execution_mode", None)):
+            mode = str(runtime.get_effective_execution_mode() or "SIMULATION").upper()
+            if mode == "SIMULATION":
+                if self.simulation_broker is not None and callable(getattr(self.simulation_broker, "execute", None)):
+                    return self.simulation_broker.execute(payload)
+            elif mode == "LIVE":
+                if not bool(getattr(runtime, "is_live_allowed", lambda: False)()):
+                    raise RuntimeError("LIVE_EXECUTION_BLOCKED")
+
+                live_client = self.betfair_client
+                if live_client is not None:
+                    place_order = getattr(live_client, "place_order", None)
+                    if callable(place_order):
+                        return place_order(payload)
+
+                    place_bet = getattr(live_client, "place_bet", None)
+                    if callable(place_bet):
+                        return place_bet(**payload)
 
         if self.order_manager is not None:
             for mn in ("submit", "place_order"):

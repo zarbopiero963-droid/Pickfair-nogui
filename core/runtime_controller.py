@@ -463,6 +463,42 @@ class RuntimeController:
     def is_live_readiness_ok(self, **kwargs) -> bool:
         return bool(self.evaluate_live_readiness(**kwargs).get("ready", False))
 
+    def is_live_allowed(self) -> bool:
+        if self._is_kill_switch_active():
+            return False
+
+        if self._safe_execution_mode(self.execution_mode) != "LIVE":
+            return False
+
+        if not self._safe_bool(self.live_enabled, default=False):
+            return False
+
+        readiness_level = "UNKNOWN"
+        try:
+            deploy_status = self.get_deploy_gate_status(
+                execution_mode="LIVE",
+                live_enabled=self.live_enabled,
+                live_readiness_ok=self.live_readiness_ok,
+            )
+            readiness_level = str(deploy_status.get("readiness") or "UNKNOWN").upper()
+        except Exception:
+            readiness = self.evaluate_live_readiness(
+                execution_mode="LIVE",
+                live_enabled=self.live_enabled,
+                live_readiness_ok=self.live_readiness_ok,
+            )
+            readiness_level = str(readiness.get("level") or "UNKNOWN").upper()
+
+        if readiness_level in {"UNKNOWN", "NOT_READY"}:
+            return False
+
+        return True
+
+    def get_effective_execution_mode(self) -> str:
+        if not self.is_live_allowed():
+            return "SIMULATION"
+        return "LIVE"
+
     def reload_config(self) -> None:
         self.config = self.settings_service.load_roserpina_config()
         self.mm = RoserpinaMoneyManagement(self.config)
