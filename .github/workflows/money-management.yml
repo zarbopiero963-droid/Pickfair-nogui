@@ -1,29 +1,40 @@
 name: money-management
 
 on:
-  push:
-    paths:
-      - "core/money_management.py"
-      - "tests/integration/test_money_management*"
-  pull_request:
-    paths:
-      - "core/money_management.py"
+  workflow_call:
+  workflow_dispatch:
 
 jobs:
-  check:
+  check-module:
     runs-on: ubuntu-latest
     outputs:
-      exists: ${{ steps.chk.outputs.exists }}
+      exists: ${{ steps.module_check.outputs.exists }}
     steps:
       - uses: actions/checkout@v4
-      - id: chk
+      - name: Check core/money_management.py presence
+        id: module_check
         run: |
-          [ -f "core/money_management.py" ] && echo "exists=true" >> $GITHUB_OUTPUT || echo "exists=false" >> $GITHUB_OUTPUT
+          if [ -f "core/money_management.py" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
 
-  run:
-    needs: check
-    if: needs.check.outputs.exists == 'true'
+  ultra-check:
+    needs: check-module
+    if: needs.check-module.outputs.exists == 'true'
     uses: ./.github/workflows/_module-ultra-check.yml
     with:
       module_path: "core/money_management.py"
+      spec_path: "guardrails/specs/core.money_management.json"
+      contract_path: "guardrails/contracts/core.money_management.json"
+      state_model_path: "guardrails/state_models/core.money_management.json"
+      mutation_path: "guardrails/mutations/core.money_management.json"
       test_paths: "tests/integration/test_money_management*"
+
+  skipped-report:
+    needs: check-module
+    if: needs.check-module.outputs.exists != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "core/money_management.py not present yet -> smart skip"
