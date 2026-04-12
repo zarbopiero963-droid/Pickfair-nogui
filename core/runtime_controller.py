@@ -13,6 +13,7 @@ from core.risk_desk import RiskDesk
 from core.system_state import DeskMode, RuntimeMode
 from core.table_manager import TableManager
 from core.safety_layer import assert_live_gate_or_refuse
+from core.type_helpers import safe_bool
 from order_manager import TERMINAL_LIFECYCLE_EVENTS
 
 logger = logging.getLogger(__name__)
@@ -129,16 +130,7 @@ class RuntimeController:
             self.betfair_service.set_simulation_mode(self.simulation_mode)
 
     def _safe_bool(self, value, default: bool = False) -> bool:
-        if value is None:
-            return bool(default)
-        if isinstance(value, bool):
-            return value
-        txt = str(value).strip().lower()
-        if txt in {"1", "true", "yes", "on"}:
-            return True
-        if txt in {"0", "false", "no", "off"}:
-            return False
-        return bool(default)
+        return safe_bool(value, default)
 
     def _safe_execution_mode(self, value) -> str:
         normalized = str(value or "").strip().upper()

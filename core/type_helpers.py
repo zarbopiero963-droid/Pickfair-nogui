@@ -57,6 +57,26 @@ def safe_str(value: Any, default: str = "") -> str:
         return default
 
 
+def safe_bool(value: Any, default: bool = False) -> bool:
+    """Return a ``bool`` from a truthy/bool/string value.
+
+    Accepts bool, int, or string representations (``"true"``, ``"1"``,
+    ``"yes"``, ``"on"`` → ``True``; ``"false"``, ``"0"``, ``"no"``,
+    ``"off"`` → ``False``).  Returns ``bool(default)`` on ``None`` or
+    unrecognised strings.
+    """
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    txt = str(value).strip().lower()
+    if txt in {"1", "true", "yes", "on"}:
+        return True
+    if txt in {"0", "false", "no", "off"}:
+        return False
+    return bool(default)
+
+
 def safe_bool_int(value: Any, default: bool = False) -> int:
     """Return ``1`` or ``0`` from a truthy/bool/string value.
 

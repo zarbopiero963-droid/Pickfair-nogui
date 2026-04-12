@@ -14,6 +14,9 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from typing import Any
+
+from core.type_helpers import safe_float
 
 WOM_WINDOW_SIZE = 50
 WOM_TIME_WINDOW_SEC = 30.0
@@ -120,13 +123,8 @@ class WoMEngine:
         except Exception:
             return default
 
-    def _safe_float(self, value, default: float = 0.0) -> float:
-        try:
-            if value in (None, ""):
-                return float(default)
-            return float(value)
-        except Exception:
-            return float(default)
+    def _safe_float(self, value: Any, default: float = 0.0) -> float:
+        return safe_float(value, default)
 
     def _clamp(self, value: float, low: float, high: float) -> float:
         return max(low, min(high, float(value)))
