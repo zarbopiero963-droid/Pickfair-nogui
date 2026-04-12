@@ -606,13 +606,28 @@ class RuntimeController:
                         market_id=market_id,
                         # bet_ids omitted → cancel ALL unmatched orders on market
                     )
-                    cancel_results.append({
-                        "market_id": market_id,
-                        "order_count": len(orders),
-                        "ok": True,
-                        "response": response,
-                    })
-                    cancelled_count += len(orders)
+                    if response.get("ok"):
+                        cancel_results.append({
+                            "market_id": market_id,
+                            "order_count": len(orders),
+                            "ok": True,
+                            "response": response,
+                        })
+                        cancelled_count += response.get("cancelled_count", len(orders))
+                    else:
+                        err_msg = response.get("error", "cancel_orders returned ok=False")
+                        logger.warning(
+                            "emergency_stop: cancel_orders ok=False for market %s: %s",
+                            market_id,
+                            err_msg,
+                        )
+                        cancel_results.append({
+                            "market_id": market_id,
+                            "order_count": len(orders),
+                            "ok": False,
+                            "error": err_msg,
+                        })
+                        error_count += len(orders)
                 except Exception as exc:
                     logger.warning(
                         "emergency_stop: cancel_orders failed for market %s: %s",

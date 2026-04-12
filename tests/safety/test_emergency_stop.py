@@ -309,6 +309,48 @@ def test_emergency_stop_cancel_orders_called_without_bet_id_kwarg():
 
 @pytest.mark.unit
 @pytest.mark.safety
+def test_emergency_stop_cancel_ok_false_counted_as_error():
+    """cancel_orders returning ok=False must increment cancel_error_count, not cancelled_count.
+
+    Regression: the old code always set ok=True in the result dict and
+    incremented cancelled_count regardless of the response payload, masking
+    silent API-level failures during emergency stop.
+    """
+    class _OkFalseClient:
+        def __init__(self):
+            self.cancel_calls = []
+
+        def cancel_orders(self, *, market_id, bet_ids=None, **_kw):
+            self.cancel_calls.append({"market_id": market_id, "bet_ids": bet_ids})
+            return {
+                "ok": False,
+                "market_id": market_id,
+                "error": "CANCEL_FAILED: MARKET_NOT_OPEN",
+                "classification": "PERMANENT",
+            }
+
+    live_client = _OkFalseClient()
+    sagas = [_FakeSaga("1.111", "bet_aaa", "ref1")]
+    rc, bus = _make_rc(
+        betfair=_BetfairService(live_client=live_client),
+        sagas=sagas,
+    )
+
+    result = rc.emergency_stop()
+
+    # Emergency flag must still be set
+    assert rc.is_emergency_stopped is True
+    # ok=False response must be treated as an error
+    assert result["cancel_error_count"] >= 1
+    assert result["cancelled_count"] == 0
+    # Subsequent signals still refused
+    rc._on_signal_received({"market_id": "1.111", "selection_id": 9})
+    rejected = [p for e, p in bus.published if e == "SIGNAL_REJECTED"]
+    assert any("emergency_stop_active" in str(r.get("reason", "")) for r in rejected)
+
+
+@pytest.mark.unit
+@pytest.mark.safety
 def test_betfair_client_cancel_orders_exists():
     """BetfairClient must define cancel_orders so emergency_stop never gets AttributeError."""
     from betfair_client import BetfairClient
