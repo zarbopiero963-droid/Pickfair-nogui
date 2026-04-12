@@ -16,4 +16,4 @@
 - Always read the selected task file from ops/tasks/
 - Treat the task file as the single source of truth
 - Do not invent requirements outside the task
-- Do not expand scope 
+- Do not expand scope
