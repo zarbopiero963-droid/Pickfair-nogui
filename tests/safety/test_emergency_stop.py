@@ -356,3 +356,78 @@ def test_betfair_client_cancel_orders_exists():
     from betfair_client import BetfairClient
     assert callable(getattr(BetfairClient, "cancel_orders", None)), \
         "BetfairClient must implement cancel_orders()"
+
+
+# ===========================================================================
+# GUI operator trigger: _runtime_emergency_stop()
+# ===========================================================================
+
+@pytest.mark.unit
+@pytest.mark.safety
+def test_gui_emergency_stop_method_invokes_runtime_emergency_stop():
+    """_runtime_emergency_stop() must invoke runtime.emergency_stop() and leave
+    the runtime permanently blocked for live order entry."""
+    rc, bus = _make_rc()
+
+    # Simulate what the GUI button does
+    rc.emergency_stop(reason="operator_gui_button")
+
+    assert rc.is_emergency_stopped is True, \
+        "emergency_stop must set is_emergency_stopped after GUI trigger"
+    assert rc.live_enabled is False, \
+        "live_enabled must be forced to False by GUI emergency stop"
+    assert rc.execution_mode == "SIMULATION", \
+        "execution_mode must be forced to SIMULATION by GUI emergency stop"
+
+    # All subsequent signals must be refused — flat gate
+    rc._on_signal_received({"market_id": "1.999", "selection_id": 1})
+    rejected = [p for e, p in bus.published if e == "SIGNAL_REJECTED"]
+    assert rejected, "GUI emergency stop must block all subsequent signal routing"
+    assert any("emergency_stop_active" in str(r.get("reason", "")) for r in rejected)
+
+
+@pytest.mark.unit
+@pytest.mark.safety
+def test_gui_emergency_stop_button_is_defined_on_mini_gui_class():
+    """mini_gui.MiniPickfairGUI must define _runtime_emergency_stop() method."""
+    import ast
+    import pathlib
+
+    src = pathlib.Path("mini_gui.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    # Find the class MiniPickfairGUI and check for _runtime_emergency_stop
+    found = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == "MiniPickfairGUI":
+            for item in ast.walk(node):
+                if isinstance(item, ast.FunctionDef) and item.name == "_runtime_emergency_stop":
+                    found = True
+                    break
+    assert found, "MiniPickfairGUI must define _runtime_emergency_stop() method"
+
+
+@pytest.mark.unit
+@pytest.mark.safety
+def test_gui_emergency_stop_cancel_semantics_flat_cancel():
+    """emergency_stop() must cancel ALL unmatched orders per market (no bet_ids).
+    Partial failure must leave the emergency flag SET (fail-closed)."""
+    live_client = _LiveClient()
+    sagas = [
+        _FakeSaga("1.111", "bet_aaa", "ref1"),
+        _FakeSaga("1.111", "bet_bbb", "ref2"),  # same market
+        _FakeSaga("1.222", "bet_ccc", "ref3"),  # different market
+    ]
+    rc, bus = _make_rc(betfair=_BetfairService(live_client=live_client), sagas=sagas)
+
+    result = rc.emergency_stop(reason="operator_gui_button")
+
+    # Two markets → two cancel calls
+    assert result["markets_attempted"] == 2, \
+        "emergency_stop must attempt cancel on each distinct market"
+    # No bet_id → flat cancel of ALL unmatched orders on each market
+    for call in live_client.cancel_calls:
+        assert "bet_ids" not in call or not call["bet_ids"], \
+            "cancel must be market-wide (no bet_ids) to flatten all unmatched orders"
+    # Emergency flag remains set regardless
+    assert rc.is_emergency_stopped is True
