@@ -32,4 +32,4 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
           MODE: ci_failure
-        run: python .github/scripts/post_codex_comment.py
+        run: python .github/scripts/post_codex_comment.py 
