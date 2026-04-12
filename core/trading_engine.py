@@ -5,102 +5,34 @@ import threading
 import time
 import uuid
 from collections import deque
-from dataclasses import dataclass
-from typing import Any, Deque, Dict, Optional, Set, Tuple
+from typing import Any, Deque, Dict, Optional
 from order_manager import OrderManager
 from order_manager import LIFECYCLE_CONTRACT
 from circuit_breaker import CircuitBreaker
+from core.trading_constants import (  # noqa: F401 – re-exported for backward compat
+    REQ_QUICK_BET, CMD_QUICK_BET,
+    STATUS_INFLIGHT, STATUS_SUBMITTED, STATUS_COMPLETED, STATUS_FAILED,
+    STATUS_AMBIGUOUS, STATUS_DENIED, STATUS_ACCEPTED_FOR_PROCESSING,
+    STATUS_DUPLICATE_BLOCKED,
+    OUTCOME_SUCCESS, OUTCOME_FAILURE, OUTCOME_AMBIGUOUS,
+    ERROR_TRANSIENT, ERROR_PERMANENT, ERROR_AMBIGUOUS,
+    READY, DEGRADED, NOT_READY,
+    AMBIGUITY_SUBMIT_TIMEOUT, AMBIGUITY_RESPONSE_LOST, AMBIGUITY_SUBMIT_UNKNOWN,
+    AMBIGUITY_PERSISTED_NOT_CONFIRMED, AMBIGUITY_SPLIT_STATE,
+    ORIGIN_NORMAL, ORIGIN_COPY, ORIGIN_PATTERN,
+    COPY_META_KEYS, PATTERN_META_KEYS,
+    _PASSTHROUGH_KEYS, _ACK_STATES, _TERMINAL_STATES,
+    ALLOWED_TRANSITIONS,
+    _ExecutionContext,
+)
 
 logger = logging.getLogger(__name__)
 
-# =========================================================
-# CONSTANTS
-# =========================================================
-REQ_QUICK_BET = "REQ_QUICK_BET"
-CMD_QUICK_BET = "CMD_QUICK_BET"
-
-# ── ORDER STATES ──
-STATUS_INFLIGHT = "INFLIGHT"
-STATUS_SUBMITTED = "SUBMITTED"
-STATUS_COMPLETED = "COMPLETED"
-STATUS_FAILED = "FAILED"
-STATUS_AMBIGUOUS = "AMBIGUOUS"
-STATUS_DENIED = "DENIED"
-STATUS_ACCEPTED_FOR_PROCESSING = "ACCEPTED_FOR_PROCESSING"
-STATUS_DUPLICATE_BLOCKED = "DUPLICATE_BLOCKED"
-
-# ── OUTCOMES ──
-OUTCOME_SUCCESS = "SUCCESS"
-OUTCOME_FAILURE = "FAILURE"
-OUTCOME_AMBIGUOUS = "AMBIGUOUS"
-
-# ── ERRORS ──
-ERROR_TRANSIENT = "TRANSIENT"
-ERROR_PERMANENT = "PERMANENT"
-ERROR_AMBIGUOUS = "AMBIGUOUS"
-
-# ── READINESS ──
-READY = "READY"
-DEGRADED = "DEGRADED"
-NOT_READY = "NOT_READY"
-
-# ── AMBIGUITY REASONS ──
-AMBIGUITY_SUBMIT_TIMEOUT = "SUBMIT_TIMEOUT"
-AMBIGUITY_RESPONSE_LOST = "RESPONSE_LOST"
-AMBIGUITY_SUBMIT_UNKNOWN = "SUBMIT_UNKNOWN"
-AMBIGUITY_PERSISTED_NOT_CONFIRMED = "PERSISTED_NOT_CONFIRMED"
-AMBIGUITY_SPLIT_STATE = "SPLIT_STATE"
-
-# ── ORDER ORIGINS ──
-ORIGIN_NORMAL = "NORMAL"
-ORIGIN_COPY = "COPY"
-ORIGIN_PATTERN = "PATTERN"
-
-# ── COPY META KEYS (File 8) ──
-COPY_META_KEYS = {
-    "master_id", "master_position_id", "action_id", "action_seq",
-    "copy_group_id", "copy_mode"
-}
-
-# ── PATTERN META KEYS (File 8) ──
-PATTERN_META_KEYS = {
-    "pattern_id", "pattern_label", "selection_template", "market_type",
-    "bet_side", "live_only", "event_context"
-}
-
-# =========================================================
-# [P2] CENTRALIZED CONSTANTS
-# =========================================================
-_PASSTHROUGH_KEYS: Tuple[str, ...] = (
-    "simulation_mode",
-    "event_key",
-    "order_origin",
-    "copy_meta",
-    "pattern_meta",
-)
-
-_ACK_STATES: Set[str] = {STATUS_SUBMITTED}
-
-_TERMINAL_STATES: Set[str] = {
-    STATUS_COMPLETED,
-    STATUS_FAILED,
-    STATUS_DENIED,
-    STATUS_AMBIGUOUS,
-    STATUS_DUPLICATE_BLOCKED,
-}
-
-# =========================================================
-# STATE MACHINE
-# =========================================================
-ALLOWED_TRANSITIONS: Dict[str, Set[str]] = {
-    STATUS_INFLIGHT: {STATUS_SUBMITTED, STATUS_FAILED, STATUS_AMBIGUOUS, STATUS_DENIED, STATUS_DUPLICATE_BLOCKED},
-    STATUS_SUBMITTED: {STATUS_COMPLETED, STATUS_FAILED, STATUS_AMBIGUOUS},
-    STATUS_AMBIGUOUS: {STATUS_COMPLETED, STATUS_FAILED},
-    STATUS_DENIED: set(),
-    STATUS_FAILED: set(),
-    STATUS_COMPLETED: set(),
-    STATUS_DUPLICATE_BLOCKED: set(),
-}
+# =============================================================================
+# NOTE: String constants, set/dict literals, ALLOWED_TRANSITIONS, and
+#       _ExecutionContext are defined in core/trading_constants.py and imported
+#       above. Existing callers that import from trading_engine are unaffected.
+# =============================================================================
 
 _INTERNAL_TO_PUBLIC_STATUS: Dict[str, str] = {
     STATUS_INFLIGHT: STATUS_INFLIGHT,
@@ -121,28 +53,11 @@ _STATUS_TO_OUTCOME: Dict[str, str] = {
     STATUS_DUPLICATE_BLOCKED: OUTCOME_SUCCESS,
 }
 
-# =========================================================
-# EXECUTION CONTEXT
-# =========================================================
-@dataclass(frozen=True)
-class _ExecutionContext:
-    """
-    Immutable execution context for order lifecycle.
-    
-    Created ONLY via TradingEngine._new_execution_context().
-    
-    NOTE: _engine_token is a deterrent against accidental misuse,
-    not a security barrier. Real protection:
-    1. Do not export this class from the module
-    2. Use factory method for creation
-    3. Code review + tests verify no bypass
-    """
-    correlation_id: str
-    customer_ref: str
-    created_at: float
-    event_key: Optional[str] = None
-    simulation_mode: Optional[bool] = None
-    _engine_token: str = "TRADING_ENGINE_INTERNAL"
+# =============================================================================
+# NOTE: _ExecutionContext is defined in core/trading_constants.py and imported
+#       above. Existing callers that reference it via trading_engine are
+#       unaffected (no public API change).
+# =============================================================================
 
 
 class ExecutionError(Exception):

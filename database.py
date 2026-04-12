@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from core.secret_cipher import SecretCipher
-from core.type_helpers import safe_float, safe_int
+from core.type_helpers import safe_float, safe_int, safe_bool_int, safe_json_dumps, safe_json_loads
 from database_schema import SCHEMA_DDL
 
 
@@ -168,25 +168,13 @@ class Database:
         return safe_int(value, default)
 
     def _safe_bool_int(self, value: Any, default: bool = False) -> int:
-        if value is None:
-            return int(bool(default))
-        if isinstance(value, bool):
-            return int(value)
-        return int(str(value).strip().lower() in {"1", "true", "yes", "on"})
+        return safe_bool_int(value, default)
 
     def _safe_json_dumps(self, value: Any) -> str:
-        try:
-            return json.dumps(value if value is not None else {}, ensure_ascii=False)
-        except Exception:
-            return "{}"
+        return safe_json_dumps(value)
 
     def _safe_json_loads(self, value: Any, default):
-        if not value:
-            return default
-        try:
-            return json.loads(value)
-        except Exception:
-            return default
+        return safe_json_loads(value, default)
 
     # =========================================================
     # INIT SCHEMA
