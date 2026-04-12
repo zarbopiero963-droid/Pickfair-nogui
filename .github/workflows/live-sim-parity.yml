@@ -28,23 +28,23 @@ jobs:
 
       - name: Trading engine parity
         run: |
-          pytest -q tests/integration/test_trading_engine_live_sim_contract_parity.py || true
+          if [ -f tests/integration/test_trading_engine_live_sim_contract_parity.py ]; then pytest -q tests/integration/test_trading_engine_live_sim_contract_parity.py; else echo "SKIP: test_trading_engine_live_sim_contract_parity.py absent"; fi
 
       - name: Order manager parity
         run: |
-          pytest -q tests/integration/test_order_manager_live_sim_parity.py || true
+          if [ -f tests/integration/test_order_manager_live_sim_parity.py ]; then pytest -q tests/integration/test_order_manager_live_sim_parity.py; else echo "SKIP: test_order_manager_live_sim_parity.py absent"; fi
 
       - name: Money management parity
         run: |
-          pytest -q tests/integration/test_money_management_live_sim_parity.py || true
+          if [ -f tests/integration/test_money_management_live_sim_parity.py ]; then pytest -q tests/integration/test_money_management_live_sim_parity.py; else echo "SKIP: test_money_management_live_sim_parity.py absent"; fi
 
       - name: Runtime controller parity
         run: |
-          pytest -q tests/integration/test_runtime_controller_live_sim_parity.py || true
+          if [ -f tests/integration/test_runtime_controller_live_sim_parity.py ]; then pytest -q tests/integration/test_runtime_controller_live_sim_parity.py; else echo "SKIP: test_runtime_controller_live_sim_parity.py absent"; fi
 
       - name: Simulation broker parity
         run: |
-          pytest -q tests/integration/test_simulation_broker_pattern_parity.py || true
-          pytest -q tests/integration/test_simulation_broker_copy_parity.py || true
-          pytest -q tests/integration/test_simulation_broker_cashout_parity.py || true
-          pytest -q tests/integration/test_simulation_broker_dutching_parity.py || true
+          if [ -f tests/integration/test_simulation_broker_pattern_parity.py ]; then pytest -q tests/integration/test_simulation_broker_pattern_parity.py; else echo "SKIP: test_simulation_broker_pattern_parity.py absent"; fi
+          if [ -f tests/integration/test_simulation_broker_copy_parity.py ]; then pytest -q tests/integration/test_simulation_broker_copy_parity.py; else echo "SKIP: test_simulation_broker_copy_parity.py absent"; fi
+          if [ -f tests/integration/test_simulation_broker_cashout_parity.py ]; then pytest -q tests/integration/test_simulation_broker_cashout_parity.py; else echo "SKIP: test_simulation_broker_cashout_parity.py absent"; fi
+          if [ -f tests/integration/test_simulation_broker_dutching_parity.py ]; then pytest -q tests/integration/test_simulation_broker_dutching_parity.py; else echo "SKIP: test_simulation_broker_dutching_parity.py absent"; fi

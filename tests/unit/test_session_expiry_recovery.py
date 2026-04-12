@@ -225,3 +225,53 @@ def test_handle_session_expiry_max_attempts_not_exceeded(monkeypatch):
     assert first_count == 1, "first call must attempt re-auth"
     assert second_count == 1, "second call must NOT retry (max exhausted)"
     assert svc.is_session_invalid is True
+
+
+# ===========================================================================
+# Tests: SESSION_EXPIRED wired into get_account_funds()
+# ===========================================================================
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_get_account_funds_triggers_session_recovery_on_session_expired():
+    """get_account_funds() must invoke handle_session_expiry() when the live
+    client raises SESSION_EXPIRED, leaving the service in blocked state."""
+
+    class _ExpiringClient:
+        def get_account_funds(self):
+            raise RuntimeError("SESSION_EXPIRED")
+
+    svc = _make_service()
+    svc.connected = True
+    svc.simulation_mode = False
+    svc.client = _ExpiringClient()
+
+    result = svc.get_account_funds()
+
+    # Recovery was invoked — service is now blocked
+    assert svc.is_session_invalid is True
+    assert svc.is_live_usable() is False
+    # Returned a safe zero-value dict (no crash)
+    assert result["available"] == 0.0
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_get_account_funds_stays_blocked_after_session_expired_no_password():
+    """When SESSION_EXPIRED fires and no password is available, service must
+    stay blocked and return zero funds (fail-closed)."""
+
+    class _ExpiringClient:
+        def get_account_funds(self):
+            raise RuntimeError("SESSION_EXPIRED")
+
+    svc = _make_service_no_password()
+    svc.connected = True
+    svc.simulation_mode = False
+    svc.client = _ExpiringClient()
+
+    result = svc.get_account_funds()
+
+    assert svc.is_session_invalid is True
+    assert svc.is_live_usable() is False
+    assert result["available"] == 0.0

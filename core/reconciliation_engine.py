@@ -162,7 +162,10 @@ class ReconciliationEngine:
         # Token is a monotonically increasing integer assigned to each
         # reconcile run that holds the batch lock.  It is stored in
         # _active_fencing_tokens while the run is in progress and cleared
-        # on completion.  Ownership is enforced in assert_fencing_ownership().
+        # on completion.  Callers that need to verify ownership can call
+        # assert_fencing_ownership(); the token itself is not auto-checked
+        # inside the reconcile path (single-process, batch lock already
+        # prevents concurrent runs for the same batch_id).
         self._fencing_counter: int = 0
         self._fencing_lock = threading.Lock()
         # batch_id → active token (set when lock acquired, cleared on exit)
@@ -401,9 +404,10 @@ class ReconciliationEngine:
         Assert that the caller still holds ownership (i.e. the active token
         for batch_id matches the token issued to this run).
 
-        Raises RuntimeError if the token is stale (another run has taken over).
-        Used inside reconcile paths that must verify ownership before persisting
-        a critical state transition.
+        Raises RuntimeError if the token is stale or absent.
+        This is an explicit caller-initiated check; it is not called
+        automatically inside the reconcile path (the batch lock already
+        serialises reconcile runs per batch_id in this single-process context).
         """
         current = self.get_active_fencing_token(batch_id)
         if current != token:

@@ -383,8 +383,15 @@ class BetfairService:
                 "simulated": bool(funds.get("simulated", self.simulation_mode)),
             }
         except Exception as exc:
-            self.last_error = str(exc)
-            logger.exception("Errore get_account_funds: %s", exc)
+            error_text = str(exc)
+            self.last_error = error_text
+            if "SESSION_EXPIRED" in error_text.upper() or "INVALID_SESSION" in error_text.upper():
+                logger.warning(
+                    "betfair_service: session expiry detected in get_account_funds; invoking recovery"
+                )
+                self.handle_session_expiry(reason=error_text)
+            else:
+                logger.exception("Errore get_account_funds: %s", exc)
             return {
                 "available": 0.0,
                 "exposure": 0.0,

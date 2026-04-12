@@ -42,3 +42,13 @@ def safe_side(value: Any) -> str:
     """Normalise a bet side string to ``"BACK"`` or ``"LAY"``."""
     s = str(value or "BACK").upper().strip()
     return s if s in {"BACK", "LAY"} else "BACK"
+
+
+def safe_str(value: Any, default: str = "") -> str:
+    """Return ``str(value)`` or ``default`` on None / error."""
+    try:
+        if value is None:
+            return default
+        return str(value)
+    except Exception:
+        return default

@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from core.type_helpers import safe_float, safe_int
+from core.type_helpers import safe_float, safe_int, safe_str
 
 logger = logging.getLogger(__name__)
 
@@ -248,12 +248,7 @@ class SafetyLayer:
         return safe_int(value, default)
 
     def _safe_str(self, value: Any, default: str = "") -> str:
-        try:
-            if value is None:
-                return default
-            return str(value)
-        except Exception:
-            return default
+        return safe_str(value, default)
 
     def _safe_age_seconds(self, created_at: Any, stale_after_sec: float) -> float:
         if created_at in (None, ""):

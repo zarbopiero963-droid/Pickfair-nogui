@@ -62,12 +62,12 @@ jobs:
 
       - name: Run chaos tests
         run: |
-          pytest tests/chaos -q || true
+          if [ -d tests/chaos ]; then pytest tests/chaos -q; else echo "SKIP: tests/chaos absent"; fi
 
       - name: Run recovery tests
         run: |
-          pytest tests/recovery -q || true
+          if [ -d tests/recovery ]; then pytest tests/recovery -q; else echo "SKIP: tests/recovery absent"; fi
 
       - name: Run reconciliation tests
         run: |
-          pytest tests/reconciliation -q || true
+          if [ -d tests/reconciliation ]; then pytest tests/reconciliation -q; else echo "SKIP: tests/reconciliation absent"; fi

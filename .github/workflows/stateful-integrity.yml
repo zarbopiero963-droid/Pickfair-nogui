@@ -36,6 +36,6 @@ jobs:
 
       - name: Duplicate / idempotency focused tests
         run: |
-          pytest -q tests/integration/test_duplication_guard_copy_events.py || true
-          pytest -q tests/integration/test_duplication_guard_pattern_events.py || true
-          pytest -q tests/recovery/test_pattern_trigger_restart_no_duplicate.py || true
+          if [ -f tests/integration/test_duplication_guard_copy_events.py ]; then pytest -q tests/integration/test_duplication_guard_copy_events.py; else echo "SKIP: test_duplication_guard_copy_events.py absent"; fi
+          if [ -f tests/integration/test_duplication_guard_pattern_events.py ]; then pytest -q tests/integration/test_duplication_guard_pattern_events.py; else echo "SKIP: test_duplication_guard_pattern_events.py absent"; fi
+          if [ -f tests/recovery/test_pattern_trigger_restart_no_duplicate.py ]; then pytest -q tests/recovery/test_pattern_trigger_restart_no_duplicate.py; else echo "SKIP: test_pattern_trigger_restart_no_duplicate.py absent"; fi
