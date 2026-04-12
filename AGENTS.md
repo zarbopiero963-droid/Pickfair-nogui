@@ -45,3 +45,11 @@ When the task is complete and merged:
 - Do not refactor unrelated code
 - Do not expand scope
 - Do not change business logic unless explicitly required
+
+### Stop conditions
+
+Stop immediately if:
+- Another PR is already open
+- Task requires files outside scope
+- Conflict cannot be resolved safely
+- Tests cannot be fixed without violating rules
