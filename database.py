@@ -10,8 +10,21 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+from core.secret_cipher import SecretCipher
+
 
 logger = logging.getLogger(__name__)
+
+# Fields whose values must be encrypted at rest.
+_SECRET_FIELDS: frozenset = frozenset({
+    "password",
+    "private_key",
+    "certificate",
+    "session_token",
+    "telegram.api_id",
+    "telegram.api_hash",
+    "telegram.session_string",
+})
 
 
 class Database:
@@ -19,6 +32,7 @@ class Database:
         self.db_path = str(db_path)
         self._local = threading.local()
         self._write_lock = threading.RLock()
+        self._cipher = SecretCipher.from_env_or_file()
         self._ensure_parent_dir()
         self._init_db()
 
@@ -456,13 +470,16 @@ class Database:
     # SETTINGS / CREDENTIALS
     # =========================================================
     def _set_setting(self, key: str, value: Any) -> None:
+        str_val = str(value if value is not None else "")
+        if key in _SECRET_FIELDS and str_val:
+            str_val = self._cipher.encrypt(str_val)
         self._execute(
             """
             INSERT INTO settings(key, value)
             VALUES(?, ?)
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """,
-            (str(key), str(value if value is not None else "")),
+            (str(key), str_val),
         )
 
     def _get_setting(self, key: str, default: str = "") -> str:
@@ -474,7 +491,10 @@ class Database:
         )
         if not row:
             return default
-        return str(row["value"])
+        val = str(row["value"])
+        if key in _SECRET_FIELDS:
+            val = self._cipher.decrypt(val)
+        return val
 
     def save_settings(self, data: Dict[str, Any]) -> None:
         with self.transaction():
@@ -489,7 +509,11 @@ class Database:
         )
         result: Dict[str, Any] = {}
         for row in rows or []:
-            result[str(row["key"])] = row["value"]
+            key = str(row["key"])
+            val = row["value"]
+            if key in _SECRET_FIELDS and val:
+                val = self._cipher.decrypt(str(val))
+            result[key] = val
         return result
 
     def save_credentials(
