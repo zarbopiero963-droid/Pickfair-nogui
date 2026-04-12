@@ -37,8 +37,9 @@ credentials*
 logs/
 log/
 diagnostics/
-diagnostics_bundle*.json
-diagnostics_export*.json
+diagnostics_exports/
+diagnostics_bundle*
+diagnostics_export*
 
 # =============================================================
 # PYTHON BYTECODE / CACHE
