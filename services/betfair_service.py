@@ -399,6 +399,62 @@ class BetfairService:
                 "simulated": bool(self.simulation_mode),
             }
 
+    def place_order(self, payload: dict) -> dict:
+        """Session-aware live-order facade.
+
+        Refuses immediately when the session is known-invalid (fail-closed).
+        Detects SESSION_EXPIRED in the client's ok=False response and invokes
+        bounded recovery via handle_session_expiry().
+
+        Only applies to live orders — simulation orders bypass this entirely.
+        """
+        if self._session_invalid:
+            return {
+                "ok": False,
+                "error": (
+                    f"LIVE_BLOCKED_SESSION_INVALID: {self._session_invalid_reason}"
+                ),
+                "classification": "PERMANENT",
+                "session_invalid": True,
+            }
+
+        if not self.client:
+            return {
+                "ok": False,
+                "error": "NO_LIVE_CLIENT",
+                "classification": "PERMANENT",
+            }
+
+        try:
+            result = self.client.place_bet(
+                market_id=payload.get("market_id"),
+                selection_id=payload.get("selection_id"),
+                side=payload.get("bet_type") or payload.get("side"),
+                price=payload.get("price"),
+                size=payload.get("stake") or payload.get("size"),
+            )
+        except Exception as exc:
+            err = str(exc)
+            if "SESSION_EXPIRED" in err.upper() or "INVALID_SESSION" in err.upper():
+                logger.warning(
+                    "betfair_service: session expiry detected in place_order "
+                    "(exception path); invoking recovery"
+                )
+                self.handle_session_expiry(reason=err)
+            raise
+
+        # place_bet catches RuntimeError and returns ok=False — inspect it.
+        if isinstance(result, dict) and not result.get("ok", True):
+            err = str(result.get("error", ""))
+            if "SESSION_EXPIRED" in err.upper() or "INVALID_SESSION" in err.upper():
+                logger.warning(
+                    "betfair_service: session expiry detected in place_order "
+                    "(result path); invoking recovery"
+                )
+                self.handle_session_expiry(reason=err)
+
+        return result
+
     def status(self) -> dict:
         broker = self.get_client()
         has_client = broker is not None

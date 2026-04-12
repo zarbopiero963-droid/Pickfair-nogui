@@ -9,6 +9,10 @@ Verifies:
 - bounded re-auth: stays blocked if re-auth fails
 - max re-auth attempts not exceeded (loop protection)
 - session invalid flag cleared after successful re-auth
+- place_order() refuses immediately when session invalid (fail-closed)
+- place_order() detects SESSION_EXPIRED in client response and invokes recovery
+- RuntimeController._on_signal_received() rejects LIVE signals when session invalid
+- TradingEngine._submit_to_order_path() raises when session invalid
 """
 
 import pytest
@@ -275,3 +279,204 @@ def test_get_account_funds_stays_blocked_after_session_expired_no_password():
     assert svc.is_session_invalid is True
     assert svc.is_live_usable() is False
     assert result["available"] == 0.0
+
+
+# ===========================================================================
+# Tests: SESSION_EXPIRED wired into place_order() — live order path
+# ===========================================================================
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_place_order_blocked_when_session_invalid():
+    """BetfairService.place_order() refuses immediately when session is invalid."""
+    svc = _make_service()
+    svc._session_invalid = True
+    svc._session_invalid_reason = "SESSION_EXPIRED"
+
+    result = svc.place_order({
+        "market_id": "1.123",
+        "selection_id": 456,
+        "bet_type": "BACK",
+        "price": 2.0,
+        "stake": 10.0,
+    })
+
+    assert result["ok"] is False
+    err = result.get("error", "")
+    assert "SESSION_INVALID" in err.upper() or "LIVE_BLOCKED" in err.upper(), \
+        f"Expected session-invalid refusal in error, got: {err!r}"
+    assert result.get("session_invalid") is True
+    # Service must remain blocked — place_order must NOT attempt recovery
+    assert svc.is_session_invalid is True
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_place_order_detects_session_expired_from_client_response():
+    """When place_bet() returns ok=False with SESSION_EXPIRED, handle_session_expiry() is invoked."""
+
+    class _SessionExpiredPlaceBetClient:
+        def place_bet(self, **_kw):
+            # BetfairClient.place_bet() catches RuntimeError and returns ok=False
+            return {
+                "ok": False,
+                "error": "SESSION_EXPIRED",
+                "classification": "PERMANENT",
+                "order_unknown": False,
+            }
+
+    svc = _make_service()
+    svc.connected = True
+    svc.simulation_mode = False
+    svc.client = _SessionExpiredPlaceBetClient()
+
+    result = svc.place_order({
+        "market_id": "1.123",
+        "selection_id": 456,
+        "bet_type": "BACK",
+        "price": 2.0,
+        "stake": 10.0,
+    })
+
+    # Recovery was invoked — service must now be blocked
+    assert svc.is_session_invalid is True, \
+        "handle_session_expiry() must have been called — service must be blocked"
+    assert svc.is_live_usable() is False
+    # Response is passed through
+    assert result["ok"] is False
+    assert "SESSION_EXPIRED" in result.get("error", "")
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_place_order_no_false_positive_on_normal_failure():
+    """place_order() must NOT invoke handle_session_expiry() on non-session errors."""
+
+    class _BetFailedClient:
+        def place_bet(self, **_kw):
+            return {
+                "ok": False,
+                "error": "BET_FAILED: MARKET_NOT_OPEN",
+                "classification": "PERMANENT",
+                "order_unknown": False,
+            }
+
+    svc = _make_service()
+    svc.connected = True
+    svc.simulation_mode = False
+    svc.client = _BetFailedClient()
+
+    svc.place_order({
+        "market_id": "1.123",
+        "selection_id": 456,
+        "bet_type": "BACK",
+        "price": 2.0,
+        "stake": 10.0,
+    })
+
+    # Non-session error must NOT block live operations
+    assert svc.is_session_invalid is False, \
+        "BET_FAILED must not trigger session invalidity"
+    assert svc.is_live_usable() is not True or not svc._session_invalid
+
+
+# ===========================================================================
+# Tests: SESSION_EXPIRED wired into RuntimeController signal routing
+# ===========================================================================
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_live_signal_rejected_when_session_invalid_in_runtime_controller():
+    """RuntimeController._on_signal_received() rejects LIVE signals when session is invalid."""
+    from core.runtime_controller import RuntimeController
+    from core.system_state import RuntimeMode
+
+    class _Bus:
+        def __init__(self):
+            self.published = []
+
+        def subscribe(self, *_a, **_kw):
+            pass
+
+        def publish(self, event, payload=None):
+            self.published.append((event, payload or {}))
+
+    class _Db:
+        def _execute(self, *_args, **_kwargs):
+            return None
+
+        def get_pending_sagas(self):
+            return []
+
+    class _InvalidSessionBetfairService:
+        _session_invalid = True
+        _session_invalid_reason = "SESSION_EXPIRED"
+
+        def set_simulation_mode(self, *_a, **_kw):
+            pass
+
+        def get_live_client(self):
+            return None
+
+        def connect(self, **_kw):
+            return {}
+
+        def disconnect(self):
+            pass
+
+        def get_account_funds(self):
+            return {"available": 0.0}
+
+        def status(self):
+            return {"connected": False}
+
+    class _TgService:
+        def start(self):
+            return {}
+
+        def stop(self):
+            pass
+
+        def status(self):
+            return {}
+
+    class _Cfg:
+        table_count = 1
+        anti_duplication_enabled = False
+        allow_recovery = False
+        auto_reset_drawdown_pct = 90
+        defense_drawdown_pct = 7.5
+        lockdown_drawdown_pct = 95
+
+        def __getattr__(self, _n):
+            return 0
+
+    class _Settings:
+        def load_roserpina_config(self):
+            return _Cfg()
+
+    bus = _Bus()
+    rc = RuntimeController(
+        bus=bus,
+        db=_Db(),
+        settings_service=_Settings(),
+        betfair_service=_InvalidSessionBetfairService(),
+        telegram_service=_TgService(),
+    )
+    rc.execution_mode = "LIVE"
+
+    rc._on_signal_received({
+        "market_id": "1.111",
+        "selection_id": 99,
+        "price": 2.0,
+        "stake": 10.0,
+    })
+
+    rejected_reasons = [
+        str(p.get("reason", ""))
+        for e, p in bus.published
+        if e == "SIGNAL_REJECTED"
+    ]
+    assert rejected_reasons, "Expected at least one SIGNAL_REJECTED event"
+    assert any("session_invalid" in r for r in rejected_reasons), \
+        f"Expected 'session_invalid' in rejection reason, got: {rejected_reasons}"

@@ -1357,6 +1357,12 @@ class TradingEngine:
                 if not bool(getattr(runtime, "is_live_allowed", lambda: False)()):
                     raise RuntimeError("LIVE_EXECUTION_BLOCKED")
 
+                # Fail-closed: block submission if BetfairService session is invalid.
+                # Use `is True` to avoid false-positive on MagicMock / non-bool attributes.
+                _betfair_svc = getattr(runtime, "betfair_service", None)
+                if _betfair_svc is not None and getattr(_betfair_svc, "_session_invalid", False) is True:
+                    raise RuntimeError("LIVE_BLOCKED_SESSION_INVALID")
+
                 live_client = self.betfair_client
                 if live_client is not None:
                     if self._order_submission_breaker.is_open():
@@ -1371,11 +1377,28 @@ class TradingEngine:
                     if place_fn is not None:
                         try:
                             result = place_fn(payload)
-                            self._order_submission_breaker.record_success()
-                            return result
                         except Exception as _exc:
                             self._order_submission_breaker.record_failure(_exc)
                             raise
+
+                        # Detect SESSION_EXPIRED in ok=False response (place_bet never raises)
+                        if isinstance(result, dict) and not result.get("ok", True):
+                            _err = str(result.get("error", "")).upper()
+                            if "SESSION_EXPIRED" in _err or "INVALID_SESSION" in _err:
+                                if _betfair_svc is not None and callable(
+                                    getattr(_betfair_svc, "handle_session_expiry", None)
+                                ):
+                                    _betfair_svc.handle_session_expiry(
+                                        reason=str(result.get("error", "SESSION_EXPIRED"))
+                                    )
+                                _exc2 = RuntimeError(
+                                    str(result.get("error", "SESSION_EXPIRED"))
+                                )
+                                self._order_submission_breaker.record_failure(_exc2)
+                                raise _exc2
+
+                        self._order_submission_breaker.record_success()
+                        return result
 
         if self.order_manager is not None:
             for mn in ("submit", "place_order"):

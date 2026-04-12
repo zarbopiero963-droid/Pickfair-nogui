@@ -878,6 +878,12 @@ class RuntimeController:
             return
 
         if str(self.execution_mode).upper() == "LIVE":
+            # Session guard — refuse live signals when session is known-invalid.
+            _svc = self.betfair_service
+            if _svc is not None and getattr(_svc, "_session_invalid", False):
+                self._reject_signal(signal, "session_invalid_live_blocked")
+                return
+
             deploy_gate = self.enforce_deploy_gate(
                 execution_mode="LIVE",
                 live_enabled=self.live_enabled,
