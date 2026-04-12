@@ -424,6 +424,67 @@ class BetfairClient:
             }
 
     # =========================================================
+    # ORDERS – CANCEL
+    # =========================================================
+    def cancel_orders(
+        self,
+        *,
+        market_id: Any,
+        bet_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Cancel orders on a Betfair market via the cancelOrders API.
+
+        When bet_ids is empty or None, cancels ALL unmatched orders on the
+        market (the standard emergency-stop / flatten behaviour).
+        Returns a result dict; never raises on API-level failure (logs and
+        returns ok=False so callers can record the error without crashing).
+        """
+        market_id_s = str(market_id or "").strip()
+        if not market_id_s:
+            raise RuntimeError("INVALID_MARKET_ID")
+
+        # Empty instructions list → cancel all active orders on the market.
+        # Non-empty → cancel only the listed bet IDs.
+        instructions: List[Dict[str, Any]] = (
+            [{"betId": str(bid)} for bid in bet_ids if bid]
+            if bet_ids else []
+        )
+
+        try:
+            result = self._post_jsonrpc(
+                self.BETTING_URL,
+                "SportsAPING/v1.0/cancelOrders",
+                {
+                    "marketId": market_id_s,
+                    "instructions": instructions,
+                },
+            )
+
+            status = str(result.get("status") or "").upper()
+            reports = result.get("instructionReports") or []
+
+            if status == "FAILURE":
+                err = str(result.get("errorCode") or "UNKNOWN")
+                raise RuntimeError(f"CANCEL_FAILED: {err}")
+
+            return {
+                "ok": True,
+                "market_id": market_id_s,
+                "status": status or "SUCCESS",
+                "cancelled_count": len(reports),
+                "result": result,
+            }
+
+        except RuntimeError as exc:
+            error_text = str(exc)
+            return {
+                "ok": False,
+                "market_id": market_id_s,
+                "error": error_text,
+                "classification": self._classify_error(error_text),
+            }
+
+    # =========================================================
     # STATUS
     # =========================================================
     def status(self) -> Dict[str, Any]:

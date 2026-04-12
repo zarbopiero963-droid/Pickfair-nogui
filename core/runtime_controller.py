@@ -604,7 +604,7 @@ class RuntimeController:
                 try:
                     response = live_client.cancel_orders(
                         market_id=market_id,
-                        bet_id="",  # empty = cancel all orders on this market
+                        # bet_ids omitted → cancel ALL unmatched orders on market
                     )
                     cancel_results.append({
                         "market_id": market_id,

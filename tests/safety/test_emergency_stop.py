@@ -65,11 +65,11 @@ class _LiveClient:
         self.cancel_calls = []
         self.raises = raises
 
-    def cancel_orders(self, market_id, bet_id="", **_kw):
+    def cancel_orders(self, *, market_id, bet_ids=None, **_kw):
         if self.raises:
             raise RuntimeError("Betfair unavailable")
-        self.cancel_calls.append({"market_id": market_id, "bet_id": bet_id})
-        return {"status": "SUCCESS"}
+        self.cancel_calls.append({"market_id": market_id, "bet_ids": bet_ids})
+        return {"ok": True, "market_id": market_id, "status": "SUCCESS", "cancelled_count": 1}
 
 
 class _BetfairService:
@@ -280,3 +280,37 @@ def test_signal_allowed_after_reset_emergency_and_restart():
     rc.reset_emergency()
 
     assert rc.is_emergency_stopped is False
+
+
+@pytest.mark.unit
+@pytest.mark.safety
+def test_emergency_stop_cancel_orders_called_without_bet_id_kwarg():
+    """cancel_orders must be called with market_id only (no bet_id= arg).
+
+    Regression: the old call used bet_id="" which does not exist on
+    BetfairClient.cancel_orders; that raised AttributeError silently,
+    leaving open orders on the exchange.
+    """
+    live_client = _LiveClient()
+    sagas = [_FakeSaga("1.999", "bet_xyz", "refA")]
+    rc, _ = _make_rc(
+        betfair=_BetfairService(live_client=live_client),
+        sagas=sagas,
+    )
+
+    rc.emergency_stop()
+
+    assert len(live_client.cancel_calls) == 1
+    call = live_client.cancel_calls[0]
+    assert call["market_id"] == "1.999"
+    # bet_ids should be None (cancel-all, no explicit bet list)
+    assert call["bet_ids"] is None
+
+
+@pytest.mark.unit
+@pytest.mark.safety
+def test_betfair_client_cancel_orders_exists():
+    """BetfairClient must define cancel_orders so emergency_stop never gets AttributeError."""
+    from betfair_client import BetfairClient
+    assert callable(getattr(BetfairClient, "cancel_orders", None)), \
+        "BetfairClient must implement cancel_orders()"
