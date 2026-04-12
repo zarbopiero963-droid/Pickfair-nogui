@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 import requests
 from requests.exceptions import HTTPError, RequestException, Timeout
 
+from circuit_breaker import CircuitBreaker
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,10 @@ class BetfairClient:
         self.session_token = ""
         self.session_expiry = ""
         self.connected = False
+
+        # Circuit breaker guards all JSON-RPC calls to Betfair API.
+        # SESSION_EXPIRED does NOT trip the breaker; only network/HTTP failures do.
+        self._api_breaker = CircuitBreaker(max_failures=5, reset_timeout=60.0)
 
     # =========================================================
     # SAFE UTILS
@@ -124,6 +129,9 @@ class BetfairClient:
         if not self.session_token:
             raise RuntimeError("NOT_AUTHENTICATED")
 
+        if self._api_breaker.is_open():
+            raise RuntimeError("CIRCUIT_BREAKER_OPEN")
+
         payload = [{
             "jsonrpc": "2.0",
             "method": method,
@@ -162,7 +170,9 @@ class BetfairClient:
 
                     raise RuntimeError(f"API_ERROR: {err}")
 
-                return item.get("result") or {}
+                result = item.get("result") or {}
+                self._api_breaker.record_success()
+                return result
 
             except Timeout:
                 last_error = "TIMEOUT"
@@ -184,7 +194,9 @@ class BetfairClient:
                 last_error = f"UNKNOWN_ERROR: {exc}"
                 logger.warning("unknown error attempt=%s method=%s error=%s", attempt, method, exc)
 
-        raise RuntimeError(f"REQUEST_FAILED: {last_error}")
+        err = RuntimeError(f"REQUEST_FAILED: {last_error}")
+        self._api_breaker.record_failure(err)
+        raise err
 
     # =========================================================
     # LOGIN / LOGOUT

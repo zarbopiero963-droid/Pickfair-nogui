@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Deque, Dict, Optional, Set, Tuple
 from order_manager import OrderManager
 from order_manager import LIFECYCLE_CONTRACT
+from circuit_breaker import CircuitBreaker
 
 logger = logging.getLogger(__name__)
 
@@ -241,6 +242,10 @@ class TradingEngine:
         self.order_manager: Optional[OrderManager] = None
         self.guard: Optional[Any] = None
         self.metrics_registry = None
+
+        # Circuit breaker for live order submission path.
+        # Trips after 3 consecutive failures; blocks for 120s before probe.
+        self._order_submission_breaker = CircuitBreaker(max_failures=3, reset_timeout=120.0)
 
         # Dedup State
         self._inflight_keys: Set[str] = set()
@@ -1354,13 +1359,23 @@ class TradingEngine:
 
                 live_client = self.betfair_client
                 if live_client is not None:
-                    place_order = getattr(live_client, "place_order", None)
-                    if callable(place_order):
-                        return place_order(payload)
+                    if self._order_submission_breaker.is_open():
+                        raise RuntimeError("ORDER_SUBMISSION_CIRCUIT_BREAKER_OPEN")
 
-                    place_bet = getattr(live_client, "place_bet", None)
-                    if callable(place_bet):
-                        return place_bet(**payload)
+                    place_order = getattr(live_client, "place_order", None)
+                    place_fn = place_order if callable(place_order) else None
+                    if place_fn is None:
+                        place_bet = getattr(live_client, "place_bet", None)
+                        place_fn = (lambda p: place_bet(**p)) if callable(place_bet) else None
+
+                    if place_fn is not None:
+                        try:
+                            result = place_fn(payload)
+                            self._order_submission_breaker.record_success()
+                            return result
+                        except Exception as _exc:
+                            self._order_submission_breaker.record_failure(_exc)
+                            raise
 
         if self.order_manager is not None:
             for mn in ("submit", "place_order"):
