@@ -8,28 +8,20 @@ This repository uses strict SERIAL TASK EXECUTION.
 
 - Only one active task is allowed at a time
 - Only one open pull request is allowed at a time
-- If any PR is open → STOP and report BLOCKED
+- If any PR is open, STOP and report BLOCKED
 - Never work directly on main
-- Always create or use a task-specific branch
 - Never execute multiple tasks in parallel
 
 ### Task source
 
-- Tasks are stored in: ops/tasks/
+- Pending tasks are stored in: ops/tasks/
 - Completed tasks are moved to: ops/tasks_done/
-- Tasks must be executed in lexicographical order (001 → 002 → ...)
-
-### Task selection
-
-- Always pick the FIRST file in ops/tasks/ (sorted)
-- Execute exactly ONE task file
-- Do not skip tasks
-- Do not reorder tasks
+- Tasks must be executed in lexicographical order
 
 ### PR behavior
 
 - Create exactly ONE PR per task
-- Include in PR body:
+- Include in the PR body:
   Task-File: <exact path of the task file>
 
 ### Failure handling
@@ -44,21 +36,12 @@ If branch conflicts with base:
 
 ### Completion
 
-When task is complete and PR is merged:
-- Move task file from ops/tasks/ → ops/tasks_done/
-- Then proceed to the next task
+When the task is complete and merged:
+- Move task file from ops/tasks/ to ops/tasks_done/
 
 ### Scope control
 
-- Only modify files required by the task
+- Modify only files required by the task
 - Do not refactor unrelated code
 - Do not expand scope
 - Do not change business logic unless explicitly required
-
-### Stop conditions
-
-Stop immediately if:
-- Another PR is already open
-- Task requires files outside scope
-- Conflict cannot be resolved safely
-- Tests cannot be fixed without violating rules
