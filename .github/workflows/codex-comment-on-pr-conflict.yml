@@ -1,0 +1,45 @@
+name: codex-comment-on-pr-conflict
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+
+jobs:
+  detect-conflict:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+      issues: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Wait briefly for mergeability calculation
+        run: sleep 10
+
+      - name: Read PR mergeability
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          STATE=$(gh pr view "$PR_NUMBER" --json mergeStateStatus -q .mergeStateStatus)
+          echo "merge_state=$STATE" >> "$GITHUB_OUTPUT"
+          echo "mergeStateStatus=$STATE"
+
+      - name: Set up Python
+        if: steps.pr.outputs.merge_state == 'DIRTY'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Post @codex follow-up on conflict
+        if: steps.pr.outputs.merge_state == 'DIRTY'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MODE: base_conflict
+        run: python .github/scripts/post_codex_comment.py
