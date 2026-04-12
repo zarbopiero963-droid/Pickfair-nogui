@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 from core.system_state import DeskMode, RiskProfile, RoserpinaConfig
+from core.type_helpers import safe_float
 
 
 @dataclass
@@ -35,12 +36,7 @@ class RoserpinaMoneyManagement:
     # SAFE HELPERS
     # =========================================================
     def _safe_float(self, value: Any, default: float = 0.0) -> float:
-        try:
-            if value in (None, ""):
-                return float(default)
-            return float(value)
-        except Exception:
-            return float(default)
+        return safe_float(value, default)
 
     def _clamp(self, value: float, min_value: float, max_value: float) -> float:
         return max(min_value, min(float(value), max_value))

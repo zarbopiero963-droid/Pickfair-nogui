@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from core.type_helpers import safe_float, safe_int
+
 logger = logging.getLogger(__name__)
 
 
@@ -240,20 +242,10 @@ class SafetyLayer:
     # =========================================================
 
     def _safe_float(self, value: Any, default: float = 0.0) -> float:
-        try:
-            if value in (None, ""):
-                return float(default)
-            return float(value)
-        except Exception:
-            return float(default)
+        return safe_float(value, default)
 
     def _safe_int(self, value: Any, default: int = 0) -> int:
-        try:
-            if value in (None, ""):
-                return int(default)
-            return int(value)
-        except Exception:
-            return int(default)
+        return safe_int(value, default)
 
     def _safe_str(self, value: Any, default: str = "") -> str:
         try:

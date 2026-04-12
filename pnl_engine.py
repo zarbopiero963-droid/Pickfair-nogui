@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, Optional
 
+from core.type_helpers import safe_side
+
 
 @dataclass
 class PnLResult:
@@ -45,10 +47,7 @@ class PnLEngine:
     # HELPERS
     # =========================================================
     def _safe_side(self, side: Any) -> str:
-        value = str(side or "BACK").upper().strip()
-        if value not in {"BACK", "LAY"}:
-            return "BACK"
-        return value
+        return safe_side(side)
 
     def _commission_amount(self, gross_pnl: float, commission_pct: Optional[float] = None) -> float:
         pct = self.commission_pct if commission_pct is None else float(commission_pct or 0.0)

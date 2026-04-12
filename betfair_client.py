@@ -9,6 +9,7 @@ import requests
 from requests.exceptions import HTTPError, RequestException, Timeout
 
 from circuit_breaker import CircuitBreaker
+from core.type_helpers import safe_float, safe_int, safe_side
 
 logger = logging.getLogger(__name__)
 
@@ -56,20 +57,13 @@ class BetfairClient:
     # SAFE UTILS
     # =========================================================
     def _safe_float(self, v: Any, d: float = 0.0) -> float:
-        try:
-            return float(v)
-        except Exception:
-            return float(d)
+        return safe_float(v, d)
 
     def _safe_int(self, v: Any, d: int = 0) -> int:
-        try:
-            return int(float(v))
-        except Exception:
-            return int(d)
+        return safe_int(v, d)
 
     def _safe_side(self, v: Any) -> str:
-        s = str(v or "BACK").upper().strip()
-        return s if s in {"BACK", "LAY"} else "BACK"
+        return safe_side(v)
 
     def _cert_tuple(self) -> tuple[str, str]:
         if not os.path.exists(self.cert_pem):
