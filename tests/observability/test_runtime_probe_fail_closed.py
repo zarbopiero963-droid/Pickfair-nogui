@@ -1,4 +1,4 @@
-7from core.runtime_controller import RuntimeController
+from core.runtime_controller import RuntimeController
 
 
 class _Bus:
@@ -99,7 +99,7 @@ def test_missing_readiness_fails_closed_no_go():
 
     result = rc.start(execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)
 
-    assert result["refused"] is False 
+    assert result["refused"] is True
     assert result["reason_code"] == "live_readiness_not_ok"
     assert result["deploy_gate_reason_code"] == "DEPLOY_BLOCKED_NOT_READY"
     assert rc.betfair_service.connect_calls == 0
