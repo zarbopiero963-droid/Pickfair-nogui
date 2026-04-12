@@ -1,38 +1,64 @@
 # AGENTS.md
 
-## HARD RULES
+## GLOBAL EXECUTION POLICY
 
-- Always create a NEW branch from `main`
-- Never work directly on `main`
-- Never target `Codex`
-- Never reuse existing branches
-- Never continue work on old `codex/analyze-*` branches
+This repository uses strict SERIAL TASK EXECUTION.
 
-## PR RULES
+### Core rules
 
-- One task = one branch = one PR
-- If another open PR already touches the same files, STOP and report conflict risk
-- Always target `main`
+- Only one active task is allowed at a time
+- Only one open pull request is allowed at a time
+- If any PR is open → STOP and report BLOCKED
+- Never work directly on main
+- Always create or use a task-specific branch
+- Never execute multiple tasks in parallel
 
-## FILE SCOPE
+### Task source
 
-- Modify ONLY explicitly allowlisted files
-- If any unrelated file changes, revert it before finishing
-- Do NOT refactor unless explicitly requested
-- Do NOT touch production code unless explicitly allowed
+- Tasks are stored in: ops/tasks/
+- Completed tasks are moved to: ops/tasks_done/
+- Tasks must be executed in lexicographical order (001 → 002 → ...)
 
-## FAILURE CONDITIONS
+### Task selection
 
-Abort immediately if:
-- branch is not freshly created from `main`
-- more files than expected are modified
-- task attempts to reuse an old Codex branch
+- Always pick the FIRST file in ops/tasks/ (sorted)
+- Execute exactly ONE task file
+- Do not skip tasks
+- Do not reorder tasks
 
-## OUTPUT RULES
+### PR behavior
 
-Always report:
-- branch used
-- changed files
-- scope respected
-- tests run
-- push status
+- Create exactly ONE PR per task
+- Include in PR body:
+  Task-File: <exact path of the task file>
+
+### Failure handling
+
+If tests fail:
+- Continue working on the SAME PR
+- Do not create a new PR
+
+If branch conflicts with base:
+- Resolve conflicts in the SAME PR
+- Do not create a new PR
+
+### Completion
+
+When task is complete and PR is merged:
+- Move task file from ops/tasks/ → ops/tasks_done/
+- Then proceed to the next task
+
+### Scope control
+
+- Only modify files required by the task
+- Do not refactor unrelated code
+- Do not expand scope
+- Do not change business logic unless explicitly required
+
+### Stop conditions
+
+Stop immediately if:
+- Another PR is already open
+- Task requires files outside scope
+- Conflict cannot be resolved safely
+- Tests cannot be fixed without violating rules
