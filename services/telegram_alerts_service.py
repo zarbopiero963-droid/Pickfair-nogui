@@ -278,11 +278,16 @@ class TelegramAlertsService:
             lines.append("• Category: ANOMALY")
 
         if details:
+            try:
+                from observability.sanitizers import sanitize_value as _san
+                safe_details = _san(dict(details))
+            except Exception:
+                safe_details = {"details": "***REDACTED_ERROR***"}
             if bool(settings.get("alert_format_rich", True)):
-                rendered = ", ".join(f"{k}={v}" for k, v in sorted(dict(details).items()))
+                rendered = ", ".join(f"{k}={v}" for k, v in sorted(safe_details.items()))
                 lines.append(f"• Details: {rendered}")
             else:
-                lines.append(f"• Details: {details}")
+                lines.append(f"• Details: {safe_details}")
 
         return "\n".join(lines)
 
