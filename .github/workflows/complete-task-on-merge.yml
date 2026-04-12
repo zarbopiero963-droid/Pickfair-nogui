@@ -1,0 +1,86 @@
+name: complete-task-on-merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  complete-task:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Move completed task file
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: python .github/scripts/complete_current_task.py
+
+      - name: Commit queue update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ops/tasks ops/tasks_done
+          git diff --cached --quiet || git commit -m "chore(queue): complete merged task"
+          git push
+
+  prepare-next:
+    needs: complete-task
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Find next task
+        id: next
+        run: |
+          python .github/scripts/next_task.py > next_task.json
+          cat next_task.json
+          FOUND=$(python - <<'PY'
+          import json
+          data = json.load(open("next_task.json"))
+          print(str(data.get("found", False)).lower())
+          PY
+          )
+          TASK_PATH=$(python - <<'PY'
+          import json
+          data = json.load(open("next_task.json"))
+          print(data.get("path", ""))
+          PY
+          )
+          echo "found=$FOUND" >> "$GITHUB_OUTPUT"
+          echo "task_path=$TASK_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Create next task issue
+        if: steps.next.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TASK_PATH: ${{ steps.next.outputs.task_path }}
+        run: python .github/scripts/create_next_task_issue.py
+
+      - name: No tasks left
+        if: steps.next.outputs.found != 'true'
+        run: echo "No pending tasks left."
