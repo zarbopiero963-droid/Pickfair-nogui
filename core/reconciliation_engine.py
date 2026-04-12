@@ -404,10 +404,13 @@ class ReconciliationEngine:
         Assert that the caller still holds ownership (i.e. the active token
         for batch_id matches the token issued to this run).
 
-        Raises RuntimeError if the token is stale or absent.
-        This is an explicit caller-initiated check; it is not called
-        automatically inside the reconcile path (the batch lock already
-        serialises reconcile runs per batch_id in this single-process context).
+        Raises RuntimeError("FENCING_OWNERSHIP_LOST") if the token is stale
+        or absent.
+
+        This is called automatically inside the reconcile path before each
+        critical state mutation (mark_batch_failed, _transactional_leg_update,
+        recompute_batch_status) when enable_fencing_token=True, and may also
+        be called explicitly by other callers that need to verify ownership.
         """
         current = self.get_active_fencing_token(batch_id)
         if current != token:
@@ -415,6 +418,15 @@ class ReconciliationEngine:
                 f"FENCING_OWNERSHIP_LOST: batch={batch_id!r} "
                 f"expected_token={token} current_token={current}"
             )
+
+    def _assert_fencing(self, batch_id: str, fencing_token: Optional[int]) -> None:
+        """Guard: enforce fencing ownership before a critical state mutation.
+
+        No-op when fencing_token is None (enable_fencing_token=False).
+        Raises RuntimeError("FENCING_OWNERSHIP_LOST") on token mismatch.
+        """
+        if fencing_token is not None:
+            self.assert_fencing_ownership(batch_id, fencing_token)
 
     # ─────────────────────────────────────────────────────────────
     # RUNTIME INVARIANT CHECKS (Point 8)
@@ -1339,7 +1351,7 @@ class ReconciliationEngine:
 
         self._set_recovery_marker(batch_id)
         try:
-            result = self._reconcile_batch_inner(batch_id)
+            result = self._reconcile_batch_inner(batch_id, fencing_token=fencing_token)
             if fencing_token is not None:
                 result["fencing_token"] = fencing_token
             return result
@@ -1352,7 +1364,7 @@ class ReconciliationEngine:
                     if self._active_fencing_tokens.get(batch_id) == fencing_token:
                         self._active_fencing_tokens.pop(batch_id, None)
 
-    def _reconcile_batch_inner(self, batch_id: str) -> Dict[str, Any]:
+    def _reconcile_batch_inner(self, batch_id: str, fencing_token: Optional[int] = None) -> Dict[str, Any]:
         # ── fresh snapshot (never use stale data after restart) ──
         batch = self.batch_manager.get_batch(batch_id)
         if not batch:
@@ -1369,6 +1381,7 @@ class ReconciliationEngine:
 
         legs = self.batch_manager.get_batch_legs(batch_id)
         if not legs:
+            self._assert_fencing(batch_id, fencing_token)
             self.batch_manager.mark_batch_failed(
                 batch_id, reason="Batch senza legs"
             )
@@ -1511,6 +1524,7 @@ class ReconciliationEngine:
                     )
 
                     # FSM-validated + transactional update (Points 1, 2, 6)
+                    self._assert_fencing(batch_id, fencing_token)
                     update_ok = self._transactional_leg_update(
                         batch_id=batch_id,
                         leg_index=leg_index,
@@ -1570,6 +1584,7 @@ class ReconciliationEngine:
             )
 
         # ── recompute batch status ──────────────────────────────
+        self._assert_fencing(batch_id, fencing_token)
         new_batch = self.batch_manager.recompute_batch_status(batch_id)
         status = str((new_batch or {}).get("status") or "")
 

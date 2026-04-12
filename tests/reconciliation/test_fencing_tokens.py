@@ -238,3 +238,70 @@ def test_assert_fencing_ownership_raises_when_no_active_token():
     # No active token (reconcile not running)
     with pytest.raises(RuntimeError, match="FENCING_OWNERSHIP_LOST"):
         engine.assert_fencing_ownership("B1", 1)
+
+
+# ===========================================================================
+# Tests: runtime enforcement at critical mutation points
+# ===========================================================================
+
+@pytest.mark.unit
+@pytest.mark.reconciliation
+def test_fencing_stale_token_denied_before_mark_batch_failed():
+    """Stale fencing token raises FENCING_OWNERSHIP_LOST before mark_batch_failed."""
+
+    class NoLegsBM(_BatchManager):
+        def get_batch_legs(self, batch_id):
+            return []  # triggers the no-legs → mark_batch_failed path
+
+    engine = _make_engine(bm=NoLegsBM())
+    # Plant a different active token so the one we pass (42) is stale
+    with engine._fencing_lock:
+        engine._active_fencing_tokens["B1"] = 99
+
+    with pytest.raises(RuntimeError, match="FENCING_OWNERSHIP_LOST"):
+        engine._reconcile_batch_inner("B1", fencing_token=42)
+
+
+@pytest.mark.unit
+@pytest.mark.reconciliation
+def test_fencing_stale_token_denied_before_transactional_leg_update():
+    """Stale fencing token raises FENCING_OWNERSHIP_LOST before _transactional_leg_update.
+
+    The default _BatchManager has B1 with one UNKNOWN leg and an empty market_id
+    (no exchange fetch). The merge policy resolves UNKNOWN → FAILED immediately,
+    triggering a state-change which calls _transactional_leg_update.
+    """
+    engine = _make_engine()
+    # Plant a different active token so the one we pass (42) is stale
+    with engine._fencing_lock:
+        engine._active_fencing_tokens["B1"] = 99
+
+    with pytest.raises(RuntimeError, match="FENCING_OWNERSHIP_LOST"):
+        engine._reconcile_batch_inner("B1", fencing_token=42)
+
+
+@pytest.mark.unit
+@pytest.mark.reconciliation
+def test_fencing_stale_token_denied_before_recompute_batch_status():
+    """Stale fencing token raises FENCING_OWNERSHIP_LOST before recompute_batch_status.
+
+    All legs are MATCHED (terminal) so the convergence loop produces no state
+    changes and _transactional_leg_update is never called — the first fencing
+    check reached is the one immediately before recompute_batch_status.
+    """
+
+    class TerminalLegsBM(_BatchManager):
+        def __init__(self):
+            super().__init__()
+            self._legs["B1"] = [
+                {"leg_index": 0, "status": "MATCHED", "bet_id": "123",
+                 "customer_ref": "r1", "created_at_ts": time.time()}
+            ]
+
+    engine = _make_engine(bm=TerminalLegsBM())
+    # Plant a different active token so the one we pass (42) is stale
+    with engine._fencing_lock:
+        engine._active_fencing_tokens["B1"] = 99
+
+    with pytest.raises(RuntimeError, match="FENCING_OWNERSHIP_LOST"):
+        engine._reconcile_batch_inner("B1", fencing_token=42)
