@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 # Fields whose values must be encrypted at rest.
 _SECRET_FIELDS: frozenset = frozenset({
+    "app_key",
     "password",
     "private_key",
     "certificate",

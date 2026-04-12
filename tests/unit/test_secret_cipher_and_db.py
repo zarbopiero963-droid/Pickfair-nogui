@@ -147,26 +147,56 @@ def test_betfair_credentials_not_stored_in_plaintext():
 
         db.save_credentials(
             username="my_user",
-            app_key="my_app_key",
+            app_key="my_app_key_secret",
             certificate="-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----",
             private_key="-----BEGIN RSA PRIVATE KEY-----\nFAKE\n-----END RSA PRIVATE KEY-----",
         )
 
         raw_cert = _raw_setting(db_path, "certificate")
         raw_pk = _raw_setting(db_path, "private_key")
+        raw_app_key = _raw_setting(db_path, "app_key")
 
         assert not raw_cert.startswith("-----BEGIN"), "certificate must not be stored as plaintext"
         assert not raw_pk.startswith("-----BEGIN"), "private_key must not be stored as plaintext"
         assert raw_cert.startswith("enc:v1:")
         assert raw_pk.startswith("enc:v1:")
 
-        # username and app_key are NOT secret fields — they stay plaintext
+        # app_key IS a secret field — must be encrypted
+        assert raw_app_key != "my_app_key_secret", "app_key must not be stored as plaintext"
+        assert raw_app_key.startswith("enc:v1:"), "app_key must use enc:v1: prefix"
+
+        # username is NOT a secret field — stays plaintext
         raw_user = _raw_setting(db_path, "username")
         assert raw_user == "my_user", "non-secret fields must remain plaintext"
 
         settings = db.get_settings()
         assert settings["certificate"].startswith("-----BEGIN CERTIFICATE")
         assert settings["private_key"].startswith("-----BEGIN RSA")
+        assert settings["app_key"] == "my_app_key_secret", "decrypted app_key must match original"
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_app_key_legacy_plaintext_migration():
+    """Legacy plaintext app_key rows (written before encryption was added) must
+    still be readable through the transparent passthrough migration path."""
+    with tempfile.TemporaryDirectory() as td:
+        db_path = str(Path(td) / "test.db")
+        db = Database(db_path)
+
+        # Simulate a legacy plaintext app_key row (written by an older version)
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            "INSERT INTO settings(key, value) VALUES('app_key', 'legacy_plain_app_key') "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        )
+        conn.commit()
+        conn.close()
+
+        # Must be readable via DB (cipher.decrypt passes through if no enc:v1: prefix)
+        settings = db.get_settings()
+        assert settings.get("app_key") == "legacy_plain_app_key", \
+            "legacy plaintext app_key must be returned transparently"
 
 
 @pytest.mark.unit
