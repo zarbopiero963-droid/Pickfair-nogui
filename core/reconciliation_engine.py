@@ -484,8 +484,14 @@ class ReconciliationEngine:
         self._outbox_lock = threading.Lock()
 
         # ── fencing token counter (Point 3) ─────────────────────
+        # Token is a monotonically increasing integer assigned to each
+        # reconcile run that holds the batch lock.  It is stored in
+        # _active_fencing_tokens while the run is in progress and cleared
+        # on completion.  Ownership is enforced in assert_fencing_ownership().
         self._fencing_counter: int = 0
         self._fencing_lock = threading.Lock()
+        # batch_id → active token (set when lock acquired, cleared on exit)
+        self._active_fencing_tokens: Dict[str, int] = {}
 
         # ── lifecycle hooks for crash-recovery testing (Point 10) ──
         self._hooks: Dict[str, Any] = {}
@@ -706,6 +712,30 @@ class ReconciliationEngine:
         with self._fencing_lock:
             self._fencing_counter += 1
             return self._fencing_counter
+
+    def get_active_fencing_token(self, batch_id: str) -> Optional[int]:
+        """
+        Return the fencing token currently held for batch_id, or None if no
+        reconcile is running for that batch.
+        """
+        with self._fencing_lock:
+            return self._active_fencing_tokens.get(batch_id)
+
+    def assert_fencing_ownership(self, batch_id: str, token: int) -> None:
+        """
+        Assert that the caller still holds ownership (i.e. the active token
+        for batch_id matches the token issued to this run).
+
+        Raises RuntimeError if the token is stale (another run has taken over).
+        Used inside reconcile paths that must verify ownership before persisting
+        a critical state transition.
+        """
+        current = self.get_active_fencing_token(batch_id)
+        if current != token:
+            raise RuntimeError(
+                f"FENCING_OWNERSHIP_LOST: batch={batch_id!r} "
+                f"expected_token={token} current_token={current}"
+            )
 
     # ─────────────────────────────────────────────────────────────
     # RUNTIME INVARIANT CHECKS (Point 8)
@@ -1621,11 +1651,27 @@ class ReconciliationEngine:
 
     def _reconcile_batch_locked(self, batch_id: str) -> Dict[str, Any]:
         """Core reconcile logic, called only under batch lock."""
+        # Assign fencing token — proves this thread owns this reconcile run.
+        fencing_token: Optional[int] = None
+        if self.cfg.enable_fencing_token:
+            fencing_token = self._next_fencing_token()
+            with self._fencing_lock:
+                self._active_fencing_tokens[batch_id] = fencing_token
+
         self._set_recovery_marker(batch_id)
         try:
-            return self._reconcile_batch_inner(batch_id)
+            result = self._reconcile_batch_inner(batch_id)
+            if fencing_token is not None:
+                result["fencing_token"] = fencing_token
+            return result
         finally:
             self._clear_recovery_marker(batch_id)
+            if fencing_token is not None:
+                with self._fencing_lock:
+                    # Only clear our own token — do not overwrite if another
+                    # concurrent run somehow raced (should not happen under lock).
+                    if self._active_fencing_tokens.get(batch_id) == fencing_token:
+                        self._active_fencing_tokens.pop(batch_id, None)
 
     def _reconcile_batch_inner(self, batch_id: str) -> Dict[str, Any]:
         # ── fresh snapshot (never use stale data after restart) ──
