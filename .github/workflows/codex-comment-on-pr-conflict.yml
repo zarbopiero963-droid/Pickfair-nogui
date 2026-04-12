@@ -42,4 +42,4 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           MODE: base_conflict
-        run: python .github/scripts/post_codex_comment.py
+        run: python .github/scripts/post_codex_comment.py 
