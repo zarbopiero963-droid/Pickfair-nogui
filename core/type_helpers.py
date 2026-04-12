@@ -22,14 +22,18 @@ def safe_float(value: Any, default: float = 0.0) -> float:
 
 
 def safe_int(value: Any, default: int = 0) -> int:
-    """Return ``int(float(value))`` or ``default`` on None / empty / error.
+    """Return ``int(value)`` or ``default`` on None / empty / error.
 
-    Uses float intermediate so "3.0" → 3 works correctly.
+    Deliberately strict: float strings like ``"123.9"`` are rejected and
+    return ``default`` rather than being silently truncated to ``123``.
+    Callers that receive genuine float values (e.g. ``3.0`` from JSON)
+    should cast with ``int(float(x))`` before calling, or use
+    ``safe_float`` and convert the result themselves.
     """
     try:
         if value in (None, ""):
             return int(default)
-        return int(float(value))
+        return int(value)
     except Exception:
         return int(default)
 
