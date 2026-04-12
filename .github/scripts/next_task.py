@@ -2,30 +2,25 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
-import sys
 
 TASKS_DIR = Path("ops/tasks")
 
 
 def main() -> int:
-    if not TASKS_DIR.exists():
-        print(json.dumps({"found": False, "reason": "ops/tasks missing"}))
-        return 0
-
     tasks = sorted(
         p for p in TASKS_DIR.iterdir()
-        if p.is_file() and p.suffix == ".md"
+        if p.is_file() and p.suffix == ".md" and p.name != ".gitkeep"
     )
 
     if not tasks:
-        print(json.dumps({"found": False, "reason": "no pending tasks"}))
+        print(json.dumps({"found": False}))
         return 0
 
-    next_task = tasks[0]
+    task = tasks[0]
     print(json.dumps({
         "found": True,
-        "path": str(next_task),
-        "name": next_task.name,
+        "path": str(task),
+        "name": task.name,
     }))
     return 0
 
