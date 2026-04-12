@@ -7,6 +7,7 @@ from tkinter import messagebox, simpledialog
 from theme import COLORS
 from services.telegram_signal_processor import TelegramSignalProcessor
 from services.telegram_bet_resolver import TelegramBetResolver
+from observability.sanitizers import sanitize_dict
 
 logger = logging.getLogger(__name__)
 
@@ -375,7 +376,7 @@ class TelegramModule:
             payload, resolution_mode = self._resolve_signal_to_payload(signal_data, stake=stake)
 
             if not payload:
-                logger.error("[TelegramModule] Segnale non risolvibile: %s", signal_data)
+                logger.error("[TelegramModule] Segnale non risolvibile: %s", sanitize_dict(dict(signal_data or {})))
                 self._safe_db_save_received_signal(
                     selection=selection_name,
                     action=action,
@@ -390,7 +391,7 @@ class TelegramModule:
             payload["raw_signal"] = dict(signal_data or {})
             payload["resolution_mode"] = resolution_mode
 
-            logger.info("[TelegramModule] Inoltro segnale betting (%s): %s", resolution_mode, payload)
+            logger.info("[TelegramModule] Inoltro segnale betting (%s): %s", resolution_mode, sanitize_dict(dict(payload or {})))
 
             try:
                 self._publish_order_signal(payload)
