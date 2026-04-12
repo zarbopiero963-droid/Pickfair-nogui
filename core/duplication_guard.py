@@ -98,12 +98,19 @@ class DuplicationGuard:
 
     # =========================================================
     # TWO-PHASE INTERFACE (is_duplicate / register)
-    # Called by dutching_controller and other runtime paths.
+    # Kept for monitoring / audit use-cases only.
+    # WARNING: using is_duplicate() + register() as a pair is NOT atomic
+    # and is subject to TOCTOU races under concurrent signal handling.
+    # Use acquire() for all order-gate decisions instead.
     # =========================================================
     def is_duplicate(self, event_key: str) -> bool:
-        """
-        Returns True if the key is already active (i.e. IS a duplicate).
+        """Read-only check: True if the key is already active.
+
         Does NOT register the key.
+
+        WARNING: non-atomic when paired with register() – two threads can
+        both see False here before either registers.  Use acquire() for
+        order-gate decisions.
         """
         key = str(event_key or "").strip()
         if not key:
@@ -115,9 +122,12 @@ class DuplicationGuard:
             return key in self._active
 
     def register(self, event_key: str) -> None:
-        """
-        Register a key as active without atomically checking first.
+        """Register a key as active without atomically checking first.
+
         Idempotent: registering an already-active key refreshes its timestamp.
+
+        WARNING: non-atomic when preceded by is_duplicate() – use acquire()
+        for order-gate decisions.
         """
         key = str(event_key or "").strip()
         if not key:

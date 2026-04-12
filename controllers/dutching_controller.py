@@ -423,10 +423,10 @@ class DutchingController:
 
         if duplication_guard and bool(getattr(config, "anti_duplication_enabled", True)):
             try:
-                if duplication_guard.is_duplicate(event_key):
+                if not duplication_guard.acquire(event_key):
                     return self._fail("Duplicato bloccato", event_key=event_key)
             except Exception:
-                logger.exception("Errore duplication_guard.is_duplicate")
+                logger.exception("Errore duplication_guard.acquire")
 
         if bankroll > 0 and config is not None:
             max_total_exposure = bankroll * (
@@ -577,22 +577,6 @@ class DutchingController:
                 event_key=event_key,
             )
 
-        if duplication_guard:
-            try:
-                duplication_guard.register(event_key)
-            except Exception:
-                logger.exception("Errore duplication_guard.register")
-                if allocated_here:
-                    self._release_table_and_key(table_id, event_key)
-                return self._fail(
-                    "Errore registrazione anti-duplicazione",
-                    dry_run=False,
-                    preflight=False,
-                    batch_id=batch_id,
-                    event_key=event_key,
-                    table_id=table_id,
-                )
-
         orders = []
         published_orders = []
         batch_created = False
@@ -726,7 +710,7 @@ class DutchingController:
             config = self._config()
 
             if duplication_guard and bool(getattr(config, "anti_duplication_enabled", True)):
-                if duplication_guard.is_duplicate(event_key):
+                if not duplication_guard.acquire(event_key):
                     return self._fail("Duplicato bloccato")
 
             bankroll = self._bankroll_current()
@@ -745,9 +729,6 @@ class DutchingController:
 
                 if current_total_exposure + exposure > max_total_exposure + 1e-9:
                     return self._fail("Esposizione globale oltre limite")
-
-            if duplication_guard:
-                duplication_guard.register(event_key)
 
             order = {
                 "market_id": market_id,

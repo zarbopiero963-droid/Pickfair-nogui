@@ -897,7 +897,7 @@ class RuntimeController:
         event_key = self.duplication_guard.build_event_key(signal)
         signal["event_key"] = event_key
 
-        if self.config.anti_duplication_enabled and self.duplication_guard.is_duplicate(event_key):
+        if self.config.anti_duplication_enabled and not self.duplication_guard.acquire(event_key):
             self._reject_signal(signal, "duplicato_bloccato")
             return
 
@@ -964,8 +964,6 @@ class RuntimeController:
                 "simulation_mode": payload["simulation_mode"],
             },
         )
-        self.duplication_guard.register(event_key)
-
         self.bus.publish(
             "SIGNAL_APPROVED",
             {
