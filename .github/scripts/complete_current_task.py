@@ -2,26 +2,29 @@ from __future__ import annotations
 
 from pathlib import Path
 import os
+import re
 import shutil
 import sys
 
-TASK_PATH = os.environ.get("TASK_PATH", "").strip()
+PR_BODY = os.environ.get("PR_BODY", "")
 DONE_DIR = Path("ops/tasks_done")
 
 
 def main() -> int:
-    if not TASK_PATH:
-        print("TASK_PATH not set", file=sys.stderr)
+    match = re.search(r"Task-File:\s*(ops/tasks/[^\s]+\.md)", PR_BODY)
+    if not match:
+        print("No Task-File marker found in PR body", file=sys.stderr)
         return 1
 
-    src = Path(TASK_PATH)
+    src = Path(match.group(1))
     if not src.exists():
-        print(f"Task file not found: {src}", file=sys.stderr)
+        print(f"Task file does not exist: {src}", file=sys.stderr)
         return 1
 
     DONE_DIR.mkdir(parents=True, exist_ok=True)
     dst = DONE_DIR / src.name
     shutil.move(str(src), str(dst))
+
     print(f"Moved {src} -> {dst}")
     return 0
 
