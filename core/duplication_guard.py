@@ -97,6 +97,38 @@ class DuplicationGuard:
         return self.acquire(event_key)
 
     # =========================================================
+    # TWO-PHASE INTERFACE (is_duplicate / register)
+    # Called by dutching_controller and other runtime paths.
+    # =========================================================
+    def is_duplicate(self, event_key: str) -> bool:
+        """
+        Returns True if the key is already active (i.e. IS a duplicate).
+        Does NOT register the key.
+        """
+        key = str(event_key or "").strip()
+        if not key:
+            return False
+
+        now = time.time()
+        with self._lock:
+            self._cleanup_locked(now)
+            return key in self._active
+
+    def register(self, event_key: str) -> None:
+        """
+        Register a key as active without atomically checking first.
+        Idempotent: registering an already-active key refreshes its timestamp.
+        """
+        key = str(event_key or "").strip()
+        if not key:
+            return
+
+        now = time.time()
+        with self._lock:
+            self._active[key] = now
+            self._registered_at[key] = datetime.utcnow().isoformat()
+
+    # =========================================================
     # RELEASE
     # =========================================================
     def release(self, event_key: str) -> None:
