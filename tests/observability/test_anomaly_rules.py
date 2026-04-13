@@ -263,6 +263,13 @@ def test_ghost_order_suspected_resets_ticks_on_clear():
     assert state["suspected_ticks"] == 0
 
 
+def test_ghost_order_suspected_suppressed_once_detected_confirmed():
+    state = {"suspected_ticks": 3}
+    ctx = {"runtime_state": {"reconcile": {"suspected_ghost_count": 2, "ghost_orders_count": 1}}}
+    assert rule_ghost_order_suspected(ctx, state) is None
+    assert state["suspected_ticks"] == 0
+
+
 # ---------------------------------------------------------------------------
 # poison_pill_subscriber — distinct from event_fanout_incomplete
 # ---------------------------------------------------------------------------

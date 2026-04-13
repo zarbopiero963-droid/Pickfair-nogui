@@ -541,3 +541,29 @@ def test_evaluate_correlations_direct_evidence_wins_over_loose_gauge():
     assert captured[0]["event_bus"]["queue_depth"] == 10
     # Loose injected field not clobbered if not in direct evidence
     assert captured[0]["event_bus"]["events_published"] == 5
+
+
+def test_watchdog_default_anomaly_path_consumes_ghost_suspected_and_poison_pill():
+    alerts = AlertsManager()
+
+    class _AnomalyProbe(_ProbeStub):
+        def collect_runtime_state(self):
+            return {"reconcile": {"suspected_ghost_count": 1}}
+
+    watchdog = WatchdogService(
+        probe=_AnomalyProbe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        anomaly_context_provider=lambda: {
+            "event_bus": {"subscriber_errors": {"toxic_sub": 4}, "poison_pill_threshold": 3}
+        },
+        interval_sec=60.0,
+    )
+
+    watchdog._evaluate_anomalies()
+    codes = {a.get("code") for a in watchdog.last_anomalies}
+    assert "GHOST_ORDER_SUSPECTED" in codes
+    assert "POISON_PILL_SUBSCRIBER" in codes

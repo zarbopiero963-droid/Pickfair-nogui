@@ -213,14 +213,22 @@ def rule_ghost_order_suspected(context: Context, state: State) -> Anomaly | None
         and (o.get("remote_bet_id") or o.get("exchange_order_id"))
     ]
 
+    confirmed = int(reconcile.get("ghost_orders_count", 0) or 0) > 0
     triggered = (
         suspected > 0
         or (unconfirmed > 0 and unconfirmed_age > age_threshold)
         or len(ambiguous_with_remote) > 0
     )
 
+    # Progression support: once confirmed by reconciliation, suppression ensures
+    # the reviewer naturally transitions from suspected -> detected.
+    if confirmed:
+        state["suspected_ticks"] = 0
+        return None
+
     if triggered:
         prev = int(state.get("suspected_ticks", 0) or 0)
+        event_key = str(reconcile.get("event_key", "") or "")
         state["suspected_ticks"] = prev + 1
         return _anomaly(
             "GHOST_ORDER_SUSPECTED",
@@ -232,6 +240,7 @@ def rule_ghost_order_suspected(context: Context, state: State) -> Anomaly | None
                 "unconfirmed_inflight_age_sec": unconfirmed_age,
                 "ambiguous_with_remote_count": len(ambiguous_with_remote),
                 "consecutive_suspected_ticks": prev + 1,
+                "event_key": event_key,
             },
         )
     state["suspected_ticks"] = 0
