@@ -7,8 +7,13 @@ import pytest
 from core.trading_engine import STATUS_AMBIGUOUS, STATUS_COMPLETED, STATUS_SUBMITTED, TradingEngine
 from observability.anomaly_engine import AnomalyEngine
 from observability.anomaly_rules import DEFAULT_ANOMALY_RULES
+from observability.alerts_manager import AlertsManager
 from observability.forensics_engine import ForensicsEngine
 from observability.forensics_rules import DEFAULT_FORENSICS_RULES
+from observability.health_registry import HealthRegistry
+from observability.incidents_manager import IncidentsManager
+from observability.metrics_registry import MetricsRegistry
+from observability.watchdog_service import WatchdogService
 
 
 class FakeBus:
@@ -152,3 +157,69 @@ def test_partial_failure_preserves_operator_facing_evidence() -> None:
     assert "FORENSIC_GAP" in anomaly_codes
     assert "SUSPICIOUS_DUPLICATE_PATTERN" not in anomaly_codes
     assert "DIAGNOSTICS_BUNDLE_EVIDENCE_GAP" in finding_codes
+
+
+@pytest.mark.chaos
+@pytest.mark.integration
+def test_timeout_ambiguity_contradiction_alert_lifecycle_through_reviewer() -> None:
+    state = {
+        "recent_orders": [
+            {"order_id": "O-TIMEOUT-1", "status": STATUS_AMBIGUOUS, "remote_status": "MATCHED"},
+        ],
+        "event_bus": {"queue_depth": 2, "running": False, "worker_threads_alive": 0},
+    }
+
+    class _Probe:
+        def collect_health(self) -> Dict[str, Any]:
+            return {"runtime": {"status": "READY", "reason": "ok", "details": {}}}
+
+        def collect_metrics(self) -> Dict[str, float]:
+            return {"inflight_count": 1.0, "last_heartbeat_age_sec": 2.0}
+
+        def collect_runtime_state(self) -> Dict[str, Any]:
+            return {"recent_orders": list(state["recent_orders"])}
+
+        def collect_correlation_context(self) -> Dict[str, Any]:
+            return {
+                "recent_orders": list(state["recent_orders"]),
+                "event_bus": dict(state["event_bus"]),
+            }
+
+    class _Snapshot:
+        def collect_and_store(self) -> None:
+            return None
+
+    alerts = AlertsManager()
+    incidents = IncidentsManager()
+    watchdog = WatchdogService(
+        probe=_Probe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=incidents,
+        snapshot_service=_Snapshot(),
+        interval_sec=60.0,
+    )
+
+    watchdog._evaluate_correlations()
+    first_codes = {a["code"] for a in alerts.active_alerts() if a.get("source") == "correlation_reviewer"}
+    assert "LOCAL_VS_REMOTE_MISMATCH" in first_codes
+    assert "QUEUE_DEPTH_DISPATCHER_CONTRADICTION" in first_codes
+    first_open_incidents = {
+        i["code"] for i in incidents.snapshot()["incidents"] if i.get("status") == "OPEN"
+    }
+    assert "LOCAL_VS_REMOTE_MISMATCH" in first_open_incidents
+    assert "QUEUE_DEPTH_DISPATCHER_CONTRADICTION" in first_open_incidents
+
+    state["recent_orders"] = [{"order_id": "O-TIMEOUT-1", "status": STATUS_COMPLETED, "remote_status": STATUS_COMPLETED}]
+    state["event_bus"] = {"queue_depth": 0, "running": True, "worker_threads_alive": 1}
+
+    watchdog._evaluate_correlations()
+    second_codes = {a["code"] for a in alerts.active_alerts() if a.get("source") == "correlation_reviewer"}
+    assert "LOCAL_VS_REMOTE_MISMATCH" not in second_codes
+    assert "QUEUE_DEPTH_DISPATCHER_CONTRADICTION" not in second_codes
+    second_open_incidents = {
+        i["code"] for i in incidents.snapshot()["incidents"] if i.get("status") == "OPEN"
+    }
+    assert "LOCAL_VS_REMOTE_MISMATCH" not in second_open_incidents
+    assert "QUEUE_DEPTH_DISPATCHER_CONTRADICTION" not in second_open_incidents
