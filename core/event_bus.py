@@ -29,6 +29,12 @@ class EventBus:
 
         self.debug = debug
 
+        # Per-subscriber exception counts — used by poison-pill anomaly detector
+        self._subscriber_errors: dict = defaultdict(int)
+
+        # Cumulative published-event counter for side-effect gap detection
+        self._published_total: int = 0
+
         # 🔥 avvio worker pool
         for _ in range(max(1, workers)):
             t = threading.Thread(target=self._worker_loop, daemon=True)
@@ -56,6 +62,18 @@ class EventBus:
                     del self._subscribers[event_type]
 
     # =========================================================
+    # ACCESSORS
+    # =========================================================
+    def queue_depth(self) -> int:
+        """Return current number of pending items in the dispatch queue."""
+        return self._queue.qsize()
+
+    def published_total_count(self) -> int:
+        """Return cumulative count of events dispatched to at least one subscriber."""
+        with self._lock:
+            return self._published_total
+
+    # =========================================================
     # PUBLISH (NON BLOCCANTE)
     # =========================================================
     def publish(self, event_type: str, data=None):
@@ -63,6 +81,8 @@ class EventBus:
             if not self._accepting:
                 return
             callbacks = self._subscribers.get(event_type, []).copy()
+            if callbacks:
+                self._published_total += 1
 
         if not callbacks:
             return
@@ -97,13 +117,21 @@ class EventBus:
     # =========================================================
     # SAFE EXECUTION
     # =========================================================
+    def subscriber_error_counts(self) -> dict:
+        """Return a snapshot of per-subscriber error counts for anomaly detection."""
+        with self._lock:
+            return dict(self._subscriber_errors)
+
     def _safe_execute(self, event_type, callback, data):
         try:
             callback(data)
 
         except Exception:
+            name = getattr(callback, "__name__", repr(callback))
+            with self._lock:
+                self._subscriber_errors[name] += 1
             logger.exception(
-                f"[EventBus] errore subscriber {callback.__name__} evento '{event_type}'"
+                f"[EventBus] errore subscriber {name} evento '{event_type}'"
             )
 
     def _drop_pending(self) -> int:

@@ -919,6 +919,8 @@ class RuntimeController:
             allow_recovery=bool(self.config.allow_recovery),
         )
         if table is None:
+            if self.config.anti_duplication_enabled:
+                self.duplication_guard.release(event_key)
             self._reject_signal(signal, "nessun_tavolo_disponibile")
             return
 
@@ -935,6 +937,8 @@ class RuntimeController:
         )
 
         if not decision.approved:
+            if self.config.anti_duplication_enabled:
+                self.duplication_guard.release(event_key)
             if decision.desk_mode == DeskMode.LOCKDOWN:
                 self.force_lockdown(decision.reason)
             self._reject_signal(signal, decision.reason)

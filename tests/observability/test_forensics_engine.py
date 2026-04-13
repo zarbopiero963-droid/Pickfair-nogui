@@ -57,3 +57,52 @@ def test_forensics_engine_flags_missing_diagnostics_evidence():
     findings = engine.evaluate(context)
     codes = {f["code"] for f in findings}
     assert "DIAGNOSTICS_BUNDLE_EVIDENCE_GAP" in codes
+
+
+def test_forensics_engine_isolates_bad_rule_does_not_silence_others():
+    """A rule that raises must not suppress findings from subsequent rules."""
+
+    def _bad_rule(context, state):
+        raise RuntimeError("rule exploded")
+
+    def _good_rule(context, state):
+        return {"code": "GOOD_FINDING", "severity": "warning", "message": "found", "details": {}}
+
+    engine = ForensicsEngine([_bad_rule, _good_rule])
+    findings = engine.evaluate({})
+
+    codes = {f["code"] for f in findings}
+    assert "GOOD_FINDING" in codes, "good rule must still emit finding after bad rule raises"
+
+
+def test_forensics_engine_records_rule_error_count():
+    """Errors are tracked per rule so callers can observe failure rates."""
+
+    def _always_raises(context, state):
+        raise ValueError("boom")
+
+    engine = ForensicsEngine([_always_raises])
+    engine.evaluate({})
+    engine.evaluate({})
+
+    assert engine.rule_errors.get("_always_raises", 0) == 2
+
+
+def test_forensics_engine_bad_rule_does_not_affect_state_of_other_rules():
+    """Rule state isolation: a crashing rule must not corrupt state of a healthy rule."""
+    healthy_calls = []
+
+    def _bad_rule(context, state):
+        raise RuntimeError("crash")
+
+    def _healthy_rule(context, state):
+        healthy_calls.append(1)
+        state["tick"] = state.get("tick", 0) + 1
+        return None
+
+    engine = ForensicsEngine([_bad_rule, _healthy_rule])
+    engine.evaluate({})
+    engine.evaluate({})
+
+    assert len(healthy_calls) == 2
+    assert engine.state.get("_healthy_rule", {}).get("tick") == 2

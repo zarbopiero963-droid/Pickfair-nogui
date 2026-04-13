@@ -184,3 +184,80 @@ def test_none_status_fail_closed():
     assert report["blockers"][0]["name"] == "component_a"
     assert report["blockers"][0]["status"] == "UNKNOWN"
     assert report["blockers"][0]["reason"] == "test_reason"
+
+
+# ---------------------------------------------------------------------------
+# Task: reviewer_strong_collectors — collect_correlation_context()
+# ---------------------------------------------------------------------------
+
+class _FakeEventBus:
+    def queue_depth(self):
+        return 5
+
+    def published_total_count(self):
+        return 42
+
+    def subscriber_error_counts(self):
+        return {"handler_a": 2}
+
+
+class _FakeAsyncDBWriter:
+    _written = 100
+    _failed = 3
+    _dropped = 1
+
+    class queue:
+        @staticmethod
+        def qsize():
+            return 7
+
+
+def test_collect_correlation_context_from_event_bus():
+    probe = RuntimeProbe(event_bus=_FakeEventBus())
+    ctx = probe.collect_correlation_context()
+
+    assert "event_bus" in ctx
+    assert ctx["event_bus"]["queue_depth"] == 5
+    assert ctx["event_bus"]["published_total"] == 42
+    assert ctx["event_bus"]["subscriber_errors"] == {"handler_a": 2}
+
+
+def test_collect_correlation_context_from_async_db_writer():
+    probe = RuntimeProbe(async_db_writer=_FakeAsyncDBWriter())
+    ctx = probe.collect_correlation_context()
+
+    assert "db_write_queue" in ctx
+    assert ctx["db_write_queue"]["queue_depth"] == 7
+    assert ctx["db_write_queue"]["written"] == 100
+    assert ctx["db_write_queue"]["failed"] == 3
+    assert ctx["db_write_queue"]["dropped"] == 1
+
+
+def test_collect_correlation_context_returns_both_sections():
+    probe = RuntimeProbe(event_bus=_FakeEventBus(), async_db_writer=_FakeAsyncDBWriter())
+    ctx = probe.collect_correlation_context()
+
+    assert "event_bus" in ctx
+    assert "db_write_queue" in ctx
+
+
+def test_collect_correlation_context_empty_when_no_collectors():
+    probe = RuntimeProbe()
+    ctx = probe.collect_correlation_context()
+    assert ctx == {}
+
+
+def test_collect_correlation_context_tolerates_event_bus_without_accessors():
+    """If event_bus lacks the new methods, falls back gracefully to stats()."""
+    class _LegacyEventBus:
+        def stats(self):
+            return {"queue_size": 3}
+
+        def subscriber_error_counts(self):
+            return {}
+
+    probe = RuntimeProbe(event_bus=_LegacyEventBus())
+    ctx = probe.collect_correlation_context()
+
+    assert ctx["event_bus"]["queue_depth"] == 3
+    assert "published_total" not in ctx["event_bus"]
