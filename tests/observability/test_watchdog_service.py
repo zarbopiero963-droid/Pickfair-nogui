@@ -625,6 +625,37 @@ def test_watchdog_correlation_default_path_uses_strong_dispatcher_liveness_evide
     assert "QUEUE_DEPTH_DISPATCHER_CONTRADICTION" in codes
 
 
+def test_build_anomaly_context_includes_probe_canonical_reviewer_blocks():
+    class _CanonicalProbe(_ProbeStub):
+        def collect_reviewer_context(self):
+            return {
+                "risk": {"expected_exposure": 9.0, "actual_exposure": 9.0, "exposure_tolerance": 0.01},
+                "db": {"lock_wait_ms": 0.0, "contention_events": 0, "db_writer_backlog": 4},
+                "financials": {"ledger_balance": 10.0, "venue_balance": 10.0, "drift_threshold": 0.01},
+                "event_bus": {"expected_fanout": 3, "delivered_fanout": 2},
+                "recent_orders": [{"order_id": "o1", "status": "SUBMITTED"}],
+                "recent_audit": [],
+                "reconcile_chain": {"missing_count": 1, "sample_missing_ids": ["o1"]},
+            }
+
+    watchdog = WatchdogService(
+        probe=_CanonicalProbe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=AlertsManager(),
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        interval_sec=60.0,
+    )
+
+    ctx = watchdog._build_anomaly_context()
+    assert ctx["risk"]["expected_exposure"] == 9.0
+    assert ctx["db"]["db_writer_backlog"] == 4
+    assert ctx["financials"]["ledger_balance"] == 10.0
+    assert ctx["event_bus"]["expected_fanout"] == 3
+    assert ctx["reconcile_chain"]["missing_count"] == 1
+
+
 # ---------------------------------------------------------------------------
 # Micro-task 1: anomaly reviewer default-on
 # ---------------------------------------------------------------------------

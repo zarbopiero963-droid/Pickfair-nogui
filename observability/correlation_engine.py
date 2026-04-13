@@ -155,6 +155,18 @@ def rule_db_vs_memory(context: CorrelationContext, state: CorrelationState) -> O
 
 
 def rule_submit_reconcile_chain_break(context: CorrelationContext, state: CorrelationState) -> Optional[CorrelationFinding]:
+    reconcile_chain = context.get("reconcile_chain") or {}
+    missing_count = reconcile_chain.get("missing_count")
+    if missing_count is not None:
+        broken_count = int(missing_count or 0)
+        sample_ids = list(reconcile_chain.get("sample_missing_ids") or [])[:3]
+        if broken_count > 0:
+            details = {"broken_count": broken_count, "sample_ids": sample_ids}
+            details["source"] = "canonical_reconcile_chain"
+            return _correlation_finding("SUBMIT_RECONCILE_CHAIN_BREAK", "warning",
+                "Submitted orders missing from reconciliation audit trail", details)
+        return None
+
     orders = context.get("recent_orders") or []
     # Orders that are SUBMITTED but never appeared in reconciliation
     submitted_ids = {o.get("order_id") or o.get("id") for o in orders if str(o.get("status", "")).upper() == "SUBMITTED"}
