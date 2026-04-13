@@ -567,3 +567,26 @@ def test_watchdog_default_anomaly_path_consumes_ghost_suspected_and_poison_pill(
     codes = {a.get("code") for a in watchdog.last_anomalies}
     assert "GHOST_ORDER_SUSPECTED" in codes
     assert "POISON_PILL_SUBSCRIBER" in codes
+
+
+def test_watchdog_correlation_default_path_uses_strong_dispatcher_liveness_evidence():
+    alerts = AlertsManager()
+
+    class _DispatcherDownProbe(_ProbeStub):
+        def collect_correlation_context(self):
+            return {"event_bus": {"queue_depth": 3, "running": False, "worker_threads_alive": 0}}
+
+    watchdog = WatchdogService(
+        probe=_DispatcherDownProbe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        interval_sec=60.0,
+    )
+
+    watchdog._evaluate_correlations()
+    active = alerts.active_alerts()
+    codes = {a["code"] for a in active if a.get("source") == "correlation_reviewer"}
+    assert "QUEUE_DEPTH_DISPATCHER_CONTRADICTION" in codes

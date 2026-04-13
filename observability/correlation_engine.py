@@ -131,7 +131,9 @@ def rule_local_vs_remote(context: CorrelationContext, state: CorrelationState) -
 def rule_db_vs_memory(context: CorrelationContext, state: CorrelationState) -> Optional[CorrelationFinding]:
     metrics = (context.get("metrics") or {})
     gauges = (metrics.get("gauges") or {}) if isinstance(metrics, dict) else {}
-    db_count = int(gauges.get("db_inflight_count", -1) or -1)
+    db_state = context.get("db_state") or {}
+    direct_db_count = db_state.get("inflight_orders_count")
+    db_count = int(direct_db_count if direct_db_count is not None else (gauges.get("db_inflight_count", -1) or -1))
     mem_count = int(gauges.get("inflight_count", 0) or 0)
     if db_count >= 0 and abs(db_count - mem_count) > 0:
         details: Dict[str, Any] = {
@@ -139,6 +141,8 @@ def rule_db_vs_memory(context: CorrelationContext, state: CorrelationState) -> O
             "memory_count": mem_count,
             "delta": abs(db_count - mem_count),
         }
+        if direct_db_count is not None:
+            details["db_source"] = "diagnostics_recent_orders"
         # Augment with DB write queue depth to distinguish expected write lag
         # from true DB/memory corruption — direct typed evidence from AsyncDBWriter.
         db_write_queue = context.get("db_write_queue") or {}
@@ -191,6 +195,17 @@ def rule_queue_depth_liveness(context: CorrelationContext, state: CorrelationSta
     direct_depth = event_bus.get("queue_depth")
     queue_depth = float(direct_depth if direct_depth is not None else gauges.get("queue_depth", 0.0) or 0.0)
     heartbeat_age = float(gauges.get("last_heartbeat_age_sec", 0.0) or 0.0)
+    running = event_bus.get("running")
+    workers_alive = event_bus.get("worker_threads_alive")
+    # Strong direct contradiction: queue has work but dispatcher is not running
+    # or has no alive worker threads.
+    if queue_depth > 0 and (running is False or (isinstance(workers_alive, int) and workers_alive <= 0)):
+        return _correlation_finding(
+            "QUEUE_DEPTH_DISPATCHER_CONTRADICTION",
+            "critical",
+            "Queue has pending work but dispatcher liveness is down",
+            {"queue_depth": queue_depth, "running": bool(running) if running is not None else None, "worker_threads_alive": workers_alive},
+        )
     # Queue has depth but heartbeat is stale → liveness contradiction
     if queue_depth > 0 and heartbeat_age > 60.0:
         return _correlation_finding("QUEUE_DEPTH_LIVENESS_CONTRADICTION", "critical",

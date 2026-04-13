@@ -160,6 +160,13 @@ class RuntimeProbe:
                     eb["published_total"] = int(pt_fn())
                 except Exception:
                     pass
+            # Direct downstream side-effect count from successful callback execution.
+            delivered_fn = getattr(self.event_bus, "delivered_total_count", None)
+            if callable(delivered_fn):
+                try:
+                    eb["side_effects_confirmed"] = int(delivered_fn())
+                except Exception:
+                    pass
             # Per-subscriber error counts for poison-pill detection
             se_fn = getattr(self.event_bus, "subscriber_error_counts", None)
             if callable(se_fn):
@@ -167,6 +174,19 @@ class RuntimeProbe:
                     eb["subscriber_errors"] = dict(se_fn())
                 except Exception:
                     pass
+            # Worker/liveness evidence from live bus internals.
+            worker_threads = getattr(self.event_bus, "_workers", None)
+            if isinstance(worker_threads, list):
+                try:
+                    eb["worker_threads_alive"] = int(sum(1 for t in worker_threads if getattr(t, "is_alive", lambda: False)()))
+                except Exception:
+                    pass
+            for attr, key in (("_running", "running"), ("_accepting", "accepting")):
+                if hasattr(self.event_bus, attr):
+                    try:
+                        eb[key] = bool(getattr(self.event_bus, attr))
+                    except Exception:
+                        pass
             if eb:
                 ctx["event_bus"] = eb
 
@@ -187,6 +207,34 @@ class RuntimeProbe:
                         pass
             if dw:
                 ctx["db_write_queue"] = dw
+
+        if self.db is not None:
+            db_state: Dict[str, Any] = {}
+            orders_getter = getattr(self.db, "get_recent_orders_for_diagnostics", None)
+            if callable(orders_getter):
+                orders_query_ok = False
+                try:
+                    orders = orders_getter(limit=500) or []
+                    orders_query_ok = True
+                except Exception:
+                    orders = None
+                if orders_query_ok and isinstance(orders, list):
+                    terminal = {"FILLED", "CANCELLED", "FAILED", "SETTLED", "VOIDED", "CLOSED", "COMPLETED"}
+                    inflight = 0
+                    remote_mismatches = 0
+                    for order in orders:
+                        if not isinstance(order, dict):
+                            continue
+                        status = str(order.get("status") or "").upper()
+                        remote_status = str(order.get("remote_status") or "").upper()
+                        if status and status not in terminal:
+                            inflight += 1
+                        if status and remote_status and status != remote_status:
+                            remote_mismatches += 1
+                    db_state["inflight_orders_count"] = int(inflight)
+                    db_state["remote_mismatch_count"] = int(remote_mismatches)
+            if db_state:
+                ctx["db_state"] = db_state
 
         return ctx
 

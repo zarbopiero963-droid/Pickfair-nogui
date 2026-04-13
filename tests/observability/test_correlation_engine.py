@@ -257,3 +257,25 @@ def test_rule_db_vs_memory_omits_write_queue_depth_when_absent():
     finding = rule_db_vs_memory(ctx, {})
     assert finding is not None
     assert "db_write_queue_depth" not in finding["details"]
+
+
+def test_rule_db_vs_memory_prefers_direct_db_state_over_gauge():
+    ctx = {
+        "metrics": {"gauges": {"db_inflight_count": 1, "inflight_count": 3}},
+        "db_state": {"inflight_orders_count": 8},
+    }
+    finding = rule_db_vs_memory(ctx, {})
+    assert finding is not None
+    assert finding["details"]["db_count"] == 8
+    assert finding["details"]["db_source"] == "diagnostics_recent_orders"
+
+
+def test_rule_queue_depth_liveness_fires_when_dispatcher_down_with_pending_depth():
+    ctx = {
+        "event_bus": {"queue_depth": 6, "running": False, "worker_threads_alive": 0},
+        "metrics": {"gauges": {"last_heartbeat_age_sec": 0.0}},
+    }
+    finding = rule_queue_depth_liveness(ctx, {})
+    assert finding is not None
+    assert finding["code"] == "QUEUE_DEPTH_DISPATCHER_CONTRADICTION"
+    assert finding["severity"] == "critical"

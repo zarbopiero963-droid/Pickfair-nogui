@@ -34,6 +34,8 @@ class EventBus:
 
         # Cumulative published-event counter for side-effect gap detection
         self._published_total: int = 0
+        # Cumulative successful subscriber callback executions (direct side effects)
+        self._delivered_total: int = 0
 
         # 🔥 avvio worker pool
         for _ in range(max(1, workers)):
@@ -72,6 +74,11 @@ class EventBus:
         """Return cumulative count of events dispatched to at least one subscriber."""
         with self._lock:
             return self._published_total
+
+    def delivered_total_count(self) -> int:
+        """Return cumulative successful callback executions."""
+        with self._lock:
+            return self._delivered_total
 
     # =========================================================
     # PUBLISH (NON BLOCCANTE)
@@ -125,6 +132,8 @@ class EventBus:
     def _safe_execute(self, event_type, callback, data):
         try:
             callback(data)
+            with self._lock:
+                self._delivered_total += 1
 
         except Exception:
             name = getattr(callback, "__name__", repr(callback))

@@ -197,6 +197,9 @@ class _FakeEventBus:
     def published_total_count(self):
         return 42
 
+    def delivered_total_count(self):
+        return 39
+
     def subscriber_error_counts(self):
         return {"handler_a": 2}
 
@@ -219,6 +222,7 @@ def test_collect_correlation_context_from_event_bus():
     assert "event_bus" in ctx
     assert ctx["event_bus"]["queue_depth"] == 5
     assert ctx["event_bus"]["published_total"] == 42
+    assert ctx["event_bus"]["side_effects_confirmed"] == 39
     assert ctx["event_bus"]["subscriber_errors"] == {"handler_a": 2}
 
 
@@ -245,6 +249,33 @@ def test_collect_correlation_context_empty_when_no_collectors():
     probe = RuntimeProbe()
     ctx = probe.collect_correlation_context()
     assert ctx == {}
+
+
+def test_collect_correlation_context_collects_direct_db_state():
+    class _DbOrdersStub:
+        def get_recent_orders_for_diagnostics(self, limit=500):
+            return [
+                {"order_id": "o1", "status": "SUBMITTED", "remote_status": "SUBMITTED"},
+                {"order_id": "o2", "status": "OPEN", "remote_status": "CANCELLED"},
+                {"order_id": "o3", "status": "COMPLETED", "remote_status": "COMPLETED"},
+            ]
+
+    probe = RuntimeProbe(db=_DbOrdersStub())
+    ctx = probe.collect_correlation_context()
+
+    assert ctx["db_state"]["inflight_orders_count"] == 2
+    assert ctx["db_state"]["remote_mismatch_count"] == 1
+
+
+def test_collect_correlation_context_omits_db_state_when_query_fails():
+    class _DbOrdersFailingStub:
+        def get_recent_orders_for_diagnostics(self, limit=500):
+            raise RuntimeError("db unavailable")
+
+    probe = RuntimeProbe(db=_DbOrdersFailingStub())
+    ctx = probe.collect_correlation_context()
+
+    assert "db_state" not in ctx
 
 
 def test_collect_correlation_context_tolerates_event_bus_without_accessors():
