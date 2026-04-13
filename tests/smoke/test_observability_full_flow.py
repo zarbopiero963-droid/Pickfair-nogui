@@ -416,7 +416,7 @@ def test_default_headless_reviewer_path_proves_critical_anomaly_and_chain_famili
             del limit
             if self._submitted_missing:
                 return []
-            return [{"order_id": "o-chain-1"}]
+            return [{"order_id": "o-chain-1", "type": "FINALIZED"}]
 
         def get_recent_observability_snapshots(self, limit=1):
             del limit
