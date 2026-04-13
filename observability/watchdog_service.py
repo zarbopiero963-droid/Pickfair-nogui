@@ -409,6 +409,7 @@ class WatchdogService:
         stale_codes = self._managed_anomaly_alert_codes - current_codes
         for code in stale_codes:
             self.alerts_manager.resolve_alert(code)
+            self.incidents_manager.close_incident(code)
 
         self._managed_anomaly_alert_codes = current_codes
 

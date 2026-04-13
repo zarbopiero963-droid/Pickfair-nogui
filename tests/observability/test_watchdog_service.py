@@ -293,6 +293,47 @@ def test_invariant_violation_opens_incident():
     assert "terminal_to_nonterminal_regression" in open_incidents
 
 
+def test_stale_anomaly_incident_closes_when_anomaly_clears():
+    """Critical anomaly opens an incident; when the anomaly clears, the incident is closed."""
+    alerts = AlertsManager()
+    incidents = IncidentsManager()
+
+    class _CriticalThenClearEngine:
+        def __init__(self):
+            self.step = 0
+
+        def evaluate(self, _context):
+            self.step += 1
+            if self.step == 1:
+                return [{"code": "FINANCIAL_DRIFT", "severity": "critical",
+                         "description": "drift detected", "details": {}}]
+            return []
+
+    watchdog = WatchdogService(
+        probe=_ProbeStub(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=incidents,
+        snapshot_service=_SnapshotStub(),
+        anomaly_engine=_CriticalThenClearEngine(),
+        anomaly_enabled=True,
+        interval_sec=60.0,
+    )
+
+    # First evaluation: anomaly fires → alert active, incident OPEN
+    watchdog._evaluate_anomalies()
+    snap1 = incidents.snapshot()
+    open1 = {i["code"] for i in snap1["incidents"] if i["status"] == "OPEN"}
+    assert "FINANCIAL_DRIFT" in open1
+
+    # Second evaluation: anomaly gone → alert resolved, incident CLOSED
+    watchdog._evaluate_anomalies()
+    snap2 = incidents.snapshot()
+    open2 = {i["code"] for i in snap2["incidents"] if i["status"] == "OPEN"}
+    assert "FINANCIAL_DRIFT" not in open2
+
+
 def test_forensics_finding_in_default_tick():
     """Forensics findings flow through _evaluate_forensics in a full tick scenario."""
     alerts = AlertsManager()
