@@ -16,4 +16,28 @@ class AnomalyEngine:
             item = rule(context, rule_state)
             if item:
                 anomalies.append(item)
-        return anomalies
+        return self._apply_progressions(anomalies)
+
+    def _apply_progressions(self, anomalies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Apply deterministic anomaly progressions used by the reviewer."""
+        has_detected = any(
+            str(item.get("code", "") or "") == "GHOST_ORDER_DETECTED"
+            for item in anomalies
+        )
+        if not has_detected:
+            return anomalies
+
+        progressed: List[Dict[str, Any]] = []
+        for item in anomalies:
+            code = str(item.get("code", "") or "")
+            if code == "GHOST_ORDER_SUSPECTED":
+                continue
+            if code == "GHOST_ORDER_DETECTED":
+                details = item.get("details")
+                if isinstance(details, dict):
+                    enriched = dict(details)
+                    enriched["progressed_from"] = "GHOST_ORDER_SUSPECTED"
+                    item = dict(item)
+                    item["details"] = enriched
+            progressed.append(item)
+        return progressed
