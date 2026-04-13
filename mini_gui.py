@@ -160,95 +160,14 @@ except Exception:  # pragma: no cover
     FONTS = {}
 
 
-class _HeadlessBoolVar:
-    def __init__(self, value: bool = False):
-        self._value = bool(value)
-
-    def get(self):
-        return self._value
-
-    def set(self, value):
-        self._value = bool(value)
-
-
-class _HeadlessStringVar:
-    def __init__(self, value: str = ""):
-        self._value = str(value)
-
-    def get(self):
-        return self._value
-
-    def set(self, value):
-        self._value = str(value)
-
-
-class _HeadlessRoot:
-    def after(self, _delay, fn=None):
-        if callable(fn):
-            try:
-                fn()
-            except Exception:
-                pass
-        return None
-
-    def destroy(self):
-        return None
-
-    def protocol(self, *_args, **_kwargs):
-        return None
-
-    def withdraw(self):
-        return None
-
-    def title(self, *_args, **_kwargs):
-        return None
-
-    def geometry(self, *_args, **_kwargs):
-        return None
-
-    def grid_columnconfigure(self, *_args, **_kwargs):
-        return None
-
-    def grid_rowconfigure(self, *_args, **_kwargs):
-        return None
-
-
-class _DummyButton:
-    def __init__(self, fn):
-        self._fn = fn
-
-    def cget(self, name):
-        if name == "command":
-            return self._fn
-        return None
-
-
-class _DummyTree:
-    def __init__(self):
-        self.rows = []
-
-    def delete(self, *_args, **_kwargs):
-        self.rows = []
-
-    def get_children(self):
-        return list(range(len(self.rows)))
-
-    def insert(self, *_args, **kwargs):
-        self.rows.append(kwargs.get("values"))
-
-
-class _DummyLog:
-    def __init__(self):
-        self.lines = []
-
-    def insert(self, *_args, **kwargs):
-        if len(args) >= 2:
-            self.lines.append(args[1])
-        elif "text" in kwargs:
-            self.lines.append(kwargs["text"])
-
-    def see(self, *_args, **_kwargs):
-        return None
+from headless_ui_stubs import (  # noqa: E402
+    _HeadlessBoolVar,
+    _HeadlessStringVar,
+    _HeadlessRoot,
+    _DummyButton,
+    _DummyTree,
+    _DummyLog,
+)
 
 
 class SimpleUIQueue:
@@ -719,6 +638,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self.btn_stop = _DummyButton(self._runtime_stop)
             self.btn_reset = _DummyButton(self._runtime_reset)
             self.btn_refresh = _DummyButton(self._refresh_runtime_status)
+            self.btn_emergency_stop = _DummyButton(self._runtime_emergency_stop)
             return
 
         frame = self.tab_dashboard
@@ -756,9 +676,15 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.btn_stop = ctk.CTkButton(controls, text="Stop", command=self._runtime_stop)
         self.btn_reset = ctk.CTkButton(controls, text="Reset Ciclo", command=self._runtime_reset)
         self.btn_refresh = ctk.CTkButton(controls, text="Refresh", command=self._refresh_runtime_status)
+        self.btn_emergency_stop = ctk.CTkButton(
+            controls, text="EMERGENCY STOP",
+            command=self._runtime_emergency_stop,
+            fg_color="#c0392b", hover_color="#96281b",
+        )
 
         for btn in [self.btn_start, self.btn_pause, self.btn_resume, self.btn_stop, self.btn_reset, self.btn_refresh]:
             btn.pack(side=tk.LEFT, padx=6, pady=10)
+        self.btn_emergency_stop.pack(side=tk.RIGHT, padx=6, pady=10)
 
         err = ctk.CTkFrame(frame)
         err.grid(row=4, column=0, columnspan=4, sticky="ew", padx=8, pady=8)
@@ -1144,6 +1070,26 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         except Exception as exc:
             self._log(f"RESET ERROR -> {exc}")
             self._safe_show_error("Errore reset", str(exc))
+        self._refresh_runtime_status()
+
+    def _runtime_emergency_stop(self):
+        """Operator-triggered emergency stop.
+
+        Calls runtime.emergency_stop() which:
+        1. Sets the emergency flag — all subsequent live order entry is refused.
+        2. Forces live_enabled=False and execution_mode=SIMULATION.
+        3. Attempts cancel-all unmatched orders on every open market.
+        4. Stays blocked until reset_emergency() is explicitly called.
+
+        Partial downstream cancel failures do NOT silently resume trading.
+        To resume after an emergency stop: call Reset Ciclo, then Avvia.
+        """
+        try:
+            result = self.runtime.emergency_stop(reason="operator_gui_button")
+            self._log(f"EMERGENCY STOP TRIGGERED -> {result}")
+        except Exception as exc:
+            self._log(f"EMERGENCY STOP ERROR -> {exc}")
+            self._safe_show_error("Errore Emergency Stop", str(exc))
         self._refresh_runtime_status()
 
     # =========================================================

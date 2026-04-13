@@ -1,3 +1,11 @@
-pytest
-pytest-cov
-requests
+# Test dependencies — install on top of requirements.txt
+# Usage: pip install -r requirements-test.txt
+-r requirements.txt
+
+# =========================
+# TEST RUNNER
+# =========================
+pytest>=7.4.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.0.0
+pytest-xdist>=3.0.0

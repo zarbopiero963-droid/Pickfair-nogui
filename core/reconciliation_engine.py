@@ -5,422 +5,45 @@ import json
 import logging
 import threading
 import time
-from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field
-from enum import Enum, unique
-from typing import Any, Dict, FrozenSet, Generator, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
+from core.batch_lock_manager import _BatchLockManager
 from core.dutching_batch_manager import DutchingBatchManager
+from core.reconciliation_types import (  # noqa: F401 – re-exported for backward compat
+    ALL_LEG_STATUSES,
+    NON_TERMINAL_LEG_STATUSES,
+    TERMINAL_BATCH_STATUSES,
+    TERMINAL_LEG_STATUSES,
+    DecisionEntry,
+    ErrorClass,
+    IllegalTransitionError,
+    OutboxEntry,
+    ReasonCode,
+    ReconcileConfig,
+    ReconcileResult,
+    classify_error,
+    validate_leg_transition,
+    _ALLOWED_LEG_TRANSITIONS,
+    _AUTH_ERROR_MARKERS,
+    _PERMANENT_ERROR_MARKERS,
+)
 
 logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# REASON CODES – standardised, machine-readable
+# NOTE: ReasonCode, ErrorClass, DecisionEntry, OutboxEntry, ReconcileResult,
+#       IllegalTransitionError, ReconcileConfig and helpers are defined in
+#       core/reconciliation_types.py and imported above. They are re-exported
+#       here so existing callers are unaffected.
 # =============================================================================
-
-@unique
-class ReasonCode(str, Enum):
-    """Standardised reconcile reason codes."""
-
-    # ── classification cases ────────────────────────────────────
-    LOCAL_INFLIGHT_EXCHANGE_ABSENT   = "LOCAL_INFLIGHT_EXCHANGE_ABSENT"
-    LOCAL_AMBIGUOUS_EXCHANGE_MATCHED = "LOCAL_AMBIGUOUS_EXCHANGE_MATCHED"
-    LOCAL_ABSENT_EXCHANGE_PRESENT    = "LOCAL_ABSENT_EXCHANGE_PRESENT"
-    SPLIT_STATE                      = "SPLIT_STATE"
-
-    # ── resolution outcomes ─────────────────────────────────────
-    EXCHANGE_WINS_MATCHED            = "EXCHANGE_WINS_MATCHED"
-    EXCHANGE_WINS_PARTIAL            = "EXCHANGE_WINS_PARTIAL"
-    EXCHANGE_WINS_CANCELLED          = "EXCHANGE_WINS_CANCELLED"
-    EXCHANGE_WINS_LAPSED             = "EXCHANGE_WINS_LAPSED"
-    LOCAL_WINS_SAGA_PENDING          = "LOCAL_WINS_SAGA_PENDING"
-    LOCAL_WINS_TERMINAL              = "LOCAL_WINS_TERMINAL"
-    GHOST_ORDER_DETECTED             = "GHOST_ORDER_DETECTED"
-    GHOST_REPLACED_ORDER             = "GHOST_REPLACED_ORDER"
-    RESOLVED_UNKNOWN_TO_FAILED       = "RESOLVED_UNKNOWN_TO_FAILED"
-    RESOLVED_UNKNOWN_TO_MATCHED      = "RESOLVED_UNKNOWN_TO_MATCHED"
-    CONVERGED                        = "CONVERGED"
-    CONVERGENCE_TIMEOUT              = "CONVERGENCE_TIMEOUT"
-    NO_LEGS                          = "NO_LEGS"
-    BATCH_NOT_FOUND                  = "BATCH_NOT_FOUND"
-    ALREADY_TERMINAL                 = "ALREADY_TERMINAL"
-    TRANSIENT_ERROR                  = "TRANSIENT_ERROR"
-    PERMANENT_ERROR                  = "PERMANENT_ERROR"
-    AUTH_ERROR                       = "AUTH_ERROR"
-    MAX_CYCLES_EXCEEDED              = "MAX_CYCLES_EXCEEDED"
-    ROLLBACK_REQUESTED               = "ROLLBACK_REQUESTED"
-    TERMINAL_FINALIZED               = "TERMINAL_FINALIZED"
-    PARTIAL_ROLLBACK                 = "PARTIAL_ROLLBACK"
-    IDEMPOTENT_SKIP                  = "IDEMPOTENT_SKIP"
-    RECONCILE_ALREADY_RUNNING        = "RECONCILE_ALREADY_RUNNING"
-    AUDIT_PERSIST_FAILED             = "AUDIT_PERSIST_FAILED"
-    RECOVERY_MARKER_SET              = "RECOVERY_MARKER_SET"
-    FETCH_PERMANENT_FAILURE          = "FETCH_PERMANENT_FAILURE"
 
 
 # =============================================================================
-# ERROR CLASSIFICATION
+# NOTE: _BatchLockManager is defined in core/batch_lock_manager.py and
+#       imported above. Existing callers that reference it via ReconciliationEngine
+#       are unaffected (no public API change).
 # =============================================================================
-
-@unique
-class ErrorClass(str, Enum):
-    """Classification of fetch/API errors for retry decisions."""
-    TRANSIENT  = "TRANSIENT"    # timeout, connection reset, 5xx
-    PERMANENT  = "PERMANENT"   # invalid market, 4xx non-auth
-    AUTH       = "AUTH"         # 401, 403, session expired
-    UNKNOWN    = "UNKNOWN"     # unclassifiable
-
-
-# well-known exception substrings/types → classification
-_PERMANENT_ERROR_MARKERS: Tuple[str, ...] = (
-    "invalid market",
-    "invalid_market",
-    "market not found",
-    "market_not_found",
-    "no such market",
-    "invalid selection",
-    "invalid_selection",
-    "bad request",
-    "bad_request",
-    "not found",
-    "not_found",
-    "invalid argument",
-    "invalid_argument",
-    "invalid_input",
-)
-
-_AUTH_ERROR_MARKERS: Tuple[str, ...] = (
-    "unauthorized",
-    "authentication",
-    "permission denied",
-    "forbidden",
-    "session expired",
-    "not logged in",
-    "invalid session",
-    "no session",
-    "ssoid",
-    "401",
-    "403",
-)
-
-
-def classify_error(exc: BaseException) -> ErrorClass:
-    """Classify an exception into TRANSIENT / PERMANENT / AUTH."""
-    msg = str(exc).lower()
-    exc_type = type(exc).__name__.lower()
-
-    for marker in _AUTH_ERROR_MARKERS:
-        if marker in msg or marker in exc_type:
-            return ErrorClass.AUTH
-
-    for marker in _PERMANENT_ERROR_MARKERS:
-        if marker in msg or marker in exc_type:
-            return ErrorClass.PERMANENT
-
-    if any(t in msg or t in exc_type for t in (
-        "timeout", "timed out", "connection", "reset", "unavailable",
-        "throttl", "rate limit", "retry", "temporary", "503", "502",
-        "504", "eof", "broken pipe",
-    )):
-        return ErrorClass.TRANSIENT
-
-    # default: treat as transient (safer — will retry)
-    return ErrorClass.TRANSIENT
-
-
-# =============================================================================
-# DECISION LOG ENTRY
-# =============================================================================
-
-@dataclass
-class DecisionEntry:
-    """Single persisted decision taken during reconciliation."""
-
-    timestamp: float
-    batch_id: str
-    leg_index: Optional[int]
-    case_classification: str
-    reason_code: str
-    local_status: str
-    exchange_status: Optional[str]
-    resolved_status: str
-    merge_winner: str                 # "LOCAL" | "EXCHANGE" | "NONE"
-    details: Dict[str, Any] = field(default_factory=dict)
-    persisted: bool = False           # True if already written to DB
-    persist_ok: Optional[bool] = None # result of last persist attempt
-
-    def to_dict(self) -> Dict[str, Any]:
-        d = asdict(self)
-        d.pop("persisted", None)      # internal flags, not for DB
-        d.pop("persist_ok", None)
-        return d
-
-
-# =============================================================================
-# LEG STATUS CONSTANTS
-# =============================================================================
-
-TERMINAL_LEG_STATUSES: FrozenSet[str] = frozenset({
-    "MATCHED", "FAILED", "CANCELLED", "ROLLED_BACK", "LAPSED", "VOIDED",
-})
-
-NON_TERMINAL_LEG_STATUSES: FrozenSet[str] = frozenset({
-    "CREATED", "SUBMITTED", "PLACED", "PARTIAL", "UNKNOWN",
-})
-
-TERMINAL_BATCH_STATUSES: FrozenSet[str] = frozenset({
-    "EXECUTED", "ROLLED_BACK", "FAILED", "CANCELLED",
-})
-
-ALL_LEG_STATUSES: FrozenSet[str] = TERMINAL_LEG_STATUSES | NON_TERMINAL_LEG_STATUSES
-
-
-# =============================================================================
-# OUTBOX ENTRY — transactional event pattern
-# =============================================================================
-
-@dataclass
-class OutboxEntry:
-    """Event queued for reliable delivery via outbox pattern."""
-    timestamp: float
-    batch_id: str
-    event_name: str
-    payload: Dict[str, Any]
-    delivered: bool = False
-
-    def to_dict(self) -> Dict[str, Any]:
-        d = asdict(self)
-        d.pop("delivered", None)
-        return d
-
-
-# =============================================================================
-# RECONCILE RESULT — structured, multi-layer
-# =============================================================================
-
-@dataclass
-class ReconcileResult:
-    """
-    Structured reconcile outcome separating:
-      - technical: did reconcile complete?
-      - business:  what is the batch state?
-      - fetch:     was exchange reachable?
-      - audit:     was audit trail persisted?
-      - recovery:  was recovery marker handled?
-    """
-    ok: bool
-    batch_id: str
-    reason_code: str = ""
-    status: str = ""
-
-    # technical
-    cycles: int = 0
-    fingerprint: str = ""
-    converged: bool = False
-
-    # fetch
-    fetch_ok: bool = True
-    fetch_failure: Optional[str] = None
-
-    # audit
-    audit_ok: bool = True
-    audit_failure: Optional[str] = None
-
-    # recovery
-    recovery_marker_cleared: bool = True
-
-    error: str = ""
-
-    def to_dict(self) -> Dict[str, Any]:
-        d = asdict(self)
-        return {k: v for k, v in d.items() if v is not None}
-
-
-# =============================================================================
-# FORMAL STATE MACHINE — leg transition matrix
-# =============================================================================
-#
-# Key: (from_status, to_status) → allowed?
-# Any transition NOT in this table is FORBIDDEN.
-# Terminal → non-terminal is always blocked.
-#
-
-_ALLOWED_LEG_TRANSITIONS: FrozenSet[Tuple[str, str]] = frozenset({
-    # from CREATED
-    ("CREATED",   "SUBMITTED"),
-    ("CREATED",   "PLACED"),
-    ("CREATED",   "FAILED"),
-    ("CREATED",   "CANCELLED"),
-    # from SUBMITTED
-    ("SUBMITTED", "PLACED"),
-    ("SUBMITTED", "PARTIAL"),
-    ("SUBMITTED", "MATCHED"),
-    ("SUBMITTED", "FAILED"),
-    ("SUBMITTED", "CANCELLED"),
-    ("SUBMITTED", "UNKNOWN"),
-    # from PLACED
-    ("PLACED",    "PARTIAL"),
-    ("PLACED",    "MATCHED"),
-    ("PLACED",    "FAILED"),
-    ("PLACED",    "CANCELLED"),
-    ("PLACED",    "LAPSED"),
-    ("PLACED",    "VOIDED"),
-    # from PARTIAL
-    ("PARTIAL",   "MATCHED"),
-    ("PARTIAL",   "FAILED"),
-    ("PARTIAL",   "CANCELLED"),
-    ("PARTIAL",   "ROLLED_BACK"),
-    # from UNKNOWN
-    ("UNKNOWN",   "PLACED"),
-    ("UNKNOWN",   "PARTIAL"),
-    ("UNKNOWN",   "MATCHED"),
-    ("UNKNOWN",   "FAILED"),
-    ("UNKNOWN",   "CANCELLED"),
-    ("UNKNOWN",   "LAPSED"),
-    ("UNKNOWN",   "VOIDED"),
-    # identity (idempotent no-op, not a real transition)
-    ("MATCHED",   "MATCHED"),
-    ("FAILED",    "FAILED"),
-    ("CANCELLED", "CANCELLED"),
-    ("LAPSED",    "LAPSED"),
-    ("VOIDED",    "VOIDED"),
-    ("ROLLED_BACK", "ROLLED_BACK"),
-})
-
-
-class IllegalTransitionError(Exception):
-    """Raised when a leg status transition violates the FSM."""
-    def __init__(self, batch_id: str, leg_index: int, from_status: str, to_status: str):
-        self.batch_id = batch_id
-        self.leg_index = leg_index
-        self.from_status = from_status
-        self.to_status = to_status
-        super().__init__(
-            f"Illegal leg transition batch={batch_id} leg={leg_index}: "
-            f"{from_status} → {to_status}"
-        )
-
-
-def validate_leg_transition(
-    from_status: str, to_status: str,
-    batch_id: str = "", leg_index: int = -1,
-) -> None:
-    """Raise IllegalTransitionError if the transition is not in the FSM."""
-    if from_status == to_status:
-        return  # identity — always allowed
-    if (from_status, to_status) not in _ALLOWED_LEG_TRANSITIONS:
-        raise IllegalTransitionError(batch_id, leg_index, from_status, to_status)
-
-
-# =============================================================================
-# CONFIGURATION
-# =============================================================================
-
-@dataclass
-class ReconcileConfig:
-    """Tunables for reconciliation behaviour."""
-
-    # convergence
-    max_convergence_cycles: int = 10
-    convergence_sleep_secs: float = 0.5
-
-    # retry policy for transient errors
-    max_transient_retries: int = 3
-    transient_retry_base_delay: float = 1.0
-    transient_retry_max_delay: float = 30.0
-
-    # caps
-    max_batches_per_run: int = 500
-
-    # ghost order handling
-    ghost_order_action: str = "LOG_AND_FLAG"  # LOG_AND_FLAG | CANCEL | IGNORE
-
-    # UNKNOWN resolution grace
-    unknown_grace_secs: float = 120.0
-
-    # audit: fail-closed → abort reconcile if audit persist fails
-    audit_fail_closed: bool = True
-
-    # recovery: persist in-progress marker
-    persist_recovery_marker: bool = True
-
-    # recovery marker TTL: markers older than this are considered stale
-    recovery_marker_ttl_secs: float = 300.0
-
-    # Point 2: transactional updates — require DB to support atomic ops
-    require_transactional_db: bool = False
-
-    # Point 3: fencing token for cross-process recovery ownership
-    enable_fencing_token: bool = True
-
-    # Point 4: validate batch_manager contract on init
-    validate_batch_manager_contract: bool = True
-
-    # Point 5: DB layer hints
-    require_wal_mode: bool = False
-
-    # Point 8: runtime invariant checks after each reconcile
-    enable_runtime_invariants: bool = True
-
-
-# =============================================================================
-# BATCH LOCK MANAGER
-# =============================================================================
-
-class _BatchLockManager:
-    """
-    Per-batch non-reentrant lock with zombie protection.
-
-    Guarantees:
-      - Only one reconcile_batch() runs per batch_id at a time
-      - Different batch_ids can reconcile in parallel
-      - Exception during reconcile → lock always released
-      - After crash/restart → no zombie locks (in-memory only,
-        combined with recovery marker in DB for cross-process)
-    """
-
-    def __init__(self) -> None:
-        self._global_lock = threading.Lock()
-        self._batch_locks: Dict[str, threading.Lock] = {}
-        self._batch_owners: Dict[str, int] = {}  # batch_id → thread id
-
-    def _get_lock(self, batch_id: str) -> threading.Lock:
-        with self._global_lock:
-            if batch_id not in self._batch_locks:
-                self._batch_locks[batch_id] = threading.Lock()
-            return self._batch_locks[batch_id]
-
-    @contextmanager
-    def acquire(self, batch_id: str) -> Generator[bool, None, None]:
-        """
-        Context manager that yields True if lock acquired, False if
-        the batch is already being reconciled by another thread.
-        Lock is always released on exit.
-        """
-        lock = self._get_lock(batch_id)
-        acquired = lock.acquire(blocking=False)
-        if acquired:
-            self._batch_owners[batch_id] = threading.get_ident()
-        try:
-            yield acquired
-        finally:
-            if acquired:
-                self._batch_owners.pop(batch_id, None)
-                lock.release()
-
-    def is_locked(self, batch_id: str) -> bool:
-        lock = self._get_lock(batch_id)
-        if lock.acquire(blocking=False):
-            lock.release()
-            return False
-        return True
-
-    def cleanup_batch(self, batch_id: str) -> None:
-        """Remove lock for a terminal batch to avoid memory leak."""
-        with self._global_lock:
-            self._batch_locks.pop(batch_id, None)
-            self._batch_owners.pop(batch_id, None)
 
 
 # =============================================================================
@@ -484,8 +107,17 @@ class ReconciliationEngine:
         self._outbox_lock = threading.Lock()
 
         # ── fencing token counter (Point 3) ─────────────────────
+        # Token is a monotonically increasing integer assigned to each
+        # reconcile run that holds the batch lock.  It is stored in
+        # _active_fencing_tokens while the run is in progress and cleared
+        # on completion.  Callers that need to verify ownership can call
+        # assert_fencing_ownership(); the token itself is not auto-checked
+        # inside the reconcile path (single-process, batch lock already
+        # prevents concurrent runs for the same batch_id).
         self._fencing_counter: int = 0
         self._fencing_lock = threading.Lock()
+        # batch_id → active token (set when lock acquired, cleared on exit)
+        self._active_fencing_tokens: Dict[str, int] = {}
 
         # ── lifecycle hooks for crash-recovery testing (Point 10) ──
         self._hooks: Dict[str, Any] = {}
@@ -706,6 +338,43 @@ class ReconciliationEngine:
         with self._fencing_lock:
             self._fencing_counter += 1
             return self._fencing_counter
+
+    def get_active_fencing_token(self, batch_id: str) -> Optional[int]:
+        """
+        Return the fencing token currently held for batch_id, or None if no
+        reconcile is running for that batch.
+        """
+        with self._fencing_lock:
+            return self._active_fencing_tokens.get(batch_id)
+
+    def assert_fencing_ownership(self, batch_id: str, token: int) -> None:
+        """
+        Assert that the caller still holds ownership (i.e. the active token
+        for batch_id matches the token issued to this run).
+
+        Raises RuntimeError("FENCING_OWNERSHIP_LOST") if the token is stale
+        or absent.
+
+        This is called automatically inside the reconcile path before each
+        critical state mutation (mark_batch_failed, _transactional_leg_update,
+        recompute_batch_status) when enable_fencing_token=True, and may also
+        be called explicitly by other callers that need to verify ownership.
+        """
+        current = self.get_active_fencing_token(batch_id)
+        if current != token:
+            raise RuntimeError(
+                f"FENCING_OWNERSHIP_LOST: batch={batch_id!r} "
+                f"expected_token={token} current_token={current}"
+            )
+
+    def _assert_fencing(self, batch_id: str, fencing_token: Optional[int]) -> None:
+        """Guard: enforce fencing ownership before a critical state mutation.
+
+        No-op when fencing_token is None (enable_fencing_token=False).
+        Raises RuntimeError("FENCING_OWNERSHIP_LOST") on token mismatch.
+        """
+        if fencing_token is not None:
+            self.assert_fencing_ownership(batch_id, fencing_token)
 
     # ─────────────────────────────────────────────────────────────
     # RUNTIME INVARIANT CHECKS (Point 8)
@@ -1621,13 +1290,29 @@ class ReconciliationEngine:
 
     def _reconcile_batch_locked(self, batch_id: str) -> Dict[str, Any]:
         """Core reconcile logic, called only under batch lock."""
+        # Assign fencing token — proves this thread owns this reconcile run.
+        fencing_token: Optional[int] = None
+        if self.cfg.enable_fencing_token:
+            fencing_token = self._next_fencing_token()
+            with self._fencing_lock:
+                self._active_fencing_tokens[batch_id] = fencing_token
+
         self._set_recovery_marker(batch_id)
         try:
-            return self._reconcile_batch_inner(batch_id)
+            result = self._reconcile_batch_inner(batch_id, fencing_token=fencing_token)
+            if fencing_token is not None:
+                result["fencing_token"] = fencing_token
+            return result
         finally:
             self._clear_recovery_marker(batch_id)
+            if fencing_token is not None:
+                with self._fencing_lock:
+                    # Only clear our own token — do not overwrite if another
+                    # concurrent run somehow raced (should not happen under lock).
+                    if self._active_fencing_tokens.get(batch_id) == fencing_token:
+                        self._active_fencing_tokens.pop(batch_id, None)
 
-    def _reconcile_batch_inner(self, batch_id: str) -> Dict[str, Any]:
+    def _reconcile_batch_inner(self, batch_id: str, fencing_token: Optional[int] = None) -> Dict[str, Any]:
         # ── fresh snapshot (never use stale data after restart) ──
         batch = self.batch_manager.get_batch(batch_id)
         if not batch:
@@ -1644,6 +1329,7 @@ class ReconciliationEngine:
 
         legs = self.batch_manager.get_batch_legs(batch_id)
         if not legs:
+            self._assert_fencing(batch_id, fencing_token)
             self.batch_manager.mark_batch_failed(
                 batch_id, reason="Batch senza legs"
             )
@@ -1786,6 +1472,7 @@ class ReconciliationEngine:
                     )
 
                     # FSM-validated + transactional update (Points 1, 2, 6)
+                    self._assert_fencing(batch_id, fencing_token)
                     update_ok = self._transactional_leg_update(
                         batch_id=batch_id,
                         leg_index=leg_index,
@@ -1845,6 +1532,7 @@ class ReconciliationEngine:
             )
 
         # ── recompute batch status ──────────────────────────────
+        self._assert_fencing(batch_id, fencing_token)
         new_batch = self.batch_manager.recompute_batch_status(batch_id)
         status = str((new_batch or {}).get("status") or "")
 

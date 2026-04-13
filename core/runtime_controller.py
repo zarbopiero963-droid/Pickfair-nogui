@@ -13,6 +13,7 @@ from core.risk_desk import RiskDesk
 from core.system_state import DeskMode, RuntimeMode
 from core.table_manager import TableManager
 from core.safety_layer import assert_live_gate_or_refuse
+from core.type_helpers import safe_bool
 from order_manager import TERMINAL_LIFECYCLE_EVENTS
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,11 @@ class RuntimeController:
             "details": {},
         }
 
+        # Emergency stop state — set by emergency_stop(), cleared only by reset_emergency()
+        self._emergency_stopped: bool = False
+        self._emergency_stopped_at: str = ""
+        self._emergency_reason: str = ""
+
         self._subscribe_bus()
 
     # =========================================================
@@ -124,16 +130,7 @@ class RuntimeController:
             self.betfair_service.set_simulation_mode(self.simulation_mode)
 
     def _safe_bool(self, value, default: bool = False) -> bool:
-        if value is None:
-            return bool(default)
-        if isinstance(value, bool):
-            return value
-        txt = str(value).strip().lower()
-        if txt in {"1", "true", "yes", "on"}:
-            return True
-        if txt in {"0", "false", "no", "off"}:
-            return False
-        return bool(default)
+        return safe_bool(value, default)
 
     def _safe_execution_mode(self, value) -> str:
         normalized = str(value or "").strip().upper()
@@ -526,6 +523,158 @@ class RuntimeController:
         }
 
     # =========================================================
+    # EMERGENCY STOP
+    # =========================================================
+    @property
+    def is_emergency_stopped(self) -> bool:
+        return self._emergency_stopped
+
+    def emergency_stop(self, reason: str = "") -> dict:
+        """
+        Global emergency stop.
+
+        1. Sets _emergency_stopped flag — all live order entry refused immediately.
+        2. Disables live_enabled.
+        3. Forces LOCKDOWN runtime mode.
+        4. Attempts cancel-all open/pending orders via live Betfair client.
+        5. Emits EMERGENCY_STOP_TRIGGERED event with full detail.
+
+        Errors in downstream cancellation do NOT silently allow normal trading —
+        the runtime stays LOCKED regardless of cancel outcome.
+
+        Returns a structured result dict with cancel outcomes.
+        To resume trading after an emergency stop you MUST call reset_emergency()
+        first, then start() again.
+        """
+        triggered_at = datetime.utcnow().isoformat()
+        self._emergency_stopped = True
+        self._emergency_stopped_at = triggered_at
+        self._emergency_reason = reason or "EMERGENCY_STOP"
+
+        # Hard-close live gate
+        self.live_enabled = False
+        self.execution_mode = "SIMULATION"
+        self.set_simulation_mode(True)
+
+        # Force LOCKDOWN
+        self.force_lockdown(self._emergency_reason)
+
+        # Attempt cancel-all open/pending orders
+        cancel_results: list = []
+        cancel_errors: list = []
+        cancelled_count = 0
+        error_count = 0
+
+        try:
+            pending = self.db.get_pending_sagas() if hasattr(self.db, "get_pending_sagas") else []
+        except Exception as exc:
+            logger.exception("emergency_stop: get_pending_sagas failed")
+            pending = []
+            cancel_errors.append({"stage": "get_pending_sagas", "error": str(exc)})
+
+        # Group by market_id for efficient batch cancel
+        by_market: dict = {}
+        for saga in pending:
+            mid = str(saga.get("market_id") or "").strip()
+            bet_id = str(saga.get("bet_id") or "").strip()
+            customer_ref = str(saga.get("customer_ref") or "").strip()
+            if mid:
+                by_market.setdefault(mid, []).append({
+                    "bet_id": bet_id,
+                    "customer_ref": customer_ref,
+                })
+
+        live_client = None
+        try:
+            live_client = self.betfair_service.get_live_client()
+        except Exception as exc:
+            logger.warning("emergency_stop: cannot get live client: %s", exc)
+            cancel_errors.append({"stage": "get_live_client", "error": str(exc)})
+
+        if live_client is not None and by_market:
+            for market_id, orders in by_market.items():
+                try:
+                    response = live_client.cancel_orders(
+                        market_id=market_id,
+                        # bet_ids omitted → cancel ALL unmatched orders on market
+                    )
+                    if response.get("ok"):
+                        cancel_results.append({
+                            "market_id": market_id,
+                            "order_count": len(orders),
+                            "ok": True,
+                            "response": response,
+                        })
+                        cancelled_count += response.get("cancelled_count", len(orders))
+                    else:
+                        err_msg = response.get("error", "cancel_orders returned ok=False")
+                        logger.warning(
+                            "emergency_stop: cancel_orders ok=False for market %s: %s",
+                            market_id,
+                            err_msg,
+                        )
+                        cancel_results.append({
+                            "market_id": market_id,
+                            "order_count": len(orders),
+                            "ok": False,
+                            "error": err_msg,
+                        })
+                        error_count += len(orders)
+                except Exception as exc:
+                    logger.warning(
+                        "emergency_stop: cancel_orders failed for market %s: %s",
+                        market_id,
+                        exc,
+                    )
+                    cancel_results.append({
+                        "market_id": market_id,
+                        "order_count": len(orders),
+                        "ok": False,
+                        "error": str(exc),
+                    })
+                    error_count += len(orders)
+        elif not by_market:
+            logger.info("emergency_stop: no open/pending orders to cancel")
+
+        result = {
+            "emergency_stopped": True,
+            "triggered_at": triggered_at,
+            "reason": self._emergency_reason,
+            "pending_count": len(pending),
+            "markets_attempted": len(by_market),
+            "cancelled_count": cancelled_count,
+            "cancel_error_count": error_count,
+            "cancel_results": cancel_results,
+            "cancel_errors": cancel_errors,
+            "live_client_available": live_client is not None,
+        }
+
+        # Emit observable structured event
+        self.bus.publish("EMERGENCY_STOP_TRIGGERED", result)
+
+        logger.critical(
+            "EMERGENCY STOP TRIGGERED at=%s reason=%r markets=%d cancelled=%d errors=%d",
+            triggered_at,
+            self._emergency_reason,
+            len(by_market),
+            cancelled_count,
+            error_count,
+        )
+
+        return result
+
+    def reset_emergency(self) -> dict:
+        """
+        Clear the emergency-stopped flag so the runtime can be restarted.
+        Does NOT restart the runtime — call start() after this.
+        """
+        self._emergency_stopped = False
+        self._emergency_stopped_at = ""
+        self._emergency_reason = ""
+        self.bus.publish("EMERGENCY_STOP_RESET", {"reset_at": datetime.utcnow().isoformat()})
+        return {"emergency_reset": True}
+
+    # =========================================================
     # LIFECYCLE
     # =========================================================
     def start(
@@ -712,7 +861,21 @@ class RuntimeController:
         signal = dict(signal or {})
         self.last_signal_at = datetime.utcnow().isoformat()
 
+        # Emergency stop hard gate — refuses ALL live order entry
+        if self._emergency_stopped:
+            self._reject_signal(
+                signal,
+                f"emergency_stop_active:triggered_at={self._emergency_stopped_at}",
+            )
+            return
+
         if str(self.execution_mode).upper() == "LIVE":
+            # Session guard — refuse live signals when session is known-invalid.
+            _svc = self.betfair_service
+            if _svc is not None and getattr(_svc, "_session_invalid", False):
+                self._reject_signal(signal, "session_invalid_live_blocked")
+                return
+
             deploy_gate = self.enforce_deploy_gate(
                 execution_mode="LIVE",
                 live_enabled=self.live_enabled,
@@ -747,7 +910,7 @@ class RuntimeController:
         event_key = self.duplication_guard.build_event_key(signal)
         signal["event_key"] = event_key
 
-        if self.config.anti_duplication_enabled and self.duplication_guard.is_duplicate(event_key):
+        if self.config.anti_duplication_enabled and not self.duplication_guard.acquire(event_key):
             self._reject_signal(signal, "duplicato_bloccato")
             return
 
@@ -814,8 +977,6 @@ class RuntimeController:
                 "simulation_mode": payload["simulation_mode"],
             },
         )
-        self.duplication_guard.register(event_key)
-
         self.bus.publish(
             "SIGNAL_APPROVED",
             {

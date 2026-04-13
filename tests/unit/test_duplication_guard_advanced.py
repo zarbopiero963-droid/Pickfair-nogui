@@ -36,10 +36,6 @@ def test_duplication_guard_key_is_stable_for_equivalent_payloads():
 @pytest.mark.invariant
 def test_duplication_guard_only_one_thread_can_acquire_same_key():
     guard = DuplicationGuard()
-
-    if not hasattr(guard, "acquire"):
-        pytest.skip("Questo test richiede DuplicationGuard con acquire atomico")
-
     key = _key_for_payload(guard)
     results = []
 
@@ -63,19 +59,12 @@ def test_duplication_guard_only_one_thread_can_acquire_same_key():
 @pytest.mark.invariant
 def test_duplication_guard_release_unlocks_key_again():
     guard = DuplicationGuard()
+    key = _key_for_payload(guard)
 
-    if hasattr(guard, "acquire"):
-        key = _key_for_payload(guard)
-        assert guard.acquire(key) is True
-        assert guard.acquire(key) is False
-        guard.release(key)
-        assert guard.acquire(key) is True, "Dopo release la stessa key deve tornare disponibile"
-    else:
-        key = _key_for_payload(guard)
-        guard.register(key)
-        assert guard.is_duplicate(key) is True
-        guard.release(key)
-        assert guard.is_duplicate(key) is False
+    guard.register(key)
+    assert guard.is_duplicate(key) is True
+    guard.release(key)
+    assert guard.is_duplicate(key) is False
 
 
 @pytest.mark.core
@@ -83,15 +72,35 @@ def test_duplication_guard_release_unlocks_key_again():
 def test_duplication_guard_clear_resets_state():
     guard = DuplicationGuard()
 
-    if hasattr(guard, "acquire"):
-        assert guard.acquire("a") is True
-        assert guard.acquire("b") is True
-    else:
-        guard.register("a")
-        guard.register("b")
+    guard.register("a")
+    guard.register("b")
 
     guard.clear()
     snap = guard.snapshot()
 
     assert snap["active_count"] == 0
     assert snap["active_keys"] == []
+
+
+@pytest.mark.core
+@pytest.mark.invariant
+def test_register_and_is_duplicate_match_acquire_semantics():
+    """
+    register() + is_duplicate() deve dare stesso risultato di acquire() sulla stessa chiave.
+    Verifica che le due interfacce leggano lo stesso stato.
+    """
+    guard = DuplicationGuard()
+    key = "3.3:30:BACK"
+
+    # Via register/is_duplicate
+    assert guard.is_duplicate(key) is False
+    guard.register(key)
+    assert guard.is_duplicate(key) is True
+    guard.release(key)
+
+    # Via acquire
+    assert guard.acquire(key) is True   # not duplicate → can proceed
+    assert guard.acquire(key) is False  # duplicate → blocked
+    assert guard.is_duplicate(key) is True  # cross-check
+    guard.release(key)
+    assert guard.is_duplicate(key) is False

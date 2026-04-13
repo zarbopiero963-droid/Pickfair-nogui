@@ -1,0 +1,106 @@
+# =============================================================
+# DATABASES
+# =============================================================
+pickfair.db
+pickfair.db-shm
+pickfair.db-wal
+*.db
+*.sqlite
+*.sqlite3
+
+# =============================================================
+# SECRETS / CERTIFICATES / KEYS
+# =============================================================
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+*.jks
+.pickfair/
+# Explicit high-risk filenames
+private_key*
+certificate*
+betfair_cert*
+betfair_key*
+secret*
+credentials*
+.env
+.env.*
+!.env.example
+
+# =============================================================
+# LOGS / DIAGNOSTIC BUNDLES
+# =============================================================
+*.log
+logs/
+log/
+diagnostics/
+diagnostics_exports/
+diagnostics_bundle*
+diagnostics_export*
+
+# =============================================================
+# PYTHON BYTECODE / CACHE
+# =============================================================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# =============================================================
+# VIRTUAL ENVIRONMENTS
+# =============================================================
+venv/
+.venv/
+env/
+.env/
+ENV/
+virtualenv/
+.virtualenv/
+
+# =============================================================
+# BUILD / DISTRIBUTION ARTIFACTS
+# =============================================================
+build/
+dist/
+*.egg-info/
+*.egg
+MANIFEST
+.eggs/
+wheels/
+pip-wheel-metadata/
+
+# =============================================================
+# TEST / COVERAGE ARTIFACTS
+# =============================================================
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+nosetests.xml
+test-results/
+
+# =============================================================
+# IDE / EDITOR JUNK
+# =============================================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =============================================================
+# OS JUNK
+# =============================================================
+.DS_Store
+.AppleDouble
+.LSOverride
+ehthumbs.db

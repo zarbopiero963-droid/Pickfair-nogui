@@ -187,6 +187,10 @@ class CircuitBreaker:
 
     # ---------------- RESET ---------------- #
 
+    def record_success(self) -> None:
+        """Record a successful call; used when not calling via call()."""
+        self._on_success()
+
     def reset(self):
         with self._lock:
             self._reset_unlocked()

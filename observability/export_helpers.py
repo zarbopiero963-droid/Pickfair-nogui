@@ -6,6 +6,8 @@ import time
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from observability.sanitizers import sanitize_dict, sanitize_value
+
 
 class ExportHelpers:
     def __init__(self, export_dir: str = "diagnostics_exports") -> None:
@@ -16,7 +18,10 @@ class ExportHelpers:
         ts = time.strftime("%Y%m%d_%H%M%S")
         path = self.export_dir / f"{name_prefix}_{ts}.json"
         path.write_text(
-            json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False, default=str),
+            json.dumps(
+                sanitize_value(payload),
+                indent=2, sort_keys=True, ensure_ascii=False, default=str,
+            ),
             encoding="utf-8",
         )
         return str(path)
@@ -25,7 +30,7 @@ class ExportHelpers:
         ts = time.strftime("%Y%m%d_%H%M%S")
         path = self.export_dir / f"{name_prefix}_{ts}.csv"
 
-        rows = list(rows)
+        rows = [sanitize_dict(dict(r)) for r in rows]
         fieldnames = sorted({key for row in rows for key in row.keys()}) if rows else ["empty"]
 
         with path.open("w", newline="", encoding="utf-8") as f:
@@ -33,7 +38,7 @@ class ExportHelpers:
             writer.writeheader()
             if rows:
                 for row in rows:
-                    writer.writerow(dict(row))
+                    writer.writerow(row)
             else:
                 writer.writerow({"empty": ""})
 

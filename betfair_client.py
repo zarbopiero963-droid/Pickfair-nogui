@@ -8,6 +8,8 @@ from typing import Any, Dict, Optional
 import requests
 from requests.exceptions import HTTPError, RequestException, Timeout
 
+from circuit_breaker import CircuitBreaker
+from core.type_helpers import safe_float, safe_int, safe_side
 
 logger = logging.getLogger(__name__)
 
@@ -47,24 +49,21 @@ class BetfairClient:
         self.session_expiry = ""
         self.connected = False
 
+        # Circuit breaker guards all JSON-RPC calls to Betfair API.
+        # SESSION_EXPIRED does NOT trip the breaker; only network/HTTP failures do.
+        self._api_breaker = CircuitBreaker(max_failures=5, reset_timeout=60.0)
+
     # =========================================================
     # SAFE UTILS
     # =========================================================
     def _safe_float(self, v: Any, d: float = 0.0) -> float:
-        try:
-            return float(v)
-        except Exception:
-            return float(d)
+        return safe_float(v, d)
 
     def _safe_int(self, v: Any, d: int = 0) -> int:
-        try:
-            return int(float(v))
-        except Exception:
-            return int(d)
+        return safe_int(v, d)
 
     def _safe_side(self, v: Any) -> str:
-        s = str(v or "BACK").upper().strip()
-        return s if s in {"BACK", "LAY"} else "BACK"
+        return safe_side(v)
 
     def _cert_tuple(self) -> tuple[str, str]:
         if not os.path.exists(self.cert_pem):
@@ -124,6 +123,9 @@ class BetfairClient:
         if not self.session_token:
             raise RuntimeError("NOT_AUTHENTICATED")
 
+        if self._api_breaker.is_open():
+            raise RuntimeError("CIRCUIT_BREAKER_OPEN")
+
         payload = [{
             "jsonrpc": "2.0",
             "method": method,
@@ -162,7 +164,9 @@ class BetfairClient:
 
                     raise RuntimeError(f"API_ERROR: {err}")
 
-                return item.get("result") or {}
+                result = item.get("result") or {}
+                self._api_breaker.record_success()
+                return result
 
             except Timeout:
                 last_error = "TIMEOUT"
@@ -184,7 +188,9 @@ class BetfairClient:
                 last_error = f"UNKNOWN_ERROR: {exc}"
                 logger.warning("unknown error attempt=%s method=%s error=%s", attempt, method, exc)
 
-        raise RuntimeError(f"REQUEST_FAILED: {last_error}")
+        err = RuntimeError(f"REQUEST_FAILED: {last_error}")
+        self._api_breaker.record_failure(err)
+        raise err
 
     # =========================================================
     # LOGIN / LOGOUT
@@ -415,6 +421,67 @@ class BetfairClient:
                 "error": error_text,
                 "classification": self._classify_error(error_text),
                 "order_unknown": "TIMEOUT" in error_text.upper(),
+            }
+
+    # =========================================================
+    # ORDERS – CANCEL
+    # =========================================================
+    def cancel_orders(
+        self,
+        *,
+        market_id: Any,
+        bet_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Cancel orders on a Betfair market via the cancelOrders API.
+
+        When bet_ids is empty or None, cancels ALL unmatched orders on the
+        market (the standard emergency-stop / flatten behaviour).
+        Returns a result dict; never raises on API-level failure (logs and
+        returns ok=False so callers can record the error without crashing).
+        """
+        market_id_s = str(market_id or "").strip()
+        if not market_id_s:
+            raise RuntimeError("INVALID_MARKET_ID")
+
+        # Empty instructions list → cancel all active orders on the market.
+        # Non-empty → cancel only the listed bet IDs.
+        instructions: List[Dict[str, Any]] = (
+            [{"betId": str(bid)} for bid in bet_ids if bid]
+            if bet_ids else []
+        )
+
+        try:
+            result = self._post_jsonrpc(
+                self.BETTING_URL,
+                "SportsAPING/v1.0/cancelOrders",
+                {
+                    "marketId": market_id_s,
+                    "instructions": instructions,
+                },
+            )
+
+            status = str(result.get("status") or "").upper()
+            reports = result.get("instructionReports") or []
+
+            if status == "FAILURE":
+                err = str(result.get("errorCode") or "UNKNOWN")
+                raise RuntimeError(f"CANCEL_FAILED: {err}")
+
+            return {
+                "ok": True,
+                "market_id": market_id_s,
+                "status": status or "SUCCESS",
+                "cancelled_count": len(reports),
+                "result": result,
+            }
+
+        except RuntimeError as exc:
+            error_text = str(exc)
+            return {
+                "ok": False,
+                "market_id": market_id_s,
+                "error": error_text,
+                "classification": self._classify_error(error_text),
             }
 
     # =========================================================

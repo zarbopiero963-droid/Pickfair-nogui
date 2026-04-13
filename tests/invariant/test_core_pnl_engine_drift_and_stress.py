@@ -2,9 +2,9 @@ import math
 import random
 import pytest
 
-from core.pnl_engine import PnLEngine
+from pnl_engine import PnLEngine
 
-_REQUIRED_API = (
+_REQUIRED_CALC_API = (
     "calculate_position_pnl",
     "calculate_settlement_pnl",
     "calculate_green_up_size",
@@ -12,14 +12,20 @@ _REQUIRED_API = (
     "mark_to_market_pnl",
 )
 
-pytestmark = pytest.mark.skipif(
-    any(not hasattr(PnLEngine, name) for name in _REQUIRED_API),
-    reason="legacy advanced PnLEngine API not available in current engine",
-)
+# Fail-closed: if the required calculation API is absent, fail at collection
+# time instead of silently skipping.  A supported implementation must pass its
+# invariant suite; missing API → broken contract → CI failure.
+_missing_api = [name for name in _REQUIRED_CALC_API if not hasattr(PnLEngine, name)]
+if _missing_api:
+    pytest.fail(
+        f"pnl_engine.PnLEngine is missing required methods: {_missing_api}. "
+        "This invariant suite is fail-closed and cannot silently skip for a "
+        "supported PnL implementation."
+    )
 
 @pytest.mark.invariant
 def test_core_pnl_position_repeat_same_input_is_stable():
-    from core.pnl_engine import PnLEngine
+    from pnl_engine import PnLEngine
 
     engine = PnLEngine(commission_pct=4.5)
 
@@ -45,7 +51,7 @@ def test_core_pnl_position_repeat_same_input_is_stable():
 
 @pytest.mark.invariant
 def test_core_pnl_settlement_repeat_same_input_is_stable():
-    from core.pnl_engine import PnLEngine
+    from pnl_engine import PnLEngine
 
     engine = PnLEngine(commission_pct=4.5)
 
@@ -65,7 +71,7 @@ def test_core_pnl_settlement_repeat_same_input_is_stable():
 
 @pytest.mark.chaos
 def test_core_pnl_numeric_stress_extreme_ranges_are_finite():
-    from core.pnl_engine import PnLEngine
+    from pnl_engine import PnLEngine
 
     engine = PnLEngine(commission_pct=4.5)
 
@@ -93,7 +99,7 @@ def test_core_pnl_numeric_stress_extreme_ranges_are_finite():
 
 @pytest.mark.chaos
 def test_core_pnl_randomized_stress_position_model_stays_finite():
-    from core.pnl_engine import PnLEngine
+    from pnl_engine import PnLEngine
 
     engine = PnLEngine(commission_pct=4.5)
     rng = random.Random(9001)
@@ -120,7 +126,7 @@ def test_core_pnl_randomized_stress_position_model_stays_finite():
 
 @pytest.mark.invariant
 def test_core_pnl_green_up_and_cashout_are_finite_under_extremes():
-    from core.pnl_engine import PnLEngine
+    from pnl_engine import PnLEngine
 
     engine = PnLEngine(commission_pct=4.5)
 
@@ -155,7 +161,7 @@ def test_core_pnl_green_up_and_cashout_are_finite_under_extremes():
 
 @pytest.mark.invariant
 def test_core_pnl_mark_to_market_repeat_read_is_stable():
-    from core.pnl_engine import PnLEngine
+    from pnl_engine import PnLEngine
 
     engine = PnLEngine(commission_pct=4.5)
 

@@ -28,6 +28,123 @@ class BetfairService:
         self.last_error = ""
         self.simulation_mode = False
 
+        # Session expiry state — set when SESSION_EXPIRED is detected;
+        # cleared only on successful re-auth.
+        self._session_invalid: bool = False
+        self._session_invalid_reason: str = ""
+        # Bounded re-auth: max 1 attempt per expiry event to avoid loops.
+        self._reauth_attempts: int = 0
+        self._MAX_REAUTH_ATTEMPTS: int = 1
+
+    # =========================================================
+    # SESSION EXPIRY DETECTION & RECOVERY
+    # =========================================================
+
+    @property
+    def is_session_invalid(self) -> bool:
+        """True if session is known-expired and live operations must be blocked."""
+        return self._session_invalid
+
+    def handle_session_expiry(self, reason: str = "SESSION_EXPIRED") -> dict:
+        """
+        Called when a SESSION_EXPIRED or INVALID_SESSION signal is detected.
+
+        1. Marks session as invalid.
+        2. Sets connected=False.
+        3. Attempts one bounded re-auth if password is loadable; otherwise stays blocked.
+        4. Returns a structured result dict.
+
+        FAIL-CLOSED: if re-auth fails or is not possible, the service remains
+        blocked and the caller must not proceed with live orders.
+        """
+        self.connected = False
+        self._session_invalid = True
+        self._session_invalid_reason = reason
+        if self.client:
+            try:
+                self.client.connected = False
+                self.client.session_token = ""
+            except Exception:
+                pass
+
+        logger.warning(
+            "betfair_service: session expiry detected reason=%r; "
+            "blocking live operations",
+            reason,
+        )
+
+        if self._reauth_attempts >= self._MAX_REAUTH_ATTEMPTS:
+            msg = (
+                f"session expiry: max re-auth attempts "
+                f"({self._MAX_REAUTH_ATTEMPTS}) exhausted — "
+                "live operations permanently blocked until manual restart"
+            )
+            logger.error("betfair_service: %s", msg)
+            self.last_error = msg
+            return {
+                "recovered": False,
+                "reason": reason,
+                "reauth_attempted": False,
+                "error": msg,
+            }
+
+        self._reauth_attempts += 1
+
+        # Try to load password from settings for re-auth
+        try:
+            password = self.settings_service.load_password()
+        except Exception as exc:
+            password = None
+            logger.warning("betfair_service: cannot load password for re-auth: %s", exc)
+
+        if not password:
+            msg = "session expiry: no password available for re-auth — live operations blocked"
+            logger.error("betfair_service: %s", msg)
+            self.last_error = msg
+            return {
+                "recovered": False,
+                "reason": reason,
+                "reauth_attempted": False,
+                "error": msg,
+            }
+
+        try:
+            result = self._connect_live(password=password, force=True)
+            self._session_invalid = False
+            self._session_invalid_reason = ""
+            self._reauth_attempts = 0
+            logger.info("betfair_service: re-auth successful after session expiry")
+            return {
+                "recovered": True,
+                "reason": reason,
+                "reauth_attempted": True,
+                "connect_result": result,
+            }
+        except Exception as exc:
+            msg = f"session expiry: re-auth failed: {exc}"
+            logger.error("betfair_service: %s", msg)
+            self.connected = False
+            self.last_error = msg
+            return {
+                "recovered": False,
+                "reason": reason,
+                "reauth_attempted": True,
+                "error": msg,
+            }
+
+    def is_live_usable(self) -> bool:
+        """
+        Returns True only if the live client is connected and session is valid.
+        Simulation mode is always usable regardless of session state.
+        """
+        if self.simulation_mode:
+            return bool(self.connected and self.simulation_broker is not None)
+        return bool(
+            self.connected
+            and self.client is not None
+            and not self._session_invalid
+        )
+
     # =========================================================
     # MODE
     # =========================================================
@@ -227,6 +344,15 @@ class BetfairService:
         password: str | None = None,
         simulation_mode: bool | None = None,
     ):
+        # If session is known-invalid and this is a live request, refuse
+        live_requested = (simulation_mode is False) or (
+            simulation_mode is None and not self.simulation_mode
+        )
+        if live_requested and self._session_invalid:
+            raise RuntimeError(
+                f"LIVE_BLOCKED_SESSION_INVALID: {self._session_invalid_reason}"
+            )
+
         broker = self.get_client()
         if self.connected and broker is not None:
             if simulation_mode is None or bool(simulation_mode) == self.simulation_mode:
@@ -257,14 +383,77 @@ class BetfairService:
                 "simulated": bool(funds.get("simulated", self.simulation_mode)),
             }
         except Exception as exc:
-            self.last_error = str(exc)
-            logger.exception("Errore get_account_funds: %s", exc)
+            error_text = str(exc)
+            self.last_error = error_text
+            if "SESSION_EXPIRED" in error_text.upper() or "INVALID_SESSION" in error_text.upper():
+                logger.warning(
+                    "betfair_service: session expiry detected in get_account_funds; invoking recovery"
+                )
+                self.handle_session_expiry(reason=error_text)
+            else:
+                logger.exception("Errore get_account_funds: %s", exc)
             return {
                 "available": 0.0,
                 "exposure": 0.0,
                 "total": 0.0,
                 "simulated": bool(self.simulation_mode),
             }
+
+    def place_order(self, payload: dict) -> dict:
+        """Session-aware live-order facade.
+
+        Refuses immediately when the session is known-invalid (fail-closed).
+        Detects SESSION_EXPIRED in the client's ok=False response and invokes
+        bounded recovery via handle_session_expiry().
+
+        Only applies to live orders — simulation orders bypass this entirely.
+        """
+        if self._session_invalid:
+            return {
+                "ok": False,
+                "error": (
+                    f"LIVE_BLOCKED_SESSION_INVALID: {self._session_invalid_reason}"
+                ),
+                "classification": "PERMANENT",
+                "session_invalid": True,
+            }
+
+        if not self.client:
+            return {
+                "ok": False,
+                "error": "NO_LIVE_CLIENT",
+                "classification": "PERMANENT",
+            }
+
+        try:
+            result = self.client.place_bet(
+                market_id=payload.get("market_id"),
+                selection_id=payload.get("selection_id"),
+                side=payload.get("bet_type") or payload.get("side"),
+                price=payload.get("price"),
+                size=payload.get("stake") or payload.get("size"),
+            )
+        except Exception as exc:
+            err = str(exc)
+            if "SESSION_EXPIRED" in err.upper() or "INVALID_SESSION" in err.upper():
+                logger.warning(
+                    "betfair_service: session expiry detected in place_order "
+                    "(exception path); invoking recovery"
+                )
+                self.handle_session_expiry(reason=err)
+            raise
+
+        # place_bet catches RuntimeError and returns ok=False — inspect it.
+        if isinstance(result, dict) and not result.get("ok", True):
+            err = str(result.get("error", ""))
+            if "SESSION_EXPIRED" in err.upper() or "INVALID_SESSION" in err.upper():
+                logger.warning(
+                    "betfair_service: session expiry detected in place_order "
+                    "(result path); invoking recovery"
+                )
+                self.handle_session_expiry(reason=err)
+
+        return result
 
     def status(self) -> dict:
         broker = self.get_client()

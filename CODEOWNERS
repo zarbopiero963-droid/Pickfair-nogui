@@ -1,0 +1,24 @@
+# CODEOWNERS
+# Each line is a file-pattern followed by one or more owners.
+# Owners are automatically requested for review when a PR touches
+# the matched files.  See:
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default: all files require review from the repo owner
+*  @zarbopiero963-droid
+
+# Safety-critical paths require explicit maintainer sign-off
+core/safety_layer.py         @zarbopiero963-droid
+core/runtime_controller.py   @zarbopiero963-droid
+core/trading_engine.py       @zarbopiero963-droid
+betfair_client.py            @zarbopiero963-droid
+services/betfair_service.py  @zarbopiero963-droid
+
+# Credential / secret storage
+database.py                  @zarbopiero963-droid
+core/secret_cipher.py        @zarbopiero963-droid
+
+# CI / governance
+.github/                     @zarbopiero963-droid
+SECURITY.md                  @zarbopiero963-droid
+CODEOWNERS                   @zarbopiero963-droid

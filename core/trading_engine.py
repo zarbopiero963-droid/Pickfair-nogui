@@ -5,101 +5,34 @@ import threading
 import time
 import uuid
 from collections import deque
-from dataclasses import dataclass
-from typing import Any, Deque, Dict, Optional, Set, Tuple
+from typing import Any, Deque, Dict, Optional
 from order_manager import OrderManager
 from order_manager import LIFECYCLE_CONTRACT
+from circuit_breaker import CircuitBreaker
+from core.trading_constants import (  # noqa: F401 – re-exported for backward compat
+    REQ_QUICK_BET, CMD_QUICK_BET,
+    STATUS_INFLIGHT, STATUS_SUBMITTED, STATUS_COMPLETED, STATUS_FAILED,
+    STATUS_AMBIGUOUS, STATUS_DENIED, STATUS_ACCEPTED_FOR_PROCESSING,
+    STATUS_DUPLICATE_BLOCKED,
+    OUTCOME_SUCCESS, OUTCOME_FAILURE, OUTCOME_AMBIGUOUS,
+    ERROR_TRANSIENT, ERROR_PERMANENT, ERROR_AMBIGUOUS,
+    READY, DEGRADED, NOT_READY,
+    AMBIGUITY_SUBMIT_TIMEOUT, AMBIGUITY_RESPONSE_LOST, AMBIGUITY_SUBMIT_UNKNOWN,
+    AMBIGUITY_PERSISTED_NOT_CONFIRMED, AMBIGUITY_SPLIT_STATE,
+    ORIGIN_NORMAL, ORIGIN_COPY, ORIGIN_PATTERN,
+    COPY_META_KEYS, PATTERN_META_KEYS,
+    _PASSTHROUGH_KEYS, _ACK_STATES, _TERMINAL_STATES,
+    ALLOWED_TRANSITIONS,
+    _ExecutionContext,
+)
 
 logger = logging.getLogger(__name__)
 
-# =========================================================
-# CONSTANTS
-# =========================================================
-REQ_QUICK_BET = "REQ_QUICK_BET"
-CMD_QUICK_BET = "CMD_QUICK_BET"
-
-# ── ORDER STATES ──
-STATUS_INFLIGHT = "INFLIGHT"
-STATUS_SUBMITTED = "SUBMITTED"
-STATUS_COMPLETED = "COMPLETED"
-STATUS_FAILED = "FAILED"
-STATUS_AMBIGUOUS = "AMBIGUOUS"
-STATUS_DENIED = "DENIED"
-STATUS_ACCEPTED_FOR_PROCESSING = "ACCEPTED_FOR_PROCESSING"
-STATUS_DUPLICATE_BLOCKED = "DUPLICATE_BLOCKED"
-
-# ── OUTCOMES ──
-OUTCOME_SUCCESS = "SUCCESS"
-OUTCOME_FAILURE = "FAILURE"
-OUTCOME_AMBIGUOUS = "AMBIGUOUS"
-
-# ── ERRORS ──
-ERROR_TRANSIENT = "TRANSIENT"
-ERROR_PERMANENT = "PERMANENT"
-ERROR_AMBIGUOUS = "AMBIGUOUS"
-
-# ── READINESS ──
-READY = "READY"
-DEGRADED = "DEGRADED"
-NOT_READY = "NOT_READY"
-
-# ── AMBIGUITY REASONS ──
-AMBIGUITY_SUBMIT_TIMEOUT = "SUBMIT_TIMEOUT"
-AMBIGUITY_RESPONSE_LOST = "RESPONSE_LOST"
-AMBIGUITY_SUBMIT_UNKNOWN = "SUBMIT_UNKNOWN"
-AMBIGUITY_PERSISTED_NOT_CONFIRMED = "PERSISTED_NOT_CONFIRMED"
-AMBIGUITY_SPLIT_STATE = "SPLIT_STATE"
-
-# ── ORDER ORIGINS ──
-ORIGIN_NORMAL = "NORMAL"
-ORIGIN_COPY = "COPY"
-ORIGIN_PATTERN = "PATTERN"
-
-# ── COPY META KEYS (File 8) ──
-COPY_META_KEYS = {
-    "master_id", "master_position_id", "action_id", "action_seq",
-    "copy_group_id", "copy_mode"
-}
-
-# ── PATTERN META KEYS (File 8) ──
-PATTERN_META_KEYS = {
-    "pattern_id", "pattern_label", "selection_template", "market_type",
-    "bet_side", "live_only", "event_context"
-}
-
-# =========================================================
-# [P2] CENTRALIZED CONSTANTS
-# =========================================================
-_PASSTHROUGH_KEYS: Tuple[str, ...] = (
-    "simulation_mode",
-    "event_key",
-    "order_origin",
-    "copy_meta",
-    "pattern_meta",
-)
-
-_ACK_STATES: Set[str] = {STATUS_SUBMITTED}
-
-_TERMINAL_STATES: Set[str] = {
-    STATUS_COMPLETED,
-    STATUS_FAILED,
-    STATUS_DENIED,
-    STATUS_AMBIGUOUS,
-    STATUS_DUPLICATE_BLOCKED,
-}
-
-# =========================================================
-# STATE MACHINE
-# =========================================================
-ALLOWED_TRANSITIONS: Dict[str, Set[str]] = {
-    STATUS_INFLIGHT: {STATUS_SUBMITTED, STATUS_FAILED, STATUS_AMBIGUOUS, STATUS_DENIED, STATUS_DUPLICATE_BLOCKED},
-    STATUS_SUBMITTED: {STATUS_COMPLETED, STATUS_FAILED, STATUS_AMBIGUOUS},
-    STATUS_AMBIGUOUS: {STATUS_COMPLETED, STATUS_FAILED},
-    STATUS_DENIED: set(),
-    STATUS_FAILED: set(),
-    STATUS_COMPLETED: set(),
-    STATUS_DUPLICATE_BLOCKED: set(),
-}
+# =============================================================================
+# NOTE: String constants, set/dict literals, ALLOWED_TRANSITIONS, and
+#       _ExecutionContext are defined in core/trading_constants.py and imported
+#       above. Existing callers that import from trading_engine are unaffected.
+# =============================================================================
 
 _INTERNAL_TO_PUBLIC_STATUS: Dict[str, str] = {
     STATUS_INFLIGHT: STATUS_INFLIGHT,
@@ -120,28 +53,11 @@ _STATUS_TO_OUTCOME: Dict[str, str] = {
     STATUS_DUPLICATE_BLOCKED: OUTCOME_SUCCESS,
 }
 
-# =========================================================
-# EXECUTION CONTEXT
-# =========================================================
-@dataclass(frozen=True)
-class _ExecutionContext:
-    """
-    Immutable execution context for order lifecycle.
-    
-    Created ONLY via TradingEngine._new_execution_context().
-    
-    NOTE: _engine_token is a deterrent against accidental misuse,
-    not a security barrier. Real protection:
-    1. Do not export this class from the module
-    2. Use factory method for creation
-    3. Code review + tests verify no bypass
-    """
-    correlation_id: str
-    customer_ref: str
-    created_at: float
-    event_key: Optional[str] = None
-    simulation_mode: Optional[bool] = None
-    _engine_token: str = "TRADING_ENGINE_INTERNAL"
+# =============================================================================
+# NOTE: _ExecutionContext is defined in core/trading_constants.py and imported
+#       above. Existing callers that reference it via trading_engine are
+#       unaffected (no public API change).
+# =============================================================================
 
 
 class ExecutionError(Exception):
@@ -241,6 +157,10 @@ class TradingEngine:
         self.order_manager: Optional[OrderManager] = None
         self.guard: Optional[Any] = None
         self.metrics_registry = None
+
+        # Circuit breaker for live order submission path.
+        # Trips after 3 consecutive failures; blocks for 120s before probe.
+        self._order_submission_breaker = CircuitBreaker(max_failures=3, reset_timeout=120.0)
 
         # Dedup State
         self._inflight_keys: Set[str] = set()
@@ -1352,15 +1272,48 @@ class TradingEngine:
                 if not bool(getattr(runtime, "is_live_allowed", lambda: False)()):
                     raise RuntimeError("LIVE_EXECUTION_BLOCKED")
 
+                # Fail-closed: block submission if BetfairService session is invalid.
+                # Use `is True` to avoid false-positive on MagicMock / non-bool attributes.
+                _betfair_svc = getattr(runtime, "betfair_service", None)
+                if _betfair_svc is not None and getattr(_betfair_svc, "_session_invalid", False) is True:
+                    raise RuntimeError("LIVE_BLOCKED_SESSION_INVALID")
+
                 live_client = self.betfair_client
                 if live_client is not None:
-                    place_order = getattr(live_client, "place_order", None)
-                    if callable(place_order):
-                        return place_order(payload)
+                    if self._order_submission_breaker.is_open():
+                        raise RuntimeError("ORDER_SUBMISSION_CIRCUIT_BREAKER_OPEN")
 
-                    place_bet = getattr(live_client, "place_bet", None)
-                    if callable(place_bet):
-                        return place_bet(**payload)
+                    place_order = getattr(live_client, "place_order", None)
+                    place_fn = place_order if callable(place_order) else None
+                    if place_fn is None:
+                        place_bet = getattr(live_client, "place_bet", None)
+                        place_fn = (lambda p: place_bet(**p)) if callable(place_bet) else None
+
+                    if place_fn is not None:
+                        try:
+                            result = place_fn(payload)
+                        except Exception as _exc:
+                            self._order_submission_breaker.record_failure(_exc)
+                            raise
+
+                        # Detect SESSION_EXPIRED in ok=False response (place_bet never raises)
+                        if isinstance(result, dict) and not result.get("ok", True):
+                            _err = str(result.get("error", "")).upper()
+                            if "SESSION_EXPIRED" in _err or "INVALID_SESSION" in _err:
+                                if _betfair_svc is not None and callable(
+                                    getattr(_betfair_svc, "handle_session_expiry", None)
+                                ):
+                                    _betfair_svc.handle_session_expiry(
+                                        reason=str(result.get("error", "SESSION_EXPIRED"))
+                                    )
+                                _exc2 = RuntimeError(
+                                    str(result.get("error", "SESSION_EXPIRED"))
+                                )
+                                self._order_submission_breaker.record_failure(_exc2)
+                                raise _exc2
+
+                        self._order_submission_breaker.record_success()
+                        return result
 
         if self.order_manager is not None:
             for mn in ("submit", "place_order"):

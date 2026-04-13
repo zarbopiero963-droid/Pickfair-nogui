@@ -4,6 +4,8 @@ import logging
 import time
 from typing import Any, Dict
 
+from observability.sanitizers import sanitize_value
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,7 +46,7 @@ class SnapshotService:
         saver = getattr(self.db, "save_observability_snapshot", None)
         if callable(saver):
             try:
-                saver(payload)
+                saver(sanitize_value(payload))
             except Exception:
                 logger.exception("save_observability_snapshot failed")
 

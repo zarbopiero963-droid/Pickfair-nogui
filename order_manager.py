@@ -6,6 +6,8 @@ import uuid
 from enum import Enum, unique
 from typing import Any, Dict, FrozenSet, Optional, Set, Tuple
 
+from core.type_helpers import safe_float, safe_int, safe_side
+
 logger = logging.getLogger("OrderManager")
 
 # =============================================================
@@ -384,26 +386,15 @@ class OrderManager:
 
     @staticmethod
     def _safe_float(value: Any, default: float = 0.0) -> float:
-        try:
-            if value in (None, ""):
-                return float(default)
-            return float(value)
-        except Exception:
-            return float(default)
+        return safe_float(value, default)
 
     @staticmethod
     def _safe_int(value: Any, default: int = 0) -> int:
-        try:
-            if value in (None, ""):
-                return int(default)
-            return int(value)
-        except Exception:
-            return int(default)
+        return safe_int(value, default)
 
     @staticmethod
     def _safe_side(value: Any) -> str:
-        side = str(value or "BACK").upper().strip()
-        return side if side in {"BACK", "LAY"} else "BACK"
+        return safe_side(value)
 
     @staticmethod
     def _extract_customer_ref(payload: Dict[str, Any]) -> str:

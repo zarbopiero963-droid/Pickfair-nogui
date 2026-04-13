@@ -3,27 +3,6 @@ import pytest
 from core.duplication_guard import DuplicationGuard
 
 
-def _register_or_acquire(guard, key):
-    if hasattr(guard, "register"):
-        guard.register(key)
-        return True
-    if hasattr(guard, "acquire"):
-        return guard.acquire(key)
-    raise AssertionError("DuplicationGuard non espone né register né acquire")
-
-
-def _is_duplicate(guard, key):
-    if hasattr(guard, "is_duplicate"):
-        return guard.is_duplicate(key)
-    if hasattr(guard, "acquire"):
-        first = guard.acquire(key)
-        if first:
-            guard.release(key)
-            return False
-        return True
-    raise AssertionError("DuplicationGuard non espone un metodo per verificare duplicati")
-
-
 @pytest.mark.unit
 @pytest.mark.guardrail
 def test_build_event_key_prefers_snake_case_fields():
@@ -62,13 +41,13 @@ def test_register_then_is_duplicate_then_release():
     guard = DuplicationGuard()
     key = "1.2:55:BACK"
 
-    assert _is_duplicate(guard, key) is False, "una chiave nuova non deve risultare duplicata"
+    assert guard.is_duplicate(key) is False, "una chiave nuova non deve risultare duplicata"
 
-    _register_or_acquire(guard, key)
-    assert _is_duplicate(guard, key) is True, "la chiave registrata deve risultare duplicata"
+    guard.register(key)
+    assert guard.is_duplicate(key) is True, "la chiave registrata deve risultare duplicata"
 
     guard.release(key)
-    assert _is_duplicate(guard, key) is False, "release deve rimuovere la chiave attiva"
+    assert guard.is_duplicate(key) is False, "release deve rimuovere la chiave attiva"
 
 
 @pytest.mark.unit
@@ -76,12 +55,8 @@ def test_register_then_is_duplicate_then_release():
 def test_register_ignores_empty_key():
     guard = DuplicationGuard()
 
-    if hasattr(guard, "register"):
-        guard.register("")
-        guard.register(None)
-    else:
-        assert guard.acquire("") is False
-        assert guard.acquire(None) is False
+    guard.register("")
+    guard.register(None)
 
     snapshot = guard.snapshot()
     assert snapshot["active_count"] == 0, "chiavi vuote non devono essere registrate"
@@ -91,8 +66,8 @@ def test_register_ignores_empty_key():
 @pytest.mark.guardrail
 def test_clear_removes_everything():
     guard = DuplicationGuard()
-    _register_or_acquire(guard, "a")
-    _register_or_acquire(guard, "b")
+    guard.register("a")
+    guard.register("b")
 
     guard.clear()
 
@@ -105,8 +80,8 @@ def test_clear_removes_everything():
 @pytest.mark.guardrail
 def test_snapshot_contains_registered_keys_and_timestamps():
     guard = DuplicationGuard()
-    _register_or_acquire(guard, "m1:s1:BACK")
-    _register_or_acquire(guard, "m2:s2:LAY")
+    guard.register("m1:s1:BACK")
+    guard.register("m2:s2:LAY")
 
     snapshot = guard.snapshot()
 
@@ -117,3 +92,46 @@ def test_snapshot_contains_registered_keys_and_timestamps():
 
     for item in snapshot["active_keys"]:
         assert item["registered_at"], "ogni chiave registrata deve avere un timestamp"
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_is_duplicate_returns_false_for_unknown_key():
+    guard = DuplicationGuard()
+    assert guard.is_duplicate("non:esiste:BACK") is False
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_is_duplicate_empty_key_returns_false():
+    guard = DuplicationGuard()
+    assert guard.is_duplicate("") is False
+    assert guard.is_duplicate(None) is False
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_register_is_idempotent():
+    guard = DuplicationGuard()
+    key = "1.1:10:BACK"
+    guard.register(key)
+    guard.register(key)  # second register must not raise and must not add a second entry
+
+    snapshot = guard.snapshot()
+    assert snapshot["active_count"] == 1, "register idempotente non deve duplicare la chiave"
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_acquire_and_is_duplicate_are_consistent():
+    """acquire() e is_duplicate() devono leggere lo stesso stato interno."""
+    guard = DuplicationGuard()
+    key = "2.2:20:LAY"
+
+    # acquire registers atomically
+    assert guard.acquire(key) is True
+    # is_duplicate must now agree the key is active
+    assert guard.is_duplicate(key) is True
+
+    guard.release(key)
+    assert guard.is_duplicate(key) is False

@@ -9,6 +9,7 @@ from . import anomaly_rules
 from .anomaly_rules import DEFAULT_ANOMALY_RULES
 from .forensics_engine import ForensicsEngine
 from .forensics_rules import DEFAULT_FORENSICS_RULES
+from .sanitizers import sanitize_value
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +183,10 @@ class WatchdogService:
                 logger.exception("anomaly engine evaluate failed")
 
         if collected:
-            logger.warning("watchdog anomaly hook collected anomalies", extra={"anomalies": collected})
+            logger.warning(
+                "watchdog anomaly hook collected anomalies",
+                extra={"anomalies": sanitize_value(collected)},
+            )
         return collected
 
     def _build_anomaly_context(self) -> dict[str, Any]:

@@ -97,6 +97,48 @@ class DuplicationGuard:
         return self.acquire(event_key)
 
     # =========================================================
+    # TWO-PHASE INTERFACE (is_duplicate / register)
+    # Kept for monitoring / audit use-cases only.
+    # WARNING: using is_duplicate() + register() as a pair is NOT atomic
+    # and is subject to TOCTOU races under concurrent signal handling.
+    # Use acquire() for all order-gate decisions instead.
+    # =========================================================
+    def is_duplicate(self, event_key: str) -> bool:
+        """Read-only check: True if the key is already active.
+
+        Does NOT register the key.
+
+        WARNING: non-atomic when paired with register() – two threads can
+        both see False here before either registers.  Use acquire() for
+        order-gate decisions.
+        """
+        key = str(event_key or "").strip()
+        if not key:
+            return False
+
+        now = time.time()
+        with self._lock:
+            self._cleanup_locked(now)
+            return key in self._active
+
+    def register(self, event_key: str) -> None:
+        """Register a key as active without atomically checking first.
+
+        Idempotent: registering an already-active key refreshes its timestamp.
+
+        WARNING: non-atomic when preceded by is_duplicate() – use acquire()
+        for order-gate decisions.
+        """
+        key = str(event_key or "").strip()
+        if not key:
+            return
+
+        now = time.time()
+        with self._lock:
+            self._active[key] = now
+            self._registered_at[key] = datetime.utcnow().isoformat()
+
+    # =========================================================
     # RELEASE
     # =========================================================
     def release(self, event_key: str) -> None:

@@ -11,6 +11,7 @@ from core.event_bus import EventBus
 from executor_manager import ExecutorManager
 from shutdown_manager import ShutdownManager
 
+from observability.sanitizers import sanitize_dict
 from services.settings_service import SettingsService
 from services.betfair_service import BetfairService
 from services.telegram_alerts_service import TelegramAlertsService
@@ -478,55 +479,55 @@ class HeadlessApp:
     # EVENT LOGGING
     # =========================================================
     def _on_runtime_started(self, payload):
-        logger.info("RUNTIME_STARTED -> %s", payload)
+        logger.info("RUNTIME_STARTED -> %s", sanitize_dict(payload))
 
     def _on_runtime_paused(self, payload):
-        logger.info("RUNTIME_PAUSED -> %s", payload)
+        logger.info("RUNTIME_PAUSED -> %s", sanitize_dict(payload))
 
     def _on_runtime_resumed(self, payload):
-        logger.info("RUNTIME_RESUMED -> %s", payload)
+        logger.info("RUNTIME_RESUMED -> %s", sanitize_dict(payload))
 
     def _on_runtime_stopped(self, payload):
-        logger.info("RUNTIME_STOPPED -> %s", payload)
+        logger.info("RUNTIME_STOPPED -> %s", sanitize_dict(payload))
 
     def _on_runtime_lockdown(self, payload):
-        logger.warning("RUNTIME_LOCKDOWN -> %s", payload)
+        logger.warning("RUNTIME_LOCKDOWN -> %s", sanitize_dict(payload))
 
     def _on_telegram_status(self, payload):
-        logger.info("TELEGRAM_STATUS -> %s", payload)
+        logger.info("TELEGRAM_STATUS -> %s", sanitize_dict(payload))
 
     def _on_signal_received(self, payload):
-        logger.info("SIGNAL_RECEIVED -> %s", payload)
+        logger.info("SIGNAL_RECEIVED -> %s", sanitize_dict(payload))
 
     def _on_signal_approved(self, payload):
-        logger.info("SIGNAL_APPROVED -> %s", payload)
+        logger.info("SIGNAL_APPROVED -> %s", sanitize_dict(payload))
 
     def _on_signal_rejected(self, payload):
-        logger.warning("SIGNAL_REJECTED -> %s", payload)
+        logger.warning("SIGNAL_REJECTED -> %s", sanitize_dict(payload))
 
     def _on_quick_bet_submitted(self, payload):
-        logger.info("QUICK_BET_SUBMITTED -> %s", payload)
+        logger.info("QUICK_BET_SUBMITTED -> %s", sanitize_dict(payload))
 
     def _on_quick_bet_accepted(self, payload):
-        logger.info("QUICK_BET_ACCEPTED -> %s", payload)
+        logger.info("QUICK_BET_ACCEPTED -> %s", sanitize_dict(payload))
 
     def _on_quick_bet_partial(self, payload):
-        logger.info("QUICK_BET_PARTIAL -> %s", payload)
+        logger.info("QUICK_BET_PARTIAL -> %s", sanitize_dict(payload))
 
     def _on_quick_bet_filled(self, payload):
-        logger.info("QUICK_BET_FILLED -> %s", payload)
+        logger.info("QUICK_BET_FILLED -> %s", sanitize_dict(payload))
 
     def _on_quick_bet_failed(self, payload):
-        logger.error("QUICK_BET_FAILED -> %s", payload)
+        logger.error("QUICK_BET_FAILED -> %s", sanitize_dict(payload))
 
     def _on_quick_bet_rollback_done(self, payload):
-        logger.warning("QUICK_BET_ROLLBACK_DONE -> %s", payload)
+        logger.warning("QUICK_BET_ROLLBACK_DONE -> %s", sanitize_dict(payload))
 
     def _on_quick_bet_success(self, payload):
-        logger.info("QUICK_BET_SUCCESS -> %s", payload)
+        logger.info("QUICK_BET_SUCCESS -> %s", sanitize_dict(payload))
 
     def _on_quick_bet_ambiguous(self, payload):
-        logger.warning("QUICK_BET_AMBIGUOUS -> %s", payload)
+        logger.warning("QUICK_BET_AMBIGUOUS -> %s", sanitize_dict(payload))
 
     # =========================================================
     # ARGUMENTS
@@ -595,6 +596,8 @@ class HeadlessApp:
                 password = raw.split("=", 1)[1]
                 break
 
+        emergency_stop = "--emergency-stop" in args
+
         return {
             "simulation_mode": execution_mode != "LIVE",
             "execution_mode": execution_mode,
@@ -602,6 +605,7 @@ class HeadlessApp:
             "kill_switch": kill_switch,
             "live_readiness_ok": live_readiness_ok,
             "password": password,
+            "emergency_stop": emergency_stop,
         }
 
     # =========================================================
@@ -655,6 +659,7 @@ class HeadlessApp:
         live_enabled = bool(args.get("live_enabled", False))
         live_readiness_ok = bool(args.get("live_readiness_ok", False))
         password = args["password"]
+        emergency_stop_requested = bool(args.get("emergency_stop", False))
 
         mode_txt = "SIMULATION" if simulation_mode else "LIVE"
         logger.info("Avvio runtime headless in modalità %s", mode_txt)
@@ -663,6 +668,18 @@ class HeadlessApp:
             logger.error("Runtime non disponibile dopo build")
             self._cleanup_partial_build()
             return 1
+
+        # Operator emergency-stop: immediately halt and cancel open orders before
+        # entering the main loop.  --emergency-stop is the headless operator
+        # trigger; it is fail-closed: partial cancel failures do not resume trading.
+        if emergency_stop_requested:
+            logger.warning("EMERGENCY STOP richiesto via --emergency-stop")
+            try:
+                result = self.runtime.emergency_stop(reason="operator_cli_flag")
+                logger.warning("EMERGENCY_STOP result: %s", result)
+            except Exception as exc:
+                logger.exception("Errore durante emergency_stop: %s", exc)
+            return 0
 
         try:
             if execution_mode == "LIVE":
