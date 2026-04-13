@@ -569,6 +569,39 @@ def test_watchdog_default_anomaly_path_consumes_ghost_suspected_and_poison_pill(
     assert "POISON_PILL_SUBSCRIBER" in codes
 
 
+def test_watchdog_default_anomaly_path_consumes_duplicate_intelligence_findings():
+    alerts = AlertsManager()
+
+    class _DuplicateProbe(_ProbeStub):
+        def collect_runtime_state(self):
+            return {"duplicate_guard": {"blocked_submit_streak": 4}}
+
+    watchdog = WatchdogService(
+        probe=_DuplicateProbe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        anomaly_context_provider=lambda: {
+            "metrics": {"counters": {"duplicate_blocked_total": 3}},
+            "recent_orders": [
+                {"status": "DUPLICATE_BLOCKED", "event_key": "evt-a"},
+                {"status": "DUPLICATE_BLOCKED", "event_key": "evt-a"},
+                {"status": "DUPLICATE_BLOCKED", "event_key": "evt-a"},
+                {"status": "DUPLICATE_BLOCKED", "event_key": "evt-b"},
+            ]
+        },
+        anomaly_enabled=True,
+        interval_sec=60.0,
+    )
+
+    watchdog._tick()
+    codes = {a.get("code") for a in watchdog.last_anomalies}
+    assert "DUPLICATE_BLOCK_SPIKE" in codes
+    assert "SUSPICIOUS_DUPLICATE_PATTERN" in codes
+
+
 def test_watchdog_correlation_default_path_uses_strong_dispatcher_liveness_evidence():
     alerts = AlertsManager()
 

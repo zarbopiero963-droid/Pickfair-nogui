@@ -12,6 +12,7 @@ from observability.anomaly_rules import (
     rule_poison_pill_subscriber,
     rule_queue_depth_liveness_mismatch,
     rule_service_stalled,
+    rule_suspicious_duplicate_pattern,
     rule_zombie_worker_suspected,
 )
 
@@ -156,6 +157,59 @@ def test_rule_queue_depth_liveness_mismatch_fires():
 def test_rule_queue_depth_liveness_mismatch_passes_when_worker_alive():
     ctx = {"metrics": {"gauges": {"queue_depth": 10.0, "worker_alive": True}}}
     assert rule_queue_depth_liveness_mismatch(ctx, {}) is None
+
+
+def test_rule_duplicate_block_spike_fires_from_contextual_burst_not_only_flat_threshold():
+    from observability.anomaly_rules import rule_duplicate_block_spike
+
+    state = {"duplicate_total": 10, "duplicate_delta_history": [2, 2, 2]}
+    ctx = {
+        "metrics": {"counters": {"duplicate_blocked_total": 13}},
+        "runtime_state": {"duplicate_guard": {"blocked_submit_streak": 3}},
+    }
+    finding = rule_duplicate_block_spike(ctx, state)
+    assert finding is not None
+    assert finding["code"] == "DUPLICATE_BLOCK_SPIKE"
+    assert finding["details"]["trigger"] == "contextual_burst"
+
+
+def test_rule_duplicate_block_spike_does_not_fire_for_small_delta_without_context():
+    from observability.anomaly_rules import rule_duplicate_block_spike
+
+    state = {"duplicate_total": 10, "duplicate_delta_history": [1, 1, 1]}
+    ctx = {"metrics": {"counters": {"duplicate_blocked_total": 12}}}
+    assert rule_duplicate_block_spike(ctx, state) is None
+
+
+def test_rule_suspicious_duplicate_pattern_fires_for_same_key_blocked_submit_pattern():
+    state = {}
+    ctx = {
+        "runtime_state": {"duplicate_guard": {"blocked_submit_streak": 4}},
+        "recent_orders": [
+            {"status": "DUPLICATE_BLOCKED", "event_key": "E-1"},
+            {"status": "DUPLICATE_BLOCKED", "event_key": "E-1"},
+            {"status": "DUPLICATE_BLOCKED", "event_key": "E-1"},
+            {"status": "DUPLICATE_BLOCKED", "event_key": "E-2"},
+        ],
+    }
+    finding = rule_suspicious_duplicate_pattern(ctx, state)
+    assert finding is not None
+    assert finding["code"] == "SUSPICIOUS_DUPLICATE_PATTERN"
+    assert "repeated_blocked_submits" in finding["details"]["evidence"]
+    assert "repeated_same_key_blocks" in finding["details"]["evidence"]
+
+
+def test_rule_suspicious_duplicate_pattern_does_not_fire_on_isolated_duplicate_noise():
+    state = {}
+    ctx = {
+        "runtime_state": {"duplicate_guard": {"blocked_submit_streak": 1}},
+        "recent_orders": [
+            {"status": "DUPLICATE_BLOCKED", "event_key": "E-1"},
+            {"status": "SUBMITTED", "event_key": "E-2"},
+            {"status": "DUPLICATE_BLOCKED", "event_key": "E-3"},
+        ],
+    }
+    assert rule_suspicious_duplicate_pattern(ctx, state) is None
 
 
 def test_config_builder_generates_expected_rule_config_from_audit_input():
