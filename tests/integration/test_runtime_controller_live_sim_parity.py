@@ -35,6 +35,10 @@ class _Betfair:
         self.sim_flags = []
     def set_simulation_mode(self, enabled):
         self.sim_flags.append(bool(enabled))
+    def get_account_funds(self):
+        return {"available": 0.0}
+    def status(self):
+        return {"connected": True}
 
 
 class _Telegram:
@@ -59,6 +63,91 @@ def test_runtime_controller_routing_parity(simulation_mode):
     assert payload["market_id"] == "1.2"
     assert payload["selection_id"] == 11
     assert payload["stake"] == 4.0
+
+
+@pytest.mark.integration
+def test_duplication_lock_released_on_table_allocation_failure():
+    """Regression: acquire() succeeded but table=None early-return never released the lock.
+    After a table-allocation rejection the same event_key must be acquirable again."""
+    bus = _Bus()
+
+    class _SettingsAntiDup:
+        def load_roserpina_config(self):
+            cfg = RoserpinaConfig()
+            cfg.anti_duplication_enabled = True
+            return cfg
+
+    rc = RuntimeController(
+        bus=bus,
+        db=_DB(),
+        settings_service=_SettingsAntiDup(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+    rc.mode = RuntimeMode.ACTIVE
+    # Force allocate to always return None regardless of table_count
+    rc.table_manager.allocate = lambda **_kw: None
+
+    signal = {"market_id": "1.9", "selection_id": 99, "price": 3.0}
+
+    # First send: lock acquired → table fails → lock must be released
+    rc._on_signal_received(signal)
+    rejected = [e for e in bus.events if e[0] == "SIGNAL_REJECTED"]
+    assert len(rejected) == 1
+    assert "nessun_tavolo" in rejected[0][1].get("reason", "")
+
+    # Second send with same signal: must NOT be rejected as duplicate
+    bus.events.clear()
+    rc._on_signal_received(signal)
+    duplicate_rejections = [
+        e for e in bus.events
+        if e[0] == "SIGNAL_REJECTED" and "duplicato" in e[1].get("reason", "")
+    ]
+    assert duplicate_rejections == [], "lock was not released on table-allocation failure"
+
+
+@pytest.mark.integration
+def test_duplication_lock_released_on_mm_rejection():
+    """Regression: acquire() succeeded but decision.approved=False early-return never released
+    the lock. After a money-management rejection the same event_key must be acquirable again."""
+    bus = _Bus()
+
+    class _SettingsAntiDup:
+        def load_roserpina_config(self):
+            cfg = RoserpinaConfig()
+            cfg.anti_duplication_enabled = True
+            return cfg
+
+    rc = RuntimeController(
+        bus=bus,
+        db=_DB(),
+        settings_service=_SettingsAntiDup(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+    rc.mode = RuntimeMode.ACTIVE
+
+    # Override MM to always reject without triggering LOCKDOWN
+    rc.mm.calculate = lambda **_kw: type(
+        "D", (), {"approved": False, "recommended_stake": 0.0, "table_id": 1,
+                  "reason": "test_rejected", "desk_mode": DeskMode.NORMAL, "metadata": {}}
+    )()
+
+    signal = {"market_id": "1.10", "selection_id": 88, "price": 2.5}
+
+    # First send: lock acquired → MM rejects → lock must be released
+    rc._on_signal_received(signal)
+    rejected = [e for e in bus.events if e[0] == "SIGNAL_REJECTED"]
+    assert len(rejected) == 1
+
+    # Second send: must NOT be rejected as duplicate
+    bus.events.clear()
+    rc._on_signal_received(signal)
+    duplicate_rejections = [
+        e for e in bus.events
+        if e[0] == "SIGNAL_REJECTED" and "duplicato" in e[1].get("reason", "")
+    ]
+    assert duplicate_rejections == [], "lock was not released on MM rejection"
 
 
 @pytest.mark.integration
