@@ -238,6 +238,144 @@ class RuntimeProbe:
 
         return ctx
 
+    def collect_reviewer_context(self) -> Dict[str, Any]:
+        """Collect canonical runtime context blocks for reviewer rules.
+
+        The returned payload is deterministic and typed so anomaly/correlation
+        evaluators can run from the default runtime path without relying on
+        ad-hoc/manual context injection.
+        """
+        context: Dict[str, Any] = {}
+
+        risk: Dict[str, Any] = {
+            "expected_exposure": 0.0,
+            "actual_exposure": 0.0,
+            "exposure_tolerance": 0.01,
+            "source": "default_zero",
+        }
+        runtime = self.runtime_controller
+        table_manager = getattr(runtime, "table_manager", None) if runtime is not None else None
+        total_exposure_fn = getattr(table_manager, "total_exposure", None)
+        if callable(total_exposure_fn):
+            try:
+                exposure = float(total_exposure_fn() or 0.0)
+                risk["expected_exposure"] = exposure
+                risk["actual_exposure"] = exposure
+                risk["source"] = "table_manager.total_exposure"
+            except Exception:
+                pass
+        cfg = getattr(runtime, "config", None) if runtime is not None else None
+        if cfg is not None and hasattr(cfg, "exposure_tolerance"):
+            try:
+                risk["exposure_tolerance"] = float(getattr(cfg, "exposure_tolerance") or 0.01)
+            except Exception:
+                pass
+        context["risk"] = risk
+
+        financials: Dict[str, Any] = {
+            "ledger_balance": 0.0,
+            "venue_balance": 0.0,
+            "drift_threshold": 0.01,
+            "source": "default_zero",
+        }
+        risk_desk = getattr(runtime, "risk_desk", None) if runtime is not None else None
+        if risk_desk is not None:
+            try:
+                bankroll = float(getattr(risk_desk, "bankroll_current", 0.0) or 0.0)
+                financials["ledger_balance"] = bankroll
+                financials["venue_balance"] = bankroll
+                financials["source"] = "risk_desk.bankroll_current"
+            except Exception:
+                pass
+        context["financials"] = financials
+
+        db_block: Dict[str, Any] = {
+            "lock_wait_ms": 0.0,
+            "contention_events": 0,
+            "lock_wait_threshold_ms": 200.0,
+            "db_writer_backlog": 0,
+            "db_writer_failed": 0,
+            "db_writer_dropped": 0,
+        }
+        writer = self.async_db_writer
+        if writer is not None:
+            q = getattr(writer, "queue", None)
+            if q is not None:
+                try:
+                    db_block["db_writer_backlog"] = int(q.qsize())
+                except Exception:
+                    pass
+            for attr, key in (("_failed", "db_writer_failed"), ("_dropped", "db_writer_dropped")):
+                val = getattr(writer, attr, None)
+                if val is not None:
+                    try:
+                        db_block[key] = int(val)
+                    except Exception:
+                        pass
+            db_block["contention_events"] = int(
+                db_block["db_writer_failed"] + db_block["db_writer_dropped"]
+            )
+        context["db"] = db_block
+
+        recent_orders: list[Any] = []
+        recent_audit: list[Any] = []
+        if self.db is not None:
+            orders_getter = getattr(self.db, "get_recent_orders_for_diagnostics", None)
+            if callable(orders_getter):
+                try:
+                    recent_orders = list(orders_getter(limit=200) or [])
+                except Exception:
+                    recent_orders = []
+            audit_getter = getattr(self.db, "get_recent_audit_events_for_diagnostics", None)
+            if callable(audit_getter):
+                try:
+                    recent_audit = list(audit_getter(limit=300) or [])
+                except Exception:
+                    recent_audit = []
+        context["recent_orders"] = recent_orders
+        context["recent_audit"] = recent_audit
+
+        submitted_ids = {
+            str(o.get("order_id") or o.get("id") or "")
+            for o in recent_orders
+            if isinstance(o, dict) and str(o.get("status", "")).upper() == "SUBMITTED"
+        }
+        submitted_ids.discard("")
+        reconciled_ids = {
+            str(a.get("order_id") or a.get("id") or "")
+            for a in recent_audit
+            if isinstance(a, dict)
+        }
+        reconciled_ids.discard("")
+        missing = sorted(list(submitted_ids - reconciled_ids))
+        context["reconcile_chain"] = {
+            "submitted_count": len(submitted_ids),
+            "reconciled_count": len(reconciled_ids),
+            "missing_count": len(missing),
+            "sample_missing_ids": missing[:5],
+        }
+
+        event_bus = dict((context.get("event_bus") or {}))
+        corr_ctx = self.collect_correlation_context()
+        direct_event_bus = corr_ctx.get("event_bus") if isinstance(corr_ctx, dict) else None
+        if isinstance(direct_event_bus, dict):
+            event_bus.update(direct_event_bus)
+        subscriber_errors = event_bus.get("subscriber_errors") or {}
+        total_errors = 0
+        if isinstance(subscriber_errors, dict):
+            try:
+                total_errors = int(sum(int(v or 0) for v in subscriber_errors.values()))
+            except Exception:
+                total_errors = 0
+        delivered_total = int(event_bus.get("side_effects_confirmed", 0) or 0)
+        expected_total = delivered_total + total_errors
+        event_bus["delivered_fanout"] = delivered_total
+        event_bus["expected_fanout"] = expected_total
+        event_bus["fanout_error_count"] = total_errors
+        context["event_bus"] = event_bus
+
+        return context
+
     def get_live_readiness_report(self) -> Dict[str, Any]:
         health = self.collect_health()
 

@@ -226,6 +226,19 @@ class WatchdogService:
             "incidents": self.incidents_manager.snapshot(),
             "runtime_state": runtime_state,
         }
+        reviewer_ctx_getter = getattr(self.probe, "collect_reviewer_context", None)
+        if callable(reviewer_ctx_getter):
+            try:
+                reviewer_ctx = reviewer_ctx_getter() or {}
+                if isinstance(reviewer_ctx, dict):
+                    for key, value in reviewer_ctx.items():
+                        existing = context.get(key)
+                        if isinstance(existing, dict) and isinstance(value, dict):
+                            context[key] = {**existing, **value}
+                        else:
+                            context[key] = value
+            except Exception:
+                logger.exception("collect_reviewer_context failed")
         if callable(self.anomaly_context_provider):
             try:
                 extra = self.anomaly_context_provider() or {}

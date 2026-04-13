@@ -215,6 +215,33 @@ class _FakeAsyncDBWriter:
             return 7
 
 
+class _DbDiagnosticsStub:
+    def get_recent_orders_for_diagnostics(self, limit=200):
+        del limit
+        return [
+            {"order_id": "o-submitted-missing", "status": "SUBMITTED"},
+            {"order_id": "o-reconciled", "status": "SUBMITTED"},
+        ]
+
+    def get_recent_audit_events_for_diagnostics(self, limit=300):
+        del limit
+        return [{"order_id": "o-reconciled"}]
+
+
+class _TableManagerStub:
+    def total_exposure(self):
+        return 12.5
+
+
+class _RiskDeskStub:
+    bankroll_current = 321.0
+
+
+class _RuntimeControllerStub:
+    table_manager = _TableManagerStub()
+    risk_desk = _RiskDeskStub()
+
+
 def test_collect_correlation_context_from_event_bus():
     probe = RuntimeProbe(event_bus=_FakeEventBus())
     ctx = probe.collect_correlation_context()
@@ -292,3 +319,27 @@ def test_collect_correlation_context_tolerates_event_bus_without_accessors():
 
     assert ctx["event_bus"]["queue_depth"] == 3
     assert "published_total" not in ctx["event_bus"]
+
+
+def test_collect_reviewer_context_emits_canonical_blocks():
+    probe = RuntimeProbe(
+        db=_DbDiagnosticsStub(),
+        event_bus=_FakeEventBus(),
+        async_db_writer=_FakeAsyncDBWriter(),
+        runtime_controller=_RuntimeControllerStub(),
+    )
+
+    ctx = probe.collect_reviewer_context()
+
+    assert ctx["risk"]["expected_exposure"] == 12.5
+    assert ctx["risk"]["actual_exposure"] == 12.5
+    assert ctx["db"]["db_writer_backlog"] == 7
+    assert ctx["db"]["db_writer_failed"] == 3
+    assert ctx["db"]["db_writer_dropped"] == 1
+    assert ctx["financials"]["ledger_balance"] == 321.0
+    assert ctx["financials"]["venue_balance"] == 321.0
+    assert ctx["event_bus"]["expected_fanout"] == 41
+    assert ctx["event_bus"]["delivered_fanout"] == 39
+    assert len(ctx["recent_orders"]) == 2
+    assert len(ctx["recent_audit"]) == 1
+    assert ctx["reconcile_chain"]["missing_count"] == 1

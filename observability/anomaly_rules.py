@@ -389,8 +389,18 @@ def db_contention_detected(context: Context, state: State) -> Anomaly | None:
     lock_wait_ms = float(db.get("lock_wait_ms", 0.0) or 0.0)
     contention_events = int(db.get("contention_events", 0) or 0)
     threshold_ms = float(db.get("lock_wait_threshold_ms", 200.0) or 200.0)
+    writer_backlog = int(db.get("db_writer_backlog", 0) or 0)
+    writer_failed = int(db.get("db_writer_failed", 0) or 0)
+    writer_dropped = int(db.get("db_writer_dropped", 0) or 0)
+    backlog_threshold = int(db.get("db_writer_backlog_threshold", 50) or 50)
 
-    if contention_events > 0 or lock_wait_ms > threshold_ms:
+    if (
+        contention_events > 0
+        or lock_wait_ms > threshold_ms
+        or writer_backlog >= backlog_threshold
+        or writer_failed > 0
+        or writer_dropped > 0
+    ):
         return _anomaly(
             "DB_CONTENTION_DETECTED",
             "warning",
@@ -399,6 +409,10 @@ def db_contention_detected(context: Context, state: State) -> Anomaly | None:
                 "lock_wait_ms": lock_wait_ms,
                 "contention_events": contention_events,
                 "lock_wait_threshold_ms": threshold_ms,
+                "db_writer_backlog": writer_backlog,
+                "db_writer_backlog_threshold": backlog_threshold,
+                "db_writer_failed": writer_failed,
+                "db_writer_dropped": writer_dropped,
             },
         )
     return None

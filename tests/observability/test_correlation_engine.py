@@ -112,6 +112,38 @@ def test_rule_submit_reconcile_chain_break_passes_when_reconciled():
     assert rule_submit_reconcile_chain_break(ctx, {}) is None
 
 
+def test_rule_submit_reconcile_chain_break_prefers_canonical_block():
+    ctx = {
+        "reconcile_chain": {
+            "missing_count": 2,
+            "sample_missing_ids": ["o7", "o8"],
+        },
+        # fallback lists intentionally contradictory to prove canonical preference
+        "recent_orders": [],
+        "recent_audit": [{"order_id": "o7"}, {"order_id": "o8"}],
+    }
+    finding = rule_submit_reconcile_chain_break(ctx, {})
+    assert finding is not None
+    assert finding["code"] == "SUBMIT_RECONCILE_CHAIN_BREAK"
+    assert finding["details"]["broken_count"] == 2
+    assert finding["details"]["source"] == "canonical_reconcile_chain"
+
+
+def test_rule_submit_reconcile_chain_break_falls_back_when_canonical_is_empty():
+    ctx = {
+        # Empty canonical block is allowed in default runtime; rule must still
+        # derive from recent_orders/recent_audit when richer evidence exists there.
+        "reconcile_chain": {"missing_count": 0, "submitted_count": 0, "reconciled_count": 0},
+        "recent_orders": [{"order_id": "o1", "status": "SUBMITTED"}],
+        "recent_audit": [],
+    }
+    finding = rule_submit_reconcile_chain_break(ctx, {})
+    assert finding is not None
+    assert finding["code"] == "SUBMIT_RECONCILE_CHAIN_BREAK"
+    assert finding["details"]["broken_count"] == 1
+    assert "source" not in finding["details"]
+
+
 def test_rule_event_side_effect_gap_fires_on_gap():
     state = {"prev_published": 0, "prev_side_effects": 0}
     ctx = {"event_bus": {"events_published": 10, "side_effects_confirmed": 5}}
