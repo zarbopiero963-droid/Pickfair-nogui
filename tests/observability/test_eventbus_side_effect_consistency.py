@@ -164,3 +164,26 @@ def test_published_total_multiple_subscribers_counts_event_once():
     # 3 subscribers each received the event, but published_total counts the event once
     assert bus.published_total_count() == 1
     assert len(calls) == 3
+
+
+@pytest.mark.observability
+@pytest.mark.core
+def test_delivered_total_counts_only_successful_callbacks():
+    bus = EventBus(workers=1)
+
+    def ok_handler(_payload):
+        return None
+
+    def bad_handler(_payload):
+        raise RuntimeError("boom")
+
+    bus.subscribe("SIG", ok_handler)
+    bus.subscribe("SIG", bad_handler)
+
+    for _ in range(4):
+        bus.publish("SIG", {})
+
+    bus.stop()
+
+    # 4 successful callbacks from ok_handler only; bad_handler failures excluded.
+    assert bus.delivered_total_count() == 4
