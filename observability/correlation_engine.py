@@ -157,9 +157,20 @@ def rule_db_vs_memory(context: CorrelationContext, state: CorrelationState) -> O
 def rule_submit_reconcile_chain_break(context: CorrelationContext, state: CorrelationState) -> Optional[CorrelationFinding]:
     reconcile_chain = context.get("reconcile_chain") or {}
     missing_count = reconcile_chain.get("missing_count")
-    if missing_count is not None:
+    submitted_count = int(reconcile_chain.get("submitted_count", 0) or 0)
+    reconciled_count = int(reconcile_chain.get("reconciled_count", 0) or 0)
+    sample_ids = list(reconcile_chain.get("sample_missing_ids") or [])[:3]
+    has_canonical_evidence = (
+        missing_count is not None
+        and (
+            int(missing_count or 0) > 0
+            or submitted_count > 0
+            or reconciled_count > 0
+            or len(sample_ids) > 0
+        )
+    )
+    if has_canonical_evidence:
         broken_count = int(missing_count or 0)
-        sample_ids = list(reconcile_chain.get("sample_missing_ids") or [])[:3]
         if broken_count > 0:
             details = {"broken_count": broken_count, "sample_ids": sample_ids}
             details["source"] = "canonical_reconcile_chain"
