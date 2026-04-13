@@ -4,10 +4,17 @@ import pytest
 from core.pnl_engine import PnLEngine
 
 _REQUIRED_EVENT_DRIVEN_API = ("_calc", "_on_filled", "_on_market", "snapshot")
-pytestmark = pytest.mark.skipif(
-    any(not hasattr(PnLEngine, name) for name in _REQUIRED_EVENT_DRIVEN_API),
-    reason="event-driven core.pnl_engine API not available",
-)
+
+# Fail-closed: if the required event-driven API is absent, fail at collection
+# time instead of silently skipping.  A supported implementation must pass its
+# invariant suite; missing API → broken contract → CI failure.
+_missing_api = [name for name in _REQUIRED_EVENT_DRIVEN_API if not hasattr(PnLEngine, name)]
+if _missing_api:
+    pytest.fail(
+        f"core.pnl_engine.PnLEngine is missing required methods: {_missing_api}. "
+        "This invariant suite is fail-closed and cannot silently skip for a "
+        "supported PnL implementation."
+    )
 
 class FakeBus:
     def __init__(self):

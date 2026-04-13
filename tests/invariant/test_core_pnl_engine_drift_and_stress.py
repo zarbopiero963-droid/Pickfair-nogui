@@ -12,10 +12,16 @@ _REQUIRED_CALC_API = (
     "mark_to_market_pnl",
 )
 
-pytestmark = pytest.mark.skipif(
-    any(not hasattr(PnLEngine, name) for name in _REQUIRED_CALC_API),
-    reason="calculation-focused pnl_engine API not available in current engine",
-)
+# Fail-closed: if the required calculation API is absent, fail at collection
+# time instead of silently skipping.  A supported implementation must pass its
+# invariant suite; missing API → broken contract → CI failure.
+_missing_api = [name for name in _REQUIRED_CALC_API if not hasattr(PnLEngine, name)]
+if _missing_api:
+    pytest.fail(
+        f"pnl_engine.PnLEngine is missing required methods: {_missing_api}. "
+        "This invariant suite is fail-closed and cannot silently skip for a "
+        "supported PnL implementation."
+    )
 
 @pytest.mark.invariant
 def test_core_pnl_position_repeat_same_input_is_stable():

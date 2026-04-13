@@ -30,3 +30,44 @@ jobs:
       state_model_path: "guardrails/state_models/pnl_engine.json"
       mutation_path: "guardrails/mutations/pnl_engine.json"
       test_paths: "tests/invariant/test_pnl_engine_drift_and_stress.py tests/invariant/test_core_pnl_engine_drift_and_stress.py"
+
+  pnl-invariants:
+    name: PnL invariant enforcement (fail-closed, both implementations)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements-test.txt ]; then
+            pip install -r requirements-test.txt
+          else
+            pip install pytest
+          fi
+
+      # Hard-fail if either PnL implementation is deleted
+      - name: Validate both PnL implementation files exist
+        run: |
+          test -f pnl_engine.py || \
+            (echo "FAIL: pnl_engine.py missing — PnL CI invariant lane requires both implementations." && exit 1)
+          test -f core/pnl_engine.py || \
+            (echo "FAIL: core/pnl_engine.py missing — PnL CI invariant lane requires both implementations." && exit 1)
+
+      # Hard-fail on any test failure or collection error; --tb=short for
+      # actionable output.  Tests themselves now fail at collection if required
+      # API is absent (no silent skip possible).
+      - name: Run PnL invariant suites (hard fail-closed, both implementations)
+        env:
+          PYTHONPATH: .
+        run: |
+          pytest -q --tb=short \
+            tests/invariant/test_pnl_engine_drift_and_stress.py \
+            tests/invariant/test_core_pnl_engine_drift_and_stress.py
