@@ -1,7 +1,8 @@
 """Pure invariant guard helpers.
 
-The guard is intentionally callable-only and disabled by default.
-It does not integrate with runtime services and has no side effects.
+These helpers are side-effect free and can be called directly in tests.
+Runtime services (for example WatchdogService) may still invoke them.
+Evaluation remains opt-in via ``enabled=True``.
 """
 
 from __future__ import annotations

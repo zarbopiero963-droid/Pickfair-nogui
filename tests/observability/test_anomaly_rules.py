@@ -6,6 +6,7 @@ from observability.anomaly_rules import (
     event_fanout_incomplete,
     exposure_mismatch,
     financial_drift,
+    financial_drift_detected,
     ghost_order_detected,
     rule_ghost_order_suspected,
     rule_heartbeat_stale,
@@ -79,6 +80,27 @@ def test_multiple_anomalies_can_be_returned_together():
     assert len([a for a in anomalies if a is not None]) == 5
 
 
+def test_exposure_mismatch_supports_local_remote_runtime_fields():
+    finding = exposure_mismatch(
+        {"risk": {"local_exposure": 100.0, "remote_exposure": 104.0, "exposure_tolerance": 1.0}},
+        {},
+    )
+    assert finding is not None
+    assert finding["code"] == "EXPOSURE_MISMATCH"
+
+
+def test_db_contention_detected_uses_db_write_queue_fallback_block():
+    finding = db_contention_detected(
+        {
+            "db": {"lock_wait_ms": 0.0, "contention_events": 0, "lock_wait_threshold_ms": 200.0},
+            "db_write_queue": {"queue_depth": 75, "failed": 0, "dropped": 0},
+        },
+        {},
+    )
+    assert finding is not None
+    assert finding["code"] == "DB_CONTENTION_DETECTED"
+
+
 def test_default_anomaly_rules_includes_all_critical_rules():
     """All previously disabled critical rules are now in DEFAULT_ANOMALY_RULES."""
     default_fns = set(DEFAULT_ANOMALY_RULES)
@@ -88,7 +110,7 @@ def test_default_anomaly_rules_includes_all_critical_rules():
     assert db_contention_detected in default_fns
     assert event_fanout_incomplete in default_fns
     assert rule_poison_pill_subscriber in default_fns
-    assert financial_drift in default_fns
+    assert financial_drift_detected in default_fns
     # New stall/zombie rules also default-on
     assert rule_service_stalled in default_fns
     assert rule_heartbeat_stale in default_fns
@@ -99,6 +121,11 @@ def test_default_anomaly_rules_includes_all_critical_rules():
 def test_disabled_anomaly_rules_is_empty():
     """DISABLED_ANOMALY_RULES must be empty — no rule should be silently disabled."""
     assert DISABLED_ANOMALY_RULES == []
+
+
+def test_financial_drift_detected_alias_matches_primary_rule():
+    ctx = {"financials": {"ledger_balance": 100.0, "venue_balance": 97.0, "drift_threshold": 0.1}}
+    assert financial_drift_detected(ctx, {}) == financial_drift(ctx, {})
 
 
 def test_rule_service_stalled_fires_on_persistent_not_ready():

@@ -221,6 +221,7 @@ class _DbDiagnosticsStub:
         return [
             {"order_id": "o-submitted-missing", "status": "SUBMITTED"},
             {"order_id": "o-reconciled", "status": "SUBMITTED"},
+            {"order_id": "o-finalized-missing", "status": "COMPLETED"},
         ]
 
     def get_recent_audit_events_for_diagnostics(self, limit=300):
@@ -235,11 +236,23 @@ class _TableManagerStub:
 
 class _RiskDeskStub:
     bankroll_current = 321.0
+    exchange_balance = 319.5
+    local_exposure = 12.5
+    remote_exposure = 11.9
 
 
 class _RuntimeControllerStub:
     table_manager = _TableManagerStub()
     risk_desk = _RiskDeskStub()
+
+
+class _RiskDeskBankrollOnlyStub:
+    bankroll_current = 222.0
+
+
+class _RuntimeControllerBankrollOnlyStub:
+    table_manager = _TableManagerStub()
+    risk_desk = _RiskDeskBankrollOnlyStub()
 
 
 def test_collect_correlation_context_from_event_bus():
@@ -332,14 +345,27 @@ def test_collect_reviewer_context_emits_canonical_blocks():
     ctx = probe.collect_reviewer_context()
 
     assert ctx["risk"]["expected_exposure"] == 12.5
-    assert ctx["risk"]["actual_exposure"] == 12.5
+    assert ctx["risk"]["actual_exposure"] == 11.9
+    assert ctx["risk"]["local_exposure"] == 12.5
+    assert ctx["risk"]["remote_exposure"] == 11.9
     assert ctx["db"]["db_writer_backlog"] == 7
     assert ctx["db"]["db_writer_failed"] == 3
     assert ctx["db"]["db_writer_dropped"] == 1
     assert ctx["financials"]["ledger_balance"] == 321.0
-    assert ctx["financials"]["venue_balance"] == 321.0
+    assert ctx["financials"]["venue_balance"] == 319.5
     assert ctx["event_bus"]["expected_fanout"] == 41
     assert ctx["event_bus"]["delivered_fanout"] == 39
-    assert len(ctx["recent_orders"]) == 2
+    assert len(ctx["recent_orders"]) == 3
     assert len(ctx["recent_audit"]) == 1
     assert ctx["reconcile_chain"]["missing_count"] == 1
+    assert ctx["reconcile_chain"]["finalized_missing_count"] == 1
+
+
+def test_collect_reviewer_context_keeps_bankroll_only_financials_balanced():
+    probe = RuntimeProbe(
+        db=_DbDiagnosticsStub(),
+        runtime_controller=_RuntimeControllerBankrollOnlyStub(),
+    )
+    ctx = probe.collect_reviewer_context()
+    assert ctx["financials"]["ledger_balance"] == 222.0
+    assert ctx["financials"]["venue_balance"] == 222.0

@@ -129,6 +129,27 @@ def test_rule_submit_reconcile_chain_break_prefers_canonical_block():
     assert finding["details"]["source"] == "canonical_reconcile_chain"
 
 
+def test_rule_submit_reconcile_chain_break_uses_finalize_stage_from_canonical_block():
+    ctx = {
+        "reconcile_chain": {
+            "missing_count": 0,
+            "submitted_count": 2,
+            "reconciled_count": 2,
+            "finalized_missing_count": 1,
+            "sample_finalized_missing_ids": ["o-final-1"],
+        },
+        "recent_orders": [],
+        "recent_audit": [],
+    }
+    finding = rule_submit_reconcile_chain_break(ctx, {})
+    assert finding is not None
+    assert finding["code"] == "SUBMIT_RECONCILE_CHAIN_BREAK"
+    assert finding["details"]["broken_count"] == 0
+    assert finding["details"]["finalized_broken_count"] == 1
+    assert finding["details"]["sample_finalized_ids"] == ["o-final-1"]
+    assert finding["details"]["source"] == "canonical_reconcile_chain"
+
+
 def test_rule_submit_reconcile_chain_break_falls_back_when_canonical_is_empty():
     ctx = {
         # Empty canonical block is allowed in default runtime; rule must still

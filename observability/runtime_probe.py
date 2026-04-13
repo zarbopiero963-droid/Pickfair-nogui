@@ -250,6 +250,8 @@ class RuntimeProbe:
         risk: Dict[str, Any] = {
             "expected_exposure": 0.0,
             "actual_exposure": 0.0,
+            "local_exposure": 0.0,
+            "remote_exposure": 0.0,
             "exposure_tolerance": 0.01,
             "source": "default_zero",
         }
@@ -261,9 +263,26 @@ class RuntimeProbe:
                 exposure = float(total_exposure_fn() or 0.0)
                 risk["expected_exposure"] = exposure
                 risk["actual_exposure"] = exposure
+                risk["local_exposure"] = exposure
+                risk["remote_exposure"] = exposure
                 risk["source"] = "table_manager.total_exposure"
             except Exception:
                 pass
+        risk_desk = getattr(runtime, "risk_desk", None) if runtime is not None else None
+        if risk_desk is not None:
+            for attr, key in (
+                ("local_exposure", "local_exposure"),
+                ("remote_exposure", "remote_exposure"),
+                ("exchange_exposure", "remote_exposure"),
+            ):
+                if hasattr(risk_desk, attr):
+                    try:
+                        risk[key] = float(getattr(risk_desk, attr) or 0.0)
+                    except Exception:
+                        pass
+            # Keep expected/actual aligned with stronger local/remote fields.
+            risk["expected_exposure"] = float(risk.get("local_exposure", risk["expected_exposure"]) or 0.0)
+            risk["actual_exposure"] = float(risk.get("remote_exposure", risk["actual_exposure"]) or 0.0)
         cfg = getattr(runtime, "config", None) if runtime is not None else None
         if cfg is not None and hasattr(cfg, "exposure_tolerance"):
             try:
@@ -278,15 +297,34 @@ class RuntimeProbe:
             "drift_threshold": 0.01,
             "source": "default_zero",
         }
-        risk_desk = getattr(runtime, "risk_desk", None) if runtime is not None else None
         if risk_desk is not None:
-            try:
-                bankroll = float(getattr(risk_desk, "bankroll_current", 0.0) or 0.0)
-                financials["ledger_balance"] = bankroll
-                financials["venue_balance"] = bankroll
-                financials["source"] = "risk_desk.bankroll_current"
-            except Exception:
-                pass
+            loaded_bankroll_current = False
+            loaded_explicit_venue = False
+            for attr, key in (
+                ("bankroll_current", "ledger_balance"),
+                ("ledger_balance", "ledger_balance"),
+                ("venue_balance", "venue_balance"),
+                ("exchange_balance", "venue_balance"),
+            ):
+                if hasattr(risk_desk, attr):
+                    try:
+                        financials[key] = float(getattr(risk_desk, attr) or 0.0)
+                        if attr == "bankroll_current":
+                            loaded_bankroll_current = True
+                        if attr in {"venue_balance", "exchange_balance"}:
+                            loaded_explicit_venue = True
+                    except Exception:
+                        pass
+            # Preserve the pre-hardening default-path behavior: when runtime RiskDesk
+            # exposes only bankroll_current, use it for both ledger and venue so we
+            # do not emit persistent false-positive FINANCIAL_DRIFT anomalies.
+            if loaded_bankroll_current and not loaded_explicit_venue:
+                financials["venue_balance"] = financials["ledger_balance"]
+            if (
+                financials["ledger_balance"] != 0.0
+                or financials["venue_balance"] != 0.0
+            ):
+                financials["source"] = "risk_desk"
         context["financials"] = financials
 
         db_block: Dict[str, Any] = {
@@ -354,6 +392,31 @@ class RuntimeProbe:
             "missing_count": len(missing),
             "sample_missing_ids": missing[:5],
         }
+        finalized_ids = {
+            str(o.get("order_id") or o.get("id") or "")
+            for o in recent_orders
+            if isinstance(o, dict) and str(o.get("status", "")).upper() in {"COMPLETED", "FAILED", "CANCELLED"}
+        }
+        finalized_ids.discard("")
+        finalized_audit_ids = {
+            str(a.get("order_id") or a.get("id") or "")
+            for a in recent_audit
+            if isinstance(a, dict)
+            and (
+                "FINAL" in str(a.get("type", "")).upper()
+                or str(a.get("status", "")).upper() in {"COMPLETED", "FAILED", "CANCELLED"}
+            )
+        }
+        finalized_audit_ids.discard("")
+        missing_finalized = sorted(list(finalized_ids - finalized_audit_ids))
+        context["reconcile_chain"].update(
+            {
+                "finalized_count": len(finalized_ids),
+                "finalized_audit_count": len(finalized_audit_ids),
+                "finalized_missing_count": len(missing_finalized),
+                "sample_finalized_missing_ids": missing_finalized[:5],
+            }
+        )
 
         event_bus = dict((context.get("event_bus") or {}))
         corr_ctx = self.collect_correlation_context()

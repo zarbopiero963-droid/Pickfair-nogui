@@ -364,8 +364,8 @@ def ghost_order_detected(context: Context, state: State) -> Anomaly | None:
 def exposure_mismatch(context: Context, state: State) -> Anomaly | None:
     del state
     risk = context.get("risk") or {}
-    expected = float(risk.get("expected_exposure", 0.0) or 0.0)
-    actual = float(risk.get("actual_exposure", 0.0) or 0.0)
+    expected = float(risk.get("expected_exposure", risk.get("local_exposure", 0.0)) or 0.0)
+    actual = float(risk.get("actual_exposure", risk.get("remote_exposure", 0.0)) or 0.0)
     tolerance = float(risk.get("exposure_tolerance", 0.01) or 0.01)
     diff = abs(expected - actual)
     if diff > tolerance:
@@ -386,12 +386,15 @@ def exposure_mismatch(context: Context, state: State) -> Anomaly | None:
 def db_contention_detected(context: Context, state: State) -> Anomaly | None:
     del state
     db = context.get("db") or {}
+    db_write_queue = context.get("db_write_queue") or {}
     lock_wait_ms = float(db.get("lock_wait_ms", 0.0) or 0.0)
     contention_events = int(db.get("contention_events", 0) or 0)
     threshold_ms = float(db.get("lock_wait_threshold_ms", 200.0) or 200.0)
-    writer_backlog = int(db.get("db_writer_backlog", 0) or 0)
-    writer_failed = int(db.get("db_writer_failed", 0) or 0)
-    writer_dropped = int(db.get("db_writer_dropped", 0) or 0)
+    writer_backlog = int(
+        db.get("db_writer_backlog", db_write_queue.get("queue_depth", 0)) or 0
+    )
+    writer_failed = int(db.get("db_writer_failed", db_write_queue.get("failed", 0)) or 0)
+    writer_dropped = int(db.get("db_writer_dropped", db_write_queue.get("dropped", 0)) or 0)
     backlog_threshold = int(db.get("db_writer_backlog_threshold", 50) or 50)
 
     if (
@@ -497,6 +500,11 @@ def financial_drift(context: Context, state: State) -> Anomaly | None:
     return None
 
 
+def financial_drift_detected(context: Context, state: State) -> Anomaly | None:
+    """Backward-compatible alias used by watchdog fallback wiring."""
+    return financial_drift(context, state)
+
+
 DEFAULT_ANOMALY_RULES = [
     rule_ambiguous_spike,
     rule_duplicate_block_spike,
@@ -515,7 +523,7 @@ DEFAULT_ANOMALY_RULES = [
     db_contention_detected,
     rule_poison_pill_subscriber,
     event_fanout_incomplete,
-    financial_drift,
+    financial_drift_detected,
 ]
 
 DISABLED_ANOMALY_RULES: list = []
