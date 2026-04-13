@@ -150,4 +150,5 @@ def test_partial_failure_preserves_operator_facing_evidence() -> None:
 
     assert "AMBIGUOUS_SPIKE" in anomaly_codes
     assert "FORENSIC_GAP" in anomaly_codes
+    assert "SUSPICIOUS_DUPLICATE_PATTERN" not in anomaly_codes
     assert "DIAGNOSTICS_BUNDLE_EVIDENCE_GAP" in finding_codes

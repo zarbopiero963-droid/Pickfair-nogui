@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any, Dict
 
 
@@ -39,14 +40,113 @@ def rule_duplicate_block_spike(context: Context, state: State) -> Anomaly | None
     prev = int(state.get("duplicate_total", 0) or 0)
     state["duplicate_total"] = total
     delta = total - prev
-    if delta >= 5:
+    if delta <= 0:
+        return None
+
+    deltas = list(state.get("duplicate_delta_history", []))
+    deltas.append(delta)
+    if len(deltas) > 6:
+        deltas = deltas[-6:]
+    state["duplicate_delta_history"] = deltas
+
+    duplicate_signal = _collect_duplicate_signal(context)
+    baseline = (sum(deltas[:-1]) / len(deltas[:-1])) if len(deltas) > 1 else 0.0
+    strong_vs_baseline = len(deltas) >= 4 and delta >= 3 and delta >= max(3, int(baseline * 2))
+    contextual_burst = (
+        delta >= 3
+        and (
+            duplicate_signal["blocked_submit_streak"] >= 3
+            or duplicate_signal["same_key_blocked_streak"] >= 2
+            or duplicate_signal["recent_duplicate_blocked"] >= 4
+        )
+    )
+    if delta >= 5 or strong_vs_baseline or contextual_burst:
+        trigger = "flat_threshold" if delta >= 5 else ("baseline_deviation" if strong_vs_baseline else "contextual_burst")
         return _anomaly(
             "DUPLICATE_BLOCK_SPIKE",
             "warning",
             "Duplicate blocking spiked",
-            {"delta": delta, "total": total},
+            {
+                "delta": delta,
+                "total": total,
+                "trigger": trigger,
+                "baseline_avg_delta": round(baseline, 2),
+                "blocked_submit_streak": duplicate_signal["blocked_submit_streak"],
+                "same_key_blocked_streak": duplicate_signal["same_key_blocked_streak"],
+                "recent_duplicate_blocked": duplicate_signal["recent_duplicate_blocked"],
+            },
         )
     return None
+
+
+def _collect_duplicate_signal(context: Context) -> Dict[str, int]:
+    runtime_state = context.get("runtime_state") or {}
+    duplicate_runtime = runtime_state.get("duplicate_guard") or {}
+    recent_orders = context.get("recent_orders") or []
+
+    blocked_orders = [
+        order for order in recent_orders
+        if str(order.get("status", "")).upper() == "DUPLICATE_BLOCKED"
+    ]
+    blocked_submit_streak = int(duplicate_runtime.get("blocked_submit_streak", 0) or 0)
+    same_key_blocked_streak = int(duplicate_runtime.get("same_key_blocked_streak", 0) or 0)
+
+    # recent_orders is provided newest-first (created_at DESC), so compute
+    # the active blocked streak from the list head rather than reversing.
+    tail_streak = 0
+    for order in recent_orders:
+        if str(order.get("status", "")).upper() != "DUPLICATE_BLOCKED":
+            break
+        tail_streak += 1
+    blocked_submit_streak = max(blocked_submit_streak, tail_streak)
+
+    key_counter: Counter[str] = Counter()
+    for order in blocked_orders:
+        key = str(order.get("event_key") or order.get("customer_ref") or "")
+        if key:
+            key_counter[key] += 1
+
+    if key_counter:
+        same_key_blocked_streak = max(same_key_blocked_streak, max(key_counter.values()))
+
+    return {
+        "blocked_submit_streak": blocked_submit_streak,
+        "same_key_blocked_streak": same_key_blocked_streak,
+        "recent_duplicate_blocked": len(blocked_orders),
+    }
+
+
+def rule_suspicious_duplicate_pattern(context: Context, state: State) -> Anomaly | None:
+    duplicate_signal = _collect_duplicate_signal(context)
+    repeated_ticks = int(state.get("duplicate_pattern_ticks", 0) or 0)
+
+    evidence: list[str] = []
+    if duplicate_signal["blocked_submit_streak"] >= 3:
+        evidence.append("repeated_blocked_submits")
+    if duplicate_signal["same_key_blocked_streak"] >= 3:
+        evidence.append("repeated_same_key_blocks")
+    if duplicate_signal["recent_duplicate_blocked"] >= 4:
+        evidence.append("duplicate_burst_shape")
+
+    suspicious = len(evidence) >= 2
+    repeated_ticks = repeated_ticks + 1 if suspicious else 0
+    state["duplicate_pattern_ticks"] = repeated_ticks
+
+    if not suspicious:
+        return None
+
+    return _anomaly(
+        "SUSPICIOUS_DUPLICATE_PATTERN",
+        "warning",
+        "Suspicious duplicate behavior observed with repeated runtime evidence",
+        {
+            "evidence": evidence,
+            "blocked_submit_streak": duplicate_signal["blocked_submit_streak"],
+            "same_key_blocked_streak": duplicate_signal["same_key_blocked_streak"],
+            "recent_duplicate_blocked": duplicate_signal["recent_duplicate_blocked"],
+            "consecutive_ticks": repeated_ticks,
+        },
+    )
 
 
 def rule_memory_growth_trend(context: Context, state: State) -> Anomaly | None:
@@ -386,6 +486,7 @@ def financial_drift(context: Context, state: State) -> Anomaly | None:
 DEFAULT_ANOMALY_RULES = [
     rule_ambiguous_spike,
     rule_duplicate_block_spike,
+    rule_suspicious_duplicate_pattern,
     rule_memory_growth_trend,
     rule_stuck_inflight,
     rule_alert_pipeline_disabled,

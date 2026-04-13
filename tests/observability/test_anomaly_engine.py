@@ -64,3 +64,21 @@ def test_anomaly_engine_does_not_mark_progression_without_suspected_evidence():
     detected = anomalies[0]
     assert detected["code"] == "GHOST_ORDER_DETECTED"
     assert "progressed_from" not in detected.get("details", {})
+
+
+def test_anomaly_engine_emits_structured_suspicious_duplicate_pattern():
+    engine = AnomalyEngine(DEFAULT_ANOMALY_RULES)
+    context = {
+        "metrics": {"counters": {"duplicate_blocked_total": 3}},
+        "runtime_state": {"duplicate_guard": {"blocked_submit_streak": 4}},
+        "recent_orders": [
+            {"status": "DUPLICATE_BLOCKED", "event_key": "evt-a"},
+            {"status": "DUPLICATE_BLOCKED", "event_key": "evt-a"},
+            {"status": "DUPLICATE_BLOCKED", "event_key": "evt-a"},
+            {"status": "DUPLICATE_BLOCKED", "event_key": "evt-b"},
+        ],
+    }
+    anomalies = engine.evaluate(context)
+    suspicious = next(a for a in anomalies if a["code"] == "SUSPICIOUS_DUPLICATE_PATTERN")
+    assert suspicious["severity"] == "warning"
+    assert isinstance(suspicious["details"]["evidence"], list)
