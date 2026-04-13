@@ -14,6 +14,11 @@ from core.trading_engine import (
     STATUS_SUBMITTED,
     TradingEngine,
 )
+from observability.alerts_manager import AlertsManager
+from observability.health_registry import HealthRegistry
+from observability.incidents_manager import IncidentsManager
+from observability.metrics_registry import MetricsRegistry
+from observability.watchdog_service import WatchdogService
 from tests.helpers.fake_exchange import FakeExchange
 
 
@@ -336,3 +341,87 @@ def test_liquidity_is_step_driven_not_optimistically_instant() -> None:
     progressed = exchange.get_current_orders(customer_ref="STEP-LIQ-2")[0]
     assert progressed["status"] == "MATCHED"
     assert progressed["matched_size"] == pytest.approx(5.0)
+
+
+@pytest.mark.integration
+def test_timeout_ambiguity_reaches_reviewer_with_structured_alerts_and_incidents() -> None:
+    exchange = FakeExchange(duplicate_mode="single_exposure")
+    exchange.force_timeout_on_next_submit()
+    engine, db, _bus, _rec = _make_engine(exchange=exchange, client=FakeClient(exchange=exchange))
+
+    result = engine.submit_quick_bet(_payload("TIMEOUT-REVIEW-1"))
+    assert result["status"] == STATUS_AMBIGUOUS
+    remote = exchange.get_current_orders(customer_ref="TIMEOUT-REVIEW-1")
+    assert len(remote) == 1
+
+    class _SnapshotStub:
+        def collect_and_store(self) -> None:
+            return None
+
+    class _ReviewerProbe:
+        def collect_health(self) -> Dict[str, Any]:
+            return {"runtime": {"status": "READY", "reason": "ok", "details": {}}}
+
+        def collect_metrics(self) -> Dict[str, float]:
+            return {"inflight_count": 1.0, "last_heartbeat_age_sec": 5.0}
+
+        def collect_runtime_state(self) -> Dict[str, Any]:
+            return {
+                "recent_orders": [
+                    {
+                        "order_id": result["order_id"],
+                        "status": STATUS_AMBIGUOUS,
+                        "remote_status": "MATCHED",
+                    }
+                ]
+            }
+
+        def collect_correlation_context(self) -> Dict[str, Any]:
+            return {
+                "recent_orders": [
+                    {
+                        "order_id": result["order_id"],
+                        "status": STATUS_AMBIGUOUS,
+                        "remote_status": "MATCHED",
+                    }
+                ],
+                "event_bus": {
+                    "queue_depth": 3,
+                    "running": False,
+                    "worker_threads_alive": 0,
+                }
+            }
+
+    alerts = AlertsManager()
+    incidents = IncidentsManager()
+    watchdog = WatchdogService(
+        probe=_ReviewerProbe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=incidents,
+        snapshot_service=_SnapshotStub(),
+        interval_sec=60.0,
+    )
+
+    watchdog._tick()
+
+    active_alerts = [a for a in alerts.active_alerts() if a.get("source") == "correlation_reviewer"]
+    codes = {a["code"] for a in active_alerts}
+    assert "LOCAL_VS_REMOTE_MISMATCH" in codes
+    assert "QUEUE_DEPTH_DISPATCHER_CONTRADICTION" in codes
+
+    mismatch_alert = next(a for a in active_alerts if a["code"] == "LOCAL_VS_REMOTE_MISMATCH")
+    assert mismatch_alert["severity"] == "critical"
+    assert mismatch_alert["details"]["mismatched_count"] == 1
+    sample = mismatch_alert["details"]["sample"][0]
+    assert sample["local"] == STATUS_AMBIGUOUS
+    assert sample["remote"] == "MATCHED"
+
+    incident_codes = {
+        item["code"]
+        for item in incidents.snapshot()["incidents"]
+        if item.get("status") == "OPEN"
+    }
+    assert "LOCAL_VS_REMOTE_MISMATCH" in incident_codes
+    assert "QUEUE_DEPTH_DISPATCHER_CONTRADICTION" in incident_codes
