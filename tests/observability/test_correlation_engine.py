@@ -1,4 +1,14 @@
-from observability.correlation_engine import correlate_events
+from observability.correlation_engine import (
+    CorrelationEvaluator,
+    DEFAULT_CORRELATION_RULES,
+    correlate_events,
+    evaluate_correlation_rules,
+    rule_db_vs_memory,
+    rule_event_side_effect_gap,
+    rule_local_vs_remote,
+    rule_queue_depth_liveness,
+    rule_submit_reconcile_chain_break,
+)
 
 
 def test_correlate_events_groups_by_shared_identity_within_window():
@@ -40,3 +50,123 @@ def test_correlate_events_ignores_invalid_timestamps_and_does_not_mutate_inputs(
     assert len(correlations) == 1
     assert correlations[0]["event_ids"] == ["b", "c"]
     assert events == snapshot
+
+
+# ---------------------------------------------------------------------------
+# Operational correlation rule tests
+# ---------------------------------------------------------------------------
+
+def test_default_correlation_rules_contains_all_five():
+    assert len(DEFAULT_CORRELATION_RULES) == 5
+    assert rule_local_vs_remote in DEFAULT_CORRELATION_RULES
+    assert rule_db_vs_memory in DEFAULT_CORRELATION_RULES
+    assert rule_submit_reconcile_chain_break in DEFAULT_CORRELATION_RULES
+    assert rule_event_side_effect_gap in DEFAULT_CORRELATION_RULES
+    assert rule_queue_depth_liveness in DEFAULT_CORRELATION_RULES
+
+
+def test_rule_local_vs_remote_fires_on_mismatch():
+    ctx = {"recent_orders": [
+        {"order_id": "o1", "status": "OPEN", "remote_status": "CANCELLED"},
+    ]}
+    finding = rule_local_vs_remote(ctx, {})
+    assert finding is not None
+    assert finding["code"] == "LOCAL_VS_REMOTE_MISMATCH"
+    assert finding["severity"] == "critical"
+
+
+def test_rule_local_vs_remote_passes_on_match():
+    ctx = {"recent_orders": [
+        {"order_id": "o1", "status": "OPEN", "remote_status": "OPEN"},
+    ]}
+    assert rule_local_vs_remote(ctx, {}) is None
+
+
+def test_rule_db_vs_memory_fires_on_delta():
+    ctx = {"metrics": {"gauges": {"db_inflight_count": 5, "inflight_count": 3}}}
+    finding = rule_db_vs_memory(ctx, {})
+    assert finding is not None
+    assert finding["code"] == "DB_VS_MEMORY_MISMATCH"
+
+
+def test_rule_db_vs_memory_passes_when_equal():
+    ctx = {"metrics": {"gauges": {"db_inflight_count": 3, "inflight_count": 3}}}
+    assert rule_db_vs_memory(ctx, {}) is None
+
+
+def test_rule_submit_reconcile_chain_break_fires_on_unreconciled():
+    ctx = {
+        "recent_orders": [{"order_id": "o1", "status": "SUBMITTED"}],
+        "recent_audit": [],
+    }
+    finding = rule_submit_reconcile_chain_break(ctx, {})
+    assert finding is not None
+    assert finding["code"] == "SUBMIT_RECONCILE_CHAIN_BREAK"
+
+
+def test_rule_submit_reconcile_chain_break_passes_when_reconciled():
+    ctx = {
+        "recent_orders": [{"order_id": "o1", "status": "SUBMITTED"}],
+        "recent_audit": [{"order_id": "o1"}],
+    }
+    assert rule_submit_reconcile_chain_break(ctx, {}) is None
+
+
+def test_rule_event_side_effect_gap_fires_on_gap():
+    state = {"prev_published": 0, "prev_side_effects": 0}
+    ctx = {"event_bus": {"events_published": 10, "side_effects_confirmed": 5}}
+    finding = rule_event_side_effect_gap(ctx, state)
+    assert finding is not None
+    assert finding["code"] == "EVENT_SIDE_EFFECT_GAP"
+    assert finding["details"]["gap"] == 5
+
+
+def test_rule_event_side_effect_gap_passes_when_balanced():
+    state = {"prev_published": 0, "prev_side_effects": 0}
+    ctx = {"event_bus": {"events_published": 10, "side_effects_confirmed": 10}}
+    assert rule_event_side_effect_gap(ctx, state) is None
+
+
+def test_rule_queue_depth_liveness_fires_on_stale_heartbeat():
+    ctx = {"metrics": {"gauges": {"queue_depth": 5.0, "last_heartbeat_age_sec": 90.0}}}
+    finding = rule_queue_depth_liveness(ctx, {})
+    assert finding is not None
+    assert finding["code"] == "QUEUE_DEPTH_LIVENESS_CONTRADICTION"
+    assert finding["severity"] == "critical"
+
+
+def test_rule_queue_depth_liveness_passes_on_fresh_heartbeat():
+    ctx = {"metrics": {"gauges": {"queue_depth": 5.0, "last_heartbeat_age_sec": 10.0}}}
+    assert rule_queue_depth_liveness(ctx, {}) is None
+
+
+def test_correlation_evaluator_stateful_across_calls():
+    """CorrelationEvaluator preserves per-rule state across evaluate() calls."""
+    evaluator = CorrelationEvaluator()
+
+    ctx1 = {"event_bus": {"events_published": 10, "side_effects_confirmed": 5}}
+    evaluator.evaluate(ctx1)
+
+    ctx2 = {"event_bus": {"events_published": 10, "side_effects_confirmed": 5}}
+    findings2 = evaluator.evaluate(ctx2)
+    # No delta on second call → no gap finding
+    gap_findings = [f for f in findings2 if f["code"] == "EVENT_SIDE_EFFECT_GAP"]
+    assert gap_findings == []
+
+
+def test_evaluate_correlation_rules_returns_findings():
+    ctx = {
+        "recent_orders": [{"order_id": "o1", "status": "OPEN", "remote_status": "CANCELLED"}],
+        "metrics": {"gauges": {}},
+        "event_bus": {},
+        "recent_audit": [],
+    }
+    findings = evaluate_correlation_rules(ctx)
+    codes = {f["code"] for f in findings}
+    assert "LOCAL_VS_REMOTE_MISMATCH" in codes
+
+
+def test_correlation_evaluator_no_crash_on_empty_context():
+    evaluator = CorrelationEvaluator()
+    findings = evaluator.evaluate({})
+    assert isinstance(findings, list)

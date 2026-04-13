@@ -7,8 +7,10 @@ from typing import Any
 from .anomaly_engine import AnomalyEngine
 from . import anomaly_rules
 from .anomaly_rules import DEFAULT_ANOMALY_RULES
+from .correlation_engine import CorrelationEvaluator, evaluate_correlation_rules
 from .forensics_engine import ForensicsEngine
 from .forensics_rules import DEFAULT_FORENSICS_RULES
+from .invariant_guard import evaluate_invariants, DEFAULT_INVARIANT_CHECKS
 from .sanitizers import sanitize_value
 
 logger = logging.getLogger(__name__)
@@ -34,6 +36,7 @@ class WatchdogService:
         anomaly_alert_service: Any = None,
         anomaly_escalation_hook: Any = None,
         interval_sec: float = 5.0,
+        invariant_checks: Any = None,
     ) -> None:
         self.probe = probe
         self.health_registry = health_registry
@@ -51,11 +54,16 @@ class WatchdogService:
         self.anomaly_alert_service = anomaly_alert_service
         self.anomaly_escalation_hook = anomaly_escalation_hook
         self.interval_sec = float(interval_sec)
+        self._invariant_checks = invariant_checks
 
         self.last_anomalies: list[dict[str, Any]] = []
         self.escalation_requested = False
         self.last_escalation_event: dict[str, Any] | None = None
         self._managed_anomaly_alert_codes: set[str] = set()
+        self._managed_invariant_alert_codes: set[str] = set()
+        self._managed_correlation_alert_codes: set[str] = set()
+        self._managed_forensics_alert_codes: set[str] = set()
+        self._correlation_evaluator = CorrelationEvaluator()
 
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -104,6 +112,9 @@ class WatchdogService:
             self.metrics_registry.set_gauge(name, value)
 
         self._evaluate_alerts()
+        self._evaluate_invariants()
+        self._evaluate_correlations()
+        self._evaluate_forensics()
         if self._is_anomaly_enabled():
             self._run_anomaly_hook()
         else:
@@ -215,10 +226,106 @@ class WatchdogService:
         return context
 
     def _evaluate_invariants(self) -> None:
-        self._evaluate_forensics()
+        # Build state from health/metrics/runtime_state
+        state: dict[str, Any] = {}
+        health = self.health_registry.snapshot()
+        metrics = self.metrics_registry.snapshot()
+        gauges = metrics.get("gauges", {}) if isinstance(metrics, dict) else {}
+        state["health"] = health
+        state["metrics"] = gauges
+        state["runtime"] = {"status": health.get("overall_status", "NOT_READY")}
+        state["inflight_count"] = float(gauges.get("inflight_count", 0.0))
+
+        # Collect runtime state (includes recent_orders if available)
+        collector = getattr(self.probe, "collect_runtime_state", None)
+        if callable(collector):
+            try:
+                runtime_state = collector() or {}
+                state.update(runtime_state)
+            except Exception:
+                logger.exception("collect_runtime_state failed during invariant review")
+
+        violations = evaluate_invariants(state, enabled=True, checks=self._invariant_checks)
+        current_codes: set[str] = set()
+
+        for violation in violations:
+            code = violation.code
+            current_codes.add(code)
+            # Severity: critical for regression/inconsistency codes, else warning
+            lower_code = code.lower()
+            if "regression" in lower_code or "inconsistent" in lower_code:
+                severity = "critical"
+            else:
+                severity = "warning"
+            self.alerts_manager.upsert_alert(
+                code,
+                severity,
+                violation.message,
+                source="invariant_reviewer",
+                details={"violation_code": code},
+            )
+            if severity == "critical":
+                self.incidents_manager.open_incident(code, code, severity)
+
+        # Resolve stale invariant alerts (close incidents too)
+        active_alerts: list[dict[str, Any]] = []
+        active_getter = getattr(self.alerts_manager, "active_alerts", None)
+        if callable(active_getter):
+            try:
+                active_alerts = active_getter() or []
+            except Exception:
+                logger.exception("active_alerts failed during invariant resolution")
+        for item in active_alerts:
+            if str(item.get("source", "")) != "invariant_reviewer":
+                continue
+            code = str(item.get("code", "") or "")
+            if code and code not in current_codes:
+                self.alerts_manager.resolve_alert(code)
+                self.incidents_manager.close_incident(code)
+
+        self._managed_invariant_alert_codes = current_codes
 
     def _evaluate_correlations(self) -> None:
-        self._evaluate_forensics()
+        context = self._build_anomaly_context()
+
+        findings = self._correlation_evaluator.evaluate(context)
+        current_codes: set[str] = set()
+
+        for finding in findings:
+            code = str(finding.get("code", "") or "")
+            if not code:
+                continue
+            current_codes.add(code)
+            severity = str(finding.get("severity", "warning") or "warning").lower()
+            message = str(finding.get("message", code) or code)
+            details = finding.get("details") or {}
+            self.alerts_manager.upsert_alert(
+                code,
+                severity,
+                message,
+                source="correlation_reviewer",
+                details=details,
+            )
+            if severity in {"critical", "error"}:
+                self.incidents_manager.open_incident(code, code, severity, details=details)
+
+        # Resolve stale correlation alerts (close incidents too)
+        active_alerts: list[dict[str, Any]] = []
+        active_getter = getattr(self.alerts_manager, "active_alerts", None)
+        if callable(active_getter):
+            try:
+                active_alerts = active_getter() or []
+            except Exception:
+                logger.exception("active_alerts failed during correlation resolution")
+        for item in active_alerts:
+            if str(item.get("source", "")) != "correlation_reviewer":
+                continue
+            code = str(item.get("code", "") or "")
+            if code and code not in current_codes:
+                self.alerts_manager.resolve_alert(code)
+                self.incidents_manager.close_incident(code)
+
+        self._managed_correlation_alert_codes = current_codes
 
     def _evaluate_alerts(self) -> None:
         health = self.health_registry.snapshot()
@@ -419,3 +526,4 @@ class WatchdogService:
             code = str(item.get("code", "") or "")
             if code and code not in current_codes:
                 self.alerts_manager.resolve_alert(code)
+                self.incidents_manager.close_incident(code)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 
 DEFAULT_MATCH_FIELDS: Tuple[str, ...] = (
@@ -99,3 +99,120 @@ def correlate_events(
 
     correlations.sort(key=lambda item: (item["start_ts"], item["cluster_id"]))
     return correlations
+
+
+# ---------------------------------------------------------------------------
+# Operational correlation rules
+# ---------------------------------------------------------------------------
+
+CorrelationFinding = Dict[str, Any]
+CorrelationContext = Dict[str, Any]
+CorrelationState = Dict[str, Any]
+
+
+def _correlation_finding(code: str, severity: str, message: str, details: Dict[str, Any]) -> CorrelationFinding:
+    return {"code": code, "severity": severity, "message": message, "details": details}
+
+
+def rule_local_vs_remote(context: CorrelationContext, state: CorrelationState) -> Optional[CorrelationFinding]:
+    orders = context.get("recent_orders") or []
+    mismatched = [
+        {"id": o.get("order_id") or o.get("id"), "local": o.get("status"), "remote": o.get("remote_status")}
+        for o in orders
+        if o.get("status") and o.get("remote_status") and o.get("status") != o.get("remote_status")
+    ]
+    if mismatched:
+        return _correlation_finding("LOCAL_VS_REMOTE_MISMATCH", "critical",
+            "Local order status does not match remote status",
+            {"mismatched_count": len(mismatched), "sample": mismatched[:3]})
+    return None
+
+
+def rule_db_vs_memory(context: CorrelationContext, state: CorrelationState) -> Optional[CorrelationFinding]:
+    metrics = (context.get("metrics") or {})
+    gauges = (metrics.get("gauges") or {}) if isinstance(metrics, dict) else {}
+    db_count = int(gauges.get("db_inflight_count", -1) or -1)
+    mem_count = int(gauges.get("inflight_count", 0) or 0)
+    if db_count >= 0 and abs(db_count - mem_count) > 0:
+        return _correlation_finding("DB_VS_MEMORY_MISMATCH", "warning",
+            "DB inflight count differs from in-memory inflight count",
+            {"db_count": db_count, "memory_count": mem_count, "delta": abs(db_count - mem_count)})
+    return None
+
+
+def rule_submit_reconcile_chain_break(context: CorrelationContext, state: CorrelationState) -> Optional[CorrelationFinding]:
+    orders = context.get("recent_orders") or []
+    # Orders that are SUBMITTED but never appeared in reconciliation
+    submitted_ids = {o.get("order_id") or o.get("id") for o in orders if str(o.get("status", "")).upper() == "SUBMITTED"}
+    reconciled_ids = {r.get("order_id") or r.get("id") for r in (context.get("recent_audit") or [])}
+    broken = [oid for oid in submitted_ids if oid and oid not in reconciled_ids]
+    if len(broken) > 0:
+        return _correlation_finding("SUBMIT_RECONCILE_CHAIN_BREAK", "warning",
+            "Submitted orders missing from reconciliation audit trail",
+            {"broken_count": len(broken), "sample_ids": broken[:3]})
+    return None
+
+
+def rule_event_side_effect_gap(context: CorrelationContext, state: CorrelationState) -> Optional[CorrelationFinding]:
+    event_bus = context.get("event_bus") or {}
+    published = int(event_bus.get("events_published", 0) or 0)
+    side_effects = int(event_bus.get("side_effects_confirmed", 0) or 0)
+    prev_pub = int(state.get("prev_published", 0) or 0)
+    prev_fx = int(state.get("prev_side_effects", 0) or 0)
+    state["prev_published"] = published
+    state["prev_side_effects"] = side_effects
+    delta_pub = published - prev_pub
+    delta_fx = side_effects - prev_fx
+    if delta_pub > 0 and delta_fx < delta_pub:
+        return _correlation_finding("EVENT_SIDE_EFFECT_GAP", "warning",
+            "Published events exceed confirmed downstream side effects",
+            {"events_published_delta": delta_pub, "side_effects_delta": delta_fx, "gap": delta_pub - delta_fx})
+    return None
+
+
+def rule_queue_depth_liveness(context: CorrelationContext, state: CorrelationState) -> Optional[CorrelationFinding]:
+    metrics = context.get("metrics") or {}
+    gauges = (metrics.get("gauges") or {}) if isinstance(metrics, dict) else {}
+    queue_depth = float(gauges.get("queue_depth", 0.0) or 0.0)
+    heartbeat_age = float(gauges.get("last_heartbeat_age_sec", 0.0) or 0.0)
+    # Queue has depth but heartbeat is stale → liveness contradiction
+    if queue_depth > 0 and heartbeat_age > 60.0:
+        return _correlation_finding("QUEUE_DEPTH_LIVENESS_CONTRADICTION", "critical",
+            "Queue has pending work but heartbeat is stale — worker may be dead",
+            {"queue_depth": queue_depth, "heartbeat_age_sec": heartbeat_age})
+    return None
+
+
+DEFAULT_CORRELATION_RULES = [
+    rule_local_vs_remote,
+    rule_db_vs_memory,
+    rule_submit_reconcile_chain_break,
+    rule_event_side_effect_gap,
+    rule_queue_depth_liveness,
+]
+
+
+class CorrelationEvaluator:
+    def __init__(self, rules=None):
+        self.rules = list(rules if rules is not None else DEFAULT_CORRELATION_RULES)
+        self.state: Dict[str, Dict[str, Any]] = {}
+
+    def evaluate(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        findings = []
+        for rule in self.rules:
+            rule_name = getattr(rule, "__name__", "rule")
+            rule_state = self.state.setdefault(rule_name, {})
+            try:
+                item = rule(context, rule_state)
+            except Exception:
+                item = None
+            if item:
+                findings.append(item)
+        return findings
+
+
+def evaluate_correlation_rules(context: Dict[str, Any], *, evaluator: "Optional[CorrelationEvaluator]" = None) -> List[Dict[str, Any]]:
+    """Evaluate all default correlation rules against context. Returns list of findings."""
+    if evaluator is not None:
+        return evaluator.evaluate(context)
+    return CorrelationEvaluator().evaluate(context)

@@ -133,7 +133,63 @@ def rule_forensic_gap(context: Context, state: State) -> Anomaly | None:
     return None
 
 
-# New anomaly rules (disabled by default).
+def rule_service_stalled(context: Context, state: State) -> Anomaly | None:
+    health = context.get("health") or {}
+    components = (health.get("components") or {}) if isinstance(health, dict) else {}
+    stalled = [name for name, comp in components.items()
+               if isinstance(comp, dict) and comp.get("status") == "NOT_READY"]
+    prev = list(state.get("stalled_components", []))
+    state["stalled_components"] = stalled
+    # Stalled if same components NOT_READY for 2+ consecutive ticks
+    persistent = [c for c in stalled if c in prev]
+    if persistent:
+        return _anomaly("SERVICE_STALLED", "critical", "Services persistently stalled",
+                        {"stalled_components": persistent, "consecutive_count": len(persistent)})
+    return None
+
+
+def rule_heartbeat_stale(context: Context, state: State) -> Anomaly | None:
+    metrics = context.get("metrics") or {}
+    gauges = (metrics.get("gauges") or {}) if isinstance(metrics, dict) else {}
+    last_hb = float(gauges.get("last_heartbeat_age_sec", 0.0) or 0.0)
+    threshold = 60.0
+    if last_hb > threshold:
+        return _anomaly("HEARTBEAT_STALE", "critical", "Heartbeat is stale",
+                        {"last_heartbeat_age_sec": last_hb, "threshold_sec": threshold})
+    return None
+
+
+def rule_zombie_worker_suspected(context: Context, state: State) -> Anomaly | None:
+    metrics = context.get("metrics") or {}
+    gauges = (metrics.get("gauges") or {}) if isinstance(metrics, dict) else {}
+    # A zombie worker holds a lock but makes no progress
+    inflight = float(gauges.get("inflight_count", 0.0) or 0.0)
+    completed_delta = float(gauges.get("completed_delta", 0.0) or 0.0)
+    ticks = int(state.get("zombie_ticks", 0) or 0)
+    if inflight > 0 and completed_delta == 0:
+        ticks += 1
+    else:
+        ticks = 0
+    state["zombie_ticks"] = ticks
+    if ticks >= 5:
+        return _anomaly("ZOMBIE_WORKER_SUSPECTED", "critical", "Worker may be zombie",
+                        {"inflight_count": inflight, "no_progress_ticks": ticks})
+    return None
+
+
+def rule_queue_depth_liveness_mismatch(context: Context, state: State) -> Anomaly | None:
+    del state
+    metrics = context.get("metrics") or {}
+    gauges = (metrics.get("gauges") or {}) if isinstance(metrics, dict) else {}
+    queue_depth = float(gauges.get("queue_depth", 0.0) or 0.0)
+    worker_alive = bool(gauges.get("worker_alive", True))
+    if queue_depth > 0 and not worker_alive:
+        return _anomaly("QUEUE_DEPTH_LIVENESS_MISMATCH", "critical",
+                        "Queue has depth but no live worker",
+                        {"queue_depth": queue_depth, "worker_alive": worker_alive})
+    return None
+
+
 def ghost_order_detected(context: Context, state: State) -> Anomaly | None:
     del state
     reconcile = (context.get("runtime_state") or {}).get("reconcile") or {}
@@ -241,12 +297,15 @@ DEFAULT_ANOMALY_RULES = [
     rule_stuck_inflight,
     rule_alert_pipeline_disabled,
     rule_forensic_gap,
-]
-
-DISABLED_ANOMALY_RULES = [
+    rule_service_stalled,
+    rule_heartbeat_stale,
+    rule_zombie_worker_suspected,
+    rule_queue_depth_liveness_mismatch,
     ghost_order_detected,
     exposure_mismatch,
     db_contention_detected,
     event_fanout_incomplete,
     financial_drift,
 ]
+
+DISABLED_ANOMALY_RULES: list = []
