@@ -281,6 +281,11 @@ class HeadlessApp:
             except Exception:
                 logger.exception("Impossibile inizializzare TelegramAlertsService")
 
+            # Prefer direct evidence from live runtime objects over heuristic gauges.
+            # async_db_writer is pulled from trading_engine if available; the probe
+            # degrades gracefully when it is None.
+            _async_db_writer = getattr(self.trading_engine, "async_db_writer", None)
+
             self.runtime_probe = RuntimeProbe(
                 db=self.db,
                 trading_engine=self.trading_engine,
@@ -291,6 +296,8 @@ class HeadlessApp:
                 telegram_service=self.telegram_service,
                 settings_service=self.settings_service,
                 telegram_alerts_service=self.telegram_alerts_service,
+                event_bus=self.bus,
+                async_db_writer=_async_db_writer,
             )
             if self.runtime is not None:
                 self.runtime.runtime_probe = self.runtime_probe
@@ -305,14 +312,26 @@ class HeadlessApp:
                 incidents_manager=self.incidents_manager,
             )
 
-            anomaly_enabled = False
+            # Default-on: anomaly reviewer runs unless settings explicitly disable it.
+            # None from settings (not configured) preserves this default.
+            anomaly_enabled = True
             anomaly_alerts_enabled = False
             anomaly_actions_enabled = False
             if self.settings_service is not None:
                 try:
-                    anomaly_enabled = bool(self.settings_service.load_anomaly_enabled())
+                    _ae = self.settings_service.load_anomaly_enabled()
+                    if _ae is not None:
+                        anomaly_enabled = bool(_ae)
+                    else:
+                        logger.info(
+                            "anomaly_enabled not configured in settings; "
+                            "anomaly reviewer running in default-on mode"
+                        )
                 except Exception:
-                    logger.exception("Failed loading anomaly_enabled toggle; fallback False")
+                    logger.warning(
+                        "Failed loading anomaly_enabled toggle; "
+                        "anomaly reviewer running in default-on mode (anomaly_enabled=True)"
+                    )
                 try:
                     anomaly_alerts_enabled = bool(self.settings_service.load_anomaly_alerts_enabled())
                 except Exception:

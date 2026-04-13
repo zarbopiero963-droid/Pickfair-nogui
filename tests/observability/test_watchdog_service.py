@@ -623,3 +623,196 @@ def test_watchdog_correlation_default_path_uses_strong_dispatcher_liveness_evide
     active = alerts.active_alerts()
     codes = {a["code"] for a in active if a.get("source") == "correlation_reviewer"}
     assert "QUEUE_DEPTH_DISPATCHER_CONTRADICTION" in codes
+
+
+# ---------------------------------------------------------------------------
+# Micro-task 1: anomaly reviewer default-on
+# ---------------------------------------------------------------------------
+
+def test_anomaly_reviewer_runs_by_default_with_no_settings_service():
+    """When no settings_service is provided, anomaly_enabled defaults to True
+    and anomaly scans run on every tick without any explicit configuration."""
+    alerts = AlertsManager()
+
+    class _AnomalyProbe(_ProbeStub):
+        def collect_runtime_state(self):
+            # Trigger HEARTBEAT_STALE via gauges
+            return {}
+
+    # Inject a simple engine that always returns one anomaly
+    class _AlwaysOnEngine:
+        def evaluate(self, _ctx):
+            return [{"code": "CANARY_ANOMALY", "severity": "warning",
+                     "description": "canary", "details": {}}]
+
+    watchdog = WatchdogService(
+        probe=_AnomalyProbe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        anomaly_engine=_AlwaysOnEngine(),
+        # No settings_service, no explicit anomaly_enabled — must default to ON
+        interval_sec=60.0,
+    )
+
+    assert watchdog._is_anomaly_enabled() is True, (
+        "anomaly reviewer must be enabled by default when no settings_service is wired"
+    )
+
+    watchdog._run_anomaly_hook()
+    codes = {a.get("code") for a in watchdog.last_anomalies}
+    assert "CANARY_ANOMALY" in codes, (
+        "anomaly rule must fire in default-on mode without any explicit configuration"
+    )
+
+
+def test_anomaly_reviewer_explicit_false_disables_scanning():
+    """An explicit anomaly_enabled=False (e.g., from operator settings) must still
+    disable scanning, but the disabled state must be visible (fail-loud logging).
+    The test verifies that no anomalies are collected when explicitly off."""
+    alerts = AlertsManager()
+
+    class _AlwaysOnEngine:
+        def evaluate(self, _ctx):
+            return [{"code": "CANARY_ANOMALY", "severity": "warning",
+                     "description": "canary", "details": {}}]
+
+    watchdog = WatchdogService(
+        probe=_ProbeStub(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        anomaly_engine=_AlwaysOnEngine(),
+        anomaly_enabled=False,  # explicit disable
+        interval_sec=60.0,
+    )
+
+    # Must report disabled
+    assert watchdog._is_anomaly_enabled() is False
+
+    # Tick must not run anomaly hook
+    watchdog._tick()
+    assert watchdog.last_anomalies == []
+
+
+def test_anomaly_settings_none_keeps_default_on():
+    """If settings_service.load_anomaly_enabled() returns None (not configured),
+    anomaly reviewer keeps the default-on=True — None must not override to False."""
+
+    class _NoneSettingsService:
+        def load_anomaly_enabled(self):
+            return None  # not configured in settings
+
+    class _AlwaysOnEngine:
+        def evaluate(self, _ctx):
+            return [{"code": "CANARY_ANOMALY", "severity": "warning",
+                     "description": "canary", "details": {}}]
+
+    watchdog = WatchdogService(
+        probe=_ProbeStub(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=AlertsManager(),
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        anomaly_engine=_AlwaysOnEngine(),
+        settings_service=_NoneSettingsService(),
+        # anomaly_enabled defaults to True
+        interval_sec=60.0,
+    )
+
+    assert watchdog._is_anomaly_enabled() is True, (
+        "None from settings must not override the default-on=True for anomaly reviewer"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Micro-task 4: incident lifecycle maturity — resolution metadata
+# ---------------------------------------------------------------------------
+
+def test_incident_resolution_metadata_set_on_close():
+    """close_incident must record resolution_reason, resolved_by, and a resolution
+    event in the incident's events list."""
+    incidents = IncidentsManager()
+    incidents.open_incident("TEST_CODE", "Test Incident", "warning")
+
+    incidents.close_incident(
+        "TEST_CODE",
+        reason="finding_cleared",
+        resolved_by="correlation_reviewer",
+    )
+
+    snap = incidents.snapshot()
+    incident = next(i for i in snap["incidents"] if i["code"] == "TEST_CODE")
+    assert incident["status"] == "CLOSED"
+    assert incident["resolution_reason"] == "finding_cleared"
+    assert incident["resolved_by"] == "correlation_reviewer"
+    assert incident["closed_at"] is not None
+
+    # Resolution event must be recorded in the events list
+    assert len(incident["events"]) >= 1
+    resolution_event = incident["events"][-1]
+    assert "closed" in resolution_event["message"].lower() or "resolved" in resolution_event["message"].lower()
+    assert resolution_event["details"]["resolved_by"] == "correlation_reviewer"
+
+
+def test_incident_resolution_defaults_are_safe():
+    """close_incident with no keyword args must use 'resolved' / 'system' defaults."""
+    incidents = IncidentsManager()
+    incidents.open_incident("DEFAULT_CODE", "Default Incident", "warning")
+    incidents.close_incident("DEFAULT_CODE")
+
+    snap = incidents.snapshot()
+    incident = next(i for i in snap["incidents"] if i["code"] == "DEFAULT_CODE")
+    assert incident["status"] == "CLOSED"
+    assert incident["resolution_reason"] == "resolved"
+    assert incident["resolved_by"] == "system"
+
+
+def test_stale_anomaly_incident_resolution_carries_reason():
+    """When an anomaly clears, the incident is closed with reason='anomaly_cleared'
+    and resolved_by='anomaly_reviewer' — proving the reviewer-sourced lifecycle metadata."""
+    alerts = AlertsManager()
+    incidents = IncidentsManager()
+
+    class _CriticalThenClear:
+        def __init__(self):
+            self.step = 0
+
+        def evaluate(self, _ctx):
+            self.step += 1
+            if self.step == 1:
+                return [{"code": "DRIFT_SENTINEL", "severity": "critical",
+                         "description": "drift detected", "details": {}}]
+            return []
+
+    watchdog = WatchdogService(
+        probe=_ProbeStub(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=incidents,
+        snapshot_service=_SnapshotStub(),
+        anomaly_engine=_CriticalThenClear(),
+        anomaly_enabled=True,
+        interval_sec=60.0,
+    )
+
+    # Tick 1: anomaly fires → incident OPEN
+    watchdog._evaluate_anomalies()
+    snap1 = incidents.snapshot()
+    assert any(i["code"] == "DRIFT_SENTINEL" and i["status"] == "OPEN" for i in snap1["incidents"])
+
+    # Tick 2: anomaly cleared → incident CLOSED with resolution metadata
+    watchdog._evaluate_anomalies()
+    snap2 = incidents.snapshot()
+    closed = next(i for i in snap2["incidents"] if i["code"] == "DRIFT_SENTINEL")
+    assert closed["status"] == "CLOSED"
+    assert closed["resolution_reason"] == "anomaly_cleared"
+    assert closed["resolved_by"] == "anomaly_reviewer"
+    # Resolution event must be in the events list
+    assert any("closed" in e["message"].lower() for e in closed["events"])
