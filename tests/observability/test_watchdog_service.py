@@ -366,3 +366,97 @@ def test_forensics_finding_in_default_tick():
     snap = incidents.snapshot()
     open_codes = {i["code"] for i in snap["incidents"] if i["status"] == "OPEN"}
     assert "FAILED_BUT_REMOTE_EXISTS" in open_codes
+
+
+# ---------------------------------------------------------------------------
+# Task: reviewer_invariant_fail_loud
+# ---------------------------------------------------------------------------
+
+def test_invariant_misconfigured_zero_checks_emits_alert():
+    """When invariant_checks=[] (zero checks), watchdog must emit a structured alert
+    so the misconfiguration is visible instead of silently producing no findings."""
+    alerts = AlertsManager()
+
+    watchdog = WatchdogService(
+        probe=_ProbeStub(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        invariant_checks=[],  # explicitly empty → misconfiguration
+        interval_sec=60.0,
+    )
+
+    watchdog._evaluate_invariants()
+
+    active = alerts.active_alerts()
+    codes = {a["code"] for a in active}
+    assert "INVARIANT_CHECKS_MISCONFIGURED" in codes, \
+        "empty invariant_checks must emit INVARIANT_CHECKS_MISCONFIGURED alert"
+
+
+def test_invariant_default_checks_none_does_not_emit_misconfigured_alert():
+    """When invariant_checks=None (use defaults), no misconfigured alert is emitted."""
+    alerts = AlertsManager()
+
+    watchdog = WatchdogService(
+        probe=_ProbeStub(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        invariant_checks=None,  # use defaults (9 checks)
+        interval_sec=60.0,
+    )
+
+    watchdog._evaluate_invariants()
+
+    active = alerts.active_alerts()
+    codes = {a["code"] for a in active if a.get("source") == "invariant_reviewer"}
+    assert "INVARIANT_CHECKS_MISCONFIGURED" not in codes
+
+
+# ---------------------------------------------------------------------------
+# Task: reviewer_forensics_rule_isolation (watchdog integration)
+# ---------------------------------------------------------------------------
+
+def test_watchdog_forensics_bad_rule_does_not_silence_other_findings():
+    """A forensics rule that raises must not prevent other rules from emitting alerts
+    via the watchdog tick. The tick itself must remain operational."""
+    from observability.forensics_engine import ForensicsEngine
+
+    alerts = AlertsManager()
+    incidents = IncidentsManager()
+
+    def _exploding_rule(context, state):
+        raise RuntimeError("forensics rule crashed")
+
+    def _finding_rule(context, state):
+        return {"code": "FORENSIC_SENTINEL", "severity": "critical",
+                "message": "sentinel finding", "details": {}}
+
+    forensics_engine = ForensicsEngine([_exploding_rule, _finding_rule])
+
+    watchdog = WatchdogService(
+        probe=_ProbeStub(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=incidents,
+        snapshot_service=_SnapshotStub(),
+        forensics_engine=forensics_engine,
+        interval_sec=60.0,
+    )
+
+    watchdog._evaluate_forensics()
+
+    active = alerts.active_alerts()
+    codes = {a["code"] for a in active}
+    assert "FORENSIC_SENTINEL" in codes, \
+        "finding_rule must still fire even though exploding_rule raised"
+
+    snap = incidents.snapshot()
+    open_codes = {i["code"] for i in snap["incidents"] if i["status"] == "OPEN"}
+    assert "FORENSIC_SENTINEL" in open_codes

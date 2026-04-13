@@ -245,8 +245,32 @@ class WatchdogService:
             except Exception:
                 logger.exception("collect_runtime_state failed during invariant review")
 
+        # Fail-loud: if a custom checks list was provided but resolves to zero
+        # checks, emit a structured operational alert so the misconfiguration
+        # is visible rather than silently producing zero findings every tick.
+        effective_checks = (
+            tuple(self._invariant_checks)
+            if self._invariant_checks is not None
+            else DEFAULT_INVARIANT_CHECKS
+        )
+        _MISCONFIG_CODE = "INVARIANT_CHECKS_MISCONFIGURED"
+        if len(effective_checks) == 0:
+            self.alerts_manager.upsert_alert(
+                _MISCONFIG_CODE,
+                "warning",
+                "Invariant reviewer has zero checks configured — pass is a no-op",
+                source="invariant_reviewer",
+                details={"checks_count": 0},
+            )
+            logger.warning(
+                "invariant reviewer: zero checks configured, "
+                "pass is a silent no-op — check invariant_checks parameter"
+            )
+
         violations = evaluate_invariants(state, enabled=True, checks=self._invariant_checks)
-        current_codes: set[str] = set()
+        # Seed current_codes with the misconfiguration sentinel so the stale-cleanup
+        # loop does not immediately resolve it in the same tick.
+        current_codes: set[str] = {_MISCONFIG_CODE} if len(effective_checks) == 0 else set()
 
         for violation in violations:
             code = violation.code
