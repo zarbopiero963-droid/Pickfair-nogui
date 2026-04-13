@@ -190,6 +190,54 @@ def rule_queue_depth_liveness_mismatch(context: Context, state: State) -> Anomal
     return None
 
 
+def rule_ghost_order_suspected(context: Context, state: State) -> Anomaly | None:
+    """Fires when evidence of a ghost order exists but is incomplete.
+
+    Distinct from ghost_order_detected (confirmed via reconciliation).
+    Severity is warning; progression to detected occurs when reconciliation
+    confirms ghost_orders_count > 0 on the same event_key.
+    Signals: unconfirmed_inflight_count present, or suspected_ghost_count > 0,
+    or inflight orders with remote IDs in ambiguous state.
+    """
+    reconcile = (context.get("runtime_state") or {}).get("reconcile") or {}
+    suspected = int(reconcile.get("suspected_ghost_count", 0) or 0)
+    unconfirmed = int(reconcile.get("unconfirmed_inflight_count", 0) or 0)
+    unconfirmed_age = float(reconcile.get("unconfirmed_inflight_age_sec", 0.0) or 0.0)
+    age_threshold = float(reconcile.get("ghost_age_threshold_sec", 120.0) or 120.0)
+
+    # Also check recent_orders for ambiguous orders with remote IDs (incomplete evidence)
+    orders = context.get("recent_orders") or []
+    ambiguous_with_remote = [
+        o for o in orders
+        if str(o.get("status", "")).upper() in {"AMBIGUOUS", "UNCERTAIN", "INFLIGHT"}
+        and (o.get("remote_bet_id") or o.get("exchange_order_id"))
+    ]
+
+    triggered = (
+        suspected > 0
+        or (unconfirmed > 0 and unconfirmed_age > age_threshold)
+        or len(ambiguous_with_remote) > 0
+    )
+
+    if triggered:
+        prev = int(state.get("suspected_ticks", 0) or 0)
+        state["suspected_ticks"] = prev + 1
+        return _anomaly(
+            "GHOST_ORDER_SUSPECTED",
+            "warning",
+            "Incomplete evidence of ghost order(s) — reconciliation confirmation pending",
+            {
+                "suspected_ghost_count": suspected,
+                "unconfirmed_inflight_count": unconfirmed,
+                "unconfirmed_inflight_age_sec": unconfirmed_age,
+                "ambiguous_with_remote_count": len(ambiguous_with_remote),
+                "consecutive_suspected_ticks": prev + 1,
+            },
+        )
+    state["suspected_ticks"] = 0
+    return None
+
+
 def ghost_order_detected(context: Context, state: State) -> Anomaly | None:
     del state
     reconcile = (context.get("runtime_state") or {}).get("reconcile") or {}
@@ -242,6 +290,42 @@ def db_contention_detected(context: Context, state: State) -> Anomaly | None:
                 "lock_wait_ms": lock_wait_ms,
                 "contention_events": contention_events,
                 "lock_wait_threshold_ms": threshold_ms,
+            },
+        )
+    return None
+
+
+def rule_poison_pill_subscriber(context: Context, state: State) -> Anomaly | None:
+    """Fires when a specific event bus subscriber has repeatedly raised exceptions.
+
+    Distinct from event_fanout_incomplete (which counts missing deliveries).
+    A poison-pill subscriber is one whose errors exceed a threshold, indicating
+    it will consistently corrupt or skip processing for its event type.
+    Severity is 'error' — worse than generic fanout incomplete (warning) because
+    the subscriber is actively broken, not merely slow or delayed.
+    """
+    del state
+    event_bus = context.get("event_bus") or {}
+    subscriber_errors = event_bus.get("subscriber_errors") or {}
+    threshold = int(event_bus.get("poison_pill_threshold", 3) or 3)
+
+    poison_pills = {
+        name: count
+        for name, count in subscriber_errors.items()
+        if int(count or 0) >= threshold
+    }
+
+    if poison_pills:
+        worst = max(poison_pills, key=lambda k: poison_pills[k])
+        return _anomaly(
+            "POISON_PILL_SUBSCRIBER",
+            "error",
+            "Event bus subscriber repeatedly raising exceptions — poison-pill pattern",
+            {
+                "poison_pill_subscribers": poison_pills,
+                "worst_subscriber": worst,
+                "worst_error_count": poison_pills[worst],
+                "threshold": threshold,
             },
         )
     return None
@@ -301,9 +385,11 @@ DEFAULT_ANOMALY_RULES = [
     rule_heartbeat_stale,
     rule_zombie_worker_suspected,
     rule_queue_depth_liveness_mismatch,
+    rule_ghost_order_suspected,
     ghost_order_detected,
     exposure_mismatch,
     db_contention_detected,
+    rule_poison_pill_subscriber,
     event_fanout_incomplete,
     financial_drift,
 ]

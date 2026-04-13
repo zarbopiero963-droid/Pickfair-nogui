@@ -7,7 +7,9 @@ from observability.anomaly_rules import (
     exposure_mismatch,
     financial_drift,
     ghost_order_detected,
+    rule_ghost_order_suspected,
     rule_heartbeat_stale,
+    rule_poison_pill_subscriber,
     rule_queue_depth_liveness_mismatch,
     rule_service_stalled,
     rule_zombie_worker_suspected,
@@ -80,9 +82,11 @@ def test_default_anomaly_rules_includes_all_critical_rules():
     """All previously disabled critical rules are now in DEFAULT_ANOMALY_RULES."""
     default_fns = set(DEFAULT_ANOMALY_RULES)
     assert ghost_order_detected in default_fns
+    assert rule_ghost_order_suspected in default_fns
     assert exposure_mismatch in default_fns
     assert db_contention_detected in default_fns
     assert event_fanout_incomplete in default_fns
+    assert rule_poison_pill_subscriber in default_fns
     assert financial_drift in default_fns
     # New stall/zombie rules also default-on
     assert rule_service_stalled in default_fns
@@ -185,3 +189,124 @@ def test_config_builder_generates_expected_rule_config_from_audit_input():
             "drift_threshold": 1.2,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# ghost_order_suspected — distinct from ghost_order_detected
+# ---------------------------------------------------------------------------
+
+def test_rule_ghost_order_suspected_fires_on_suspected_count():
+    ctx = {"runtime_state": {"reconcile": {"suspected_ghost_count": 1}}}
+    finding = rule_ghost_order_suspected(ctx, {})
+    assert finding is not None
+    assert finding["code"] == "GHOST_ORDER_SUSPECTED"
+    assert finding["severity"] == "warning"
+
+
+def test_rule_ghost_order_suspected_fires_on_aged_unconfirmed_inflight():
+    ctx = {"runtime_state": {"reconcile": {
+        "unconfirmed_inflight_count": 2,
+        "unconfirmed_inflight_age_sec": 250.0,
+        "ghost_age_threshold_sec": 120.0,
+    }}}
+    finding = rule_ghost_order_suspected(ctx, {})
+    assert finding is not None
+    assert finding["code"] == "GHOST_ORDER_SUSPECTED"
+
+
+def test_rule_ghost_order_suspected_fires_on_ambiguous_with_remote():
+    ctx = {"recent_orders": [
+        {"order_id": "o1", "status": "AMBIGUOUS", "remote_bet_id": "ext-99"},
+    ]}
+    finding = rule_ghost_order_suspected(ctx, {})
+    assert finding is not None
+    assert finding["code"] == "GHOST_ORDER_SUSPECTED"
+    assert finding["details"]["ambiguous_with_remote_count"] == 1
+
+
+def test_rule_ghost_order_suspected_does_not_fire_on_clean_state():
+    ctx = {"runtime_state": {"reconcile": {}}, "recent_orders": []}
+    assert rule_ghost_order_suspected(ctx, {}) is None
+
+
+def test_ghost_suspected_and_detected_are_distinguishable():
+    """suspected and detected must emit different codes and severities."""
+    ctx_suspected = {"runtime_state": {"reconcile": {"suspected_ghost_count": 1}}}
+    ctx_detected = {"runtime_state": {"reconcile": {"ghost_orders_count": 1}}}
+
+    suspected = rule_ghost_order_suspected(ctx_suspected, {})
+    detected = ghost_order_detected(ctx_detected, {})
+
+    assert suspected["code"] == "GHOST_ORDER_SUSPECTED"
+    assert suspected["severity"] == "warning"
+    assert detected["code"] == "GHOST_ORDER_DETECTED"
+    assert detected["severity"] == "critical"
+    assert suspected["code"] != detected["code"]
+
+
+def test_ghost_order_suspected_tracks_consecutive_ticks():
+    """State tracks how many consecutive ticks the suspicion has been active."""
+    ctx = {"runtime_state": {"reconcile": {"suspected_ghost_count": 1}}}
+    state = {}
+    rule_ghost_order_suspected(ctx, state)
+    rule_ghost_order_suspected(ctx, state)
+    finding = rule_ghost_order_suspected(ctx, state)
+    assert finding["details"]["consecutive_suspected_ticks"] == 3
+
+
+def test_ghost_order_suspected_resets_ticks_on_clear():
+    ctx_active = {"runtime_state": {"reconcile": {"suspected_ghost_count": 1}}}
+    ctx_clear = {"runtime_state": {"reconcile": {}}, "recent_orders": []}
+    state = {}
+    rule_ghost_order_suspected(ctx_active, state)
+    rule_ghost_order_suspected(ctx_clear, state)
+    assert state["suspected_ticks"] == 0
+
+
+# ---------------------------------------------------------------------------
+# poison_pill_subscriber — distinct from event_fanout_incomplete
+# ---------------------------------------------------------------------------
+
+def test_rule_poison_pill_subscriber_fires_above_threshold():
+    ctx = {"event_bus": {
+        "subscriber_errors": {"on_signal": 5, "on_heartbeat": 1},
+        "poison_pill_threshold": 3,
+    }}
+    finding = rule_poison_pill_subscriber(ctx, {})
+    assert finding is not None
+    assert finding["code"] == "POISON_PILL_SUBSCRIBER"
+    assert finding["severity"] == "error"
+    assert finding["details"]["worst_subscriber"] == "on_signal"
+
+
+def test_rule_poison_pill_subscriber_does_not_fire_below_threshold():
+    ctx = {"event_bus": {
+        "subscriber_errors": {"on_signal": 2},
+        "poison_pill_threshold": 3,
+    }}
+    assert rule_poison_pill_subscriber(ctx, {}) is None
+
+
+def test_rule_poison_pill_subscriber_uses_default_threshold_of_3():
+    ctx = {"event_bus": {"subscriber_errors": {"on_fill": 3}}}
+    finding = rule_poison_pill_subscriber(ctx, {})
+    assert finding is not None
+    assert finding["code"] == "POISON_PILL_SUBSCRIBER"
+
+
+def test_poison_pill_and_fanout_incomplete_are_distinguishable():
+    """poison-pill subtype must be distinct from generic fanout incomplete."""
+    ctx = {
+        "event_bus": {
+            "subscriber_errors": {"on_fill": 5},
+            "expected_fanout": 3,
+            "delivered_fanout": 2,
+        }
+    }
+    poison = rule_poison_pill_subscriber(ctx, {})
+    fanout = event_fanout_incomplete(ctx, {})
+
+    assert poison["code"] == "POISON_PILL_SUBSCRIBER"
+    assert fanout["code"] == "EVENT_FANOUT_INCOMPLETE"
+    assert poison["severity"] == "error"      # worse — specific broken subscriber
+    assert fanout["severity"] == "warning"    # generic delivery shortfall
