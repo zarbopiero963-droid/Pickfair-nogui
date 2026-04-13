@@ -1,5 +1,6 @@
 from observability.anomaly_engine import AnomalyEngine
 from observability.anomaly_rules import DEFAULT_ANOMALY_RULES
+from observability.anomaly_rules import ghost_order_detected
 
 
 
@@ -42,18 +43,24 @@ def test_anomaly_engine_evaluates_rules_and_returns_expected_codes():
 
 def test_anomaly_engine_progresses_ghost_suspected_to_detected():
     engine = AnomalyEngine(DEFAULT_ANOMALY_RULES)
-    context = {
-        "runtime_state": {
-            "reconcile": {
-                "suspected_ghost_count": 1,
-                "ghost_orders_count": 2,
-                "event_key": "order-1",
-            }
-        }
-    }
-    anomalies = engine.evaluate(context)
+    suspected_context = {"runtime_state": {"reconcile": {"suspected_ghost_count": 1, "event_key": "order-1"}}}
+    detected_context = {"runtime_state": {"reconcile": {"ghost_orders_count": 2, "event_key": "order-1"}}}
+
+    first = engine.evaluate(suspected_context)
+    assert "GHOST_ORDER_SUSPECTED" in {a["code"] for a in first}
+
+    anomalies = engine.evaluate(detected_context)
     codes = {a["code"] for a in anomalies}
     assert "GHOST_ORDER_SUSPECTED" not in codes
     assert "GHOST_ORDER_DETECTED" in codes
     detected = next(a for a in anomalies if a["code"] == "GHOST_ORDER_DETECTED")
     assert detected["details"]["progressed_from"] == "GHOST_ORDER_SUSPECTED"
+
+
+def test_anomaly_engine_does_not_mark_progression_without_suspected_evidence():
+    engine = AnomalyEngine([ghost_order_detected])
+    anomalies = engine.evaluate({"runtime_state": {"reconcile": {"ghost_orders_count": 1}}})
+    assert len(anomalies) == 1
+    detected = anomalies[0]
+    assert detected["code"] == "GHOST_ORDER_DETECTED"
+    assert "progressed_from" not in detected.get("details", {})

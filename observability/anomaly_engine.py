@@ -24,7 +24,18 @@ class AnomalyEngine:
             str(item.get("code", "") or "") == "GHOST_ORDER_DETECTED"
             for item in anomalies
         )
-        if not has_detected:
+        has_suspected = any(
+            str(item.get("code", "") or "") == "GHOST_ORDER_SUSPECTED"
+            for item in anomalies
+        )
+        progression_state = self.state.setdefault("_progression", {})
+        was_suspected_recently = bool(progression_state.get("ghost_suspected_recent", False))
+        progression_state["ghost_suspected_recent"] = has_suspected
+
+        # Progression metadata is only valid if suspected evidence is present
+        # in the same evaluation pass (or explicitly tracked from immediately
+        # prior evaluation).
+        if not has_detected or not (has_suspected or was_suspected_recently):
             return anomalies
 
         progressed: List[Dict[str, Any]] = []
