@@ -460,3 +460,84 @@ def test_watchdog_forensics_bad_rule_does_not_silence_other_findings():
     snap = incidents.snapshot()
     open_codes = {i["code"] for i in snap["incidents"] if i["status"] == "OPEN"}
     assert "FORENSIC_SENTINEL" in open_codes
+
+
+# ---------------------------------------------------------------------------
+# Task: reviewer_strong_collectors — correlation context enrichment via probe
+# ---------------------------------------------------------------------------
+
+def test_evaluate_correlations_enriches_context_from_probe_collect_correlation_context():
+    """_evaluate_correlations must call probe.collect_correlation_context() and merge
+    direct typed evidence into the correlation context so rules can fire on real data."""
+    from observability.correlation_engine import CorrelationEvaluator
+
+    alerts = AlertsManager()
+    fired_contexts = []
+
+    def _spy_rule(ctx, state):
+        fired_contexts.append(dict(ctx))
+        return None
+
+    class _DirectEvidenceProbe(_ProbeStub):
+        def collect_correlation_context(self):
+            return {
+                "event_bus": {"queue_depth": 7, "published_total": 99},
+                "db_write_queue": {"queue_depth": 3, "failed": 1},
+            }
+
+    watchdog = WatchdogService(
+        probe=_DirectEvidenceProbe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        interval_sec=60.0,
+    )
+    # Replace evaluator with one using our spy rule
+    watchdog._correlation_evaluator = CorrelationEvaluator([_spy_rule])
+
+    watchdog._evaluate_correlations()
+
+    assert len(fired_contexts) == 1
+    ctx = fired_contexts[0]
+    assert ctx.get("event_bus", {}).get("queue_depth") == 7
+    assert ctx.get("event_bus", {}).get("published_total") == 99
+    assert ctx.get("db_write_queue", {}).get("queue_depth") == 3
+
+
+def test_evaluate_correlations_direct_evidence_wins_over_loose_gauge():
+    """When probe provides event_bus.queue_depth, it overrides the loose gauge value
+    that was already present in the base context from _build_anomaly_context()."""
+    from observability.correlation_engine import CorrelationEvaluator
+
+    captured = []
+
+    def _capture_rule(ctx, state):
+        captured.append(dict(ctx))
+        return None
+
+    class _ConflictingProbe(_ProbeStub):
+        def collect_correlation_context(self):
+            # Direct evidence says queue_depth=10
+            return {"event_bus": {"queue_depth": 10}}
+
+    watchdog = WatchdogService(
+        probe=_ConflictingProbe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=AlertsManager(),
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        anomaly_context_provider=lambda: {"event_bus": {"queue_depth": 0, "events_published": 5}},
+        interval_sec=60.0,
+    )
+    watchdog._correlation_evaluator = CorrelationEvaluator([_capture_rule])
+
+    watchdog._evaluate_correlations()
+
+    assert len(captured) == 1
+    # Direct evidence (10) wins over the loose injected value (0)
+    assert captured[0]["event_bus"]["queue_depth"] == 10
+    # Loose injected field not clobbered if not in direct evidence
+    assert captured[0]["event_bus"]["events_published"] == 5

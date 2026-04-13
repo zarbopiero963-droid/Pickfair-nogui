@@ -20,6 +20,8 @@ class RuntimeProbe:
         telegram_service: Any = None,
         settings_service: Any = None,
         telegram_alerts_service: Any = None,
+        event_bus: Any = None,
+        async_db_writer: Any = None,
     ) -> None:
         self.db = db
         self.trading_engine = trading_engine
@@ -30,6 +32,8 @@ class RuntimeProbe:
         self.telegram_service = telegram_service
         self.settings_service = settings_service
         self.telegram_alerts_service = telegram_alerts_service
+        self.event_bus = event_bus
+        self.async_db_writer = async_db_writer
 
     def collect_health(self) -> Dict[str, Dict[str, Any]]:
         out: Dict[str, Dict[str, Any]] = {}
@@ -122,6 +126,69 @@ class RuntimeProbe:
             "diagnostics_export": diagnostics_export,
         }
 
+
+    def collect_correlation_context(self) -> Dict[str, Any]:
+        """Collect strongly-typed direct evidence from runtime collectors.
+
+        Returns a dict with ``event_bus`` and/or ``db_write_queue`` sub-dicts
+        populated from the actual live objects rather than loose injected gauges.
+        Callers should merge this into their correlation context so rules can
+        prefer typed direct evidence over heuristic gauge snapshots.
+        """
+        ctx: Dict[str, Any] = {}
+
+        if self.event_bus is not None:
+            eb: Dict[str, Any] = {}
+            # Direct queue depth
+            qd_fn = getattr(self.event_bus, "queue_depth", None)
+            if callable(qd_fn):
+                try:
+                    eb["queue_depth"] = int(qd_fn())
+                except Exception:
+                    pass
+            else:
+                stats_fn = getattr(self.event_bus, "stats", None)
+                if callable(stats_fn):
+                    try:
+                        eb["queue_depth"] = int((stats_fn() or {}).get("queue_size", 0))
+                    except Exception:
+                        pass
+            # Direct published_total counter
+            pt_fn = getattr(self.event_bus, "published_total_count", None)
+            if callable(pt_fn):
+                try:
+                    eb["published_total"] = int(pt_fn())
+                except Exception:
+                    pass
+            # Per-subscriber error counts for poison-pill detection
+            se_fn = getattr(self.event_bus, "subscriber_error_counts", None)
+            if callable(se_fn):
+                try:
+                    eb["subscriber_errors"] = dict(se_fn())
+                except Exception:
+                    pass
+            if eb:
+                ctx["event_bus"] = eb
+
+        if self.async_db_writer is not None:
+            dw: Dict[str, Any] = {}
+            q = getattr(self.async_db_writer, "queue", None)
+            if q is not None:
+                try:
+                    dw["queue_depth"] = int(q.qsize())
+                except Exception:
+                    pass
+            for attr in ("_written", "_failed", "_dropped"):
+                val = getattr(self.async_db_writer, attr, None)
+                if val is not None:
+                    try:
+                        dw[attr.lstrip("_")] = int(val)
+                    except Exception:
+                        pass
+            if dw:
+                ctx["db_write_queue"] = dw
+
+        return ctx
 
     def get_live_readiness_report(self) -> Dict[str, Any]:
         health = self.collect_health()

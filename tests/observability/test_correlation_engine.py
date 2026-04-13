@@ -170,3 +170,90 @@ def test_correlation_evaluator_no_crash_on_empty_context():
     evaluator = CorrelationEvaluator()
     findings = evaluator.evaluate({})
     assert isinstance(findings, list)
+
+
+# ---------------------------------------------------------------------------
+# Task: reviewer_strong_collectors — direct evidence preference
+# ---------------------------------------------------------------------------
+
+def test_rule_event_side_effect_gap_prefers_published_total_over_events_published():
+    """When both published_total (direct) and events_published (loose) are present,
+    published_total must be used — it is the authoritative source from EventBus."""
+    state = {}
+    ctx = {
+        "event_bus": {
+            "published_total": 20,       # direct evidence from EventBus
+            "events_published": 5,        # stale/loose injected gauge
+            "side_effects_confirmed": 10,
+        }
+    }
+    finding = rule_event_side_effect_gap(ctx, state)
+    assert finding is not None
+    # delta should be 20-0 = 20, side_effects_delta = 10-0 = 10 → gap = 10
+    assert finding["details"]["events_published_delta"] == 20
+    assert finding["details"]["gap"] == 10
+
+
+def test_rule_event_side_effect_gap_falls_back_to_events_published():
+    """When published_total is absent, events_published is used as fallback."""
+    state = {}
+    ctx = {
+        "event_bus": {
+            "events_published": 8,
+            "side_effects_confirmed": 3,
+        }
+    }
+    finding = rule_event_side_effect_gap(ctx, state)
+    assert finding is not None
+    assert finding["details"]["events_published_delta"] == 8
+    assert finding["details"]["gap"] == 5
+
+
+def test_rule_queue_depth_liveness_prefers_direct_event_bus_depth():
+    """When event_bus.queue_depth (direct) is present, it takes precedence over
+    the loose metrics gauge — even if the gauge says zero."""
+    ctx = {
+        "event_bus": {"queue_depth": 8},
+        "metrics": {
+            "gauges": {
+                "queue_depth": 0.0,           # gauge says no depth
+                "last_heartbeat_age_sec": 90.0,
+            }
+        },
+    }
+    finding = rule_queue_depth_liveness(ctx, {})
+    assert finding is not None, "direct queue_depth=8 must trigger the rule"
+    assert finding["code"] == "QUEUE_DEPTH_LIVENESS_CONTRADICTION"
+    assert finding["details"]["queue_depth"] == 8.0
+
+
+def test_rule_queue_depth_liveness_falls_back_to_gauge_when_no_direct_depth():
+    """When event_bus has no queue_depth, metrics gauge is used."""
+    ctx = {
+        "event_bus": {},
+        "metrics": {"gauges": {"queue_depth": 5.0, "last_heartbeat_age_sec": 90.0}},
+    }
+    finding = rule_queue_depth_liveness(ctx, {})
+    assert finding is not None
+    assert finding["details"]["queue_depth"] == 5.0
+
+
+def test_rule_db_vs_memory_includes_write_queue_depth_in_details():
+    """When db_write_queue.queue_depth is available, it must appear in finding details
+    to help distinguish expected write lag from true DB/memory corruption."""
+    ctx = {
+        "metrics": {"gauges": {"db_inflight_count": 5, "inflight_count": 3}},
+        "db_write_queue": {"queue_depth": 12},
+    }
+    finding = rule_db_vs_memory(ctx, {})
+    assert finding is not None
+    assert finding["code"] == "DB_VS_MEMORY_MISMATCH"
+    assert finding["details"]["db_write_queue_depth"] == 12
+
+
+def test_rule_db_vs_memory_omits_write_queue_depth_when_absent():
+    """When db_write_queue is not present, finding must still be emitted without crashing."""
+    ctx = {"metrics": {"gauges": {"db_inflight_count": 5, "inflight_count": 3}}}
+    finding = rule_db_vs_memory(ctx, {})
+    assert finding is not None
+    assert "db_write_queue_depth" not in finding["details"]

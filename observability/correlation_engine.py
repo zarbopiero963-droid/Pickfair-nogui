@@ -134,9 +134,19 @@ def rule_db_vs_memory(context: CorrelationContext, state: CorrelationState) -> O
     db_count = int(gauges.get("db_inflight_count", -1) or -1)
     mem_count = int(gauges.get("inflight_count", 0) or 0)
     if db_count >= 0 and abs(db_count - mem_count) > 0:
+        details: Dict[str, Any] = {
+            "db_count": db_count,
+            "memory_count": mem_count,
+            "delta": abs(db_count - mem_count),
+        }
+        # Augment with DB write queue depth to distinguish expected write lag
+        # from true DB/memory corruption — direct typed evidence from AsyncDBWriter.
+        db_write_queue = context.get("db_write_queue") or {}
+        write_queue_depth = db_write_queue.get("queue_depth")
+        if write_queue_depth is not None:
+            details["db_write_queue_depth"] = int(write_queue_depth)
         return _correlation_finding("DB_VS_MEMORY_MISMATCH", "warning",
-            "DB inflight count differs from in-memory inflight count",
-            {"db_count": db_count, "memory_count": mem_count, "delta": abs(db_count - mem_count)})
+            "DB inflight count differs from in-memory inflight count", details)
     return None
 
 
@@ -155,7 +165,9 @@ def rule_submit_reconcile_chain_break(context: CorrelationContext, state: Correl
 
 def rule_event_side_effect_gap(context: CorrelationContext, state: CorrelationState) -> Optional[CorrelationFinding]:
     event_bus = context.get("event_bus") or {}
-    published = int(event_bus.get("events_published", 0) or 0)
+    # Prefer direct published_total (from EventBus.published_total_count) over loose
+    # injected events_published gauge — direct evidence is authoritative.
+    published = int(event_bus.get("published_total", event_bus.get("events_published", 0)) or 0)
     side_effects = int(event_bus.get("side_effects_confirmed", 0) or 0)
     prev_pub = int(state.get("prev_published", 0) or 0)
     prev_fx = int(state.get("prev_side_effects", 0) or 0)
@@ -173,7 +185,11 @@ def rule_event_side_effect_gap(context: CorrelationContext, state: CorrelationSt
 def rule_queue_depth_liveness(context: CorrelationContext, state: CorrelationState) -> Optional[CorrelationFinding]:
     metrics = context.get("metrics") or {}
     gauges = (metrics.get("gauges") or {}) if isinstance(metrics, dict) else {}
-    queue_depth = float(gauges.get("queue_depth", 0.0) or 0.0)
+    # Prefer direct event_bus.queue_depth (from EventBus.queue_depth()) over loose
+    # metrics gauge — direct typed evidence from the live queue object is authoritative.
+    event_bus = context.get("event_bus") or {}
+    direct_depth = event_bus.get("queue_depth")
+    queue_depth = float(direct_depth if direct_depth is not None else gauges.get("queue_depth", 0.0) or 0.0)
     heartbeat_age = float(gauges.get("last_heartbeat_age_sec", 0.0) or 0.0)
     # Queue has depth but heartbeat is stale → liveness contradiction
     if queue_depth > 0 and heartbeat_age > 60.0:

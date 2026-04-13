@@ -312,6 +312,23 @@ class WatchdogService:
     def _evaluate_correlations(self) -> None:
         context = self._build_anomaly_context()
 
+        # Enrich with strongly-typed direct evidence from live runtime collectors.
+        # Direct values (queue depth, published total, subscriber errors, DB write
+        # queue stats) take precedence over loose injected gauges when both are present.
+        corr_ctx_getter = getattr(self.probe, "collect_correlation_context", None)
+        if callable(corr_ctx_getter):
+            try:
+                direct_evidence = corr_ctx_getter() or {}
+                if isinstance(direct_evidence, dict):
+                    for key, value in direct_evidence.items():
+                        existing = context.get(key)
+                        if isinstance(existing, dict) and isinstance(value, dict):
+                            context[key] = {**existing, **value}
+                        else:
+                            context[key] = value
+            except Exception:
+                logger.exception("collect_correlation_context failed")
+
         findings = self._correlation_evaluator.evaluate(context)
         current_codes: set[str] = set()
 
