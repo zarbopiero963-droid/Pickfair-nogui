@@ -52,13 +52,42 @@ class IncidentsManager:
                 }
             )
 
-    def close_incident(self, code: str) -> None:
+    def close_incident(
+        self,
+        code: str,
+        *,
+        reason: str = "resolved",
+        resolved_by: str = "system",
+    ) -> None:
+        """Close an open incident with structured resolution metadata.
+
+        Parameters
+        ----------
+        code:
+            The incident code to close.
+        reason:
+            Human-readable reason for resolution (e.g. ``"finding_cleared"``,
+            ``"stale_alert_resolved"``).  Stored as ``resolution_reason``.
+        resolved_by:
+            Source that triggered the closure (e.g. ``"anomaly_reviewer"``,
+            ``"correlation_reviewer"``).  Stored as ``resolved_by``.
+        """
+        now = time.time()
         with self._lock:
             incident = self._incidents.get(code)
             if not incident or incident["status"] != "OPEN":
                 return
             incident["status"] = "CLOSED"
-            incident["closed_at"] = time.time()
+            incident["closed_at"] = now
+            incident["resolution_reason"] = reason
+            incident["resolved_by"] = resolved_by
+            incident["events"].append(
+                {
+                    "ts": now,
+                    "message": f"Incident closed: {reason}",
+                    "details": {"resolved_by": resolved_by},
+                }
+            )
 
     def snapshot(self) -> Dict[str, Any]:
         with self._lock:

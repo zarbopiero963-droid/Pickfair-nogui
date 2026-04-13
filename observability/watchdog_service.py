@@ -30,7 +30,7 @@ class WatchdogService:
         forensics_engine: Any = None,
         anomaly_context_provider: Any = None,
         settings_service: Any = None,
-        anomaly_enabled: bool = False,
+        anomaly_enabled: bool = True,
         anomaly_alerts_enabled: bool = False,
         anomaly_actions_enabled: bool = False,
         anomaly_alert_service: Any = None,
@@ -118,6 +118,12 @@ class WatchdogService:
         if self._is_anomaly_enabled():
             self._run_anomaly_hook()
         else:
+            # Fail-loud: anomaly scanning is explicitly disabled.  Emit an operational
+            # warning every tick so the suppression is visible in logs and observable.
+            logger.warning(
+                "anomaly reviewer is DISABLED — anomaly scans are suppressed this tick; "
+                "set anomaly_enabled=True or configure load_anomaly_enabled() to re-enable"
+            )
             self.last_anomalies = []
             self.escalation_requested = False
             self.last_escalation_event = None
@@ -139,9 +145,13 @@ class WatchdogService:
         loader = getattr(self.settings_service, loader_name, None)
         if callable(loader):
             try:
-                return bool(loader())
+                val = loader()
+                # None means "not configured in settings" — preserve the default.
+                if val is None:
+                    return bool(fallback)
+                return bool(val)
             except Exception:
-                logger.exception("%s failed, fallback to local flag", loader_name)
+                logger.exception("%s failed, using default flag=%s", loader_name, fallback)
 
         return bool(fallback)
 
@@ -305,7 +315,11 @@ class WatchdogService:
             code = str(item.get("code", "") or "")
             if code and code not in current_codes:
                 self.alerts_manager.resolve_alert(code)
-                self.incidents_manager.close_incident(code)
+                self.incidents_manager.close_incident(
+                    code,
+                    reason="invariant_cleared",
+                    resolved_by="invariant_reviewer",
+                )
 
         self._managed_invariant_alert_codes = current_codes
 
@@ -364,7 +378,11 @@ class WatchdogService:
             code = str(item.get("code", "") or "")
             if code and code not in current_codes:
                 self.alerts_manager.resolve_alert(code)
-                self.incidents_manager.close_incident(code)
+                self.incidents_manager.close_incident(
+                    code,
+                    reason="finding_cleared",
+                    resolved_by="correlation_reviewer",
+                )
 
         self._managed_correlation_alert_codes = current_codes
 
@@ -383,7 +401,11 @@ class WatchdogService:
             self.incidents_manager.open_incident("SYSTEM_NOT_READY", "System Not Ready", "critical")
         else:
             self.alerts_manager.resolve_alert("SYSTEM_NOT_READY")
-            self.incidents_manager.close_incident("SYSTEM_NOT_READY")
+            self.incidents_manager.close_incident(
+                "SYSTEM_NOT_READY",
+                reason="system_ready",
+                resolved_by="alert_reviewer",
+            )
 
         gauges = metrics.get("gauges", {}) if isinstance(metrics, dict) else {}
         memory_rss = float(gauges.get("memory_rss_mb", 0.0))
@@ -450,7 +472,11 @@ class WatchdogService:
         stale_codes = self._managed_anomaly_alert_codes - current_codes
         for code in stale_codes:
             self.alerts_manager.resolve_alert(code)
-            self.incidents_manager.close_incident(code)
+            self.incidents_manager.close_incident(
+                code,
+                reason="anomaly_cleared",
+                resolved_by="anomaly_reviewer",
+            )
 
         self._managed_anomaly_alert_codes = current_codes
 
@@ -568,4 +594,8 @@ class WatchdogService:
             code = str(item.get("code", "") or "")
             if code and code not in current_codes:
                 self.alerts_manager.resolve_alert(code)
-                self.incidents_manager.close_incident(code)
+                self.incidents_manager.close_incident(
+                    code,
+                    reason="finding_cleared",
+                    resolved_by="forensics_reviewer",
+                )
