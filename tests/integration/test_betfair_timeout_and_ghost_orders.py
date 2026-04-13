@@ -353,6 +353,7 @@ def test_timeout_ambiguity_reaches_reviewer_with_structured_alerts_and_incidents
     assert result["status"] == STATUS_AMBIGUOUS
     remote = exchange.get_current_orders(customer_ref="TIMEOUT-REVIEW-1")
     assert len(remote) == 1
+    remote_status = str(remote[0]["status"])
 
     class _SnapshotStub:
         def collect_and_store(self) -> None:
@@ -371,7 +372,7 @@ def test_timeout_ambiguity_reaches_reviewer_with_structured_alerts_and_incidents
                     {
                         "order_id": result["order_id"],
                         "status": STATUS_AMBIGUOUS,
-                        "remote_status": "MATCHED",
+                        "remote_status": remote_status,
                     }
                 ]
             }
@@ -382,7 +383,7 @@ def test_timeout_ambiguity_reaches_reviewer_with_structured_alerts_and_incidents
                     {
                         "order_id": result["order_id"],
                         "status": STATUS_AMBIGUOUS,
-                        "remote_status": "MATCHED",
+                        "remote_status": remote_status,
                     }
                 ],
                 "event_bus": {
@@ -416,7 +417,7 @@ def test_timeout_ambiguity_reaches_reviewer_with_structured_alerts_and_incidents
     assert mismatch_alert["details"]["mismatched_count"] == 1
     sample = mismatch_alert["details"]["sample"][0]
     assert sample["local"] == STATUS_AMBIGUOUS
-    assert sample["remote"] == "MATCHED"
+    assert sample["remote"] == remote_status
 
     incident_codes = {
         item["code"]
