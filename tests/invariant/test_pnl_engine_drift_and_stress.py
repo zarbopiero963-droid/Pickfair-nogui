@@ -1,12 +1,12 @@
 import math
 import pytest
 
-from pnl_engine import PnLEngine
+from core.pnl_engine import PnLEngine
 
-_REQUIRED_LEGACY_API = ("_calc", "_on_filled", "_on_market", "snapshot")
+_REQUIRED_EVENT_DRIVEN_API = ("_calc", "_on_filled", "_on_market", "snapshot")
 pytestmark = pytest.mark.skipif(
-    any(not hasattr(PnLEngine, name) for name in _REQUIRED_LEGACY_API),
-    reason="legacy event-driven pnl_engine API not available",
+    any(not hasattr(PnLEngine, name) for name in _REQUIRED_EVENT_DRIVEN_API),
+    reason="event-driven core.pnl_engine API not available",
 )
 
 class FakeBus:
@@ -23,7 +23,7 @@ class FakeBus:
 
 @pytest.mark.invariant
 def test_root_pnl_engine_repeated_calc_is_stable():
-    from pnl_engine import PnLEngine
+    from core.pnl_engine import PnLEngine
 
     engine = PnLEngine(bus=None, commission_pct=4.5)
 
@@ -59,7 +59,7 @@ def test_root_pnl_engine_repeated_calc_is_stable():
 
 @pytest.mark.chaos
 def test_root_pnl_engine_numeric_stress_extreme_prices_and_stakes():
-    from pnl_engine import PnLEngine
+    from core.pnl_engine import PnLEngine
 
     engine = PnLEngine(bus=None, commission_pct=4.5)
 
@@ -100,7 +100,7 @@ def test_root_pnl_engine_numeric_stress_extreme_prices_and_stakes():
 
 @pytest.mark.chaos
 def test_root_pnl_engine_missing_quotes_is_safe_zero():
-    from pnl_engine import PnLEngine
+    from core.pnl_engine import PnLEngine
 
     engine = PnLEngine(bus=None)
 
@@ -127,7 +127,7 @@ def test_root_pnl_engine_missing_quotes_is_safe_zero():
 
 @pytest.mark.invariant
 def test_root_pnl_engine_close_trigger_is_deterministic():
-    from pnl_engine import PnLEngine
+    from core.pnl_engine import PnLEngine
 
     bus = FakeBus()
     engine = PnLEngine(bus=bus, commission_pct=4.5)
@@ -168,7 +168,7 @@ def test_root_pnl_engine_close_trigger_is_deterministic():
 
 @pytest.mark.invariant
 def test_root_pnl_engine_snapshot_is_stable_under_many_positions():
-    from pnl_engine import PnLEngine
+    from core.pnl_engine import PnLEngine
 
     engine = PnLEngine(bus=None)
 
