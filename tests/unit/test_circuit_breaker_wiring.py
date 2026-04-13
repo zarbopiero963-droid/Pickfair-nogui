@@ -239,6 +239,84 @@ def test_trading_engine_successful_order_resets_breaker_failures():
         "successful order must reset breaker failure count"
 
 
+@pytest.mark.unit
+def test_trading_engine_ok_false_non_session_trips_breaker():
+    """Regression: ok=False that is NOT a session error must still be counted as a
+    breaker failure. Previously these fell through to record_success(), defeating
+    the circuit breaker for exchange/network errors reported via ok=False."""
+    engine = _make_engine()
+
+    rt = MagicMock()
+    rt.get_effective_execution_mode.return_value = "LIVE"
+    rt.is_live_allowed.return_value = True
+    engine.runtime_controller = rt
+
+    fake_client = MagicMock()
+    # place_order returns ok=False with a non-session error (e.g. market suspended)
+    fake_client.place_order.return_value = {"ok": False, "error": "MARKET_SUSPENDED"}
+    engine.betfair_client = fake_client
+
+    ctx = _make_ctx(engine)
+    payload = {"market_id": "1.1", "selection_id": 123, "side": "BACK", "price": 2.0, "size": 10.0}
+
+    breaker = engine._order_submission_breaker
+    threshold = breaker.max_failures
+
+    for _ in range(threshold):
+        result = engine._submit_to_order_path(ctx, payload)
+        assert result == {"ok": False, "error": "MARKET_SUSPENDED"}, \
+            "ok=False result must be returned to caller"
+
+    assert breaker.is_open(), \
+        "breaker must open after repeated ok=False non-session failures"
+
+
+@pytest.mark.unit
+def test_trading_engine_ok_false_non_session_returns_result_to_caller():
+    """ok=False non-session failures count as breaker failures but do NOT raise —
+    the error dict is returned so the caller can inspect it."""
+    engine = _make_engine()
+
+    rt = MagicMock()
+    rt.get_effective_execution_mode.return_value = "LIVE"
+    rt.is_live_allowed.return_value = True
+    engine.runtime_controller = rt
+
+    fake_client = MagicMock()
+    fake_client.place_order.return_value = {"ok": False, "error": "NETWORK_TIMEOUT"}
+    engine.betfair_client = fake_client
+
+    result = engine._submit_to_order_path(_make_ctx(engine),
+        {"market_id": "1.2", "selection_id": 99, "side": "LAY", "price": 3.0, "size": 5.0})
+
+    assert result == {"ok": False, "error": "NETWORK_TIMEOUT"}
+    assert engine._order_submission_breaker.failures == 1
+
+
+@pytest.mark.unit
+def test_trading_engine_ok_true_still_records_success():
+    """ok=True responses still record a breaker success (no regression)."""
+    engine = _make_engine()
+
+    rt = MagicMock()
+    rt.get_effective_execution_mode.return_value = "LIVE"
+    rt.is_live_allowed.return_value = True
+    engine.runtime_controller = rt
+
+    fake_client = MagicMock()
+    fake_client.place_order.return_value = {"ok": True, "bet_id": "BET-1"}
+    engine.betfair_client = fake_client
+
+    # Seed 2 failures first
+    engine._order_submission_breaker.failures = 2
+
+    engine._submit_to_order_path(_make_ctx(engine),
+        {"market_id": "1.3", "selection_id": 77, "side": "BACK", "price": 2.0, "size": 10.0})
+
+    assert engine._order_submission_breaker.failures == 0, \
+        "ok=True must still call record_success and reset failure count"
+
+
 # ===========================================================================
 # Helpers
 # ===========================================================================

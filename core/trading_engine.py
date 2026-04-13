@@ -1296,7 +1296,8 @@ class TradingEngine:
                             self._order_submission_breaker.record_failure(_exc)
                             raise
 
-                        # Detect SESSION_EXPIRED in ok=False response (place_bet never raises)
+                        # Any ok=False is a submission failure for the breaker.
+                        # Session-expiry errors additionally trigger session recovery.
                         if isinstance(result, dict) and not result.get("ok", True):
                             _err = str(result.get("error", "")).upper()
                             if "SESSION_EXPIRED" in _err or "INVALID_SESSION" in _err:
@@ -1311,6 +1312,14 @@ class TradingEngine:
                                 )
                                 self._order_submission_breaker.record_failure(_exc2)
                                 raise _exc2
+
+                            # Non-session ok=False: count as breaker failure but do not raise
+                            # so the caller receives the error dict and can handle it.
+                            _exc3 = RuntimeError(
+                                str(result.get("error", "SUBMISSION_FAILED"))
+                            )
+                            self._order_submission_breaker.record_failure(_exc3)
+                            return result
 
                         self._order_submission_breaker.record_success()
                         return result
