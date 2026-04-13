@@ -91,8 +91,10 @@ def _collect_duplicate_signal(context: Context) -> Dict[str, int]:
     blocked_submit_streak = int(duplicate_runtime.get("blocked_submit_streak", 0) or 0)
     same_key_blocked_streak = int(duplicate_runtime.get("same_key_blocked_streak", 0) or 0)
 
+    # recent_orders is provided newest-first (created_at DESC), so compute
+    # the active blocked streak from the list head rather than reversing.
     tail_streak = 0
-    for order in reversed(recent_orders):
+    for order in recent_orders:
         if str(order.get("status", "")).upper() != "DUPLICATE_BLOCKED":
             break
         tail_streak += 1

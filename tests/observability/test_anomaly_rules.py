@@ -212,6 +212,22 @@ def test_rule_suspicious_duplicate_pattern_does_not_fire_on_isolated_duplicate_n
     assert rule_suspicious_duplicate_pattern(ctx, state) is None
 
 
+def test_rule_suspicious_duplicate_pattern_uses_newest_first_ordering_for_streak():
+    state = {}
+    ctx = {
+        "recent_orders": [
+            {"status": "DUPLICATE_BLOCKED", "event_key": "E-1"},  # newest
+            {"status": "DUPLICATE_BLOCKED", "event_key": "E-1"},
+            {"status": "SUBMITTED", "event_key": "E-2"},
+            {"status": "DUPLICATE_BLOCKED", "event_key": "E-1"},  # older
+            {"status": "DUPLICATE_BLOCKED", "event_key": "E-1"},
+        ],
+    }
+    finding = rule_suspicious_duplicate_pattern(ctx, state)
+    assert finding is not None
+    assert finding["details"]["blocked_submit_streak"] == 2
+
+
 def test_config_builder_generates_expected_rule_config_from_audit_input():
     audit_input = {
         "ghost_orders_count": 3,
