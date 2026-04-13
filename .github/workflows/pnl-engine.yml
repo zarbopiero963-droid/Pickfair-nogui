@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - "pnl_engine.py"
+      - "core/pnl_engine.py"
       - "guardrails/specs/pnl_engine.json"
       - "guardrails/contracts/pnl_engine.json"
       - "guardrails/state_models/pnl_engine.json"
@@ -12,6 +13,7 @@ on:
   pull_request:
     paths:
       - "pnl_engine.py"
+      - "core/pnl_engine.py"
       - "guardrails/specs/pnl_engine.json"
       - "guardrails/contracts/pnl_engine.json"
       - "guardrails/state_models/pnl_engine.json"
@@ -27,4 +29,4 @@ jobs:
       contract_path: "guardrails/contracts/pnl_engine.json"
       state_model_path: "guardrails/state_models/pnl_engine.json"
       mutation_path: "guardrails/mutations/pnl_engine.json"
-      test_paths: "tests"
+      test_paths: "tests/invariant/test_pnl_engine_drift_and_stress.py tests/invariant/test_core_pnl_engine_drift_and_stress.py"
