@@ -267,6 +267,17 @@ def test_collect_correlation_context_collects_direct_db_state():
     assert ctx["db_state"]["remote_mismatch_count"] == 1
 
 
+def test_collect_correlation_context_omits_db_state_when_query_fails():
+    class _DbOrdersFailingStub:
+        def get_recent_orders_for_diagnostics(self, limit=500):
+            raise RuntimeError("db unavailable")
+
+    probe = RuntimeProbe(db=_DbOrdersFailingStub())
+    ctx = probe.collect_correlation_context()
+
+    assert "db_state" not in ctx
+
+
 def test_collect_correlation_context_tolerates_event_bus_without_accessors():
     """If event_bus lacks the new methods, falls back gracefully to stats()."""
     class _LegacyEventBus:

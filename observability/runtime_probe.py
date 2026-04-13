@@ -212,11 +212,13 @@ class RuntimeProbe:
             db_state: Dict[str, Any] = {}
             orders_getter = getattr(self.db, "get_recent_orders_for_diagnostics", None)
             if callable(orders_getter):
+                orders_query_ok = False
                 try:
                     orders = orders_getter(limit=500) or []
+                    orders_query_ok = True
                 except Exception:
-                    orders = []
-                if isinstance(orders, list):
+                    orders = None
+                if orders_query_ok and isinstance(orders, list):
                     terminal = {"FILLED", "CANCELLED", "FAILED", "SETTLED", "VOIDED", "CLOSED", "COMPLETED"}
                     inflight = 0
                     remote_mismatches = 0
