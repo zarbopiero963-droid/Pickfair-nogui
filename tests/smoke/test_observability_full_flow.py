@@ -98,3 +98,115 @@ def test_observability_full_flow_smoke(tmp_path):
         assert "forensics_review.json" in set(zf.namelist())
         review = json.loads(zf.read("forensics_review.json"))
     assert "degraded_or_not_ready" in review
+
+
+@pytest.mark.smoke
+def test_timeout_ambiguity_contradiction_lifecycle_canonical_proof():
+    trace_id = "trace-timeout-ambiguity-1"
+    order_id = "ORD-TIMEOUT-AMB-1"
+
+    state = {
+        "submit_phase": {"result": "TIMEOUT", "trace_id": trace_id},
+        "recent_orders": [
+            {
+                "order_id": order_id,
+                "correlation_id": trace_id,
+                "status": "AMBIGUOUS",
+                "remote_status": "MATCHED",
+                "remote_final_status": "SETTLED_WIN",
+            }
+        ],
+        "recent_audit": [{"type": "REQUEST_RECEIVED", "order_id": order_id, "correlation_id": trace_id}],
+    }
+
+    class _Probe:
+        def collect_runtime_state(self):
+            return {
+                "submit_phase": dict(state["submit_phase"]),
+                "recent_orders": [dict(item) for item in state["recent_orders"]],
+                "recent_audit": [dict(item) for item in state["recent_audit"]],
+            }
+
+        def collect_correlation_context(self):
+            return {
+                "recent_orders": [dict(item) for item in state["recent_orders"]],
+                "recent_audit": [dict(item) for item in state["recent_audit"]],
+            }
+
+        def collect_forensics_evidence(self):
+            return {
+                "recent_orders": [dict(item) for item in state["recent_orders"]],
+                "recent_audit": [dict(item) for item in state["recent_audit"]],
+            }
+
+        def collect_health(self):
+            return {"runtime": {"status": "READY", "reason": "ok", "details": {"trace_id": trace_id}}}
+
+        def collect_metrics(self):
+            return {"inflight_count": 1.0}
+
+    class _Snapshot:
+        def collect_and_store(self):
+            return None
+
+    alerts = AlertsManager()
+    incidents = IncidentsManager()
+    watchdog = WatchdogService(
+        probe=_Probe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=incidents,
+        snapshot_service=_Snapshot(),
+        interval_sec=60.0,
+    )
+
+    watchdog._tick()
+
+    assert state["submit_phase"]["result"] == "TIMEOUT"
+    assert state["recent_orders"][0]["status"] == "AMBIGUOUS"
+    assert state["recent_orders"][0]["remote_status"] == "MATCHED"
+
+    active_alerts = {a["code"]: a for a in alerts.active_alerts()}
+    assert "ambiguous_local_remote_inconsistency" in active_alerts
+    assert "LOCAL_VS_REMOTE_MISMATCH" in active_alerts
+    assert "ALERT_WITHOUT_RUNTIME_CONTEXT" in active_alerts
+    assert active_alerts["ambiguous_local_remote_inconsistency"]["source"] == "invariant_reviewer"
+    assert active_alerts["LOCAL_VS_REMOTE_MISMATCH"]["source"] == "correlation_reviewer"
+    assert active_alerts["ALERT_WITHOUT_RUNTIME_CONTEXT"]["source"] == "forensics_reviewer"
+    assert active_alerts["LOCAL_VS_REMOTE_MISMATCH"]["details"]["mismatched_count"] == 1
+    assert active_alerts["LOCAL_VS_REMOTE_MISMATCH"]["details"]["sample"][0]["id"] == order_id
+
+    open_incidents = {row["code"]: row for row in incidents.snapshot()["incidents"] if row["status"] == "OPEN"}
+    assert "LOCAL_VS_REMOTE_MISMATCH" in open_incidents
+    assert open_incidents["LOCAL_VS_REMOTE_MISMATCH"]["severity"] == "critical"
+
+    state["submit_phase"] = {"result": "RECONCILED", "trace_id": trace_id}
+    state["recent_orders"] = [
+        {
+            "order_id": order_id,
+            "correlation_id": trace_id,
+            "status": "COMPLETED",
+            "remote_status": "COMPLETED",
+            "remote_final_status": "SETTLED_WIN",
+        }
+    ]
+    # Provide runtime context once healed so forensics no longer flags context gap.
+    state["runtime_context"] = {"mode": "smoke-flow"}
+
+    class _HealedProbe(_Probe):
+        def collect_runtime_state(self):
+            base = super().collect_runtime_state()
+            base.update(state.get("runtime_context", {}))
+            return base
+
+    watchdog.probe = _HealedProbe()
+    watchdog._tick()
+
+    healed_codes = {a["code"] for a in alerts.active_alerts()}
+    assert "ambiguous_local_remote_inconsistency" not in healed_codes
+    assert "LOCAL_VS_REMOTE_MISMATCH" not in healed_codes
+    assert "ALERT_WITHOUT_RUNTIME_CONTEXT" not in healed_codes
+
+    healed_open_incidents = {row["code"] for row in incidents.snapshot()["incidents"] if row["status"] == "OPEN"}
+    assert "LOCAL_VS_REMOTE_MISMATCH" not in healed_open_incidents
