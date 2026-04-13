@@ -246,6 +246,15 @@ class _RuntimeControllerStub:
     risk_desk = _RiskDeskStub()
 
 
+class _RiskDeskBankrollOnlyStub:
+    bankroll_current = 222.0
+
+
+class _RuntimeControllerBankrollOnlyStub:
+    table_manager = _TableManagerStub()
+    risk_desk = _RiskDeskBankrollOnlyStub()
+
+
 def test_collect_correlation_context_from_event_bus():
     probe = RuntimeProbe(event_bus=_FakeEventBus())
     ctx = probe.collect_correlation_context()
@@ -350,3 +359,13 @@ def test_collect_reviewer_context_emits_canonical_blocks():
     assert len(ctx["recent_audit"]) == 1
     assert ctx["reconcile_chain"]["missing_count"] == 1
     assert ctx["reconcile_chain"]["finalized_missing_count"] == 1
+
+
+def test_collect_reviewer_context_keeps_bankroll_only_financials_balanced():
+    probe = RuntimeProbe(
+        db=_DbDiagnosticsStub(),
+        runtime_controller=_RuntimeControllerBankrollOnlyStub(),
+    )
+    ctx = probe.collect_reviewer_context()
+    assert ctx["financials"]["ledger_balance"] == 222.0
+    assert ctx["financials"]["venue_balance"] == 222.0

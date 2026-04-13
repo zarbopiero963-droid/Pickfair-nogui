@@ -298,6 +298,8 @@ class RuntimeProbe:
             "source": "default_zero",
         }
         if risk_desk is not None:
+            loaded_bankroll_current = False
+            loaded_explicit_venue = False
             for attr, key in (
                 ("bankroll_current", "ledger_balance"),
                 ("ledger_balance", "ledger_balance"),
@@ -307,8 +309,17 @@ class RuntimeProbe:
                 if hasattr(risk_desk, attr):
                     try:
                         financials[key] = float(getattr(risk_desk, attr) or 0.0)
+                        if attr == "bankroll_current":
+                            loaded_bankroll_current = True
+                        if attr in {"venue_balance", "exchange_balance"}:
+                            loaded_explicit_venue = True
                     except Exception:
                         pass
+            # Preserve the pre-hardening default-path behavior: when runtime RiskDesk
+            # exposes only bankroll_current, use it for both ledger and venue so we
+            # do not emit persistent false-positive FINANCIAL_DRIFT anomalies.
+            if loaded_bankroll_current and not loaded_explicit_venue:
+                financials["venue_balance"] = financials["ledger_balance"]
             if (
                 financials["ledger_balance"] != 0.0
                 or financials["venue_balance"] != 0.0
