@@ -363,3 +363,184 @@ def test_headless_direct_collector_db_write_queue_evidence_e2e():
     assert "db_write_queue_depth" in mismatch_alert["details"]
     assert mismatch_alert["details"]["db_write_queue_depth"] == 8
     assert mismatch_alert["details"]["db_source"] == "diagnostics_recent_orders"
+
+
+@pytest.mark.smoke
+def test_default_headless_reviewer_path_proves_critical_anomaly_and_chain_families_e2e():
+    """End-to-end proof for default headless/runtime reviewer path coverage.
+
+    Verifies the default RuntimeProbe -> WatchdogService path operationalizes:
+    - EXPOSURE_MISMATCH
+    - DB_CONTENTION_DETECTED
+    - FINANCIAL_DRIFT (critical -> incident lifecycle)
+    - EVENT_FANOUT_INCOMPLETE
+    - SUBMIT_RECONCILE_CHAIN_BREAK
+
+    Also verifies alert lifecycle (active -> resolved) and incident lifecycle where
+    severity warrants it.
+    """
+    from queue import Queue
+
+    from observability.runtime_probe import RuntimeProbe
+
+    class _ReadyComponent:
+        def is_ready(self):
+            return True
+
+    class _TradingEngine:
+        _inflight_keys = []
+        _seen_correlation_ids = []
+
+        def readiness(self):
+            return {"ok": True}
+
+    class _Writer:
+        def __init__(self):
+            self.queue = Queue()
+            for _ in range(4):
+                self.queue.put({"kind": "write"})
+            self._failed = 2
+            self._dropped = 1
+
+    class _Db:
+        def __init__(self):
+            self._submitted_missing = True
+
+        def get_recent_orders_for_diagnostics(self, limit=200):
+            del limit
+            if self._submitted_missing:
+                return [{"order_id": "o-chain-1", "status": "SUBMITTED"}]
+            return [{"order_id": "o-chain-1", "status": "COMPLETED"}]
+
+        def get_recent_audit_events_for_diagnostics(self, limit=300):
+            del limit
+            if self._submitted_missing:
+                return []
+            return [{"order_id": "o-chain-1"}]
+
+        def get_recent_observability_snapshots(self, limit=1):
+            del limit
+            return []
+
+    class _EventBus:
+        def __init__(self):
+            self._errors = {"fanout_handler": 2}
+
+        def queue_depth(self):
+            return 0
+
+        def published_total_count(self):
+            return 10
+
+        def delivered_total_count(self):
+            return 8
+
+        def subscriber_error_counts(self):
+            return dict(self._errors)
+
+    class _RiskDesk:
+        bankroll_current = 1000.0
+
+    class _TableManager:
+        def total_exposure(self):
+            return 120.0
+
+    class _RuntimeController:
+        table_manager = _TableManager()
+        risk_desk = _RiskDesk()
+
+    class _Probe(RuntimeProbe):
+        def __init__(self, *, db, writer, event_bus, runtime_controller):
+            super().__init__(
+                db=db,
+                async_db_writer=writer,
+                event_bus=event_bus,
+                runtime_controller=runtime_controller,
+                trading_engine=_TradingEngine(),
+                betfair_service=_ReadyComponent(),
+                safe_mode=_ReadyComponent(),
+                shutdown_manager=_ReadyComponent(),
+            )
+
+        def collect_reviewer_context(self):
+            ctx = super().collect_reviewer_context()
+            # Force drift and exposure mismatch on the canonical default context block.
+            ctx["risk"]["actual_exposure"] = 95.0
+            ctx["financials"]["venue_balance"] = 900.0
+            return ctx
+
+    class _Snapshot:
+        def collect_and_store(self):
+            return None
+
+    db = _Db()
+    writer = _Writer()
+    event_bus = _EventBus()
+    probe = _Probe(db=db, writer=writer, event_bus=event_bus, runtime_controller=_RuntimeController())
+
+    alerts = AlertsManager()
+    incidents = IncidentsManager()
+    watchdog = WatchdogService(
+        probe=probe,
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=incidents,
+        snapshot_service=_Snapshot(),
+        anomaly_enabled=True,
+        interval_sec=60.0,
+    )
+
+    # Tick 1: degraded state with chain break/fanout/exposure/db contention/drift.
+    watchdog._tick()
+
+    active_alerts = {a["code"]: a for a in alerts.active_alerts()}
+    assert "EXPOSURE_MISMATCH" in active_alerts
+    assert "DB_CONTENTION_DETECTED" in active_alerts
+    assert "FINANCIAL_DRIFT" in active_alerts
+    assert "EVENT_FANOUT_INCOMPLETE" in active_alerts
+    assert "SUBMIT_RECONCILE_CHAIN_BREAK" in active_alerts
+
+    assert active_alerts["EXPOSURE_MISMATCH"]["source"] == "anomaly"
+    assert active_alerts["DB_CONTENTION_DETECTED"]["source"] == "anomaly"
+    assert active_alerts["FINANCIAL_DRIFT"]["source"] == "anomaly"
+    assert active_alerts["EVENT_FANOUT_INCOMPLETE"]["source"] == "anomaly"
+    assert active_alerts["SUBMIT_RECONCILE_CHAIN_BREAK"]["source"] == "correlation_reviewer"
+
+    open_incidents = {
+        row["code"]: row for row in incidents.snapshot()["incidents"] if row["status"] == "OPEN"
+    }
+    assert "FINANCIAL_DRIFT" in open_incidents
+    assert open_incidents["FINANCIAL_DRIFT"]["severity"].lower() == "critical"
+    # Warning-level families must not force incidents.
+    assert "EXPOSURE_MISMATCH" not in open_incidents
+    assert "DB_CONTENTION_DETECTED" not in open_incidents
+    assert "EVENT_FANOUT_INCOMPLETE" not in open_incidents
+    assert "SUBMIT_RECONCILE_CHAIN_BREAK" not in open_incidents
+
+    # Tick 2: healed state; prove alert/incident lifecycle closes cleanly.
+    db._submitted_missing = False
+    event_bus._errors = {}
+    writer._failed = 0
+    writer._dropped = 0
+
+    def _healed_collect_reviewer_context():
+        healed = RuntimeProbe.collect_reviewer_context(probe)
+        healed["risk"]["actual_exposure"] = healed["risk"]["expected_exposure"]
+        healed["financials"]["venue_balance"] = healed["financials"]["ledger_balance"]
+        return healed
+
+    probe.collect_reviewer_context = _healed_collect_reviewer_context
+    watchdog._tick()
+
+    healed_codes = {a["code"] for a in alerts.active_alerts()}
+    assert "EXPOSURE_MISMATCH" not in healed_codes
+    assert "DB_CONTENTION_DETECTED" not in healed_codes
+    assert "FINANCIAL_DRIFT" not in healed_codes
+    assert "EVENT_FANOUT_INCOMPLETE" not in healed_codes
+    assert "SUBMIT_RECONCILE_CHAIN_BREAK" not in healed_codes
+
+    healed_open_incidents = {
+        row["code"] for row in incidents.snapshot()["incidents"] if row["status"] == "OPEN"
+    }
+    assert "FINANCIAL_DRIFT" not in healed_open_incidents
