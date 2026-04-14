@@ -895,6 +895,49 @@ class WatchdogService:
             synthetic = [r for r in normalized if r["code"] in {"DB_VS_MEMORY_MISMATCH", "EVENT_SIDE_EFFECT_GAP", "DIAGNOSTICS_BUNDLE_EVIDENCE_GAP"}]
             if synthetic:
                 grouped[preferred_key] = synthetic
+        if "QUEUE_DEPTH_LIVENESS_CONTRADICTION" in all_codes and (
+            "HEARTBEAT_STALE" in all_codes or "QUEUE_DEPTH_DISPATCHER_CONTRADICTION" in all_codes
+        ):
+            preferred_key = next(
+                (k for k, rows in grouped.items() if any(r["code"] == "QUEUE_DEPTH_LIVENESS_CONTRADICTION" for r in rows)),
+                "global:liveness",
+            )
+            synthetic = [
+                r for r in normalized
+                if r["code"] in {"QUEUE_DEPTH_LIVENESS_CONTRADICTION", "QUEUE_DEPTH_DISPATCHER_CONTRADICTION", "HEARTBEAT_STALE", "SERVICE_STALLED", "ZOMBIE_WORKER_SUSPECTED"}
+            ]
+            if synthetic:
+                merged_rows = list(grouped.get(preferred_key, [])) + synthetic
+                grouped[preferred_key] = merged_rows
+        if "EVENT_SIDE_EFFECT_GAP" in all_codes and (
+            "POISON_PILL_SUBSCRIBER" in all_codes or "EVENT_FANOUT_INCOMPLETE" in all_codes
+        ):
+            preferred_key = next(
+                (k for k, rows in grouped.items() if any(r["code"] == "EVENT_SIDE_EFFECT_GAP" for r in rows)),
+                "global:dispatch",
+            )
+            synthetic = [
+                r for r in normalized
+                if r["code"] in {"EVENT_SIDE_EFFECT_GAP", "POISON_PILL_SUBSCRIBER", "EVENT_FANOUT_INCOMPLETE"}
+            ]
+            if synthetic:
+                merged_rows = list(grouped.get(preferred_key, [])) + synthetic
+                grouped[preferred_key] = merged_rows
+        if (
+            ("FINANCIAL_DRIFT" in all_codes or "FINANCIAL_DRIFT_DETECTED" in all_codes or "EXPOSURE_MISMATCH" in all_codes or "INVARIANT_EXPOSURE_MISMATCH" in all_codes)
+            and ("LOCAL_VS_REMOTE_MISMATCH" in all_codes or "GHOST_ORDER_SUSPECTED" in all_codes or "GHOST_ORDER_DETECTED" in all_codes)
+        ):
+            preferred_key = next(
+                (k for k, rows in grouped.items() if any(r["code"] in {"LOCAL_VS_REMOTE_MISMATCH", "GHOST_ORDER_SUSPECTED", "GHOST_ORDER_DETECTED"} for r in rows)),
+                "global:financial",
+            )
+            synthetic = [
+                r for r in normalized
+                if r["code"] in {"FINANCIAL_DRIFT", "FINANCIAL_DRIFT_DETECTED", "EXPOSURE_MISMATCH", "INVARIANT_EXPOSURE_MISMATCH", "LOCAL_VS_REMOTE_MISMATCH", "GHOST_ORDER_SUSPECTED", "GHOST_ORDER_DETECTED"}
+            ]
+            if synthetic:
+                merged_rows = list(grouped.get(preferred_key, [])) + synthetic
+                grouped[preferred_key] = merged_rows
 
         current_codes: set[str] = set()
         delivery = self._delivery_status_snapshot()

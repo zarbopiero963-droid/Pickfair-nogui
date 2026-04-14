@@ -175,3 +175,94 @@ def test_eventbus_poison_pill_evidence_flows_through_reviewer_path():
     )
 
     bus.stop_lossy(timeout=1.0)
+
+
+def test_natural_dispatch_governance_lifecycle_repeated_cycles():
+    state = {
+        "event_bus": {"published_total": 10, "side_effects_confirmed": 4, "subscriber_errors": {"poisoned_subscriber": 5}, "poison_pill_threshold": 3},
+        "runtime_state": {
+            "alert_pipeline": {"alerts_enabled": True, "sender_available": True, "deliverable": True, "last_delivery_ok": True},
+        },
+    }
+
+    class _Probe:
+        def collect_health(self):
+            return {"runtime": {"status": "READY", "reason": "ok", "details": {}}}
+
+        def collect_metrics(self):
+            return {}
+
+        def collect_runtime_state(self):
+            return dict(state["runtime_state"])
+
+        def collect_correlation_context(self):
+            return {"event_bus": dict(state["event_bus"])}
+
+        def collect_reviewer_context(self):
+            return {"event_bus": dict(state["event_bus"])}
+
+    class _Snapshot:
+        def collect_and_store(self):
+            return None
+
+    alerts = AlertsManager()
+    incidents = IncidentsManager()
+    watchdog = WatchdogService(
+        probe=_Probe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=incidents,
+        snapshot_service=_Snapshot(),
+        interval_sec=60.0,
+    )
+
+    watchdog.tick()
+    dispatch = [
+        a for a in alerts.active_alerts()
+        if a.get("source") == "reviewer_governance"
+        and (a.get("details") or {}).get("incident_class") == "dispatch_pipeline_incident"
+        and a["code"].startswith("REVIEWER_GOVERNANCE::")
+    ]
+    assert len(dispatch) == 1
+    code = dispatch[0]["code"]
+    assert (dispatch[0]["details"] or {}).get("normalized_severity") in {"high", "critical"}
+
+    for _ in range(2):
+        state["event_bus"]["published_total"] += 10
+        state["event_bus"]["side_effects_confirmed"] += 5
+        watchdog.tick()
+    stable = [
+        a for a in alerts.active_alerts()
+        if a.get("source") == "reviewer_governance"
+        and (a.get("details") or {}).get("incident_class") == "dispatch_pipeline_incident"
+        and a["code"].startswith("REVIEWER_GOVERNANCE::")
+    ]
+    assert len(stable) == 1
+    assert stable[0]["code"] == code
+
+    state["event_bus"] = {"published_total": 40, "side_effects_confirmed": 40, "subscriber_errors": {"poisoned_subscriber": 0}, "poison_pill_threshold": 3}
+    watchdog.tick()
+    assert not any(a["code"] == code for a in alerts.active_alerts())
+
+    state["event_bus"] = {"published_total": 60, "side_effects_confirmed": 50, "subscriber_errors": {"poisoned_subscriber": 6}, "poison_pill_threshold": 3}
+    watchdog.tick()
+    reopened = [
+        a for a in alerts.active_alerts()
+        if a.get("source") == "reviewer_governance"
+        and (a.get("details") or {}).get("incident_class") == "dispatch_pipeline_incident"
+        and a["code"].startswith("REVIEWER_GOVERNANCE::")
+    ]
+    assert len(reopened) == 1
+    assert reopened[0]["code"] == code
+
+    state["event_bus"] = {"published_total": 70, "side_effects_confirmed": 70, "subscriber_errors": {"poisoned_subscriber": 0}, "poison_pill_threshold": 3}
+    watchdog.tick()
+    assert not any(a["code"] == code for a in alerts.active_alerts())
+    assert all(
+        not (
+            row.get("status") == "OPEN"
+            and (row.get("details") or {}).get("incident_class") == "dispatch_pipeline_incident"
+        )
+        for row in incidents.snapshot()["incidents"]
+    )

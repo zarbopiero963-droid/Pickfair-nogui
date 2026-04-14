@@ -287,3 +287,221 @@ def test_repeated_contention_cycles_produce_stable_grouped_governance_incident()
     state["runtime_state"]["forensics"] = {"observability_snapshot_recent": True}
     watchdog.tick()
     assert grouped[0]["code"] not in {a["code"] for a in alerts.active_alerts()}
+
+
+@pytest.mark.chaos
+@pytest.mark.integration
+def test_natural_liveness_governance_lifecycle_repeated_cycles() -> None:
+    state = {
+        "metrics": {"queue_depth": 7.0, "last_heartbeat_age_sec": 120.0},
+        "runtime_state": {
+            "alert_pipeline": {"alerts_enabled": True, "sender_available": True, "deliverable": True, "last_delivery_ok": True},
+        },
+        "correlation_context": {
+            "metrics": {"gauges": {"queue_depth": 7.0, "last_heartbeat_age_sec": 120.0}},
+            "event_bus": {"queue_depth": 7, "running": True, "worker_threads_alive": 1},
+        },
+    }
+
+    class _Probe:
+        def collect_health(self):
+            return {"runtime": {"status": "READY", "reason": "ok", "details": {}}}
+
+        def collect_metrics(self):
+            return dict(state["metrics"])
+
+        def collect_runtime_state(self):
+            return dict(state["runtime_state"])
+
+        def collect_correlation_context(self):
+            return dict(state["correlation_context"])
+
+    class _Snapshot:
+        def collect_and_store(self):
+            return None
+
+    alerts = AlertsManager()
+    incidents = IncidentsManager()
+    watchdog = WatchdogService(
+        probe=_Probe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=incidents,
+        snapshot_service=_Snapshot(),
+        interval_sec=60.0,
+    )
+
+    watchdog.tick()
+    liveness = [
+        a for a in alerts.active_alerts()
+        if a.get("source") == "reviewer_governance"
+        and (a.get("details") or {}).get("incident_class") == "liveness_degradation_incident"
+        and a["code"].startswith("REVIEWER_GOVERNANCE::")
+    ]
+    assert len(liveness) == 1
+    stable_code = liveness[0]["code"]
+    assert (liveness[0]["details"] or {}).get("normalized_severity") in {"high", "critical"}
+
+    watchdog.tick()
+    watchdog.tick()
+    stable = [
+        a for a in alerts.active_alerts()
+        if a.get("source") == "reviewer_governance"
+        and (a.get("details") or {}).get("incident_class") == "liveness_degradation_incident"
+        and a["code"].startswith("REVIEWER_GOVERNANCE::")
+    ]
+    assert len(stable) == 1
+    assert stable[0]["code"] == stable_code
+
+    state["metrics"] = {"queue_depth": 0.0, "last_heartbeat_age_sec": 0.0}
+    state["correlation_context"] = {
+        "metrics": {"gauges": {"queue_depth": 0.0, "last_heartbeat_age_sec": 0.0}},
+        "event_bus": {"queue_depth": 0, "running": True, "worker_threads_alive": 1},
+    }
+    watchdog.tick()
+    assert not any(a["code"] == stable_code for a in alerts.active_alerts())
+
+    state["metrics"] = {"queue_depth": 5.0, "last_heartbeat_age_sec": 90.0}
+    state["correlation_context"] = {
+        "metrics": {"gauges": {"queue_depth": 5.0, "last_heartbeat_age_sec": 90.0}},
+        "event_bus": {"queue_depth": 5, "running": True, "worker_threads_alive": 1},
+    }
+    watchdog.tick()
+    reopened = [
+        a for a in alerts.active_alerts()
+        if a.get("source") == "reviewer_governance"
+        and (a.get("details") or {}).get("incident_class") == "liveness_degradation_incident"
+        and a["code"].startswith("REVIEWER_GOVERNANCE::")
+    ]
+    assert len(reopened) == 1
+    assert reopened[0]["code"] == stable_code
+
+    state["metrics"] = {"queue_depth": 0.0, "last_heartbeat_age_sec": 0.0}
+    state["correlation_context"] = {
+        "metrics": {"gauges": {"queue_depth": 0.0, "last_heartbeat_age_sec": 0.0}},
+        "event_bus": {"queue_depth": 0, "running": True, "worker_threads_alive": 1},
+    }
+    watchdog.tick()
+    assert not any(a["code"] == stable_code for a in alerts.active_alerts())
+    assert all(
+        not (
+            row.get("status") == "OPEN"
+            and (row.get("details") or {}).get("incident_class") == "liveness_degradation_incident"
+        )
+        for row in incidents.snapshot()["incidents"]
+    )
+
+
+@pytest.mark.chaos
+@pytest.mark.integration
+def test_natural_financial_integrity_governance_lifecycle_repeated_cycles() -> None:
+    state = {
+        "runtime_state": {
+            "reconcile": {"ghost_orders_count": 1, "suspected_ghost_count": 1, "event_key": "FIN-LOOP-1"},
+            "alert_pipeline": {"alerts_enabled": True, "sender_available": True, "deliverable": True, "last_delivery_ok": True},
+        },
+        "recent_orders": [{"order_id": "FIN-LOOP-1", "status": "AMBIGUOUS", "remote_status": "MATCHED"}],
+        "financials": {"ledger_balance": 100.0, "venue_balance": 94.0, "drift_threshold": 0.5},
+        "risk": {"local_exposure": 12.0, "remote_exposure": 2.0, "exposure_tolerance": 0.5},
+    }
+
+    class _Probe:
+        def collect_health(self):
+            return {"runtime": {"status": "READY", "reason": "ok", "details": {}}}
+
+        def collect_metrics(self):
+            return {}
+
+        def collect_runtime_state(self):
+            payload = dict(state["runtime_state"])
+            payload["recent_orders"] = [dict(item) for item in state["recent_orders"]]
+            return payload
+
+        def collect_correlation_context(self):
+            return {"recent_orders": [dict(item) for item in state["recent_orders"]]}
+
+        def collect_reviewer_context(self):
+            return {
+                "recent_orders": [dict(item) for item in state["recent_orders"]],
+                "financials": dict(state["financials"]),
+                "risk": dict(state["risk"]),
+            }
+
+    class _Snapshot:
+        def collect_and_store(self):
+            return None
+
+    alerts = AlertsManager()
+    incidents = IncidentsManager()
+    watchdog = WatchdogService(
+        probe=_Probe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=incidents,
+        snapshot_service=_Snapshot(),
+        interval_sec=60.0,
+    )
+
+    watchdog.tick()
+    financial = [
+        a for a in alerts.active_alerts()
+        if a.get("source") == "reviewer_governance"
+        and (a.get("details") or {}).get("incident_class") == "financial_integrity_incident"
+        and a["code"].startswith("REVIEWER_GOVERNANCE::")
+    ]
+    assert len(financial) == 1
+    code = financial[0]["code"]
+    details = financial[0]["details"] or {}
+    assert details.get("normalized_severity") == "critical"
+    assert details.get("delivery_required") is True
+    assert "FINANCIAL_DRIFT" in set(details.get("triggering_finding_codes") or [])
+    assert "GHOST_ORDER_DETECTED" in set(details.get("triggering_finding_codes") or [])
+    assert "LOCAL_VS_REMOTE_MISMATCH" in set(details.get("triggering_finding_codes") or [])
+
+    watchdog.tick()
+    watchdog.tick()
+    stable = [
+        a for a in alerts.active_alerts()
+        if a.get("source") == "reviewer_governance"
+        and (a.get("details") or {}).get("incident_class") == "financial_integrity_incident"
+        and a["code"].startswith("REVIEWER_GOVERNANCE::")
+    ]
+    assert len(stable) == 1
+    assert stable[0]["code"] == code
+
+    state["runtime_state"]["reconcile"] = {"ghost_orders_count": 0, "suspected_ghost_count": 0, "event_key": "FIN-LOOP-1"}
+    state["recent_orders"] = [{"order_id": "FIN-LOOP-1", "status": "COMPLETED", "remote_status": "COMPLETED"}]
+    state["financials"] = {"ledger_balance": 100.0, "venue_balance": 100.0, "drift_threshold": 0.5}
+    state["risk"] = {"local_exposure": 5.0, "remote_exposure": 5.0, "exposure_tolerance": 0.5}
+    watchdog.tick()
+    assert not any(a["code"] == code for a in alerts.active_alerts())
+
+    state["runtime_state"]["reconcile"] = {"ghost_orders_count": 1, "suspected_ghost_count": 1, "event_key": "FIN-LOOP-1"}
+    state["recent_orders"] = [{"order_id": "FIN-LOOP-1", "status": "AMBIGUOUS", "remote_status": "MATCHED"}]
+    state["financials"] = {"ledger_balance": 100.0, "venue_balance": 92.0, "drift_threshold": 0.5}
+    state["risk"] = {"local_exposure": 11.0, "remote_exposure": 1.0, "exposure_tolerance": 0.5}
+    watchdog.tick()
+    reopened = [
+        a for a in alerts.active_alerts()
+        if a.get("source") == "reviewer_governance"
+        and (a.get("details") or {}).get("incident_class") == "financial_integrity_incident"
+        and a["code"].startswith("REVIEWER_GOVERNANCE::")
+    ]
+    assert len(reopened) == 1
+    assert reopened[0]["code"] == code
+
+    state["runtime_state"]["reconcile"] = {"ghost_orders_count": 0, "suspected_ghost_count": 0, "event_key": "FIN-LOOP-1"}
+    state["recent_orders"] = [{"order_id": "FIN-LOOP-1", "status": "COMPLETED", "remote_status": "COMPLETED"}]
+    state["financials"] = {"ledger_balance": 100.0, "venue_balance": 100.0, "drift_threshold": 0.5}
+    state["risk"] = {"local_exposure": 5.0, "remote_exposure": 5.0, "exposure_tolerance": 0.5}
+    watchdog.tick()
+    assert not any(a["code"] == code for a in alerts.active_alerts())
+    assert all(
+        not (
+            row.get("status") == "OPEN"
+            and (row.get("details") or {}).get("incident_class") == "financial_integrity_incident"
+        )
+        for row in incidents.snapshot()["incidents"]
+    )
