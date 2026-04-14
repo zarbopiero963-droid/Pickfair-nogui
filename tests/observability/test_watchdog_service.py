@@ -1112,3 +1112,45 @@ def test_anomaly_reviewer_disabled_signal_is_idempotent_across_ticks():
         if i["code"] == "ANOMALY_REVIEWER_DISABLED" and i["status"] == "OPEN"
     ]
     assert len(disabled_incidents) == 1, "ANOMALY_REVIEWER_DISABLED incident must be idempotent"
+
+
+def test_anomaly_reviewer_disabled_signal_clears_when_reenabled():
+    alerts = AlertsManager()
+    incidents = IncidentsManager()
+
+    class _ToggleSettings:
+        def __init__(self):
+            self.enabled = False
+
+        def load_anomaly_enabled(self):
+            return self.enabled
+
+    settings = _ToggleSettings()
+    watchdog = WatchdogService(
+        probe=_ProbeStub(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=incidents,
+        snapshot_service=_SnapshotStub(),
+        anomaly_enabled=False,
+        settings_service=settings,
+        interval_sec=60.0,
+    )
+
+    watchdog.tick()
+    assert any(a["code"] == "ANOMALY_REVIEWER_DISABLED" for a in alerts.active_alerts())
+    assert any(
+        i["code"] == "ANOMALY_REVIEWER_DISABLED" and i["status"] == "OPEN"
+        for i in incidents.snapshot()["incidents"]
+    )
+
+    settings.enabled = True
+    watchdog.tick()
+
+    active_codes = {a["code"] for a in alerts.active_alerts()}
+    assert "ANOMALY_REVIEWER_DISABLED" not in active_codes
+    assert any(
+        i["code"] == "ANOMALY_REVIEWER_DISABLED" and i["status"] == "CLOSED"
+        for i in incidents.snapshot()["incidents"]
+    )
