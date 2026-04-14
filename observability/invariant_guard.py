@@ -93,6 +93,45 @@ _DEFAULT_CHECKS: tuple[tuple[str, str, InvariantCheck], ...] = (
             for o in (state.get("recent_orders") or [])
         ),
     ),
+    # ── Required runtime-reviewer invariant codes ──────────────────────────
+    # These use the canonical uppercase code names required by the runtime
+    # reviewer stack audit. They evaluate the same conditions as the aliased
+    # checks above but are exposed under the exact codes the reviewer depends on.
+    (
+        "FAILED_LOCAL_REMOTE_EXISTS",
+        "FAILED_LOCAL_REMOTE_EXISTS: An order marked FAILED locally has a remote bet ID — ghost order risk",
+        lambda state: not any(
+            str(o.get("status", "")).upper() in {"FAILED", "ERROR", "REJECTED"}
+            and (o.get("remote_bet_id") or o.get("exchange_order_id"))
+            for o in (state.get("recent_orders") or [])
+        ),
+    ),
+    (
+        "STATE_REGRESSION",
+        "STATE_REGRESSION: An order transitioned from a terminal state back to a non-terminal state",
+        lambda state: not any(
+            str(o.get("prev_status", "")).upper() in {"COMPLETED", "FAILED", "CANCELLED"}
+            and str(o.get("status", "")).upper() not in {"COMPLETED", "FAILED", "CANCELLED"}
+            for o in (state.get("recent_orders") or [])
+        ),
+    ),
+    (
+        "INFLIGHT_STUCK",
+        "INFLIGHT_STUCK: Inflight orders are stuck and exceed the maximum allowed age",
+        lambda state: not any(
+            str(o.get("status", "")).upper() == "INFLIGHT"
+            and float(o.get("age_sec", 0) or 0) > float(state.get("max_inflight_age_sec", 300) or 300)
+            for o in (state.get("recent_orders") or [])
+        ),
+    ),
+    (
+        "EXPOSURE_MISMATCH",
+        "EXPOSURE_MISMATCH: Local computed exposure differs significantly from remote reported exposure",
+        lambda state: abs(
+            float((state.get("risk") or {}).get("local_exposure", 0) or 0)
+            - float((state.get("risk") or {}).get("remote_exposure", 0) or 0)
+        ) <= float((state.get("risk") or {}).get("exposure_tolerance", 0.01) or 0.01),
+    ),
 )
 
 DEFAULT_INVARIANT_CHECKS = _DEFAULT_CHECKS

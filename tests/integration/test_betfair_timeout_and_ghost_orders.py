@@ -252,6 +252,14 @@ def test_submit_timeout_becomes_ambiguous_and_remote_order_exists() -> None:
 
 @pytest.mark.integration
 def test_timeout_retry_has_no_double_exposure_and_reconcile_finds_ghost() -> None:
+    """Proves:
+    - timeout → ambiguous (not failed)
+    - retry → duplicate blocked (no double exposure)
+    - remote exists (exchange recorded the order)
+    - ambiguity is preserved until reconcile confirms the outcome
+    - ghost IS detectable (local=AMBIGUOUS, remote=EXECUTABLE) WITHOUT manual DB update
+    - ghost is resolved through a reconcile pass that compares remote vs local truth
+    """
     exchange = FakeExchange(duplicate_mode="single_exposure")
     exchange.force_timeout_on_next_submit()
     engine, db, bus, _rec = _make_engine(exchange=exchange, client=FakeClient(exchange=exchange))
@@ -259,32 +267,48 @@ def test_timeout_retry_has_no_double_exposure_and_reconcile_finds_ghost() -> Non
     first = engine.submit_quick_bet(_payload("GHOST-1"))
     second = engine.submit_quick_bet(_payload("GHOST-1"))
 
+    # Timeout → ambiguous, not failed
     assert first["status"] == STATUS_AMBIGUOUS
+    # Retry → duplicate blocked — no double submission on exchange
     assert second["status"] == STATUS_DUPLICATE_BLOCKED
 
+    # Exchange shows exactly 1 order (no double exposure on remote side)
     remote = exchange.get_current_orders(customer_ref="GHOST-1")
     assert len(remote) == 1
 
-    for oid, row in db.orders.items():
-        if row.get("customer_ref") == "GHOST-1" and row.get("status") != STATUS_DUPLICATE_BLOCKED:
-            db.update_order(
-                oid,
-                {
-                    "status": STATUS_COMPLETED,
-                    "outcome": "SUCCESS",
-                    "remote_bet_id": remote[0]["bet_id"],
-                    "finalized": True,
-                },
-            )
+    # Ghost condition: local is AMBIGUOUS, remote is live — ghost evidence is present
+    # Ambiguity is preserved at this point; local has NOT been prematurely finalized
+    ghost_order = db.get_order(first["order_id"])
+    assert ghost_order["status"] == STATUS_AMBIGUOUS, "ambiguity must be preserved before reconcile"
+    assert ghost_order["status"] != STATUS_FAILED, "order must not transition to failed on timeout"
+    assert remote[0]["status"] in {"EXECUTABLE", "PARTIALLY_MATCHED", "MATCHED"}, (
+        "remote order must be live — ghost condition: remote exists, local is ambiguous"
+    )
 
+    # No double exposure: only 1 non-duplicate order in DB
     non_duplicate_orders = [o for o in db.orders.values() if o.get("status") != STATUS_DUPLICATE_BLOCKED]
     assert len(non_duplicate_orders) == 1
-    assert non_duplicate_orders[0]["status"] == STATUS_COMPLETED
-    assert non_duplicate_orders[0]["remote_bet_id"] == remote[0]["bet_id"]
-    assert non_duplicate_orders[0]["status"] != STATUS_FAILED
+    # That order is still AMBIGUOUS — ambiguity preserved, no fake completion
+    assert non_duplicate_orders[0]["status"] == STATUS_AMBIGUOUS
 
+    # Ambiguous event was published — operational observability proof
     ambiguous_events = [payload for name, payload in bus.events if name == "QUICK_BET_AMBIGUOUS"]
     assert len(ambiguous_events) == 1
+
+    # Ghost resolved through reconcile pass (NOT via manual DB override):
+    # ReconcilePassRunner fetches remote state and updates local only when remote confirms
+    runner = ReconcilePassRunner(
+        db,
+        FlakyRemoteFetcher([{"bet_id": remote[0]["bet_id"]}]),
+    )
+    resolved = runner.run_once(customer_ref="GHOST-1")
+    assert resolved is True, "reconcile pass must resolve the ghost order using remote evidence"
+
+    # After reconcile confirms remote → local state resolves deterministically
+    resolved_order = db.get_order(first["order_id"])
+    assert resolved_order["status"] == STATUS_COMPLETED
+    assert resolved_order["remote_bet_id"] == remote[0]["bet_id"]
+    assert resolved_order["status"] != STATUS_FAILED
 
 
 @pytest.mark.integration
