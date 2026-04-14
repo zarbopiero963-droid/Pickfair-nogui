@@ -132,6 +132,7 @@ class ReconciliationEngine:
             "sample_ghost_bet_ids": [],
             "source": "reconciliation_engine",
         }
+        self._audited_runtime_ts: Optional[float] = None
 
         # ── validate contracts on init (Point 4) ────────────────
         if self.cfg.validate_batch_manager_contract:
@@ -299,7 +300,7 @@ class ReconciliationEngine:
         self, *, batch_id: str, event_name: str, payload: Dict[str, Any]
     ) -> None:
         entry = OutboxEntry(
-            timestamp=time.time(),
+            timestamp=self._now_epoch(),
             batch_id=batch_id,
             event_name=event_name,
             payload=payload,
@@ -445,7 +446,7 @@ class ReconciliationEngine:
             st = str(lg.get("status") or "").upper()
             ts = float(lg.get("created_at_ts", 0) or 0)
             if st == "UNKNOWN" and ts > 0:
-                age = time.time() - ts
+                age = self._now_epoch() - ts
                 if age > self.cfg.unknown_grace_secs:
                     violations.append(
                         f"leg {lg.get('leg_index')}: UNKNOWN beyond TTL "
@@ -507,6 +508,47 @@ class ReconciliationEngine:
 
     def _audited_single_pass_mode(self) -> bool:
         return bool(getattr(self.cfg, "audited_single_pass_mode", False))
+
+    def _resolve_audited_runtime_ts(self, *, batch_id: str) -> Tuple[Optional[float], Optional[Dict[str, Any]]]:
+        provider = getattr(self.db, "get_reconcile_runtime_ts", None)
+        if not callable(provider):
+            return None, {
+                "code": "RECONCILE_RUNTIME_TS_UNAVAILABLE",
+                "reason": "db.get_reconcile_runtime_ts unavailable",
+                "batch_id": batch_id,
+            }
+        try:
+            raw = provider(batch_id=batch_id)
+        except TypeError:
+            raw = provider(batch_id)
+        except Exception as exc:
+            return None, {
+                "code": "RECONCILE_RUNTIME_TS_UNAVAILABLE",
+                "reason": f"db.get_reconcile_runtime_ts raised {type(exc).__name__}",
+                "batch_id": batch_id,
+            }
+        try:
+            ts = float(raw)
+        except (TypeError, ValueError):
+            return None, {
+                "code": "RECONCILE_RUNTIME_TS_MISCONFIGURED",
+                "reason": "runtime timestamp is missing_or_non_numeric",
+                "batch_id": batch_id,
+            }
+        if ts <= 0:
+            return None, {
+                "code": "RECONCILE_RUNTIME_TS_MISCONFIGURED",
+                "reason": "runtime timestamp must be > 0",
+                "batch_id": batch_id,
+            }
+        return ts, None
+
+    def _now_epoch(self) -> float:
+        if self._audited_single_pass_mode():
+            if self._audited_runtime_ts is None:
+                raise RuntimeError("audited_runtime_ts_missing")
+            return float(self._audited_runtime_ts)
+        return time.time()
 
     def _load_supplied_remote_orders(
         self, *, batch_id: str, market_id: str
@@ -775,7 +817,7 @@ class ReconciliationEngine:
         persist_immediate: bool = False,
     ) -> DecisionEntry:
         entry = DecisionEntry(
-            timestamp=time.time(),
+            timestamp=self._now_epoch(),
             batch_id=batch_id,
             leg_index=leg_index,
             case_classification=case_classification,
@@ -956,7 +998,7 @@ class ReconciliationEngine:
         setter = getattr(self.db, "set_reconcile_marker", None)
         if callable(setter):
             try:
-                setter(batch_id, time.time())
+                setter(batch_id, self._now_epoch())
             except Exception:
                 logger.exception("Failed to set recovery marker batch=%s", batch_id)
 
@@ -996,7 +1038,7 @@ class ReconciliationEngine:
                 return False
             # timestamp-based TTL
             if isinstance(value, (int, float)) and value > 1:
-                age = time.time() - float(value)
+                age = self._now_epoch() - float(value)
                 if age > self.cfg.recovery_marker_ttl_secs:
                     logger.warning(
                         "Recovery marker for batch=%s is stale "
@@ -1105,7 +1147,7 @@ class ReconciliationEngine:
                 )
                 return None, ReasonCode.LOCAL_WINS_SAGA_PENDING, "LOCAL"
 
-            age = time.time() - created_ts
+            age = self._now_epoch() - created_ts
 
             if local_status == "UNKNOWN" or age > self.cfg.unknown_grace_secs:
                 self._log_decision(
@@ -1384,6 +1426,20 @@ class ReconciliationEngine:
 
     def _reconcile_batch_locked(self, batch_id: str) -> Dict[str, Any]:
         """Core reconcile logic, called only under batch lock."""
+        if self._audited_single_pass_mode():
+            audited_ts, signal = self._resolve_audited_runtime_ts(batch_id=batch_id)
+            if audited_ts is None:
+                return self._result(
+                    False,
+                    batch_id,
+                    reason_code=ReasonCode.FETCH_PERMANENT_FAILURE,
+                    extra={
+                        "fetch_failure": ReasonCode.FETCH_PERMANENT_FAILURE.value,
+                        "operational_signal": signal,
+                    },
+                )
+            self._audited_runtime_ts = audited_ts
+
         # Assign fencing token — proves this thread owns this reconcile run.
         fencing_token: Optional[int] = None
         if self.cfg.enable_fencing_token:
@@ -1399,6 +1455,7 @@ class ReconciliationEngine:
             return result
         finally:
             self._clear_recovery_marker(batch_id)
+            self._audited_runtime_ts = None
             if fencing_token is not None:
                 with self._fencing_lock:
                     # Only clear our own token — do not overwrite if another

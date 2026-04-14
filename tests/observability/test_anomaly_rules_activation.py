@@ -321,6 +321,23 @@ def test_stuck_inflight_requires_explicit_runtime_timestamp() -> None:
     assert result["severity"] == "critical"
 
 
+def test_stuck_inflight_missing_timestamp_never_falls_back_to_wall_clock(monkeypatch) -> None:
+    import time
+
+    def _boom():
+        raise AssertionError("time.time fallback must not be used")
+
+    monkeypatch.setattr(time, "time", _boom)
+    context = {
+        "metrics": {"gauges": {"inflight_count": 55}},
+        "runtime_state": {"require_explicit_ts": True},
+        "recent_orders": [{"order_id": "O-1", "status": "INFLIGHT"}],
+    }
+    result = rule_stuck_inflight(context, {})
+    assert result is not None
+    assert result["code"] == "ANOMALY_INPUT_MISSING"
+
+
 # ===========================================================================
 # F) Watchdog runtime activation — all 5 rules active via watchdog path
 # ===========================================================================

@@ -211,6 +211,31 @@ class WatchdogService:
 
         runtime_state = context.get("runtime_state")
         rule_inputs = context
+        strict_fail_closed = bool(context.get("anomaly_fail_closed"))
+        if isinstance(runtime_state, dict):
+            strict_fail_closed = strict_fail_closed or bool(runtime_state.get("anomaly_fail_closed"))
+
+        if strict_fail_closed:
+            if not isinstance(runtime_state, dict):
+                collected.append(
+                    {
+                        "code": "ANOMALY_REVIEWER_MISCONFIGURED",
+                        "severity": "critical",
+                        "message": "Anomaly reviewer runtime_state is malformed",
+                        "details": {"reason": "runtime_state_not_mapping"},
+                    }
+                )
+                return collected
+            if not runtime_state:
+                collected.append(
+                    {
+                        "code": "ANOMALY_REVIEWER_INPUT_MISSING",
+                        "severity": "critical",
+                        "message": "Anomaly reviewer runtime_state input missing",
+                        "details": {"reason": "runtime_state_empty"},
+                    }
+                )
+                return collected
 
         if self.anomaly_engine is None:
             for rule_name in (
