@@ -47,6 +47,13 @@ def test_default_invariant_checks_exported():
     assert "runtime_status_known" in codes
     assert "terminal_to_nonterminal_regression" in codes
     assert "failed_local_remote_exists" in codes
+    # Required runtime-reviewer canonical codes must also be present.
+    # Note: invariant EXPOSURE_MISMATCH is prefixed INVARIANT_ to avoid collision
+    # with anomaly rule EXPOSURE_MISMATCH (different source, same code key = resolution bug).
+    assert "FAILED_LOCAL_REMOTE_EXISTS" in codes
+    assert "STATE_REGRESSION" in codes
+    assert "INFLIGHT_STUCK" in codes
+    assert "INVARIANT_EXPOSURE_MISMATCH" in codes
 
 
 def test_failed_local_remote_exists_catches_ghost():
@@ -190,3 +197,205 @@ def test_new_checks_are_fail_safe_on_empty_orders():
     assert "ambiguous_local_remote_inconsistency" not in codes
     assert "duplicate_blocked_but_remote_executed" not in codes
     assert "finalized_state_inconsistent_with_audit_or_exchange_evidence" not in codes
+    # Required canonical codes must also not fire on empty orders
+    assert "FAILED_LOCAL_REMOTE_EXISTS" not in codes
+    assert "STATE_REGRESSION" not in codes
+    assert "INFLIGHT_STUCK" not in codes
+    assert "INVARIANT_EXPOSURE_MISMATCH" not in codes
+
+
+# ---------------------------------------------------------------------------
+# Required runtime-reviewer invariant codes — explicit assertion tests
+# ---------------------------------------------------------------------------
+
+def test_FAILED_LOCAL_REMOTE_EXISTS_fires_on_ghost_order():
+    """FAILED_LOCAL_REMOTE_EXISTS fires when a FAILED order has a remote_bet_id."""
+    state = {
+        "runtime": {"status": "READY"},
+        "metrics": {"inflight_count": 0},
+        "recent_orders": [
+            {"order_id": "o1", "status": "FAILED", "remote_bet_id": "ext-ghost-1"},
+        ],
+    }
+    violations = evaluate_invariants(state, enabled=True)
+    codes = {v.code for v in violations}
+    assert "FAILED_LOCAL_REMOTE_EXISTS" in codes
+
+
+def test_FAILED_LOCAL_REMOTE_EXISTS_no_false_positive():
+    """FAILED_LOCAL_REMOTE_EXISTS does not fire when no FAILED order has a remote id."""
+    state = {
+        "runtime": {"status": "READY"},
+        "metrics": {"inflight_count": 0},
+        "recent_orders": [
+            {"order_id": "o1", "status": "FAILED", "remote_bet_id": None},
+            {"order_id": "o2", "status": "COMPLETED", "remote_bet_id": "ext-ok"},
+        ],
+    }
+    violations = evaluate_invariants(state, enabled=True)
+    codes = {v.code for v in violations}
+    assert "FAILED_LOCAL_REMOTE_EXISTS" not in codes
+
+
+def test_STATE_REGRESSION_fires_on_terminal_to_nonterminal():
+    """STATE_REGRESSION fires when an order regresses from a terminal to a non-terminal state."""
+    state = {
+        "runtime": {"status": "READY"},
+        "metrics": {"inflight_count": 0},
+        "recent_orders": [
+            {"order_id": "o1", "prev_status": "COMPLETED", "status": "PENDING"},
+        ],
+    }
+    violations = evaluate_invariants(state, enabled=True)
+    codes = {v.code for v in violations}
+    assert "STATE_REGRESSION" in codes
+
+
+def test_STATE_REGRESSION_no_false_positive():
+    """STATE_REGRESSION does not fire on valid terminal-to-terminal transitions."""
+    state = {
+        "runtime": {"status": "READY"},
+        "metrics": {"inflight_count": 0},
+        "recent_orders": [
+            {"order_id": "o1", "prev_status": "COMPLETED", "status": "FAILED"},
+        ],
+    }
+    violations = evaluate_invariants(state, enabled=True)
+    codes = {v.code for v in violations}
+    assert "STATE_REGRESSION" not in codes
+
+
+def test_INFLIGHT_STUCK_fires_when_inflight_order_exceeds_max_age():
+    """INFLIGHT_STUCK fires when an INFLIGHT order exceeds the max_inflight_age_sec threshold."""
+    state = {
+        "runtime": {"status": "READY"},
+        "metrics": {"inflight_count": 1},
+        "max_inflight_age_sec": 300,
+        "recent_orders": [
+            {"order_id": "o1", "status": "INFLIGHT", "age_sec": 400},
+        ],
+    }
+    violations = evaluate_invariants(state, enabled=True)
+    codes = {v.code for v in violations}
+    assert "INFLIGHT_STUCK" in codes
+
+
+def test_INFLIGHT_STUCK_no_false_positive():
+    """INFLIGHT_STUCK does not fire when inflight orders are within allowed age."""
+    state = {
+        "runtime": {"status": "READY"},
+        "metrics": {"inflight_count": 1},
+        "max_inflight_age_sec": 300,
+        "recent_orders": [
+            {"order_id": "o1", "status": "INFLIGHT", "age_sec": 100},
+        ],
+    }
+    violations = evaluate_invariants(state, enabled=True)
+    codes = {v.code for v in violations}
+    assert "INFLIGHT_STUCK" not in codes
+
+
+def test_EXPOSURE_MISMATCH_fires_on_exposure_delta_exceeding_tolerance():
+    """INVARIANT_EXPOSURE_MISMATCH fires when local and remote exposure differ beyond tolerance.
+
+    The invariant code is INVARIANT_EXPOSURE_MISMATCH (not EXPOSURE_MISMATCH) to avoid
+    code-key collision with the anomaly rule EXPOSURE_MISMATCH — same key without source
+    scoping in AlertsManager/IncidentsManager causes anomaly stale-cleanup to wrongly
+    resolve a still-active invariant alert.
+    """
+    state = {
+        "runtime": {"status": "READY"},
+        "metrics": {"inflight_count": 0},
+        "risk": {"local_exposure": 100.0, "remote_exposure": 200.0, "exposure_tolerance": 0.01},
+    }
+    violations = evaluate_invariants(state, enabled=True)
+    codes = {v.code for v in violations}
+    assert "INVARIANT_EXPOSURE_MISMATCH" in codes
+    # The anomaly code EXPOSURE_MISMATCH must NOT be emitted from the invariant path
+    assert "EXPOSURE_MISMATCH" not in codes
+
+
+def test_EXPOSURE_MISMATCH_no_false_positive():
+    """INVARIANT_EXPOSURE_MISMATCH does not fire when local and remote exposure match within tolerance."""
+    state = {
+        "runtime": {"status": "READY"},
+        "metrics": {"inflight_count": 0},
+        "risk": {"local_exposure": 100.0, "remote_exposure": 100.0, "exposure_tolerance": 0.01},
+    }
+    violations = evaluate_invariants(state, enabled=True)
+    codes = {v.code for v in violations}
+    assert "INVARIANT_EXPOSURE_MISMATCH" not in codes
+
+
+def test_all_four_required_invariants_active_in_watchdog_path():
+    """Proves all 4 required invariant codes are evaluated when watchdog calls evaluate_invariants.
+
+    Specifically tests that the watchdog's _evaluate_invariants() path surfaces
+    FAILED_LOCAL_REMOTE_EXISTS, STATE_REGRESSION, INFLIGHT_STUCK, EXPOSURE_MISMATCH
+    as operational alerts when violations are present.
+    """
+    from observability.alerts_manager import AlertsManager
+    from observability.health_registry import HealthRegistry
+    from observability.incidents_manager import IncidentsManager
+    from observability.metrics_registry import MetricsRegistry
+    from observability.watchdog_service import WatchdogService
+
+    class _SnapshotStub:
+        def collect_and_store(self):
+            return None
+
+    alerts = AlertsManager()
+
+    class _ViolatingProbe:
+        def collect_health(self):
+            return {"runtime": {"status": "READY", "reason": "ok", "details": {}}}
+
+        def collect_metrics(self):
+            return {}
+
+        def collect_runtime_state(self):
+            return {
+                "runtime": {"status": "READY"},
+                "metrics": {"inflight_count": 1},
+                "max_inflight_age_sec": 300,
+                "risk": {"local_exposure": 0.0, "remote_exposure": 999.0, "exposure_tolerance": 0.01},
+                "recent_orders": [
+                    # FAILED_LOCAL_REMOTE_EXISTS: failed order with remote bet id
+                    {"order_id": "o1", "status": "FAILED", "remote_bet_id": "ext-ghost"},
+                    # STATE_REGRESSION: completed order reverted to non-terminal
+                    {"order_id": "o2", "prev_status": "COMPLETED", "status": "PENDING"},
+                    # INFLIGHT_STUCK: inflight order older than max age
+                    {"order_id": "o3", "status": "INFLIGHT", "age_sec": 999},
+                ],
+            }
+
+    watchdog = WatchdogService(
+        probe=_ViolatingProbe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        interval_sec=60.0,
+    )
+
+    watchdog._evaluate_invariants()
+
+    active_codes = {a["code"] for a in alerts.active_alerts() if a.get("source") == "invariant_reviewer"}
+    assert "FAILED_LOCAL_REMOTE_EXISTS" in active_codes, (
+        "FAILED_LOCAL_REMOTE_EXISTS must be raised by invariant reviewer when a FAILED order has remote_bet_id"
+    )
+    assert "STATE_REGRESSION" in active_codes, (
+        "STATE_REGRESSION must be raised by invariant reviewer on terminal→non-terminal regression"
+    )
+    assert "INFLIGHT_STUCK" in active_codes, (
+        "INFLIGHT_STUCK must be raised by invariant reviewer when inflight orders exceed max age"
+    )
+    assert "INVARIANT_EXPOSURE_MISMATCH" in active_codes, (
+        "INVARIANT_EXPOSURE_MISMATCH must be raised by invariant reviewer when local/remote exposure differs; "
+        "code is prefixed to avoid collision with anomaly EXPOSURE_MISMATCH"
+    )
+    # Prove no collision: anomaly reviewer code must NOT be present from invariant path
+    assert "EXPOSURE_MISMATCH" not in active_codes, (
+        "invariant reviewer must NOT emit bare EXPOSURE_MISMATCH — that code belongs to the anomaly path"
+    )
