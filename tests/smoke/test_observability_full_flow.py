@@ -544,3 +544,178 @@ def test_default_headless_reviewer_path_proves_critical_anomaly_and_chain_famili
         row["code"] for row in incidents.snapshot()["incidents"] if row["status"] == "OPEN"
     }
     assert "FINANCIAL_DRIFT" not in healed_open_incidents
+
+
+@pytest.mark.smoke
+def test_headless_app_build_bootstrap_reviewer_proof_e2e(monkeypatch):
+    """Bootstrap-level reviewer proof on the real HeadlessApp.build() assembly path."""
+    import headless_main
+
+    state = {
+        "mismatch": True,
+        "runtime_context": False,
+    }
+
+    class _FakeDatabase:
+        def close_all_connections(self):
+            return None
+
+        def get_recent_orders_for_diagnostics(self, limit=200):
+            del limit
+            if state["mismatch"]:
+                return [{"order_id": "ord-1", "status": "OPEN", "remote_status": "CANCELLED"}]
+            return [{"order_id": "ord-1", "status": "COMPLETED", "remote_status": "COMPLETED"}]
+
+        def get_recent_audit_events_for_diagnostics(self, limit=300):
+            del limit
+            return [{"order_id": "ord-1", "type": "REQUEST_RECEIVED"}]
+
+        def get_recent_observability_snapshots(self, limit=1):
+            del limit
+            return []
+
+    class _FakeEventBus:
+        def subscribe(self, *_args, **_kwargs):
+            return None
+
+        def queue_depth(self):
+            return 0
+
+        def published_total_count(self):
+            return 2
+
+        def delivered_total_count(self):
+            return 2
+
+        def subscriber_error_counts(self):
+            return {}
+
+    class _FakeExecutor:
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        def shutdown(self, **kwargs):
+            del kwargs
+            return None
+
+    class _FakeShutdownManager:
+        def register(self, *args, **kwargs):
+            del args, kwargs
+            return None
+
+    class _FakeSettingsService:
+        def __init__(self, _db):
+            return None
+
+        def load_anomaly_enabled(self):
+            return False
+
+        def load_anomaly_alerts_enabled(self):
+            return False
+
+        def load_anomaly_actions_enabled(self):
+            return False
+
+    class _FakeBetfairService:
+        def __init__(self, _settings):
+            return None
+
+        def get_client(self):
+            return object()
+
+        def disconnect(self):
+            return None
+
+    class _Sender:
+        def send(self, *_args, **_kwargs):
+            return None
+
+    class _FakeTelegramService:
+        def __init__(self, *_args, **_kwargs):
+            self.sender = _Sender()
+
+        def get_sender(self):
+            return self.sender
+
+        def stop(self):
+            return None
+
+    class _FakeTradingEngine:
+        def __init__(self, **kwargs):
+            del kwargs
+            self.async_db_writer = None
+            self.runtime_controller = None
+            self.simulation_broker = None
+            self.betfair_client = None
+
+    class _FakeRuntimeController:
+        def __init__(self, **kwargs):
+            del kwargs
+            self.runtime_probe = None
+            self.enforce_probe_readiness_gate = False
+
+    monkeypatch.setattr(headless_main, "Database", _FakeDatabase)
+    monkeypatch.setattr(headless_main, "EventBus", _FakeEventBus)
+    monkeypatch.setattr(headless_main, "ExecutorManager", _FakeExecutor)
+    monkeypatch.setattr(headless_main, "ShutdownManager", _FakeShutdownManager)
+    monkeypatch.setattr(headless_main, "SettingsService", _FakeSettingsService)
+    monkeypatch.setattr(headless_main, "BetfairService", _FakeBetfairService)
+    monkeypatch.setattr(headless_main, "TelegramService", _FakeTelegramService)
+    monkeypatch.setattr(headless_main, "TradingEngine", _FakeTradingEngine)
+    monkeypatch.setattr(headless_main, "RuntimeController", _FakeRuntimeController)
+    monkeypatch.setattr(headless_main, "get_safe_mode_manager", lambda: object())
+    monkeypatch.setattr(headless_main.WatchdogService, "start", lambda self: None)
+    monkeypatch.setattr(headless_main.WatchdogService, "stop", lambda self: None)
+    monkeypatch.setattr(headless_main.CleanupService, "start", lambda self: None)
+    monkeypatch.setattr(headless_main.CleanupService, "stop", lambda self: None)
+
+    app = headless_main.HeadlessApp()
+    app.build()
+
+    assert app.runtime_probe is not None
+    assert app.watchdog_service is not None
+    assert app.runtime is not None
+    assert app.runtime.runtime_probe is app.runtime_probe
+
+    # Tick 1 (degraded): reviewer findings must come from live assembled runtime probe.
+    app.watchdog_service._tick()
+    active_alerts = {a["code"]: a for a in app.alerts_manager.active_alerts()}
+
+    assert "LOCAL_VS_REMOTE_MISMATCH" in active_alerts
+    assert "DB_VS_MEMORY_MISMATCH" in active_alerts
+    assert active_alerts["LOCAL_VS_REMOTE_MISMATCH"]["source"] == "correlation_reviewer"
+    assert active_alerts["DB_VS_MEMORY_MISMATCH"]["source"] == "correlation_reviewer"
+    assert active_alerts["LOCAL_VS_REMOTE_MISMATCH"]["details"]["mismatched_count"] == 1
+    assert active_alerts["LOCAL_VS_REMOTE_MISMATCH"]["details"]["sample"][0]["id"] == "ord-1"
+
+    open_incidents = {
+        row["code"]: row
+        for row in app.incidents_manager.snapshot()["incidents"]
+        if row["status"] == "OPEN"
+    }
+    assert "LOCAL_VS_REMOTE_MISMATCH" in open_incidents
+    assert open_incidents["LOCAL_VS_REMOTE_MISMATCH"]["severity"] == "critical"
+
+    # Tick 2 (healed): prove clean resolution in the same assembled runtime path.
+    state["mismatch"] = False
+    state["runtime_context"] = True
+    base_collect_runtime_state = app.runtime_probe.collect_runtime_state
+
+    def _healed_runtime_state():
+        payload = dict(base_collect_runtime_state())
+        payload["mode"] = "healed"
+        return payload
+
+    app.runtime_probe.collect_runtime_state = _healed_runtime_state
+    app.watchdog_service._tick()
+
+    healed_codes = {a["code"] for a in app.alerts_manager.active_alerts()}
+    assert "LOCAL_VS_REMOTE_MISMATCH" not in healed_codes
+    assert "DB_VS_MEMORY_MISMATCH" not in healed_codes
+
+    healed_open_incidents = {
+        row["code"]
+        for row in app.incidents_manager.snapshot()["incidents"]
+        if row["status"] == "OPEN"
+    }
+    assert "LOCAL_VS_REMOTE_MISMATCH" not in healed_open_incidents
