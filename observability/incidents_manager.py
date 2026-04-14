@@ -23,6 +23,22 @@ class IncidentsManager:
         with self._lock:
             existing = self._incidents.get(code)
             if existing and existing["status"] == "OPEN":
+                merged_details = dict(existing.get("details") or {})
+                merged_details.update(dict(details or {}))
+                changed = (
+                    str(existing.get("severity")) != str(severity)
+                    or merged_details != dict(existing.get("details") or {})
+                )
+                if changed:
+                    existing["severity"] = severity
+                    existing["details"] = merged_details
+                    existing["events"].append(
+                        {
+                            "ts": now,
+                            "message": "Incident updated",
+                            "details": {"severity": severity},
+                        }
+                    )
                 return existing["incident_id"]
 
             incident_id = str(uuid.uuid4())

@@ -15,6 +15,98 @@ from .sanitizers import sanitize_value
 
 logger = logging.getLogger(__name__)
 
+_SEVERITY_RANK = {"info": 10, "warning": 20, "error": 30, "high": 35, "critical": 40}
+_RANK_SEVERITY = {v: k for k, v in _SEVERITY_RANK.items()}
+
+
+class ReviewerGovernancePolicy:
+    def normalize(self, finding: dict[str, Any]) -> dict[str, Any]:
+        source = str(finding.get("source", "unknown") or "unknown")
+        code = str(finding.get("code", "UNKNOWN_FINDING") or "UNKNOWN_FINDING").upper()
+        base = str(finding.get("severity", "warning") or "warning").lower()
+        rank = _SEVERITY_RANK.get(base, _SEVERITY_RANK["warning"])
+        if source == "invariant_reviewer":
+            rank = max(rank, _SEVERITY_RANK["high"])
+        if source == "correlation_reviewer":
+            rank = max(rank, _SEVERITY_RANK["high"])
+        if "FINANCIAL" in code or "EXPOSURE_MISMATCH" in code:
+            rank = max(rank, _SEVERITY_RANK["critical"])
+        if "AMBIGUOUS_LOCAL_REMOTE_INCONSISTENCY" in code or "LOCAL_VS_REMOTE_MISMATCH" in code:
+            rank = max(rank, _SEVERITY_RANK["high"])
+        return {
+            "code": code,
+            "source": source,
+            "normalized_severity": _RANK_SEVERITY[rank],
+            "normalized_rank": rank,
+            "message": str(finding.get("message") or code),
+            "details": dict(finding.get("details") or {}),
+        }
+
+    def grouping_key(self, finding: dict[str, Any]) -> str:
+        details = finding.get("details") or {}
+        for key in ("grouping_key", "order_id", "id", "event_key", "correlation_id", "component", "service"):
+            val = details.get(key) if isinstance(details, dict) else None
+            if val not in (None, ""):
+                return f"entity:{val}"
+        sample = details.get("sample") if isinstance(details, dict) else None
+        if isinstance(sample, list) and sample:
+            first = sample[0] or {}
+            ident = first.get("id") or first.get("order_id")
+            if ident:
+                return f"entity:{ident}"
+        return f"code:{finding.get('code', 'UNKNOWN')}"
+
+    def classify_group(self, codes: set[str]) -> tuple[str, str, str, str]:
+        def has(*items: str) -> bool:
+            return all(i in codes for i in items)
+
+        if (
+            ("FINANCIAL_DRIFT_DETECTED" in codes or "EXPOSURE_MISMATCH" in codes or "INVARIANT_EXPOSURE_MISMATCH" in codes)
+            and ("LOCAL_VS_REMOTE_MISMATCH" in codes or "GHOST_ORDER_DETECTED" in codes or "GHOST_ORDER_SUSPECTED" in codes)
+        ):
+            return (
+                "financial_integrity_incident",
+                "mandatory_delivery_with_degraded_fallback_state",
+                "critical",
+                "Financial drift with execution contradiction can hide real exposure and PnL risk.",
+            )
+        if (
+            ("GHOST_ORDER_SUSPECTED" in codes or "GHOST_ORDER_DETECTED" in codes)
+            and "LOCAL_VS_REMOTE_MISMATCH" in codes
+        ):
+            return (
+                "execution_consistency_incident",
+                "mandatory_delivery_with_degraded_fallback_state",
+                "critical",
+                "Execution consistency contradiction means local state can diverge from exchange truth.",
+            )
+        if (
+            "QUEUE_DEPTH_LIVENESS_CONTRADICTION" in codes
+            and ("HEARTBEAT_STALE" in codes or "QUEUE_DEPTH_DISPATCHER_CONTRADICTION" in codes)
+        ):
+            return (
+                "liveness_degradation_incident",
+                "incident_and_alert",
+                "high",
+                "Dispatcher liveness degradation can block reconciliation and event delivery.",
+            )
+        if "EVENT_SIDE_EFFECT_GAP" in codes and ("POISON_PILL_SUBSCRIBER" in codes or "EVENT_FANOUT_INCOMPLETE" in codes):
+            return (
+                "dispatch_pipeline_incident",
+                "incident_and_alert",
+                "high",
+                "Event fanout/poison-pill signals indicate downstream side effects are incomplete.",
+            )
+        if ("DB_CONTENTION_DETECTED" in codes or "DB_VS_MEMORY_MISMATCH" in codes) and (
+            "EVENT_SIDE_EFFECT_GAP" in codes or "DIAGNOSTICS_BUNDLE_EVIDENCE_GAP" in codes
+        ):
+            return (
+                "observability_evidence_incident",
+                "incident_and_alert",
+                "high",
+                "Contention plus evidence gaps reduce reviewer auditability and dispatch trust.",
+            )
+        return ("reviewer_generic_incident", "alert_only", "warning", "Reviewer finding requires operator visibility.")
 
 class WatchdogService:
     def __init__(
@@ -63,7 +155,9 @@ class WatchdogService:
         self._managed_invariant_alert_codes: set[str] = set()
         self._managed_correlation_alert_codes: set[str] = set()
         self._managed_forensics_alert_codes: set[str] = set()
+        self._managed_governance_alert_codes: set[str] = set()
         self._correlation_evaluator = CorrelationEvaluator()
+        self._reviewer_policy = ReviewerGovernancePolicy()
 
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -146,6 +240,7 @@ class WatchdogService:
             self.last_anomalies = []
             self.escalation_requested = False
             self.last_escalation_event = None
+        self._evaluate_reviewer_governance()
         self.snapshot_service.collect_and_store()
 
     def _publish_health_components(self, health_map: dict[str, Any]) -> None:
@@ -752,3 +847,202 @@ class WatchdogService:
                     reason="finding_cleared",
                     resolved_by="forensics_reviewer",
                 )
+
+    def _evaluate_reviewer_governance(self) -> None:
+        active = []
+        getter = getattr(self.alerts_manager, "active_alerts", None)
+        if callable(getter):
+            try:
+                active = getter() or []
+            except Exception:
+                logger.exception("active_alerts failed during reviewer governance pass")
+
+        reviewer_sources = {"anomaly", "invariant_reviewer", "correlation_reviewer", "forensics_reviewer"}
+        findings = [a for a in active if str(a.get("source", "")) in reviewer_sources]
+        normalized = [self._reviewer_policy.normalize(f) for f in findings]
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for finding in normalized:
+            key = self._reviewer_policy.grouping_key(finding)
+            grouped.setdefault(key, []).append(finding)
+        all_codes = {item["code"] for item in normalized}
+        if {"GHOST_ORDER_DETECTED", "LOCAL_VS_REMOTE_MISMATCH"} <= all_codes or {"GHOST_ORDER_SUSPECTED", "LOCAL_VS_REMOTE_MISMATCH"} <= all_codes:
+            preferred_key = next(
+                (k for k, rows in grouped.items() if any(r["code"] == "LOCAL_VS_REMOTE_MISMATCH" for r in rows)),
+                "global:execution",
+            )
+            synthetic = [r for r in normalized if r["code"] in {"GHOST_ORDER_DETECTED", "GHOST_ORDER_SUSPECTED", "LOCAL_VS_REMOTE_MISMATCH", "AMBIGUOUS_LOCAL_REMOTE_INCONSISTENCY"}]
+            if synthetic:
+                existing_rows = list(grouped.get(preferred_key, []))
+                merged_rows = existing_rows + synthetic
+                deduped: list[dict[str, Any]] = []
+                seen: set[tuple[str, str, str]] = set()
+                for row in merged_rows:
+                    key = (
+                        str(row.get("code", "")),
+                        str(row.get("source", "")),
+                        str((row.get("details") or {}).get("grouping_key", "")),
+                    )
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    deduped.append(row)
+                grouped[preferred_key] = deduped
+        if {"DB_VS_MEMORY_MISMATCH", "DIAGNOSTICS_BUNDLE_EVIDENCE_GAP"} <= all_codes:
+            preferred_key = next(
+                (k for k, rows in grouped.items() if any(r["code"] == "DB_VS_MEMORY_MISMATCH" for r in rows)),
+                "global:observability",
+            )
+            synthetic = [r for r in normalized if r["code"] in {"DB_VS_MEMORY_MISMATCH", "EVENT_SIDE_EFFECT_GAP", "DIAGNOSTICS_BUNDLE_EVIDENCE_GAP"}]
+            if synthetic:
+                grouped[preferred_key] = synthetic
+        if "QUEUE_DEPTH_LIVENESS_CONTRADICTION" in all_codes and (
+            "HEARTBEAT_STALE" in all_codes or "QUEUE_DEPTH_DISPATCHER_CONTRADICTION" in all_codes
+        ):
+            preferred_key = next(
+                (k for k, rows in grouped.items() if any(r["code"] == "QUEUE_DEPTH_LIVENESS_CONTRADICTION" for r in rows)),
+                "global:liveness",
+            )
+            synthetic = [
+                r for r in normalized
+                if r["code"] in {"QUEUE_DEPTH_LIVENESS_CONTRADICTION", "QUEUE_DEPTH_DISPATCHER_CONTRADICTION", "HEARTBEAT_STALE", "SERVICE_STALLED", "ZOMBIE_WORKER_SUSPECTED"}
+            ]
+            if synthetic:
+                merged_rows = list(grouped.get(preferred_key, [])) + synthetic
+                grouped[preferred_key] = merged_rows
+        if "EVENT_SIDE_EFFECT_GAP" in all_codes and (
+            "POISON_PILL_SUBSCRIBER" in all_codes or "EVENT_FANOUT_INCOMPLETE" in all_codes
+        ):
+            preferred_key = next(
+                (k for k, rows in grouped.items() if any(r["code"] == "EVENT_SIDE_EFFECT_GAP" for r in rows)),
+                "global:dispatch",
+            )
+            synthetic = [
+                r for r in normalized
+                if r["code"] in {"EVENT_SIDE_EFFECT_GAP", "POISON_PILL_SUBSCRIBER", "EVENT_FANOUT_INCOMPLETE"}
+            ]
+            if synthetic:
+                merged_rows = list(grouped.get(preferred_key, [])) + synthetic
+                grouped[preferred_key] = merged_rows
+        if (
+            ("FINANCIAL_DRIFT" in all_codes or "FINANCIAL_DRIFT_DETECTED" in all_codes or "EXPOSURE_MISMATCH" in all_codes or "INVARIANT_EXPOSURE_MISMATCH" in all_codes)
+            and ("LOCAL_VS_REMOTE_MISMATCH" in all_codes or "GHOST_ORDER_SUSPECTED" in all_codes or "GHOST_ORDER_DETECTED" in all_codes)
+        ):
+            preferred_key = next(
+                (k for k, rows in grouped.items() if any(r["code"] in {"LOCAL_VS_REMOTE_MISMATCH", "GHOST_ORDER_SUSPECTED", "GHOST_ORDER_DETECTED"} for r in rows)),
+                "global:financial",
+            )
+            synthetic = [
+                r for r in normalized
+                if r["code"] in {"FINANCIAL_DRIFT", "FINANCIAL_DRIFT_DETECTED", "EXPOSURE_MISMATCH", "INVARIANT_EXPOSURE_MISMATCH", "LOCAL_VS_REMOTE_MISMATCH", "GHOST_ORDER_SUSPECTED", "GHOST_ORDER_DETECTED"}
+            ]
+            if synthetic:
+                merged_rows = list(grouped.get(preferred_key, [])) + synthetic
+                grouped[preferred_key] = merged_rows
+
+        current_codes: set[str] = set()
+        delivery = self._delivery_status_snapshot()
+        for grouping_key, rows in sorted(grouped.items(), key=lambda x: x[0]):
+            codes = {r["code"] for r in rows}
+            max_rank = max(r["normalized_rank"] for r in rows)
+            incident_class, policy_class, floor_severity, why_it_matters = self._reviewer_policy.classify_group(codes)
+            max_rank = max(max_rank, _SEVERITY_RANK.get(floor_severity, _SEVERITY_RANK["warning"]))
+            normalized_severity = _RANK_SEVERITY[max_rank]
+            alert_code = f"REVIEWER_GOVERNANCE::{incident_class}::{grouping_key}"
+            current_codes.add(alert_code)
+            requires_delivery = policy_class.startswith("mandatory_delivery")
+            degraded_reason = self._delivery_degraded_reason(delivery) if requires_delivery else None
+            delivery_status = "ready"
+            if requires_delivery and degraded_reason:
+                delivery_status = "degraded"
+            elif requires_delivery and not degraded_reason:
+                delivery_status = "required_ready"
+            details = {
+                "normalized_severity": normalized_severity,
+                "incident_class": incident_class,
+                "triggering_finding_codes": sorted(codes),
+                "grouping_key": grouping_key,
+                "why_it_matters": why_it_matters,
+                "recommended_action": f"Follow runbook for {incident_class} and verify signal convergence.",
+                "runbook_hint": f"runbook://reviewer/{incident_class}",
+                "governance_decision": "centralized_reviewer_policy",
+                "source_summary": sorted({r['source'] for r in rows}),
+                "contributing_sources": sorted({r['source'] for r in rows}),
+                "delivery_required": requires_delivery,
+                "delivery_policy_class": policy_class,
+                "delivery_status": delivery_status,
+                "degraded_reason": degraded_reason,
+                "policy_source": "watchdog.reviewer_governance.v1",
+                "delivery_affects_governance": bool(requires_delivery and degraded_reason),
+            }
+            sev = "critical" if normalized_severity == "critical" else ("high" if normalized_severity == "high" else "warning")
+            self.alerts_manager.upsert_alert(
+                alert_code,
+                sev,
+                f"{incident_class} detected for {grouping_key}",
+                source="reviewer_governance",
+                details=details,
+            )
+            if policy_class != "alert_only":
+                self.incidents_manager.open_incident(
+                    alert_code,
+                    incident_class,
+                    sev,
+                    details=details,
+                )
+            if requires_delivery and degraded_reason:
+                fail_closed_code = f"REVIEWER_DELIVERY_DEGRADED::{incident_class}::{grouping_key}"
+                current_codes.add(fail_closed_code)
+                fail_closed_details = dict(details)
+                fail_closed_details["governance_decision"] = "mandatory_delivery_degraded_fail_closed"
+                fail_closed_details["transport_only_failure"] = True
+                self.alerts_manager.upsert_alert(
+                    fail_closed_code,
+                    "critical",
+                    f"Mandatory reviewer delivery degraded: {incident_class}",
+                    source="reviewer_governance",
+                    details=fail_closed_details,
+                )
+                self.incidents_manager.open_incident(
+                    fail_closed_code,
+                    "reviewer_delivery_governance_incident",
+                    "critical",
+                    details=fail_closed_details,
+                )
+
+        stale = self._managed_governance_alert_codes - current_codes
+        for code in stale:
+            self.alerts_manager.resolve_alert(code)
+            self.incidents_manager.close_incident(
+                code,
+                reason="grouped_reviewer_condition_cleared",
+                resolved_by="reviewer_governance",
+            )
+        self._managed_governance_alert_codes = current_codes
+
+    def _delivery_status_snapshot(self) -> dict[str, Any]:
+        availability = {}
+        getter = getattr(self.anomaly_alert_service, "availability_status", None)
+        if callable(getter):
+            try:
+                availability = getter() or {}
+            except Exception:
+                logger.exception("availability_status failed during governance")
+        if not availability:
+            context = self._build_anomaly_context()
+            runtime_state = context.get("runtime_state") if isinstance(context, dict) else {}
+            if isinstance(runtime_state, dict):
+                availability = dict(runtime_state.get("alert_pipeline") or {})
+        return availability
+
+    def _delivery_degraded_reason(self, delivery: dict[str, Any]) -> str | None:
+        if not isinstance(delivery, dict) or not delivery:
+            return "delivery_state_unknown"
+        if not bool(delivery.get("alerts_enabled", False)):
+            return "alerts_disabled"
+        if not bool(delivery.get("sender_available", False)):
+            return "sender_unavailable"
+        if not bool(delivery.get("deliverable", False)):
+            return str(delivery.get("reason") or "transport_not_deliverable")
+        if delivery.get("last_delivery_ok") is False and delivery.get("last_delivery_error"):
+            return f"last_delivery_failed:{delivery.get('last_delivery_error')}"
+        return None

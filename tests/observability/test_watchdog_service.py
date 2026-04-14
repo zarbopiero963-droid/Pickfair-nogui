@@ -240,6 +240,445 @@ def test_watchdog_tick_calls_forensics_pass():
     assert "FAILED_BUT_REMOTE_EXISTS" in codes
 
 
+def test_watchdog_governance_groups_cross_rule_execution_consistency():
+    class _Probe(_ProbeStub):
+        def collect_runtime_state(self):
+            return {
+                "recent_orders": [
+                    {"order_id": "O-1", "status": "AMBIGUOUS", "remote_status": "MATCHED", "remote_final_status": "SETTLED_WIN"},
+                ],
+                "reconcile": {"ghost_orders_count": 1, "event_key": "O-1"},
+                "alert_pipeline": {"alerts_enabled": True, "sender_available": True, "deliverable": True, "last_delivery_ok": True},
+            }
+
+        def collect_correlation_context(self):
+            return {
+                "recent_orders": [
+                    {"order_id": "O-1", "status": "AMBIGUOUS", "remote_status": "MATCHED"},
+                ]
+            }
+
+    alerts = AlertsManager()
+    incidents = IncidentsManager()
+    watchdog = WatchdogService(
+        probe=_Probe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=incidents,
+        snapshot_service=_SnapshotStub(),
+        interval_sec=60.0,
+    )
+
+    watchdog.tick()
+    gov_alerts = [a for a in alerts.active_alerts() if a.get("source") == "reviewer_governance"]
+    execution = [a for a in gov_alerts if "execution_consistency_incident" in a["code"]]
+    assert len(execution) == 1
+    details = execution[0]["details"]
+    assert details["incident_class"] == "execution_consistency_incident"
+    assert details["normalized_severity"] == "critical"
+    assert details["delivery_required"] is True
+    assert details["delivery_policy_class"] == "mandatory_delivery_with_degraded_fallback_state"
+    assert "LOCAL_VS_REMOTE_MISMATCH" in details["triggering_finding_codes"]
+    assert "GHOST_ORDER_DETECTED" in details["triggering_finding_codes"]
+
+
+def test_watchdog_governance_fail_closed_when_mandatory_delivery_degraded():
+    class _Probe(_ProbeStub):
+        def collect_runtime_state(self):
+            return {
+                "recent_orders": [{"order_id": "O-2", "status": "AMBIGUOUS", "remote_status": "MATCHED"}],
+                "reconcile": {"ghost_orders_count": 1, "event_key": "O-2"},
+                "alert_pipeline": {"alerts_enabled": False, "sender_available": False, "deliverable": False, "last_delivery_ok": False},
+            }
+
+        def collect_correlation_context(self):
+            return {"recent_orders": [{"order_id": "O-2", "status": "AMBIGUOUS", "remote_status": "MATCHED"}]}
+
+    alerts = AlertsManager()
+    incidents = IncidentsManager()
+    watchdog = WatchdogService(
+        probe=_Probe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=incidents,
+        snapshot_service=_SnapshotStub(),
+        interval_sec=60.0,
+    )
+    watchdog.tick()
+    codes = {a["code"] for a in alerts.active_alerts() if a.get("source") == "reviewer_governance"}
+    degraded = [c for c in codes if c.startswith("REVIEWER_DELIVERY_DEGRADED::execution_consistency_incident")]
+    assert len(degraded) == 1
+    delivery_alert = [a for a in alerts.active_alerts() if a["code"] == degraded[0]][0]
+    assert delivery_alert["details"]["delivery_status"] == "degraded"
+    assert delivery_alert["details"]["degraded_reason"] == "alerts_disabled"
+
+
+def test_watchdog_governance_open_close_reopen_lifecycle_is_deterministic():
+    state = {
+        "recent_orders": [{"order_id": "O-3", "status": "AMBIGUOUS", "remote_status": "MATCHED"}],
+        "reconcile": {"ghost_orders_count": 1, "event_key": "O-3"},
+    }
+
+    class _Probe(_ProbeStub):
+        def collect_runtime_state(self):
+            return {
+                "recent_orders": list(state["recent_orders"]),
+                "reconcile": dict(state["reconcile"]),
+                "alert_pipeline": {"alerts_enabled": True, "sender_available": True, "deliverable": True, "last_delivery_ok": True},
+            }
+
+        def collect_correlation_context(self):
+            return {"recent_orders": list(state["recent_orders"])}
+
+    alerts = AlertsManager()
+    incidents = IncidentsManager()
+    watchdog = WatchdogService(
+        probe=_Probe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=incidents,
+        snapshot_service=_SnapshotStub(),
+        interval_sec=60.0,
+    )
+    watchdog.tick()
+    code = next(a["code"] for a in alerts.active_alerts() if a.get("source") == "reviewer_governance" and "execution_consistency_incident" in a["code"])
+    first_open = [i for i in incidents.snapshot()["incidents"] if i["code"] == code and i["status"] == "OPEN"]
+    assert len(first_open) == 1
+
+    state["recent_orders"] = [{"order_id": "O-3", "status": "COMPLETED", "remote_status": "COMPLETED"}]
+    state["reconcile"] = {"ghost_orders_count": 0, "event_key": "O-3"}
+    watchdog.tick()
+    assert code not in {a["code"] for a in alerts.active_alerts()}
+
+    state["recent_orders"] = [{"order_id": "O-3", "status": "AMBIGUOUS", "remote_status": "MATCHED"}]
+    state["reconcile"] = {"ghost_orders_count": 1, "event_key": "O-3"}
+    watchdog.tick()
+    reopened = [a for a in alerts.active_alerts() if a["code"] == code]
+    assert len(reopened) == 1
+
+
+class _GovernanceProbe:
+    def __init__(self, state):
+        self.state = state
+
+    def collect_health(self):
+        return {"runtime": {"status": "READY", "reason": "ok", "details": {}}}
+
+    def collect_metrics(self):
+        return dict(self.state.get("metrics", {}))
+
+    def collect_runtime_state(self):
+        return dict(self.state.get("runtime_state", {}))
+
+    def collect_correlation_context(self):
+        return dict(self.state.get("correlation_context", {}))
+
+    def collect_forensics_evidence(self):
+        return dict(self.state.get("forensics_evidence", {}))
+
+    def collect_reviewer_context(self):
+        return dict(self.state.get("reviewer_context", {}))
+
+
+def _active_governance_by_class(alerts: AlertsManager, incident_class: str):
+    return [
+        row
+        for row in alerts.active_alerts()
+        if row.get("source") == "reviewer_governance"
+        and str(row.get("code", "")).startswith("REVIEWER_GOVERNANCE::")
+        and (row.get("details") or {}).get("incident_class") == incident_class
+    ]
+
+
+def test_financial_integrity_governance_repeated_cycles_no_flap_no_orphan():
+    state = {"runtime_state": {"alert_pipeline": {"alerts_enabled": True, "sender_available": True, "deliverable": True, "last_delivery_ok": True}}}
+    alerts = AlertsManager()
+    incidents = IncidentsManager()
+    watchdog = WatchdogService(
+        probe=_GovernanceProbe(state),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=incidents,
+        snapshot_service=_SnapshotStub(),
+        interval_sec=60.0,
+    )
+
+    for source, code in (
+        ("anomaly", "EXPOSURE_MISMATCH"),
+        ("anomaly", "GHOST_ORDER_DETECTED"),
+    ):
+        alerts.upsert_alert(
+            code,
+            "critical",
+            code,
+            source=source,
+            details={"grouping_key": "order:FIN-1"},
+        )
+    watchdog._evaluate_reviewer_governance()
+    first = _active_governance_by_class(alerts, "financial_integrity_incident")
+    assert len(first) == 1
+    first_code = first[0]["code"]
+    first_details = first[0]["details"]
+    assert first_details["normalized_severity"] == "critical"
+    assert first_details["delivery_required"] is True
+    assert first_details["delivery_policy_class"] == "mandatory_delivery_with_degraded_fallback_state"
+    assert "EXPOSURE_MISMATCH" in first_details["triggering_finding_codes"]
+    assert "GHOST_ORDER_DETECTED" in first_details["triggering_finding_codes"]
+
+    watchdog._evaluate_reviewer_governance()
+    watchdog._evaluate_reviewer_governance()
+    stable = _active_governance_by_class(alerts, "financial_integrity_incident")
+    assert len(stable) == 1
+    assert stable[0]["code"] == first_code
+
+    for code in ("EXPOSURE_MISMATCH", "GHOST_ORDER_DETECTED"):
+        alerts.resolve_alert(code)
+    watchdog._evaluate_reviewer_governance()
+    assert _active_governance_by_class(alerts, "financial_integrity_incident") == []
+
+    for source, code in (
+        ("anomaly", "EXPOSURE_MISMATCH"),
+        ("anomaly", "GHOST_ORDER_DETECTED"),
+    ):
+        alerts.upsert_alert(
+            code,
+            "critical",
+            code,
+            source=source,
+            details={"grouping_key": "order:FIN-1"},
+        )
+    watchdog._evaluate_reviewer_governance()
+    reopened = _active_governance_by_class(alerts, "financial_integrity_incident")
+    assert len(reopened) == 1
+    assert reopened[0]["code"] == first_code
+
+    for code in ("EXPOSURE_MISMATCH", "GHOST_ORDER_DETECTED"):
+        alerts.resolve_alert(code)
+    watchdog._evaluate_reviewer_governance()
+
+    assert _active_governance_by_class(alerts, "financial_integrity_incident") == []
+    assert all(
+        not (
+            row.get("status") == "OPEN"
+            and (row.get("details") or {}).get("incident_class") == "financial_integrity_incident"
+        )
+        for row in incidents.snapshot()["incidents"]
+    )
+
+
+def test_liveness_governance_reopens_deterministically_without_duplicate_noise():
+    state = {"runtime_state": {"alert_pipeline": {"alerts_enabled": True, "sender_available": True, "deliverable": True, "last_delivery_ok": True}}}
+    alerts = AlertsManager()
+    incidents = IncidentsManager()
+    watchdog = WatchdogService(
+        probe=_GovernanceProbe(state),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=incidents,
+        snapshot_service=_SnapshotStub(),
+        interval_sec=60.0,
+    )
+
+    alerts.upsert_alert(
+        "QUEUE_DEPTH_LIVENESS_CONTRADICTION",
+        "critical",
+        "q",
+        source="correlation_reviewer",
+        details={"grouping_key": "svc:dispatcher"},
+    )
+    alerts.upsert_alert(
+        "HEARTBEAT_STALE",
+        "critical",
+        "h",
+        source="anomaly",
+        details={"grouping_key": "svc:dispatcher"},
+    )
+    watchdog._evaluate_reviewer_governance()
+    first = _active_governance_by_class(alerts, "liveness_degradation_incident")
+    assert len(first) == 1
+    code = first[0]["code"]
+    assert first[0]["details"]["normalized_severity"] in {"high", "critical"}
+
+    watchdog._evaluate_reviewer_governance()
+    watchdog._evaluate_reviewer_governance()
+    stable = _active_governance_by_class(alerts, "liveness_degradation_incident")
+    assert len(stable) == 1
+    assert stable[0]["code"] == code
+
+    alerts.resolve_alert("QUEUE_DEPTH_LIVENESS_CONTRADICTION")
+    alerts.resolve_alert("HEARTBEAT_STALE")
+    watchdog._evaluate_reviewer_governance()
+    assert _active_governance_by_class(alerts, "liveness_degradation_incident") == []
+
+    alerts.upsert_alert(
+        "QUEUE_DEPTH_LIVENESS_CONTRADICTION",
+        "critical",
+        "q",
+        source="correlation_reviewer",
+        details={"grouping_key": "svc:dispatcher"},
+    )
+    alerts.upsert_alert(
+        "HEARTBEAT_STALE",
+        "critical",
+        "h",
+        source="anomaly",
+        details={"grouping_key": "svc:dispatcher"},
+    )
+    watchdog._evaluate_reviewer_governance()
+    reopened = _active_governance_by_class(alerts, "liveness_degradation_incident")
+    assert len(reopened) == 1
+    assert reopened[0]["code"] == code
+
+
+def test_dispatch_pipeline_governance_repeated_cycles_and_cleanup():
+    state = {"runtime_state": {"alert_pipeline": {"alerts_enabled": True, "sender_available": True, "deliverable": True, "last_delivery_ok": True}}}
+    alerts = AlertsManager()
+    incidents = IncidentsManager()
+    watchdog = WatchdogService(
+        probe=_GovernanceProbe(state),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=incidents,
+        snapshot_service=_SnapshotStub(),
+        interval_sec=60.0,
+    )
+
+    alerts.upsert_alert(
+        "EVENT_SIDE_EFFECT_GAP",
+        "warning",
+        "gap",
+        source="correlation_reviewer",
+        details={"grouping_key": "svc:eventbus"},
+    )
+    alerts.upsert_alert(
+        "POISON_PILL_SUBSCRIBER",
+        "error",
+        "poison",
+        source="anomaly",
+        details={"grouping_key": "svc:eventbus"},
+    )
+    watchdog._evaluate_reviewer_governance()
+    first = _active_governance_by_class(alerts, "dispatch_pipeline_incident")
+    assert len(first) == 1
+    first_code = first[0]["code"]
+    assert "EVENT_SIDE_EFFECT_GAP" in first[0]["details"]["triggering_finding_codes"]
+    assert "POISON_PILL_SUBSCRIBER" in first[0]["details"]["triggering_finding_codes"]
+
+    for _ in range(2):
+        watchdog._evaluate_reviewer_governance()
+    stable = _active_governance_by_class(alerts, "dispatch_pipeline_incident")
+    assert len(stable) == 1
+    assert stable[0]["code"] == first_code
+
+    alerts.resolve_alert("EVENT_SIDE_EFFECT_GAP")
+    alerts.resolve_alert("POISON_PILL_SUBSCRIBER")
+    watchdog._evaluate_reviewer_governance()
+    assert _active_governance_by_class(alerts, "dispatch_pipeline_incident") == []
+
+    alerts.upsert_alert(
+        "EVENT_SIDE_EFFECT_GAP",
+        "warning",
+        "gap",
+        source="correlation_reviewer",
+        details={"grouping_key": "svc:eventbus"},
+    )
+    alerts.upsert_alert(
+        "POISON_PILL_SUBSCRIBER",
+        "error",
+        "poison",
+        source="anomaly",
+        details={"grouping_key": "svc:eventbus"},
+    )
+    watchdog._evaluate_reviewer_governance()
+    reopened = _active_governance_by_class(alerts, "dispatch_pipeline_incident")
+    assert len(reopened) == 1
+    assert reopened[0]["code"] == first_code
+
+
+def test_delivery_degradation_matrix_mandatory_vs_optional_governance():
+    mandatory_template = {"runtime_state": {}}
+    modes = [
+        {"alerts_enabled": False, "sender_available": False, "deliverable": False, "reason": "alerts_disabled"},
+        {"alerts_enabled": True, "sender_available": False, "deliverable": False, "reason": "sender_unavailable"},
+        {"alerts_enabled": True, "sender_available": True, "deliverable": False, "reason": "alerts_chat_id_missing"},
+        {"alerts_enabled": True, "sender_available": True, "deliverable": True, "last_delivery_ok": False, "last_delivery_error": "send_failed"},
+    ]
+
+    for idx, pipeline in enumerate(modes):
+        state = dict(mandatory_template)
+        state["runtime_state"] = dict(mandatory_template["runtime_state"])
+        state["runtime_state"]["alert_pipeline"] = dict(pipeline)
+        alerts = AlertsManager()
+        watchdog = WatchdogService(
+            probe=_GovernanceProbe(state),
+            health_registry=HealthRegistry(),
+            metrics_registry=MetricsRegistry(),
+            alerts_manager=alerts,
+            incidents_manager=IncidentsManager(),
+            snapshot_service=_SnapshotStub(),
+            interval_sec=60.0,
+        )
+        watchdog.tick()
+        alerts.upsert_alert(
+            "EXPOSURE_MISMATCH",
+            "critical",
+            "x",
+            source="anomaly",
+            details={"grouping_key": "order:D-1"},
+        )
+        alerts.upsert_alert(
+            "GHOST_ORDER_DETECTED",
+            "critical",
+            "g",
+            source="anomaly",
+            details={"grouping_key": "order:D-1"},
+        )
+        watchdog._evaluate_reviewer_governance()
+        grouped = _active_governance_by_class(alerts, "financial_integrity_incident")
+        assert len(grouped) == 1, f"mandatory grouped incident missing for mode {idx}"
+        details = grouped[0]["details"]
+        assert details["delivery_required"] is True
+        assert details["delivery_policy_class"] == "mandatory_delivery_with_degraded_fallback_state"
+        assert details["delivery_status"] == "degraded"
+        assert bool(details["degraded_reason"])
+        degraded_codes = {
+            a["code"]
+            for a in alerts.active_alerts()
+            if a.get("source") == "reviewer_governance" and a["code"].startswith("REVIEWER_DELIVERY_DEGRADED::")
+        }
+        assert len(degraded_codes) >= 1
+
+    optional_state = {"runtime_state": {"alert_pipeline": {"alerts_enabled": False, "sender_available": False, "deliverable": False, "reason": "alerts_disabled"}}}
+    alerts = AlertsManager()
+    watchdog = WatchdogService(
+        probe=_GovernanceProbe(optional_state),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        interval_sec=60.0,
+    )
+    alerts.upsert_alert(
+        "AMBIGUOUS_SPIKE",
+        "warning",
+        "warn",
+        source="anomaly",
+        details={"grouping_key": "order:O-WARN"},
+    )
+    watchdog._evaluate_reviewer_governance()
+    generic = _active_governance_by_class(alerts, "reviewer_generic_incident")
+    assert len(generic) >= 1
+    assert all((row["details"] or {}).get("delivery_required") is False for row in generic)
+    assert all(not row["code"].startswith("REVIEWER_DELIVERY_DEGRADED::") for row in alerts.active_alerts())
+
+
 def test_stale_invariant_alert_resolves_cleanly():
     """When an invariant violation clears, its alert is resolved on the next evaluation."""
     alerts = AlertsManager()
