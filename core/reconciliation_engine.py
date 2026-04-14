@@ -582,7 +582,7 @@ class ReconciliationEngine:
                 "batch_id": batch_id,
                 "market_id": market_id,
             }
-        if not isinstance(payload, Sequence):
+        if isinstance(payload, (str, bytes, bytearray)) or not isinstance(payload, Sequence):
             return [], ReasonCode.FETCH_PERMANENT_FAILURE, {
                 "code": "RECONCILE_REMOTE_INPUT_MISCONFIGURED",
                 "reason": "supplied remote orders snapshot is non-sequence",
@@ -590,7 +590,16 @@ class ReconciliationEngine:
                 "market_id": market_id,
                 "payload_type": type(payload).__name__,
             }
-        return list(payload), None, None
+        orders = list(payload)
+        if any(not isinstance(row, dict) for row in orders):
+            return [], ReasonCode.FETCH_PERMANENT_FAILURE, {
+                "code": "RECONCILE_REMOTE_INPUT_MISCONFIGURED",
+                "reason": "supplied remote orders snapshot must contain mapping rows",
+                "batch_id": batch_id,
+                "market_id": market_id,
+                "payload_type": type(payload).__name__,
+            }
+        return orders, None, None
 
     # ─────────────────────────────────────────────────────────────
     # SAGA HELPERS
