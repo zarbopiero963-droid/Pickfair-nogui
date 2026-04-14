@@ -125,10 +125,8 @@ _DEFAULT_CHECKS: tuple[tuple[str, str, InvariantCheck], ...] = (
         ),
     ),
     (
-        # Keep invariant code namespaced to avoid key collision with anomaly
-        # reviewer EXPOSURE_MISMATCH in AlertsManager (which is keyed by code).
-        "INVARIANT_EXPOSURE_MISMATCH",
-        "INVARIANT_EXPOSURE_MISMATCH: Local computed exposure differs significantly from remote reported exposure",
+        "EXPOSURE_MISMATCH",
+        "EXPOSURE_MISMATCH: Local computed exposure differs significantly from remote reported exposure",
         lambda state: abs(
             float((state.get("risk") or {}).get("local_exposure", 0) or 0)
             - float((state.get("risk") or {}).get("remote_exposure", 0) or 0)

@@ -51,7 +51,7 @@ def test_default_invariant_checks_exported():
     assert "FAILED_LOCAL_REMOTE_EXISTS" in codes
     assert "STATE_REGRESSION" in codes
     assert "INFLIGHT_STUCK" in codes
-    assert "INVARIANT_EXPOSURE_MISMATCH" in codes
+    assert "EXPOSURE_MISMATCH" in codes
 
 
 def test_failed_local_remote_exists_catches_ghost():
@@ -199,7 +199,7 @@ def test_new_checks_are_fail_safe_on_empty_orders():
     assert "FAILED_LOCAL_REMOTE_EXISTS" not in codes
     assert "STATE_REGRESSION" not in codes
     assert "INFLIGHT_STUCK" not in codes
-    assert "INVARIANT_EXPOSURE_MISMATCH" not in codes
+    assert "EXPOSURE_MISMATCH" not in codes
 
 
 # ---------------------------------------------------------------------------
@@ -293,8 +293,8 @@ def test_INFLIGHT_STUCK_no_false_positive():
     assert "INFLIGHT_STUCK" not in codes
 
 
-def test_INVARIANT_EXPOSURE_MISMATCH_fires_on_exposure_delta_exceeding_tolerance():
-    """INVARIANT_EXPOSURE_MISMATCH fires when exposure differs beyond tolerance."""
+def test_EXPOSURE_MISMATCH_fires_on_exposure_delta_exceeding_tolerance():
+    """EXPOSURE_MISMATCH fires when exposure differs beyond tolerance."""
     state = {
         "runtime": {"status": "READY"},
         "metrics": {"inflight_count": 0},
@@ -302,12 +302,11 @@ def test_INVARIANT_EXPOSURE_MISMATCH_fires_on_exposure_delta_exceeding_tolerance
     }
     violations = evaluate_invariants(state, enabled=True)
     codes = {v.code for v in violations}
-    assert "INVARIANT_EXPOSURE_MISMATCH" in codes
-    assert "EXPOSURE_MISMATCH" not in codes
+    assert "EXPOSURE_MISMATCH" in codes
 
 
-def test_INVARIANT_EXPOSURE_MISMATCH_no_false_positive():
-    """INVARIANT_EXPOSURE_MISMATCH does not fire when local and remote exposure match within tolerance."""
+def test_EXPOSURE_MISMATCH_no_false_positive():
+    """EXPOSURE_MISMATCH does not fire when local and remote exposure match within tolerance."""
     state = {
         "runtime": {"status": "READY"},
         "metrics": {"inflight_count": 0},
@@ -315,14 +314,14 @@ def test_INVARIANT_EXPOSURE_MISMATCH_no_false_positive():
     }
     violations = evaluate_invariants(state, enabled=True)
     codes = {v.code for v in violations}
-    assert "INVARIANT_EXPOSURE_MISMATCH" not in codes
+    assert "EXPOSURE_MISMATCH" not in codes
 
 
 def test_all_four_required_invariants_active_in_watchdog_path():
     """Proves all 4 required invariant codes are evaluated when watchdog calls evaluate_invariants.
 
     Specifically tests that the watchdog's _evaluate_invariants() path surfaces
-    FAILED_LOCAL_REMOTE_EXISTS, STATE_REGRESSION, INFLIGHT_STUCK, INVARIANT_EXPOSURE_MISMATCH
+    FAILED_LOCAL_REMOTE_EXISTS, STATE_REGRESSION, INFLIGHT_STUCK, EXPOSURE_MISMATCH
     as operational alerts when violations are present.
     """
     from observability.alerts_manager import AlertsManager
@@ -372,7 +371,8 @@ def test_all_four_required_invariants_active_in_watchdog_path():
 
     watchdog._evaluate_invariants()
 
-    active_codes = {a["code"] for a in alerts.active_alerts() if a.get("source") == "invariant_reviewer"}
+    invariant_alerts = [a for a in alerts.active_alerts() if a.get("source") == "invariant_reviewer"]
+    active_codes = {a["code"] for a in invariant_alerts}
     assert "FAILED_LOCAL_REMOTE_EXISTS" in active_codes, (
         "FAILED_LOCAL_REMOTE_EXISTS must be raised by invariant reviewer when a FAILED order has remote_bet_id"
     )
@@ -383,6 +383,7 @@ def test_all_four_required_invariants_active_in_watchdog_path():
         "INFLIGHT_STUCK must be raised by invariant reviewer when inflight orders exceed max age"
     )
     assert "INVARIANT_EXPOSURE_MISMATCH" in active_codes, (
-        "INVARIANT_EXPOSURE_MISMATCH must be raised by invariant reviewer when local/remote exposure differs"
+        "Invariant alert key remains namespaced while canonical violation code is EXPOSURE_MISMATCH"
     )
-    assert "EXPOSURE_MISMATCH" not in active_codes
+    exposure_alert = next(a for a in invariant_alerts if a["code"] == "INVARIANT_EXPOSURE_MISMATCH")
+    assert exposure_alert.get("details", {}).get("violation_code") == "EXPOSURE_MISMATCH"

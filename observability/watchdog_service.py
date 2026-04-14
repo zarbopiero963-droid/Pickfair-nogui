@@ -361,10 +361,17 @@ class WatchdogService:
             current_codes.add(_MISCONFIG_CODE)
 
         for violation in violations:
-            code = violation.code
+            violation_code = violation.code
+            # Keep runtime invariant code canonical in violation details while
+            # preserving distinct alert keys across reviewers in AlertsManager.
+            code = (
+                "INVARIANT_EXPOSURE_MISMATCH"
+                if violation_code == "EXPOSURE_MISMATCH"
+                else violation_code
+            )
             current_codes.add(code)
             # Severity: critical for regression/inconsistency codes, else warning
-            lower_code = code.lower()
+            lower_code = violation_code.lower()
             if "regression" in lower_code or "inconsistent" in lower_code:
                 severity = "critical"
             else:
@@ -374,7 +381,7 @@ class WatchdogService:
                 severity,
                 violation.message,
                 source="invariant_reviewer",
-                details={"violation_code": code},
+                details={"violation_code": violation_code},
             )
             if severity == "critical":
                 self.incidents_manager.open_incident(code, code, severity)
