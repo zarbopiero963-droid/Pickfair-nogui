@@ -450,3 +450,136 @@ def test_timeout_ambiguity_reaches_reviewer_with_structured_alerts_and_incidents
     }
     assert "LOCAL_VS_REMOTE_MISMATCH" in incident_codes
     assert "QUEUE_DEPTH_DISPATCHER_CONTRADICTION" in incident_codes
+
+
+# ---------------------------------------------------------------------------
+# Gap 2: Production ReconciliationEngine ghost comparator path proof
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_production_reconciliation_engine_ghost_comparator_detects_ghost_directly() -> None:
+    """Directly exercises the production ReconciliationEngine ghost comparator path.
+
+    Proves:
+    - ReconciliationEngine._detect_ghost_orders() is called on the real production path
+    - When remote has an order with no matching local leg, ghost is detected
+    - ghost_evidence_snapshot() surfaces the ghost count and bet_id from the
+      production comparator (not from a test helper)
+    - No manual DB override tricks; ambiguity semantics preserved for the local leg
+      until reconcile truth is established from the remote comparison
+
+    Setup:
+    - Local batch has one leg (customer_ref=LOCAL-REF-1, market_id=1.GHOST_TEST, sel=10)
+    - Remote returns two orders:
+        1. Matching order for local leg (customer_ref=LOCAL-REF-1) → NOT a ghost
+        2. Ghost order (customer_ref=GHOST-REF-99, sel=999) → no local match → GHOST
+    """
+    from core.reconciliation_engine import ReconciliationEngine
+    from core.reconciliation_types import ReconcileConfig
+
+    BATCH_ID = "BATCH-GHOST-PROOF-PRODUCTION-1"
+    MARKET_ID = "1.GHOST_TEST"
+
+    # Local leg: customer_ref and selection_id that do NOT match the ghost remote order
+    legs_store: List[Dict[str, Any]] = [
+        {
+            "leg_index": 0,
+            "customer_ref": "LOCAL-REF-1",
+            "bet_id": None,
+            "market_id": MARKET_ID,
+            "selection_id": "10",
+            "status": "SUBMITTED",
+        }
+    ]
+
+    # Remote orders: one matching the local leg, one ghost (no local counterpart)
+    ghost_order = {
+        "customerOrderRef": "GHOST-REF-99",
+        "betId": "GHOST-BET-99",
+        "marketId": MARKET_ID,
+        "selectionId": "999",   # distinct selection → no structural match with local
+        "status": "EXECUTABLE",
+        "sizeMatched": "0.0",
+        "sizeRemaining": "3.0",
+    }
+    matching_order = {
+        "customerOrderRef": "LOCAL-REF-1",
+        "betId": "BET-LOCAL-1",
+        "marketId": MARKET_ID,
+        "selectionId": "10",
+        "status": "EXECUTABLE",
+        "sizeMatched": "0.0",
+        "sizeRemaining": "5.0",
+    }
+
+    class _StubBatchManager:
+        def get_batch(self, batch_id: str) -> Dict[str, Any]:
+            return {"batch_id": batch_id, "market_id": MARKET_ID, "status": "CREATED"}
+
+        def get_batch_legs(self, batch_id: str) -> List[Dict[str, Any]]:
+            return list(legs_store)
+
+        def update_leg_status(
+            self, *, batch_id: str, leg_index: int, status: str, **_kwargs: Any
+        ) -> None:
+            if 0 <= leg_index < len(legs_store):
+                legs_store[leg_index]["status"] = status
+
+        def recompute_batch_status(self, batch_id: str) -> Dict[str, Any]:
+            return {"status": "PENDING"}
+
+        def release_runtime_artifacts(self, batch_id: str, **_kwargs: Any) -> None:
+            return None
+
+        def mark_batch_failed(self, batch_id: str, reason: str = "") -> None:
+            return None
+
+        def get_open_batches(self) -> List[Dict[str, Any]]:
+            return []
+
+    class _GhostExchangeClient:
+        """Returns the local order (matched) and a ghost order (no local counterpart)."""
+        def get_current_orders(self, market_ids: List[str]) -> List[Dict[str, Any]]:
+            return [matching_order, ghost_order]
+
+    cfg = ReconcileConfig(
+        validate_batch_manager_contract=True,
+        audit_fail_closed=False,       # no DB audit write needed in integration test
+        persist_recovery_marker=False,  # no DB recovery marker needed
+        max_convergence_cycles=1,       # single pass — no time.sleep between cycles
+        max_transient_retries=0,        # no retry → no time.sleep in fetch path
+        enable_fencing_token=True,
+        enable_runtime_invariants=False,  # skip post-reconcile invariants for stub
+        ghost_order_action="LOG_AND_FLAG",
+    )
+
+    engine = ReconciliationEngine(
+        db=object(),  # no DB methods called with audit_fail_closed=False
+        batch_manager=_StubBatchManager(),
+        client_getter=lambda: _GhostExchangeClient(),
+        config=cfg,
+    )
+
+    # Run the production reconciliation path directly.
+    engine.reconcile_batch(BATCH_ID)
+
+    # The production _detect_ghost_orders comparator must have fired and populated
+    # ghost_evidence_snapshot with the ghost order that has no local counterpart.
+    ghost_snap = engine.ghost_evidence_snapshot()
+
+    assert ghost_snap["ghost_orders_count"] >= 1, (
+        "ReconciliationEngine production _detect_ghost_orders comparator must detect "
+        "the ghost order (GHOST-REF-99) that exists on remote but has no local match"
+    )
+    assert ghost_snap["source"] == "reconciliation_engine", (
+        "ghost_evidence_snapshot must originate from the production ReconciliationEngine, "
+        "not from a test helper"
+    )
+    ghost_bets = ghost_snap.get("sample_ghost_bet_ids", [])
+    assert "GHOST-BET-99" in ghost_bets, (
+        "production comparator must record GHOST-BET-99 in sample_ghost_bet_ids — "
+        "proving the production remote-vs-local comparison path was directly exercised"
+    )
+    assert ghost_snap["suspected_ghost_count"] >= 1, (
+        "suspected_ghost_count must reflect the production ghost detection result"
+    )
