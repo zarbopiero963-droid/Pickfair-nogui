@@ -568,7 +568,9 @@ def test_headless_app_build_bootstrap_reviewer_proof_e2e(monkeypatch):
 
         def get_recent_audit_events_for_diagnostics(self, limit=300):
             del limit
-            return [{"order_id": "ord-1", "type": "REQUEST_RECEIVED"}]
+            if state["mismatch"]:
+                return [{"order_id": "ord-1", "type": "REQUEST_RECEIVED"}]
+            return [{"order_id": "ord-1", "type": "FINALIZED"}]
 
         def get_recent_observability_snapshots(self, limit=1):
             del limit
@@ -709,9 +711,15 @@ def test_headless_app_build_bootstrap_reviewer_proof_e2e(monkeypatch):
     app.runtime_probe.collect_runtime_state = _healed_runtime_state
     app.watchdog_service._tick()
 
-    healed_codes = {a["code"] for a in app.alerts_manager.active_alerts()}
+    healed_active_alerts = app.alerts_manager.active_alerts()
+    healed_codes = {a["code"] for a in healed_active_alerts}
     assert "LOCAL_VS_REMOTE_MISMATCH" not in healed_codes
     assert "DB_VS_MEMORY_MISMATCH" not in healed_codes
+    assert "SUBMIT_RECONCILE_CHAIN_BREAK" not in healed_codes
+    healed_correlation_codes = {
+        a["code"] for a in healed_active_alerts if a.get("source") == "correlation_reviewer"
+    }
+    assert healed_correlation_codes == set()
 
     healed_open_incidents = {
         row["code"]
