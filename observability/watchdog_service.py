@@ -872,7 +872,21 @@ class WatchdogService:
             )
             synthetic = [r for r in normalized if r["code"] in {"GHOST_ORDER_DETECTED", "GHOST_ORDER_SUSPECTED", "LOCAL_VS_REMOTE_MISMATCH", "AMBIGUOUS_LOCAL_REMOTE_INCONSISTENCY"}]
             if synthetic:
-                grouped[preferred_key] = synthetic
+                existing_rows = list(grouped.get(preferred_key, []))
+                merged_rows = existing_rows + synthetic
+                deduped: list[dict[str, Any]] = []
+                seen: set[tuple[str, str, str]] = set()
+                for row in merged_rows:
+                    key = (
+                        str(row.get("code", "")),
+                        str(row.get("source", "")),
+                        str((row.get("details") or {}).get("grouping_key", "")),
+                    )
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    deduped.append(row)
+                grouped[preferred_key] = deduped
         if {"DB_VS_MEMORY_MISMATCH", "DIAGNOSTICS_BUNDLE_EVIDENCE_GAP"} <= all_codes:
             preferred_key = next(
                 (k for k, rows in grouped.items() if any(r["code"] == "DB_VS_MEMORY_MISMATCH" for r in rows)),
