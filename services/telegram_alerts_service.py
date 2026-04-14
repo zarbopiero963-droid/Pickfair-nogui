@@ -289,6 +289,22 @@ class TelegramAlertsService:
             else:
                 lines.append(f"• Details: {safe_details}")
 
+        incident_class = details.get("incident_class") if isinstance(details, dict) else None
+        normalized = details.get("normalized_severity") if isinstance(details, dict) else None
+        why_it_matters = details.get("why_it_matters") if isinstance(details, dict) else None
+        recommended = details.get("recommended_action") if isinstance(details, dict) else None
+        resolution_reason = details.get("resolution_reason") if isinstance(details, dict) else None
+        if incident_class:
+            lines.append(f"• Incident Class: {incident_class}")
+        if normalized:
+            lines.append(f"• Normalized Severity: {str(normalized).upper()}")
+        if why_it_matters:
+            lines.append(f"• Why it matters: {why_it_matters}")
+        if recommended:
+            lines.append(f"• Recommended action: {recommended}")
+        if resolution_reason and lifecycle == "RESOLVED":
+            lines.append(f"• Resolution: {resolution_reason}")
+
         return "\n".join(lines)
 
     def _dedup_key(self, alert: Dict[str, Any]) -> str:

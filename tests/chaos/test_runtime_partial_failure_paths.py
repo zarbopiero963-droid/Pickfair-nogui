@@ -223,3 +223,67 @@ def test_timeout_ambiguity_contradiction_alert_lifecycle_through_reviewer() -> N
     }
     assert "LOCAL_VS_REMOTE_MISMATCH" not in second_open_incidents
     assert "QUEUE_DEPTH_DISPATCHER_CONTRADICTION" not in second_open_incidents
+
+
+@pytest.mark.chaos
+@pytest.mark.integration
+def test_repeated_contention_cycles_produce_stable_grouped_governance_incident() -> None:
+    state = {
+        "event_bus": {"events_published": 20, "side_effects_confirmed": 10},
+        "db_write_queue": {"queue_depth": 7},
+        "gauges": {"db_inflight_count": 9, "inflight_count": 5},
+        "diagnostics_export": {"manifest_files": []},
+        "runtime_state": {
+            "alert_pipeline": {"alerts_enabled": True, "sender_available": True, "deliverable": True, "last_delivery_ok": True},
+            "forensics": {"observability_snapshot_recent": False},
+        },
+    }
+
+    class _Probe:
+        def collect_health(self):
+            return {"runtime": {"status": "READY", "reason": "ok", "details": {}}}
+
+        def collect_metrics(self):
+            return {}
+
+        def collect_runtime_state(self):
+            return dict(state["runtime_state"])
+
+        def collect_correlation_context(self):
+            return {
+                "event_bus": dict(state["event_bus"]),
+                "db_write_queue": dict(state["db_write_queue"]),
+                "metrics": {"gauges": dict(state["gauges"])},
+            }
+
+        def collect_forensics_evidence(self):
+            return {"diagnostics_export": dict(state["diagnostics_export"])}
+
+    class _Snapshot:
+        def collect_and_store(self):
+            return None
+
+    alerts = AlertsManager()
+    incidents = IncidentsManager()
+    watchdog = WatchdogService(
+        probe=_Probe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=incidents,
+        snapshot_service=_Snapshot(),
+        interval_sec=60.0,
+    )
+
+    for _ in range(3):
+        watchdog.tick()
+    grouped = [a for a in alerts.active_alerts() if a.get("source") == "reviewer_governance" and "observability_evidence_incident" in a["code"]]
+    assert len(grouped) == 1
+    assert grouped[0]["details"]["incident_class"] == "observability_evidence_incident"
+
+    state["event_bus"] = {"events_published": 20, "side_effects_confirmed": 20}
+    state["gauges"] = {"db_inflight_count": 5, "inflight_count": 5}
+    state["diagnostics_export"] = {"manifest_files": ["health.json"]}
+    state["runtime_state"]["forensics"] = {"observability_snapshot_recent": True}
+    watchdog.tick()
+    assert grouped[0]["code"] not in {a["code"] for a in alerts.active_alerts()}

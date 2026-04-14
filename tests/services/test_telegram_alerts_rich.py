@@ -39,3 +39,27 @@ def test_telegram_alerts_rich_settings_and_sender_method_are_honest():
     assert result["delivered"] is True
     assert len(sender.messages) == 1
     assert "Details: x=1" in sender.messages[0][1]
+
+
+@pytest.mark.smoke
+def test_telegram_alerts_rich_includes_governance_fields():
+    sender = _Sender()
+    svc = TelegramAlertsService(settings_service=_Settings(), telegram_sender=sender)
+
+    result = svc.notify_alert(
+        {
+            "severity": "critical",
+            "code": "REVIEWER-GOV-1",
+            "message": "governance",
+            "details": {
+                "incident_class": "execution_consistency_incident",
+                "normalized_severity": "critical",
+                "why_it_matters": "Execution can diverge from exchange truth",
+                "recommended_action": "Reconcile and block new submissions",
+            },
+        }
+    )
+    assert result["delivered"] is True
+    text = sender.messages[0][1]
+    assert "Incident Class: execution_consistency_incident" in text
+    assert "Normalized Severity: CRITICAL" in text
