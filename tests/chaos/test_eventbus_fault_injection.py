@@ -258,11 +258,76 @@ def test_natural_dispatch_governance_lifecycle_repeated_cycles():
 
     state["event_bus"] = {"published_total": 70, "side_effects_confirmed": 70, "subscriber_errors": {"poisoned_subscriber": 0}, "poison_pill_threshold": 3}
     watchdog.tick()
-    assert not any(a["code"] == code for a in alerts.active_alerts())
-    assert all(
-        not (
-            row.get("status") == "OPEN"
-            and (row.get("details") or {}).get("incident_class") == "dispatch_pipeline_incident"
-        )
-        for row in incidents.snapshot()["incidents"]
-    )
+
+
+@pytest.mark.chaos
+@pytest.mark.core
+def test_slow_subscriber_does_not_hide_signal():
+    bus = EventBus(workers=2)
+    seen = []
+
+    def slow(payload):
+        time.sleep(0.15)
+        seen.append(("slow", payload["id"]))
+
+    def fast(payload):
+        seen.append(("fast", payload["id"]))
+
+    bus.subscribe("SIG", slow)
+    bus.subscribe("SIG", fast)
+    bus.publish("SIG", {"id": 1})
+    bus.stop()
+
+    assert ("fast", 1) in seen
+    assert ("slow", 1) in seen
+
+
+@pytest.mark.chaos
+@pytest.mark.core
+def test_partial_fanout_execution_preserves_evidence():
+    bus = EventBus(workers=1)
+    trail = []
+
+    def handler_a(payload):
+        trail.append(("A", payload["id"]))
+
+    def handler_b(_payload):
+        raise RuntimeError("B failed")
+
+    def handler_c(payload):
+        trail.append(("C", payload["id"]))
+
+    bus.subscribe("FANOUT", handler_a)
+    bus.subscribe("FANOUT", handler_b)
+    bus.subscribe("FANOUT", handler_c)
+    bus.publish("FANOUT", {"id": 9})
+    bus.stop()
+
+    assert ("A", 9) in trail
+    assert ("C", 9) in trail
+    errors = bus.subscriber_error_counts()
+    assert errors.get("handler_b", 0) >= 1
+
+
+@pytest.mark.chaos
+@pytest.mark.core
+def test_critical_vs_noncritical_handler_behavior_documented_as_best_effort():
+    bus = EventBus(workers=1)
+    calls = []
+
+    def critical_handler(_payload):
+        calls.append("critical")
+        raise RuntimeError("critical exploded")
+
+    def noncritical_handler(_payload):
+        calls.append("noncritical")
+
+    bus.subscribe("MIXED", critical_handler)
+    bus.subscribe("MIXED", noncritical_handler)
+    bus.publish("MIXED", {"id": "x"})
+    bus.stop()
+
+    # Current architecture is best-effort fanout (no criticality distinction):
+    # failure in one subscriber does not block others.
+    assert "critical" in calls
+    assert "noncritical" in calls

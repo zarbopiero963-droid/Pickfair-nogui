@@ -1,4 +1,5 @@
 import pytest
+import services.telegram_alerts_service as telegram_alerts_module
 
 from services.telegram_alerts_service import TelegramAlertsService
 
@@ -149,3 +150,49 @@ def test_invalid_min_severity_falls_back_and_allows_high_signal():
     result = svc.notify_alert({"severity": "high", "code": "X5", "message": "boom"})
     assert result["delivered"] is True
     assert len(sender.calls) == 1
+
+
+def test_telegram_alert_pipeline_resend_after_cooldown(monkeypatch):
+    sender = SenderStub()
+    svc = TelegramAlertsService(settings_service=CooldownSettingsStub(), telegram_sender=sender)
+    now = {"t": 1000.0}
+    monkeypatch.setattr(telegram_alerts_module.time, "time", lambda: now["t"])
+
+    payload = {"severity": "critical", "code": "RESEND", "message": "m1"}
+    first = svc.notify_alert(payload)
+    second = svc.notify_alert(payload)
+    now["t"] += 601.0
+    third = svc.notify_alert(payload)
+
+    assert first["delivered"] is True
+    assert second["reason"] == "dedup_cooldown"
+    assert third["delivered"] is True
+    assert len(sender.calls) == 2
+
+
+def test_telegram_alert_pipeline_grouping_count_summary(monkeypatch):
+    class AggSettings(SettingsStub):
+        def load_telegram_config_row(self):
+            data = super().load_telegram_config_row()
+            data.update(
+                {
+                    "alert_aggregation_enabled": True,
+                    "alert_aggregation_threshold": 3,
+                    "alert_aggregation_window_sec": 60,
+                    "alert_dedup_enabled": False,
+                }
+            )
+            return data
+
+    sender = SenderStub()
+    svc = TelegramAlertsService(settings_service=AggSettings(), telegram_sender=sender)
+    monkeypatch.setattr(telegram_alerts_module.time, "time", lambda: 2000.0)
+
+    svc.notify_alert({"severity": "warning", "code": "G1", "message": "a"})
+    svc.notify_alert({"severity": "warning", "code": "G2", "message": "b"})
+    third = svc.notify_alert({"severity": "warning", "code": "G3", "message": "c"})
+
+    assert third["delivered"] is True
+    assert len(sender.calls) == 3
+    assert "Alert Burst Detected" in sender.calls[-1][1]
+    assert "Alerts in 60s: 3" in sender.calls[-1][1]

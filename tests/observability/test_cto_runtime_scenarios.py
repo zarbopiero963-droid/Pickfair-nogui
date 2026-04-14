@@ -14,6 +14,11 @@ class _Probe:
             "stalled_ticks": 3,
             "completed_delta": 0,
             "missing_observability_sections": 2,
+            "db_lock_errors": 2,
+            "network_timeout_count": 1,
+            "ambiguous_submissions": 1,
+            "writer_backlog": 60,
+            "memory_growth_mb": 130,
         }
 
     def collect_runtime_state(self):
@@ -55,3 +60,43 @@ def test_watchdog_tick_exposes_cto_findings_after_anomaly_and_forensics():
     assert "STUCK_INFLIGHT" in active_codes
     assert "LOCAL_VS_REMOTE_MISMATCH" in active_codes
     assert any(code.startswith("CTO::") for code in active_codes)
+
+
+def test_stuck_inflight_under_lag_and_cascade_pattern_named_coverage():
+    alerts = AlertsManager()
+    svc = WatchdogService(
+        probe=_Probe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_Snapshot(),
+        anomaly_engine=_Anomaly(),
+        forensics_engine=_Forensics(),
+    )
+    svc.tick()
+    codes = {a["code"] for a in alerts.active_alerts()}
+    assert "CTO::STALLED_SYSTEM_DETECTED" in codes
+    assert "CTO::CASCADE_FAILURE_RISK" in codes
+
+
+def test_silent_failure_detected_from_enabled_undeliverable_pipeline_integrated():
+    class _ProbeWithUndeliverable(_Probe):
+        def collect_forensics_evidence(self):
+            return {"diagnostics_export": {"manifest_files": []}}
+
+    alerts = AlertsManager()
+    svc = WatchdogService(
+        probe=_ProbeWithUndeliverable(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_Snapshot(),
+        anomaly_engine=_Anomaly(),
+        forensics_engine=_Forensics(),
+    )
+    svc.tick()
+    codes = {a["code"] for a in alerts.active_alerts()}
+    assert "CTO::SILENT_FAILURE_DETECTED" in codes
+    assert "CTO::OBSERVABILITY_UNTRUSTED" in codes

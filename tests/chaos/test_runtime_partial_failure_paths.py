@@ -505,3 +505,26 @@ def test_natural_financial_integrity_governance_lifecycle_repeated_cycles() -> N
         )
         for row in incidents.snapshot()["incidents"]
     )
+
+@pytest.mark.chaos
+@pytest.mark.integration
+def test_timeout_to_ambiguity_lifecycle_is_visible_to_anomaly_and_forensics_directly() -> None:
+    context = {
+        "metrics": {"counters": {"quick_bet_ambiguous_total": 2}, "gauges": {"queue_depth": 2, "worker_alive": 0}},
+        "runtime_state": {
+            "alert_pipeline": {"enabled": True, "deliverable": False},
+            "reconcile": {"ghost_orders_count": 1, "suspected_ghost_count": 1, "event_key": "AMB-1"},
+        },
+        "recent_orders": [{"order_id": "AMB-1", "status": STATUS_AMBIGUOUS, "remote_status": "MATCHED"}],
+        "recent_audit": [{"type": "REQUEST_RECEIVED", "order_id": "AMB-1"}],
+        "health": {"overall_status": "DEGRADED"},
+        "alerts": {"active_count": 1, "alerts": [{"code": "AMBIGUOUS_SPIKE", "active": True}]},
+        "incidents": {"open_count": 1, "incidents": [{"code": "INC-AMB", "status": "OPEN"}]},
+        "diagnostics_export": {"manifest_files": []},
+    }
+    anomaly_codes = {a["code"] for a in AnomalyEngine(DEFAULT_ANOMALY_RULES).evaluate(context)}
+    forensics_codes = {f["code"] for f in ForensicsEngine(DEFAULT_FORENSICS_RULES).evaluate(context)}
+    assert "SERVICE_STALLED" in anomaly_codes or "QUEUE_DEPTH_LIVENESS_MISMATCH" in anomaly_codes
+    assert "GHOST_ORDER_DETECTED" in anomaly_codes
+    assert "INCIDENT_WITHOUT_SUPPORTING_ALERT" in forensics_codes
+    assert "ALERT_WITHOUT_RUNTIME_CONTEXT" in forensics_codes

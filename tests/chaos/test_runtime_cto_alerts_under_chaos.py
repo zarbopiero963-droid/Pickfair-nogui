@@ -22,3 +22,4 @@ def test_chaos_repeated_stall_escalates_and_cooldown_applies():
     assert escalated and escalated[0]["severity"] in {"high", "critical"}
     assert any(x["rule_name"] == "MEMORY_GROWTH_TREND" for x in second)
     assert any(x["rule_name"] in {"OBSERVABILITY_UNTRUSTED", "CASCADE_FAILURE_RISK"} for x in first)
+    assert any(x["rule_name"] == "SILENT_FAILURE_DETECTED" for x in first)

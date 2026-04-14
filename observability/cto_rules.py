@@ -44,7 +44,8 @@ def evaluate_cto_rules(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
         ))
 
     pipeline = dict(runtime_probe.get("alert_pipeline") or {})
-    if bool(pipeline.get("enabled")) and not bool(pipeline.get("deliverable", True)):
+    pipeline_enabled = bool(pipeline.get("enabled", pipeline.get("alerts_enabled", False)))
+    if pipeline_enabled and not bool(pipeline.get("deliverable", True)):
         findings.append(_finding(
             rule_name="SILENT_FAILURE_DETECTED",
             severity="high",

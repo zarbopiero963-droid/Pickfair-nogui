@@ -857,6 +857,18 @@ class WatchdogService:
     def _evaluate_cto_reviewer(self) -> None:
         runtime_collector = getattr(self.probe, "collect_runtime_state", None)
         runtime_state = runtime_collector() if callable(runtime_collector) else {}
+        forensics_getter = getattr(self.probe, "collect_forensics_evidence", None)
+        diagnostics_bundle = {}
+        if callable(forensics_getter):
+            try:
+                evidence = forensics_getter() or {}
+                if isinstance(evidence, dict):
+                    diagnostics_bundle = dict(evidence.get("diagnostics_export") or {})
+                    if "available" not in diagnostics_bundle:
+                        manifest_files = diagnostics_bundle.get("manifest_files") or []
+                        diagnostics_bundle["available"] = bool(manifest_files)
+            except Exception:
+                diagnostics_bundle = {}
         payload = {
             "health_snapshot": self.health_registry.snapshot(),
             "metrics_snapshot": self.metrics_registry.snapshot(),
@@ -864,7 +876,7 @@ class WatchdogService:
             "forensics_alerts": list(self.last_forensics_findings or []),
             "incidents_snapshot": self.incidents_manager.snapshot(),
             "runtime_probe_state": runtime_state or {},
-            "diagnostics_bundle": {},
+            "diagnostics_bundle": diagnostics_bundle,
         }
         findings = self._cto_reviewer.evaluate(payload)
         current_codes: set[str] = set()

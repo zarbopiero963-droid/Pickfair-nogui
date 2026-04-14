@@ -46,3 +46,16 @@ def test_distinct_context_not_collapsed_and_payload_fields_present():
         assert row["rule_name"]
         assert row["reasoning_payload"]["anomaly_alert_count"] >= 0
         assert row["suggested_action"]
+
+
+def test_diagnostics_metadata_participates_in_observability_untrusted():
+    reviewer = CtoReviewer(history_window=4, cooldown_sec=0)
+    out = reviewer.evaluate(
+        _payload(
+            diagnostics_bundle={},
+            diagnostics_metadata={"available": False},
+            metrics_snapshot={"gauges": {"missing_observability_sections": 2, "repeated_high_ticks": 2, "stalled_ticks": 2, "completed_delta": 0}},
+        )
+    )
+    names = {x["rule_name"] for x in out}
+    assert "OBSERVABILITY_UNTRUSTED" in names

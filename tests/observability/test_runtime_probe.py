@@ -76,7 +76,10 @@ def test_runtime_probe_alert_pipeline_state_uses_wired_services():
 
     state = probe.collect_runtime_state()
 
-    assert state["alert_pipeline"] == fake_state.alert_pipeline_snapshot()
+    expected = fake_state.alert_pipeline_snapshot()
+    assert state["alert_pipeline"]["enabled"] == expected["alerts_enabled"]
+    for key, value in expected.items():
+        assert state["alert_pipeline"][key] == value
     assert state["safe_mode_enabled"] is True
 
 
