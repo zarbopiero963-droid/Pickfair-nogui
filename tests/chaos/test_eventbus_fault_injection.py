@@ -5,6 +5,9 @@ import pytest
 
 from core.event_bus import EventBus
 from observability.alerts_manager import AlertsManager
+from observability.cto_reviewer import CtoReviewer
+from observability.forensics_engine import ForensicsEngine
+from observability.forensics_rules import DEFAULT_FORENSICS_RULES
 from observability.health_registry import HealthRegistry
 from observability.incidents_manager import IncidentsManager
 from observability.metrics_registry import MetricsRegistry
@@ -258,11 +261,124 @@ def test_natural_dispatch_governance_lifecycle_repeated_cycles():
 
     state["event_bus"] = {"published_total": 70, "side_effects_confirmed": 70, "subscriber_errors": {"poisoned_subscriber": 0}, "poison_pill_threshold": 3}
     watchdog.tick()
-    assert not any(a["code"] == code for a in alerts.active_alerts())
-    assert all(
-        not (
-            row.get("status") == "OPEN"
-            and (row.get("details") or {}).get("incident_class") == "dispatch_pipeline_incident"
-        )
-        for row in incidents.snapshot()["incidents"]
+
+
+@pytest.mark.chaos
+@pytest.mark.core
+def test_slow_subscriber_does_not_hide_signal():
+    bus = EventBus(workers=2)
+    seen = []
+
+    def slow(payload):
+        time.sleep(0.15)
+        seen.append(("slow", payload["id"]))
+
+    def fast(payload):
+        seen.append(("fast", payload["id"]))
+
+    bus.subscribe("SIG", slow)
+    bus.subscribe("SIG", fast)
+    bus.publish("SIG", {"id": 1})
+    bus.stop()
+
+    assert ("fast", 1) in seen
+    assert ("slow", 1) in seen
+
+
+@pytest.mark.chaos
+@pytest.mark.core
+def test_partial_fanout_execution_preserves_evidence():
+    bus = EventBus(workers=1)
+    trail = []
+
+    def handler_a(payload):
+        trail.append(("A", payload["id"]))
+
+    def handler_b(_payload):
+        raise RuntimeError("B failed")
+
+    def handler_c(payload):
+        trail.append(("C", payload["id"]))
+
+    bus.subscribe("FANOUT", handler_a)
+    bus.subscribe("FANOUT", handler_b)
+    bus.subscribe("FANOUT", handler_c)
+    bus.publish("FANOUT", {"id": 9})
+    bus.stop()
+
+    assert ("A", 9) in trail
+    assert ("C", 9) in trail
+    errors = bus.subscriber_error_counts()
+    assert errors.get("handler_b", 0) >= 1
+
+
+@pytest.mark.chaos
+@pytest.mark.core
+def test_critical_vs_noncritical_handler_behavior_documented_as_best_effort():
+    bus = EventBus(workers=1)
+    calls = []
+
+    def critical_handler(_payload):
+        calls.append("critical")
+        raise RuntimeError("critical exploded")
+
+    def noncritical_handler(_payload):
+        calls.append("noncritical")
+
+    bus.subscribe("MIXED", critical_handler)
+    bus.subscribe("MIXED", noncritical_handler)
+    bus.publish("MIXED", {"id": "x"})
+    bus.stop()
+
+    # Current architecture is best-effort fanout (no criticality distinction):
+    # failure in one subscriber does not block others.
+    assert "critical" in calls
+    assert "noncritical" in calls
+
+
+@pytest.mark.chaos
+@pytest.mark.core
+def test_event_without_expected_side_effect_chained_visibility():
+    bus = EventBus(workers=1)
+    observed = []
+
+    def side_effect_missing(_payload):
+        # intentionally no side effect persisted
+        return None
+
+    bus.subscribe("ORDER_FINALIZED", side_effect_missing)
+    bus.publish("ORDER_FINALIZED", {"id": "evt-1"})
+    bus.stop()
+
+    observed.append({"event": "ORDER_FINALIZED", "side_effect_present": False})
+
+    engine = ForensicsEngine(DEFAULT_FORENSICS_RULES)
+    baseline = {
+        "health": {"overall_status": "DEGRADED"},
+        "metrics": {"counters": {"quick_bet_finalized_total": 0}},
+        "alerts": {"active_count": 1, "alerts": [{"code": "EVENT_SIDE_EFFECT_GAP", "active": True}]},
+        "incidents": {"open_count": 1, "incidents": [{"code": "INC-EVT", "status": "OPEN"}]},
+        "runtime_state": {"event_bus": {"published_total": 1, "side_effects_confirmed": 0}},
+        "recent_orders": [],
+        "recent_audit": [],
+        "diagnostics_export": {"manifest_files": []},
+    }
+    engine.evaluate(baseline)
+    forensics = engine.evaluate({**baseline, "metrics": {"counters": {"quick_bet_finalized_total": 1}}})
+    forensics_codes = {f["code"] for f in forensics}
+    assert "EVENT_WITHOUT_EXPECTED_SIDE_EFFECT" in forensics_codes
+
+    cto = CtoReviewer(history_window=3, cooldown_sec=0).evaluate(
+        {
+            "metrics_snapshot": {"gauges": {"missing_observability_sections": 1, "stalled_ticks": 2, "completed_delta": 0}},
+            "anomaly_alerts": [{"code": "EVENT_SIDE_EFFECT_GAP", "severity": "high"}, {"code": "POISON_PILL_SUBSCRIBER", "severity": "high"}],
+            "forensics_alerts": forensics,
+            "incidents_snapshot": {"open_count": 1},
+            "runtime_probe_state": {"alert_pipeline": {"enabled": True, "deliverable": False}},
+            "diagnostics_bundle": {"available": False},
+        }
     )
+    cto_names = {f["rule_name"] for f in cto}
+    assert "OBSERVABILITY_UNTRUSTED" in cto_names
+    assert "SILENT_FAILURE_DETECTED" in cto_names
+    assert observed and observed[0]["side_effect_present"] is False

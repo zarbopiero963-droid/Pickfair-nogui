@@ -4,6 +4,7 @@ import threading
 from typing import Any, Dict, List, Optional
 
 import pytest
+from requests.exceptions import ReadTimeout
 
 from core.trading_engine import (
     AMBIGUITY_SUBMIT_TIMEOUT,
@@ -204,3 +205,14 @@ def test_concurrent_submit_race_is_deduplicated() -> None:
 
         non_duplicate_orders = [o for o in db.orders.values() if o.get("status") != STATUS_DUPLICATE_BLOCKED]
         assert len(non_duplicate_orders) == 1
+
+
+@pytest.mark.chaos
+@pytest.mark.integration
+def test_submit_readtimeout_becomes_ambiguous_not_failed() -> None:
+    engine, db, _bus, _rec = _make_engine(client=FakeClient(error=ReadTimeout("read timeout")))
+    result = engine.submit_quick_bet(_payload("READ-TIMEOUT-1"))
+    assert result["status"] == STATUS_AMBIGUOUS
+    assert result["status"] != STATUS_FAILED
+    order = db.get_order(result["order_id"])
+    assert order["status"] == STATUS_AMBIGUOUS

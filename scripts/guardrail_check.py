@@ -93,6 +93,12 @@ def main() -> int:
     critical_touched = touches_critical_files(changed_files)
 
     task = extract_task(text)
+    allowed_scope = load_json(".guardrails/allowed_scope.json")
+    allowed_tasks = set()
+    if isinstance(allowed_scope, dict):
+        tasks = allowed_scope.get("tasks")
+        if isinstance(tasks, dict):
+            allowed_tasks = {str(k) for k in tasks.keys()}
 
     print("=" * 80)
     print("PR GUARD REPORT")
@@ -111,18 +117,11 @@ def main() -> int:
         info("No critical files touched")
 
     print()
-    if task:
-        info(f"TASK tag found: {task}")
-    else:
-        if critical_touched:
-            fail(
-                "Missing [TASK: ...] tag in PR title/body for critical change. "
-                "Add a tag like [TASK: trading_engine] to title or body."
-            )
-        warn(
-            "Missing [TASK: ...] tag in PR title/body. "
-            "Non-critical change, so this is advisory only."
-        )
+    if not task:
+        fail("Missing [TASK: ...] tag in PR title/body. TASK validation is fail-closed.")
+    if task not in allowed_tasks:
+        fail(f"Unknown TASK tag: {task}. Must be one of configured task keys.")
+    info(f"TASK tag found: {task}")
 
     # Optional hygiene warnings
     if len(changed_files) > 25:

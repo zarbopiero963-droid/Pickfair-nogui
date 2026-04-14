@@ -65,14 +65,16 @@ class TelegramAlertsService:
             logger.warning("Telegram alert skipped: sender unavailable while alerts are enabled")
             return {**availability, "delivered": False, "reason": "sender_unavailable"}
 
-        chat_id = settings.get("alerts_chat_id")
+        chat_id = settings.get("telegram_alert_chat_id") or settings.get("alerts_chat_id")
         if chat_id in (None, "", 0, "0"):
             self.last_delivery_ok = False
             self.last_delivery_error = "alerts_chat_id_missing"
             logger.warning("Telegram alert skipped: alerts_chat_id missing while alerts are enabled")
             return {**availability, "delivered": False, "reason": "alerts_chat_id_missing"}
 
-        min_severity = str(settings.get("min_alert_severity", "WARNING") or "WARNING").upper()
+        min_severity = str(settings.get("telegram_alert_min_severity") or settings.get("min_alert_severity", "WARNING") or "WARNING").upper()
+        if min_severity not in SEVERITY_RANK:
+            min_severity = "WARNING"
         severity = str(alert.get("severity", "WARNING") or "WARNING").upper()
 
         if not self._should_send(severity, min_severity):
@@ -81,7 +83,7 @@ class TelegramAlertsService:
             return {**availability, "delivered": False, "reason": "below_min_severity"}
 
         dedup_enabled = bool(settings.get("alert_dedup_enabled", True))
-        cooldown_sec = int(settings.get("alert_cooldown_sec", 300) or 300)
+        cooldown_sec = int(settings.get("telegram_alert_cooldown_sec") or settings.get("alert_cooldown_sec", 300) or 300)
         dedup_key = self._dedup_key(alert)
         now = time.time()
         if dedup_enabled and cooldown_sec > 0:
@@ -171,9 +173,10 @@ class TelegramAlertsService:
 
     def availability_status(self, settings: Dict[str, Any] | None = None) -> Dict[str, Any]:
         settings = settings or self._get_telegram_settings()
-        alerts_enabled = bool(settings.get("alerts_enabled", False))
+        alerts_enabled = bool(settings.get("telegram_alerts_enabled", settings.get("alerts_enabled", False)))
         sender_available = self._sender_has_supported_method(self.telegram_sender)
-        deliverable = alerts_enabled and sender_available and settings.get("alerts_chat_id") not in (None, "", 0, "0")
+        chat_id = settings.get("telegram_alert_chat_id") or settings.get("alerts_chat_id")
+        deliverable = alerts_enabled and sender_available and chat_id not in (None, "", 0, "0")
 
         reason = None
         status = "DISABLED"
@@ -207,25 +210,36 @@ class TelegramAlertsService:
         if callable(loader):
             data = loader()
             if isinstance(data, dict):
-                return data
+                return self._normalize_telegram_settings(data)
 
         getter = getattr(self.settings_service, "get_all_settings", None)
         if callable(getter):
             try:
                 data = getter() or {}
-                return {
-                    "alerts_enabled": bool(data.get("telegram.alerts_enabled", False)),
-                    "alerts_chat_id": data.get("telegram.alerts_chat_id"),
-                    "alerts_chat_name": data.get("telegram.alerts_chat_name", ""),
-                    "min_alert_severity": data.get("telegram.min_alert_severity", "WARNING"),
-                    "alert_cooldown_sec": data.get("telegram.alert_cooldown_sec", 300),
-                    "alert_dedup_enabled": bool(data.get("telegram.alert_dedup_enabled", True)),
-                    "alert_format_rich": bool(data.get("telegram.alert_format_rich", True)),
-                }
+                return self._normalize_telegram_settings(data)
             except Exception:
                 logger.exception("get_all_settings failed while reading telegram alert settings")
 
         return {}
+
+    def _normalize_telegram_settings(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "alerts_enabled": bool(data.get("alerts_enabled", data.get("telegram.alerts_enabled", data.get("telegram_alerts_enabled", False)))),
+            "alerts_chat_id": data.get("alerts_chat_id", data.get("telegram.alerts_chat_id", data.get("telegram_alert_chat_id"))),
+            "alerts_chat_name": data.get("alerts_chat_name", data.get("telegram.alerts_chat_name", data.get("telegram_alert_name", ""))),
+            "min_alert_severity": data.get("min_alert_severity", data.get("telegram.min_alert_severity", data.get("telegram_alert_min_severity", "WARNING"))),
+            "alert_cooldown_sec": data.get("alert_cooldown_sec", data.get("telegram.alert_cooldown_sec", data.get("telegram_alert_cooldown_sec", 300))),
+            "telegram_alerts_enabled": bool(data.get("telegram_alerts_enabled", data.get("alerts_enabled", data.get("telegram.alerts_enabled", False)))),
+            "telegram_alert_chat_id": data.get("telegram_alert_chat_id", data.get("alerts_chat_id", data.get("telegram.alerts_chat_id"))),
+            "telegram_alert_name": data.get("telegram_alert_name", data.get("alerts_chat_name", data.get("telegram.alerts_chat_name", ""))),
+            "telegram_alert_min_severity": data.get("telegram_alert_min_severity", data.get("min_alert_severity", data.get("telegram.min_alert_severity", "WARNING"))),
+            "telegram_alert_cooldown_sec": data.get("telegram_alert_cooldown_sec", data.get("alert_cooldown_sec", data.get("telegram.alert_cooldown_sec", 300))),
+            "alert_dedup_enabled": bool(data.get("alert_dedup_enabled", data.get("telegram.alert_dedup_enabled", True))),
+            "alert_format_rich": bool(data.get("alert_format_rich", data.get("telegram.alert_format_rich", True))),
+            "alert_aggregation_enabled": bool(data.get("alert_aggregation_enabled", True)),
+            "alert_aggregation_threshold": int(data.get("alert_aggregation_threshold", 5) or 5),
+            "alert_aggregation_window_sec": int(data.get("alert_aggregation_window_sec", 10) or 10),
+        }
 
     def _should_send(self, severity: str, min_severity: str) -> bool:
         return SEVERITY_RANK.get(severity, 0) >= SEVERITY_RANK.get(min_severity, 20)
@@ -243,7 +257,8 @@ class TelegramAlertsService:
         details = alert.get("details") or alert.get("payload") or {}
         alert_type = str(alert.get("type", "") or "").lower()
 
-        chat_name = str(settings.get("alerts_chat_name", "") or "").strip()
+        chat_name = str(settings.get("telegram_alert_name") or settings.get("alerts_chat_name", "") or "").strip()
+        timestamp = str(alert.get("timestamp") or alert.get("ts") or "").strip()
 
         lifecycle = str(alert.get("lifecycle") or "").upper()
         if lifecycle not in {"OPEN", "UPDATED", "RESOLVED"}:
@@ -270,6 +285,8 @@ class TelegramAlertsService:
 
         if chat_name:
             lines.append(f"• Channel: {chat_name}")
+        if timestamp:
+            lines.append(f"• Time: {timestamp}")
 
         if description:
             lines.append(f"• Description: {description}")
@@ -302,6 +319,9 @@ class TelegramAlertsService:
             lines.append(f"• Why it matters: {why_it_matters}")
         if recommended:
             lines.append(f"• Recommended action: {recommended}")
+        suggested_action = alert.get("suggested_action") or (details.get("suggested_action") if isinstance(details, dict) else None)
+        if suggested_action:
+            lines.append(f"• Suggested action: {suggested_action}")
         if resolution_reason and lifecycle == "RESOLVED":
             lines.append(f"• Resolution: {resolution_reason}")
 

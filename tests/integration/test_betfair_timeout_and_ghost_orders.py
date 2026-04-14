@@ -251,6 +251,21 @@ def test_submit_timeout_becomes_ambiguous_and_remote_order_exists() -> None:
 
 
 @pytest.mark.integration
+def test_incomplete_submit_response_does_not_claim_false_success() -> None:
+    class _MalformedClient:
+        def place_bet(self, **_payload):
+            return None  # structurally invalid/unusable confirmation payload
+
+    engine, db, bus, _rec = _make_engine(client=_MalformedClient())
+    result = engine.submit_quick_bet(_payload("INCOMPLETE-1"))
+    assert result["status"] == STATUS_AMBIGUOUS
+    assert result["status"] != STATUS_COMPLETED
+    order = db.get_order(result["order_id"])
+    assert order["status"] == STATUS_AMBIGUOUS
+    assert "QUICK_BET_SUBMITTED" not in [name for name, _ in bus.events]
+
+
+@pytest.mark.integration
 def test_timeout_retry_has_no_double_exposure_and_reconcile_finds_ghost() -> None:
     """Proves:
     - timeout → ambiguous (not failed)

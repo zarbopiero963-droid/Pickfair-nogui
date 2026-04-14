@@ -79,3 +79,26 @@ class SettingsService(LegacySettingsService):
                 "anomaly_actions_enabled": int(bool(enabled)),
             }
         )
+
+    def load_telegram_alerts_enabled(self) -> bool:
+        data = self.get_all_settings()
+        return self._b(data, "telegram_alerts_enabled", self._b(data, "telegram.alerts_enabled", False))
+
+    def load_telegram_alert_chat_id(self) -> str:
+        data = self.get_all_settings()
+        return str(data.get("telegram_alert_chat_id", data.get("telegram.alerts_chat_id", "")) or "")
+
+    def load_telegram_alert_name(self) -> str:
+        data = self.get_all_settings()
+        return str(data.get("telegram_alert_name", data.get("telegram.alerts_chat_name", "")) or "")
+
+    def load_telegram_alert_min_severity(self) -> str:
+        data = self.get_all_settings()
+        return str(data.get("telegram_alert_min_severity", data.get("telegram.min_alert_severity", "WARNING")) or "WARNING").upper()
+
+    def load_telegram_alert_cooldown_sec(self) -> int:
+        data = self.get_all_settings()
+        try:
+            return int(data.get("telegram_alert_cooldown_sec", data.get("telegram.alert_cooldown_sec", 300)) or 300)
+        except Exception:
+            return 300

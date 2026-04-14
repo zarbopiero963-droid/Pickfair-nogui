@@ -986,6 +986,7 @@ class RuntimeProbe:
             status = "DISABLED"
 
         return {
+            "enabled": bool(alerts_enabled),
             "alerts_enabled": alerts_enabled,
             "sender_available": sender_available,
             "deliverable": deliverable,
