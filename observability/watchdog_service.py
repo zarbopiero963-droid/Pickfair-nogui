@@ -114,11 +114,28 @@ class WatchdogService:
         if self._is_anomaly_enabled():
             self._run_anomaly_hook()
         else:
-            # Fail-loud: anomaly scanning is explicitly disabled.  Emit an operational
-            # warning every tick so the suppression is visible in logs and observable.
+            # Fail-loud + fail-closed: anomaly scanning is explicitly disabled.
+            # Emit a structured operational alert and incident so the reviewer-disabled
+            # state is surfaced beyond log output — satisfying the fail-closed audit
+            # requirement that suppression is an operationally escalated condition.
+            _DISABLED_CODE = "ANOMALY_REVIEWER_DISABLED"
             logger.warning(
                 "anomaly reviewer is DISABLED — anomaly scans are suppressed this tick; "
                 "set anomaly_enabled=True or configure load_anomaly_enabled() to re-enable"
+            )
+            self.alerts_manager.upsert_alert(
+                _DISABLED_CODE,
+                "warning",
+                "Anomaly reviewer is DISABLED: anomaly scans are suppressed each tick. "
+                "Reviewer coverage gap is active. Set anomaly_enabled=True to restore coverage.",
+                source="anomaly_reviewer_disabled",
+                details={"anomaly_enabled": False, "suppressed_this_tick": True},
+            )
+            self.incidents_manager.open_incident(
+                _DISABLED_CODE,
+                _DISABLED_CODE,
+                "warning",
+                details={"reason": "anomaly_reviewer_explicitly_disabled"},
             )
             self.last_anomalies = []
             self.escalation_requested = False

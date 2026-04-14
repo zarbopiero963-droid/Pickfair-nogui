@@ -1028,3 +1028,87 @@ def test_invariant_reviewer_fails_closed_on_missing_runtime_input():
         i["code"] for i in incidents.snapshot()["incidents"] if i["status"] == "OPEN"
     }
     assert "INVARIANT_INPUT_MISSING" in open_incidents
+
+
+# ---------------------------------------------------------------------------
+# Gap 3: anomaly reviewer disabled → structured operational fail-closed signal
+# ---------------------------------------------------------------------------
+
+def test_anomaly_reviewer_disabled_emits_structured_operational_signal():
+    """When anomaly_enabled=False the watchdog must emit a structured operational
+    alert AND open an incident — not just log a warning.
+
+    Proves the disabled reviewer state is fail-closed / operationally escalated,
+    not merely visible suppression via log output.
+    """
+    alerts = AlertsManager()
+    incidents = IncidentsManager()
+
+    watchdog = WatchdogService(
+        probe=_ProbeStub(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=incidents,
+        snapshot_service=_SnapshotStub(),
+        anomaly_enabled=False,
+        interval_sec=60.0,
+    )
+
+    watchdog.tick()
+
+    # Structured alert must be present (not just log output).
+    active_codes = {a["code"] for a in alerts.active_alerts()}
+    assert "ANOMALY_REVIEWER_DISABLED" in active_codes, (
+        "anomaly reviewer disabled state must emit ANOMALY_REVIEWER_DISABLED "
+        "structured alert — warning log alone is insufficient"
+    )
+
+    # Source must clearly identify the disabled reviewer.
+    disabled_alert = next(
+        a for a in alerts.active_alerts() if a["code"] == "ANOMALY_REVIEWER_DISABLED"
+    )
+    assert disabled_alert["source"] == "anomaly_reviewer_disabled"
+
+    # Structured incident must be opened so the disabled state is operationally
+    # escalated beyond alert-only visibility.
+    open_incidents = {
+        i["code"] for i in incidents.snapshot()["incidents"] if i["status"] == "OPEN"
+    }
+    assert "ANOMALY_REVIEWER_DISABLED" in open_incidents, (
+        "anomaly reviewer disabled state must open a structured incident "
+        "to satisfy fail-closed / operationally escalated requirement"
+    )
+
+
+def test_anomaly_reviewer_disabled_signal_is_idempotent_across_ticks():
+    """ANOMALY_REVIEWER_DISABLED alert and incident are not duplicated across ticks —
+    open_incident is idempotent, upsert_alert updates count but not a new alert."""
+    alerts = AlertsManager()
+    incidents = IncidentsManager()
+
+    watchdog = WatchdogService(
+        probe=_ProbeStub(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=incidents,
+        snapshot_service=_SnapshotStub(),
+        anomaly_enabled=False,
+        interval_sec=60.0,
+    )
+
+    watchdog.tick()
+    watchdog.tick()
+    watchdog.tick()
+
+    # Alert must remain active (upserted, not duplicated).
+    disabled_alerts = [a for a in alerts.active_alerts() if a["code"] == "ANOMALY_REVIEWER_DISABLED"]
+    assert len(disabled_alerts) == 1, "ANOMALY_REVIEWER_DISABLED must not be duplicated"
+
+    # Incident must remain a single OPEN incident.
+    disabled_incidents = [
+        i for i in incidents.snapshot()["incidents"]
+        if i["code"] == "ANOMALY_REVIEWER_DISABLED" and i["status"] == "OPEN"
+    ]
+    assert len(disabled_incidents) == 1, "ANOMALY_REVIEWER_DISABLED incident must be idempotent"
