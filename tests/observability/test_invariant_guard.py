@@ -263,6 +263,27 @@ def test_STATE_REGRESSION_no_false_positive():
     assert "STATE_REGRESSION" not in codes
 
 
+def test_invariant_checks_empty_is_explicit_misconfiguration_violation():
+    violations = evaluate_invariants({"runtime": {"status": "READY"}}, enabled=True, checks=())
+    assert len(violations) == 1
+    assert violations[0].code == "INVARIANT_CHECKS_MISCONFIGURED"
+
+
+def test_invariant_checks_invalid_shapes_are_fail_loud():
+    violations = evaluate_invariants(
+        {"runtime": {"status": "READY"}},
+        enabled=True,
+        checks=(
+            ("ok", "ok", lambda _state: True),
+            ("bad_shape", "only two fields"),  # type: ignore[arg-type]
+            ("not_callable", "must fail", "nope"),  # type: ignore[arg-type]
+        ),
+    )
+    codes = [v.code for v in violations]
+    assert "INVARIANT_CHECKS_MISCONFIGURED" in codes
+    assert "ok" not in codes
+
+
 def test_INFLIGHT_STUCK_fires_when_inflight_order_exceeds_max_age():
     """INFLIGHT_STUCK fires when an INFLIGHT order exceeds the max_inflight_age_sec threshold."""
     state = {

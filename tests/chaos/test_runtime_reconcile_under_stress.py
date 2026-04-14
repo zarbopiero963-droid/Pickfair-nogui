@@ -122,6 +122,24 @@ def test_reconciliation_audited_path_has_no_while_true_or_sleep() -> None:
         def set_reconcile_marker(self, _batch_id, _value):
             return None
 
+        def get_reconcile_runtime_ts(self, batch_id):
+            _ = batch_id
+            return 1_700_000_000.0
+
+        def get_reconcile_remote_orders(self, *, batch_id, market_id):
+            _ = (batch_id, market_id)
+            return [
+                {
+                    "customerOrderRef": "R1",
+                    "betId": "BET-R1",
+                    "marketId": "1.1",
+                    "selectionId": "10",
+                    "status": "EXECUTION_COMPLETE",
+                    "sizeMatched": 2.0,
+                    "sizeRemaining": 0.0,
+                }
+            ]
+
     class _Batch:
         def get_batch(self, batch_id):
             return {"batch_id": batch_id, "market_id": "1.1", "status": "LIVE"}
@@ -149,7 +167,7 @@ def test_reconciliation_audited_path_has_no_while_true_or_sleep() -> None:
     class _Client:
         def get_current_orders(self, market_ids=None):
             _ = market_ids
-            raise TimeoutError("transient")
+            raise AssertionError("audited reconcile path must not call network fetch client")
 
     engine = ReconciliationEngine(
         db=_DB(),
@@ -159,19 +177,129 @@ def test_reconciliation_audited_path_has_no_while_true_or_sleep() -> None:
     setattr(engine.cfg, "audited_single_pass_mode", True)
 
     original_sleep = __import__("time").sleep
+    original_time = __import__("time").time
 
     def _boom(_seconds):
         raise AssertionError("time.sleep must not be called in audited single-pass mode")
 
+    def _boom_time():
+        raise AssertionError("time.time must not be called in audited single-pass mode")
+
     import time
 
     time.sleep = _boom
+    time.time = _boom_time
     try:
-        _orders, reason = engine._fetch_current_orders_by_market("1.1")
+        result = engine.reconcile_batch("B1")
     finally:
         time.sleep = original_sleep
+        time.time = original_time
 
-    assert reason is not None
+    assert result["ok"] is True
+
+
+@pytest.mark.chaos
+@pytest.mark.integration
+def test_reconciliation_audited_path_requires_supplied_remote_snapshot() -> None:
+    class _DB:
+        def persist_decision_log(self, *args, **kwargs):
+            return None
+
+        def get_pending_sagas(self):
+            return []
+
+        def get_reconcile_marker(self, _batch_id):
+            return None
+
+        def set_reconcile_marker(self, _batch_id, _value):
+            return None
+
+        def get_reconcile_runtime_ts(self, batch_id):
+            _ = batch_id
+            return 1_700_000_000.0
+
+    class _Batch:
+        def get_batch(self, batch_id):
+            return {"batch_id": batch_id, "market_id": "1.1", "status": "LIVE"}
+
+        def get_batch_legs(self, _batch_id):
+            return [{"leg_index": 0, "status": "SUBMITTED", "customer_ref": "R1"}]
+
+        def update_leg_status(self, **kwargs):
+            _ = kwargs
+            return None
+
+        def recompute_batch_status(self, batch_id):
+            return {"batch_id": batch_id, "status": "LIVE"}
+
+        def mark_batch_failed(self, *_args, **_kwargs):
+            return None
+
+        def get_open_batches(self):
+            return []
+
+        def release_runtime_artifacts(self, **kwargs):
+            _ = kwargs
+            return None
+
+    engine = ReconciliationEngine(db=_DB(), batch_manager=_Batch(), client_getter=lambda: object())
+    setattr(engine.cfg, "audited_single_pass_mode", True)
+    result = engine.reconcile_batch("B1")
+    assert result["ok"] is False
+    assert result["reason_code"] == "FETCH_PERMANENT_FAILURE"
+    assert result.get("operational_signal", {}).get("code") == "RECONCILE_REMOTE_INPUT_UNAVAILABLE"
+
+
+@pytest.mark.chaos
+@pytest.mark.integration
+def test_reconciliation_audited_path_requires_supplied_runtime_timestamp() -> None:
+    class _DB:
+        def persist_decision_log(self, *args, **kwargs):
+            return None
+
+        def get_pending_sagas(self):
+            return []
+
+        def get_reconcile_marker(self, _batch_id):
+            return None
+
+        def set_reconcile_marker(self, _batch_id, _value):
+            return None
+
+        def get_reconcile_runtime_ts(self, batch_id):
+            _ = batch_id
+            return None
+
+    class _Batch:
+        def get_batch(self, batch_id):
+            return {"batch_id": batch_id, "market_id": "1.1", "status": "LIVE"}
+
+        def get_batch_legs(self, _batch_id):
+            return [{"leg_index": 0, "status": "SUBMITTED", "customer_ref": "R1"}]
+
+        def update_leg_status(self, **kwargs):
+            _ = kwargs
+            return None
+
+        def recompute_batch_status(self, batch_id):
+            return {"batch_id": batch_id, "status": "LIVE"}
+
+        def mark_batch_failed(self, *_args, **_kwargs):
+            return None
+
+        def get_open_batches(self):
+            return []
+
+        def release_runtime_artifacts(self, **kwargs):
+            _ = kwargs
+            return None
+
+    engine = ReconciliationEngine(db=_DB(), batch_manager=_Batch(), client_getter=lambda: object())
+    setattr(engine.cfg, "audited_single_pass_mode", True)
+    result = engine.reconcile_batch("B1")
+    assert result["ok"] is False
+    assert result["reason_code"] == "FETCH_PERMANENT_FAILURE"
+    assert result.get("operational_signal", {}).get("code") == "RECONCILE_RUNTIME_TS_MISCONFIGURED"
 
 
 @pytest.mark.chaos

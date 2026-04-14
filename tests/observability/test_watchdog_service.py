@@ -1198,3 +1198,73 @@ def test_anomaly_reviewer_disabled_signal_clears_after_reenable():
     assert "ANOMALY_REVIEWER_DISABLED" not in {
         i["code"] for i in incidents.snapshot()["incidents"] if i["status"] == "OPEN"
     }
+
+
+def test_anomaly_reviewer_unavailable_context_is_fail_loud() -> None:
+    alerts = AlertsManager()
+    incidents = IncidentsManager()
+    watchdog = WatchdogService(
+        probe=_ProbeStub(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=incidents,
+        snapshot_service=_SnapshotStub(),
+        anomaly_enabled=True,
+        interval_sec=60.0,
+    )
+    watchdog._build_anomaly_context = lambda: []  # type: ignore[assignment]
+
+    watchdog._evaluate_anomalies()
+    active = {a["code"] for a in alerts.active_alerts()}
+    assert "ANOMALY_REVIEWER_UNAVAILABLE" in active
+
+
+def test_anomaly_reviewer_missing_runtime_state_is_fail_closed_in_strict_mode() -> None:
+    class _StrictProbe(_ProbeStub):
+        def collect_runtime_state(self):
+            return {}
+
+        def collect_reviewer_context(self):
+            return {"anomaly_fail_closed": True}
+
+    alerts = AlertsManager()
+    watchdog = WatchdogService(
+        probe=_StrictProbe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        anomaly_enabled=True,
+        interval_sec=60.0,
+    )
+
+    watchdog._evaluate_anomalies()
+    active = {a["code"] for a in alerts.active_alerts()}
+    assert "ANOMALY_REVIEWER_INPUT_MISSING" in active
+
+
+def test_anomaly_reviewer_malformed_runtime_state_is_fail_closed_in_strict_mode() -> None:
+    class _StrictProbe(_ProbeStub):
+        def collect_runtime_state(self):
+            return "broken-shape"
+
+        def collect_reviewer_context(self):
+            return {"anomaly_fail_closed": True}
+
+    alerts = AlertsManager()
+    watchdog = WatchdogService(
+        probe=_StrictProbe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        anomaly_enabled=True,
+        interval_sec=60.0,
+    )
+
+    watchdog._evaluate_anomalies()
+    active = {a["code"] for a in alerts.active_alerts()}
+    assert "ANOMALY_REVIEWER_MISCONFIGURED" in active

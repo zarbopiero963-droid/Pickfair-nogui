@@ -151,10 +151,64 @@ def evaluate_invariants(
     if not enabled:
         return []
 
-    selected_checks = tuple(checks) if checks is not None else _DEFAULT_CHECKS
+    misconfig_code = "INVARIANT_CHECKS_MISCONFIGURED"
+    if checks is None:
+        selected_checks = _DEFAULT_CHECKS
+    else:
+        try:
+            selected_checks = tuple(checks)
+        except Exception as exc:
+            return [
+                InvariantViolation(
+                    code=misconfig_code,
+                    message=f"invariant checks configuration is unreadable: {type(exc).__name__}",
+                )
+            ]
+
+    if len(selected_checks) == 0:
+        return [
+            InvariantViolation(
+                code=misconfig_code,
+                message="invariant checks configuration is empty",
+            )
+        ]
+
     violations: list[InvariantViolation] = []
 
-    for code, message, check in selected_checks:
+    for idx, row in enumerate(selected_checks):
+        if not isinstance(row, tuple) or len(row) != 3:
+            violations.append(
+                InvariantViolation(
+                    code=misconfig_code,
+                    message=f"invariant check #{idx} has invalid shape",
+                )
+            )
+            continue
+        code, message, check = row
+        if not isinstance(code, str) or not code.strip():
+            violations.append(
+                InvariantViolation(
+                    code=misconfig_code,
+                    message=f"invariant check #{idx} has invalid code",
+                )
+            )
+            continue
+        if not isinstance(message, str) or not message.strip():
+            violations.append(
+                InvariantViolation(
+                    code=misconfig_code,
+                    message=f"invariant check {code} has invalid message",
+                )
+            )
+            continue
+        if not callable(check):
+            violations.append(
+                InvariantViolation(
+                    code=misconfig_code,
+                    message=f"invariant check {code} is not callable",
+                )
+            )
+            continue
         if not check(state):
             violations.append(InvariantViolation(code=code, message=message))
 
