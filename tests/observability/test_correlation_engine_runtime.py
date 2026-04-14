@@ -340,6 +340,86 @@ def test_correlation_evaluator_misconfigured_rules_emits_structured_signal():
     assert findings[0]["code"] == "CORRELATION_REVIEWER_MISCONFIGURED"
 
 
+def test_partial_invalid_rules_still_run_callable_checks_and_emit_misconfiguration():
+    def valid_rule(context):
+        return [
+            {
+                "code": "LOCAL_VS_REMOTE_MISMATCH",
+                "severity": "critical",
+                "reason": "Local and remote state diverged",
+                "details": {"order_id": "ord-1"},
+            }
+        ]
+
+    invalid_rule = "not-callable"
+
+    evaluator = CorrelationEvaluator(
+        rules=[invalid_rule, valid_rule],
+    )
+
+    findings = evaluator.evaluate(
+        {
+            "local_state": {"orders": [{"id": "ord-1", "status": "OPEN"}]},
+            "remote_state": {"orders": []},
+            "db_state": {},
+            "memory_state": {},
+            "lifecycle_events": [],
+        }
+    )
+
+    codes = {finding["code"] if isinstance(finding, dict) else finding.code for finding in findings}
+
+    assert "CORRELATION_REVIEWER_MISCONFIGURED" in codes
+    assert "LOCAL_VS_REMOTE_MISMATCH" in codes
+
+
+def test_all_invalid_rules_emit_only_misconfiguration():
+    evaluator = CorrelationEvaluator(
+        rules=["not-callable-1", None],
+    )
+
+    findings = evaluator.evaluate(
+        {
+            "local_state": {},
+            "remote_state": {},
+            "db_state": {},
+            "memory_state": {},
+            "lifecycle_events": [],
+        }
+    )
+
+    codes = [finding["code"] if isinstance(finding, dict) else finding.code for finding in findings]
+
+    assert "CORRELATION_REVIEWER_MISCONFIGURED" in codes
+    assert "LOCAL_VS_REMOTE_MISMATCH" not in codes
+    assert "DB_VS_MEMORY_MISMATCH" not in codes
+    assert "SUBMIT_RECONCILE_CHAIN_BREAK" not in codes
+
+
+def test_all_valid_healthy_rules_do_not_emit_misconfiguration():
+    def healthy_rule(context):
+        return []
+
+    evaluator = CorrelationEvaluator(
+        rules=[healthy_rule],
+    )
+
+    findings = evaluator.evaluate(
+        {
+            "local_state": {},
+            "remote_state": {},
+            "db_state": {},
+            "memory_state": {},
+            "lifecycle_events": [],
+        }
+    )
+
+    codes = [finding["code"] if isinstance(finding, dict) else finding.code for finding in findings]
+
+    assert "CORRELATION_REVIEWER_MISCONFIGURED" not in codes
+    assert findings == []
+
+
 def test_correlation_evaluator_healthy_zero_findings_is_not_misconfigured():
     evaluator = CorrelationEvaluator([rule_local_vs_remote])
     findings = evaluator.evaluate(

@@ -283,25 +283,36 @@ class CorrelationEvaluator:
                 )
             ]
         invalid_rules = [getattr(rule, "__name__", repr(rule)) for rule in self.rules if not callable(rule)]
+        callable_rules = [rule for rule in self.rules if callable(rule)]
+
+        findings: List[Dict[str, Any]] = []
         if invalid_rules:
-            return [
+            findings.append(
                 _reviewer_state_finding(
                     "CORRELATION_REVIEWER_MISCONFIGURED",
                     "Correlation reviewer configuration is invalid; checks are not callable",
                     details={"invalid_rules": invalid_rules},
                 )
-            ]
+            )
 
-        findings = []
-        for rule in self.rules:
+        for rule in callable_rules:
             rule_name = getattr(rule, "__name__", "rule")
             rule_state = self.state.setdefault(rule_name, {})
             try:
                 item = rule(context, rule_state)
+            except TypeError:
+                # Minimal compatibility for single-argument callable rules.
+                try:
+                    item = rule(context)
+                except Exception:
+                    item = None
             except Exception:
                 item = None
             if item:
-                findings.append(item)
+                if isinstance(item, list):
+                    findings.extend(item)
+                else:
+                    findings.append(item)
         return findings
 
 

@@ -990,7 +990,7 @@ def test_stale_anomaly_incident_resolution_carries_reason():
 
 
 def test_tick_keeps_invariant_and_anomaly_exposure_signals_distinct():
-    """Anomaly EXPOSURE_MISMATCH and invariant INVARIANT_EXPOSURE_MISMATCH do not clobber each other."""
+    """Anomaly EXPOSURE_MISMATCH and invariant EXPOSURE_MISMATCH remain distinct in alerts."""
     alerts = AlertsManager()
     incidents = IncidentsManager()
 
@@ -1033,9 +1033,13 @@ def test_tick_keeps_invariant_and_anomaly_exposure_signals_distinct():
 
     watchdog.tick()
 
-    all_codes_t1 = {a["code"] for a in alerts.active_alerts()}
+    active_t1 = alerts.active_alerts()
+    all_codes_t1 = {a["code"] for a in active_t1}
     assert "EXPOSURE_MISMATCH" in all_codes_t1
     assert "INVARIANT_EXPOSURE_MISMATCH" in all_codes_t1
+    invariant_exposure = next(a for a in active_t1 if a["code"] == "INVARIANT_EXPOSURE_MISMATCH")
+    assert invariant_exposure["source"] == "invariant_reviewer"
+    assert invariant_exposure.get("details", {}).get("violation_code") == "EXPOSURE_MISMATCH"
 
     watchdog.tick()
 
