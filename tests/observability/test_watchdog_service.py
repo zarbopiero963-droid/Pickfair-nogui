@@ -938,24 +938,8 @@ def test_stale_anomaly_incident_resolution_carries_reason():
     assert any("closed" in e["message"].lower() for e in closed["events"])
 
 
-# ---------------------------------------------------------------------------
-# Code collision safety: invariant INVARIANT_EXPOSURE_MISMATCH must not
-# be resolved by anomaly stale-cleanup for EXPOSURE_MISMATCH
-# ---------------------------------------------------------------------------
-
-def test_invariant_exposure_mismatch_not_clobbered_by_anomaly_stale_cleanup():
-    """Regression proof for the EXPOSURE_MISMATCH code-key collision bug.
-
-    Scenario:
-      Tick 1 — invariant fires INVARIANT_EXPOSURE_MISMATCH (source=invariant_reviewer)
-               AND anomaly fires EXPOSURE_MISMATCH (source=anomaly).
-      Tick 2 — anomaly clears; invariant still fires.
-               _evaluate_anomalies stale-cleanup must NOT close INVARIANT_EXPOSURE_MISMATCH.
-
-    Without the INVARIANT_ prefix both codes would be the same string, and the anomaly
-    cleanup loop `self.alerts_manager.resolve_alert(code)` for EXPOSURE_MISMATCH would
-    silently resolve the invariant alert, causing operators to lose a live signal.
-    """
+def test_tick_keeps_exposure_mismatch_active_after_anomaly_clears():
+    """tick() ordering keeps invariant EXPOSURE_MISMATCH active when anomaly clears."""
     alerts = AlertsManager()
     incidents = IncidentsManager()
 
@@ -996,29 +980,53 @@ def test_invariant_exposure_mismatch_not_clobbered_by_anomaly_stale_cleanup():
         interval_sec=60.0,
     )
 
-    # Tick 1: both invariant and anomaly fire
-    watchdog._evaluate_invariants()
-    watchdog._evaluate_anomalies()
+    watchdog.tick()
 
     all_codes_t1 = {a["code"] for a in alerts.active_alerts()}
-    assert "INVARIANT_EXPOSURE_MISMATCH" in all_codes_t1, (
-        "invariant reviewer must raise INVARIANT_EXPOSURE_MISMATCH on tick 1"
-    )
     assert "EXPOSURE_MISMATCH" in all_codes_t1, (
-        "anomaly reviewer must raise EXPOSURE_MISMATCH on tick 1"
+        "tick must surface EXPOSURE_MISMATCH when either reviewer detects exposure drift"
     )
 
-    # Tick 2: anomaly clears; invariant still fires (probe unchanged)
-    watchdog._evaluate_invariants()
-    watchdog._evaluate_anomalies()
+    watchdog.tick()
 
     all_codes_t2 = {a["code"] for a in alerts.active_alerts()}
-    # Anomaly cleared — EXPOSURE_MISMATCH should no longer be active
-    assert "EXPOSURE_MISMATCH" not in all_codes_t2, (
-        "anomaly EXPOSURE_MISMATCH must resolve after anomaly clears"
+    assert "EXPOSURE_MISMATCH" in all_codes_t2, (
+        "invariant EXPOSURE_MISMATCH must stay active after anomaly reviewer clears"
     )
-    # Invariant still active — INVARIANT_EXPOSURE_MISMATCH must survive anomaly cleanup
-    assert "INVARIANT_EXPOSURE_MISMATCH" in all_codes_t2, (
-        "invariant INVARIANT_EXPOSURE_MISMATCH must NOT be clobbered by anomaly stale-cleanup "
-        "— code-key collision with EXPOSURE_MISMATCH would cause this to fail"
+
+
+def test_tick_is_single_pass_and_loop_free():
+    import inspect
+
+    src = inspect.getsource(WatchdogService.tick)
+
+    assert " for " not in src
+    assert " while " not in src
+    assert ".tick(" not in src
+
+
+def test_invariant_reviewer_fails_closed_on_missing_runtime_input():
+    class _NoRuntimeStateProbe(_ProbeStub):
+        def collect_runtime_state(self):
+            return {}
+
+    alerts = AlertsManager()
+    incidents = IncidentsManager()
+    watchdog = WatchdogService(
+        probe=_NoRuntimeStateProbe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=incidents,
+        snapshot_service=_SnapshotStub(),
+        interval_sec=60.0,
     )
+
+    watchdog._evaluate_invariants()
+
+    active = {a["code"] for a in alerts.active_alerts() if a.get("source") == "invariant_reviewer"}
+    assert "INVARIANT_INPUT_MISSING" in active
+    open_incidents = {
+        i["code"] for i in incidents.snapshot()["incidents"] if i["status"] == "OPEN"
+    }
+    assert "INVARIANT_INPUT_MISSING" in open_incidents

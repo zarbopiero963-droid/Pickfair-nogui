@@ -98,23 +98,16 @@ class WatchdogService:
         logger.info("WatchdogService stopped")
 
     def _tick(self) -> None:
+        self.tick()
+
+    def tick(self) -> None:
         health_map = self.probe.collect_health()
-        for name, item in health_map.items():
-            self.health_registry.set_component(
-                name,
-                item.get("status", "DEGRADED"),
-                reason=item.get("reason"),
-                details=item.get("details"),
-            )
+        self._publish_health_components(health_map)
 
         metrics = self.probe.collect_metrics()
-        for name, value in metrics.items():
-            self.metrics_registry.set_gauge(name, value)
+        self._publish_metric_gauges(metrics)
 
         self._evaluate_alerts()
-        self._evaluate_invariants()
-        self._evaluate_correlations()
-        self._evaluate_forensics()
         if self._is_anomaly_enabled():
             self._run_anomaly_hook()
         else:
@@ -127,7 +120,23 @@ class WatchdogService:
             self.last_anomalies = []
             self.escalation_requested = False
             self.last_escalation_event = None
+        self._evaluate_invariants()
+        self._evaluate_correlations()
+        self._evaluate_forensics()
         self.snapshot_service.collect_and_store()
+
+    def _publish_health_components(self, health_map: dict[str, Any]) -> None:
+        for name, item in health_map.items():
+            self.health_registry.set_component(
+                name,
+                item.get("status", "DEGRADED"),
+                reason=item.get("reason"),
+                details=item.get("details"),
+            )
+
+    def _publish_metric_gauges(self, metrics: dict[str, Any]) -> None:
+        for name, value in metrics.items():
+            self.metrics_registry.set_gauge(name, value)
 
     def _is_anomaly_enabled(self) -> bool:
         return self._load_toggle("load_anomaly_enabled", self.anomaly_enabled)
@@ -259,14 +268,46 @@ class WatchdogService:
         state["runtime"] = {"status": health.get("overall_status", "NOT_READY")}
         state["inflight_count"] = float(gauges.get("inflight_count", 0.0))
 
+        runtime_state_missing_reason: str | None = None
+        runtime_state_payload: dict[str, Any] = {}
+
         # Collect runtime state (includes recent_orders if available)
         collector = getattr(self.probe, "collect_runtime_state", None)
-        if callable(collector):
+        if not callable(collector):
+            runtime_state_missing_reason = "collect_runtime_state unavailable"
+        else:
             try:
-                runtime_state = collector() or {}
-                state.update(runtime_state)
+                collected = collector()
+                if collected is None:
+                    runtime_state_missing_reason = "collect_runtime_state returned null"
+                elif not isinstance(collected, dict):
+                    runtime_state_missing_reason = "collect_runtime_state returned non-mapping payload"
+                elif len(collected) == 0:
+                    runtime_state_missing_reason = "collect_runtime_state returned empty payload"
+                else:
+                    runtime_state_payload = collected
+                    state.update(runtime_state_payload)
             except Exception:
+                runtime_state_missing_reason = "collect_runtime_state raised exception"
                 logger.exception("collect_runtime_state failed during invariant review")
+
+        _INPUT_MISSING_CODE = "INVARIANT_INPUT_MISSING"
+        current_codes: set[str] = set()
+        if runtime_state_missing_reason:
+            current_codes.add(_INPUT_MISSING_CODE)
+            self.alerts_manager.upsert_alert(
+                _INPUT_MISSING_CODE,
+                "critical",
+                "Invariant reviewer missing runtime_state input; refusing silent success",
+                source="invariant_reviewer",
+                details={"reason": runtime_state_missing_reason},
+            )
+            self.incidents_manager.open_incident(
+                _INPUT_MISSING_CODE,
+                _INPUT_MISSING_CODE,
+                "critical",
+                details={"reason": runtime_state_missing_reason},
+            )
 
         # Fail-loud: if a custom checks list was provided but resolves to zero
         # checks, emit a structured operational alert so the misconfiguration
@@ -293,7 +334,8 @@ class WatchdogService:
         violations = evaluate_invariants(state, enabled=True, checks=self._invariant_checks)
         # Seed current_codes with the misconfiguration sentinel so the stale-cleanup
         # loop does not immediately resolve it in the same tick.
-        current_codes: set[str] = {_MISCONFIG_CODE} if len(effective_checks) == 0 else set()
+        if len(effective_checks) == 0:
+            current_codes.add(_MISCONFIG_CODE)
 
         for violation in violations:
             code = violation.code
