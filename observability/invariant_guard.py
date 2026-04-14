@@ -125,8 +125,13 @@ _DEFAULT_CHECKS: tuple[tuple[str, str, InvariantCheck], ...] = (
         ),
     ),
     (
-        "EXPOSURE_MISMATCH",
-        "EXPOSURE_MISMATCH: Local computed exposure differs significantly from remote reported exposure",
+        # NOTE: Code is intentionally prefixed INVARIANT_ to avoid code-key collision
+        # with the anomaly rule EXPOSURE_MISMATCH (observability/anomaly_rules.py).
+        # AlertsManager and IncidentsManager key by code alone (no source scoping), so
+        # sharing a code with an anomaly rule causes _evaluate_anomalies stale-cleanup
+        # to incorrectly resolve a still-active invariant alert when the anomaly clears.
+        "INVARIANT_EXPOSURE_MISMATCH",
+        "INVARIANT_EXPOSURE_MISMATCH: Local computed exposure differs significantly from remote reported exposure",
         lambda state: abs(
             float((state.get("risk") or {}).get("local_exposure", 0) or 0)
             - float((state.get("risk") or {}).get("remote_exposure", 0) or 0)

@@ -936,3 +936,89 @@ def test_stale_anomaly_incident_resolution_carries_reason():
     assert closed["resolved_by"] == "anomaly_reviewer"
     # Resolution event must be in the events list
     assert any("closed" in e["message"].lower() for e in closed["events"])
+
+
+# ---------------------------------------------------------------------------
+# Code collision safety: invariant INVARIANT_EXPOSURE_MISMATCH must not
+# be resolved by anomaly stale-cleanup for EXPOSURE_MISMATCH
+# ---------------------------------------------------------------------------
+
+def test_invariant_exposure_mismatch_not_clobbered_by_anomaly_stale_cleanup():
+    """Regression proof for the EXPOSURE_MISMATCH code-key collision bug.
+
+    Scenario:
+      Tick 1 — invariant fires INVARIANT_EXPOSURE_MISMATCH (source=invariant_reviewer)
+               AND anomaly fires EXPOSURE_MISMATCH (source=anomaly).
+      Tick 2 — anomaly clears; invariant still fires.
+               _evaluate_anomalies stale-cleanup must NOT close INVARIANT_EXPOSURE_MISMATCH.
+
+    Without the INVARIANT_ prefix both codes would be the same string, and the anomaly
+    cleanup loop `self.alerts_manager.resolve_alert(code)` for EXPOSURE_MISMATCH would
+    silently resolve the invariant alert, causing operators to lose a live signal.
+    """
+    alerts = AlertsManager()
+    incidents = IncidentsManager()
+
+    class _ExposureMismatchProbe(_ProbeStub):
+        def collect_runtime_state(self):
+            return {
+                "runtime": {"status": "READY"},
+                "metrics": {"inflight_count": 0},
+                "risk": {
+                    "local_exposure": 0.0,
+                    "remote_exposure": 999.0,
+                    "exposure_tolerance": 0.01,
+                },
+            }
+
+    class _AnomalyThenClearEngine:
+        def __init__(self):
+            self.step = 0
+
+        def evaluate(self, _ctx):
+            self.step += 1
+            if self.step == 1:
+                # Tick 1: anomaly EXPOSURE_MISMATCH fires
+                return [{"code": "EXPOSURE_MISMATCH", "severity": "warning",
+                         "description": "anomaly exposure drift", "details": {}}]
+            # Tick 2+: anomaly EXPOSURE_MISMATCH clears
+            return []
+
+    watchdog = WatchdogService(
+        probe=_ExposureMismatchProbe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=incidents,
+        snapshot_service=_SnapshotStub(),
+        anomaly_engine=_AnomalyThenClearEngine(),
+        anomaly_enabled=True,
+        interval_sec=60.0,
+    )
+
+    # Tick 1: both invariant and anomaly fire
+    watchdog._evaluate_invariants()
+    watchdog._evaluate_anomalies()
+
+    all_codes_t1 = {a["code"] for a in alerts.active_alerts()}
+    assert "INVARIANT_EXPOSURE_MISMATCH" in all_codes_t1, (
+        "invariant reviewer must raise INVARIANT_EXPOSURE_MISMATCH on tick 1"
+    )
+    assert "EXPOSURE_MISMATCH" in all_codes_t1, (
+        "anomaly reviewer must raise EXPOSURE_MISMATCH on tick 1"
+    )
+
+    # Tick 2: anomaly clears; invariant still fires (probe unchanged)
+    watchdog._evaluate_invariants()
+    watchdog._evaluate_anomalies()
+
+    all_codes_t2 = {a["code"] for a in alerts.active_alerts()}
+    # Anomaly cleared — EXPOSURE_MISMATCH should no longer be active
+    assert "EXPOSURE_MISMATCH" not in all_codes_t2, (
+        "anomaly EXPOSURE_MISMATCH must resolve after anomaly clears"
+    )
+    # Invariant still active — INVARIANT_EXPOSURE_MISMATCH must survive anomaly cleanup
+    assert "INVARIANT_EXPOSURE_MISMATCH" in all_codes_t2, (
+        "invariant INVARIANT_EXPOSURE_MISMATCH must NOT be clobbered by anomaly stale-cleanup "
+        "— code-key collision with EXPOSURE_MISMATCH would cause this to fail"
+    )

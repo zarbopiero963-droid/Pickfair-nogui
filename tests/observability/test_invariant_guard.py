@@ -47,11 +47,13 @@ def test_default_invariant_checks_exported():
     assert "runtime_status_known" in codes
     assert "terminal_to_nonterminal_regression" in codes
     assert "failed_local_remote_exists" in codes
-    # Required runtime-reviewer canonical codes must also be present
+    # Required runtime-reviewer canonical codes must also be present.
+    # Note: invariant EXPOSURE_MISMATCH is prefixed INVARIANT_ to avoid collision
+    # with anomaly rule EXPOSURE_MISMATCH (different source, same code key = resolution bug).
     assert "FAILED_LOCAL_REMOTE_EXISTS" in codes
     assert "STATE_REGRESSION" in codes
     assert "INFLIGHT_STUCK" in codes
-    assert "EXPOSURE_MISMATCH" in codes
+    assert "INVARIANT_EXPOSURE_MISMATCH" in codes
 
 
 def test_failed_local_remote_exists_catches_ghost():
@@ -199,7 +201,7 @@ def test_new_checks_are_fail_safe_on_empty_orders():
     assert "FAILED_LOCAL_REMOTE_EXISTS" not in codes
     assert "STATE_REGRESSION" not in codes
     assert "INFLIGHT_STUCK" not in codes
-    assert "EXPOSURE_MISMATCH" not in codes
+    assert "INVARIANT_EXPOSURE_MISMATCH" not in codes
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +296,13 @@ def test_INFLIGHT_STUCK_no_false_positive():
 
 
 def test_EXPOSURE_MISMATCH_fires_on_exposure_delta_exceeding_tolerance():
-    """EXPOSURE_MISMATCH fires when local and remote exposure differ beyond tolerance."""
+    """INVARIANT_EXPOSURE_MISMATCH fires when local and remote exposure differ beyond tolerance.
+
+    The invariant code is INVARIANT_EXPOSURE_MISMATCH (not EXPOSURE_MISMATCH) to avoid
+    code-key collision with the anomaly rule EXPOSURE_MISMATCH — same key without source
+    scoping in AlertsManager/IncidentsManager causes anomaly stale-cleanup to wrongly
+    resolve a still-active invariant alert.
+    """
     state = {
         "runtime": {"status": "READY"},
         "metrics": {"inflight_count": 0},
@@ -302,11 +310,13 @@ def test_EXPOSURE_MISMATCH_fires_on_exposure_delta_exceeding_tolerance():
     }
     violations = evaluate_invariants(state, enabled=True)
     codes = {v.code for v in violations}
-    assert "EXPOSURE_MISMATCH" in codes
+    assert "INVARIANT_EXPOSURE_MISMATCH" in codes
+    # The anomaly code EXPOSURE_MISMATCH must NOT be emitted from the invariant path
+    assert "EXPOSURE_MISMATCH" not in codes
 
 
 def test_EXPOSURE_MISMATCH_no_false_positive():
-    """EXPOSURE_MISMATCH does not fire when local and remote exposure match within tolerance."""
+    """INVARIANT_EXPOSURE_MISMATCH does not fire when local and remote exposure match within tolerance."""
     state = {
         "runtime": {"status": "READY"},
         "metrics": {"inflight_count": 0},
@@ -314,7 +324,7 @@ def test_EXPOSURE_MISMATCH_no_false_positive():
     }
     violations = evaluate_invariants(state, enabled=True)
     codes = {v.code for v in violations}
-    assert "EXPOSURE_MISMATCH" not in codes
+    assert "INVARIANT_EXPOSURE_MISMATCH" not in codes
 
 
 def test_all_four_required_invariants_active_in_watchdog_path():
@@ -381,6 +391,11 @@ def test_all_four_required_invariants_active_in_watchdog_path():
     assert "INFLIGHT_STUCK" in active_codes, (
         "INFLIGHT_STUCK must be raised by invariant reviewer when inflight orders exceed max age"
     )
-    assert "EXPOSURE_MISMATCH" in active_codes, (
-        "EXPOSURE_MISMATCH must be raised by invariant reviewer when local/remote exposure differs"
+    assert "INVARIANT_EXPOSURE_MISMATCH" in active_codes, (
+        "INVARIANT_EXPOSURE_MISMATCH must be raised by invariant reviewer when local/remote exposure differs; "
+        "code is prefixed to avoid collision with anomaly EXPOSURE_MISMATCH"
+    )
+    # Prove no collision: anomaly reviewer code must NOT be present from invariant path
+    assert "EXPOSURE_MISMATCH" not in active_codes, (
+        "invariant reviewer must NOT emit bare EXPOSURE_MISMATCH — that code belongs to the anomaly path"
     )
