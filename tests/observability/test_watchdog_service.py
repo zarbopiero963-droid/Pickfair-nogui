@@ -656,6 +656,46 @@ def test_build_anomaly_context_includes_probe_canonical_reviewer_blocks():
     assert ctx["reconcile_chain"]["missing_count"] == 1
 
 
+def test_watchdog_default_path_uses_runtime_probe_liveness_metrics():
+    from observability.runtime_probe import RuntimeProbe
+
+    class _DeadWorker:
+        def is_alive(self):
+            return False
+
+    class _Bus:
+        _workers = [_DeadWorker()]
+
+        def queue_depth(self):
+            return 4
+
+        def delivered_total_count(self):
+            return 10
+
+    class _Runtime:
+        last_signal_at = "2000-01-01T00:00:00+00:00"
+
+    probe = RuntimeProbe(runtime_controller=_Runtime(), event_bus=_Bus())
+    alerts = AlertsManager()
+    watchdog = WatchdogService(
+        probe=probe,
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        interval_sec=60.0,
+    )
+
+    # First tick seeds completed_total baseline; second tick evaluates no-progress delta.
+    watchdog._tick()
+    watchdog._tick()
+
+    codes = {a["code"] for a in alerts.active_alerts() if a.get("source") == "anomaly"}
+    assert "HEARTBEAT_STALE" in codes
+    assert "QUEUE_DEPTH_LIVENESS_MISMATCH" in codes
+
+
 # ---------------------------------------------------------------------------
 # Micro-task 1: anomaly reviewer default-on
 # ---------------------------------------------------------------------------

@@ -238,24 +238,45 @@ def rule_service_stalled(context: Context, state: State) -> Anomaly | None:
     components = (health.get("components") or {}) if isinstance(health, dict) else {}
     stalled = [name for name, comp in components.items()
                if isinstance(comp, dict) and comp.get("status") == "NOT_READY"]
+    metrics = context.get("metrics") or {}
+    gauges = (metrics.get("gauges") or {}) if isinstance(metrics, dict) else {}
+    queue_depth = float(gauges.get("queue_depth", 0.0) or 0.0)
+    completed_delta = float(gauges.get("completed_delta", 0.0) or 0.0)
+    worker_threads_alive = int(gauges.get("worker_threads_alive", 1) or 0)
+    worker_alive = bool(gauges.get("worker_alive", worker_threads_alive > 0))
     prev = list(state.get("stalled_components", []))
     state["stalled_components"] = stalled
     # Stalled if same components NOT_READY for 2+ consecutive ticks
     persistent = [c for c in stalled if c in prev]
-    if persistent:
+    hard_liveness_stall = queue_depth > 0 and completed_delta <= 0 and not worker_alive
+    if persistent or hard_liveness_stall:
         return _anomaly("SERVICE_STALLED", "critical", "Services persistently stalled",
-                        {"stalled_components": persistent, "consecutive_count": len(persistent)})
+                        {
+                            "stalled_components": persistent,
+                            "consecutive_count": len(persistent),
+                            "queue_depth": queue_depth,
+                            "completed_delta": completed_delta,
+                            "worker_alive": worker_alive,
+                            "worker_threads_alive": worker_threads_alive,
+                            "hard_liveness_stall": hard_liveness_stall,
+                        })
     return None
 
 
 def rule_heartbeat_stale(context: Context, state: State) -> Anomaly | None:
+    del state
     metrics = context.get("metrics") or {}
     gauges = (metrics.get("gauges") or {}) if isinstance(metrics, dict) else {}
-    last_hb = float(gauges.get("last_heartbeat_age_sec", 0.0) or 0.0)
+    hb_age = float(
+        gauges.get(
+            "heartbeat_age",
+            gauges.get("last_heartbeat_age_sec", 0.0),
+        ) or 0.0
+    )
     threshold = 60.0
-    if last_hb > threshold:
+    if hb_age > threshold:
         return _anomaly("HEARTBEAT_STALE", "critical", "Heartbeat is stale",
-                        {"last_heartbeat_age_sec": last_hb, "threshold_sec": threshold})
+                        {"heartbeat_age": hb_age, "threshold_sec": threshold})
     return None
 
 
@@ -264,16 +285,26 @@ def rule_zombie_worker_suspected(context: Context, state: State) -> Anomaly | No
     gauges = (metrics.get("gauges") or {}) if isinstance(metrics, dict) else {}
     # A zombie worker holds a lock but makes no progress
     inflight = float(gauges.get("inflight_count", 0.0) or 0.0)
-    completed_delta = float(gauges.get("completed_delta", 0.0) or 0.0)
+    completed_delta = float(
+        gauges.get("completed_delta", gauges.get("progress_delta", 0.0)) or 0.0
+    )
+    worker_threads_alive = int(gauges.get("worker_threads_alive", 1) or 0)
+    worker_alive = bool(gauges.get("worker_alive", worker_threads_alive > 0))
     ticks = int(state.get("zombie_ticks", 0) or 0)
-    if inflight > 0 and completed_delta == 0:
+    if inflight > 0 and completed_delta == 0 and (not worker_alive or worker_threads_alive <= 0):
         ticks += 1
     else:
         ticks = 0
     state["zombie_ticks"] = ticks
     if ticks >= 5:
         return _anomaly("ZOMBIE_WORKER_SUSPECTED", "critical", "Worker may be zombie",
-                        {"inflight_count": inflight, "no_progress_ticks": ticks})
+                        {
+                            "inflight_count": inflight,
+                            "completed_delta": completed_delta,
+                            "worker_alive": worker_alive,
+                            "worker_threads_alive": worker_threads_alive,
+                            "no_progress_ticks": ticks,
+                        })
     return None
 
 
@@ -282,11 +313,16 @@ def rule_queue_depth_liveness_mismatch(context: Context, state: State) -> Anomal
     metrics = context.get("metrics") or {}
     gauges = (metrics.get("gauges") or {}) if isinstance(metrics, dict) else {}
     queue_depth = float(gauges.get("queue_depth", 0.0) or 0.0)
-    worker_alive = bool(gauges.get("worker_alive", True))
+    worker_threads_alive = int(gauges.get("worker_threads_alive", 1) or 0)
+    worker_alive = bool(gauges.get("worker_alive", worker_threads_alive > 0))
     if queue_depth > 0 and not worker_alive:
         return _anomaly("QUEUE_DEPTH_LIVENESS_MISMATCH", "critical",
                         "Queue has depth but no live worker",
-                        {"queue_depth": queue_depth, "worker_alive": worker_alive})
+                        {
+                            "queue_depth": queue_depth,
+                            "worker_alive": worker_alive,
+                            "worker_threads_alive": worker_threads_alive,
+                        })
     return None
 
 
