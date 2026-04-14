@@ -158,6 +158,57 @@ def test_watchdog_tick_calls_correlation_pass():
     assert "LOCAL_VS_REMOTE_MISMATCH" in codes
 
 
+def test_watchdog_correlation_disabled_emits_structured_operational_signal():
+    alerts = AlertsManager()
+
+    watchdog = WatchdogService(
+        probe=_ProbeStub(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        anomaly_context_provider=lambda: {"correlation_reviewer_enabled": False},
+        interval_sec=60.0,
+    )
+
+    watchdog._evaluate_correlations()
+    codes = {a["code"] for a in alerts.active_alerts() if a.get("source") == "correlation_reviewer"}
+    assert "CORRELATION_REVIEWER_DISABLED" in codes
+
+
+def test_watchdog_correlation_missing_evaluator_emits_structured_signal():
+    alerts = AlertsManager()
+    watchdog = _make_watchdog(alerts_manager=alerts)
+    watchdog._correlation_evaluator = None
+
+    watchdog._evaluate_correlations()
+    codes = {a["code"] for a in alerts.active_alerts() if a.get("source") == "correlation_reviewer"}
+    assert "CORRELATION_REVIEWER_MISSING" in codes
+
+
+def test_watchdog_correlation_unavailable_evaluator_emits_structured_signal():
+    alerts = AlertsManager()
+    watchdog = _make_watchdog(alerts_manager=alerts)
+    watchdog._correlation_evaluator = object()
+
+    watchdog._evaluate_correlations()
+    codes = {a["code"] for a in alerts.active_alerts() if a.get("source") == "correlation_reviewer"}
+    assert "CORRELATION_REVIEWER_UNAVAILABLE" in codes
+
+
+def test_watchdog_correlation_empty_noop_evaluator_emits_structured_signal():
+    from observability.correlation_engine import CorrelationEvaluator
+
+    alerts = AlertsManager()
+    watchdog = _make_watchdog(alerts_manager=alerts)
+    watchdog._correlation_evaluator = CorrelationEvaluator([])
+
+    watchdog._evaluate_correlations()
+    codes = {a["code"] for a in alerts.active_alerts() if a.get("source") == "correlation_reviewer"}
+    assert "CORRELATION_REVIEWER_EMPTY" in codes
+
+
 def test_watchdog_tick_calls_forensics_pass():
     """_evaluate_forensics() runs during tick and produces alerts for findings."""
     alerts = AlertsManager()

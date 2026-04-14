@@ -322,6 +322,32 @@ def test_correlation_evaluator_returns_empty_on_clean_context():
     assert findings == []
 
 
+def test_correlation_evaluator_disabled_state_emits_structured_signal():
+    evaluator = CorrelationEvaluator([rule_local_vs_remote])
+    findings = evaluator.evaluate({"correlation_reviewer_enabled": False})
+    assert findings[0]["code"] == "CORRELATION_REVIEWER_DISABLED"
+
+
+def test_correlation_evaluator_empty_rules_emits_structured_signal():
+    evaluator = CorrelationEvaluator([])
+    findings = evaluator.evaluate({})
+    assert findings[0]["code"] == "CORRELATION_REVIEWER_EMPTY"
+
+
+def test_correlation_evaluator_misconfigured_rules_emits_structured_signal():
+    evaluator = CorrelationEvaluator([None])
+    findings = evaluator.evaluate({})
+    assert findings[0]["code"] == "CORRELATION_REVIEWER_MISCONFIGURED"
+
+
+def test_correlation_evaluator_healthy_zero_findings_is_not_misconfigured():
+    evaluator = CorrelationEvaluator([rule_local_vs_remote])
+    findings = evaluator.evaluate(
+        {"recent_orders": [{"order_id": "o1", "status": "COMPLETED", "remote_status": "COMPLETED"}]}
+    )
+    assert findings == []
+
+
 def test_evaluate_correlation_rules_functional_api():
     """evaluate_correlation_rules() stateless functional API returns findings correctly."""
     context = {
