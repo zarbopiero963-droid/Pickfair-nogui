@@ -154,9 +154,34 @@ def evaluate_invariants(
     selected_checks = tuple(checks) if checks is not None else _DEFAULT_CHECKS
     violations: list[InvariantViolation] = []
 
-    for code, message, check in selected_checks:
-        if not check(state):
-            violations.append(InvariantViolation(code=code, message=message))
+    for item in selected_checks:
+        # Validate check shape: must be a 3-tuple (code: str, message: str, check: callable).
+        # Malformed / non-callable shapes are explicitly rejected — they must not silently
+        # pass as if the invariant were satisfied.
+        if (
+            not isinstance(item, (tuple, list))
+            or len(item) != 3
+            or not isinstance(item[0], str)
+            or not item[0]
+            or not callable(item[2])
+        ):
+            violations.append(InvariantViolation(
+                code="INVARIANT_CHECK_MALFORMED",
+                message=(
+                    "Invariant check is malformed or non-callable: "
+                    + repr(item)[:120]
+                ),
+            ))
+            continue
+        code, message, check = item
+        try:
+            if not check(state):
+                violations.append(InvariantViolation(code=code, message=message))
+        except Exception as exc:
+            violations.append(InvariantViolation(
+                code="INVARIANT_CHECK_MALFORMED",
+                message=f"Invariant check {code!r} raised an exception: {exc!r}",
+            ))
 
     return violations
 

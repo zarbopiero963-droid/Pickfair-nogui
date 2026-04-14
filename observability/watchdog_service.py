@@ -333,8 +333,9 @@ class WatchdogService:
             )
 
         # Fail-loud: if a custom checks list was provided but resolves to zero
-        # checks, emit a structured operational alert so the misconfiguration
-        # is visible rather than silently producing zero findings every tick.
+        # checks, or contains malformed/non-callable shapes, emit a structured
+        # operational alert so the misconfiguration is visible rather than
+        # silently producing zero findings every tick.
         effective_checks = (
             tuple(self._invariant_checks)
             if self._invariant_checks is not None
@@ -353,23 +354,75 @@ class WatchdogService:
                 "invariant reviewer: zero checks configured, "
                 "pass is a silent no-op — check invariant_checks parameter"
             )
+        else:
+            # Validate each check's shape.  Malformed / non-callable checks are
+            # fail-loud: operators must know if invariant checks are broken.
+            _malformed = []
+            for _item in effective_checks:
+                if (
+                    not isinstance(_item, (tuple, list))
+                    or len(_item) != 3
+                    or not isinstance(_item[0], str)
+                    or not _item[0]
+                    or not callable(_item[2])
+                ):
+                    _malformed.append(repr(_item)[:80])
+            if _malformed:
+                self.alerts_manager.upsert_alert(
+                    _MISCONFIG_CODE,
+                    "warning",
+                    (
+                        f"Invariant reviewer has {len(_malformed)} malformed or "
+                        "non-callable check(s) — those checks will never fire"
+                    ),
+                    source="invariant_reviewer",
+                    details={
+                        "malformed_count": len(_malformed),
+                        "malformed_checks": _malformed,
+                    },
+                )
+                logger.warning(
+                    "invariant reviewer: %d malformed/non-callable check(s) — "
+                    "each will produce an INVARIANT_CHECK_MALFORMED violation",
+                    len(_malformed),
+                )
 
         violations = evaluate_invariants(state, enabled=True, checks=self._invariant_checks)
         # Seed current_codes with the misconfiguration sentinel so the stale-cleanup
         # loop does not immediately resolve it in the same tick.
-        if len(effective_checks) == 0:
+        _misconfig_signalled = (
+            len(effective_checks) == 0
+            or any(
+                not isinstance(_it, (tuple, list))
+                or len(_it) != 3
+                or not isinstance(_it[0], str)
+                or not _it[0]
+                or not callable(_it[2])
+                for _it in effective_checks
+            )
+        )
+        if _misconfig_signalled:
             current_codes.add(_MISCONFIG_CODE)
 
         for violation in violations:
             violation_code = violation.code
             # Keep runtime invariant code canonical in violation details while
             # preserving distinct alert keys across reviewers in AlertsManager.
-            code = (
-                "INVARIANT_EXPOSURE_MISMATCH"
-                if violation_code == "EXPOSURE_MISMATCH"
-                else violation_code
-            )
+            # INVARIANT_CHECK_MALFORMED violations are surfaced under the same
+            # INVARIANT_CHECKS_MISCONFIGURED sentinel used by the pre-validation
+            # path so alert consumers see a single consistent code.
+            if violation_code == "EXPOSURE_MISMATCH":
+                code = "INVARIANT_EXPOSURE_MISMATCH"
+            elif violation_code == "INVARIANT_CHECK_MALFORMED":
+                code = _MISCONFIG_CODE
+            else:
+                code = violation_code
             current_codes.add(code)
+            # INVARIANT_CHECK_MALFORMED maps to _MISCONFIG_CODE which was already
+            # upserted by the pre-validation step with richer details (malformed_count,
+            # malformed_checks).  Skip re-emitting to avoid overwriting those details.
+            if violation_code == "INVARIANT_CHECK_MALFORMED":
+                continue
             # Severity: critical for regression/inconsistency codes, else warning
             lower_code = violation_code.lower()
             if "regression" in lower_code or "inconsistent" in lower_code:

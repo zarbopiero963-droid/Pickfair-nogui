@@ -583,3 +583,106 @@ def test_production_reconciliation_engine_ghost_comparator_detects_ghost_directl
     assert ghost_snap["suspected_ghost_count"] >= 1, (
         "suspected_ghost_count must reflect the production ghost detection result"
     )
+
+
+@pytest.mark.integration
+def test_production_reconciliation_engine_ghost_via_remote_snapshot() -> None:
+    """Proves the production ReconciliationEngine detects ghosts when a pre-supplied
+    remote_snapshot is provided (audited path: no network call, full comparator runs).
+
+    This test closes gap D.3 for the audited mode: the production _detect_ghost_orders
+    comparator is exercised directly via reconcile_batch(remote_snapshot=...) so the
+    remote-vs-local mismatch proof holds even when the audited path is network-free.
+    """
+    from core.reconciliation_engine import ReconciliationEngine
+    from core.reconciliation_types import ReconcileConfig
+
+    BATCH_ID = "BATCH-GHOST-AUDITED-SNAPSHOT-1"
+    MARKET_ID = "1.GHOST_SNAP_TEST"
+
+    legs_store: List[Dict[str, Any]] = [
+        {
+            "leg_index": 0,
+            "customer_ref": "LOCAL-SNAP-REF-1",
+            "bet_id": None,
+            "market_id": MARKET_ID,
+            "selection_id": "10",
+            "status": "SUBMITTED",
+        }
+    ]
+
+    # Ghost: no local counterpart for GHOST-SNAP-REF-99
+    ghost_order = {
+        "customerOrderRef": "GHOST-SNAP-REF-99",
+        "betId": "GHOST-SNAP-BET-99",
+        "marketId": MARKET_ID,
+        "selectionId": "999",
+        "status": "EXECUTABLE",
+        "sizeMatched": "0.0",
+        "sizeRemaining": "3.0",
+    }
+    matching_order = {
+        "customerOrderRef": "LOCAL-SNAP-REF-1",
+        "betId": "BET-SNAP-LOCAL-1",
+        "marketId": MARKET_ID,
+        "selectionId": "10",
+        "status": "EXECUTABLE",
+        "sizeMatched": "0.0",
+        "sizeRemaining": "5.0",
+    }
+
+    class _StubBatchManager:
+        def get_batch(self, batch_id: str) -> Dict[str, Any]:
+            return {"batch_id": batch_id, "market_id": MARKET_ID, "status": "CREATED"}
+
+        def get_batch_legs(self, batch_id: str) -> List[Dict[str, Any]]:
+            return list(legs_store)
+
+        def update_leg_status(self, *, batch_id: str, leg_index: int, status: str, **_kw) -> None:
+            if 0 <= leg_index < len(legs_store):
+                legs_store[leg_index]["status"] = status
+
+        def recompute_batch_status(self, batch_id: str) -> Dict[str, Any]:
+            return {"status": "PENDING"}
+
+        def release_runtime_artifacts(self, batch_id: str, **_kw) -> None:
+            return None
+
+        def mark_batch_failed(self, batch_id: str, reason: str = "") -> None:
+            return None
+
+        def get_open_batches(self) -> List[Dict[str, Any]]:
+            return []
+
+    cfg = ReconcileConfig(
+        validate_batch_manager_contract=True,
+        audit_fail_closed=False,
+        persist_recovery_marker=False,
+        max_convergence_cycles=1,
+        max_transient_retries=0,
+        enable_fencing_token=True,
+        enable_runtime_invariants=False,
+        ghost_order_action="LOG_AND_FLAG",
+    )
+
+    engine = ReconciliationEngine(
+        db=object(),
+        batch_manager=_StubBatchManager(),
+        config=cfg,
+        # No client_getter — audited path must not need it when snapshot is provided
+    )
+    setattr(engine.cfg, "audited_single_pass_mode", True)
+
+    # Supply remote snapshot directly — production comparator path runs without network
+    remote_snapshot = [matching_order, ghost_order]
+    engine.reconcile_batch(BATCH_ID, remote_snapshot=remote_snapshot)
+
+    ghost_snap = engine.ghost_evidence_snapshot()
+
+    assert ghost_snap["ghost_orders_count"] >= 1, (
+        "Production _detect_ghost_orders comparator must detect ghost via pre-supplied snapshot"
+    )
+    assert ghost_snap["source"] == "reconciliation_engine"
+    assert "GHOST-SNAP-BET-99" in ghost_snap.get("sample_ghost_bet_ids", []), (
+        "Ghost bet ID must be recorded by the production comparator path"
+    )

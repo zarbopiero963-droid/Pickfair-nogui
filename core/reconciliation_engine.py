@@ -535,17 +535,46 @@ class ReconciliationEngine:
         market_id: str,
         *,
         _attempt: int = 0,
+        remote_snapshot: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[List[Dict[str, Any]], Optional[ReasonCode]]:
         """
         Returns (orders, failure_reason).
         failure_reason is None on success, a ReasonCode on permanent failure.
         Retries only on TRANSIENT errors.  Iterative (no stack overflow).
+
+        Audited single-pass mode
+        ------------------------
+        When ``audited_single_pass_mode=True`` the path must NOT make any
+        network call.  Instead:
+        - If ``remote_snapshot`` is provided it is consumed directly.
+        - If ``remote_snapshot`` is None the call refuses to proceed and
+          returns an explicit FETCH_PERMANENT_FAILURE signal so the caller
+          can surface the unavailable-input condition rather than silently
+          producing stale or empty results.
         """
+        if self._audited_single_pass_mode():
+            if remote_snapshot is not None:
+                logger.info(
+                    "Audited path: consuming pre-supplied remote snapshot "
+                    "market=%s (%d orders) — no network call made",
+                    market_id, len(remote_snapshot),
+                )
+                return list(remote_snapshot), None
+            # No snapshot supplied — refuse rather than make a hidden network call.
+            logger.error(
+                "Audited path: no remote_snapshot provided for market=%s — "
+                "refusing network fetch; emitting FETCH_PERMANENT_FAILURE as "
+                "explicit unavailable-input signal",
+                market_id,
+            )
+            return [], ReasonCode.FETCH_PERMANENT_FAILURE
+
+        # ── Non-audited path: regular fetch with classified retry ──────────
         client = self._get_client()
         if not client:
             return [], ReasonCode.PERMANENT_ERROR
 
-        max_attempt = _attempt if self._audited_single_pass_mode() else self.cfg.max_transient_retries
+        max_attempt = self.cfg.max_transient_retries
         for attempt in range(_attempt, max_attempt + 1):
             try:
                 orders = client.get_current_orders(market_ids=[market_id])
@@ -574,19 +603,12 @@ class ReconciliationEngine:
                         self.cfg.transient_retry_base_delay * (2 ** attempt),
                         self.cfg.transient_retry_max_delay,
                     )
-                    if self._audited_single_pass_mode():
-                        logger.warning(
-                            "Transient error fetching orders market=%s attempt=%d, "
-                            "audited single-pass mode: no retry wait: %s",
-                            market_id, attempt, exc,
-                        )
-                    else:
-                        logger.warning(
-                            "Transient error fetching orders market=%s attempt=%d, "
-                            "retrying in %.1fs: %s",
-                            market_id, attempt, delay, exc,
-                        )
-                        time.sleep(delay)
+                    logger.warning(
+                        "Transient error fetching orders market=%s attempt=%d, "
+                        "retrying in %.1fs: %s",
+                        market_id, attempt, delay, exc,
+                    )
+                    time.sleep(delay)
                     attempt += 1
                     continue
 
@@ -1319,7 +1341,12 @@ class ReconciliationEngine:
     # CONVERGENCE ALGORITHM — strong deterministic
     # ─────────────────────────────────────────────────────────────
 
-    def reconcile_batch(self, batch_id: str) -> Dict[str, Any]:
+    def reconcile_batch(
+        self,
+        batch_id: str,
+        *,
+        remote_snapshot: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """
         Explicit convergence loop with:
           - Per-batch lock (reject if already running)
@@ -1327,6 +1354,11 @@ class ReconciliationEngine:
           - Re-fetch + re-evaluate until fingerprint-stable AND no changes
           - Fail-closed audit persistence
           - Snapshot reload before every critical decision
+
+        ``remote_snapshot`` may be supplied by the caller to provide pre-fetched
+        exchange state.  In ``audited_single_pass_mode`` the snapshot is
+        *required*; when absent the audited path emits an explicit
+        FETCH_PERMANENT_FAILURE signal rather than making a hidden network call.
         """
         with self._lock_mgr.acquire(batch_id) as acquired:
             if not acquired:
@@ -1338,9 +1370,13 @@ class ReconciliationEngine:
                     False, batch_id,
                     reason_code=ReasonCode.RECONCILE_ALREADY_RUNNING,
                 )
-            return self._reconcile_batch_locked(batch_id)
+            return self._reconcile_batch_locked(batch_id, remote_snapshot=remote_snapshot)
 
-    def _reconcile_batch_locked(self, batch_id: str) -> Dict[str, Any]:
+    def _reconcile_batch_locked(
+        self,
+        batch_id: str,
+        remote_snapshot: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """Core reconcile logic, called only under batch lock."""
         # Assign fencing token — proves this thread owns this reconcile run.
         fencing_token: Optional[int] = None
@@ -1351,7 +1387,11 @@ class ReconciliationEngine:
 
         self._set_recovery_marker(batch_id)
         try:
-            result = self._reconcile_batch_inner(batch_id, fencing_token=fencing_token)
+            result = self._reconcile_batch_inner(
+                batch_id,
+                fencing_token=fencing_token,
+                remote_snapshot=remote_snapshot,
+            )
             if fencing_token is not None:
                 result["fencing_token"] = fencing_token
             return result
@@ -1364,7 +1404,12 @@ class ReconciliationEngine:
                     if self._active_fencing_tokens.get(batch_id) == fencing_token:
                         self._active_fencing_tokens.pop(batch_id, None)
 
-    def _reconcile_batch_inner(self, batch_id: str, fencing_token: Optional[int] = None) -> Dict[str, Any]:
+    def _reconcile_batch_inner(
+        self,
+        batch_id: str,
+        fencing_token: Optional[int] = None,
+        remote_snapshot: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         # ── fresh snapshot (never use stale data after restart) ──
         batch = self.batch_manager.get_batch(batch_id)
         if not batch:
@@ -1405,7 +1450,10 @@ class ReconciliationEngine:
             # ── re-fetch exchange state ─────────────────────────
             if market_id:
                 remote_orders, fetch_err = (
-                    self._fetch_current_orders_by_market(market_id)
+                    self._fetch_current_orders_by_market(
+                        market_id,
+                        remote_snapshot=remote_snapshot,
+                    )
                 )
                 if fetch_err is not None:
                     fetch_failure = fetch_err

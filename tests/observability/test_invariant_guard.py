@@ -387,3 +387,140 @@ def test_all_four_required_invariants_active_in_watchdog_path():
     )
     exposure_alert = next(a for a in invariant_alerts if a["code"] == "INVARIANT_EXPOSURE_MISMATCH")
     assert exposure_alert.get("details", {}).get("violation_code") == "EXPOSURE_MISMATCH"
+
+
+# ---------------------------------------------------------------------------
+# A.11 — Invariant check misconfiguration: malformed / non-callable shapes
+# ---------------------------------------------------------------------------
+
+def test_malformed_check_tuple_produces_explicit_violation():
+    """A check that is not a 3-tuple produces INVARIANT_CHECK_MALFORMED violation."""
+    state = {"runtime": {"status": "READY"}, "metrics": {"inflight_count": 0}}
+
+    # 2-tuple instead of 3-tuple
+    bad_check = ("only_two_elements", "missing callable")
+    violations = evaluate_invariants(state, enabled=True, checks=(bad_check,))
+
+    codes = {v.code for v in violations}
+    assert "INVARIANT_CHECK_MALFORMED" in codes, (
+        "A 2-tuple check must produce INVARIANT_CHECK_MALFORMED — not a silent pass"
+    )
+
+
+def test_non_callable_check_produces_explicit_violation():
+    """A check whose third element is not callable produces INVARIANT_CHECK_MALFORMED."""
+    state = {"runtime": {"status": "READY"}, "metrics": {"inflight_count": 0}}
+
+    # third element is a string, not a callable
+    bad_check = ("my_check", "my message", "not_a_function")
+    violations = evaluate_invariants(state, enabled=True, checks=(bad_check,))
+
+    codes = {v.code for v in violations}
+    assert "INVARIANT_CHECK_MALFORMED" in codes, (
+        "A check with non-callable third element must produce INVARIANT_CHECK_MALFORMED"
+    )
+
+
+def test_empty_code_in_check_produces_explicit_violation():
+    """A check with an empty code string produces INVARIANT_CHECK_MALFORMED."""
+    state = {"runtime": {"status": "READY"}, "metrics": {"inflight_count": 0}}
+
+    bad_check = ("", "message but no code", lambda s: True)
+    violations = evaluate_invariants(state, enabled=True, checks=(bad_check,))
+
+    codes = {v.code for v in violations}
+    assert "INVARIANT_CHECK_MALFORMED" in codes, (
+        "A check with empty code string must produce INVARIANT_CHECK_MALFORMED"
+    )
+
+
+def test_raising_check_produces_explicit_violation():
+    """A check callable that raises an exception produces INVARIANT_CHECK_MALFORMED."""
+    state = {"runtime": {"status": "READY"}, "metrics": {"inflight_count": 0}}
+
+    def _explodes(s):
+        raise RuntimeError("boom")
+
+    bad_check = ("exploding_check", "this check raises", _explodes)
+    violations = evaluate_invariants(state, enabled=True, checks=(bad_check,))
+
+    codes = {v.code for v in violations}
+    assert "INVARIANT_CHECK_MALFORMED" in codes, (
+        "A check that raises must produce INVARIANT_CHECK_MALFORMED — not a silent pass"
+    )
+
+
+def test_mixed_checks_malformed_and_valid_both_surface():
+    """Mixed list: valid checks fire normally, malformed checks produce INVARIANT_CHECK_MALFORMED."""
+    state = {
+        "runtime": {"status": "READY"},
+        "metrics": {"inflight_count": 0},
+        "recent_orders": [
+            {"order_id": "o1", "status": "FAILED", "remote_bet_id": "ext-ghost"},
+        ],
+    }
+
+    good_check = (
+        "FAILED_LOCAL_REMOTE_EXISTS",
+        "FAILED_LOCAL_REMOTE_EXISTS: ghost check",
+        lambda s: not any(
+            str(o.get("status", "")).upper() in {"FAILED", "ERROR"}
+            and (o.get("remote_bet_id") or o.get("exchange_order_id"))
+            for o in (s.get("recent_orders") or [])
+        ),
+    )
+    bad_check = ("BAD", "malformed", "not_callable")
+
+    violations = evaluate_invariants(state, enabled=True, checks=(good_check, bad_check))
+
+    codes = {v.code for v in violations}
+    assert "FAILED_LOCAL_REMOTE_EXISTS" in codes, "valid check must still fire"
+    assert "INVARIANT_CHECK_MALFORMED" in codes, "malformed check must produce explicit signal"
+
+
+def test_malformed_invariant_check_emits_structured_alert_in_watchdog():
+    """Watchdog emits INVARIANT_CHECKS_MISCONFIGURED alert when a malformed check is supplied."""
+    from observability.alerts_manager import AlertsManager
+    from observability.health_registry import HealthRegistry
+    from observability.incidents_manager import IncidentsManager
+    from observability.metrics_registry import MetricsRegistry
+    from observability.watchdog_service import WatchdogService
+
+    class _SnapshotStub:
+        def collect_and_store(self):
+            return None
+
+    class _Probe:
+        def collect_health(self):
+            return {"runtime": {"status": "READY", "reason": "ok", "details": {}}}
+        def collect_metrics(self):
+            return {}
+        def collect_runtime_state(self):
+            return {"runtime": {"status": "READY"}, "metrics": {"inflight_count": 0}}
+
+    alerts = AlertsManager()
+    # Pass a list with one valid check and one malformed (non-callable) check
+    bad_checks = [
+        ("valid_check", "valid message", lambda s: True),
+        ("bad_check", "bad message", "NOT_CALLABLE"),
+    ]
+    watchdog = WatchdogService(
+        probe=_Probe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        invariant_checks=bad_checks,
+        interval_sec=60.0,
+    )
+
+    watchdog._evaluate_invariants()
+
+    invariant_alerts = [a for a in alerts.active_alerts() if a.get("source") == "invariant_reviewer"]
+    codes = {a["code"] for a in invariant_alerts}
+    assert "INVARIANT_CHECKS_MISCONFIGURED" in codes, (
+        "Watchdog must emit INVARIANT_CHECKS_MISCONFIGURED when a non-callable check is configured"
+    )
+    misconfig_alert = next(a for a in invariant_alerts if a["code"] == "INVARIANT_CHECKS_MISCONFIGURED")
+    assert misconfig_alert["details"]["malformed_count"] >= 1

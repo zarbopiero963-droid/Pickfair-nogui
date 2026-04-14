@@ -1198,3 +1198,95 @@ def test_anomaly_reviewer_disabled_signal_clears_after_reenable():
     assert "ANOMALY_REVIEWER_DISABLED" not in {
         i["code"] for i in incidents.snapshot()["incidents"] if i["status"] == "OPEN"
     }
+
+
+# ---------------------------------------------------------------------------
+# A.11 / G.4 — Malformed invariant check: fail-loud/fail-closed proof via watchdog
+# ---------------------------------------------------------------------------
+
+def test_watchdog_non_callable_check_emits_invariant_checks_misconfigured():
+    """When invariant_checks contains a non-callable third element, watchdog emits
+    INVARIANT_CHECKS_MISCONFIGURED as an explicit structured operational alert."""
+    alerts = AlertsManager()
+
+    bad_checks = [
+        ("valid_check", "valid", lambda s: True),
+        ("bad_check", "bad", "THIS_IS_NOT_CALLABLE"),
+    ]
+    watchdog = WatchdogService(
+        probe=_ProbeStub(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        invariant_checks=bad_checks,
+        interval_sec=60.0,
+    )
+
+    watchdog._evaluate_invariants()
+
+    codes = {a["code"] for a in alerts.active_alerts() if a.get("source") == "invariant_reviewer"}
+    assert "INVARIANT_CHECKS_MISCONFIGURED" in codes, (
+        "Watchdog must emit INVARIANT_CHECKS_MISCONFIGURED for non-callable invariant checks"
+    )
+    alert = next(a for a in alerts.active_alerts() if a["code"] == "INVARIANT_CHECKS_MISCONFIGURED")
+    assert alert["details"]["malformed_count"] >= 1
+
+
+def test_watchdog_malformed_tuple_check_emits_invariant_checks_misconfigured():
+    """A 2-element tuple check (missing callable) must emit INVARIANT_CHECKS_MISCONFIGURED."""
+    alerts = AlertsManager()
+
+    bad_checks = [("only_two_fields", "message_but_no_callable")]
+    watchdog = WatchdogService(
+        probe=_ProbeStub(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        invariant_checks=bad_checks,
+        interval_sec=60.0,
+    )
+
+    watchdog._evaluate_invariants()
+
+    codes = {a["code"] for a in alerts.active_alerts() if a.get("source") == "invariant_reviewer"}
+    assert "INVARIANT_CHECKS_MISCONFIGURED" in codes, (
+        "A 2-tuple invariant check must cause INVARIANT_CHECKS_MISCONFIGURED alert"
+    )
+
+
+def test_watchdog_malformed_check_does_not_silently_pass():
+    """A watchdog with only malformed checks must NOT produce zero findings silently.
+    INVARIANT_CHECKS_MISCONFIGURED must be the explicit signal, not an empty findings set."""
+    alerts = AlertsManager()
+
+    bad_checks = [
+        ("no_callable", "desc", None),
+        ("also_bad", "desc2", 42),
+    ]
+    watchdog = WatchdogService(
+        probe=_ProbeStub(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        invariant_checks=bad_checks,
+        interval_sec=60.0,
+    )
+
+    watchdog._evaluate_invariants()
+
+    active_inv_codes = {
+        a["code"]
+        for a in alerts.active_alerts()
+        if a.get("source") == "invariant_reviewer"
+    }
+    # Must NOT be empty — malformed config must be signalled
+    assert len(active_inv_codes) > 0, (
+        "Watchdog with all-malformed checks must not produce zero invariant findings"
+    )
+    assert "INVARIANT_CHECKS_MISCONFIGURED" in active_inv_codes

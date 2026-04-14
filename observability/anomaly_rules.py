@@ -211,7 +211,19 @@ def _collect_stuck_inflight_evidence(context: Context) -> Dict[str, Any]:
 
     now_ts = _coerce_epoch_seconds(runtime_state.get("ts"))
     if now_ts is None:
-        now_ts = datetime.now(timezone.utc).timestamp()
+        # No reference timestamp available — do NOT fall back to wall-clock time.
+        # The audited reviewer path must not have a real-time dependency.
+        # Return an explicit signal so callers can surface the misconfiguration.
+        return {
+            "inflight_with_age_count": 0,
+            "stale_inflight_count": 0,
+            "stale_ids": [],
+            "sample_stale_inflight": [],
+            "max_inflight_age_sec": 0.0,
+            "p90_inflight_age_sec": 0.0,
+            "age_threshold_sec": 120.0,
+            "timestamp_missing": True,
+        }
 
     inflight_statuses = {"INFLIGHT", "SUBMITTED", "AMBIGUOUS", "UNCERTAIN"}
     age_threshold_sec = 120.0
@@ -277,6 +289,20 @@ def rule_stuck_inflight(context: Context, state: State) -> Anomaly | None:
     gauges = (context.get("metrics") or {}).get("gauges") or {}
     inflight = float(gauges.get("inflight_count", 0.0) or 0.0)
     evidence = _collect_stuck_inflight_evidence(context)
+
+    # When the runtime state has no reference timestamp, age-based stuck
+    # detection is impossible.  Emit an explicit structured signal when
+    # inflight orders are present so operators can investigate the
+    # missing timestamp rather than silently skipping the check.
+    if evidence.get("timestamp_missing"):
+        if inflight > 0:
+            return _anomaly(
+                "STUCK_INFLIGHT_TIMESTAMP_MISSING",
+                "warning",
+                "Cannot evaluate stuck inflight age: runtime timestamp (ts) missing from context",
+                {"inflight_count": inflight, "reason": "ts_missing_from_runtime_state"},
+            )
+        return None
 
     stale_ids = list(evidence.get("stale_ids", []))
     stale_fingerprint = "|".join(stale_ids[:8])

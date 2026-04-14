@@ -527,3 +527,110 @@ def test_no_false_positives_on_clean_context():
     assert db_contention_detected(context, {}) is None
     assert event_fanout_incomplete(context, {}) is None
     assert financial_drift(context, {}) is None
+
+
+# ===========================================================================
+# G) F.6 — No real-time dependency: missing timestamp emits explicit signal
+# ===========================================================================
+
+from observability.anomaly_rules import rule_stuck_inflight
+
+
+def test_stuck_inflight_missing_timestamp_emits_explicit_signal_when_inflight_present():
+    """When runtime_state.ts is absent, rule_stuck_inflight must emit STUCK_INFLIGHT_TIMESTAMP_MISSING
+    (not fall back to wall-clock time) when inflight orders are present."""
+    context = {
+        "metrics": {"gauges": {"inflight_count": 60.0}},
+        "runtime_state": {},  # no ts key → timestamp_missing
+        "recent_orders": [],
+    }
+    result = rule_stuck_inflight(context, {})
+    assert result is not None, (
+        "rule_stuck_inflight must emit explicit signal when timestamp is missing "
+        "and inflight orders are present — not silently skip"
+    )
+    assert result["code"] == "STUCK_INFLIGHT_TIMESTAMP_MISSING", (
+        "must use structured code STUCK_INFLIGHT_TIMESTAMP_MISSING, "
+        "not fall back to datetime.now()"
+    )
+    assert result["details"]["reason"] == "ts_missing_from_runtime_state"
+
+
+def test_stuck_inflight_missing_timestamp_no_signal_when_no_inflight():
+    """When runtime_state.ts is absent AND inflight_count == 0, no anomaly is emitted
+    (there is nothing stuck to report)."""
+    context = {
+        "metrics": {"gauges": {"inflight_count": 0.0}},
+        "runtime_state": {},
+        "recent_orders": [],
+    }
+    result = rule_stuck_inflight(context, {})
+    assert result is None, (
+        "With no inflight orders and no timestamp, rule_stuck_inflight must not fire"
+    )
+
+
+def test_stuck_inflight_no_datetime_now_call_when_timestamp_absent():
+    """Proves rule_stuck_inflight does NOT fall back to wall-clock time when runtime timestamp is absent.
+
+    Source-level proof: _collect_stuck_inflight_evidence must not contain datetime.now().
+    Runtime proof: when ts is absent the result code is STUCK_INFLIGHT_TIMESTAMP_MISSING,
+    which proves the age-based (wall-clock dependent) path was NOT taken.
+    """
+    import inspect
+    from observability.anomaly_rules import _collect_stuck_inflight_evidence
+
+    # Source-level: verify datetime.now() is absent from the evidence collector
+    src = inspect.getsource(_collect_stuck_inflight_evidence)
+    assert "datetime.now" not in src, (
+        "_collect_stuck_inflight_evidence must not contain datetime.now() "
+        "— wall-clock fallback in the audited reviewer path is forbidden"
+    )
+
+    # Runtime proof: when ts is absent, the result is the explicit signal — not
+    # a result that could only arise from a real-time age calculation.
+    context = {
+        "metrics": {"gauges": {"inflight_count": 10.0}},
+        "runtime_state": {},  # no ts key → timestamp_missing
+        "recent_orders": [],
+    }
+    result = rule_stuck_inflight(context, {})
+    assert result is not None
+    assert result["code"] == "STUCK_INFLIGHT_TIMESTAMP_MISSING", (
+        "When ts is absent, the code must be STUCK_INFLIGHT_TIMESTAMP_MISSING "
+        "— not STUCK_INFLIGHT (which requires age computation)"
+    )
+
+
+def test_stuck_inflight_uses_provided_ts_not_wall_clock():
+    """When runtime_state.ts is present, age-based evaluation proceeds without wall-clock access.
+
+    The 'now' reference comes from runtime_state.ts, not from real wall-clock time.
+    Orders whose timestamps are older than (now_ts - age_threshold) are detected as stale.
+    """
+    import time as _time_module
+
+    # 'now' reference: use a fixed explicit value (could be past, doesn't matter)
+    now_ts = _time_module.time() - 300  # arbitrary offset to confirm ts is used, not real time
+    # Orders were created 200 seconds *before* now_ts so age = 200 > threshold(120)
+    order_ts = now_ts - 200
+
+    context = {
+        "metrics": {"gauges": {"inflight_count": 60.0}},
+        "runtime_state": {"ts": now_ts},
+        "recent_orders": [
+            {"order_id": f"o{i}", "status": "INFLIGHT", "updated_at": order_ts}
+            for i in range(3)
+        ],
+    }
+    state: dict = {}
+    result = None
+    # Call three times to exceed the consecutive_ticks threshold (count >= 3)
+    for _ in range(3):
+        result = rule_stuck_inflight(context, state)
+
+    # Stuck inflight should fire (3 ticks, 3 stale orders by age)
+    assert result is not None, (
+        "STUCK_INFLIGHT must fire when runtime timestamp is provided and orders exceed age threshold"
+    )
+    assert result["code"] == "STUCK_INFLIGHT"
