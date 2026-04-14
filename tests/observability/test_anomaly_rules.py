@@ -444,3 +444,70 @@ def test_poison_pill_and_fanout_incomplete_are_distinguishable():
     assert fanout["code"] == "EVENT_FANOUT_INCOMPLETE"
     assert poison["severity"] == "error"      # worse — specific broken subscriber
     assert fanout["severity"] == "warning"    # generic delivery shortfall
+
+
+def test_rule_stuck_inflight_requires_more_than_aggregate_threshold():
+    from observability.anomaly_rules import rule_stuck_inflight
+
+    state = {}
+    ctx = {
+        "metrics": {"gauges": {"inflight_count": 55.0}},
+        "runtime_state": {"ts": 1_800_000_000.0},
+        "recent_orders": [
+            {"order_id": "o-1", "status": "SUBMITTED", "created_at": 1_799_999_950.0},
+            {"order_id": "o-2", "status": "SUBMITTED", "created_at": 1_799_999_945.0},
+        ],
+    }
+
+    # High inflight alone should not accumulate STUCK_INFLIGHT ticks.
+    assert rule_stuck_inflight(ctx, state) is None
+    assert state["stuck_inflight_ticks"] == 0
+
+
+def test_rule_stuck_inflight_fires_with_repeated_stale_identity_and_age_evidence():
+    from observability.anomaly_rules import rule_stuck_inflight
+
+    state = {}
+    base_ts = 1_800_000_000.0
+    ctx = {
+        "metrics": {"gauges": {"inflight_count": 55.0}},
+        "runtime_state": {"ts": base_ts},
+        "recent_orders": [
+            {"order_id": "o-1", "status": "SUBMITTED", "created_at": base_ts - 240.0},
+            {"order_id": "o-2", "status": "INFLIGHT", "created_at": base_ts - 220.0},
+            {"order_id": "o-3", "status": "AMBIGUOUS", "created_at": base_ts - 200.0},
+            {"order_id": "o-4", "status": "SUBMITTED", "created_at": base_ts - 80.0},
+        ],
+    }
+
+    assert rule_stuck_inflight(ctx, state) is None
+    assert rule_stuck_inflight(ctx, state) is None
+    finding = rule_stuck_inflight(ctx, state)
+    assert finding is not None
+    assert finding["code"] == "STUCK_INFLIGHT"
+    assert finding["details"]["stale_inflight_count"] == 3
+    assert finding["details"]["evidence_flags"]["per_order_age"] is True
+    assert finding["details"]["evidence_flags"]["repeated_stale_identity"] is True
+    assert finding["details"]["sample_stale_inflight"][0]["order_id"] == "o-1"
+
+
+def test_rule_stuck_inflight_preserves_aggregate_fallback_when_age_evidence_unavailable():
+    from observability.anomaly_rules import rule_stuck_inflight
+
+    state = {}
+    ctx = {
+        "metrics": {"gauges": {"inflight_count": 55.0}},
+        "runtime_state": {},
+        "recent_orders": [
+            {"order_id": "o-1", "status": "SUBMITTED"},
+            {"order_id": "o-2", "status": "INFLIGHT"},
+        ],
+    }
+
+    assert rule_stuck_inflight(ctx, state) is None
+    assert rule_stuck_inflight(ctx, state) is None
+    finding = rule_stuck_inflight(ctx, state)
+    assert finding is not None
+    assert finding["code"] == "STUCK_INFLIGHT"
+    assert finding["details"]["evidence_flags"]["evidence_supported"] is False
+    assert finding["details"]["evidence_flags"]["aggregate_fallback_used"] is True

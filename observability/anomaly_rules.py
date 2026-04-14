@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 
@@ -171,11 +172,134 @@ def rule_memory_growth_trend(context: Context, state: State) -> Anomaly | None:
     return None
 
 
+
+
+def _coerce_epoch_seconds(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        ts = float(value)
+        if ts <= 0:
+            return None
+        # Allow millisecond epoch values from DB/export payloads.
+        if ts > 1e12:
+            ts = ts / 1000.0
+        return ts
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        try:
+            return _coerce_epoch_seconds(float(raw))
+        except ValueError:
+            pass
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    return None
+
+
+def _collect_stuck_inflight_evidence(context: Context) -> Dict[str, Any]:
+    runtime_state = context.get("runtime_state") or {}
+    recent_orders = context.get("recent_orders") or []
+
+    now_ts = _coerce_epoch_seconds(runtime_state.get("ts"))
+    if now_ts is None:
+        now_ts = datetime.now(timezone.utc).timestamp()
+
+    inflight_statuses = {"INFLIGHT", "SUBMITTED", "AMBIGUOUS", "UNCERTAIN"}
+    age_threshold_sec = 120.0
+
+    stale_by_order_id: Dict[str, float] = {}
+    ages_sec: list[float] = []
+
+    for row in recent_orders:
+        if not isinstance(row, dict):
+            continue
+        status = str(row.get("status", "")).upper()
+        if status not in inflight_statuses:
+            continue
+
+        order_id = str(row.get("order_id") or row.get("id") or row.get("customer_ref") or "").strip()
+        if not order_id:
+            continue
+
+        ts_candidates = (
+            row.get("updated_at"),
+            row.get("submitted_at"),
+            row.get("created_at"),
+            row.get("ts"),
+            row.get("timestamp"),
+        )
+        order_ts = None
+        for candidate in ts_candidates:
+            order_ts = _coerce_epoch_seconds(candidate)
+            if order_ts is not None:
+                break
+
+        if order_ts is None:
+            continue
+
+        age_sec = max(0.0, now_ts - order_ts)
+        ages_sec.append(age_sec)
+        if age_sec >= age_threshold_sec:
+            prior = stale_by_order_id.get(order_id)
+            if prior is None or age_sec > prior:
+                stale_by_order_id[order_id] = age_sec
+
+    sorted_stale = sorted(stale_by_order_id.items(), key=lambda item: (-item[1], item[0]))
+    p90_age_sec = 0.0
+    if ages_sec:
+        ordered = sorted(ages_sec)
+        idx = min(len(ordered) - 1, int((len(ordered) - 1) * 0.9))
+        p90_age_sec = ordered[idx]
+
+    return {
+        "inflight_with_age_count": len(ages_sec),
+        "stale_inflight_count": len(sorted_stale),
+        "stale_ids": [oid for oid, _ in sorted_stale],
+        "sample_stale_inflight": [
+            {"order_id": oid, "age_sec": round(age, 3)}
+            for oid, age in sorted_stale[:5]
+        ],
+        "max_inflight_age_sec": round(sorted_stale[0][1], 3) if sorted_stale else 0.0,
+        "p90_inflight_age_sec": round(p90_age_sec, 3),
+        "age_threshold_sec": age_threshold_sec,
+    }
+
 def rule_stuck_inflight(context: Context, state: State) -> Anomaly | None:
     gauges = (context.get("metrics") or {}).get("gauges") or {}
     inflight = float(gauges.get("inflight_count", 0.0) or 0.0)
+    evidence = _collect_stuck_inflight_evidence(context)
+
+    stale_ids = list(evidence.get("stale_ids", []))
+    stale_fingerprint = "|".join(stale_ids[:8])
+    prev_fingerprint = str(state.get("stale_identity_fingerprint", "") or "")
+    repeated_identity_ticks = int(state.get("repeated_stale_identity_ticks", 0) or 0)
+    if stale_fingerprint and stale_fingerprint == prev_fingerprint:
+        repeated_identity_ticks += 1
+    else:
+        repeated_identity_ticks = 1 if stale_fingerprint else 0
+
+    state["stale_identity_fingerprint"] = stale_fingerprint
+    state["repeated_stale_identity_ticks"] = repeated_identity_ticks
+
+    stale_count = int(evidence.get("stale_inflight_count", 0) or 0)
+    has_age_distribution_signal = float(evidence.get("p90_inflight_age_sec", 0.0) or 0.0) >= 180.0
+    has_per_order_signal = stale_count >= 3
+    has_repeated_identity_signal = repeated_identity_ticks >= 2 and stale_count >= 2
+
+    has_strong_evidence = has_per_order_signal or has_repeated_identity_signal or has_age_distribution_signal
+    evidence_supported = int(evidence.get("inflight_with_age_count", 0) or 0) > 0
+
     count = int(state.get("stuck_inflight_ticks", 0) or 0)
-    if inflight >= 50:
+    if inflight >= 50 and (has_strong_evidence or not evidence_supported):
         count += 1
     else:
         count = 0
@@ -185,8 +309,24 @@ def rule_stuck_inflight(context: Context, state: State) -> Anomaly | None:
         return _anomaly(
             "STUCK_INFLIGHT",
             "warning",
-            "Inflight orders appear stuck",
-            {"inflight_count": inflight, "consecutive_ticks": count},
+            "Inflight orders appear stuck with repeated per-order age evidence",
+            {
+                "inflight_count": inflight,
+                "consecutive_ticks": count,
+                "stale_inflight_count": stale_count,
+                "repeated_stale_identity_ticks": repeated_identity_ticks,
+                "p90_inflight_age_sec": evidence.get("p90_inflight_age_sec", 0.0),
+                "max_inflight_age_sec": evidence.get("max_inflight_age_sec", 0.0),
+                "age_threshold_sec": evidence.get("age_threshold_sec", 120.0),
+                "sample_stale_inflight": evidence.get("sample_stale_inflight", []),
+                "evidence_flags": {
+                    "per_order_age": has_per_order_signal,
+                    "repeated_stale_identity": has_repeated_identity_signal,
+                    "age_distribution": has_age_distribution_signal,
+                    "evidence_supported": evidence_supported,
+                    "aggregate_fallback_used": (not evidence_supported),
+                },
+            },
         )
     return None
 
