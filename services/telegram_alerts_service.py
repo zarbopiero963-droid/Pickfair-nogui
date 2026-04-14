@@ -210,30 +210,36 @@ class TelegramAlertsService:
         if callable(loader):
             data = loader()
             if isinstance(data, dict):
-                return data
+                return self._normalize_telegram_settings(data)
 
         getter = getattr(self.settings_service, "get_all_settings", None)
         if callable(getter):
             try:
                 data = getter() or {}
-                return {
-                    "alerts_enabled": bool(data.get("telegram.alerts_enabled", False)),
-                    "alerts_chat_id": data.get("telegram.alerts_chat_id"),
-                    "alerts_chat_name": data.get("telegram.alerts_chat_name", ""),
-                    "min_alert_severity": data.get("telegram.min_alert_severity", "WARNING"),
-                    "alert_cooldown_sec": data.get("telegram.alert_cooldown_sec", 300),
-                    "telegram_alerts_enabled": bool(data.get("telegram_alerts_enabled", data.get("telegram.alerts_enabled", False))),
-                    "telegram_alert_chat_id": data.get("telegram_alert_chat_id", data.get("telegram.alerts_chat_id")),
-                    "telegram_alert_name": data.get("telegram_alert_name", data.get("telegram.alerts_chat_name", "")),
-                    "telegram_alert_min_severity": data.get("telegram_alert_min_severity", data.get("telegram.min_alert_severity", "WARNING")),
-                    "telegram_alert_cooldown_sec": data.get("telegram_alert_cooldown_sec", data.get("telegram.alert_cooldown_sec", 300)),
-                    "alert_dedup_enabled": bool(data.get("telegram.alert_dedup_enabled", True)),
-                    "alert_format_rich": bool(data.get("telegram.alert_format_rich", True)),
-                }
+                return self._normalize_telegram_settings(data)
             except Exception:
                 logger.exception("get_all_settings failed while reading telegram alert settings")
 
         return {}
+
+    def _normalize_telegram_settings(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "alerts_enabled": bool(data.get("alerts_enabled", data.get("telegram.alerts_enabled", data.get("telegram_alerts_enabled", False)))),
+            "alerts_chat_id": data.get("alerts_chat_id", data.get("telegram.alerts_chat_id", data.get("telegram_alert_chat_id"))),
+            "alerts_chat_name": data.get("alerts_chat_name", data.get("telegram.alerts_chat_name", data.get("telegram_alert_name", ""))),
+            "min_alert_severity": data.get("min_alert_severity", data.get("telegram.min_alert_severity", data.get("telegram_alert_min_severity", "WARNING"))),
+            "alert_cooldown_sec": data.get("alert_cooldown_sec", data.get("telegram.alert_cooldown_sec", data.get("telegram_alert_cooldown_sec", 300))),
+            "telegram_alerts_enabled": bool(data.get("telegram_alerts_enabled", data.get("alerts_enabled", data.get("telegram.alerts_enabled", False)))),
+            "telegram_alert_chat_id": data.get("telegram_alert_chat_id", data.get("alerts_chat_id", data.get("telegram.alerts_chat_id"))),
+            "telegram_alert_name": data.get("telegram_alert_name", data.get("alerts_chat_name", data.get("telegram.alerts_chat_name", ""))),
+            "telegram_alert_min_severity": data.get("telegram_alert_min_severity", data.get("min_alert_severity", data.get("telegram.min_alert_severity", "WARNING"))),
+            "telegram_alert_cooldown_sec": data.get("telegram_alert_cooldown_sec", data.get("alert_cooldown_sec", data.get("telegram.alert_cooldown_sec", 300))),
+            "alert_dedup_enabled": bool(data.get("alert_dedup_enabled", data.get("telegram.alert_dedup_enabled", True))),
+            "alert_format_rich": bool(data.get("alert_format_rich", data.get("telegram.alert_format_rich", True))),
+            "alert_aggregation_enabled": bool(data.get("alert_aggregation_enabled", True)),
+            "alert_aggregation_threshold": int(data.get("alert_aggregation_threshold", 5) or 5),
+            "alert_aggregation_window_sec": int(data.get("alert_aggregation_window_sec", 10) or 10),
+        }
 
     def _should_send(self, severity: str, min_severity: str) -> bool:
         return SEVERITY_RANK.get(severity, 0) >= SEVERITY_RANK.get(min_severity, 20)

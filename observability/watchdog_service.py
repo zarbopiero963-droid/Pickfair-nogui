@@ -856,7 +856,13 @@ class WatchdogService:
 
     def _evaluate_cto_reviewer(self) -> None:
         runtime_collector = getattr(self.probe, "collect_runtime_state", None)
-        runtime_state = runtime_collector() if callable(runtime_collector) else {}
+        runtime_state = {}
+        if callable(runtime_collector):
+            try:
+                runtime_state = runtime_collector() or {}
+            except Exception:
+                logger.exception("collect_runtime_state failed during CTO reviewer pass")
+                runtime_state = {}
         forensics_getter = getattr(self.probe, "collect_forensics_evidence", None)
         diagnostics_bundle = {}
         if callable(forensics_getter):
@@ -879,13 +885,13 @@ class WatchdogService:
             "diagnostics_bundle": diagnostics_bundle,
         }
         findings = self._cto_reviewer.evaluate(payload)
-        current_codes: set[str] = set()
+        active_rule_names = self._cto_reviewer.current_rule_names(payload)
+        current_codes: set[str] = {f"CTO::{name}" for name in active_rule_names}
         for finding in findings:
             rule_name = str(finding.get("rule_name") or "")
             if not rule_name:
                 continue
             code = f"CTO::{rule_name}"
-            current_codes.add(code)
             severity = str(finding.get("severity") or "warning")
             self.alerts_manager.upsert_alert(
                 code,

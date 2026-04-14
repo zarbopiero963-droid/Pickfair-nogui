@@ -100,3 +100,54 @@ def test_silent_failure_detected_from_enabled_undeliverable_pipeline_integrated(
     codes = {a["code"] for a in alerts.active_alerts()}
     assert "CTO::SILENT_FAILURE_DETECTED" in codes
     assert "CTO::OBSERVABILITY_UNTRUSTED" in codes
+
+
+def test_cto_alert_not_resolved_just_because_reviewer_is_in_cooldown():
+    class _StableProbe(_Probe):
+        def collect_forensics_evidence(self):
+            return {"diagnostics_export": {"manifest_files": []}}
+
+    alerts = AlertsManager()
+    svc = WatchdogService(
+        probe=_StableProbe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=alerts,
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_Snapshot(),
+        anomaly_engine=_Anomaly(),
+        forensics_engine=_Forensics(),
+    )
+    svc.tick()
+    first_codes = {a["code"] for a in alerts.active_alerts() if a.get("source") == "cto_reviewer"}
+    assert "CTO::SILENT_FAILURE_DETECTED" in first_codes
+    svc.tick()  # within reviewer cooldown, no new emission expected
+    second_codes = {a["code"] for a in alerts.active_alerts() if a.get("source") == "cto_reviewer"}
+    assert "CTO::SILENT_FAILURE_DETECTED" in second_codes
+
+
+def test_cto_reviewer_pass_handles_runtime_probe_exception_without_aborting_tick():
+    class _BrokenProbe(_Probe):
+        def collect_runtime_state(self):
+            raise RuntimeError("runtime probe failed")
+
+    class _SnapshotCounter(_Snapshot):
+        def __init__(self):
+            self.calls = 0
+
+        def collect_and_store(self):
+            self.calls += 1
+
+    snapshot = _SnapshotCounter()
+    svc = WatchdogService(
+        probe=_BrokenProbe(),
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=AlertsManager(),
+        incidents_manager=IncidentsManager(),
+        snapshot_service=snapshot,
+        anomaly_engine=_Anomaly(),
+        forensics_engine=_Forensics(),
+    )
+    svc.tick()
+    assert snapshot.calls == 1

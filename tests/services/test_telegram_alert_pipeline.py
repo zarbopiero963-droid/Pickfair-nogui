@@ -196,3 +196,24 @@ def test_telegram_alert_pipeline_grouping_count_summary(monkeypatch):
     assert len(sender.calls) == 3
     assert "Alert Burst Detected" in sender.calls[-1][1]
     assert "Alerts in 60s: 3" in sender.calls[-1][1]
+
+
+def test_telegram_alert_pipeline_primary_loader_accepts_new_key_schema_only():
+    class NewOnlySettings:
+        def load_telegram_config_row(self):
+            return {
+                "telegram_alerts_enabled": True,
+                "telegram_alert_chat_id": "777",
+                "telegram_alert_name": "ops-new",
+                "telegram_alert_min_severity": "WARNING",
+                "telegram_alert_cooldown_sec": 0,
+                "alert_dedup_enabled": True,
+                "alert_format_rich": True,
+            }
+
+    sender = SenderStub()
+    svc = TelegramAlertsService(settings_service=NewOnlySettings(), telegram_sender=sender)
+    result = svc.notify_alert({"severity": "critical", "code": "NEW-SCHEMA", "message": "ok"})
+    assert result["delivered"] is True
+    assert len(sender.calls) == 1
+    assert sender.calls[0][0] == "777"

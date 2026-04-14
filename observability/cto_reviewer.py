@@ -62,6 +62,11 @@ class CtoReviewer:
             out.append(item)
         return out
 
+    def current_rule_names(self, payload: Dict[str, Any]) -> set[str]:
+        """Return currently-active CTO rule names without cooldown suppression."""
+        findings = evaluate_cto_rules(self._build_rule_payload(payload))
+        return {str(item.get("rule_name") or "") for item in findings if str(item.get("rule_name") or "")}
+
     def _build_rule_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         metrics_snapshot = dict(payload.get("metrics_snapshot") or {})
         gauges = dict(metrics_snapshot.get("gauges") or metrics_snapshot)
