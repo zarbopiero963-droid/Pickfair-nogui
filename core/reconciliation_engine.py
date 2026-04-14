@@ -505,6 +505,9 @@ class ReconciliationEngine:
             return self.betfair_service.get_client()
         return None
 
+    def _audited_single_pass_mode(self) -> bool:
+        return bool(getattr(self.cfg, "audited_single_pass_mode", False))
+
     # ─────────────────────────────────────────────────────────────
     # SAGA HELPERS
     # ─────────────────────────────────────────────────────────────
@@ -542,8 +545,8 @@ class ReconciliationEngine:
         if not client:
             return [], ReasonCode.PERMANENT_ERROR
 
-        attempt = _attempt
-        while True:
+        max_attempt = _attempt if self._audited_single_pass_mode() else self.cfg.max_transient_retries
+        for attempt in range(_attempt, max_attempt + 1):
             try:
                 orders = client.get_current_orders(market_ids=[market_id])
                 return (list(orders) if orders else []), None
@@ -566,17 +569,24 @@ class ReconciliationEngine:
                     return [], ReasonCode.AUTH_ERROR
 
                 # ── TRANSIENT → retry with backoff ──────────────
-                if attempt < self.cfg.max_transient_retries:
+                if attempt < max_attempt:
                     delay = min(
                         self.cfg.transient_retry_base_delay * (2 ** attempt),
                         self.cfg.transient_retry_max_delay,
                     )
-                    logger.warning(
-                        "Transient error fetching orders market=%s attempt=%d, "
-                        "retrying in %.1fs: %s",
-                        market_id, attempt, delay, exc,
-                    )
-                    time.sleep(delay)
+                    if self._audited_single_pass_mode():
+                        logger.warning(
+                            "Transient error fetching orders market=%s attempt=%d, "
+                            "audited single-pass mode: no retry wait: %s",
+                            market_id, attempt, exc,
+                        )
+                    else:
+                        logger.warning(
+                            "Transient error fetching orders market=%s attempt=%d, "
+                            "retrying in %.1fs: %s",
+                            market_id, attempt, delay, exc,
+                        )
+                        time.sleep(delay)
                     attempt += 1
                     continue
 
@@ -585,6 +595,7 @@ class ReconciliationEngine:
                     market_id, attempt + 1,
                 )
                 return [], ReasonCode.TRANSIENT_ERROR
+        return [], ReasonCode.TRANSIENT_ERROR
 
     # ─────────────────────────────────────────────────────────────
     # EXTRACTION HELPERS
@@ -1387,7 +1398,8 @@ class ReconciliationEngine:
         last_cycle = 0
         fetch_failure: Optional[ReasonCode] = None
 
-        for cycle in range(1, self.cfg.max_convergence_cycles + 1):
+        max_cycles = 1 if self._audited_single_pass_mode() else self.cfg.max_convergence_cycles
+        for cycle in range(1, max_cycles + 1):
             last_cycle = cycle
 
             # ── re-fetch exchange state ─────────────────────────
@@ -1555,10 +1567,11 @@ class ReconciliationEngine:
                     cycle, batch_id,
                 )
 
-            if cycle < self.cfg.max_convergence_cycles:
+            if cycle < max_cycles:
                 # only sleep + reload when state changed (need exchange to settle)
                 if changed:
-                    time.sleep(self.cfg.convergence_sleep_secs)
+                    if not self._audited_single_pass_mode():
+                        time.sleep(self.cfg.convergence_sleep_secs)
                     legs = self.batch_manager.get_batch_legs(batch_id)
                     if not legs:
                         break
@@ -1569,7 +1582,7 @@ class ReconciliationEngine:
                 reason_code=ReasonCode.MAX_CYCLES_EXCEEDED,
                 local_status="", exchange_status=None,
                 resolved_status="", merge_winner="NONE",
-                details={"max_cycles": self.cfg.max_convergence_cycles},
+                details={"max_cycles": max_cycles},
             )
 
         # ── recompute batch status ──────────────────────────────
