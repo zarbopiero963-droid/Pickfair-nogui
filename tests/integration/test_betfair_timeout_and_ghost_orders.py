@@ -252,7 +252,11 @@ def test_submit_timeout_becomes_ambiguous_and_remote_order_exists() -> None:
 
 @pytest.mark.integration
 def test_incomplete_submit_response_does_not_claim_false_success() -> None:
-    engine, db, bus, _rec = _make_engine(client=FakeClient(response={"status": "AMBIGUOUS", "reason_code": "UNKNOWN"}))
+    class _MalformedClient:
+        def place_bet(self, **_payload):
+            return None  # structurally invalid/unusable confirmation payload
+
+    engine, db, bus, _rec = _make_engine(client=_MalformedClient())
     result = engine.submit_quick_bet(_payload("INCOMPLETE-1"))
     assert result["status"] == STATUS_AMBIGUOUS
     assert result["status"] != STATUS_COMPLETED

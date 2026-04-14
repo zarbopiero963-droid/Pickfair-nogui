@@ -1,6 +1,7 @@
 import pytest
 import services.telegram_alerts_service as telegram_alerts_module
 
+from observability.cto_reviewer import CtoReviewer
 from services.telegram_alerts_service import TelegramAlertsService
 
 
@@ -217,3 +218,46 @@ def test_telegram_alert_pipeline_primary_loader_accepts_new_key_schema_only():
     assert result["delivered"] is True
     assert len(sender.calls) == 1
     assert sender.calls[0][0] == "777"
+
+
+def test_cto_originated_alert_uses_same_telegram_pipeline(monkeypatch):
+    sender = SenderStub()
+    svc = TelegramAlertsService(settings_service=CooldownSettingsStub(), telegram_sender=sender)
+    reviewer = CtoReviewer(history_window=4, cooldown_sec=60)
+
+    cto_findings = reviewer.evaluate(
+        {
+            "now_ts": 100.0,
+            "health_snapshot": {"overall_status": "DEGRADED"},
+            "metrics_snapshot": {"gauges": {"stalled_ticks": 3, "completed_delta": 0, "repeated_high_ticks": 2, "missing_observability_sections": 1}},
+            "anomaly_alerts": [{"code": "STALL", "severity": "high"}, {"code": "LAG", "severity": "high"}],
+            "forensics_alerts": [],
+            "incidents_snapshot": {"open_count": 1},
+            "runtime_probe_state": {"component": "runtime-a", "alert_pipeline": {"enabled": True, "deliverable": False}},
+            "diagnostics_bundle": {"available": False},
+        }
+    )
+    silent = next(item for item in cto_findings if item["rule_name"] == "SILENT_FAILURE_DETECTED")
+    payload = {
+        "code": f"CTO::{silent['rule_name']}",
+        "severity": silent["severity"],
+        "title": silent["rule_name"],
+        "message": silent["short_explanation"],
+        "source": "cto_reviewer",
+        "details": {"key_metrics": silent["key_metrics"]},
+        "suggested_action": silent["suggested_action"],
+        "timestamp": "2026-04-14 12:30:00 UTC",
+    }
+
+    now = {"t": 2000.0}
+    monkeypatch.setattr(telegram_alerts_module.time, "time", lambda: now["t"])
+    first = svc.notify_alert(payload)
+    second = svc.notify_alert(payload)
+
+    assert first["delivered"] is True
+    assert second["reason"] == "dedup_cooldown"
+    assert len(sender.calls) == 1
+    text = sender.calls[0][1]
+    assert "CTO::SILENT_FAILURE_DETECTED" in text
+    assert "Source: cto_reviewer" in text
+    assert "Suggested action:" in text

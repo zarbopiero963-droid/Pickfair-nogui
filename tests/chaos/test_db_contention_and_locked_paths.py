@@ -11,6 +11,8 @@ from observability.anomaly_rules import DEFAULT_ANOMALY_RULES
 from observability.cto_reviewer import CtoReviewer
 from observability.diagnostic_bundle_builder import DiagnosticBundleBuilder
 from observability.diagnostics_service import DiagnosticsService
+from observability.forensics_engine import ForensicsEngine
+from observability.forensics_rules import DEFAULT_FORENSICS_RULES
 
 
 class _DBLocked:
@@ -116,3 +118,32 @@ def test_contention_with_diagnostic_export_marks_evidence_sections(tmp_path: Pat
     )
     bundle = service.export_bundle()
     assert Path(bundle).exists()
+
+
+def test_snapshot_persistence_degraded_survives_into_forensics_and_cto():
+    context = {
+        "health": {"overall_status": "DEGRADED"},
+        "metrics": {"counters": {"quick_bet_finalized_total": 1}},
+        "alerts": {"active_count": 1, "alerts": [{"code": "SNAPSHOT_PERSISTENCE_DEGRADED", "active": True}]},
+        "incidents": {"open_count": 1, "incidents": [{"code": "INC-SNAPSHOT", "status": "OPEN"}]},
+        "runtime_state": {"forensics": {"observability_snapshot_recent": False}},
+        "recent_orders": [],
+        "recent_audit": [],
+        "diagnostics_export": {"manifest_files": []},
+    }
+    findings = ForensicsEngine(DEFAULT_FORENSICS_RULES).evaluate(context)
+    codes = {f["code"] for f in findings}
+    assert "DIAGNOSTICS_BUNDLE_EVIDENCE_GAP" in codes
+
+    cto = CtoReviewer(history_window=3, cooldown_sec=0).evaluate(
+        {
+            "metrics_snapshot": {"gauges": {"missing_observability_sections": 2, "stalled_ticks": 2, "completed_delta": 0}},
+            "anomaly_alerts": [{"code": "DB_CONTENTION_DETECTED", "severity": "high"}, {"code": "EVENT_SIDE_EFFECT_GAP", "severity": "high"}],
+            "forensics_alerts": findings,
+            "incidents_snapshot": {"open_count": 1},
+            "runtime_probe_state": {"alert_pipeline": {"enabled": True, "deliverable": False}},
+            "diagnostics_bundle": {"available": False},
+        }
+    )
+    names = {f["rule_name"] for f in cto}
+    assert "OBSERVABILITY_UNTRUSTED" in names

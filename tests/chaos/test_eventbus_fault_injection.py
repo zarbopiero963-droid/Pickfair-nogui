@@ -5,6 +5,9 @@ import pytest
 
 from core.event_bus import EventBus
 from observability.alerts_manager import AlertsManager
+from observability.cto_reviewer import CtoReviewer
+from observability.forensics_engine import ForensicsEngine
+from observability.forensics_rules import DEFAULT_FORENSICS_RULES
 from observability.health_registry import HealthRegistry
 from observability.incidents_manager import IncidentsManager
 from observability.metrics_registry import MetricsRegistry
@@ -331,3 +334,51 @@ def test_critical_vs_noncritical_handler_behavior_documented_as_best_effort():
     # failure in one subscriber does not block others.
     assert "critical" in calls
     assert "noncritical" in calls
+
+
+@pytest.mark.chaos
+@pytest.mark.core
+def test_event_without_expected_side_effect_chained_visibility():
+    bus = EventBus(workers=1)
+    observed = []
+
+    def side_effect_missing(_payload):
+        # intentionally no side effect persisted
+        return None
+
+    bus.subscribe("ORDER_FINALIZED", side_effect_missing)
+    bus.publish("ORDER_FINALIZED", {"id": "evt-1"})
+    bus.stop()
+
+    observed.append({"event": "ORDER_FINALIZED", "side_effect_present": False})
+
+    engine = ForensicsEngine(DEFAULT_FORENSICS_RULES)
+    baseline = {
+        "health": {"overall_status": "DEGRADED"},
+        "metrics": {"counters": {"quick_bet_finalized_total": 0}},
+        "alerts": {"active_count": 1, "alerts": [{"code": "EVENT_SIDE_EFFECT_GAP", "active": True}]},
+        "incidents": {"open_count": 1, "incidents": [{"code": "INC-EVT", "status": "OPEN"}]},
+        "runtime_state": {"event_bus": {"published_total": 1, "side_effects_confirmed": 0}},
+        "recent_orders": [],
+        "recent_audit": [],
+        "diagnostics_export": {"manifest_files": []},
+    }
+    engine.evaluate(baseline)
+    forensics = engine.evaluate({**baseline, "metrics": {"counters": {"quick_bet_finalized_total": 1}}})
+    forensics_codes = {f["code"] for f in forensics}
+    assert "EVENT_WITHOUT_EXPECTED_SIDE_EFFECT" in forensics_codes
+
+    cto = CtoReviewer(history_window=3, cooldown_sec=0).evaluate(
+        {
+            "metrics_snapshot": {"gauges": {"missing_observability_sections": 1, "stalled_ticks": 2, "completed_delta": 0}},
+            "anomaly_alerts": [{"code": "EVENT_SIDE_EFFECT_GAP", "severity": "high"}, {"code": "POISON_PILL_SUBSCRIBER", "severity": "high"}],
+            "forensics_alerts": forensics,
+            "incidents_snapshot": {"open_count": 1},
+            "runtime_probe_state": {"alert_pipeline": {"enabled": True, "deliverable": False}},
+            "diagnostics_bundle": {"available": False},
+        }
+    )
+    cto_names = {f["rule_name"] for f in cto}
+    assert "OBSERVABILITY_UNTRUSTED" in cto_names
+    assert "SILENT_FAILURE_DETECTED" in cto_names
+    assert observed and observed[0]["side_effect_present"] is False
