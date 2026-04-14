@@ -144,12 +144,31 @@ def test_rule_service_stalled_does_not_fire_on_first_tick():
     assert finding is None  # first tick — not yet persistent
 
 
+def test_rule_service_stalled_fires_on_hard_liveness_stall_without_history():
+    state = {}
+    ctx = {
+        "health": {"components": {"db": {"status": "READY"}}},
+        "metrics": {
+            "gauges": {
+                "queue_depth": 3.0,
+                "completed_delta": 0.0,
+                "worker_threads_alive": 0.0,
+            }
+        },
+    }
+    finding = rule_service_stalled(ctx, state)
+    assert finding is not None
+    assert finding["code"] == "SERVICE_STALLED"
+    assert finding["details"]["hard_liveness_stall"] is True
+
+
 def test_rule_heartbeat_stale_fires_when_stale():
-    ctx = {"metrics": {"gauges": {"last_heartbeat_age_sec": 120.0}}}
+    ctx = {"metrics": {"gauges": {"heartbeat_age": 120.0}}}
     finding = rule_heartbeat_stale(ctx, {})
     assert finding is not None
     assert finding["code"] == "HEARTBEAT_STALE"
     assert finding["severity"] == "critical"
+    assert finding["details"]["heartbeat_age"] == 120.0
 
 
 def test_rule_heartbeat_stale_passes_when_fresh():
@@ -159,7 +178,12 @@ def test_rule_heartbeat_stale_passes_when_fresh():
 
 def test_rule_zombie_worker_fires_after_threshold():
     state = {"zombie_ticks": 4}
-    ctx = {"metrics": {"gauges": {"inflight_count": 5, "completed_delta": 0}}}
+    ctx = {"metrics": {"gauges": {
+        "inflight_count": 5,
+        "completed_delta": 0,
+        "worker_alive": False,
+        "worker_threads_alive": 0,
+    }}}
     finding = rule_zombie_worker_suspected(ctx, state)
     assert finding is not None
     assert finding["code"] == "ZOMBIE_WORKER_SUSPECTED"
@@ -168,17 +192,23 @@ def test_rule_zombie_worker_fires_after_threshold():
 
 def test_rule_zombie_worker_does_not_fire_on_progress():
     state = {"zombie_ticks": 4}
-    ctx = {"metrics": {"gauges": {"inflight_count": 5, "completed_delta": 1}}}
+    ctx = {"metrics": {"gauges": {
+        "inflight_count": 5,
+        "completed_delta": 1,
+        "worker_alive": False,
+        "worker_threads_alive": 0,
+    }}}
     assert rule_zombie_worker_suspected(ctx, state) is None
     assert state["zombie_ticks"] == 0
 
 
 def test_rule_queue_depth_liveness_mismatch_fires():
-    ctx = {"metrics": {"gauges": {"queue_depth": 10.0, "worker_alive": False}}}
+    ctx = {"metrics": {"gauges": {"queue_depth": 10.0, "worker_threads_alive": 0}}}
     finding = rule_queue_depth_liveness_mismatch(ctx, {})
     assert finding is not None
     assert finding["code"] == "QUEUE_DEPTH_LIVENESS_MISMATCH"
     assert finding["severity"] == "critical"
+    assert finding["details"]["worker_threads_alive"] == 0
 
 
 def test_rule_queue_depth_liveness_mismatch_passes_when_worker_alive():

@@ -26,6 +26,11 @@ class _DbStub:
         return [{"id": 1}]
 
 
+class _RuntimeHeartbeatStub:
+    # 2000-01-01T00:00:00Z
+    last_signal_at = "2000-01-01T00:00:00+00:00"
+
+
 class _RuntimeControllerNoChecker:
     pass
 
@@ -204,6 +209,21 @@ class _FakeEventBus:
         return {"handler_a": 2}
 
 
+class _WorkerDead:
+    def is_alive(self):
+        return False
+
+
+class _LivenessEventBus:
+    _workers = [_WorkerDead()]
+
+    def queue_depth(self):
+        return 4
+
+    def delivered_total_count(self):
+        return 11
+
+
 class _FakeAsyncDBWriter:
     _written = 100
     _failed = 3
@@ -253,6 +273,39 @@ class _RiskDeskBankrollOnlyStub:
 class _RuntimeControllerBankrollOnlyStub:
     table_manager = _TableManagerStub()
     risk_desk = _RiskDeskBankrollOnlyStub()
+
+
+def test_collect_metrics_emits_default_liveness_signals():
+    probe = RuntimeProbe(
+        runtime_controller=_RuntimeHeartbeatStub(),
+        event_bus=_LivenessEventBus(),
+    )
+
+    metrics = probe.collect_metrics()
+
+    assert "heartbeat_age" in metrics
+    assert metrics["heartbeat_age"] > 0.0
+    assert metrics["last_heartbeat_age_sec"] == metrics["heartbeat_age"]
+    assert metrics["queue_depth"] == 4.0
+    assert metrics["worker_threads_alive"] == 0.0
+    assert metrics["worker_alive"] == 0.0
+    assert metrics["completed_total"] == 11.0
+    assert metrics["completed_delta"] == 0.0
+
+
+def test_collect_metrics_completed_delta_advances_deterministically():
+    class _Writer:
+        _written = 7
+
+    probe = RuntimeProbe(async_db_writer=_Writer())
+    first = probe.collect_metrics()
+    assert first["completed_total"] == 7.0
+    assert first["completed_delta"] == 0.0
+
+    _Writer._written = 10
+    second = probe.collect_metrics()
+    assert second["completed_total"] == 10.0
+    assert second["completed_delta"] == 3.0
 
 
 def test_collect_correlation_context_from_event_bus():

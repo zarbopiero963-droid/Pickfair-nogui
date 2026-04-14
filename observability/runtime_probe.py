@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import time
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
 
@@ -34,6 +35,7 @@ class RuntimeProbe:
         self.telegram_alerts_service = telegram_alerts_service
         self.event_bus = event_bus
         self.async_db_writer = async_db_writer
+        self._last_completed_total: float | None = None
 
     def collect_health(self) -> Dict[str, Dict[str, Any]]:
         out: Dict[str, Dict[str, Any]] = {}
@@ -49,6 +51,7 @@ class RuntimeProbe:
 
     def collect_metrics(self) -> Dict[str, float]:
         metrics: Dict[str, float] = {}
+        now_ts = time.time()
 
         if self.trading_engine is not None:
             inflight = getattr(self.trading_engine, "_inflight_keys", None)
@@ -58,6 +61,29 @@ class RuntimeProbe:
             seen = getattr(self.trading_engine, "_seen_correlation_ids", None)
             if seen is not None:
                 metrics["seen_correlation_ids_count"] = float(len(seen))
+
+        heartbeat_age = self._heartbeat_age_seconds(now_ts)
+        if heartbeat_age is not None:
+            metrics["heartbeat_age"] = float(heartbeat_age)
+            # Backward-compatible alias used by existing rules/correlations.
+            metrics["last_heartbeat_age_sec"] = float(heartbeat_age)
+
+        queue_depth = self._event_bus_queue_depth()
+        if queue_depth is not None:
+            metrics["queue_depth"] = float(queue_depth)
+
+        worker_threads_alive = self._event_bus_worker_threads_alive()
+        if worker_threads_alive is not None:
+            metrics["worker_threads_alive"] = float(worker_threads_alive)
+            metrics["worker_alive"] = float(1.0 if worker_threads_alive > 0 else 0.0)
+
+        completed_total = self._completed_total()
+        if completed_total is not None:
+            prev = self._last_completed_total
+            completed_delta = 0.0 if prev is None else max(0.0, float(completed_total - prev))
+            metrics["completed_total"] = float(completed_total)
+            metrics["completed_delta"] = float(completed_delta)
+            self._last_completed_total = float(completed_total)
 
         rss_mb = self._current_rss_mb()
         if rss_mb is not None:
@@ -125,6 +151,85 @@ class RuntimeProbe:
             "recent_audit": recent_audit,
             "diagnostics_export": diagnostics_export,
         }
+
+    def _heartbeat_age_seconds(self, now_ts: float) -> float | None:
+        runtime = self.runtime_controller
+        if runtime is None:
+            return None
+
+        raw = getattr(runtime, "last_signal_at", None)
+        if raw is None:
+            return None
+        if isinstance(raw, (int, float)):
+            try:
+                ts = float(raw)
+            except Exception:
+                return None
+            if ts <= 0:
+                return None
+            return max(0.0, now_ts - ts)
+        if isinstance(raw, str):
+            text = raw.strip()
+            if not text:
+                return None
+            try:
+                parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except Exception:
+                return None
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return max(0.0, now_ts - parsed.timestamp())
+        return None
+
+    def _event_bus_queue_depth(self) -> int | None:
+        if self.event_bus is None:
+            return None
+        qd_fn = getattr(self.event_bus, "queue_depth", None)
+        if callable(qd_fn):
+            try:
+                return int(qd_fn())
+            except Exception:
+                return None
+        queue = getattr(self.event_bus, "_queue", None)
+        if queue is not None:
+            try:
+                return int(queue.qsize())
+            except Exception:
+                return None
+        return None
+
+    def _event_bus_worker_threads_alive(self) -> int | None:
+        if self.event_bus is None:
+            return None
+        workers = getattr(self.event_bus, "_workers", None)
+        if not isinstance(workers, list):
+            return None
+        try:
+            return int(sum(1 for t in workers if getattr(t, "is_alive", lambda: False)()))
+        except Exception:
+            return None
+
+    def _completed_total(self) -> float | None:
+        # Prefer async db writer committed writes as canonical progress.
+        writer = self.async_db_writer
+        if writer is not None:
+            written = getattr(writer, "_written", None)
+            if written is not None:
+                try:
+                    return float(written)
+                except Exception:
+                    pass
+
+        # Fallback to event bus delivered callbacks as progress proxy.
+        bus = self.event_bus
+        if bus is not None:
+            delivered_fn = getattr(bus, "delivered_total_count", None)
+            if callable(delivered_fn):
+                try:
+                    return float(delivered_fn())
+                except Exception:
+                    pass
+        return None
 
 
     def collect_correlation_context(self) -> Dict[str, Any]:
