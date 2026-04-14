@@ -121,6 +121,17 @@ class ReconciliationEngine:
 
         # ── lifecycle hooks for crash-recovery testing (Point 10) ──
         self._hooks: Dict[str, Any] = {}
+        self._ghost_evidence_snapshot: Dict[str, Any] = {
+            "suspected_ghost_count": 0,
+            "ghost_orders_count": 0,
+            "unconfirmed_inflight_count": 0,
+            "unconfirmed_inflight_age_sec": 0.0,
+            "ghost_age_threshold_sec": 120.0,
+            "event_key": "",
+            "sample_unconfirmed_order_ids": [],
+            "sample_ghost_bet_ids": [],
+            "source": "reconciliation_engine",
+        }
 
         # ── validate contracts on init (Point 4) ────────────────
         if self.cfg.validate_batch_manager_contract:
@@ -1245,8 +1256,38 @@ class ReconciliationEngine:
             })
             if self.cfg.ghost_order_action == "CANCEL":
                 self._cancel_ghost_orders(ghosts)
+            self._ghost_evidence_snapshot = {
+                "suspected_ghost_count": int(len(ghosts)),
+                "ghost_orders_count": int(len(ghosts)),
+                "unconfirmed_inflight_count": int(len(ghosts)),
+                "unconfirmed_inflight_age_sec": 0.0,
+                "ghost_age_threshold_sec": 120.0,
+                "event_key": str(batch_id or ""),
+                "sample_unconfirmed_order_ids": [],
+                "sample_ghost_bet_ids": [
+                    str(g.get("bet_id") or "")
+                    for g in ghosts[:5]
+                    if str(g.get("bet_id") or "")
+                ],
+                "source": "reconciliation_engine",
+            }
+        else:
+            self._ghost_evidence_snapshot = {
+                "suspected_ghost_count": 0,
+                "ghost_orders_count": 0,
+                "unconfirmed_inflight_count": 0,
+                "unconfirmed_inflight_age_sec": 0.0,
+                "ghost_age_threshold_sec": 120.0,
+                "event_key": str(batch_id or ""),
+                "sample_unconfirmed_order_ids": [],
+                "sample_ghost_bet_ids": [],
+                "source": "reconciliation_engine",
+            }
 
         return ghosts
+
+    def ghost_evidence_snapshot(self) -> Dict[str, Any]:
+        return dict(self._ghost_evidence_snapshot)
 
     def _cancel_ghost_orders(self, ghosts: List[Dict[str, Any]]) -> None:
         client = self._get_client()

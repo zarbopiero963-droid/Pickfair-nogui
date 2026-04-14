@@ -84,6 +84,7 @@ class _NullRiskMiddleware:
 
 class _NullReconciliationEngine:
     def enqueue(self, **_kw: Any) -> None: return None
+    def ghost_evidence_snapshot(self) -> Dict[str, Any]: return {}
     def is_ready(self) -> bool: return True
 
 

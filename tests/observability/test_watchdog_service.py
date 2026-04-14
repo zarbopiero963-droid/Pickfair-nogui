@@ -636,6 +636,7 @@ def test_build_anomaly_context_includes_probe_canonical_reviewer_blocks():
                 "recent_orders": [{"order_id": "o1", "status": "SUBMITTED"}],
                 "recent_audit": [],
                 "reconcile_chain": {"missing_count": 1, "sample_missing_ids": ["o1"]},
+                "runtime_state": {"reconcile": {"suspected_ghost_count": 1, "event_key": "evt-1"}},
             }
 
     watchdog = WatchdogService(
@@ -654,6 +655,54 @@ def test_build_anomaly_context_includes_probe_canonical_reviewer_blocks():
     assert ctx["financials"]["ledger_balance"] == 10.0
     assert ctx["event_bus"]["expected_fanout"] == 3
     assert ctx["reconcile_chain"]["missing_count"] == 1
+    assert ctx["runtime_state"]["reconcile"]["suspected_ghost_count"] == 1
+
+
+def test_runtime_probe_default_path_emits_canonical_ghost_evidence_for_anomaly_context():
+    from observability.runtime_probe import RuntimeProbe
+
+    class _Rec:
+        def ghost_evidence_snapshot(self):
+            return {"ghost_orders_count": 2, "event_key": "batch-42", "source": "reconciliation_engine"}
+
+    class _Trading:
+        reconciliation_engine = _Rec()
+
+        def readiness(self):
+            return {"state": "READY"}
+
+    class _Db:
+        def get_recent_orders_for_diagnostics(self, limit=200):
+            del limit
+            return [
+                {
+                    "order_id": "ord-1",
+                    "status": "AMBIGUOUS",
+                    "remote_bet_id": "bet-100",
+                    "event_key": "evt-100",
+                }
+            ]
+
+        def get_recent_audit_events_for_diagnostics(self, limit=300):
+            del limit
+            return []
+
+    probe = RuntimeProbe(db=_Db(), trading_engine=_Trading())
+    watchdog = WatchdogService(
+        probe=probe,
+        health_registry=HealthRegistry(),
+        metrics_registry=MetricsRegistry(),
+        alerts_manager=AlertsManager(),
+        incidents_manager=IncidentsManager(),
+        snapshot_service=_SnapshotStub(),
+        interval_sec=60.0,
+    )
+
+    ctx = watchdog._build_anomaly_context()
+    reconcile = ctx["runtime_state"]["reconcile"]
+    assert reconcile["ghost_orders_count"] == 2
+    assert reconcile["suspected_ghost_count"] >= 1
+    assert reconcile["event_key"] in {"batch-42", "evt-100"}
 
 
 def test_watchdog_default_path_uses_runtime_probe_liveness_metrics():
