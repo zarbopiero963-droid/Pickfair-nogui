@@ -106,10 +106,115 @@ class RuntimeProbe:
 
         if self.trading_engine is not None:
             state["trading_engine_readiness"] = getattr(self.trading_engine, "readiness", lambda: None)()
+        state["reconcile"] = self._collect_canonical_ghost_evidence()
         state["alert_pipeline"] = self._alert_pipeline_state()
         state["forensics"] = self._forensics_state()
 
         return state
+
+    def _collect_canonical_ghost_evidence(self) -> Dict[str, Any]:
+        evidence: Dict[str, Any] = {
+            "suspected_ghost_count": 0,
+            "ghost_orders_count": 0,
+            "unconfirmed_inflight_count": 0,
+            "unconfirmed_inflight_age_sec": 0.0,
+            "ghost_age_threshold_sec": 120.0,
+            "event_key": "",
+            "sample_unconfirmed_order_ids": [],
+            "sample_ghost_bet_ids": [],
+            "source": "default_runtime_probe",
+        }
+
+        reconcile_engine = getattr(self.trading_engine, "reconciliation_engine", None)
+        ghost_snapshot_getter = getattr(reconcile_engine, "ghost_evidence_snapshot", None)
+        if callable(ghost_snapshot_getter):
+            try:
+                snapshot = ghost_snapshot_getter() or {}
+            except Exception:
+                snapshot = {}
+            if isinstance(snapshot, dict):
+                for key in (
+                    "suspected_ghost_count",
+                    "ghost_orders_count",
+                    "unconfirmed_inflight_count",
+                    "unconfirmed_inflight_age_sec",
+                    "ghost_age_threshold_sec",
+                    "event_key",
+                    "sample_unconfirmed_order_ids",
+                    "sample_ghost_bet_ids",
+                ):
+                    if key in snapshot:
+                        evidence[key] = snapshot.get(key)
+                source = str(snapshot.get("source", "") or "")
+                if source:
+                    evidence["source"] = source
+
+        recent_orders: list[dict[str, Any]] = []
+        recent_audit: list[dict[str, Any]] = []
+        if self.db is not None:
+            orders_getter = getattr(self.db, "get_recent_orders_for_diagnostics", None)
+            if callable(orders_getter):
+                try:
+                    recent_orders = [
+                        o for o in (orders_getter(limit=200) or [])
+                        if isinstance(o, dict)
+                    ]
+                except Exception:
+                    recent_orders = []
+            audit_getter = getattr(self.db, "get_recent_audit_events_for_diagnostics", None)
+            if callable(audit_getter):
+                try:
+                    recent_audit = [
+                        a for a in (audit_getter(limit=300) or [])
+                        if isinstance(a, dict)
+                    ]
+                except Exception:
+                    recent_audit = []
+
+        audit_ids = {
+            str(a.get("order_id") or a.get("id") or "").strip()
+            for a in recent_audit
+        }
+        audit_ids.discard("")
+        ghost_candidate_statuses = {"INFLIGHT", "AMBIGUOUS", "UNCERTAIN", "SUBMITTED"}
+
+        unconfirmed_orders = []
+        for order in recent_orders:
+            status = str(order.get("status") or "").upper()
+            if status not in ghost_candidate_statuses:
+                continue
+            order_id = str(order.get("order_id") or order.get("id") or "").strip()
+            if order_id and order_id in audit_ids:
+                continue
+            remote_id = str(order.get("remote_bet_id") or order.get("exchange_order_id") or "").strip()
+            if not remote_id:
+                continue
+            unconfirmed_orders.append(order)
+
+        if unconfirmed_orders:
+            evidence["suspected_ghost_count"] = max(
+                int(evidence.get("suspected_ghost_count", 0) or 0),
+                len(unconfirmed_orders),
+            )
+            evidence["unconfirmed_inflight_count"] = max(
+                int(evidence.get("unconfirmed_inflight_count", 0) or 0),
+                len(unconfirmed_orders),
+            )
+            evidence["sample_unconfirmed_order_ids"] = [
+                str(o.get("order_id") or o.get("id") or "")
+                for o in unconfirmed_orders[:5]
+                if str(o.get("order_id") or o.get("id") or "")
+            ]
+            if not str(evidence.get("event_key", "") or ""):
+                first = unconfirmed_orders[0]
+                evidence["event_key"] = str(
+                    first.get("event_key")
+                    or first.get("customer_ref")
+                    or first.get("order_id")
+                    or ""
+                )
+
+        return evidence
 
     def collect_forensics_evidence(self) -> Dict[str, Any]:
         recent_orders = []
@@ -522,6 +627,7 @@ class RuntimeProbe:
                 "sample_finalized_missing_ids": missing_finalized[:5],
             }
         )
+        context["runtime_state"] = {"reconcile": self._collect_canonical_ghost_evidence()}
 
         event_bus = dict((context.get("event_bus") or {}))
         corr_ctx = self.collect_correlation_context()
