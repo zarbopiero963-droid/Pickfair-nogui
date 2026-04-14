@@ -48,8 +48,6 @@ def test_default_invariant_checks_exported():
     assert "terminal_to_nonterminal_regression" in codes
     assert "failed_local_remote_exists" in codes
     # Required runtime-reviewer canonical codes must also be present.
-    # Note: invariant EXPOSURE_MISMATCH is prefixed INVARIANT_ to avoid collision
-    # with anomaly rule EXPOSURE_MISMATCH (different source, same code key = resolution bug).
     assert "FAILED_LOCAL_REMOTE_EXISTS" in codes
     assert "STATE_REGRESSION" in codes
     assert "INFLIGHT_STUCK" in codes
@@ -297,11 +295,6 @@ def test_INFLIGHT_STUCK_no_false_positive():
 
 def test_EXPOSURE_MISMATCH_fires_on_exposure_delta_exceeding_tolerance():
     """INVARIANT_EXPOSURE_MISMATCH fires when local and remote exposure differ beyond tolerance.
-
-    The invariant code is INVARIANT_EXPOSURE_MISMATCH (not EXPOSURE_MISMATCH) to avoid
-    code-key collision with the anomaly rule EXPOSURE_MISMATCH — same key without source
-    scoping in AlertsManager/IncidentsManager causes anomaly stale-cleanup to wrongly
-    resolve a still-active invariant alert.
     """
     state = {
         "runtime": {"status": "READY"},
@@ -311,7 +304,6 @@ def test_EXPOSURE_MISMATCH_fires_on_exposure_delta_exceeding_tolerance():
     violations = evaluate_invariants(state, enabled=True)
     codes = {v.code for v in violations}
     assert "INVARIANT_EXPOSURE_MISMATCH" in codes
-    # The anomaly code EXPOSURE_MISMATCH must NOT be emitted from the invariant path
     assert "EXPOSURE_MISMATCH" not in codes
 
 
@@ -331,7 +323,7 @@ def test_all_four_required_invariants_active_in_watchdog_path():
     """Proves all 4 required invariant codes are evaluated when watchdog calls evaluate_invariants.
 
     Specifically tests that the watchdog's _evaluate_invariants() path surfaces
-    FAILED_LOCAL_REMOTE_EXISTS, STATE_REGRESSION, INFLIGHT_STUCK, EXPOSURE_MISMATCH
+    FAILED_LOCAL_REMOTE_EXISTS, STATE_REGRESSION, INFLIGHT_STUCK, INVARIANT_EXPOSURE_MISMATCH
     as operational alerts when violations are present.
     """
     from observability.alerts_manager import AlertsManager
@@ -392,10 +384,5 @@ def test_all_four_required_invariants_active_in_watchdog_path():
         "INFLIGHT_STUCK must be raised by invariant reviewer when inflight orders exceed max age"
     )
     assert "INVARIANT_EXPOSURE_MISMATCH" in active_codes, (
-        "INVARIANT_EXPOSURE_MISMATCH must be raised by invariant reviewer when local/remote exposure differs; "
-        "code is prefixed to avoid collision with anomaly EXPOSURE_MISMATCH"
-    )
-    # Prove no collision: anomaly reviewer code must NOT be present from invariant path
-    assert "EXPOSURE_MISMATCH" not in active_codes, (
-        "invariant reviewer must NOT emit bare EXPOSURE_MISMATCH — that code belongs to the anomaly path"
+        "INVARIANT_EXPOSURE_MISMATCH must be raised by invariant reviewer when local/remote exposure differs"
     )

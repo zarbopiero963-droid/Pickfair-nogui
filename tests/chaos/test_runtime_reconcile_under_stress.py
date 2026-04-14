@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import inspect
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, List
 
 import pytest
 
+from core.reconciliation_engine import ReconciliationEngine
 from core.trading_engine import STATUS_AMBIGUOUS, STATUS_COMPLETED
 from observability.diagnostic_bundle_builder import DiagnosticBundleBuilder
 from observability.diagnostics_service import DiagnosticsService
@@ -96,6 +98,80 @@ def test_reconcile_transient_failure_preserves_ambiguity() -> None:
     assert state_after_first["status"] != "FAILED"
     assert second_pass is True
     assert state_after_second["status"] == STATUS_COMPLETED
+
+
+@pytest.mark.chaos
+@pytest.mark.integration
+def test_reconciliation_audited_path_has_no_while_true_or_sleep() -> None:
+    fetch_src = inspect.getsource(ReconciliationEngine._fetch_current_orders_by_market)
+    reconcile_src = inspect.getsource(ReconciliationEngine._reconcile_batch_inner)
+
+    assert "while True" not in fetch_src
+    assert "while True" not in reconcile_src
+
+    class _DB:
+        def persist_decision_log(self, *args, **kwargs):
+            return None
+
+        def get_pending_sagas(self):
+            return []
+
+        def get_reconcile_marker(self, _batch_id):
+            return None
+
+        def set_reconcile_marker(self, _batch_id, _value):
+            return None
+
+    class _Batch:
+        def get_batch(self, batch_id):
+            return {"batch_id": batch_id, "market_id": "1.1", "status": "LIVE"}
+
+        def get_batch_legs(self, _batch_id):
+            return [{"leg_index": 0, "status": "SUBMITTED", "customer_ref": "R1"}]
+
+        def update_leg_status(self, **kwargs):
+            _ = kwargs
+            return None
+
+        def recompute_batch_status(self, batch_id):
+            return {"batch_id": batch_id, "status": "LIVE"}
+
+        def mark_batch_failed(self, *_args, **_kwargs):
+            return None
+
+        def get_open_batches(self):
+            return []
+
+        def release_runtime_artifacts(self, **kwargs):
+            _ = kwargs
+            return None
+
+    class _Client:
+        def get_current_orders(self, market_ids=None):
+            _ = market_ids
+            raise TimeoutError("transient")
+
+    engine = ReconciliationEngine(
+        db=_DB(),
+        batch_manager=_Batch(),
+        client_getter=lambda: _Client(),
+    )
+    setattr(engine.cfg, "audited_single_pass_mode", True)
+
+    original_sleep = __import__("time").sleep
+
+    def _boom(_seconds):
+        raise AssertionError("time.sleep must not be called in audited single-pass mode")
+
+    import time
+
+    time.sleep = _boom
+    try:
+        _orders, reason = engine._fetch_current_orders_by_market("1.1")
+    finally:
+        time.sleep = original_sleep
+
+    assert reason is not None
 
 
 @pytest.mark.chaos
