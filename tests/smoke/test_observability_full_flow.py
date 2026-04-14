@@ -75,6 +75,12 @@ def test_observability_full_flow_smoke(tmp_path):
         interval_sec=0.01,
     )
     watchdog._tick()
+    correlation_codes = {a["code"] for a in alerts.active_alerts() if a.get("source") == "correlation_reviewer"}
+    assert "CORRELATION_REVIEWER_DISABLED" not in correlation_codes
+    assert "CORRELATION_REVIEWER_MISSING" not in correlation_codes
+    assert "CORRELATION_REVIEWER_UNAVAILABLE" not in correlation_codes
+    assert "CORRELATION_REVIEWER_MISCONFIGURED" not in correlation_codes
+    assert "CORRELATION_REVIEWER_EMPTY" not in correlation_codes
 
     service = DiagnosticsService(
         builder=DiagnosticBundleBuilder(export_dir=str(tmp_path / "exports")),

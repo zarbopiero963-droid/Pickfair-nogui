@@ -403,6 +403,18 @@ class WatchdogService:
 
     def _evaluate_correlations(self) -> None:
         context = self._build_anomaly_context()
+        current_codes: set[str] = set()
+
+        corr_enabled = context.get("correlation_reviewer_enabled", True)
+        if not bool(corr_enabled):
+            findings = [{
+                "code": "CORRELATION_REVIEWER_DISABLED",
+                "severity": "critical",
+                "message": "Correlation reviewer is DISABLED; fail-closed blocker raised",
+                "details": {"correlation_reviewer_enabled": False, "suppressed_this_tick": True},
+            }]
+        else:
+            findings = None
 
         # Enrich with strongly-typed direct evidence from live runtime collectors.
         # Direct values (queue depth, published total, subscriber errors, DB write
@@ -421,8 +433,28 @@ class WatchdogService:
             except Exception:
                 logger.exception("collect_correlation_context failed")
 
-        findings = self._correlation_evaluator.evaluate(context)
-        current_codes: set[str] = set()
+        if findings is None:
+            evaluator = self._correlation_evaluator
+            if evaluator is None:
+                code = "CORRELATION_REVIEWER_MISSING"
+                findings = [{
+                    "code": code,
+                    "severity": "critical",
+                    "message": "Correlation reviewer evaluator is missing",
+                    "details": {"evaluator": None},
+                }]
+            else:
+                evaluate = getattr(evaluator, "evaluate", None)
+                if not callable(evaluate):
+                    code = "CORRELATION_REVIEWER_UNAVAILABLE"
+                    findings = [{
+                        "code": code,
+                        "severity": "critical",
+                        "message": "Correlation reviewer evaluator is unavailable",
+                        "details": {"evaluator_type": type(evaluator).__name__},
+                    }]
+                else:
+                    findings = evaluate(context)
 
         for finding in findings:
             code = str(finding.get("code", "") or "")

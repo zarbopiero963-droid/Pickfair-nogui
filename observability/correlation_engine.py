@@ -114,6 +114,10 @@ def _correlation_finding(code: str, severity: str, message: str, details: Dict[s
     return {"code": code, "severity": severity, "message": message, "details": details}
 
 
+def _reviewer_state_finding(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> CorrelationFinding:
+    return _correlation_finding(code, "critical", message, details or {})
+
+
 def rule_local_vs_remote(context: CorrelationContext, state: CorrelationState) -> Optional[CorrelationFinding]:
     orders = context.get("recent_orders") or []
     mismatched = [
@@ -262,6 +266,32 @@ class CorrelationEvaluator:
         self.state: Dict[str, Dict[str, Any]] = {}
 
     def evaluate(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        if not bool(context.get("correlation_reviewer_enabled", True)):
+            return [
+                _reviewer_state_finding(
+                    "CORRELATION_REVIEWER_DISABLED",
+                    "Correlation reviewer is disabled; refusing healthy no-finding semantics",
+                    details={"correlation_reviewer_enabled": False},
+                )
+            ]
+        if len(self.rules) == 0:
+            return [
+                _reviewer_state_finding(
+                    "CORRELATION_REVIEWER_EMPTY",
+                    "Correlation reviewer has no checks configured; refusing no-op pass semantics",
+                    details={"checks_count": 0},
+                )
+            ]
+        invalid_rules = [getattr(rule, "__name__", repr(rule)) for rule in self.rules if not callable(rule)]
+        if invalid_rules:
+            return [
+                _reviewer_state_finding(
+                    "CORRELATION_REVIEWER_MISCONFIGURED",
+                    "Correlation reviewer configuration is invalid; checks are not callable",
+                    details={"invalid_rules": invalid_rules},
+                )
+            ]
+
         findings = []
         for rule in self.rules:
             rule_name = getattr(rule, "__name__", "rule")
