@@ -108,6 +108,9 @@ class WatchdogService:
         self._publish_metric_gauges(metrics)
 
         self._evaluate_alerts()
+        self._evaluate_invariants()
+        self._evaluate_correlations()
+        self._evaluate_forensics()
         if self._is_anomaly_enabled():
             self._run_anomaly_hook()
         else:
@@ -120,9 +123,6 @@ class WatchdogService:
             self.last_anomalies = []
             self.escalation_requested = False
             self.last_escalation_event = None
-        self._evaluate_invariants()
-        self._evaluate_correlations()
-        self._evaluate_forensics()
         self.snapshot_service.collect_and_store()
 
     def _publish_health_components(self, health_map: dict[str, Any]) -> None:

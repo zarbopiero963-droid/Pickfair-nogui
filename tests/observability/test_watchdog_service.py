@@ -938,8 +938,8 @@ def test_stale_anomaly_incident_resolution_carries_reason():
     assert any("closed" in e["message"].lower() for e in closed["events"])
 
 
-def test_tick_keeps_exposure_mismatch_active_after_anomaly_clears():
-    """tick() ordering keeps invariant EXPOSURE_MISMATCH active when anomaly clears."""
+def test_tick_keeps_invariant_and_anomaly_exposure_signals_distinct():
+    """Anomaly EXPOSURE_MISMATCH and invariant INVARIANT_EXPOSURE_MISMATCH do not clobber each other."""
     alerts = AlertsManager()
     incidents = IncidentsManager()
 
@@ -983,16 +983,14 @@ def test_tick_keeps_exposure_mismatch_active_after_anomaly_clears():
     watchdog.tick()
 
     all_codes_t1 = {a["code"] for a in alerts.active_alerts()}
-    assert "EXPOSURE_MISMATCH" in all_codes_t1, (
-        "tick must surface EXPOSURE_MISMATCH when either reviewer detects exposure drift"
-    )
+    assert "EXPOSURE_MISMATCH" in all_codes_t1
+    assert "INVARIANT_EXPOSURE_MISMATCH" in all_codes_t1
 
     watchdog.tick()
 
     all_codes_t2 = {a["code"] for a in alerts.active_alerts()}
-    assert "EXPOSURE_MISMATCH" in all_codes_t2, (
-        "invariant EXPOSURE_MISMATCH must stay active after anomaly reviewer clears"
-    )
+    assert "EXPOSURE_MISMATCH" not in all_codes_t2
+    assert "INVARIANT_EXPOSURE_MISMATCH" in all_codes_t2
 
 
 def test_tick_is_single_pass_and_loop_free():

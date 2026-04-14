@@ -51,7 +51,7 @@ def test_default_invariant_checks_exported():
     assert "FAILED_LOCAL_REMOTE_EXISTS" in codes
     assert "STATE_REGRESSION" in codes
     assert "INFLIGHT_STUCK" in codes
-    assert "EXPOSURE_MISMATCH" in codes
+    assert "INVARIANT_EXPOSURE_MISMATCH" in codes
 
 
 def test_failed_local_remote_exists_catches_ghost():
@@ -199,7 +199,7 @@ def test_new_checks_are_fail_safe_on_empty_orders():
     assert "FAILED_LOCAL_REMOTE_EXISTS" not in codes
     assert "STATE_REGRESSION" not in codes
     assert "INFLIGHT_STUCK" not in codes
-    assert "EXPOSURE_MISMATCH" not in codes
+    assert "INVARIANT_EXPOSURE_MISMATCH" not in codes
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +294,7 @@ def test_INFLIGHT_STUCK_no_false_positive():
 
 
 def test_EXPOSURE_MISMATCH_fires_on_exposure_delta_exceeding_tolerance():
-    """EXPOSURE_MISMATCH fires when local and remote exposure differ beyond tolerance.
+    """INVARIANT_EXPOSURE_MISMATCH fires when local and remote exposure differ beyond tolerance.
     """
     state = {
         "runtime": {"status": "READY"},
@@ -303,11 +303,12 @@ def test_EXPOSURE_MISMATCH_fires_on_exposure_delta_exceeding_tolerance():
     }
     violations = evaluate_invariants(state, enabled=True)
     codes = {v.code for v in violations}
-    assert "EXPOSURE_MISMATCH" in codes
+    assert "INVARIANT_EXPOSURE_MISMATCH" in codes
+    assert "EXPOSURE_MISMATCH" not in codes
 
 
 def test_EXPOSURE_MISMATCH_no_false_positive():
-    """EXPOSURE_MISMATCH does not fire when local and remote exposure match within tolerance."""
+    """INVARIANT_EXPOSURE_MISMATCH does not fire when local and remote exposure match within tolerance."""
     state = {
         "runtime": {"status": "READY"},
         "metrics": {"inflight_count": 0},
@@ -315,14 +316,14 @@ def test_EXPOSURE_MISMATCH_no_false_positive():
     }
     violations = evaluate_invariants(state, enabled=True)
     codes = {v.code for v in violations}
-    assert "EXPOSURE_MISMATCH" not in codes
+    assert "INVARIANT_EXPOSURE_MISMATCH" not in codes
 
 
 def test_all_four_required_invariants_active_in_watchdog_path():
     """Proves all 4 required invariant codes are evaluated when watchdog calls evaluate_invariants.
 
     Specifically tests that the watchdog's _evaluate_invariants() path surfaces
-    FAILED_LOCAL_REMOTE_EXISTS, STATE_REGRESSION, INFLIGHT_STUCK, EXPOSURE_MISMATCH
+    FAILED_LOCAL_REMOTE_EXISTS, STATE_REGRESSION, INFLIGHT_STUCK, INVARIANT_EXPOSURE_MISMATCH
     as operational alerts when violations are present.
     """
     from observability.alerts_manager import AlertsManager
@@ -382,6 +383,6 @@ def test_all_four_required_invariants_active_in_watchdog_path():
     assert "INFLIGHT_STUCK" in active_codes, (
         "INFLIGHT_STUCK must be raised by invariant reviewer when inflight orders exceed max age"
     )
-    assert "EXPOSURE_MISMATCH" in active_codes, (
-        "EXPOSURE_MISMATCH must be raised by invariant reviewer when local/remote exposure differs"
+    assert "INVARIANT_EXPOSURE_MISMATCH" in active_codes, (
+        "INVARIANT_EXPOSURE_MISMATCH must be raised by invariant reviewer when local/remote exposure differs"
     )
