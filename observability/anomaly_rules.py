@@ -296,9 +296,10 @@ def rule_stuck_inflight(context: Context, state: State) -> Anomaly | None:
     has_repeated_identity_signal = repeated_identity_ticks >= 2 and stale_count >= 2
 
     has_strong_evidence = has_per_order_signal or has_repeated_identity_signal or has_age_distribution_signal
+    evidence_supported = int(evidence.get("inflight_with_age_count", 0) or 0) > 0
 
     count = int(state.get("stuck_inflight_ticks", 0) or 0)
-    if inflight >= 50 and has_strong_evidence:
+    if inflight >= 50 and (has_strong_evidence or not evidence_supported):
         count += 1
     else:
         count = 0
@@ -322,6 +323,8 @@ def rule_stuck_inflight(context: Context, state: State) -> Anomaly | None:
                     "per_order_age": has_per_order_signal,
                     "repeated_stale_identity": has_repeated_identity_signal,
                     "age_distribution": has_age_distribution_signal,
+                    "evidence_supported": evidence_supported,
+                    "aggregate_fallback_used": (not evidence_supported),
                 },
             },
         )

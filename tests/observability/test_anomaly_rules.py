@@ -489,3 +489,25 @@ def test_rule_stuck_inflight_fires_with_repeated_stale_identity_and_age_evidence
     assert finding["details"]["evidence_flags"]["per_order_age"] is True
     assert finding["details"]["evidence_flags"]["repeated_stale_identity"] is True
     assert finding["details"]["sample_stale_inflight"][0]["order_id"] == "o-1"
+
+
+def test_rule_stuck_inflight_preserves_aggregate_fallback_when_age_evidence_unavailable():
+    from observability.anomaly_rules import rule_stuck_inflight
+
+    state = {}
+    ctx = {
+        "metrics": {"gauges": {"inflight_count": 55.0}},
+        "runtime_state": {},
+        "recent_orders": [
+            {"order_id": "o-1", "status": "SUBMITTED"},
+            {"order_id": "o-2", "status": "INFLIGHT"},
+        ],
+    }
+
+    assert rule_stuck_inflight(ctx, state) is None
+    assert rule_stuck_inflight(ctx, state) is None
+    finding = rule_stuck_inflight(ctx, state)
+    assert finding is not None
+    assert finding["code"] == "STUCK_INFLIGHT"
+    assert finding["details"]["evidence_flags"]["evidence_supported"] is False
+    assert finding["details"]["evidence_flags"]["aggregate_fallback_used"] is True
