@@ -101,6 +101,7 @@ class WatchdogService:
         self.tick()
 
     def tick(self) -> None:
+        _DISABLED_CODE = "ANOMALY_REVIEWER_DISABLED"
         health_map = self.probe.collect_health()
         self._publish_health_components(health_map)
 
@@ -112,13 +113,18 @@ class WatchdogService:
         self._evaluate_correlations()
         self._evaluate_forensics()
         if self._is_anomaly_enabled():
+            self.alerts_manager.resolve_alert(_DISABLED_CODE)
+            self.incidents_manager.close_incident(
+                _DISABLED_CODE,
+                reason="anomaly_reviewer_reenabled",
+                resolved_by="anomaly_reviewer",
+            )
             self._run_anomaly_hook()
         else:
             # Fail-loud + fail-closed: anomaly scanning is explicitly disabled.
             # Emit a structured operational alert and incident so the reviewer-disabled
             # state is surfaced beyond log output — satisfying the fail-closed audit
             # requirement that suppression is an operationally escalated condition.
-            _DISABLED_CODE = "ANOMALY_REVIEWER_DISABLED"
             logger.warning(
                 "anomaly reviewer is DISABLED — anomaly scans are suppressed this tick; "
                 "set anomaly_enabled=True or configure load_anomaly_enabled() to re-enable"
