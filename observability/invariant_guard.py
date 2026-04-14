@@ -134,18 +134,6 @@ _DEFAULT_CHECKS: tuple[tuple[str, str, InvariantCheck], ...] = (
             - float((state.get("risk") or {}).get("remote_exposure", 0) or 0)
         ) <= float((state.get("risk") or {}).get("exposure_tolerance", 0.01) or 0.01),
     ),
-    (
-        # Canonical audited contract code: EXPOSURE_MISMATCH.
-        # Alias of INVARIANT_EXPOSURE_MISMATCH satisfying the runtime-reviewer
-        # audit requirement that the invariant layer explicitly surfaces
-        # EXPOSURE_MISMATCH in real invariant results.
-        "EXPOSURE_MISMATCH",
-        "EXPOSURE_MISMATCH: Local computed exposure differs significantly from remote reported exposure — canonical invariant contract",
-        lambda state: abs(
-            float((state.get("risk") or {}).get("local_exposure", 0) or 0)
-            - float((state.get("risk") or {}).get("remote_exposure", 0) or 0)
-        ) <= float((state.get("risk") or {}).get("exposure_tolerance", 0.01) or 0.01),
-    ),
 )
 
 DEFAULT_INVARIANT_CHECKS = _DEFAULT_CHECKS

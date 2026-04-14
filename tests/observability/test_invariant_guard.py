@@ -52,8 +52,6 @@ def test_default_invariant_checks_exported():
     assert "STATE_REGRESSION" in codes
     assert "INFLIGHT_STUCK" in codes
     assert "INVARIANT_EXPOSURE_MISMATCH" in codes
-    # Canonical audited contract code must also be present.
-    assert "EXPOSURE_MISMATCH" in codes
 
 
 def test_failed_local_remote_exists_catches_ghost():
@@ -202,7 +200,6 @@ def test_new_checks_are_fail_safe_on_empty_orders():
     assert "STATE_REGRESSION" not in codes
     assert "INFLIGHT_STUCK" not in codes
     assert "INVARIANT_EXPOSURE_MISMATCH" not in codes
-    assert "EXPOSURE_MISMATCH" not in codes
 
 
 # ---------------------------------------------------------------------------
@@ -296,11 +293,8 @@ def test_INFLIGHT_STUCK_no_false_positive():
     assert "INFLIGHT_STUCK" not in codes
 
 
-def test_EXPOSURE_MISMATCH_fires_on_exposure_delta_exceeding_tolerance():
-    """Both EXPOSURE_MISMATCH and INVARIANT_EXPOSURE_MISMATCH fire when exposure
-    differs beyond tolerance. EXPOSURE_MISMATCH is the canonical audited contract
-    code; INVARIANT_EXPOSURE_MISMATCH is retained for backward compatibility.
-    """
+def test_INVARIANT_EXPOSURE_MISMATCH_fires_on_exposure_delta_exceeding_tolerance():
+    """INVARIANT_EXPOSURE_MISMATCH fires when exposure differs beyond tolerance."""
     state = {
         "runtime": {"status": "READY"},
         "metrics": {"inflight_count": 0},
@@ -309,12 +303,10 @@ def test_EXPOSURE_MISMATCH_fires_on_exposure_delta_exceeding_tolerance():
     violations = evaluate_invariants(state, enabled=True)
     codes = {v.code for v in violations}
     assert "INVARIANT_EXPOSURE_MISMATCH" in codes
-    # Canonical audited contract: EXPOSURE_MISMATCH must explicitly appear
-    # in invariant results (not just in anomaly results).
-    assert "EXPOSURE_MISMATCH" in codes
+    assert "EXPOSURE_MISMATCH" not in codes
 
 
-def test_EXPOSURE_MISMATCH_no_false_positive():
+def test_INVARIANT_EXPOSURE_MISMATCH_no_false_positive():
     """INVARIANT_EXPOSURE_MISMATCH does not fire when local and remote exposure match within tolerance."""
     state = {
         "runtime": {"status": "READY"},
@@ -393,40 +385,4 @@ def test_all_four_required_invariants_active_in_watchdog_path():
     assert "INVARIANT_EXPOSURE_MISMATCH" in active_codes, (
         "INVARIANT_EXPOSURE_MISMATCH must be raised by invariant reviewer when local/remote exposure differs"
     )
-    assert "EXPOSURE_MISMATCH" in active_codes, (
-        "EXPOSURE_MISMATCH (canonical audited contract code) must be raised by invariant reviewer when local/remote exposure differs"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Explicit canonical EXPOSURE_MISMATCH contract proof
-# ---------------------------------------------------------------------------
-
-def test_EXPOSURE_MISMATCH_canonical_invariant_contract_explicitly_satisfied():
-    """Explicit proof that EXPOSURE_MISMATCH is present in invariant results.
-
-    The runtime-reviewer audit requires the invariant layer to surface
-    EXPOSURE_MISMATCH (not only INVARIANT_EXPOSURE_MISMATCH) in real
-    invariant violation results. This test makes that contract undeniable.
-    """
-    state = {
-        "runtime": {"status": "READY"},
-        "metrics": {"inflight_count": 0},
-        "risk": {"local_exposure": 50.0, "remote_exposure": 500.0, "exposure_tolerance": 0.01},
-    }
-    violations = evaluate_invariants(state, enabled=True)
-    codes = {v.code for v in violations}
-
-    # The canonical audited contract code must appear in the invariant results.
-    assert "EXPOSURE_MISMATCH" in codes, (
-        "EXPOSURE_MISMATCH must appear in evaluate_invariants() violation results "
-        "when local and remote exposure diverge — this is the canonical invariant contract"
-    )
-    # Backward-compat alias must also remain.
-    assert "INVARIANT_EXPOSURE_MISMATCH" in codes, (
-        "INVARIANT_EXPOSURE_MISMATCH backward-compat alias must remain in invariant results"
-    )
-    # Confirm the EXPOSURE_MISMATCH violation carries the correct structure.
-    exposure_violation = next(v for v in violations if v.code == "EXPOSURE_MISMATCH")
-    assert "EXPOSURE_MISMATCH" in exposure_violation.message
-    assert isinstance(exposure_violation.message, str)
+    assert "EXPOSURE_MISMATCH" not in active_codes
