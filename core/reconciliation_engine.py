@@ -508,6 +508,48 @@ class ReconciliationEngine:
     def _audited_single_pass_mode(self) -> bool:
         return bool(getattr(self.cfg, "audited_single_pass_mode", False))
 
+    def _load_supplied_remote_orders(
+        self, *, batch_id: str, market_id: str
+    ) -> Tuple[List[Dict[str, Any]], Optional[ReasonCode], Optional[Dict[str, Any]]]:
+        """
+        Audited path input boundary.
+        The audited reconcile path must consume a supplied snapshot and must not
+        fetch exchange state itself.
+        """
+        provider = getattr(self.db, "get_reconcile_remote_orders", None)
+        if not callable(provider):
+            return [], ReasonCode.FETCH_PERMANENT_FAILURE, {
+                "code": "RECONCILE_REMOTE_INPUT_UNAVAILABLE",
+                "reason": "db.get_reconcile_remote_orders unavailable",
+                "batch_id": batch_id,
+                "market_id": market_id,
+            }
+        try:
+            payload = provider(batch_id=batch_id, market_id=market_id)
+        except Exception as exc:
+            return [], ReasonCode.FETCH_PERMANENT_FAILURE, {
+                "code": "RECONCILE_REMOTE_INPUT_UNAVAILABLE",
+                "reason": f"db.get_reconcile_remote_orders raised {type(exc).__name__}",
+                "batch_id": batch_id,
+                "market_id": market_id,
+            }
+        if payload is None:
+            return [], ReasonCode.FETCH_PERMANENT_FAILURE, {
+                "code": "RECONCILE_REMOTE_INPUT_MISSING",
+                "reason": "supplied remote orders snapshot is null",
+                "batch_id": batch_id,
+                "market_id": market_id,
+            }
+        if not isinstance(payload, Sequence):
+            return [], ReasonCode.FETCH_PERMANENT_FAILURE, {
+                "code": "RECONCILE_REMOTE_INPUT_MISCONFIGURED",
+                "reason": "supplied remote orders snapshot is non-sequence",
+                "batch_id": batch_id,
+                "market_id": market_id,
+                "payload_type": type(payload).__name__,
+            }
+        return list(payload), None, None
+
     # ─────────────────────────────────────────────────────────────
     # SAGA HELPERS
     # ─────────────────────────────────────────────────────────────
@@ -1397,6 +1439,7 @@ class ReconciliationEngine:
         last_remote_orders: List[Dict[str, Any]] = []
         last_cycle = 0
         fetch_failure: Optional[ReasonCode] = None
+        operational_signal: Optional[Dict[str, Any]] = None
 
         max_cycles = 1 if self._audited_single_pass_mode() else self.cfg.max_convergence_cycles
         for cycle in range(1, max_cycles + 1):
@@ -1404,9 +1447,18 @@ class ReconciliationEngine:
 
             # ── re-fetch exchange state ─────────────────────────
             if market_id:
-                remote_orders, fetch_err = (
-                    self._fetch_current_orders_by_market(market_id)
-                )
+                if self._audited_single_pass_mode():
+                    remote_orders, fetch_err, signal = self._load_supplied_remote_orders(
+                        batch_id=batch_id,
+                        market_id=market_id,
+                    )
+                    if signal is not None:
+                        operational_signal = dict(signal)
+                else:
+                    remote_orders, fetch_err = (
+                        self._fetch_current_orders_by_market(market_id)
+                    )
+                    signal = None
                 if fetch_err is not None:
                     fetch_failure = fetch_err
                     self._log_decision(
@@ -1415,7 +1467,11 @@ class ReconciliationEngine:
                         reason_code=fetch_err,
                         local_status="", exchange_status=None,
                         resolved_status="", merge_winner="NONE",
-                        details={"market_id": market_id, "cycle": cycle},
+                        details={
+                            "market_id": market_id,
+                            "cycle": cycle,
+                            "operational_signal": signal,
+                        },
                     )
                     if fetch_err in (
                         ReasonCode.FETCH_PERMANENT_FAILURE,
@@ -1645,6 +1701,8 @@ class ReconciliationEngine:
                     "cycles": last_cycle,
                     "fingerprint": self._reconcile_fingerprints.get(batch_id, ""),
                     "invariant_violations": violations,
+                    "fetch_failure": fetch_failure.value,
+                    "operational_signal": operational_signal,
                 },
             )
             self._publish("RECONCILIATION_BATCH_DONE", result)

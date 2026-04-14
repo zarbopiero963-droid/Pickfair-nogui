@@ -197,9 +197,20 @@ class WatchdogService:
 
     def _run_anomaly_checks(self) -> list[dict[str, Any]]:
         context = self._build_anomaly_context()
-        runtime_state = context.get("runtime_state")
-        rule_inputs = context if isinstance(context, dict) else {}
         collected: list[dict[str, Any]] = []
+        if not isinstance(context, dict):
+            collected.append(
+                {
+                    "code": "ANOMALY_REVIEWER_UNAVAILABLE",
+                    "severity": "critical",
+                    "message": "Anomaly reviewer input unavailable",
+                    "details": {"reason": "context_not_mapping"},
+                }
+            )
+            return collected
+
+        runtime_state = context.get("runtime_state")
+        rule_inputs = context
 
         if self.anomaly_engine is None:
             for rule_name in (

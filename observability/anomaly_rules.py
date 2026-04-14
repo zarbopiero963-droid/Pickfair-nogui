@@ -211,7 +211,17 @@ def _collect_stuck_inflight_evidence(context: Context) -> Dict[str, Any]:
 
     now_ts = _coerce_epoch_seconds(runtime_state.get("ts"))
     if now_ts is None:
-        now_ts = datetime.now(timezone.utc).timestamp()
+        return {
+            "timestamp_missing": True,
+            "timestamp_reason": "runtime_state.ts missing_or_invalid",
+            "inflight_with_age_count": 0,
+            "stale_inflight_count": 0,
+            "stale_ids": [],
+            "sample_stale_inflight": [],
+            "max_inflight_age_sec": 0.0,
+            "p90_inflight_age_sec": 0.0,
+            "age_threshold_sec": 120.0,
+        }
 
     inflight_statuses = {"INFLIGHT", "SUBMITTED", "AMBIGUOUS", "UNCERTAIN"}
     age_threshold_sec = 120.0
@@ -277,6 +287,18 @@ def rule_stuck_inflight(context: Context, state: State) -> Anomaly | None:
     gauges = (context.get("metrics") or {}).get("gauges") or {}
     inflight = float(gauges.get("inflight_count", 0.0) or 0.0)
     evidence = _collect_stuck_inflight_evidence(context)
+    require_explicit_ts = bool((context.get("runtime_state") or {}).get("require_explicit_ts"))
+    if bool(evidence.get("timestamp_missing")) and inflight >= 50 and require_explicit_ts:
+        return _anomaly(
+            "ANOMALY_INPUT_MISSING",
+            "critical",
+            "Anomaly reviewer missing runtime timestamp for stuck-inflight evaluation",
+            {
+                "reason": evidence.get("timestamp_reason", "runtime timestamp missing"),
+                "required_input": "runtime_state.ts",
+                "rule": "STUCK_INFLIGHT",
+            },
+        )
 
     stale_ids = list(evidence.get("stale_ids", []))
     stale_fingerprint = "|".join(stale_ids[:8])

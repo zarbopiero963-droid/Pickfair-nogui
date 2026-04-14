@@ -16,6 +16,7 @@ from observability.anomaly_rules import (
     exposure_mismatch,
     financial_drift,
     ghost_order_detected,
+    rule_stuck_inflight,
 )
 from observability.alerts_manager import AlertsManager
 from observability.health_registry import HealthRegistry
@@ -305,6 +306,19 @@ def test_financial_drift_is_pure_function():
     assert r1 is not None and r2 is not None
     assert r1["code"] == r2["code"]
     assert r1["details"]["drift"] == r2["details"]["drift"]
+
+
+def test_stuck_inflight_requires_explicit_runtime_timestamp() -> None:
+    context = {
+        "metrics": {"gauges": {"inflight_count": 55}},
+        "runtime_state": {"require_explicit_ts": True},
+        "recent_orders": [],
+    }
+    state: Dict[str, Any] = {}
+    result = rule_stuck_inflight(context, state)
+    assert result is not None
+    assert result["code"] == "ANOMALY_INPUT_MISSING"
+    assert result["severity"] == "critical"
 
 
 # ===========================================================================
