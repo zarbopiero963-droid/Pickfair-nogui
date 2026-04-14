@@ -7,10 +7,15 @@ class SettingsStub:
     def load_telegram_config_row(self):
         return {
             "alerts_enabled": True,
+            "telegram_alerts_enabled": True,
             "alerts_chat_id": "12345",
+            "telegram_alert_chat_id": "12345",
             "alerts_chat_name": "ops",
+            "telegram_alert_name": "ops",
             "min_alert_severity": "WARNING",
+            "telegram_alert_min_severity": "WARNING",
             "alert_cooldown_sec": 0,
+            "telegram_alert_cooldown_sec": 0,
             "alert_dedup_enabled": True,
             "alert_format_rich": True,
         }
@@ -41,6 +46,7 @@ class StrictSeveritySettingsStub(SettingsStub):
     def load_telegram_config_row(self):
         data = super().load_telegram_config_row()
         data["min_alert_severity"] = "CRITICAL"
+        data["telegram_alert_min_severity"] = "CRITICAL"
         return data
 
 
@@ -113,3 +119,33 @@ def test_telegram_alert_pipeline_enabled_but_missing_sender_is_truthful_degraded
     assert result["delivered"] is False
     assert result["reason"] == "sender_unavailable"
     assert result["sender_available"] is False
+
+
+def test_telegram_alert_pipeline_missing_chat_id_no_send():
+    class MissingChat(SettingsStub):
+        def load_telegram_config_row(self):
+            data = super().load_telegram_config_row()
+            data["alerts_chat_id"] = ""
+            data["telegram_alert_chat_id"] = ""
+            return data
+
+    sender = SenderStub()
+    svc = TelegramAlertsService(settings_service=MissingChat(), telegram_sender=sender)
+    result = svc.notify_alert({"severity": "critical", "code": "X4", "message": "boom"})
+    assert result["delivered"] is False
+    assert result["reason"] == "alerts_chat_id_missing"
+    assert sender.calls == []
+
+
+def test_invalid_min_severity_falls_back_and_allows_high_signal():
+    class InvalidSeverity(SettingsStub):
+        def load_telegram_config_row(self):
+            data = super().load_telegram_config_row()
+            data["telegram_alert_min_severity"] = "NOPE"
+            return data
+
+    sender = SenderStub()
+    svc = TelegramAlertsService(settings_service=InvalidSeverity(), telegram_sender=sender)
+    result = svc.notify_alert({"severity": "high", "code": "X5", "message": "boom"})
+    assert result["delivered"] is True
+    assert len(sender.calls) == 1

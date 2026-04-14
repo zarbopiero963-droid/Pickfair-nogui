@@ -58,10 +58,10 @@ def _run_guard(
     )
 
 
-def test_missing_task_non_critical_warns_and_passes(tmp_path: Path):
+def test_missing_task_non_critical_fails_closed(tmp_path: Path):
     result = _run_guard(tmp_path, title="Guardrail update")
-    assert result.returncode == 0
-    assert "Missing [TASK: ...]" in result.stdout
+    assert result.returncode != 0
+    assert "TASK validation is fail-closed" in result.stdout
 
 
 def test_missing_task_critical_fails(tmp_path: Path):
@@ -73,10 +73,10 @@ def test_missing_task_critical_fails(tmp_path: Path):
     assert result.returncode != 0
 
 
-def test_unknown_task_non_critical_follows_current_semantics(tmp_path: Path):
+def test_unknown_task_non_critical_fails_closed(tmp_path: Path):
     result = _run_guard(tmp_path, title="[TASK: not_real] Guardrail update")
-    assert result.returncode == 0
-    assert "TASK tag found: not_real" in result.stdout
+    assert result.returncode != 0
+    assert "Unknown TASK tag" in result.stdout
 
 
 def test_valid_task_passes(tmp_path: Path):

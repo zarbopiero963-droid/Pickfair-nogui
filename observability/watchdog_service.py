@@ -10,6 +10,7 @@ from .anomaly_rules import DEFAULT_ANOMALY_RULES
 from .correlation_engine import CorrelationEvaluator, evaluate_correlation_rules
 from .forensics_engine import ForensicsEngine
 from .forensics_rules import DEFAULT_FORENSICS_RULES
+from .cto_reviewer import CtoReviewer
 from .invariant_guard import evaluate_invariants, DEFAULT_INVARIANT_CHECKS
 from .sanitizers import sanitize_value
 
@@ -156,8 +157,11 @@ class WatchdogService:
         self._managed_correlation_alert_codes: set[str] = set()
         self._managed_forensics_alert_codes: set[str] = set()
         self._managed_governance_alert_codes: set[str] = set()
+        self._managed_cto_alert_codes: set[str] = set()
         self._correlation_evaluator = CorrelationEvaluator()
         self._reviewer_policy = ReviewerGovernancePolicy()
+        self._cto_reviewer = CtoReviewer()
+        self.last_forensics_findings: list[dict[str, Any]] = []
 
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -205,7 +209,6 @@ class WatchdogService:
         self._evaluate_alerts()
         self._evaluate_invariants()
         self._evaluate_correlations()
-        self._evaluate_forensics()
         if self._is_anomaly_enabled():
             self.alerts_manager.resolve_alert(_DISABLED_CODE)
             self.incidents_manager.close_incident(
@@ -240,6 +243,8 @@ class WatchdogService:
             self.last_anomalies = []
             self.escalation_requested = False
             self.last_escalation_event = None
+        self._evaluate_forensics()
+        self._evaluate_cto_reviewer()
         self._evaluate_reviewer_governance()
         self.snapshot_service.collect_and_store()
 
@@ -809,6 +814,7 @@ class WatchdogService:
                 logger.exception("collect_forensics_evidence failed")
 
         findings = self.forensics_engine.evaluate(context)
+        self.last_forensics_findings = [item for item in findings if isinstance(item, dict)]
         current_codes = set()
         for finding in findings:
             code = str(finding.get("code", "") or "")
@@ -847,6 +853,42 @@ class WatchdogService:
                     reason="finding_cleared",
                     resolved_by="forensics_reviewer",
                 )
+
+    def _evaluate_cto_reviewer(self) -> None:
+        runtime_collector = getattr(self.probe, "collect_runtime_state", None)
+        runtime_state = runtime_collector() if callable(runtime_collector) else {}
+        payload = {
+            "health_snapshot": self.health_registry.snapshot(),
+            "metrics_snapshot": self.metrics_registry.snapshot(),
+            "anomaly_alerts": list(self.last_anomalies or []),
+            "forensics_alerts": list(self.last_forensics_findings or []),
+            "incidents_snapshot": self.incidents_manager.snapshot(),
+            "runtime_probe_state": runtime_state or {},
+            "diagnostics_bundle": {},
+        }
+        findings = self._cto_reviewer.evaluate(payload)
+        current_codes: set[str] = set()
+        for finding in findings:
+            rule_name = str(finding.get("rule_name") or "")
+            if not rule_name:
+                continue
+            code = f"CTO::{rule_name}"
+            current_codes.add(code)
+            severity = str(finding.get("severity") or "warning")
+            self.alerts_manager.upsert_alert(
+                code,
+                severity,
+                str(finding.get("short_explanation") or rule_name),
+                source="cto_reviewer",
+                details=dict(finding),
+            )
+            if severity.lower() in {"high", "critical", "error"}:
+                self.incidents_manager.open_incident(code, code, severity, details=dict(finding))
+        stale_codes = self._managed_cto_alert_codes - current_codes
+        for code in stale_codes:
+            self.alerts_manager.resolve_alert(code)
+            self.incidents_manager.close_incident(code, reason="cto_finding_cleared", resolved_by="cto_reviewer")
+        self._managed_cto_alert_codes = current_codes
 
     def _evaluate_reviewer_governance(self) -> None:
         active = []

@@ -13,6 +13,11 @@ class _Settings:
             "alert_cooldown_sec": 0,
             "alert_dedup_enabled": False,
             "alert_format_rich": True,
+            "telegram_alerts_enabled": True,
+            "telegram_alert_chat_id": "9988",
+            "telegram_alert_name": "ops",
+            "telegram_alert_min_severity": "INFO",
+            "telegram_alert_cooldown_sec": 0,
         }
 
 
@@ -63,3 +68,21 @@ def test_telegram_alerts_rich_includes_governance_fields():
     text = sender.messages[0][1]
     assert "Incident Class: execution_consistency_incident" in text
     assert "Normalized Severity: CRITICAL" in text
+
+
+@pytest.mark.smoke
+def test_telegram_alerts_rich_includes_timestamp_and_suggested_action():
+    sender = _Sender()
+    svc = TelegramAlertsService(settings_service=_Settings(), telegram_sender=sender)
+    svc.notify_alert(
+        {
+            "severity": "high",
+            "code": "CTO-1",
+            "message": "cto finding",
+            "timestamp": "2026-04-14 12:00:00 UTC",
+            "suggested_action": "Drain queue and inspect stalls",
+        }
+    )
+    text = sender.messages[0][1]
+    assert "Time: 2026-04-14 12:00:00 UTC" in text
+    assert "Suggested action: Drain queue and inspect stalls" in text
