@@ -90,3 +90,58 @@ def test_health_probe_is_pure_and_non_blocking():
     assert first.failed is False
     assert first.healthy is False
     assert first.degraded is False
+
+
+def test_restart_boundary_alone_does_not_report_healthy_without_runtime_truth():
+    probe = TelegramHealthProbe()
+    health = probe.evaluate(
+        _snapshot(
+            state="CONNECTING",
+            running=True,
+            listener_started=True,
+            client_alive=False,
+            active_network_resources=0,
+            reconnect_attempts=2,
+            reconnect_in_progress=False,
+        ),
+        checked_at="2026-04-15T00:10:00+00:00",
+    )
+
+    assert health.healthy is False
+    assert health.failed is False
+    assert health.degraded is True
+    assert health.invariant_ok is True
+
+
+def test_long_horizon_stale_runtime_remains_degraded_until_fresh_message_truth_exists():
+    probe = TelegramHealthProbe()
+
+    stale = probe.evaluate(
+        _snapshot(
+            state="CONNECTED",
+            client_alive=True,
+            active_network_resources=1,
+            last_successful_message_ts="2026-04-15T00:00:00+00:00",
+            now_ts="2026-04-15T01:30:00+00:00",
+            stale_after_seconds=300,
+        ),
+        checked_at="2026-04-15T01:30:00+00:00",
+    )
+    recovered = probe.evaluate(
+        _snapshot(
+            state="CONNECTED",
+            client_alive=True,
+            active_network_resources=1,
+            last_successful_message_ts="2026-04-15T01:29:55+00:00",
+            now_ts="2026-04-15T01:30:00+00:00",
+            stale_after_seconds=300,
+        ),
+        checked_at="2026-04-15T01:30:00+00:00",
+    )
+
+    assert stale.healthy is False
+    assert stale.degraded is False
+    assert stale.failed is True
+    assert "STALE_RUNTIME" in stale.active_alert_codes
+    assert recovered.healthy is True
+    assert recovered.invariant_ok is True

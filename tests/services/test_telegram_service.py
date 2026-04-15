@@ -250,3 +250,97 @@ def test_intentional_stop_never_restarts():
 
     assert outcome["action"] == "NO_ACTION"
     assert svc.status()["state"] == "STOPPED"
+
+
+@pytest.mark.unit
+def test_reboot_like_service_reconstruction_preserves_session_path_without_false_connected_state():
+    settings = _Settings(_TelegramCfg(session_string="persisted-session"))
+
+    first = TelegramService(settings_service=settings, db=_DB(), bus=_Bus())
+    first_start = first.start()
+    assert first_start["started"] is True
+    first.listener.last_successful_message_ts = "2026-04-15T00:00:00+00:00"
+
+    reconstructed = TelegramService(settings_service=settings, db=_DB(), bus=_Bus())
+    second_start = reconstructed.start()
+    second_status = reconstructed.status()
+
+    assert second_start["started"] is True
+    assert second_status["state"] == "CONNECTING"
+    assert second_status["connected"] is False
+    assert second_status["handlers_registered"] == 2
+
+
+@pytest.mark.unit
+def test_dirty_stop_and_intentional_stop_are_distinguishable_for_restart_paths():
+    dirty = TelegramService(settings_service=_Settings(_TelegramCfg()), db=_DB(), bus=_Bus())
+    dirty.start()
+    assert dirty.listener is not None
+    dirty.handlers_registered = 1
+    dirty.listener.handlers_registered = 1
+
+    dirty.listener._set_state("FAILED")
+    dirty.listener.reconnect_in_progress = False
+    dirty.listener.last_error = "process_crashed"
+    dirty_status = dirty.status()
+    dirty_autoheal = dirty.run_autoheal_once(
+        checked_at_ts=2_000_000_000.0,
+        startup_grace_active=False,
+        reconnect_grace_active=False,
+        failure_escalated=True,
+    )
+
+    intentional = TelegramService(settings_service=_Settings(_TelegramCfg()), db=_DB(), bus=_Bus())
+    intentional.start()
+    intentional.stop()
+    intentional_autoheal = intentional.run_autoheal_once(
+        checked_at_ts=1200.0,
+        startup_grace_active=False,
+        reconnect_grace_active=False,
+        failure_escalated=True,
+    )
+
+    assert dirty_status["state"] == "FAILED"
+    assert dirty_autoheal["action"] == "SCHEDULE_RESTART"
+    assert dirty_autoheal["restart_result"]["started"] is True
+    assert dirty.status()["state"] == "CONNECTING"
+    assert dirty.status()["intentional_stop"] is False
+    assert intentional_autoheal["action"] == "NO_ACTION"
+
+
+@pytest.mark.unit
+def test_restart_during_unstable_lifecycle_phase_is_safely_suppressed():
+    svc = TelegramService(settings_service=_Settings(_TelegramCfg()), db=_DB(), bus=_Bus())
+    svc.start()
+
+    suppressed = svc.restart()
+
+    assert suppressed["started"] is False
+    assert suppressed["reason"] == "connection_in_progress"
+    assert svc.status()["state"] == "CONNECTING"
+
+
+@pytest.mark.unit
+def test_repeated_crash_recovery_cycles_remain_idempotent_without_duplicate_handlers():
+    svc = TelegramService(settings_service=_Settings(_TelegramCfg()), db=_DB(), bus=_Bus())
+    svc.start()
+    svc.handlers_registered = 1
+
+    for i in range(3):
+        assert svc.listener is not None
+        svc.listener.handlers_registered = 1
+        svc.listener._set_state("FAILED")
+        svc.listener.reconnect_in_progress = False
+        svc.listener.last_error = f"crash-{i}"
+        action = svc.run_autoheal_once(
+            checked_at_ts=2_000_000_000.0 + (i * 25.0),
+            startup_grace_active=False,
+            reconnect_grace_active=False,
+            failure_escalated=True,
+        )
+        assert action["action"] == "SCHEDULE_RESTART"
+        status = svc.status()
+        assert status["handlers_registered"] == 2
+        assert status["state"] == "CONNECTING"
+        assert status["reconnect_attempts"] == i + 1
+        assert svc._restart_in_progress is False
