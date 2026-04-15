@@ -700,7 +700,8 @@ class WatchdogService:
         self._evaluate_telegram_alerts()
 
     def _evaluate_telegram_alerts(self) -> None:
-        health = self._collect_telegram_health()
+        fallback_checked_at = datetime.now(timezone.utc).isoformat()
+        health = self._collect_telegram_health(checked_at=fallback_checked_at)
         current_codes: set[str] = set()
         if not isinstance(health, dict):
             self._resolve_stale_telegram_alerts(current_codes)
@@ -779,7 +780,7 @@ class WatchdogService:
 
         self._resolve_stale_telegram_alerts(current_codes)
 
-    def _collect_telegram_health(self) -> dict[str, Any] | None:
+    def _collect_telegram_health(self, *, checked_at: str | None = None) -> dict[str, Any] | None:
         runtime_state = {}
         runtime_collector = getattr(self.probe, "collect_runtime_state", None)
         if callable(runtime_collector):
@@ -808,6 +809,8 @@ class WatchdogService:
         status_getter = getattr(telegram_service, "health_status", None)
         if callable(status_getter):
             try:
+                if checked_at is not None:
+                    return dict(status_getter(checked_at=checked_at))
                 return dict(status_getter())
             except Exception:
                 logger.exception("telegram_service.health_status failed during watchdog tick")

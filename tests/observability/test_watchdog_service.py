@@ -68,6 +68,42 @@ def test_watchdog_handles_telegram_probe():
     assert "TELEGRAM_FAILED" in codes
 
 
+def test_watchdog_fallback_telegram_health_passes_checked_at_timestamp():
+    class _TelegramServiceStub:
+        def __init__(self):
+            self.calls: list[str | None] = []
+
+        def health_status(self, *, checked_at: str | None = None):
+            self.calls.append(checked_at)
+            return {
+                "state": "CONNECTED",
+                "failed": False,
+                "invariant_ok": True,
+                "intentional_stop": False,
+                "reconnect_in_progress": False,
+                "last_error": "",
+                "reconnect_attempts": 0,
+                "active_alert_codes": [],
+                "checked_at": checked_at,
+            }
+
+    class _TelegramFallbackProbe(_ProbeStub):
+        def __init__(self):
+            self.telegram_service = _TelegramServiceStub()
+
+    alerts = AlertsManager()
+    probe = _TelegramFallbackProbe()
+    watchdog = _make_watchdog(probe=probe, alerts_manager=alerts)
+
+    watchdog._evaluate_alerts()
+
+    assert len(probe.telegram_service.calls) == 1
+    checked_at = probe.telegram_service.calls[0]
+    assert isinstance(checked_at, str)
+    assert checked_at
+    assert "TELEGRAM_FAILED" not in {a["code"] for a in alerts.active_alerts()}
+
+
 def test_watchdog_does_not_loop():
     class _SnapshotCountingStub(_SnapshotStub):
         def __init__(self):
