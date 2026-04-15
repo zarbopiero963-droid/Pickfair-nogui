@@ -146,6 +146,63 @@ def test_runtime_controller_preserves_origin_metadata_passthrough(meta_field, me
 
 
 @pytest.mark.integration
+def test_runtime_controller_accepts_telegram_boundary_marker_without_contract_drift():
+    bus = _Bus()
+    rc = RuntimeController(
+        bus=bus,
+        db=_DB(),
+        settings_service=_Settings(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+    rc.mode = RuntimeMode.ACTIVE
+    rc.duplication_guard = type(
+        "DG",
+        (),
+        {
+            "build_event_key": staticmethod(lambda _s: "1.2:11:BACK:telegram"),
+            "is_duplicate": staticmethod(lambda _k: False),
+            "register": staticmethod(lambda _k: None),
+            "acquire": staticmethod(lambda _k: True),
+            "release": staticmethod(lambda _k: None),
+        },
+    )()
+    rc.mm.calculate = lambda **_kw: type(
+        "D",
+        (),
+        {
+            "approved": True,
+            "recommended_stake": 5.0,
+            "table_id": 1,
+            "reason": "ok",
+            "desk_mode": DeskMode.NORMAL,
+            "metadata": {},
+        },
+    )()
+
+    rc._on_signal_received(
+        {
+            "boundary_stage": "telegram_ingestion_normalized_v1",
+            "market_id": "1.2",
+            "selection_id": 11,
+            "price": 2.2,
+            "order_origin": "telegram",
+            "copy_meta": {"master_id": "M1"},
+            "simulation_mode": True,
+        }
+    )
+
+    routed = [e for e in bus.events if e[0] == "CMD_QUICK_BET"]
+    assert len(routed) == 1
+    payload = routed[0][1]
+    assert payload["market_id"] == "1.2"
+    assert payload["selection_id"] == 11
+    assert payload["stake"] == 5.0
+    assert payload["order_origin"] == "telegram"
+    assert payload["copy_meta"] == {"master_id": "M1"}
+
+
+@pytest.mark.integration
 def test_runtime_controller_rejects_signal_when_copy_and_pattern_meta_are_both_present():
     bus = _Bus()
     rc = RuntimeController(

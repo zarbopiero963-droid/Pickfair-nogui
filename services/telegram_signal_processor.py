@@ -132,6 +132,92 @@ class TelegramSignalProcessor:
     # =========================================================
     # DIRECT PAYLOAD BUILD
     # =========================================================
+    def normalize_ingestion_signal(self, signal: Any) -> Dict[str, Any]:
+        """
+        Telegram ingestion boundary.
+
+        Restituisce sempre un contratto deterministico:
+        {
+          "ok": bool,
+          "error_code": str|None,
+          "error_reason": str|None,
+          "normalized_signal": dict,
+        }
+        """
+        if not isinstance(signal, dict):
+            return {
+                "ok": False,
+                "error_code": "SIGNAL_NOT_DICT",
+                "error_reason": "telegram signal must be a dict payload",
+                "normalized_signal": {},
+            }
+
+        raw = dict(signal)
+        copy_meta = raw.get("copy_meta")
+        pattern_meta = raw.get("pattern_meta")
+
+        if copy_meta is not None and not isinstance(copy_meta, dict):
+            return {
+                "ok": False,
+                "error_code": "COPY_META_NOT_DICT",
+                "error_reason": "copy_meta must be a dict when provided",
+                "normalized_signal": {},
+            }
+        if pattern_meta is not None and not isinstance(pattern_meta, dict):
+            return {
+                "ok": False,
+                "error_code": "PATTERN_META_NOT_DICT",
+                "error_reason": "pattern_meta must be a dict when provided",
+                "normalized_signal": {},
+            }
+        if isinstance(copy_meta, dict) and isinstance(pattern_meta, dict):
+            return {
+                "ok": False,
+                "error_code": "COPY_PATTERN_MUTUALLY_EXCLUSIVE",
+                "error_reason": "copy_meta and pattern_meta cannot coexist",
+                "normalized_signal": {},
+            }
+
+        selection_id = self.parse_selection_id(raw)
+        market_id = self.parse_market_id(raw)
+        action = self.normalize_action(raw)
+        price = self.parse_price(raw)
+
+        normalized: Dict[str, Any] = {
+            "boundary_stage": "telegram_ingestion_normalized_v1",
+            "market_id": market_id,
+            "selection_id": selection_id,
+            "bet_type": action,
+            "action": action,
+            "price": price,
+            "event_name": self.parse_event_name(raw),
+            "market_name": self.parse_market_name(raw),
+            "market_type": self.parse_market_type(raw),
+            "selection": self.parse_selection_name(raw, selection_id),
+            "signal_type": str(raw.get("signal_type") or raw.get("signal_name") or ""),
+            "minute": self.parse_minute(raw),
+            "home_score": self.parse_home_score(raw),
+            "away_score": self.parse_away_score(raw),
+            "raw_text": raw.get("raw_text") or raw.get("message") or raw.get("text") or "",
+            "raw_signal": raw,
+        }
+
+        if isinstance(copy_meta, dict):
+            normalized["copy_meta"] = dict(copy_meta)
+            normalized["order_origin"] = str(raw.get("order_origin") or "COPY").upper()
+        elif isinstance(pattern_meta, dict):
+            normalized["pattern_meta"] = dict(pattern_meta)
+            normalized["order_origin"] = str(raw.get("order_origin") or "PATTERN").upper()
+        elif raw.get("order_origin"):
+            normalized["order_origin"] = str(raw.get("order_origin")).strip()
+
+        return {
+            "ok": True,
+            "error_code": None,
+            "error_reason": None,
+            "normalized_signal": normalized,
+        }
+
     def build_runtime_signal(
         self,
         signal: Dict[str, Any],
