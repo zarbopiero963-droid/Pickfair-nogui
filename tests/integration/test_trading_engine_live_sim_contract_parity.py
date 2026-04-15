@@ -146,3 +146,30 @@ def test_trading_engine_live_sim_contract_parity(response, semantic, order_origi
     # audit shape parity (do not require exact timestamps)
     assert len(live_audit) == len(sim_audit)
     assert [sorted(row.keys()) for row in live_audit] == [sorted(row.keys()) for row in sim_audit]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "origin_meta,expected_origin",
+    [
+        ({"copy_meta": {"master_id": "m1", "copy_group_id": "cg1"}}, "COPY"),
+        ({"pattern_meta": {"pattern_id": "p1", "pattern_label": "x"}}, "PATTERN"),
+    ],
+)
+def test_trading_engine_derives_order_origin_from_metadata_when_missing(origin_meta, expected_origin):
+    response = {"ok": True, "status": "PLACED", "reason_code": "PLACED_OK"}
+    _, live_call, _ = _run(
+        False,
+        response,
+        order_origin="",
+        origin_meta=origin_meta,
+    )
+    _, sim_call, _ = _run(
+        True,
+        response,
+        order_origin="",
+        origin_meta=origin_meta,
+    )
+
+    assert live_call["order_origin"] == expected_origin
+    assert sim_call["order_origin"] == expected_origin
