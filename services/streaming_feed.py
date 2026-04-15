@@ -36,6 +36,7 @@ class StreamingFeedConfig:
     conflate_ms: int = 0
     heartbeat_ms: int = 1000
     segmentation_enabled: bool = True
+    max_auth_failures: int = 2
 
     def __post_init__(self) -> None:
         self.market_ids = list(self.market_ids or [])
@@ -67,12 +68,14 @@ class StreamingFeed:
         on_market_book: Callable[[Dict[str, Any]], None],
         on_disconnect: Optional[Callable[[Dict[str, Any]], None]] = None,
         listener_factory: Optional[Callable[..., Any]] = None,
+        session_gate: Optional[Callable[[], Any]] = None,
     ):
         self.client_getter = client_getter
         self.config = StreamingFeedConfig(**dict(config or {}))
         self.on_market_book = on_market_book
         self.on_disconnect = on_disconnect
         self.listener_factory = listener_factory or StreamListener
+        self.session_gate = session_gate
 
         self._stop_event = threading.Event()
         self._run_thread: Optional[threading.Thread] = None
@@ -92,6 +95,12 @@ class StreamingFeed:
         self._clk = ""
         self._initial_clk = ""
         self._market_cache: Dict[str, Dict[str, Any]] = {}
+        self._auth_failure_count = 0
+        self._auth_degraded = False
+        self._last_auth_error = ""
+        self._last_transport_error = ""
+        self._keepalive_failure_count = 0
+        self._last_keepalive_error = ""
 
     @property
     def healthy(self) -> bool:
@@ -104,6 +113,12 @@ class StreamingFeed:
                 "running": bool(self._run_thread and self._run_thread.is_alive()),
                 "connected": bool(self._connected),
                 "degraded_503": bool(self._degraded_503),
+                "auth_failure_count": int(self._auth_failure_count),
+                "auth_degraded": bool(self._auth_degraded),
+                "last_auth_error": self._last_auth_error,
+                "last_transport_error": self._last_transport_error,
+                "keepalive_failure_count": int(self._keepalive_failure_count),
+                "last_keepalive_error": self._last_keepalive_error,
                 "clk": self._clk,
                 "initial_clk": self._initial_clk,
                 "last_message_at": self._last_message_at,
@@ -139,9 +154,23 @@ class StreamingFeed:
             try:
                 self._connect_and_consume()
                 backoff = max(1, int(self.config.reconnect_backoff_sec or 1))
+                self._auth_failure_count = 0
+                self._last_auth_error = ""
+                self._last_transport_error = ""
+            except StreamAuthError as exc:
+                self._auth_failure_count += 1
+                self._last_auth_error = str(exc)
+                self._notify_disconnect(reason=str(exc), kind="auth")
+                if self._auth_failure_count >= int(self.config.max_auth_failures or 1):
+                    self._auth_degraded = True
+                    break
+                if self._stop_event.wait(timeout=backoff):
+                    break
+                backoff = min(30, max(1, backoff * 2))
             except Exception as exc:
                 reason = str(exc)
-                self._notify_disconnect(reason=reason)
+                self._last_transport_error = reason
+                self._notify_disconnect(reason=reason, kind="transport")
                 if self._stop_event.wait(timeout=backoff):
                     break
                 backoff = min(30, max(1, backoff * 2))
@@ -150,6 +179,7 @@ class StreamingFeed:
         self._stream_client = self.client_getter()
         if self._stream_client is None:
             raise RuntimeError("STREAM_CLIENT_UNAVAILABLE")
+        self._ensure_session_ready()
 
         output_queue: Queue = Queue()
         self._listener = self.listener_factory(output_queue=output_queue)
@@ -223,7 +253,8 @@ class StreamingFeed:
                 continue
             try:
                 keep_alive()
-            except Exception:
+            except Exception as exc:
+                self._mark_keepalive_failure(str(exc))
                 logger.exception("stream keep_alive failed")
 
     def _process_message(self, message: Any) -> None:
@@ -636,7 +667,7 @@ class StreamingFeed:
             out.append({"price": price, "size": size})
         return out
 
-    def _notify_disconnect(self, *, reason: str) -> None:
+    def _notify_disconnect(self, *, reason: str, kind: str = "transport") -> None:
         with self._lock:
             self._connected = False
 
@@ -647,6 +678,7 @@ class StreamingFeed:
             self.on_disconnect(
                 {
                     "reason": str(reason or ""),
+                    "kind": str(kind or "transport"),
                     "last_snapshot_at": self._last_snapshot_at,
                     "clk": self._clk,
                     "initial_clk": self._initial_clk,
@@ -726,3 +758,31 @@ class StreamingFeed:
 
         if not cfg.use_full_ladder and any(f == "EX_ALL_OFFERS" for f in cfg.fields):
             raise StreamingConfigError("EX_ALL_OFFERS_REQUIRES_OPT_IN")
+
+    def _ensure_session_ready(self) -> None:
+        if callable(self.session_gate):
+            result = self.session_gate()
+            if isinstance(result, dict):
+                ok = bool(result.get("ok", False))
+                if ok:
+                    return
+                reason = str(result.get("reason") or "SESSION_GATE_FAILED")
+                raise StreamAuthError(reason)
+            if bool(result):
+                return
+            raise StreamAuthError("SESSION_GATE_FAILED")
+
+        # Fallback safety when no explicit session gate is provided.
+        token = str(getattr(self._stream_client, "session_token", "") or "").strip()
+        if not token:
+            raise StreamAuthError("SESSION_TOKEN_MISSING")
+
+    def _mark_keepalive_failure(self, error: str) -> None:
+        self._keepalive_failure_count += 1
+        self._last_keepalive_error = str(error or "UNKNOWN_KEEPALIVE_ERROR")
+        if "SESSION_EXPIRED" in self._last_keepalive_error.upper() or "INVALID_SESSION" in self._last_keepalive_error.upper():
+            self._last_auth_error = self._last_keepalive_error
+
+
+class StreamAuthError(RuntimeError):
+    pass

@@ -145,6 +145,38 @@ class BetfairService:
             and not self._session_invalid
         )
 
+    def ensure_stream_session_ready(self) -> dict:
+        """
+        Stream-specific session gate.
+
+        Reuses handle_session_expiry() as the authoritative bounded re-auth path.
+        Returns a dict with ok/reason for streaming reconnect decisions.
+        """
+        if self.simulation_mode:
+            return {"ok": False, "reason": "simulation_mode"}
+
+        if self.client is None:
+            return {"ok": False, "reason": "no_live_client"}
+
+        if self._session_invalid:
+            recovery = self.handle_session_expiry(self._session_invalid_reason or "SESSION_INVALID_STREAM_GATE")
+            return {
+                "ok": bool(recovery.get("recovered", False)),
+                "reason": str(recovery.get("error") or recovery.get("reason") or "session_invalid"),
+                "recovery": recovery,
+            }
+
+        token = str(getattr(self.client, "session_token", "") or "").strip()
+        if not token:
+            recovery = self.handle_session_expiry("SESSION_TOKEN_MISSING_STREAM_GATE")
+            return {
+                "ok": bool(recovery.get("recovered", False)),
+                "reason": str(recovery.get("error") or recovery.get("reason") or "session_token_missing"),
+                "recovery": recovery,
+            }
+
+        return {"ok": True, "reason": "session_ready"}
+
     # =========================================================
     # MODE
     # =========================================================

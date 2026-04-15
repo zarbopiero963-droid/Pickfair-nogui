@@ -169,6 +169,7 @@ class RuntimeController:
             config=self._market_data_cfg,
             on_market_book=self._stream_market_book_callback,
             on_disconnect=self._stream_disconnect_callback,
+            session_gate=self.betfair_service.ensure_stream_session_ready,
         )
         self.streaming_feed.start()
 
@@ -1287,6 +1288,13 @@ class RuntimeController:
         data["runtime_io"] = self.runtime_io_snapshot()
         data["broker_status"] = self.betfair_service.status()
         data["account_funds"] = funds
+        if self.streaming_feed is not None:
+            try:
+                data["streaming_feed"] = self.streaming_feed.status()
+            except Exception:
+                data["streaming_feed"] = {"running": False, "error": "status_unavailable"}
+        else:
+            data["streaming_feed"] = {"running": False}
 
         if self.simulation_mode and hasattr(self.betfair_service, "simulation_snapshot"):
             try:

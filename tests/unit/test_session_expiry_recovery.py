@@ -380,6 +380,47 @@ def test_place_order_no_false_positive_on_normal_failure():
     assert svc.is_live_usable() is not True or not svc._session_invalid
 
 
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_ensure_stream_session_ready_returns_ok_when_token_present():
+    svc = _make_service()
+    svc.simulation_mode = False
+
+    class _Client:
+        session_token = "TOK"
+
+    svc.client = _Client()
+    svc.connected = True
+
+    out = svc.ensure_stream_session_ready()
+    assert out["ok"] is True
+    assert out["reason"] == "session_ready"
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_ensure_stream_session_ready_uses_bounded_reauth_when_invalid(monkeypatch):
+    svc = _make_service()
+    svc.simulation_mode = False
+    svc._session_invalid = True
+    svc._session_invalid_reason = "SESSION_EXPIRED"
+
+    class _Client:
+        session_token = ""
+
+    svc.client = _Client()
+
+    monkeypatch.setattr(
+        svc,
+        "handle_session_expiry",
+        lambda reason="": {"recovered": False, "reason": reason, "error": "max attempts"},
+    )
+
+    out = svc.ensure_stream_session_ready()
+    assert out["ok"] is False
+    assert "max attempts" in out["reason"]
+
+
 # ===========================================================================
 # Tests: SESSION_EXPIRED wired into RuntimeController signal routing
 # ===========================================================================

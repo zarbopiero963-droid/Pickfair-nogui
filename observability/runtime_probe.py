@@ -955,6 +955,25 @@ class RuntimeProbe:
             status = "DEGRADED"
             reason = "external_io_slow"
 
+        runtime = self.runtime_controller
+        feed = getattr(runtime, "streaming_feed", None) if runtime is not None else None
+        feed_status_getter = getattr(feed, "status", None)
+        if callable(feed_status_getter):
+            try:
+                stream_status = dict(feed_status_getter() or {})
+            except Exception:
+                stream_status = {}
+            details["streaming_feed"] = stream_status
+            if bool(stream_status.get("auth_degraded")):
+                status = "DEGRADED"
+                reason = reason or "stream_auth_degraded"
+            elif int(stream_status.get("keepalive_failure_count", 0) or 0) > 0 and status == "READY":
+                status = "DEGRADED"
+                reason = reason or "stream_keepalive_failures"
+            elif bool(stream_status.get("degraded_503")) and status == "READY":
+                status = "DEGRADED"
+                reason = reason or "stream_503_degraded"
+
         return {
             "name": "betfair_service",
             "status": status,

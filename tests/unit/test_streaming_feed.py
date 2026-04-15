@@ -110,6 +110,7 @@ def test_streaming_feed_reconnect_reuses_clk_and_initialclk():
         on_market_book=lambda book: updates.append(book),
         on_disconnect=lambda payload: disconnects.append(payload),
         listener_factory=_Listener,
+        session_gate=lambda: {"ok": True},
     )
 
     feed.start()
@@ -148,6 +149,7 @@ def test_streaming_feed_503_degraded_does_not_disconnect():
         on_market_book=lambda _book: None,
         on_disconnect=lambda payload: disconnects.append(payload),
         listener_factory=_Listener,
+        session_gate=lambda: {"ok": True},
     )
 
     feed.start()
@@ -440,3 +442,80 @@ def test_streaming_feed_mixed_repeated_partial_updates_converge_without_data_los
     # untouched runner 52 must remain present and intact despite repeated updates to runner 51 only
     assert runners[52]["ex"]["availableToBack"] == [{"price": 2.4, "size": 6.0}]
     assert runners[52]["ex"]["availableToLay"] == [{"price": 2.5, "size": 5.0}]
+
+
+def test_streaming_feed_session_gate_blocks_subscribe_when_invalid():
+    subscriptions = []
+    disconnects = []
+    client = _Client(scripts=[[{"mc": [{"id": "1.999", "rc": []}]}]], subscriptions=subscriptions)
+
+    feed = StreamingFeed(
+        client_getter=lambda: client,
+        config={
+            "enabled": True,
+            "market_data_mode": "stream",
+            "market_ids": ["1.999"],
+            "max_auth_failures": 1,
+        },
+        on_market_book=lambda _book: None,
+        on_disconnect=lambda payload: disconnects.append(payload),
+        listener_factory=_Listener,
+        session_gate=lambda: {"ok": False, "reason": "SESSION_INVALID"},
+    )
+    feed.start()
+    time.sleep(0.2)
+    feed.stop()
+
+    assert subscriptions == []
+    status = feed.status()
+    assert status["auth_degraded"] is True
+    assert status["auth_failure_count"] >= 1
+    assert disconnects and disconnects[0]["kind"] == "auth"
+
+
+def test_streaming_feed_repeated_auth_failure_is_bounded():
+    subscriptions = []
+    guard_calls = {"n": 0}
+    client = _Client(scripts=[[{"mc": [{"id": "1.998", "rc": []}]}]], subscriptions=subscriptions)
+
+    def _guard():
+        guard_calls["n"] += 1
+        return {"ok": False, "reason": "SESSION_EXPIRED"}
+
+    feed = StreamingFeed(
+        client_getter=lambda: client,
+        config={
+            "enabled": True,
+            "market_data_mode": "stream",
+            "market_ids": ["1.998"],
+            "reconnect_backoff_sec": 1,
+            "max_auth_failures": 2,
+        },
+        on_market_book=lambda _book: None,
+        on_disconnect=lambda _payload: None,
+        listener_factory=_Listener,
+        session_gate=_guard,
+    )
+    feed.start()
+    time.sleep(2.3)
+    feed.stop()
+
+    status = feed.status()
+    assert status["auth_degraded"] is True
+    assert status["auth_failure_count"] == 2
+    assert guard_calls["n"] == 2
+    assert subscriptions == []
+
+
+def test_streaming_feed_keepalive_failure_is_visible_in_status():
+    feed = StreamingFeed(
+        client_getter=lambda: None,
+        config={"enabled": False, "market_data_mode": "poll"},
+        on_market_book=lambda _book: None,
+    )
+    feed._mark_keepalive_failure("SESSION_EXPIRED")
+    snap = feed.status()
+
+    assert snap["keepalive_failure_count"] == 1
+    assert "SESSION_EXPIRED" in snap["last_keepalive_error"]
+    assert "SESSION_EXPIRED" in snap["last_auth_error"]

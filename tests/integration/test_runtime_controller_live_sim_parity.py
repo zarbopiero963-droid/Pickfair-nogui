@@ -53,6 +53,8 @@ class _Betfair:
     def get_market_book_snapshot(self, market_id):
         _ = market_id
         return None
+    def ensure_stream_session_ready(self):
+        return True
 
 
 class _Telegram:
@@ -60,6 +62,8 @@ class _Telegram:
         return {"started": True}
     def stop(self):
         return None
+    def status(self):
+        return {"connected": True}
 
 
 @pytest.mark.integration
@@ -237,8 +241,8 @@ def test_runtime_controller_market_data_ingestion_boundary_uses_market_tracker(m
             }
 
     class _FakeStreamingFeed:
-        def __init__(self, *, client_getter, config, on_market_book, on_disconnect):
-            _ = client_getter, config, on_disconnect
+        def __init__(self, *, client_getter, config, on_market_book, on_disconnect, session_gate=None):
+            _ = client_getter, config, on_disconnect, session_gate
             self.on_market_book = on_market_book
             self.started = False
             self.stopped = False
@@ -307,8 +311,8 @@ def test_runtime_controller_market_tracker_receives_coherent_edge_case_book(monk
     }
 
     class _FakeStreamingFeed:
-        def __init__(self, *, client_getter, config, on_market_book, on_disconnect):
-            _ = client_getter, config, on_disconnect
+        def __init__(self, *, client_getter, config, on_market_book, on_disconnect, session_gate=None):
+            _ = client_getter, config, on_disconnect, session_gate
             self.on_market_book = on_market_book
 
         def start(self):
@@ -341,3 +345,49 @@ def test_runtime_controller_market_tracker_receives_coherent_edge_case_book(monk
     assert len(out["runners"]) == 2
     assert out["runners"][0]["selectionId"] == 101
     assert out["runners"][1]["ex"]["availableToLay"] == [{"price": 3.2, "size": 6.0}]
+
+
+@pytest.mark.integration
+def test_runtime_controller_status_surfaces_streaming_feed_degraded_state(monkeypatch):
+    class _SettingsStream(_Settings):
+        def load_market_data_config(self):
+            return {
+                "market_data_mode": "stream",
+                "enabled": True,
+                "market_ids": ["1.902"],
+            }
+
+    class _FakeStreamingFeed:
+        def __init__(self, *, client_getter, config, on_market_book, on_disconnect, session_gate=None):
+            _ = client_getter, config, on_market_book, on_disconnect, session_gate
+
+        def start(self):
+            return {"started": True}
+
+        def stop(self):
+            return {"stopped": True}
+
+        def status(self):
+            return {
+                "running": True,
+                "auth_degraded": True,
+                "keepalive_failure_count": 2,
+                "last_keepalive_error": "SESSION_EXPIRED",
+            }
+
+    monkeypatch.setattr("core.runtime_controller.StreamingFeed", _FakeStreamingFeed)
+
+    rc = RuntimeController(
+        bus=_Bus(),
+        db=_DB(),
+        settings_service=_SettingsStream(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+    rc.simulation_mode = False
+    rc._start_market_data_feed()
+
+    status = rc.get_status()
+    assert "streaming_feed" in status
+    assert status["streaming_feed"]["auth_degraded"] is True
+    assert status["streaming_feed"]["keepalive_failure_count"] == 2
