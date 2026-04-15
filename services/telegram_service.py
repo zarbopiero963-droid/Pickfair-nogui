@@ -6,6 +6,13 @@ from typing import Optional
 
 from observability.telegram_health_probe import TelegramHealthProbe
 from observability.telegram_invariant_guard import TelegramInvariantSnapshot
+from recovery.telegram_autoheal import (
+    TelegramAutohealAction,
+    TelegramAutohealDecision,
+    TelegramAutohealHistory,
+    TelegramAutohealPolicy,
+    TelegramAutohealSnapshot,
+)
 from telegram_listener import TelegramListener
 
 logger = logging.getLogger(__name__)
@@ -38,6 +45,16 @@ class TelegramService:
         self.handlers_registered = 0
         self.active_network_resources = 0
         self._health_probe = TelegramHealthProbe()
+        self._autoheal_policy = TelegramAutohealPolicy()
+        self._restart_attempts_total = 0
+        self._restart_timestamps: list[float] = []
+        self._lockout_active = False
+        self._lockout_since_ts: float | None = None
+        self._lockout_reason = ""
+        self._last_restart_ts: float | None = None
+        self._last_autoheal_action = TelegramAutohealAction.NO_ACTION.value
+        self._last_autoheal_decision_reason = "not_evaluated"
+        self._restart_in_progress = False
 
     def _set_state(self, new_state: str) -> None:
         allowed_states = {"CREATED", "CONNECTING", "CONNECTED", "RECONNECTING", "STOPPED", "FAILED"}
@@ -209,14 +226,35 @@ class TelegramService:
         self.active_network_resources = 0
 
     def restart(self) -> dict:
+        if self.intentional_stop:
+            return {"started": False, "reason": "intentional_stop", "state": self.state}
+        if self._restart_in_progress:
+            return {"started": False, "reason": "restart_in_progress", "state": self.state}
+        if self.state in {"CONNECTING", "RECONNECTING"}:
+            return {"started": False, "reason": "connection_in_progress", "state": self.state}
+
+        self._restart_in_progress = True
         self.intentional_stop = False
         self.reconnect_in_progress = True
         self.reconnect_attempts += 1
+        self._restart_attempts_total += 1
+        now_ts = self._autoheal_policy.now()
+        self._last_restart_ts = now_ts
+        self._restart_timestamps.append(now_ts)
+        self._restart_timestamps = [
+            ts for ts in self._restart_timestamps if (now_ts - ts) <= self._autoheal_policy.restart_window_sec
+        ]
         self._set_state("RECONNECTING")
-        self.stop()
-        self.intentional_stop = False
-        self.reconnect_in_progress = False
-        return self.start()
+        try:
+            self.stop()
+            self.intentional_stop = False
+            self.reconnect_in_progress = False
+            result = self.start()
+            if not bool(result.get("started", False)):
+                result["recovered"] = False
+            return result
+        finally:
+            self._restart_in_progress = False
 
     # =========================================================
     # STATUS
@@ -241,6 +279,14 @@ class TelegramService:
             "listener_started": bool(self.listener_started),
             "handlers_registered": int(self.handlers_registered),
             "active_network_resources": int(self.active_network_resources),
+            "restart_attempts_total": int(self._restart_attempts_total),
+            "restart_attempts_in_window": len(self._restart_timestamps),
+            "last_restart_ts": self._last_restart_ts,
+            "lockout_active": bool(self._lockout_active),
+            "lockout_reason": self._lockout_reason,
+            "last_autoheal_action": self._last_autoheal_action,
+            "last_autoheal_decision_reason": self._last_autoheal_decision_reason,
+            "recovery_allowed": bool(not self._lockout_active and not self.intentional_stop),
         }
 
     def runtime_snapshot(self) -> dict:
@@ -305,3 +351,75 @@ class TelegramService:
         if callable(getattr(self, "send_alert_message", None)):
             return self
         return None
+
+    def evaluate_autoheal(
+        self,
+        *,
+        checked_at_ts: float | None,
+        startup_grace_active: bool,
+        reconnect_grace_active: bool,
+        failure_escalated: bool,
+    ) -> TelegramAutohealDecision:
+        health = self.health_status()
+        now_ts = float(checked_at_ts if checked_at_ts is not None else self._autoheal_policy.now())
+        snapshot = TelegramAutohealSnapshot(
+            state=str(health.get("state") or self.state),
+            invariant_ok=bool(health.get("invariant_ok", True)),
+            active_alert_codes=tuple(str(c) for c in (health.get("active_alert_codes") or [])),
+            reconnect_attempts=int(health.get("reconnect_attempts", 0) or 0),
+            restart_attempts_total=int(self._restart_attempts_total),
+            restart_in_progress=bool(self._restart_in_progress),
+            intentional_stop=bool(health.get("intentional_stop", self.intentional_stop)),
+            startup_grace_active=bool(startup_grace_active),
+            reconnect_grace_active=bool(reconnect_grace_active),
+            lockout_active=bool(self._lockout_active),
+            last_error_category=str(health.get("last_error") or ""),
+            failure_escalated=bool(failure_escalated),
+            listener_stale="STALE_RUNTIME" in set(health.get("active_alert_codes") or []),
+            now_ts=now_ts,
+        )
+        history = TelegramAutohealHistory(
+            restart_timestamps=tuple(self._restart_timestamps),
+            lockout_since_ts=self._lockout_since_ts,
+        )
+        decision = self._autoheal_policy.evaluate(snapshot, history)
+        self._last_autoheal_action = decision.action.value
+        self._last_autoheal_decision_reason = decision.reason
+        if decision.action == TelegramAutohealAction.ENTER_FAILED_LOCKOUT:
+            self._lockout_active = True
+            self._lockout_since_ts = now_ts
+            self._lockout_reason = decision.reason
+        elif self._lockout_active and self._lockout_since_ts is not None:
+            if (now_ts - self._lockout_since_ts) >= self._autoheal_policy.lockout_sec:
+                self._lockout_active = False
+                self._lockout_since_ts = None
+                self._lockout_reason = ""
+        return decision
+
+    def run_autoheal_once(
+        self,
+        *,
+        checked_at_ts: float | None,
+        startup_grace_active: bool,
+        reconnect_grace_active: bool,
+        failure_escalated: bool,
+    ) -> dict:
+        decision = self.evaluate_autoheal(
+            checked_at_ts=checked_at_ts,
+            startup_grace_active=startup_grace_active,
+            reconnect_grace_active=reconnect_grace_active,
+            failure_escalated=failure_escalated,
+        )
+        if decision.action == TelegramAutohealAction.SCHEDULE_RESTART:
+            restarted = self.restart()
+            return {
+                "action": decision.action.value,
+                "reason": decision.reason,
+                "failure_class": decision.failure_class.value,
+                "restart_result": dict(restarted),
+            }
+        return {
+            "action": decision.action.value,
+            "reason": decision.reason,
+            "failure_class": decision.failure_class.value,
+        }

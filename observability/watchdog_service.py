@@ -778,6 +778,13 @@ class WatchdogService:
                 current_codes=current_codes,
             )
 
+        self._request_telegram_autoheal(
+            checked_at_ts=now_ts,
+            startup_grace_active=startup_grace_active,
+            reconnect_grace_active=reconnect_grace_active,
+            failure_escalated=bool(current_codes),
+        )
+
         self._resolve_stale_telegram_alerts(current_codes)
 
     def _collect_telegram_health(self, *, checked_at: str | None = None) -> dict[str, Any] | None:
@@ -823,6 +830,28 @@ class WatchdogService:
             return (now_ts - self._telegram_reconnect_started_ts) < self._telegram_reconnect_grace_sec
         self._telegram_reconnect_started_ts = None
         return False
+
+    def _request_telegram_autoheal(
+        self,
+        *,
+        checked_at_ts: float,
+        startup_grace_active: bool,
+        reconnect_grace_active: bool,
+        failure_escalated: bool,
+    ) -> None:
+        telegram_service = getattr(self.probe, "telegram_service", None)
+        autoheal = getattr(telegram_service, "run_autoheal_once", None)
+        if not callable(autoheal):
+            return
+        try:
+            autoheal(
+                checked_at_ts=checked_at_ts,
+                startup_grace_active=startup_grace_active,
+                reconnect_grace_active=reconnect_grace_active,
+                failure_escalated=failure_escalated,
+            )
+        except Exception:
+            logger.exception("telegram autoheal execution failed during watchdog tick")
 
     def _upsert_telegram_alert(
         self,

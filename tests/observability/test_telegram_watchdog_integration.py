@@ -200,3 +200,24 @@ def test_watchdog_does_not_affect_unrelated_alerts():
 
     system_row = next(a for a in alerts.snapshot()["alerts"] if a["code"] == "SYSTEM_WARN")
     assert system_row["active"] is True
+
+
+def test_watchdog_triggers_single_autoheal_action():
+    class _Service:
+        def __init__(self):
+            self.calls = []
+
+        def run_autoheal_once(self, **kwargs):
+            self.calls.append(dict(kwargs))
+            return {"action": "SCHEDULE_RESTART"}
+
+    probe = _TelegramProbe(_base_health(state="FAILED", failed=True, checked_at="2026-04-15T00:00:00+00:00"))
+    probe.telegram_service = _Service()
+    alerts = AlertsManager()
+    watchdog = _make_watchdog(probe, alerts=alerts)
+
+    watchdog._evaluate_alerts()
+
+    assert len(probe.telegram_service.calls) == 1
+    call = probe.telegram_service.calls[0]
+    assert call["failure_escalated"] is True
