@@ -29,6 +29,15 @@ class _Settings:
         cfg.anti_duplication_enabled = False
         return cfg
 
+    def load_market_data_config(self):
+        return {
+            "market_data_mode": "poll",
+            "enabled": False,
+            "market_ids": [],
+            "snapshot_fallback_enabled": True,
+            "snapshot_fallback_interval_sec": 1,
+        }
+
 
 class _Betfair:
     def __init__(self):
@@ -39,10 +48,22 @@ class _Betfair:
         return {"available": 0.0}
     def status(self):
         return {"connected": True}
+    def get_live_client(self):
+        return object()
+    def get_market_book_snapshot(self, market_id):
+        _ = market_id
+        return None
+    def ensure_stream_session_ready(self):
+        return True
 
 
 class _Telegram:
-    pass
+    def start(self):
+        return {"started": True}
+    def stop(self):
+        return None
+    def status(self):
+        return {"connected": True}
 
 
 @pytest.mark.integration
@@ -197,3 +218,398 @@ def test_effective_execution_mode_stays_simulation_when_deploy_gate_denies_ready
     rc.get_deploy_gate_status = lambda **_kwargs: {"allowed": False, "readiness": "READY"}
 
     assert rc.get_effective_execution_mode() == "SIMULATION"
+
+
+@pytest.mark.integration
+def test_runtime_controller_market_data_ingestion_boundary_uses_market_tracker(monkeypatch):
+    events = []
+
+    class _BusBoundary(_Bus):
+        def publish(self, topic, payload=None):
+            super().publish(topic, payload)
+            events.append((topic, payload or {}))
+
+    class _SettingsStream(_Settings):
+        def load_market_data_config(self):
+            return {
+                "market_data_mode": "stream",
+                "enabled": True,
+                "market_ids": ["1.900"],
+                "heartbeat_timeout_sec": 2,
+                "snapshot_fallback_enabled": True,
+                "snapshot_fallback_interval_sec": 1,
+            }
+
+    class _FakeStreamingFeed:
+        def __init__(self, *, client_getter, config, on_market_book, on_disconnect, session_gate=None):
+            _ = client_getter, config, on_disconnect, session_gate
+            self.on_market_book = on_market_book
+            self.started = False
+            self.stopped = False
+
+        def start(self):
+            self.started = True
+            self.on_market_book({"marketId": "1.900", "runners": []})
+            return {"started": True}
+
+        def stop(self):
+            self.stopped = True
+            return {"stopped": True}
+
+    monkeypatch.setattr("core.runtime_controller.StreamingFeed", _FakeStreamingFeed)
+
+    rc = RuntimeController(
+        bus=_BusBoundary(),
+        db=_DB(),
+        settings_service=_SettingsStream(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+    rc.simulation_mode = False
+
+    received = []
+    rc.market_tracker.on_market_book = lambda book: received.append(dict(book))
+
+    rc._start_market_data_feed()
+    assert rc.streaming_feed is not None
+    assert received and received[0]["marketId"] == "1.900"
+    rc._stop_market_data_feed()
+    assert rc.streaming_feed is None
+
+
+@pytest.mark.integration
+def test_runtime_controller_market_tracker_receives_coherent_edge_case_book(monkeypatch):
+    class _SettingsStream(_Settings):
+        def load_market_data_config(self):
+            return {
+                "market_data_mode": "stream",
+                "enabled": True,
+                "market_ids": ["1.901"],
+                "heartbeat_timeout_sec": 2,
+            }
+
+    coherent_book = {
+        "marketId": "1.901",
+        "market_id": "1.901",
+        "status": "SUSPENDED",
+        "inplay": True,
+        "marketDefinition": {"status": "SUSPENDED", "inPlay": True},
+        "runners": [
+            {
+                "selectionId": 101,
+                "runnerName": "Runner 101",
+                "status": "REMOVED",
+                "ex": {"availableToBack": [{"price": 2.02, "size": 9.0}], "availableToLay": []},
+            },
+            {
+                "selectionId": 102,
+                "runnerName": "Runner 102",
+                "status": "ACTIVE",
+                "ex": {"availableToBack": [{"price": 3.1, "size": 4.0}], "availableToLay": [{"price": 3.2, "size": 6.0}]},
+            },
+        ],
+    }
+
+    class _FakeStreamingFeed:
+        def __init__(self, *, client_getter, config, on_market_book, on_disconnect, session_gate=None):
+            _ = client_getter, config, on_disconnect, session_gate
+            self.on_market_book = on_market_book
+
+        def start(self):
+            self.on_market_book(coherent_book)
+            return {"started": True}
+
+        def stop(self):
+            return {"stopped": True}
+
+    monkeypatch.setattr("core.runtime_controller.StreamingFeed", _FakeStreamingFeed)
+
+    rc = RuntimeController(
+        bus=_Bus(),
+        db=_DB(),
+        settings_service=_SettingsStream(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+    rc.simulation_mode = False
+
+    received = []
+    rc.market_tracker.on_market_book = lambda book: received.append(dict(book))
+    rc._start_market_data_feed()
+
+    assert len(received) == 1
+    out = received[0]
+    assert out["marketId"] == "1.901"
+    assert out["status"] == "SUSPENDED"
+    assert out["inplay"] is True
+    assert len(out["runners"]) == 2
+    assert out["runners"][0]["selectionId"] == 101
+    assert out["runners"][1]["ex"]["availableToLay"] == [{"price": 3.2, "size": 6.0}]
+
+
+@pytest.mark.integration
+def test_runtime_controller_status_surfaces_streaming_feed_degraded_state(monkeypatch):
+    class _SettingsStream(_Settings):
+        def load_market_data_config(self):
+            return {
+                "market_data_mode": "stream",
+                "enabled": True,
+                "market_ids": ["1.902"],
+            }
+
+    class _FakeStreamingFeed:
+        def __init__(self, *, client_getter, config, on_market_book, on_disconnect, session_gate=None):
+            _ = client_getter, config, on_market_book, on_disconnect, session_gate
+
+        def start(self):
+            return {"started": True}
+
+        def stop(self):
+            return {"stopped": True}
+
+        def status(self):
+            return {
+                "running": True,
+                "auth_degraded": True,
+                "keepalive_failure_count": 2,
+                "last_keepalive_error": "SESSION_EXPIRED",
+            }
+
+    monkeypatch.setattr("core.runtime_controller.StreamingFeed", _FakeStreamingFeed)
+
+    rc = RuntimeController(
+        bus=_Bus(),
+        db=_DB(),
+        settings_service=_SettingsStream(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+    rc.simulation_mode = False
+    rc._start_market_data_feed()
+
+    status = rc.get_status()
+    assert "streaming_feed" in status
+    assert status["streaming_feed"]["auth_degraded"] is True
+    assert status["streaming_feed"]["keepalive_failure_count"] == 2
+
+
+@pytest.mark.integration
+def test_runtime_controller_market_tracker_preserves_rare_metadata_fields(monkeypatch):
+    class _SettingsStream(_Settings):
+        def load_market_data_config(self):
+            return {
+                "market_data_mode": "stream",
+                "enabled": True,
+                "market_ids": ["1.903"],
+                "heartbeat_timeout_sec": 2,
+            }
+
+    metadata_rich_book = {
+        "marketId": "1.903",
+        "market_id": "1.903",
+        "status": "SUSPENDED",
+        "inplay": True,
+        "marketDefinition": {
+            "status": "SUSPENDED",
+            "inPlay": True,
+            "keyLineDefinition": {"kl": [{"id": 301, "hc": 0.0}]},
+            "runners": [
+                {
+                    "id": 301,
+                    "name": "Runner 301",
+                    "status": "REMOVED",
+                    "adjustmentFactor": 14.2,
+                    "removalDate": "2026-04-01T09:30:00Z",
+                    "bsp": 3.6,
+                    "spn": 3.4,
+                    "spf": 3.8,
+                }
+            ],
+        },
+        "runners": [
+            {
+                "selectionId": 301,
+                "runnerName": "Runner 301",
+                "status": "REMOVED",
+                "handicap": 0.0,
+                "ltp": 3.5,
+                "adjustmentFactor": 14.2,
+                "removalDate": "2026-04-01T09:30:00Z",
+                "bsp": 3.6,
+                "spn": 3.4,
+                "spf": 3.8,
+                "ex": {
+                    "availableToBack": [{"price": 3.4, "size": 5.0}],
+                    "availableToLay": [{"price": 3.7, "size": 4.0}],
+                    "tradedVolume": [{"price": 3.5, "size": 110.0}],
+                },
+            }
+        ],
+    }
+
+    class _FakeStreamingFeed:
+        def __init__(self, *, client_getter, config, on_market_book, on_disconnect, session_gate=None):
+            _ = client_getter, config, on_disconnect, session_gate
+            self.on_market_book = on_market_book
+
+        def start(self):
+            self.on_market_book(metadata_rich_book)
+            return {"started": True}
+
+        def stop(self):
+            return {"stopped": True}
+
+    monkeypatch.setattr("core.runtime_controller.StreamingFeed", _FakeStreamingFeed)
+
+    rc = RuntimeController(
+        bus=_Bus(),
+        db=_DB(),
+        settings_service=_SettingsStream(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+    rc.simulation_mode = False
+
+    received = []
+    rc.market_tracker.on_market_book = lambda book: received.append(dict(book))
+    rc._start_market_data_feed()
+
+    assert len(received) == 1
+    out = received[0]
+    assert out["marketId"] == "1.903"
+    assert out["status"] == "SUSPENDED"
+    assert out["marketDefinition"]["keyLineDefinition"] == {"kl": [{"id": 301, "hc": 0.0}]}
+    assert out["marketDefinition"]["runners"][0]["adjustmentFactor"] == pytest.approx(14.2)
+    runner = out["runners"][0]
+    assert runner["selectionId"] == 301
+    assert runner["status"] == "REMOVED"
+    assert runner["adjustmentFactor"] == pytest.approx(14.2)
+    assert runner["removalDate"] == "2026-04-01T09:30:00Z"
+    assert runner["bsp"] == pytest.approx(3.6)
+    assert runner["spn"] == pytest.approx(3.4)
+    assert runner["spf"] == pytest.approx(3.8)
+
+
+@pytest.mark.integration
+def test_runtime_controller_turbulence_recovery_clears_degraded_and_restores_coherence(monkeypatch):
+    class _SettingsStream(_Settings):
+        def load_market_data_config(self):
+            return {
+                "market_data_mode": "stream",
+                "enabled": True,
+                "market_ids": ["1.904"],
+                "heartbeat_timeout_sec": 2,
+            }
+
+    class _FakeStreamingFeed:
+        def __init__(self, *, client_getter, config, on_market_book, on_disconnect, session_gate=None):
+            _ = client_getter, config, on_disconnect, session_gate
+            self.on_market_book = on_market_book
+            self._degraded = True
+
+        def start(self):
+            self.on_market_book(
+                {
+                    "marketId": "1.904",
+                    "market_id": "1.904",
+                    "status": "SUSPENDED",
+                    "inplay": False,
+                    "marketDefinition": {"status": "SUSPENDED", "inPlay": False},
+                    "runners": [
+                        {
+                            "selectionId": 401,
+                            "runnerName": "Runner 401",
+                            "status": "ACTIVE",
+                            "ex": {"availableToBack": [{"price": 2.2, "size": 5.0}], "availableToLay": []},
+                        }
+                    ],
+                }
+            )
+            return {"started": True}
+
+        def emit_recovered(self):
+            self._degraded = False
+            self.on_market_book(
+                {
+                    "marketId": "1.904",
+                    "market_id": "1.904",
+                    "status": "OPEN",
+                    "inplay": True,
+                    "marketDefinition": {
+                        "status": "OPEN",
+                        "inPlay": True,
+                        "runners": [{"id": 401, "name": "Runner 401", "status": "ACTIVE", "adjustmentFactor": 8.4}],
+                    },
+                    "runners": [
+                        {
+                            "selectionId": 401,
+                            "runnerName": "Runner 401",
+                            "status": "ACTIVE",
+                            "adjustmentFactor": 8.4,
+                            "ex": {
+                                "availableToBack": [{"price": 2.1, "size": 12.0}],
+                                "availableToLay": [{"price": 2.2, "size": 11.0}],
+                                "tradedVolume": [{"price": 2.15, "size": 90.0}],
+                            },
+                        }
+                    ],
+                }
+            )
+
+        def stop(self):
+            return {"stopped": True}
+
+        def status(self):
+            if self._degraded:
+                return {
+                    "running": True,
+                    "auth_degraded": True,
+                    "keepalive_failure_count": 1,
+                    "last_keepalive_error": "SESSION_EXPIRED",
+                }
+            return {
+                "running": True,
+                "auth_degraded": False,
+                "keepalive_failure_count": 0,
+                "last_keepalive_error": "",
+            }
+
+    monkeypatch.setattr("core.runtime_controller.StreamingFeed", _FakeStreamingFeed)
+
+    rc = RuntimeController(
+        bus=_Bus(),
+        db=_DB(),
+        settings_service=_SettingsStream(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+    rc.simulation_mode = False
+
+    received = []
+    rc.market_tracker.on_market_book = lambda book: received.append(dict(book))
+    rc._start_market_data_feed()
+
+    degraded_status = rc.get_status()
+    assert degraded_status["streaming_feed"]["auth_degraded"] is True
+    assert degraded_status["streaming_feed"]["keepalive_failure_count"] == 1
+
+    assert rc.streaming_feed is not None
+    rc.streaming_feed.emit_recovered()
+
+    recovered_status = rc.get_status()
+    assert recovered_status["streaming_feed"]["auth_degraded"] is False
+    assert recovered_status["streaming_feed"]["keepalive_failure_count"] == 0
+
+    assert len(received) >= 2
+    final = received[-1]
+    assert final["marketId"] == "1.904"
+    assert final["status"] == "OPEN"
+    assert final["inplay"] is True
+    assert final["marketDefinition"]["status"] == "OPEN"
+    assert final["marketDefinition"]["runners"][0]["adjustmentFactor"] == pytest.approx(8.4)
+    runner = final["runners"][0]
+    assert runner["selectionId"] == 401
+    assert runner["status"] == "ACTIVE"
+    assert runner["adjustmentFactor"] == pytest.approx(8.4)
+    assert runner["ex"]["availableToBack"] == [{"price": 2.1, "size": 12.0}]
+    assert runner["ex"]["tradedVolume"] == [{"price": 2.15, "size": 90.0}]

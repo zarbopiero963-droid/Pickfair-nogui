@@ -102,3 +102,9 @@ class SettingsService(LegacySettingsService):
             return int(data.get("telegram_alert_cooldown_sec", data.get("telegram.alert_cooldown_sec", 300)) or 300)
         except Exception:
             return 300
+
+    def load_market_data_config(self) -> Dict[str, Any]:
+        return super().load_market_data_config()
+
+    def save_market_data_config(self, config: Dict[str, Any]) -> None:
+        super().save_market_data_config(config)
