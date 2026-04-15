@@ -24,3 +24,8 @@ def test_legacy_caller_uses_auto_throttle_to_gate_calls():
     assert caller.click() is True
     assert caller.click() is False
     assert caller.calls == 2
+
+
+@pytest.mark.integration
+def test_auto_throttle_canonical_import_path_contract():
+    assert AutoThrottle.__module__ == "auto_throttle"
