@@ -130,6 +130,12 @@ class RiskMiddleware:
                 "source": source,
                 "order_origin": order_origin,
             }
+            routing_contract = payload.get("telegram_routing_contract")
+            if isinstance(routing_contract, str) and routing_contract.strip():
+                normalized["telegram_routing_contract"] = routing_contract.strip()
+            route_target = payload.get("telegram_route_target")
+            if isinstance(route_target, str) and route_target.strip():
+                normalized["telegram_route_target"] = route_target.strip()
             if isinstance(copy_meta, dict):
                 normalized["copy_meta"] = dict(copy_meta)
             if isinstance(pattern_meta, dict):

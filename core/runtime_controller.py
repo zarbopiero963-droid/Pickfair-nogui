@@ -1164,6 +1164,12 @@ class RuntimeController:
             "roserpina_reason": decision.reason,
             "roserpina_mode": decision.desk_mode.value,
         }
+        routing_contract = signal.get("telegram_routing_contract")
+        if isinstance(routing_contract, str) and routing_contract.strip():
+            payload["telegram_routing_contract"] = routing_contract.strip()
+        route_target = signal.get("telegram_route_target")
+        if isinstance(route_target, str) and route_target.strip():
+            payload["telegram_route_target"] = route_target.strip()
         has_copy_meta = isinstance(copy_meta, dict)
         has_pattern_meta = isinstance(pattern_meta, dict)
         if has_copy_meta and has_pattern_meta:
