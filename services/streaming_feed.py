@@ -370,15 +370,15 @@ class StreamingFeed:
             return
 
         existing = dict(state.get("marketDefinition") or {})
-        existing.update({k: deepcopy(v) for k, v in market_definition.items()})
-        state["marketDefinition"] = existing
+        merged_definition = self._merge_market_definition_dict(existing, market_definition)
+        state["marketDefinition"] = merged_definition
 
-        if market_definition.get("status") is not None:
-            state["status"] = market_definition.get("status")
-        if market_definition.get("inPlay") is not None:
-            state["inplay"] = bool(market_definition.get("inPlay"))
+        if merged_definition.get("status") is not None:
+            state["status"] = merged_definition.get("status")
+        if merged_definition.get("inPlay") is not None:
+            state["inplay"] = bool(merged_definition.get("inPlay"))
 
-        for runner_def in market_definition.get("runners") or []:
+        for runner_def in merged_definition.get("runners") or []:
             if not isinstance(runner_def, dict):
                 continue
             selection_id = runner_def.get("id")
@@ -393,6 +393,16 @@ class StreamingFeed:
                 runner_state["handicap"] = runner_def.get("hc")
             if runner_def.get("sortPriority") is not None:
                 runner_state["sortPriority"] = runner_def.get("sortPriority")
+            if runner_def.get("adjustmentFactor") is not None:
+                runner_state["adjustmentFactor"] = runner_def.get("adjustmentFactor")
+            if runner_def.get("removalDate") is not None:
+                runner_state["removalDate"] = runner_def.get("removalDate")
+            if runner_def.get("bsp") is not None:
+                runner_state["bsp"] = runner_def.get("bsp")
+            if runner_def.get("spn") is not None:
+                runner_state["spn"] = runner_def.get("spn")
+            if runner_def.get("spf") is not None:
+                runner_state["spf"] = runner_def.get("spf")
 
     def _get_or_init_runner_state(self, state: Dict[str, Any], selection_id: Any) -> Dict[str, Any]:
         key = str(selection_id)
@@ -406,6 +416,11 @@ class StreamingFeed:
                 "handicap": 0,
                 "sortPriority": 0,
                 "ltp": None,
+                "adjustmentFactor": None,
+                "removalDate": None,
+                "bsp": None,
+                "spn": None,
+                "spf": None,
                 "ex": {
                     "availableToBack": [],
                     "availableToLay": [],
@@ -431,6 +446,16 @@ class StreamingFeed:
             runner_state["sortPriority"] = runner.get("sortPriority")
         if runner.get("ltp") is not None:
             runner_state["ltp"] = runner.get("ltp")
+        if runner.get("adjustmentFactor") is not None:
+            runner_state["adjustmentFactor"] = runner.get("adjustmentFactor")
+        if runner.get("removalDate") is not None:
+            runner_state["removalDate"] = runner.get("removalDate")
+        if runner.get("bsp") is not None:
+            runner_state["bsp"] = runner.get("bsp")
+        if runner.get("spn") is not None:
+            runner_state["spn"] = runner.get("spn")
+        if runner.get("spf") is not None:
+            runner_state["spf"] = runner.get("spf")
 
         ex = runner.get("ex") if isinstance(runner.get("ex"), dict) else {}
         if "availableToBack" in ex and ex.get("availableToBack") is not None:
@@ -452,10 +477,22 @@ class StreamingFeed:
             runner_state["handicap"] = rc.get("hc")
         if rc.get("ltp") is not None:
             runner_state["ltp"] = rc.get("ltp")
-        if rc.get("tv") is not None:
-            runner_state["ex"]["tradedVolume"] = self._parse_price_points(rc.get("tv") or [])
+        if rc.get("adjustmentFactor") is not None:
+            runner_state["adjustmentFactor"] = rc.get("adjustmentFactor")
+        if rc.get("removalDate") is not None:
+            runner_state["removalDate"] = rc.get("removalDate")
+        if rc.get("bsp") is not None:
+            runner_state["bsp"] = rc.get("bsp")
+        if rc.get("spn") is not None:
+            runner_state["spn"] = rc.get("spn")
+        if rc.get("spf") is not None:
+            runner_state["spf"] = rc.get("spf")
+        # Contract: traded volume uses the latest update; if both keys are present
+        # in a single runner-change payload, `trd` is canonical and takes precedence.
         if rc.get("trd") is not None:
             runner_state["ex"]["tradedVolume"] = self._parse_price_points(rc.get("trd") or [])
+        elif rc.get("tv") is not None:
+            runner_state["ex"]["tradedVolume"] = self._parse_price_points(rc.get("tv") or [])
         if rc.get("batb") is not None:
             runner_state["ex"]["availableToBack"] = self._merge_ladder_points(
                 runner_state["ex"]["availableToBack"],
@@ -478,6 +515,11 @@ class StreamingFeed:
                 "handicap": runner_state.get("handicap"),
                 "sortPriority": runner_state.get("sortPriority"),
                 "ltp": runner_state.get("ltp"),
+                "adjustmentFactor": runner_state.get("adjustmentFactor"),
+                "removalDate": runner_state.get("removalDate"),
+                "bsp": runner_state.get("bsp"),
+                "spn": runner_state.get("spn"),
+                "spf": runner_state.get("spf"),
                 "ex": {
                     "availableToBack": list(runner_state.get("ex", {}).get("availableToBack") or []),
                     "availableToLay": list(runner_state.get("ex", {}).get("availableToLay") or []),
@@ -515,6 +557,57 @@ class StreamingFeed:
             if isinstance(level, (int, float)):
                 item["level"] = int(level)
             out.append(item)
+        return out
+
+    def _merge_market_definition_dict(self, existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
+        merged = deepcopy(existing or {})
+        for key, value in (incoming or {}).items():
+            if key == "runners" and isinstance(value, list):
+                merged["runners"] = self._merge_market_definition_runners(
+                    merged.get("runners"),
+                    value,
+                )
+                continue
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                merged[key] = self._deep_merge_dict(merged.get(key) or {}, value)
+                continue
+            merged[key] = deepcopy(value)
+        return merged
+
+    def _merge_market_definition_runners(self, existing: Any, incoming: List[Any]) -> List[Any]:
+        existing_list = list(existing or [])
+        merged: List[Any] = [deepcopy(item) for item in existing_list]
+        index_by_id: Dict[str, int] = {}
+        for idx, item in enumerate(merged):
+            if isinstance(item, dict) and item.get("id") not in (None, ""):
+                index_by_id[str(item.get("id"))] = idx
+
+        for runner in incoming or []:
+            if not isinstance(runner, dict):
+                merged.append(deepcopy(runner))
+                continue
+            runner_id = runner.get("id")
+            if runner_id in (None, ""):
+                merged.append(deepcopy(runner))
+                continue
+            key = str(runner_id)
+            if key in index_by_id and isinstance(merged[index_by_id[key]], dict):
+                merged[index_by_id[key]] = self._deep_merge_dict(
+                    merged[index_by_id[key]],
+                    runner,
+                )
+            else:
+                index_by_id[key] = len(merged)
+                merged.append(deepcopy(runner))
+        return merged
+
+    def _deep_merge_dict(self, base: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]:
+        out = deepcopy(base or {})
+        for key, value in (update or {}).items():
+            if isinstance(value, dict) and isinstance(out.get(key), dict):
+                out[key] = self._deep_merge_dict(out.get(key) or {}, value)
+            else:
+                out[key] = deepcopy(value)
         return out
 
     def _merge_ladder_points(self, existing: List[Dict[str, Any]], updates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -605,6 +698,11 @@ class StreamingFeed:
                     "status": getattr(runner, "status", None),
                     "handicap": getattr(runner, "handicap", None),
                     "ltp": getattr(runner, "last_price_traded", None),
+                    "adjustmentFactor": getattr(runner, "adjustment_factor", None),
+                    "removalDate": getattr(runner, "removal_date", None),
+                    "bsp": getattr(runner, "bsp", None),
+                    "spn": getattr(runner, "spn", None),
+                    "spf": getattr(runner, "spf", None),
                     "ex": {
                         "availableToBack": available_to_back,
                         "availableToLay": available_to_lay,
@@ -645,6 +743,11 @@ class StreamingFeed:
                     "status": getattr(runner_def, "status", None),
                     "hc": getattr(runner_def, "handicap", None),
                     "sortPriority": getattr(runner_def, "sort_priority", None),
+                    "adjustmentFactor": getattr(runner_def, "adjustment_factor", None),
+                    "removalDate": getattr(runner_def, "removal_date", None),
+                    "bsp": getattr(runner_def, "bsp", None),
+                    "spn": getattr(runner_def, "spn", None),
+                    "spf": getattr(runner_def, "spf", None),
                 }
             )
         if runners_out:

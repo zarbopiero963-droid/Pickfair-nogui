@@ -444,6 +444,191 @@ def test_streaming_feed_mixed_repeated_partial_updates_converge_without_data_los
     assert runners[52]["ex"]["availableToLay"] == [{"price": 2.5, "size": 5.0}]
 
 
+def test_streaming_feed_tv_then_trd_is_deterministic():
+    updates = []
+    feed = StreamingFeed(
+        client_getter=lambda: None,
+        config={"enabled": False, "market_data_mode": "poll"},
+        on_market_book=lambda book: updates.append(book),
+    )
+
+    feed._process_message({"mc": [{"id": "1.840", "rc": [{"id": 77, "tv": [[2.0, 10.0]]}]}]})
+    feed._process_message({"mc": [{"id": "1.840", "rc": [{"id": 77, "trd": [[2.2, 22.0]]}]}]})
+    final = updates[-1]
+    runner = next(r for r in final["runners"] if r["selectionId"] == 77)
+    assert runner["ex"]["tradedVolume"] == [{"price": 2.2, "size": 22.0}]
+
+
+def test_streaming_feed_trd_then_tv_is_deterministic():
+    updates = []
+    feed = StreamingFeed(
+        client_getter=lambda: None,
+        config={"enabled": False, "market_data_mode": "poll"},
+        on_market_book=lambda book: updates.append(book),
+    )
+
+    feed._process_message({"mc": [{"id": "1.841", "rc": [{"id": 78, "trd": [[1.9, 19.0]]}]}]})
+    feed._process_message({"mc": [{"id": "1.841", "rc": [{"id": 78, "tv": [[1.8, 18.0]]}]}]})
+    final = updates[-1]
+    runner = next(r for r in final["runners"] if r["selectionId"] == 78)
+    assert runner["ex"]["tradedVolume"] == [{"price": 1.8, "size": 18.0}]
+
+
+def test_streaming_feed_trd_precedence_when_tv_and_trd_arrive_together():
+    updates = []
+    feed = StreamingFeed(
+        client_getter=lambda: None,
+        config={"enabled": False, "market_data_mode": "poll"},
+        on_market_book=lambda book: updates.append(book),
+    )
+
+    feed._process_message(
+        {
+            "mc": [
+                {
+                    "id": "1.842",
+                    "rc": [
+                        {
+                            "id": 79,
+                            "tv": [[2.4, 24.0]],
+                            "trd": [[2.6, 26.0]],
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+    final = updates[-1]
+    runner = next(r for r in final["runners"] if r["selectionId"] == 79)
+    assert runner["ex"]["tradedVolume"] == [{"price": 2.6, "size": 26.0}]
+
+
+def test_streaming_feed_metadata_only_rc_update_preserves_price_state_and_ladders():
+    updates = []
+    feed = StreamingFeed(
+        client_getter=lambda: None,
+        config={"enabled": False, "market_data_mode": "poll"},
+        on_market_book=lambda book: updates.append(book),
+    )
+
+    feed._process_message(
+        {
+            "mc": [
+                {
+                    "id": "1.850",
+                    "rc": [
+                        {
+                            "id": 88,
+                            "ltp": 3.1,
+                            "batb": [[0, 3.05, 12.0]],
+                            "batl": [[0, 3.2, 9.0]],
+                            "trd": [[3.1, 42.0]],
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+    feed._process_message(
+        {
+            "mc": [
+                {
+                    "id": "1.850",
+                    "rc": [
+                        {
+                            "id": 88,
+                            "status": "REMOVED",
+                            "hc": 0.0,
+                            "adjustmentFactor": 12.5,
+                            "removalDate": "2026-03-01T10:00:00Z",
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    final = updates[-1]
+    runner = next(r for r in final["runners"] if r["selectionId"] == 88)
+    assert runner["status"] == "REMOVED"
+    assert runner["handicap"] == 0.0
+    assert runner["adjustmentFactor"] == 12.5
+    assert runner["removalDate"] == "2026-03-01T10:00:00Z"
+    assert runner["ltp"] == pytest.approx(3.1)
+    assert runner["ex"]["availableToBack"] == [{"price": 3.05, "size": 12.0}]
+    assert runner["ex"]["availableToLay"] == [{"price": 3.2, "size": 9.0}]
+    assert runner["ex"]["tradedVolume"] == [{"price": 3.1, "size": 42.0}]
+
+
+def test_streaming_feed_partial_market_definition_nested_metadata_is_preserved():
+    updates = []
+    feed = StreamingFeed(
+        client_getter=lambda: None,
+        config={"enabled": False, "market_data_mode": "poll"},
+        on_market_book=lambda book: updates.append(book),
+    )
+
+    feed._process_message(
+        {
+            "mc": [
+                {
+                    "id": "1.860",
+                    "marketDefinition": {
+                        "status": "OPEN",
+                        "inPlay": False,
+                        "keyLineDefinition": {"kl": [{"id": 88, "hc": 0.0}]},
+                        "runners": [
+                            {
+                                "id": 88,
+                                "name": "Runner 88",
+                                "status": "ACTIVE",
+                                "adjustmentFactor": 11.0,
+                                "bsp": 2.9,
+                            }
+                        ],
+                    },
+                }
+            ]
+        }
+    )
+    feed._process_message(
+        {
+            "mc": [
+                {
+                    "id": "1.860",
+                    "marketDefinition": {
+                        "inPlay": True,
+                        "runners": [
+                            {
+                                "id": 88,
+                                "status": "REMOVED",
+                                "removalDate": "2026-03-01T11:00:00Z",
+                            }
+                        ],
+                    },
+                }
+            ]
+        }
+    )
+
+    final = updates[-1]
+    assert final["status"] == "OPEN"
+    assert final["inplay"] is True
+    assert final["marketDefinition"]["keyLineDefinition"] == {"kl": [{"id": 88, "hc": 0.0}]}
+    runner_def = final["marketDefinition"]["runners"][0]
+    assert runner_def["name"] == "Runner 88"
+    assert runner_def["adjustmentFactor"] == 11.0
+    assert runner_def["bsp"] == 2.9
+    assert runner_def["status"] == "REMOVED"
+    assert runner_def["removalDate"] == "2026-03-01T11:00:00Z"
+    runner = final["runners"][0]
+    assert runner["runnerName"] == "Runner 88"
+    assert runner["status"] == "REMOVED"
+    assert runner["adjustmentFactor"] == 11.0
+    assert runner["bsp"] == 2.9
+    assert runner["removalDate"] == "2026-03-01T11:00:00Z"
+
+
 def test_streaming_feed_session_gate_blocks_subscribe_when_invalid():
     subscriptions = []
     disconnects = []

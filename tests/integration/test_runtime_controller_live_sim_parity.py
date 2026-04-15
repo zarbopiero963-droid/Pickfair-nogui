@@ -391,3 +391,100 @@ def test_runtime_controller_status_surfaces_streaming_feed_degraded_state(monkey
     assert "streaming_feed" in status
     assert status["streaming_feed"]["auth_degraded"] is True
     assert status["streaming_feed"]["keepalive_failure_count"] == 2
+
+
+@pytest.mark.integration
+def test_runtime_controller_market_tracker_preserves_rare_metadata_fields(monkeypatch):
+    class _SettingsStream(_Settings):
+        def load_market_data_config(self):
+            return {
+                "market_data_mode": "stream",
+                "enabled": True,
+                "market_ids": ["1.903"],
+                "heartbeat_timeout_sec": 2,
+            }
+
+    metadata_rich_book = {
+        "marketId": "1.903",
+        "market_id": "1.903",
+        "status": "SUSPENDED",
+        "inplay": True,
+        "marketDefinition": {
+            "status": "SUSPENDED",
+            "inPlay": True,
+            "keyLineDefinition": {"kl": [{"id": 301, "hc": 0.0}]},
+            "runners": [
+                {
+                    "id": 301,
+                    "name": "Runner 301",
+                    "status": "REMOVED",
+                    "adjustmentFactor": 14.2,
+                    "removalDate": "2026-04-01T09:30:00Z",
+                    "bsp": 3.6,
+                    "spn": 3.4,
+                    "spf": 3.8,
+                }
+            ],
+        },
+        "runners": [
+            {
+                "selectionId": 301,
+                "runnerName": "Runner 301",
+                "status": "REMOVED",
+                "handicap": 0.0,
+                "ltp": 3.5,
+                "adjustmentFactor": 14.2,
+                "removalDate": "2026-04-01T09:30:00Z",
+                "bsp": 3.6,
+                "spn": 3.4,
+                "spf": 3.8,
+                "ex": {
+                    "availableToBack": [{"price": 3.4, "size": 5.0}],
+                    "availableToLay": [{"price": 3.7, "size": 4.0}],
+                    "tradedVolume": [{"price": 3.5, "size": 110.0}],
+                },
+            }
+        ],
+    }
+
+    class _FakeStreamingFeed:
+        def __init__(self, *, client_getter, config, on_market_book, on_disconnect, session_gate=None):
+            _ = client_getter, config, on_disconnect, session_gate
+            self.on_market_book = on_market_book
+
+        def start(self):
+            self.on_market_book(metadata_rich_book)
+            return {"started": True}
+
+        def stop(self):
+            return {"stopped": True}
+
+    monkeypatch.setattr("core.runtime_controller.StreamingFeed", _FakeStreamingFeed)
+
+    rc = RuntimeController(
+        bus=_Bus(),
+        db=_DB(),
+        settings_service=_SettingsStream(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+    rc.simulation_mode = False
+
+    received = []
+    rc.market_tracker.on_market_book = lambda book: received.append(dict(book))
+    rc._start_market_data_feed()
+
+    assert len(received) == 1
+    out = received[0]
+    assert out["marketId"] == "1.903"
+    assert out["status"] == "SUSPENDED"
+    assert out["marketDefinition"]["keyLineDefinition"] == {"kl": [{"id": 301, "hc": 0.0}]}
+    assert out["marketDefinition"]["runners"][0]["adjustmentFactor"] == pytest.approx(14.2)
+    runner = out["runners"][0]
+    assert runner["selectionId"] == 301
+    assert runner["status"] == "REMOVED"
+    assert runner["adjustmentFactor"] == pytest.approx(14.2)
+    assert runner["removalDate"] == "2026-04-01T09:30:00Z"
+    assert runner["bsp"] == pytest.approx(3.6)
+    assert runner["spn"] == pytest.approx(3.4)
+    assert runner["spf"] == pytest.approx(3.8)
