@@ -1164,14 +1164,20 @@ class RuntimeController:
             "roserpina_reason": decision.reason,
             "roserpina_mode": decision.desk_mode.value,
         }
-        if isinstance(copy_meta, dict):
+        has_copy_meta = isinstance(copy_meta, dict)
+        has_pattern_meta = isinstance(pattern_meta, dict)
+        if has_copy_meta and has_pattern_meta:
+            # Defensive fail-closed guard: Runtime should never forward both.
+            self._reject_signal(signal, "copy_pattern_mutually_exclusive")
+            return
+        if has_copy_meta:
             payload["copy_meta"] = dict(copy_meta)
-        if isinstance(pattern_meta, dict):
+        elif has_pattern_meta:
             payload["pattern_meta"] = dict(pattern_meta)
         order_origin = self._resolve_order_origin(
             signal,
-            has_copy_meta=isinstance(copy_meta, dict),
-            has_pattern_meta=isinstance(pattern_meta, dict),
+            has_copy_meta=has_copy_meta,
+            has_pattern_meta=has_pattern_meta,
         )
         if order_origin:
             payload["order_origin"] = order_origin
