@@ -169,12 +169,28 @@ class TelegramModule:
             logger.exception("[TelegramModule] Errore save_received_signal status=%s: %s", status, e)
 
     def _bus_has_subscriber(self, event_name: str) -> bool:
+        event_name = str(event_name or "")
+        if not event_name:
+            return False
+
         try:
             subscribers = getattr(self.bus, "subscribers", None)
             if isinstance(subscribers, dict):
-                return bool(subscribers.get(event_name))
+                return bool(list(subscribers.get(event_name) or []))
         except Exception:
-            pass
+            logger.exception("[TelegramModule] Errore accesso bus.subscribers")
+
+        try:
+            private_subscribers = getattr(self.bus, "_subscribers", None)
+            if isinstance(private_subscribers, dict):
+                lock = getattr(self.bus, "_lock", None)
+                if lock is not None and hasattr(lock, "__enter__"):
+                    with lock:
+                        return bool(list(private_subscribers.get(event_name) or []))
+                return bool(list(private_subscribers.get(event_name) or []))
+        except Exception:
+            logger.exception("[TelegramModule] Errore accesso bus._subscribers")
+
         return False
 
     def _publish_order_signal(self, payload: dict) -> str:

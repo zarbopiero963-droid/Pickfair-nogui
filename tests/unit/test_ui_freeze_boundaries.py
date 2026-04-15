@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Future
+import threading
 
 import pytest
 
@@ -147,6 +148,31 @@ def test_telegram_module_falls_back_to_req_quick_bet_when_runtime_gate_not_wired
 
     assert h.bus.events[0][0] == "REQ_QUICK_BET"
     assert h.bus.events[0][1]["telegram_route_target"] == "REQ_QUICK_BET"
+
+
+@pytest.mark.unit
+def test_telegram_module_detects_eventbus_private_subscribers_shape():
+    h = _TelegramHarness()
+
+    class _EventBusLike:
+        def __init__(self):
+            self._subscribers = {"SIGNAL_RECEIVED": [object()]}
+            self._lock = threading.Lock()
+            self.events = []
+
+        def publish(self, name, payload=None):
+            self.events.append((name, payload))
+
+    h.bus = _EventBusLike()
+    h._publish_order_signal(
+        {
+            "market_id": "1.2",
+            "selection_id": 20,
+            "telegram_boundary_stage": "telegram_ingestion_normalized_v1",
+        }
+    )
+
+    assert h.bus.events[0][0] == "SIGNAL_RECEIVED"
 
 
 @pytest.mark.unit
