@@ -16,6 +16,7 @@ from core.table_manager import TableManager
 from core.safety_layer import assert_live_gate_or_refuse
 from core.type_helpers import safe_bool
 from order_manager import TERMINAL_LIFECYCLE_EVENTS
+from services.streaming_feed import StreamingConfigError, StreamingFeed
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,9 @@ class RuntimeController:
             bus=self.bus,
             betfair_service=self.betfair_service,
         )
+        self.streaming_feed: Optional[StreamingFeed] = None
+        self._market_data_cfg: dict[str, Any] = {}
+        self._last_fallback_snapshot_at: float = 0.0
 
         self.mode = RuntimeMode.STOPPED
         self.last_error = ""
@@ -127,6 +131,85 @@ class RuntimeController:
             self._io_observations["degraded_count"] = int(self._io_observations.get("degraded_count", 0) or 0) + 1
         if status == "UNAVAILABLE":
             self._io_observations["unavailable_count"] = int(self._io_observations.get("unavailable_count", 0) or 0) + 1
+
+    def _load_market_data_config(self) -> dict:
+        if hasattr(self.settings_service, "load_market_data_config"):
+            try:
+                cfg = self.settings_service.load_market_data_config() or {}
+                if isinstance(cfg, dict):
+                    return cfg
+            except Exception:
+                logger.exception("Errore load_market_data_config")
+        return {
+            "market_data_mode": "poll",
+            "enabled": False,
+            "snapshot_fallback_enabled": True,
+            "snapshot_fallback_interval_sec": 5,
+            "market_ids": [],
+        }
+
+    def _stream_market_book_callback(self, market_book: dict) -> None:
+        self.market_tracker.on_market_book(dict(market_book or {}))
+
+    def _stream_disconnect_callback(self, payload: dict) -> None:
+        logger.warning("Streaming disconnected -> fallback snapshot payload=%s", payload)
+        self._snapshot_rest_fallback(reason="stream_disconnect", payload=payload)
+
+    def _start_market_data_feed(self) -> None:
+        self._market_data_cfg = self._load_market_data_config()
+        mode = str(self._market_data_cfg.get("market_data_mode", "poll") or "poll").strip().lower()
+        enabled = bool(self._market_data_cfg.get("enabled", False))
+        if self.simulation_mode:
+            return
+        if mode not in {"stream", "hybrid"} or not enabled:
+            return
+
+        self.streaming_feed = StreamingFeed(
+            client_getter=self.betfair_service.get_live_client,
+            config=self._market_data_cfg,
+            on_market_book=self._stream_market_book_callback,
+            on_disconnect=self._stream_disconnect_callback,
+        )
+        self.streaming_feed.start()
+
+    def _stop_market_data_feed(self) -> None:
+        if self.streaming_feed is None:
+            return
+        try:
+            self.streaming_feed.stop()
+        except Exception:
+            logger.exception("Errore stop streaming_feed")
+        finally:
+            self.streaming_feed = None
+
+    def _snapshot_rest_fallback(self, *, reason: str, payload: Optional[dict] = None) -> None:
+        cfg = dict(self._market_data_cfg or self._load_market_data_config())
+        if not bool(cfg.get("snapshot_fallback_enabled", True)):
+            return
+
+        now = time.monotonic()
+        min_interval = max(1.0, float(cfg.get("snapshot_fallback_interval_sec", 5) or 5))
+        if (now - self._last_fallback_snapshot_at) < min_interval:
+            return
+
+        market_ids = [str(mid).strip() for mid in (cfg.get("market_ids") or []) if str(mid).strip()]
+        if not market_ids:
+            return
+
+        for market_id in market_ids:
+            book = self.betfair_service.get_market_book_snapshot(market_id)
+            if isinstance(book, dict) and book:
+                self.market_tracker.on_market_book(book)
+        self._last_fallback_snapshot_at = now
+        self.bus.publish(
+            "MARKET_DATA_FALLBACK_SNAPSHOT",
+            {
+                "reason": reason,
+                "market_count": len(market_ids),
+                "ts": datetime.utcnow().isoformat(),
+                "stream_payload": dict(payload or {}),
+            },
+        )
 
     def runtime_io_snapshot(self) -> dict:
         return dict(self._io_observations)
@@ -825,6 +908,16 @@ class RuntimeController:
         except Exception as exc:
             self._record_runtime_io(operation="telegram_start", started_at=start_telegram, ok=False, error=str(exc))
             raise
+        start_market_data = time.monotonic()
+        try:
+            self._start_market_data_feed()
+            self._record_runtime_io(operation="market_data_feed_start", started_at=start_market_data, ok=True)
+        except StreamingConfigError as exc:
+            self._record_runtime_io(operation="market_data_feed_start", started_at=start_market_data, ok=False, error=str(exc))
+            raise RuntimeError(f"MARKET_DATA_CONFIG_INVALID:{exc}") from exc
+        except Exception as exc:
+            self._record_runtime_io(operation="market_data_feed_start", started_at=start_market_data, ok=False, error=str(exc))
+            logger.exception("Errore start market data feed: %s", exc)
 
         try:
             self.reconciliation_engine.reconcile_all_open_batches()
@@ -845,6 +938,7 @@ class RuntimeController:
         }
 
     def stop(self) -> dict:
+        self._stop_market_data_feed()
         self.telegram_service.stop()
         self.betfair_service.disconnect()
         self.mode = RuntimeMode.STOPPED

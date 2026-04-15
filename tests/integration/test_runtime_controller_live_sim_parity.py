@@ -29,6 +29,15 @@ class _Settings:
         cfg.anti_duplication_enabled = False
         return cfg
 
+    def load_market_data_config(self):
+        return {
+            "market_data_mode": "poll",
+            "enabled": False,
+            "market_ids": [],
+            "snapshot_fallback_enabled": True,
+            "snapshot_fallback_interval_sec": 1,
+        }
+
 
 class _Betfair:
     def __init__(self):
@@ -39,10 +48,18 @@ class _Betfair:
         return {"available": 0.0}
     def status(self):
         return {"connected": True}
+    def get_live_client(self):
+        return object()
+    def get_market_book_snapshot(self, market_id):
+        _ = market_id
+        return None
 
 
 class _Telegram:
-    pass
+    def start(self):
+        return {"started": True}
+    def stop(self):
+        return None
 
 
 @pytest.mark.integration
@@ -197,3 +214,60 @@ def test_effective_execution_mode_stays_simulation_when_deploy_gate_denies_ready
     rc.get_deploy_gate_status = lambda **_kwargs: {"allowed": False, "readiness": "READY"}
 
     assert rc.get_effective_execution_mode() == "SIMULATION"
+
+
+@pytest.mark.integration
+def test_runtime_controller_market_data_ingestion_boundary_uses_market_tracker(monkeypatch):
+    events = []
+
+    class _BusBoundary(_Bus):
+        def publish(self, topic, payload=None):
+            super().publish(topic, payload)
+            events.append((topic, payload or {}))
+
+    class _SettingsStream(_Settings):
+        def load_market_data_config(self):
+            return {
+                "market_data_mode": "stream",
+                "enabled": True,
+                "market_ids": ["1.900"],
+                "heartbeat_timeout_sec": 2,
+                "snapshot_fallback_enabled": True,
+                "snapshot_fallback_interval_sec": 1,
+            }
+
+    class _FakeStreamingFeed:
+        def __init__(self, *, client_getter, config, on_market_book, on_disconnect):
+            _ = client_getter, config, on_disconnect
+            self.on_market_book = on_market_book
+            self.started = False
+            self.stopped = False
+
+        def start(self):
+            self.started = True
+            self.on_market_book({"marketId": "1.900", "runners": []})
+            return {"started": True}
+
+        def stop(self):
+            self.stopped = True
+            return {"stopped": True}
+
+    monkeypatch.setattr("core.runtime_controller.StreamingFeed", _FakeStreamingFeed)
+
+    rc = RuntimeController(
+        bus=_BusBoundary(),
+        db=_DB(),
+        settings_service=_SettingsStream(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+    rc.simulation_mode = False
+
+    received = []
+    rc.market_tracker.on_market_book = lambda book: received.append(dict(book))
+
+    rc._start_market_data_feed()
+    assert rc.streaming_feed is not None
+    assert received and received[0]["marketId"] == "1.900"
+    rc._stop_market_data_feed()
+    assert rc.streaming_feed is None

@@ -560,6 +560,32 @@ class BetfairService:
                 "error": str(exc),
             }
 
+    def get_market_book_snapshot(self, market_id: str) -> Optional[Dict[str, Any]]:
+        if self.simulation_mode:
+            if not self.simulation_broker:
+                return None
+            try:
+                return self.simulation_broker.get_market_book(str(market_id)) or None
+            except Exception:
+                logger.exception("Errore get_market_book_snapshot simulation")
+                return None
+
+        if not self.client:
+            return None
+
+        try:
+            return self.client.get_market_book(str(market_id)) or None
+        except Exception as exc:
+            error_text = str(exc)
+            if "SESSION_EXPIRED" in error_text.upper() or "INVALID_SESSION" in error_text.upper():
+                logger.warning(
+                    "betfair_service: session expiry detected in get_market_book_snapshot; invoking recovery"
+                )
+                self.handle_session_expiry(reason=error_text)
+            else:
+                logger.exception("Errore get_market_book_snapshot: %s", exc)
+            return None
+
     def reset_simulation(self, starting_balance: float | None = None) -> dict:
         if not self.simulation_broker:
             return {

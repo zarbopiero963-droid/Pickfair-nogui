@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Dict
 
 from core.system_state import (
@@ -54,6 +55,24 @@ class SettingsService:
         if isinstance(value, bool):
             return value
         return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+    def _list(self, data: Dict[str, Any], key: str, default: list[str] | None = None) -> list[str]:
+        value = data.get(key, default or [])
+        if isinstance(value, list):
+            return [str(v).strip() for v in value if str(v).strip()]
+        if value in (None, ""):
+            return list(default or [])
+        raw = str(value).strip()
+        if not raw:
+            return list(default or [])
+        if raw.startswith("["):
+            try:
+                decoded = json.loads(raw)
+                if isinstance(decoded, list):
+                    return [str(v).strip() for v in decoded if str(v).strip()]
+            except Exception:
+                pass
+        return [p.strip() for p in raw.split(",") if p.strip()]
 
     # =========================================================
     # BETFAIR CONFIG
@@ -252,6 +271,63 @@ class SettingsService:
             "consume_liquidity": self._b(data, "simulation.consume_liquidity", True),
             "persist_state": self._b(data, "simulation.persist_state", True),
         }
+
+    def load_market_data_config(self) -> Dict[str, Any]:
+        data = self.get_all_settings()
+        compact_fields = ["EX_BEST_OFFERS", "EX_MARKET_DEF", "EX_LTP"]
+        use_full_ladder = self._b(data, "streaming.use_full_ladder", False)
+        fields = self._list(data, "streaming.fields", compact_fields)
+        if not use_full_ladder:
+            fields = [f for f in fields if f != "EX_ALL_OFFERS"]
+        return {
+            "market_data_mode": str(data.get("market_data.mode", "poll") or "poll").strip().lower(),
+            "enabled": self._b(data, "streaming.enabled", False),
+            "reconnect_backoff_sec": self._i(data, "streaming.reconnect_backoff_sec", 1),
+            "heartbeat_timeout_sec": self._i(data, "streaming.heartbeat_timeout_sec", 2),
+            "snapshot_fallback_enabled": self._b(data, "streaming.snapshot_fallback_enabled", True),
+            "snapshot_fallback_interval_sec": self._i(data, "streaming.snapshot_fallback_interval_sec", 5),
+            "max_markets": self._i(data, "streaming.max_markets", 25),
+            "market_ids": self._list(data, "streaming.market_ids", []),
+            "event_type_ids": self._list(data, "streaming.event_type_ids", []),
+            "country_codes": self._list(data, "streaming.country_codes", []),
+            "market_types": self._list(data, "streaming.market_types", []),
+            "use_full_ladder": use_full_ladder,
+            "fields": fields or compact_fields,
+            "ladder_levels": self._i(data, "streaming.ladder_levels", 3),
+            "conflate_ms": self._i(data, "streaming.conflate_ms", 0),
+            "heartbeat_ms": self._i(data, "streaming.heartbeat_ms", 1000),
+            "segmentation_enabled": self._b(data, "streaming.segmentation_enabled", True),
+        }
+
+    def save_market_data_config(self, config: Dict[str, Any]) -> None:
+        compact_fields = ["EX_BEST_OFFERS", "EX_MARKET_DEF", "EX_LTP"]
+        use_full_ladder = bool(config.get("use_full_ladder", False))
+        fields = config.get("fields", compact_fields)
+        if not isinstance(fields, list):
+            fields = compact_fields
+        if not use_full_ladder:
+            fields = [f for f in fields if f != "EX_ALL_OFFERS"]
+        self.save_settings(
+            {
+                "market_data.mode": str(config.get("market_data_mode", "poll") or "poll").strip().lower(),
+                "streaming.enabled": int(bool(config.get("enabled", False))),
+                "streaming.reconnect_backoff_sec": int(config.get("reconnect_backoff_sec", 1) or 1),
+                "streaming.heartbeat_timeout_sec": int(config.get("heartbeat_timeout_sec", 2) or 2),
+                "streaming.snapshot_fallback_enabled": int(bool(config.get("snapshot_fallback_enabled", True))),
+                "streaming.snapshot_fallback_interval_sec": int(config.get("snapshot_fallback_interval_sec", 5) or 5),
+                "streaming.max_markets": int(config.get("max_markets", 25) or 25),
+                "streaming.market_ids": json.dumps(list(config.get("market_ids", []) or [])),
+                "streaming.event_type_ids": json.dumps(list(config.get("event_type_ids", []) or [])),
+                "streaming.country_codes": json.dumps(list(config.get("country_codes", []) or [])),
+                "streaming.market_types": json.dumps(list(config.get("market_types", []) or [])),
+                "streaming.use_full_ladder": int(use_full_ladder),
+                "streaming.fields": json.dumps(list(fields)),
+                "streaming.ladder_levels": int(config.get("ladder_levels", 3) or 3),
+                "streaming.conflate_ms": int(config.get("conflate_ms", 0) or 0),
+                "streaming.heartbeat_ms": int(config.get("heartbeat_ms", 1000) or 1000),
+                "streaming.segmentation_enabled": int(bool(config.get("segmentation_enabled", True))),
+            }
+        )
 
     def save_simulation_config(self, config: Dict[str, Any]) -> None:
         self.db.save_settings(
