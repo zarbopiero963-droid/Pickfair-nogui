@@ -3,6 +3,7 @@ import random
 import pytest
 
 from pnl_engine import PnLEngine
+from core.pnl_engine import PnLEngine as EventDrivenPnLEngine
 
 _REQUIRED_CALC_API = (
     "calculate_position_pnl",
@@ -178,3 +179,16 @@ def test_core_pnl_mark_to_market_repeat_read_is_stable():
     first = values[0]
     assert all(math.isfinite(v) for v in values)
     assert all(abs(v - first) < 1e-12 for v in values)
+
+
+@pytest.mark.invariant
+def test_two_pnl_engines_have_separate_contract_surfaces():
+    # Calculation PnL engine contract (top-level pnl_engine.py)
+    assert hasattr(PnLEngine, "calculate_position_pnl")
+    assert hasattr(PnLEngine, "calculate_settlement_pnl")
+    assert not hasattr(PnLEngine, "_on_market")
+
+    # Event-driven PnL engine contract (core/pnl_engine.py)
+    assert hasattr(EventDrivenPnLEngine, "_on_market")
+    assert hasattr(EventDrivenPnLEngine, "_on_filled")
+    assert not hasattr(EventDrivenPnLEngine, "calculate_position_pnl")
