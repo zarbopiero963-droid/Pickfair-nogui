@@ -415,6 +415,10 @@ class StreamingFeed:
             return
         runner_state = self._get_or_init_runner_state(state, selection_id)
 
+        if rc.get("status") is not None:
+            runner_state["status"] = rc.get("status")
+        if rc.get("hc") is not None:
+            runner_state["handicap"] = rc.get("hc")
         if rc.get("ltp") is not None:
             runner_state["ltp"] = rc.get("ltp")
         if rc.get("tv") is not None:
@@ -422,9 +426,15 @@ class StreamingFeed:
         if rc.get("trd") is not None:
             runner_state["ex"]["tradedVolume"] = self._parse_price_points(rc.get("trd") or [])
         if rc.get("batb") is not None:
-            runner_state["ex"]["availableToBack"] = self._parse_price_points(rc.get("batb") or [])
+            runner_state["ex"]["availableToBack"] = self._merge_ladder_points(
+                runner_state["ex"]["availableToBack"],
+                self._parse_price_points(rc.get("batb") or []),
+            )
         if rc.get("batl") is not None:
-            runner_state["ex"]["availableToLay"] = self._parse_price_points(rc.get("batl") or [])
+            runner_state["ex"]["availableToLay"] = self._merge_ladder_points(
+                runner_state["ex"]["availableToLay"],
+                self._parse_price_points(rc.get("batl") or []),
+            )
 
     def _state_to_market_book(self, state: Dict[str, Any]) -> Dict[str, Any]:
         runners = []
@@ -463,13 +473,49 @@ class StreamingFeed:
             if not isinstance(row, (list, tuple)) or len(row) < 2:
                 continue
             if len(row) >= 3:
+                level = row[0]
                 price = row[1]
                 size = row[2]
             else:
+                level = None
                 price = row[0]
                 size = row[1]
-            out.append({"price": price, "size": size})
+            item: Dict[str, Any] = {"price": price, "size": size}
+            if isinstance(level, (int, float)):
+                item["level"] = int(level)
+            out.append(item)
         return out
+
+    def _merge_ladder_points(self, existing: List[Dict[str, Any]], updates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not updates:
+            return list(existing or [])
+
+        # No explicit levels -> treat update as full ladder replacement.
+        if not any("level" in item for item in updates):
+            return [{"price": item.get("price"), "size": item.get("size")} for item in updates]
+
+        by_level: Dict[int, Dict[str, Any]] = {}
+        for idx, item in enumerate(existing or []):
+            level = item.get("level")
+            if not isinstance(level, int):
+                level = idx
+            by_level[level] = {"price": item.get("price"), "size": item.get("size")}
+
+        for item in updates:
+            level = item.get("level")
+            if not isinstance(level, int):
+                continue
+            size = item.get("size")
+            if size is not None and float(size) <= 0:
+                by_level.pop(level, None)
+                continue
+            by_level[level] = {"price": item.get("price"), "size": size}
+
+        merged = []
+        for level in sorted(by_level.keys()):
+            row = by_level[level]
+            merged.append({"price": row.get("price"), "size": row.get("size")})
+        return merged
 
     def _safe_on_market_book(self, market_book: Dict[str, Any]) -> None:
         try:

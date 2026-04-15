@@ -271,3 +271,73 @@ def test_runtime_controller_market_data_ingestion_boundary_uses_market_tracker(m
     assert received and received[0]["marketId"] == "1.900"
     rc._stop_market_data_feed()
     assert rc.streaming_feed is None
+
+
+@pytest.mark.integration
+def test_runtime_controller_market_tracker_receives_coherent_edge_case_book(monkeypatch):
+    class _SettingsStream(_Settings):
+        def load_market_data_config(self):
+            return {
+                "market_data_mode": "stream",
+                "enabled": True,
+                "market_ids": ["1.901"],
+                "heartbeat_timeout_sec": 2,
+            }
+
+    coherent_book = {
+        "marketId": "1.901",
+        "market_id": "1.901",
+        "status": "SUSPENDED",
+        "inplay": True,
+        "marketDefinition": {"status": "SUSPENDED", "inPlay": True},
+        "runners": [
+            {
+                "selectionId": 101,
+                "runnerName": "Runner 101",
+                "status": "REMOVED",
+                "ex": {"availableToBack": [{"price": 2.02, "size": 9.0}], "availableToLay": []},
+            },
+            {
+                "selectionId": 102,
+                "runnerName": "Runner 102",
+                "status": "ACTIVE",
+                "ex": {"availableToBack": [{"price": 3.1, "size": 4.0}], "availableToLay": [{"price": 3.2, "size": 6.0}]},
+            },
+        ],
+    }
+
+    class _FakeStreamingFeed:
+        def __init__(self, *, client_getter, config, on_market_book, on_disconnect):
+            _ = client_getter, config, on_disconnect
+            self.on_market_book = on_market_book
+
+        def start(self):
+            self.on_market_book(coherent_book)
+            return {"started": True}
+
+        def stop(self):
+            return {"stopped": True}
+
+    monkeypatch.setattr("core.runtime_controller.StreamingFeed", _FakeStreamingFeed)
+
+    rc = RuntimeController(
+        bus=_Bus(),
+        db=_DB(),
+        settings_service=_SettingsStream(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+    rc.simulation_mode = False
+
+    received = []
+    rc.market_tracker.on_market_book = lambda book: received.append(dict(book))
+    rc._start_market_data_feed()
+
+    assert len(received) == 1
+    out = received[0]
+    assert out["marketId"] == "1.901"
+    assert out["status"] == "SUSPENDED"
+    assert out["inplay"] is True
+    assert len(out["runners"]) == 2
+    assert out["runners"][0]["selectionId"] == 101
+    assert out["runners"][1]["ex"]["availableToLay"] == [{"price": 3.2, "size": 6.0}]

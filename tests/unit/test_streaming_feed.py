@@ -54,6 +54,18 @@ class _Client:
         self.keep_alive_calls += 1
 
 
+EDGE_FIXTURE_SPARSE_LADDER_SEQUENCE = [
+    {"mc": [{"id": "1.810", "rc": [{"id": 31, "batb": [[0, 2.0, 10.0], [1, 1.99, 8.0]], "batl": [[0, 2.04, 12.0], [1, 2.06, 7.0]]}]}]},
+    {"mc": [{"id": "1.810", "rc": [{"id": 31, "batb": [[0, 2.02, 9.0]]}]}]},
+]
+
+EDGE_FIXTURE_MARKET_DEF_TRANSITIONS = [
+    {"mc": [{"id": "1.820", "marketDefinition": {"status": "OPEN", "inPlay": False, "runners": [{"id": 41, "name": "Runner A", "status": "ACTIVE"}, {"id": 42, "name": "Runner B", "status": "ACTIVE"}]}}]},
+    {"mc": [{"id": "1.820", "rc": [{"id": 41, "ltp": 1.9, "batb": [[0, 1.88, 20.0]]}, {"id": 42, "ltp": 2.1, "batl": [[0, 2.12, 18.0]]}]}]},
+    {"mc": [{"id": "1.820", "marketDefinition": {"status": "SUSPENDED", "inPlay": True, "runners": [{"id": 41, "name": "Runner A", "status": "REMOVED"}, {"id": 42, "name": "Runner B", "status": "ACTIVE"}]}}]},
+]
+
+
 def test_streaming_feed_rejects_unbounded_subscription():
     feed = StreamingFeed(
         client_getter=lambda: None,
@@ -346,3 +358,85 @@ def test_streaming_feed_parses_market_book_resource_objects_from_default_listene
     assert out["inplay"] is True
     assert out["runners"][0]["selectionId"] == 7
     assert out["runners"][0]["ex"]["availableToBack"] == [{"price": 2.02, "size": 9.0}]
+
+
+def test_streaming_feed_sparse_ladder_update_preserves_untouched_levels():
+    updates = []
+    feed = StreamingFeed(
+        client_getter=lambda: None,
+        config={"enabled": False, "market_data_mode": "poll"},
+        on_market_book=lambda book: updates.append(book),
+    )
+
+    for payload in EDGE_FIXTURE_SPARSE_LADDER_SEQUENCE:
+        feed._process_message(payload)
+
+    final = updates[-1]
+    runner = final["runners"][0]
+    assert runner["selectionId"] == 31
+    # level 0 changed; level 1 must remain from prior update (no wipe)
+    assert runner["ex"]["availableToBack"] == [
+        {"price": 2.02, "size": 9.0},
+        {"price": 1.99, "size": 8.0},
+    ]
+    assert runner["ex"]["availableToLay"] == [
+        {"price": 2.04, "size": 12.0},
+        {"price": 2.06, "size": 7.0},
+    ]
+
+
+def test_streaming_feed_market_definition_transition_and_runner_status_regression_guard():
+    updates = []
+    feed = StreamingFeed(
+        client_getter=lambda: None,
+        config={"enabled": False, "market_data_mode": "poll"},
+        on_market_book=lambda book: updates.append(book),
+    )
+
+    for payload in EDGE_FIXTURE_MARKET_DEF_TRANSITIONS:
+        feed._process_message(payload)
+
+    final = updates[-1]
+    runners = {r["selectionId"]: r for r in final["runners"]}
+    assert final["status"] == "SUSPENDED"
+    assert final["inplay"] is True
+    assert runners[41]["status"] == "REMOVED"
+    assert runners[41]["runnerName"] == "Runner A"
+    # price state from prior updates should remain coherent after metadata/status transition
+    assert runners[41]["ex"]["availableToBack"] == [{"price": 1.88, "size": 20.0}]
+    assert runners[42]["ex"]["availableToLay"] == [{"price": 2.12, "size": 18.0}]
+
+
+def test_streaming_feed_mixed_repeated_partial_updates_converge_without_data_loss():
+    updates = []
+    feed = StreamingFeed(
+        client_getter=lambda: None,
+        config={"enabled": False, "market_data_mode": "poll"},
+        on_market_book=lambda book: updates.append(book),
+    )
+
+    feed._process_message(
+        {
+            "mc": [
+                {
+                    "id": "1.830",
+                    "rc": [
+                        {"id": 51, "batb": [[0, 1.9, 11.0], [1, 1.88, 7.0]], "batl": [[0, 1.95, 10.0]]},
+                        {"id": 52, "batb": [[0, 2.4, 6.0]], "batl": [[0, 2.5, 5.0]]},
+                    ],
+                }
+            ]
+        }
+    )
+    for i in range(12):
+        feed._process_message({"mc": [{"id": "1.830", "rc": [{"id": 51, "ltp": 1.91 + (i * 0.01)}]}]})
+    feed._process_message({"mc": [{"id": "1.830", "rc": [{"id": 51, "trd": [[1.9, 100.0]]}]}]})
+
+    final = updates[-1]
+    runners = {r["selectionId"]: r for r in final["runners"]}
+    assert runners[51]["ltp"] == pytest.approx(2.02)
+    assert runners[51]["ex"]["availableToBack"] == [{"price": 1.9, "size": 11.0}, {"price": 1.88, "size": 7.0}]
+    assert runners[51]["ex"]["tradedVolume"] == [{"price": 1.9, "size": 100.0}]
+    # untouched runner 52 must remain present and intact despite repeated updates to runner 51 only
+    assert runners[52]["ex"]["availableToBack"] == [{"price": 2.4, "size": 6.0}]
+    assert runners[52]["ex"]["availableToLay"] == [{"price": 2.5, "size": 5.0}]
