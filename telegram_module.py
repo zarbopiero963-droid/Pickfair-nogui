@@ -201,17 +201,24 @@ class TelegramModule:
         Se non li ha, usa il resolver automatico over successivo / linea esplicita.
         """
         processor = self._get_signal_processor()
+        normalized_result = processor.normalize_ingestion_signal(signal_data)
+        if not normalized_result.get("ok"):
+            return None, f"INVALID_SIGNAL:{normalized_result.get('error_code')}"
 
-        if not self._needs_resolution(signal_data):
+        normalized_signal = dict(normalized_result.get("normalized_signal") or {})
+
+        if not self._needs_resolution(normalized_signal):
             payload = processor.build_runtime_signal(
-                signal=signal_data,
+                signal=normalized_signal,
                 stake=stake,
                 simulation_mode=bool(getattr(self, "simulation_mode", False)),
             )
+            if payload:
+                payload["telegram_boundary_stage"] = normalized_signal.get("boundary_stage")
             return payload, "DIRECT"
 
         resolver = self._get_bet_resolver()
-        resolved = resolver.resolve(signal_data, aggressive_best_price=True)
+        resolved = resolver.resolve(normalized_signal, aggressive_best_price=True)
         if not resolved:
             return None, "UNRESOLVED"
 
@@ -220,7 +227,8 @@ class TelegramModule:
             simulation_mode=bool(getattr(self, "simulation_mode", False)),
         )
 
-        payload["raw_signal"] = dict(signal_data or {})
+        payload["raw_signal"] = dict(normalized_signal.get("raw_signal") or {})
+        payload["telegram_boundary_stage"] = normalized_signal.get("boundary_stage")
         payload["resolution_mode"] = "AUTO_RESOLVED"
         return payload, "AUTO_RESOLVED"
 
@@ -348,8 +356,28 @@ class TelegramModule:
         """
 
         def safe_process_signal():
-            signal_data = dict(signal or {})
             processor = self._get_signal_processor()
+            normalized_result = processor.normalize_ingestion_signal(signal)
+            signal_data = dict(normalized_result.get("normalized_signal") or {})
+
+            if not normalized_result.get("ok"):
+                error_code = str(normalized_result.get("error_code") or "INVALID_SIGNAL")
+                error_reason = str(normalized_result.get("error_reason") or "invalid telegram signal")
+                logger.warning("[TelegramModule] Scarto segnale telegram non valido: %s (%s)", error_code, error_reason)
+                self._safe_db_save_received_signal(
+                    selection="Unknown",
+                    action="BACK",
+                    price=0.0,
+                    stake=self._safe_parse_stake(),
+                    status="ERROR",
+                    signal={
+                        "error_code": error_code,
+                        "error_reason": error_reason,
+                        "raw_signal": signal,
+                    },
+                )
+                self._safe_refresh_telegram_signals_tree()
+                return
 
             action = processor.normalize_action(signal_data)
             selection_id = processor.parse_selection_id(signal_data)

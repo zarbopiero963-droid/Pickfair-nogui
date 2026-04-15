@@ -1,5 +1,6 @@
 from observability.runtime_probe import RuntimeProbe
 from services.telegram_alerts_service import TelegramAlertsService
+from services.telegram_signal_processor import TelegramSignalProcessor
 
 
 class _SettingsEnabled:
@@ -75,3 +76,49 @@ def test_telegram_runtime_truth_e2e_probe_uses_real_deliverability_not_only_enab
     assert state["deliverable"] is False
     assert state["status"] == "DEGRADED"
     assert state["reason"] == "alerts_chat_id_missing"
+
+
+def test_telegram_runtime_truth_e2e_normalization_boundary_is_explicit_for_valid_signal():
+    processor = TelegramSignalProcessor()
+
+    result = processor.normalize_ingestion_signal(
+        {
+            "market_id": "1.100",
+            "selection_id": "11",
+            "odds": "2.14",
+            "action": "back",
+            "event_name": "A v B",
+            "copy_meta": {"master_id": "M1"},
+        }
+    )
+
+    assert result["ok"] is True
+    normalized = result["normalized_signal"]
+    assert normalized["boundary_stage"] == "telegram_ingestion_normalized_v1"
+    assert normalized["market_id"] == "1.100"
+    assert normalized["selection_id"] == 11
+    assert normalized["bet_type"] == "BACK"
+    assert normalized["price"] == 2.14
+    assert normalized["order_origin"] == "COPY"
+    assert normalized["copy_meta"] == {"master_id": "M1"}
+
+
+def test_telegram_runtime_truth_e2e_normalization_fails_closed_for_ambiguous_origin_meta():
+    processor = TelegramSignalProcessor()
+
+    result = processor.normalize_ingestion_signal(
+        {
+            "market_id": "1.100",
+            "selection_id": 11,
+            "price": 2.2,
+            "copy_meta": {"master_id": "M1"},
+            "pattern_meta": {"pattern_id": "P1"},
+        }
+    )
+
+    assert result == {
+        "ok": False,
+        "error_code": "COPY_PATTERN_MUTUALLY_EXCLUSIVE",
+        "error_reason": "copy_meta and pattern_meta cannot coexist",
+        "normalized_signal": {},
+    }
