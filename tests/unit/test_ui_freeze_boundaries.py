@@ -95,6 +95,7 @@ class _TelegramHarness(TelegramModule):
             "price": 2.0,
             "stake": stake,
             "runner_name": "Runner",
+            "telegram_boundary_stage": "telegram_ingestion_normalized_v1",
         }, "AUTO_RESOLVED"
 
     def _refresh_telegram_signals_tree(self):
@@ -104,32 +105,48 @@ class _TelegramHarness(TelegramModule):
 @pytest.mark.unit
 def test_telegram_signal_resolution_is_submitted_to_executor():
     h = _TelegramHarness()
+    h.bus.subscribers = {"SIGNAL_RECEIVED": [object()]}
 
     h._handle_telegram_signal({"event_name": "A v B", "price": 2.1})
 
     assert "telegram_signal_resolution" in h.executor.calls
     assert h.resolution_calls == 1
-    assert any(e[0] == "REQ_QUICK_BET" for e in h.bus.events)
+    assert any(e[0] == "SIGNAL_RECEIVED" for e in h.bus.events)
 
 
 @pytest.mark.unit
-def test_telegram_module_prefers_req_quick_bet_when_present():
+def test_telegram_module_prefers_signal_received_when_present():
     h = _TelegramHarness()
     h.bus.subscribers = {"REQ_QUICK_BET": [object()], "SIGNAL_RECEIVED": [object()]}
 
-    h._publish_order_signal({"market_id": "1.1", "selection_id": 10})
+    h._publish_order_signal(
+        {
+            "market_id": "1.1",
+            "selection_id": 10,
+            "telegram_boundary_stage": "telegram_ingestion_normalized_v1",
+        }
+    )
 
-    assert h.bus.events == [("REQ_QUICK_BET", {"market_id": "1.1", "selection_id": 10})]
+    assert h.bus.events[0][0] == "SIGNAL_RECEIVED"
+    assert h.bus.events[0][1]["telegram_routing_contract"] == "telegram_authoritative_routing_v1"
+    assert h.bus.events[0][1]["telegram_route_target"] == "SIGNAL_RECEIVED"
 
 
 @pytest.mark.unit
-def test_telegram_module_falls_back_to_signal_received_when_req_not_wired():
+def test_telegram_module_falls_back_to_req_quick_bet_when_runtime_gate_not_wired():
     h = _TelegramHarness()
-    h.bus.subscribers = {"SIGNAL_RECEIVED": [object()]}
+    h.bus.subscribers = {"REQ_QUICK_BET": [object()]}
 
-    h._publish_order_signal({"market_id": "1.2", "selection_id": 20})
+    h._publish_order_signal(
+        {
+            "market_id": "1.2",
+            "selection_id": 20,
+            "telegram_boundary_stage": "telegram_ingestion_normalized_v1",
+        }
+    )
 
-    assert h.bus.events == [("SIGNAL_RECEIVED", {"market_id": "1.2", "selection_id": 20})]
+    assert h.bus.events[0][0] == "REQ_QUICK_BET"
+    assert h.bus.events[0][1]["telegram_route_target"] == "REQ_QUICK_BET"
 
 
 @pytest.mark.unit
