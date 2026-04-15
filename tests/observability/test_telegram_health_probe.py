@@ -9,7 +9,7 @@ def _snapshot(**overrides):
         state="STOPPED",
         listener_started=True,
         client_alive=False,
-        handlers_registered=1,
+        handlers_registered=2,
         reconnect_in_progress=False,
         reconnect_attempts=0,
         active_network_resources=0,

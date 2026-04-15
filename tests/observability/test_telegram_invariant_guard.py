@@ -8,7 +8,7 @@ def _snapshot(**overrides):
         state="STOPPED",
         listener_started=True,
         client_alive=False,
-        handlers_registered=1,
+        handlers_registered=2,
         reconnect_in_progress=False,
         reconnect_attempts=0,
         active_network_resources=0,
@@ -28,13 +28,19 @@ def test_connected_requires_live_client():
     assert "CONNECTED_REQUIRES_CLIENT_ALIVE" in violation_codes(result)
 
 
-def test_connected_requires_single_handler_registration():
+def test_connected_requires_expected_callback_pair():
     result = TelegramInvariantGuard().evaluate(
-        _snapshot(state="CONNECTED", client_alive=True, active_network_resources=1, handlers_registered=2)
+        _snapshot(state="CONNECTED", client_alive=True, active_network_resources=1, handlers_registered=1)
     )
     codes = set(violation_codes(result))
-    assert "CONNECTED_REQUIRES_SINGLE_HANDLER" in codes
-    assert "DUPLICATE_HANDLER_REGISTRATION" in codes
+    assert "CONNECTED_REQUIRES_CALLBACK_PAIR" in codes
+
+
+def test_duplicate_handler_registration_requires_more_than_callback_pair():
+    result = TelegramInvariantGuard().evaluate(
+        _snapshot(state="CONNECTED", client_alive=True, active_network_resources=1, handlers_registered=3)
+    )
+    assert "DUPLICATE_HANDLER_REGISTRATION" in violation_codes(result)
 
 
 def test_reconnecting_requires_reconnect_in_progress():
