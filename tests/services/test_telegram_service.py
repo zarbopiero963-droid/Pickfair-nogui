@@ -102,6 +102,7 @@ def test_telegram_service_stop_is_idempotent_and_marks_intentional_stop():
 def test_telegram_service_restart_is_controlled_and_bounded():
     svc = TelegramService(settings_service=_Settings(_TelegramCfg()), db=_DB(), bus=_Bus())
     svc.start()
+    svc._set_state("FAILED")
 
     result = svc.restart()
     status = svc.status()
@@ -203,3 +204,49 @@ def test_telegram_service_redundant_start_is_idempotent_and_preserves_listener_s
     assert status["state"] == "CONNECTING"
     assert status["connected"] is False
     assert status["last_successful_message_ts"] == "2026-04-15T00:00:00+00:00"
+
+
+@pytest.mark.unit
+def test_restart_action_is_idempotent():
+    svc = TelegramService(settings_service=_Settings(_TelegramCfg()), db=_DB(), bus=_Bus())
+    svc.start()
+    svc._set_state("FAILED")
+
+    first = svc.restart()
+    svc._restart_in_progress = True
+    second = svc.restart()
+
+    assert first["started"] is True
+    assert second["started"] is False
+    assert second["reason"] == "restart_in_progress"
+
+
+@pytest.mark.unit
+def test_restart_does_not_claim_success_without_live_runtime():
+    svc = TelegramService(settings_service=_Settings(_TelegramCfg()), db=_DB(), bus=_Bus())
+    svc.start()
+    svc._set_state("FAILED")
+
+    result = svc.restart()
+    status = svc.status()
+
+    assert result["started"] is True
+    assert status["connected"] is False
+    assert status["state"] == "CONNECTING"
+
+
+@pytest.mark.unit
+def test_intentional_stop_never_restarts():
+    svc = TelegramService(settings_service=_Settings(_TelegramCfg()), db=_DB(), bus=_Bus())
+    svc.start()
+    svc.stop()
+
+    outcome = svc.run_autoheal_once(
+        checked_at_ts=1000.0,
+        startup_grace_active=False,
+        reconnect_grace_active=False,
+        failure_escalated=True,
+    )
+
+    assert outcome["action"] == "NO_ACTION"
+    assert svc.status()["state"] == "STOPPED"
