@@ -2,6 +2,7 @@ import pytest
 
 from core.runtime_controller import RuntimeController
 from core.system_state import RoserpinaConfig, RuntimeMode, DeskMode
+from services.telegram_signal_processor import TelegramSignalProcessor
 
 
 class _Bus:
@@ -64,6 +65,48 @@ class _Telegram:
         return None
     def status(self):
         return {"connected": True}
+
+
+@pytest.mark.integration
+def test_telegram_signal_processor_boundary_is_deterministic_for_invalid_price():
+    processor = TelegramSignalProcessor()
+
+    malformed = {
+        "event_name": "Alpha v Beta",
+        "selection": "Over 2.5",
+        "market_id": "1.100",
+        "selection_id": 22,
+        "price": "abc",
+    }
+    result = processor.normalize_ingestion_signal(malformed)
+
+    assert result["ok"] is False
+    assert result["reason_code"] == "invalid_price"
+    assert result["normalized_signal"] is None
+
+
+@pytest.mark.integration
+def test_telegram_signal_processor_boundary_keeps_valid_signal_stable_snapshot():
+    processor = TelegramSignalProcessor()
+
+    raw = {
+        "event_name": "Alpha v Beta",
+        "selection": "Over 2.5",
+        "market_id": "1.100",
+        "selection_id": "22",
+        "odds": "2,35",
+        "bet_type": "lay",
+        "raw_text": "RAW TELEX",
+    }
+    result = processor.normalize_ingestion_signal(raw)
+    normalized = result["normalized_signal"]
+
+    assert result["ok"] is True
+    assert normalized["market_id"] == "1.100"
+    assert normalized["selection_id"] == 22
+    assert normalized["price"] == 2.35
+    assert normalized["action"] == "LAY"
+    assert normalized["raw_text"] == "RAW TELEX"
 
 
 @pytest.mark.integration

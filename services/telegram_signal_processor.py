@@ -20,6 +20,71 @@ class TelegramSignalProcessor:
     """
 
     # =========================================================
+    # INGESTION BOUNDARY NORMALIZATION
+    # =========================================================
+    def normalize_ingestion_signal(self, raw_signal: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Telegram parsing/routing boundary contract.
+
+        Input:
+        - raw signal payload coming from Telegram listener/ingestion layer
+
+        Output contract:
+        - ok=False + reason_code on malformed/ambiguous payload
+        - ok=True + normalized_signal for deterministic downstream routing
+
+        This method does NOT resolve missing market_id/selection_id.
+        Resolution ownership remains in TelegramBetResolver.
+        """
+        signal = dict(raw_signal or {})
+
+        if not signal:
+            return {
+                "ok": False,
+                "reason_code": "empty_signal",
+                "reason": "Signal Telegram vuoto",
+                "normalized_signal": None,
+            }
+
+        action = self.normalize_action(signal)
+        selection_id = self.parse_selection_id(signal)
+        market_id = self.parse_market_id(signal)
+        price = self.parse_price(signal)
+
+        if any(key in signal for key in ("price", "odds", "master_price", "quote")) and price is None:
+            return {
+                "ok": False,
+                "reason_code": "invalid_price",
+                "reason": "Quota Telegram non valida",
+                "normalized_signal": None,
+            }
+
+        normalized = {
+            "event_name": self.parse_event_name(signal),
+            "market_name": self.parse_market_name(signal),
+            "market_type": self.parse_market_type(signal),
+            "selection_name": self.parse_selection_name(signal, selection_id),
+            "market_id": market_id,
+            "selection_id": selection_id,
+            "action": action,
+            "price": price,
+            "minute": self.parse_minute(signal),
+            "home_score": self.parse_home_score(signal),
+            "away_score": self.parse_away_score(signal),
+            "signal_type": str(signal.get("signal_type") or signal.get("signal_name") or ""),
+            "raw_text": signal.get("raw_text") or signal.get("message") or signal.get("text") or "",
+            "raw_signal": signal,
+            "has_direct_bet_ids": bool(market_id and selection_id is not None),
+        }
+
+        return {
+            "ok": True,
+            "reason_code": None,
+            "reason": None,
+            "normalized_signal": normalized,
+        }
+
+    # =========================================================
     # NORMALIZZAZIONE BASE
     # =========================================================
     def normalize_action(self, signal: Dict[str, Any]) -> str:
@@ -195,22 +260,25 @@ class TelegramSignalProcessor:
         Utile per debug/UI/log.
         Non garantisce che il segnale sia già eseguibile.
         """
-        selection_id = self.parse_selection_id(signal)
-        market_id = self.parse_market_id(signal)
-        price = self.parse_price(signal)
+        boundary = self.normalize_ingestion_signal(signal)
+        normalized = boundary.get("normalized_signal") or {}
+        if normalized:
+            return normalized
 
         return {
             "event_name": self.parse_event_name(signal),
             "market_name": self.parse_market_name(signal),
             "market_type": self.parse_market_type(signal),
-            "selection_name": self.parse_selection_name(signal, selection_id),
-            "market_id": market_id,
-            "selection_id": selection_id,
+            "selection_name": self.parse_selection_name(signal, None),
+            "market_id": None,
+            "selection_id": None,
             "action": self.normalize_action(signal),
-            "price": price,
+            "price": None,
             "minute": self.parse_minute(signal),
             "home_score": self.parse_home_score(signal),
             "away_score": self.parse_away_score(signal),
             "signal_type": str(signal.get("signal_type") or signal.get("signal_name") or ""),
-            "has_direct_bet_ids": bool(market_id and selection_id is not None),
+            "raw_text": signal.get("raw_text") or signal.get("message") or signal.get("text") or "",
+            "raw_signal": dict(signal or {}),
+            "has_direct_bet_ids": False,
         }

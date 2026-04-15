@@ -224,6 +224,14 @@ class TelegramModule:
         payload["resolution_mode"] = "AUTO_RESOLVED"
         return payload, "AUTO_RESOLVED"
 
+    def _normalize_telegram_ingestion_signal(self, signal_data: dict) -> dict:
+        """
+        Explicit Telegram boundary:
+        raw ingestion payload -> deterministic normalized signal snapshot.
+        """
+        processor = self._get_signal_processor()
+        return processor.normalize_ingestion_signal(signal_data)
+
     # =========================================================
     # START / STOP LISTENER
     # =========================================================
@@ -349,25 +357,50 @@ class TelegramModule:
 
         def safe_process_signal():
             signal_data = dict(signal or {})
-            processor = self._get_signal_processor()
+            boundary = self._normalize_telegram_ingestion_signal(signal_data)
+            normalized_signal = dict(boundary.get("normalized_signal") or {})
 
-            action = processor.normalize_action(signal_data)
-            selection_id = processor.parse_selection_id(signal_data)
-            market_id = processor.parse_market_id(signal_data)
-            original_price = processor.parse_price(signal_data)
-            selection_name = processor.parse_selection_name(signal_data, selection_id)
+            action = normalized_signal.get("action") or "BACK"
+            selection_id = normalized_signal.get("selection_id")
+            market_id = normalized_signal.get("market_id")
+            original_price = normalized_signal.get("price")
+            selection_name = normalized_signal.get("selection_name") or "Segnale Telegram"
             stake = self._safe_parse_stake()
 
-            if original_price is None:
-                original_price = 0.0
+            if not boundary.get("ok"):
+                self._safe_db_save_received_signal(
+                    selection=selection_name,
+                    action=action,
+                    price=0.0,
+                    stake=stake,
+                    status="ERROR",
+                    signal={
+                        **signal_data,
+                        "boundary_reason_code": boundary.get("reason_code"),
+                        "boundary_reason": boundary.get("reason"),
+                    },
+                )
+                self._safe_refresh_telegram_signals_tree()
+                logger.warning(
+                    "[TelegramModule] Segnale Telegram scartato alla boundary: reason_code=%s payload=%s",
+                    boundary.get("reason_code"),
+                    sanitize_dict(dict(signal_data or {})),
+                )
+                return
+
+            normalized_price = float(original_price or 0.0)
 
             self._safe_db_save_received_signal(
                 selection=selection_name,
                 action=action,
-                price=original_price,
+                price=normalized_price,
                 stake=stake,
                 status="RECEIVED",
-                signal=signal_data,
+                signal={
+                    **signal_data,
+                    "normalized_signal": normalized_signal,
+                    "boundary_stage": "INGESTION_NORMALIZED",
+                },
             )
             self._safe_refresh_telegram_signals_tree()
 
@@ -388,14 +421,14 @@ class TelegramModule:
                         f"Segnale ricevuto:\n"
                         f"{selection_name or signal_data.get('event_name', 'Segnale Telegram')}\n"
                         f"Tipo: {action}\n"
-                        f"Quota Master: {float(original_price or 0.0):.2f}\n\n"
+                        f"Quota Master: {normalized_price:.2f}\n\n"
                         f"Inviare il segnale al runtime?"
                     )
                     if not messagebox.askyesno("Nuovo Segnale Telegram", msg):
                         self._safe_db_save_received_signal(
                             selection=selection_name,
                             action=action,
-                            price=original_price,
+                            price=normalized_price,
                             stake=stake,
                             status="IGNORED",
                             signal=signal_data,
@@ -406,7 +439,7 @@ class TelegramModule:
                     self._safe_db_save_received_signal(
                         selection=selection_name,
                         action=action,
-                        price=original_price,
+                        price=normalized_price,
                         stake=stake,
                         status="IGNORED",
                         signal=signal_data,
@@ -422,7 +455,7 @@ class TelegramModule:
                         "status": "ERROR",
                         "selection_name": selection_name,
                         "action": action,
-                        "price": original_price,
+                        "price": normalized_price,
                         "stake": stake,
                     }
 
@@ -440,7 +473,7 @@ class TelegramModule:
                     "payload": payload,
                     "selection_name": selection_name,
                     "action": action,
-                    "price": original_price,
+                    "price": normalized_price,
                     "stake": stake,
                 }
 
@@ -454,7 +487,7 @@ class TelegramModule:
                     self._safe_db_save_received_signal(
                         selection=result.get("selection_name", selection_name),
                         action=result.get("action", action),
-                        price=result.get("price", original_price),
+                        price=result.get("price", normalized_price),
                         stake=result.get("stake", stake),
                         status="ERROR",
                         signal=signal_data,
@@ -466,7 +499,7 @@ class TelegramModule:
                 self._safe_db_save_received_signal(
                     selection=payload.get("runner_name", selection_name),
                     action=payload.get("bet_type", action),
-                    price=payload.get("price", original_price),
+                    price=payload.get("price", normalized_price),
                     stake=payload.get("stake", stake),
                     status="SUBMITTED",
                     signal={**signal_data, "resolved_payload": payload},
@@ -479,7 +512,7 @@ class TelegramModule:
                 self._safe_db_save_received_signal(
                     selection=selection_name,
                     action=action,
-                    price=original_price,
+                    price=normalized_price,
                     stake=stake,
                     status="ERROR",
                     signal=signal_data,
