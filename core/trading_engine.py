@@ -5,7 +5,7 @@ import threading
 import time
 import uuid
 from collections import deque
-from typing import Any, Deque, Dict, Optional
+from typing import Any, Deque, Dict, Optional, Tuple
 from order_manager import OrderManager
 from order_manager import LIFECYCLE_CONTRACT
 from circuit_breaker import CircuitBreaker
@@ -1091,17 +1091,10 @@ class TradingEngine:
         if not isinstance(raw, dict):
             return {"order_origin": ORIGIN_NORMAL}
 
-        extra: Dict[str, Any] = {"order_origin": ORIGIN_NORMAL}
-
-        copy_meta = raw.get("copy_meta")
-        pattern_meta = raw.get("pattern_meta")
-
-        if isinstance(copy_meta, dict) and not isinstance(pattern_meta, dict):
-            extra["copy_meta"] = {k: copy_meta[k] for k in COPY_META_KEYS if k in copy_meta}
-            extra["order_origin"] = ORIGIN_COPY
-        elif isinstance(pattern_meta, dict) and not isinstance(copy_meta, dict):
-            extra["pattern_meta"] = {k: pattern_meta[k] for k in PATTERN_META_KEYS if k in pattern_meta}
-            extra["order_origin"] = ORIGIN_PATTERN
+        extra, _dropped_copy_keys, _dropped_pattern_keys = self._normalize_origin_metadata(
+            raw,
+            fail_closed=False,
+        )
 
         if "event_key" in raw:
             extra["event_key"] = raw.get("event_key")
@@ -1109,6 +1102,55 @@ class TradingEngine:
             extra["simulation_mode"] = raw.get("simulation_mode")
 
         return extra
+
+    def _normalize_origin_metadata(
+        self,
+        request: Dict[str, Any],
+        *,
+        fail_closed: bool,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """
+        Copy/Pattern metadata contract normalization.
+
+        Returns:
+          - normalized origin payload (order_origin + sanitized meta)
+          - dropped keys report for audit/log visibility
+        """
+        if not isinstance(request, dict):
+            return {"order_origin": ORIGIN_NORMAL}, {"copy_meta": [], "pattern_meta": []}
+
+        copy_meta = request.get("copy_meta")
+        pattern_meta = request.get("pattern_meta")
+
+        if copy_meta and not isinstance(copy_meta, dict):
+            if fail_closed:
+                raise ValueError("COPY_META_MUST_BE_DICT")
+            copy_meta = None
+
+        if pattern_meta and not isinstance(pattern_meta, dict):
+            if fail_closed:
+                raise ValueError("PATTERN_META_MUST_BE_DICT")
+            pattern_meta = None
+
+        if copy_meta and pattern_meta:
+            if fail_closed:
+                raise ValueError("COPY_AND_PATTERN_MUTUALLY_EXCLUSIVE")
+            pattern_meta = None
+
+        dropped_copy = []
+        dropped_pattern = []
+
+        normalized: Dict[str, Any] = {"order_origin": ORIGIN_NORMAL}
+        if copy_meta:
+            normalized["copy_meta"] = {k: copy_meta[k] for k in COPY_META_KEYS if k in copy_meta}
+            dropped_copy = sorted(k for k in copy_meta.keys() if k not in COPY_META_KEYS)
+            normalized["order_origin"] = ORIGIN_COPY
+        elif pattern_meta:
+            normalized["pattern_meta"] = {k: pattern_meta[k] for k in PATTERN_META_KEYS if k in pattern_meta}
+            dropped_pattern = sorted(k for k in pattern_meta.keys() if k not in PATTERN_META_KEYS)
+            normalized["order_origin"] = ORIGIN_PATTERN
+
+        return normalized, {"copy_meta": dropped_copy, "pattern_meta": dropped_pattern}
 
     # ==================================================================
     # NORMALIZATION
@@ -1133,25 +1175,22 @@ class TradingEngine:
         normalized["customer_ref"] = customer_ref
         normalized["correlation_id"] = correlation_id
 
-        copy_meta = request.get("copy_meta")
-        pattern_meta = request.get("pattern_meta")
+        origin_metadata, dropped_keys = self._normalize_origin_metadata(
+            request,
+            fail_closed=True,
+        )
+        normalized.update(origin_metadata)
 
-        if copy_meta and not isinstance(copy_meta, dict):
-            raise ValueError("COPY_META_MUST_BE_DICT")
-        if pattern_meta and not isinstance(pattern_meta, dict):
-            raise ValueError("PATTERN_META_MUST_BE_DICT")
-
-        if copy_meta and pattern_meta:
-            raise ValueError("COPY_AND_PATTERN_MUTUALLY_EXCLUSIVE")
-
-        if copy_meta:
-            normalized["copy_meta"] = {k: copy_meta[k] for k in COPY_META_KEYS if k in copy_meta}
-            normalized["order_origin"] = ORIGIN_COPY
-        elif pattern_meta:
-            normalized["pattern_meta"] = {k: pattern_meta[k] for k in PATTERN_META_KEYS if k in pattern_meta}
-            normalized["order_origin"] = ORIGIN_PATTERN
-        else:
-            normalized["order_origin"] = ORIGIN_NORMAL
+        if dropped_keys["copy_meta"]:
+            logger.info(
+                "copy_meta keys dropped by contract: %s",
+                dropped_keys["copy_meta"],
+            )
+        if dropped_keys["pattern_meta"]:
+            logger.info(
+                "pattern_meta keys dropped by contract: %s",
+                dropped_keys["pattern_meta"],
+            )
 
         return normalized
 

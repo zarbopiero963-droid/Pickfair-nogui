@@ -37,3 +37,15 @@ def test_pattern_trigger_is_not_reexecuted_after_restart():
 
     guard_after = _boot_guard_from_store(store)
     assert guard_after.acquire(key) is False
+
+
+def test_duplication_guard_derives_copy_pattern_strategy_from_metadata_when_source_missing():
+    guard = DuplicationGuard(ttl_seconds=999999)
+    base = {"market_id": "1.100", "selection_id": "22", "bet_type": "BACK"}
+
+    copy_key = guard.build_event_key({**base, "copy_meta": {"copy_group_id": "CG-7"}})
+    pattern_key = guard.build_event_key({**base, "pattern_meta": {"pattern_id": "PT-7"}})
+
+    assert copy_key.endswith(":copy")
+    assert pattern_key.endswith(":pattern")
+    assert copy_key != pattern_key

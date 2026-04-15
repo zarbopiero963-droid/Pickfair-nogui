@@ -94,7 +94,11 @@ def _run(simulation_mode, response, *, order_origin="COPY", origin_meta=None):
 @pytest.mark.parametrize(
     "order_origin,origin_meta,meta_field",
     [
-        ("COPY", {"copy_meta": {"master_id": "m1", "copy_mode": "mirror"}}, "copy_meta"),
+        (
+            "COPY",
+            {"copy_meta": {"master_id": "m1", "copy_mode": "mirror", "unexpected": "drop-me"}},
+            "copy_meta",
+        ),
         ("PATTERN", {"pattern_meta": {"pattern_id": "p1", "pattern_version": 3}}, "pattern_meta"),
     ],
 )
@@ -128,7 +132,8 @@ def test_trading_engine_live_sim_contract_parity(response, semantic, order_origi
 
     assert live_call.get(meta_field) == sim_call.get(meta_field)
     if meta_field == "copy_meta":
-        assert live_call.get(meta_field) == origin_meta[meta_field]
+        assert live_call.get(meta_field) == {"master_id": "m1", "copy_mode": "mirror"}
+        assert "unexpected" not in live_call.get(meta_field, {})
     else:
         # pattern metadata is normalized to the engine allow-list; unknown keys
         # (like pattern_version) are intentionally dropped before downstream call.

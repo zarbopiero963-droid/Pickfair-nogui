@@ -1073,6 +1073,12 @@ class RuntimeController:
 
         copy_meta = signal.get("copy_meta")
         pattern_meta = signal.get("pattern_meta")
+        if "copy_meta" in signal and copy_meta is not None and not isinstance(copy_meta, dict):
+            self._reject_signal(signal, "copy_meta_invalid")
+            return
+        if "pattern_meta" in signal and pattern_meta is not None and not isinstance(pattern_meta, dict):
+            self._reject_signal(signal, "pattern_meta_invalid")
+            return
         if isinstance(copy_meta, dict) and isinstance(pattern_meta, dict):
             self._reject_signal(signal, "copy_pattern_mutually_exclusive")
             return
@@ -1139,8 +1145,13 @@ class RuntimeController:
             payload["copy_meta"] = dict(copy_meta)
         if isinstance(pattern_meta, dict):
             payload["pattern_meta"] = dict(pattern_meta)
-        if signal.get("order_origin"):
-            payload["order_origin"] = signal.get("order_origin")
+        derived_origin = str(signal.get("order_origin") or "").strip().upper()
+        if not derived_origin and isinstance(copy_meta, dict):
+            derived_origin = "COPY"
+        if not derived_origin and isinstance(pattern_meta, dict):
+            derived_origin = "PATTERN"
+        if derived_origin:
+            payload["order_origin"] = derived_origin
 
         self.table_manager.activate(
             table_id=decision.table_id,

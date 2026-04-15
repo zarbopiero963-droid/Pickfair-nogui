@@ -55,3 +55,35 @@ def test_reconcile_metadata_isolated_between_copy_and_pattern_sources():
     assert pattern_match["meta"]["source"] == "pattern"
     assert "pattern_id" not in copy_match["meta"]
     assert "copy_group_id" not in pattern_match["meta"]
+
+
+def test_merge_startup_active_orders_preserves_copy_pattern_lineage_metadata():
+    engine = ReconciliationEngine(
+        db=FakeDB(),
+        bus=None,
+        batch_manager=FakeBatchManager(),
+        client_getter=lambda: None,
+    )
+
+    remote_orders = [
+        {
+            "customerOrderRef": "COPY-REF-2",
+            "order_origin": "COPY",
+            "copy_meta": {"copy_group_id": "CG-22", "action_id": "A-22"},
+            "meta": {"source": "copy"},
+        },
+        {
+            "customerOrderRef": "PATTERN-REF-2",
+            "order_origin": "PATTERN",
+            "pattern_meta": {"pattern_id": "PT-22", "pattern_label": "late-over"},
+            "meta": {"source": "pattern"},
+        },
+    ]
+
+    merged = engine.merge_startup_active_orders(remote_orders)
+
+    assert merged["count"] == 2
+    assert merged["orders"][0]["order_origin"] == "COPY"
+    assert merged["orders"][0]["copy_meta"]["copy_group_id"] == "CG-22"
+    assert merged["orders"][1]["order_origin"] == "PATTERN"
+    assert merged["orders"][1]["pattern_meta"]["pattern_id"] == "PT-22"

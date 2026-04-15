@@ -30,6 +30,23 @@ class DuplicationGuard:
     # =========================================================
     # KEY BUILD
     # =========================================================
+    @staticmethod
+    def _derive_strategy(payload: Dict[str, Any]) -> str:
+        explicit = str(
+            payload.get("strategy")
+            or payload.get("source")
+            or payload.get("order_origin")
+            or ""
+        ).strip().lower()
+        if explicit:
+            return explicit
+
+        if isinstance(payload.get("copy_meta"), dict):
+            return "copy"
+        if isinstance(payload.get("pattern_meta"), dict):
+            return "pattern"
+        return "default"
+
     def build_event_key(self, payload: Dict[str, Any]) -> str:
         payload = dict(payload or {})
 
@@ -51,11 +68,7 @@ class DuplicationGuard:
             or "BACK"
         ).upper().strip()
 
-        strategy = str(
-            payload.get("strategy")
-            or payload.get("source")
-            or "default"
-        ).lower().strip()
+        strategy = self._derive_strategy(payload)
 
         return f"{market_id}:{selection_id}:{bet_type}:{strategy}"
 
