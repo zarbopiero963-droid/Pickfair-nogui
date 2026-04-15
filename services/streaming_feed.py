@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from copy import deepcopy
 from dataclasses import dataclass
 from queue import Empty, Queue
 from typing import Any, Callable, Dict, Iterable, List, Optional
@@ -89,6 +90,7 @@ class StreamingFeed:
 
         self._clk = ""
         self._initial_clk = ""
+        self._market_cache: Dict[str, Dict[str, Any]] = {}
 
     @property
     def healthy(self) -> bool:
@@ -236,7 +238,9 @@ class StreamingFeed:
         if isinstance(raw_books, list):
             for item in raw_books:
                 if isinstance(item, dict):
-                    books.append(dict(item))
+                    merged = self._merge_market_snapshot(item)
+                    if merged:
+                        books.append(merged)
             return books
 
         # Betfair stream message market changes form
@@ -244,31 +248,198 @@ class StreamingFeed:
         for change in market_changes:
             if not isinstance(change, dict):
                 continue
-            market_id = str(change.get("id") or "").strip()
-            if not market_id:
-                continue
-            runners = []
-            for rc in change.get("rc") or []:
-                if not isinstance(rc, dict):
-                    continue
-                runner = {
-                    "selectionId": rc.get("id"),
-                    "ltp": rc.get("ltp"),
-                    "ex": {
-                        "availableToBack": self._parse_price_points(rc.get("batb") or []),
-                        "availableToLay": self._parse_price_points(rc.get("batl") or []),
-                    },
-                }
-                runners.append(runner)
-            books.append({"marketId": market_id, "runners": runners})
+            merged = self._merge_market_change(change)
+            if merged:
+                books.append(merged)
         return books
+
+    def _merge_market_snapshot(self, market_book: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        market_id = str(
+            market_book.get("marketId")
+            or market_book.get("market_id")
+            or market_book.get("id")
+            or ""
+        ).strip()
+        if not market_id:
+            return None
+
+        state = self._get_or_init_market_state(market_id)
+        self._merge_market_definition(state, market_book.get("marketDefinition"))
+        if "status" in market_book and market_book.get("status") is not None:
+            state["status"] = market_book.get("status")
+        if "inplay" in market_book:
+            state["inplay"] = bool(market_book.get("inplay"))
+        if "inPlay" in market_book:
+            state["inplay"] = bool(market_book.get("inPlay"))
+
+        for runner in market_book.get("runners") or []:
+            if not isinstance(runner, dict):
+                continue
+            self._merge_runner_snapshot(state, runner)
+        return self._state_to_market_book(state)
+
+    def _merge_market_change(self, change: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        market_id = str(change.get("id") or change.get("marketId") or "").strip()
+        if not market_id:
+            return None
+
+        state = self._get_or_init_market_state(market_id)
+        self._merge_market_definition(state, change.get("marketDefinition"))
+        for rc in change.get("rc") or []:
+            if not isinstance(rc, dict):
+                continue
+            self._merge_runner_change(state, rc)
+        return self._state_to_market_book(state)
+
+    def _get_or_init_market_state(self, market_id: str) -> Dict[str, Any]:
+        state = self._market_cache.get(market_id)
+        if state is None:
+            state = {
+                "marketId": market_id,
+                "market_id": market_id,
+                "status": "",
+                "inplay": False,
+                "marketDefinition": {},
+                "runners_by_id": {},
+            }
+            self._market_cache[market_id] = state
+        return state
+
+    def _merge_market_definition(self, state: Dict[str, Any], market_definition: Any) -> None:
+        if not isinstance(market_definition, dict):
+            return
+
+        existing = dict(state.get("marketDefinition") or {})
+        existing.update({k: deepcopy(v) for k, v in market_definition.items()})
+        state["marketDefinition"] = existing
+
+        if market_definition.get("status") is not None:
+            state["status"] = market_definition.get("status")
+        if market_definition.get("inPlay") is not None:
+            state["inplay"] = bool(market_definition.get("inPlay"))
+
+        for runner_def in market_definition.get("runners") or []:
+            if not isinstance(runner_def, dict):
+                continue
+            selection_id = runner_def.get("id")
+            if selection_id in (None, ""):
+                continue
+            runner_state = self._get_or_init_runner_state(state, selection_id)
+            if runner_def.get("name") is not None:
+                runner_state["runnerName"] = runner_def.get("name")
+            if runner_def.get("status") is not None:
+                runner_state["status"] = runner_def.get("status")
+            if runner_def.get("hc") is not None:
+                runner_state["handicap"] = runner_def.get("hc")
+            if runner_def.get("sortPriority") is not None:
+                runner_state["sortPriority"] = runner_def.get("sortPriority")
+
+    def _get_or_init_runner_state(self, state: Dict[str, Any], selection_id: Any) -> Dict[str, Any]:
+        key = str(selection_id)
+        runners = state["runners_by_id"]
+        runner_state = runners.get(key)
+        if runner_state is None:
+            runner_state = {
+                "selectionId": int(selection_id),
+                "runnerName": "",
+                "status": "",
+                "handicap": 0,
+                "sortPriority": 0,
+                "ltp": None,
+                "ex": {
+                    "availableToBack": [],
+                    "availableToLay": [],
+                    "tradedVolume": [],
+                },
+            }
+            runners[key] = runner_state
+        return runner_state
+
+    def _merge_runner_snapshot(self, state: Dict[str, Any], runner: Dict[str, Any]) -> None:
+        selection_id = runner.get("selectionId") or runner.get("selection_id")
+        if selection_id in (None, ""):
+            return
+        runner_state = self._get_or_init_runner_state(state, selection_id)
+
+        if runner.get("runnerName") is not None:
+            runner_state["runnerName"] = runner.get("runnerName")
+        if runner.get("status") is not None:
+            runner_state["status"] = runner.get("status")
+        if runner.get("handicap") is not None:
+            runner_state["handicap"] = runner.get("handicap")
+        if runner.get("sortPriority") is not None:
+            runner_state["sortPriority"] = runner.get("sortPriority")
+        if runner.get("ltp") is not None:
+            runner_state["ltp"] = runner.get("ltp")
+
+        ex = runner.get("ex") if isinstance(runner.get("ex"), dict) else {}
+        if "availableToBack" in ex and ex.get("availableToBack") is not None:
+            runner_state["ex"]["availableToBack"] = list(ex.get("availableToBack") or [])
+        if "availableToLay" in ex and ex.get("availableToLay") is not None:
+            runner_state["ex"]["availableToLay"] = list(ex.get("availableToLay") or [])
+        if "tradedVolume" in ex and ex.get("tradedVolume") is not None:
+            runner_state["ex"]["tradedVolume"] = list(ex.get("tradedVolume") or [])
+
+    def _merge_runner_change(self, state: Dict[str, Any], rc: Dict[str, Any]) -> None:
+        selection_id = rc.get("id")
+        if selection_id in (None, ""):
+            return
+        runner_state = self._get_or_init_runner_state(state, selection_id)
+
+        if rc.get("ltp") is not None:
+            runner_state["ltp"] = rc.get("ltp")
+        if rc.get("tv") is not None:
+            runner_state["ex"]["tradedVolume"] = self._parse_price_points(rc.get("tv") or [])
+        if rc.get("trd") is not None:
+            runner_state["ex"]["tradedVolume"] = self._parse_price_points(rc.get("trd") or [])
+        if rc.get("batb") is not None:
+            runner_state["ex"]["availableToBack"] = self._parse_price_points(rc.get("batb") or [])
+        if rc.get("batl") is not None:
+            runner_state["ex"]["availableToLay"] = self._parse_price_points(rc.get("batl") or [])
+
+    def _state_to_market_book(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        runners = []
+        for sid in sorted(state.get("runners_by_id", {}).keys(), key=lambda x: int(x)):
+            runner_state = state["runners_by_id"][sid]
+            runner = {
+                "selectionId": runner_state.get("selectionId"),
+                "runnerName": runner_state.get("runnerName"),
+                "status": runner_state.get("status"),
+                "handicap": runner_state.get("handicap"),
+                "sortPriority": runner_state.get("sortPriority"),
+                "ltp": runner_state.get("ltp"),
+                "ex": {
+                    "availableToBack": list(runner_state.get("ex", {}).get("availableToBack") or []),
+                    "availableToLay": list(runner_state.get("ex", {}).get("availableToLay") or []),
+                    "tradedVolume": list(runner_state.get("ex", {}).get("tradedVolume") or []),
+                },
+            }
+            # Compatibility with existing consumers expecting flattened ladders
+            runner["availableToBack"] = list(runner["ex"]["availableToBack"])
+            runner["availableToLay"] = list(runner["ex"]["availableToLay"])
+            runners.append(runner)
+
+        return {
+            "marketId": state.get("marketId"),
+            "market_id": state.get("market_id"),
+            "status": state.get("status"),
+            "inplay": bool(state.get("inplay", False)),
+            "marketDefinition": deepcopy(state.get("marketDefinition") or {}),
+            "runners": runners,
+        }
 
     def _parse_price_points(self, points: List[Any]) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
         for row in points:
-            if not isinstance(row, (list, tuple)) or len(row) < 3:
+            if not isinstance(row, (list, tuple)) or len(row) < 2:
                 continue
-            out.append({"price": row[1], "size": row[2]})
+            if len(row) >= 3:
+                price = row[1]
+                size = row[2]
+            else:
+                price = row[0]
+                size = row[1]
+            out.append({"price": price, "size": size})
         return out
 
     def _safe_on_market_book(self, market_book: Dict[str, Any]) -> None:
