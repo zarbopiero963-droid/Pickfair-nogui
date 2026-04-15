@@ -488,3 +488,128 @@ def test_runtime_controller_market_tracker_preserves_rare_metadata_fields(monkey
     assert runner["bsp"] == pytest.approx(3.6)
     assert runner["spn"] == pytest.approx(3.4)
     assert runner["spf"] == pytest.approx(3.8)
+
+
+@pytest.mark.integration
+def test_runtime_controller_turbulence_recovery_clears_degraded_and_restores_coherence(monkeypatch):
+    class _SettingsStream(_Settings):
+        def load_market_data_config(self):
+            return {
+                "market_data_mode": "stream",
+                "enabled": True,
+                "market_ids": ["1.904"],
+                "heartbeat_timeout_sec": 2,
+            }
+
+    class _FakeStreamingFeed:
+        def __init__(self, *, client_getter, config, on_market_book, on_disconnect, session_gate=None):
+            _ = client_getter, config, on_disconnect, session_gate
+            self.on_market_book = on_market_book
+            self._degraded = True
+
+        def start(self):
+            self.on_market_book(
+                {
+                    "marketId": "1.904",
+                    "market_id": "1.904",
+                    "status": "SUSPENDED",
+                    "inplay": False,
+                    "marketDefinition": {"status": "SUSPENDED", "inPlay": False},
+                    "runners": [
+                        {
+                            "selectionId": 401,
+                            "runnerName": "Runner 401",
+                            "status": "ACTIVE",
+                            "ex": {"availableToBack": [{"price": 2.2, "size": 5.0}], "availableToLay": []},
+                        }
+                    ],
+                }
+            )
+            return {"started": True}
+
+        def emit_recovered(self):
+            self._degraded = False
+            self.on_market_book(
+                {
+                    "marketId": "1.904",
+                    "market_id": "1.904",
+                    "status": "OPEN",
+                    "inplay": True,
+                    "marketDefinition": {
+                        "status": "OPEN",
+                        "inPlay": True,
+                        "runners": [{"id": 401, "name": "Runner 401", "status": "ACTIVE", "adjustmentFactor": 8.4}],
+                    },
+                    "runners": [
+                        {
+                            "selectionId": 401,
+                            "runnerName": "Runner 401",
+                            "status": "ACTIVE",
+                            "adjustmentFactor": 8.4,
+                            "ex": {
+                                "availableToBack": [{"price": 2.1, "size": 12.0}],
+                                "availableToLay": [{"price": 2.2, "size": 11.0}],
+                                "tradedVolume": [{"price": 2.15, "size": 90.0}],
+                            },
+                        }
+                    ],
+                }
+            )
+
+        def stop(self):
+            return {"stopped": True}
+
+        def status(self):
+            if self._degraded:
+                return {
+                    "running": True,
+                    "auth_degraded": True,
+                    "keepalive_failure_count": 1,
+                    "last_keepalive_error": "SESSION_EXPIRED",
+                }
+            return {
+                "running": True,
+                "auth_degraded": False,
+                "keepalive_failure_count": 0,
+                "last_keepalive_error": "",
+            }
+
+    monkeypatch.setattr("core.runtime_controller.StreamingFeed", _FakeStreamingFeed)
+
+    rc = RuntimeController(
+        bus=_Bus(),
+        db=_DB(),
+        settings_service=_SettingsStream(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+    rc.simulation_mode = False
+
+    received = []
+    rc.market_tracker.on_market_book = lambda book: received.append(dict(book))
+    rc._start_market_data_feed()
+
+    degraded_status = rc.get_status()
+    assert degraded_status["streaming_feed"]["auth_degraded"] is True
+    assert degraded_status["streaming_feed"]["keepalive_failure_count"] == 1
+
+    assert rc.streaming_feed is not None
+    rc.streaming_feed.emit_recovered()
+
+    recovered_status = rc.get_status()
+    assert recovered_status["streaming_feed"]["auth_degraded"] is False
+    assert recovered_status["streaming_feed"]["keepalive_failure_count"] == 0
+
+    assert len(received) >= 2
+    final = received[-1]
+    assert final["marketId"] == "1.904"
+    assert final["status"] == "OPEN"
+    assert final["inplay"] is True
+    assert final["marketDefinition"]["status"] == "OPEN"
+    assert final["marketDefinition"]["runners"][0]["adjustmentFactor"] == pytest.approx(8.4)
+    runner = final["runners"][0]
+    assert runner["selectionId"] == 401
+    assert runner["status"] == "ACTIVE"
+    assert runner["adjustmentFactor"] == pytest.approx(8.4)
+    assert runner["ex"]["availableToBack"] == [{"price": 2.1, "size": 12.0}]
+    assert runner["ex"]["tradedVolume"] == [{"price": 2.15, "size": 90.0}]
