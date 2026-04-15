@@ -8,6 +8,7 @@ from dutching import (
     calculate_dutching_stakes,
     dynamic_cashout_single,
 )
+from dutching_cache import cached_dutching_stakes, get_dutching_cache
 
 
 @pytest.mark.unit
@@ -113,3 +114,45 @@ def test_dutching_commission_reduces_net_profits_only():
 
     for gross, net in zip(result["profits"], result["net_profits"]):
         assert net <= gross + 1e-9
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_dutching_cache_hit_avoids_recompute():
+    cache = get_dutching_cache()
+    cache.clear()
+
+    calls = {"n": 0}
+
+    def fake_calc(selections, total_stake, bet_type, commission):
+        calls["n"] += 1
+        return ([{"selectionId": 1, "stake": total_stake}], 1.0, 90.0)
+
+    selections = [{"selectionId": 1, "price": 2.0, "side": "BACK"}]
+    first = cached_dutching_stakes(fake_calc, selections, 10.0, "BACK", 4.5)
+    second = cached_dutching_stakes(fake_calc, selections, 10.0, "BACK", 4.5)
+
+    assert first == second
+    assert calls["n"] == 1
+    assert cache.get_stats()["hits"] >= 1
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_dutching_cache_key_separates_back_and_lay():
+    cache = get_dutching_cache()
+    cache.clear()
+
+    calls = {"n": 0}
+
+    def fake_calc(selections, total_stake, bet_type, commission):
+        calls["n"] += 1
+        return ([{"selectionId": 1, "stake": total_stake, "side": bet_type}], 1.0, 90.0)
+
+    back_sel = [{"selectionId": 1, "price": 2.0, "effectiveType": "BACK"}]
+    lay_sel = [{"selectionId": 1, "price": 2.0, "effectiveType": "LAY"}]
+
+    cached_dutching_stakes(fake_calc, back_sel, 10.0, "BACK", 4.5)
+    cached_dutching_stakes(fake_calc, lay_sel, 10.0, "LAY", 4.5)
+
+    assert calls["n"] == 2

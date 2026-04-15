@@ -12,6 +12,10 @@ class AutoThrottle:
     """
     OMS-Level Rate Limiter con compatibilità legacy.
 
+    Canonical import path in this repository:
+    - ``from auto_throttle import AutoThrottle``
+    (master-plan mapping sometimes references ``core/auto_throttle.py``).
+
     Compatibilità legacy:
     - allow_call() fa check + consume atomico
     - wait() blocca e poi registra la chiamata

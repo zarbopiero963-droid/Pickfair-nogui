@@ -105,6 +105,15 @@ class RiskMiddleware:
             return
 
         try:
+            copy_meta = payload.get("copy_meta")
+            pattern_meta = payload.get("pattern_meta")
+            source = str(payload.get("source", "UI"))
+
+            order_origin = str(
+                payload.get("order_origin")
+                or ("COPY" if isinstance(copy_meta, dict) else "PATTERN" if isinstance(pattern_meta, dict) else source)
+            ).upper()
+
             normalized = {
                 "market_id": str(payload.get("market_id", "")),
                 "market_type": str(payload.get("market_type", "MATCH_ODDS")),
@@ -118,8 +127,13 @@ class RiskMiddleware:
                 "price": float(payload.get("price", 0.0)),
                 "stake": float(payload.get("stake", 0.0)),
                 "simulation_mode": bool(payload.get("simulation_mode", False)),
-                "source": str(payload.get("source", "UI")),
+                "source": source,
+                "order_origin": order_origin,
             }
+            if isinstance(copy_meta, dict):
+                normalized["copy_meta"] = dict(copy_meta)
+            if isinstance(pattern_meta, dict):
+                normalized["pattern_meta"] = dict(pattern_meta)
         except Exception as e:
             logger.error(
                 f"[RiskMiddleware] Payload QUICK_BET invalido: {e} | payload={payload}"
@@ -264,4 +278,3 @@ class RiskMiddleware:
 
         logger.info("[RiskMiddleware] Forward REQ_REPLACE_ORDER -> CMD_REPLACE_ORDER")
         self.bus.publish("CMD_REPLACE_ORDER", normalized)
-
