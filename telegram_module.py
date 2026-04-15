@@ -97,6 +97,43 @@ class TelegramModule:
             return default
         return str(value).strip().lower() in {"1", "true", "yes", "y", "si", "sì", "on"}
 
+    def _submit_non_blocking(self, task_name: str, worker_fn, on_success, on_error) -> None:
+        submit_fn = getattr(getattr(self, "executor", None), "submit", None)
+        if not callable(submit_fn):
+            try:
+                on_success(worker_fn())
+            except Exception as exc:
+                on_error(exc)
+            return
+
+        try:
+            future = submit_fn(task_name, worker_fn)
+        except Exception as exc:
+            on_error(exc)
+            return
+
+        if hasattr(future, "add_done_callback"):
+            def _done(fut):
+                try:
+                    result = fut.result()
+                    if hasattr(self, "uiq") and self.uiq:
+                        self.uiq.post(on_success, result)
+                    else:
+                        on_success(result)
+                except Exception as exc:
+                    if hasattr(self, "uiq") and self.uiq:
+                        self.uiq.post(on_error, exc)
+                    else:
+                        on_error(exc)
+
+            future.add_done_callback(_done)
+            return
+
+        try:
+            on_success(future)
+        except Exception as exc:
+            on_error(exc)
+
     def _safe_db_save_received_signal(
         self,
         selection,
@@ -373,29 +410,67 @@ class TelegramModule:
                     self._safe_refresh_telegram_signals_tree()
                     return
 
-            payload, resolution_mode = self._resolve_signal_to_payload(signal_data, stake=stake)
+            def _worker():
+                payload, resolution_mode = self._resolve_signal_to_payload(signal_data, stake=stake)
+                if not payload:
+                    return {
+                        "ok": False,
+                        "status": "ERROR",
+                        "selection_name": selection_name,
+                        "action": action,
+                        "price": original_price,
+                        "stake": stake,
+                    }
 
-            if not payload:
-                logger.error("[TelegramModule] Segnale non risolvibile: %s", sanitize_dict(dict(signal_data or {})))
+                payload["raw_signal"] = dict(signal_data or {})
+                payload["resolution_mode"] = resolution_mode
+
+                logger.info(
+                    "[TelegramModule] Inoltro segnale betting (%s): %s",
+                    resolution_mode,
+                    sanitize_dict(dict(payload or {})),
+                )
+                self._publish_order_signal(payload)
+                return {
+                    "ok": True,
+                    "payload": payload,
+                    "selection_name": selection_name,
+                    "action": action,
+                    "price": original_price,
+                    "stake": stake,
+                }
+
+            def _on_success(result):
+                result = dict(result or {})
+                if not bool(result.get("ok")):
+                    logger.error(
+                        "[TelegramModule] Segnale non risolvibile: %s",
+                        sanitize_dict(dict(signal_data or {})),
+                    )
+                    self._safe_db_save_received_signal(
+                        selection=result.get("selection_name", selection_name),
+                        action=result.get("action", action),
+                        price=result.get("price", original_price),
+                        stake=result.get("stake", stake),
+                        status="ERROR",
+                        signal=signal_data,
+                    )
+                    self._safe_refresh_telegram_signals_tree()
+                    return
+
+                payload = dict(result.get("payload") or {})
                 self._safe_db_save_received_signal(
-                    selection=selection_name,
-                    action=action,
-                    price=original_price,
-                    stake=stake,
-                    status="ERROR",
-                    signal=signal_data,
+                    selection=payload.get("runner_name", selection_name),
+                    action=payload.get("bet_type", action),
+                    price=payload.get("price", original_price),
+                    stake=payload.get("stake", stake),
+                    status="SUBMITTED",
+                    signal={**signal_data, "resolved_payload": payload},
                 )
                 self._safe_refresh_telegram_signals_tree()
-                return
 
-            payload["raw_signal"] = dict(signal_data or {})
-            payload["resolution_mode"] = resolution_mode
-
-            logger.info("[TelegramModule] Inoltro segnale betting (%s): %s", resolution_mode, sanitize_dict(dict(payload or {})))
-
-            try:
-                self._publish_order_signal(payload)
-            except Exception as e:
+            def _on_error(exc):
+                e = exc
                 logger.exception("[TelegramModule] Errore publish ordine: %s", e)
                 self._safe_db_save_received_signal(
                     selection=selection_name,
@@ -406,17 +481,13 @@ class TelegramModule:
                     signal=signal_data,
                 )
                 self._safe_refresh_telegram_signals_tree()
-                return
 
-            self._safe_db_save_received_signal(
-                selection=payload.get("runner_name", selection_name),
-                action=payload.get("bet_type", action),
-                price=payload.get("price", original_price),
-                stake=payload.get("stake", stake),
-                status="SUBMITTED",
-                signal={**signal_data, "resolved_payload": payload},
+            self._submit_non_blocking(
+                "telegram_signal_resolution",
+                _worker,
+                _on_success,
+                _on_error,
             )
-            self._safe_refresh_telegram_signals_tree()
 
         if hasattr(self, "uiq") and self.uiq:
             self.uiq.post(safe_process_signal)
