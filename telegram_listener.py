@@ -81,9 +81,7 @@ class TelegramListener:
         self.active_network_resources = 0
 
         # This listener currently does not manage a live Telegram client socket.
-        # We must avoid reporting a fake CONNECTED state.
-        self._set_state("STOPPED")
-        self.running = False
+        # Keep lifecycle honest: started runtime, but no proven CONNECTED state.
         self._emit_status("LISTENING", "Listener avviato")
         return {
             "started": True,

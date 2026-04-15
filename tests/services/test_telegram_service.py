@@ -51,9 +51,10 @@ def test_telegram_service_exposes_explicit_lifecycle_truth_without_fake_connecte
     status = svc.status()
 
     assert start["started"] is True
-    assert start["state"] == "STOPPED"
+    assert start["state"] == "CONNECTING"
     assert start["connected"] is False
-    assert status["state"] == "STOPPED"
+    assert status["state"] == "CONNECTING"
+    assert status["running"] is True
     assert status["connected"] is False
     assert status["listener_started"] is True
     assert status["active_network_resources"] == 0
@@ -106,7 +107,7 @@ def test_telegram_service_restart_is_controlled_and_bounded():
     status = svc.status()
 
     assert result["started"] is True
-    assert status["state"] == "STOPPED"
+    assert status["state"] == "CONNECTING"
     assert status["reconnect_attempts"] >= 1
     assert status["reconnect_in_progress"] is False
 
@@ -126,7 +127,7 @@ def test_telegram_listener_callback_failure_is_isolated_and_status_remains_coher
     listener._emit_status("INFO", "hello")
     status = svc.status()
 
-    assert status["state"] in {"STOPPED", "FAILED"}
+    assert status["state"] in {"CONNECTING", "STOPPED", "FAILED"}
     assert status["connected"] is False
 
 
@@ -150,7 +151,7 @@ def test_telegram_service_exposes_probe_snapshot():
 
     snapshot = svc.runtime_snapshot()
 
-    assert snapshot["state"] == "STOPPED"
+    assert snapshot["state"] == "CONNECTING"
     assert snapshot["listener_started"] is True
     assert snapshot["handlers_registered"] == 2
     assert snapshot["active_network_resources"] == 0
@@ -181,5 +182,24 @@ def test_telegram_service_health_status_is_probe_friendly():
             "checked_at",
         )
     ) <= set(health)
-    assert health["state"] == "STOPPED"
+    assert health["state"] == "CONNECTING"
     assert health["checked_at"] == "2026-04-15T00:00:10+00:00"
+
+
+@pytest.mark.unit
+def test_telegram_service_redundant_start_is_idempotent_and_preserves_listener_state():
+    svc = TelegramService(settings_service=_Settings(_TelegramCfg()), db=_DB(), bus=_Bus())
+    first = svc.start()
+    first_listener = svc.listener
+    assert first_listener is not None
+    first_listener.last_successful_message_ts = "2026-04-15T00:00:00+00:00"
+
+    second = svc.start()
+    second_listener = svc.listener
+    status = svc.status()
+
+    assert second["reason"] == "already_running"
+    assert second_listener is first_listener
+    assert status["state"] == "CONNECTING"
+    assert status["connected"] is False
+    assert status["last_successful_message_ts"] == "2026-04-15T00:00:00+00:00"
