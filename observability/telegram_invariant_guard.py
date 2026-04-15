@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 _ALLOWED_STATES = {"CREATED", "CONNECTING", "CONNECTED", "RECONNECTING", "STOPPED", "FAILED"}
+_EXPECTED_RUNTIME_HANDLER_COUNT = 2
 
 
 @dataclass(frozen=True)
@@ -58,19 +59,19 @@ class TelegramInvariantGuard:
                 )
             )
 
-        if snapshot.state == "CONNECTED" and snapshot.handlers_registered != 1:
+        if snapshot.state == "CONNECTED" and snapshot.handlers_registered != _EXPECTED_RUNTIME_HANDLER_COUNT:
             violations.append(
                 TelegramInvariantViolation(
-                    code="CONNECTED_REQUIRES_SINGLE_HANDLER",
-                    message="CONNECTED requires exactly one runtime handler registration",
+                    code="CONNECTED_REQUIRES_CALLBACK_PAIR",
+                    message="CONNECTED requires exactly two runtime callbacks (on_signal, on_status)",
                 )
             )
 
-        if snapshot.handlers_registered > 1:
+        if snapshot.handlers_registered > _EXPECTED_RUNTIME_HANDLER_COUNT:
             violations.append(
                 TelegramInvariantViolation(
                     code="DUPLICATE_HANDLER_REGISTRATION",
-                    message="handlers_registered > 1 indicates duplicate registration",
+                    message="handlers_registered above the expected callback pair indicates duplicate registration",
                 )
             )
 
