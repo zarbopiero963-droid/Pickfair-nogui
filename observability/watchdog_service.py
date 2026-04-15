@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
+from datetime import datetime, timezone
 from typing import Any
 
 from .anomaly_engine import AnomalyEngine
@@ -158,6 +160,11 @@ class WatchdogService:
         self._managed_forensics_alert_codes: set[str] = set()
         self._managed_governance_alert_codes: set[str] = set()
         self._managed_cto_alert_codes: set[str] = set()
+        self._managed_telegram_alert_codes: set[str] = set()
+        self._telegram_first_seen_ts: float | None = None
+        self._telegram_reconnect_started_ts: float | None = None
+        self._telegram_startup_grace_sec = 30.0
+        self._telegram_reconnect_grace_sec = 20.0
         self._correlation_evaluator = CorrelationEvaluator()
         self._reviewer_policy = ReviewerGovernancePolicy()
         self._cto_reviewer = CtoReviewer()
@@ -689,6 +696,183 @@ class WatchdogService:
             )
         else:
             self.alerts_manager.resolve_alert("INFLIGHT_HIGH")
+
+        self._evaluate_telegram_alerts()
+
+    def _evaluate_telegram_alerts(self) -> None:
+        fallback_checked_at = datetime.now(timezone.utc).isoformat()
+        health = self._collect_telegram_health(checked_at=fallback_checked_at)
+        current_codes: set[str] = set()
+        if not isinstance(health, dict):
+            self._resolve_stale_telegram_alerts(current_codes)
+            return
+
+        state = str(health.get("state") or "UNKNOWN").upper()
+        failed = bool(health.get("failed", False)) or state == "FAILED"
+        invariant_ok = bool(health.get("invariant_ok", True))
+        intentional_stop = bool(health.get("intentional_stop", False))
+        reconnecting = bool(health.get("reconnect_in_progress", False)) or state == "RECONNECTING"
+        checked_at = self._coerce_unix_ts(health.get("checked_at"))
+        now_ts = checked_at if checked_at is not None else time.time()
+
+        if self._telegram_first_seen_ts is None:
+            self._telegram_first_seen_ts = now_ts
+
+        startup_grace_active = (now_ts - self._telegram_first_seen_ts) < self._telegram_startup_grace_sec
+        reconnect_grace_active = self._update_reconnect_grace(now_ts, reconnecting)
+
+        invariant_codes = tuple(str(x) for x in (health.get("active_alert_codes") or []) if x)
+        stale_codes = {"STALE_RUNTIME", "STALE_RUNTIME_NO_TIMESTAMP", "STALE_RUNTIME_BAD_TIMESTAMP"}
+        stale_only = bool(invariant_codes) and all(code in stale_codes for code in invariant_codes)
+        stale_detected = any(code in stale_codes for code in invariant_codes)
+
+        if intentional_stop and state == "STOPPED":
+            self._resolve_stale_telegram_alerts(current_codes)
+            return
+
+        if not invariant_ok and not stale_only:
+            self._upsert_telegram_alert(
+                code="TELEGRAM_INVARIANT_BROKEN",
+                severity="critical",
+                message="Telegram runtime invariant violations detected",
+                details={"state": state, "active_alert_codes": list(invariant_codes)},
+                current_codes=current_codes,
+            )
+
+        if failed:
+            self._upsert_telegram_alert(
+                code="TELEGRAM_FAILED",
+                severity="error",
+                message="Telegram runtime reported FAILED state",
+                details={
+                    "state": state,
+                    "last_error": str(health.get("last_error") or ""),
+                    "reconnect_attempts": int(health.get("reconnect_attempts", 0) or 0),
+                },
+                current_codes=current_codes,
+            )
+        elif reconnecting:
+            if not reconnect_grace_active:
+                self._upsert_telegram_alert(
+                    code="TELEGRAM_RECONNECTING",
+                    severity="warning",
+                    message="Telegram runtime is reconnecting",
+                    details={"state": state, "reconnect_attempts": int(health.get("reconnect_attempts", 0) or 0)},
+                    current_codes=current_codes,
+                )
+        elif state in {"CREATED", "CONNECTING", "STOPPED"} and not startup_grace_active:
+            self._upsert_telegram_alert(
+                code="TELEGRAM_DISCONNECTED",
+                severity="warning",
+                message="Telegram runtime is not connected",
+                details={"state": state, "intentional_stop": intentional_stop},
+                current_codes=current_codes,
+            )
+
+        if stale_detected and not startup_grace_active and not reconnect_grace_active:
+            self._upsert_telegram_alert(
+                code="TELEGRAM_STALE",
+                severity="warning",
+                message="Telegram runtime appears stale",
+                details={"state": state, "active_alert_codes": list(invariant_codes)},
+                current_codes=current_codes,
+            )
+
+        self._resolve_stale_telegram_alerts(current_codes)
+
+    def _collect_telegram_health(self, *, checked_at: str | None = None) -> dict[str, Any] | None:
+        runtime_state = {}
+        runtime_collector = getattr(self.probe, "collect_runtime_state", None)
+        if callable(runtime_collector):
+            try:
+                payload = runtime_collector() or {}
+                if isinstance(payload, dict):
+                    runtime_state = payload
+            except Exception:
+                logger.exception("collect_runtime_state failed during telegram alert evaluation")
+
+        direct = runtime_state.get("telegram_health")
+        if isinstance(direct, dict):
+            return dict(direct)
+
+        telegram_state = runtime_state.get("telegram")
+        if isinstance(telegram_state, dict):
+            telegram_health = telegram_state.get("health")
+            if isinstance(telegram_health, dict):
+                return dict(telegram_health)
+
+        probe_health = runtime_state.get("telegram_health_status")
+        if isinstance(probe_health, dict):
+            return dict(probe_health)
+
+        telegram_service = getattr(self.probe, "telegram_service", None)
+        status_getter = getattr(telegram_service, "health_status", None)
+        if callable(status_getter):
+            try:
+                if checked_at is not None:
+                    return dict(status_getter(checked_at=checked_at))
+                return dict(status_getter())
+            except Exception:
+                logger.exception("telegram_service.health_status failed during watchdog tick")
+        return None
+
+    def _update_reconnect_grace(self, now_ts: float, reconnecting: bool) -> bool:
+        if reconnecting:
+            if self._telegram_reconnect_started_ts is None:
+                self._telegram_reconnect_started_ts = now_ts
+            return (now_ts - self._telegram_reconnect_started_ts) < self._telegram_reconnect_grace_sec
+        self._telegram_reconnect_started_ts = None
+        return False
+
+    def _upsert_telegram_alert(
+        self,
+        *,
+        code: str,
+        severity: str,
+        message: str,
+        details: dict[str, Any],
+        current_codes: set[str],
+    ) -> None:
+        current_codes.add(code)
+        self.alerts_manager.upsert_alert(
+            code,
+            severity,
+            message,
+            source="telegram_watchdog",
+            details=details,
+        )
+        if severity in {"critical", "error"}:
+            self.incidents_manager.open_incident(code, code, severity, details=details)
+
+    def _resolve_stale_telegram_alerts(self, current_codes: set[str]) -> None:
+        stale_codes = self._managed_telegram_alert_codes - current_codes
+        for code in stale_codes:
+            self.alerts_manager.resolve_alert(code)
+            self.incidents_manager.close_incident(
+                code,
+                reason="telegram_condition_cleared",
+                resolved_by="telegram_watchdog",
+            )
+        self._managed_telegram_alert_codes = current_codes
+
+    def _coerce_unix_ts(self, raw: Any) -> float | None:
+        if isinstance(raw, (int, float)):
+            try:
+                return float(raw)
+            except Exception:
+                return None
+        if isinstance(raw, str):
+            text = raw.strip()
+            if not text:
+                return None
+            try:
+                parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except Exception:
+                return None
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.timestamp()
+        return None
 
     def _evaluate_anomalies(self) -> None:
         anomalies = self._run_anomaly_checks()
