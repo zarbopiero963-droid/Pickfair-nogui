@@ -81,9 +81,7 @@ class TelegramListener:
         self.active_network_resources = 0
 
         # This listener currently does not manage a live Telegram client socket.
-        # We must avoid reporting a fake CONNECTED state.
-        self._set_state("STOPPED")
-        self.running = False
+        # Keep lifecycle honest: started runtime, but no proven CONNECTED state.
         self._emit_status("LISTENING", "Listener avviato")
         return {
             "started": True,
@@ -143,6 +141,24 @@ class TelegramListener:
             "handlers_registered": int(self.handlers_registered),
             "active_network_resources": int(self.active_network_resources),
             "monitored_chat_count": len(self.monitored_chats),
+        }
+
+    def runtime_snapshot(self) -> Dict[str, Any]:
+        """Deterministic snapshot for invariant/health probe evaluation."""
+        status = self.status()
+        return {
+            "state": status["state"],
+            "running": status["running"],
+            "listener_started": status["listener_started"],
+            "client_alive": bool(self.running and self.active_network_resources > 0),
+            "handlers_registered": status["handlers_registered"],
+            "reconnect_in_progress": status["reconnect_in_progress"],
+            "reconnect_attempts": status["reconnect_attempts"],
+            "active_network_resources": status["active_network_resources"],
+            "intentional_stop": status["intentional_stop"],
+            "retry_loop_active": bool(self.reconnect_in_progress),
+            "last_error": status["last_error"],
+            "last_successful_message_ts": status["last_successful_message_ts"],
         }
 
     def request_code(self, phone_number: str):
