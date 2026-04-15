@@ -75,7 +75,7 @@ def test_runtime_controller_routing_parity(simulation_mode):
     rc.duplication_guard = type("DG", (), {"build_event_key": staticmethod(lambda s: "1.2:11:BACK:default"), "is_duplicate": staticmethod(lambda _k: False), "register": staticmethod(lambda _k: None)})()
     rc.mm.calculate = lambda **_kw: type("D", (), {"approved": True, "recommended_stake": 4.0, "table_id": 1, "reason": "ok", "desk_mode": DeskMode.NORMAL, "metadata": {}})()
 
-    signal = {"market_id": "1.2", "selection_id": 11, "price": 2.0, "simulation_mode": simulation_mode, "copy_meta": {"k": "v"}, "pattern_meta": {"p": 1}}
+    signal = {"market_id": "1.2", "selection_id": 11, "price": 2.0, "simulation_mode": simulation_mode, "copy_meta": {"k": "v"}}
     rc._on_signal_received(signal)
 
     routed = [e for e in bus.events if e[0] == "CMD_QUICK_BET"]
@@ -143,6 +143,35 @@ def test_runtime_controller_preserves_origin_metadata_passthrough(meta_field, me
     payload = routed[0][1]
     assert payload["order_origin"] == "telegram"
     assert payload[meta_field] == meta_value
+
+
+@pytest.mark.integration
+def test_runtime_controller_rejects_signal_when_copy_and_pattern_meta_are_both_present():
+    bus = _Bus()
+    rc = RuntimeController(
+        bus=bus,
+        db=_DB(),
+        settings_service=_Settings(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+    rc.mode = RuntimeMode.ACTIVE
+
+    signal = {
+        "market_id": "1.2",
+        "selection_id": 11,
+        "price": 2.0,
+        "copy_meta": {"channel": "telegram"},
+        "pattern_meta": {"pattern_id": 9},
+    }
+    rc._on_signal_received(signal)
+
+    quick_bets = [e for e in bus.events if e[0] == "CMD_QUICK_BET"]
+    rejections = [e for e in bus.events if e[0] == "SIGNAL_REJECTED"]
+
+    assert quick_bets == []
+    assert len(rejections) == 1
+    assert rejections[0][1]["reason"] == "copy_pattern_mutually_exclusive"
 
 
 @pytest.mark.integration

@@ -1071,6 +1071,12 @@ class RuntimeController:
             self._reject_signal(signal, f"campi_mancanti:{','.join(missing)}")
             return
 
+        copy_meta = signal.get("copy_meta")
+        pattern_meta = signal.get("pattern_meta")
+        if isinstance(copy_meta, dict) and isinstance(pattern_meta, dict):
+            self._reject_signal(signal, "copy_pattern_mutually_exclusive")
+            return
+
         event_key = self.duplication_guard.build_event_key(signal)
         signal["event_key"] = event_key
 
@@ -1129,8 +1135,6 @@ class RuntimeController:
             "roserpina_reason": decision.reason,
             "roserpina_mode": decision.desk_mode.value,
         }
-        copy_meta = signal.get("copy_meta")
-        pattern_meta = signal.get("pattern_meta")
         if isinstance(copy_meta, dict):
             payload["copy_meta"] = dict(copy_meta)
         if isinstance(pattern_meta, dict):
