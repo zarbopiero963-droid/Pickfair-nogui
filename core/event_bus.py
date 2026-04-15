@@ -10,6 +10,7 @@ EventBus PRO
 __all__ = ["EventBus"]
 
 import logging
+import time
 import threading
 from collections import defaultdict
 from queue import Empty, Queue
@@ -36,6 +37,12 @@ class EventBus:
         self._published_total: int = 0
         # Cumulative successful subscriber callback executions (direct side effects)
         self._delivered_total: int = 0
+        # Queue/backpressure observability
+        self._enqueued_total: int = 0
+        self._dequeued_total: int = 0
+        self._queue_high_watermark: int = 0
+        self._last_enqueue_ts: float = 0.0
+        self._last_dequeue_ts: float = 0.0
 
         # 🔥 avvio worker pool
         for _ in range(max(1, workers)):
@@ -99,6 +106,12 @@ class EventBus:
 
         for cb in callbacks:
             self._queue.put((event_type, cb, data))
+            with self._lock:
+                self._enqueued_total += 1
+                self._last_enqueue_ts = time.time()
+                qd = self._queue.qsize()
+                if qd > self._queue_high_watermark:
+                    self._queue_high_watermark = qd
 
     # =========================================================
     # WORKER LOOP
@@ -113,6 +126,9 @@ class EventBus:
 
                 self._safe_execute(event_type, callback, data)
                 self._queue.task_done()
+                with self._lock:
+                    self._dequeued_total += 1
+                    self._last_dequeue_ts = time.time()
 
             except Empty:
                 if not self._running:
@@ -198,3 +214,19 @@ class EventBus:
                 k: len(v) for k, v in self._subscribers.items()
             },
         }
+
+    def pressure_snapshot(self) -> dict:
+        with self._lock:
+            now = time.time()
+            since_enqueue = (now - self._last_enqueue_ts) if self._last_enqueue_ts > 0 else None
+            since_dequeue = (now - self._last_dequeue_ts) if self._last_dequeue_ts > 0 else None
+            return {
+                "queue_depth": int(self._queue.qsize()),
+                "queue_high_watermark": int(self._queue_high_watermark),
+                "enqueued_total": int(self._enqueued_total),
+                "dequeued_total": int(self._dequeued_total),
+                "running": bool(self._running),
+                "accepting": bool(self._accepting),
+                "seconds_since_last_enqueue": float(since_enqueue) if since_enqueue is not None else None,
+                "seconds_since_last_dequeue": float(since_dequeue) if since_dequeue is not None else None,
+            }

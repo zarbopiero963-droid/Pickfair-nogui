@@ -218,6 +218,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._load_initial_settings()
         self._wire_bus()
         self._apply_simulation_mode_to_runtime()
+        self._status_refresh_inflight = False
+        self._status_refresh_pending = False
+        self._runtime_commands_inflight: set[str] = set()
+        self._runtime_command_rejected_total = 0
 
         if not self._test_mode:
             self._start_polling()
@@ -1013,6 +1017,59 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
     # =========================================================
     # RUNTIME COMMANDS
     # =========================================================
+    def _run_runtime_command_async(self, command_name: str, worker_fn):
+        submit_fn = getattr(getattr(self, "executor", None), "submit", None)
+        inflight_key = str(command_name or "").strip().upper()
+        if inflight_key in self._runtime_commands_inflight:
+            self._runtime_command_rejected_total += 1
+            self._log(f"{command_name} SKIPPED -> command already in-flight")
+            return
+        self._runtime_commands_inflight.add(inflight_key)
+
+        def _on_success(result):
+            try:
+                self._log(f"{command_name} -> {result}")
+                self._refresh_runtime_status()
+            finally:
+                self._runtime_commands_inflight.discard(inflight_key)
+
+        def _on_error(exc: Exception):
+            try:
+                self._log(f"{command_name} ERROR -> {exc}")
+                self._safe_show_error(f"Errore {command_name.lower()}", str(exc))
+                self._refresh_runtime_status()
+            finally:
+                self._runtime_commands_inflight.discard(inflight_key)
+
+        if not callable(submit_fn):
+            try:
+                _on_success(worker_fn())
+            except Exception as exc:
+                _on_error(exc)
+            return
+
+        try:
+            future = submit_fn(f"gui_{command_name.lower()}", worker_fn)
+        except Exception as exc:
+            _on_error(exc)
+            return
+
+        if hasattr(future, "add_done_callback"):
+            def _done(fut):
+                try:
+                    result = fut.result()
+                    self.uiq.post(_on_success, result)
+                except Exception as exc:
+                    self.uiq.post(_on_error, exc)
+
+            future.add_done_callback(_done)
+            return
+
+        try:
+            _on_success(future)
+        except Exception as exc:
+            _on_error(exc)
+
     def _runtime_start(self):
         self._sync_execution_controls_to_runtime()
         execution_mode = str(self.execution_mode_var.get() or "SIMULATION").strip().upper()
@@ -1022,55 +1079,28 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         live_enabled = bool(self.live_enabled_var.get())
         live_readiness_ok = False
 
-        try:
-            result = self.runtime.start(
+        def _work():
+            return self.runtime.start(
                 password=self.bf_password_var.get() or None,
                 simulation_mode=self.simulation_mode,
                 execution_mode=execution_mode,
                 live_enabled=live_enabled and not bool(self.kill_switch_var.get()),
                 live_readiness_ok=live_readiness_ok,
             )
-            self._log(f"START -> {result}")
-        except Exception as exc:
-            self._log(f"START ERROR -> {exc}")
-            self._safe_show_error("Errore avvio", str(exc))
-        self._refresh_runtime_status()
+
+        self._run_runtime_command_async("START", _work)
 
     def _runtime_pause(self):
-        try:
-            result = self.runtime.pause()
-            self._log(f"PAUSE -> {result}")
-        except Exception as exc:
-            self._log(f"PAUSE ERROR -> {exc}")
-            self._safe_show_error("Errore pausa", str(exc))
-        self._refresh_runtime_status()
+        self._run_runtime_command_async("PAUSE", self.runtime.pause)
 
     def _runtime_resume(self):
-        try:
-            result = self.runtime.resume()
-            self._log(f"RESUME -> {result}")
-        except Exception as exc:
-            self._log(f"RESUME ERROR -> {exc}")
-            self._safe_show_error("Errore resume", str(exc))
-        self._refresh_runtime_status()
+        self._run_runtime_command_async("RESUME", self.runtime.resume)
 
     def _runtime_stop(self):
-        try:
-            result = self.runtime.stop()
-            self._log(f"STOP -> {result}")
-        except Exception as exc:
-            self._log(f"STOP ERROR -> {exc}")
-            self._safe_show_error("Errore stop", str(exc))
-        self._refresh_runtime_status()
+        self._run_runtime_command_async("STOP", self.runtime.stop)
 
     def _runtime_reset(self):
-        try:
-            result = self.runtime.reset_cycle()
-            self._log(f"RESET -> {result}")
-        except Exception as exc:
-            self._log(f"RESET ERROR -> {exc}")
-            self._safe_show_error("Errore reset", str(exc))
-        self._refresh_runtime_status()
+        self._run_runtime_command_async("RESET", self.runtime.reset_cycle)
 
     def _runtime_emergency_stop(self):
         """Operator-triggered emergency stop.
@@ -1084,13 +1114,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         Partial downstream cancel failures do NOT silently resume trading.
         To resume after an emergency stop: call Reset Ciclo, then Avvia.
         """
-        try:
-            result = self.runtime.emergency_stop(reason="operator_gui_button")
-            self._log(f"EMERGENCY STOP TRIGGERED -> {result}")
-        except Exception as exc:
-            self._log(f"EMERGENCY STOP ERROR -> {exc}")
-            self._safe_show_error("Errore Emergency Stop", str(exc))
-        self._refresh_runtime_status()
+        self._run_runtime_command_async(
+            "EMERGENCY STOP",
+            lambda: self.runtime.emergency_stop(reason="operator_gui_button"),
+        )
 
     # =========================================================
     # BUS EVENTS
@@ -1133,15 +1160,11 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
     # =========================================================
     # STATUS / LOG
     # =========================================================
-    def _refresh_runtime_status(self):
+    def _build_runtime_status_snapshot(self) -> dict:
         try:
             status = self.runtime.get_status() if hasattr(self.runtime, "get_status") else {}
         except Exception as exc:
-            self._log(f"STATUS ERROR -> {exc}")
-            status = {}
-
-        broker_status = status.get("broker_status", {}) or {}
-        funds = status.get("account_funds", {}) or {}
+            return {"error": exc, "status": {}}
 
         try:
             betfair_status = self.betfair_service.status() if hasattr(self.betfair_service, "status") else {}
@@ -1152,6 +1175,23 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             telegram_status = self.telegram_service.status() if hasattr(self.telegram_service, "status") else {}
         except Exception:
             telegram_status = {}
+
+        return {
+            "status": status or {},
+            "betfair_status": betfair_status or {},
+            "telegram_status": telegram_status or {},
+        }
+
+    def _apply_runtime_status_snapshot(self, snapshot: dict):
+        snapshot = dict(snapshot or {})
+        if snapshot.get("error"):
+            self._log(f"STATUS ERROR -> {snapshot.get('error')}")
+        status = snapshot.get("status") or {}
+        betfair_status = snapshot.get("betfair_status") or {}
+        telegram_status = snapshot.get("telegram_status") or {}
+
+        broker_status = status.get("broker_status", {}) or {}
+        funds = status.get("account_funds", {}) or {}
 
         self.status_mode_var.set(str(status.get("mode", "STOPPED")))
         self.status_broker_var.set(
@@ -1190,6 +1230,47 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                     )
                 except Exception:
                     continue
+
+    def _refresh_runtime_status(self):
+        if self._status_refresh_inflight:
+            self._status_refresh_pending = True
+            return
+
+        submit_fn = getattr(getattr(self, "executor", None), "submit", None)
+        if not callable(submit_fn):
+            self._apply_runtime_status_snapshot(self._build_runtime_status_snapshot())
+            return
+
+        self._status_refresh_inflight = True
+        self._status_refresh_pending = False
+
+        try:
+            future = submit_fn("gui_refresh_runtime_status", self._build_runtime_status_snapshot)
+        except Exception as exc:
+            self._status_refresh_inflight = False
+            self._apply_runtime_status_snapshot({"error": exc, "status": {}})
+            return
+
+        if not hasattr(future, "add_done_callback"):
+            self._status_refresh_inflight = False
+            self._apply_runtime_status_snapshot(future if isinstance(future, dict) else {"status": {}})
+            return
+
+        def _done(fut):
+            try:
+                snapshot = fut.result()
+            except Exception as exc:
+                snapshot = {"error": exc, "status": {}}
+
+            def _apply():
+                self._status_refresh_inflight = False
+                self._apply_runtime_status_snapshot(snapshot)
+                if self._status_refresh_pending:
+                    self._refresh_runtime_status()
+
+            self.uiq.post(_apply)
+
+        future.add_done_callback(_done)
 
     def _refresh_live_control_plane_status(self, status: dict):
         runtime_status = status or {}

@@ -425,3 +425,53 @@ def test_collect_reviewer_context_keeps_bankroll_only_financials_balanced():
     ctx = probe.collect_reviewer_context()
     assert ctx["financials"]["ledger_balance"] == 222.0
     assert ctx["financials"]["venue_balance"] == 222.0
+
+
+def test_collect_correlation_context_prefers_pressure_snapshots_when_available():
+    class _PressureBus:
+        def pressure_snapshot(self):
+            return {
+                "queue_depth": 9,
+                "queue_high_watermark": 13,
+                "enqueued_total": 21,
+                "dequeued_total": 18,
+            }
+
+    class _PressureWriter:
+        def pressure_snapshot(self):
+            return {
+                "queued": 4,
+                "queue_high_watermark": 22,
+                "written": 10,
+                "failed": 1,
+                "dropped": 0,
+            }
+
+    probe = RuntimeProbe(event_bus=_PressureBus(), async_db_writer=_PressureWriter())
+    ctx = probe.collect_correlation_context()
+    assert ctx["event_bus"]["queue_high_watermark"] == 13
+    assert ctx["event_bus"]["enqueued_total"] == 21
+    assert ctx["db_write_queue"]["queue_high_watermark"] == 22
+
+
+def test_probe_betfair_degraded_when_external_io_slow_even_if_connected():
+    class _Client:
+        def io_snapshot(self):
+            return {
+                "last_status": "SLOW",
+                "last_latency_ms": 4100.0,
+                "last_operation": "listMarketBook",
+            }
+
+    class _Svc:
+        connected = True
+
+        def get_client(self):
+            return _Client()
+
+    probe = RuntimeProbe(betfair_service=_Svc())
+    health = probe.collect_health()
+    bf = health["betfair_service"]
+    assert bf["status"] == "DEGRADED"
+    assert bf["reason"] == "external_io_slow"
+    assert bf["details"]["external_io"]["last_latency_ms"] == 4100.0
