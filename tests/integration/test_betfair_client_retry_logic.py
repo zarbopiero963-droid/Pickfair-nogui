@@ -135,3 +135,36 @@ def test_place_bet_network_then_success_recovers():
 
     assert out["ok"] is True
     assert len(session.calls) == 2
+
+
+@pytest.mark.integration
+def test_io_snapshot_tracks_degraded_then_recovered_request_state():
+    from betfair_client import BetfairClient
+
+    session = FakeSession([
+        Timeout(),
+        FakeResponse(
+            json_data=[{
+                "result": [
+                    {"marketId": "1.103", "runners": []}
+                ]
+            }]
+        ),
+    ])
+
+    client = BetfairClient(
+        username="user",
+        app_key="app",
+        cert_pem="cert.pem",
+        key_pem="key.pem",
+        session=session,
+        max_retries=1,
+    )
+    client.session_token = "TOK"
+    out = client.get_market_book("1.103")
+
+    snap = client.io_snapshot()
+    assert out["marketId"] == "1.103"
+    assert snap["last_operation"] == "SportsAPING/v1.0/listMarketBook"
+    assert snap["last_status"] in {"SUCCESS", "SLOW"}
+    assert snap["total_calls"] >= 1

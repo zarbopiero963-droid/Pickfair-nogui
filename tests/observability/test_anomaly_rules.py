@@ -8,6 +8,8 @@ from observability.anomaly_rules import (
     financial_drift,
     financial_drift_detected,
     ghost_order_detected,
+    rule_event_bus_backpressure,
+    rule_executor_saturation,
     rule_ghost_order_suspected,
     rule_heartbeat_stale,
     rule_poison_pill_subscriber,
@@ -116,6 +118,8 @@ def test_default_anomaly_rules_includes_all_critical_rules():
     assert rule_heartbeat_stale in default_fns
     assert rule_zombie_worker_suspected in default_fns
     assert rule_queue_depth_liveness_mismatch in default_fns
+    assert rule_event_bus_backpressure in default_fns
+    assert rule_executor_saturation in default_fns
 
 
 def test_disabled_anomaly_rules_is_empty():
@@ -214,6 +218,33 @@ def test_rule_queue_depth_liveness_mismatch_fires():
 def test_rule_queue_depth_liveness_mismatch_passes_when_worker_alive():
     ctx = {"metrics": {"gauges": {"queue_depth": 10.0, "worker_alive": True}}}
     assert rule_queue_depth_liveness_mismatch(ctx, {}) is None
+
+
+def test_rule_event_bus_backpressure_fires_on_stalled_growth():
+    state = {"prev_enqueue_total": 10, "prev_dequeue_total": 10}
+    ctx = {
+        "event_bus": {
+            "queue_depth": 20,
+            "queue_high_watermark": 22,
+            "enqueued_total": 18,
+            "dequeued_total": 10,
+            "seconds_since_last_dequeue": 90.0,
+        }
+    }
+    first = rule_event_bus_backpressure(ctx, state)
+    assert first is None
+    second = rule_event_bus_backpressure(ctx, state)
+    assert second is not None
+    assert second["code"] == "EVENT_BUS_BACKPRESSURE"
+
+
+def test_rule_executor_saturation_fires_on_repeated_saturation():
+    state = {}
+    ctx = {"executor": {"pending_tasks": 9, "running_tasks": 4, "max_workers": 4, "saturated": True}}
+    assert rule_executor_saturation(ctx, state) is None
+    finding = rule_executor_saturation(ctx, state)
+    assert finding is not None
+    assert finding["code"] == "EXECUTOR_SATURATION"
 
 
 def test_rule_duplicate_block_spike_fires_from_contextual_burst_not_only_flat_threshold():

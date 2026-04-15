@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from typing import Any, Dict, Optional
 
 import requests
@@ -52,6 +53,36 @@ class BetfairClient:
         # Circuit breaker guards all JSON-RPC calls to Betfair API.
         # SESSION_EXPIRED does NOT trip the breaker; only network/HTTP failures do.
         self._api_breaker = CircuitBreaker(max_failures=5, reset_timeout=60.0)
+        self._io_stats: Dict[str, Any] = {
+            "last_operation": "",
+            "last_latency_ms": 0.0,
+            "last_status": "UNKNOWN",
+            "total_calls": 0,
+            "slow_calls": 0,
+            "degraded_calls": 0,
+            "unavailable_calls": 0,
+            "last_error": "",
+            "last_call_at": 0.0,
+        }
+
+    def _record_io(self, *, operation: str, started_at: float, status: str, error: str = "") -> None:
+        elapsed_ms = max(0.0, (time.monotonic() - started_at) * 1000.0)
+        status_up = str(status or "UNKNOWN").strip().upper()
+        self._io_stats["last_operation"] = str(operation)
+        self._io_stats["last_latency_ms"] = round(elapsed_ms, 3)
+        self._io_stats["last_status"] = status_up
+        self._io_stats["last_error"] = str(error or "")
+        self._io_stats["last_call_at"] = time.time()
+        self._io_stats["total_calls"] = int(self._io_stats.get("total_calls", 0) or 0) + 1
+        if status_up == "SLOW":
+            self._io_stats["slow_calls"] = int(self._io_stats.get("slow_calls", 0) or 0) + 1
+        if status_up == "DEGRADED":
+            self._io_stats["degraded_calls"] = int(self._io_stats.get("degraded_calls", 0) or 0) + 1
+        if status_up == "UNAVAILABLE":
+            self._io_stats["unavailable_calls"] = int(self._io_stats.get("unavailable_calls", 0) or 0) + 1
+
+    def io_snapshot(self) -> Dict[str, Any]:
+        return dict(self._io_stats)
 
     # =========================================================
     # SAFE UTILS
@@ -120,10 +151,13 @@ class BetfairClient:
     # CORE JSON-RPC
     # =========================================================
     def _post_jsonrpc(self, url: str, method: str, params: Dict[str, Any]) -> Any:
+        started_at = time.monotonic()
         if not self.session_token:
+            self._record_io(operation=method, started_at=started_at, status="UNAVAILABLE", error="NOT_AUTHENTICATED")
             raise RuntimeError("NOT_AUTHENTICATED")
 
         if self._api_breaker.is_open():
+            self._record_io(operation=method, started_at=started_at, status="UNAVAILABLE", error="CIRCUIT_BREAKER_OPEN")
             raise RuntimeError("CIRCUIT_BREAKER_OPEN")
 
         payload = [{
@@ -166,6 +200,9 @@ class BetfairClient:
 
                 result = item.get("result") or {}
                 self._api_breaker.record_success()
+                elapsed_ms = max(0.0, (time.monotonic() - started_at) * 1000.0)
+                status = "SLOW" if elapsed_ms >= max(2000.0, self.timeout * 1000.0 * 0.8) else "SUCCESS"
+                self._record_io(operation=method, started_at=started_at, status=status)
                 return result
 
             except Timeout:
@@ -190,12 +227,15 @@ class BetfairClient:
 
         err = RuntimeError(f"REQUEST_FAILED: {last_error}")
         self._api_breaker.record_failure(err)
+        failure_status = "DEGRADED" if (last_error or "").startswith(("TIMEOUT", "HTTP_5", "NETWORK_ERROR")) else "UNAVAILABLE"
+        self._record_io(operation=method, started_at=started_at, status=failure_status, error=str(last_error or "REQUEST_FAILED"))
         raise err
 
     # =========================================================
     # LOGIN / LOGOUT
     # =========================================================
     def login(self, password: str) -> Dict[str, Any]:
+        started_at = time.monotonic()
         try:
             response = self.session.post(
                 self.IDENTITY_URL,
@@ -218,6 +258,9 @@ class BetfairClient:
             self.session_token = str(data.get("sessionToken") or "")
             self.session_expiry = str(data.get("sessionExpiryTime") or "")
             self.connected = bool(self.session_token)
+            elapsed_ms = max(0.0, (time.monotonic() - started_at) * 1000.0)
+            status = "SLOW" if elapsed_ms >= max(2000.0, self.timeout * 1000.0 * 0.8) else "SUCCESS"
+            self._record_io(operation="login", started_at=started_at, status=status)
 
             return {
                 "connected": self.connected,
@@ -226,12 +269,15 @@ class BetfairClient:
             }
 
         except Timeout as exc:
+            self._record_io(operation="login", started_at=started_at, status="DEGRADED", error="LOGIN_TIMEOUT")
             raise RuntimeError("LOGIN_TIMEOUT") from exc
 
         except HTTPError as exc:
+            self._record_io(operation="login", started_at=started_at, status="DEGRADED", error=f"LOGIN_HTTP_ERROR:{exc}")
             raise RuntimeError(f"LOGIN_HTTP_ERROR: {exc}") from exc
 
         except RequestException as exc:
+            self._record_io(operation="login", started_at=started_at, status="DEGRADED", error=f"LOGIN_NETWORK_ERROR:{exc}")
             raise RuntimeError(f"LOGIN_NETWORK_ERROR: {exc}") from exc
 
     def logout(self) -> Dict[str, Any]:

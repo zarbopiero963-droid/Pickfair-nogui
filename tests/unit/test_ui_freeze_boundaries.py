@@ -27,6 +27,23 @@ class _DoneExecutor:
         return None
 
 
+class _PendingExecutor:
+    def __init__(self, *args, **kwargs):
+        _ = args, kwargs
+        self.calls: list[str] = []
+        self.futures: list[Future] = []
+
+    def submit(self, name, fn):
+        self.calls.append(str(name))
+        fut: Future = Future()
+        self.futures.append(fut)
+        return fut
+
+    def shutdown(self, wait=True, cancel_futures=False):
+        _ = wait, cancel_futures
+        return None
+
+
 class _Var:
     def __init__(self, value):
         self._value = value
@@ -306,6 +323,107 @@ def test_risk_tree_row_payload_matches_defined_columns(monkeypatch):
         assert row[4] == "EVT-1"
         assert row[5] == "1.123"
         assert row[6] == 99
+    finally:
+        gui.destroy()
+
+
+@pytest.mark.unit
+def test_runtime_command_coalescing_prevents_unbounded_executor_stacking(monkeypatch):
+    import mini_gui
+
+    class _FakeDB:
+        def close_all_connections(self):
+            return None
+
+    class _FakeBus:
+        def subscribe(self, *_a, **_k):
+            return None
+
+        def publish(self, *_a, **_k):
+            return None
+
+    class _FakeShutdown:
+        def register(self, *_a, **_k):
+            return None
+
+    class _FakeSettings:
+        def __init__(self, _db):
+            pass
+
+        def load_betfair_config(self):
+            return {}
+
+        def load_roserpina_config(self):
+            return {}
+
+        def load_simulation_config(self):
+            return {}
+
+        def load_execution_settings(self):
+            return {}
+
+    class _FakeBetfair:
+        def __init__(self, _settings):
+            pass
+
+        def get_client(self):
+            return None
+
+        def set_simulation_mode(self, _value):
+            return None
+
+        def status(self):
+            return {"connected": False}
+
+        def disconnect(self):
+            return None
+
+    class _FakeTelegramService:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def status(self):
+            return {"connected": False}
+
+        def stop(self):
+            return None
+
+    class _FakeRuntime:
+        def __init__(self, **_kwargs):
+            self.start_calls = 0
+
+        def set_simulation_mode(self, _v):
+            return None
+
+        def start(self, **_kwargs):
+            self.start_calls += 1
+            return {"started": True}
+
+        def get_status(self):
+            return {"mode": "STOPPED", "tables": []}
+
+    class _FakeTradingEngine:
+        def __init__(self, **_kwargs):
+            self.runtime_controller = None
+            self.simulation_broker = None
+            self.betfair_client = None
+
+    monkeypatch.setattr(mini_gui, "Database", _FakeDB)
+    monkeypatch.setattr(mini_gui, "EventBus", _FakeBus)
+    monkeypatch.setattr(mini_gui, "ExecutorManager", _PendingExecutor)
+    monkeypatch.setattr(mini_gui, "ShutdownManager", _FakeShutdown)
+    monkeypatch.setattr(mini_gui, "SettingsService", _FakeSettings)
+    monkeypatch.setattr(mini_gui, "BetfairService", _FakeBetfair)
+    monkeypatch.setattr(mini_gui, "TelegramService", _FakeTelegramService)
+    monkeypatch.setattr(mini_gui, "TradingEngine", _FakeTradingEngine)
+    monkeypatch.setattr(mini_gui, "RuntimeController", _FakeRuntime)
+
+    gui = mini_gui.MiniPickfairGUI(test_mode=True)
+    try:
+        gui._runtime_start()
+        gui._runtime_start()
+        assert gui.executor.calls.count("gui_start") == 1
+        assert gui._runtime_command_rejected_total == 1
     finally:
         gui.destroy()
 

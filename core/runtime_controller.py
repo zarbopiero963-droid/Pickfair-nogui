@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
 from typing import Any, Optional
 
@@ -91,8 +92,44 @@ class RuntimeController:
         self._emergency_stopped: bool = False
         self._emergency_stopped_at: str = ""
         self._emergency_reason: str = ""
+        self._io_observations: dict[str, Any] = {
+            "last_operation": "",
+            "last_status": "UNKNOWN",
+            "last_latency_ms": 0.0,
+            "slow_count": 0,
+            "degraded_count": 0,
+            "unavailable_count": 0,
+            "total_count": 0,
+            "last_error": "",
+        }
 
         self._subscribe_bus()
+
+    def _record_runtime_io(self, *, operation: str, started_at: float, ok: bool, error: str = "") -> None:
+        elapsed_ms = max(0.0, (time.monotonic() - started_at) * 1000.0)
+        slow_threshold_ms = 2000.0
+        if ok and elapsed_ms >= slow_threshold_ms:
+            status = "SLOW"
+        elif ok:
+            status = "SUCCESS"
+        elif error:
+            status = "DEGRADED"
+        else:
+            status = "UNAVAILABLE"
+        self._io_observations["last_operation"] = str(operation)
+        self._io_observations["last_status"] = status
+        self._io_observations["last_latency_ms"] = round(elapsed_ms, 3)
+        self._io_observations["last_error"] = str(error or "")
+        self._io_observations["total_count"] = int(self._io_observations.get("total_count", 0) or 0) + 1
+        if status == "SLOW":
+            self._io_observations["slow_count"] = int(self._io_observations.get("slow_count", 0) or 0) + 1
+        if status == "DEGRADED":
+            self._io_observations["degraded_count"] = int(self._io_observations.get("degraded_count", 0) or 0) + 1
+        if status == "UNAVAILABLE":
+            self._io_observations["unavailable_count"] = int(self._io_observations.get("unavailable_count", 0) or 0) + 1
+
+    def runtime_io_snapshot(self) -> dict:
+        return dict(self._io_observations)
 
     # =========================================================
     # INTERNAL BUILDERS
@@ -757,14 +794,37 @@ class RuntimeController:
         self.duplication_guard = DuplicationGuard()
         self.reconciliation_engine = self._build_reconciliation_engine()
 
-        session = self.betfair_service.connect(
-            password=password,
-            simulation_mode=self.simulation_mode,
-        )
-        funds = self.betfair_service.get_account_funds()
+        start_connect = time.monotonic()
+        try:
+            session = self.betfair_service.connect(
+                password=password,
+                simulation_mode=self.simulation_mode,
+            )
+            self._record_runtime_io(operation="betfair_connect", started_at=start_connect, ok=True)
+        except Exception as exc:
+            self._record_runtime_io(operation="betfair_connect", started_at=start_connect, ok=False, error=str(exc))
+            raise
+        start_funds = time.monotonic()
+        try:
+            funds = self.betfair_service.get_account_funds()
+            self._record_runtime_io(operation="betfair_get_account_funds", started_at=start_funds, ok=True)
+        except Exception as exc:
+            self._record_runtime_io(
+                operation="betfair_get_account_funds",
+                started_at=start_funds,
+                ok=False,
+                error=str(exc),
+            )
+            raise
         self.risk_desk.sync_bankroll(float(funds.get("available", 0.0) or 0.0))
 
-        telegram_result = self.telegram_service.start()
+        start_telegram = time.monotonic()
+        try:
+            telegram_result = self.telegram_service.start()
+            self._record_runtime_io(operation="telegram_start", started_at=start_telegram, ok=True)
+        except Exception as exc:
+            self._record_runtime_io(operation="telegram_start", started_at=start_telegram, ok=False, error=str(exc))
+            raise
 
         try:
             self.reconciliation_engine.reconcile_all_open_batches()
@@ -1088,7 +1148,18 @@ class RuntimeController:
     # STATUS
     # =========================================================
     def get_status(self) -> dict:
-        funds = self.betfair_service.get_account_funds()
+        started_at = time.monotonic()
+        try:
+            funds = self.betfair_service.get_account_funds()
+            self._record_runtime_io(operation="betfair_get_account_funds", started_at=started_at, ok=True)
+        except Exception as exc:
+            self._record_runtime_io(
+                operation="betfair_get_account_funds",
+                started_at=started_at,
+                ok=False,
+                error=str(exc),
+            )
+            raise
         bankroll_current = float(
             funds.get("available", self.risk_desk.bankroll_current)
             or self.risk_desk.bankroll_current
@@ -1119,6 +1190,7 @@ class RuntimeController:
         data["kill_switch_active"] = bool(self._is_kill_switch_active())
         data["execution_gate_reason"] = str(self.last_execution_gate_reason)
         data["deploy_gate"] = dict(self.last_deploy_gate_status or {})
+        data["runtime_io"] = self.runtime_io_snapshot()
         data["broker_status"] = self.betfair_service.status()
         data["account_funds"] = funds
 

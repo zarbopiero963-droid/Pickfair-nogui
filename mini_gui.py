@@ -220,6 +220,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._apply_simulation_mode_to_runtime()
         self._status_refresh_inflight = False
         self._status_refresh_pending = False
+        self._runtime_commands_inflight: set[str] = set()
+        self._runtime_command_rejected_total = 0
 
         if not self._test_mode:
             self._start_polling()
@@ -1017,15 +1019,27 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
     # =========================================================
     def _run_runtime_command_async(self, command_name: str, worker_fn):
         submit_fn = getattr(getattr(self, "executor", None), "submit", None)
+        inflight_key = str(command_name or "").strip().upper()
+        if inflight_key in self._runtime_commands_inflight:
+            self._runtime_command_rejected_total += 1
+            self._log(f"{command_name} SKIPPED -> command already in-flight")
+            return
+        self._runtime_commands_inflight.add(inflight_key)
 
         def _on_success(result):
-            self._log(f"{command_name} -> {result}")
-            self._refresh_runtime_status()
+            try:
+                self._log(f"{command_name} -> {result}")
+                self._refresh_runtime_status()
+            finally:
+                self._runtime_commands_inflight.discard(inflight_key)
 
         def _on_error(exc: Exception):
-            self._log(f"{command_name} ERROR -> {exc}")
-            self._safe_show_error(f"Errore {command_name.lower()}", str(exc))
-            self._refresh_runtime_status()
+            try:
+                self._log(f"{command_name} ERROR -> {exc}")
+                self._safe_show_error(f"Errore {command_name.lower()}", str(exc))
+                self._refresh_runtime_status()
+            finally:
+                self._runtime_commands_inflight.discard(inflight_key)
 
         if not callable(submit_fn):
             try:

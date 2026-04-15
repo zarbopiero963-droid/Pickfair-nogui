@@ -44,6 +44,11 @@ class AsyncDBWriter:
         self._written = 0
         self._failed = 0
         self._dropped = 0
+        self._submitted = 0
+        self._retried = 0
+        self._queue_high_watermark = 0
+        self._last_submit_ts = 0.0
+        self._last_write_ts = 0.0
 
     # =========================================================
     # START / STOP
@@ -81,6 +86,11 @@ class AsyncDBWriter:
                     "retries": 0,
                 }
             )
+            self._submitted += 1
+            self._last_submit_ts = time.time()
+            current_depth = self.queue.qsize()
+            if current_depth > self._queue_high_watermark:
+                self._queue_high_watermark = current_depth
             return True
 
         except Exception:
@@ -137,12 +147,14 @@ class AsyncDBWriter:
         try:
             self._write(kind, payload)
             self._written += 1
+            self._last_write_ts = time.time()
 
         except Exception as e:
             self._failed += 1
 
             if retries < self.max_retries:
                 item["retries"] += 1
+                self._retried += 1
 
                 time.sleep(self.retry_delay)
 
@@ -193,10 +205,21 @@ class AsyncDBWriter:
     # STATS
     # =========================================================
     def stats(self):
+        now = time.time()
+        since_submit = (now - self._last_submit_ts) if self._last_submit_ts > 0 else None
+        since_write = (now - self._last_write_ts) if self._last_write_ts > 0 else None
         return {
             "queued": self.queue.qsize(),
             "written": self._written,
             "failed": self._failed,
             "dropped": self._dropped,
+            "submitted": self._submitted,
+            "retried": self._retried,
+            "queue_high_watermark": self._queue_high_watermark,
+            "seconds_since_last_submit": since_submit,
+            "seconds_since_last_write": since_write,
             "running": self.running,
         }
+
+    def pressure_snapshot(self):
+        return self.stats()

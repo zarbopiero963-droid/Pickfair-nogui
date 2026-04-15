@@ -231,6 +231,9 @@ def rule_queue_depth_liveness(context: CorrelationContext, state: CorrelationSta
     event_bus = context.get("event_bus") or {}
     direct_depth = event_bus.get("queue_depth")
     queue_depth = float(direct_depth if direct_depth is not None else gauges.get("queue_depth", 0.0) or 0.0)
+    high_watermark = float(event_bus.get("queue_high_watermark", 0.0) or 0.0)
+    enqueue_total = int(event_bus.get("enqueued_total", 0) or 0)
+    dequeue_total = int(event_bus.get("dequeued_total", 0) or 0)
     heartbeat_age = float(gauges.get("last_heartbeat_age_sec", 0.0) or 0.0)
     running = event_bus.get("running")
     workers_alive = event_bus.get("worker_threads_alive")
@@ -241,13 +244,26 @@ def rule_queue_depth_liveness(context: CorrelationContext, state: CorrelationSta
             "QUEUE_DEPTH_DISPATCHER_CONTRADICTION",
             "critical",
             "Queue has pending work but dispatcher liveness is down",
-            {"queue_depth": queue_depth, "running": bool(running) if running is not None else None, "worker_threads_alive": workers_alive},
+            {
+                "queue_depth": queue_depth,
+                "queue_high_watermark": high_watermark,
+                "enqueued_total": enqueue_total,
+                "dequeued_total": dequeue_total,
+                "running": bool(running) if running is not None else None,
+                "worker_threads_alive": workers_alive,
+            },
         )
     # Queue has depth but heartbeat is stale → liveness contradiction
     if queue_depth > 0 and heartbeat_age > 60.0:
         return _correlation_finding("QUEUE_DEPTH_LIVENESS_CONTRADICTION", "critical",
             "Queue has pending work but heartbeat is stale — worker may be dead",
-            {"queue_depth": queue_depth, "heartbeat_age_sec": heartbeat_age})
+            {
+                "queue_depth": queue_depth,
+                "queue_high_watermark": high_watermark,
+                "enqueued_total": enqueue_total,
+                "dequeued_total": dequeue_total,
+                "heartbeat_age_sec": heartbeat_age,
+            })
     return None
 
 

@@ -45,3 +45,11 @@ def test_async_db_writer_write_rejects_non_mapping_payload():
     writer = AsyncDBWriter(_AuditDB())
     with pytest.raises(TypeError, match="expects a dict"):
         writer.write("not-an-event")
+
+
+def test_async_db_writer_pressure_snapshot_exposes_backpressure_counters():
+    writer = AsyncDBWriter(_AuditDB())
+    snap = writer.pressure_snapshot()
+    assert "submitted" in snap
+    assert "queue_high_watermark" in snap
+    assert "seconds_since_last_submit" in snap

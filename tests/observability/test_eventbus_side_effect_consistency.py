@@ -187,3 +187,17 @@ def test_delivered_total_counts_only_successful_callbacks():
 
     # 4 successful callbacks from ok_handler only; bad_handler failures excluded.
     assert bus.delivered_total_count() == 4
+
+
+@pytest.mark.observability
+@pytest.mark.core
+def test_pressure_snapshot_exposes_queue_counters_and_high_watermark():
+    bus = EventBus(workers=1)
+    sink = []
+    bus.subscribe("SIG", lambda payload: sink.append(payload))
+    bus.publish("SIG", {"id": 1})
+    bus.stop()
+    snap = bus.pressure_snapshot()
+    assert snap["enqueued_total"] >= 1
+    assert snap["dequeued_total"] >= 1
+    assert snap["queue_high_watermark"] >= 1

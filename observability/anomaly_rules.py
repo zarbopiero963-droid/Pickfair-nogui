@@ -675,6 +675,76 @@ def event_fanout_incomplete(context: Context, state: State) -> Anomaly | None:
     return None
 
 
+def rule_event_bus_backpressure(context: Context, state: State) -> Anomaly | None:
+    event_bus = context.get("event_bus") or {}
+    queue_depth = int(event_bus.get("queue_depth", 0) or 0)
+    high_watermark = int(event_bus.get("queue_high_watermark", 0) or 0)
+    enqueue_total = int(event_bus.get("enqueued_total", 0) or 0)
+    dequeue_total = int(event_bus.get("dequeued_total", 0) or 0)
+    seconds_since_last_dequeue = event_bus.get("seconds_since_last_dequeue")
+    prev_enqueue = int(state.get("prev_enqueue_total", enqueue_total) or enqueue_total)
+    prev_dequeue = int(state.get("prev_dequeue_total", dequeue_total) or dequeue_total)
+    state["prev_enqueue_total"] = enqueue_total
+    state["prev_dequeue_total"] = dequeue_total
+
+    enqueue_delta = max(0, enqueue_total - prev_enqueue)
+    dequeue_delta = max(0, dequeue_total - prev_dequeue)
+    stalled = queue_depth > 0 and dequeue_delta == 0 and (
+        enqueue_delta > 0 or float(seconds_since_last_dequeue or 0.0) >= 30.0
+    )
+    if stalled:
+        state["stall_ticks"] = int(state.get("stall_ticks", 0) or 0) + 1
+    else:
+        state["stall_ticks"] = 0
+
+    if queue_depth >= 250 or high_watermark >= 500 or int(state.get("stall_ticks", 0) or 0) >= 2:
+        return _anomaly(
+            "EVENT_BUS_BACKPRESSURE",
+            "warning",
+            "Event bus pressure indicates backlog growth or stalled delivery",
+            {
+                "queue_depth": queue_depth,
+                "queue_high_watermark": high_watermark,
+                "enqueued_total": enqueue_total,
+                "dequeued_total": dequeue_total,
+                "enqueue_delta": enqueue_delta,
+                "dequeue_delta": dequeue_delta,
+                "stall_ticks": int(state.get("stall_ticks", 0) or 0),
+                "seconds_since_last_dequeue": seconds_since_last_dequeue,
+            },
+        )
+    return None
+
+
+def rule_executor_saturation(context: Context, state: State) -> Anomaly | None:
+    executor = context.get("executor") or {}
+    pending = int(executor.get("pending_tasks", 0) or 0)
+    running = int(executor.get("running_tasks", 0) or 0)
+    max_workers = int(executor.get("max_workers", 0) or 0)
+    saturated = bool(executor.get("saturated", False))
+    if saturated or (max_workers > 0 and pending >= max_workers * 2):
+        ticks = int(state.get("saturation_ticks", 0) or 0) + 1
+        state["saturation_ticks"] = ticks
+    else:
+        state["saturation_ticks"] = 0
+        ticks = 0
+
+    if ticks >= 2:
+        return _anomaly(
+            "EXECUTOR_SATURATION",
+            "warning",
+            "Runtime executor is saturated; responsiveness may degrade",
+            {
+                "pending_tasks": pending,
+                "running_tasks": running,
+                "max_workers": max_workers,
+                "saturated": saturated,
+                "saturation_ticks": ticks,
+            },
+        )
+    return None
+
+
 def financial_drift(context: Context, state: State) -> Anomaly | None:
     del state
     financials = context.get("financials") or {}
@@ -721,6 +791,8 @@ DEFAULT_ANOMALY_RULES = [
     db_contention_detected,
     rule_poison_pill_subscriber,
     event_fanout_incomplete,
+    rule_event_bus_backpressure,
+    rule_executor_saturation,
     financial_drift_detected,
 ]
 

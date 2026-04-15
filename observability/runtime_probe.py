@@ -89,6 +89,27 @@ class RuntimeProbe:
         if rss_mb is not None:
             metrics["memory_rss_mb"] = float(rss_mb)
 
+        pressure = self._event_bus_pressure()
+        if pressure:
+            if pressure.get("queue_high_watermark") is not None:
+                metrics["event_bus_queue_high_watermark"] = float(pressure.get("queue_high_watermark", 0))
+            if pressure.get("seconds_since_last_dequeue") is not None:
+                metrics["event_bus_seconds_since_last_dequeue"] = float(pressure.get("seconds_since_last_dequeue", 0.0))
+
+        db_pressure = self._db_writer_pressure()
+        if db_pressure:
+            if db_pressure.get("queue_high_watermark") is not None:
+                metrics["db_writer_queue_high_watermark"] = float(db_pressure.get("queue_high_watermark", 0))
+            if db_pressure.get("seconds_since_last_write") is not None:
+                metrics["db_writer_seconds_since_last_write"] = float(db_pressure.get("seconds_since_last_write", 0.0))
+
+        runtime_io = self._runtime_io_snapshot()
+        if runtime_io:
+            if runtime_io.get("last_latency_ms") is not None:
+                metrics["runtime_io_last_latency_ms"] = float(runtime_io.get("last_latency_ms", 0.0))
+            metrics["runtime_io_degraded_total"] = float(runtime_io.get("degraded_count", 0) or 0)
+            metrics["runtime_io_slow_total"] = float(runtime_io.get("slow_count", 0) or 0)
+
         return metrics
 
     def collect_runtime_state(self) -> Dict[str, Any]:
@@ -101,6 +122,9 @@ class RuntimeProbe:
             for attr in ("mode", "simulation_mode", "last_error", "last_signal_at"):
                 if hasattr(self.runtime_controller, attr):
                     state[attr] = getattr(self.runtime_controller, attr)
+            runtime_io = self._runtime_io_snapshot()
+            if runtime_io:
+                state["runtime_io"] = runtime_io
 
         state["safe_mode_enabled"] = self._safe_mode_enabled()
 
@@ -349,6 +373,9 @@ class RuntimeProbe:
 
         if self.event_bus is not None:
             eb: Dict[str, Any] = {}
+            pressure = self._event_bus_pressure()
+            if isinstance(pressure, dict):
+                eb.update(pressure)
             # Direct queue depth
             qd_fn = getattr(self.event_bus, "queue_depth", None)
             if callable(qd_fn):
@@ -402,6 +429,9 @@ class RuntimeProbe:
 
         if self.async_db_writer is not None:
             dw: Dict[str, Any] = {}
+            db_pressure = self._db_writer_pressure()
+            if isinstance(db_pressure, dict):
+                dw.update(db_pressure)
             q = getattr(self.async_db_writer, "queue", None)
             if q is not None:
                 try:
@@ -564,6 +594,36 @@ class RuntimeProbe:
                 db_block["db_writer_failed"] + db_block["db_writer_dropped"]
             )
         context["db"] = db_block
+
+        executor_block: Dict[str, Any] = {
+            "tracked_tasks": 0,
+            "running_tasks": 0,
+            "pending_tasks": 0,
+            "max_workers": 0,
+            "saturated": False,
+        }
+        runtime_executor = getattr(runtime, "executor", None) if runtime is not None else None
+        status_fn = getattr(runtime_executor, "status", None)
+        if callable(status_fn):
+            try:
+                snap = status_fn() or {}
+            except Exception:
+                snap = {}
+            tasks = dict(snap.get("tasks") or {})
+            running = sum(1 for v in tasks.values() if str(v).upper() == "RUNNING")
+            pending = sum(1 for v in tasks.values() if str(v).upper() in {"PENDING", "QUEUED"})
+            max_workers = int(snap.get("max_workers", 0) or 0)
+            tracked = int(snap.get("tracked_tasks", len(tasks)) or len(tasks))
+            executor_block.update(
+                {
+                    "tracked_tasks": tracked,
+                    "running_tasks": running,
+                    "pending_tasks": pending,
+                    "max_workers": max_workers,
+                    "saturated": bool(max_workers > 0 and pending > max_workers),
+                }
+            )
+        context["executor"] = executor_block
 
         recent_orders: list[Any] = []
         recent_audit: list[Any] = []
@@ -870,12 +930,81 @@ class RuntimeProbe:
                 "details": details,
             }
 
+        client = None
+        getter = getattr(self.betfair_service, "get_client", None)
+        if callable(getter):
+            try:
+                client = getter()
+            except Exception:
+                client = None
+        io_snapshot = getattr(client, "io_snapshot", None)
+        if callable(io_snapshot):
+            try:
+                details["external_io"] = dict(io_snapshot() or {})
+            except Exception:
+                details["external_io"] = {}
+
+        status = "READY" if connected else "DEGRADED"
+        reason = None if connected else "disconnected"
+        io = details.get("external_io") or {}
+        io_state = str(io.get("last_status") or "").upper()
+        if io_state in {"DEGRADED", "UNAVAILABLE"}:
+            status = "DEGRADED"
+            reason = reason or f"external_io_{io_state.lower()}"
+        elif io_state == "SLOW" and status == "READY":
+            status = "DEGRADED"
+            reason = "external_io_slow"
+
         return {
             "name": "betfair_service",
-            "status": "READY" if connected else "DEGRADED",
-            "reason": None if connected else "disconnected",
+            "status": status,
+            "reason": reason,
             "details": details,
         }
+
+    def _event_bus_pressure(self) -> Dict[str, Any]:
+        if self.event_bus is None:
+            return {}
+        getter = getattr(self.event_bus, "pressure_snapshot", None)
+        if callable(getter):
+            try:
+                snap = getter() or {}
+                if isinstance(snap, dict):
+                    return dict(snap)
+            except Exception:
+                return {}
+        return {}
+
+    def _db_writer_pressure(self) -> Dict[str, Any]:
+        writer = self.async_db_writer
+        if writer is None:
+            return {}
+        getter = getattr(writer, "pressure_snapshot", None)
+        if callable(getter):
+            try:
+                snap = getter() or {}
+                if isinstance(snap, dict):
+                    return dict(snap)
+            except Exception:
+                return {}
+        return {}
+
+    def _runtime_io_snapshot(self) -> Dict[str, Any]:
+        runtime = self.runtime_controller
+        if runtime is None:
+            return {}
+        getter = getattr(runtime, "runtime_io_snapshot", None)
+        if callable(getter):
+            try:
+                snap = getter() or {}
+                if isinstance(snap, dict):
+                    return dict(snap)
+            except Exception:
+                return {}
+        raw = getattr(runtime, "_io_observations", None)
+        if isinstance(raw, dict):
+            return dict(raw)
+        return {}
 
     def _probe_safe_mode(self) -> Dict[str, Any]:
         if self.safe_mode is None:
