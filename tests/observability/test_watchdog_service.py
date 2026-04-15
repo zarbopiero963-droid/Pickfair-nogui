@@ -1,3 +1,5 @@
+import time
+
 from observability.alerts_manager import AlertsManager
 from observability.health_registry import HealthRegistry
 from observability.incidents_manager import IncidentsManager
@@ -38,6 +40,87 @@ def _make_watchdog(**kwargs):
     )
     defaults.update(kwargs)
     return WatchdogService(**defaults)
+
+
+def test_watchdog_handles_telegram_probe():
+    class _TelegramProbe(_ProbeStub):
+        def collect_runtime_state(self):
+            return {
+                "telegram_health": {
+                    "state": "FAILED",
+                    "failed": True,
+                    "invariant_ok": True,
+                    "intentional_stop": False,
+                    "reconnect_in_progress": False,
+                    "last_error": "boom",
+                    "reconnect_attempts": 2,
+                    "active_alert_codes": [],
+                    "checked_at": "2026-04-15T00:00:30+00:00",
+                }
+            }
+
+    alerts = AlertsManager()
+    watchdog = _make_watchdog(probe=_TelegramProbe(), alerts_manager=alerts)
+
+    watchdog._evaluate_alerts()
+
+    codes = {a["code"] for a in alerts.active_alerts()}
+    assert "TELEGRAM_FAILED" in codes
+
+
+def test_watchdog_does_not_loop():
+    class _SnapshotCountingStub(_SnapshotStub):
+        def __init__(self):
+            self.calls = 0
+
+        def collect_and_store(self):
+            self.calls += 1
+            return None
+
+    snapshot = _SnapshotCountingStub()
+    watchdog = _make_watchdog(snapshot_service=snapshot)
+
+    watchdog.tick()
+
+    assert snapshot.calls == 1
+
+
+def test_watchdog_tick_is_pure_function():
+    class _PureProbe(_ProbeStub):
+        def collect_runtime_state(self):
+            return {
+                "telegram_health": {
+                    "state": "FAILED",
+                    "failed": True,
+                    "invariant_ok": True,
+                    "intentional_stop": False,
+                    "reconnect_in_progress": False,
+                    "last_error": "boom",
+                    "reconnect_attempts": 1,
+                    "active_alert_codes": [],
+                    "checked_at": "2026-04-15T00:00:35+00:00",
+                }
+            }
+
+    alerts = AlertsManager()
+    watchdog = _make_watchdog(probe=_PureProbe(), alerts_manager=alerts)
+    watchdog._evaluate_alerts()
+    first = {a["code"]: (a["severity"], a["message"]) for a in alerts.active_alerts()}
+
+    watchdog._evaluate_alerts()
+    second = {a["code"]: (a["severity"], a["message"]) for a in alerts.active_alerts()}
+
+    assert first == second
+
+
+def test_watchdog_does_not_block_execution():
+    watchdog = _make_watchdog()
+
+    started = time.perf_counter()
+    watchdog.tick()
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 1.0
 
 
 def test_watchdog_resolves_stale_anomaly_alert_without_touching_unrelated_alerts():
