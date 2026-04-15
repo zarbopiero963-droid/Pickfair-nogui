@@ -78,3 +78,27 @@ def test_order_manager_replace_and_idempotency_same_live_sim_contract():
 
     assert outcomes[0][0:2] == outcomes[1][0:2] == (OrderStatus.PLACED.value, OrderStatus.PLACED.value)
     assert outcomes[0][2] == outcomes[1][2]
+
+
+@pytest.mark.integration
+def test_order_manager_persists_origin_metadata_in_saga_payload():
+    payload = {
+        "market_id": "1.1",
+        "selection_id": 7,
+        "price": 2.0,
+        "stake": 5.0,
+        "customer_ref": "META-PARITY",
+        "order_origin": "PATTERN",
+        "pattern_meta": {"pattern_id": "PT-01", "pattern_version": 2},
+    }
+
+    for sim in (False, True):
+        db = _DB()
+        om = OrderManager(db=db, client_getter=lambda: _Client(), sleep_fn=lambda *_: None)
+        placed = om.place_order({**payload, "simulation_mode": sim})
+        saga = db.get_order_saga(placed["customer_ref"])
+
+        assert saga is not None
+        persisted_payload = saga.get("payload") or {}
+        assert persisted_payload.get("order_origin") == "PATTERN"
+        assert persisted_payload.get("pattern_meta") == payload["pattern_meta"]

@@ -67,7 +67,7 @@ class _OM:
         return dict(self.response)
 
 
-def _run(simulation_mode, response):
+def _run(simulation_mode, response, *, order_origin="COPY", origin_meta=None):
     bus, db = _Bus(), _DB()
     engine = TradingEngine(bus=bus, db=db, client_getter=lambda: None, executor=_Executor())
     om = _OM(response)
@@ -82,14 +82,22 @@ def _run(simulation_mode, response):
         "customer_ref": "REF-PARITY",
         "event_key": "evt:123",
         "simulation_mode": simulation_mode,
-        "order_origin": "COPY",
-        "copy_meta": {"master_id": "m1", "copy_mode": "mirror"},
+        "order_origin": order_origin,
     }
+    if origin_meta:
+        payload.update(origin_meta)
     result = engine.submit_quick_bet(payload)
     return result, om.calls[0], db.audit
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize(
+    "order_origin,origin_meta,meta_field",
+    [
+        ("COPY", {"copy_meta": {"master_id": "m1", "copy_mode": "mirror"}}, "copy_meta"),
+        ("PATTERN", {"pattern_meta": {"pattern_id": "p1", "pattern_version": 3}}, "pattern_meta"),
+    ],
+)
 @pytest.mark.parametrize(
     "response,semantic",
     [
@@ -98,9 +106,19 @@ def _run(simulation_mode, response):
         ({"ok": False, "status": "AMBIGUOUS", "reason_code": "UNKNOWN", "error_class": "AMBIGUOUS"}, "ambiguous"),
     ],
 )
-def test_trading_engine_live_sim_contract_parity(response, semantic):
-    live_result, live_call, live_audit = _run(False, response)
-    sim_result, sim_call, sim_audit = _run(True, response)
+def test_trading_engine_live_sim_contract_parity(response, semantic, order_origin, origin_meta, meta_field):
+    live_result, live_call, live_audit = _run(
+        False,
+        response,
+        order_origin=order_origin,
+        origin_meta=origin_meta,
+    )
+    sim_result, sim_call, sim_audit = _run(
+        True,
+        response,
+        order_origin=order_origin,
+        origin_meta=origin_meta,
+    )
 
     assert set(live_result.keys()) == set(sim_result.keys())
     assert (live_result["status"] == "ACCEPTED_FOR_PROCESSING") == (sim_result["status"] == "ACCEPTED_FOR_PROCESSING")
@@ -108,9 +126,15 @@ def test_trading_engine_live_sim_contract_parity(response, semantic):
     assert isinstance(live_result.get("audit"), dict) and isinstance(sim_result.get("audit"), dict)
     assert isinstance(live_result["audit"].get("events"), list) and isinstance(sim_result["audit"].get("events"), list)
 
-    assert live_call["copy_meta"] == sim_call["copy_meta"]
-    assert live_call.get("pattern_meta") == sim_call.get("pattern_meta")
-    assert live_call["order_origin"] == sim_call["order_origin"] == "COPY"
+    assert live_call.get(meta_field) == sim_call.get(meta_field)
+    if meta_field == "copy_meta":
+        assert live_call.get(meta_field) == origin_meta[meta_field]
+    else:
+        # pattern metadata is normalized to the engine allow-list; unknown keys
+        # (like pattern_version) are intentionally dropped before downstream call.
+        assert live_call.get(meta_field) == {"pattern_id": "p1"}
+        assert "pattern_version" not in live_call.get(meta_field, {})
+    assert live_call["order_origin"] == sim_call["order_origin"] == order_origin
 
     # semantic status class parity (ack / terminal)
     assert live_result["is_terminal"] == sim_result["is_terminal"]

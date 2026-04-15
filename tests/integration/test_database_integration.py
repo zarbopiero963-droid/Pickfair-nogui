@@ -38,3 +38,26 @@ def test_received_signal_and_settings_flow():
         assert len(rows) == 1
         assert rows[0]["selection"] == "Over 2.5"
         assert rows[0]["action"] == "BACK"
+
+
+@pytest.mark.integration
+def test_database_copy_state_persistence_roundtrip():
+    with tempfile.TemporaryDirectory() as td:
+        db = Database(str(Path(td) / "db.sqlite"))
+        state_key = "copy_state"
+        copy_state = {
+            "copy_group_id": "CG-01",
+            "action_seq": 14,
+            "positions": [
+                {"position_id": "P-1", "status": "OPEN"},
+                {"position_id": "P-2", "status": "PARTIAL"},
+            ],
+            "meta": {"source": "copy", "version": 2},
+        }
+
+        db.save_simulation_state(state_key, copy_state)
+        restored = db.get_simulation_state(state_key)
+        loaded = db.load_simulation_state(state_key)
+
+        assert restored == copy_state
+        assert loaded == copy_state
