@@ -197,6 +197,119 @@ def test_mini_gui_runtime_actions_are_delegated_to_executor(monkeypatch):
         gui.destroy()
 
 
+@pytest.mark.unit
+def test_risk_tree_row_payload_matches_defined_columns(monkeypatch):
+    import mini_gui
+
+    class _FakeDB:
+        def close_all_connections(self):
+            return None
+
+    class _FakeBus:
+        def subscribe(self, *_a, **_k):
+            return None
+
+        def publish(self, *_a, **_k):
+            return None
+
+    class _FakeShutdown:
+        def register(self, *_a, **_k):
+            return None
+
+    class _FakeSettings:
+        def __init__(self, _db):
+            pass
+
+        def load_betfair_config(self):
+            return {}
+
+        def load_roserpina_config(self):
+            return {}
+
+        def load_simulation_config(self):
+            return {}
+
+        def load_execution_settings(self):
+            return {}
+
+    class _FakeBetfair:
+        def __init__(self, _settings):
+            pass
+
+        def get_client(self):
+            return None
+
+        def set_simulation_mode(self, _value):
+            return None
+
+        def status(self):
+            return {"connected": False}
+
+        def disconnect(self):
+            return None
+
+    class _FakeTelegramService:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def status(self):
+            return {"connected": False}
+
+        def stop(self):
+            return None
+
+    class _FakeRuntime:
+        def __init__(self, **_kwargs):
+            pass
+
+        def set_simulation_mode(self, _v):
+            return None
+
+        def get_status(self):
+            return {
+                "mode": "ACTIVE",
+                "tables": [
+                    {
+                        "table_id": 7,
+                        "status": "ACTIVE",
+                        "loss_amount": 1.5,
+                        "current_exposure": 2.5,
+                        "current_event_key": "EVT-1",
+                        "market_id": "1.123",
+                        "selection_id": 99,
+                    }
+                ],
+            }
+
+    class _FakeTradingEngine:
+        def __init__(self, **_kwargs):
+            self.runtime_controller = None
+            self.simulation_broker = None
+            self.betfair_client = None
+
+    monkeypatch.setattr(mini_gui, "Database", _FakeDB)
+    monkeypatch.setattr(mini_gui, "EventBus", _FakeBus)
+    monkeypatch.setattr(mini_gui, "ExecutorManager", _DoneExecutor)
+    monkeypatch.setattr(mini_gui, "ShutdownManager", _FakeShutdown)
+    monkeypatch.setattr(mini_gui, "SettingsService", _FakeSettings)
+    monkeypatch.setattr(mini_gui, "BetfairService", _FakeBetfair)
+    monkeypatch.setattr(mini_gui, "TelegramService", _FakeTelegramService)
+    monkeypatch.setattr(mini_gui, "TradingEngine", _FakeTradingEngine)
+    monkeypatch.setattr(mini_gui, "RuntimeController", _FakeRuntime)
+
+    gui = mini_gui.MiniPickfairGUI(test_mode=True)
+    try:
+        gui._refresh_runtime_status()
+        assert len(gui.risk_tree.rows) == 1
+        row = gui.risk_tree.rows[0]
+        assert len(row) == 7
+        assert row[4] == "EVT-1"
+        assert row[5] == "1.123"
+        assert row[6] == 99
+    finally:
+        gui.destroy()
+
+
 class _StopEventProbe:
     def __init__(self):
         self.wait_calls = 0

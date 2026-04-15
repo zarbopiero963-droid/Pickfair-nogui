@@ -218,13 +218,13 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._load_initial_settings()
         self._wire_bus()
         self._apply_simulation_mode_to_runtime()
+        self._status_refresh_inflight = False
+        self._status_refresh_pending = False
 
         if not self._test_mode:
             self._start_polling()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
-        self._status_refresh_inflight = False
-        self._status_refresh_pending = False
 
     # =========================================================
     # ROOT / HEADLESS HELPERS
@@ -1208,7 +1208,6 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                             table.get("table_id"),
                             table.get("status"),
                             table.get("loss_amount"),
-                            table.get("current_exposure"),
                             table.get("current_exposure"),
                             table.get("current_event_key"),
                             table.get("market_id"),
