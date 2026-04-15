@@ -1091,10 +1091,8 @@ class TradingEngine:
         if not isinstance(raw, dict):
             return {"order_origin": ORIGIN_NORMAL}
 
-        extra, _dropped_copy_keys, _dropped_pattern_keys = self._normalize_origin_metadata(
-            raw,
-            fail_closed=False,
-        )
+        result = self._normalize_origin_metadata(raw, fail_closed=False)
+        extra = result[0] if isinstance(result, tuple) and result else {}
 
         if "event_key" in raw:
             extra["event_key"] = raw.get("event_key")
