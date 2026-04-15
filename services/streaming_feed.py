@@ -77,6 +77,7 @@ class StreamingFeed:
         self._stop_event = threading.Event()
         self._run_thread: Optional[threading.Thread] = None
         self._keepalive_thread: Optional[threading.Thread] = None
+        self._stream_reader_thread: Optional[threading.Thread] = None
 
         self._stream: Any = None
         self._stream_client: Any = None
@@ -161,6 +162,7 @@ class StreamingFeed:
 
         subscribe_kwargs = self._build_subscribe_kwargs()
         self._stream.subscribe_to_markets(**subscribe_kwargs)
+        self._start_stream_reader()
 
         with self._lock:
             self._connected = True
@@ -190,6 +192,26 @@ class StreamingFeed:
             daemon=True,
         )
         self._keepalive_thread.start()
+
+    def _start_stream_reader(self) -> None:
+        start = getattr(self._stream, "start", None)
+        if not callable(start):
+            return
+        if self._stream_reader_thread and self._stream_reader_thread.is_alive():
+            return
+
+        def _reader() -> None:
+            try:
+                start()
+            except Exception:
+                logger.exception("stream reader failed")
+
+        self._stream_reader_thread = threading.Thread(
+            target=_reader,
+            name="streaming-feed-reader",
+            daemon=True,
+        )
+        self._stream_reader_thread.start()
 
     def _keepalive_loop(self) -> None:
         while not self._stop_event.wait(timeout=900.0):
@@ -230,6 +252,13 @@ class StreamingFeed:
         if isinstance(message, list):
             for item in message:
                 self._process_message(item)
+            return
+
+        resource_book = self._resource_to_market_book(message)
+        if resource_book:
+            merged = self._merge_market_snapshot(resource_book)
+            if merged:
+                self._safe_on_market_book(merged)
 
     def _extract_market_books(self, message: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
         books = []
@@ -463,6 +492,103 @@ class StreamingFeed:
                 stop()
             except Exception:
                 logger.exception("stream stop failed")
+        if self._stream_reader_thread and self._stream_reader_thread.is_alive():
+            self._stream_reader_thread.join(timeout=2.0)
+        self._stream_reader_thread = None
+
+    def _resource_to_market_book(self, resource: Any) -> Optional[Dict[str, Any]]:
+        market_id = str(
+            getattr(resource, "market_id", None)
+            or getattr(resource, "marketId", None)
+            or ""
+        ).strip()
+        if not market_id:
+            return None
+
+        market_definition = self._resource_market_definition_to_dict(
+            getattr(resource, "market_definition", None)
+        )
+        status = getattr(resource, "status", None)
+        inplay = getattr(resource, "inplay", None)
+        if inplay is None:
+            inplay = getattr(resource, "in_play", None)
+
+        runners = []
+        for runner in getattr(resource, "runners", None) or []:
+            selection_id = getattr(runner, "selection_id", None)
+            if selection_id in (None, ""):
+                continue
+            ex = getattr(runner, "ex", None)
+            available_to_back = self._coerce_price_ladder(getattr(ex, "available_to_back", None))
+            available_to_lay = self._coerce_price_ladder(getattr(ex, "available_to_lay", None))
+            traded_volume = self._coerce_price_ladder(getattr(ex, "traded_volume", None))
+            runners.append(
+                {
+                    "selectionId": selection_id,
+                    "status": getattr(runner, "status", None),
+                    "handicap": getattr(runner, "handicap", None),
+                    "ltp": getattr(runner, "last_price_traded", None),
+                    "ex": {
+                        "availableToBack": available_to_back,
+                        "availableToLay": available_to_lay,
+                        "tradedVolume": traded_volume,
+                    },
+                }
+            )
+
+        return {
+            "marketId": market_id,
+            "status": status,
+            "inplay": bool(inplay) if inplay is not None else False,
+            "marketDefinition": market_definition,
+            "runners": runners,
+        }
+
+    def _resource_market_definition_to_dict(self, market_definition: Any) -> Dict[str, Any]:
+        if market_definition is None:
+            return {}
+
+        out: Dict[str, Any] = {}
+        status = getattr(market_definition, "status", None)
+        if status is not None:
+            out["status"] = status
+        in_play = getattr(market_definition, "in_play", None)
+        if in_play is not None:
+            out["inPlay"] = bool(in_play)
+
+        runners_out = []
+        for runner_def in getattr(market_definition, "runners", None) or []:
+            rid = getattr(runner_def, "selection_id", None)
+            if rid in (None, ""):
+                continue
+            runners_out.append(
+                {
+                    "id": rid,
+                    "name": getattr(runner_def, "name", None),
+                    "status": getattr(runner_def, "status", None),
+                    "hc": getattr(runner_def, "handicap", None),
+                    "sortPriority": getattr(runner_def, "sort_priority", None),
+                }
+            )
+        if runners_out:
+            out["runners"] = runners_out
+        return out
+
+    def _coerce_price_ladder(self, points: Any) -> List[Dict[str, Any]]:
+        if points is None:
+            return []
+        out: List[Dict[str, Any]] = []
+        for point in points:
+            if isinstance(point, dict):
+                price = point.get("price")
+                size = point.get("size")
+            else:
+                price = getattr(point, "price", None)
+                size = getattr(point, "size", None)
+            if price is None or size is None:
+                continue
+            out.append({"price": price, "size": size})
+        return out
 
     def _notify_disconnect(self, *, reason: str) -> None:
         with self._lock:

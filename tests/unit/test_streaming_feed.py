@@ -17,6 +17,7 @@ class _Stream:
         self.scripted_messages = list(scripted_messages)
         self.subscriptions = []
         self.stopped = False
+        self.started = False
 
     def subscribe_to_markets(self, **kwargs):
         self.subscriptions.append(dict(kwargs))
@@ -26,16 +27,21 @@ class _Stream:
     def stop(self):
         self.stopped = True
 
+    def start(self):
+        self.started = True
+
 
 class _StreamingAPI:
     def __init__(self, scripts, subscriptions):
         self._scripts = list(scripts)
         self._subscriptions = subscriptions
+        self.streams = []
 
     def create_stream(self, listener):
         script = self._scripts.pop(0) if self._scripts else []
         stream = _Stream(listener.output_queue, script)
         self._subscriptions.append(stream.subscriptions)
+        self.streams.append(stream)
         return stream
 
 
@@ -108,6 +114,7 @@ def test_streaming_feed_reconnect_reuses_clk_and_initialclk():
     second_sub = subscriptions[1][0]
     assert second_sub.get("initial_clk") == "ic_1"
     assert second_sub.get("clk") == "c_1"
+    assert any(stream.started for stream in client.streaming.streams)
 
 
 @pytest.mark.integration
@@ -283,3 +290,59 @@ def test_streaming_feed_high_churn_updates_keep_runner_state_coherent():
     assert runners[102]["runnerName"] == "Runner 102"
     assert final["status"] == "SUSPENDED"
     assert final["inplay"] is True
+
+
+def test_streaming_feed_parses_market_book_resource_objects_from_default_listener():
+    class _PS:
+        def __init__(self, price, size):
+            self.price = price
+            self.size = size
+
+    class _RunnerDef:
+        def __init__(self, selection_id, name, status):
+            self.selection_id = selection_id
+            self.name = name
+            self.status = status
+            self.handicap = 0
+            self.sort_priority = 1
+
+    class _MD:
+        status = "OPEN"
+        in_play = True
+        runners = [_RunnerDef(7, "Runner 7", "ACTIVE")]
+
+    class _Ex:
+        available_to_back = [_PS(2.02, 9.0)]
+        available_to_lay = [_PS(2.06, 8.5)]
+        traded_volume = [_PS(2.04, 100.0)]
+
+    class _Runner:
+        selection_id = 7
+        status = "ACTIVE"
+        handicap = 0
+        last_price_traded = 2.04
+        ex = _Ex()
+
+    class _MarketBook:
+        market_id = "1.700"
+        status = "OPEN"
+        inplay = True
+        market_definition = _MD()
+        runners = [_Runner()]
+
+    updates = []
+    feed = StreamingFeed(
+        client_getter=lambda: None,
+        config={"enabled": False, "market_data_mode": "poll"},
+        on_market_book=lambda book: updates.append(book),
+    )
+
+    feed._process_message(_MarketBook())
+
+    assert updates, "resource payload should produce downstream market book update"
+    out = updates[-1]
+    assert out["marketId"] == "1.700"
+    assert out["status"] == "OPEN"
+    assert out["inplay"] is True
+    assert out["runners"][0]["selectionId"] == 7
+    assert out["runners"][0]["ex"]["availableToBack"] == [{"price": 2.02, "size": 9.0}]
