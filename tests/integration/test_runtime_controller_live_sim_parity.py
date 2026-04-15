@@ -1,5 +1,6 @@
 import pytest
 
+from core.risk_middleware import RiskMiddleware
 from core.runtime_controller import RuntimeController
 from core.system_state import RoserpinaConfig, RuntimeMode, DeskMode
 
@@ -200,6 +201,103 @@ def test_runtime_controller_accepts_telegram_boundary_marker_without_contract_dr
     assert payload["stake"] == 5.0
     assert payload["order_origin"] == "telegram"
     assert payload["copy_meta"] == {"master_id": "M1"}
+
+
+@pytest.mark.integration
+def test_telegram_routing_markers_survive_runtime_to_risk_to_trading_intake_path():
+    class _SyncBus:
+        def __init__(self):
+            self.events = []
+            self.subscribers = {}
+
+        def subscribe(self, topic, handler):
+            self.subscribers.setdefault(topic, []).append(handler)
+
+        def publish(self, topic, payload=None):
+            data = dict(payload or {})
+            self.events.append((topic, data))
+            for handler in list(self.subscribers.get(topic, [])):
+                handler(data)
+
+    bus = _SyncBus()
+    rc = RuntimeController(
+        bus=bus,
+        db=_DB(),
+        settings_service=_Settings(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+    rc.mode = RuntimeMode.ACTIVE
+    rc.duplication_guard = type(
+        "DG",
+        (),
+        {
+            "build_event_key": staticmethod(lambda _s: "1.2:11:BACK:telegram"),
+            "is_duplicate": staticmethod(lambda _k: False),
+            "register": staticmethod(lambda _k: None),
+            "acquire": staticmethod(lambda _k: True),
+            "release": staticmethod(lambda _k: None),
+        },
+    )()
+    rc.mm.calculate = lambda **_kw: type(
+        "D",
+        (),
+        {
+            "approved": True,
+            "recommended_stake": 5.0,
+            "table_id": 1,
+            "reason": "ok",
+            "desk_mode": DeskMode.NORMAL,
+            "metadata": {},
+        },
+    )()
+    RiskMiddleware(bus=bus)
+
+    rc._on_signal_received(
+        {
+            "boundary_stage": "telegram_ingestion_normalized_v1",
+            "market_id": "1.2",
+            "selection_id": 11,
+            "price": 2.2,
+            "order_origin": "telegram",
+            "copy_meta": {"master_id": "M1"},
+            "telegram_routing_contract": "telegram_authoritative_routing_v1",
+            "telegram_route_target": "SIGNAL_RECEIVED",
+            "simulation_mode": True,
+        }
+    )
+
+    runtime_cmd_events = [e for e in bus.events if e[0] == "CMD_QUICK_BET"]
+    assert len(runtime_cmd_events) == 1
+    runtime_payload = runtime_cmd_events[0][1]
+
+    assert runtime_payload["telegram_routing_contract"] == "telegram_authoritative_routing_v1"
+    assert runtime_payload["telegram_route_target"] == "SIGNAL_RECEIVED"
+
+    # RuntimeController output becomes the boundary-equivalent intake for
+    # RiskMiddleware (REQ_QUICK_BET surface).
+    bus.publish("REQ_QUICK_BET", runtime_payload)
+    cmd_events = [e for e in bus.events if e[0] == "CMD_QUICK_BET"]
+    assert len(cmd_events) >= 2
+    risk_payload = cmd_events[-1][1]
+    assert risk_payload["telegram_routing_contract"] == "telegram_authoritative_routing_v1"
+    assert risk_payload["telegram_route_target"] == "SIGNAL_RECEIVED"
+
+    # Fail-closed exclusivity must remain intact.
+    before = len([e for e in bus.events if e[0] == "CMD_QUICK_BET"])
+    rc._on_signal_received(
+        {
+            "market_id": "1.2",
+            "selection_id": 11,
+            "price": 2.2,
+            "copy_meta": {"master_id": "M1"},
+            "pattern_meta": {"pattern_id": "P1"},
+        }
+    )
+    after = len([e for e in bus.events if e[0] == "CMD_QUICK_BET"])
+    rejects = [e for e in bus.events if e[0] == "SIGNAL_REJECTED"]
+    assert after == before
+    assert any((p or {}).get("reason") == "copy_pattern_mutually_exclusive" for _, p in rejects)
 
 
 @pytest.mark.integration

@@ -1,6 +1,7 @@
 from observability.runtime_probe import RuntimeProbe
 from services.telegram_alerts_service import TelegramAlertsService
 from services.telegram_signal_processor import TelegramSignalProcessor
+from telegram_module import TelegramModule
 
 
 class _SettingsEnabled:
@@ -35,6 +36,20 @@ class _SenderOk:
 class _DbStub:
     def get_recent_observability_snapshots(self, limit=1):
         return [{"id": 1}]
+
+
+class _BusStub:
+    def __init__(self):
+        self.subscribers = {}
+        self.events = []
+
+    def publish(self, topic, payload):
+        self.events.append((topic, dict(payload or {})))
+
+
+class _TelegramContractHarness(TelegramModule):
+    def __init__(self, bus):
+        self.bus = bus
 
 
 def test_telegram_runtime_truth_e2e_sender_missing_is_explicit_degraded_and_not_deliverable():
@@ -122,3 +137,39 @@ def test_telegram_runtime_truth_e2e_normalization_fails_closed_for_ambiguous_ori
         "error_reason": "copy_meta and pattern_meta cannot coexist",
         "normalized_signal": {},
     }
+
+
+def test_telegram_runtime_truth_e2e_authoritative_route_prefers_runtime_signal_gate_when_present():
+    bus = _BusStub()
+    bus.subscribers = {"SIGNAL_RECEIVED": [object()], "REQ_QUICK_BET": [object()]}
+    module = _TelegramContractHarness(bus)
+
+    route = module._publish_order_signal(
+        {
+            "market_id": "1.101",
+            "selection_id": 9,
+            "telegram_boundary_stage": "telegram_ingestion_normalized_v1",
+        }
+    )
+
+    assert route == "SIGNAL_RECEIVED"
+    assert len(bus.events) == 1
+    topic, payload = bus.events[0]
+    assert topic == "SIGNAL_RECEIVED"
+    assert payload["telegram_routing_contract"] == "telegram_authoritative_routing_v1"
+    assert payload["telegram_route_target"] == "SIGNAL_RECEIVED"
+
+
+def test_telegram_runtime_truth_e2e_routing_fails_closed_if_boundary_stage_missing():
+    bus = _BusStub()
+    bus.subscribers = {"SIGNAL_RECEIVED": [object()]}
+    module = _TelegramContractHarness(bus)
+
+    try:
+        module._publish_order_signal({"market_id": "1.202", "selection_id": 12})
+    except ValueError as exc:
+        assert str(exc) == "TELEGRAM_ROUTING_BOUNDARY_INVALID_STAGE"
+    else:
+        raise AssertionError("Expected fail-closed boundary validation")
+
+    assert bus.events == []

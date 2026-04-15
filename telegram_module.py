@@ -25,6 +25,11 @@ class TelegramModule:
     - se NON li ha -> prova a risolvere automaticamente via TelegramBetResolver
     """
 
+    TELEGRAM_BOUNDARY_STAGE = "telegram_ingestion_normalized_v1"
+    TELEGRAM_ROUTING_CONTRACT = "telegram_authoritative_routing_v1"
+    TELEGRAM_PRIMARY_ROUTE = "SIGNAL_RECEIVED"
+    TELEGRAM_COMPAT_FALLBACK_ROUTE = "REQ_QUICK_BET"
+
     # =========================================================
     # INTERNAL HELPERS
     # =========================================================
@@ -164,31 +169,58 @@ class TelegramModule:
             logger.exception("[TelegramModule] Errore save_received_signal status=%s: %s", status, e)
 
     def _bus_has_subscriber(self, event_name: str) -> bool:
+        event_name = str(event_name or "")
+        if not event_name:
+            return False
+
         try:
             subscribers = getattr(self.bus, "subscribers", None)
             if isinstance(subscribers, dict):
-                return bool(subscribers.get(event_name))
+                return bool(list(subscribers.get(event_name) or []))
         except Exception:
-            pass
+            logger.exception("[TelegramModule] Errore accesso bus.subscribers")
+
+        try:
+            private_subscribers = getattr(self.bus, "_subscribers", None)
+            if isinstance(private_subscribers, dict):
+                lock = getattr(self.bus, "_lock", None)
+                if lock is not None and hasattr(lock, "__enter__"):
+                    with lock:
+                        return bool(list(private_subscribers.get(event_name) or []))
+                return bool(list(private_subscribers.get(event_name) or []))
+        except Exception:
+            logger.exception("[TelegramModule] Errore accesso bus._subscribers")
+
         return False
 
-    def _publish_order_signal(self, payload: dict) -> None:
+    def _publish_order_signal(self, payload: dict) -> str:
         """
-        Runtime routing boundary.
+        Authoritative Telegram routing boundary.
 
-        Prefer REQ_QUICK_BET when TradingEngine is already wired for direct intake.
-        Fallback to SIGNAL_RECEIVED for legacy flows where RuntimeController owns
-        the gate and emits CMD_QUICK_BET downstream.
+        Contract:
+        1) Telegram payload MUST already be normalized at ingestion boundary.
+        2) Primary route is SIGNAL_RECEIVED (RuntimeController gate owner).
+        3) REQ_QUICK_BET is explicit compatibility fallback only when runtime
+           signal gate is not subscribed.
         """
-        if self._bus_has_subscriber("REQ_QUICK_BET"):
-            self.bus.publish("REQ_QUICK_BET", payload)
-            return
+        payload = dict(payload or {})
+        stage = str(payload.get("telegram_boundary_stage") or "").strip()
+        if stage != self.TELEGRAM_BOUNDARY_STAGE:
+            raise ValueError("TELEGRAM_ROUTING_BOUNDARY_INVALID_STAGE")
 
-        if self._bus_has_subscriber("SIGNAL_RECEIVED"):
-            self.bus.publish("SIGNAL_RECEIVED", payload)
-            return
+        payload["telegram_routing_contract"] = self.TELEGRAM_ROUTING_CONTRACT
 
-        self.bus.publish("REQ_QUICK_BET", payload)
+        if self._bus_has_subscriber(self.TELEGRAM_PRIMARY_ROUTE):
+            payload["telegram_route_target"] = self.TELEGRAM_PRIMARY_ROUTE
+            self.bus.publish(self.TELEGRAM_PRIMARY_ROUTE, payload)
+            return self.TELEGRAM_PRIMARY_ROUTE
+
+        if self._bus_has_subscriber(self.TELEGRAM_COMPAT_FALLBACK_ROUTE):
+            payload["telegram_route_target"] = self.TELEGRAM_COMPAT_FALLBACK_ROUTE
+            self.bus.publish(self.TELEGRAM_COMPAT_FALLBACK_ROUTE, payload)
+            return self.TELEGRAM_COMPAT_FALLBACK_ROUTE
+
+        raise RuntimeError("TELEGRAM_ROUTING_NO_SUBSCRIBERS")
 
     def _needs_resolution(self, signal_data: dict) -> bool:
         market_id = signal_data.get("market_id") or signal_data.get("marketId")
@@ -462,7 +494,8 @@ class TelegramModule:
                     resolution_mode,
                     sanitize_dict(dict(payload or {})),
                 )
-                self._publish_order_signal(payload)
+                route_target = self._publish_order_signal(payload)
+                payload["telegram_route_target"] = route_target
                 return {
                     "ok": True,
                     "payload": payload,
