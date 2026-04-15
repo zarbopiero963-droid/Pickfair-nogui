@@ -642,6 +642,13 @@ class WatchdogService:
     def _evaluate_alerts(self) -> None:
         health = self.health_registry.snapshot()
         metrics = self.metrics_registry.snapshot()
+        runtime_state = {}
+        collector = getattr(self.probe, "collect_runtime_state", None)
+        if callable(collector):
+            try:
+                runtime_state = collector() or {}
+            except Exception:
+                logger.exception("collect_runtime_state failed during alert evaluation")
 
         overall = health.get("overall_status")
         if overall == "NOT_READY":
@@ -689,6 +696,77 @@ class WatchdogService:
             )
         else:
             self.alerts_manager.resolve_alert("INFLIGHT_HIGH")
+
+        session_snapshot = {}
+        if isinstance(runtime_state, dict):
+            session_snapshot = (
+                runtime_state.get("session_manager")
+                or runtime_state.get("session")
+                or runtime_state.get("betfair_session")
+                or {}
+            )
+        if not isinstance(session_snapshot, dict):
+            session_snapshot = {}
+
+        state = str(session_snapshot.get("state") or "").upper()
+        keepalive_failures = int(session_snapshot.get("consecutive_keepalive_failures") or 0)
+        login_failures = int(session_snapshot.get("consecutive_login_failures") or 0)
+        last_error_code = str(session_snapshot.get("last_error_code") or "").upper()
+        ttl = float(session_snapshot.get("session_ttl_sec") or 0.0)
+        expiry = session_snapshot.get("session_expires_at")
+        logged_in_at = session_snapshot.get("logged_in_at")
+        token_present = bool(session_snapshot.get("token_present"))
+
+        expired = state == "EXPIRED"
+        if ttl > 0 and logged_in_at is not None and expiry is not None:
+            try:
+                expired = expired or float(expiry) <= float(logged_in_at)
+            except Exception:
+                pass
+
+        if keepalive_failures > 0 and state not in {"ACTIVE"}:
+            self.alerts_manager.upsert_alert(
+                "SESSION_KEEPALIVE_FAILED",
+                "warning",
+                "Betfair session keepalive failure detected",
+                source="session_manager",
+                details={"consecutive_keepalive_failures": keepalive_failures, "state": state},
+            )
+        else:
+            self.alerts_manager.resolve_alert("SESSION_KEEPALIVE_FAILED")
+
+        if expired or (state in {"LOGGED_OUT", "EXPIRED", "LOCKED_OUT"} and not token_present):
+            self.alerts_manager.upsert_alert(
+                "SESSION_EXPIRED",
+                "warning",
+                "Betfair session is expired or unavailable",
+                source="session_manager",
+                details={"state": state, "last_error_code": last_error_code},
+            )
+        else:
+            self.alerts_manager.resolve_alert("SESSION_EXPIRED")
+
+        if login_failures > 0 and state in {"DEGRADED", "EXPIRED"}:
+            self.alerts_manager.upsert_alert(
+                "SESSION_RELOGIN_FAILED",
+                "warning",
+                "Betfair session relogin failed",
+                source="session_manager",
+                details={"consecutive_login_failures": login_failures, "state": state},
+            )
+        else:
+            self.alerts_manager.resolve_alert("SESSION_RELOGIN_FAILED")
+
+        if state == "LOCKED_OUT" or last_error_code == "TEMPORARY_BAN_TOO_MANY_REQUESTS":
+            self.alerts_manager.upsert_alert(
+                "SESSION_LOGIN_THROTTLED",
+                "warning",
+                "Betfair login is throttled/locked out",
+                source="session_manager",
+                details={"state": state, "last_error_code": last_error_code},
+            )
+        else:
+            self.alerts_manager.resolve_alert("SESSION_LOGIN_THROTTLED")
 
     def _evaluate_anomalies(self) -> None:
         anomalies = self._run_anomaly_checks()

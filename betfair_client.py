@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any, Dict, Optional
+import time
+from typing import Any, Dict, List, Optional
 
 import requests
 from requests.exceptions import HTTPError, RequestException, Timeout
 
 from circuit_breaker import CircuitBreaker
+from core.session_manager import SessionManager
 from core.type_helpers import safe_float, safe_int, safe_side
 
 logger = logging.getLogger(__name__)
@@ -16,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 class BetfairClient:
     IDENTITY_URL = "https://identitysso.betfair.it/api/certlogin"
+    KEEPALIVE_URL = "https://identitysso.betfair.it/api/keepAlive"
     BETTING_URL = "https://api.betfair.com/exchange/betting/json-rpc/v1"
     ACCOUNT_URL = "https://api.betfair.com/exchange/account/json-rpc/v1"
 
@@ -48,10 +51,16 @@ class BetfairClient:
         self.session_token = ""
         self.session_expiry = ""
         self.connected = False
+        self._last_login_password = ""
 
         # Circuit breaker guards all JSON-RPC calls to Betfair API.
         # SESSION_EXPIRED does NOT trip the breaker; only network/HTTP failures do.
         self._api_breaker = CircuitBreaker(max_failures=5, reset_timeout=60.0)
+        self.session_manager = SessionManager(
+            login_func=self._login_for_session_manager,
+            keepalive_func=self._keepalive_for_session_manager,
+            clock=time.time,
+        )
 
     # =========================================================
     # SAFE UTILS
@@ -77,9 +86,45 @@ class BetfairClient:
             "X-Application": self.app_key,
             "Content-Type": "application/json",
         }
-        if self.session_token:
-            headers["X-Authentication"] = self.session_token
+        headers.update(self.session_manager.get_auth_headers())
         return headers
+
+    def _sync_session_manager_from_legacy_fields(self) -> None:
+        manager_token = self.session_manager.get_session_token()
+        if self.session_token and not manager_token:
+            self.session_manager.mark_logged_in(self.session_token)
+
+    def _normalize_auth_error_code(self, error_payload: Any) -> str:
+        if isinstance(error_payload, dict):
+            code = str(error_payload.get("errorCode") or error_payload.get("code") or "").upper()
+            if code:
+                return code
+            data = str(error_payload)
+        else:
+            data = str(error_payload or "")
+        upper = data.upper()
+        if "NO_SESSION" in upper:
+            return "NO_SESSION"
+        if "INVALID_SESSION" in upper:
+            return "INVALID_SESSION"
+        if "TEMPORARY_BAN_TOO_MANY_REQUESTS" in upper:
+            return "TEMPORARY_BAN_TOO_MANY_REQUESTS"
+        if "INPUT_VALIDATION_ERROR" in upper:
+            return "INPUT_VALIDATION_ERROR"
+        if "INTERNAL_ERROR" in upper:
+            return "INTERNAL_ERROR"
+        return "UNKNOWN_AUTH_ERROR"
+
+    def _attempt_controlled_recovery(self) -> bool:
+        if not self.session_manager.can_attempt_login():
+            return False
+        state_before = self.session_manager.snapshot().get("state")
+        self.session_manager.tick()
+        self.session_token = self.session_manager.get_session_token()
+        self.connected = bool(self.session_token)
+        if self.connected:
+            self.session_expiry = str(self.session_manager.snapshot().get("session_expires_at") or "")
+        return bool(self.session_manager.has_valid_session()) and self.session_manager.snapshot().get("state") != state_before
 
     def _parse_json(self, response: Any, err_code: str) -> Any:
         try:
@@ -120,8 +165,11 @@ class BetfairClient:
     # CORE JSON-RPC
     # =========================================================
     def _post_jsonrpc(self, url: str, method: str, params: Dict[str, Any]) -> Any:
-        if not self.session_token:
-            raise RuntimeError("NOT_AUTHENTICATED")
+        self._sync_session_manager_from_legacy_fields()
+        self.session_manager.tick()
+        if not self.session_manager.has_valid_session():
+            if not self._attempt_controlled_recovery():
+                raise RuntimeError("NOT_AUTHENTICATED")
 
         if self._api_breaker.is_open():
             raise RuntimeError("CIRCUIT_BREAKER_OPEN")
@@ -134,9 +182,14 @@ class BetfairClient:
         }]
 
         last_error: Optional[str] = None
+        recovered = False
 
-        for attempt in range(self.max_retries + 1):
+        for attempt in range(self.max_retries + 2):
             try:
+                self.session_token = self.session_manager.get_session_token()
+                self.connected = bool(self.session_token)
+                if not self.session_token:
+                    raise RuntimeError("NOT_AUTHENTICATED")
                 response = self.session.post(
                     url,
                     headers=self._headers(),
@@ -154,17 +207,24 @@ class BetfairClient:
                 item = data[0]
 
                 if "error" in item:
-                    err = str(item["error"])
-
-                    if "INVALID_SESSION" in err or "NO_SESSION" in err:
-                        self.connected = False
-                        self.session_token = ""
+                    err_payload = item.get("error")
+                    err = str(err_payload)
+                    auth_code = self._normalize_auth_error_code(err_payload)
+                    self.session_manager.on_api_auth_error(auth_code, raw=err_payload)
+                    self.session_token = self.session_manager.get_session_token()
+                    self.connected = bool(self.session_token)
+                    if auth_code in {"NO_SESSION", "INVALID_SESSION"}:
                         self.session_expiry = ""
+                        if not recovered and self._attempt_controlled_recovery():
+                            recovered = True
+                            continue
                         raise RuntimeError("SESSION_EXPIRED")
-
+                    if auth_code == "TEMPORARY_BAN_TOO_MANY_REQUESTS":
+                        raise RuntimeError("AUTH_THROTTLED")
                     raise RuntimeError(f"API_ERROR: {err}")
 
                 result = item.get("result") or {}
+                self.session_manager.on_api_success(raw=result)
                 self._api_breaker.record_success()
                 return result
 
@@ -196,6 +256,19 @@ class BetfairClient:
     # LOGIN / LOGOUT
     # =========================================================
     def login(self, password: str) -> Dict[str, Any]:
+        self._last_login_password = str(password or "")
+        data = self._perform_login(self._last_login_password)
+        self.session_manager.on_login_result(data)
+        self.session_token = self.session_manager.get_session_token()
+        self.connected = bool(self.session_token)
+        self.session_expiry = str(self.session_manager.snapshot().get("session_expires_at") or "")
+        return {
+            "connected": self.connected,
+            "session_token": bool(self.session_token),
+            "expiry": self.session_expiry,
+        }
+
+    def _perform_login(self, password: str) -> Dict[str, Any]:
         try:
             response = self.session.post(
                 self.IDENTITY_URL,
@@ -215,15 +288,7 @@ class BetfairClient:
             if str(data.get("loginStatus")) != "SUCCESS":
                 raise RuntimeError(f"LOGIN_FAILED: {data}")
 
-            self.session_token = str(data.get("sessionToken") or "")
-            self.session_expiry = str(data.get("sessionExpiryTime") or "")
-            self.connected = bool(self.session_token)
-
-            return {
-                "connected": self.connected,
-                "session_token": bool(self.session_token),
-                "expiry": self.session_expiry,
-            }
+            return data
 
         except Timeout as exc:
             raise RuntimeError("LOGIN_TIMEOUT") from exc
@@ -234,10 +299,48 @@ class BetfairClient:
         except RequestException as exc:
             raise RuntimeError(f"LOGIN_NETWORK_ERROR: {exc}") from exc
 
+    def _login_for_session_manager(self) -> Dict[str, Any]:
+        if not self._last_login_password:
+            return {"loginStatus": "FAIL", "errorCode": "INPUT_VALIDATION_ERROR"}
+        try:
+            return self._perform_login(self._last_login_password)
+        except RuntimeError as exc:
+            message = str(exc)
+            code = self._normalize_auth_error_code(message)
+            if "TEMPORARY_BAN_TOO_MANY_REQUESTS" in message.upper():
+                code = "TEMPORARY_BAN_TOO_MANY_REQUESTS"
+            return {"loginStatus": "FAIL", "errorCode": code, "detail": message}
+
+    def _keepalive_for_session_manager(self) -> Dict[str, Any]:
+        token = self.session_manager.get_session_token()
+        if not token:
+            return {"status": "FAIL", "errorCode": "NO_SESSION"}
+        try:
+            response = self.session.post(
+                self.KEEPALIVE_URL,
+                headers={
+                    "X-Application": self.app_key,
+                    "X-Authentication": token,
+                    "Accept": "application/json",
+                },
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            data = self._parse_json(response, "INVALID_KEEPALIVE_JSON")
+            keepalive_status = str(data.get("status") or data.get("keepAliveStatus") or "").upper()
+            if keepalive_status == "SUCCESS":
+                return {"status": "SUCCESS"}
+            code = self._normalize_auth_error_code(data)
+            return {"status": "FAIL", "errorCode": code, "detail": data}
+        except Exception as exc:
+            code = self._normalize_auth_error_code(str(exc))
+            return {"status": "FAIL", "errorCode": code, "detail": str(exc)}
+
     def logout(self) -> Dict[str, Any]:
         self.session_token = ""
         self.session_expiry = ""
         self.connected = False
+        self.session_manager.mark_session_expired("LOGOUT")
         return {
             "ok": True,
             "logged_out": True,
@@ -488,7 +591,8 @@ class BetfairClient:
     # STATUS
     # =========================================================
     def status(self) -> Dict[str, Any]:
+        self.session_token = self.session_manager.get_session_token() or self.session_token
         return {
-            "connected": bool(self.session_token),
+            "connected": bool(self.session_manager.get_session_token() or self.session_token),
             "expiry": self.session_expiry,
         }
