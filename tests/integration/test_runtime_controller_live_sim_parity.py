@@ -253,17 +253,6 @@ def test_telegram_routing_markers_survive_runtime_to_risk_to_trading_intake_path
     )()
     RiskMiddleware(bus=bus)
 
-    bridged = {"done": False}
-
-    def _bridge_runtime_cmd_to_req(payload):
-        # Prevent loops: bridge only the first runtime-emitted CMD payload.
-        if bridged["done"]:
-            return
-        bridged["done"] = True
-        bus.publish("REQ_QUICK_BET", payload)
-
-    bus.subscribe("CMD_QUICK_BET", _bridge_runtime_cmd_to_req)
-
     rc._on_signal_received(
         {
             "boundary_stage": "telegram_ingestion_normalized_v1",
@@ -278,13 +267,19 @@ def test_telegram_routing_markers_survive_runtime_to_risk_to_trading_intake_path
         }
     )
 
-    cmd_events = [e for e in bus.events if e[0] == "CMD_QUICK_BET"]
-    assert len(cmd_events) >= 2
-    runtime_payload = cmd_events[0][1]
-    risk_payload = cmd_events[-1][1]
+    runtime_cmd_events = [e for e in bus.events if e[0] == "CMD_QUICK_BET"]
+    assert len(runtime_cmd_events) == 1
+    runtime_payload = runtime_cmd_events[0][1]
 
     assert runtime_payload["telegram_routing_contract"] == "telegram_authoritative_routing_v1"
     assert runtime_payload["telegram_route_target"] == "SIGNAL_RECEIVED"
+
+    # RuntimeController output becomes the boundary-equivalent intake for
+    # RiskMiddleware (REQ_QUICK_BET surface).
+    bus.publish("REQ_QUICK_BET", runtime_payload)
+    cmd_events = [e for e in bus.events if e[0] == "CMD_QUICK_BET"]
+    assert len(cmd_events) >= 2
+    risk_payload = cmd_events[-1][1]
     assert risk_payload["telegram_routing_contract"] == "telegram_authoritative_routing_v1"
     assert risk_payload["telegram_route_target"] == "SIGNAL_RECEIVED"
 
