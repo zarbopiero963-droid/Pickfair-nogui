@@ -141,3 +141,45 @@ def test_telegram_service_invalid_config_fails_closed():
     status = svc.status()
     assert status["state"] == "FAILED"
     assert "incompleta" in status["last_error"].lower()
+
+
+@pytest.mark.unit
+def test_telegram_service_exposes_probe_snapshot():
+    svc = TelegramService(settings_service=_Settings(_TelegramCfg()), db=_DB(), bus=_Bus())
+    svc.start()
+
+    snapshot = svc.runtime_snapshot()
+
+    assert snapshot["state"] == "STOPPED"
+    assert snapshot["listener_started"] is True
+    assert snapshot["handlers_registered"] == 2
+    assert snapshot["active_network_resources"] == 0
+    assert snapshot["client_alive"] is False
+
+
+@pytest.mark.unit
+def test_telegram_service_health_status_is_probe_friendly():
+    svc = TelegramService(settings_service=_Settings(_TelegramCfg()), db=_DB(), bus=_Bus())
+    svc.start()
+    health = svc.health_status(checked_at="2026-04-15T00:00:10+00:00")
+
+    assert set(
+        (
+            "state",
+            "healthy",
+            "degraded",
+            "failed",
+            "last_error",
+            "reconnect_attempts",
+            "reconnect_in_progress",
+            "last_successful_message_ts",
+            "handlers_registered",
+            "client_alive",
+            "intentional_stop",
+            "invariant_ok",
+            "active_alert_codes",
+            "checked_at",
+        )
+    ) <= set(health)
+    assert health["state"] == "STOPPED"
+    assert health["checked_at"] == "2026-04-15T00:00:10+00:00"

@@ -4,6 +4,8 @@ import logging
 from datetime import datetime
 from typing import Optional
 
+from observability.telegram_health_probe import TelegramHealthProbe
+from observability.telegram_invariant_guard import TelegramInvariantSnapshot
 from telegram_listener import TelegramListener
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,7 @@ class TelegramService:
         self.listener_started = False
         self.handlers_registered = 0
         self.active_network_resources = 0
+        self._health_probe = TelegramHealthProbe()
 
     def _set_state(self, new_state: str) -> None:
         allowed_states = {"CREATED", "CONNECTING", "CONNECTED", "RECONNECTING", "STOPPED", "FAILED"}
@@ -238,6 +241,61 @@ class TelegramService:
             "listener_started": bool(self.listener_started),
             "handlers_registered": int(self.handlers_registered),
             "active_network_resources": int(self.active_network_resources),
+        }
+
+    def runtime_snapshot(self) -> dict:
+        listener_snapshot = {}
+        if self.listener and callable(getattr(self.listener, "runtime_snapshot", None)):
+            listener_snapshot = self.listener.runtime_snapshot() or {}
+        status = self.status()
+        return {
+            "state": str(status["state"]),
+            "running": bool(status["running"]),
+            "listener_started": bool(status["listener_started"]),
+            "client_alive": bool(listener_snapshot.get("client_alive", False)),
+            "handlers_registered": int(status["handlers_registered"]),
+            "reconnect_in_progress": bool(status["reconnect_in_progress"]),
+            "reconnect_attempts": int(status["reconnect_attempts"]),
+            "active_network_resources": int(status["active_network_resources"]),
+            "intentional_stop": bool(status["intentional_stop"]),
+            "retry_loop_active": bool(status["reconnect_in_progress"]),
+            "last_error": str(status["last_error"] or ""),
+            "last_successful_message_ts": status["last_successful_message_ts"],
+        }
+
+    def health_status(self, *, checked_at: str | None = None) -> dict:
+        snap = self.runtime_snapshot()
+        invariant_snapshot = TelegramInvariantSnapshot(
+            state=str(snap["state"]),
+            listener_started=bool(snap["listener_started"]),
+            client_alive=bool(snap["client_alive"]),
+            handlers_registered=int(snap["handlers_registered"]),
+            reconnect_in_progress=bool(snap["reconnect_in_progress"]),
+            reconnect_attempts=int(snap["reconnect_attempts"]),
+            active_network_resources=int(snap["active_network_resources"]),
+            intentional_stop=bool(snap["intentional_stop"]),
+            retry_loop_active=bool(snap["retry_loop_active"]),
+            running=bool(snap["running"]),
+            last_error=str(snap["last_error"] or ""),
+            last_successful_message_ts=snap["last_successful_message_ts"],
+            now_ts=checked_at,
+        )
+        health = self._health_probe.evaluate(invariant_snapshot, checked_at=checked_at)
+        return {
+            "state": health.state,
+            "healthy": health.healthy,
+            "degraded": health.degraded,
+            "failed": health.failed,
+            "last_error": health.last_error,
+            "reconnect_attempts": health.reconnect_attempts,
+            "reconnect_in_progress": health.reconnect_in_progress,
+            "last_successful_message_ts": health.last_successful_message_ts,
+            "handlers_registered": health.handlers_registered,
+            "client_alive": health.client_alive,
+            "intentional_stop": health.intentional_stop,
+            "invariant_ok": health.invariant_ok,
+            "active_alert_codes": list(health.active_alert_codes),
+            "checked_at": health.checked_at,
         }
 
     def get_sender(self):
