@@ -60,6 +60,7 @@ class _UIQ:
 class _Bus:
     def __init__(self):
         self.events = []
+        self.subscribers = {}
 
     def publish(self, name, payload=None):
         self.events.append((name, payload))
@@ -109,6 +110,26 @@ def test_telegram_signal_resolution_is_submitted_to_executor():
     assert "telegram_signal_resolution" in h.executor.calls
     assert h.resolution_calls == 1
     assert any(e[0] == "REQ_QUICK_BET" for e in h.bus.events)
+
+
+@pytest.mark.unit
+def test_telegram_module_prefers_req_quick_bet_when_present():
+    h = _TelegramHarness()
+    h.bus.subscribers = {"REQ_QUICK_BET": [object()], "SIGNAL_RECEIVED": [object()]}
+
+    h._publish_order_signal({"market_id": "1.1", "selection_id": 10})
+
+    assert h.bus.events == [("REQ_QUICK_BET", {"market_id": "1.1", "selection_id": 10})]
+
+
+@pytest.mark.unit
+def test_telegram_module_falls_back_to_signal_received_when_req_not_wired():
+    h = _TelegramHarness()
+    h.bus.subscribers = {"SIGNAL_RECEIVED": [object()]}
+
+    h._publish_order_signal({"market_id": "1.2", "selection_id": 20})
+
+    assert h.bus.events == [("SIGNAL_RECEIVED", {"market_id": "1.2", "selection_id": 20})]
 
 
 @pytest.mark.unit

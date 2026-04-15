@@ -174,7 +174,11 @@ class TelegramModule:
 
     def _publish_order_signal(self, payload: dict) -> None:
         """
-        Compatibilità vecchio/nuovo flow.
+        Runtime routing boundary.
+
+        Prefer REQ_QUICK_BET when TradingEngine is already wired for direct intake.
+        Fallback to SIGNAL_RECEIVED for legacy flows where RuntimeController owns
+        the gate and emits CMD_QUICK_BET downstream.
         """
         if self._bus_has_subscriber("REQ_QUICK_BET"):
             self.bus.publish("REQ_QUICK_BET", payload)

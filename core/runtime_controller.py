@@ -1013,6 +1013,15 @@ class RuntimeController:
         return float(table.current_exposure or 0.0)
 
     def _on_signal_received(self, signal: dict) -> None:
+        """
+        Runtime signal gate for Telegram/UI-driven order intents.
+
+        Ownership boundary:
+        - this method validates runtime readiness + anti-duplication + MM/table checks
+        - it does NOT resolve Telegram text parsing (owned upstream)
+        - it forwards already-normalized copy/pattern metadata to TradingEngine
+          as passthrough context (no strategy rewrite here)
+        """
         signal = dict(signal or {})
         self.last_signal_at = datetime.utcnow().isoformat()
 
@@ -1120,6 +1129,14 @@ class RuntimeController:
             "roserpina_reason": decision.reason,
             "roserpina_mode": decision.desk_mode.value,
         }
+        copy_meta = signal.get("copy_meta")
+        pattern_meta = signal.get("pattern_meta")
+        if isinstance(copy_meta, dict):
+            payload["copy_meta"] = dict(copy_meta)
+        if isinstance(pattern_meta, dict):
+            payload["pattern_meta"] = dict(pattern_meta)
+        if signal.get("order_origin"):
+            payload["order_origin"] = signal.get("order_origin")
 
         self.table_manager.activate(
             table_id=decision.table_id,

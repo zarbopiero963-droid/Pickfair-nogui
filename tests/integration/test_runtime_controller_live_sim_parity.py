@@ -87,6 +87,65 @@ def test_runtime_controller_routing_parity(simulation_mode):
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize(
+    ("meta_field", "meta_value"),
+    [
+        ("copy_meta", {"channel": "telegram", "copy_target": "desk-a"}),
+        ("pattern_meta", {"pattern_id": 7, "pattern_name": "late_over"}),
+    ],
+)
+def test_runtime_controller_preserves_origin_metadata_passthrough(meta_field, meta_value):
+    bus = _Bus()
+    rc = RuntimeController(
+        bus=bus,
+        db=_DB(),
+        settings_service=_Settings(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+    rc.mode = RuntimeMode.ACTIVE
+    rc.duplication_guard = type(
+        "DG",
+        (),
+        {
+            "build_event_key": staticmethod(lambda s: "1.2:11:BACK:telegram"),
+            "is_duplicate": staticmethod(lambda _k: False),
+            "register": staticmethod(lambda _k: None),
+            "acquire": staticmethod(lambda _k: True),
+            "release": staticmethod(lambda _k: None),
+        },
+    )()
+    rc.mm.calculate = lambda **_kw: type(
+        "D",
+        (),
+        {
+            "approved": True,
+            "recommended_stake": 4.0,
+            "table_id": 1,
+            "reason": "ok",
+            "desk_mode": DeskMode.NORMAL,
+            "metadata": {},
+        },
+    )()
+
+    signal = {
+        "market_id": "1.2",
+        "selection_id": 11,
+        "price": 2.0,
+        "simulation_mode": True,
+        "order_origin": "telegram",
+        meta_field: meta_value,
+    }
+    rc._on_signal_received(signal)
+
+    routed = [e for e in bus.events if e[0] == "CMD_QUICK_BET"]
+    assert len(routed) == 1
+    payload = routed[0][1]
+    assert payload["order_origin"] == "telegram"
+    assert payload[meta_field] == meta_value
+
+
+@pytest.mark.integration
 def test_duplication_lock_released_on_table_allocation_failure():
     """Regression: acquire() succeeded but table=None early-return never released the lock.
     After a table-allocation rejection the same event_key must be acquirable again."""
