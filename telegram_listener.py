@@ -25,12 +25,27 @@ class TelegramListener:
 
         self.running = False
         self.monitored_chats: List[int] = []
+        self.state = "CREATED"
+        self.last_error = ""
+        self.intentional_stop = False
+        self.reconnect_attempts = 0
+        self.reconnect_in_progress = False
+        self.last_successful_message_ts: str | None = None
+        self.listener_started = False
+        self.handlers_registered = 0
+        self.active_network_resources = 0
 
         self._callbacks = {
             "on_signal": None,
             "on_message": None,
             "on_status": None,
         }
+
+    def _set_state(self, new_state: str) -> None:
+        allowed_states = {"CREATED", "CONNECTING", "CONNECTED", "RECONNECTING", "STOPPED", "FAILED"}
+        if new_state not in allowed_states:
+            raise ValueError(f"Invalid Telegram listener state: {new_state}")
+        self.state = new_state
 
     # =========================================================
     # EXTERNAL SETUP
@@ -45,22 +60,90 @@ class TelegramListener:
         self._callbacks["on_signal"] = on_signal
         self._callbacks["on_message"] = on_message
         self._callbacks["on_status"] = on_status
+        self.handlers_registered = sum(1 for cb in self._callbacks.values() if callable(cb))
 
     # =========================================================
     # LIFECYCLE
     # =========================================================
     def start(self, monitored_chats: Optional[List[int]] = None):
+        if self.running:
+            return {"started": True, "reason": "already_running", "chat_count": len(self.monitored_chats)}
+
         if monitored_chats is not None:
             self.set_monitored_chats(monitored_chats)
 
+        self.intentional_stop = False
+        self.reconnect_in_progress = False
+        self.last_error = ""
+        self._set_state("CONNECTING")
         self.running = True
+        self.listener_started = True
+        self.active_network_resources = 0
+
+        # This listener currently does not manage a live Telegram client socket.
+        # We must avoid reporting a fake CONNECTED state.
+        self._set_state("STOPPED")
+        self.running = False
         self._emit_status("LISTENING", "Listener avviato")
-        return {"started": True, "chat_count": len(self.monitored_chats)}
+        return {
+            "started": True,
+            "chat_count": len(self.monitored_chats),
+            "state": self.state,
+            "reason": "no_live_runtime_client",
+        }
 
     def stop(self):
+        if self.state == "STOPPED" and not self.running:
+            return {"stopped": True, "reason": "already_stopped", "state": self.state}
+
+        self.intentional_stop = True
+        self.reconnect_in_progress = False
         self.running = False
+        self.active_network_resources = 0
+        self._set_state("STOPPED")
         self._emit_status("STOPPED", "Listener fermato")
-        return {"stopped": True}
+        return {"stopped": True, "state": self.state}
+
+    def mark_failed(self, error: str) -> None:
+        self.last_error = str(error or "")
+        self.running = False
+        self.reconnect_in_progress = False
+        self._set_state("FAILED")
+        self._emit_status("FAILED", self.last_error or "Listener failure")
+
+    def begin_reconnect_attempt(self) -> bool:
+        if self.intentional_stop or self.state in {"STOPPED", "FAILED"}:
+            return False
+        self.reconnect_attempts += 1
+        self.reconnect_in_progress = True
+        self._set_state("RECONNECTING")
+        return True
+
+    def end_reconnect_attempt(self, *, success: bool, error: str = "") -> None:
+        self.reconnect_in_progress = False
+        if success:
+            self.last_error = ""
+            # Keep this truthful for current architecture: no live network resource.
+            self._set_state("STOPPED")
+            self.running = False
+            self.active_network_resources = 0
+            return
+        self.mark_failed(error or "reconnect_failed")
+
+    def status(self) -> Dict[str, Any]:
+        return {
+            "state": self.state,
+            "running": bool(self.running),
+            "intentional_stop": bool(self.intentional_stop),
+            "reconnect_attempts": int(self.reconnect_attempts),
+            "reconnect_in_progress": bool(self.reconnect_in_progress),
+            "last_error": self.last_error,
+            "last_successful_message_ts": self.last_successful_message_ts,
+            "listener_started": bool(self.listener_started),
+            "handlers_registered": int(self.handlers_registered),
+            "active_network_resources": int(self.active_network_resources),
+            "monitored_chat_count": len(self.monitored_chats),
+        }
 
     def request_code(self, phone_number: str):
         self._emit_status("CODE_SENT", f"Codice inviato a {phone_number}")
@@ -80,6 +163,7 @@ class TelegramListener:
             try:
                 cb(status, message)
             except Exception:
+                self.last_error = "on_status_callback_failed"
                 logger.exception("[TelegramListener] Errore callback on_status")
 
     def _emit_signal(self, signal: Dict[str, Any]):
@@ -87,7 +171,9 @@ class TelegramListener:
         if callable(cb):
             try:
                 cb(signal)
+                self.last_successful_message_ts = signal.get("received_at") or signal.get("timestamp")
             except Exception:
+                self.last_error = "on_signal_callback_failed"
                 logger.exception("[TelegramListener] Errore callback on_signal")
 
     # =========================================================
