@@ -132,6 +132,36 @@ class RuntimeController:
         if status == "UNAVAILABLE":
             self._io_observations["unavailable_count"] = int(self._io_observations.get("unavailable_count", 0) or 0) + 1
 
+    @staticmethod
+    def _extract_origin_metadata(signal: dict) -> tuple[dict | None, dict | None]:
+        """
+        Runtime boundary metadata extractor.
+
+        RuntimeController acts as a passthrough boundary:
+        - preserves structurally valid copy/pattern metadata
+        - does not own allow-list normalization (TradingEngine remains authoritative)
+        """
+        copy_meta = signal.get("copy_meta")
+        pattern_meta = signal.get("pattern_meta")
+        copy_dict = dict(copy_meta) if isinstance(copy_meta, dict) else None
+        pattern_dict = dict(pattern_meta) if isinstance(pattern_meta, dict) else None
+        return copy_dict, pattern_dict
+
+    @staticmethod
+    def _resolve_order_origin(signal: dict, *, has_copy_meta: bool, has_pattern_meta: bool) -> str:
+        """
+        Resolve boundary origin with minimal inference.
+        TradingEngine remains the final normalization authority.
+        """
+        explicit = str(signal.get("order_origin") or "").strip()
+        if explicit:
+            return explicit
+        if has_copy_meta:
+            return "COPY"
+        if has_pattern_meta:
+            return "PATTERN"
+        return ""
+
     def _load_market_data_config(self) -> dict:
         if hasattr(self.settings_service, "load_market_data_config"):
             try:
@@ -1071,8 +1101,7 @@ class RuntimeController:
             self._reject_signal(signal, f"campi_mancanti:{','.join(missing)}")
             return
 
-        copy_meta = signal.get("copy_meta")
-        pattern_meta = signal.get("pattern_meta")
+        copy_meta, pattern_meta = self._extract_origin_metadata(signal)
         if isinstance(copy_meta, dict) and isinstance(pattern_meta, dict):
             self._reject_signal(signal, "copy_pattern_mutually_exclusive")
             return
@@ -1135,12 +1164,23 @@ class RuntimeController:
             "roserpina_reason": decision.reason,
             "roserpina_mode": decision.desk_mode.value,
         }
-        if isinstance(copy_meta, dict):
+        has_copy_meta = isinstance(copy_meta, dict)
+        has_pattern_meta = isinstance(pattern_meta, dict)
+        if has_copy_meta and has_pattern_meta:
+            # Defensive fail-closed guard: Runtime should never forward both.
+            self._reject_signal(signal, "copy_pattern_mutually_exclusive")
+            return
+        if has_copy_meta:
             payload["copy_meta"] = dict(copy_meta)
-        if isinstance(pattern_meta, dict):
+        elif has_pattern_meta:
             payload["pattern_meta"] = dict(pattern_meta)
-        if signal.get("order_origin"):
-            payload["order_origin"] = signal.get("order_origin")
+        order_origin = self._resolve_order_origin(
+            signal,
+            has_copy_meta=has_copy_meta,
+            has_pattern_meta=has_pattern_meta,
+        )
+        if order_origin:
+            payload["order_origin"] = order_origin
 
         self.table_manager.activate(
             table_id=decision.table_id,

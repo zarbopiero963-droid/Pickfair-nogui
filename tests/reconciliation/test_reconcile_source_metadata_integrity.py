@@ -32,14 +32,14 @@ def test_reconcile_metadata_isolated_between_copy_and_pattern_sources():
             "betId": "BET-COPY",
             "marketId": "1.101",
             "selectionId": 10,
-            "meta": {"source": "copy", "copy_group_id": "CG-1"},
+            "meta": {"source": "copy", "copy_group_id": "CG-1", "order_origin": "COPY"},
         },
         {
             "customerOrderRef": "PATTERN-REF-1",
             "betId": "BET-PAT",
             "marketId": "1.101",
             "selectionId": 10,
-            "meta": {"source": "pattern", "pattern_id": "PT-1"},
+            "meta": {"source": "pattern", "pattern_id": "PT-1", "order_origin": "PATTERN"},
         },
     ]
 
@@ -53,5 +53,7 @@ def test_reconcile_metadata_isolated_between_copy_and_pattern_sources():
 
     assert copy_match["meta"]["source"] == "copy"
     assert pattern_match["meta"]["source"] == "pattern"
+    assert copy_match["meta"]["order_origin"] == "COPY"
+    assert pattern_match["meta"]["order_origin"] == "PATTERN"
     assert "pattern_id" not in copy_match["meta"]
     assert "copy_group_id" not in pattern_match["meta"]

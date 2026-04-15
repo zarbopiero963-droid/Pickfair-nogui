@@ -81,15 +81,22 @@ def test_order_manager_replace_and_idempotency_same_live_sim_contract():
 
 
 @pytest.mark.integration
-def test_order_manager_persists_origin_metadata_in_saga_payload():
+@pytest.mark.parametrize(
+    "origin,payload_meta_key,payload_meta",
+    [
+        ("PATTERN", "pattern_meta", {"pattern_id": "PT-01", "pattern_version": 2}),
+        ("COPY", "copy_meta", {"master_id": "M-1", "copy_group_id": "CG-1", "copy_mode": "mirror"}),
+    ],
+)
+def test_order_manager_persists_origin_metadata_in_saga_payload(origin, payload_meta_key, payload_meta):
     payload = {
         "market_id": "1.1",
         "selection_id": 7,
         "price": 2.0,
         "stake": 5.0,
         "customer_ref": "META-PARITY",
-        "order_origin": "PATTERN",
-        "pattern_meta": {"pattern_id": "PT-01", "pattern_version": 2},
+        "order_origin": origin,
+        payload_meta_key: payload_meta,
     }
 
     for sim in (False, True):
@@ -100,5 +107,5 @@ def test_order_manager_persists_origin_metadata_in_saga_payload():
 
         assert saga is not None
         persisted_payload = saga.get("payload") or {}
-        assert persisted_payload.get("order_origin") == "PATTERN"
-        assert persisted_payload.get("pattern_meta") == payload["pattern_meta"]
+        assert persisted_payload.get("order_origin") == origin
+        assert persisted_payload.get(payload_meta_key) == payload_meta

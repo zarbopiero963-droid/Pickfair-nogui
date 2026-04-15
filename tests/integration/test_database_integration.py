@@ -61,3 +61,28 @@ def test_database_copy_state_persistence_roundtrip():
 
         assert restored == copy_state
         assert loaded == copy_state
+
+
+@pytest.mark.integration
+def test_database_pattern_state_persistence_roundtrip():
+    with tempfile.TemporaryDirectory() as td:
+        db = Database(str(Path(td) / "db.sqlite"))
+        state_key = "pattern_state"
+        pattern_state = {
+            "order_origin": "PATTERN",
+            "pattern_meta": {
+                "pattern_id": "PT-01",
+                "pattern_label": "late-goal",
+                "event_context": {"league": "SERIE_A"},
+            },
+            "positions": [
+                {"position_id": "PX-1", "status": "OPEN"},
+            ],
+        }
+
+        db.save_simulation_state(state_key, pattern_state)
+        restored = db.get_simulation_state(state_key)
+        loaded = db.load_simulation_state(state_key)
+
+        assert restored == pattern_state
+        assert loaded == pattern_state

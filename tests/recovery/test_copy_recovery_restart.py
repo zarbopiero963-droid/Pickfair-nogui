@@ -30,6 +30,8 @@ def test_copy_recovery_rebuilds_state_without_duplicate_actions_after_restart():
             "status": "PENDING",
             "payload": {
                 "copy_group_id": "CG-1",
+                "order_origin": "COPY",
+                "copy_meta": {"master_id": "M-1", "copy_group_id": "CG-1"},
                 "position_id": "POS-1",
                 "action_id": "A-1",
                 "action_seq": 10,
@@ -40,6 +42,8 @@ def test_copy_recovery_rebuilds_state_without_duplicate_actions_after_restart():
             "status": "PENDING",
             "payload": {
                 "copy_group_id": "CG-1",
+                "order_origin": "COPY",
+                "copy_meta": {"master_id": "M-1", "copy_group_id": "CG-1"},
                 "position_id": "POS-2",
                 "action_id": "A-2",
                 "action_seq": 11,
@@ -61,7 +65,11 @@ def test_copy_recovery_rebuilds_state_without_duplicate_actions_after_restart():
 
     action_ids = [p["action_id"] for p in recovered_payloads]
     action_seq = [p["action_seq"] for p in recovered_payloads]
+    order_origins = [p.get("order_origin") for p in recovered_payloads]
+    copy_meta_group_ids = [((p.get("copy_meta") or {}).get("copy_group_id")) for p in recovered_payloads]
     assert action_ids == ["A-1", "A-2"]
     assert action_seq == [10, 11]
+    assert order_origins == ["COPY", "COPY"]
+    assert copy_meta_group_ids == ["CG-1", "CG-1"]
     assert len(set(action_ids)) == len(action_ids)
     assert action_seq == sorted(action_seq)
