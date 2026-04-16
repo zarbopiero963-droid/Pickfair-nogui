@@ -153,6 +153,7 @@ class RuntimeController:
             "risk_status": "RISK_NOT_EVALUATED",
             "submitted": False,
             "reason": "cycle_executor_not_triggered",
+            "recovery_status": "RECOVERY_NO_STATE",
         }
 
         self._subscribe_bus()
@@ -1324,6 +1325,33 @@ class RuntimeController:
         if event_key:
             self.duplication_guard.release(event_key)
         settlement_key = self._build_bankroll_sync_key(payload)
+        recovery_probe = self._read_cycle_recovery_state(settlement_key)
+        if self._should_fail_closed_on_recovery(recovery_probe):
+            fail_result = self._build_fail_closed_recovery_result(payload=payload, probe=recovery_probe)
+            sync_result = {
+                "correlation_id": str(payload.get("correlation_id") or payload.get("event_key") or ""),
+                "settlement_detected": True,
+                "bankroll_before": float(self.risk_desk.bankroll_current),
+                "bankroll_after": float(self.risk_desk.bankroll_current),
+                "bankroll_sync_status": "SYNC_SKIPPED_DUPLICATE",
+                "balance_source": "durable_checkpoint",
+                "reason": "RECOVERY_FAIL_CLOSED",
+                "recovery_status": str(fail_result.get("recovery_status") or "RECOVERY_STATE_AMBIGUOUS"),
+            }
+            self._last_bankroll_sync_result = dict(sync_result)
+            self._last_auto_trade_result = dict(fail_result)
+            self._last_cycle_executor_result = dict(fail_result)
+            self.bus.publish("BANKROLL_SYNC_RESULT", dict(sync_result))
+            self.bus.publish("AUTO_TRADE_MM_RESULT", dict(fail_result))
+            return
+        self._persist_cycle_checkpoint(
+            settlement_key=settlement_key,
+            payload=payload,
+            checkpoint_stage="SETTLEMENT_DETECTED",
+            next_trade_submission_status="NOT_ATTEMPTED",
+            reason="settlement_detected",
+            recovery_status=recovery_probe.get("status", "RECOVERY_NO_STATE"),
+        )
         if settlement_key and settlement_key not in self._processed_realized_pnl_keys:
             self._apply_realized_pnl_without_mutating_bankroll(pnl)
             self._processed_realized_pnl_keys.add(settlement_key)
@@ -1393,6 +1421,14 @@ class RuntimeController:
             result["reason"] = "MISSING_SETTLEMENT_KEY"
             return result
 
+        durable_state = self._read_cycle_recovery_state(settlement_key)
+        state_body = durable_state.get("state", {})
+        if bool(state_body.get("bankroll_synced")):
+            self._processed_bankroll_sync_keys.add(settlement_key)
+            result["recovery_status"] = "RECOVERY_SKIPPED_DUPLICATE"
+        elif durable_state.get("status"):
+            result["recovery_status"] = str(durable_state.get("status"))
+
         if settlement_key in self._processed_bankroll_sync_keys:
             result["bankroll_sync_status"] = "SYNC_SKIPPED_DUPLICATE"
             result["reason"] = "SETTLEMENT_ALREADY_SYNCED"
@@ -1451,6 +1487,15 @@ class RuntimeController:
         result["bankroll_sync_status"] = "SYNC_SUCCESS"
         result["balance_source"] = "exchange_available"
         result["reason"] = "BALANCE_SYNCED_FROM_EXCHANGE"
+        self._persist_cycle_checkpoint(
+            settlement_key=settlement_key,
+            payload=payload,
+            checkpoint_stage="BANKROLL_SYNC_DONE",
+            bankroll_sync_status=result["bankroll_sync_status"],
+            next_trade_submission_status="NOT_ATTEMPTED",
+            reason=result["reason"],
+            recovery_status=str(result.get("recovery_status") or "RECOVERY_STATE_LOADED"),
+        )
         return result
 
     @staticmethod
@@ -1489,12 +1534,49 @@ class RuntimeController:
             "risk_status": "RISK_NOT_EVALUATED",
             "submitted": False,
             "reason": "",
+            "recovery_status": "RECOVERY_NO_STATE",
         }
+        recovery_probe = self._read_cycle_recovery_state(settlement_key)
+        result["recovery_status"] = str(recovery_probe.get("status") or "RECOVERY_NO_STATE")
+        recovery_state = recovery_probe.get("state", {})
+
+        if self._should_fail_closed_on_recovery(recovery_probe):
+            result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_DUPLICATE"
+            result["cycle_executor_status"] = "CYCLE_AMBIGUOUS"
+            result["reason"] = "recovery_state_ambiguous"
+            self._persist_cycle_checkpoint(
+                settlement_key=settlement_key,
+                payload=payload,
+                checkpoint_stage="CYCLE_AMBIGUOUS",
+                bankroll_sync_status=result["bankroll_sync_status"],
+                money_management_status=result["money_management_status"],
+                next_trade_submission_status="AMBIGUOUS",
+                reason=result["reason"],
+                is_ambiguous=True,
+                recovery_status="RECOVERY_STATE_AMBIGUOUS",
+            )
+            return result
+        if bool(recovery_state.get("submit_confirmed")):
+            result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_DUPLICATE"
+            result["cycle_executor_status"] = "CYCLE_SKIPPED_DUPLICATE"
+            result["reason"] = "durable_submit_already_confirmed"
+            if settlement_key:
+                self._processed_auto_trade_keys.add(settlement_key)
+            return result
 
         if not result["cycle_executor_enabled"]:
             result["auto_trade_status"] = "AUTO_TRADE_DISABLED"
             result["cycle_executor_status"] = "CYCLE_EXECUTOR_DISABLED"
             result["reason"] = "cycle_executor_disabled"
+            self._persist_cycle_checkpoint(
+                settlement_key=settlement_key,
+                payload=payload,
+                checkpoint_stage="CYCLE_BLOCKED",
+                bankroll_sync_status=result["bankroll_sync_status"],
+                next_trade_submission_status="NOT_ATTEMPTED",
+                reason=result["reason"],
+                recovery_status=result["recovery_status"],
+            )
             return result
 
         if result["kill_switch_active"]:
@@ -1503,6 +1585,15 @@ class RuntimeController:
             result["reason"] = "kill_switch_active"
             if settlement_key:
                 self._processed_auto_trade_keys.add(settlement_key)
+            self._persist_cycle_checkpoint(
+                settlement_key=settlement_key,
+                payload=payload,
+                checkpoint_stage="CYCLE_BLOCKED",
+                bankroll_sync_status=result["bankroll_sync_status"],
+                next_trade_submission_status="NOT_ATTEMPTED",
+                reason=result["reason"],
+                recovery_status=result["recovery_status"],
+            )
             return result
 
         if result["bankroll_sync_status"] != "SYNC_SUCCESS":
@@ -1557,6 +1648,20 @@ class RuntimeController:
         cycle_id = str(getattr(decision, "cycle_id", "") or "")
         current_step_index = int(self._cycle_step_counts.get(cycle_id, 0) or 0)
         result["cycle_step_index"] = current_step_index
+        self._persist_cycle_checkpoint(
+            settlement_key=settlement_key,
+            payload=payload,
+            checkpoint_stage="MM_DECISION_DONE",
+            bankroll_sync_status=result["bankroll_sync_status"],
+            money_management_status=result["money_management_status"],
+            cycle_active=result["cycle_active"],
+            progression_allowed=result["progression_allowed"],
+            next_stake=result["next_stake"],
+            step_index=result["cycle_step_index"],
+            next_trade_submission_status="NOT_ATTEMPTED",
+            reason="mm_decision_done",
+            recovery_status=result["recovery_status"],
+        )
 
         max_steps = mm_context.get("max_steps") if isinstance(mm_context, dict) else None
         max_steps_value = None
@@ -1623,6 +1728,20 @@ class RuntimeController:
             return result
 
         try:
+            self._persist_cycle_checkpoint(
+                settlement_key=settlement_key,
+                payload=payload,
+                checkpoint_stage="NEXT_TRADE_SUBMIT_ATTEMPTED",
+                bankroll_sync_status=result["bankroll_sync_status"],
+                money_management_status=result["money_management_status"],
+                cycle_active=result["cycle_active"],
+                progression_allowed=result["progression_allowed"],
+                next_stake=result["next_stake"],
+                step_index=result["cycle_step_index"],
+                next_trade_submission_status="ATTEMPTED",
+                reason="submit_attempt",
+                recovery_status=result["recovery_status"],
+            )
             submit_payload = self._build_auto_trade_payload(signal=signal or {}, decision_stake=result["next_stake"])
         except Exception as exc:
             result["auto_trade_status"] = "AUTO_TRADE_SUBMIT_FAILED"
@@ -1630,6 +1749,21 @@ class RuntimeController:
             result["reason"] = f"submit_payload_invalid:{type(exc).__name__}"
             if settlement_key:
                 self._processed_auto_trade_keys.add(settlement_key)
+            self._persist_cycle_checkpoint(
+                settlement_key=settlement_key,
+                payload=payload,
+                checkpoint_stage="CYCLE_AMBIGUOUS",
+                bankroll_sync_status=result["bankroll_sync_status"],
+                money_management_status=result["money_management_status"],
+                cycle_active=result["cycle_active"],
+                progression_allowed=result["progression_allowed"],
+                next_stake=result["next_stake"],
+                step_index=result["cycle_step_index"],
+                next_trade_submission_status="AMBIGUOUS",
+                reason=result["reason"],
+                is_ambiguous=True,
+                recovery_status="RECOVERY_STATE_AMBIGUOUS",
+            )
             return result
 
         table_id = submit_payload.get("table_id", decision.table_id)
@@ -1661,7 +1795,180 @@ class RuntimeController:
             result["cycle_step_index"] = self._cycle_step_counts[cycle_id]
         if settlement_key:
             self._processed_auto_trade_keys.add(settlement_key)
+        self._persist_cycle_checkpoint(
+            settlement_key=settlement_key,
+            payload=payload,
+            checkpoint_stage="NEXT_TRADE_SUBMIT_CONFIRMED",
+            bankroll_sync_status=result["bankroll_sync_status"],
+            money_management_status=result["money_management_status"],
+            cycle_active=result["cycle_active"],
+            progression_allowed=result["progression_allowed"],
+            next_stake=result["next_stake"],
+            step_index=result["cycle_step_index"],
+            next_trade_submission_status="SUBMITTED",
+            reason=result["reason"],
+            recovery_status="RECOVERY_READY_NO_SUBMIT",
+        )
         return result
+
+    def _read_cycle_recovery_state(self, settlement_key: str) -> dict[str, Any]:
+        default = {"status": "RECOVERY_NO_STATE", "state": {}}
+        key = str(settlement_key or "").strip()
+        if not key:
+            return default
+        getter = getattr(self.db, "get_cycle_recovery_state", None)
+        if not callable(getter):
+            return default
+        try:
+            state = getter(key) or {}
+            if not isinstance(state, dict):
+                return {"status": "RECOVERY_STATE_INVALID", "state": {}}
+            if not bool(state.get("exists")):
+                return default
+            if bool(state.get("ambiguous")):
+                return {"status": "RECOVERY_STATE_AMBIGUOUS", "state": state}
+            if bool(state.get("processed")):
+                return {"status": "RECOVERY_SKIPPED_DUPLICATE", "state": state}
+            return {"status": "RECOVERY_STATE_LOADED", "state": state}
+        except Exception:
+            logger.exception("Errore read cycle recovery state")
+            return {"status": "RECOVERY_STATE_INVALID", "state": {}}
+
+    @staticmethod
+    def _should_fail_closed_on_recovery(probe: dict[str, Any]) -> bool:
+        status = str((probe or {}).get("status") or "")
+        if status in {"RECOVERY_STATE_AMBIGUOUS", "RECOVERY_STATE_INVALID"}:
+            return True
+        state = (probe or {}).get("state") or {}
+        return bool(state.get("ambiguous"))
+
+    def _build_fail_closed_recovery_result(self, *, payload: dict, probe: dict[str, Any]) -> dict[str, Any]:
+        settlement_key = self._build_bankroll_sync_key(payload)
+        reason = "recovery_state_ambiguous"
+        status = str(probe.get("status") or "RECOVERY_STATE_AMBIGUOUS")
+        if status == "RECOVERY_STATE_INVALID":
+            reason = "recovery_state_invalid"
+        self._persist_cycle_checkpoint(
+            settlement_key=settlement_key,
+            payload=payload,
+            checkpoint_stage="CYCLE_AMBIGUOUS",
+            bankroll_sync_status="NOT_SETTLED",
+            money_management_status="MM_STOP_CONTEXT_MISSING",
+            next_trade_submission_status="AMBIGUOUS",
+            reason=reason,
+            is_ambiguous=True,
+            recovery_status=status,
+        )
+        return {
+            "correlation_id": f"auto-next::{str(payload.get('correlation_id') or '')}",
+            "source_settlement_correlation_id": str(payload.get("correlation_id") or ""),
+            "cycle_executor_enabled": bool(payload.get("cycle_executor_enabled", False)),
+            "cycle_step_index": 0,
+            "max_steps_reached": False,
+            "kill_switch_active": bool(self._is_kill_switch_active()),
+            "anomaly_pause_active": False,
+            "cycle_executor_status": "CYCLE_AMBIGUOUS",
+            "bankroll_sync_status": "SYNC_SKIPPED_DUPLICATE",
+            "money_management_status": "MM_STOP_CONTEXT_MISSING",
+            "cycle_active": False,
+            "progression_allowed": False,
+            "auto_trade_enabled": bool(payload.get("auto_trade_enabled", False)),
+            "auto_trade_status": "AUTO_TRADE_SKIPPED_DUPLICATE",
+            "next_stake": 0.0,
+            "risk_status": "RISK_NOT_EVALUATED",
+            "submitted": False,
+            "reason": reason,
+            "recovery_status": status,
+        }
+
+    def _persist_cycle_checkpoint(
+        self,
+        *,
+        settlement_key: str,
+        payload: dict,
+        checkpoint_stage: str,
+        bankroll_sync_status: str = "NOT_SETTLED",
+        money_management_status: str = "MM_STOP_CONTEXT_MISSING",
+        cycle_active: bool = False,
+        progression_allowed: bool = False,
+        next_stake: float = 0.0,
+        step_index: int = 0,
+        round_index: int = 0,
+        next_trade_submission_status: str = "NOT_ATTEMPTED",
+        reason: str = "",
+        is_ambiguous: bool = False,
+        recovery_status: str = "RECOVERY_STATE_LOADED",
+    ) -> None:
+        key = str(settlement_key or "").strip()
+        if not key:
+            return
+        writer = getattr(self.db, "upsert_cycle_recovery_checkpoint", None)
+        if not callable(writer):
+            return
+        existing: dict[str, Any] = {}
+        existing_getter = getattr(self.db, "get_cycle_recovery_checkpoint", None)
+        if callable(existing_getter):
+            try:
+                loaded = existing_getter(key)
+                if isinstance(loaded, dict):
+                    existing = dict(loaded)
+            except Exception:
+                logger.exception("Errore read existing checkpoint settlement_key=%s", key)
+
+        stage_rank = {
+            "SETTLEMENT_DETECTED": 10,
+            "BANKROLL_SYNC_DONE": 20,
+            "MM_DECISION_DONE": 30,
+            "NEXT_TRADE_SUBMIT_ATTEMPTED": 40,
+            "NEXT_TRADE_SUBMIT_CONFIRMED": 50,
+            "CYCLE_BLOCKED": 60,
+            "CYCLE_AMBIGUOUS": 70,
+        }
+        submit_rank = {
+            "NOT_ATTEMPTED": 10,
+            "ATTEMPTED": 20,
+            "SUBMITTED": 30,
+            "CONFIRMED": 40,
+            "AMBIGUOUS": 50,
+        }
+        mm_context = payload.get("mm_context") if isinstance(payload, dict) else None
+        cycle_id = str(mm_context.get("cycle_id") or "") if isinstance(mm_context, dict) else ""
+        incoming_stage = str(checkpoint_stage or "SETTLEMENT_DETECTED")
+        existing_stage = str(existing.get("checkpoint_stage") or "")
+        effective_stage = incoming_stage
+        if stage_rank.get(existing_stage, 0) > stage_rank.get(incoming_stage, 0):
+            effective_stage = existing_stage
+
+        incoming_submit = str(next_trade_submission_status or "NOT_ATTEMPTED")
+        existing_submit = str(existing.get("next_trade_submission_status") or "")
+        effective_submit = incoming_submit
+        if submit_rank.get(existing_submit, 0) > submit_rank.get(incoming_submit, 0):
+            effective_submit = existing_submit
+
+        effective_reason = str(reason or existing.get("reason") or "")
+        effective_ambiguous = bool(is_ambiguous) or bool(existing.get("is_ambiguous", False))
+        record = {
+            "settlement_correlation_id": str(payload.get("correlation_id") or payload.get("event_key") or ""),
+            "cycle_id": cycle_id,
+            "table_id": payload.get("table_id"),
+            "strategy_context": {"auto_trade_source": "settlement_mm_gate", "recovery_status": recovery_status},
+            "checkpoint_stage": effective_stage,
+            "bankroll_sync_status": str(bankroll_sync_status or "NOT_SETTLED"),
+            "money_management_status": str(money_management_status or "MM_STOP_CONTEXT_MISSING"),
+            "cycle_active": bool(cycle_active),
+            "progression_allowed": bool(progression_allowed),
+            "next_stake": float(next_stake or 0.0),
+            "step_index": int(step_index or 0),
+            "round_index": int(round_index or 0),
+            "next_trade_submission_status": effective_submit,
+            "idempotency_key": key,
+            "reason": effective_reason,
+            "is_ambiguous": effective_ambiguous,
+        }
+        try:
+            writer(key, record)
+        except Exception:
+            logger.exception("Errore persist checkpoint settlement_key=%s", key)
 
     def _risk_allows_auto_trade(self) -> tuple[bool, str]:
         if not self._runtime_active():
