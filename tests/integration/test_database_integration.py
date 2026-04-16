@@ -123,3 +123,73 @@ def test_database_cycle_recovery_checkpoint_roundtrip():
         assert state["exists"] is True
         assert state["processed"] is True
         assert state["ambiguous"] is True
+
+
+@pytest.mark.integration
+def test_database_cycle_recovery_checkpoint_monotonic_merge_preserves_stronger_truth():
+    with tempfile.TemporaryDirectory() as td:
+        db = Database(str(Path(td) / "db.sqlite"))
+        key = "batch-4b|evt-4b|1|bet-1"
+        db.upsert_cycle_recovery_checkpoint(
+            key,
+            {
+                "settlement_correlation_id": "corr-4b",
+                "checkpoint_stage": "NEXT_TRADE_SUBMIT_CONFIRMED",
+                "next_trade_submission_status": "SUBMITTED",
+                "bankroll_sync_status": "SYNC_SUCCESS",
+                "reason": "submitted",
+                "is_ambiguous": False,
+            },
+        )
+        db.upsert_cycle_recovery_checkpoint(
+            key,
+            {
+                "settlement_correlation_id": "corr-4b-reentry",
+                "checkpoint_stage": "BANKROLL_SYNC_DONE",
+                "next_trade_submission_status": "NOT_ATTEMPTED",
+                "bankroll_sync_status": "SYNC_SUCCESS",
+                "reason": "attempted_downgrade",
+                "is_ambiguous": False,
+            },
+        )
+
+        loaded = db.get_cycle_recovery_checkpoint(key)
+        assert loaded is not None
+        assert loaded["checkpoint_stage"] == "NEXT_TRADE_SUBMIT_CONFIRMED"
+        assert loaded["next_trade_submission_status"] == "SUBMITTED"
+        assert loaded["bankroll_sync_status"] == "SYNC_SUCCESS"
+
+
+@pytest.mark.integration
+def test_database_cycle_recovery_checkpoint_merge_preserves_sync_success_on_weaker_reentry():
+    with tempfile.TemporaryDirectory() as td:
+        db = Database(str(Path(td) / "db.sqlite"))
+        key = "batch-4b-sync|evt-4b-sync|1|bet-1"
+        db.upsert_cycle_recovery_checkpoint(
+            key,
+            {
+                "settlement_correlation_id": "corr-4b-sync",
+                "checkpoint_stage": "BANKROLL_SYNC_DONE",
+                "next_trade_submission_status": "NOT_ATTEMPTED",
+                "bankroll_sync_status": "SYNC_SUCCESS",
+                "reason": "sync_ok",
+                "is_ambiguous": False,
+            },
+        )
+        db.upsert_cycle_recovery_checkpoint(
+            key,
+            {
+                "settlement_correlation_id": "corr-4b-sync-reentry",
+                "checkpoint_stage": "SETTLEMENT_DETECTED",
+                "next_trade_submission_status": "NOT_ATTEMPTED",
+                "bankroll_sync_status": "NOT_SETTLED",
+                "reason": "weaker_reentry",
+                "is_ambiguous": False,
+            },
+        )
+
+        loaded = db.get_cycle_recovery_checkpoint(key)
+        assert loaded is not None
+        assert loaded["checkpoint_stage"] == "BANKROLL_SYNC_DONE"
+        assert loaded["next_trade_submission_status"] == "NOT_ATTEMPTED"
+        assert loaded["bankroll_sync_status"] == "SYNC_SUCCESS"
