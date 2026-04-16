@@ -49,6 +49,27 @@ class _CheckpointDB:
         return dict(item) if isinstance(item, dict) else None
 
 
+class _NoCheckpointDB:
+    def _execute(self, *_args, **_kwargs):
+        return None
+
+    def upsert_cycle_recovery_checkpoint(self, _settlement_key: str, _payload: dict) -> None:
+        return None
+
+    def get_cycle_recovery_state(self, _settlement_key: str) -> dict:
+        return {
+            "exists": False,
+            "processed": False,
+            "bankroll_synced": False,
+            "submit_attempted": False,
+            "submit_confirmed": False,
+            "ambiguous": False,
+        }
+
+    def get_cycle_recovery_checkpoint(self, _settlement_key: str):
+        return None
+
+
 class _Settings:
     def load_roserpina_config(self):
         cfg = RoserpinaConfig()
@@ -110,6 +131,19 @@ def _make_controller(*, responses):
     return rc, bus, db
 
 
+def _make_controller_no_checkpoint(*, responses):
+    bus = _Bus()
+    rc = RuntimeController(
+        bus=bus,
+        db=_NoCheckpointDB(),
+        settings_service=_Settings(),
+        betfair_service=_Betfair(responses),
+        telegram_service=_Telegram(),
+    )
+    rc.mode = RuntimeMode.ACTIVE
+    return rc, bus
+
+
 def _close_payload(**overrides):
     payload = {
         "event_key": "evt-cyc-1",
@@ -135,6 +169,30 @@ def test_cycle_recovery_no_prior_state_defaults_to_no_state():
     rc, _, _ = _make_controller(responses=[{"available": 150.0}])
     probe = rc._read_cycle_recovery_state("missing|key")
     assert probe["status"] == "RECOVERY_NO_STATE"
+
+
+def test_restore_only_blocks_submit_when_resume_disabled_and_checkpoint_missing():
+    rc, bus, _ = _make_controller(responses=[{"available": 150.0}])
+    payload = _close_payload(correlation_id="corr-no-state", event_key="evt-no-state", batch_id="batch-no-state")
+
+    rc._on_close_position(payload)
+
+    assert rc._last_cycle_executor_result["submitted"] is False
+    assert rc._last_cycle_executor_result["recovery_status"] == "RECOVERY_READY_NO_SUBMIT"
+    assert rc._last_cycle_executor_result["reason"] == "resume_submit_disabled"
+    assert not any(topic == "CMD_QUICK_BET" for topic, _ in bus.events)
+
+
+def test_restore_only_blocks_submit_when_checkpoint_persistence_unavailable():
+    rc, bus = _make_controller_no_checkpoint(responses=[{"available": 150.0}])
+    payload = _close_payload(correlation_id="corr-no-db", event_key="evt-no-db", batch_id="batch-no-db")
+
+    rc._on_close_position(payload)
+
+    assert rc._last_cycle_executor_result["submitted"] is False
+    assert rc._last_cycle_executor_result["recovery_status"] == "RECOVERY_READY_NO_SUBMIT"
+    assert rc._last_cycle_executor_result["reason"] == "resume_submit_disabled"
+    assert not any(topic == "CMD_QUICK_BET" for topic, _ in bus.events)
 
 
 def test_cycle_recovery_checkpoint_progression_and_duplicate_marker():

@@ -714,6 +714,13 @@ class Database:
             "CONFIRMED": 40,
             "AMBIGUOUS": 50,
         }
+        bankroll_sync_rank = {
+            "NOT_SETTLED": 10,
+            "SYNC_SKIPPED_DUPLICATE": 20,
+            "SYNC_FAILED_BALANCE_UNAVAILABLE": 30,
+            "SYNC_FAILED_INVALID_BALANCE": 40,
+            "SYNC_SUCCESS": 50,
+        }
         incoming_stage = str(body.get("checkpoint_stage") or "SETTLEMENT_DETECTED")
         existing_stage = str((existing or {}).get("checkpoint_stage") or "")
         effective_stage = incoming_stage
@@ -724,6 +731,11 @@ class Database:
         effective_submit = incoming_submit
         if submit_rank.get(existing_submit, 0) > submit_rank.get(incoming_submit, 0):
             effective_submit = existing_submit
+        incoming_sync = str(body.get("bankroll_sync_status") or "NOT_SETTLED")
+        existing_sync = str((existing or {}).get("bankroll_sync_status") or "")
+        effective_sync = incoming_sync
+        if bankroll_sync_rank.get(existing_sync, 0) > bankroll_sync_rank.get(incoming_sync, 0):
+            effective_sync = existing_sync
         effective_ambiguous = bool(body.get("is_ambiguous", False)) or bool((existing or {}).get("is_ambiguous", False))
         effective_reason = str(body.get("reason") or (existing or {}).get("reason") or "")
 
@@ -777,7 +789,7 @@ class Database:
                 None if body.get("table_id") in (None, "") else self._safe_int(body.get("table_id"), 0),
                 self._safe_json_dumps(body.get("strategy_context") or {}),
                 effective_stage,
-                str(body.get("bankroll_sync_status") or "NOT_SETTLED"),
+                effective_sync,
                 str(body.get("money_management_status") or "MM_STOP_CONTEXT_MISSING"),
                 self._safe_bool_int(body.get("cycle_active", False)),
                 self._safe_bool_int(body.get("progression_allowed", False)),

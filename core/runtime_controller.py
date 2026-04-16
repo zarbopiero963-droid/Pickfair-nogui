@@ -1543,6 +1543,7 @@ class RuntimeController:
             "checkpoint_valid": False,
             "checkpoint_ambiguous": False,
         }
+        checkpoint_capable = callable(getattr(self.db, "get_cycle_recovery_state", None))
         recovery_probe = self._read_cycle_recovery_state(settlement_key)
         probe_status = str(recovery_probe.get("status") or "RECOVERY_NO_STATE")
         result["recovery_status"] = probe_status
@@ -1586,7 +1587,7 @@ class RuntimeController:
             if settlement_key:
                 self._processed_auto_trade_keys.add(settlement_key)
             return result
-        if has_checkpoint and not resume_submit_enabled:
+        if checkpoint_capable and not resume_submit_enabled and result["cycle_executor_enabled"]:
             result["auto_trade_status"] = "AUTO_TRADE_DISABLED"
             result["cycle_executor_status"] = "CYCLE_NOT_ELIGIBLE"
             result["recovery_status"] = "RECOVERY_READY_NO_SUBMIT"
