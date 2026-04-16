@@ -1573,6 +1573,14 @@ class RuntimeController:
             if settlement_key:
                 self._processed_auto_trade_keys.add(settlement_key)
             return result
+        if max_steps_value is not None and max_steps_value >= 0 and not cycle_id:
+            result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_MM_BLOCKED"
+            result["cycle_executor_status"] = "CYCLE_STOPPED_MAX_STEPS"
+            result["max_steps_reached"] = True
+            result["reason"] = "max_steps_requires_cycle_id"
+            if settlement_key:
+                self._processed_auto_trade_keys.add(settlement_key)
+            return result
 
         if decision.money_management_status != "MM_CONTINUE_ALLOWED":
             result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_MM_BLOCKED"

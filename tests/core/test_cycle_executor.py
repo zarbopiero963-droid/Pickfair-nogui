@@ -209,6 +209,49 @@ def test_cycle_executor_stops_on_max_steps_limit():
     assert rc._last_cycle_executor_result["max_steps_reached"] is True
 
 
+def test_cycle_executor_fails_closed_when_max_steps_set_and_cycle_id_missing():
+    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc.mode = RuntimeMode.ACTIVE
+
+    rc._on_close_position(
+        _close_payload(
+            mm_context={
+                "cycle_active": True,
+                "max_steps": 1,
+                "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
+                "next_signal": {"market_id": "1.234", "selection_id": 42, "price": 2.0, "bet_type": "BACK"},
+            },
+        )
+    )
+
+    assert rc._last_cycle_executor_result["cycle_executor_status"] == "CYCLE_STOPPED_MAX_STEPS"
+    assert rc._last_cycle_executor_result["reason"] == "max_steps_requires_cycle_id"
+    assert rc._last_cycle_executor_result["submitted"] is False
+    assert len([event for event in bus.events if event[0] == "CMD_QUICK_BET"]) == 0
+
+
+def test_cycle_executor_fails_closed_when_max_steps_set_and_cycle_id_empty():
+    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc.mode = RuntimeMode.ACTIVE
+
+    rc._on_close_position(
+        _close_payload(
+            mm_context={
+                "cycle_active": True,
+                "cycle_id": "",
+                "max_steps": 1,
+                "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
+                "next_signal": {"market_id": "1.234", "selection_id": 42, "price": 2.0, "bet_type": "BACK"},
+            },
+        )
+    )
+
+    assert rc._last_cycle_executor_result["cycle_executor_status"] == "CYCLE_STOPPED_MAX_STEPS"
+    assert rc._last_cycle_executor_result["reason"] == "max_steps_requires_cycle_id"
+    assert rc._last_cycle_executor_result["submitted"] is False
+    assert len([event for event in bus.events if event[0] == "CMD_QUICK_BET"]) == 0
+
+
 def test_cycle_executor_skips_risk_rejected_runtime_inactive():
     rc, _ = _make_controller(responses=[{"available": 150.0}])
     rc.mode = RuntimeMode.STOPPED

@@ -136,3 +136,30 @@ def test_cycle_executor_disabled_keeps_submission_off_and_status_snapshot_availa
 
     status = rc.get_status()
     assert status["cycle_executor"]["cycle_executor_status"] == "CYCLE_EXECUTOR_DISABLED"
+
+
+def test_cycle_executor_max_steps_with_valid_cycle_id_allows_below_limit():
+    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc.mode = RuntimeMode.ACTIVE
+
+    rc._on_close_position(
+        {
+            "event_key": "evt-integration-cycle-max-ok",
+            "table_id": 1,
+            "batch_id": "batch-integration-cycle-max-ok",
+            "correlation_id": "corr-integration-cycle-max-ok",
+            "pnl": 5.0,
+            "auto_trade_enabled": True,
+            "cycle_executor_enabled": True,
+            "mm_context": {
+                "cycle_active": True,
+                "cycle_id": "cycle-integration-max-ok",
+                "max_steps": 2,
+                "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
+                "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0},
+            },
+        }
+    )
+
+    assert rc._last_cycle_executor_result["cycle_executor_status"] == "CYCLE_STEP_SUBMITTED"
+    assert len([event for event in bus.events if event[0] == "CMD_QUICK_BET"]) == 1
