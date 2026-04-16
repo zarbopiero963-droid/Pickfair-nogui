@@ -17,6 +17,21 @@ class MoneyManagementDecision:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class PostSettlementDecision:
+    cycle_active: bool
+    progression_allowed: bool
+    bankroll_reference: float
+    next_stake: float
+    target_reached: bool
+    stop_reason: str
+    table_id: Optional[int]
+    cycle_id: str
+    money_management_status: str
+    desk_mode: DeskMode
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
 class RoserpinaMoneyManagement:
     """
     Money management Roserpina Hedge AI.
@@ -362,4 +377,124 @@ class RoserpinaMoneyManagement:
                 "max_event": max_event,
                 "in_recovery": in_recovery,
             },
+        )
+
+    def evaluate_next_trade_after_settlement(
+        self,
+        *,
+        signal: Dict[str, Any] | None,
+        bankroll_current: float,
+        equity_peak: float,
+        current_total_exposure: float,
+        event_current_exposure: float,
+        table: Any,
+        cycle_id: str = "",
+        cycle_active: bool = True,
+        target_reached: bool = False,
+    ) -> PostSettlementDecision:
+        bankroll_current = self._safe_float(bankroll_current, 0.0)
+        table_id = self._extract_table_id(table)
+        cycle_id = str(cycle_id or "")
+
+        if not cycle_active:
+            return PostSettlementDecision(
+                cycle_active=False,
+                progression_allowed=False,
+                bankroll_reference=bankroll_current,
+                next_stake=0.0,
+                target_reached=bool(target_reached),
+                stop_reason="cycle_closed",
+                table_id=table_id,
+                cycle_id=cycle_id,
+                money_management_status="MM_STOP_CYCLE_CLOSED",
+                desk_mode=DeskMode.NORMAL,
+                metadata={},
+            )
+
+        if target_reached:
+            return PostSettlementDecision(
+                cycle_active=True,
+                progression_allowed=False,
+                bankroll_reference=bankroll_current,
+                next_stake=0.0,
+                target_reached=True,
+                stop_reason="target_reached",
+                table_id=table_id,
+                cycle_id=cycle_id,
+                money_management_status="MM_STOP_TARGET_REACHED",
+                desk_mode=DeskMode.NORMAL,
+                metadata={},
+            )
+
+        if bankroll_current <= 0.0:
+            return PostSettlementDecision(
+                cycle_active=True,
+                progression_allowed=False,
+                bankroll_reference=bankroll_current,
+                next_stake=0.0,
+                target_reached=False,
+                stop_reason="invalid_bankroll",
+                table_id=table_id,
+                cycle_id=cycle_id,
+                money_management_status="MM_STOP_INVALID_BANKROLL",
+                desk_mode=DeskMode.LOCKDOWN,
+                metadata={"bankroll_current": bankroll_current},
+            )
+
+        if not isinstance(signal, dict):
+            return PostSettlementDecision(
+                cycle_active=True,
+                progression_allowed=False,
+                bankroll_reference=bankroll_current,
+                next_stake=0.0,
+                target_reached=False,
+                stop_reason="context_missing_signal",
+                table_id=table_id,
+                cycle_id=cycle_id,
+                money_management_status="MM_STOP_CONTEXT_MISSING",
+                desk_mode=DeskMode.NORMAL,
+                metadata={},
+            )
+
+        decision = self.calculate(
+            signal=dict(signal),
+            bankroll_current=bankroll_current,
+            equity_peak=equity_peak,
+            current_total_exposure=current_total_exposure,
+            event_current_exposure=event_current_exposure,
+            table=table,
+        )
+        next_stake = float(decision.recommended_stake or 0.0)
+        if decision.approved and next_stake > 0.0:
+            return PostSettlementDecision(
+                cycle_active=True,
+                progression_allowed=True,
+                bankroll_reference=bankroll_current,
+                next_stake=next_stake,
+                target_reached=False,
+                stop_reason="approved",
+                table_id=decision.table_id,
+                cycle_id=cycle_id,
+                money_management_status="MM_CONTINUE_ALLOWED",
+                desk_mode=decision.desk_mode,
+                metadata=dict(decision.metadata),
+            )
+
+        status = "MM_STOP_RULE_BLOCKED"
+        if decision.reason in {"stake_calcolato_non_valido", "quota_non_valida"}:
+            status = "MM_STOP_INVALID_STAKE"
+        if decision.reason == "bankroll_non_valido":
+            status = "MM_STOP_INVALID_BANKROLL"
+        return PostSettlementDecision(
+            cycle_active=True,
+            progression_allowed=False,
+            bankroll_reference=bankroll_current,
+            next_stake=max(0.0, next_stake),
+            target_reached=False,
+            stop_reason=str(decision.reason or "rule_blocked"),
+            table_id=decision.table_id,
+            cycle_id=cycle_id,
+            money_management_status=status,
+            desk_mode=decision.desk_mode,
+            metadata=dict(decision.metadata),
         )
