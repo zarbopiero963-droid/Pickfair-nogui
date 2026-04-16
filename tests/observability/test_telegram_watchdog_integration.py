@@ -221,3 +221,59 @@ def test_watchdog_triggers_single_autoheal_action():
     assert len(probe.telegram_service.calls) == 1
     call = probe.telegram_service.calls[0]
     assert call["failure_escalated"] is True
+
+
+def test_watchdog_does_not_resolve_failed_alert_on_restart_attempt_without_health_recovery():
+    class _Service:
+        def __init__(self):
+            self.calls = 0
+
+        def run_autoheal_once(self, **kwargs):
+            self.calls += 1
+            return {"action": "SCHEDULE_RESTART", "kwargs": dict(kwargs)}
+
+    probe = _TelegramProbe(_base_health(state="FAILED", failed=True, checked_at="2026-04-15T00:00:00+00:00"))
+    probe.telegram_service = _Service()
+    alerts = AlertsManager()
+    watchdog = _make_watchdog(probe, alerts=alerts)
+
+    watchdog._evaluate_alerts()
+    probe.set_health(_base_health(state="CONNECTING", healthy=False, degraded=True, failed=False, checked_at="2026-04-15T00:01:00+00:00"))
+    watchdog._evaluate_alerts()
+
+    snapshot = alerts.snapshot()["alerts"]
+    failed_row = next(a for a in snapshot if a["code"] == "TELEGRAM_FAILED")
+
+    assert failed_row["active"] is True
+    assert probe.telegram_service.calls == 2
+
+
+def test_watchdog_surfaces_stale_state_after_grace_window_with_fake_time_only():
+    probe = _TelegramProbe(
+        _base_health(
+            state="CONNECTED",
+            healthy=False,
+            degraded=True,
+            invariant_ok=False,
+            active_alert_codes=["STALE_RUNTIME"],
+            checked_at="2026-04-15T00:00:00+00:00",
+        )
+    )
+    alerts = AlertsManager()
+    watchdog = _make_watchdog(probe, alerts=alerts)
+
+    watchdog._evaluate_alerts()
+    probe.set_health(
+        _base_health(
+            state="CONNECTED",
+            healthy=False,
+            degraded=True,
+            invariant_ok=False,
+            active_alert_codes=["STALE_RUNTIME"],
+            checked_at="2026-04-15T00:01:00+00:00",
+        )
+    )
+    watchdog._evaluate_alerts()
+
+    stale_row = next(a for a in alerts.active_alerts() if a["code"] == "TELEGRAM_STALE")
+    assert stale_row["severity"] == "warning"

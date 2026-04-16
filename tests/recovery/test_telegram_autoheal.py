@@ -93,3 +93,54 @@ def test_lockout_state_is_observable():
     )
     assert decision.action == TelegramAutohealAction.SUPPRESS_RESTART
     assert decision.reason == "lockout_active"
+
+
+def test_long_horizon_restart_budget_resets_after_window_expires():
+    policy = TelegramAutohealPolicy(max_restarts_in_window=2, restart_window_sec=300)
+
+    stale_history = _history(restart_timestamps=(100.0, 200.0))
+    decision = policy.evaluate(
+        _snapshot(now_ts=1000.0, state="FAILED", reconnect_attempts=1),
+        stale_history,
+    )
+
+    assert decision.action == TelegramAutohealAction.SCHEDULE_RESTART
+    assert decision.recovery_allowed is True
+
+
+def test_long_horizon_lockout_expires_and_recovery_becomes_allowed():
+    policy = TelegramAutohealPolicy(lockout_sec=60)
+
+    locked = policy.evaluate(
+        _snapshot(lockout_active=True, now_ts=1000.0, state="FAILED"),
+        _history(lockout_since_ts=980.0),
+    )
+    released = policy.evaluate(
+        _snapshot(lockout_active=True, now_ts=1100.0, state="FAILED"),
+        _history(lockout_since_ts=980.0),
+    )
+
+    assert locked.action == TelegramAutohealAction.SUPPRESS_RESTART
+    assert released.action == TelegramAutohealAction.SCHEDULE_RESTART
+    assert released.recovery_allowed is True
+
+
+def test_reconnect_storm_progresses_from_cooldown_to_lockout_deterministically():
+    policy = TelegramAutohealPolicy(max_restarts_in_window=2, restart_window_sec=300, restart_cooldown_sec=30)
+
+    cooldown = policy.evaluate(
+        _snapshot(now_ts=1000.0, state="FAILED", reconnect_attempts=1),
+        _history(restart_timestamps=(985.0,)),
+    )
+    second_restart = policy.evaluate(
+        _snapshot(now_ts=1020.0, state="FAILED", reconnect_attempts=1),
+        _history(restart_timestamps=(950.0,)),
+    )
+    lockout = policy.evaluate(
+        _snapshot(now_ts=1030.0, state="FAILED", reconnect_attempts=2),
+        _history(restart_timestamps=(900.0, 1005.0)),
+    )
+
+    assert cooldown.action == TelegramAutohealAction.SUPPRESS_RESTART
+    assert second_restart.action == TelegramAutohealAction.SCHEDULE_RESTART
+    assert lockout.action == TelegramAutohealAction.ENTER_FAILED_LOCKOUT
