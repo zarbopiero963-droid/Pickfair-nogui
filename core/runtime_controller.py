@@ -1515,9 +1515,13 @@ class RuntimeController:
     def _evaluate_and_maybe_submit_auto_next_trade(self, *, payload: dict, sync_result: dict) -> dict:
         settlement_key = self._build_bankroll_sync_key(payload)
         source_corr_id = str(sync_result.get("correlation_id") or "")
+        recovery_enabled = bool(payload.get("recovery_enabled", self.config.allow_recovery))
+        resume_submit_enabled = bool(payload.get("resume_submit_enabled", False))
         result: dict[str, Any] = {
             "correlation_id": f"auto-next::{source_corr_id}" if source_corr_id else "",
             "source_settlement_correlation_id": source_corr_id,
+            "recovery_enabled": recovery_enabled,
+            "resume_submit_enabled": resume_submit_enabled,
             "cycle_executor_enabled": bool(payload.get("cycle_executor_enabled", False)),
             "cycle_step_index": 0,
             "max_steps_reached": False,
@@ -1535,14 +1539,32 @@ class RuntimeController:
             "submitted": False,
             "reason": "",
             "recovery_status": "RECOVERY_NO_STATE",
+            "checkpoint_stage": "",
+            "checkpoint_valid": False,
+            "checkpoint_ambiguous": False,
         }
         recovery_probe = self._read_cycle_recovery_state(settlement_key)
-        result["recovery_status"] = str(recovery_probe.get("status") or "RECOVERY_NO_STATE")
+        probe_status = str(recovery_probe.get("status") or "RECOVERY_NO_STATE")
+        result["recovery_status"] = probe_status
         recovery_state = recovery_probe.get("state", {})
+        checkpoint = recovery_state.get("checkpoint", {}) if isinstance(recovery_state, dict) else {}
+        result["checkpoint_stage"] = str(checkpoint.get("checkpoint_stage") or recovery_state.get("stage") or "")
+        result["checkpoint_ambiguous"] = bool(recovery_state.get("ambiguous"))
+        result["checkpoint_valid"] = bool(recovery_state.get("exists")) and not bool(recovery_state.get("ambiguous"))
+        has_checkpoint = bool(recovery_state.get("exists"))
+
+        if not recovery_enabled and has_checkpoint:
+            result["auto_trade_status"] = "AUTO_TRADE_DISABLED"
+            result["cycle_executor_status"] = "CYCLE_NOT_ELIGIBLE"
+            result["recovery_status"] = "RECOVERY_DISABLED"
+            result["reason"] = "recovery_disabled"
+            return result
 
         if self._should_fail_closed_on_recovery(recovery_probe):
             result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_DUPLICATE"
             result["cycle_executor_status"] = "CYCLE_AMBIGUOUS"
+            result["recovery_status"] = "RECOVERY_STATE_AMBIGUOUS"
+            result["checkpoint_valid"] = False
             result["reason"] = "recovery_state_ambiguous"
             self._persist_cycle_checkpoint(
                 settlement_key=settlement_key,
@@ -1556,17 +1578,25 @@ class RuntimeController:
                 recovery_status="RECOVERY_STATE_AMBIGUOUS",
             )
             return result
-        if bool(recovery_state.get("submit_confirmed")):
+        if bool(recovery_state.get("submit_confirmed")) or bool(recovery_state.get("submit_attempted")):
             result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_DUPLICATE"
             result["cycle_executor_status"] = "CYCLE_SKIPPED_DUPLICATE"
+            result["recovery_status"] = "RECOVERY_SKIPPED_ALREADY_SUBMITTED"
             result["reason"] = "durable_submit_already_confirmed"
             if settlement_key:
                 self._processed_auto_trade_keys.add(settlement_key)
+            return result
+        if has_checkpoint and not resume_submit_enabled:
+            result["auto_trade_status"] = "AUTO_TRADE_DISABLED"
+            result["cycle_executor_status"] = "CYCLE_NOT_ELIGIBLE"
+            result["recovery_status"] = "RECOVERY_READY_NO_SUBMIT"
+            result["reason"] = "resume_submit_disabled"
             return result
 
         if not result["cycle_executor_enabled"]:
             result["auto_trade_status"] = "AUTO_TRADE_DISABLED"
             result["cycle_executor_status"] = "CYCLE_EXECUTOR_DISABLED"
+            result["recovery_status"] = "RECOVERY_READY_NO_SUBMIT" if has_checkpoint else result["recovery_status"]
             result["reason"] = "cycle_executor_disabled"
             self._persist_cycle_checkpoint(
                 settlement_key=settlement_key,
@@ -1582,6 +1612,7 @@ class RuntimeController:
         if result["kill_switch_active"]:
             result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_MM_BLOCKED"
             result["cycle_executor_status"] = "CYCLE_STOPPED_KILL_SWITCH"
+            result["recovery_status"] = "RECOVERY_SKIPPED_MM_BLOCKED" if has_checkpoint else result["recovery_status"]
             result["reason"] = "kill_switch_active"
             if settlement_key:
                 self._processed_auto_trade_keys.add(settlement_key)
@@ -1610,12 +1641,14 @@ class RuntimeController:
         if not result["auto_trade_enabled"]:
             result["auto_trade_status"] = "AUTO_TRADE_DISABLED"
             result["cycle_executor_status"] = "CYCLE_NOT_ELIGIBLE"
+            result["recovery_status"] = "RECOVERY_READY_NO_SUBMIT" if has_checkpoint else result["recovery_status"]
             result["reason"] = "auto_trade_disabled"
             return result
 
         if settlement_key and settlement_key in self._processed_auto_trade_keys:
             result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_DUPLICATE"
             result["cycle_executor_status"] = "CYCLE_SKIPPED_DUPLICATE"
+            result["recovery_status"] = "RECOVERY_SKIPPED_DUPLICATE" if has_checkpoint else result["recovery_status"]
             result["reason"] = "settlement_auto_trade_already_evaluated"
             return result
 
@@ -1673,6 +1706,7 @@ class RuntimeController:
         if max_steps_value is not None and max_steps_value >= 0 and current_step_index >= max_steps_value:
             result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_MM_BLOCKED"
             result["cycle_executor_status"] = "CYCLE_STOPPED_MAX_STEPS"
+            result["recovery_status"] = "RECOVERY_STOPPED_CLOSED" if has_checkpoint else result["recovery_status"]
             result["max_steps_reached"] = True
             result["reason"] = "max_steps_reached"
             if settlement_key:
@@ -1681,6 +1715,7 @@ class RuntimeController:
         if max_steps_value is not None and max_steps_value >= 0 and not cycle_id:
             result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_MM_BLOCKED"
             result["cycle_executor_status"] = "CYCLE_STOPPED_MAX_STEPS"
+            result["recovery_status"] = "RECOVERY_STOPPED_CLOSED" if has_checkpoint else result["recovery_status"]
             result["max_steps_reached"] = True
             result["reason"] = "max_steps_requires_cycle_id"
             if settlement_key:
@@ -1691,10 +1726,13 @@ class RuntimeController:
             result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_MM_BLOCKED"
             if decision.money_management_status == "MM_STOP_TARGET_REACHED":
                 result["cycle_executor_status"] = "CYCLE_STOPPED_TARGET_REACHED"
+                result["recovery_status"] = "RECOVERY_STOPPED_TARGET_REACHED" if has_checkpoint else result["recovery_status"]
             elif decision.money_management_status == "MM_STOP_CYCLE_CLOSED":
                 result["cycle_executor_status"] = "CYCLE_STOPPED_CLOSED"
+                result["recovery_status"] = "RECOVERY_STOPPED_CLOSED" if has_checkpoint else result["recovery_status"]
             else:
                 result["cycle_executor_status"] = "CYCLE_SKIPPED_MM_BLOCKED"
+                result["recovery_status"] = "RECOVERY_SKIPPED_MM_BLOCKED" if has_checkpoint else result["recovery_status"]
             result["reason"] = str(decision.stop_reason or "mm_blocked")
             if settlement_key:
                 self._processed_auto_trade_keys.add(settlement_key)
@@ -1704,6 +1742,7 @@ class RuntimeController:
             result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_INVALID_STAKE"
             result["money_management_status"] = "MM_STOP_INVALID_STAKE"
             result["cycle_executor_status"] = "CYCLE_SKIPPED_INVALID_STAKE"
+            result["recovery_status"] = "RECOVERY_SKIPPED_INVALID_STAKE" if has_checkpoint else result["recovery_status"]
             result["reason"] = "invalid_next_stake"
             if settlement_key:
                 self._processed_auto_trade_keys.add(settlement_key)
@@ -1714,6 +1753,7 @@ class RuntimeController:
         if not risk_allowed:
             result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_RISK_REJECTED"
             result["cycle_executor_status"] = "CYCLE_SKIPPED_RISK_REJECTED"
+            result["recovery_status"] = "RECOVERY_SKIPPED_RISK_REJECTED" if has_checkpoint else result["recovery_status"]
             result["reason"] = risk_reason
             if settlement_key:
                 self._processed_auto_trade_keys.add(settlement_key)
@@ -1722,6 +1762,7 @@ class RuntimeController:
         if self._has_open_trade_conflict(decision.table_id):
             result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_EXISTING_INFLIGHT"
             result["cycle_executor_status"] = "CYCLE_SKIPPED_EXISTING_INFLIGHT"
+            result["recovery_status"] = "RECOVERY_SKIPPED_EXISTING_INFLIGHT" if has_checkpoint else result["recovery_status"]
             result["reason"] = "existing_inflight_trade"
             if settlement_key:
                 self._processed_auto_trade_keys.add(settlement_key)
@@ -1746,6 +1787,7 @@ class RuntimeController:
         except Exception as exc:
             result["auto_trade_status"] = "AUTO_TRADE_SUBMIT_FAILED"
             result["cycle_executor_status"] = "CYCLE_SUBMIT_FAILED"
+            result["recovery_status"] = "RECOVERY_SUBMIT_FAILED" if has_checkpoint else result["recovery_status"]
             result["reason"] = f"submit_payload_invalid:{type(exc).__name__}"
             if settlement_key:
                 self._processed_auto_trade_keys.add(settlement_key)
@@ -1788,6 +1830,7 @@ class RuntimeController:
         self.bus.publish("CMD_QUICK_BET", submit_payload)
         result["auto_trade_status"] = "AUTO_TRADE_SUBMITTED"
         result["cycle_executor_status"] = "CYCLE_STEP_SUBMITTED"
+        result["recovery_status"] = "RECOVERY_STEP_SUBMITTED" if has_checkpoint else result["recovery_status"]
         result["submitted"] = True
         result["reason"] = "submitted"
         if cycle_id:
@@ -1807,7 +1850,7 @@ class RuntimeController:
             step_index=result["cycle_step_index"],
             next_trade_submission_status="SUBMITTED",
             reason=result["reason"],
-            recovery_status="RECOVERY_READY_NO_SUBMIT",
+            recovery_status=result["recovery_status"],
         )
         return result
 

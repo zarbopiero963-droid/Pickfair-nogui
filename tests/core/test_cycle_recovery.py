@@ -119,6 +119,7 @@ def _close_payload(**overrides):
         "pnl": 5.0,
         "auto_trade_enabled": True,
         "cycle_executor_enabled": True,
+        "resume_submit_enabled": False,
         "mm_context": {
             "cycle_active": True,
             "cycle_id": "cycle-1",
@@ -138,7 +139,7 @@ def test_cycle_recovery_no_prior_state_defaults_to_no_state():
 
 def test_cycle_recovery_checkpoint_progression_and_duplicate_marker():
     rc, _, db = _make_controller(responses=[{"available": 150.0}, {"available": 999.0}])
-    payload = _close_payload()
+    payload = _close_payload(resume_submit_enabled=True)
     rc._on_close_position(payload)
     key = rc._build_bankroll_sync_key(payload)
     assert db.records[key]["checkpoint_stage"] == "NEXT_TRADE_SUBMIT_CONFIRMED"
@@ -150,7 +151,7 @@ def test_cycle_recovery_checkpoint_progression_and_duplicate_marker():
 
 def test_cycle_recovery_ambiguous_state_fails_closed_without_submit():
     rc, bus, db = _make_controller(responses=[{"available": 150.0}])
-    payload = _close_payload(correlation_id="corr-amb", event_key="evt-amb", batch_id="batch-amb")
+    payload = _close_payload(correlation_id="corr-amb", event_key="evt-amb", batch_id="batch-amb", resume_submit_enabled=True)
     key = rc._build_bankroll_sync_key(payload)
     db.upsert_cycle_recovery_checkpoint(
         key,
@@ -188,6 +189,7 @@ def test_cycle_reentry_does_not_downgrade_confirmed_checkpoint():
     stored = db.get_cycle_recovery_checkpoint(key)
     assert stored["checkpoint_stage"] == "NEXT_TRADE_SUBMIT_CONFIRMED"
     assert stored["next_trade_submission_status"] == "SUBMITTED"
+    assert rc._last_cycle_executor_result["recovery_status"] == "RECOVERY_SKIPPED_ALREADY_SUBMITTED"
 
 
 def test_cycle_reentry_does_not_downgrade_attempted_checkpoint():
@@ -209,3 +211,80 @@ def test_cycle_reentry_does_not_downgrade_attempted_checkpoint():
     stored = db.get_cycle_recovery_checkpoint(key)
     assert stored["checkpoint_stage"] == "CYCLE_AMBIGUOUS"
     assert stored["next_trade_submission_status"] == "AMBIGUOUS"
+
+
+def test_recovery_checkpoint_defaults_to_restore_only_without_resume_submit():
+    rc, bus, db = _make_controller(responses=[{"available": 150.0}])
+    payload = _close_payload(correlation_id="corr-restore", event_key="evt-restore", batch_id="batch-restore")
+    key = rc._build_bankroll_sync_key(payload)
+    db.upsert_cycle_recovery_checkpoint(
+        key,
+        {
+            "checkpoint_stage": "BANKROLL_SYNC_DONE",
+            "next_trade_submission_status": "NOT_ATTEMPTED",
+            "bankroll_sync_status": "SYNC_SUCCESS",
+            "is_ambiguous": False,
+        },
+    )
+
+    rc._on_close_position(payload)
+    assert rc._last_cycle_executor_result["recovery_status"] == "RECOVERY_READY_NO_SUBMIT"
+    assert rc._last_cycle_executor_result["submitted"] is False
+    assert not any(topic == "CMD_QUICK_BET" for topic, _ in bus.events)
+
+
+def test_recovery_checkpoint_resume_submit_submits_one_step_when_enabled():
+    rc, bus, db = _make_controller(responses=[{"available": 150.0}])
+    payload = _close_payload(
+        correlation_id="corr-resume",
+        event_key="evt-resume",
+        batch_id="batch-resume",
+        resume_submit_enabled=True,
+    )
+    key = rc._build_bankroll_sync_key(payload)
+    db.upsert_cycle_recovery_checkpoint(
+        key,
+        {
+            "checkpoint_stage": "BANKROLL_SYNC_DONE",
+            "next_trade_submission_status": "NOT_ATTEMPTED",
+            "bankroll_sync_status": "SYNC_SUCCESS",
+            "is_ambiguous": False,
+        },
+    )
+
+    rc._on_close_position(payload)
+    assert rc._last_cycle_executor_result["recovery_status"] == "RECOVERY_STEP_SUBMITTED"
+    assert rc._last_cycle_executor_result["submitted"] is True
+    assert len([event for event in bus.events if event[0] == "CMD_QUICK_BET"]) == 1
+
+
+def test_recovery_resume_submit_invalid_stake_blocks_submit():
+    rc, bus, db = _make_controller(responses=[{"available": 150.0}])
+    payload = _close_payload(
+        correlation_id="corr-invalid-stake",
+        event_key="evt-invalid-stake",
+        batch_id="batch-invalid-stake",
+        resume_submit_enabled=True,
+        mm_context={
+            "cycle_active": True,
+            "cycle_id": "cycle-1",
+            "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
+            "next_signal": {"market_id": "1.234", "selection_id": 42, "price": 2.0, "bet_type": "BACK"},
+            "target_reached": True,
+        },
+    )
+    key = rc._build_bankroll_sync_key(payload)
+    db.upsert_cycle_recovery_checkpoint(
+        key,
+        {
+            "checkpoint_stage": "BANKROLL_SYNC_DONE",
+            "next_trade_submission_status": "NOT_ATTEMPTED",
+            "bankroll_sync_status": "SYNC_SUCCESS",
+            "is_ambiguous": False,
+        },
+    )
+
+    rc._on_close_position(payload)
+    assert rc._last_cycle_executor_result["submitted"] is False
+    assert rc._last_cycle_executor_result["recovery_status"] in {"RECOVERY_STOPPED_TARGET_REACHED", "RECOVERY_SKIPPED_MM_BLOCKED"}
+    assert not any(topic == "CMD_QUICK_BET" for topic, _ in bus.events)

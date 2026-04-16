@@ -77,6 +77,7 @@ def _close_payload(**overrides):
         "pnl": 5.0,
         "auto_trade_enabled": True,
         "cycle_executor_enabled": True,
+        "resume_submit_enabled": False,
         "mm_context": {
             "cycle_active": True,
             "cycle_id": "cycle-it-1",
@@ -112,11 +113,11 @@ def test_runtime_controller_cycle_recovery_checkpoint_roundtrip_and_restore_only
         checkpoint = db.get_cycle_recovery_checkpoint(key)
 
         assert checkpoint is not None
-        assert checkpoint["checkpoint_stage"] == "NEXT_TRADE_SUBMIT_CONFIRMED"
-        assert checkpoint["next_trade_submission_status"] == "SUBMITTED"
+        assert checkpoint["checkpoint_stage"] == "BANKROLL_SYNC_DONE"
+        assert checkpoint["next_trade_submission_status"] == "NOT_ATTEMPTED"
         assert checkpoint["bankroll_sync_status"] == "SYNC_SUCCESS"
-        assert rc._last_cycle_executor_result["recovery_status"] in {"RECOVERY_NO_STATE", "RECOVERY_STATE_LOADED", "RECOVERY_SKIPPED_DUPLICATE", "RECOVERY_READY_NO_SUBMIT"}
-        assert len([event for event in bus.events if event[0] == "CMD_QUICK_BET"]) == 1
+        assert rc._last_cycle_executor_result["recovery_status"] in {"RECOVERY_NO_STATE", "RECOVERY_STATE_LOADED", "RECOVERY_READY_NO_SUBMIT"}
+        assert len([event for event in bus.events if event[0] == "CMD_QUICK_BET"]) == 0
 
 
 def test_runtime_controller_cycle_recovery_ambiguous_checkpoint_fails_closed_no_submit():
@@ -186,4 +187,47 @@ def test_runtime_controller_cycle_reentry_preserves_submit_confirmed_checkpoint(
         assert checkpoint is not None
         assert checkpoint["checkpoint_stage"] == "NEXT_TRADE_SUBMIT_CONFIRMED"
         assert checkpoint["next_trade_submission_status"] == "SUBMITTED"
+        assert rc._last_cycle_executor_result["recovery_status"] == "RECOVERY_SKIPPED_ALREADY_SUBMITTED"
         assert len([event for event in bus.events if event[0] == "CMD_QUICK_BET"]) == 0
+
+
+def test_runtime_controller_recovery_resume_submit_enabled_submits_one_step():
+    with tempfile.TemporaryDirectory() as td:
+        db = Database(str(Path(td) / "db.sqlite"))
+        rc, bus = _make_controller(db=db, responses=[{"available": 150.0}])
+        payload = _close_payload(
+            correlation_id="corr-it-resume",
+            event_key="evt-it-resume",
+            batch_id="batch-it-resume",
+            resume_submit_enabled=True,
+        )
+        key = rc._build_bankroll_sync_key(payload)
+        db.upsert_cycle_recovery_checkpoint(
+            key,
+            {
+                "settlement_correlation_id": "corr-it-resume",
+                "cycle_id": "cycle-it-resume",
+                "table_id": 1,
+                "checkpoint_stage": "BANKROLL_SYNC_DONE",
+                "bankroll_sync_status": "SYNC_SUCCESS",
+                "money_management_status": "MM_CONTINUE_ALLOWED",
+                "cycle_active": True,
+                "progression_allowed": True,
+                "next_stake": 5.0,
+                "step_index": 1,
+                "round_index": 0,
+                "next_trade_submission_status": "NOT_ATTEMPTED",
+                "idempotency_key": key,
+                "reason": "bankroll_sync_done",
+                "is_ambiguous": False,
+            },
+        )
+
+        rc._on_close_position(payload)
+
+        checkpoint = db.get_cycle_recovery_checkpoint(key)
+        assert checkpoint is not None
+        assert checkpoint["checkpoint_stage"] == "NEXT_TRADE_SUBMIT_CONFIRMED"
+        assert checkpoint["next_trade_submission_status"] == "SUBMITTED"
+        assert rc._last_cycle_executor_result["recovery_status"] == "RECOVERY_STEP_SUBMITTED"
+        assert len([event for event in bus.events if event[0] == "CMD_QUICK_BET"]) == 1

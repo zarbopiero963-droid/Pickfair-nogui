@@ -698,6 +698,34 @@ class Database:
         now = self._utc_now()
         existing = self.get_cycle_recovery_checkpoint(key)
         created_at = str((existing or {}).get("created_at") or now)
+        stage_rank = {
+            "SETTLEMENT_DETECTED": 10,
+            "BANKROLL_SYNC_DONE": 20,
+            "MM_DECISION_DONE": 30,
+            "NEXT_TRADE_SUBMIT_ATTEMPTED": 40,
+            "NEXT_TRADE_SUBMIT_CONFIRMED": 50,
+            "CYCLE_BLOCKED": 60,
+            "CYCLE_AMBIGUOUS": 70,
+        }
+        submit_rank = {
+            "NOT_ATTEMPTED": 10,
+            "ATTEMPTED": 20,
+            "SUBMITTED": 30,
+            "CONFIRMED": 40,
+            "AMBIGUOUS": 50,
+        }
+        incoming_stage = str(body.get("checkpoint_stage") or "SETTLEMENT_DETECTED")
+        existing_stage = str((existing or {}).get("checkpoint_stage") or "")
+        effective_stage = incoming_stage
+        if stage_rank.get(existing_stage, 0) > stage_rank.get(incoming_stage, 0):
+            effective_stage = existing_stage
+        incoming_submit = str(body.get("next_trade_submission_status") or "NOT_ATTEMPTED")
+        existing_submit = str((existing or {}).get("next_trade_submission_status") or "")
+        effective_submit = incoming_submit
+        if submit_rank.get(existing_submit, 0) > submit_rank.get(incoming_submit, 0):
+            effective_submit = existing_submit
+        effective_ambiguous = bool(body.get("is_ambiguous", False)) or bool((existing or {}).get("is_ambiguous", False))
+        effective_reason = str(body.get("reason") or (existing or {}).get("reason") or "")
 
         self._execute(
             """
@@ -748,7 +776,7 @@ class Database:
                 str(body.get("cycle_id") or ""),
                 None if body.get("table_id") in (None, "") else self._safe_int(body.get("table_id"), 0),
                 self._safe_json_dumps(body.get("strategy_context") or {}),
-                str(body.get("checkpoint_stage") or "SETTLEMENT_DETECTED"),
+                effective_stage,
                 str(body.get("bankroll_sync_status") or "NOT_SETTLED"),
                 str(body.get("money_management_status") or "MM_STOP_CONTEXT_MISSING"),
                 self._safe_bool_int(body.get("cycle_active", False)),
@@ -756,10 +784,10 @@ class Database:
                 self._safe_float(body.get("next_stake"), 0.0),
                 self._safe_int(body.get("step_index"), 0),
                 self._safe_int(body.get("round_index"), 0),
-                str(body.get("next_trade_submission_status") or "NOT_ATTEMPTED"),
+                effective_submit,
                 str(body.get("idempotency_key") or key),
-                str(body.get("reason") or ""),
-                self._safe_bool_int(body.get("is_ambiguous", False)),
+                effective_reason,
+                self._safe_bool_int(effective_ambiguous),
                 created_at,
                 now,
             ),
