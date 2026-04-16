@@ -37,10 +37,26 @@ _KEY_LEN = 32
 
 class SecretCipher:
 
-    def __init__(self, key: bytes) -> None:
+    def __init__(self, key: bytes, *, key_source: str = "unknown") -> None:
         if len(key) != _KEY_LEN:
             raise ValueError(f"SecretCipher: key must be {_KEY_LEN} bytes")
         self._key = key
+        self._key_source = str(key_source)
+
+    @property
+    def key_source(self) -> str:
+        """Deterministic classification of where the current key came from.
+
+        Values produced by :meth:`from_env_or_file`:
+            - ``"env"``            — loaded from PICKFAIR_SECRET_KEY env var
+            - ``"file_existing"``  — loaded from a pre-existing key file
+            - ``"file_generated"`` — newly generated key, persisted to disk
+            - ``"ephemeral"``      — newly generated key, persist to disk failed
+
+        Instances constructed directly via ``SecretCipher(key)`` (without the
+        factory) default to ``"unknown"``.
+        """
+        return self._key_source
 
     # ------------------------------------------------------------------
     # Factory
@@ -55,7 +71,7 @@ class SecretCipher:
                 key = bytes.fromhex(env_val[:64])
                 if len(key) == _KEY_LEN:
                     logger.debug("secret_cipher: key loaded from PICKFAIR_SECRET_KEY")
-                    return cls(key)
+                    return cls(key, key_source="env")
             except ValueError:
                 logger.warning(
                     "secret_cipher: PICKFAIR_SECRET_KEY is set but not valid hex; ignoring"
@@ -69,12 +85,13 @@ class SecretCipher:
                 key = bytes.fromhex(raw.decode("ascii"))
                 if len(key) == _KEY_LEN:
                     logger.debug("secret_cipher: key loaded from %s", key_path)
-                    return cls(key)
+                    return cls(key, key_source="file_existing")
             except Exception as exc:
                 logger.warning("secret_cipher: key file unreadable (%s); regenerating", exc)
 
         # 3. Generate new key and persist
         key = secrets.token_bytes(_KEY_LEN)
+        persisted = False
         try:
             key_path.parent.mkdir(parents=True, exist_ok=True)
             key_path.write_text(key.hex())
@@ -83,6 +100,7 @@ class SecretCipher:
             except Exception:
                 pass
             logger.info("secret_cipher: new key generated and saved to %s", key_path)
+            persisted = True
         except Exception as exc:
             logger.warning(
                 "secret_cipher: could not persist key to %s (%s); "
@@ -91,7 +109,7 @@ class SecretCipher:
                 exc,
             )
 
-        return cls(key)
+        return cls(key, key_source="file_generated" if persisted else "ephemeral")
 
     @staticmethod
     def _key_file_path() -> Path:
