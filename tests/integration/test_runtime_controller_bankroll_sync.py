@@ -144,3 +144,41 @@ def test_runtime_controller_status_exposes_last_bankroll_sync_result():
     assert "bankroll_sync" in status
     assert status["bankroll_sync"]["bankroll_sync_status"] == "SYNC_SUCCESS"
     assert status["bankroll_sync"]["correlation_id"] == "corr-status"
+
+
+@pytest.mark.integration
+def test_runtime_controller_rejects_ambiguous_zero_fallback_balance_payload():
+    rc, _ = _make_controller(responses=[{"available": 0.0, "exposure": 0.0, "total": 0.0, "simulated": False}])
+    rc.risk_desk.sync_bankroll(100.0)
+
+    rc._on_close_position(
+        {
+            "event_key": "evt-zero-fallback-int",
+            "table_id": 1,
+            "batch_id": "batch-zero-fallback-int",
+            "correlation_id": "corr-zero-fallback-int",
+            "pnl": 20.0,
+        }
+    )
+
+    assert float(rc.risk_desk.bankroll_current) == 100.0
+    assert rc._last_bankroll_sync_result["bankroll_sync_status"] == "SYNC_FAILED_BALANCE_UNAVAILABLE"
+
+
+@pytest.mark.integration
+def test_runtime_controller_close_updates_realized_pnl_even_with_exchange_first_bankroll_sync():
+    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc.risk_desk.sync_bankroll(100.0)
+
+    rc._on_close_position(
+        {
+            "event_key": "evt-realized-int",
+            "table_id": 1,
+            "batch_id": "batch-realized-int",
+            "correlation_id": "corr-realized-int",
+            "pnl": 7.0,
+        }
+    )
+
+    assert float(rc.risk_desk.realized_pnl) == 7.0
+    assert float(rc.risk_desk.bankroll_current) == 150.0

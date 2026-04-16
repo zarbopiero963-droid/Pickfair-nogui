@@ -108,6 +108,7 @@ class RuntimeController:
             "last_error": "",
         }
         self._processed_bankroll_sync_keys: set[str] = set()
+        self._processed_realized_pnl_keys: set[str] = set()
         self._last_bankroll_sync_result: dict[str, Any] = {
             "correlation_id": "",
             "settlement_detected": False,
@@ -1286,6 +1287,10 @@ class RuntimeController:
 
         if event_key:
             self.duplication_guard.release(event_key)
+        settlement_key = self._build_bankroll_sync_key(payload)
+        if settlement_key and settlement_key not in self._processed_realized_pnl_keys:
+            self._apply_realized_pnl_without_mutating_bankroll(pnl)
+            self._processed_realized_pnl_keys.add(settlement_key)
         sync_result = self._sync_bankroll_post_settlement(payload)
         self._last_bankroll_sync_result = dict(sync_result)
         self.bus.publish("BANKROLL_SYNC_RESULT", dict(sync_result))
@@ -1317,6 +1322,12 @@ class RuntimeController:
 
         if current_drawdown >= self.config.lockdown_drawdown_pct:
             self.force_lockdown("Drawdown oltre soglia lockdown")
+
+    def _apply_realized_pnl_without_mutating_bankroll(self, pnl: float) -> None:
+        bankroll_before = float(self.risk_desk.bankroll_current)
+        self.risk_desk.apply_closed_pnl(pnl)
+        if float(self.risk_desk.bankroll_current) != bankroll_before:
+            self.risk_desk.sync_bankroll(bankroll_before)
 
     def _sync_bankroll_post_settlement(self, payload: dict) -> dict:
         bankroll_before = float(self.risk_desk.bankroll_current)
@@ -1382,6 +1393,16 @@ class RuntimeController:
         if not math.isfinite(available_f) or available_f < 0.0:
             result["bankroll_sync_status"] = "SYNC_FAILED_INVALID_BALANCE"
             result["reason"] = "BALANCE_NOT_FINITE_OR_NEGATIVE"
+            return result
+
+        trusted_zero = bool(
+            funds.get("ok")
+            or funds.get("authoritative")
+            or funds.get("balance_confirmed")
+        )
+        if available_f == 0.0 and not trusted_zero:
+            result["bankroll_sync_status"] = "SYNC_FAILED_BALANCE_UNAVAILABLE"
+            result["reason"] = "BALANCE_ZERO_AMBIGUOUS_OR_FALLBACK"
             return result
 
         self.risk_desk.sync_bankroll(available_f)

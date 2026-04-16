@@ -154,6 +154,45 @@ def test_bankroll_sync_fails_closed_when_balance_unavailable():
     assert float(rc.risk_desk.bankroll_current) == 100.0
 
 
+def test_bankroll_sync_rejects_ambiguous_zero_fallback_balance():
+    rc, _ = _make_controller(responses=[{"available": 0.0, "exposure": 0.0, "total": 0.0, "simulated": False}])
+    rc.risk_desk.sync_bankroll(100.0)
+
+    rc._on_close_position(
+        {
+            "event_key": "evt-zero-fallback",
+            "table_id": 1,
+            "batch_id": "batch-zero-fallback",
+            "correlation_id": "corr-zero-fallback",
+            "pnl": 15.0,
+        }
+    )
+
+    result = rc._last_bankroll_sync_result
+    assert result["bankroll_sync_status"] == "SYNC_FAILED_BALANCE_UNAVAILABLE"
+    assert result["reason"] == "BALANCE_ZERO_AMBIGUOUS_OR_FALLBACK"
+    assert float(rc.risk_desk.bankroll_current) == 100.0
+
+
+def test_bankroll_sync_accepts_explicitly_confirmed_zero_balance():
+    rc, _ = _make_controller(responses=[{"available": 0.0, "ok": True}])
+    rc.risk_desk.sync_bankroll(10.0)
+
+    rc._on_close_position(
+        {
+            "event_key": "evt-zero-confirmed",
+            "table_id": 1,
+            "batch_id": "batch-zero-confirmed",
+            "correlation_id": "corr-zero-confirmed",
+            "pnl": -5.0,
+        }
+    )
+
+    result = rc._last_bankroll_sync_result
+    assert result["bankroll_sync_status"] == "SYNC_SUCCESS"
+    assert float(rc.risk_desk.bankroll_current) == 0.0
+
+
 def test_bankroll_sync_fails_closed_when_balance_invalid():
     rc, _ = _make_controller(responses=[{"available": "nan"}])
     rc.risk_desk.sync_bankroll(100.0)
@@ -171,3 +210,22 @@ def test_bankroll_sync_fails_closed_when_balance_invalid():
     result = rc._last_bankroll_sync_result
     assert result["bankroll_sync_status"] == "SYNC_FAILED_INVALID_BALANCE"
     assert float(rc.risk_desk.bankroll_current) == 100.0
+
+
+def test_realized_pnl_is_preserved_on_close_while_bankroll_sync_runs():
+    rc, _ = _make_controller(responses=[{"available": 140.0}])
+    rc.risk_desk.sync_bankroll(100.0)
+    realized_before = float(rc.risk_desk.realized_pnl)
+
+    rc._on_close_position(
+        {
+            "event_key": "evt-realized",
+            "table_id": 1,
+            "batch_id": "batch-realized",
+            "correlation_id": "corr-realized",
+            "pnl": 12.5,
+        }
+    )
+
+    assert float(rc.risk_desk.realized_pnl) == realized_before + 12.5
+    assert float(rc.risk_desk.bankroll_current) == 140.0
