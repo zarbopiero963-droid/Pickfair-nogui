@@ -151,3 +151,39 @@ def test_runtime_controller_cycle_recovery_ambiguous_checkpoint_fails_closed_no_
         assert rc._last_cycle_executor_result["cycle_executor_status"] == "CYCLE_AMBIGUOUS"
         assert rc._last_cycle_executor_result["recovery_status"] == "RECOVERY_STATE_AMBIGUOUS"
         assert len([event for event in bus.events if event[0] == "CMD_QUICK_BET"]) == 0
+
+
+def test_runtime_controller_cycle_reentry_preserves_submit_confirmed_checkpoint():
+    with tempfile.TemporaryDirectory() as td:
+        db = Database(str(Path(td) / "db.sqlite"))
+        rc, bus = _make_controller(db=db, responses=[{"available": 999.0}])
+        payload = _close_payload(correlation_id="corr-it-confirmed", event_key="evt-it-confirmed", batch_id="batch-it-confirmed")
+        key = rc._build_bankroll_sync_key(payload)
+        db.upsert_cycle_recovery_checkpoint(
+            key,
+            {
+                "settlement_correlation_id": "corr-it-confirmed",
+                "cycle_id": "cycle-it-confirmed",
+                "table_id": 1,
+                "checkpoint_stage": "NEXT_TRADE_SUBMIT_CONFIRMED",
+                "bankroll_sync_status": "SYNC_SUCCESS",
+                "money_management_status": "MM_CONTINUE_ALLOWED",
+                "cycle_active": True,
+                "progression_allowed": True,
+                "next_stake": 5.0,
+                "step_index": 1,
+                "round_index": 0,
+                "next_trade_submission_status": "SUBMITTED",
+                "idempotency_key": key,
+                "reason": "submitted",
+                "is_ambiguous": False,
+            },
+        )
+
+        rc._on_close_position(payload)
+
+        checkpoint = db.get_cycle_recovery_checkpoint(key)
+        assert checkpoint is not None
+        assert checkpoint["checkpoint_stage"] == "NEXT_TRADE_SUBMIT_CONFIRMED"
+        assert checkpoint["next_trade_submission_status"] == "SUBMITTED"
+        assert len([event for event in bus.events if event[0] == "CMD_QUICK_BET"]) == 0

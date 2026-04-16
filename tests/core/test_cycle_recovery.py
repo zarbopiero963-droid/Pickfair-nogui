@@ -44,6 +44,10 @@ class _CheckpointDB:
             "checkpoint": dict(item),
         }
 
+    def get_cycle_recovery_checkpoint(self, settlement_key: str):
+        item = self.records.get(settlement_key)
+        return dict(item) if isinstance(item, dict) else None
+
 
 class _Settings:
     def load_roserpina_config(self):
@@ -163,3 +167,45 @@ def test_cycle_recovery_ambiguous_state_fails_closed_without_submit():
     assert rc._last_cycle_executor_result["cycle_executor_status"] == "CYCLE_AMBIGUOUS"
     assert rc._last_cycle_executor_result["submitted"] is False
     assert not any(topic == "CMD_QUICK_BET" for topic, _ in bus.events)
+
+
+def test_cycle_reentry_does_not_downgrade_confirmed_checkpoint():
+    rc, _, db = _make_controller(responses=[{"available": 999.0}])
+    payload = _close_payload(correlation_id="corr-confirmed", event_key="evt-confirmed", batch_id="batch-confirmed")
+    key = rc._build_bankroll_sync_key(payload)
+    db.upsert_cycle_recovery_checkpoint(
+        key,
+        {
+            "checkpoint_stage": "NEXT_TRADE_SUBMIT_CONFIRMED",
+            "next_trade_submission_status": "SUBMITTED",
+            "bankroll_sync_status": "SYNC_SUCCESS",
+            "reason": "submitted",
+            "is_ambiguous": False,
+        },
+    )
+
+    rc._on_close_position(payload)
+    stored = db.get_cycle_recovery_checkpoint(key)
+    assert stored["checkpoint_stage"] == "NEXT_TRADE_SUBMIT_CONFIRMED"
+    assert stored["next_trade_submission_status"] == "SUBMITTED"
+
+
+def test_cycle_reentry_does_not_downgrade_attempted_checkpoint():
+    rc, _, db = _make_controller(responses=[{"available": 180.0}])
+    payload = _close_payload(correlation_id="corr-attempted", event_key="evt-attempted", batch_id="batch-attempted")
+    key = rc._build_bankroll_sync_key(payload)
+    db.upsert_cycle_recovery_checkpoint(
+        key,
+        {
+            "checkpoint_stage": "NEXT_TRADE_SUBMIT_ATTEMPTED",
+            "next_trade_submission_status": "ATTEMPTED",
+            "bankroll_sync_status": "SYNC_SUCCESS",
+            "reason": "submit_attempt",
+            "is_ambiguous": True,
+        },
+    )
+
+    rc._on_close_position(payload)
+    stored = db.get_cycle_recovery_checkpoint(key)
+    assert stored["checkpoint_stage"] == "CYCLE_AMBIGUOUS"
+    assert stored["next_trade_submission_status"] == "AMBIGUOUS"

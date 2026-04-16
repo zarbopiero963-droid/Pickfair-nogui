@@ -1538,6 +1538,7 @@ class RuntimeController:
         }
         recovery_probe = self._read_cycle_recovery_state(settlement_key)
         result["recovery_status"] = str(recovery_probe.get("status") or "RECOVERY_NO_STATE")
+        recovery_state = recovery_probe.get("state", {})
 
         if self._should_fail_closed_on_recovery(recovery_probe):
             result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_DUPLICATE"
@@ -1554,6 +1555,13 @@ class RuntimeController:
                 is_ambiguous=True,
                 recovery_status="RECOVERY_STATE_AMBIGUOUS",
             )
+            return result
+        if bool(recovery_state.get("submit_confirmed")):
+            result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_DUPLICATE"
+            result["cycle_executor_status"] = "CYCLE_SKIPPED_DUPLICATE"
+            result["reason"] = "durable_submit_already_confirmed"
+            if settlement_key:
+                self._processed_auto_trade_keys.add(settlement_key)
             return result
 
         if not result["cycle_executor_enabled"]:
@@ -1897,14 +1905,54 @@ class RuntimeController:
         writer = getattr(self.db, "upsert_cycle_recovery_checkpoint", None)
         if not callable(writer):
             return
+        existing: dict[str, Any] = {}
+        existing_getter = getattr(self.db, "get_cycle_recovery_checkpoint", None)
+        if callable(existing_getter):
+            try:
+                loaded = existing_getter(key)
+                if isinstance(loaded, dict):
+                    existing = dict(loaded)
+            except Exception:
+                logger.exception("Errore read existing checkpoint settlement_key=%s", key)
+
+        stage_rank = {
+            "SETTLEMENT_DETECTED": 10,
+            "BANKROLL_SYNC_DONE": 20,
+            "MM_DECISION_DONE": 30,
+            "NEXT_TRADE_SUBMIT_ATTEMPTED": 40,
+            "NEXT_TRADE_SUBMIT_CONFIRMED": 50,
+            "CYCLE_BLOCKED": 60,
+            "CYCLE_AMBIGUOUS": 70,
+        }
+        submit_rank = {
+            "NOT_ATTEMPTED": 10,
+            "ATTEMPTED": 20,
+            "SUBMITTED": 30,
+            "CONFIRMED": 40,
+            "AMBIGUOUS": 50,
+        }
         mm_context = payload.get("mm_context") if isinstance(payload, dict) else None
         cycle_id = str(mm_context.get("cycle_id") or "") if isinstance(mm_context, dict) else ""
+        incoming_stage = str(checkpoint_stage or "SETTLEMENT_DETECTED")
+        existing_stage = str(existing.get("checkpoint_stage") or "")
+        effective_stage = incoming_stage
+        if stage_rank.get(existing_stage, 0) > stage_rank.get(incoming_stage, 0):
+            effective_stage = existing_stage
+
+        incoming_submit = str(next_trade_submission_status or "NOT_ATTEMPTED")
+        existing_submit = str(existing.get("next_trade_submission_status") or "")
+        effective_submit = incoming_submit
+        if submit_rank.get(existing_submit, 0) > submit_rank.get(incoming_submit, 0):
+            effective_submit = existing_submit
+
+        effective_reason = str(reason or existing.get("reason") or "")
+        effective_ambiguous = bool(is_ambiguous) or bool(existing.get("is_ambiguous", False))
         record = {
             "settlement_correlation_id": str(payload.get("correlation_id") or payload.get("event_key") or ""),
             "cycle_id": cycle_id,
             "table_id": payload.get("table_id"),
             "strategy_context": {"auto_trade_source": "settlement_mm_gate", "recovery_status": recovery_status},
-            "checkpoint_stage": str(checkpoint_stage or "SETTLEMENT_DETECTED"),
+            "checkpoint_stage": effective_stage,
             "bankroll_sync_status": str(bankroll_sync_status or "NOT_SETTLED"),
             "money_management_status": str(money_management_status or "MM_STOP_CONTEXT_MISSING"),
             "cycle_active": bool(cycle_active),
@@ -1912,10 +1960,10 @@ class RuntimeController:
             "next_stake": float(next_stake or 0.0),
             "step_index": int(step_index or 0),
             "round_index": int(round_index or 0),
-            "next_trade_submission_status": str(next_trade_submission_status or "NOT_ATTEMPTED"),
+            "next_trade_submission_status": effective_submit,
             "idempotency_key": key,
-            "reason": str(reason or ""),
-            "is_ambiguous": bool(is_ambiguous),
+            "reason": effective_reason,
+            "is_ambiguous": effective_ambiguous,
         }
         try:
             writer(key, record)
