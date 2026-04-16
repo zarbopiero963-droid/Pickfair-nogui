@@ -243,10 +243,8 @@ def test_watchdog_does_not_resolve_failed_alert_on_restart_attempt_without_healt
 
     snapshot = alerts.snapshot()["alerts"]
     failed_row = next(a for a in snapshot if a["code"] == "TELEGRAM_FAILED")
-    disconnected_row = next(a for a in snapshot if a["code"] == "TELEGRAM_DISCONNECTED")
 
-    assert failed_row["active"] is False
-    assert disconnected_row["active"] is True
+    assert failed_row["active"] is True
     assert probe.telegram_service.calls == 2
 
 

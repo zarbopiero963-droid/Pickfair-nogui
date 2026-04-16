@@ -751,6 +751,14 @@ class WatchdogService:
                 },
                 current_codes=current_codes,
             )
+        elif (
+            not bool(health.get("healthy", False))
+            and state in {"CREATED", "CONNECTING", "RECONNECTING", "STOPPED"}
+            and "TELEGRAM_FAILED" in self._managed_telegram_alert_codes
+        ):
+            # Keep FAILED alert active until runtime truth reaches a healthy state.
+            # A restart boundary (e.g. FAILED -> CONNECTING) is not equivalent to recovery.
+            current_codes.add("TELEGRAM_FAILED")
         elif reconnecting:
             if not reconnect_grace_active:
                 self._upsert_telegram_alert(
