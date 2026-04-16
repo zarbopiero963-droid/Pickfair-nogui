@@ -1549,6 +1549,25 @@ class RuntimeController:
                 self._processed_auto_trade_keys.add(settlement_key)
             return result
 
+        table_id = submit_payload.get("table_id", decision.table_id)
+        if table_id is not None:
+            self.table_manager.activate(
+                table_id=int(table_id),
+                event_key=str(submit_payload.get("event_key") or ""),
+                exposure=float(result["next_stake"]),
+                market_id=str(submit_payload.get("market_id") or ""),
+                selection_id=submit_payload.get("selection_id"),
+                meta={
+                    "event_name": submit_payload.get("event_name") or "",
+                    "market_name": submit_payload.get("market_name") or "",
+                    "runner_name": submit_payload.get("runner_name") or "",
+                    "bet_type": submit_payload.get("bet_type") or "",
+                    "price": float(submit_payload.get("price") or 0.0),
+                    "simulation_mode": bool(submit_payload.get("simulation_mode", self.simulation_mode)),
+                    "auto_trade_source": submit_payload.get("auto_trade_source") or "",
+                },
+            )
+
         self.bus.publish("CMD_QUICK_BET", submit_payload)
         result["auto_trade_status"] = "AUTO_TRADE_SUBMITTED"
         result["submitted"] = True

@@ -7,11 +7,14 @@ from core.system_state import RoserpinaConfig, RuntimeMode
 class _Bus:
     def __init__(self) -> None:
         self.events: list[tuple[str, dict]] = []
+        self.on_publish = None
 
     def subscribe(self, *_args) -> None:
         return None
 
     def publish(self, topic, payload=None) -> None:
+        if callable(self.on_publish):
+            self.on_publish(topic, dict(payload or {}))
         self.events.append((topic, dict(payload or {})))
 
 
@@ -160,3 +163,49 @@ def test_runtime_controller_status_includes_auto_trade_snapshot():
     status = rc.get_status()
     assert "auto_trade_mm" in status
     assert status["auto_trade_mm"]["source_settlement_correlation_id"] == "corr-integration-status"
+
+
+def test_runtime_controller_auto_trade_activates_table_before_publish():
+    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc.mode = RuntimeMode.ACTIVE
+    rc.risk_desk.sync_bankroll(100.0)
+    observed = {}
+
+    def _inspect_publish(topic: str, payload: dict) -> None:
+        if topic != "CMD_QUICK_BET":
+            return
+        table_id = int(payload["table_id"])
+        table = rc.table_manager.get_table(table_id)
+        observed["status"] = table.status if table else ""
+        observed["event_key"] = table.current_event_key if table else ""
+        observed["exposure"] = float(table.current_exposure if table else 0.0)
+        observed["payload_event_key"] = str(payload.get("event_key") or "")
+        observed["payload_stake"] = float(payload.get("stake") or 0.0)
+
+    bus.on_publish = _inspect_publish
+
+    rc._on_close_position(
+        {
+            "event_key": "evt-integration-activate",
+            "table_id": 1,
+            "batch_id": "batch-integration-activate",
+            "correlation_id": "corr-integration-activate",
+            "pnl": 10.0,
+            "auto_trade_enabled": True,
+            "mm_context": {
+                "cycle_active": True,
+                "cycle_id": "cycle-activate",
+                "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
+                "next_signal": {
+                    "market_id": "1.888",
+                    "selection_id": 11,
+                    "table_id": 1,
+                    "price": 2.0,
+                },
+            },
+        }
+    )
+
+    assert observed["status"] == "ACTIVE"
+    assert observed["event_key"] == observed["payload_event_key"]
+    assert observed["exposure"] == observed["payload_stake"]
