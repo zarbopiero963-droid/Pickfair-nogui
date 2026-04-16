@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 from datetime import datetime
 from typing import Any, Optional
@@ -105,6 +106,17 @@ class RuntimeController:
             "unavailable_count": 0,
             "total_count": 0,
             "last_error": "",
+        }
+        self._processed_bankroll_sync_keys: set[str] = set()
+        self._processed_realized_pnl_keys: set[str] = set()
+        self._last_bankroll_sync_result: dict[str, Any] = {
+            "correlation_id": "",
+            "settlement_detected": False,
+            "bankroll_before": float(self.risk_desk.bankroll_current),
+            "bankroll_after": float(self.risk_desk.bankroll_current),
+            "bankroll_sync_status": "NOT_SETTLED",
+            "balance_source": "none",
+            "reason": "sync_not_triggered",
         }
 
         self._subscribe_bus()
@@ -1275,8 +1287,13 @@ class RuntimeController:
 
         if event_key:
             self.duplication_guard.release(event_key)
-
-        self.risk_desk.apply_closed_pnl(pnl)
+        settlement_key = self._build_bankroll_sync_key(payload)
+        if settlement_key and settlement_key not in self._processed_realized_pnl_keys:
+            self._apply_realized_pnl_without_mutating_bankroll(pnl)
+            self._processed_realized_pnl_keys.add(settlement_key)
+        sync_result = self._sync_bankroll_post_settlement(payload)
+        self._last_bankroll_sync_result = dict(sync_result)
+        self.bus.publish("BANKROLL_SYNC_RESULT", dict(sync_result))
 
         current_drawdown = self.risk_desk.drawdown_pct()
 
@@ -1305,6 +1322,110 @@ class RuntimeController:
 
         if current_drawdown >= self.config.lockdown_drawdown_pct:
             self.force_lockdown("Drawdown oltre soglia lockdown")
+
+    def _apply_realized_pnl_without_mutating_bankroll(self, pnl: float) -> None:
+        bankroll_before = float(self.risk_desk.bankroll_current)
+        self.risk_desk.apply_closed_pnl(pnl)
+        if float(self.risk_desk.bankroll_current) != bankroll_before:
+            self.risk_desk.sync_bankroll(bankroll_before)
+
+    def _sync_bankroll_post_settlement(self, payload: dict) -> dict:
+        bankroll_before = float(self.risk_desk.bankroll_current)
+        correlation_id = str(
+            payload.get("correlation_id")
+            or payload.get("customer_ref")
+            or payload.get("event_key")
+            or ""
+        )
+        result = {
+            "correlation_id": correlation_id,
+            "settlement_detected": True,
+            "bankroll_before": bankroll_before,
+            "bankroll_after": bankroll_before,
+            "bankroll_sync_status": "NOT_SETTLED",
+            "balance_source": "none",
+            "reason": "",
+        }
+
+        settlement_key = self._build_bankroll_sync_key(payload)
+        if not settlement_key:
+            result["bankroll_sync_status"] = "SYNC_FAILED_INVALID_BALANCE"
+            result["reason"] = "MISSING_SETTLEMENT_KEY"
+            return result
+
+        if settlement_key in self._processed_bankroll_sync_keys:
+            result["bankroll_sync_status"] = "SYNC_SKIPPED_DUPLICATE"
+            result["reason"] = "SETTLEMENT_ALREADY_SYNCED"
+            return result
+
+        started_at = time.monotonic()
+        try:
+            funds = self.betfair_service.get_account_funds()
+            self._record_runtime_io(
+                operation="betfair_get_account_funds",
+                started_at=started_at,
+                ok=True,
+            )
+        except Exception as exc:
+            self._record_runtime_io(
+                operation="betfair_get_account_funds",
+                started_at=started_at,
+                ok=False,
+                error=str(exc),
+            )
+            result["bankroll_sync_status"] = "SYNC_FAILED_BALANCE_UNAVAILABLE"
+            result["reason"] = f"BALANCE_FETCH_ERROR:{type(exc).__name__}"
+            return result
+
+        if not isinstance(funds, dict):
+            result["bankroll_sync_status"] = "SYNC_FAILED_BALANCE_UNAVAILABLE"
+            result["reason"] = "BALANCE_PAYLOAD_NOT_DICT"
+            return result
+
+        available = funds.get("available")
+        try:
+            available_f = float(available)
+        except Exception:
+            result["bankroll_sync_status"] = "SYNC_FAILED_INVALID_BALANCE"
+            result["reason"] = "BALANCE_NOT_NUMERIC"
+            return result
+
+        if not math.isfinite(available_f) or available_f < 0.0:
+            result["bankroll_sync_status"] = "SYNC_FAILED_INVALID_BALANCE"
+            result["reason"] = "BALANCE_NOT_FINITE_OR_NEGATIVE"
+            return result
+
+        trusted_zero = bool(
+            funds.get("ok")
+            or funds.get("authoritative")
+            or funds.get("balance_confirmed")
+        )
+        if available_f == 0.0 and not trusted_zero:
+            result["bankroll_sync_status"] = "SYNC_FAILED_BALANCE_UNAVAILABLE"
+            result["reason"] = "BALANCE_ZERO_AMBIGUOUS_OR_FALLBACK"
+            return result
+
+        self.risk_desk.sync_bankroll(available_f)
+        self._processed_bankroll_sync_keys.add(settlement_key)
+        result["bankroll_after"] = float(self.risk_desk.bankroll_current)
+        result["bankroll_sync_status"] = "SYNC_SUCCESS"
+        result["balance_source"] = "exchange_available"
+        result["reason"] = "BALANCE_SYNCED_FROM_EXCHANGE"
+        return result
+
+    @staticmethod
+    def _build_bankroll_sync_key(payload: dict) -> str:
+        parts = [
+            str(payload.get("batch_id") or "").strip(),
+            str(payload.get("event_key") or "").strip(),
+            str(payload.get("table_id") or "").strip(),
+            str(payload.get("bet_id") or "").strip(),
+            str(payload.get("order_id") or "").strip(),
+        ]
+        parts = [p for p in parts if p]
+        if not parts:
+            return ""
+        return "|".join(parts)
 
     # =========================================================
     # STATUS
@@ -1355,6 +1476,7 @@ class RuntimeController:
         data["runtime_io"] = self.runtime_io_snapshot()
         data["broker_status"] = self.betfair_service.status()
         data["account_funds"] = funds
+        data["bankroll_sync"] = dict(self._last_bankroll_sync_result or {})
         if self.streaming_feed is not None:
             try:
                 data["streaming_feed"] = self.streaming_feed.status()
