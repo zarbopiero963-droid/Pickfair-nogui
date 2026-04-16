@@ -109,6 +109,7 @@ class RuntimeController:
         }
         self._processed_bankroll_sync_keys: set[str] = set()
         self._processed_realized_pnl_keys: set[str] = set()
+        self._processed_auto_trade_keys: set[str] = set()
         self._last_bankroll_sync_result: dict[str, Any] = {
             "correlation_id": "",
             "settlement_detected": False,
@@ -117,6 +118,20 @@ class RuntimeController:
             "bankroll_sync_status": "NOT_SETTLED",
             "balance_source": "none",
             "reason": "sync_not_triggered",
+        }
+        self._last_auto_trade_result: dict[str, Any] = {
+            "correlation_id": "",
+            "source_settlement_correlation_id": "",
+            "bankroll_sync_status": "NOT_SETTLED",
+            "money_management_status": "MM_STOP_CONTEXT_MISSING",
+            "cycle_active": False,
+            "progression_allowed": False,
+            "auto_trade_enabled": False,
+            "auto_trade_status": "AUTO_TRADE_NOT_ELIGIBLE",
+            "next_stake": 0.0,
+            "risk_status": "RISK_NOT_EVALUATED",
+            "submitted": False,
+            "reason": "auto_trade_not_triggered",
         }
 
         self._subscribe_bus()
@@ -1294,6 +1309,9 @@ class RuntimeController:
         sync_result = self._sync_bankroll_post_settlement(payload)
         self._last_bankroll_sync_result = dict(sync_result)
         self.bus.publish("BANKROLL_SYNC_RESULT", dict(sync_result))
+        auto_trade_result = self._evaluate_and_maybe_submit_auto_next_trade(payload=payload, sync_result=sync_result)
+        self._last_auto_trade_result = dict(auto_trade_result)
+        self.bus.publish("AUTO_TRADE_MM_RESULT", dict(auto_trade_result))
 
         current_drawdown = self.risk_desk.drawdown_pct()
 
@@ -1427,6 +1445,158 @@ class RuntimeController:
             return ""
         return "|".join(parts)
 
+    def _evaluate_and_maybe_submit_auto_next_trade(self, *, payload: dict, sync_result: dict) -> dict:
+        settlement_key = self._build_bankroll_sync_key(payload)
+        source_corr_id = str(sync_result.get("correlation_id") or "")
+        result: dict[str, Any] = {
+            "correlation_id": f"auto-next::{source_corr_id}" if source_corr_id else "",
+            "source_settlement_correlation_id": source_corr_id,
+            "bankroll_sync_status": str(sync_result.get("bankroll_sync_status") or "NOT_SETTLED"),
+            "money_management_status": "MM_STOP_CONTEXT_MISSING",
+            "cycle_active": False,
+            "progression_allowed": False,
+            "auto_trade_enabled": bool(payload.get("auto_trade_enabled", False)),
+            "auto_trade_status": "AUTO_TRADE_NOT_ELIGIBLE",
+            "next_stake": 0.0,
+            "risk_status": "RISK_NOT_EVALUATED",
+            "submitted": False,
+            "reason": "",
+        }
+
+        if result["bankroll_sync_status"] != "SYNC_SUCCESS":
+            if result["bankroll_sync_status"] == "SYNC_SKIPPED_DUPLICATE":
+                result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_DUPLICATE"
+                result["reason"] = "settlement_already_processed"
+            else:
+                result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_SYNC_FAILED"
+                result["reason"] = "bankroll_sync_not_success"
+            return result
+
+        if not result["auto_trade_enabled"]:
+            result["auto_trade_status"] = "AUTO_TRADE_DISABLED"
+            result["reason"] = "auto_trade_disabled"
+            return result
+
+        if settlement_key and settlement_key in self._processed_auto_trade_keys:
+            result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_DUPLICATE"
+            result["reason"] = "settlement_auto_trade_already_evaluated"
+            return result
+
+        mm_context = payload.get("mm_context")
+        signal = mm_context.get("next_signal") if isinstance(mm_context, dict) else None
+        table_ctx = mm_context.get("table") if isinstance(mm_context, dict) else None
+        cycle_id = mm_context.get("cycle_id", "") if isinstance(mm_context, dict) else ""
+        cycle_active = bool(mm_context.get("cycle_active", True)) if isinstance(mm_context, dict) else False
+        target_reached = bool(mm_context.get("target_reached", False)) if isinstance(mm_context, dict) else False
+        table_id = mm_context.get("table_id") if isinstance(mm_context, dict) else None
+
+        table = table_ctx if table_ctx is not None else (
+            {"table_id": table_id} if table_id is not None else None
+        )
+        decision = self.mm.evaluate_next_trade_after_settlement(
+            signal=signal,
+            bankroll_current=float(self.risk_desk.bankroll_current),
+            equity_peak=float(self.risk_desk.equity_peak),
+            current_total_exposure=self.table_manager.total_exposure(),
+            event_current_exposure=0.0,
+            table=table,
+            cycle_id=str(cycle_id or ""),
+            cycle_active=cycle_active,
+            target_reached=target_reached,
+        )
+        result["money_management_status"] = decision.money_management_status
+        result["cycle_active"] = bool(decision.cycle_active)
+        result["progression_allowed"] = bool(decision.progression_allowed)
+        result["next_stake"] = float(decision.next_stake or 0.0)
+
+        if decision.money_management_status != "MM_CONTINUE_ALLOWED":
+            result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_MM_BLOCKED"
+            result["reason"] = str(decision.stop_reason or "mm_blocked")
+            if settlement_key:
+                self._processed_auto_trade_keys.add(settlement_key)
+            return result
+
+        if not math.isfinite(result["next_stake"]) or result["next_stake"] <= 0.0:
+            result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_INVALID_STAKE"
+            result["money_management_status"] = "MM_STOP_INVALID_STAKE"
+            result["reason"] = "invalid_next_stake"
+            if settlement_key:
+                self._processed_auto_trade_keys.add(settlement_key)
+            return result
+
+        risk_allowed, risk_reason = self._risk_allows_auto_trade()
+        result["risk_status"] = "RISK_APPROVED" if risk_allowed else "RISK_REJECTED"
+        if not risk_allowed:
+            result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_RISK_REJECTED"
+            result["reason"] = risk_reason
+            if settlement_key:
+                self._processed_auto_trade_keys.add(settlement_key)
+            return result
+
+        if self._has_open_trade_conflict(decision.table_id):
+            result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_EXISTING_INFLIGHT"
+            result["reason"] = "existing_inflight_trade"
+            if settlement_key:
+                self._processed_auto_trade_keys.add(settlement_key)
+            return result
+
+        try:
+            submit_payload = self._build_auto_trade_payload(signal=signal or {}, decision_stake=result["next_stake"])
+        except Exception as exc:
+            result["auto_trade_status"] = "AUTO_TRADE_SUBMIT_FAILED"
+            result["reason"] = f"submit_payload_invalid:{type(exc).__name__}"
+            if settlement_key:
+                self._processed_auto_trade_keys.add(settlement_key)
+            return result
+
+        self.bus.publish("CMD_QUICK_BET", submit_payload)
+        result["auto_trade_status"] = "AUTO_TRADE_SUBMITTED"
+        result["submitted"] = True
+        result["reason"] = "submitted"
+        if settlement_key:
+            self._processed_auto_trade_keys.add(settlement_key)
+        return result
+
+    def _risk_allows_auto_trade(self) -> tuple[bool, str]:
+        if not self._runtime_active():
+            return False, "runtime_not_active"
+        if self._desk_mode() == DeskMode.LOCKDOWN:
+            return False, "desk_lockdown"
+        return True, "risk_approved"
+
+    def _has_open_trade_conflict(self, table_id: Optional[int]) -> bool:
+        if table_id is None:
+            return False
+        table = self.table_manager.get_table(int(table_id))
+        if table is None:
+            return False
+        return bool(table.current_event_key)
+
+    def _build_auto_trade_payload(self, *, signal: dict, decision_stake: float) -> dict:
+        payload = {
+            "market_id": str(signal.get("market_id")),
+            "selection_id": int(signal.get("selection_id")),
+            "bet_type": str(
+                signal.get("bet_type")
+                or signal.get("side")
+                or signal.get("action")
+                or "BACK"
+            ).upper(),
+            "price": float(signal.get("price") or signal.get("odds")),
+            "stake": float(decision_stake),
+            "event_name": signal.get("event") or signal.get("match") or signal.get("event_name") or "",
+            "market_name": signal.get("market") or signal.get("market_name") or signal.get("market_type") or "",
+            "runner_name": signal.get("selection") or signal.get("runner_name") or signal.get("runnerName") or "",
+            "simulation_mode": bool(signal.get("simulation_mode", self.simulation_mode)),
+            "event_key": self.duplication_guard.build_event_key(signal),
+            "batch_id": str(signal.get("batch_id") or ""),
+            "auto_trade_source": "settlement_mm_gate",
+        }
+        table_id = signal.get("table_id")
+        if table_id is not None:
+            payload["table_id"] = int(table_id)
+        return payload
+
     # =========================================================
     # STATUS
     # =========================================================
@@ -1477,6 +1647,7 @@ class RuntimeController:
         data["broker_status"] = self.betfair_service.status()
         data["account_funds"] = funds
         data["bankroll_sync"] = dict(self._last_bankroll_sync_result or {})
+        data["auto_trade_mm"] = dict(self._last_auto_trade_result or {})
         if self.streaming_feed is not None:
             try:
                 data["streaming_feed"] = self.streaming_feed.status()
