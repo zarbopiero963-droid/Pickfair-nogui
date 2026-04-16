@@ -110,6 +110,7 @@ class RuntimeController:
         self._processed_bankroll_sync_keys: set[str] = set()
         self._processed_realized_pnl_keys: set[str] = set()
         self._processed_auto_trade_keys: set[str] = set()
+        self._cycle_step_counts: dict[str, int] = {}
         self._last_bankroll_sync_result: dict[str, Any] = {
             "correlation_id": "",
             "settlement_detected": False,
@@ -132,6 +133,26 @@ class RuntimeController:
             "risk_status": "RISK_NOT_EVALUATED",
             "submitted": False,
             "reason": "auto_trade_not_triggered",
+        }
+        self._last_cycle_executor_result: dict[str, Any] = {
+            "correlation_id": "",
+            "source_settlement_correlation_id": "",
+            "cycle_executor_enabled": False,
+            "cycle_active": False,
+            "progression_allowed": False,
+            "bankroll_sync_status": "NOT_SETTLED",
+            "money_management_status": "MM_STOP_CONTEXT_MISSING",
+            "next_stake": 0.0,
+            "cycle_step_index": 0,
+            "max_steps_reached": False,
+            "kill_switch_active": False,
+            "anomaly_pause_active": False,
+            "auto_trade_enabled": False,
+            "auto_trade_status": "AUTO_TRADE_NOT_ELIGIBLE",
+            "cycle_executor_status": "CYCLE_EXECUTOR_DISABLED",
+            "risk_status": "RISK_NOT_EVALUATED",
+            "submitted": False,
+            "reason": "cycle_executor_not_triggered",
         }
 
         self._subscribe_bus()
@@ -1311,6 +1332,7 @@ class RuntimeController:
         self.bus.publish("BANKROLL_SYNC_RESULT", dict(sync_result))
         auto_trade_result = self._evaluate_and_maybe_submit_auto_next_trade(payload=payload, sync_result=sync_result)
         self._last_auto_trade_result = dict(auto_trade_result)
+        self._last_cycle_executor_result = dict(auto_trade_result)
         self.bus.publish("AUTO_TRADE_MM_RESULT", dict(auto_trade_result))
 
         current_drawdown = self.risk_desk.drawdown_pct()
@@ -1451,6 +1473,12 @@ class RuntimeController:
         result: dict[str, Any] = {
             "correlation_id": f"auto-next::{source_corr_id}" if source_corr_id else "",
             "source_settlement_correlation_id": source_corr_id,
+            "cycle_executor_enabled": bool(payload.get("cycle_executor_enabled", False)),
+            "cycle_step_index": 0,
+            "max_steps_reached": False,
+            "kill_switch_active": bool(self._is_kill_switch_active()),
+            "anomaly_pause_active": False,
+            "cycle_executor_status": "CYCLE_NOT_ELIGIBLE",
             "bankroll_sync_status": str(sync_result.get("bankroll_sync_status") or "NOT_SETTLED"),
             "money_management_status": "MM_STOP_CONTEXT_MISSING",
             "cycle_active": False,
@@ -1463,22 +1491,40 @@ class RuntimeController:
             "reason": "",
         }
 
+        if not result["cycle_executor_enabled"]:
+            result["auto_trade_status"] = "AUTO_TRADE_DISABLED"
+            result["cycle_executor_status"] = "CYCLE_EXECUTOR_DISABLED"
+            result["reason"] = "cycle_executor_disabled"
+            return result
+
+        if result["kill_switch_active"]:
+            result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_MM_BLOCKED"
+            result["cycle_executor_status"] = "CYCLE_STOPPED_KILL_SWITCH"
+            result["reason"] = "kill_switch_active"
+            if settlement_key:
+                self._processed_auto_trade_keys.add(settlement_key)
+            return result
+
         if result["bankroll_sync_status"] != "SYNC_SUCCESS":
             if result["bankroll_sync_status"] == "SYNC_SKIPPED_DUPLICATE":
                 result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_DUPLICATE"
+                result["cycle_executor_status"] = "CYCLE_SKIPPED_DUPLICATE"
                 result["reason"] = "settlement_already_processed"
             else:
                 result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_SYNC_FAILED"
+                result["cycle_executor_status"] = "CYCLE_SKIPPED_SYNC_FAILED"
                 result["reason"] = "bankroll_sync_not_success"
             return result
 
         if not result["auto_trade_enabled"]:
             result["auto_trade_status"] = "AUTO_TRADE_DISABLED"
+            result["cycle_executor_status"] = "CYCLE_NOT_ELIGIBLE"
             result["reason"] = "auto_trade_disabled"
             return result
 
         if settlement_key and settlement_key in self._processed_auto_trade_keys:
             result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_DUPLICATE"
+            result["cycle_executor_status"] = "CYCLE_SKIPPED_DUPLICATE"
             result["reason"] = "settlement_auto_trade_already_evaluated"
             return result
 
@@ -1508,9 +1554,42 @@ class RuntimeController:
         result["cycle_active"] = bool(decision.cycle_active)
         result["progression_allowed"] = bool(decision.progression_allowed)
         result["next_stake"] = float(decision.next_stake or 0.0)
+        cycle_id = str(getattr(decision, "cycle_id", "") or "")
+        current_step_index = int(self._cycle_step_counts.get(cycle_id, 0) or 0)
+        result["cycle_step_index"] = current_step_index
+
+        max_steps = mm_context.get("max_steps") if isinstance(mm_context, dict) else None
+        max_steps_value = None
+        try:
+            if max_steps is not None:
+                max_steps_value = int(max_steps)
+        except Exception:
+            max_steps_value = None
+        if max_steps_value is not None and max_steps_value >= 0 and current_step_index >= max_steps_value:
+            result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_MM_BLOCKED"
+            result["cycle_executor_status"] = "CYCLE_STOPPED_MAX_STEPS"
+            result["max_steps_reached"] = True
+            result["reason"] = "max_steps_reached"
+            if settlement_key:
+                self._processed_auto_trade_keys.add(settlement_key)
+            return result
+        if max_steps_value is not None and max_steps_value >= 0 and not cycle_id:
+            result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_MM_BLOCKED"
+            result["cycle_executor_status"] = "CYCLE_STOPPED_MAX_STEPS"
+            result["max_steps_reached"] = True
+            result["reason"] = "max_steps_requires_cycle_id"
+            if settlement_key:
+                self._processed_auto_trade_keys.add(settlement_key)
+            return result
 
         if decision.money_management_status != "MM_CONTINUE_ALLOWED":
             result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_MM_BLOCKED"
+            if decision.money_management_status == "MM_STOP_TARGET_REACHED":
+                result["cycle_executor_status"] = "CYCLE_STOPPED_TARGET_REACHED"
+            elif decision.money_management_status == "MM_STOP_CYCLE_CLOSED":
+                result["cycle_executor_status"] = "CYCLE_STOPPED_CLOSED"
+            else:
+                result["cycle_executor_status"] = "CYCLE_SKIPPED_MM_BLOCKED"
             result["reason"] = str(decision.stop_reason or "mm_blocked")
             if settlement_key:
                 self._processed_auto_trade_keys.add(settlement_key)
@@ -1519,6 +1598,7 @@ class RuntimeController:
         if not math.isfinite(result["next_stake"]) or result["next_stake"] <= 0.0:
             result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_INVALID_STAKE"
             result["money_management_status"] = "MM_STOP_INVALID_STAKE"
+            result["cycle_executor_status"] = "CYCLE_SKIPPED_INVALID_STAKE"
             result["reason"] = "invalid_next_stake"
             if settlement_key:
                 self._processed_auto_trade_keys.add(settlement_key)
@@ -1528,6 +1608,7 @@ class RuntimeController:
         result["risk_status"] = "RISK_APPROVED" if risk_allowed else "RISK_REJECTED"
         if not risk_allowed:
             result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_RISK_REJECTED"
+            result["cycle_executor_status"] = "CYCLE_SKIPPED_RISK_REJECTED"
             result["reason"] = risk_reason
             if settlement_key:
                 self._processed_auto_trade_keys.add(settlement_key)
@@ -1535,6 +1616,7 @@ class RuntimeController:
 
         if self._has_open_trade_conflict(decision.table_id):
             result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_EXISTING_INFLIGHT"
+            result["cycle_executor_status"] = "CYCLE_SKIPPED_EXISTING_INFLIGHT"
             result["reason"] = "existing_inflight_trade"
             if settlement_key:
                 self._processed_auto_trade_keys.add(settlement_key)
@@ -1544,6 +1626,7 @@ class RuntimeController:
             submit_payload = self._build_auto_trade_payload(signal=signal or {}, decision_stake=result["next_stake"])
         except Exception as exc:
             result["auto_trade_status"] = "AUTO_TRADE_SUBMIT_FAILED"
+            result["cycle_executor_status"] = "CYCLE_SUBMIT_FAILED"
             result["reason"] = f"submit_payload_invalid:{type(exc).__name__}"
             if settlement_key:
                 self._processed_auto_trade_keys.add(settlement_key)
@@ -1570,8 +1653,12 @@ class RuntimeController:
 
         self.bus.publish("CMD_QUICK_BET", submit_payload)
         result["auto_trade_status"] = "AUTO_TRADE_SUBMITTED"
+        result["cycle_executor_status"] = "CYCLE_STEP_SUBMITTED"
         result["submitted"] = True
         result["reason"] = "submitted"
+        if cycle_id:
+            self._cycle_step_counts[cycle_id] = current_step_index + 1
+            result["cycle_step_index"] = self._cycle_step_counts[cycle_id]
         if settlement_key:
             self._processed_auto_trade_keys.add(settlement_key)
         return result
@@ -1667,6 +1754,7 @@ class RuntimeController:
         data["account_funds"] = funds
         data["bankroll_sync"] = dict(self._last_bankroll_sync_result or {})
         data["auto_trade_mm"] = dict(self._last_auto_trade_result or {})
+        data["cycle_executor"] = dict(self._last_cycle_executor_result or {})
         if self.streaming_feed is not None:
             try:
                 data["streaming_feed"] = self.streaming_feed.status()

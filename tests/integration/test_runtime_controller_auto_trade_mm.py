@@ -103,6 +103,7 @@ def test_runtime_controller_emits_structured_auto_trade_result_payload():
             "correlation_id": "corr-integration-1",
             "pnl": 10.0,
             "auto_trade_enabled": True,
+            "cycle_executor_enabled": True,
             "mm_context": {
                 "cycle_active": True,
                 "cycle_id": "cycle-1",
@@ -192,6 +193,7 @@ def test_runtime_controller_auto_trade_activates_table_before_publish():
             "correlation_id": "corr-integration-activate",
             "pnl": 10.0,
             "auto_trade_enabled": True,
+            "cycle_executor_enabled": True,
             "mm_context": {
                 "cycle_active": True,
                 "cycle_id": "cycle-activate",

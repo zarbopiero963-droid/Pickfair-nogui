@@ -126,7 +126,7 @@ def test_auto_trade_happy_path_submits_exactly_one_trade():
     rc, bus = _make_controller(responses=[{"available": 150.0}, {"available": 999.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
-    payload = _close_payload(auto_trade_enabled=True)
+    payload = _close_payload(auto_trade_enabled=True, cycle_executor_enabled=True)
 
     rc._on_close_position(payload)
     rc._on_close_position(payload)
@@ -141,7 +141,7 @@ def test_auto_trade_skips_on_bankroll_sync_failed():
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
 
-    rc._on_close_position(_close_payload(auto_trade_enabled=True))
+    rc._on_close_position(_close_payload(auto_trade_enabled=True, cycle_executor_enabled=True))
 
     assert rc._last_auto_trade_result["auto_trade_status"] == "AUTO_TRADE_SKIPPED_SYNC_FAILED"
     assert rc._last_auto_trade_result["submitted"] is False
@@ -154,6 +154,7 @@ def test_auto_trade_skips_when_mm_blocks_progression():
 
     payload = _close_payload(
         auto_trade_enabled=True,
+        cycle_executor_enabled=True,
         mm_context={
             "cycle_active": False,
             "cycle_id": "cycle-stop",
@@ -181,7 +182,7 @@ def test_auto_trade_skips_invalid_next_stake(monkeypatch):
         table_id = 1
 
     monkeypatch.setattr(rc.mm, "evaluate_next_trade_after_settlement", lambda **_kwargs: _Decision())
-    rc._on_close_position(_close_payload(auto_trade_enabled=True))
+    rc._on_close_position(_close_payload(auto_trade_enabled=True, cycle_executor_enabled=True))
 
     assert rc._last_auto_trade_result["auto_trade_status"] == "AUTO_TRADE_SKIPPED_INVALID_STAKE"
     assert rc._last_auto_trade_result["money_management_status"] == "MM_STOP_INVALID_STAKE"
@@ -192,7 +193,7 @@ def test_auto_trade_skips_when_risk_rejects_runtime_not_active():
     rc.mode = RuntimeMode.STOPPED
     rc.risk_desk.sync_bankroll(100.0)
 
-    rc._on_close_position(_close_payload(auto_trade_enabled=True))
+    rc._on_close_position(_close_payload(auto_trade_enabled=True, cycle_executor_enabled=True))
 
     assert rc._last_auto_trade_result["auto_trade_status"] == "AUTO_TRADE_SKIPPED_RISK_REJECTED"
     assert rc._last_auto_trade_result["risk_status"] == "RISK_REJECTED"
@@ -213,6 +214,7 @@ def test_auto_trade_skips_on_existing_inflight_conflict():
     rc._on_close_position(
         _close_payload(
             auto_trade_enabled=True,
+            cycle_executor_enabled=True,
             mm_context={
                 "cycle_active": True,
                 "table_id": 2,
@@ -232,6 +234,7 @@ def test_auto_trade_submit_failure_returns_structured_status():
 
     payload = _close_payload(
         auto_trade_enabled=True,
+        cycle_executor_enabled=True,
         mm_context={
             "cycle_active": True,
             "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
