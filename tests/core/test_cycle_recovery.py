@@ -291,6 +291,33 @@ def test_recovery_checkpoint_defaults_to_restore_only_without_resume_submit():
     assert not any(topic == "CMD_QUICK_BET" for topic, _ in bus.events)
 
 
+def test_startup_restore_only_never_emits_cmd_quick_bet_without_explicit_resume_enable():
+    rc, bus, db = _make_controller(responses=[{"available": 150.0}])
+    payload = _close_payload(
+        correlation_id="corr-startup-no-autofire",
+        event_key="evt-startup-no-autofire",
+        batch_id="batch-startup-no-autofire",
+        resume_submit_enabled=False,
+    )
+    key = rc._build_bankroll_sync_key(payload)
+    db.upsert_cycle_recovery_checkpoint(
+        key,
+        {
+            "checkpoint_stage": "BANKROLL_SYNC_DONE",
+            "next_trade_submission_status": "NOT_ATTEMPTED",
+            "bankroll_sync_status": "SYNC_SUCCESS",
+            "is_ambiguous": False,
+        },
+    )
+
+    rc._on_close_position(payload)
+
+    assert rc._last_cycle_executor_result["recovery_status"] == "RECOVERY_READY_NO_SUBMIT"
+    assert rc._last_cycle_executor_result["submitted"] is False
+    assert rc._last_cycle_executor_result["reason"] == "resume_submit_disabled"
+    assert not any(topic == "CMD_QUICK_BET" for topic, _ in bus.events)
+
+
 def test_recovery_checkpoint_resume_submit_submits_one_step_when_enabled():
     rc, bus, db = _make_controller(responses=[{"available": 150.0}])
     payload = _close_payload(
