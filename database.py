@@ -183,6 +183,39 @@ class Database:
         with self.transaction() as conn:
             for stmt in SCHEMA_DDL:
                 conn.execute(stmt)
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cycle_recovery_checkpoints (
+                    settlement_key TEXT PRIMARY KEY,
+                    settlement_correlation_id TEXT NOT NULL DEFAULT '',
+                    cycle_id TEXT NOT NULL DEFAULT '',
+                    table_id INTEGER,
+                    strategy_context_json TEXT NOT NULL DEFAULT '{}',
+                    checkpoint_stage TEXT NOT NULL DEFAULT 'SETTLEMENT_DETECTED',
+                    bankroll_sync_status TEXT NOT NULL DEFAULT 'NOT_SETTLED',
+                    money_management_status TEXT NOT NULL DEFAULT 'MM_STOP_CONTEXT_MISSING',
+                    cycle_active INTEGER NOT NULL DEFAULT 0,
+                    progression_allowed INTEGER NOT NULL DEFAULT 0,
+                    next_stake REAL NOT NULL DEFAULT 0.0,
+                    step_index INTEGER NOT NULL DEFAULT 0,
+                    round_index INTEGER NOT NULL DEFAULT 0,
+                    next_trade_submission_status TEXT NOT NULL DEFAULT 'NOT_ATTEMPTED',
+                    idempotency_key TEXT NOT NULL DEFAULT '',
+                    reason TEXT NOT NULL DEFAULT '',
+                    is_ambiguous INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cycle_checkpoint_corr_id "
+                "ON cycle_recovery_checkpoints(settlement_correlation_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cycle_checkpoint_stage "
+                "ON cycle_recovery_checkpoints(checkpoint_stage)"
+            )
 
         # =========================================================
     # SETTINGS / CREDENTIALS
@@ -652,6 +685,148 @@ class Database:
 
     def load_simulation_state(self, state_key: str = "default") -> Dict[str, Any]:
         return self.get_simulation_state(state_key=state_key)
+
+    # =========================================================
+    # CYCLE RECOVERY CHECKPOINTS
+    # =========================================================
+    def upsert_cycle_recovery_checkpoint(self, settlement_key: str, payload: Dict[str, Any]) -> None:
+        key = str(settlement_key or "").strip()
+        if not key:
+            raise RuntimeError("settlement_key mancante")
+
+        body = dict(payload or {})
+        now = self._utc_now()
+        existing = self.get_cycle_recovery_checkpoint(key)
+        created_at = str((existing or {}).get("created_at") or now)
+
+        self._execute(
+            """
+            INSERT INTO cycle_recovery_checkpoints(
+                settlement_key,
+                settlement_correlation_id,
+                cycle_id,
+                table_id,
+                strategy_context_json,
+                checkpoint_stage,
+                bankroll_sync_status,
+                money_management_status,
+                cycle_active,
+                progression_allowed,
+                next_stake,
+                step_index,
+                round_index,
+                next_trade_submission_status,
+                idempotency_key,
+                reason,
+                is_ambiguous,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(settlement_key) DO UPDATE SET
+                settlement_correlation_id = excluded.settlement_correlation_id,
+                cycle_id = excluded.cycle_id,
+                table_id = excluded.table_id,
+                strategy_context_json = excluded.strategy_context_json,
+                checkpoint_stage = excluded.checkpoint_stage,
+                bankroll_sync_status = excluded.bankroll_sync_status,
+                money_management_status = excluded.money_management_status,
+                cycle_active = excluded.cycle_active,
+                progression_allowed = excluded.progression_allowed,
+                next_stake = excluded.next_stake,
+                step_index = excluded.step_index,
+                round_index = excluded.round_index,
+                next_trade_submission_status = excluded.next_trade_submission_status,
+                idempotency_key = excluded.idempotency_key,
+                reason = excluded.reason,
+                is_ambiguous = excluded.is_ambiguous,
+                updated_at = excluded.updated_at
+            """,
+            (
+                key,
+                str(body.get("settlement_correlation_id") or ""),
+                str(body.get("cycle_id") or ""),
+                None if body.get("table_id") in (None, "") else self._safe_int(body.get("table_id"), 0),
+                self._safe_json_dumps(body.get("strategy_context") or {}),
+                str(body.get("checkpoint_stage") or "SETTLEMENT_DETECTED"),
+                str(body.get("bankroll_sync_status") or "NOT_SETTLED"),
+                str(body.get("money_management_status") or "MM_STOP_CONTEXT_MISSING"),
+                self._safe_bool_int(body.get("cycle_active", False)),
+                self._safe_bool_int(body.get("progression_allowed", False)),
+                self._safe_float(body.get("next_stake"), 0.0),
+                self._safe_int(body.get("step_index"), 0),
+                self._safe_int(body.get("round_index"), 0),
+                str(body.get("next_trade_submission_status") or "NOT_ATTEMPTED"),
+                str(body.get("idempotency_key") or key),
+                str(body.get("reason") or ""),
+                self._safe_bool_int(body.get("is_ambiguous", False)),
+                created_at,
+                now,
+            ),
+        )
+
+    def get_cycle_recovery_checkpoint(self, settlement_key: str) -> Optional[Dict[str, Any]]:
+        key = str(settlement_key or "").strip()
+        if not key:
+            return None
+        row = self._execute(
+            "SELECT * FROM cycle_recovery_checkpoints WHERE settlement_key = ? LIMIT 1",
+            (key,),
+            fetchone=True,
+            commit=False,
+        )
+        if not row:
+            return None
+        item = dict(row)
+        item["strategy_context"] = self._safe_json_loads(item.get("strategy_context_json"), {})
+        item["table_id"] = None if item.get("table_id") is None else self._safe_int(item.get("table_id"), 0)
+        item["cycle_active"] = bool(item.get("cycle_active"))
+        item["progression_allowed"] = bool(item.get("progression_allowed"))
+        item["is_ambiguous"] = bool(item.get("is_ambiguous"))
+        item["next_stake"] = self._safe_float(item.get("next_stake"), 0.0)
+        item["step_index"] = self._safe_int(item.get("step_index"), 0)
+        item["round_index"] = self._safe_int(item.get("round_index"), 0)
+        return item
+
+    def get_cycle_recovery_state(self, settlement_key: str) -> Dict[str, Any]:
+        checkpoint = self.get_cycle_recovery_checkpoint(settlement_key)
+        if checkpoint is None:
+            return {
+                "exists": False,
+                "processed": False,
+                "bankroll_synced": False,
+                "submit_attempted": False,
+                "submit_confirmed": False,
+                "ambiguous": False,
+                "stage": "",
+                "checkpoint": None,
+            }
+
+        stage = str(checkpoint.get("checkpoint_stage") or "")
+        bankroll_sync_status = str(checkpoint.get("bankroll_sync_status") or "")
+        submit_status = str(checkpoint.get("next_trade_submission_status") or "")
+        ambiguous = bool(checkpoint.get("is_ambiguous"))
+        submit_attempted = submit_status in {"ATTEMPTED", "SUBMITTED", "CONFIRMED", "AMBIGUOUS"}
+        submit_confirmed = submit_status in {"SUBMITTED", "CONFIRMED"}
+        processed = stage in {
+            "SETTLEMENT_DETECTED",
+            "BANKROLL_SYNC_DONE",
+            "MM_DECISION_DONE",
+            "NEXT_TRADE_SUBMIT_ATTEMPTED",
+            "NEXT_TRADE_SUBMIT_CONFIRMED",
+            "CYCLE_BLOCKED",
+            "CYCLE_AMBIGUOUS",
+        }
+        return {
+            "exists": True,
+            "processed": processed,
+            "bankroll_synced": bankroll_sync_status == "SYNC_SUCCESS",
+            "submit_attempted": submit_attempted,
+            "submit_confirmed": submit_confirmed,
+            "ambiguous": ambiguous or (submit_attempted and not submit_confirmed),
+            "stage": stage,
+            "checkpoint": checkpoint,
+        }
 
     def save_simulation_bet(self, payload: Dict[str, Any]) -> None:
         now = self._utc_now()

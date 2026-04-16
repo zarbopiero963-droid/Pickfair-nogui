@@ -86,3 +86,40 @@ def test_database_pattern_state_persistence_roundtrip():
 
         assert restored == pattern_state
         assert loaded == pattern_state
+
+
+@pytest.mark.integration
+def test_database_cycle_recovery_checkpoint_roundtrip():
+    with tempfile.TemporaryDirectory() as td:
+        db = Database(str(Path(td) / "db.sqlite"))
+        key = "batch-4a|evt-4a|1|bet-1"
+        payload = {
+            "settlement_correlation_id": "corr-4a",
+            "cycle_id": "cycle-4a",
+            "table_id": 1,
+            "strategy_context": {"mode": "restore_only"},
+            "checkpoint_stage": "MM_DECISION_DONE",
+            "bankroll_sync_status": "SYNC_SUCCESS",
+            "money_management_status": "MM_CONTINUE_ALLOWED",
+            "cycle_active": True,
+            "progression_allowed": True,
+            "next_stake": 7.5,
+            "step_index": 2,
+            "round_index": 0,
+            "next_trade_submission_status": "ATTEMPTED",
+            "idempotency_key": key,
+            "reason": "mm_decision_done",
+            "is_ambiguous": True,
+        }
+        db.upsert_cycle_recovery_checkpoint(key, payload)
+        loaded = db.get_cycle_recovery_checkpoint(key)
+        state = db.get_cycle_recovery_state(key)
+
+        assert loaded is not None
+        assert loaded["settlement_correlation_id"] == "corr-4a"
+        assert loaded["checkpoint_stage"] == "MM_DECISION_DONE"
+        assert loaded["next_trade_submission_status"] == "ATTEMPTED"
+        assert loaded["strategy_context"]["mode"] == "restore_only"
+        assert state["exists"] is True
+        assert state["processed"] is True
+        assert state["ambiguous"] is True
