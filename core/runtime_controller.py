@@ -1496,7 +1496,10 @@ class RuntimeController:
     @staticmethod
     def _extract_settlement_contract(payload: dict) -> dict[str, float | str]:
         body = dict(payload or {})
-        net_pnl = body.get("net_pnl", body.get("pnl", 0.0))
+        if "net_pnl" in body and body.get("net_pnl") is not None:
+            net_pnl = body.get("net_pnl")
+        else:
+            net_pnl = body.get("pnl", 0.0)
         net_pnl_f = float(net_pnl or 0.0)
         gross_pnl_f = float(body.get("gross_pnl", net_pnl_f) or 0.0)
         commission_amount_f = float(body.get("commission_amount", (gross_pnl_f - net_pnl_f)) or 0.0)

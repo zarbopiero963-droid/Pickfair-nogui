@@ -147,6 +147,34 @@ def test_runtime_controller_close_payload_preserves_settlement_provenance_fields
 
 
 @pytest.mark.integration
+def test_runtime_controller_close_payload_falls_back_to_legacy_pnl_when_net_is_null():
+    rc, bus = _make_controller(responses=[{"available": 140.0}])
+    rc.risk_desk.sync_bankroll(100.0)
+
+    rc._on_close_position(
+        {
+            "event_key": "evt-null-net",
+            "table_id": 1,
+            "batch_id": "batch-null-net",
+            "correlation_id": "corr-null-net",
+            "gross_pnl": 13.0,
+            "commission_amount": 0.5,
+            "net_pnl": None,
+            "commission_pct": 4.5,
+            "settlement_source": "test_settlement",
+            "pnl": 12.5,
+        }
+    )
+
+    closed = [payload for topic, payload in bus.events if topic == "BATCH_POSITION_CLOSED"]
+    assert len(closed) == 1
+    payload = closed[0]
+    assert payload["pnl"] == 12.5
+    assert payload["net_pnl"] == 12.5
+    assert float(rc.risk_desk.realized_pnl) == 12.5
+
+
+@pytest.mark.integration
 def test_runtime_controller_non_settlement_paths_do_not_trigger_bankroll_sync():
     rc, _ = _make_controller(responses=[{"available": 777.0}])
     rc.risk_desk.sync_bankroll(100.0)
