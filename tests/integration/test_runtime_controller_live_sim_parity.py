@@ -934,7 +934,7 @@ def test_runtime_controller_settlement_contract_extraction_prefers_explicit_net_
 
 
 @pytest.mark.integration
-def test_runtime_controller_settlement_contract_extraction_falls_back_when_net_is_null():
+def test_runtime_controller_settlement_contract_extraction_rejects_legacy_payload_when_net_is_null():
     extracted = RuntimeController._extract_settlement_contract(
         {
             "gross_pnl": 13.0,
@@ -951,10 +951,11 @@ def test_runtime_controller_settlement_contract_extraction_falls_back_when_net_i
     assert extracted["net_pnl"] == 12.5
     assert extracted["commission_pct"] == 4.5
     assert extracted["settlement_source"] == "integration_test"
-    assert extracted["settlement_kind"] == "realized_settlement"
-    assert extracted["settlement_authority"] == "legacy_fallback"
-    assert extracted["settlement_validation"] == "degraded_legacy"
-    assert extracted["settlement_acceptance"] == "DEGRADED_LEGACY_SETTLEMENT"
+    assert extracted["settlement_kind"] == "legacy_compat"
+    assert extracted["settlement_authority"] == "legacy_compat"
+    assert extracted["settlement_validation"] == "rejected_non_canonical_settlement"
+    assert extracted["settlement_acceptance"] == "REJECT_NON_CANONICAL_SETTLEMENT"
+    assert extracted["reason"] == "LEGACY_SETTLEMENT_NON_AUTHORITATIVE"
 
 
 @pytest.mark.integration

@@ -1539,7 +1539,7 @@ class RuntimeController:
         legacy_net_raw = body.get("pnl") if "pnl" in body else None
         has_explicit_net = explicit_net_raw is not None
         has_legacy_net = legacy_net_raw is not None
-        has_explicit_contract = all(
+        has_canonical_contract = all(
             k in body and body.get(k) is not None
             for k in (
                 "gross_pnl",
@@ -1550,16 +1550,16 @@ class RuntimeController:
                 "settlement_kind",
             )
         )
-        if has_explicit_contract and has_explicit_net:
+        if has_canonical_contract and has_explicit_net:
             net_pnl = explicit_net_raw
             settlement_authority = "explicit_contract"
             settlement_validation = "accepted"
             settlement_acceptance = "ACCEPT_REALIZED_SETTLEMENT"
         elif has_legacy_net:
             net_pnl = legacy_net_raw
-            settlement_authority = "legacy_fallback"
-            settlement_validation = "degraded_legacy"
-            settlement_acceptance = "DEGRADED_LEGACY_SETTLEMENT"
+            settlement_authority = "legacy_compat"
+            settlement_validation = "rejected_non_canonical_settlement"
+            settlement_acceptance = "REJECT_NON_CANONICAL_SETTLEMENT"
         else:
             net_pnl = 0.0
             settlement_authority = "rejected_ambiguous"
@@ -1585,15 +1585,21 @@ class RuntimeController:
         settlement_source = str(
             body.get("settlement_source")
             or body.get("source")
-            or ("legacy_compat" if settlement_authority == "legacy_fallback" else "")
+            or ("legacy_compat" if settlement_authority == "legacy_compat" else "")
         )
-        settlement_kind = str(body.get("settlement_kind") or ("realized_settlement" if settlement_authority == "legacy_fallback" else ""))
+        settlement_kind = str(
+            body.get("settlement_kind")
+            or ("legacy_compat" if settlement_authority == "legacy_compat" else "")
+        )
         reason = ""
-        if settlement_authority == "legacy_fallback":
+        if settlement_authority == "legacy_compat":
             if not settlement_source:
                 settlement_source = "legacy_compat"
-            settlement_validation = "degraded_legacy"
-            settlement_acceptance = "DEGRADED_LEGACY_SETTLEMENT"
+            if not settlement_kind:
+                settlement_kind = "legacy_compat"
+            settlement_validation = "rejected_non_canonical_settlement"
+            reason = "LEGACY_SETTLEMENT_NON_AUTHORITATIVE"
+            settlement_acceptance = "REJECT_NON_CANONICAL_SETTLEMENT"
         elif settlement_authority.startswith("rejected"):
             reason = "MISSING_CANONICAL_SETTLEMENT_FIELDS"
             settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"

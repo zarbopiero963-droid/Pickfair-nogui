@@ -119,6 +119,15 @@ def test_dutching_commission_reduces_net_profits_only():
 
 @pytest.mark.unit
 @pytest.mark.guardrail
+def test_dutching_helper_output_is_not_realized_settlement_authority_contract():
+    result = calculate_dutching_stakes([2.4, 3.6, 5.2], 75, commission=4.5)
+    assert "settlement_source" not in result
+    assert "settlement_kind" not in result
+    assert "commission_pct" not in result
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
 def test_dutching_equal_profit_is_tolerance_bounded_with_italy_commission_reference():
     result = calculate_dutching_stakes([3.0, 4.0, 6.0], 120, commission=4.5)
 
