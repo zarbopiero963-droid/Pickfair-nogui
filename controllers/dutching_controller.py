@@ -299,6 +299,19 @@ class DutchingController:
             float(avg_net_profit),
         )
 
+    def _min_net_profit(self, results: List[Dict[str, Any]], avg_net_profit: float) -> float:
+        net_values: List[float] = []
+        for item in results:
+            if "profitIfWinsNet" not in item:
+                continue
+            try:
+                net_values.append(float(item.get("profitIfWinsNet", 0.0) or 0.0))
+            except Exception:
+                continue
+        if net_values and len(net_values) == len(results):
+            return min(net_values)
+        return float(avg_net_profit)
+
     def _batch_manager_create(
         self,
         batch_id: str,
@@ -416,6 +429,7 @@ class DutchingController:
             event_key = self._build_event_key(payload, results)
             batch_id = self._build_batch_id(payload, results)
             batch_exposure = self._compute_batch_exposure(results)
+            min_net_profit = self._min_net_profit(results, avg_net_profit)
 
             return self._ok(
                 dry_run=True,
@@ -429,7 +443,7 @@ class DutchingController:
                 batch_id=batch_id,
                 batch_exposure=round(batch_exposure, 2),
                 commission_pct=self._resolve_commission_pct(payload),
-                profitable_net=bool(float(avg_net_profit) > 0.0),
+                profitable_net=bool(float(min_net_profit) > 0.0),
             )
         except Exception as exc:
             logger.exception("Errore preview dutching")
@@ -460,6 +474,7 @@ class DutchingController:
         event_key = self._build_event_key(payload, results)
         batch_id = self._build_batch_id(payload, results)
         batch_exposure = self._compute_batch_exposure(results)
+        min_net_profit = self._min_net_profit(results, avg_net_profit)
 
         self._cleanup_batches()
         if batch_id in self._recent_batches:
@@ -535,7 +550,7 @@ class DutchingController:
             batch_id=batch_id,
             batch_exposure=float(batch_exposure),
             commission_pct=self._resolve_commission_pct(payload),
-            profitable_net=bool(float(avg_net_profit) > 0.0),
+            profitable_net=bool(float(min_net_profit) > 0.0),
         )
 
     # =========================================================
