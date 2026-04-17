@@ -75,6 +75,23 @@ def test_simulation_settlement_requires_market_id():
     with pytest.raises(ValueError, match="market_id is required"):
         broker.record_realized_settlement(10.0, market_id="")
 
+
+@pytest.mark.integration
+def test_simulation_legacy_global_commission_ledger_is_migrated_to_first_explicit_market():
+    broker = SimulationBroker(starting_balance=1000.0, commission_pct=4.5)
+    broker.state.market_commission_ledger["__GLOBAL__"] = {"gross": 100.0, "commission": 4.5}
+
+    settlement = broker.record_realized_settlement(-100.0, market_id="1.104")
+
+    assert settlement["market_id"] == "1.104"
+    assert settlement["market_net_gross"] == 0.0
+    assert settlement["market_commission_amount_total"] == 0.0
+    assert settlement["commission_amount"] == pytest.approx(-4.5)
+    assert settlement["net_pnl"] == pytest.approx(-95.5)
+    assert "__GLOBAL__" not in broker.state.market_commission_ledger
+    assert broker.state.market_commission_ledger["1.104"]["gross"] == 0.0
+    assert broker.state.market_commission_ledger["1.104"]["commission"] == 0.0
+
 @pytest.mark.integration
 def test_simulation_same_market_multi_leg_commission_is_market_net_positive_once():
     broker = SimulationBroker(starting_balance=1000.0, commission_pct=4.5)

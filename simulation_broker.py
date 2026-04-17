@@ -593,6 +593,21 @@ class SimulationBroker:
         market_key = str(market_id or "").strip()
         if not market_key:
             raise ValueError("market_id is required for record_realized_settlement")
+        legacy_market_key = "__GLOBAL__"
+        if market_key != legacy_market_key and market_key not in self.state.market_commission_ledger:
+            legacy_row = self.state.market_commission_ledger.get(legacy_market_key)
+            if isinstance(legacy_row, dict):
+                non_legacy_market_keys = [
+                    str(k)
+                    for k in self.state.market_commission_ledger.keys()
+                    if str(k) and str(k) != legacy_market_key
+                ]
+                if not non_legacy_market_keys:
+                    self.state.market_commission_ledger[market_key] = {
+                        "gross": float(legacy_row.get("gross", 0.0) or 0.0),
+                        "commission": float(legacy_row.get("commission", 0.0) or 0.0),
+                    }
+                    self.state.market_commission_ledger.pop(legacy_market_key, None)
         market_row = self.state.market_commission_ledger.setdefault(
             market_key,
             {"gross": 0.0, "commission": 0.0},
