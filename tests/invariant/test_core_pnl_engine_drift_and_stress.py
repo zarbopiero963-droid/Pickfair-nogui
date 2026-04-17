@@ -70,6 +70,92 @@ def test_core_pnl_settlement_repeat_same_input_is_stable():
     assert all(v == first for v in values)
 
 
+@pytest.mark.invariant
+def test_core_pnl_commission_sign_semantics_are_explicit():
+    from pnl_engine import PnLEngine
+
+    engine = PnLEngine(commission_pct=4.5)
+
+    # Positive gross -> commission applied
+    positive = engine.calculate_position_pnl(
+        market_id="1.305",
+        selection_id=10,
+        side="BACK",
+        entry_price=2.0,
+        exit_price=3.0,
+        size=100.0,
+    )
+    assert positive.gross_pnl > 0.0
+    assert positive.commission_amount > 0.0
+
+    # Zero gross -> no commission
+    zero = engine.calculate_position_pnl(
+        market_id="1.305",
+        selection_id=10,
+        side="BACK",
+        entry_price=2.0,
+        exit_price=2.0,
+        size=100.0,
+    )
+    assert zero.gross_pnl == 0.0
+    assert zero.commission_amount == 0.0
+    assert zero.net_pnl == 0.0
+
+    # Negative gross -> no commission
+    negative = engine.calculate_position_pnl(
+        market_id="1.305",
+        selection_id=10,
+        side="BACK",
+        entry_price=2.0,
+        exit_price=1.5,
+        size=100.0,
+    )
+    assert negative.gross_pnl < 0.0
+    assert negative.commission_amount == 0.0
+    assert negative.net_pnl == negative.gross_pnl
+
+
+@pytest.mark.invariant
+def test_event_driven_pnl_commission_sign_semantics_match_contract():
+    engine = EventDrivenPnLEngine(bus=None, commission_pct=4.5)
+
+    pos = {
+        "event_key": "E-SIGN",
+        "market_id": "1.450",
+        "selection_id": 77,
+        "side": "BACK",
+        "price": 2.0,
+        "stake": 100.0,
+        "table_id": 1,
+        "batch_id": "B",
+    }
+
+    def _book(lay: float) -> dict:
+        return {
+            "marketId": "1.450",
+            "runners": [
+                {
+                    "selectionId": 77,
+                    "ex": {
+                        "availableToBack": [{"price": 2.0}],
+                        "availableToLay": [{"price": lay}],
+                    },
+                }
+            ],
+        }
+
+    pos_pnl = engine._calc(dict(pos), _book(1.5))
+    zero_pnl = engine._calc(dict(pos), _book(2.0))
+    neg_pnl = engine._calc(dict(pos), _book(2.5))
+
+    assert math.isfinite(pos_pnl)
+    assert math.isfinite(zero_pnl)
+    assert math.isfinite(neg_pnl)
+    assert abs(pos_pnl - 47.75) < 1e-12
+    assert zero_pnl == 0.0
+    assert abs(neg_pnl - (-50.0)) < 1e-12
+
+
 @pytest.mark.chaos
 def test_core_pnl_numeric_stress_extreme_ranges_are_finite():
     from pnl_engine import PnLEngine

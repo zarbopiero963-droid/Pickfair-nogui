@@ -96,12 +96,18 @@ class PnLEngine:
             else:
                 pnl = (back - entry) * stake
 
-            # 💰 commissione
-            pnl_net = pnl * (1 - self.commission)
+            # 💰 commissione applicata solo su profitto positivo
+            pnl_net = pnl - self._commission_amount(pnl)
 
             return float(pnl_net)
 
         return 0.0
+
+    def _commission_amount(self, gross_pnl: float) -> float:
+        gross_pnl = float(gross_pnl or 0.0)
+        if gross_pnl <= 0.0:
+            return 0.0
+        return gross_pnl * float(self.commission)
 
     # =========================================================
     # CLOSE
