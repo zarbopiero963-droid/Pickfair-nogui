@@ -28,6 +28,9 @@ class _Settings:
     def load_roserpina_config(self):
         cfg = RoserpinaConfig()
         cfg.anti_duplication_enabled = False
+        cfg.max_daily_loss = 100.0
+        cfg.max_drawdown_hard_stop_pct = 20.0
+        cfg.max_open_exposure = 250.0
         return cfg
 
     def load_market_data_config(self):

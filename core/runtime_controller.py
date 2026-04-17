@@ -433,6 +433,9 @@ class RuntimeController:
                 continue
 
             values[field_name] = parsed
+            if not math.isfinite(parsed):
+                invalid_fields.append(field_name)
+                continue
             if parsed <= 0.0:
                 invalid_fields.append(field_name)
                 continue

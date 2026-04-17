@@ -227,6 +227,27 @@ def test_live_readiness_with_explicit_hard_stop_config_passes_without_hard_stop_
     assert "LIVE_HARD_STOP_CONFIG_INVALID" not in readiness["blockers"]
 
 
+def test_live_readiness_missing_hard_stop_config_from_implicit_defaults_reports_missing_blocker():
+    rc = _make_runtime(
+        ready=True,
+        config=RoserpinaConfig(table_count=1),
+    )
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=True,
+    )
+
+    assert readiness["ready"] is False
+    assert "LIVE_HARD_STOP_CONFIG_MISSING" in readiness["blockers"]
+    assert set(readiness["details"]["hard_stop_config_state"]["missing_fields"]) == {
+        "max_daily_loss",
+        "max_drawdown_hard_stop_pct",
+        "max_open_exposure",
+    }
+
+
 def test_live_readiness_missing_daily_loss_reports_explicit_blocker():
     rc = _make_runtime(
         ready=True,
@@ -281,6 +302,43 @@ def test_live_readiness_missing_open_exposure_reports_explicit_blocker():
     ],
 )
 def test_live_readiness_invalid_hard_stop_values_report_explicit_blocker(
+    max_daily_loss,
+    max_drawdown_hard_stop_pct,
+    max_open_exposure,
+):
+    rc = _make_runtime(
+        ready=True,
+        config=RoserpinaConfig(
+            table_count=1,
+            max_daily_loss=max_daily_loss,
+            max_drawdown_hard_stop_pct=max_drawdown_hard_stop_pct,
+            max_open_exposure=max_open_exposure,
+        ),
+    )
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=True,
+    )
+
+    assert readiness["ready"] is False
+    assert "LIVE_HARD_STOP_CONFIG_INVALID" in readiness["blockers"]
+    assert readiness["details"]["hard_stop_config_state"]["invalid_fields"]
+
+
+@pytest.mark.parametrize(
+    ("max_daily_loss", "max_drawdown_hard_stop_pct", "max_open_exposure"),
+    [
+        (float("nan"), 20.0, 200.0),
+        (100.0, float("nan"), 200.0),
+        (100.0, 20.0, float("nan")),
+        (float("inf"), 20.0, 200.0),
+        (100.0, float("-inf"), 200.0),
+        (100.0, 20.0, float("inf")),
+    ],
+)
+def test_live_readiness_non_finite_hard_stop_values_are_invalid(
     max_daily_loss,
     max_drawdown_hard_stop_pct,
     max_open_exposure,
