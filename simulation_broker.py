@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from trading_config import enforce_betfair_italy_commission_pct
 
 logger = logging.getLogger(__name__)
 
@@ -578,9 +579,13 @@ class SimulationBroker:
         - nessuna commissione su pnl <= 0
         """
         gross = float(gross_pnl or 0.0)
+        commission_pct = enforce_betfair_italy_commission_pct(
+            self.state.commission_pct,
+            context="simulation_broker_settlement",
+        )
         commission = 0.0
-        if gross > 0.0 and self.state.commission_pct > 0.0:
-            commission = gross * (self.state.commission_pct / 100.0)
+        if gross > 0.0 and commission_pct > 0.0:
+            commission = gross * (commission_pct / 100.0)
         net = gross - commission
 
         self.state.realized_pnl += net
@@ -590,8 +595,9 @@ class SimulationBroker:
             "gross_pnl": gross,
             "commission_amount": commission,
             "net_pnl": net,
-            "commission_pct": float(self.state.commission_pct),
+            "commission_pct": float(commission_pct),
             "settlement_source": "simulation_broker",
+            "settlement_kind": "realized_settlement",
             "realized_pnl": self.state.realized_pnl,
             "realized_commission": self.state.realized_commission,
         }
@@ -603,6 +609,7 @@ class SimulationBroker:
             "net_pnl": float(settlement["net_pnl"]),
             "commission_pct": float(settlement["commission_pct"]),
             "settlement_source": str(settlement["settlement_source"]),
+            "settlement_kind": str(settlement["settlement_kind"]),
         }
         return settlement
 

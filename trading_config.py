@@ -15,6 +15,8 @@ MAX_WIN = 10000.0  # Vincita massima €10.000
 
 # Commission
 DEFAULT_COMMISSION = 4.5  # 4.5% Betfair Italia
+BETFAIR_ITALY_COMMISSION_PCT = 4.5
+BETFAIR_ITALY_COMMISSION_TOLERANCE = 1e-9
 
 # Session
 SESSION_TIMEOUT_MIN = 20  # Timeout sessione 20 minuti
@@ -50,3 +52,17 @@ LIQUIDITY_WARNING_ONLY = False
 # Live readiness safety gates
 # Default OFF: enables strict key-source enforcement for LIVE readiness only
 STRICT_LIVE_KEY_SOURCE_REQUIRED = False
+
+
+def enforce_betfair_italy_commission_pct(value: float, *, context: str) -> float:
+    """
+    Fail-closed policy guard for Betfair Italy commission semantics.
+    """
+    value_f = float(value)
+    expected = float(BETFAIR_ITALY_COMMISSION_PCT)
+    if abs(value_f - expected) > float(BETFAIR_ITALY_COMMISSION_TOLERANCE):
+        raise ValueError(
+            f"Betfair Italy commission policy violation ({context}): "
+            f"expected {expected}, got {value_f}"
+        )
+    return value_f

@@ -129,6 +129,7 @@ def test_runtime_controller_close_payload_preserves_settlement_provenance_fields
             "net_pnl": 19.1,
             "commission_pct": 4.5,
             "settlement_source": "test_settlement",
+            "settlement_kind": "realized_settlement",
             # conflicting legacy alias should not override explicit net_pnl
             "pnl": 999.0,
         }
@@ -142,7 +143,9 @@ def test_runtime_controller_close_payload_preserves_settlement_provenance_fields
     assert payload["net_pnl"] == 19.1
     assert payload["commission_pct"] == 4.5
     assert payload["settlement_source"] == "test_settlement"
+    assert payload["settlement_kind"] == "realized_settlement"
     assert payload["settlement_authority"] == "explicit_contract"
+    assert payload["settlement_validation"] == "accepted"
     assert payload["pnl"] == 19.1
     assert float(rc.risk_desk.realized_pnl) == 19.1
 
@@ -173,7 +176,9 @@ def test_runtime_controller_close_payload_falls_back_to_legacy_pnl_when_net_is_n
     assert payload["pnl"] == 12.5
     assert payload["net_pnl"] == 12.5
     assert payload["settlement_source"] == "test_settlement"
+    assert payload["settlement_kind"] == "realized_settlement"
     assert payload["settlement_authority"] == "legacy_fallback"
+    assert payload["settlement_validation"] == "degraded_legacy"
     assert float(rc.risk_desk.realized_pnl) == 12.5
 
 
@@ -246,3 +251,27 @@ def test_runtime_controller_close_updates_realized_pnl_even_with_exchange_first_
 
     assert float(rc.risk_desk.realized_pnl) == 7.0
     assert float(rc.risk_desk.bankroll_current) == 150.0
+
+
+@pytest.mark.integration
+def test_runtime_controller_rejects_ambiguous_contract_without_explicit_or_legacy_net():
+    rc, _ = _make_controller(responses=[{"available": 140.0}])
+    rc.risk_desk.sync_bankroll(100.0)
+
+    rc._on_close_position(
+        {
+            "event_key": "evt-reject-ambiguous",
+            "table_id": 1,
+            "batch_id": "batch-reject-ambiguous",
+            "correlation_id": "corr-reject-ambiguous",
+            "gross_pnl": 10.0,
+            "commission_amount": 0.45,
+            "commission_pct": 4.5,
+            "settlement_source": "simulation_broker",
+            "settlement_kind": "realized_settlement",
+        }
+    )
+
+    assert rc._last_bankroll_sync_result["bankroll_sync_status"] == "SYNC_FAILED_INVALID_SETTLEMENT_CONTRACT"
+    assert rc._last_bankroll_sync_result["reason"] == "MISSING_CANONICAL_SETTLEMENT_FIELDS"
+    assert float(rc.risk_desk.realized_pnl) == 0.0

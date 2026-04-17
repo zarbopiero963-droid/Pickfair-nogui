@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
+from trading_config import enforce_betfair_italy_commission_pct
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,8 @@ class PnLEngine:
                     "commission_amount": 0.0,
                     "net_pnl": 0.0,
                     "commission_pct": float(self.commission * 100.0),
-                    "settlement_source": "local_event_engine",
+                    "settlement_source": "core_pnl_engine",
+                    "settlement_kind": "mark_to_market_estimate",
                 }
 
             if side == "BACK":
@@ -115,7 +117,8 @@ class PnLEngine:
                 "commission_amount": float(commission_amount),
                 "net_pnl": float(pnl_net),
                 "commission_pct": float(self.commission * 100.0),
-                "settlement_source": "local_event_engine",
+                "settlement_source": "core_pnl_engine",
+                "settlement_kind": "mark_to_market_estimate",
             }
 
         return {
@@ -123,7 +126,8 @@ class PnLEngine:
             "commission_amount": 0.0,
             "net_pnl": 0.0,
             "commission_pct": float(self.commission * 100.0),
-            "settlement_source": "local_event_engine",
+            "settlement_source": "core_pnl_engine",
+            "settlement_kind": "mark_to_market_estimate",
         }
 
     def _commission_amount(self, gross_pnl: float) -> float:
@@ -141,11 +145,13 @@ class PnLEngine:
         gross_pnl = float(settlement.get("gross_pnl", net_pnl) or 0.0)
         commission_amount = float(settlement.get("commission_amount", 0.0) or 0.0)
         commission_pct = float(settlement.get("commission_pct", self.commission * 100.0) or 0.0)
+        enforce_betfair_italy_commission_pct(commission_pct, context="core_pnl_engine_close")
         settlement_source = str(
             settlement.get("settlement_source")
             or settlement.get("source")
-            or "local_event_engine"
+            or "core_pnl_engine"
         )
+        settlement_kind = "realized_settlement"
         payload = {
             "event_key": pos["event_key"],
             "table_id": pos["table_id"],
@@ -157,6 +163,7 @@ class PnLEngine:
             "net_pnl": net_pnl,
             "commission_pct": commission_pct,
             "settlement_source": settlement_source,
+            "settlement_kind": settlement_kind,
         }
 
         logger.info(f"[PnL] Close {pos['event_key']} pnl={net_pnl:.2f}")
