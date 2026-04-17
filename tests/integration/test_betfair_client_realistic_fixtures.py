@@ -1,4 +1,6 @@
 import pytest
+import shutil
+import subprocess
 
 from tests.helpers.betfair_fixtures import load_betfair_fixture
 
@@ -34,14 +36,42 @@ class FakeSession:
         return item
 
 
+def _write_self_signed_cert(tmp_path):
+    cert = tmp_path / "client.crt"
+    key = tmp_path / "client.key"
+    subprocess.run(
+        [
+            "openssl",
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-keyout",
+            str(key),
+            "-out",
+            str(cert),
+            "-sha256",
+            "-days",
+            "365",
+            "-nodes",
+            "-subj",
+            "/CN=localhost",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    cert.chmod(0o600)
+    key.chmod(0o600)
+    return cert, key
+
+
 @pytest.mark.integration
+@pytest.mark.skipif(shutil.which("openssl") is None, reason="openssl required to generate local test cert")
 def test_login_success_with_realistic_fixture(tmp_path):
     from betfair_client import BetfairClient
 
-    cert = tmp_path / "client.crt"
-    key = tmp_path / "client.key"
-    cert.write_text("CERT")
-    key.write_text("KEY")
+    cert, key = _write_self_signed_cert(tmp_path)
 
     session = FakeSession([
         FakeResponse(json_data=load_betfair_fixture("login_success.json")),

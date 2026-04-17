@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import ssl
+import stat
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import requests
@@ -98,10 +101,57 @@ class BetfairClient:
 
     def _cert_tuple(self) -> tuple[str, str]:
         if not os.path.exists(self.cert_pem):
-            raise RuntimeError("CERT_MISSING")
+            raise RuntimeError("CERT_FILE_MISSING")
         if not os.path.exists(self.key_pem):
-            raise RuntimeError("KEY_MISSING")
+            raise RuntimeError("CERT_KEY_MISSING")
+
+        self._validate_cert_file(self.cert_pem, is_key=False)
+        self._validate_cert_file(self.key_pem, is_key=True)
+        self._validate_certificate_content(self.cert_pem)
         return (self.cert_pem, self.key_pem)
+
+    def _validate_cert_file(self, path: str, *, is_key: bool) -> os.stat_result:
+        try:
+            file_stat = os.stat(path)
+        except OSError as exc:
+            raise RuntimeError(f"CERT_UNREADABLE: {path}: {exc}") from exc
+
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise RuntimeError(f"CERT_UNREADABLE: {path}: not a regular file")
+
+        try:
+            with open(path, "rb") as fh:
+                fh.read(1)
+        except OSError as exc:
+            raise RuntimeError(f"CERT_UNREADABLE: {path}: {exc}") from exc
+
+        if os.name == "posix":
+            mode = stat.S_IMODE(file_stat.st_mode)
+            unsafe_bits = stat.S_IWGRP | stat.S_IWOTH | stat.S_IXGRP | stat.S_IXOTH
+            if is_key:
+                unsafe_bits |= stat.S_IRGRP | stat.S_IROTH
+            if mode & unsafe_bits:
+                raise RuntimeError(f"CERT_PERMISSIONS_UNSAFE: {path}: mode={oct(mode)}")
+
+        return file_stat
+
+    def _validate_certificate_content(self, cert_path: str) -> None:
+        try:
+            decoded = ssl._ssl._test_decode_cert(cert_path)
+        except Exception as exc:
+            raise RuntimeError(f"CERT_INVALID_FORMAT: {cert_path}") from exc
+
+        not_after_raw = str(decoded.get("notAfter") or "").strip()
+        if not not_after_raw:
+            raise RuntimeError(f"CERT_INVALID_FORMAT: {cert_path}: missing_notAfter")
+
+        try:
+            expires_at = datetime.strptime(not_after_raw, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
+        except Exception as exc:
+            raise RuntimeError(f"CERT_INVALID_FORMAT: {cert_path}: invalid_notAfter") from exc
+
+        if expires_at <= datetime.now(timezone.utc):
+            raise RuntimeError(f"CERT_EXPIRED: {cert_path}: notAfter={not_after_raw}")
 
     def _headers(self) -> Dict[str, str]:
         headers = {
