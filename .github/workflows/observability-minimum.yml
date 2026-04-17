@@ -1,0 +1,39 @@
+name: observability-minimum
+
+on:
+  pull_request:
+    paths:
+      - "ops/observability_minimum.md"
+      - "scripts/observability_minimum_check.py"
+      - "tests/scripts/test_observability_minimum_check.py"
+      - ".github/workflows/observability-minimum.yml"
+  push:
+    paths:
+      - "ops/observability_minimum.md"
+      - "scripts/observability_minimum_check.py"
+      - "tests/scripts/test_observability_minimum_check.py"
+      - ".github/workflows/observability-minimum.yml"
+
+jobs:
+  observability-minimum:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+
+      - name: Run observability minimum check tests
+        run: |
+          pytest -q tests/scripts/test_observability_minimum_check.py -x
+
+      - name: Validate tracked observability minimum document
+        run: |
+          python scripts/observability_minimum_check.py --doc-path ops/observability_minimum.md
