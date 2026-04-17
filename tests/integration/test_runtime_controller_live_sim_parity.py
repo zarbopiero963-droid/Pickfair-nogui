@@ -1125,9 +1125,9 @@ def test_runtime_controller_settlement_contract_rejects_wrong_commission_arithme
 def test_runtime_controller_settlement_contract_accepts_negative_commission_delta_for_canonical_market_net_reversal():
     extracted = RuntimeController._extract_settlement_contract(
         {
-            "gross_pnl": -100.0,
-            "commission_amount": -4.5,
-            "net_pnl": -95.5,
+            "gross_pnl": -40.0,
+            "commission_amount": -1.8,
+            "net_pnl": -38.2,
             "commission_pct": 4.5,
             "settlement_source": "core_pnl_engine",
             "settlement_kind": "realized_settlement",
@@ -1157,6 +1157,44 @@ def test_runtime_controller_settlement_contract_rejects_malformed_negative_commi
     assert extracted["settlement_validation"] == "rejected_arithmetic_incoherent_settlement"
     assert extracted["settlement_acceptance"] == "REJECT_AMBIGUOUS_SETTLEMENT"
     assert extracted["reason"] == "SETTLEMENT_ARITHMETIC_INCOHERENT"
+
+
+@pytest.mark.integration
+def test_runtime_controller_settlement_contract_rejects_impossible_negative_rebate_that_credits_loss_to_positive():
+    extracted = RuntimeController._extract_settlement_contract(
+        {
+            "gross_pnl": -10.0,
+            "commission_amount": -15.0,
+            "net_pnl": 5.0,
+            "commission_pct": 4.5,
+            "settlement_source": "core_pnl_engine",
+            "settlement_kind": "realized_settlement",
+            "settlement_basis": "market_net_realized",
+        }
+    )
+
+    assert extracted["settlement_validation"] == "rejected_impossible_negative_rebate_positive_net"
+    assert extracted["settlement_acceptance"] == "REJECT_AMBIGUOUS_SETTLEMENT"
+    assert extracted["reason"] == "NEGATIVE_REBATE_CANNOT_CREATE_POSITIVE_NET_ON_LOSS"
+
+
+@pytest.mark.integration
+def test_runtime_controller_settlement_contract_rejects_oversized_negative_rebate_on_non_positive_gross():
+    extracted = RuntimeController._extract_settlement_contract(
+        {
+            "gross_pnl": -10.0,
+            "commission_amount": -12.0,
+            "net_pnl": 2.0,
+            "commission_pct": 4.5,
+            "settlement_source": "core_pnl_engine",
+            "settlement_kind": "realized_settlement",
+            "settlement_basis": "market_net_realized",
+        }
+    )
+
+    assert extracted["settlement_validation"] == "rejected_impossible_negative_rebate_positive_net"
+    assert extracted["settlement_acceptance"] == "REJECT_AMBIGUOUS_SETTLEMENT"
+    assert extracted["reason"] == "NEGATIVE_REBATE_CANNOT_CREATE_POSITIVE_NET_ON_LOSS"
 
 
 @pytest.mark.integration
