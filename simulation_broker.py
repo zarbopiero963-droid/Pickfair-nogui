@@ -63,6 +63,7 @@ class SimulationState:
         self.commission_pct = float(commission_pct)
         self.realized_pnl = 0.0
         self.realized_commission = 0.0
+        self.market_commission_ledger: Dict[str, Dict[str, float]] = {}
         self.last_settlement: Dict[str, float | str] = {}
         self.orders: Dict[str, SimOrder] = {}
         self.market_books: Dict[str, Dict[str, Any]] = {}
@@ -76,6 +77,7 @@ class SimulationState:
             "commission_pct": self.commission_pct,
             "realized_pnl": self.realized_pnl,
             "realized_commission": self.realized_commission,
+            "market_commission_ledger": self.market_commission_ledger,
             "last_settlement": dict(self.last_settlement),
             "orders": {k: v.to_dict() for k, v in self.orders.items()},
             "market_books": self.market_books,
@@ -90,6 +92,14 @@ class SimulationState:
         self.commission_pct = float(data.get("commission_pct", self.commission_pct))
         self.realized_pnl = float(data.get("realized_pnl", 0.0))
         self.realized_commission = float(data.get("realized_commission", 0.0))
+        raw_ledger = data.get("market_commission_ledger") or {}
+        self.market_commission_ledger = {}
+        for market_id, item in dict(raw_ledger).items():
+            row = dict(item or {})
+            self.market_commission_ledger[str(market_id)] = {
+                "gross": float(row.get("gross", 0.0)),
+                "commission": float(row.get("commission", 0.0)),
+            }
         self.last_settlement = dict(data.get("last_settlement") or {})
 
         self.orders = {}
@@ -571,31 +581,50 @@ class SimulationBroker:
             except Exception:
                 logger.exception("Errore save_simulation_bet")
 
-    def record_realized_settlement(self, gross_pnl: float) -> Dict[str, Any]:
+    def record_realized_settlement(self, gross_pnl: float, market_id: str = "") -> Dict[str, Any]:
         """
         Registra un risultato settlement realizzato e rende ispezionabile
         la commissione applicata:
         - commissione solo su pnl positivo
         - nessuna commissione su pnl <= 0
+        - mercato: commissione su market-net realizzato (non per singolo leg positivo)
         """
         gross = float(gross_pnl or 0.0)
+        market_key = str(market_id or "__GLOBAL__")
+        market_row = self.state.market_commission_ledger.setdefault(
+            market_key,
+            {"gross": 0.0, "commission": 0.0},
+        )
+        previous_market_gross = float(market_row.get("gross", 0.0))
+        previous_market_commission = float(market_row.get("commission", 0.0))
         commission_pct = enforce_betfair_italy_commission_pct(
             self.state.commission_pct,
             context="simulation_broker_settlement",
         )
-        commission = 0.0
-        if gross > 0.0 and commission_pct > 0.0:
-            commission = gross * (commission_pct / 100.0)
+        market_gross_after = previous_market_gross + gross
+        desired_market_commission = 0.0
+        if market_gross_after > 0.0 and commission_pct > 0.0:
+            desired_market_commission = market_gross_after * (commission_pct / 100.0)
+
+        # Delta commission can be negative when later legs reduce market-net wins:
+        # this refunds prior over-collected per-fragment commission.
+        commission = desired_market_commission - previous_market_commission
         net = gross - commission
+
+        market_row["gross"] = market_gross_after
+        market_row["commission"] = desired_market_commission
 
         self.state.realized_pnl += net
         self.state.realized_commission += commission
         self.state.balance += net
         settlement = {
+            "market_id": market_id,
             "gross_pnl": gross,
             "commission_amount": commission,
             "net_pnl": net,
             "commission_pct": float(commission_pct),
+            "market_net_gross": market_gross_after,
+            "market_commission_amount_total": desired_market_commission,
             "settlement_source": "simulation_broker",
             "settlement_kind": "realized_settlement",
             "realized_pnl": self.state.realized_pnl,
