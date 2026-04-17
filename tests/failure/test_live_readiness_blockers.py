@@ -12,13 +12,21 @@ class _Bus:
 
 
 class _Db:
+    def __init__(self, key_source="unknown"):
+        class _Cipher:
+            def __init__(self, src):
+                self.key_source = src
+
+        self._cipher = _Cipher(key_source)
+
     def _execute(self, *_args, **_kwargs):
         return None
 
 
 class _Settings:
-    def __init__(self, *, ready=True):
+    def __init__(self, *, ready=True, strict_live_key_source_required=False):
         self._ready = ready
+        self._strict_live_key_source_required = strict_live_key_source_required
 
     def load_roserpina_config(self):
         class Cfg:
@@ -31,6 +39,9 @@ class _Settings:
 
     def load_live_readiness_ok(self):
         return self._ready
+
+    def load_strict_live_key_source_required(self):
+        return self._strict_live_key_source_required
 
 
 class _Betfair:
@@ -71,11 +82,11 @@ class _Probe:
         return self._report
 
 
-def _make_runtime(*, ready=True, safe_mode=False, betfair_service=None):
+def _make_runtime(*, ready=True, safe_mode=False, betfair_service=None, key_source="unknown", strict_live_key_source_required=False):
     return RuntimeController(
         bus=_Bus(),
-        db=_Db(),
-        settings_service=_Settings(ready=ready),
+        db=_Db(key_source=key_source),
+        settings_service=_Settings(ready=ready, strict_live_key_source_required=strict_live_key_source_required),
         betfair_service=betfair_service or _Betfair(),
         telegram_service=_Telegram(),
         safe_mode=_SafeMode(safe_mode),
@@ -183,6 +194,28 @@ def test_runtime_missing_readiness_signal_from_settings_fails_closed():
 
     assert readiness["ready"] is False
     assert "LIVE_READINESS_FLAG_NOT_OK" in readiness["blockers"]
+
+
+@pytest.mark.parametrize("unsafe_key_source", ["ephemeral", "unknown"])
+def test_strict_live_key_source_blocks_unsafe_sources(unsafe_key_source):
+    rc = _make_runtime(
+        ready=True,
+        key_source=unsafe_key_source,
+        strict_live_key_source_required=True,
+    )
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=True,
+    )
+
+    assert readiness["ready"] is False
+    assert "LIVE_KEY_SOURCE_UNSAFE" in readiness["blockers"]
+    ks = readiness["details"]["key_source_state"]
+    assert ks["strict_live_key_source_required"] is True
+    assert ks["key_source"] == unsafe_key_source
+    assert ks["passed"] is False
 
 
 @pytest.mark.parametrize(

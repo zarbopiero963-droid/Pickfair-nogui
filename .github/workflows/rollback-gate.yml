@@ -1,0 +1,39 @@
+name: rollback-gate
+
+on:
+  pull_request:
+    paths:
+      - "ops/rollback_checklist.md"
+      - "ops/db_backup_restore.md"
+      - "scripts/rollback_gate.py"
+      - "scripts/db_restore_validate.py"
+      - "tests/scripts/test_rollback_gate.py"
+      - ".github/workflows/rollback-gate.yml"
+  push:
+    paths:
+      - "ops/rollback_checklist.md"
+      - "ops/db_backup_restore.md"
+      - "scripts/rollback_gate.py"
+      - "scripts/db_restore_validate.py"
+      - "tests/scripts/test_rollback_gate.py"
+      - ".github/workflows/rollback-gate.yml"
+
+jobs:
+  rollback-gate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+
+      - name: Run rollback gate tests
+        run: |
+          pytest -q tests/scripts/test_rollback_gate.py -x

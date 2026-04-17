@@ -18,6 +18,7 @@ from core.safety_layer import assert_live_gate_or_refuse
 from core.type_helpers import safe_bool
 from order_manager import TERMINAL_LIFECYCLE_EVENTS
 from services.streaming_feed import StreamingConfigError, StreamingFeed
+from trading_config import STRICT_LIVE_KEY_SOURCE_REQUIRED
 
 logger = logging.getLogger(__name__)
 
@@ -378,6 +379,29 @@ class RuntimeController:
 
         return False
 
+    def _derive_strict_live_key_source_required(self) -> bool:
+        loader = getattr(self.settings_service, "load_strict_live_key_source_required", None)
+        if callable(loader):
+            try:
+                return self._safe_bool(loader(), default=STRICT_LIVE_KEY_SOURCE_REQUIRED)
+            except Exception:
+                return bool(STRICT_LIVE_KEY_SOURCE_REQUIRED)
+        return bool(STRICT_LIVE_KEY_SOURCE_REQUIRED)
+
+    def _resolve_secret_key_source(self) -> str:
+        getter = getattr(self.db, "get_secret_key_source", None)
+        if callable(getter):
+            try:
+                src = str(getter() or "").strip().lower()
+                return src or "unknown"
+            except Exception:
+                return "unknown"
+
+        cipher = getattr(self.db, "_cipher", None)
+        key_source = getattr(cipher, "key_source", None)
+        src = str(key_source or "").strip().lower()
+        return src or "unknown"
+
     def _get_probe_live_readiness_report(self) -> tuple[bool, str, dict]:
         probe = getattr(self, "runtime_probe", None)
         probe_required = bool(getattr(self, "enforce_probe_readiness_gate", False))
@@ -623,6 +647,10 @@ class RuntimeController:
             default=False,
         )
         configured_live_readiness_ok = self._derive_live_readiness_ok(live_readiness_ok)
+        strict_live_key_source_required = self._derive_strict_live_key_source_required()
+        key_source = self._resolve_secret_key_source()
+        allowed_key_sources = {"env", "file_existing", "file_generated"}
+        key_source_passed = key_source in allowed_key_sources
         execution_mode_valid = normalized_execution_mode in {"SIMULATION", "LIVE"}
         contradictory_state = (
             (normalized_execution_mode == "LIVE" and bool(getattr(self, "simulation_mode", False)))
@@ -636,6 +664,12 @@ class RuntimeController:
             "simulation_mode": bool(getattr(self, "simulation_mode", False)),
             "contradictory_state": contradictory_state,
         }
+        details["key_source_state"] = {
+            "key_source": key_source,
+            "strict_live_key_source_required": strict_live_key_source_required,
+            "passed": (not strict_live_key_source_required) or key_source_passed,
+            "allowed_sources": sorted(allowed_key_sources),
+        }
 
         if not execution_mode_valid:
             blockers.append("INVALID_EXECUTION_MODE")
@@ -643,6 +677,8 @@ class RuntimeController:
             blockers.append("LIVE_NOT_ENABLED")
         if normalized_execution_mode == "LIVE" and not configured_live_readiness_ok:
             blockers.append("LIVE_READINESS_FLAG_NOT_OK")
+        if normalized_execution_mode == "LIVE" and strict_live_key_source_required and not key_source_passed:
+            blockers.append("LIVE_KEY_SOURCE_UNSAFE")
         if contradictory_state:
             blockers.append("CONTRADICTORY_STATE")
 
