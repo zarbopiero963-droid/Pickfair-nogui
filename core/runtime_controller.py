@@ -1506,6 +1506,7 @@ class RuntimeController:
                     "commission_amount": float(settlement["commission_amount"]),
                     "net_pnl": float(settlement["net_pnl"]),
                     "commission_pct": float(settlement["commission_pct"]),
+                    "settlement_basis": str(settlement["settlement_basis"]),
                     "settlement_source": str(settlement["settlement_source"]),
                     "settlement_kind": str(settlement["settlement_kind"]),
                     "settlement_authority": str(settlement["settlement_authority"]),
@@ -1551,6 +1552,7 @@ class RuntimeController:
                 "commission_amount",
                 "net_pnl",
                 "commission_pct",
+                "settlement_basis",
                 "settlement_source",
                 "settlement_kind",
             )
@@ -1596,6 +1598,10 @@ class RuntimeController:
             body.get("settlement_kind")
             or ("legacy_compat" if settlement_authority == "legacy_compat" else "")
         )
+        settlement_basis = str(
+            body.get("settlement_basis")
+            or ("legacy_compat" if settlement_authority == "legacy_compat" else "")
+        )
         reason = ""
         if settlement_authority == "legacy_compat":
             if not settlement_source:
@@ -1613,6 +1619,10 @@ class RuntimeController:
             if settlement_kind != "realized_settlement":
                 settlement_validation = "rejected_non_realized_settlement"
                 reason = "SETTLEMENT_KIND_NOT_REALIZED"
+                settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
+            elif settlement_basis != "market_net_realized":
+                settlement_validation = "rejected_non_market_net_basis"
+                reason = "SETTLEMENT_BASIS_NOT_MARKET_NET_REALIZED"
                 settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
             elif not settlement_source:
                 settlement_validation = "rejected_ambiguous_source"
@@ -1634,6 +1644,7 @@ class RuntimeController:
             "commission_amount": commission_amount_f,
             "net_pnl": net_pnl_f,
             "commission_pct": commission_pct_f,
+            "settlement_basis": settlement_basis,
             "settlement_source": settlement_source,
             "settlement_kind": settlement_kind,
             "settlement_authority": settlement_authority,

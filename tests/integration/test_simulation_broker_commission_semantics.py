@@ -16,6 +16,7 @@ def test_simulation_realized_commission_is_applied_only_on_positive_winnings():
     assert won["commission_amount"] == 9.0
     assert won["net_pnl"] == 191.0
     assert won["commission_pct"] == 4.5
+    assert won["settlement_basis"] == "market_net_realized"
     assert won["settlement_source"] == "simulation_broker"
     assert won["settlement_kind"] == "realized_settlement"
     assert won["pnl"] == won["net_pnl"]
@@ -33,6 +34,7 @@ def test_simulation_realized_commission_is_zero_on_losses():
     assert lost["commission_amount"] == 0.0
     assert lost["net_pnl"] == -100.0
     assert lost["commission_pct"] == 4.5
+    assert lost["settlement_basis"] == "market_net_realized"
     assert lost["settlement_source"] == "simulation_broker"
     assert lost["settlement_kind"] == "realized_settlement"
 
@@ -109,6 +111,7 @@ def test_simulation_same_market_multi_leg_commission_is_market_net_positive_once
     assert second["market_id"] == "1.777"
     assert second["market_net_gross"] == expected_market_net_gross
     assert second["market_commission_amount_total"] == expected_market_commission
+    assert second["settlement_basis"] == "market_net_realized"
     assert broker.state.realized_commission == expected_market_commission
     assert broker.state.realized_pnl == expected_market_net
     assert broker.state.balance == 1000.0 + expected_market_net
@@ -126,6 +129,7 @@ def test_simulation_same_market_multi_leg_net_loss_has_zero_commission():
     assert second["market_id"] == "1.778"
     assert second["market_net_gross"] == -20.0
     assert second["market_commission_amount_total"] == 0.0
+    assert second["settlement_basis"] == "market_net_realized"
     assert broker.state.realized_commission == 0.0
     assert broker.state.realized_pnl == -20.0
     assert broker.state.balance == pytest.approx(980.0)

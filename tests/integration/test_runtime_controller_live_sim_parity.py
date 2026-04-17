@@ -920,6 +920,7 @@ def test_runtime_controller_settlement_contract_extraction_prefers_explicit_net_
             "commission_pct": 4.5,
             "settlement_source": "integration_test",
             "settlement_kind": "realized_settlement",
+            "settlement_basis": "market_net_realized",
             "pnl": 999.0,
         }
     )
@@ -928,6 +929,7 @@ def test_runtime_controller_settlement_contract_extraction_prefers_explicit_net_
     assert extracted["commission_amount"] == 1.35
     assert extracted["net_pnl"] == 28.65
     assert extracted["commission_pct"] == 4.5
+    assert extracted["settlement_basis"] == "market_net_realized"
     assert extracted["settlement_source"] == "integration_test"
     assert extracted["settlement_kind"] == "realized_settlement"
     assert extracted["settlement_authority"] == "explicit_contract"
@@ -954,6 +956,7 @@ def test_runtime_controller_settlement_contract_extraction_rejects_legacy_payloa
     assert extracted["commission_pct"] == 4.5
     assert extracted["settlement_source"] == "integration_test"
     assert extracted["settlement_kind"] == "legacy_compat"
+    assert extracted["settlement_basis"] == "legacy_compat"
     assert extracted["settlement_authority"] == "legacy_compat"
     assert extracted["settlement_validation"] == "rejected_non_canonical_settlement"
     assert extracted["settlement_acceptance"] == "REJECT_NON_CANONICAL_SETTLEMENT"
@@ -975,6 +978,7 @@ def test_runtime_controller_settlement_contract_extraction_rejects_when_contract
     assert extracted["commission_pct"] == 0.0
     assert extracted["settlement_source"] == ""
     assert extracted["settlement_kind"] == ""
+    assert extracted["settlement_basis"] == ""
     assert extracted["settlement_authority"] == "rejected_ambiguous"
     assert extracted["settlement_validation"] == "rejected_ambiguous"
     assert extracted["settlement_acceptance"] == "REJECT_AMBIGUOUS_SETTLEMENT"
@@ -991,6 +995,7 @@ def test_runtime_controller_settlement_contract_extraction_does_not_recompute_ex
             "commission_pct": 4.5,
             "settlement_source": "integration_test",
             "settlement_kind": "realized_settlement",
+            "settlement_basis": "market_net_realized",
         }
     )
 
@@ -1012,6 +1017,7 @@ def test_runtime_controller_settlement_contract_rejects_non_italy_commission_pct
             "commission_pct": 5.0,
             "settlement_source": "simulation_broker",
             "settlement_kind": "realized_settlement",
+            "settlement_basis": "market_net_realized",
         }
     )
 
@@ -1030,12 +1036,32 @@ def test_runtime_controller_settlement_contract_rejects_mark_to_market_payload_a
             "commission_pct": 4.5,
             "settlement_source": "core_pnl_engine",
             "settlement_kind": "mark_to_market_estimate",
+            "settlement_basis": "market_net_realized",
         }
     )
 
     assert extracted["settlement_validation"] == "rejected_non_realized_settlement"
     assert extracted["settlement_acceptance"] == "REJECT_AMBIGUOUS_SETTLEMENT"
     assert extracted["reason"] == "SETTLEMENT_KIND_NOT_REALIZED"
+
+
+@pytest.mark.integration
+def test_runtime_controller_settlement_contract_rejects_non_market_net_settlement_basis():
+    extracted = RuntimeController._extract_settlement_contract(
+        {
+            "gross_pnl": 10.0,
+            "commission_amount": 0.45,
+            "net_pnl": 9.55,
+            "commission_pct": 4.5,
+            "settlement_source": "core_pnl_engine",
+            "settlement_kind": "realized_settlement",
+            "settlement_basis": "per_fragment_realized",
+        }
+    )
+
+    assert extracted["settlement_validation"] == "rejected_non_market_net_basis"
+    assert extracted["settlement_acceptance"] == "REJECT_AMBIGUOUS_SETTLEMENT"
+    assert extracted["reason"] == "SETTLEMENT_BASIS_NOT_MARKET_NET_REALIZED"
 
 
 @pytest.mark.integration
@@ -1109,6 +1135,7 @@ def test_runtime_controller_live_event_settlement_economics_align_with_simulatio
     assert extracted["settlement_acceptance"] == "ACCEPT_REALIZED_SETTLEMENT"
     assert extracted["settlement_kind"] == "realized_settlement"
     assert extracted["settlement_source"] == "core_pnl_engine"
+    assert extracted["settlement_basis"] == "market_net_realized"
 
 @pytest.mark.integration
 def test_runtime_controller_legacy_non_canonical_close_is_non_authoritative_but_not_hard_rejected():
