@@ -120,6 +120,7 @@ def test_auto_trade_disabled_by_default():
 
     assert rc._last_auto_trade_result["auto_trade_status"] == "AUTO_TRADE_DISABLED"
     assert rc._last_auto_trade_result["submitted"] is False
+    assert rc._last_bankroll_sync_result["bankroll_sync_status"] == "SYNC_SUCCESS"
 
 
 def test_auto_trade_happy_path_submits_exactly_one_trade():
