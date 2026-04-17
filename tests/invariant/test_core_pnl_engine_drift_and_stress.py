@@ -267,6 +267,82 @@ def test_event_driven_close_payload_exposes_explicit_settlement_contract():
     assert payload["pnl"] == payload["net_pnl"]
 
 
+@pytest.mark.invariant
+def test_event_driven_realized_settlement_uses_market_net_commission_for_same_market_multi_leg():
+    class _Bus:
+        def __init__(self):
+            self.events = []
+
+        def subscribe(self, *_args, **_kwargs):
+            return None
+
+        def publish(self, topic, payload):
+            self.events.append((topic, dict(payload or {})))
+
+    bus = _Bus()
+    engine = EventDrivenPnLEngine(bus=bus, commission_pct=4.5)
+
+    base_fill = {
+        "market_id": "1.452",
+        "selection_id": 88,
+        "bet_type": "BACK",
+        "table_id": 1,
+        "batch_id": "B-SC-NET",
+    }
+
+    engine._on_filled({**base_fill, "event_key": "E-SC-NET-1", "price": 2.0, "stake": 100.0})
+    engine._on_market(
+        {
+            "marketId": "1.452",
+            "runners": [
+                {
+                    "selectionId": 88,
+                    "ex": {
+                        "availableToBack": [{"price": 2.0}],
+                        "availableToLay": [{"price": 1.0}],  # gross +100
+                    },
+                }
+            ],
+        }
+    )
+
+    engine._on_filled({**base_fill, "event_key": "E-SC-NET-2", "price": 2.0, "stake": 100.0})
+    engine._on_market(
+        {
+            "marketId": "1.452",
+            "runners": [
+                {
+                    "selectionId": 88,
+                    "ex": {
+                        "availableToBack": [{"price": 2.0}],
+                        "availableToLay": [{"price": 3.0}],  # gross -100
+                    },
+                }
+            ],
+        }
+    )
+
+    close_events = [payload for topic, payload in bus.events if topic == "RUNTIME_CLOSE_POSITION"]
+    assert len(close_events) == 2
+    first, second = close_events
+
+    assert first["gross_pnl"] == 100.0
+    assert first["commission_amount"] == pytest.approx(4.5)
+    assert first["net_pnl"] == pytest.approx(95.5)
+    assert first["market_net_gross"] == 100.0
+    assert first["market_commission_amount_total"] == pytest.approx(4.5)
+
+    assert second["gross_pnl"] == -100.0
+    assert second["commission_amount"] == pytest.approx(-4.5)
+    assert second["net_pnl"] == pytest.approx(-95.5)
+    assert second["market_net_gross"] == 0.0
+    assert second["market_commission_amount_total"] == 0.0
+
+    total_commission = first["commission_amount"] + second["commission_amount"]
+    total_net = first["net_pnl"] + second["net_pnl"]
+    assert total_commission == pytest.approx(0.0)
+    assert total_net == pytest.approx(0.0)
+
 @pytest.mark.chaos
 def test_core_pnl_numeric_stress_extreme_ranges_are_finite():
     from pnl_engine import PnLEngine

@@ -1,8 +1,10 @@
 import pytest
 
+from core.pnl_engine import PnLEngine as EventDrivenPnLEngine
 from core.risk_middleware import RiskMiddleware
 from core.runtime_controller import RuntimeController
 from core.system_state import RoserpinaConfig, RuntimeMode, DeskMode
+from simulation_broker import SimulationBroker
 
 
 class _Bus:
@@ -1035,6 +1037,78 @@ def test_runtime_controller_settlement_contract_rejects_mark_to_market_payload_a
     assert extracted["settlement_acceptance"] == "REJECT_AMBIGUOUS_SETTLEMENT"
     assert extracted["reason"] == "SETTLEMENT_KIND_NOT_REALIZED"
 
+
+@pytest.mark.integration
+def test_runtime_controller_live_event_settlement_economics_align_with_simulation_market_net_basis():
+    class _BusCapture(_Bus):
+        def subscribe(self, *_args):
+            return None
+
+    live_bus = _BusCapture()
+    live_engine = EventDrivenPnLEngine(bus=live_bus, commission_pct=4.5)
+
+    base_fill = {
+        "market_id": "1.990",
+        "selection_id": 501,
+        "bet_type": "BACK",
+        "table_id": 1,
+        "batch_id": "batch-live-sim",
+        "price": 2.0,
+        "stake": 100.0,
+    }
+
+    live_engine._on_filled({**base_fill, "event_key": "evt-live-1"})
+    live_engine._on_market(
+        {
+            "marketId": "1.990",
+            "runners": [
+                {
+                    "selectionId": 501,
+                    "ex": {
+                        "availableToBack": [{"price": 2.0}],
+                        "availableToLay": [{"price": 1.0}],
+                    },
+                }
+            ],
+        }
+    )
+    live_engine._on_filled({**base_fill, "event_key": "evt-live-2"})
+    live_engine._on_market(
+        {
+            "marketId": "1.990",
+            "runners": [
+                {
+                    "selectionId": 501,
+                    "ex": {
+                        "availableToBack": [{"price": 2.0}],
+                        "availableToLay": [{"price": 3.0}],
+                    },
+                }
+            ],
+        }
+    )
+
+    live_close_events = [payload for topic, payload in live_bus.events if topic == "RUNTIME_CLOSE_POSITION"]
+    assert len(live_close_events) == 2
+    live_last = live_close_events[-1]
+
+    sim = SimulationBroker(starting_balance=1000.0, commission_pct=4.5)
+    sim.record_realized_settlement(100.0, market_id="1.990")
+    sim_last = sim.record_realized_settlement(-100.0, market_id="1.990")
+
+    assert live_last["gross_pnl"] == pytest.approx(sim_last["gross_pnl"])
+    assert live_last["commission_amount"] == pytest.approx(sim_last["commission_amount"])
+    assert live_last["net_pnl"] == pytest.approx(sim_last["net_pnl"])
+    assert live_last["market_net_gross"] == pytest.approx(sim_last["market_net_gross"])
+    assert live_last["market_commission_amount_total"] == pytest.approx(
+        sim_last["market_commission_amount_total"]
+    )
+
+    extracted = RuntimeController._extract_settlement_contract(dict(live_last))
+    assert extracted["settlement_validation"] == "accepted"
+    assert extracted["settlement_acceptance"] == "ACCEPT_REALIZED_SETTLEMENT"
+    assert extracted["settlement_kind"] == "realized_settlement"
+    assert extracted["settlement_source"] == "core_pnl_engine"
 
 @pytest.mark.integration
 def test_runtime_controller_legacy_non_canonical_close_is_non_authoritative_but_not_hard_rejected():

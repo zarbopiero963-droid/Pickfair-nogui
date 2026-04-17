@@ -265,6 +265,8 @@ def test_runtime_controller_close_updates_realized_pnl_even_with_exchange_first_
     )
 
     assert float(rc.risk_desk.realized_pnl) == 7.64
+
+
     assert float(rc.risk_desk.bankroll_current) == 150.0
 
 
