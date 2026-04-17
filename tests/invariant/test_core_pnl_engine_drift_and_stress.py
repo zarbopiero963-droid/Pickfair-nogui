@@ -343,6 +343,75 @@ def test_event_driven_realized_settlement_uses_market_net_commission_for_same_ma
     assert total_commission == pytest.approx(0.0)
     assert total_net == pytest.approx(0.0)
 
+
+@pytest.mark.invariant
+def test_event_driven_realized_settlement_overcharge_detector_differs_from_per_leg_commission():
+    class _Bus:
+        def __init__(self):
+            self.events = []
+
+        def subscribe(self, *_args, **_kwargs):
+            return None
+
+        def publish(self, topic, payload):
+            self.events.append((topic, dict(payload or {})))
+
+    bus = _Bus()
+    engine = EventDrivenPnLEngine(bus=bus, commission_pct=4.5)
+    base_fill = {
+        "market_id": "1.453",
+        "selection_id": 89,
+        "bet_type": "BACK",
+        "table_id": 1,
+        "batch_id": "B-SC-OVERCHARGE",
+        "price": 2.0,
+        "stake": 100.0,
+    }
+
+    engine._on_filled({**base_fill, "event_key": "E-SC-OC-1"})
+    engine._on_market(
+        {
+            "marketId": "1.453",
+            "runners": [
+                {
+                    "selectionId": 89,
+                    "ex": {
+                        "availableToBack": [{"price": 2.0}],
+                        "availableToLay": [{"price": 1.0}],  # gross +100
+                    },
+                }
+            ],
+        }
+    )
+
+    engine._on_filled({**base_fill, "event_key": "E-SC-OC-2"})
+    engine._on_market(
+        {
+            "marketId": "1.453",
+            "runners": [
+                {
+                    "selectionId": 89,
+                    "ex": {
+                        "availableToBack": [{"price": 2.0}],
+                        "availableToLay": [{"price": 2.4}],  # gross -40
+                    },
+                }
+            ],
+        }
+    )
+
+    close_events = [payload for topic, payload in bus.events if topic == "RUNTIME_CLOSE_POSITION"]
+    assert len(close_events) == 2
+
+    total_commission = sum(float(item["commission_amount"]) for item in close_events)
+    total_net = sum(float(item["net_pnl"]) for item in close_events)
+    per_leg_commission_if_wrong = 100.0 * 0.045
+    market_net_commission_expected = 60.0 * 0.045
+
+    assert total_commission == pytest.approx(market_net_commission_expected)
+    assert total_net == pytest.approx(60.0 - market_net_commission_expected)
+    assert total_commission < per_leg_commission_if_wrong
+
 @pytest.mark.chaos
 def test_core_pnl_numeric_stress_extreme_ranges_are_finite():
     from pnl_engine import PnLEngine
