@@ -474,3 +474,27 @@ def test_runtime_controller_accepted_settlement_still_releases_table_and_updates
     assert float(after.loss_amount) == 5.225
     assert after.in_recovery is True
     assert all(k["event_key"] != "evt-accept-ordering" for k in rc.duplication_guard.snapshot()["active_keys"])
+
+
+@pytest.mark.integration
+def test_runtime_controller_helper_like_close_payload_does_not_become_authoritative_realized_settlement():
+    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc.risk_desk.sync_bankroll(100.0)
+
+    rc._on_close_position(
+        {
+            "event_key": "evt-helper-like-contract",
+            "table_id": 1,
+            "batch_id": "batch-helper-like-contract",
+            "correlation_id": "corr-helper-like-contract",
+            "gross_pnl": 30.0,
+            "commission_amount": 1.35,
+            "net_pnl": 28.65,
+            "commission_pct": 4.5,
+        }
+    )
+
+    assert rc._last_bankroll_sync_result["bankroll_sync_status"] == "SYNC_FAILED_INVALID_SETTLEMENT_CONTRACT"
+    assert rc._last_bankroll_sync_result["reason"] == "MISSING_CANONICAL_SETTLEMENT_FIELDS"
+    assert rc._last_bankroll_sync_result["settlement_acceptance"] == "REJECT_AMBIGUOUS_SETTLEMENT"
+    assert float(rc.risk_desk.realized_pnl) == 0.0

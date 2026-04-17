@@ -1323,3 +1323,46 @@ def test_runtime_controller_legacy_non_canonical_close_is_non_authoritative_but_
     assert rc._last_bankroll_sync_result["bankroll_sync_status"] == "SYNC_SUCCESS"
     assert float(rc.risk_desk.realized_pnl) == 0.0
     assert rc._last_auto_trade_result["auto_trade_status"] == "AUTO_TRADE_DISABLED"
+
+
+@pytest.mark.integration
+def test_runtime_controller_rejects_helper_settlement_payload_as_non_canonical_even_with_net_fields():
+    helper = EventDrivenPnLEngine(bus=None, commission_pct=4.5)
+    helper_payload = helper._calc_settlement(
+        {
+            "event_key": "evt-helper-surface",
+            "market_id": "1.888",
+            "selection_id": 99,
+            "side": "BACK",
+            "price": 2.0,
+            "stake": 100.0,
+            "table_id": 1,
+            "batch_id": "batch-helper-surface",
+        },
+        {
+            "marketId": "1.888",
+            "runners": [
+                {
+                    "selectionId": 99,
+                    "ex": {
+                        "availableToBack": [{"price": 2.0}],
+                        "availableToLay": [{"price": 1.5}],
+                    },
+                }
+            ],
+        },
+    )
+    extracted = RuntimeController._extract_settlement_contract(
+        {
+            "event_key": "evt-helper-surface",
+            "table_id": 1,
+            "batch_id": "batch-helper-surface",
+            "correlation_id": "corr-helper-surface",
+            **helper_payload,
+        }
+    )
+
+    assert extracted["settlement_authority"] == "rejected_ambiguous"
+    assert extracted["settlement_validation"] == "rejected_ambiguous"
+    assert extracted["settlement_acceptance"] == "REJECT_AMBIGUOUS_SETTLEMENT"
+    assert extracted["reason"] == "MISSING_CANONICAL_SETTLEMENT_FIELDS"

@@ -157,6 +157,28 @@ def test_dutching_zero_commission_mode_is_explicit_gross_only_preview():
 
 @pytest.mark.unit
 @pytest.mark.guardrail
+def test_dutching_dynamic_cashout_surface_is_helper_only_not_canonical_settlement_contract():
+    result = dynamic_cashout_single(
+        matched_stake=100.0,
+        matched_price=2.0,
+        current_price=1.6,
+        commission=4.5,
+        side="BACK",
+    )
+    for forbidden_key in (
+        "settlement_source",
+        "settlement_kind",
+        "settlement_basis",
+        "settlement_authority",
+        "settlement_validation",
+        "settlement_acceptance",
+        "commission_pct",
+    ):
+        assert forbidden_key not in result
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
 def test_dutching_equal_profit_is_tolerance_bounded_with_italy_commission_reference():
     result = calculate_dutching_stakes([3.0, 4.0, 6.0], 120, commission=4.5)
 

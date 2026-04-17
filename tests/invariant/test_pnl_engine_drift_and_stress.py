@@ -301,3 +301,72 @@ def test_root_pnl_engine_snapshot_is_stable_under_many_positions():
     snap = engine.snapshot()
     assert snap["open_positions"] == 1000
     assert len(snap["positions"]) == 1000
+
+
+@pytest.mark.invariant
+def test_runtime_authoritative_settlement_acceptance_remains_centralized_not_helper_derived():
+    from core.runtime_controller import RuntimeController
+    from core.pnl_engine import PnLEngine as EventPnLEngine
+    from pnl_engine import PnLEngine as HelperPnLEngine
+
+    helper = HelperPnLEngine(commission_pct=4.5)
+    helper_payload = helper.calculate_settlement_pnl(
+        side="BACK",
+        price=2.0,
+        size=100.0,
+        won=True,
+    )
+    extracted_helper = RuntimeController._extract_settlement_contract(
+        {
+            "event_key": "evt-helper-centralized",
+            "batch_id": "batch-helper-centralized",
+            "table_id": 1,
+            "correlation_id": "corr-helper-centralized",
+            **helper_payload,
+        }
+    )
+    assert extracted_helper["settlement_validation"] == "rejected_ambiguous"
+    assert extracted_helper["settlement_acceptance"] == "REJECT_AMBIGUOUS_SETTLEMENT"
+
+    class _Bus:
+        def __init__(self):
+            self.events = []
+
+        def subscribe(self, *_args, **_kwargs):
+            return None
+
+        def publish(self, topic, payload):
+            self.events.append((topic, dict(payload or {})))
+
+    bus = _Bus()
+    engine = EventPnLEngine(bus=bus, commission_pct=4.5)
+    engine._on_filled(
+        {
+            "event_key": "evt-authoritative-centralized",
+            "market_id": "1.333",
+            "selection_id": 123,
+            "bet_type": "BACK",
+            "price": 2.0,
+            "stake": 100.0,
+            "table_id": 1,
+            "batch_id": "batch-authoritative-centralized",
+        }
+    )
+    engine._on_market(
+        {
+            "marketId": "1.333",
+            "runners": [
+                {
+                    "selectionId": 123,
+                    "ex": {
+                        "availableToBack": [{"price": 2.0}],
+                        "availableToLay": [{"price": 1.5}],
+                    },
+                }
+            ],
+        }
+    )
+    close_payload = [payload for topic, payload in bus.events if topic == "RUNTIME_CLOSE_POSITION"][-1]
+    extracted_authoritative = RuntimeController._extract_settlement_contract(dict(close_payload))
+    assert extracted_authoritative["settlement_validation"] == "accepted"
+    assert extracted_authoritative["settlement_acceptance"] == "ACCEPT_REALIZED_SETTLEMENT"
