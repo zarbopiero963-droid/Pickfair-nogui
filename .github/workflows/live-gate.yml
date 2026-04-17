@@ -1,40 +1,37 @@
 name: live-gate
 
 on:
-  workflow_call:
-  workflow_dispatch:
+  pull_request:
+    paths:
+      - "ops/paper_trading_gate.md"
+      - "ops/live_microstake_gate.md"
+      - "scripts/live_gate.py"
+      - "tests/scripts/test_live_gate.py"
+      - ".github/workflows/live-gate.yml"
+  push:
+    paths:
+      - "ops/paper_trading_gate.md"
+      - "ops/live_microstake_gate.md"
+      - "scripts/live_gate.py"
+      - "tests/scripts/test_live_gate.py"
+      - ".github/workflows/live-gate.yml"
 
 jobs:
-  check-module:
+  live-gate:
     runs-on: ubuntu-latest
-    outputs:
-      exists: ${{ steps.module_check.outputs.exists }}
+
     steps:
       - uses: actions/checkout@v4
-      - name: Check live_gate.py presence
-        id: module_check
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
         run: |
-          if [ -f "live_gate.py" ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+          python -m pip install --upgrade pip
+          pip install pytest
 
-  ultra-check:
-    needs: check-module
-    if: needs.check-module.outputs.exists == 'true'
-    uses: ./.github/workflows/_module-ultra-check.yml
-    with:
-      module_path: "live_gate.py"
-      spec_path: "guardrails/specs/live_gate.json"
-      contract_path: "guardrails/contracts/live_gate.json"
-      state_model_path: "guardrails/state_models/live_gate.json"
-      mutation_path: "guardrails/mutations/live_gate.json"
-      test_paths: "tests/test_live_gate.py tests/unit/test_live_gate.py tests/integration/test_live_gate.py"
-
-  skipped-report:
-    needs: check-module
-    if: needs.check-module.outputs.exists != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "live_gate.py not present yet -> smart skip"
+      - name: Run live gate tests
+        run: |
+          pytest -q tests/scripts/test_live_gate.py -x
