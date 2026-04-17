@@ -47,3 +47,6 @@ MIN_LIQUIDITY_ABSOLUTE = 50.0  # €
 # Se True → warning, se False → blocco
 LIQUIDITY_WARNING_ONLY = False
 
+# Live readiness safety gates
+# Default OFF: enables strict key-source enforcement for LIVE readiness only
+STRICT_LIVE_KEY_SOURCE_REQUIRED = False

@@ -1,4 +1,5 @@
 from observability.runtime_probe import RuntimeProbe
+from core.runtime_controller import RuntimeController
 
 
 class _Ready:
@@ -37,6 +38,65 @@ class _SafeModeActive:
 class _SafeModeInactive:
     def is_enabled(self):
         return False
+
+
+class _GateBus:
+    def subscribe(self, *_args, **_kwargs):
+        return None
+
+    def publish(self, *_args, **_kwargs):
+        return None
+
+
+class _GateDb:
+    def __init__(self, key_source="unknown"):
+        class _Cipher:
+            def __init__(self, src):
+                self.key_source = src
+
+        self._cipher = _Cipher(key_source)
+
+    def _execute(self, *_args, **_kwargs):
+        return None
+
+
+class _GateSettings:
+    def __init__(self, *, strict_live_key_source_required=False):
+        self._strict = strict_live_key_source_required
+
+    def load_roserpina_config(self):
+        class Cfg:
+            table_count = 1
+
+            def __getattr__(self, _name):
+                return 0
+
+        return Cfg()
+
+    def load_live_readiness_ok(self):
+        return True
+
+    def load_strict_live_key_source_required(self):
+        return self._strict
+
+
+class _GateBetfair:
+    def set_simulation_mode(self, _enabled):
+        return None
+
+    def connect(self, **_kwargs):
+        return {"ok": True}
+
+    def get_account_funds(self):
+        return {"available": 100.0}
+
+    def status(self):
+        return {"connected": True}
+
+
+class _GateTelegram:
+    def status(self):
+        return {"connected": True}
 
 
 
@@ -126,3 +186,26 @@ def test_missing_dependency_and_kill_switch_have_expected_blockers():
     assert report["level"] == "NOT_READY"
     assert "LIVE_DEPENDENCY_MISSING" in blocker_codes
     assert "SAFE_MODE_BLOCKING" in degraded_codes
+
+
+def test_runtime_controller_readiness_exposes_strict_key_source_truth():
+    rc = RuntimeController(
+        bus=_GateBus(),
+        db=_GateDb(key_source="unknown"),
+        settings_service=_GateSettings(strict_live_key_source_required=True),
+        betfair_service=_GateBetfair(),
+        telegram_service=_GateTelegram(),
+        safe_mode=_SafeModeInactive(),
+    )
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=True,
+    )
+
+    key_source_state = readiness["details"]["key_source_state"]
+    assert key_source_state["key_source"] == "unknown"
+    assert key_source_state["strict_live_key_source_required"] is True
+    assert key_source_state["passed"] is False
+    assert "LIVE_KEY_SOURCE_UNSAFE" in readiness["blockers"]

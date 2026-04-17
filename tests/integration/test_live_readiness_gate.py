@@ -16,14 +16,22 @@ class _Bus:
 
 
 class _Db:
+    def __init__(self, key_source="unknown"):
+        class _Cipher:
+            def __init__(self, src):
+                self.key_source = src
+
+        self._cipher = _Cipher(key_source)
+
     def _execute(self, *_args, **_kwargs):
         return None
 
 
 class _Settings:
-    def __init__(self, live_enabled=False, live_ready=False):
+    def __init__(self, live_enabled=False, live_ready=False, strict_live_key_source_required=False):
         self._live_enabled = live_enabled
         self._live_ready = live_ready
+        self._strict_live_key_source_required = strict_live_key_source_required
 
     def load_roserpina_config(self):
         class Cfg:
@@ -44,6 +52,9 @@ class _Settings:
 
     def load_live_readiness_ok(self):
         return self._live_ready
+
+    def load_strict_live_key_source_required(self):
+        return self._strict_live_key_source_required
 
 
 class _Betfair:
@@ -95,11 +106,23 @@ class _Probe:
 
 
 
-def _make_runtime(*, live_enabled=False, live_ready=False, kill_switch=False, betfair_service=None):
+def _make_runtime(
+    *,
+    live_enabled=False,
+    live_ready=False,
+    kill_switch=False,
+    betfair_service=None,
+    key_source="unknown",
+    strict_live_key_source_required=False,
+):
     return RuntimeController(
         bus=_Bus(),
-        db=_Db(),
-        settings_service=_Settings(live_enabled=live_enabled, live_ready=live_ready),
+        db=_Db(key_source=key_source),
+        settings_service=_Settings(
+            live_enabled=live_enabled,
+            live_ready=live_ready,
+            strict_live_key_source_required=strict_live_key_source_required,
+        ),
         betfair_service=betfair_service or _Betfair(),
         telegram_service=_Telegram(),
         safe_mode=_KillSwitch(kill_switch),
@@ -171,6 +194,46 @@ def test_valid_live_ready_state_allows_live():
     assert rc.execution_mode == "LIVE"
     assert rc.live_enabled is True
     assert rc.live_readiness_ok is True
+
+
+def test_key_source_ephemeral_does_not_change_behavior_when_strict_flag_off():
+    rc = _make_runtime(
+        live_enabled=True,
+        live_ready=True,
+        key_source="ephemeral",
+        strict_live_key_source_required=False,
+    )
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=True,
+    )
+
+    assert readiness["ready"] is True
+    assert readiness["details"]["key_source_state"]["strict_live_key_source_required"] is False
+    assert "LIVE_KEY_SOURCE_UNSAFE" not in readiness["blockers"]
+
+
+@pytest.mark.parametrize("allowed_key_source", ["env", "file_existing", "file_generated"])
+def test_strict_key_source_on_allows_live_for_safe_sources(allowed_key_source):
+    rc = _make_runtime(
+        live_enabled=True,
+        live_ready=True,
+        key_source=allowed_key_source,
+        strict_live_key_source_required=True,
+    )
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=True,
+    )
+
+    assert readiness["ready"] is True
+    assert readiness["details"]["key_source_state"]["key_source"] == allowed_key_source
+    assert readiness["details"]["key_source_state"]["strict_live_key_source_required"] is True
+    assert "LIVE_KEY_SOURCE_UNSAFE" not in readiness["blockers"]
 
 
 @pytest.mark.parametrize("bad_mode", [None, "", "paper", "unknown"])
