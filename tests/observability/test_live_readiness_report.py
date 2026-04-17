@@ -1,5 +1,6 @@
 from observability.runtime_probe import RuntimeProbe
 from core.runtime_controller import RuntimeController
+from core.system_state import RoserpinaConfig
 
 
 class _Ready:
@@ -61,17 +62,19 @@ class _GateDb:
 
 
 class _GateSettings:
-    def __init__(self, *, strict_live_key_source_required=False):
+    def __init__(self, *, strict_live_key_source_required=False, config=None):
         self._strict = strict_live_key_source_required
+        self._config = config
 
     def load_roserpina_config(self):
-        class Cfg:
-            table_count = 1
-
-            def __getattr__(self, _name):
-                return 0
-
-        return Cfg()
+        if self._config is not None:
+            return self._config
+        return RoserpinaConfig(
+            table_count=1,
+            max_daily_loss=100.0,
+            max_drawdown_hard_stop_pct=20.0,
+            max_open_exposure=200.0,
+        )
 
     def load_live_readiness_ok(self):
         return True
@@ -209,3 +212,39 @@ def test_runtime_controller_readiness_exposes_strict_key_source_truth():
     assert key_source_state["strict_live_key_source_required"] is True
     assert key_source_state["passed"] is False
     assert "LIVE_KEY_SOURCE_UNSAFE" in readiness["blockers"]
+
+
+def test_runtime_controller_readiness_exposes_hard_stop_config_state_and_blockers():
+    rc = RuntimeController(
+        bus=_GateBus(),
+        db=_GateDb(key_source="env"),
+        settings_service=_GateSettings(
+            strict_live_key_source_required=False,
+            config=RoserpinaConfig(
+                table_count=1,
+                max_daily_loss=None,
+                max_drawdown_hard_stop_pct=0.0,
+                max_open_exposure=200.0,
+            ),
+        ),
+        betfair_service=_GateBetfair(),
+        telegram_service=_GateTelegram(),
+        safe_mode=_SafeModeInactive(),
+    )
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=True,
+    )
+    state = readiness["details"]["hard_stop_config_state"]
+
+    assert state["required_fields"] == [
+        "max_daily_loss",
+        "max_drawdown_hard_stop_pct",
+        "max_open_exposure",
+    ]
+    assert "max_daily_loss" in state["missing_fields"]
+    assert "max_drawdown_hard_stop_pct" in state["invalid_fields"]
+    assert "LIVE_HARD_STOP_CONFIG_MISSING" in readiness["blockers"]
+    assert "LIVE_HARD_STOP_CONFIG_INVALID" in readiness["blockers"]

@@ -40,6 +40,13 @@ class _Settings:
         }
 
 
+class _SettingsMissingHardStop(_Settings):
+    def load_roserpina_config(self):
+        cfg = super().load_roserpina_config()
+        cfg.max_daily_loss = None
+        return cfg
+
+
 class _Betfair:
     def __init__(self):
         self.sim_flags = []
@@ -65,6 +72,46 @@ class _Telegram:
         return None
     def status(self):
         return {"connected": True}
+
+
+@pytest.mark.integration
+def test_runtime_controller_live_readiness_requires_explicit_hard_stop_config():
+    rc = RuntimeController(
+        bus=_Bus(),
+        db=_DB(),
+        settings_service=_SettingsMissingHardStop(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=True,
+    )
+
+    assert readiness["ready"] is False
+    assert "LIVE_HARD_STOP_CONFIG_MISSING" in readiness["blockers"]
+
+
+@pytest.mark.integration
+def test_runtime_controller_live_readiness_accepts_valid_explicit_hard_stop_config():
+    rc = RuntimeController(
+        bus=_Bus(),
+        db=_DB(),
+        settings_service=_Settings(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=True,
+    )
+
+    assert "LIVE_HARD_STOP_CONFIG_MISSING" not in readiness["blockers"]
+    assert "LIVE_HARD_STOP_CONFIG_INVALID" not in readiness["blockers"]
 
 
 @pytest.mark.integration

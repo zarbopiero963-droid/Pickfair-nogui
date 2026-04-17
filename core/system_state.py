@@ -52,6 +52,9 @@ class RoserpinaConfig:
     max_single_bet_pct: float = 18.0
     max_total_exposure_pct: float = 35.0
     max_event_exposure_pct: float = 18.0
+    max_daily_loss: float = 250.0
+    max_drawdown_hard_stop_pct: float = 20.0
+    max_open_exposure: float = 1000.0
 
     auto_reset_drawdown_pct: float = 15.0
     defense_drawdown_pct: float = 7.5
