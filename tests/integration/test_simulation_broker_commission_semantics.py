@@ -7,7 +7,7 @@ from simulation_broker import SimulationBroker
 @pytest.mark.integration
 def test_simulation_realized_commission_is_applied_only_on_positive_winnings():
     broker = SimulationBroker(starting_balance=1000.0, commission_pct=4.5)
-    won = broker.record_realized_settlement(200.0)
+    won = broker.record_realized_settlement(200.0, market_id="1.100")
 
     assert math.isfinite(won["gross_pnl"])
     assert math.isfinite(won["commission_amount"])
@@ -24,7 +24,7 @@ def test_simulation_realized_commission_is_applied_only_on_positive_winnings():
 @pytest.mark.integration
 def test_simulation_realized_commission_is_zero_on_losses():
     broker = SimulationBroker(starting_balance=1000.0, commission_pct=4.5)
-    lost = broker.record_realized_settlement(-100.0)
+    lost = broker.record_realized_settlement(-100.0, market_id="1.101")
 
     assert math.isfinite(lost["gross_pnl"])
     assert math.isfinite(lost["commission_amount"])
@@ -40,15 +40,15 @@ def test_simulation_realized_commission_is_zero_on_losses():
 @pytest.mark.integration
 def test_simulation_broker_snapshot_exposes_realized_commission_accounting_contract():
     broker = SimulationBroker(starting_balance=1000.0, commission_pct=4.5)
-    broker.record_realized_settlement(200.0)
-    broker.record_realized_settlement(-100.0)
+    broker.record_realized_settlement(200.0, market_id="1.102")
+    broker.record_realized_settlement(-100.0, market_id="1.102")
     snap = broker.snapshot()
 
     # Fail-closed expectation lock: simulation-facing realized accounting is explicit.
     assert "realized_pnl" in snap
     assert "realized_commission" in snap
     assert "last_settlement" in snap
-    # Commission is market-net scoped on the default/global market key:
+    # Commission is market-net scoped per market id:
     # gross path +200 then -100 => market-net +100 => commission 4.5
     assert snap["realized_pnl"] == 95.5
     assert snap["realized_commission"] == 4.5
@@ -65,8 +65,15 @@ def test_simulation_broker_snapshot_exposes_realized_commission_accounting_contr
 def test_simulation_broker_enforces_explicit_betfair_italy_commission_policy():
     broker = SimulationBroker(starting_balance=1000.0, commission_pct=5.0)
     with pytest.raises(ValueError):
-        broker.record_realized_settlement(100.0)
+        broker.record_realized_settlement(100.0, market_id="1.103")
 
+
+@pytest.mark.integration
+def test_simulation_settlement_requires_market_id():
+    broker = SimulationBroker(starting_balance=1000.0, commission_pct=4.5)
+
+    with pytest.raises(ValueError, match="market_id is required"):
+        broker.record_realized_settlement(10.0, market_id="")
 
 @pytest.mark.integration
 def test_simulation_same_market_multi_leg_commission_is_market_net_positive_once():

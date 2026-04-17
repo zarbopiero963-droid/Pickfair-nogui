@@ -581,7 +581,7 @@ class SimulationBroker:
             except Exception:
                 logger.exception("Errore save_simulation_bet")
 
-    def record_realized_settlement(self, gross_pnl: float, market_id: str = "") -> Dict[str, Any]:
+    def record_realized_settlement(self, gross_pnl: float, market_id: str) -> Dict[str, Any]:
         """
         Registra un risultato settlement realizzato e rende ispezionabile
         la commissione applicata:
@@ -590,7 +590,9 @@ class SimulationBroker:
         - mercato: commissione su market-net realizzato (non per singolo leg positivo)
         """
         gross = float(gross_pnl or 0.0)
-        market_key = str(market_id or "__GLOBAL__")
+        market_key = str(market_id or "").strip()
+        if not market_key:
+            raise ValueError("market_id is required for record_realized_settlement")
         market_row = self.state.market_commission_ledger.setdefault(
             market_key,
             {"gross": 0.0, "commission": 0.0},
