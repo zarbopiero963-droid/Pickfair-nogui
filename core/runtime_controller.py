@@ -1508,6 +1508,7 @@ class RuntimeController:
                     "commission_pct": float(settlement["commission_pct"]),
                     "settlement_source": str(settlement["settlement_source"]),
                     "settlement_kind": str(settlement["settlement_kind"]),
+                    "settlement_basis": str(settlement["settlement_basis"]),
                     "settlement_authority": str(settlement["settlement_authority"]),
                     "settlement_validation": str(settlement["settlement_validation"]),
                     "settlement_acceptance": str(settlement["settlement_acceptance"]),
@@ -1553,6 +1554,7 @@ class RuntimeController:
                 "commission_pct",
                 "settlement_source",
                 "settlement_kind",
+                "settlement_basis",
             )
         )
         if has_canonical_contract and has_explicit_net:
@@ -1596,12 +1598,18 @@ class RuntimeController:
             body.get("settlement_kind")
             or ("legacy_compat" if settlement_authority == "legacy_compat" else "")
         )
+        settlement_basis = str(
+            body.get("settlement_basis")
+            or ("legacy_compat" if settlement_authority == "legacy_compat" else "")
+        )
         reason = ""
         if settlement_authority == "legacy_compat":
             if not settlement_source:
                 settlement_source = "legacy_compat"
             if not settlement_kind:
                 settlement_kind = "legacy_compat"
+            if not settlement_basis:
+                settlement_basis = "legacy_compat"
             settlement_validation = "rejected_non_canonical_settlement"
             reason = "LEGACY_SETTLEMENT_NON_AUTHORITATIVE"
             settlement_acceptance = "REJECT_NON_CANONICAL_SETTLEMENT"
@@ -1617,6 +1625,10 @@ class RuntimeController:
             elif not settlement_source:
                 settlement_validation = "rejected_ambiguous_source"
                 reason = "MISSING_SETTLEMENT_SOURCE"
+                settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
+            elif settlement_basis != "market_net_realized":
+                settlement_validation = "rejected_non_canonical_basis"
+                reason = "SETTLEMENT_BASIS_NOT_MARKET_NET_REALIZED"
                 settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
 
         if settlement_validation == "accepted" and settlement_kind == "realized_settlement":
@@ -1636,6 +1648,7 @@ class RuntimeController:
             "commission_pct": commission_pct_f,
             "settlement_source": settlement_source,
             "settlement_kind": settlement_kind,
+            "settlement_basis": settlement_basis,
             "settlement_authority": settlement_authority,
             "settlement_validation": settlement_validation,
             "settlement_acceptance": settlement_acceptance,

@@ -158,6 +158,7 @@ def test_root_event_driven_calc_surface_is_mark_to_market_not_realized_settlemen
 
     settlement = engine._calc_settlement(dict(pos), winning_book)
     assert settlement["settlement_kind"] == "mark_to_market_estimate"
+    assert settlement["settlement_basis"] == "position_mark_to_market_estimate"
     assert settlement["settlement_source"] == "core_pnl_engine"
 
 
@@ -275,6 +276,7 @@ def test_root_pnl_engine_close_trigger_is_deterministic():
     assert payload["commission_pct"] == 4.5
     assert payload["settlement_source"] == "core_pnl_engine"
     assert payload["settlement_kind"] == "realized_settlement"
+    assert payload["settlement_basis"] == "market_net_realized"
 
 
 @pytest.mark.invariant

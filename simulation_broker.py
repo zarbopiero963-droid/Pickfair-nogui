@@ -598,6 +598,7 @@ class SimulationBroker:
             "commission_pct": float(commission_pct),
             "settlement_source": "simulation_broker",
             "settlement_kind": "realized_settlement",
+            "settlement_basis": "market_net_realized",
             "realized_pnl": self.state.realized_pnl,
             "realized_commission": self.state.realized_commission,
         }
@@ -610,6 +611,7 @@ class SimulationBroker:
             "commission_pct": float(settlement["commission_pct"]),
             "settlement_source": str(settlement["settlement_source"]),
             "settlement_kind": str(settlement["settlement_kind"]),
+            "settlement_basis": str(settlement["settlement_basis"]),
         }
         return settlement
 

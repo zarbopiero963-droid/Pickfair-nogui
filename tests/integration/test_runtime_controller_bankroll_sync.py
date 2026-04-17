@@ -109,6 +109,7 @@ def test_runtime_controller_bankroll_sync_prefers_exchange_over_local_pnl():
             "commission_pct": 4.5,
             "settlement_source": "test_settlement",
             "settlement_kind": "realized_settlement",
+            "settlement_basis": "market_net_realized",
         }
     )
 
@@ -135,6 +136,7 @@ def test_runtime_controller_close_payload_preserves_settlement_provenance_fields
             "commission_pct": 4.5,
             "settlement_source": "test_settlement",
             "settlement_kind": "realized_settlement",
+            "settlement_basis": "market_net_realized",
             # conflicting legacy alias should not override explicit net_pnl
             "pnl": 999.0,
         }
@@ -149,6 +151,7 @@ def test_runtime_controller_close_payload_preserves_settlement_provenance_fields
     assert payload["commission_pct"] == 4.5
     assert payload["settlement_source"] == "test_settlement"
     assert payload["settlement_kind"] == "realized_settlement"
+    assert payload["settlement_basis"] == "market_net_realized"
     assert payload["settlement_authority"] == "explicit_contract"
     assert payload["settlement_validation"] == "accepted"
     assert payload["settlement_acceptance"] == "ACCEPT_REALIZED_SETTLEMENT"
@@ -211,6 +214,7 @@ def test_runtime_controller_status_exposes_last_bankroll_sync_result():
             "commission_pct": 4.5,
             "settlement_source": "test_settlement",
             "settlement_kind": "realized_settlement",
+            "settlement_basis": "market_net_realized",
         }
     )
 
@@ -237,6 +241,7 @@ def test_runtime_controller_rejects_ambiguous_zero_fallback_balance_payload():
             "commission_pct": 4.5,
             "settlement_source": "simulation_broker",
             "settlement_kind": "realized_settlement",
+            "settlement_basis": "market_net_realized",
         }
     )
 
@@ -261,6 +266,7 @@ def test_runtime_controller_close_updates_realized_pnl_even_with_exchange_first_
             "commission_pct": 4.5,
             "settlement_source": "test_settlement",
             "settlement_kind": "realized_settlement",
+            "settlement_basis": "market_net_realized",
         }
     )
 
@@ -284,6 +290,7 @@ def test_runtime_controller_rejects_ambiguous_contract_without_explicit_or_legac
             "commission_pct": 4.5,
             "settlement_source": "simulation_broker",
             "settlement_kind": "realized_settlement",
+            "settlement_basis": "market_net_realized",
         }
     )
 
@@ -310,6 +317,7 @@ def test_runtime_controller_rejects_mark_to_market_settlement_kind_for_close_pro
             "commission_pct": 4.5,
             "settlement_source": "core_pnl_engine",
             "settlement_kind": "mark_to_market_estimate",
+            "settlement_basis": "position_mark_to_market_estimate",
         }
     )
 
@@ -359,6 +367,7 @@ def test_runtime_controller_rejected_settlement_does_not_release_table_or_mutate
             "commission_pct": 4.5,
             "settlement_source": "core_pnl_engine",
             "settlement_kind": "mark_to_market_estimate",
+            "settlement_basis": "position_mark_to_market_estimate",
         }
     )
 
@@ -453,6 +462,7 @@ def test_runtime_controller_accepted_settlement_still_releases_table_and_updates
             "commission_pct": 4.5,
             "settlement_source": "core_pnl_engine",
             "settlement_kind": "realized_settlement",
+            "settlement_basis": "market_net_realized",
         }
     )
 

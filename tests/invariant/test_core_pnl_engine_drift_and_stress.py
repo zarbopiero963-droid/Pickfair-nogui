@@ -144,6 +144,7 @@ def test_core_helper_settlement_math_does_not_claim_authoritative_settlement_pro
     assert set(settlement.keys()) == {"gross_pnl", "commission_pct", "commission_amount", "net_pnl"}
     assert "settlement_source" not in settlement
     assert "settlement_kind" not in settlement
+    assert "settlement_basis" not in settlement
 
 
 @pytest.mark.invariant
@@ -264,6 +265,7 @@ def test_event_driven_close_payload_exposes_explicit_settlement_contract():
     assert payload["commission_pct"] == 4.5
     assert payload["settlement_source"] == "core_pnl_engine"
     assert payload["settlement_kind"] == "realized_settlement"
+    assert payload["settlement_basis"] == "market_net_realized"
     assert payload["pnl"] == payload["net_pnl"]
 
 
