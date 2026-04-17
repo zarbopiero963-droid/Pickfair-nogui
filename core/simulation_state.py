@@ -5,6 +5,8 @@ from datetime import datetime
 from threading import RLock
 from typing import Any, Dict, List, Optional
 
+from trading_config import enforce_betfair_italy_commission_pct
+
 
 @dataclass
 class SimulationPosition:
@@ -223,9 +225,13 @@ class SimulationState:
                 return None
 
             pnl = float(pnl or 0.0)
+            commission_pct = enforce_betfair_italy_commission_pct(
+                self.commission_pct,
+                context="core_simulation_state_settle",
+            )
             commission = 0.0
-            if pnl > 0 and self.commission_pct > 0:
-                commission = pnl * (self.commission_pct / 100.0)
+            if pnl > 0 and commission_pct > 0:
+                commission = pnl * (commission_pct / 100.0)
 
             net_pnl = pnl - commission
 
