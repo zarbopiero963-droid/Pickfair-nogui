@@ -1530,6 +1530,10 @@ class RuntimeController:
     @staticmethod
     def _extract_settlement_contract(payload: dict) -> dict[str, float | str]:
         body = dict(payload or {})
+        explicit_net_raw = body.get("net_pnl") if "net_pnl" in body else None
+        legacy_net_raw = body.get("pnl") if "pnl" in body else None
+        has_explicit_net = explicit_net_raw is not None
+        has_legacy_net = legacy_net_raw is not None
         has_explicit_contract = all(
             k in body and body.get(k) is not None
             for k in (
@@ -1541,21 +1545,19 @@ class RuntimeController:
                 "settlement_kind",
             )
         )
-        has_explicit_net = "net_pnl" in body and body.get("net_pnl") is not None
-        has_legacy_net = body.get("pnl") is not None
         if has_explicit_contract and has_explicit_net:
-            net_pnl = body.get("net_pnl")
+            net_pnl = explicit_net_raw
             settlement_authority = "explicit_contract"
             settlement_validation = "accepted"
         elif has_legacy_net:
-            net_pnl = body.get("pnl")
+            net_pnl = legacy_net_raw
             settlement_authority = "legacy_fallback"
             settlement_validation = "degraded_legacy"
         else:
             net_pnl = 0.0
             settlement_authority = "rejected_ambiguous"
             settlement_validation = "rejected_ambiguous"
-        net_pnl_f = float(net_pnl or 0.0)
+        net_pnl_f = float(net_pnl if net_pnl is not None else 0.0)
         has_explicit_gross = "gross_pnl" in body and body.get("gross_pnl") is not None
         has_explicit_commission = "commission_amount" in body and body.get("commission_amount") is not None
         if has_explicit_gross:
