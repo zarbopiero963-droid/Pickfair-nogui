@@ -65,16 +65,20 @@ class PnLEngine:
             if pos["market_id"] != market_id:
                 continue
 
-            pnl = self._calc(pos, market_book)
+            settlement = self._calc_settlement(pos, market_book)
+            pnl = float(settlement["net_pnl"])
 
             # 🎯 LOGICA USCITA
             if pnl >= pos["stake"] * 0.03 or pnl <= -pos["stake"] * 0.05:
-                self._close(pos, pnl)
+                self._close(pos, settlement)
 
     # =========================================================
     # PNL CALC
     # =========================================================
     def _calc(self, pos, market_book):
+        return float(self._calc_settlement(pos, market_book)["net_pnl"])
+
+    def _calc_settlement(self, pos, market_book):
         sel = int(pos["selection_id"])
         side = pos["side"]
         entry = pos["price"]
@@ -89,19 +93,38 @@ class PnLEngine:
             lay = (ex.get("availableToLay") or [{}])[0].get("price")
 
             if not back or not lay:
-                return 0.0
+                return {
+                    "gross_pnl": 0.0,
+                    "commission_amount": 0.0,
+                    "net_pnl": 0.0,
+                    "commission_pct": float(self.commission * 100.0),
+                    "settlement_source": "core_pnl_engine_mark_to_market_close",
+                }
 
             if side == "BACK":
-                pnl = (entry - lay) * stake
+                gross_pnl = (entry - lay) * stake
             else:
-                pnl = (back - entry) * stake
+                gross_pnl = (back - entry) * stake
 
             # 💰 commissione applicata solo su profitto positivo
-            pnl_net = pnl - self._commission_amount(pnl)
+            commission_amount = self._commission_amount(gross_pnl)
+            pnl_net = gross_pnl - commission_amount
 
-            return float(pnl_net)
+            return {
+                "gross_pnl": float(gross_pnl),
+                "commission_amount": float(commission_amount),
+                "net_pnl": float(pnl_net),
+                "commission_pct": float(self.commission * 100.0),
+                "settlement_source": "core_pnl_engine_mark_to_market_close",
+            }
 
-        return 0.0
+        return {
+            "gross_pnl": 0.0,
+            "commission_amount": 0.0,
+            "net_pnl": 0.0,
+            "commission_pct": float(self.commission * 100.0),
+            "settlement_source": "core_pnl_engine_mark_to_market_close",
+        }
 
     def _commission_amount(self, gross_pnl: float) -> float:
         gross_pnl = float(gross_pnl or 0.0)
@@ -112,15 +135,31 @@ class PnLEngine:
     # =========================================================
     # CLOSE
     # =========================================================
-    def _close(self, pos, pnl):
+    def _close(self, pos, settlement):
+        settlement = dict(settlement or {})
+        net_pnl = float(settlement.get("net_pnl", 0.0) or 0.0)
+        gross_pnl = float(settlement.get("gross_pnl", net_pnl) or 0.0)
+        commission_amount = float(settlement.get("commission_amount", 0.0) or 0.0)
+        commission_pct = float(settlement.get("commission_pct", self.commission * 100.0) or 0.0)
+        settlement_source = str(
+            settlement.get("settlement_source")
+            or settlement.get("source")
+            or "core_pnl_engine_mark_to_market_close"
+        )
         payload = {
             "event_key": pos["event_key"],
             "table_id": pos["table_id"],
             "batch_id": pos["batch_id"],
-            "pnl": pnl,
+            # legacy alias (net pnl) kept for compatibility
+            "pnl": net_pnl,
+            "gross_pnl": gross_pnl,
+            "commission_amount": commission_amount,
+            "net_pnl": net_pnl,
+            "commission_pct": commission_pct,
+            "settlement_source": settlement_source,
         }
 
-        logger.info(f"[PnL] Close {pos['event_key']} pnl={pnl:.2f}")
+        logger.info(f"[PnL] Close {pos['event_key']} pnl={net_pnl:.2f}")
 
         if self.bus:
             self.bus.publish("RUNTIME_CLOSE_POSITION", payload)

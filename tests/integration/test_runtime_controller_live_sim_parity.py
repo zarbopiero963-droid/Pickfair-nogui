@@ -906,3 +906,23 @@ def test_runtime_controller_turbulence_recovery_clears_degraded_and_restores_coh
     assert runner["adjustmentFactor"] == pytest.approx(8.4)
     assert runner["ex"]["availableToBack"] == [{"price": 2.1, "size": 12.0}]
     assert runner["ex"]["tradedVolume"] == [{"price": 2.15, "size": 90.0}]
+
+
+@pytest.mark.integration
+def test_runtime_controller_settlement_contract_extraction_prefers_explicit_net_fields():
+    extracted = RuntimeController._extract_settlement_contract(
+        {
+            "gross_pnl": 30.0,
+            "commission_amount": 1.35,
+            "net_pnl": 28.65,
+            "commission_pct": 4.5,
+            "settlement_source": "integration_test",
+            "pnl": 999.0,
+        }
+    )
+
+    assert extracted["gross_pnl"] == 30.0
+    assert extracted["commission_amount"] == 1.35
+    assert extracted["net_pnl"] == 28.65
+    assert extracted["commission_pct"] == 4.5
+    assert extracted["settlement_source"] == "integration_test"

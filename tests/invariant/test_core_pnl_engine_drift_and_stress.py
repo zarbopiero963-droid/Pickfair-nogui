@@ -176,6 +176,58 @@ def test_event_driven_pnl_commission_sign_semantics_match_contract():
 
 
 @pytest.mark.chaos
+def test_event_driven_close_payload_exposes_explicit_settlement_contract():
+    class _Bus:
+        def __init__(self):
+            self.events = []
+
+        def subscribe(self, *_args, **_kwargs):
+            return None
+
+        def publish(self, topic, payload):
+            self.events.append((topic, dict(payload or {})))
+
+    bus = _Bus()
+    engine = EventDrivenPnLEngine(bus=bus, commission_pct=4.5)
+
+    fill = {
+        "event_key": "E-SC",
+        "market_id": "1.451",
+        "selection_id": 88,
+        "bet_type": "BACK",
+        "price": 2.0,
+        "stake": 100.0,
+        "table_id": 1,
+        "batch_id": "B-SC",
+    }
+    engine._on_filled(fill)
+    engine._on_market(
+        {
+            "marketId": "1.451",
+            "runners": [
+                {
+                    "selectionId": 88,
+                    "ex": {
+                        "availableToBack": [{"price": 2.0}],
+                        "availableToLay": [{"price": 1.5}],
+                    },
+                }
+            ],
+        }
+    )
+
+    close_events = [payload for topic, payload in bus.events if topic == "RUNTIME_CLOSE_POSITION"]
+    assert len(close_events) == 1
+    payload = close_events[0]
+    assert payload["gross_pnl"] == 50.0
+    assert payload["commission_amount"] == 2.25
+    assert payload["net_pnl"] == 47.75
+    assert payload["commission_pct"] == 4.5
+    assert payload["settlement_source"] == "core_pnl_engine_mark_to_market_close"
+    assert payload["pnl"] == payload["net_pnl"]
+
+
+@pytest.mark.chaos
 def test_core_pnl_numeric_stress_extreme_ranges_are_finite():
     from pnl_engine import PnLEngine
 

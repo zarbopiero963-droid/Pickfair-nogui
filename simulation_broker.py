@@ -62,6 +62,7 @@ class SimulationState:
         self.commission_pct = float(commission_pct)
         self.realized_pnl = 0.0
         self.realized_commission = 0.0
+        self.last_settlement: Dict[str, float | str] = {}
         self.orders: Dict[str, SimOrder] = {}
         self.market_books: Dict[str, Dict[str, Any]] = {}
         self.event_index: Dict[str, Dict[str, Any]] = {}
@@ -74,6 +75,7 @@ class SimulationState:
             "commission_pct": self.commission_pct,
             "realized_pnl": self.realized_pnl,
             "realized_commission": self.realized_commission,
+            "last_settlement": dict(self.last_settlement),
             "orders": {k: v.to_dict() for k, v in self.orders.items()},
             "market_books": self.market_books,
             "event_index": self.event_index,
@@ -87,6 +89,7 @@ class SimulationState:
         self.commission_pct = float(data.get("commission_pct", self.commission_pct))
         self.realized_pnl = float(data.get("realized_pnl", 0.0))
         self.realized_commission = float(data.get("realized_commission", 0.0))
+        self.last_settlement = dict(data.get("last_settlement") or {})
 
         self.orders = {}
         for bet_id, payload in (data.get("orders") or {}).items():
@@ -567,7 +570,7 @@ class SimulationBroker:
             except Exception:
                 logger.exception("Errore save_simulation_bet")
 
-    def record_realized_settlement(self, gross_pnl: float) -> Dict[str, float]:
+    def record_realized_settlement(self, gross_pnl: float) -> Dict[str, Any]:
         """
         Registra un risultato settlement realizzato e rende ispezionabile
         la commissione applicata:
@@ -583,13 +586,25 @@ class SimulationBroker:
         self.state.realized_pnl += net
         self.state.realized_commission += commission
         self.state.balance += net
-        return {
+        settlement = {
             "gross_pnl": gross,
             "commission_amount": commission,
             "net_pnl": net,
+            "commission_pct": float(self.state.commission_pct),
+            "settlement_source": "simulation_broker_realized_settlement",
             "realized_pnl": self.state.realized_pnl,
             "realized_commission": self.state.realized_commission,
         }
+        # legacy alias retained for downstream compatibility
+        settlement["pnl"] = settlement["net_pnl"]
+        self.state.last_settlement = {
+            "gross_pnl": float(settlement["gross_pnl"]),
+            "commission_amount": float(settlement["commission_amount"]),
+            "net_pnl": float(settlement["net_pnl"]),
+            "commission_pct": float(settlement["commission_pct"]),
+            "settlement_source": str(settlement["settlement_source"]),
+        }
+        return settlement
 
     # =========================================================
     # UTILS
@@ -604,6 +619,7 @@ class SimulationBroker:
             "commission_pct": self.state.commission_pct,
             "realized_pnl": self.state.realized_pnl,
             "realized_commission": self.state.realized_commission,
+            "last_settlement": dict(self.state.last_settlement),
             "orders": [o.to_dict() for o in self.state.orders.values()],
             "tracked_markets": list(self.state.market_books.keys()),
             "tracked_events": list(self.state.event_index.keys()),

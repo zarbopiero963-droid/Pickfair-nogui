@@ -1404,8 +1404,9 @@ class RuntimeController:
         if not isinstance(payload, dict):
             return
 
+        settlement = self._extract_settlement_contract(payload)
         table_id = payload.get("table_id")
-        pnl = float(payload.get("pnl", 0.0) or 0.0)
+        pnl = float(settlement["net_pnl"])
         event_key = str(payload.get("event_key") or "")
         batch_id = str(payload.get("batch_id") or "")
 
@@ -1461,6 +1462,11 @@ class RuntimeController:
                 {
                     "batch_id": batch_id,
                     "pnl": pnl,
+                    "gross_pnl": float(settlement["gross_pnl"]),
+                    "commission_amount": float(settlement["commission_amount"]),
+                    "net_pnl": float(settlement["net_pnl"]),
+                    "commission_pct": float(settlement["commission_pct"]),
+                    "settlement_source": str(settlement["settlement_source"]),
                     "event_key": event_key,
                 },
             )
@@ -1486,6 +1492,27 @@ class RuntimeController:
         self.risk_desk.apply_closed_pnl(pnl)
         if float(self.risk_desk.bankroll_current) != bankroll_before:
             self.risk_desk.sync_bankroll(bankroll_before)
+
+    @staticmethod
+    def _extract_settlement_contract(payload: dict) -> dict[str, float | str]:
+        body = dict(payload or {})
+        net_pnl = body.get("net_pnl", body.get("pnl", 0.0))
+        net_pnl_f = float(net_pnl or 0.0)
+        gross_pnl_f = float(body.get("gross_pnl", net_pnl_f) or 0.0)
+        commission_amount_f = float(body.get("commission_amount", (gross_pnl_f - net_pnl_f)) or 0.0)
+        commission_pct_f = float(body.get("commission_pct", 0.0) or 0.0)
+        settlement_source = str(
+            body.get("settlement_source")
+            or body.get("source")
+            or "runtime_close_event"
+        )
+        return {
+            "gross_pnl": gross_pnl_f,
+            "commission_amount": commission_amount_f,
+            "net_pnl": net_pnl_f,
+            "commission_pct": commission_pct_f,
+            "settlement_source": settlement_source,
+        }
 
     def _sync_bankroll_post_settlement(self, payload: dict) -> dict:
         bankroll_before = float(self.risk_desk.bankroll_current)

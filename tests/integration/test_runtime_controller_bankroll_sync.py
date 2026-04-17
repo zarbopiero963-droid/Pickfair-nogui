@@ -114,6 +114,39 @@ def test_runtime_controller_bankroll_sync_prefers_exchange_over_local_pnl():
 
 
 @pytest.mark.integration
+def test_runtime_controller_close_payload_preserves_settlement_provenance_fields():
+    rc, bus = _make_controller(responses=[{"available": 140.0}])
+    rc.risk_desk.sync_bankroll(100.0)
+
+    rc._on_close_position(
+        {
+            "event_key": "evt-prov",
+            "table_id": 1,
+            "batch_id": "batch-prov",
+            "correlation_id": "corr-prov",
+            "gross_pnl": 20.0,
+            "commission_amount": 0.9,
+            "net_pnl": 19.1,
+            "commission_pct": 4.5,
+            "settlement_source": "test_settlement",
+            # conflicting legacy alias should not override explicit net_pnl
+            "pnl": 999.0,
+        }
+    )
+
+    closed = [payload for topic, payload in bus.events if topic == "BATCH_POSITION_CLOSED"]
+    assert len(closed) == 1
+    payload = closed[0]
+    assert payload["gross_pnl"] == 20.0
+    assert payload["commission_amount"] == 0.9
+    assert payload["net_pnl"] == 19.1
+    assert payload["commission_pct"] == 4.5
+    assert payload["settlement_source"] == "test_settlement"
+    assert payload["pnl"] == 19.1
+    assert float(rc.risk_desk.realized_pnl) == 19.1
+
+
+@pytest.mark.integration
 def test_runtime_controller_non_settlement_paths_do_not_trigger_bankroll_sync():
     rc, _ = _make_controller(responses=[{"available": 777.0}])
     rc.risk_desk.sync_bankroll(100.0)
