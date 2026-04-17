@@ -33,3 +33,7 @@ jobs:
       - name: Run observability minimum check tests
         run: |
           pytest -q tests/scripts/test_observability_minimum_check.py -x
+
+      - name: Validate tracked observability minimum document
+        run: |
+          python scripts/observability_minimum_check.py --doc-path ops/observability_minimum.md
