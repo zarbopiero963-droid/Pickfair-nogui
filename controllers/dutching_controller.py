@@ -12,12 +12,20 @@ except ImportError:
     # compat legacy guardrail
     from dutching import calculate_dutching_stakes as _calculate_dutching_stakes
 
-    def calculate_dutching(selections, total_stake):
+    def calculate_dutching(selections, total_stake, commission=4.5):
         odds = [float(s["price"]) for s in selections]
-        res = _calculate_dutching_stakes(odds, float(total_stake))
+        commission_value = float(commission if commission is not None else 4.5)
+        res = _calculate_dutching_stakes(
+            odds,
+            float(total_stake),
+            commission=commission_value,
+            commission_aware=True,
+        )
         stakes = res.get("stakes", []) or []
         profits = res.get("profits", []) or []
+        net_profits = res.get("net_profits", []) or []
         avg_profit = float(res.get("avg_profit", 0.0) or 0.0)
+        avg_net_profit = float(res.get("avg_net_profit", avg_profit) or avg_profit)
         book_pct = float(res.get("book_pct", 0.0) or 0.0)
 
         results = []
@@ -30,6 +38,9 @@ except ImportError:
                 "side": side,
                 "runnerName": selection.get("runnerName", ""),
                 "profitIfWins": float(profits[idx]) if idx < len(profits) else 0.0,
+                "profitIfWinsNet": (
+                    float(net_profits[idx]) if idx < len(net_profits) else 0.0
+                ),
             }
             if side == "LAY":
                 item["liability"] = round(
@@ -38,7 +49,7 @@ except ImportError:
                 )
             results.append(item)
 
-        return results, avg_profit, book_pct
+        return results, avg_profit, book_pct, avg_net_profit
 
 
 logger = logging.getLogger(__name__)
@@ -248,6 +259,46 @@ class DutchingController:
         side = str(value or "BACK").upper().strip()
         return side if side in {"BACK", "LAY"} else "BACK"
 
+    def _resolve_commission_pct(self, payload: Dict[str, Any]) -> float:
+        if "commission" in payload:
+            try:
+                return max(0.0, float(payload.get("commission", 4.5) or 0.0))
+            except Exception:
+                return 4.5
+        return 4.5
+
+    def _calculate_dutching_with_commission(
+        self, payload: Dict[str, Any]
+    ) -> tuple[List[Dict[str, Any]], float, float, float]:
+        commission_pct = self._resolve_commission_pct(payload)
+        try:
+            calc_out = calculate_dutching(
+                payload["selections"],
+                float(payload["total_stake"]),
+                commission=commission_pct,
+            )
+        except TypeError:
+            # Compat path for test doubles/legacy callables without commission argument.
+            calc_out = calculate_dutching(
+                payload["selections"],
+                float(payload["total_stake"]),
+            )
+
+        if isinstance(calc_out, tuple) and len(calc_out) >= 4:
+            results, avg_profit, book_pct, avg_net_profit = calc_out[:4]
+        elif isinstance(calc_out, tuple) and len(calc_out) == 3:
+            results, avg_profit, book_pct = calc_out
+            avg_net_profit = float(avg_profit)
+        else:
+            raise ValueError("Formato output calculate_dutching non valido")
+
+        return (
+            results,
+            float(avg_profit),
+            float(book_pct),
+            float(avg_net_profit),
+        )
+
     def _batch_manager_create(
         self,
         batch_id: str,
@@ -355,9 +406,8 @@ class DutchingController:
             if not validation["ok"]:
                 return validation
 
-            results, avg_profit, book_pct = calculate_dutching(
-                payload["selections"],
-                float(payload["total_stake"]),
+            results, avg_profit, book_pct, avg_net_profit = (
+                self._calculate_dutching_with_commission(payload)
             )
 
             if not isinstance(results, list):
@@ -372,10 +422,14 @@ class DutchingController:
                 preflight=False,
                 results=results,
                 avg_profit=float(avg_profit),
+                avg_profit_net=float(avg_net_profit),
+                avg_profit_semantics="gross",
                 book_pct=float(book_pct),
                 event_key=event_key,
                 batch_id=batch_id,
                 batch_exposure=round(batch_exposure, 2),
+                commission_pct=self._resolve_commission_pct(payload),
+                profitable_net=bool(float(avg_net_profit) > 0.0),
             )
         except Exception as exc:
             logger.exception("Errore preview dutching")
@@ -393,9 +447,8 @@ class DutchingController:
             return self._fail("Runtime non attivo")
 
         try:
-            results, avg_profit, book_pct = calculate_dutching(
-                payload["selections"],
-                float(payload["total_stake"]),
+            results, avg_profit, book_pct, avg_net_profit = (
+                self._calculate_dutching_with_commission(payload)
             )
         except Exception as exc:
             logger.exception("Errore calculate_dutching in precheck")
@@ -475,10 +528,14 @@ class DutchingController:
             dry_run=False,
             results=results,
             avg_profit=float(avg_profit),
+            avg_profit_net=float(avg_net_profit),
+            avg_profit_semantics="gross",
             book_pct=float(book_pct),
             event_key=event_key,
             batch_id=batch_id,
             batch_exposure=float(batch_exposure),
+            commission_pct=self._resolve_commission_pct(payload),
+            profitable_net=bool(float(avg_net_profit) > 0.0),
         )
 
     # =========================================================
