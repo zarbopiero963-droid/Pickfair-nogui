@@ -60,6 +60,8 @@ class SimulationState:
         self.balance = float(starting_balance)
         self.exposure = 0.0
         self.commission_pct = float(commission_pct)
+        self.realized_pnl = 0.0
+        self.realized_commission = 0.0
         self.orders: Dict[str, SimOrder] = {}
         self.market_books: Dict[str, Dict[str, Any]] = {}
         self.event_index: Dict[str, Dict[str, Any]] = {}
@@ -70,6 +72,8 @@ class SimulationState:
             "balance": self.balance,
             "exposure": self.exposure,
             "commission_pct": self.commission_pct,
+            "realized_pnl": self.realized_pnl,
+            "realized_commission": self.realized_commission,
             "orders": {k: v.to_dict() for k, v in self.orders.items()},
             "market_books": self.market_books,
             "event_index": self.event_index,
@@ -81,6 +85,8 @@ class SimulationState:
         self.balance = float(data.get("balance", self.starting_balance))
         self.exposure = float(data.get("exposure", 0.0))
         self.commission_pct = float(data.get("commission_pct", self.commission_pct))
+        self.realized_pnl = float(data.get("realized_pnl", 0.0))
+        self.realized_commission = float(data.get("realized_commission", 0.0))
 
         self.orders = {}
         for bet_id, payload in (data.get("orders") or {}).items():
@@ -561,6 +567,30 @@ class SimulationBroker:
             except Exception:
                 logger.exception("Errore save_simulation_bet")
 
+    def record_realized_settlement(self, gross_pnl: float) -> Dict[str, float]:
+        """
+        Registra un risultato settlement realizzato e rende ispezionabile
+        la commissione applicata:
+        - commissione solo su pnl positivo
+        - nessuna commissione su pnl <= 0
+        """
+        gross = float(gross_pnl or 0.0)
+        commission = 0.0
+        if gross > 0.0 and self.state.commission_pct > 0.0:
+            commission = gross * (self.state.commission_pct / 100.0)
+        net = gross - commission
+
+        self.state.realized_pnl += net
+        self.state.realized_commission += commission
+        self.state.balance += net
+        return {
+            "gross_pnl": gross,
+            "commission_amount": commission,
+            "net_pnl": net,
+            "realized_pnl": self.state.realized_pnl,
+            "realized_commission": self.state.realized_commission,
+        }
+
     # =========================================================
     # UTILS
     # =========================================================
@@ -572,6 +602,8 @@ class SimulationBroker:
             "exposure": self.state.exposure,
             "starting_balance": self.state.starting_balance,
             "commission_pct": self.state.commission_pct,
+            "realized_pnl": self.state.realized_pnl,
+            "realized_commission": self.state.realized_commission,
             "orders": [o.to_dict() for o in self.state.orders.values()],
             "tracked_markets": list(self.state.market_books.keys()),
             "tracked_events": list(self.state.event_index.keys()),

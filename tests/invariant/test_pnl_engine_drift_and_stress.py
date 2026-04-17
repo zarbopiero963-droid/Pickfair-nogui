@@ -109,6 +109,33 @@ def test_root_pnl_engine_commission_applies_only_to_positive_pnl():
     assert abs(pnl_neg - (-50.0)) < 1e-12
 
 
+@pytest.mark.invariant
+def test_root_pnl_engine_commission_contract_is_finite_and_single_applied():
+    from core.pnl_engine import PnLEngine
+
+    engine = PnLEngine(bus=None, commission_pct=4.5)
+    pos = {
+        "event_key": "E-COMM-2",
+        "market_id": "1.251",
+        "selection_id": 101,
+        "side": "BACK",
+        "price": 2.0,
+        "stake": 100.0,
+        "table_id": 1,
+        "batch_id": "BC2",
+    }
+
+    winning_book = {
+        "marketId": "1.251",
+        "runners": [{"selectionId": 101, "ex": {"availableToBack": [{"price": 2.0}], "availableToLay": [{"price": 1.5}]}}],
+    }
+
+    pnl_net = engine._calc(dict(pos), winning_book)
+    assert math.isfinite(pnl_net)
+    # Single-application 4.5% reference: +50 gross -> +47.75 net
+    assert abs(pnl_net - 47.75) < 1e-12
+
+
 @pytest.mark.chaos
 def test_root_pnl_engine_numeric_stress_extreme_prices_and_stakes():
     from core.pnl_engine import PnLEngine
