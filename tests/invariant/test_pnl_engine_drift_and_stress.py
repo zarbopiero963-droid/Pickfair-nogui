@@ -64,6 +64,51 @@ def test_root_pnl_engine_repeated_calc_is_stable():
     assert all(abs(v - first) < 1e-12 for v in values)
 
 
+@pytest.mark.invariant
+def test_root_pnl_engine_commission_applies_only_to_positive_pnl():
+    from core.pnl_engine import PnLEngine
+
+    engine = PnLEngine(bus=None, commission_pct=4.5)
+    base_pos = {
+        "event_key": "E-COMM",
+        "market_id": "1.250",
+        "selection_id": 99,
+        "side": "BACK",
+        "price": 2.0,
+        "stake": 100.0,
+        "table_id": 1,
+        "batch_id": "BC",
+    }
+
+    positive_book = {
+        "marketId": "1.250",
+        "runners": [{"selectionId": 99, "ex": {"availableToBack": [{"price": 2.0}], "availableToLay": [{"price": 1.5}]}}],
+    }
+    zero_book = {
+        "marketId": "1.250",
+        "runners": [{"selectionId": 99, "ex": {"availableToBack": [{"price": 2.0}], "availableToLay": [{"price": 2.0}]}}],
+    }
+    negative_book = {
+        "marketId": "1.250",
+        "runners": [{"selectionId": 99, "ex": {"availableToBack": [{"price": 2.0}], "availableToLay": [{"price": 2.5}]}}],
+    }
+
+    pnl_pos = engine._calc(dict(base_pos), positive_book)
+    pnl_zero = engine._calc(dict(base_pos), zero_book)
+    pnl_neg = engine._calc(dict(base_pos), negative_book)
+
+    assert math.isfinite(pnl_pos)
+    assert math.isfinite(pnl_zero)
+    assert math.isfinite(pnl_neg)
+
+    # Gross +50 => net 50 - 4.5%
+    assert abs(pnl_pos - 47.75) < 1e-12
+    # Zero remains zero
+    assert pnl_zero == 0.0
+    # Gross -50 should not be further reduced by commission
+    assert abs(pnl_neg - (-50.0)) < 1e-12
+
+
 @pytest.mark.chaos
 def test_root_pnl_engine_numeric_stress_extreme_prices_and_stakes():
     from core.pnl_engine import PnLEngine
