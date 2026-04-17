@@ -87,18 +87,31 @@ def _make_controller(*, responses):
     return rc, bus
 
 
+def _close_payload(*, event_key: str, batch_id: str, correlation_id: str, net_pnl: float) -> dict:
+    net = float(net_pnl)
+    return {
+        "event_key": str(event_key),
+        "table_id": 1,
+        "batch_id": str(batch_id),
+        "correlation_id": str(correlation_id),
+        "gross_pnl": net,
+        "commission_amount": 0.0,
+        "net_pnl": net,
+        "commission_pct": 4.5,
+        "settlement_source": "core_pnl_engine",
+        "settlement_kind": "realized_settlement",
+        "settlement_basis": "market_net_realized",
+        # legacy alias retained for compatibility with existing paths
+        "pnl": net,
+    }
+
+
 def test_bankroll_sync_success_on_settlement_close_event():
     rc, bus = _make_controller(responses=[{"available": 150.0}])
     rc.risk_desk.sync_bankroll(100.0)
 
     rc._on_close_position(
-        {
-            "event_key": "evt-1",
-            "table_id": 1,
-            "batch_id": "batch-1",
-            "correlation_id": "corr-1",
-            "pnl": 25.0,
-        }
+        _close_payload(event_key="evt-1", batch_id="batch-1", correlation_id="corr-1", net_pnl=25.0)
     )
 
     result = rc._last_bankroll_sync_result
@@ -116,13 +129,7 @@ def test_bankroll_sync_success_on_settlement_close_event():
 def test_bankroll_sync_duplicate_settlement_is_idempotent():
     rc, _ = _make_controller(responses=[{"available": 150.0}, {"available": 999.0}])
     rc.risk_desk.sync_bankroll(100.0)
-    payload = {
-        "event_key": "evt-dup",
-        "table_id": 1,
-        "batch_id": "batch-dup",
-        "correlation_id": "corr-dup",
-        "pnl": 10.0,
-    }
+    payload = _close_payload(event_key="evt-dup", batch_id="batch-dup", correlation_id="corr-dup", net_pnl=10.0)
 
     rc._on_close_position(payload)
     first_after = float(rc.risk_desk.bankroll_current)
@@ -140,13 +147,7 @@ def test_bankroll_sync_fails_closed_when_balance_unavailable():
     rc.risk_desk.sync_bankroll(100.0)
 
     rc._on_close_position(
-        {
-            "event_key": "evt-fail",
-            "table_id": 1,
-            "batch_id": "batch-fail",
-            "correlation_id": "corr-fail",
-            "pnl": -50.0,
-        }
+        _close_payload(event_key="evt-fail", batch_id="batch-fail", correlation_id="corr-fail", net_pnl=-50.0)
     )
 
     result = rc._last_bankroll_sync_result
@@ -159,13 +160,12 @@ def test_bankroll_sync_rejects_ambiguous_zero_fallback_balance():
     rc.risk_desk.sync_bankroll(100.0)
 
     rc._on_close_position(
-        {
-            "event_key": "evt-zero-fallback",
-            "table_id": 1,
-            "batch_id": "batch-zero-fallback",
-            "correlation_id": "corr-zero-fallback",
-            "pnl": 15.0,
-        }
+        _close_payload(
+            event_key="evt-zero-fallback",
+            batch_id="batch-zero-fallback",
+            correlation_id="corr-zero-fallback",
+            net_pnl=15.0,
+        )
     )
 
     result = rc._last_bankroll_sync_result
@@ -179,13 +179,12 @@ def test_bankroll_sync_accepts_explicitly_confirmed_zero_balance():
     rc.risk_desk.sync_bankroll(10.0)
 
     rc._on_close_position(
-        {
-            "event_key": "evt-zero-confirmed",
-            "table_id": 1,
-            "batch_id": "batch-zero-confirmed",
-            "correlation_id": "corr-zero-confirmed",
-            "pnl": -5.0,
-        }
+        _close_payload(
+            event_key="evt-zero-confirmed",
+            batch_id="batch-zero-confirmed",
+            correlation_id="corr-zero-confirmed",
+            net_pnl=-5.0,
+        )
     )
 
     result = rc._last_bankroll_sync_result
@@ -198,13 +197,7 @@ def test_bankroll_sync_fails_closed_when_balance_invalid():
     rc.risk_desk.sync_bankroll(100.0)
 
     rc._on_close_position(
-        {
-            "event_key": "evt-invalid",
-            "table_id": 1,
-            "batch_id": "batch-invalid",
-            "correlation_id": "corr-invalid",
-            "pnl": 10.0,
-        }
+        _close_payload(event_key="evt-invalid", batch_id="batch-invalid", correlation_id="corr-invalid", net_pnl=10.0)
     )
 
     result = rc._last_bankroll_sync_result
@@ -229,6 +222,7 @@ def test_realized_pnl_is_preserved_on_close_while_bankroll_sync_runs():
             "commission_pct": 4.5,
             "settlement_source": "core_pnl_engine",
             "settlement_kind": "realized_settlement",
+            "settlement_basis": "market_net_realized",
         }
     )
 

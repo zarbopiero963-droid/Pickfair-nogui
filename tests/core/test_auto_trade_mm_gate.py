@@ -99,6 +99,7 @@ def _close_payload(**overrides):
         "commission_pct": 4.5,
         "settlement_source": "core_pnl_engine",
         "settlement_kind": "realized_settlement",
+        "settlement_basis": "market_net_realized",
         "mm_context": {
             "cycle_active": True,
             "cycle_id": "cycle-1",
@@ -124,6 +125,7 @@ def _legacy_non_canonical_close_payload(**overrides):
     payload.pop("commission_pct", None)
     payload.pop("settlement_source", None)
     payload.pop("settlement_kind", None)
+    payload.pop("settlement_basis", None)
     if "pnl" not in payload:
         payload["pnl"] = 5.0
     return payload
