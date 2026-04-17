@@ -1,4 +1,5 @@
 import pytest
+import math
 
 from dutching import calculate_cashout, calculate_dutching_stakes, dynamic_cashout_single
 
@@ -35,3 +36,21 @@ def test_cashout_function_and_dynamic_cashout_are_consistent():
     assert abs(a["cashout_stake"] - b["cashout_stake"]) < 0.01
     assert abs(a["profit_if_win"] - b["profit_if_win"]) < 0.05
     assert abs(a["profit_if_lose"] - b["profit_if_lose"]) < 0.05
+
+
+@pytest.mark.integration
+def test_dutching_market_net_semantics_are_explicit_under_4p5_commission():
+    result = calculate_dutching_stakes([2.4, 3.6, 5.2], 75, commission=4.5)
+
+    assert len(result["profits"]) == len(result["net_profits"]) == 3
+    assert all(math.isfinite(x) for x in result["profits"])
+    assert all(math.isfinite(x) for x in result["net_profits"])
+
+    # Market-net semantics are explicit: net is never above gross and can be
+    # equal only when gross is non-positive.
+    for gross, net in zip(result["profits"], result["net_profits"]):
+        assert net <= gross + 1e-12
+        if gross > 0:
+            assert abs(net - (gross * 0.955)) <= 0.02
+        else:
+            assert net == gross

@@ -116,6 +116,25 @@ def test_core_pnl_commission_sign_semantics_are_explicit():
 
 
 @pytest.mark.invariant
+def test_core_pnl_commission_fixed_4p5_reference_and_no_double_commission():
+    from pnl_engine import PnLEngine
+
+    engine = PnLEngine(commission_pct=4.5)
+    win = engine.calculate_settlement_pnl(side="BACK", price=3.0, size=100.0, won=True)
+    zero = engine.calculate_settlement_pnl(side="LAY", price=2.0, size=0.000001, won=False)
+
+    assert math.isfinite(win["gross_pnl"])
+    assert math.isfinite(win["commission_amount"])
+    assert math.isfinite(win["net_pnl"])
+    assert abs(win["commission_amount"] - (win["gross_pnl"] * 0.045)) < 1e-12
+    assert abs(win["net_pnl"] - (win["gross_pnl"] * 0.955)) < 1e-12
+
+    # No double-commission: net + commission must reconstruct gross.
+    assert abs((win["net_pnl"] + win["commission_amount"]) - win["gross_pnl"]) < 1e-12
+    assert zero["commission_amount"] == 0.0
+
+
+@pytest.mark.invariant
 def test_event_driven_pnl_commission_sign_semantics_match_contract():
     engine = EventDrivenPnLEngine(bus=None, commission_pct=4.5)
 

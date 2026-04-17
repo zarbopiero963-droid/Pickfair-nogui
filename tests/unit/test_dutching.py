@@ -1,4 +1,5 @@
 import pytest
+import math
 
 from dutching import (
     _apply_commission,
@@ -114,6 +115,41 @@ def test_dutching_commission_reduces_net_profits_only():
 
     for gross, net in zip(result["profits"], result["net_profits"]):
         assert net <= gross + 1e-9
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_dutching_equal_profit_is_tolerance_bounded_with_italy_commission_reference():
+    result = calculate_dutching_stakes([3.0, 4.0, 6.0], 120, commission=4.5)
+
+    assert len(result["stakes"]) == 3
+    assert abs(sum(result["stakes"]) - 120.0) < 0.01
+    assert all(math.isfinite(x) for x in result["net_profits"])
+    # Equalized net-profit expectation is explicit and fail-closed.
+    spread = max(result["net_profits"]) - min(result["net_profits"])
+    assert spread <= 0.10
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_dutching_rounding_tolerance_is_explicitly_bounded():
+    result = calculate_dutching_stakes([2.17, 3.41, 5.35], 37, commission=4.5)
+
+    assert len(result["net_profits"]) == 3
+    assert all(math.isfinite(x) for x in result["net_profits"])
+    # Tight-but-realistic tolerance that allows cent rounding only.
+    assert max(result["net_profits"]) - min(result["net_profits"]) <= 0.15
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_dutching_unprofitable_books_are_reported_honestly_not_forced_positive():
+    # Book > 100% means non-profitable dutch; tests must lock honesty semantics.
+    result = calculate_dutching_stakes([1.9, 1.9], 100, commission=4.5)
+
+    assert result["book_pct"] > 100.0
+    assert len(result["net_profits"]) == 2
+    assert max(result["net_profits"]) < 0.0
 
 
 @pytest.mark.unit
