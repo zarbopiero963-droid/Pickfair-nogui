@@ -7,6 +7,7 @@ from trading_config import enforce_betfair_italy_commission_pct
 
 TWOPLACES = Decimal("0.01")
 EPS = Decimal("0.0000001")
+_NON_AUTHORITATIVE_SETTLEMENT_KEYS = ("settlement_source", "settlement_kind", "settlement_basis")
 
 
 def _d(value: Any, default: str = "0") -> Decimal:
@@ -35,6 +36,7 @@ def _resolve_policy_commission_pct(commission: float | Decimal) -> Decimal:
     commission_d = _d(commission, "0")
     if commission_d <= Decimal("0"):
         # Helper surfaces can explicitly disable commission for gross-only previews.
+        # This module is preview-only and NOT a realized settlement authority.
         return Decimal("0")
     enforced = enforce_betfair_italy_commission_pct(
         float(commission_d),
@@ -134,7 +136,7 @@ def calculate_dutching_stakes(
     commission_aware: bool = True,
 ) -> Dict[str, Any]:
     """
-    Dutching pro:
+    Dutching helper (preview-only, non-authoritative settlement surface):
     - stake distribution corretta
     - equalizzazione post-rounding
     - commission-aware opzionale
@@ -218,7 +220,7 @@ def calculate_dutching_stakes(
     )
     book_pct = inv_sum * Decimal("100")
 
-    return {
+    result = {
         "stakes": [float(s) for s in stakes],
         "profits": [float(p) for p in profits],
         "net_profits": [float(p) for p in net_profits],
@@ -226,6 +228,9 @@ def calculate_dutching_stakes(
         "avg_profit": float(_round_step(avg_profit)),
         "avg_net_profit": float(_round_step(avg_net_profit)),
     }
+    for key in _NON_AUTHORITATIVE_SETTLEMENT_KEYS:
+        result.pop(key, None)
+    return result
 
 
 def dynamic_cashout_single(

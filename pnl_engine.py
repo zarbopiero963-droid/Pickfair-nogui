@@ -26,7 +26,7 @@ class PnLResult:
 
 class PnLEngine:
     """
-    Motore P&L unificato.
+    Motore P&L helper (NON autoritativo per settlement realizzato).
 
     Supporta:
     - BACK
@@ -35,10 +35,11 @@ class PnLEngine:
     - commissione exchange
     - output coerente live/sim
 
-    NON gestisce:
+    NON gestisce / NON è autorità di settlement:
     - matching
     - ordini
     - stato tavoli
+    - contratto canonical realized_settlement (source/kind/basis)
     """
 
     def __init__(self, commission_pct: float = 4.5):
@@ -50,17 +51,25 @@ class PnLEngine:
     def _safe_side(self, side: Any) -> str:
         return safe_side(side)
 
-    def _commission_amount(self, gross_pnl: float, commission_pct: Optional[float] = None) -> float:
-        pct = self._resolve_policy_commission_pct(commission_pct)
+    def _commission_amount(
+        self,
+        gross_pnl: float,
+        commission_pct: Optional[float] = None,
+        *,
+        preview_only: bool = False,
+    ) -> float:
+        pct = self._resolve_policy_commission_pct(commission_pct, preview_only=preview_only)
         if gross_pnl <= 0:
             return 0.0
         return gross_pnl * (pct / 100.0)
 
-    def _resolve_policy_commission_pct(self, commission_pct: Optional[float]) -> float:
+    def _resolve_policy_commission_pct(self, commission_pct: Optional[float], *, preview_only: bool = False) -> float:
         pct = self.commission_pct if commission_pct is None else float(commission_pct or 0.0)
         if pct <= 0.0:
-            # Helper paths (e.g. mark-to-market) can disable commission explicitly.
-            return 0.0
+            # preview-only helper paths (mark-to-market / preview) can disable commission explicitly.
+            if preview_only:
+                return 0.0
+            raise ValueError("commission_pct=0.0 is allowed only in preview-only helper paths")
         return float(
             enforce_betfair_italy_commission_pct(
                 pct,
@@ -81,6 +90,7 @@ class PnLEngine:
         exit_price: float,
         size: float,
         commission_pct: Optional[float] = None,
+        _preview_only: bool = False,
     ) -> PnLResult:
         """
         Calcolo P&L chiusura posizione semplice.
@@ -114,7 +124,7 @@ class PnLEngine:
         else:
             gross = size * (entry_price - exit_price) / entry_price
 
-        commission_amount = self._commission_amount(gross, commission_pct)
+        commission_amount = self._commission_amount(gross, commission_pct, preview_only=_preview_only)
         net = gross - commission_amount
 
         return PnLResult(
@@ -125,7 +135,7 @@ class PnLEngine:
             exit_price=exit_price,
             size=size,
             gross_pnl=float(gross),
-            commission_pct=float(self._resolve_policy_commission_pct(commission_pct)),
+            commission_pct=float(self._resolve_policy_commission_pct(commission_pct, preview_only=_preview_only)),
             commission_amount=float(commission_amount),
             net_pnl=float(net),
         )
@@ -167,12 +177,12 @@ class PnLEngine:
         else:
             gross = size if won else -(size * (price - 1.0))
 
-        commission_amount = self._commission_amount(gross, commission_pct)
+        commission_amount = self._commission_amount(gross, commission_pct, preview_only=False)
         net = gross - commission_amount
 
         return {
             "gross_pnl": float(gross),
-            "commission_pct": float(self._resolve_policy_commission_pct(commission_pct)),
+            "commission_pct": float(self._resolve_policy_commission_pct(commission_pct, preview_only=False)),
             "commission_amount": float(commission_amount),
             "net_pnl": float(net),
         }
@@ -238,6 +248,7 @@ class PnLEngine:
             exit_price=hedge_price,
             size=entry_size,
             commission_pct=commission_pct,
+            _preview_only=True,
         )
 
         return {
@@ -266,5 +277,6 @@ class PnLEngine:
             exit_price=current_price,
             size=size,
             commission_pct=0.0,
+            _preview_only=True,
         )
         return float(result.gross_pnl)
