@@ -1412,11 +1412,6 @@ class RuntimeController:
         validation_status = str(settlement.get("settlement_validation") or "accepted")
         settlement_acceptance = str(settlement.get("settlement_acceptance") or "")
 
-        if table_id is not None:
-            self.table_manager.release(int(table_id), pnl=pnl)
-
-        if event_key:
-            self.duplication_guard.release(event_key)
         if validation_status.startswith("rejected"):
             sync_result = {
                 "correlation_id": str(payload.get("correlation_id") or payload.get("event_key") or ""),
@@ -1449,6 +1444,12 @@ class RuntimeController:
             self.bus.publish("BANKROLL_SYNC_RESULT", dict(sync_result))
             self.bus.publish("AUTO_TRADE_MM_RESULT", dict(auto_trade_result))
             return
+
+        if table_id is not None:
+            self.table_manager.release(int(table_id), pnl=pnl)
+
+        if event_key:
+            self.duplication_guard.release(event_key)
         settlement_key = self._build_bankroll_sync_key(payload)
         recovery_probe = self._read_cycle_recovery_state(settlement_key)
         if self._should_fail_closed_on_recovery(recovery_probe):

@@ -304,3 +304,100 @@ def test_runtime_controller_rejects_mark_to_market_settlement_kind_for_close_pro
     assert rc._last_bankroll_sync_result["reason"] == "SETTLEMENT_KIND_NOT_REALIZED"
     assert rc._last_bankroll_sync_result["settlement_acceptance"] == "REJECT_AMBIGUOUS_SETTLEMENT"
     assert float(rc.risk_desk.realized_pnl) == 0.0
+
+
+@pytest.mark.integration
+def test_runtime_controller_rejected_settlement_does_not_release_table_or_mutate_recovery_loss():
+    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc.risk_desk.sync_bankroll(100.0)
+    rc.table_manager.activate(
+        table_id=1,
+        event_key="evt-reject-ordering",
+        exposure=20.0,
+        market_id="1.100",
+        selection_id=7,
+        meta={},
+    )
+    rc.table_manager.release(1, pnl=-10.0)
+    rc.table_manager.activate(
+        table_id=1,
+        event_key="evt-reject-ordering",
+        exposure=15.0,
+        market_id="1.100",
+        selection_id=7,
+        meta={},
+    )
+    rc.duplication_guard.acquire("evt-reject-ordering")
+    before = rc.table_manager.get_table(1)
+    assert before is not None
+    assert before.current_event_key == "evt-reject-ordering"
+    assert float(before.loss_amount) == 10.0
+    assert before.in_recovery is True
+
+    rc._on_close_position(
+        {
+            "event_key": "evt-reject-ordering",
+            "table_id": 1,
+            "batch_id": "batch-reject-ordering",
+            "correlation_id": "corr-reject-ordering",
+            "gross_pnl": 10.0,
+            "commission_amount": 0.45,
+            "net_pnl": 9.55,
+            "commission_pct": 4.5,
+            "settlement_source": "core_pnl_engine",
+            "settlement_kind": "mark_to_market_estimate",
+        }
+    )
+
+    after = rc.table_manager.get_table(1)
+    assert after is not None
+    assert after.current_event_key == "evt-reject-ordering"
+    assert float(after.loss_amount) == 10.0
+    assert after.in_recovery is True
+    assert any(k["event_key"] == "evt-reject-ordering" for k in rc.duplication_guard.snapshot()["active_keys"])
+
+
+@pytest.mark.integration
+def test_runtime_controller_accepted_settlement_still_releases_table_and_updates_recovery():
+    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc.risk_desk.sync_bankroll(100.0)
+    rc.table_manager.activate(
+        table_id=1,
+        event_key="evt-accept-ordering",
+        exposure=20.0,
+        market_id="1.100",
+        selection_id=7,
+        meta={},
+    )
+    rc.table_manager.release(1, pnl=-10.0)
+    rc.table_manager.activate(
+        table_id=1,
+        event_key="evt-accept-ordering",
+        exposure=15.0,
+        market_id="1.100",
+        selection_id=7,
+        meta={},
+    )
+    rc.duplication_guard.acquire("evt-accept-ordering")
+
+    rc._on_close_position(
+        {
+            "event_key": "evt-accept-ordering",
+            "table_id": 1,
+            "batch_id": "batch-accept-ordering",
+            "correlation_id": "corr-accept-ordering",
+            "gross_pnl": 5.0,
+            "commission_amount": 0.225,
+            "net_pnl": 4.775,
+            "commission_pct": 4.5,
+            "settlement_source": "core_pnl_engine",
+            "settlement_kind": "realized_settlement",
+        }
+    )
+
+    after = rc.table_manager.get_table(1)
+    assert after is not None
+    assert after.current_event_key == ""
+    assert float(after.loss_amount) == 5.225
+    assert after.in_recovery is True
+    assert all(k["event_key"] != "evt-accept-ordering" for k in rc.duplication_guard.snapshot()["active_keys"])
