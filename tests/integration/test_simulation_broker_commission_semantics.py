@@ -1,20 +1,13 @@
 import math
 import pytest
 
-from pnl_engine import PnLEngine
 from simulation_broker import SimulationBroker
 
 
 @pytest.mark.integration
 def test_simulation_realized_commission_is_applied_only_on_positive_winnings():
-    engine = PnLEngine(commission_pct=4.5)
-
-    won = engine.calculate_settlement_pnl(
-        side="BACK",
-        price=3.0,
-        size=100.0,
-        won=True,
-    )
+    broker = SimulationBroker(starting_balance=1000.0, commission_pct=4.5)
+    won = broker.record_realized_settlement(200.0)
 
     assert math.isfinite(won["gross_pnl"])
     assert math.isfinite(won["commission_amount"])
@@ -26,14 +19,8 @@ def test_simulation_realized_commission_is_applied_only_on_positive_winnings():
 
 @pytest.mark.integration
 def test_simulation_realized_commission_is_zero_on_losses():
-    engine = PnLEngine(commission_pct=4.5)
-
-    lost = engine.calculate_settlement_pnl(
-        side="BACK",
-        price=3.0,
-        size=100.0,
-        won=False,
-    )
+    broker = SimulationBroker(starting_balance=1000.0, commission_pct=4.5)
+    lost = broker.record_realized_settlement(-100.0)
 
     assert math.isfinite(lost["gross_pnl"])
     assert math.isfinite(lost["commission_amount"])
@@ -46,9 +33,12 @@ def test_simulation_realized_commission_is_zero_on_losses():
 @pytest.mark.integration
 def test_simulation_broker_snapshot_exposes_realized_commission_accounting_contract():
     broker = SimulationBroker(starting_balance=1000.0, commission_pct=4.5)
+    broker.record_realized_settlement(200.0)
+    broker.record_realized_settlement(-100.0)
     snap = broker.snapshot()
 
-    # Fail-closed expectation lock for phase 1A: simulation-facing accounting
-    # must expose realized fields so drift cannot stay implicit.
+    # Fail-closed expectation lock: simulation-facing realized accounting is explicit.
     assert "realized_pnl" in snap
     assert "realized_commission" in snap
+    assert snap["realized_pnl"] == 91.0
+    assert snap["realized_commission"] == 9.0
