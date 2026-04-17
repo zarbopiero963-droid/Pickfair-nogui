@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from trading_config import enforce_betfair_italy_commission_pct
+from core.pnl_engine import MarketNetRealizedSettlementAggregator
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +162,11 @@ class SimulationBroker:
             starting_balance=float(starting_balance),
             commission_pct=float(commission_pct),
         )
+        self._market_net_realized_aggregator = MarketNetRealizedSettlementAggregator(
+            commission_pct=self.state.commission_pct,
+            context="simulation_broker_settlement",
+        )
+        self._market_net_realized_aggregator.ledger = self.state.market_commission_ledger
 
     # =========================================================
     # SESSION
@@ -581,7 +586,7 @@ class SimulationBroker:
             except Exception:
                 logger.exception("Errore save_simulation_bet")
 
-    def record_realized_settlement(self, gross_pnl: float, market_id: str = "") -> Dict[str, Any]:
+    def record_realized_settlement(self, gross_pnl: float, market_id: str) -> Dict[str, Any]:
         """
         Registra un risultato settlement realizzato e rende ispezionabile
         la commissione applicata:
@@ -590,29 +595,30 @@ class SimulationBroker:
         - mercato: commissione su market-net realizzato (non per singolo leg positivo)
         """
         gross = float(gross_pnl or 0.0)
-        market_key = str(market_id or "__GLOBAL__")
-        market_row = self.state.market_commission_ledger.setdefault(
-            market_key,
-            {"gross": 0.0, "commission": 0.0},
+        market_key = str(market_id or "").strip()
+        if not market_key:
+            raise ValueError("market_id is required for record_realized_settlement")
+        legacy_market_key = "__GLOBAL__"
+        if market_key != legacy_market_key and market_key not in self.state.market_commission_ledger:
+            legacy_row = self.state.market_commission_ledger.get(legacy_market_key)
+            if isinstance(legacy_row, dict):
+                non_legacy_market_keys = [
+                    str(k)
+                    for k in self.state.market_commission_ledger.keys()
+                    if str(k) and str(k) != legacy_market_key
+                ]
+                if not non_legacy_market_keys:
+                    self.state.market_commission_ledger[market_key] = {
+                        "gross": float(legacy_row.get("gross", 0.0) or 0.0),
+                        "commission": float(legacy_row.get("commission", 0.0) or 0.0),
+                    }
+                    self.state.market_commission_ledger.pop(legacy_market_key, None)
+        realized = self._market_net_realized_aggregator.apply(
+            market_id=market_key,
+            gross_pnl=gross,
         )
-        previous_market_gross = float(market_row.get("gross", 0.0))
-        previous_market_commission = float(market_row.get("commission", 0.0))
-        commission_pct = enforce_betfair_italy_commission_pct(
-            self.state.commission_pct,
-            context="simulation_broker_settlement",
-        )
-        market_gross_after = previous_market_gross + gross
-        desired_market_commission = 0.0
-        if market_gross_after > 0.0 and commission_pct > 0.0:
-            desired_market_commission = market_gross_after * (commission_pct / 100.0)
-
-        # Delta commission can be negative when later legs reduce market-net wins:
-        # this refunds prior over-collected per-fragment commission.
-        commission = desired_market_commission - previous_market_commission
-        net = gross - commission
-
-        market_row["gross"] = market_gross_after
-        market_row["commission"] = desired_market_commission
+        commission = float(realized["commission_amount"])
+        net = float(realized["net_pnl"])
 
         self.state.realized_pnl += net
         self.state.realized_commission += commission
@@ -622,9 +628,10 @@ class SimulationBroker:
             "gross_pnl": gross,
             "commission_amount": commission,
             "net_pnl": net,
-            "commission_pct": float(commission_pct),
-            "market_net_gross": market_gross_after,
-            "market_commission_amount_total": desired_market_commission,
+            "commission_pct": float(realized["commission_pct"]),
+            "market_net_gross": float(realized["market_net_gross"]),
+            "market_commission_amount_total": float(realized["market_commission_amount_total"]),
+            "settlement_basis": str(realized["settlement_basis"]),
             "settlement_source": "simulation_broker",
             "settlement_kind": "realized_settlement",
             "realized_pnl": self.state.realized_pnl,
@@ -671,6 +678,11 @@ class SimulationBroker:
             starting_balance=new_balance,
             commission_pct=self.state.commission_pct,
         )
+        self._market_net_realized_aggregator = MarketNetRealizedSettlementAggregator(
+            commission_pct=self.state.commission_pct,
+            context="simulation_broker_settlement",
+        )
+        self._market_net_realized_aggregator.ledger = self.state.market_commission_ledger
         return {
             "ok": True,
             "starting_balance": new_balance,

@@ -1506,6 +1506,7 @@ class RuntimeController:
                     "commission_amount": float(settlement["commission_amount"]),
                     "net_pnl": float(settlement["net_pnl"]),
                     "commission_pct": float(settlement["commission_pct"]),
+                    "settlement_basis": str(settlement["settlement_basis"]),
                     "settlement_source": str(settlement["settlement_source"]),
                     "settlement_kind": str(settlement["settlement_kind"]),
                     "settlement_authority": str(settlement["settlement_authority"]),
@@ -1551,6 +1552,7 @@ class RuntimeController:
                 "commission_amount",
                 "net_pnl",
                 "commission_pct",
+                "settlement_basis",
                 "settlement_source",
                 "settlement_kind",
             )
@@ -1596,6 +1598,10 @@ class RuntimeController:
             body.get("settlement_kind")
             or ("legacy_compat" if settlement_authority == "legacy_compat" else "")
         )
+        settlement_basis = str(
+            body.get("settlement_basis")
+            or ("legacy_compat" if settlement_authority == "legacy_compat" else "")
+        )
         reason = ""
         if settlement_authority == "legacy_compat":
             if not settlement_source:
@@ -1614,11 +1620,45 @@ class RuntimeController:
                 settlement_validation = "rejected_non_realized_settlement"
                 reason = "SETTLEMENT_KIND_NOT_REALIZED"
                 settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
+            elif settlement_basis != "market_net_realized":
+                settlement_validation = "rejected_non_market_net_basis"
+                reason = "SETTLEMENT_BASIS_NOT_MARKET_NET_REALIZED"
+                settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
             elif not settlement_source:
                 settlement_validation = "rejected_ambiguous_source"
                 reason = "MISSING_SETTLEMENT_SOURCE"
                 settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
 
+        if settlement_validation == "accepted" and settlement_kind == "realized_settlement":
+            arithmetic_tolerance = 1e-9
+            finite_values = (
+                math.isfinite(gross_pnl_f),
+                math.isfinite(commission_amount_f),
+                math.isfinite(net_pnl_f),
+                math.isfinite(commission_pct_f),
+            )
+            if not all(finite_values):
+                settlement_validation = "rejected_non_finite_settlement_values"
+                reason = "SETTLEMENT_VALUES_NOT_FINITE"
+                settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
+            elif abs((gross_pnl_f - commission_amount_f) - net_pnl_f) > arithmetic_tolerance:
+                settlement_validation = "rejected_arithmetic_incoherent_settlement"
+                reason = "SETTLEMENT_ARITHMETIC_INCOHERENT"
+                settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
+            elif commission_amount_f < -arithmetic_tolerance:
+                settlement_validation = "rejected_negative_commission_amount"
+                reason = "NEGATIVE_COMMISSION_NOT_ALLOWED"
+                settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
+            elif gross_pnl_f <= 0.0 and abs(commission_amount_f) > arithmetic_tolerance:
+                settlement_validation = "rejected_non_zero_commission_on_non_positive_gross"
+                reason = "NON_POSITIVE_GROSS_REQUIRES_ZERO_COMMISSION"
+                settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
+            elif gross_pnl_f > 0.0:
+                expected_commission = gross_pnl_f * (commission_pct_f / 100.0)
+                if abs(commission_amount_f - expected_commission) > arithmetic_tolerance:
+                    settlement_validation = "rejected_commission_amount_policy_mismatch"
+                    reason = "COMMISSION_AMOUNT_POLICY_MISMATCH"
+                    settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
         if settlement_validation == "accepted" and settlement_kind == "realized_settlement":
             try:
                 enforce_betfair_italy_commission_pct(
@@ -1634,6 +1674,7 @@ class RuntimeController:
             "commission_amount": commission_amount_f,
             "net_pnl": net_pnl_f,
             "commission_pct": commission_pct_f,
+            "settlement_basis": settlement_basis,
             "settlement_source": settlement_source,
             "settlement_kind": settlement_kind,
             "settlement_authority": settlement_authority,
