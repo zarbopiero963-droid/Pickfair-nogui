@@ -1,0 +1,35 @@
+name: incident-snapshot
+
+on:
+  pull_request:
+    paths:
+      - "ops/incident_playbook.md"
+      - "scripts/incident_snapshot.py"
+      - "tests/scripts/test_incident_snapshot.py"
+      - ".github/workflows/incident-snapshot.yml"
+  push:
+    paths:
+      - "ops/incident_playbook.md"
+      - "scripts/incident_snapshot.py"
+      - "tests/scripts/test_incident_snapshot.py"
+      - ".github/workflows/incident-snapshot.yml"
+
+jobs:
+  incident-snapshot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+
+      - name: Run incident snapshot tests
+        run: |
+          pytest -q tests/scripts/test_incident_snapshot.py -x
