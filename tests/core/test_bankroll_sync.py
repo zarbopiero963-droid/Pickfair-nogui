@@ -223,7 +223,12 @@ def test_realized_pnl_is_preserved_on_close_while_bankroll_sync_runs():
             "table_id": 1,
             "batch_id": "batch-realized",
             "correlation_id": "corr-realized",
-            "pnl": 12.5,
+            "gross_pnl": 13.089005235602095,
+            "commission_amount": 0.5890052356020943,
+            "net_pnl": 12.5,
+            "commission_pct": 4.5,
+            "settlement_source": "core_pnl_engine",
+            "settlement_kind": "realized_settlement",
         }
     )
 

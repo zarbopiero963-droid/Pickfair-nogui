@@ -85,6 +85,23 @@ def test_dutching_market_net_semantics_are_explicit_under_4p5_commission():
 
 
 @pytest.mark.integration
+def test_dutching_preview_surface_is_helper_only_not_realized_settlement_authority():
+    result = calculate_dutching_stakes([2.4, 3.6, 5.2], 75, commission=4.5)
+    assert "settlement_source" not in result
+    assert "settlement_kind" not in result
+    assert "commission_pct" not in result
+
+
+@pytest.mark.integration
+def test_controller_preview_rejects_non_italy_commission_when_commission_enabled():
+    controller = DutchingController(bus=None, runtime_controller=_Runtime())
+    out = controller.preview(_controller_payload([3.0, 4.0, 6.0], total_stake=120.0, commission=5.0))
+
+    assert out["ok"] is False
+    assert "Betfair Italy commission policy violation" in str(out.get("error") or "")
+
+
+@pytest.mark.integration
 def test_controller_preview_propagates_commission_into_authoritative_path(monkeypatch):
     captured = {}
 

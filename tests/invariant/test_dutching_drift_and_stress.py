@@ -89,7 +89,10 @@ def test_dutching_randomized_stress_no_negative_or_nan():
         n = rng.randint(2, 8)
         odds = [rng.uniform(1.01, 1000.0) for _ in range(n)]
         total_stake = rng.uniform(0.01, 1_000_000.0)
-        commission = rng.uniform(0.0, 10.0)
+        # Generic helper-stress surface: keep commission in policy-allowed
+        # helper modes (4.5 for Italy-facing commission-aware math, 0.0 for
+        # explicit non-policy/gross helper mode).
+        commission = 4.5 if rng.random() < 0.5 else 0.0
 
         result = calculate_dutching_stakes(
             odds=odds,

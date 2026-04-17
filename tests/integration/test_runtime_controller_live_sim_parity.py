@@ -934,7 +934,7 @@ def test_runtime_controller_settlement_contract_extraction_prefers_explicit_net_
 
 
 @pytest.mark.integration
-def test_runtime_controller_settlement_contract_extraction_falls_back_when_net_is_null():
+def test_runtime_controller_settlement_contract_extraction_rejects_legacy_payload_when_net_is_null():
     extracted = RuntimeController._extract_settlement_contract(
         {
             "gross_pnl": 13.0,
@@ -951,10 +951,11 @@ def test_runtime_controller_settlement_contract_extraction_falls_back_when_net_i
     assert extracted["net_pnl"] == 12.5
     assert extracted["commission_pct"] == 4.5
     assert extracted["settlement_source"] == "integration_test"
-    assert extracted["settlement_kind"] == "realized_settlement"
-    assert extracted["settlement_authority"] == "legacy_fallback"
-    assert extracted["settlement_validation"] == "degraded_legacy"
-    assert extracted["settlement_acceptance"] == "DEGRADED_LEGACY_SETTLEMENT"
+    assert extracted["settlement_kind"] == "legacy_compat"
+    assert extracted["settlement_authority"] == "legacy_compat"
+    assert extracted["settlement_validation"] == "rejected_non_canonical_settlement"
+    assert extracted["settlement_acceptance"] == "REJECT_NON_CANONICAL_SETTLEMENT"
+    assert extracted["reason"] == "LEGACY_SETTLEMENT_NON_AUTHORITATIVE"
 
 
 @pytest.mark.integration
@@ -1033,3 +1034,38 @@ def test_runtime_controller_settlement_contract_rejects_mark_to_market_payload_a
     assert extracted["settlement_validation"] == "rejected_non_realized_settlement"
     assert extracted["settlement_acceptance"] == "REJECT_AMBIGUOUS_SETTLEMENT"
     assert extracted["reason"] == "SETTLEMENT_KIND_NOT_REALIZED"
+
+
+@pytest.mark.integration
+def test_runtime_controller_legacy_non_canonical_close_is_non_authoritative_but_not_hard_rejected():
+    bus = _Bus()
+    rc = RuntimeController(
+        bus=bus,
+        db=_DB(),
+        settings_service=_Settings(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+    rc.mode = RuntimeMode.ACTIVE
+    rc.betfair_service.get_account_funds = lambda: {"available": 150.0}
+    rc.risk_desk.sync_bankroll(100.0)
+
+    rc._on_close_position(
+        {
+            "event_key": "evt-legacy-parity",
+            "table_id": 1,
+            "batch_id": "batch-legacy-parity",
+            "correlation_id": "corr-legacy-parity",
+            "gross_pnl": 13.0,
+            "commission_amount": 0.5,
+            "net_pnl": None,
+            "commission_pct": 4.5,
+            "settlement_source": "integration_test",
+            "pnl": 12.5,
+            "mm_context": {"cycle_active": True},
+        }
+    )
+
+    assert rc._last_bankroll_sync_result["bankroll_sync_status"] == "SYNC_SUCCESS"
+    assert float(rc.risk_desk.realized_pnl) == 0.0
+    assert rc._last_auto_trade_result["auto_trade_status"] == "AUTO_TRADE_DISABLED"

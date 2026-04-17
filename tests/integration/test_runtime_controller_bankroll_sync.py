@@ -103,7 +103,12 @@ def test_runtime_controller_bankroll_sync_prefers_exchange_over_local_pnl():
             "table_id": 1,
             "batch_id": "batch-prec",
             "correlation_id": "corr-prec",
-            "pnl": 999.0,
+            "gross_pnl": 20.0,
+            "commission_amount": 0.9,
+            "net_pnl": 19.1,
+            "commission_pct": 4.5,
+            "settlement_source": "test_settlement",
+            "settlement_kind": "realized_settlement",
         }
     )
 
@@ -152,7 +157,7 @@ def test_runtime_controller_close_payload_preserves_settlement_provenance_fields
 
 
 @pytest.mark.integration
-def test_runtime_controller_close_payload_falls_back_to_legacy_pnl_when_net_is_null():
+def test_runtime_controller_close_payload_rejects_legacy_non_canonical_settlement_payload():
     rc, bus = _make_controller(responses=[{"available": 140.0}])
     rc.risk_desk.sync_bankroll(100.0)
 
@@ -173,15 +178,8 @@ def test_runtime_controller_close_payload_falls_back_to_legacy_pnl_when_net_is_n
 
     closed = [payload for topic, payload in bus.events if topic == "BATCH_POSITION_CLOSED"]
     assert len(closed) == 1
-    payload = closed[0]
-    assert payload["pnl"] == 12.5
-    assert payload["net_pnl"] == 12.5
-    assert payload["settlement_source"] == "test_settlement"
-    assert payload["settlement_kind"] == "realized_settlement"
-    assert payload["settlement_authority"] == "legacy_fallback"
-    assert payload["settlement_validation"] == "degraded_legacy"
-    assert payload["settlement_acceptance"] == "DEGRADED_LEGACY_SETTLEMENT"
-    assert float(rc.risk_desk.realized_pnl) == 12.5
+    assert rc._last_bankroll_sync_result["bankroll_sync_status"] == "SYNC_SUCCESS"
+    assert float(rc.risk_desk.realized_pnl) == 0.0
 
 
 @pytest.mark.integration
@@ -207,7 +205,12 @@ def test_runtime_controller_status_exposes_last_bankroll_sync_result():
             "table_id": 1,
             "batch_id": "batch-status",
             "correlation_id": "corr-status",
-            "pnl": 5.0,
+            "gross_pnl": 10.0,
+            "commission_amount": 0.45,
+            "net_pnl": 9.55,
+            "commission_pct": 4.5,
+            "settlement_source": "test_settlement",
+            "settlement_kind": "realized_settlement",
         }
     )
 
@@ -228,7 +231,12 @@ def test_runtime_controller_rejects_ambiguous_zero_fallback_balance_payload():
             "table_id": 1,
             "batch_id": "batch-zero-fallback-int",
             "correlation_id": "corr-zero-fallback-int",
-            "pnl": 20.0,
+            "gross_pnl": 20.0,
+            "commission_amount": 0.9,
+            "net_pnl": 19.1,
+            "commission_pct": 4.5,
+            "settlement_source": "simulation_broker",
+            "settlement_kind": "realized_settlement",
         }
     )
 
@@ -247,11 +255,16 @@ def test_runtime_controller_close_updates_realized_pnl_even_with_exchange_first_
             "table_id": 1,
             "batch_id": "batch-realized-int",
             "correlation_id": "corr-realized-int",
-            "pnl": 7.0,
+            "gross_pnl": 8.0,
+            "commission_amount": 0.36,
+            "net_pnl": 7.64,
+            "commission_pct": 4.5,
+            "settlement_source": "test_settlement",
+            "settlement_kind": "realized_settlement",
         }
     )
 
-    assert float(rc.risk_desk.realized_pnl) == 7.0
+    assert float(rc.risk_desk.realized_pnl) == 7.64
     assert float(rc.risk_desk.bankroll_current) == 150.0
 
 
@@ -355,6 +368,54 @@ def test_runtime_controller_rejected_settlement_does_not_release_table_or_mutate
     assert float(after.loss_amount) == 10.0
     assert after.in_recovery is True
     assert any(k["event_key"] == "evt-reject-ordering" for k in rc.duplication_guard.snapshot()["active_keys"])
+
+
+@pytest.mark.integration
+def test_runtime_controller_legacy_non_canonical_settlement_releases_table_and_duplication_key():
+    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc.risk_desk.sync_bankroll(100.0)
+    rc.table_manager.activate(
+        table_id=1,
+        event_key="evt-legacy-unlock",
+        exposure=20.0,
+        market_id="1.100",
+        selection_id=7,
+        meta={},
+    )
+    rc.table_manager.release(1, pnl=-10.0)
+    rc.table_manager.activate(
+        table_id=1,
+        event_key="evt-legacy-unlock",
+        exposure=15.0,
+        market_id="1.100",
+        selection_id=7,
+        meta={},
+    )
+    rc.duplication_guard.acquire("evt-legacy-unlock")
+
+    rc._on_close_position(
+        {
+            "event_key": "evt-legacy-unlock",
+            "table_id": 1,
+            "batch_id": "batch-legacy-unlock",
+            "correlation_id": "corr-legacy-unlock",
+            "gross_pnl": 13.0,
+            "commission_amount": 0.5,
+            "net_pnl": None,
+            "commission_pct": 4.5,
+            "settlement_source": "test_settlement",
+            "pnl": 12.5,
+            "mm_context": {"cycle_active": True},
+        }
+    )
+
+    after = rc.table_manager.get_table(1)
+    assert after is not None
+    assert after.current_event_key in ("", None)
+    assert float(after.loss_amount) == 0.0
+    assert after.in_recovery is False
+    assert not any(k["event_key"] == "evt-legacy-unlock" for k in rc.duplication_guard.snapshot()["active_keys"])
+    assert rc._last_auto_trade_result["auto_trade_status"] == "AUTO_TRADE_DISABLED"
 
 
 @pytest.mark.integration

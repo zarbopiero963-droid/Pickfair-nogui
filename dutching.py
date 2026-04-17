@@ -3,6 +3,7 @@ from __future__ import annotations
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, List
 
+from trading_config import enforce_betfair_italy_commission_pct
 
 TWOPLACES = Decimal("0.01")
 EPS = Decimal("0.0000001")
@@ -28,6 +29,18 @@ def _apply_commission(profit: Decimal, commission: float | Decimal = 4.5) -> Dec
     if profit <= Decimal("0") or commission_d <= Decimal("0"):
         return profit
     return profit * (Decimal("1") - (commission_d / Decimal("100")))
+
+
+def _resolve_policy_commission_pct(commission: float | Decimal) -> Decimal:
+    commission_d = _d(commission, "0")
+    if commission_d <= Decimal("0"):
+        # Helper surfaces can explicitly disable commission for gross-only previews.
+        return Decimal("0")
+    enforced = enforce_betfair_italy_commission_pct(
+        float(commission_d),
+        context="dutching_helper",
+    )
+    return _d(enforced, "0")
 
 
 def _profit_for_outcome(
@@ -136,7 +149,7 @@ def calculate_dutching_stakes(
     """
     odds_d = [_d(x, "0") for x in (odds or [])]
     total_stake_d = _d(total_stake, "0")
-    commission_d = _d(commission, "0")
+    commission_d = _resolve_policy_commission_pct(commission)
 
     if not odds_d or total_stake_d <= Decimal("0"):
         return {
@@ -280,7 +293,8 @@ def dynamic_cashout_single(
     profit_if_lose = _round_step(profit_if_lose)
 
     raw_green = _round_step((profit_if_win + profit_if_lose) / Decimal("2"))
-    net_green = _round_step(_apply_commission(raw_green, commission))
+    commission_d = _resolve_policy_commission_pct(commission)
+    net_green = _round_step(_apply_commission(raw_green, commission_d))
 
     result = {
         "cashout_stake": float(cashout_stake),

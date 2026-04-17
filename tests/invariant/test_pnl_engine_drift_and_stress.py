@@ -136,6 +136,31 @@ def test_root_pnl_engine_commission_contract_is_finite_and_single_applied():
     assert abs(pnl_net - 47.75) < 1e-12
 
 
+@pytest.mark.invariant
+def test_root_event_driven_calc_surface_is_mark_to_market_not_realized_settlement():
+    from core.pnl_engine import PnLEngine
+
+    engine = PnLEngine(bus=None, commission_pct=4.5)
+    pos = {
+        "event_key": "E-KIND",
+        "market_id": "1.252",
+        "selection_id": 102,
+        "side": "BACK",
+        "price": 2.0,
+        "stake": 100.0,
+        "table_id": 1,
+        "batch_id": "BK",
+    }
+    winning_book = {
+        "marketId": "1.252",
+        "runners": [{"selectionId": 102, "ex": {"availableToBack": [{"price": 2.0}], "availableToLay": [{"price": 1.5}]}}],
+    }
+
+    settlement = engine._calc_settlement(dict(pos), winning_book)
+    assert settlement["settlement_kind"] == "mark_to_market_estimate"
+    assert settlement["settlement_source"] == "core_pnl_engine"
+
+
 @pytest.mark.chaos
 def test_root_pnl_engine_numeric_stress_extreme_prices_and_stakes():
     from core.pnl_engine import PnLEngine

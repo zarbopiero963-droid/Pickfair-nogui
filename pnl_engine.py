@@ -4,6 +4,7 @@ from dataclasses import dataclass, asdict
 from typing import Any, Dict, Optional
 
 from core.type_helpers import safe_side
+from trading_config import enforce_betfair_italy_commission_pct
 
 
 @dataclass
@@ -50,10 +51,22 @@ class PnLEngine:
         return safe_side(side)
 
     def _commission_amount(self, gross_pnl: float, commission_pct: Optional[float] = None) -> float:
-        pct = self.commission_pct if commission_pct is None else float(commission_pct or 0.0)
+        pct = self._resolve_policy_commission_pct(commission_pct)
         if gross_pnl <= 0:
             return 0.0
         return gross_pnl * (pct / 100.0)
+
+    def _resolve_policy_commission_pct(self, commission_pct: Optional[float]) -> float:
+        pct = self.commission_pct if commission_pct is None else float(commission_pct or 0.0)
+        if pct <= 0.0:
+            # Helper paths (e.g. mark-to-market) can disable commission explicitly.
+            return 0.0
+        return float(
+            enforce_betfair_italy_commission_pct(
+                pct,
+                context="pnl_engine_helper",
+            )
+        )
 
     # =========================================================
     # SINGLE POSITION PNL
@@ -112,7 +125,7 @@ class PnLEngine:
             exit_price=exit_price,
             size=size,
             gross_pnl=float(gross),
-            commission_pct=float(self.commission_pct if commission_pct is None else commission_pct),
+            commission_pct=float(self._resolve_policy_commission_pct(commission_pct)),
             commission_amount=float(commission_amount),
             net_pnl=float(net),
         )
@@ -159,7 +172,7 @@ class PnLEngine:
 
         return {
             "gross_pnl": float(gross),
-            "commission_pct": float(self.commission_pct if commission_pct is None else commission_pct),
+            "commission_pct": float(self._resolve_policy_commission_pct(commission_pct)),
             "commission_amount": float(commission_amount),
             "net_pnl": float(net),
         }

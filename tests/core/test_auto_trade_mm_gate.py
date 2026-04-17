@@ -93,7 +93,12 @@ def _close_payload(**overrides):
         "table_id": 1,
         "batch_id": "batch-1",
         "correlation_id": "corr-1",
-        "pnl": 5.0,
+        "gross_pnl": 5.235602094240838,
+        "commission_amount": 0.23560209424083772,
+        "net_pnl": 5.0,
+        "commission_pct": 4.5,
+        "settlement_source": "core_pnl_engine",
+        "settlement_kind": "realized_settlement",
         "mm_context": {
             "cycle_active": True,
             "cycle_id": "cycle-1",
@@ -111,6 +116,19 @@ def _close_payload(**overrides):
     return payload
 
 
+def _legacy_non_canonical_close_payload(**overrides):
+    payload = _close_payload(**overrides)
+    payload.pop("gross_pnl", None)
+    payload.pop("commission_amount", None)
+    payload.pop("net_pnl", None)
+    payload.pop("commission_pct", None)
+    payload.pop("settlement_source", None)
+    payload.pop("settlement_kind", None)
+    if "pnl" not in payload:
+        payload["pnl"] = 5.0
+    return payload
+
+
 def test_auto_trade_disabled_by_default():
     rc, _ = _make_controller(responses=[{"available": 150.0}])
     rc.mode = RuntimeMode.ACTIVE
@@ -120,6 +138,24 @@ def test_auto_trade_disabled_by_default():
 
     assert rc._last_auto_trade_result["auto_trade_status"] == "AUTO_TRADE_DISABLED"
     assert rc._last_auto_trade_result["submitted"] is False
+    assert rc._last_bankroll_sync_result["bankroll_sync_status"] == "SYNC_SUCCESS"
+
+
+def test_auto_trade_rejects_non_canonical_settlement_payload():
+    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc.mode = RuntimeMode.ACTIVE
+    rc.risk_desk.sync_bankroll(100.0)
+
+    rc._on_close_position(
+        _legacy_non_canonical_close_payload(
+            # Force hard rejection path instead of accepted canonical path.
+            pnl=None,
+        )
+    )
+
+    assert rc._last_auto_trade_result["auto_trade_status"] == "AUTO_TRADE_REJECTED_SETTLEMENT"
+    assert rc._last_auto_trade_result["submitted"] is False
+    assert rc._last_bankroll_sync_result["bankroll_sync_status"] == "SYNC_FAILED_INVALID_SETTLEMENT_CONTRACT"
 
 
 def test_auto_trade_happy_path_submits_exactly_one_trade():
