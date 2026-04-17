@@ -28,6 +28,9 @@ class _Settings:
     def load_roserpina_config(self):
         cfg = RoserpinaConfig()
         cfg.anti_duplication_enabled = False
+        cfg.max_daily_loss = 100.0
+        cfg.max_drawdown_hard_stop_pct = 20.0
+        cfg.max_open_exposure = 250.0
         return cfg
 
     def load_market_data_config(self):
@@ -38,6 +41,13 @@ class _Settings:
             "snapshot_fallback_enabled": True,
             "snapshot_fallback_interval_sec": 1,
         }
+
+
+class _SettingsMissingHardStop(_Settings):
+    def load_roserpina_config(self):
+        cfg = super().load_roserpina_config()
+        cfg.max_daily_loss = None
+        return cfg
 
 
 class _Betfair:
@@ -65,6 +75,46 @@ class _Telegram:
         return None
     def status(self):
         return {"connected": True}
+
+
+@pytest.mark.integration
+def test_runtime_controller_live_readiness_requires_explicit_hard_stop_config():
+    rc = RuntimeController(
+        bus=_Bus(),
+        db=_DB(),
+        settings_service=_SettingsMissingHardStop(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=True,
+    )
+
+    assert readiness["ready"] is False
+    assert "LIVE_HARD_STOP_CONFIG_MISSING" in readiness["blockers"]
+
+
+@pytest.mark.integration
+def test_runtime_controller_live_readiness_accepts_valid_explicit_hard_stop_config():
+    rc = RuntimeController(
+        bus=_Bus(),
+        db=_DB(),
+        settings_service=_Settings(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=True,
+    )
+
+    assert "LIVE_HARD_STOP_CONFIG_MISSING" not in readiness["blockers"]
+    assert "LIVE_HARD_STOP_CONFIG_INVALID" not in readiness["blockers"]
 
 
 @pytest.mark.integration

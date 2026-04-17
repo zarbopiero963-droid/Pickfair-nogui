@@ -1,6 +1,7 @@
 import pytest
 
 from core.runtime_controller import RuntimeController
+from core.system_state import RoserpinaConfig
 
 
 class _Bus:
@@ -24,18 +25,15 @@ class _Db:
 
 
 class _Settings:
-    def __init__(self, *, ready=True, strict_live_key_source_required=False):
+    def __init__(self, *, ready=True, strict_live_key_source_required=False, config=None):
         self._ready = ready
         self._strict_live_key_source_required = strict_live_key_source_required
+        self._config = config
 
     def load_roserpina_config(self):
-        class Cfg:
-            table_count = 1
-
-            def __getattr__(self, _name):
-                return 0
-
-        return Cfg()
+        if self._config is not None:
+            return self._config
+        return RoserpinaConfig(table_count=1)
 
     def load_live_readiness_ok(self):
         return self._ready
@@ -82,11 +80,23 @@ class _Probe:
         return self._report
 
 
-def _make_runtime(*, ready=True, safe_mode=False, betfair_service=None, key_source="unknown", strict_live_key_source_required=False):
+def _make_runtime(
+    *,
+    ready=True,
+    safe_mode=False,
+    betfair_service=None,
+    key_source="unknown",
+    strict_live_key_source_required=False,
+    config=None,
+):
     return RuntimeController(
         bus=_Bus(),
         db=_Db(key_source=key_source),
-        settings_service=_Settings(ready=ready, strict_live_key_source_required=strict_live_key_source_required),
+        settings_service=_Settings(
+            ready=ready,
+            strict_live_key_source_required=strict_live_key_source_required,
+            config=config,
+        ),
         betfair_service=betfair_service or _Betfair(),
         telegram_service=_Telegram(),
         safe_mode=_SafeMode(safe_mode),
@@ -194,6 +204,185 @@ def test_runtime_missing_readiness_signal_from_settings_fails_closed():
 
     assert readiness["ready"] is False
     assert "LIVE_READINESS_FLAG_NOT_OK" in readiness["blockers"]
+
+
+def test_live_readiness_with_explicit_hard_stop_config_passes_without_hard_stop_blockers():
+    rc = _make_runtime(
+        ready=True,
+        config=RoserpinaConfig(
+            table_count=1,
+            max_daily_loss=100.0,
+            max_drawdown_hard_stop_pct=20.0,
+            max_open_exposure=200.0,
+        ),
+    )
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=True,
+    )
+
+    assert "LIVE_HARD_STOP_CONFIG_MISSING" not in readiness["blockers"]
+    assert "LIVE_HARD_STOP_CONFIG_INVALID" not in readiness["blockers"]
+
+
+def test_live_readiness_missing_hard_stop_config_from_implicit_defaults_reports_missing_blocker():
+    rc = _make_runtime(
+        ready=True,
+        config=RoserpinaConfig(table_count=1),
+    )
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=True,
+    )
+
+    assert readiness["ready"] is False
+    assert "LIVE_HARD_STOP_CONFIG_MISSING" in readiness["blockers"]
+    assert set(readiness["details"]["hard_stop_config_state"]["missing_fields"]) == {
+        "max_daily_loss",
+        "max_drawdown_hard_stop_pct",
+        "max_open_exposure",
+    }
+
+
+def test_live_readiness_missing_daily_loss_reports_explicit_blocker():
+    rc = _make_runtime(
+        ready=True,
+        config=RoserpinaConfig(
+            table_count=1,
+            max_daily_loss=None,
+            max_drawdown_hard_stop_pct=20.0,
+            max_open_exposure=200.0,
+        ),
+    )
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=True,
+    )
+
+    assert readiness["ready"] is False
+    assert "LIVE_HARD_STOP_CONFIG_MISSING" in readiness["blockers"]
+    assert "max_daily_loss" in readiness["details"]["hard_stop_config_state"]["missing_fields"]
+
+
+def test_live_readiness_missing_open_exposure_reports_explicit_blocker():
+    rc = _make_runtime(
+        ready=True,
+        config=RoserpinaConfig(
+            table_count=1,
+            max_daily_loss=100.0,
+            max_drawdown_hard_stop_pct=20.0,
+            max_open_exposure=None,
+        ),
+    )
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=True,
+    )
+
+    assert readiness["ready"] is False
+    assert "LIVE_HARD_STOP_CONFIG_MISSING" in readiness["blockers"]
+    assert "max_open_exposure" in readiness["details"]["hard_stop_config_state"]["missing_fields"]
+
+
+@pytest.mark.parametrize(
+    ("max_daily_loss", "max_drawdown_hard_stop_pct", "max_open_exposure"),
+    [
+        (0.0, 20.0, 200.0),
+        (100.0, 0.0, 200.0),
+        (100.0, 101.0, 200.0),
+        (100.0, 20.0, -1.0),
+    ],
+)
+def test_live_readiness_invalid_hard_stop_values_report_explicit_blocker(
+    max_daily_loss,
+    max_drawdown_hard_stop_pct,
+    max_open_exposure,
+):
+    rc = _make_runtime(
+        ready=True,
+        config=RoserpinaConfig(
+            table_count=1,
+            max_daily_loss=max_daily_loss,
+            max_drawdown_hard_stop_pct=max_drawdown_hard_stop_pct,
+            max_open_exposure=max_open_exposure,
+        ),
+    )
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=True,
+    )
+
+    assert readiness["ready"] is False
+    assert "LIVE_HARD_STOP_CONFIG_INVALID" in readiness["blockers"]
+    assert readiness["details"]["hard_stop_config_state"]["invalid_fields"]
+
+
+@pytest.mark.parametrize(
+    ("max_daily_loss", "max_drawdown_hard_stop_pct", "max_open_exposure"),
+    [
+        (float("nan"), 20.0, 200.0),
+        (100.0, float("nan"), 200.0),
+        (100.0, 20.0, float("nan")),
+        (float("inf"), 20.0, 200.0),
+        (100.0, float("-inf"), 200.0),
+        (100.0, 20.0, float("inf")),
+    ],
+)
+def test_live_readiness_non_finite_hard_stop_values_are_invalid(
+    max_daily_loss,
+    max_drawdown_hard_stop_pct,
+    max_open_exposure,
+):
+    rc = _make_runtime(
+        ready=True,
+        config=RoserpinaConfig(
+            table_count=1,
+            max_daily_loss=max_daily_loss,
+            max_drawdown_hard_stop_pct=max_drawdown_hard_stop_pct,
+            max_open_exposure=max_open_exposure,
+        ),
+    )
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=True,
+    )
+
+    assert readiness["ready"] is False
+    assert "LIVE_HARD_STOP_CONFIG_INVALID" in readiness["blockers"]
+    assert readiness["details"]["hard_stop_config_state"]["invalid_fields"]
+
+
+def test_non_live_readiness_does_not_emit_hard_stop_blockers_even_if_config_invalid():
+    rc = _make_runtime(
+        ready=True,
+        config=RoserpinaConfig(
+            table_count=1,
+            max_daily_loss=0.0,
+            max_drawdown_hard_stop_pct=0.0,
+            max_open_exposure=0.0,
+        ),
+    )
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="SIMULATION",
+        live_enabled=False,
+        live_readiness_ok=True,
+    )
+
+    assert "LIVE_HARD_STOP_CONFIG_MISSING" not in readiness["blockers"]
+    assert "LIVE_HARD_STOP_CONFIG_INVALID" not in readiness["blockers"]
 
 
 @pytest.mark.parametrize("unsafe_key_source", ["ephemeral", "unknown"])

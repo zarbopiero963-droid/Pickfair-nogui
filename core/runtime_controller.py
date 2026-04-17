@@ -402,6 +402,54 @@ class RuntimeController:
         src = str(key_source or "").strip().lower()
         return src or "unknown"
 
+    def _validate_live_hard_stop_config(self) -> dict[str, Any]:
+        required_fields = (
+            "max_daily_loss",
+            "max_drawdown_hard_stop_pct",
+            "max_open_exposure",
+        )
+        missing_fields: list[str] = []
+        invalid_fields: list[str] = []
+        values: dict[str, float | None] = {}
+        config = getattr(self, "config", None)
+
+        for field_name in required_fields:
+            if config is None or not hasattr(config, field_name):
+                missing_fields.append(field_name)
+                values[field_name] = None
+                continue
+
+            raw = getattr(config, field_name)
+            if raw is None:
+                missing_fields.append(field_name)
+                values[field_name] = None
+                continue
+
+            try:
+                parsed = float(raw)
+            except Exception:
+                invalid_fields.append(field_name)
+                values[field_name] = None
+                continue
+
+            values[field_name] = parsed
+            if not math.isfinite(parsed):
+                invalid_fields.append(field_name)
+                continue
+            if parsed <= 0.0:
+                invalid_fields.append(field_name)
+                continue
+            if field_name == "max_drawdown_hard_stop_pct" and parsed > 100.0:
+                invalid_fields.append(field_name)
+
+        return {
+            "required_fields": list(required_fields),
+            "missing_fields": missing_fields,
+            "invalid_fields": invalid_fields,
+            "values": values,
+            "valid": not missing_fields and not invalid_fields,
+        }
+
     def _get_probe_live_readiness_report(self) -> tuple[bool, str, dict]:
         probe = getattr(self, "runtime_probe", None)
         probe_required = bool(getattr(self, "enforce_probe_readiness_gate", False))
@@ -670,6 +718,8 @@ class RuntimeController:
             "passed": (not strict_live_key_source_required) or key_source_passed,
             "allowed_sources": sorted(allowed_key_sources),
         }
+        hard_stop_config_state = self._validate_live_hard_stop_config()
+        details["hard_stop_config_state"] = hard_stop_config_state
 
         if not execution_mode_valid:
             blockers.append("INVALID_EXECUTION_MODE")
@@ -679,6 +729,10 @@ class RuntimeController:
             blockers.append("LIVE_READINESS_FLAG_NOT_OK")
         if normalized_execution_mode == "LIVE" and strict_live_key_source_required and not key_source_passed:
             blockers.append("LIVE_KEY_SOURCE_UNSAFE")
+        if normalized_execution_mode == "LIVE" and hard_stop_config_state["missing_fields"]:
+            blockers.append("LIVE_HARD_STOP_CONFIG_MISSING")
+        if normalized_execution_mode == "LIVE" and hard_stop_config_state["invalid_fields"]:
+            blockers.append("LIVE_HARD_STOP_CONFIG_INVALID")
         if contradictory_state:
             blockers.append("CONTRADICTORY_STATE")
 
