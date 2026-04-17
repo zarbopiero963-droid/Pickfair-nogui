@@ -1645,11 +1645,7 @@ class RuntimeController:
                 settlement_validation = "rejected_arithmetic_incoherent_settlement"
                 reason = "SETTLEMENT_ARITHMETIC_INCOHERENT"
                 settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
-            elif commission_amount_f < -arithmetic_tolerance:
-                settlement_validation = "rejected_negative_commission_amount"
-                reason = "NEGATIVE_COMMISSION_NOT_ALLOWED"
-                settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
-            elif gross_pnl_f <= 0.0 and abs(commission_amount_f) > arithmetic_tolerance:
+            elif gross_pnl_f <= 0.0 and commission_amount_f > arithmetic_tolerance:
                 settlement_validation = "rejected_non_zero_commission_on_non_positive_gross"
                 reason = "NON_POSITIVE_GROSS_REQUIRES_ZERO_COMMISSION"
                 settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
