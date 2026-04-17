@@ -1630,6 +1630,36 @@ class RuntimeController:
                 settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
 
         if settlement_validation == "accepted" and settlement_kind == "realized_settlement":
+            arithmetic_tolerance = 1e-9
+            finite_values = (
+                math.isfinite(gross_pnl_f),
+                math.isfinite(commission_amount_f),
+                math.isfinite(net_pnl_f),
+                math.isfinite(commission_pct_f),
+            )
+            if not all(finite_values):
+                settlement_validation = "rejected_non_finite_settlement_values"
+                reason = "SETTLEMENT_VALUES_NOT_FINITE"
+                settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
+            elif abs((gross_pnl_f - commission_amount_f) - net_pnl_f) > arithmetic_tolerance:
+                settlement_validation = "rejected_arithmetic_incoherent_settlement"
+                reason = "SETTLEMENT_ARITHMETIC_INCOHERENT"
+                settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
+            elif commission_amount_f < -arithmetic_tolerance:
+                settlement_validation = "rejected_negative_commission_amount"
+                reason = "NEGATIVE_COMMISSION_NOT_ALLOWED"
+                settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
+            elif gross_pnl_f <= 0.0 and abs(commission_amount_f) > arithmetic_tolerance:
+                settlement_validation = "rejected_non_zero_commission_on_non_positive_gross"
+                reason = "NON_POSITIVE_GROSS_REQUIRES_ZERO_COMMISSION"
+                settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
+            elif gross_pnl_f > 0.0:
+                expected_commission = gross_pnl_f * (commission_pct_f / 100.0)
+                if abs(commission_amount_f - expected_commission) > arithmetic_tolerance:
+                    settlement_validation = "rejected_commission_amount_policy_mismatch"
+                    reason = "COMMISSION_AMOUNT_POLICY_MISMATCH"
+                    settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
+        if settlement_validation == "accepted" and settlement_kind == "realized_settlement":
             try:
                 enforce_betfair_italy_commission_pct(
                     commission_pct_f,
