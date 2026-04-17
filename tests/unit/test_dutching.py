@@ -128,6 +128,22 @@ def test_dutching_helper_output_is_not_realized_settlement_authority_contract():
 
 @pytest.mark.unit
 @pytest.mark.guardrail
+def test_dutching_helper_rejects_non_italy_commission_when_commission_enabled():
+    with pytest.raises(ValueError):
+        calculate_dutching_stakes([2.4, 3.6, 5.2], 75, commission=5.0)
+
+    with pytest.raises(ValueError):
+        dynamic_cashout_single(
+            matched_stake=100,
+            matched_price=2.0,
+            current_price=1.5,
+            side="BACK",
+            commission=5.0,
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
 def test_dutching_equal_profit_is_tolerance_bounded_with_italy_commission_reference():
     result = calculate_dutching_stakes([3.0, 4.0, 6.0], 120, commission=4.5)
 

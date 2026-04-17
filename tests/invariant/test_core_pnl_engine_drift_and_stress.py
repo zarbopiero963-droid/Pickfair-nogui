@@ -147,6 +147,33 @@ def test_core_helper_settlement_math_does_not_claim_authoritative_settlement_pro
 
 
 @pytest.mark.invariant
+def test_core_helper_rejects_non_italy_commission_pct_on_commission_enabled_paths():
+    from pnl_engine import PnLEngine
+
+    engine = PnLEngine(commission_pct=4.5)
+
+    with pytest.raises(ValueError):
+        engine.calculate_settlement_pnl(
+            side="BACK",
+            price=2.0,
+            size=100.0,
+            won=True,
+            commission_pct=5.0,
+        )
+
+    with pytest.raises(ValueError):
+        engine.calculate_position_pnl(
+            market_id="1.999",
+            selection_id=1,
+            side="BACK",
+            entry_price=2.0,
+            exit_price=2.2,
+            size=10.0,
+            commission_pct=5.0,
+        )
+
+
+@pytest.mark.invariant
 def test_event_driven_pnl_commission_sign_semantics_match_contract():
     engine = EventDrivenPnLEngine(bus=None, commission_pct=4.5)
 
