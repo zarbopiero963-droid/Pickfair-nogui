@@ -1173,9 +1173,9 @@ def test_runtime_controller_settlement_contract_rejects_impossible_negative_reba
         }
     )
 
-    assert extracted["settlement_validation"] == "rejected_impossible_negative_rebate_positive_net"
+    assert extracted["settlement_validation"] == "rejected_negative_rebate_exceeds_gross_abs_bound"
     assert extracted["settlement_acceptance"] == "REJECT_AMBIGUOUS_SETTLEMENT"
-    assert extracted["reason"] == "NEGATIVE_REBATE_CANNOT_CREATE_POSITIVE_NET_ON_LOSS"
+    assert extracted["reason"] == "NEGATIVE_REBATE_EXCEEDS_GROSS_ABS_BOUND"
 
 
 @pytest.mark.integration
@@ -1192,9 +1192,28 @@ def test_runtime_controller_settlement_contract_rejects_oversized_negative_rebat
         }
     )
 
-    assert extracted["settlement_validation"] == "rejected_impossible_negative_rebate_positive_net"
+    assert extracted["settlement_validation"] == "rejected_negative_rebate_exceeds_gross_abs_bound"
     assert extracted["settlement_acceptance"] == "REJECT_AMBIGUOUS_SETTLEMENT"
-    assert extracted["reason"] == "NEGATIVE_REBATE_CANNOT_CREATE_POSITIVE_NET_ON_LOSS"
+    assert extracted["reason"] == "NEGATIVE_REBATE_EXCEEDS_GROSS_ABS_BOUND"
+
+
+@pytest.mark.integration
+def test_runtime_controller_settlement_contract_rejects_negative_commission_on_positive_gross():
+    extracted = RuntimeController._extract_settlement_contract(
+        {
+            "gross_pnl": 10.0,
+            "commission_amount": -0.45,
+            "net_pnl": 10.45,
+            "commission_pct": 4.5,
+            "settlement_source": "core_pnl_engine",
+            "settlement_kind": "realized_settlement",
+            "settlement_basis": "market_net_realized",
+        }
+    )
+
+    assert extracted["settlement_validation"] == "rejected_commission_amount_policy_mismatch"
+    assert extracted["settlement_acceptance"] == "REJECT_AMBIGUOUS_SETTLEMENT"
+    assert extracted["reason"] == "COMMISSION_AMOUNT_POLICY_MISMATCH"
 
 
 @pytest.mark.integration

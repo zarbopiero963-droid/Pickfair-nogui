@@ -1645,21 +1645,21 @@ class RuntimeController:
                 settlement_validation = "rejected_arithmetic_incoherent_settlement"
                 reason = "SETTLEMENT_ARITHMETIC_INCOHERENT"
                 settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
-            elif gross_pnl_f <= 0.0:
+            elif gross_pnl_f <= arithmetic_tolerance:
                 if commission_amount_f > arithmetic_tolerance:
                     settlement_validation = "rejected_non_zero_commission_on_non_positive_gross"
                     reason = "NON_POSITIVE_GROSS_REQUIRES_ZERO_COMMISSION"
                     settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
                 elif commission_amount_f < -arithmetic_tolerance:
-                    if net_pnl_f > arithmetic_tolerance:
-                        settlement_validation = "rejected_impossible_negative_rebate_positive_net"
-                        reason = "NEGATIVE_REBATE_CANNOT_CREATE_POSITIVE_NET_ON_LOSS"
-                        settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
-                    elif abs(commission_amount_f) - abs(gross_pnl_f) > arithmetic_tolerance:
+                    if abs(commission_amount_f) - abs(gross_pnl_f) > arithmetic_tolerance:
                         settlement_validation = "rejected_negative_rebate_exceeds_gross_abs_bound"
                         reason = "NEGATIVE_REBATE_EXCEEDS_GROSS_ABS_BOUND"
                         settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
-            elif gross_pnl_f > 0.0:
+                    elif net_pnl_f > arithmetic_tolerance:
+                        settlement_validation = "rejected_impossible_negative_rebate_positive_net"
+                        reason = "NEGATIVE_REBATE_CANNOT_CREATE_POSITIVE_NET_ON_LOSS"
+                        settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
+            elif gross_pnl_f > arithmetic_tolerance:
                 expected_commission = gross_pnl_f * (commission_pct_f / 100.0)
                 if abs(commission_amount_f - expected_commission) > arithmetic_tolerance:
                     settlement_validation = "rejected_commission_amount_policy_mismatch"
