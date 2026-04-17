@@ -24,7 +24,7 @@ When creating a filesystem-level backup, copy all present files above as one con
 If any precondition cannot be confirmed, **abort backup**.
 
 ## Safe backup procedure
-Preferred method (SQLite-native logical copy):
+Preferred method (SQLite-native logical copy, single backup artifact):
 1. Ensure target backup directory exists.
 2. Run:
 
@@ -32,15 +32,20 @@ Preferred method (SQLite-native logical copy):
 sqlite3 "<DB_PATH>" ".backup '<BACKUP_DB_PATH>'"
 ```
 
-Fallback method (filesystem copy only when writes are fully stopped):
+Filesystem snapshot method (raw file copy):
 1. Copy `<DB_PATH>`.
 2. If present, copy `<DB_PATH>-wal` and `<DB_PATH>-shm`.
+3. Treat these copied files as one inseparable consistency set.
 
 ## Safe restore procedure (to temp path first)
 1. Never restore directly over the active production DB first.
-2. Copy backup artifact to a temporary candidate path, for example:
-   - `restore_candidate/pickfair.restore.sqlite`
-3. Run validation against candidate:
+2. Build a restore candidate at a temporary path.
+3. Choose restore mode explicitly:
+   - **Logical backup artifact restore (`.backup` output):** restore the single backup DB artifact.
+   - **Filesystem snapshot restore:** restore the full SQLite consistency set from the same snapshot (`<DB_PATH>`, `<DB_PATH>-wal` if present in backup, `<DB_PATH>-shm` if present in backup).
+4. For filesystem snapshot restores in WAL mode, restoring only `<DB_PATH>` is unsafe and can lose committed-but-uncheckpointed transactions.
+5. If a snapshot restore does not contain the expected sidecar set, **do not trust the candidate**.
+6. Run validation against candidate:
 
 ```bash
 python scripts/db_restore_validate.py \
@@ -48,7 +53,7 @@ python scripts/db_restore_validate.py \
   --report-path restore_candidate/restore_validation_report.json
 ```
 
-4. Inspect JSON report:
+7. Inspect JSON report:
    - `status` must be `PASS`
    - `failed_checks` must be empty
    - `missing_tables` must be empty

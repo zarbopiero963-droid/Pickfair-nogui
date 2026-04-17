@@ -108,7 +108,7 @@ def validate_db(db_path: str) -> ValidationReport:
         for table in REQUIRED_TABLES:
             check_name = f"table_readable:{table}"
             try:
-                conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+                conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
                 passed_checks.append(check_name)
             except sqlite3.Error as exc:
                 failed_checks.append(check_name)
