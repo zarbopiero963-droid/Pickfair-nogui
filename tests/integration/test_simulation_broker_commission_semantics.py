@@ -16,7 +16,7 @@ def test_simulation_realized_commission_is_applied_only_on_positive_winnings():
     assert won["commission_amount"] == 9.0
     assert won["net_pnl"] == 191.0
     assert won["commission_pct"] == 4.5
-    assert won["settlement_source"] == "simulation_broker_realized_settlement"
+    assert won["settlement_source"] == "simulation_broker"
     assert won["pnl"] == won["net_pnl"]
 
 
@@ -32,7 +32,7 @@ def test_simulation_realized_commission_is_zero_on_losses():
     assert lost["commission_amount"] == 0.0
     assert lost["net_pnl"] == -100.0
     assert lost["commission_pct"] == 4.5
-    assert lost["settlement_source"] == "simulation_broker_realized_settlement"
+    assert lost["settlement_source"] == "simulation_broker"
 
 
 @pytest.mark.integration
@@ -52,4 +52,4 @@ def test_simulation_broker_snapshot_exposes_realized_commission_accounting_contr
     assert snap["last_settlement"]["commission_amount"] == 0.0
     assert snap["last_settlement"]["net_pnl"] == -100.0
     assert snap["last_settlement"]["commission_pct"] == 4.5
-    assert snap["last_settlement"]["settlement_source"] == "simulation_broker_realized_settlement"
+    assert snap["last_settlement"]["settlement_source"] == "simulation_broker"

@@ -223,7 +223,7 @@ def test_event_driven_close_payload_exposes_explicit_settlement_contract():
     assert payload["commission_amount"] == 2.25
     assert payload["net_pnl"] == 47.75
     assert payload["commission_pct"] == 4.5
-    assert payload["settlement_source"] == "core_pnl_engine_mark_to_market_close"
+    assert payload["settlement_source"] == "local_event_engine"
     assert payload["pnl"] == payload["net_pnl"]
 
 

@@ -926,6 +926,7 @@ def test_runtime_controller_settlement_contract_extraction_prefers_explicit_net_
     assert extracted["net_pnl"] == 28.65
     assert extracted["commission_pct"] == 4.5
     assert extracted["settlement_source"] == "integration_test"
+    assert extracted["settlement_authority"] == "explicit_contract"
 
 
 @pytest.mark.integration
@@ -946,6 +947,7 @@ def test_runtime_controller_settlement_contract_extraction_falls_back_when_net_i
     assert extracted["net_pnl"] == 12.5
     assert extracted["commission_pct"] == 4.5
     assert extracted["settlement_source"] == "integration_test"
+    assert extracted["settlement_authority"] == "legacy_fallback"
 
 
 @pytest.mark.integration
@@ -962,3 +964,22 @@ def test_runtime_controller_settlement_contract_extraction_safe_default_when_bot
     assert extracted["net_pnl"] == 0.0
     assert extracted["commission_pct"] == 0.0
     assert extracted["settlement_source"] == "runtime_close_event"
+    assert extracted["settlement_authority"] == "default_zero"
+
+
+@pytest.mark.integration
+def test_runtime_controller_settlement_contract_extraction_does_not_recompute_explicit_commission():
+    extracted = RuntimeController._extract_settlement_contract(
+        {
+            "gross_pnl": 99.0,
+            "commission_amount": 1.25,
+            "net_pnl": 10.0,
+            "pnl": 777.0,
+            "settlement_source": "integration_test",
+        }
+    )
+
+    assert extracted["net_pnl"] == 10.0
+    assert extracted["gross_pnl"] == 99.0
+    assert extracted["commission_amount"] == 1.25
+    assert extracted["settlement_authority"] == "explicit_contract"

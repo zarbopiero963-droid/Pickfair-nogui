@@ -1467,6 +1467,7 @@ class RuntimeController:
                     "net_pnl": float(settlement["net_pnl"]),
                     "commission_pct": float(settlement["commission_pct"]),
                     "settlement_source": str(settlement["settlement_source"]),
+                    "settlement_authority": str(settlement["settlement_authority"]),
                     "event_key": event_key,
                 },
             )
@@ -1496,18 +1497,38 @@ class RuntimeController:
     @staticmethod
     def _extract_settlement_contract(payload: dict) -> dict[str, float | str]:
         body = dict(payload or {})
-        if "net_pnl" in body and body.get("net_pnl") is not None:
+        has_explicit_net = "net_pnl" in body and body.get("net_pnl") is not None
+        has_legacy_net = body.get("pnl") is not None
+        if has_explicit_net:
             net_pnl = body.get("net_pnl")
+            settlement_authority = "explicit_contract"
+        elif has_legacy_net:
+            net_pnl = body.get("pnl")
+            settlement_authority = "legacy_fallback"
         else:
-            net_pnl = body.get("pnl", 0.0)
+            net_pnl = 0.0
+            settlement_authority = "default_zero"
         net_pnl_f = float(net_pnl or 0.0)
-        gross_pnl_f = float(body.get("gross_pnl", net_pnl_f) or 0.0)
-        commission_amount_f = float(body.get("commission_amount", (gross_pnl_f - net_pnl_f)) or 0.0)
+        has_explicit_gross = "gross_pnl" in body and body.get("gross_pnl") is not None
+        has_explicit_commission = "commission_amount" in body and body.get("commission_amount") is not None
+        if has_explicit_gross:
+            gross_pnl_f = float(body.get("gross_pnl") or 0.0)
+        elif has_explicit_net and has_explicit_commission:
+            gross_pnl_f = float(net_pnl_f + float(body.get("commission_amount") or 0.0))
+        else:
+            gross_pnl_f = float(net_pnl_f)
+
+        if has_explicit_commission:
+            commission_amount_f = float(body.get("commission_amount") or 0.0)
+        elif has_explicit_gross and has_explicit_net:
+            commission_amount_f = float(gross_pnl_f - net_pnl_f)
+        else:
+            commission_amount_f = 0.0
         commission_pct_f = float(body.get("commission_pct", 0.0) or 0.0)
         settlement_source = str(
             body.get("settlement_source")
             or body.get("source")
-            or "runtime_close_event"
+            or ("legacy_pnl_event" if settlement_authority == "legacy_fallback" else "runtime_close_event")
         )
         return {
             "gross_pnl": gross_pnl_f,
@@ -1515,6 +1536,7 @@ class RuntimeController:
             "net_pnl": net_pnl_f,
             "commission_pct": commission_pct_f,
             "settlement_source": settlement_source,
+            "settlement_authority": settlement_authority,
         }
 
     def _sync_bankroll_post_settlement(self, payload: dict) -> dict:

@@ -142,6 +142,7 @@ def test_runtime_controller_close_payload_preserves_settlement_provenance_fields
     assert payload["net_pnl"] == 19.1
     assert payload["commission_pct"] == 4.5
     assert payload["settlement_source"] == "test_settlement"
+    assert payload["settlement_authority"] == "explicit_contract"
     assert payload["pnl"] == 19.1
     assert float(rc.risk_desk.realized_pnl) == 19.1
 
@@ -171,6 +172,8 @@ def test_runtime_controller_close_payload_falls_back_to_legacy_pnl_when_net_is_n
     payload = closed[0]
     assert payload["pnl"] == 12.5
     assert payload["net_pnl"] == 12.5
+    assert payload["settlement_source"] == "test_settlement"
+    assert payload["settlement_authority"] == "legacy_fallback"
     assert float(rc.risk_desk.realized_pnl) == 12.5
 
 

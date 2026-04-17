@@ -98,7 +98,7 @@ class PnLEngine:
                     "commission_amount": 0.0,
                     "net_pnl": 0.0,
                     "commission_pct": float(self.commission * 100.0),
-                    "settlement_source": "core_pnl_engine_mark_to_market_close",
+                    "settlement_source": "local_event_engine",
                 }
 
             if side == "BACK":
@@ -115,7 +115,7 @@ class PnLEngine:
                 "commission_amount": float(commission_amount),
                 "net_pnl": float(pnl_net),
                 "commission_pct": float(self.commission * 100.0),
-                "settlement_source": "core_pnl_engine_mark_to_market_close",
+                "settlement_source": "local_event_engine",
             }
 
         return {
@@ -123,7 +123,7 @@ class PnLEngine:
             "commission_amount": 0.0,
             "net_pnl": 0.0,
             "commission_pct": float(self.commission * 100.0),
-            "settlement_source": "core_pnl_engine_mark_to_market_close",
+            "settlement_source": "local_event_engine",
         }
 
     def _commission_amount(self, gross_pnl: float) -> float:
@@ -144,7 +144,7 @@ class PnLEngine:
         settlement_source = str(
             settlement.get("settlement_source")
             or settlement.get("source")
-            or "core_pnl_engine_mark_to_market_close"
+            or "local_event_engine"
         )
         payload = {
             "event_key": pos["event_key"],

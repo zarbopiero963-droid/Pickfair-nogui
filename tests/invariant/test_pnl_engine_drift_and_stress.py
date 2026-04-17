@@ -248,7 +248,7 @@ def test_root_pnl_engine_close_trigger_is_deterministic():
     assert math.isfinite(payload["net_pnl"])
     assert payload["pnl"] == payload["net_pnl"]
     assert payload["commission_pct"] == 4.5
-    assert payload["settlement_source"] == "core_pnl_engine_mark_to_market_close"
+    assert payload["settlement_source"] == "local_event_engine"
 
 
 @pytest.mark.invariant

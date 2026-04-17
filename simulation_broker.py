@@ -591,7 +591,7 @@ class SimulationBroker:
             "commission_amount": commission,
             "net_pnl": net,
             "commission_pct": float(self.state.commission_pct),
-            "settlement_source": "simulation_broker_realized_settlement",
+            "settlement_source": "simulation_broker",
             "realized_pnl": self.state.realized_pnl,
             "realized_commission": self.state.realized_commission,
         }
