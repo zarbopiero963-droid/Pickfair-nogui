@@ -146,6 +146,7 @@ def test_runtime_controller_close_payload_preserves_settlement_provenance_fields
     assert payload["settlement_kind"] == "realized_settlement"
     assert payload["settlement_authority"] == "explicit_contract"
     assert payload["settlement_validation"] == "accepted"
+    assert payload["settlement_acceptance"] == "ACCEPT_REALIZED_SETTLEMENT"
     assert payload["pnl"] == 19.1
     assert float(rc.risk_desk.realized_pnl) == 19.1
 
@@ -179,6 +180,7 @@ def test_runtime_controller_close_payload_falls_back_to_legacy_pnl_when_net_is_n
     assert payload["settlement_kind"] == "realized_settlement"
     assert payload["settlement_authority"] == "legacy_fallback"
     assert payload["settlement_validation"] == "degraded_legacy"
+    assert payload["settlement_acceptance"] == "DEGRADED_LEGACY_SETTLEMENT"
     assert float(rc.risk_desk.realized_pnl) == 12.5
 
 
@@ -274,4 +276,31 @@ def test_runtime_controller_rejects_ambiguous_contract_without_explicit_or_legac
 
     assert rc._last_bankroll_sync_result["bankroll_sync_status"] == "SYNC_FAILED_INVALID_SETTLEMENT_CONTRACT"
     assert rc._last_bankroll_sync_result["reason"] == "MISSING_CANONICAL_SETTLEMENT_FIELDS"
+    assert rc._last_bankroll_sync_result["settlement_acceptance"] == "REJECT_AMBIGUOUS_SETTLEMENT"
+    assert float(rc.risk_desk.realized_pnl) == 0.0
+
+
+@pytest.mark.integration
+def test_runtime_controller_rejects_mark_to_market_settlement_kind_for_close_processing():
+    rc, _ = _make_controller(responses=[{"available": 140.0}])
+    rc.risk_desk.sync_bankroll(100.0)
+
+    rc._on_close_position(
+        {
+            "event_key": "evt-reject-mtm",
+            "table_id": 1,
+            "batch_id": "batch-reject-mtm",
+            "correlation_id": "corr-reject-mtm",
+            "gross_pnl": 10.0,
+            "commission_amount": 0.45,
+            "net_pnl": 9.55,
+            "commission_pct": 4.5,
+            "settlement_source": "core_pnl_engine",
+            "settlement_kind": "mark_to_market_estimate",
+        }
+    )
+
+    assert rc._last_bankroll_sync_result["bankroll_sync_status"] == "SYNC_FAILED_INVALID_SETTLEMENT_CONTRACT"
+    assert rc._last_bankroll_sync_result["reason"] == "SETTLEMENT_KIND_NOT_REALIZED"
+    assert rc._last_bankroll_sync_result["settlement_acceptance"] == "REJECT_AMBIGUOUS_SETTLEMENT"
     assert float(rc.risk_desk.realized_pnl) == 0.0
