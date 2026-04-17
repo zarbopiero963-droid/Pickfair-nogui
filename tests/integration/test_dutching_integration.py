@@ -89,6 +89,7 @@ def test_dutching_preview_surface_is_helper_only_not_realized_settlement_authori
     result = calculate_dutching_stakes([2.4, 3.6, 5.2], 75, commission=4.5)
     assert "settlement_source" not in result
     assert "settlement_kind" not in result
+    assert "settlement_basis" not in result
     assert "commission_pct" not in result
 
 

@@ -123,6 +123,7 @@ def test_dutching_helper_output_is_not_realized_settlement_authority_contract():
     result = calculate_dutching_stakes([2.4, 3.6, 5.2], 75, commission=4.5)
     assert "settlement_source" not in result
     assert "settlement_kind" not in result
+    assert "settlement_basis" not in result
     assert "commission_pct" not in result
 
 
@@ -140,6 +141,18 @@ def test_dutching_helper_rejects_non_italy_commission_when_commission_enabled():
             side="BACK",
             commission=5.0,
         )
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_dutching_zero_commission_mode_is_explicit_gross_only_preview():
+    result = calculate_dutching_stakes([2.4, 3.6, 5.2], 75, commission=0.0)
+    assert len(result["profits"]) == len(result["net_profits"]) == 3
+    for gross, net in zip(result["profits"], result["net_profits"]):
+        assert net == gross
+    assert "settlement_source" not in result
+    assert "settlement_kind" not in result
+    assert "settlement_basis" not in result
 
 
 @pytest.mark.unit
