@@ -30,6 +30,9 @@ class _Settings:
             auto_reset_drawdown_pct = 90
             defense_drawdown_pct = 7.5
             lockdown_drawdown_pct = 95
+            max_daily_loss = 100.0
+            max_drawdown_hard_stop_pct = 20.0
+            max_open_exposure = 250.0
 
             def __getattr__(self, _name):
                 return 0

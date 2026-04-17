@@ -22,6 +22,9 @@ class _Settings:
     def load_roserpina_config(self):
         class Cfg:
             table_count = 1
+            max_daily_loss = 100.0
+            max_drawdown_hard_stop_pct = 20.0
+            max_open_exposure = 250.0
 
             def __getattr__(self, _name):
                 return 0
