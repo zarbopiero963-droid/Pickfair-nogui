@@ -17,6 +17,7 @@ def test_simulation_realized_commission_is_applied_only_on_positive_winnings():
     assert won["net_pnl"] == 191.0
     assert won["commission_pct"] == 4.5
     assert won["settlement_source"] == "simulation_broker"
+    assert won["settlement_kind"] == "realized_settlement"
     assert won["pnl"] == won["net_pnl"]
 
 
@@ -33,6 +34,7 @@ def test_simulation_realized_commission_is_zero_on_losses():
     assert lost["net_pnl"] == -100.0
     assert lost["commission_pct"] == 4.5
     assert lost["settlement_source"] == "simulation_broker"
+    assert lost["settlement_kind"] == "realized_settlement"
 
 
 @pytest.mark.integration
@@ -53,3 +55,11 @@ def test_simulation_broker_snapshot_exposes_realized_commission_accounting_contr
     assert snap["last_settlement"]["net_pnl"] == -100.0
     assert snap["last_settlement"]["commission_pct"] == 4.5
     assert snap["last_settlement"]["settlement_source"] == "simulation_broker"
+    assert snap["last_settlement"]["settlement_kind"] == "realized_settlement"
+
+
+@pytest.mark.integration
+def test_simulation_broker_enforces_explicit_betfair_italy_commission_policy():
+    broker = SimulationBroker(starting_balance=1000.0, commission_pct=5.0)
+    with pytest.raises(ValueError):
+        broker.record_realized_settlement(100.0)

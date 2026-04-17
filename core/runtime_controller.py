@@ -18,7 +18,7 @@ from core.safety_layer import assert_live_gate_or_refuse
 from core.type_helpers import safe_bool
 from order_manager import TERMINAL_LIFECYCLE_EVENTS
 from services.streaming_feed import StreamingConfigError, StreamingFeed
-from trading_config import STRICT_LIVE_KEY_SOURCE_REQUIRED
+from trading_config import STRICT_LIVE_KEY_SOURCE_REQUIRED, enforce_betfair_italy_commission_pct
 
 logger = logging.getLogger(__name__)
 
@@ -1409,6 +1409,41 @@ class RuntimeController:
         pnl = float(settlement["net_pnl"])
         event_key = str(payload.get("event_key") or "")
         batch_id = str(payload.get("batch_id") or "")
+        validation_status = str(settlement.get("settlement_validation") or "accepted")
+        settlement_acceptance = str(settlement.get("settlement_acceptance") or "")
+
+        if validation_status.startswith("rejected"):
+            sync_result = {
+                "correlation_id": str(payload.get("correlation_id") or payload.get("event_key") or ""),
+                "settlement_detected": True,
+                "bankroll_before": float(self.risk_desk.bankroll_current),
+                "bankroll_after": float(self.risk_desk.bankroll_current),
+                "bankroll_sync_status": "SYNC_FAILED_INVALID_SETTLEMENT_CONTRACT",
+                "balance_source": "none",
+                "reason": str(settlement.get("reason") or "SETTLEMENT_CONTRACT_REJECTED"),
+                "settlement_acceptance": settlement_acceptance,
+            }
+            auto_trade_result = {
+                "correlation_id": str(payload.get("correlation_id") or payload.get("event_key") or ""),
+                "source_settlement_correlation_id": str(payload.get("correlation_id") or ""),
+                "bankroll_sync_status": "SYNC_FAILED_INVALID_SETTLEMENT_CONTRACT",
+                "money_management_status": "MM_STOP_SETTLEMENT_CONTRACT_REJECTED",
+                "cycle_active": False,
+                "progression_allowed": False,
+                "auto_trade_enabled": False,
+                "auto_trade_status": "AUTO_TRADE_REJECTED_SETTLEMENT",
+                "next_stake": 0.0,
+                "risk_status": "RISK_NOT_EVALUATED",
+                "submitted": False,
+                "reason": str(settlement.get("reason") or "SETTLEMENT_CONTRACT_REJECTED"),
+                "settlement_acceptance": settlement_acceptance,
+            }
+            self._last_bankroll_sync_result = dict(sync_result)
+            self._last_auto_trade_result = dict(auto_trade_result)
+            self._last_cycle_executor_result = dict(auto_trade_result)
+            self.bus.publish("BANKROLL_SYNC_RESULT", dict(sync_result))
+            self.bus.publish("AUTO_TRADE_MM_RESULT", dict(auto_trade_result))
+            return
 
         if table_id is not None:
             self.table_manager.release(int(table_id), pnl=pnl)
@@ -1467,7 +1502,10 @@ class RuntimeController:
                     "net_pnl": float(settlement["net_pnl"]),
                     "commission_pct": float(settlement["commission_pct"]),
                     "settlement_source": str(settlement["settlement_source"]),
+                    "settlement_kind": str(settlement["settlement_kind"]),
                     "settlement_authority": str(settlement["settlement_authority"]),
+                    "settlement_validation": str(settlement["settlement_validation"]),
+                    "settlement_acceptance": str(settlement["settlement_acceptance"]),
                     "event_key": event_key,
                 },
             )
@@ -1497,18 +1535,37 @@ class RuntimeController:
     @staticmethod
     def _extract_settlement_contract(payload: dict) -> dict[str, float | str]:
         body = dict(payload or {})
-        has_explicit_net = "net_pnl" in body and body.get("net_pnl") is not None
-        has_legacy_net = body.get("pnl") is not None
-        if has_explicit_net:
-            net_pnl = body.get("net_pnl")
+        explicit_net_raw = body.get("net_pnl") if "net_pnl" in body else None
+        legacy_net_raw = body.get("pnl") if "pnl" in body else None
+        has_explicit_net = explicit_net_raw is not None
+        has_legacy_net = legacy_net_raw is not None
+        has_explicit_contract = all(
+            k in body and body.get(k) is not None
+            for k in (
+                "gross_pnl",
+                "commission_amount",
+                "net_pnl",
+                "commission_pct",
+                "settlement_source",
+                "settlement_kind",
+            )
+        )
+        if has_explicit_contract and has_explicit_net:
+            net_pnl = explicit_net_raw
             settlement_authority = "explicit_contract"
+            settlement_validation = "accepted"
+            settlement_acceptance = "ACCEPT_REALIZED_SETTLEMENT"
         elif has_legacy_net:
-            net_pnl = body.get("pnl")
+            net_pnl = legacy_net_raw
             settlement_authority = "legacy_fallback"
+            settlement_validation = "degraded_legacy"
+            settlement_acceptance = "DEGRADED_LEGACY_SETTLEMENT"
         else:
             net_pnl = 0.0
-            settlement_authority = "default_zero"
-        net_pnl_f = float(net_pnl or 0.0)
+            settlement_authority = "rejected_ambiguous"
+            settlement_validation = "rejected_ambiguous"
+            settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
+        net_pnl_f = float(net_pnl if net_pnl is not None else 0.0)
         has_explicit_gross = "gross_pnl" in body and body.get("gross_pnl") is not None
         has_explicit_commission = "commission_amount" in body and body.get("commission_amount") is not None
         if has_explicit_gross:
@@ -1528,15 +1585,50 @@ class RuntimeController:
         settlement_source = str(
             body.get("settlement_source")
             or body.get("source")
-            or ("legacy_pnl_event" if settlement_authority == "legacy_fallback" else "runtime_close_event")
+            or ("legacy_compat" if settlement_authority == "legacy_fallback" else "")
         )
+        settlement_kind = str(body.get("settlement_kind") or ("realized_settlement" if settlement_authority == "legacy_fallback" else ""))
+        reason = ""
+        if settlement_authority == "legacy_fallback":
+            if not settlement_source:
+                settlement_source = "legacy_compat"
+            settlement_validation = "degraded_legacy"
+            settlement_acceptance = "DEGRADED_LEGACY_SETTLEMENT"
+        elif settlement_authority.startswith("rejected"):
+            reason = "MISSING_CANONICAL_SETTLEMENT_FIELDS"
+            settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
+
+        if settlement_validation == "accepted":
+            if settlement_kind != "realized_settlement":
+                settlement_validation = "rejected_non_realized_settlement"
+                reason = "SETTLEMENT_KIND_NOT_REALIZED"
+                settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
+            elif not settlement_source:
+                settlement_validation = "rejected_ambiguous_source"
+                reason = "MISSING_SETTLEMENT_SOURCE"
+                settlement_acceptance = "REJECT_AMBIGUOUS_SETTLEMENT"
+
+        if settlement_validation == "accepted" and settlement_kind == "realized_settlement":
+            try:
+                enforce_betfair_italy_commission_pct(
+                    commission_pct_f,
+                    context=f"runtime_controller:{settlement_source}",
+                )
+            except ValueError:
+                settlement_validation = "rejected_policy_violation"
+                reason = "BETFAIR_ITALY_COMMISSION_POLICY_VIOLATION"
+                settlement_acceptance = "REJECT_POLICY_VIOLATION"
         return {
             "gross_pnl": gross_pnl_f,
             "commission_amount": commission_amount_f,
             "net_pnl": net_pnl_f,
             "commission_pct": commission_pct_f,
             "settlement_source": settlement_source,
+            "settlement_kind": settlement_kind,
             "settlement_authority": settlement_authority,
+            "settlement_validation": settlement_validation,
+            "settlement_acceptance": settlement_acceptance,
+            "reason": reason,
         }
 
     def _sync_bankroll_post_settlement(self, payload: dict) -> dict:

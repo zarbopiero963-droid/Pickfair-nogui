@@ -129,6 +129,7 @@ def test_runtime_controller_close_payload_preserves_settlement_provenance_fields
             "net_pnl": 19.1,
             "commission_pct": 4.5,
             "settlement_source": "test_settlement",
+            "settlement_kind": "realized_settlement",
             # conflicting legacy alias should not override explicit net_pnl
             "pnl": 999.0,
         }
@@ -142,7 +143,10 @@ def test_runtime_controller_close_payload_preserves_settlement_provenance_fields
     assert payload["net_pnl"] == 19.1
     assert payload["commission_pct"] == 4.5
     assert payload["settlement_source"] == "test_settlement"
+    assert payload["settlement_kind"] == "realized_settlement"
     assert payload["settlement_authority"] == "explicit_contract"
+    assert payload["settlement_validation"] == "accepted"
+    assert payload["settlement_acceptance"] == "ACCEPT_REALIZED_SETTLEMENT"
     assert payload["pnl"] == 19.1
     assert float(rc.risk_desk.realized_pnl) == 19.1
 
@@ -173,7 +177,10 @@ def test_runtime_controller_close_payload_falls_back_to_legacy_pnl_when_net_is_n
     assert payload["pnl"] == 12.5
     assert payload["net_pnl"] == 12.5
     assert payload["settlement_source"] == "test_settlement"
+    assert payload["settlement_kind"] == "realized_settlement"
     assert payload["settlement_authority"] == "legacy_fallback"
+    assert payload["settlement_validation"] == "degraded_legacy"
+    assert payload["settlement_acceptance"] == "DEGRADED_LEGACY_SETTLEMENT"
     assert float(rc.risk_desk.realized_pnl) == 12.5
 
 
@@ -246,3 +253,151 @@ def test_runtime_controller_close_updates_realized_pnl_even_with_exchange_first_
 
     assert float(rc.risk_desk.realized_pnl) == 7.0
     assert float(rc.risk_desk.bankroll_current) == 150.0
+
+
+@pytest.mark.integration
+def test_runtime_controller_rejects_ambiguous_contract_without_explicit_or_legacy_net():
+    rc, _ = _make_controller(responses=[{"available": 140.0}])
+    rc.risk_desk.sync_bankroll(100.0)
+
+    rc._on_close_position(
+        {
+            "event_key": "evt-reject-ambiguous",
+            "table_id": 1,
+            "batch_id": "batch-reject-ambiguous",
+            "correlation_id": "corr-reject-ambiguous",
+            "gross_pnl": 10.0,
+            "commission_amount": 0.45,
+            "commission_pct": 4.5,
+            "settlement_source": "simulation_broker",
+            "settlement_kind": "realized_settlement",
+        }
+    )
+
+    assert rc._last_bankroll_sync_result["bankroll_sync_status"] == "SYNC_FAILED_INVALID_SETTLEMENT_CONTRACT"
+    assert rc._last_bankroll_sync_result["reason"] == "MISSING_CANONICAL_SETTLEMENT_FIELDS"
+    assert rc._last_bankroll_sync_result["settlement_acceptance"] == "REJECT_AMBIGUOUS_SETTLEMENT"
+    assert float(rc.risk_desk.realized_pnl) == 0.0
+
+
+@pytest.mark.integration
+def test_runtime_controller_rejects_mark_to_market_settlement_kind_for_close_processing():
+    rc, _ = _make_controller(responses=[{"available": 140.0}])
+    rc.risk_desk.sync_bankroll(100.0)
+
+    rc._on_close_position(
+        {
+            "event_key": "evt-reject-mtm",
+            "table_id": 1,
+            "batch_id": "batch-reject-mtm",
+            "correlation_id": "corr-reject-mtm",
+            "gross_pnl": 10.0,
+            "commission_amount": 0.45,
+            "net_pnl": 9.55,
+            "commission_pct": 4.5,
+            "settlement_source": "core_pnl_engine",
+            "settlement_kind": "mark_to_market_estimate",
+        }
+    )
+
+    assert rc._last_bankroll_sync_result["bankroll_sync_status"] == "SYNC_FAILED_INVALID_SETTLEMENT_CONTRACT"
+    assert rc._last_bankroll_sync_result["reason"] == "SETTLEMENT_KIND_NOT_REALIZED"
+    assert rc._last_bankroll_sync_result["settlement_acceptance"] == "REJECT_AMBIGUOUS_SETTLEMENT"
+    assert float(rc.risk_desk.realized_pnl) == 0.0
+
+
+@pytest.mark.integration
+def test_runtime_controller_rejected_settlement_does_not_release_table_or_mutate_recovery_loss():
+    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc.risk_desk.sync_bankroll(100.0)
+    rc.table_manager.activate(
+        table_id=1,
+        event_key="evt-reject-ordering",
+        exposure=20.0,
+        market_id="1.100",
+        selection_id=7,
+        meta={},
+    )
+    rc.table_manager.release(1, pnl=-10.0)
+    rc.table_manager.activate(
+        table_id=1,
+        event_key="evt-reject-ordering",
+        exposure=15.0,
+        market_id="1.100",
+        selection_id=7,
+        meta={},
+    )
+    rc.duplication_guard.acquire("evt-reject-ordering")
+    before = rc.table_manager.get_table(1)
+    assert before is not None
+    assert before.current_event_key == "evt-reject-ordering"
+    assert float(before.loss_amount) == 10.0
+    assert before.in_recovery is True
+
+    rc._on_close_position(
+        {
+            "event_key": "evt-reject-ordering",
+            "table_id": 1,
+            "batch_id": "batch-reject-ordering",
+            "correlation_id": "corr-reject-ordering",
+            "gross_pnl": 10.0,
+            "commission_amount": 0.45,
+            "net_pnl": 9.55,
+            "commission_pct": 4.5,
+            "settlement_source": "core_pnl_engine",
+            "settlement_kind": "mark_to_market_estimate",
+        }
+    )
+
+    after = rc.table_manager.get_table(1)
+    assert after is not None
+    assert after.current_event_key == "evt-reject-ordering"
+    assert float(after.loss_amount) == 10.0
+    assert after.in_recovery is True
+    assert any(k["event_key"] == "evt-reject-ordering" for k in rc.duplication_guard.snapshot()["active_keys"])
+
+
+@pytest.mark.integration
+def test_runtime_controller_accepted_settlement_still_releases_table_and_updates_recovery():
+    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc.risk_desk.sync_bankroll(100.0)
+    rc.table_manager.activate(
+        table_id=1,
+        event_key="evt-accept-ordering",
+        exposure=20.0,
+        market_id="1.100",
+        selection_id=7,
+        meta={},
+    )
+    rc.table_manager.release(1, pnl=-10.0)
+    rc.table_manager.activate(
+        table_id=1,
+        event_key="evt-accept-ordering",
+        exposure=15.0,
+        market_id="1.100",
+        selection_id=7,
+        meta={},
+    )
+    rc.duplication_guard.acquire("evt-accept-ordering")
+
+    rc._on_close_position(
+        {
+            "event_key": "evt-accept-ordering",
+            "table_id": 1,
+            "batch_id": "batch-accept-ordering",
+            "correlation_id": "corr-accept-ordering",
+            "gross_pnl": 5.0,
+            "commission_amount": 0.225,
+            "net_pnl": 4.775,
+            "commission_pct": 4.5,
+            "settlement_source": "core_pnl_engine",
+            "settlement_kind": "realized_settlement",
+        }
+    )
+
+    after = rc.table_manager.get_table(1)
+    assert after is not None
+    assert after.current_event_key == ""
+    assert float(after.loss_amount) == 5.225
+    assert after.in_recovery is True
+    assert all(k["event_key"] != "evt-accept-ordering" for k in rc.duplication_guard.snapshot()["active_keys"])
