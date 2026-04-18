@@ -7,8 +7,6 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
 
-from order_manager import ErrorClass, classify_error
-
 logger = logging.getLogger(__name__)
 
 
@@ -83,7 +81,7 @@ class TelegramBetResolver:
     SCORE_RE = re.compile(r"(\d+)\s*[-–]\s*(\d+)")
     MINUTE_RE = re.compile(r"(\d+)\s*m\b", re.IGNORECASE)
     VS_RE = re.compile(r"([A-Za-z0-9 .'\-]+?)\s+v\s+([A-Za-z0-9 .'\-]+)", re.IGNORECASE)
-    NON_TRADABLE_MARKET_STATUSES = {"SUSPENDED", "CLOSED", "INACTIVE"}
+    TRADABLE_MARKET_STATUS = "OPEN"
 
     def __init__(self, client_getter):
         """
@@ -472,14 +470,7 @@ class TelegramBetResolver:
         if not market_status:
             return True
 
-        if market_status in self.NON_TRADABLE_MARKET_STATUSES:
-            return False
-
-        if market_status != "OPEN":
-            error_class = classify_error(f"MARKET_{market_status}")
-            return error_class != ErrorClass.PERMANENT
-
-        return True
+        return market_status == self.TRADABLE_MARKET_STATUS
 
     def _extract_market_status(self, market_book: Dict[str, Any]) -> str:
         direct_status = str(market_book.get("status") or "").strip().upper()

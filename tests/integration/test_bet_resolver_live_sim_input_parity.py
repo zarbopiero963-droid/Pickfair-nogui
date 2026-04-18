@@ -50,7 +50,7 @@ def test_bet_resolver_copy_messages_skipped_in_both_modes():
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("market_status", ["SUSPENDED", "CLOSED", "INACTIVE"])
+@pytest.mark.parametrize("market_status", ["SUSPENDED", "CLOSED", "INACTIVE", "HALTED"])
 def test_bet_resolver_rejects_non_tradable_market_status_in_both_modes(market_status):
     resolver = TelegramBetResolver(client_getter=lambda: _Client(market_book_status=market_status))
     signal = {"event_name": "Roma v Milan", "home_score": 1, "away_score": 1, "minute": 55, "signal_type": "OVER_SUCCESSIVO"}
