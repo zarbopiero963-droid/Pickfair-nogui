@@ -13,6 +13,13 @@ class _Bus:
 
 
 class _Db:
+    def __init__(self, key_source="env"):
+        class _Cipher:
+            def __init__(self, src):
+                self.key_source = src
+
+        self._cipher = _Cipher(key_source)
+
     def _execute(self, *_args, **_kwargs):
         return None
 
@@ -88,11 +95,19 @@ class _SafeMode:
         return self._enabled
 
 
-def _runtime(*, readiness_level="READY", blockers=None, kill_switch=False, live_enabled=True, readiness_ok=True):
+def _runtime(
+    *,
+    readiness_level="READY",
+    blockers=None,
+    kill_switch=False,
+    live_enabled=True,
+    readiness_ok=True,
+    key_source="env",
+):
     bus = _Bus()
     rc = RuntimeController(
         bus=bus,
-        db=_Db(),
+        db=_Db(key_source=key_source),
         settings_service=_Settings(live_enabled=live_enabled, readiness_ok=readiness_ok),
         betfair_service=_Betfair(),
         telegram_service=_Telegram(),

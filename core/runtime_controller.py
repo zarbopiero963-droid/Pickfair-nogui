@@ -520,12 +520,13 @@ class RuntimeController:
         if isinstance(probe_report, dict):
             blockers.extend(list(probe_report.get("blockers") or []))
         probe_ok = bool(readiness_payload.get("probe_ok", False))
+        probe_reason = str((((readiness_payload.get("details") or {}).get("probe") or {}).get("reason")) or "")
 
         if not gate.allowed and str(gate.reason_code) == "kill_switch_active":
             reasons.append("DEPLOY_BLOCKED_KILL_SWITCH")
 
         not_ready = readiness_level != "READY" or not probe_ok or not bool(readiness_payload.get("ready", False))
-        if not probe_ok and not_ready:
+        if not probe_ok and not_ready and probe_reason != "probe_report_has_blockers":
             reasons.append("DEPLOY_BLOCKED_NOT_READY")
         if blockers:
             reasons.append("DEPLOY_BLOCKED_BLOCKERS_PRESENT")
