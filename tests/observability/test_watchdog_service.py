@@ -1826,3 +1826,28 @@ def test_anomaly_reviewer_malformed_runtime_state_is_fail_closed_in_strict_mode(
     watchdog._evaluate_anomalies()
     active = {a["code"] for a in alerts.active_alerts()}
     assert "ANOMALY_REVIEWER_MISCONFIGURED" in active
+
+
+def test_watchdog_exposes_external_observability_snapshot_and_metrics_text():
+    class _Probe(_ProbeStub):
+        def collect_metrics(self):
+            return {"queue-depth": 3, "worker_alive": 1, "9bad": 2}
+
+        def collect_runtime_state(self):
+            return {"mode": "runtime"}
+
+    watchdog = _make_watchdog(probe=_Probe())
+
+    watchdog.tick()
+
+    snapshot = watchdog.get_external_observability_snapshot()
+    assert snapshot["version"] == 1
+    assert isinstance(snapshot.get("collected_at"), float)
+    assert snapshot["health"]["runtime"]["status"] == "READY"
+    assert snapshot["metrics"]["worker_alive"] == 1
+    assert snapshot["runtime_state"]["mode"] == "runtime"
+
+    metrics_text = watchdog.get_external_metrics_text()
+    assert "queue_depth 3.0" in metrics_text
+    assert "worker_alive 1.0" in metrics_text
+    assert "metric_9bad 2.0" in metrics_text

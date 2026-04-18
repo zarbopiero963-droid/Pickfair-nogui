@@ -172,6 +172,7 @@ class WatchdogService:
 
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._last_external_snapshot: dict[str, Any] = {"version": 1, "collected_at": None}
 
     def is_ready(self) -> bool:
         return True
@@ -212,6 +213,8 @@ class WatchdogService:
 
         metrics = self.probe.collect_metrics()
         self._publish_metric_gauges(metrics)
+        runtime_state = self._safe_collect_runtime_state()
+        self._update_external_snapshot(health_map=health_map, metrics=metrics, runtime_state=runtime_state)
 
         self._evaluate_alerts()
         self._evaluate_invariants()
@@ -254,6 +257,89 @@ class WatchdogService:
         self._evaluate_cto_reviewer()
         self._evaluate_reviewer_governance()
         self.snapshot_service.collect_and_store()
+
+    def get_external_observability_snapshot(self) -> dict[str, Any]:
+        """Structured runtime observability surface for external consumers."""
+        return sanitize_value(dict(self._last_external_snapshot))
+
+    def get_external_metrics_text(self) -> str:
+        """Return current metrics in a Prometheus text exposition format."""
+        snap = self.metrics_registry.snapshot()
+        gauges = snap.get("gauges", {}) if isinstance(snap, dict) else {}
+        counters = snap.get("counters", {}) if isinstance(snap, dict) else {}
+
+        lines: list[str] = []
+        for name, value in sorted({**counters, **gauges}.items()):
+            metric_name = self._normalize_prom_metric_name(name)
+            if not metric_name:
+                continue
+            try:
+                lines.append(f"{metric_name} {float(value)}")
+            except Exception:
+                continue
+        return "\n".join(lines) + ("\n" if lines else "")
+
+    def _safe_collect_runtime_state(self) -> dict[str, Any]:
+        collector = getattr(self.probe, "collect_runtime_state", None)
+        if not callable(collector):
+            return {}
+        try:
+            payload = collector() or {}
+            return payload if isinstance(payload, dict) else {}
+        except Exception:
+            logger.exception("collect_runtime_state failed during external snapshot update")
+            return {}
+
+    def _update_external_snapshot(self, *, health_map: dict[str, Any], metrics: dict[str, Any], runtime_state: dict[str, Any]) -> None:
+        readiness_getter = getattr(self.probe, "get_live_readiness_report", None)
+        deploy_getter = getattr(self.probe, "get_deploy_gate_status", None)
+        readiness = {}
+        deploy_gate = {}
+        if callable(readiness_getter):
+            try:
+                candidate = readiness_getter() or {}
+                if isinstance(candidate, dict):
+                    readiness = candidate
+            except Exception:
+                logger.exception("get_live_readiness_report failed during external snapshot update")
+        if callable(deploy_getter):
+            try:
+                candidate = deploy_getter() or {}
+                if isinstance(candidate, dict):
+                    deploy_gate = candidate
+            except Exception:
+                logger.exception("get_deploy_gate_status failed during external snapshot update")
+
+        self._last_external_snapshot = sanitize_value(
+            {
+                "version": 1,
+                "collected_at": time.time(),
+                "health": dict(health_map or {}),
+                "metrics": dict(metrics or {}),
+                "runtime_state": dict(runtime_state or {}),
+                "readiness": readiness,
+                "deploy_gate": deploy_gate,
+                "health_registry": self.health_registry.snapshot(),
+                "metrics_registry": self.metrics_registry.snapshot(),
+                "alerts": self.alerts_manager.snapshot(),
+                "incidents": self.incidents_manager.snapshot(),
+            }
+        )
+
+    def _normalize_prom_metric_name(self, raw_name: Any) -> str:
+        name = str(raw_name or "").strip()
+        if not name:
+            return ""
+        chars = []
+        for ch in name:
+            if ch.isalnum() or ch in {"_", ":"}:
+                chars.append(ch)
+            else:
+                chars.append("_")
+        normalized = "".join(chars)
+        if normalized and normalized[0].isdigit():
+            normalized = f"metric_{normalized}"
+        return normalized
 
     def _publish_health_components(self, health_map: dict[str, Any]) -> None:
         for name, item in health_map.items():
