@@ -296,3 +296,24 @@ def test_calculate_dutching_rejects_mixed_back_lay_contract():
     ]
     with pytest.raises(ValueError):
         calculate_dutching(selections=selections, total_stake=20.0, commission=4.5)
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_calculate_dutching_direct_call_falsy_side_uses_effective_type():
+    selections = [
+        {"selectionId": 1, "price": 3.0, "side": "", "effectiveType": "LAY"},
+        {"selectionId": 2, "price": 4.0, "side": None, "effectiveType": "LAY"},
+    ]
+
+    results, _avg_profit, _book_pct, _avg_net_profit = calculate_dutching(
+        selections=selections,
+        total_stake=40.0,
+        commission=4.5,
+    )
+
+    assert len(results) == 2
+    assert all(str(row.get("side")) == "LAY" for row in results)
+    assert all(
+        row["dutchingModel"] == "LAY_EQUAL_PROFIT_FIXED_TOTAL_STAKE" for row in results
+    )

@@ -234,7 +234,11 @@ def calculate_dutching_stakes(
 
 
 def _normalize_selection_side(selection: Dict[str, Any]) -> str:
-    side = str((selection or {}).get("side", (selection or {}).get("effectiveType", "BACK"))).upper().strip()
+    item = selection or {}
+    raw_side = item.get("side")
+    if not raw_side:
+        raw_side = item.get("effectiveType")
+    side = str(raw_side or "BACK").upper().strip()
     return side if side in {"BACK", "LAY"} else "BACK"
 
 
