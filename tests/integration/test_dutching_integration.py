@@ -321,3 +321,19 @@ def test_controller_preview_rejects_mixed_back_lay_dutching_contract():
 
     assert out["ok"] is False
     assert "mixed BACK/LAY selections" in str(out.get("error") or "")
+
+
+@pytest.mark.integration
+def test_controller_side_fallback_prefers_effective_type_when_side_is_falsy():
+    controller = DutchingController(bus=None, runtime_controller=_Runtime())
+    payload = _controller_payload([3.0, 4.0], total_stake=40.0, commission=4.5)
+    payload["selections"] = [
+        {"selectionId": 1, "price": 3.0, "side": "", "effectiveType": "LAY"},
+        {"selectionId": 2, "price": 4.0, "side": None, "effectiveType": "LAY"},
+    ]
+
+    out = controller.preview(payload)
+
+    assert out["ok"] is True
+    assert out["dutching_model"] == "LAY_EQUAL_PROFIT_FIXED_TOTAL_STAKE"
+    assert all(str(row.get("side")) == "LAY" for row in out["results"])

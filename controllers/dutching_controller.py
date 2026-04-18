@@ -259,6 +259,10 @@ class DutchingController:
         side = str(value or "BACK").upper().strip()
         return side if side in {"BACK", "LAY"} else "BACK"
 
+    def _resolve_selection_side(self, selection: Dict[str, Any]) -> str:
+        raw = (selection or {}).get("side") or (selection or {}).get("effectiveType") or "BACK"
+        return self._normalize_side(raw)
+
     def _resolve_commission_pct(self, payload: Dict[str, Any]) -> float:
         if "commission" in payload:
             try:
@@ -270,17 +274,23 @@ class DutchingController:
     def _calculate_dutching_with_commission(
         self, payload: Dict[str, Any]
     ) -> tuple[List[Dict[str, Any]], float, float, float]:
+        normalized_selections: List[Dict[str, Any]] = []
+        for selection in list(payload.get("selections") or []):
+            item = dict(selection or {})
+            item["side"] = self._resolve_selection_side(item)
+            normalized_selections.append(item)
+
         commission_pct = self._resolve_commission_pct(payload)
         try:
             calc_out = calculate_dutching(
-                payload["selections"],
+                normalized_selections,
                 float(payload["total_stake"]),
                 commission=commission_pct,
             )
         except TypeError:
             # Compat path for test doubles/legacy callables without commission argument.
             calc_out = calculate_dutching(
-                payload["selections"],
+                normalized_selections,
                 float(payload["total_stake"]),
             )
 
@@ -430,7 +440,7 @@ class DutchingController:
                     return self._fail(f"Quota non valida alla selezione #{idx}: {price}")
 
                 if "side" in selection:
-                    side = self._normalize_side(selection.get("side", "BACK"))
+                    side = self._resolve_selection_side(selection)
                     if side not in {"BACK", "LAY"}:
                         return self._fail(f"side non valido alla selezione #{idx}: {side}")
 
