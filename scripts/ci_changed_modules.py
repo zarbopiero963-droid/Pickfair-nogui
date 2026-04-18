@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from pathlib import PurePosixPath
 
 
 MODULE_RULES = [
@@ -17,10 +18,7 @@ MODULE_RULES = [
             "guardrails/contracts/dutching.json",
             "guardrails/state_models/dutching.json",
             "guardrails/mutations/dutching.json",
-            "tests/unit/test_dutching.py",
-            "tests/integration/test_dutching_integration.py",
-            "tests/invariant/test_dutching_drift_and_stress.py",
-            "tests/integration/test_simulation_broker_dutching_parity.py",
+            "tests/**/test_*dutching*.py",
         ],
     },
     {
@@ -216,6 +214,9 @@ def get_changed_files(base_ref: str) -> list[str]:
 
 def matches_rule(changed_file: str, rule_paths: list[str]) -> bool:
     for path in rule_paths:
+        if "*" in path or "?" in path or "[" in path:
+            if PurePosixPath(changed_file).match(path):
+                return True
         if path.endswith("/"):
             if changed_file.startswith(path):
                 return True
