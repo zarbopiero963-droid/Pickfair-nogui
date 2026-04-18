@@ -1446,3 +1446,104 @@ def test_runtime_controller_rejects_helper_settlement_payload_as_non_canonical_e
     assert extracted["settlement_validation"] == "rejected_ambiguous"
     assert extracted["settlement_acceptance"] == "REJECT_AMBIGUOUS_SETTLEMENT"
     assert extracted["reason"] == "MISSING_CANONICAL_SETTLEMENT_FIELDS"
+
+
+@pytest.mark.integration
+def test_runtime_controller_live_event_settlement_parity_with_duplicate_and_delayed_market_updates():
+    class _BusCapture(_Bus):
+        def subscribe(self, *_args):
+            return None
+
+    live_bus = _BusCapture()
+    live_engine = EventDrivenPnLEngine(bus=live_bus, commission_pct=4.5)
+
+    fill_payload = {
+        "market_id": "1.991",
+        "selection_id": 502,
+        "bet_type": "BACK",
+        "table_id": 1,
+        "batch_id": "batch-live-sim-reorder",
+        "price": 2.0,
+        "stake": 100.0,
+    }
+
+    live_engine._on_filled({**fill_payload, "event_key": "evt-fill-1"})
+    live_engine._on_market(
+        {
+            "marketId": "1.991",
+            "runners": [{"selectionId": 502, "ex": {"availableToBack": [{"price": 2.0}], "availableToLay": [{"price": 1.0}]}}],
+        }
+    )
+    live_engine._on_market(
+        {
+            "marketId": "1.991",
+            "runners": [{"selectionId": 502, "ex": {"availableToBack": [{"price": 2.0}], "availableToLay": [{"price": 1.0}]}}],
+        }
+    )
+    live_engine._on_filled({**fill_payload, "event_key": "evt-fill-2"})
+    live_engine._on_market(
+        {
+            "marketId": "1.991",
+            "runners": [{"selectionId": 502, "ex": {"availableToBack": [{"price": 2.0}], "availableToLay": [{"price": 1.6}]}}],
+        }
+    )
+    live_engine._on_market(
+        {
+            "marketId": "1.991",
+            "runners": [{"selectionId": 502, "ex": {"availableToBack": [{"price": 2.0}], "availableToLay": [{"price": 3.0}]}}],
+        }
+    )
+
+    live_closes = [payload for topic, payload in live_bus.events if topic == "RUNTIME_CLOSE_POSITION"]
+    assert len(live_closes) == 2
+    live_last = live_closes[-1]
+
+    sim = SimulationBroker(starting_balance=1000.0, commission_pct=4.5)
+    sim.record_realized_settlement(100.0, market_id="1.991")
+    sim_last = sim.record_realized_settlement(40.0, market_id="1.991")
+
+    assert live_last["market_id"] == "1.991"
+    assert live_last["gross_pnl"] == pytest.approx(sim_last["gross_pnl"])
+    assert live_last["commission_amount"] == pytest.approx(sim_last["commission_amount"])
+    assert live_last["net_pnl"] == pytest.approx(sim_last["net_pnl"])
+    assert live_last["market_net_gross"] == pytest.approx(sim_last["market_net_gross"])
+    assert live_last["market_commission_amount_total"] == pytest.approx(sim_last["market_commission_amount_total"])
+
+
+@pytest.mark.integration
+def test_runtime_controller_logs_structured_context_for_non_canonical_settlement_rejection(caplog):
+    bus = _Bus()
+    rc = RuntimeController(
+        bus=bus,
+        db=_DB(),
+        settings_service=_Settings(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+    rc.mode = RuntimeMode.ACTIVE
+    rc.betfair_service.get_account_funds = lambda: {"available": 200.0}
+    rc.risk_desk.sync_bankroll(150.0)
+
+    with caplog.at_level("WARNING"):
+        rc._on_close_position(
+            {
+                "event_key": "evt-reject-ctx",
+                "table_id": 1,
+                "batch_id": "batch-reject-ctx",
+                "correlation_id": "corr-reject-ctx",
+                "gross_pnl": 10.0,
+                "commission_amount": 0.45,
+                "net_pnl": 9.55,
+                "commission_pct": 4.5,
+                "settlement_source": "integration_test",
+                "settlement_kind": "mark_to_market_estimate",
+                "settlement_basis": "market_net_realized",
+            }
+        )
+
+    warning_messages = [r.message for r in caplog.records if "Settlement contract rejected at runtime boundary" in r.message]
+    assert warning_messages
+    text = warning_messages[-1]
+    assert "SETTLEMENT_KIND_NOT_REALIZED" in text
+    assert "rejected_non_realized_settlement" in text
+    assert "corr-reject-ctx" in text

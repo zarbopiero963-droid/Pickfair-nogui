@@ -57,6 +57,26 @@ class _Executor:
         return fn()
 
 
+class _Recovery:
+    def __init__(self, ok=True):
+        self.ok = ok
+
+    def recover(self):
+        return {"ok": self.ok, "reason": None if self.ok else "recovery_failed"}
+
+
+class _Reconcile:
+    def __init__(self, raise_error=False):
+        self.raise_error = raise_error
+        self.calls = 0
+
+    def enqueue_pending(self):
+        self.calls += 1
+        if self.raise_error:
+            raise RuntimeError("reconcile exploded")
+        return {"triggered": True, "mode": "enqueue_pending"}
+
+
 class _OM:
     def __init__(self, response):
         self.response = response
@@ -173,3 +193,48 @@ def test_trading_engine_derives_order_origin_from_metadata_when_missing(origin_m
 
     assert live_call["order_origin"] == expected_origin
     assert sim_call["order_origin"] == expected_origin
+
+
+@pytest.mark.integration
+def test_trading_engine_recovery_and_reconcile_contract_parity_after_intermediate_state():
+    outcomes = []
+    for sim in (False, True):
+        bus, db = _Bus(), _DB()
+        rec = _Reconcile(raise_error=(sim is True))
+        engine = TradingEngine(
+            bus=bus,
+            db=db,
+            client_getter=lambda: None,
+            executor=_Executor(),
+            state_recovery=_Recovery(ok=True),
+            reconciliation_engine=rec,
+        )
+
+        response = {"ok": False, "status": "AMBIGUOUS", "reason_code": "UNKNOWN", "error_class": "AMBIGUOUS"}
+        om = _OM(response)
+        engine.order_manager = om
+        submit_result = engine.submit_quick_bet(
+            {
+                "market_id": "1.200",
+                "selection_id": 9,
+                "price": 2.5,
+                "stake": 4.0,
+                "side": "BACK",
+                "customer_ref": f"REC-{sim}",
+                "event_key": f"evt-rec-{sim}",
+                "simulation_mode": sim,
+            }
+        )
+        recovery = engine.recover_after_restart()
+        outcomes.append((submit_result, recovery))
+
+    live_submit, live_recovery = outcomes[0]
+    sim_submit, sim_recovery = outcomes[1]
+    assert live_submit["status"] == sim_submit["status"] == "AMBIGUOUS"
+    assert live_submit["is_terminal"] == sim_submit["is_terminal"] is True
+    assert live_recovery["status"] == sim_recovery["status"] == "RECOVERY_TRIGGERED"
+    assert live_recovery["ok"] is True and sim_recovery["ok"] is True
+    assert isinstance(live_recovery["reconcile"], dict)
+    assert isinstance(sim_recovery["reconcile"], dict)
+    assert live_recovery["reconcile"].get("triggered") is True
+    assert sim_recovery["reconcile"].get("triggered") is False
