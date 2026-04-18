@@ -9,6 +9,8 @@ jobs:
   detect:
     runs-on: ubuntu-latest
     outputs:
+      run_dutching: ${{ steps.detect.outputs.run_dutching }}
+      run_pnl_engine: ${{ steps.detect.outputs.run_pnl_engine }}
       run_trading_engine: ${{ steps.detect.outputs.run_trading_engine }}
       run_order_manager: ${{ steps.detect.outputs.run_order_manager }}
       run_execution_guard: ${{ steps.detect.outputs.run_execution_guard }}
@@ -48,6 +50,8 @@ jobs:
           data = json.loads(Path("changed_modules.json").read_text(encoding="utf-8"))
 
           mapping = {
+              "run_dutching": data.get("run_dutching", False),
+              "run_pnl_engine": data.get("run_pnl_engine", False),
               "run_trading_engine": data.get("run_trading_engine", False),
               "run_order_manager": data.get("run_order_manager", False),
               "run_execution_guard": data.get("run_execution_guard", False),
@@ -80,6 +84,16 @@ jobs:
 
   repo-guardrails-extended:
     uses: ./.github/workflows/repo-guardrails-extended.yml
+
+  dutching:
+    needs: detect
+    if: needs.detect.outputs.run_dutching == 'true'
+    uses: ./.github/workflows/dutching.yml
+
+  pnl-engine:
+    needs: detect
+    if: needs.detect.outputs.run_pnl_engine == 'true'
+    uses: ./.github/workflows/pnl-engine.yml
 
   trading-engine:
     needs: detect
