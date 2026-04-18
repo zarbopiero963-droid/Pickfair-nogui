@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import threading
 import time
@@ -29,13 +30,29 @@ _SECRET_FIELDS: frozenset = frozenset({
     "telegram.session_string",
 })
 
+_DB_DURABILITY_PROFILES: Dict[str, Dict[str, str]] = {
+    # LIVE-safe default: WAL + FULL minimizes committed-data loss on crash/power loss.
+    "live_safe": {
+        "journal_mode": "WAL",
+        "synchronous": "FULL",
+    },
+    # Faster profile with larger crash-loss window (kept for explicit opt-in only).
+    "balanced": {
+        "journal_mode": "WAL",
+        "synchronous": "NORMAL",
+    },
+}
+
+_DB_DURABILITY_PROFILE_ENV = "PICKFAIR_DB_DURABILITY_PROFILE"
+
 
 class Database:
-    def __init__(self, db_path: str = "pickfair.db"):
+    def __init__(self, db_path: str = "pickfair.db", durability_profile: Optional[str] = None):
         self.db_path = str(db_path)
         self._local = threading.local()
         self._write_lock = threading.RLock()
         self._cipher = SecretCipher.from_env_or_file()
+        self._durability_profile = self._resolve_durability_profile(durability_profile)
         self._ensure_parent_dir()
         self._init_db()
 
@@ -56,12 +73,39 @@ class Database:
                 timeout=30.0,
             )
             conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA journal_mode=WAL")
+            self._apply_durability_pragmas(conn)
             conn.execute("PRAGMA foreign_keys=ON")
-            conn.execute("PRAGMA synchronous=NORMAL")
             self._local.conn = conn
             self._local.tx_depth = 0
         return conn
+
+    def _resolve_durability_profile(self, durability_profile: Optional[str]) -> str:
+        raw = (
+            durability_profile
+            if durability_profile is not None
+            else os.getenv(_DB_DURABILITY_PROFILE_ENV, "live_safe")
+        )
+        selected = str(raw or "").strip().lower()
+        if selected not in _DB_DURABILITY_PROFILES:
+            allowed = ", ".join(sorted(_DB_DURABILITY_PROFILES))
+            raise ValueError(
+                f"Unsupported DB durability profile '{raw}'. Allowed profiles: {allowed}"
+            )
+        return selected
+
+    def _apply_durability_pragmas(self, conn: sqlite3.Connection) -> None:
+        profile = _DB_DURABILITY_PROFILES[self._durability_profile]
+        conn.execute(f"PRAGMA journal_mode={profile['journal_mode']}")
+        conn.execute(f"PRAGMA synchronous={profile['synchronous']}")
+
+    def get_durability_profile(self) -> str:
+        return self._durability_profile
+
+    def is_wal_mode(self) -> bool:
+        conn = self._get_connection()
+        row = conn.execute("PRAGMA journal_mode").fetchone()
+        mode = str(row[0] if row else "").strip().lower()
+        return mode == "wal"
 
     def _get_tx_depth(self) -> int:
         return int(getattr(self._local, "tx_depth", 0) or 0)
