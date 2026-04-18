@@ -996,6 +996,29 @@ class ReconciliationEngine:
         )
         return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
+    def _has_age_based_recheck_candidate(self, legs: List[Dict[str, Any]]) -> bool:
+        """
+        True when at least one leg could change purely due to age progression.
+
+        This guards first-cycle idempotent skip: fingerprints do not encode time,
+        so UNKNOWN/PLACED legs near or beyond timeout thresholds must be
+        re-evaluated even when local+remote snapshots look unchanged.
+        """
+        now = self._now_epoch()
+        for leg in legs:
+            status = str(leg.get("status") or "").upper()
+            if status not in {"UNKNOWN", "PLACED"}:
+                continue
+            created_ts = float(leg.get("created_at_ts", 0) or 0)
+            if created_ts <= 0:
+                continue
+            age = now - created_ts
+            if status == "UNKNOWN" and age >= float(self.cfg.unknown_grace_secs):
+                return True
+            if status == "PLACED" and age >= float(self.cfg.placed_order_timeout_secs):
+                return True
+        return False
+
     # ─────────────────────────────────────────────────────────────
     # RECOVERY MARKERS
     # ─────────────────────────────────────────────────────────────
@@ -1101,9 +1124,12 @@ class ReconciliationEngine:
     #   2. Exchange wins on PARTIAL (dominant non-terminal).
     #   3. Local wins when saga is still pending.
     #   4. Local wins when already terminal and exchange agrees.
-    #   5. UNKNOWN resolved after grace period ONLY if created_at_ts
+    #   5. UNKNOWN resolved after unknown_grace_secs ONLY if created_at_ts
     #      is present; missing timestamp → safe hold (not instant FAIL).
-    #   6. Ghost orders flagged/cancelled per config.
+    #   6. PLACED resolved after placed_order_timeout_secs when exchange
+    #      remains absent; this timeout is explicit and independent from
+    #      UNKNOWN grace.
+    #   7. Ghost orders flagged/cancelled per config.
     # ─────────────────────────────────────────────────────────────
 
     def _apply_merge_policy(
@@ -1158,16 +1184,33 @@ class ReconciliationEngine:
 
             age = self._now_epoch() - created_ts
 
-            if local_status == "UNKNOWN" or age > self.cfg.unknown_grace_secs:
+            if local_status == "UNKNOWN" and age > self.cfg.unknown_grace_secs:
                 self._log_decision(
                     batch_id=batch_id, leg_index=leg_index,
                     case_classification=classification,
                     reason_code=ReasonCode.RESOLVED_UNKNOWN_TO_FAILED,
                     local_status=local_status, exchange_status=None,
                     resolved_status="FAILED", merge_winner="NONE",
-                    details={"age_secs": round(age, 2)},
+                    details={
+                        "age_secs": round(age, 2),
+                        "unknown_grace_secs": round(float(self.cfg.unknown_grace_secs), 2),
+                    },
                 )
                 return "FAILED", ReasonCode.RESOLVED_UNKNOWN_TO_FAILED, "NONE"
+
+            if local_status == "PLACED" and age > self.cfg.placed_order_timeout_secs:
+                self._log_decision(
+                    batch_id=batch_id, leg_index=leg_index,
+                    case_classification=classification,
+                    reason_code=ReasonCode.RESOLVED_PLACED_TO_FAILED_TIMEOUT,
+                    local_status=local_status, exchange_status=None,
+                    resolved_status="FAILED", merge_winner="NONE",
+                    details={
+                        "age_secs": round(age, 2),
+                        "placed_order_timeout_secs": round(float(self.cfg.placed_order_timeout_secs), 2),
+                    },
+                )
+                return "FAILED", ReasonCode.RESOLVED_PLACED_TO_FAILED_TIMEOUT, "NONE"
 
             # within grace period — hold
             return None, ReasonCode.LOCAL_WINS_SAGA_PENDING, "LOCAL"
@@ -1560,6 +1603,7 @@ class ReconciliationEngine:
             if (
                 cycle == 1
                 and fp == self._reconcile_fingerprints.get(batch_id)
+                and not self._has_age_based_recheck_candidate(legs_sorted)
             ):
                 self._log_decision(
                     batch_id=batch_id, leg_index=None,

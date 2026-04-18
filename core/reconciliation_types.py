@@ -42,6 +42,7 @@ class ReasonCode(str, Enum):
     GHOST_ORDER_DETECTED             = "GHOST_ORDER_DETECTED"
     GHOST_REPLACED_ORDER             = "GHOST_REPLACED_ORDER"
     RESOLVED_UNKNOWN_TO_FAILED       = "RESOLVED_UNKNOWN_TO_FAILED"
+    RESOLVED_PLACED_TO_FAILED_TIMEOUT = "RESOLVED_PLACED_TO_FAILED_TIMEOUT"
     RESOLVED_UNKNOWN_TO_MATCHED      = "RESOLVED_UNKNOWN_TO_MATCHED"
     CONVERGED                        = "CONVERGED"
     CONVERGENCE_TIMEOUT              = "CONVERGENCE_TIMEOUT"
@@ -336,6 +337,8 @@ class ReconcileConfig:
 
     # UNKNOWN resolution grace
     unknown_grace_secs: float = 120.0
+    # PLACED resolution timeout (local PLACED + exchange absent)
+    placed_order_timeout_secs: float = 300.0
 
     # audit: fail-closed → abort reconcile if audit persist fails
     audit_fail_closed: bool = True
