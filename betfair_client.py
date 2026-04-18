@@ -5,9 +5,10 @@ import logging
 import os
 import ssl
 import stat
+import threading
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 from requests.exceptions import HTTPError, RequestException, Timeout
@@ -52,6 +53,7 @@ class BetfairClient:
         self.session_token = ""
         self.session_expiry = ""
         self.connected = False
+        self._session_state_lock = threading.RLock()
 
         # Circuit breaker guards all JSON-RPC calls to Betfair API.
         # SESSION_EXPIRED does NOT trip the breaker; only network/HTTP failures do.
@@ -154,13 +156,37 @@ class BetfairClient:
             raise RuntimeError(f"CERT_EXPIRED: {cert_path}: notAfter={not_after_raw}")
 
     def _headers(self) -> Dict[str, str]:
+        with self._session_state_lock:
+            session_token = self.session_token
         headers = {
             "X-Application": self.app_key,
             "Content-Type": "application/json",
         }
-        if self.session_token:
-            headers["X-Authentication"] = self.session_token
+        if session_token:
+            headers["X-Authentication"] = session_token
         return headers
+
+    def _set_session_state(
+        self,
+        *,
+        session_token: Optional[str] = None,
+        session_expiry: Optional[str] = None,
+        connected: Optional[bool] = None,
+    ) -> None:
+        with self._session_state_lock:
+            if session_token is not None:
+                self.session_token = str(session_token)
+            if session_expiry is not None:
+                self.session_expiry = str(session_expiry)
+            if connected is not None:
+                self.connected = bool(connected)
+
+    def _clear_session_state(self) -> None:
+        self._set_session_state(session_token="", session_expiry="", connected=False)
+
+    def _session_token_value(self) -> str:
+        with self._session_state_lock:
+            return str(self.session_token or "")
 
     def _parse_json(self, response: Any, err_code: str) -> Any:
         try:
@@ -202,7 +228,7 @@ class BetfairClient:
     # =========================================================
     def _post_jsonrpc(self, url: str, method: str, params: Dict[str, Any]) -> Any:
         started_at = time.monotonic()
-        if not self.session_token:
+        if not self._session_token_value():
             self._record_io(operation=method, started_at=started_at, status="UNAVAILABLE", error="NOT_AUTHENTICATED")
             raise RuntimeError("NOT_AUTHENTICATED")
 
@@ -241,9 +267,7 @@ class BetfairClient:
                     err = str(item["error"])
 
                     if "INVALID_SESSION" in err or "NO_SESSION" in err:
-                        self.connected = False
-                        self.session_token = ""
-                        self.session_expiry = ""
+                        self._clear_session_state()
                         raise RuntimeError("SESSION_EXPIRED")
 
                     raise RuntimeError(f"API_ERROR: {err}")
@@ -305,17 +329,22 @@ class BetfairClient:
             if str(data.get("loginStatus")) != "SUCCESS":
                 raise RuntimeError(f"LOGIN_FAILED: {data}")
 
-            self.session_token = str(data.get("sessionToken") or "")
-            self.session_expiry = str(data.get("sessionExpiryTime") or "")
-            self.connected = bool(self.session_token)
+            session_token = str(data.get("sessionToken") or "")
+            session_expiry = str(data.get("sessionExpiryTime") or "")
+            connected = bool(session_token)
+            self._set_session_state(
+                session_token=session_token,
+                session_expiry=session_expiry,
+                connected=connected,
+            )
             elapsed_ms = max(0.0, (time.monotonic() - started_at) * 1000.0)
             status = "SLOW" if elapsed_ms >= max(2000.0, self.timeout * 1000.0 * 0.8) else "SUCCESS"
             self._record_io(operation="login", started_at=started_at, status=status)
 
             return {
-                "connected": self.connected,
-                "session_token": bool(self.session_token),
-                "expiry": self.session_expiry,
+                "connected": connected,
+                "session_token": bool(session_token),
+                "expiry": session_expiry,
             }
 
         except Timeout as exc:
@@ -331,9 +360,7 @@ class BetfairClient:
             raise RuntimeError(f"LOGIN_NETWORK_ERROR: {exc}") from exc
 
     def logout(self) -> Dict[str, Any]:
-        self.session_token = ""
-        self.session_expiry = ""
-        self.connected = False
+        self._clear_session_state()
         return {
             "ok": True,
             "logged_out": True,
@@ -584,7 +611,10 @@ class BetfairClient:
     # STATUS
     # =========================================================
     def status(self) -> Dict[str, Any]:
+        with self._session_state_lock:
+            session_token = self.session_token
+            session_expiry = self.session_expiry
         return {
-            "connected": bool(self.session_token),
-            "expiry": self.session_expiry,
+            "connected": bool(session_token),
+            "expiry": session_expiry,
         }
