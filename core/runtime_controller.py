@@ -1529,6 +1529,14 @@ class RuntimeController:
         non_authoritative_close = validation_status == "rejected_non_canonical_settlement"
 
         if validation_status.startswith("rejected") and not non_authoritative_close:
+            rejection_context = self._build_settlement_rejection_context(payload, settlement)
+            logger.warning(
+                "Settlement contract rejected at runtime boundary: reason=%s validation=%s acceptance=%s context=%s",
+                rejection_context["reason"],
+                rejection_context["settlement_validation"],
+                rejection_context["settlement_acceptance"],
+                rejection_context,
+            )
             sync_result = {
                 "correlation_id": str(payload.get("correlation_id") or payload.get("event_key") or ""),
                 "settlement_detected": True,
@@ -1803,6 +1811,26 @@ class RuntimeController:
             "settlement_validation": settlement_validation,
             "settlement_acceptance": settlement_acceptance,
             "reason": reason,
+        }
+
+    @staticmethod
+    def _build_settlement_rejection_context(payload: dict, settlement: dict[str, float | str]) -> dict[str, Any]:
+        body = dict(payload or {})
+        safe_payload_excerpt = {
+            "event_key": str(body.get("event_key") or ""),
+            "correlation_id": str(body.get("correlation_id") or ""),
+            "market_id": str(body.get("market_id") or ""),
+            "selection_id": body.get("selection_id"),
+            "table_id": body.get("table_id"),
+            "batch_id": str(body.get("batch_id") or ""),
+            "provided_fields": sorted(str(k) for k in body.keys()),
+        }
+        return {
+            "reason": str(settlement.get("reason") or "SETTLEMENT_CONTRACT_REJECTED"),
+            "settlement_validation": str(settlement.get("settlement_validation") or ""),
+            "settlement_acceptance": str(settlement.get("settlement_acceptance") or ""),
+            "settlement_authority": str(settlement.get("settlement_authority") or ""),
+            "payload_excerpt": safe_payload_excerpt,
         }
 
     def _sync_bankroll_post_settlement(self, payload: dict) -> dict:
