@@ -386,11 +386,15 @@ def test_non_live_readiness_does_not_emit_hard_stop_blockers_even_if_config_inva
 
 
 @pytest.mark.parametrize("unsafe_key_source", ["ephemeral", "unknown"])
-def test_strict_live_key_source_blocks_unsafe_sources(unsafe_key_source):
+@pytest.mark.parametrize("strict_live_key_source_required", [False, True])
+def test_live_key_source_blocks_unsafe_sources_even_when_strict_flag_is_off(
+    unsafe_key_source,
+    strict_live_key_source_required,
+):
     rc = _make_runtime(
         ready=True,
         key_source=unsafe_key_source,
-        strict_live_key_source_required=True,
+        strict_live_key_source_required=strict_live_key_source_required,
     )
 
     readiness = rc.evaluate_live_readiness(
@@ -403,6 +407,7 @@ def test_strict_live_key_source_blocks_unsafe_sources(unsafe_key_source):
     assert "LIVE_KEY_SOURCE_UNSAFE" in readiness["blockers"]
     ks = readiness["details"]["key_source_state"]
     assert ks["strict_live_key_source_required"] is True
+    assert ks["configured_strict_live_key_source_required"] is strict_live_key_source_required
     assert ks["key_source"] == unsafe_key_source
     assert ks["passed"] is False
 

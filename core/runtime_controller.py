@@ -700,6 +700,9 @@ class RuntimeController:
         allowed_key_sources = {"env", "file_existing", "file_generated"}
         key_source_passed = key_source in allowed_key_sources
         execution_mode_valid = normalized_execution_mode in {"SIMULATION", "LIVE"}
+        effective_strict_live_key_source_required = (
+            normalized_execution_mode == "LIVE" or strict_live_key_source_required
+        )
         contradictory_state = (
             (normalized_execution_mode == "LIVE" and bool(getattr(self, "simulation_mode", False)))
             or (normalized_execution_mode == "LIVE" and not effective_live_enabled)
@@ -714,8 +717,9 @@ class RuntimeController:
         }
         details["key_source_state"] = {
             "key_source": key_source,
-            "strict_live_key_source_required": strict_live_key_source_required,
-            "passed": (not strict_live_key_source_required) or key_source_passed,
+            "strict_live_key_source_required": effective_strict_live_key_source_required,
+            "configured_strict_live_key_source_required": strict_live_key_source_required,
+            "passed": (not effective_strict_live_key_source_required) or key_source_passed,
             "allowed_sources": sorted(allowed_key_sources),
         }
         hard_stop_config_state = self._validate_live_hard_stop_config()
@@ -727,7 +731,7 @@ class RuntimeController:
             blockers.append("LIVE_NOT_ENABLED")
         if normalized_execution_mode == "LIVE" and not configured_live_readiness_ok:
             blockers.append("LIVE_READINESS_FLAG_NOT_OK")
-        if normalized_execution_mode == "LIVE" and strict_live_key_source_required and not key_source_passed:
+        if normalized_execution_mode == "LIVE" and effective_strict_live_key_source_required and not key_source_passed:
             blockers.append("LIVE_KEY_SOURCE_UNSAFE")
         if normalized_execution_mode == "LIVE" and hard_stop_config_state["missing_fields"]:
             blockers.append("LIVE_HARD_STOP_CONFIG_MISSING")
