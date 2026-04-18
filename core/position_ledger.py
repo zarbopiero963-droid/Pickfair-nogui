@@ -119,10 +119,17 @@ class PositionLedger:
         incoming_price = _to_decimal(price)
         incoming_size = _to_decimal(size)
 
+        if not incoming_price.is_finite():
+            raise ValueError("price must be finite")
+        if not incoming_size.is_finite():
+            raise ValueError("size must be finite")
         if incoming_price <= Decimal("1"):
             raise ValueError("price must be > 1")
         if incoming_size <= _D0:
             raise ValueError("size must be > 0")
+
+        # Any accepted fill invalidates previous mark-to-market snapshot.
+        self._unrealized_pnl = _D0
 
         realized_delta = _D0
         remaining_incoming = incoming_size

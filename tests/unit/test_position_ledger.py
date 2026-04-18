@@ -108,3 +108,60 @@ def test_residual_exposure_and_liability_semantics_for_back_and_lay():
     lay_snap = lay.snapshot()
     assert lay_snap.exposure == pytest.approx(20.0)
     assert lay_snap.liability == pytest.approx(20.0)
+
+
+def test_unrealized_pnl_resets_after_full_close_fill_mutation():
+    ledger = PositionLedger(market_id="1.108", runner_id=18)
+    ledger.apply_fill(fill_id="f1", side="BACK", price=2.0, size=10.0)
+    mtm = ledger.mark_to_market(mark_price=1.8)
+    assert mtm.unrealized_pnl == pytest.approx((2.0 - 1.8) * 10.0)
+
+    ledger.apply_fill(fill_id="f2", side="LAY", price=1.8, size=10.0)
+    snap = ledger.snapshot()
+
+    assert snap.open_size == pytest.approx(0.0)
+    assert snap.unrealized_pnl == pytest.approx(0.0)
+
+
+def test_non_finite_price_is_rejected_without_state_mutation_or_fill_recording():
+    ledger = PositionLedger(market_id="1.109", runner_id=19)
+
+    with pytest.raises(ValueError, match="price must be finite"):
+        ledger.apply_fill(fill_id="nf-price", side="BACK", price=float("nan"), size=10.0)
+
+    snap = ledger.snapshot()
+    assert snap.open_size == pytest.approx(0.0)
+    assert snap.realized_pnl == pytest.approx(0.0)
+
+    # Same fill_id must still be accepted because failed validation should not record it.
+    accepted = ledger.apply_fill(fill_id="nf-price", side="BACK", price=2.0, size=10.0)
+    assert accepted["applied"] is True
+    assert accepted["duplicate"] is False
+
+
+def test_non_finite_size_is_rejected_without_state_mutation_or_fill_recording():
+    ledger = PositionLedger(market_id="1.110", runner_id=20)
+
+    with pytest.raises(ValueError, match="size must be finite"):
+        ledger.apply_fill(fill_id="nf-size", side="BACK", price=2.0, size=float("inf"))
+
+    snap = ledger.snapshot()
+    assert snap.open_size == pytest.approx(0.0)
+    assert snap.realized_pnl == pytest.approx(0.0)
+
+    accepted = ledger.apply_fill(fill_id="nf-size", side="BACK", price=2.0, size=10.0)
+    assert accepted["applied"] is True
+    assert accepted["duplicate"] is False
+
+
+def test_duplicate_fill_id_idempotency_still_holds_after_validation_changes():
+    ledger = PositionLedger(market_id="1.111", runner_id=21)
+    ledger.apply_fill(fill_id="dup-v2", side="BACK", price=2.0, size=10.0)
+
+    first = ledger.apply_fill(fill_id="close-v2", side="LAY", price=1.5, size=4.0)
+    second = ledger.apply_fill(fill_id="close-v2", side="LAY", price=1.5, size=4.0)
+
+    assert first["applied"] is True
+    assert second["applied"] is False
+    assert second["duplicate"] is True
+    assert second["realized_delta"] == pytest.approx(0.0)
