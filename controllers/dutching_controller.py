@@ -270,6 +270,18 @@ class DutchingController:
     def _calculate_dutching_with_commission(
         self, payload: Dict[str, Any]
     ) -> tuple[List[Dict[str, Any]], float, float, float]:
+        selections = list(payload.get("selections") or [])
+        lay_count = sum(
+            1
+            for item in selections
+            if self._normalize_side((item or {}).get("side", (item or {}).get("effectiveType", "BACK"))) == "LAY"
+        )
+        if lay_count > 1:
+            raise ValueError(
+                "Unsupported LAY dutching contract: multi-selection LAY dutching is not implemented; "
+                "fail-closed to avoid BACK-style allocation reuse"
+            )
+
         commission_pct = self._resolve_commission_pct(payload)
         try:
             calc_out = calculate_dutching(

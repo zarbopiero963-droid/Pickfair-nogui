@@ -267,3 +267,35 @@ def test_controller_profitable_net_is_fail_closed_when_worst_case_is_zero(monkey
     assert precheck["ok"] is True
     assert preview["profitable_net"] is False
     assert precheck["profitable_net"] is False
+
+
+@pytest.mark.integration
+def test_controller_preview_fail_closed_for_multi_selection_lay_dutching():
+    controller = DutchingController(bus=None, runtime_controller=_Runtime())
+    payload = _controller_payload([3.0, 4.0, 6.0], total_stake=120.0, commission=4.5)
+    payload["selections"] = [
+        {"selectionId": 1, "price": 3.0, "side": "LAY"},
+        {"selectionId": 2, "price": 4.0, "side": "LAY"},
+        {"selectionId": 3, "price": 6.0, "side": "LAY"},
+    ]
+
+    out = controller.preview(payload)
+
+    assert out["ok"] is False
+    assert "Unsupported LAY dutching contract" in str(out.get("error") or "")
+    assert "BACK-style allocation reuse" in str(out.get("error") or "")
+
+
+@pytest.mark.integration
+def test_controller_precheck_fail_closed_for_multi_selection_lay_dutching():
+    controller = DutchingController(bus=None, runtime_controller=_Runtime())
+    payload = _controller_payload([2.5, 3.5], total_stake=50.0, commission=4.5)
+    payload["selections"] = [
+        {"selectionId": 1, "price": 2.5, "side": "LAY"},
+        {"selectionId": 2, "price": 3.5, "side": "LAY"},
+    ]
+
+    out = controller.precheck(payload)
+
+    assert out["ok"] is False
+    assert "Unsupported LAY dutching contract" in str(out.get("error") or "")
