@@ -710,6 +710,30 @@ class RuntimeProbe:
 
         return context
 
+
+    def collect_external_observability(self) -> Dict[str, Any]:
+        """Return a minimal externally consumable observability payload.
+
+        This surface intentionally mirrors existing probe truth producers
+        (health/metrics/runtime_state/readiness) without introducing any
+        endpoint/server concerns in the probe layer.
+        """
+        health = self.collect_health()
+        metrics = self.collect_metrics()
+        runtime_state = self.collect_runtime_state()
+        readiness = self.get_live_readiness_report()
+        deploy_gate = self.get_deploy_gate_status()
+        now_ts = time.time()
+
+        return {
+            "version": 1,
+            "collected_at": now_ts,
+            "health": health,
+            "metrics": metrics,
+            "runtime_state": runtime_state,
+            "readiness": readiness,
+            "deploy_gate": deploy_gate,
+        }
     def get_live_readiness_report(self) -> Dict[str, Any]:
         health = self.collect_health()
 

@@ -475,3 +475,21 @@ def test_probe_betfair_degraded_when_external_io_slow_even_if_connected():
     assert bf["status"] == "DEGRADED"
     assert bf["reason"] == "external_io_slow"
     assert bf["details"]["external_io"]["last_latency_ms"] == 4100.0
+
+
+def test_collect_external_observability_has_minimal_external_surface():
+    probe = RuntimeProbe(
+        db=_DbStub(),
+        settings_service=FakeSettingsService(),
+        telegram_service=_TelegramStub(),
+    )
+
+    payload = probe.collect_external_observability()
+
+    assert payload["version"] == 1
+    assert isinstance(payload.get("collected_at"), float)
+    assert isinstance(payload.get("health"), dict)
+    assert isinstance(payload.get("metrics"), dict)
+    assert isinstance(payload.get("runtime_state"), dict)
+    assert isinstance(payload.get("readiness"), dict)
+    assert isinstance(payload.get("deploy_gate"), dict)
