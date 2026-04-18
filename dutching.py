@@ -233,6 +233,101 @@ def calculate_dutching_stakes(
     return result
 
 
+def _normalize_selection_side(selection: Dict[str, Any]) -> str:
+    side = str((selection or {}).get("side", (selection or {}).get("effectiveType", "BACK"))).upper().strip()
+    return side if side in {"BACK", "LAY"} else "BACK"
+
+
+def calculate_dutching(
+    selections: List[Dict[str, Any]],
+    total_stake: float,
+    commission: float = 4.5,
+) -> tuple[List[Dict[str, Any]], float, float, float]:
+    """
+    Explicit dutching contract dispatcher.
+
+    Supported models:
+    - BACK_EQUAL_PROFIT_FIXED_TOTAL_STAKE
+    - LAY_EQUAL_PROFIT_FIXED_TOTAL_STAKE
+
+    LAY model semantics:
+    - fixed total lay stake budget (sum(stake_i) == total_stake)
+    - equalized gross/net outcome across selected mutually-exclusive outcomes
+    - if laid outcome i wins against us:
+        gross_i = sum(stake_j for j!=i) - liability_i
+                = total_stake - stake_i * odds_i
+      liability_i = stake_i * (odds_i - 1)
+    """
+    selections = list(selections or [])
+    if not selections:
+        return [], 0.0, 0.0, 0.0
+
+    side_set = {_normalize_selection_side(s) for s in selections}
+    if len(side_set) != 1:
+        raise ValueError(
+            "Unsupported dutching contract: mixed BACK/LAY selections are not supported"
+        )
+
+    mode = next(iter(side_set))
+    odds = [float((s or {}).get("price", 0.0) or 0.0) for s in selections]
+    preview = calculate_dutching_stakes(
+        odds=odds,
+        total_stake=float(total_stake),
+        commission=float(commission),
+        commission_aware=True,
+    )
+    if preview.get("error"):
+        raise ValueError(str(preview.get("error")))
+
+    stakes = [float(x) for x in (preview.get("stakes") or [])]
+    profits = [float(x) for x in (preview.get("profits") or [])]
+    net_profits = [float(x) for x in (preview.get("net_profits") or [])]
+    avg_profit = float(preview.get("avg_profit", 0.0) or 0.0)
+    avg_net_profit = float(preview.get("avg_net_profit", avg_profit) or avg_profit)
+    book_pct = float(preview.get("book_pct", 0.0) or 0.0)
+
+    total_stake_d = _d(total_stake, "0")
+    odds_d = [_d(o, "0") for o in odds]
+    commission_d = _resolve_policy_commission_pct(commission)
+    lay_gross: List[float] = []
+    lay_net: List[float] = []
+
+    if mode == "LAY":
+        lay_gross = []
+        lay_net = []
+        for idx, stake in enumerate(stakes):
+            stake_d = _d(stake, "0")
+            gross_d = _round_step(total_stake_d - (stake_d * odds_d[idx]))
+            net_d = _round_step(_apply_commission(gross_d, commission_d))
+            lay_gross.append(float(gross_d))
+            lay_net.append(float(net_d))
+
+    results: List[Dict[str, Any]] = []
+    for idx, selection in enumerate(selections):
+        stake_f = float(stakes[idx]) if idx < len(stakes) else 0.0
+        profit_f = float(profits[idx]) if idx < len(profits) else 0.0
+        net_profit_f = float(net_profits[idx]) if idx < len(net_profits) else 0.0
+        item = {
+            "selectionId": int(selection["selectionId"]),
+            "price": float(selection["price"]),
+            "stake": stake_f,
+            "side": mode,
+            "runnerName": selection.get("runnerName", ""),
+            "profitIfWins": profit_f,
+            "profitIfWinsNet": net_profit_f,
+            "dutchingModel": f"{mode}_EQUAL_PROFIT_FIXED_TOTAL_STAKE",
+        }
+        if mode == "LAY":
+            item["liability"] = round(stake_f * max(0.0, float(item["price"]) - 1.0), 2)
+            if idx < len(lay_gross):
+                item["profitIfWins"] = lay_gross[idx]
+            if idx < len(lay_net):
+                item["profitIfWinsNet"] = lay_net[idx]
+        results.append(item)
+
+    return results, avg_profit, book_pct, avg_net_profit
+
+
 def dynamic_cashout_single(
     matched_stake: float = None,
     matched_price: float = None,

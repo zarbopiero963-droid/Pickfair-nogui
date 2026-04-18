@@ -270,18 +270,6 @@ class DutchingController:
     def _calculate_dutching_with_commission(
         self, payload: Dict[str, Any]
     ) -> tuple[List[Dict[str, Any]], float, float, float]:
-        selections = list(payload.get("selections") or [])
-        lay_count = sum(
-            1
-            for item in selections
-            if self._normalize_side((item or {}).get("side", (item or {}).get("effectiveType", "BACK"))) == "LAY"
-        )
-        if lay_count > 1:
-            raise ValueError(
-                "Unsupported LAY dutching contract: multi-selection LAY dutching is not implemented; "
-                "fail-closed to avoid BACK-style allocation reuse"
-            )
-
         commission_pct = self._resolve_commission_pct(payload)
         try:
             calc_out = calculate_dutching(
@@ -310,6 +298,37 @@ class DutchingController:
             float(book_pct),
             float(avg_net_profit),
         )
+
+    def _dutching_model(self, results: List[Dict[str, Any]]) -> str:
+        sides = {
+            self._normalize_side(item.get("side", "BACK"))
+            for item in (results or [])
+            if isinstance(item, dict)
+        }
+        if len(sides) == 1:
+            side = next(iter(sides))
+            return f"{side}_EQUAL_PROFIT_FIXED_TOTAL_STAKE"
+        return "UNSPECIFIED"
+
+    def _lay_liability_metrics(self, results: List[Dict[str, Any]]) -> Dict[str, float]:
+        liabilities: List[float] = []
+        for item in results or []:
+            side = self._normalize_side((item or {}).get("side", "BACK"))
+            if side != "LAY":
+                continue
+            try:
+                liabilities.append(max(0.0, float((item or {}).get("liability", 0.0) or 0.0)))
+            except Exception:
+                continue
+        if not liabilities:
+            return {
+                "lay_total_liability": 0.0,
+                "lay_worst_case_liability": 0.0,
+            }
+        return {
+            "lay_total_liability": float(sum(liabilities)),
+            "lay_worst_case_liability": float(max(liabilities)),
+        }
 
     def _min_net_profit(self, results: List[Dict[str, Any]], avg_net_profit: float) -> float:
         net_values: List[float] = []
@@ -456,6 +475,8 @@ class DutchingController:
                 batch_exposure=round(batch_exposure, 2),
                 commission_pct=self._resolve_commission_pct(payload),
                 profitable_net=bool(float(min_net_profit) > 0.0),
+                dutching_model=self._dutching_model(results),
+                **self._lay_liability_metrics(results),
             )
         except Exception as exc:
             logger.exception("Errore preview dutching")
@@ -563,6 +584,8 @@ class DutchingController:
             batch_exposure=float(batch_exposure),
             commission_pct=self._resolve_commission_pct(payload),
             profitable_net=bool(float(min_net_profit) > 0.0),
+            dutching_model=self._dutching_model(results),
+            **self._lay_liability_metrics(results),
         )
 
     # =========================================================
