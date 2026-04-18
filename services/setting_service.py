@@ -218,6 +218,21 @@ class SettingsService:
             max_single_bet_pct=self._f(data, "roserpina.max_single_bet_pct", 18.0),
             max_total_exposure_pct=self._f(data, "roserpina.max_total_exposure_pct", 35.0),
             max_event_exposure_pct=self._f(data, "roserpina.max_event_exposure_pct", 18.0),
+            max_daily_loss=self._optional_hard_stop_value(
+                data,
+                "roserpina.max_daily_loss",
+                fallback_key="max_daily_loss",
+            ),
+            max_drawdown_hard_stop_pct=self._optional_hard_stop_value(
+                data,
+                "roserpina.max_drawdown_hard_stop_pct",
+                fallback_key="max_drawdown_hard_stop_pct",
+            ),
+            max_open_exposure=self._optional_hard_stop_value(
+                data,
+                "roserpina.max_open_exposure",
+                fallback_key="max_open_exposure",
+            ),
             auto_reset_drawdown_pct=self._f(data, "roserpina.auto_reset_drawdown_pct", 15.0),
             defense_drawdown_pct=self._f(data, "roserpina.defense_drawdown_pct", 7.5),
             lockdown_drawdown_pct=self._f(data, "roserpina.lockdown_drawdown_pct", 20.0),
@@ -241,6 +256,9 @@ class SettingsService:
                 "roserpina.max_single_bet_pct": config.max_single_bet_pct,
                 "roserpina.max_total_exposure_pct": config.max_total_exposure_pct,
                 "roserpina.max_event_exposure_pct": config.max_event_exposure_pct,
+                "roserpina.max_daily_loss": config.max_daily_loss,
+                "roserpina.max_drawdown_hard_stop_pct": config.max_drawdown_hard_stop_pct,
+                "roserpina.max_open_exposure": config.max_open_exposure,
                 "roserpina.auto_reset_drawdown_pct": config.auto_reset_drawdown_pct,
                 "roserpina.defense_drawdown_pct": config.defense_drawdown_pct,
                 "roserpina.lockdown_drawdown_pct": config.lockdown_drawdown_pct,
@@ -257,6 +275,31 @@ class SettingsService:
                 "roserpina.max_stake_abs": config.max_stake_abs,
             }
         )
+
+    def _optional_hard_stop_value(
+        self,
+        data: Dict[str, Any],
+        key: str,
+        *,
+        fallback_key: str | None = None,
+    ) -> float | None:
+        if key in data:
+            value = data.get(key)
+        elif fallback_key and fallback_key in data:
+            value = data.get(fallback_key)
+        else:
+            return None
+
+        if value is None:
+            return None
+
+        if isinstance(value, str) and value.strip() == "":
+            return None
+
+        try:
+            return float(value)
+        except Exception:
+            return float("nan")
 
     # =========================================================
     # SIMULATION CONFIG
