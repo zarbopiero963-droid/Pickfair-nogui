@@ -210,6 +210,7 @@ def test_runtime_controller_readiness_exposes_strict_key_source_truth():
     key_source_state = readiness["details"]["key_source_state"]
     assert key_source_state["key_source"] == "unknown"
     assert key_source_state["strict_live_key_source_required"] is True
+    assert key_source_state["configured_strict_live_key_source_required"] is True
     assert key_source_state["passed"] is False
     assert "LIVE_KEY_SOURCE_UNSAFE" in readiness["blockers"]
 

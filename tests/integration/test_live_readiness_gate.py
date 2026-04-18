@@ -16,7 +16,7 @@ class _Bus:
 
 
 class _Db:
-    def __init__(self, key_source="unknown"):
+    def __init__(self, key_source="env"):
         class _Cipher:
             def __init__(self, src):
                 self.key_source = src
@@ -115,7 +115,7 @@ def _make_runtime(
     live_ready=False,
     kill_switch=False,
     betfair_service=None,
-    key_source="unknown",
+    key_source="env",
     strict_live_key_source_required=False,
 ):
     return RuntimeController(
@@ -199,7 +199,7 @@ def test_valid_live_ready_state_allows_live():
     assert rc.live_readiness_ok is True
 
 
-def test_key_source_ephemeral_does_not_change_behavior_when_strict_flag_off():
+def test_key_source_ephemeral_blocks_live_even_when_strict_flag_off():
     rc = _make_runtime(
         live_enabled=True,
         live_ready=True,
@@ -213,9 +213,10 @@ def test_key_source_ephemeral_does_not_change_behavior_when_strict_flag_off():
         live_readiness_ok=True,
     )
 
-    assert readiness["ready"] is True
-    assert readiness["details"]["key_source_state"]["strict_live_key_source_required"] is False
-    assert "LIVE_KEY_SOURCE_UNSAFE" not in readiness["blockers"]
+    assert readiness["ready"] is False
+    assert readiness["details"]["key_source_state"]["strict_live_key_source_required"] is True
+    assert readiness["details"]["key_source_state"]["configured_strict_live_key_source_required"] is False
+    assert "LIVE_KEY_SOURCE_UNSAFE" in readiness["blockers"]
 
 
 @pytest.mark.parametrize("allowed_key_source", ["env", "file_existing", "file_generated"])

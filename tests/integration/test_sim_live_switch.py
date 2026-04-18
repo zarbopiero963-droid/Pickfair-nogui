@@ -16,6 +16,13 @@ class _Bus:
 
 
 class _Db:
+    def __init__(self, key_source="env"):
+        class _Cipher:
+            def __init__(self, src):
+                self.key_source = src
+
+        self._cipher = _Cipher(key_source)
+
     def _execute(self, *_args, **_kwargs):
         return None
 
@@ -90,10 +97,10 @@ class _KillSwitch:
         return self._enabled
 
 
-def _make_runtime(*, live_enabled=False, live_ready=False, kill_switch=False):
+def _make_runtime(*, live_enabled=False, live_ready=False, kill_switch=False, key_source="env"):
     return RuntimeController(
         bus=_Bus(),
-        db=_Db(),
+        db=_Db(key_source=key_source),
         settings_service=_Settings(live_enabled=live_enabled, live_ready=live_ready),
         betfair_service=_Betfair(),
         telegram_service=_Telegram(),
