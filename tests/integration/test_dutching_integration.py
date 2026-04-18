@@ -129,6 +129,24 @@ def test_controller_preview_propagates_commission_into_authoritative_path(monkey
 
 
 @pytest.mark.integration
+def test_controller_preview_explicitly_excludes_canonical_realized_settlement_authority_fields():
+    controller = DutchingController(bus=None, runtime_controller=_Runtime())
+    out = controller.preview(_controller_payload([3.0, 4.0, 6.0], total_stake=120.0, commission=4.5))
+
+    assert out["ok"] is True
+    assert out["commission_pct"] == 4.5
+    for forbidden_key in (
+        "settlement_source",
+        "settlement_kind",
+        "settlement_basis",
+        "settlement_authority",
+        "settlement_validation",
+        "settlement_acceptance",
+    ):
+        assert forbidden_key not in out
+
+
+@pytest.mark.integration
 def test_controller_preview_net_profit_semantics_are_explicit_and_equalized():
     controller = DutchingController(bus=None, runtime_controller=_Runtime())
     out = controller.preview(_controller_payload([3.0, 4.0, 6.0], total_stake=120.0, commission=4.5))

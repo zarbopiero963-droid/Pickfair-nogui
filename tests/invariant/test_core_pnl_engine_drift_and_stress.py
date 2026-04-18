@@ -556,3 +556,30 @@ def test_two_pnl_engines_have_separate_contract_surfaces():
     assert hasattr(EventDrivenPnLEngine, "_on_market")
     assert hasattr(EventDrivenPnLEngine, "_on_filled")
     assert not hasattr(EventDrivenPnLEngine, "calculate_position_pnl")
+
+
+@pytest.mark.invariant
+def test_helper_settlement_math_surface_is_not_a_runtime_authoritative_close_contract():
+    from core.runtime_controller import RuntimeController
+    from pnl_engine import PnLEngine as HelperPnLEngine
+
+    helper = HelperPnLEngine(commission_pct=4.5)
+    helper_settlement = helper.calculate_settlement_pnl(
+        side="BACK",
+        price=2.0,
+        size=100.0,
+        won=True,
+    )
+    extracted = RuntimeController._extract_settlement_contract(
+        {
+            "event_key": "evt-helper-contract",
+            "batch_id": "batch-helper-contract",
+            "table_id": 1,
+            "correlation_id": "corr-helper-contract",
+            **helper_settlement,
+        }
+    )
+
+    assert extracted["settlement_authority"] == "rejected_ambiguous"
+    assert extracted["settlement_validation"] == "rejected_ambiguous"
+    assert extracted["settlement_acceptance"] == "REJECT_AMBIGUOUS_SETTLEMENT"
