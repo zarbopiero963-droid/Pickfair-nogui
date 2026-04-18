@@ -224,3 +224,29 @@ def test_unknown_resolves_to_failed(engine, batch):
     engine.reconcile_batch(batch["batch_id"])
 
     assert leg["status"] == "FAILED"
+
+
+def test_placed_within_explicit_timeout_stays_placed(engine, batch):
+    engine.cfg.placed_order_timeout_secs = 1200
+    leg = engine.batch_manager.get_batch_legs(batch["batch_id"])[0]
+    leg["status"] = "PLACED"
+    leg["created_at_ts"] = time.time() - 10
+
+    engine.reconcile_batch(batch["batch_id"])
+
+    assert leg["status"] == "PLACED"
+
+
+def test_placed_beyond_explicit_timeout_resolves_to_failed(engine, batch):
+    engine.cfg.placed_order_timeout_secs = 5
+    leg = engine.batch_manager.get_batch_legs(batch["batch_id"])[0]
+    leg["status"] = "PLACED"
+    leg["created_at_ts"] = time.time() - 1000
+
+    result = engine.reconcile_batch(batch["batch_id"])
+
+    assert leg["status"] == "FAILED"
+    assert result["reason_code"] in {
+        ReasonCode.CONVERGED.value,
+        ReasonCode.TERMINAL_FINALIZED.value,
+    }
