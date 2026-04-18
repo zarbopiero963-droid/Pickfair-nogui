@@ -8,6 +8,35 @@ from pathlib import Path
 
 MODULE_RULES = [
     {
+        "name": "dutching",
+        "paths": [
+            "dutching.py",
+            "controllers/dutching_controller.py",
+            "dutching_state.py",
+            "guardrails/specs/dutching.json",
+            "guardrails/contracts/dutching.json",
+            "guardrails/state_models/dutching.json",
+            "guardrails/mutations/dutching.json",
+            "tests/unit/test_dutching.py",
+            "tests/integration/test_dutching_integration.py",
+            "tests/invariant/test_dutching_drift_and_stress.py",
+            "tests/integration/test_simulation_broker_dutching_parity.py",
+        ],
+    },
+    {
+        "name": "pnl-engine",
+        "paths": [
+            "pnl_engine.py",
+            "core/pnl_engine.py",
+            "guardrails/specs/pnl_engine.json",
+            "guardrails/contracts/pnl_engine.json",
+            "guardrails/state_models/pnl_engine.json",
+            "guardrails/mutations/pnl_engine.json",
+            "tests/invariant/test_pnl_engine_drift_and_stress.py",
+            "tests/invariant/test_core_pnl_engine_drift_and_stress.py",
+        ],
+    },
+    {
         "name": "trading-engine",
         "paths": [
             "core/trading_engine.py",
