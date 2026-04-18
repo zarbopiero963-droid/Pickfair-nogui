@@ -1145,6 +1145,25 @@ def test_runtime_controller_settlement_contract_rejects_non_market_net_settlemen
 
 
 @pytest.mark.integration
+def test_runtime_controller_settlement_contract_rejects_missing_settlement_source_provenance():
+    extracted = RuntimeController._extract_settlement_contract(
+        {
+            "gross_pnl": 10.0,
+            "commission_amount": 0.45,
+            "net_pnl": 9.55,
+            "commission_pct": 4.5,
+            "settlement_source": "",
+            "settlement_kind": "realized_settlement",
+            "settlement_basis": "market_net_realized",
+        }
+    )
+
+    assert extracted["settlement_validation"] == "rejected_ambiguous_source"
+    assert extracted["settlement_acceptance"] == "REJECT_AMBIGUOUS_SETTLEMENT"
+    assert extracted["reason"] == "MISSING_SETTLEMENT_SOURCE"
+
+
+@pytest.mark.integration
 def test_runtime_controller_settlement_contract_rejects_arithmetic_incoherent_payload():
     extracted = RuntimeController._extract_settlement_contract(
         {
@@ -1547,3 +1566,68 @@ def test_runtime_controller_logs_structured_context_for_non_canonical_settlement
     assert "SETTLEMENT_KIND_NOT_REALIZED" in text
     assert "rejected_non_realized_settlement" in text
     assert "corr-reject-ctx" in text
+
+
+@pytest.mark.integration
+def test_runtime_controller_rejected_settlement_boundary_is_fail_closed_and_does_not_mutate_realized_truth(caplog):
+    bus = _Bus()
+    rc = RuntimeController(
+        bus=bus,
+        db=_DB(),
+        settings_service=_Settings(),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+    rc.mode = RuntimeMode.ACTIVE
+    rc.betfair_service.get_account_funds = lambda: {"available": 500.0}
+    rc.risk_desk.sync_bankroll(500.0)
+
+    canonical_payload = {
+        "event_key": "evt-canonical-accepted",
+        "table_id": 1,
+        "batch_id": "batch-canonical-accepted",
+        "correlation_id": "corr-canonical-accepted",
+        "market_id": "1.700",
+        "selection_id": 77,
+        "gross_pnl": 20.0,
+        "commission_amount": 0.9,
+        "net_pnl": 19.1,
+        "commission_pct": 4.5,
+        "settlement_source": "core_pnl_engine",
+        "settlement_kind": "realized_settlement",
+        "settlement_basis": "market_net_realized",
+    }
+    rc._on_close_position(canonical_payload)
+    realized_after_canonical = float(rc.risk_desk.realized_pnl)
+    assert realized_after_canonical == pytest.approx(19.1)
+
+    helper_like_non_canonical = {
+        "event_key": "evt-helper-rejected",
+        "table_id": 2,
+        "batch_id": "batch-helper-rejected",
+        "correlation_id": "corr-helper-rejected",
+        "market_id": "1.700",
+        "selection_id": 77,
+        "gross_pnl": 10.0,
+        "commission_amount": 0.45,
+        "net_pnl": 9.55,
+        "commission_pct": 4.5,
+        "settlement_source": "core_pnl_engine_helper",
+        "settlement_kind": "mark_to_market_estimate",
+        "settlement_basis": "market_net_realized",
+    }
+    with caplog.at_level("WARNING"):
+        rc._on_close_position(helper_like_non_canonical)
+
+    assert float(rc.risk_desk.realized_pnl) == pytest.approx(realized_after_canonical)
+    assert rc._last_bankroll_sync_result["bankroll_sync_status"] == "SYNC_FAILED_INVALID_SETTLEMENT_CONTRACT"
+    assert rc._last_bankroll_sync_result["reason"] == "SETTLEMENT_KIND_NOT_REALIZED"
+    assert rc._last_auto_trade_result["auto_trade_status"] == "AUTO_TRADE_REJECTED_SETTLEMENT"
+    assert rc._last_auto_trade_result["reason"] == "SETTLEMENT_KIND_NOT_REALIZED"
+
+    warning_messages = [r.message for r in caplog.records if "Settlement contract rejected at runtime boundary" in r.message]
+    assert warning_messages
+    text = warning_messages[-1]
+    assert "SETTLEMENT_KIND_NOT_REALIZED" in text
+    assert "rejected_non_realized_settlement" in text
+    assert "corr-helper-rejected" in text
