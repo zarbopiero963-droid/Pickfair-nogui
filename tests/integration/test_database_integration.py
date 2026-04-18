@@ -6,6 +6,41 @@ import pytest
 from database import Database
 
 
+def _db_pragma_value(db: Database, pragma_name: str) -> str:
+    row = db._get_connection().execute(f"PRAGMA {pragma_name}").fetchone()
+    return str(row[0] if row else "")
+
+
+@pytest.mark.integration
+def test_database_live_safe_durability_profile_is_explicit_and_wal(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        monkeypatch.setenv("PICKFAIR_DB_DURABILITY_PROFILE", "live_safe")
+        db = Database(str(Path(td) / "db.sqlite"))
+
+        assert db.get_durability_profile() == "live_safe"
+        assert db.is_wal_mode() is True
+        assert _db_pragma_value(db, "synchronous") == "2"  # FULL
+
+
+@pytest.mark.integration
+def test_database_balanced_durability_profile_is_explicit(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        monkeypatch.setenv("PICKFAIR_DB_DURABILITY_PROFILE", "balanced")
+        db = Database(str(Path(td) / "db.sqlite"))
+
+        assert db.get_durability_profile() == "balanced"
+        assert db.is_wal_mode() is True
+        assert _db_pragma_value(db, "synchronous") == "1"  # NORMAL
+
+
+@pytest.mark.integration
+def test_database_rejects_unknown_durability_profile(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        monkeypatch.setenv("PICKFAIR_DB_DURABILITY_PROFILE", "unknown")
+        with pytest.raises(ValueError):
+            Database(str(Path(td) / "db.sqlite"))
+
+
 @pytest.mark.integration
 def test_received_signal_and_settings_flow():
     with tempfile.TemporaryDirectory() as td:
