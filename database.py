@@ -47,12 +47,12 @@ _DB_DURABILITY_PROFILE_ENV = "PICKFAIR_DB_DURABILITY_PROFILE"
 
 
 class Database:
-    def __init__(self, db_path: str = "pickfair.db", durability_profile: Optional[str] = None):
+    def __init__(self, db_path: str = "pickfair.db"):
         self.db_path = str(db_path)
         self._local = threading.local()
         self._write_lock = threading.RLock()
         self._cipher = SecretCipher.from_env_or_file()
-        self._durability_profile = self._resolve_durability_profile(durability_profile)
+        self._durability_profile = self._resolve_durability_profile()
         self._ensure_parent_dir()
         self._init_db()
 
@@ -79,12 +79,8 @@ class Database:
             self._local.tx_depth = 0
         return conn
 
-    def _resolve_durability_profile(self, durability_profile: Optional[str]) -> str:
-        raw = (
-            durability_profile
-            if durability_profile is not None
-            else os.getenv(_DB_DURABILITY_PROFILE_ENV, "live_safe")
-        )
+    def _resolve_durability_profile(self) -> str:
+        raw = os.getenv(_DB_DURABILITY_PROFILE_ENV, "live_safe")
         selected = str(raw or "").strip().lower()
         if selected not in _DB_DURABILITY_PROFILES:
             allowed = ", ".join(sorted(_DB_DURABILITY_PROFILES))

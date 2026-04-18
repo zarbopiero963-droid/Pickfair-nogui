@@ -12,9 +12,10 @@ def _db_pragma_value(db: Database, pragma_name: str) -> str:
 
 
 @pytest.mark.integration
-def test_database_live_safe_durability_profile_is_explicit_and_wal() -> None:
+def test_database_live_safe_durability_profile_is_explicit_and_wal(monkeypatch) -> None:
     with tempfile.TemporaryDirectory() as td:
-        db = Database(str(Path(td) / "db.sqlite"), durability_profile="live_safe")
+        monkeypatch.setenv("PICKFAIR_DB_DURABILITY_PROFILE", "live_safe")
+        db = Database(str(Path(td) / "db.sqlite"))
 
         assert db.get_durability_profile() == "live_safe"
         assert db.is_wal_mode() is True
@@ -22,9 +23,10 @@ def test_database_live_safe_durability_profile_is_explicit_and_wal() -> None:
 
 
 @pytest.mark.integration
-def test_database_balanced_durability_profile_is_explicit() -> None:
+def test_database_balanced_durability_profile_is_explicit(monkeypatch) -> None:
     with tempfile.TemporaryDirectory() as td:
-        db = Database(str(Path(td) / "db.sqlite"), durability_profile="balanced")
+        monkeypatch.setenv("PICKFAIR_DB_DURABILITY_PROFILE", "balanced")
+        db = Database(str(Path(td) / "db.sqlite"))
 
         assert db.get_durability_profile() == "balanced"
         assert db.is_wal_mode() is True
@@ -32,10 +34,11 @@ def test_database_balanced_durability_profile_is_explicit() -> None:
 
 
 @pytest.mark.integration
-def test_database_rejects_unknown_durability_profile() -> None:
+def test_database_rejects_unknown_durability_profile(monkeypatch) -> None:
     with tempfile.TemporaryDirectory() as td:
+        monkeypatch.setenv("PICKFAIR_DB_DURABILITY_PROFILE", "unknown")
         with pytest.raises(ValueError):
-            Database(str(Path(td) / "db.sqlite"), durability_profile="unknown")
+            Database(str(Path(td) / "db.sqlite"))
 
 
 @pytest.mark.integration
