@@ -4,9 +4,36 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from pathlib import PurePosixPath
 
 
 MODULE_RULES = [
+    {
+        "name": "dutching",
+        "paths": [
+            "dutching.py",
+            "controllers/dutching_controller.py",
+            "dutching_state.py",
+            "guardrails/specs/dutching.json",
+            "guardrails/contracts/dutching.json",
+            "guardrails/state_models/dutching.json",
+            "guardrails/mutations/dutching.json",
+            "tests/**/test_*dutching*.py",
+        ],
+    },
+    {
+        "name": "pnl-engine",
+        "paths": [
+            "pnl_engine.py",
+            "core/pnl_engine.py",
+            "guardrails/specs/pnl_engine.json",
+            "guardrails/contracts/pnl_engine.json",
+            "guardrails/state_models/pnl_engine.json",
+            "guardrails/mutations/pnl_engine.json",
+            "tests/invariant/test_pnl_engine_drift_and_stress.py",
+            "tests/invariant/test_core_pnl_engine_drift_and_stress.py",
+        ],
+    },
     {
         "name": "trading-engine",
         "paths": [
@@ -187,6 +214,9 @@ def get_changed_files(base_ref: str) -> list[str]:
 
 def matches_rule(changed_file: str, rule_paths: list[str]) -> bool:
     for path in rule_paths:
+        if "*" in path or "?" in path or "[" in path:
+            if PurePosixPath(changed_file).match(path):
+                return True
         if path.endswith("/"):
             if changed_file.startswith(path):
                 return True

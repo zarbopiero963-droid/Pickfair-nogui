@@ -47,4 +47,4 @@ jobs:
           if [ -f tests/integration/test_simulation_broker_pattern_parity.py ]; then pytest -q tests/integration/test_simulation_broker_pattern_parity.py; else echo "SKIP: test_simulation_broker_pattern_parity.py absent"; fi
           if [ -f tests/integration/test_simulation_broker_copy_parity.py ]; then pytest -q tests/integration/test_simulation_broker_copy_parity.py; else echo "SKIP: test_simulation_broker_copy_parity.py absent"; fi
           if [ -f tests/integration/test_simulation_broker_cashout_parity.py ]; then pytest -q tests/integration/test_simulation_broker_cashout_parity.py; else echo "SKIP: test_simulation_broker_cashout_parity.py absent"; fi
-          if [ -f tests/integration/test_simulation_broker_dutching_parity.py ]; then pytest -q tests/integration/test_simulation_broker_dutching_parity.py; else echo "SKIP: test_simulation_broker_dutching_parity.py absent"; fi
+          pytest -q tests/integration/test_simulation_broker_dutching_parity.py
