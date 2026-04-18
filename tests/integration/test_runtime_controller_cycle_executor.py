@@ -87,26 +87,43 @@ def _make_controller(*, responses):
     return rc, bus
 
 
+def _canonical_close_payload(**overrides):
+    payload = {
+        "event_key": "evt-integration-cycle-default",
+        "table_id": 1,
+        "batch_id": "batch-integration-cycle-default",
+        "correlation_id": "corr-integration-cycle-default",
+        "gross_pnl": 5.0,
+        "commission_amount": 0.225,
+        "net_pnl": 4.775,
+        "commission_pct": 4.5,
+        "settlement_source": "test_runtime_controller_cycle_executor",
+        "settlement_kind": "realized_settlement",
+        "settlement_basis": "market_net_realized",
+        "pnl": 4.775,
+    }
+    payload.update(overrides)
+    return payload
+
+
 def test_cycle_executor_result_event_contains_contract_fields():
     rc, bus = _make_controller(responses=[{"available": 150.0}])
     rc.mode = RuntimeMode.ACTIVE
 
     rc._on_close_position(
-        {
-            "event_key": "evt-integration-cycle-1",
-            "table_id": 1,
-            "batch_id": "batch-integration-cycle-1",
-            "correlation_id": "corr-integration-cycle-1",
-            "pnl": 5.0,
-            "auto_trade_enabled": True,
-            "cycle_executor_enabled": True,
-            "mm_context": {
+        _canonical_close_payload(
+            event_key="evt-integration-cycle-1",
+            batch_id="batch-integration-cycle-1",
+            correlation_id="corr-integration-cycle-1",
+            auto_trade_enabled=True,
+            cycle_executor_enabled=True,
+            mm_context={
                 "cycle_active": True,
                 "cycle_id": "cycle-integration-1",
                 "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
                 "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0},
             },
-        }
+        )
     )
 
     payload = [event for event in bus.events if event[0] == "AUTO_TRADE_MM_RESULT"][0][1]
@@ -121,14 +138,12 @@ def test_cycle_executor_disabled_keeps_submission_off_and_status_snapshot_availa
     rc.mode = RuntimeMode.ACTIVE
 
     rc._on_close_position(
-        {
-            "event_key": "evt-integration-cycle-disabled",
-            "table_id": 1,
-            "batch_id": "batch-integration-cycle-disabled",
-            "correlation_id": "corr-integration-cycle-disabled",
-            "pnl": 5.0,
-            "auto_trade_enabled": True,
-        }
+        _canonical_close_payload(
+            event_key="evt-integration-cycle-disabled",
+            batch_id="batch-integration-cycle-disabled",
+            correlation_id="corr-integration-cycle-disabled",
+            auto_trade_enabled=True,
+        )
     )
 
     assert rc._last_cycle_executor_result["cycle_executor_status"] == "CYCLE_EXECUTOR_DISABLED"
@@ -143,22 +158,20 @@ def test_cycle_executor_max_steps_with_valid_cycle_id_allows_below_limit():
     rc.mode = RuntimeMode.ACTIVE
 
     rc._on_close_position(
-        {
-            "event_key": "evt-integration-cycle-max-ok",
-            "table_id": 1,
-            "batch_id": "batch-integration-cycle-max-ok",
-            "correlation_id": "corr-integration-cycle-max-ok",
-            "pnl": 5.0,
-            "auto_trade_enabled": True,
-            "cycle_executor_enabled": True,
-            "mm_context": {
+        _canonical_close_payload(
+            event_key="evt-integration-cycle-max-ok",
+            batch_id="batch-integration-cycle-max-ok",
+            correlation_id="corr-integration-cycle-max-ok",
+            auto_trade_enabled=True,
+            cycle_executor_enabled=True,
+            mm_context={
                 "cycle_active": True,
                 "cycle_id": "cycle-integration-max-ok",
                 "max_steps": 2,
                 "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
                 "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0},
             },
-        }
+        )
     )
 
     assert rc._last_cycle_executor_result["cycle_executor_status"] == "CYCLE_STEP_SUBMITTED"
