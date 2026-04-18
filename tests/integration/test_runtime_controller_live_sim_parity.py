@@ -4,6 +4,7 @@ from core.pnl_engine import PnLEngine as EventDrivenPnLEngine
 from core.risk_middleware import RiskMiddleware
 from core.runtime_controller import RuntimeController
 from core.system_state import RoserpinaConfig, RuntimeMode, DeskMode
+from services.settings_service import SettingsService
 from simulation_broker import SimulationBroker
 
 
@@ -23,6 +24,27 @@ class _DB:
         return None
     def _fetch_one(self, *_args, **_kwargs):
         return None
+    def _fetch_all(self, *_args, **_kwargs):
+        return []
+
+
+class _SettingsDb:
+    def __init__(self, settings=None):
+        self._settings = dict(settings or {})
+        self._cipher = type("_Cipher", (), {"key_source": "env"})()
+
+    def get_settings(self):
+        return dict(self._settings)
+
+    def save_settings(self, payload):
+        self._settings.update(dict(payload or {}))
+
+    def _execute(self, *_args, **_kwargs):
+        return None
+
+    def _fetch_one(self, *_args, **_kwargs):
+        return None
+
     def _fetch_all(self, *_args, **_kwargs):
         return []
 
@@ -77,6 +99,64 @@ class _Telegram:
         return None
     def status(self):
         return {"connected": True}
+
+
+@pytest.mark.integration
+def test_runtime_controller_live_readiness_loads_hard_stop_fields_from_persisted_settings():
+    settings_db = _SettingsDb(
+        {
+            "roserpina.max_daily_loss": "150.0",
+            "roserpina.max_drawdown_hard_stop_pct": "22.5",
+            "roserpina.max_open_exposure": "300.0",
+        }
+    )
+    rc = RuntimeController(
+        bus=_Bus(),
+        db=settings_db,
+        settings_service=SettingsService(settings_db),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=True,
+    )
+
+    state = readiness["details"]["hard_stop_config_state"]
+    assert state["missing_fields"] == []
+    assert state["invalid_fields"] == []
+    assert "LIVE_HARD_STOP_CONFIG_MISSING" not in readiness["blockers"]
+    assert "LIVE_HARD_STOP_CONFIG_INVALID" not in readiness["blockers"]
+
+
+@pytest.mark.integration
+def test_runtime_controller_live_readiness_flags_invalid_hard_stop_from_persisted_settings():
+    settings_db = _SettingsDb(
+        {
+            "roserpina.max_daily_loss": "bad-value",
+            "roserpina.max_drawdown_hard_stop_pct": "20",
+            "roserpina.max_open_exposure": "250",
+        }
+    )
+    rc = RuntimeController(
+        bus=_Bus(),
+        db=settings_db,
+        settings_service=SettingsService(settings_db),
+        betfair_service=_Betfair(),
+        telegram_service=_Telegram(),
+    )
+
+    readiness = rc.evaluate_live_readiness(
+        execution_mode="LIVE",
+        live_enabled=True,
+        live_readiness_ok=True,
+    )
+
+    state = readiness["details"]["hard_stop_config_state"]
+    assert "max_daily_loss" in state["invalid_fields"]
+    assert "LIVE_HARD_STOP_CONFIG_INVALID" in readiness["blockers"]
 
 
 @pytest.mark.integration

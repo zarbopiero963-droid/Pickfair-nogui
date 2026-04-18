@@ -218,6 +218,21 @@ class SettingsService:
             max_single_bet_pct=self._f(data, "roserpina.max_single_bet_pct", 18.0),
             max_total_exposure_pct=self._f(data, "roserpina.max_total_exposure_pct", 35.0),
             max_event_exposure_pct=self._f(data, "roserpina.max_event_exposure_pct", 18.0),
+            max_daily_loss=self._optional_hard_stop_value(
+                data,
+                "roserpina.max_daily_loss",
+                fallback_key="max_daily_loss",
+            ),
+            max_drawdown_hard_stop_pct=self._optional_hard_stop_value(
+                data,
+                "roserpina.max_drawdown_hard_stop_pct",
+                fallback_key="max_drawdown_hard_stop_pct",
+            ),
+            max_open_exposure=self._optional_hard_stop_value(
+                data,
+                "roserpina.max_open_exposure",
+                fallback_key="max_open_exposure",
+            ),
             auto_reset_drawdown_pct=self._f(data, "roserpina.auto_reset_drawdown_pct", 15.0),
             defense_drawdown_pct=self._f(data, "roserpina.defense_drawdown_pct", 7.5),
             lockdown_drawdown_pct=self._f(data, "roserpina.lockdown_drawdown_pct", 20.0),
@@ -235,28 +250,61 @@ class SettingsService:
         )
 
     def save_roserpina_config(self, config: RoserpinaConfig) -> None:
-        self.db.save_settings(
-            {
-                "roserpina.target_profit_cycle_pct": config.target_profit_cycle_pct,
-                "roserpina.max_single_bet_pct": config.max_single_bet_pct,
-                "roserpina.max_total_exposure_pct": config.max_total_exposure_pct,
-                "roserpina.max_event_exposure_pct": config.max_event_exposure_pct,
-                "roserpina.auto_reset_drawdown_pct": config.auto_reset_drawdown_pct,
-                "roserpina.defense_drawdown_pct": config.defense_drawdown_pct,
-                "roserpina.lockdown_drawdown_pct": config.lockdown_drawdown_pct,
-                "roserpina.expansion_profit_pct": config.expansion_profit_pct,
-                "roserpina.expansion_multiplier": config.expansion_multiplier,
-                "roserpina.defense_multiplier": config.defense_multiplier,
-                "roserpina.risk_profile": config.risk_profile.value,
-                "roserpina.table_count": config.table_count,
-                "roserpina.max_recovery_tables": config.max_recovery_tables,
-                "roserpina.allow_recovery": int(bool(config.allow_recovery)),
-                "roserpina.anti_duplication_enabled": int(bool(config.anti_duplication_enabled)),
-                "roserpina.commission_pct": config.commission_pct,
-                "roserpina.min_stake": config.min_stake,
-                "roserpina.max_stake_abs": config.max_stake_abs,
-            }
-        )
+        payload = {
+            "roserpina.target_profit_cycle_pct": config.target_profit_cycle_pct,
+            "roserpina.max_single_bet_pct": config.max_single_bet_pct,
+            "roserpina.max_total_exposure_pct": config.max_total_exposure_pct,
+            "roserpina.max_event_exposure_pct": config.max_event_exposure_pct,
+            "roserpina.auto_reset_drawdown_pct": config.auto_reset_drawdown_pct,
+            "roserpina.defense_drawdown_pct": config.defense_drawdown_pct,
+            "roserpina.lockdown_drawdown_pct": config.lockdown_drawdown_pct,
+            "roserpina.expansion_profit_pct": config.expansion_profit_pct,
+            "roserpina.expansion_multiplier": config.expansion_multiplier,
+            "roserpina.defense_multiplier": config.defense_multiplier,
+            "roserpina.risk_profile": config.risk_profile.value,
+            "roserpina.table_count": config.table_count,
+            "roserpina.max_recovery_tables": config.max_recovery_tables,
+            "roserpina.allow_recovery": int(bool(config.allow_recovery)),
+            "roserpina.anti_duplication_enabled": int(bool(config.anti_duplication_enabled)),
+            "roserpina.commission_pct": config.commission_pct,
+            "roserpina.min_stake": config.min_stake,
+            "roserpina.max_stake_abs": config.max_stake_abs,
+        }
+
+        # Preserve previously persisted hard-stop limits when caller omits these optional fields.
+        if config.max_daily_loss is not None:
+            payload["roserpina.max_daily_loss"] = config.max_daily_loss
+        if config.max_drawdown_hard_stop_pct is not None:
+            payload["roserpina.max_drawdown_hard_stop_pct"] = config.max_drawdown_hard_stop_pct
+        if config.max_open_exposure is not None:
+            payload["roserpina.max_open_exposure"] = config.max_open_exposure
+
+        self.db.save_settings(payload)
+
+    def _optional_hard_stop_value(
+        self,
+        data: Dict[str, Any],
+        key: str,
+        *,
+        fallback_key: str | None = None,
+    ) -> float | None:
+        if key in data:
+            value = data.get(key)
+        elif fallback_key and fallback_key in data:
+            value = data.get(fallback_key)
+        else:
+            return None
+
+        if value is None:
+            return None
+
+        if isinstance(value, str) and value.strip() == "":
+            return None
+
+        try:
+            return float(value)
+        except Exception:
+            return float("nan")
 
     # =========================================================
     # SIMULATION CONFIG
