@@ -4,6 +4,9 @@ from services.telegram_bet_resolver import TelegramBetResolver
 
 
 class _Client:
+    def __init__(self, market_book_status="OPEN"):
+        self.market_book_status = market_book_status
+
     def list_soccer_events(self, live_only=True):
         _ = live_only
         return [{"event_id": "E1", "event_name": "Roma v Milan"}]
@@ -15,6 +18,7 @@ class _Client:
     def get_market_book(self, market_id):
         assert market_id == "1.100"
         return {
+            "status": self.market_book_status,
             "runners": [
                 {"selectionId": 99, "runnerName": "Over 2.5", "ex": {"availableToBack": [{"price": 2.02, "size": 100}]}}
             ]
@@ -42,4 +46,14 @@ def test_bet_resolver_copy_messages_skipped_in_both_modes():
     # copy-like payload with no resolvable teams should be rejected deterministically in both modes
     signal = {"message": "COPY TRADE REF#1", "simulation_mode": False}
     assert resolver.resolve(signal) is None
+    assert resolver.resolve({**signal, "simulation_mode": True}) is None
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("market_status", ["SUSPENDED", "CLOSED", "INACTIVE"])
+def test_bet_resolver_rejects_non_tradable_market_status_in_both_modes(market_status):
+    resolver = TelegramBetResolver(client_getter=lambda: _Client(market_book_status=market_status))
+    signal = {"event_name": "Roma v Milan", "home_score": 1, "away_score": 1, "minute": 55, "signal_type": "OVER_SUCCESSIVO"}
+
+    assert resolver.resolve({**signal, "simulation_mode": False}) is None
     assert resolver.resolve({**signal, "simulation_mode": True}) is None
