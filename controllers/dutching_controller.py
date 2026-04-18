@@ -259,6 +259,10 @@ class DutchingController:
         side = str(value or "BACK").upper().strip()
         return side if side in {"BACK", "LAY"} else "BACK"
 
+    def _resolve_selection_side(self, selection: Dict[str, Any]) -> str:
+        raw = (selection or {}).get("side") or (selection or {}).get("effectiveType") or "BACK"
+        return self._normalize_side(raw)
+
     def _resolve_commission_pct(self, payload: Dict[str, Any]) -> float:
         if "commission" in payload:
             try:
@@ -270,17 +274,23 @@ class DutchingController:
     def _calculate_dutching_with_commission(
         self, payload: Dict[str, Any]
     ) -> tuple[List[Dict[str, Any]], float, float, float]:
+        normalized_selections: List[Dict[str, Any]] = []
+        for selection in list(payload.get("selections") or []):
+            item = dict(selection or {})
+            item["side"] = self._resolve_selection_side(item)
+            normalized_selections.append(item)
+
         commission_pct = self._resolve_commission_pct(payload)
         try:
             calc_out = calculate_dutching(
-                payload["selections"],
+                normalized_selections,
                 float(payload["total_stake"]),
                 commission=commission_pct,
             )
         except TypeError:
             # Compat path for test doubles/legacy callables without commission argument.
             calc_out = calculate_dutching(
-                payload["selections"],
+                normalized_selections,
                 float(payload["total_stake"]),
             )
 
@@ -298,6 +308,37 @@ class DutchingController:
             float(book_pct),
             float(avg_net_profit),
         )
+
+    def _dutching_model(self, results: List[Dict[str, Any]]) -> str:
+        sides = {
+            self._normalize_side(item.get("side", "BACK"))
+            for item in (results or [])
+            if isinstance(item, dict)
+        }
+        if len(sides) == 1:
+            side = next(iter(sides))
+            return f"{side}_EQUAL_PROFIT_FIXED_TOTAL_STAKE"
+        return "UNSPECIFIED"
+
+    def _lay_liability_metrics(self, results: List[Dict[str, Any]]) -> Dict[str, float]:
+        liabilities: List[float] = []
+        for item in results or []:
+            side = self._normalize_side((item or {}).get("side", "BACK"))
+            if side != "LAY":
+                continue
+            try:
+                liabilities.append(max(0.0, float((item or {}).get("liability", 0.0) or 0.0)))
+            except Exception:
+                continue
+        if not liabilities:
+            return {
+                "lay_total_liability": 0.0,
+                "lay_worst_case_liability": 0.0,
+            }
+        return {
+            "lay_total_liability": float(sum(liabilities)),
+            "lay_worst_case_liability": float(max(liabilities)),
+        }
 
     def _min_net_profit(self, results: List[Dict[str, Any]], avg_net_profit: float) -> float:
         net_values: List[float] = []
@@ -399,7 +440,7 @@ class DutchingController:
                     return self._fail(f"Quota non valida alla selezione #{idx}: {price}")
 
                 if "side" in selection:
-                    side = self._normalize_side(selection.get("side", "BACK"))
+                    side = self._resolve_selection_side(selection)
                     if side not in {"BACK", "LAY"}:
                         return self._fail(f"side non valido alla selezione #{idx}: {side}")
 
@@ -444,6 +485,8 @@ class DutchingController:
                 batch_exposure=round(batch_exposure, 2),
                 commission_pct=self._resolve_commission_pct(payload),
                 profitable_net=bool(float(min_net_profit) > 0.0),
+                dutching_model=self._dutching_model(results),
+                **self._lay_liability_metrics(results),
             )
         except Exception as exc:
             logger.exception("Errore preview dutching")
@@ -551,6 +594,8 @@ class DutchingController:
             batch_exposure=float(batch_exposure),
             commission_pct=self._resolve_commission_pct(payload),
             profitable_net=bool(float(min_net_profit) > 0.0),
+            dutching_model=self._dutching_model(results),
+            **self._lay_liability_metrics(results),
         )
 
     # =========================================================

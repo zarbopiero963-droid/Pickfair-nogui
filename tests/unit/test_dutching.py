@@ -5,6 +5,7 @@ from dutching import (
     _apply_commission,
     _d,
     _round_step,
+    calculate_dutching,
     calculate_cashout,
     calculate_dutching_stakes,
     dynamic_cashout_single,
@@ -252,3 +253,67 @@ def test_dutching_cache_key_separates_back_and_lay():
     cached_dutching_stakes(fake_calc, lay_sel, 10.0, "LAY", 4.5)
 
     assert calls["n"] == 2
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_calculate_dutching_lay_contract_is_explicit_and_coherent():
+    selections = [
+        {"selectionId": 1, "price": 3.0, "side": "LAY"},
+        {"selectionId": 2, "price": 4.0, "side": "LAY"},
+        {"selectionId": 3, "price": 6.0, "side": "LAY"},
+    ]
+    results, _avg_profit, _book_pct, _avg_net_profit = calculate_dutching(
+        selections=selections,
+        total_stake=120.0,
+        commission=4.5,
+    )
+
+    assert len(results) == 3
+    total_stake = sum(float(r["stake"]) for r in results)
+    assert abs(total_stake - 120.0) < 0.01
+    for row in results:
+        assert row["side"] == "LAY"
+        assert row["dutchingModel"] == "LAY_EQUAL_PROFIT_FIXED_TOTAL_STAKE"
+        assert row["liability"] == pytest.approx(
+            round(float(row["stake"]) * (float(row["price"]) - 1.0), 2),
+            abs=0.01,
+        )
+        expected_gross = total_stake - (float(row["stake"]) * float(row["price"]))
+        assert float(row["profitIfWins"]) == pytest.approx(expected_gross, abs=0.02)
+    spread_gross = max(float(r["profitIfWins"]) for r in results) - min(float(r["profitIfWins"]) for r in results)
+    spread_net = max(float(r["profitIfWinsNet"]) for r in results) - min(float(r["profitIfWinsNet"]) for r in results)
+    assert spread_gross <= 0.10
+    assert spread_net <= 0.10
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_calculate_dutching_rejects_mixed_back_lay_contract():
+    selections = [
+        {"selectionId": 1, "price": 3.0, "side": "LAY"},
+        {"selectionId": 2, "price": 4.0, "side": "BACK"},
+    ]
+    with pytest.raises(ValueError):
+        calculate_dutching(selections=selections, total_stake=20.0, commission=4.5)
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_calculate_dutching_direct_call_falsy_side_uses_effective_type():
+    selections = [
+        {"selectionId": 1, "price": 3.0, "side": "", "effectiveType": "LAY"},
+        {"selectionId": 2, "price": 4.0, "side": None, "effectiveType": "LAY"},
+    ]
+
+    results, _avg_profit, _book_pct, _avg_net_profit = calculate_dutching(
+        selections=selections,
+        total_stake=40.0,
+        commission=4.5,
+    )
+
+    assert len(results) == 2
+    assert all(str(row.get("side")) == "LAY" for row in results)
+    assert all(
+        row["dutchingModel"] == "LAY_EQUAL_PROFIT_FIXED_TOTAL_STAKE" for row in results
+    )

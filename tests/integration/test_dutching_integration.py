@@ -267,3 +267,73 @@ def test_controller_profitable_net_is_fail_closed_when_worst_case_is_zero(monkey
     assert precheck["ok"] is True
     assert preview["profitable_net"] is False
     assert precheck["profitable_net"] is False
+
+
+@pytest.mark.integration
+def test_controller_preview_supports_explicit_multi_selection_lay_dutching_model():
+    controller = DutchingController(bus=None, runtime_controller=_Runtime())
+    payload = _controller_payload([3.0, 4.0, 6.0], total_stake=120.0, commission=4.5)
+    payload["selections"] = [
+        {"selectionId": 1, "price": 3.0, "side": "LAY"},
+        {"selectionId": 2, "price": 4.0, "side": "LAY"},
+        {"selectionId": 3, "price": 6.0, "side": "LAY"},
+    ]
+
+    out = controller.preview(payload)
+
+    assert out["ok"] is True
+    assert out["dutching_model"] == "LAY_EQUAL_PROFIT_FIXED_TOTAL_STAKE"
+    assert out["lay_worst_case_liability"] > 0.0
+    assert out["lay_total_liability"] >= out["lay_worst_case_liability"]
+    gross = [float(row["profitIfWins"]) for row in out["results"]]
+    net = [float(row["profitIfWinsNet"]) for row in out["results"]]
+    assert max(gross) - min(gross) <= 0.10
+    assert max(net) - min(net) <= 0.10
+
+
+@pytest.mark.integration
+def test_controller_precheck_supports_explicit_multi_selection_lay_dutching_model():
+    controller = DutchingController(bus=None, runtime_controller=_Runtime())
+    payload = _controller_payload([2.5, 3.5], total_stake=50.0, commission=4.5)
+    payload["selections"] = [
+        {"selectionId": 1, "price": 2.5, "side": "LAY"},
+        {"selectionId": 2, "price": 3.5, "side": "LAY"},
+    ]
+
+    out = controller.precheck(payload)
+
+    assert out["ok"] is True
+    assert out["dutching_model"] == "LAY_EQUAL_PROFIT_FIXED_TOTAL_STAKE"
+    assert out["lay_worst_case_liability"] > 0.0
+    assert out["lay_total_liability"] >= out["lay_worst_case_liability"]
+
+
+@pytest.mark.integration
+def test_controller_preview_rejects_mixed_back_lay_dutching_contract():
+    controller = DutchingController(bus=None, runtime_controller=_Runtime())
+    payload = _controller_payload([3.0, 4.0], total_stake=40.0, commission=4.5)
+    payload["selections"] = [
+        {"selectionId": 1, "price": 3.0, "side": "LAY"},
+        {"selectionId": 2, "price": 4.0, "side": "BACK"},
+    ]
+
+    out = controller.preview(payload)
+
+    assert out["ok"] is False
+    assert "mixed BACK/LAY selections" in str(out.get("error") or "")
+
+
+@pytest.mark.integration
+def test_controller_side_fallback_prefers_effective_type_when_side_is_falsy():
+    controller = DutchingController(bus=None, runtime_controller=_Runtime())
+    payload = _controller_payload([3.0, 4.0], total_stake=40.0, commission=4.5)
+    payload["selections"] = [
+        {"selectionId": 1, "price": 3.0, "side": "", "effectiveType": "LAY"},
+        {"selectionId": 2, "price": 4.0, "side": None, "effectiveType": "LAY"},
+    ]
+
+    out = controller.preview(payload)
+
+    assert out["ok"] is True
+    assert out["dutching_model"] == "LAY_EQUAL_PROFIT_FIXED_TOTAL_STAKE"
+    assert all(str(row.get("side")) == "LAY" for row in out["results"])
