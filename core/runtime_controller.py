@@ -524,10 +524,12 @@ class RuntimeController:
         if not gate.allowed and str(gate.reason_code) == "kill_switch_active":
             reasons.append("DEPLOY_BLOCKED_KILL_SWITCH")
 
+        not_ready = readiness_level != "READY" or not probe_ok or not bool(readiness_payload.get("ready", False))
+        if not probe_ok and not_ready:
+            reasons.append("DEPLOY_BLOCKED_NOT_READY")
         if blockers:
             reasons.append("DEPLOY_BLOCKED_BLOCKERS_PRESENT")
-
-        if readiness_level != "READY" or not probe_ok or not bool(readiness_payload.get("ready", False)):
+        if probe_ok and not_ready:
             reasons.append("DEPLOY_BLOCKED_NOT_READY")
 
         if not reasons and not gate.allowed:
