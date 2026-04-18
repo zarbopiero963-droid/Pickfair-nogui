@@ -172,7 +172,14 @@ class WatchdogService:
 
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
-        self._last_external_snapshot: dict[str, Any] = {"version": 1, "collected_at": None}
+        self._last_external_snapshot: dict[str, Any] = self._build_external_snapshot(
+            collected_at=None,
+            health_map={},
+            metrics={},
+            runtime_state={},
+            readiness={},
+            deploy_gate={},
+        )
 
     def is_ready(self) -> bool:
         return True
@@ -214,7 +221,6 @@ class WatchdogService:
         metrics = self.probe.collect_metrics()
         self._publish_metric_gauges(metrics)
         runtime_state = self._safe_collect_runtime_state()
-        self._update_external_snapshot(health_map=health_map, metrics=metrics, runtime_state=runtime_state)
 
         self._evaluate_alerts()
         self._evaluate_invariants()
@@ -256,6 +262,7 @@ class WatchdogService:
         self._evaluate_forensics()
         self._evaluate_cto_reviewer()
         self._evaluate_reviewer_governance()
+        self._update_external_snapshot(health_map=health_map, metrics=metrics, runtime_state=runtime_state)
         self.snapshot_service.collect_and_store()
 
     def get_external_observability_snapshot(self) -> dict[str, Any]:
@@ -310,15 +317,34 @@ class WatchdogService:
             except Exception:
                 logger.exception("get_deploy_gate_status failed during external snapshot update")
 
-        self._last_external_snapshot = sanitize_value(
+        self._last_external_snapshot = self._build_external_snapshot(
+            collected_at=time.time(),
+            health_map=health_map,
+            metrics=metrics,
+            runtime_state=runtime_state,
+            readiness=readiness,
+            deploy_gate=deploy_gate,
+        )
+
+    def _build_external_snapshot(
+        self,
+        *,
+        collected_at: float | None,
+        health_map: dict[str, Any],
+        metrics: dict[str, Any],
+        runtime_state: dict[str, Any],
+        readiness: dict[str, Any],
+        deploy_gate: dict[str, Any],
+    ) -> dict[str, Any]:
+        return sanitize_value(
             {
                 "version": 1,
-                "collected_at": time.time(),
+                "collected_at": collected_at,
                 "health": dict(health_map or {}),
                 "metrics": dict(metrics or {}),
                 "runtime_state": dict(runtime_state or {}),
-                "readiness": readiness,
-                "deploy_gate": deploy_gate,
+                "readiness": dict(readiness or {}),
+                "deploy_gate": dict(deploy_gate or {}),
                 "health_registry": self.health_registry.snapshot(),
                 "metrics_registry": self.metrics_registry.snapshot(),
                 "alerts": self.alerts_manager.snapshot(),

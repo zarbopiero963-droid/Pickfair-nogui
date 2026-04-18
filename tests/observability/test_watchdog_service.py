@@ -1851,3 +1851,44 @@ def test_watchdog_exposes_external_observability_snapshot_and_metrics_text():
     assert "queue_depth 3.0" in metrics_text
     assert "worker_alive 1.0" in metrics_text
     assert "metric_9bad 2.0" in metrics_text
+
+
+def test_watchdog_external_snapshot_has_stable_schema_before_first_tick():
+    watchdog = _make_watchdog()
+
+    snapshot = watchdog.get_external_observability_snapshot()
+
+    assert snapshot["version"] == 1
+    assert "collected_at" in snapshot
+    assert isinstance(snapshot["health"], dict)
+    assert isinstance(snapshot["metrics"], dict)
+    assert isinstance(snapshot["runtime_state"], dict)
+    assert isinstance(snapshot["readiness"], dict)
+    assert isinstance(snapshot["deploy_gate"], dict)
+    assert isinstance(snapshot["alerts"], dict)
+    assert isinstance(snapshot["incidents"], dict)
+
+
+def test_watchdog_external_snapshot_reflects_alerts_opened_in_same_tick():
+    class _ProbeNotReady(_ProbeStub):
+        def collect_health(self):
+            return {
+                "runtime": {
+                    "status": "NOT_READY",
+                    "reason": "dependency_missing",
+                    "details": {"missing": "database"},
+                }
+            }
+
+        def collect_metrics(self):
+            return {}
+
+    watchdog = _make_watchdog(probe=_ProbeNotReady())
+
+    watchdog.tick()
+
+    snapshot = watchdog.get_external_observability_snapshot()
+    alert_codes = {a["code"] for a in snapshot["alerts"]["alerts"] if a.get("active")}
+    incident_codes = {i["code"] for i in snapshot["incidents"]["incidents"] if i.get("status") == "OPEN"}
+    assert "SYSTEM_NOT_READY" in alert_codes
+    assert "SYSTEM_NOT_READY" in incident_codes
