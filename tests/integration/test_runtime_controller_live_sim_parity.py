@@ -1390,7 +1390,7 @@ def test_runtime_controller_live_event_settlement_economics_align_with_simulatio
     assert extracted["settlement_basis"] == "market_net_realized"
 
 @pytest.mark.integration
-def test_runtime_controller_legacy_non_canonical_close_is_non_authoritative_but_not_hard_rejected():
+def test_runtime_controller_legacy_non_canonical_close_is_hard_rejected_fail_closed(caplog):
     bus = _Bus()
     rc = RuntimeController(
         bus=bus,
@@ -1403,25 +1403,35 @@ def test_runtime_controller_legacy_non_canonical_close_is_non_authoritative_but_
     rc.betfair_service.get_account_funds = lambda: {"available": 150.0}
     rc.risk_desk.sync_bankroll(100.0)
 
-    rc._on_close_position(
-        {
-            "event_key": "evt-legacy-parity",
-            "table_id": 1,
-            "batch_id": "batch-legacy-parity",
-            "correlation_id": "corr-legacy-parity",
-            "gross_pnl": 13.0,
-            "commission_amount": 0.5,
-            "net_pnl": None,
-            "commission_pct": 4.5,
-            "settlement_source": "integration_test",
-            "pnl": 12.5,
-            "mm_context": {"cycle_active": True},
-        }
-    )
+    with caplog.at_level("WARNING"):
+        rc._on_close_position(
+            {
+                "event_key": "evt-legacy-parity",
+                "table_id": 1,
+                "batch_id": "batch-legacy-parity",
+                "correlation_id": "corr-legacy-parity",
+                "gross_pnl": 13.0,
+                "commission_amount": 0.5,
+                "net_pnl": None,
+                "commission_pct": 4.5,
+                "settlement_source": "integration_test",
+                "pnl": 12.5,
+                "mm_context": {"cycle_active": True},
+            }
+        )
 
-    assert rc._last_bankroll_sync_result["bankroll_sync_status"] == "SYNC_SUCCESS"
+    assert rc._last_bankroll_sync_result["bankroll_sync_status"] == "SYNC_FAILED_INVALID_SETTLEMENT_CONTRACT"
+    assert rc._last_bankroll_sync_result["reason"] == "LEGACY_SETTLEMENT_NON_AUTHORITATIVE"
     assert float(rc.risk_desk.realized_pnl) == 0.0
-    assert rc._last_auto_trade_result["auto_trade_status"] == "AUTO_TRADE_DISABLED"
+    assert rc._last_auto_trade_result["auto_trade_status"] == "AUTO_TRADE_REJECTED_SETTLEMENT"
+    assert rc._last_auto_trade_result["reason"] == "LEGACY_SETTLEMENT_NON_AUTHORITATIVE"
+
+    warning_messages = [r.message for r in caplog.records if "Settlement contract rejected at runtime boundary" in r.message]
+    assert warning_messages
+    text = warning_messages[-1]
+    assert "LEGACY_SETTLEMENT_NON_AUTHORITATIVE" in text
+    assert "rejected_non_canonical_settlement" in text
+    assert "corr-legacy-parity" in text
 
 
 @pytest.mark.integration

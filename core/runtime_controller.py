@@ -1526,9 +1526,8 @@ class RuntimeController:
         batch_id = str(payload.get("batch_id") or "")
         validation_status = str(settlement.get("settlement_validation") or "accepted")
         settlement_acceptance = str(settlement.get("settlement_acceptance") or "")
-        non_authoritative_close = validation_status == "rejected_non_canonical_settlement"
 
-        if validation_status.startswith("rejected") and not non_authoritative_close:
+        if validation_status.startswith("rejected"):
             rejection_context = self._build_settlement_rejection_context(payload, settlement)
             logger.warning(
                 "Settlement contract rejected at runtime boundary: reason=%s validation=%s acceptance=%s context=%s",
@@ -1602,11 +1601,7 @@ class RuntimeController:
             reason="settlement_detected",
             recovery_status=recovery_probe.get("status", "RECOVERY_NO_STATE"),
         )
-        if (
-            not non_authoritative_close
-            and settlement_key
-            and settlement_key not in self._processed_realized_pnl_keys
-        ):
+        if settlement_key and settlement_key not in self._processed_realized_pnl_keys:
             self._apply_realized_pnl_without_mutating_bankroll(pnl)
             self._processed_realized_pnl_keys.add(settlement_key)
         sync_result = self._sync_bankroll_post_settlement(payload)
