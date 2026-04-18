@@ -370,3 +370,104 @@ def test_runtime_authoritative_settlement_acceptance_remains_centralized_not_hel
     extracted_authoritative = RuntimeController._extract_settlement_contract(dict(close_payload))
     assert extracted_authoritative["settlement_validation"] == "accepted"
     assert extracted_authoritative["settlement_acceptance"] == "ACCEPT_REALIZED_SETTLEMENT"
+
+
+@pytest.mark.invariant
+def test_core_event_pnl_weighted_average_multi_fill_same_event_key_is_authoritative():
+    from core.pnl_engine import PnLEngine
+
+    engine = PnLEngine(bus=None, commission_pct=4.5)
+    engine._on_filled(
+        {
+            "event_key": "E-WAVG",
+            "market_id": "1.610",
+            "selection_id": 10,
+            "bet_type": "BACK",
+            "price": 2.0,
+            "stake": 100.0,
+            "fill_id": "f1",
+            "table_id": 1,
+            "batch_id": "BWAVG",
+        }
+    )
+    engine._on_filled(
+        {
+            "event_key": "E-WAVG",
+            "market_id": "1.610",
+            "selection_id": 10,
+            "bet_type": "BACK",
+            "price": 3.0,
+            "stake": 50.0,
+            "fill_id": "f2",
+            "table_id": 1,
+            "batch_id": "BWAVG",
+        }
+    )
+
+    pos = engine.snapshot()["positions"][0]["ledger"]
+    assert pos["open_side"] == "BACK"
+    assert pos["open_size"] == pytest.approx(150.0)
+    assert pos["avg_entry_price"] == pytest.approx((2.0 * 100.0 + 3.0 * 50.0) / 150.0)
+
+
+@pytest.mark.invariant
+def test_core_event_pnl_partial_close_same_event_key_updates_residual_and_realized():
+    from core.pnl_engine import PnLEngine
+
+    engine = PnLEngine(bus=None, commission_pct=4.5)
+    engine._on_filled(
+        {
+            "event_key": "E-PCLOSE",
+            "market_id": "1.611",
+            "selection_id": 10,
+            "bet_type": "BACK",
+            "price": 2.0,
+            "stake": 100.0,
+            "fill_id": "f1",
+            "table_id": 1,
+            "batch_id": "BPCLOSE",
+        }
+    )
+    engine._on_filled(
+        {
+            "event_key": "E-PCLOSE",
+            "market_id": "1.611",
+            "selection_id": 10,
+            "bet_type": "LAY",
+            "price": 1.5,
+            "stake": 40.0,
+            "fill_id": "f2",
+            "table_id": 1,
+            "batch_id": "BPCLOSE",
+        }
+    )
+
+    pos = engine.snapshot()["positions"][0]["ledger"]
+    assert pos["open_side"] == "BACK"
+    assert pos["open_size"] == pytest.approx(60.0)
+    assert pos["realized_pnl"] == pytest.approx((2.0 - 1.5) * 40.0)
+    assert pos["unrealized_pnl"] == pytest.approx(0.0)
+
+
+@pytest.mark.invariant
+def test_core_event_pnl_duplicate_fill_id_no_duplicate_realization():
+    from core.pnl_engine import PnLEngine
+
+    engine = PnLEngine(bus=None, commission_pct=4.5)
+    payload = {
+        "event_key": "E-DUP",
+        "market_id": "1.612",
+        "selection_id": 10,
+        "bet_type": "BACK",
+        "price": 2.0,
+        "stake": 100.0,
+        "fill_id": "dup-fill",
+        "table_id": 1,
+        "batch_id": "BDUP",
+    }
+    engine._on_filled(dict(payload))
+    engine._on_filled(dict(payload))
+
+    pos = engine.snapshot()["positions"][0]["ledger"]
+    assert pos["open_size"] == pytest.approx(100.0)
+    assert pos["realized_pnl"] == pytest.approx(0.0)
