@@ -159,7 +159,9 @@ class RuntimeController:
         self._daily_loss_monitor_state: dict[str, Any] = {
             "day_utc": datetime.utcnow().date().isoformat(),
             "threshold": self._safe_daily_loss_threshold(),
+            "realized_pnl_day_baseline": float(self.risk_desk.realized_pnl),
             "realized_pnl": float(self.risk_desk.realized_pnl),
+            "intraday_realized_pnl": 0.0,
             "daily_loss_amount": 0.0,
             "breached": False,
             "breached_at": "",
@@ -341,7 +343,15 @@ class RuntimeController:
         day_rollover = bool(previous_day and previous_day != today_utc)
 
         realized_pnl = float(self.risk_desk.realized_pnl)
-        daily_loss_amount = max(0.0, -realized_pnl)
+        previous_realized_raw = previous.get("realized_pnl", realized_pnl)
+        previous_realized = float(realized_pnl if previous_realized_raw is None else previous_realized_raw)
+        if day_rollover:
+            realized_pnl_day_baseline = previous_realized
+        else:
+            baseline_raw = previous.get("realized_pnl_day_baseline", realized_pnl)
+            realized_pnl_day_baseline = float(realized_pnl if baseline_raw is None else baseline_raw)
+        intraday_realized_pnl = float(realized_pnl - realized_pnl_day_baseline)
+        daily_loss_amount = max(0.0, -intraday_realized_pnl)
         breached = bool(threshold is not None and daily_loss_amount >= threshold)
         status = "DAILY_LOSS_MONITOR_OK"
         reason = "daily_loss_within_threshold"
@@ -355,7 +365,9 @@ class RuntimeController:
         state = {
             "day_utc": today_utc,
             "threshold": threshold,
+            "realized_pnl_day_baseline": realized_pnl_day_baseline,
             "realized_pnl": realized_pnl,
+            "intraday_realized_pnl": intraday_realized_pnl,
             "daily_loss_amount": daily_loss_amount,
             "breached": breached,
             "breached_at": "",
