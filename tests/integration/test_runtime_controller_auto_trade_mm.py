@@ -90,21 +90,38 @@ def _make_controller(*, responses):
     return rc, bus
 
 
+def _canonical_close_payload(**overrides):
+    payload = {
+        "event_key": "evt-integration-default",
+        "table_id": 1,
+        "batch_id": "batch-integration-default",
+        "correlation_id": "corr-integration-default",
+        "gross_pnl": 10.0,
+        "commission_amount": 0.45,
+        "net_pnl": 9.55,
+        "commission_pct": 4.5,
+        "settlement_source": "test_runtime_controller_auto_trade_mm",
+        "settlement_kind": "realized_settlement",
+        "settlement_basis": "market_net_realized",
+        "pnl": 9.55,
+    }
+    payload.update(overrides)
+    return payload
+
+
 def test_runtime_controller_emits_structured_auto_trade_result_payload():
     rc, bus = _make_controller(responses=[{"available": 150.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
 
     rc._on_close_position(
-        {
-            "event_key": "evt-integration-1",
-            "table_id": 1,
-            "batch_id": "batch-integration-1",
-            "correlation_id": "corr-integration-1",
-            "pnl": 10.0,
-            "auto_trade_enabled": True,
-            "cycle_executor_enabled": True,
-            "mm_context": {
+        _canonical_close_payload(
+            event_key="evt-integration-1",
+            batch_id="batch-integration-1",
+            correlation_id="corr-integration-1",
+            auto_trade_enabled=True,
+            cycle_executor_enabled=True,
+            mm_context={
                 "cycle_active": True,
                 "cycle_id": "cycle-1",
                 "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
@@ -114,7 +131,7 @@ def test_runtime_controller_emits_structured_auto_trade_result_payload():
                     "price": 2.0,
                 },
             },
-        }
+        )
     )
 
     auto_events = [event for event in bus.events if event[0] == "AUTO_TRADE_MM_RESULT"]
@@ -132,13 +149,15 @@ def test_runtime_controller_auto_trade_disabled_preserves_backward_compatibility
     rc.risk_desk.sync_bankroll(100.0)
 
     rc._on_close_position(
-        {
-            "event_key": "evt-integration-backward",
-            "table_id": 1,
-            "batch_id": "batch-integration-backward",
-            "correlation_id": "corr-integration-backward",
-            "pnl": 5.0,
-        }
+        _canonical_close_payload(
+            event_key="evt-integration-backward",
+            batch_id="batch-integration-backward",
+            correlation_id="corr-integration-backward",
+            gross_pnl=5.0,
+            commission_amount=0.225,
+            net_pnl=4.775,
+            pnl=4.775,
+        )
     )
 
     assert rc._last_bankroll_sync_result["bankroll_sync_status"] == "SYNC_SUCCESS"
@@ -152,13 +171,15 @@ def test_runtime_controller_status_includes_auto_trade_snapshot():
     rc.risk_desk.sync_bankroll(100.0)
 
     rc._on_close_position(
-        {
-            "event_key": "evt-integration-status",
-            "table_id": 1,
-            "batch_id": "batch-integration-status",
-            "correlation_id": "corr-integration-status",
-            "pnl": 4.0,
-        }
+        _canonical_close_payload(
+            event_key="evt-integration-status",
+            batch_id="batch-integration-status",
+            correlation_id="corr-integration-status",
+            gross_pnl=4.0,
+            commission_amount=0.18,
+            net_pnl=3.82,
+            pnl=3.82,
+        )
     )
 
     status = rc.get_status()
@@ -186,15 +207,13 @@ def test_runtime_controller_auto_trade_activates_table_before_publish():
     bus.on_publish = _inspect_publish
 
     rc._on_close_position(
-        {
-            "event_key": "evt-integration-activate",
-            "table_id": 1,
-            "batch_id": "batch-integration-activate",
-            "correlation_id": "corr-integration-activate",
-            "pnl": 10.0,
-            "auto_trade_enabled": True,
-            "cycle_executor_enabled": True,
-            "mm_context": {
+        _canonical_close_payload(
+            event_key="evt-integration-activate",
+            batch_id="batch-integration-activate",
+            correlation_id="corr-integration-activate",
+            auto_trade_enabled=True,
+            cycle_executor_enabled=True,
+            mm_context={
                 "cycle_active": True,
                 "cycle_id": "cycle-activate",
                 "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
@@ -205,7 +224,7 @@ def test_runtime_controller_auto_trade_activates_table_before_publish():
                     "price": 2.0,
                 },
             },
-        }
+        )
     )
 
     assert observed["status"] == "ACTIVE"

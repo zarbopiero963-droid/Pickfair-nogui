@@ -182,8 +182,10 @@ def test_runtime_controller_close_payload_rejects_legacy_non_canonical_settlemen
     )
 
     closed = [payload for topic, payload in bus.events if topic == "BATCH_POSITION_CLOSED"]
-    assert len(closed) == 1
-    assert rc._last_bankroll_sync_result["bankroll_sync_status"] == "SYNC_SUCCESS"
+    assert closed == []
+    assert rc._last_bankroll_sync_result["bankroll_sync_status"] == "SYNC_FAILED_INVALID_SETTLEMENT_CONTRACT"
+    assert rc._last_bankroll_sync_result["reason"] == "LEGACY_SETTLEMENT_NON_AUTHORITATIVE"
+    assert rc._last_auto_trade_result["auto_trade_status"] == "AUTO_TRADE_REJECTED_SETTLEMENT"
     assert float(rc.risk_desk.realized_pnl) == 0.0
 
 
@@ -495,7 +497,7 @@ def test_runtime_controller_rejected_settlement_does_not_release_table_or_mutate
 
 
 @pytest.mark.integration
-def test_runtime_controller_legacy_non_canonical_settlement_releases_table_and_duplication_key():
+def test_runtime_controller_legacy_non_canonical_settlement_does_not_release_table_or_duplication_key():
     rc, _ = _make_controller(responses=[{"available": 150.0}])
     rc.risk_desk.sync_bankroll(100.0)
     rc.table_manager.activate(
@@ -535,11 +537,13 @@ def test_runtime_controller_legacy_non_canonical_settlement_releases_table_and_d
 
     after = rc.table_manager.get_table(1)
     assert after is not None
-    assert after.current_event_key in ("", None)
-    assert float(after.loss_amount) == 0.0
-    assert after.in_recovery is False
-    assert not any(k["event_key"] == "evt-legacy-unlock" for k in rc.duplication_guard.snapshot()["active_keys"])
-    assert rc._last_auto_trade_result["auto_trade_status"] == "AUTO_TRADE_DISABLED"
+    assert after.current_event_key == "evt-legacy-unlock"
+    assert float(after.loss_amount) == 10.0
+    assert after.in_recovery is True
+    assert any(k["event_key"] == "evt-legacy-unlock" for k in rc.duplication_guard.snapshot()["active_keys"])
+    assert rc._last_bankroll_sync_result["bankroll_sync_status"] == "SYNC_FAILED_INVALID_SETTLEMENT_CONTRACT"
+    assert rc._last_bankroll_sync_result["reason"] == "LEGACY_SETTLEMENT_NON_AUTHORITATIVE"
+    assert rc._last_auto_trade_result["auto_trade_status"] == "AUTO_TRADE_REJECTED_SETTLEMENT"
 
 
 @pytest.mark.integration
