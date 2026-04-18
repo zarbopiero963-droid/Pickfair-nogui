@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from core.pnl_engine import MarketNetRealizedSettlementAggregator
+from core.position_ledger import PositionLedger
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,7 @@ class SimulationState:
         self.starting_balance = float(starting_balance)
         self.balance = float(starting_balance)
         self.exposure = 0.0
+        self.unrealized_pnl = 0.0
         self.commission_pct = float(commission_pct)
         self.realized_pnl = 0.0
         self.realized_commission = 0.0
@@ -68,12 +70,14 @@ class SimulationState:
         self.orders: Dict[str, SimOrder] = {}
         self.market_books: Dict[str, Dict[str, Any]] = {}
         self.event_index: Dict[str, Dict[str, Any]] = {}
+        self.position_ledgers: Dict[str, PositionLedger] = {}
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "starting_balance": self.starting_balance,
             "balance": self.balance,
             "exposure": self.exposure,
+            "unrealized_pnl": self.unrealized_pnl,
             "commission_pct": self.commission_pct,
             "realized_pnl": self.realized_pnl,
             "realized_commission": self.realized_commission,
@@ -82,6 +86,14 @@ class SimulationState:
             "orders": {k: v.to_dict() for k, v in self.orders.items()},
             "market_books": self.market_books,
             "event_index": self.event_index,
+            "position_ledgers": {
+                key: {
+                    "market_id": ledger.market_id,
+                    "runner_id": ledger.runner_id,
+                    "snapshot": ledger.snapshot().__dict__,
+                }
+                for key, ledger in self.position_ledgers.items()
+            },
         }
 
     def load_from_dict(self, data: Dict[str, Any]) -> None:
@@ -89,6 +101,7 @@ class SimulationState:
         self.starting_balance = float(data.get("starting_balance", self.starting_balance))
         self.balance = float(data.get("balance", self.starting_balance))
         self.exposure = float(data.get("exposure", 0.0))
+        self.unrealized_pnl = float(data.get("unrealized_pnl", 0.0))
         self.commission_pct = float(data.get("commission_pct", self.commission_pct))
         self.realized_pnl = float(data.get("realized_pnl", 0.0))
         self.realized_commission = float(data.get("realized_commission", 0.0))
@@ -128,6 +141,27 @@ class SimulationState:
 
         self.market_books = dict(data.get("market_books") or {})
         self.event_index = dict(data.get("event_index") or {})
+        self.position_ledgers = {}
+        raw_ledgers = data.get("position_ledgers") or {}
+        for key, payload in dict(raw_ledgers).items():
+            item = dict(payload or {})
+            market_id = str(item.get("market_id") or "")
+            runner_id = int(item.get("runner_id") or 0)
+            if not market_id or runner_id <= 0:
+                continue
+            ledger = PositionLedger(market_id=market_id, runner_id=runner_id)
+            snap = dict(item.get("snapshot") or {})
+            open_side = str(snap.get("open_side") or "").strip().upper()
+            open_size = float(snap.get("open_size") or 0.0)
+            avg_price = float(snap.get("avg_entry_price") or 0.0)
+            if open_side in {"BACK", "LAY"} and open_size > 0.0 and avg_price > 1.0:
+                ledger.apply_fill(
+                    fill_id=f"restore:{key}:open",
+                    side=open_side,
+                    price=avg_price,
+                    size=open_size,
+                )
+            self.position_ledgers[str(key)] = ledger
 
 
 class SimulationBroker:
@@ -167,6 +201,55 @@ class SimulationBroker:
             context="simulation_broker_settlement",
         )
         self._market_net_realized_aggregator.ledger = self.state.market_commission_ledger
+
+    @staticmethod
+    def _ledger_key(market_id: str, selection_id: int) -> str:
+        return f"{str(market_id)}::{int(selection_id)}"
+
+    def _get_or_create_ledger(self, *, market_id: str, selection_id: int) -> PositionLedger:
+        key = self._ledger_key(market_id, selection_id)
+        ledger = self.state.position_ledgers.get(key)
+        if ledger is None:
+            ledger = PositionLedger(market_id=str(market_id), runner_id=int(selection_id))
+            self.state.position_ledgers[key] = ledger
+        return ledger
+
+    def _recompute_exposure_and_unrealized(self) -> None:
+        total_exposure = 0.0
+        total_unrealized = 0.0
+        for ledger in self.state.position_ledgers.values():
+            snap = ledger.snapshot()
+            total_exposure += float(snap.exposure)
+            total_unrealized += float(snap.unrealized_pnl)
+        self.state.exposure = float(total_exposure)
+        self.state.unrealized_pnl = float(total_unrealized)
+
+    def _apply_fill_to_position_ledger(
+        self,
+        *,
+        fill_id: str,
+        market_id: str,
+        selection_id: int,
+        side: str,
+        price: float,
+        size: float,
+    ) -> Dict[str, Any]:
+        ledger = self._get_or_create_ledger(market_id=market_id, selection_id=selection_id)
+        before = ledger.snapshot()
+        applied = ledger.apply_fill(
+            fill_id=fill_id,
+            side=side,
+            price=price,
+            size=size,
+        )
+        after = applied["snapshot"]
+        if applied.get("applied", False):
+            before_exposure = float(before.exposure)
+            after_exposure = float(after.exposure)
+            realized_delta = float(applied.get("realized_delta") or 0.0)
+            self.state.balance += (before_exposure - after_exposure) + realized_delta
+        self._recompute_exposure_and_unrealized()
+        return applied
 
     # =========================================================
     # SESSION
@@ -230,6 +313,7 @@ class SimulationBroker:
         normalized["market_id"] = market_id
 
         self.state.market_books[market_id] = normalized
+        self._refresh_unrealized_for_market(market_id)
 
         event_name = str(
             normalized.get("event_name")
@@ -267,6 +351,40 @@ class SimulationBroker:
             }
 
         return {"ok": True, "market_id": market_id, "simulated": True}
+
+    def _refresh_unrealized_for_market(self, market_id: str) -> None:
+        market = self.state.market_books.get(str(market_id))
+        if not market:
+            self._recompute_exposure_and_unrealized()
+            return
+        runners_by_selection: Dict[int, Dict[str, Any]] = {}
+        for runner in market.get("runners") or []:
+            try:
+                sid = int(runner.get("selectionId") or runner.get("selection_id") or 0)
+            except Exception:
+                sid = 0
+            if sid > 0:
+                runners_by_selection[sid] = dict(runner or {})
+
+        for key, ledger in self.state.position_ledgers.items():
+            if not key.startswith(f"{str(market_id)}::"):
+                continue
+            snap = ledger.snapshot()
+            if snap.open_side not in {"BACK", "LAY"} or snap.open_size <= 0.0:
+                continue
+            runner = runners_by_selection.get(int(snap.runner_id))
+            if not runner:
+                continue
+            ex = runner.get("ex") or {}
+            backs = ex.get("availableToBack") or []
+            lays = ex.get("availableToLay") or []
+            if snap.open_side == "BACK":
+                mark = float((lays[0] if lays else {}).get("price") or 0.0)
+            else:
+                mark = float((backs[0] if backs else {}).get("price") or 0.0)
+            if mark > 1.0:
+                ledger.mark_to_market(mark_price=mark)
+        self._recompute_exposure_and_unrealized()
 
     def get_market_book(self, market_id: str) -> Optional[Dict[str, Any]]:
         return self.state.market_books.get(str(market_id))
@@ -566,18 +684,14 @@ class SimulationBroker:
             best_counter["size"] = max(0.0, available_size - matched)
 
     def _apply_balance_effect(self, order: SimOrder, matched: float, price: float) -> None:
-        """
-        Modellazione semplice:
-        - BACK: blocca stake come esposizione
-        - LAY: blocca liability
-        """
-        if order.side == "BACK":
-            self.state.balance -= matched
-            self.state.exposure += matched
-        else:
-            liability = matched * max(0.0, price - 1.0)
-            self.state.balance -= liability
-            self.state.exposure += liability
+        self._apply_fill_to_position_ledger(
+            fill_id=str(order.bet_id),
+            market_id=order.market_id,
+            selection_id=int(order.selection_id),
+            side=order.side,
+            price=float(price),
+            size=float(matched),
+        )
 
     def _persist_order(self, order: SimOrder) -> None:
         if self.db and hasattr(self.db, "save_simulation_bet"):
@@ -662,10 +776,12 @@ class SimulationBroker:
             "commission_pct": self.state.commission_pct,
             "realized_pnl": self.state.realized_pnl,
             "realized_commission": self.state.realized_commission,
+            "unrealized_pnl": self.state.unrealized_pnl,
             "last_settlement": dict(self.state.last_settlement),
             "orders": [o.to_dict() for o in self.state.orders.values()],
             "tracked_markets": list(self.state.market_books.keys()),
             "tracked_events": list(self.state.event_index.keys()),
+            "open_positions": [ledger.snapshot().__dict__ for ledger in self.state.position_ledgers.values()],
         }
 
     def reset(self, starting_balance: float | None = None) -> Dict[str, Any]:
