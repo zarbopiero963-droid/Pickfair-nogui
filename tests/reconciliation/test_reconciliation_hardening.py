@@ -250,3 +250,25 @@ def test_placed_beyond_explicit_timeout_resolves_to_failed(engine, batch):
         ReasonCode.CONVERGED.value,
         ReasonCode.TERMINAL_FINALIZED.value,
     }
+
+
+def test_unknown_not_starved_by_first_cycle_idempotency_after_grace(engine, batch):
+    leg = engine.batch_manager.get_batch_legs(batch["batch_id"])[0]
+    leg["status"] = "UNKNOWN"
+    leg["created_at_ts"] = 1000.0
+
+    now = {"ts": 1001.0}
+    engine._now_epoch = lambda: now["ts"]
+    engine.cfg.unknown_grace_secs = 10.0
+
+    first = engine.reconcile_batch(batch["batch_id"])
+    assert leg["status"] == "UNKNOWN"
+    assert first["reason_code"] in {
+        ReasonCode.CONVERGED.value,
+        ReasonCode.TERMINAL_FINALIZED.value,
+    }
+
+    now["ts"] = 1015.0
+    second = engine.reconcile_batch(batch["batch_id"])
+    assert leg["status"] == "FAILED"
+    assert second["reason_code"] != ReasonCode.IDEMPOTENT_SKIP.value

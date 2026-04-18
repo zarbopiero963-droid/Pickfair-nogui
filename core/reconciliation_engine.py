@@ -996,6 +996,29 @@ class ReconciliationEngine:
         )
         return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
+    def _has_age_based_recheck_candidate(self, legs: List[Dict[str, Any]]) -> bool:
+        """
+        True when at least one leg could change purely due to age progression.
+
+        This guards first-cycle idempotent skip: fingerprints do not encode time,
+        so UNKNOWN/PLACED legs near or beyond timeout thresholds must be
+        re-evaluated even when local+remote snapshots look unchanged.
+        """
+        now = self._now_epoch()
+        for leg in legs:
+            status = str(leg.get("status") or "").upper()
+            if status not in {"UNKNOWN", "PLACED"}:
+                continue
+            created_ts = float(leg.get("created_at_ts", 0) or 0)
+            if created_ts <= 0:
+                continue
+            age = now - created_ts
+            if status == "UNKNOWN" and age >= float(self.cfg.unknown_grace_secs):
+                return True
+            if status == "PLACED" and age >= float(self.cfg.placed_order_timeout_secs):
+                return True
+        return False
+
     # ─────────────────────────────────────────────────────────────
     # RECOVERY MARKERS
     # ─────────────────────────────────────────────────────────────
@@ -1580,6 +1603,7 @@ class ReconciliationEngine:
             if (
                 cycle == 1
                 and fp == self._reconcile_fingerprints.get(batch_id)
+                and not self._has_age_based_recheck_candidate(legs_sorted)
             ):
                 self._log_decision(
                     batch_id=batch_id, leg_index=None,
