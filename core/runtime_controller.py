@@ -156,6 +156,21 @@ class RuntimeController:
             "reason": "cycle_executor_not_triggered",
             "recovery_status": "RECOVERY_NO_STATE",
         }
+        self._daily_loss_monitor_state: dict[str, Any] = {
+            "day_utc": datetime.utcnow().date().isoformat(),
+            "threshold": self._safe_daily_loss_threshold(),
+            "realized_pnl_day_baseline": float(self.risk_desk.realized_pnl),
+            "realized_pnl": float(self.risk_desk.realized_pnl),
+            "intraday_realized_pnl": 0.0,
+            "daily_loss_amount": 0.0,
+            "breached": False,
+            "breached_at": "",
+            "last_status": "DAILY_LOSS_NOT_CONFIGURED",
+            "reason": "max_daily_loss_not_configured",
+            "alert_count": 0,
+            "last_alert_event": "",
+            "last_checked_at": datetime.utcnow().isoformat(),
+        }
 
         self._subscribe_bus()
 
@@ -307,6 +322,98 @@ class RuntimeController:
             table_manager=self.table_manager,
             duplication_guard=self.duplication_guard,
         )
+
+    def _safe_daily_loss_threshold(self) -> Optional[float]:
+        raw = getattr(self.config, "max_daily_loss", None)
+        try:
+            parsed = float(raw)
+        except Exception:
+            return None
+        if not math.isfinite(parsed) or parsed <= 0.0:
+            return None
+        return parsed
+
+    def _monitor_daily_loss_breach(self, *, source: str, payload: Optional[dict] = None) -> dict[str, Any]:
+        now = datetime.utcnow()
+        today_utc = now.date().isoformat()
+        threshold = self._safe_daily_loss_threshold()
+        previous = dict(self._daily_loss_monitor_state or {})
+        previous_day = str(previous.get("day_utc") or "")
+        previous_breached = bool(previous.get("breached", False))
+        day_rollover = bool(previous_day and previous_day != today_utc)
+
+        realized_pnl = float(self.risk_desk.realized_pnl)
+        previous_realized_raw = previous.get("realized_pnl", realized_pnl)
+        previous_realized = float(realized_pnl if previous_realized_raw is None else previous_realized_raw)
+        if day_rollover:
+            realized_pnl_day_baseline = previous_realized
+        else:
+            baseline_raw = previous.get("realized_pnl_day_baseline", realized_pnl)
+            realized_pnl_day_baseline = float(realized_pnl if baseline_raw is None else baseline_raw)
+        intraday_realized_pnl = float(realized_pnl - realized_pnl_day_baseline)
+        daily_loss_amount = max(0.0, -intraday_realized_pnl)
+        breached = bool(threshold is not None and daily_loss_amount >= threshold)
+        status = "DAILY_LOSS_MONITOR_OK"
+        reason = "daily_loss_within_threshold"
+        if threshold is None:
+            status = "DAILY_LOSS_NOT_CONFIGURED"
+            reason = "max_daily_loss_not_configured_or_invalid"
+        elif breached:
+            status = "DAILY_LOSS_BREACHED"
+            reason = "daily_loss_threshold_exceeded"
+
+        state = {
+            "day_utc": today_utc,
+            "threshold": threshold,
+            "realized_pnl_day_baseline": realized_pnl_day_baseline,
+            "realized_pnl": realized_pnl,
+            "intraday_realized_pnl": intraday_realized_pnl,
+            "daily_loss_amount": daily_loss_amount,
+            "breached": breached,
+            "breached_at": "",
+            "last_status": status,
+            "reason": reason,
+            "alert_count": int(previous.get("alert_count", 0) or 0),
+            "last_alert_event": str(previous.get("last_alert_event") or ""),
+            "last_checked_at": now.isoformat(),
+        }
+
+        if breached:
+            breach_at = str(previous.get("breached_at") or "") if (previous_breached and not day_rollover) else now.isoformat()
+            state["breached_at"] = breach_at
+            alert_payload = {
+                "source": str(source),
+                "day_utc": today_utc,
+                "breached": True,
+                "threshold": float(threshold or 0.0),
+                "daily_loss_amount": float(daily_loss_amount),
+                "realized_pnl": float(realized_pnl),
+                "breached_at": breach_at,
+                "alert_count": int(state["alert_count"]) + 1,
+                "runtime_mode": str(self.mode.value),
+                "execution_mode": str(self.execution_mode),
+                "payload_correlation_id": str((payload or {}).get("correlation_id") or (payload or {}).get("event_key") or ""),
+            }
+            if not previous_breached or day_rollover:
+                state["last_alert_event"] = "DAILY_LOSS_BREACH_TRIGGERED"
+                self.bus.publish("DAILY_LOSS_BREACH_TRIGGERED", dict(alert_payload))
+                logger.critical("DAILY LOSS BREACH TRIGGERED: %s", alert_payload)
+            else:
+                state["last_alert_event"] = "DAILY_LOSS_BREACH_ACTIVE"
+                self.bus.publish("DAILY_LOSS_BREACH_ACTIVE", dict(alert_payload))
+                logger.error("DAILY LOSS BREACH ACTIVE: %s", alert_payload)
+            state["alert_count"] = int(alert_payload["alert_count"])
+        elif previous_breached and not day_rollover:
+            state["breached"] = True
+            state["breached_at"] = str(previous.get("breached_at") or now.isoformat())
+            state["last_status"] = "DAILY_LOSS_BREACHED"
+            state["reason"] = "daily_loss_breach_persistent_until_day_rollover"
+            state["daily_loss_amount"] = max(daily_loss_amount, float(previous.get("daily_loss_amount", 0.0) or 0.0))
+            state["alert_count"] = int(previous.get("alert_count", 0) or 0)
+            state["last_alert_event"] = str(previous.get("last_alert_event") or "DAILY_LOSS_BREACH_TRIGGERED")
+
+        self._daily_loss_monitor_state = state
+        return dict(state)
 
     def _subscribe_bus(self) -> None:
         self.bus.subscribe("SIGNAL_RECEIVED", self._on_signal_received)
@@ -799,6 +906,7 @@ class RuntimeController:
         self.mm = RoserpinaMoneyManagement(self.config)
         self.table_manager = TableManager(table_count=self.config.table_count)
         self.reconciliation_engine = self._build_reconciliation_engine()
+        self._daily_loss_monitor_state["threshold"] = self._safe_daily_loss_threshold()
 
     def _desk_mode(self) -> DeskMode:
         return self.mm.determine_desk_mode(
@@ -1500,6 +1608,7 @@ class RuntimeController:
         self._last_auto_trade_result = dict(auto_trade_result)
         self._last_cycle_executor_result = dict(auto_trade_result)
         self.bus.publish("AUTO_TRADE_MM_RESULT", dict(auto_trade_result))
+        self._monitor_daily_loss_breach(source="RUNTIME_CLOSE_POSITION", payload=payload)
 
         current_drawdown = self.risk_desk.drawdown_pct()
 
@@ -2405,6 +2514,7 @@ class RuntimeController:
         data["bankroll_sync"] = dict(self._last_bankroll_sync_result or {})
         data["auto_trade_mm"] = dict(self._last_auto_trade_result or {})
         data["cycle_executor"] = dict(self._last_cycle_executor_result or {})
+        data["daily_loss_monitor"] = self._monitor_daily_loss_breach(source="RUNTIME_STATUS_SNAPSHOT")
         if self.streaming_feed is not None:
             try:
                 data["streaming_feed"] = self.streaming_feed.status()

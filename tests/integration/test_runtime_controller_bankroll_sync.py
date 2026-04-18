@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 import pytest
 
 from core.runtime_controller import RuntimeController
@@ -223,6 +225,117 @@ def test_runtime_controller_status_exposes_last_bankroll_sync_result():
     assert status["bankroll_sync"]["bankroll_sync_status"] == "SYNC_SUCCESS"
     assert status["bankroll_sync"]["correlation_id"] == "corr-status"
 
+
+@pytest.mark.integration
+def test_runtime_controller_daily_loss_breach_is_alerted_and_does_not_force_stop():
+    rc, bus = _make_controller(responses=[{"available": 85.0}, {"available": 85.0}])
+    rc.mode = RuntimeMode.ACTIVE
+    rc.config.max_daily_loss = 10.0
+    rc.risk_desk.sync_bankroll(100.0)
+
+    rc._on_close_position(
+        {
+            "event_key": "evt-daily-loss-trigger",
+            "table_id": 1,
+            "batch_id": "batch-daily-loss-trigger",
+            "correlation_id": "corr-daily-loss-trigger",
+            "gross_pnl": -15.0,
+            "commission_amount": 0.0,
+            "net_pnl": -15.0,
+            "commission_pct": 4.5,
+            "settlement_source": "test_settlement",
+            "settlement_kind": "realized_settlement",
+            "settlement_basis": "market_net_realized",
+        }
+    )
+
+    status = rc.get_status()
+    assert rc.mode == RuntimeMode.ACTIVE
+    assert not any(topic == "RUNTIME_LOCKDOWN" for topic, _ in bus.events)
+    breach_events = [payload for topic, payload in bus.events if topic == "DAILY_LOSS_BREACH_TRIGGERED"]
+    assert len(breach_events) == 1
+    assert status["daily_loss_monitor"]["breached"] is True
+    assert status["daily_loss_monitor"]["last_status"] == "DAILY_LOSS_BREACHED"
+    assert status["daily_loss_monitor"]["threshold"] == 10.0
+    assert status["daily_loss_monitor"]["daily_loss_amount"] >= 15.0
+
+
+@pytest.mark.integration
+def test_runtime_controller_daily_loss_breach_state_is_persistent_until_day_rollover():
+    rc, bus = _make_controller(responses=[{"available": 85.0}, {"available": 120.0}, {"available": 120.0}])
+    rc.mode = RuntimeMode.ACTIVE
+    rc.config.max_daily_loss = 10.0
+    rc.risk_desk.sync_bankroll(100.0)
+
+    rc._on_close_position(
+        {
+            "event_key": "evt-daily-loss-persist-1",
+            "table_id": 1,
+            "batch_id": "batch-daily-loss-persist-1",
+            "correlation_id": "corr-daily-loss-persist-1",
+            "gross_pnl": -15.0,
+            "commission_amount": 0.0,
+            "net_pnl": -15.0,
+            "commission_pct": 4.5,
+            "settlement_source": "test_settlement",
+            "settlement_kind": "realized_settlement",
+            "settlement_basis": "market_net_realized",
+        }
+    )
+    rc._on_close_position(
+        {
+            "event_key": "evt-daily-loss-persist-2",
+            "table_id": 2,
+            "batch_id": "batch-daily-loss-persist-2",
+            "correlation_id": "corr-daily-loss-persist-2",
+            "gross_pnl": 35.0,
+            "commission_amount": 1.575,
+            "net_pnl": 33.425,
+            "commission_pct": 4.5,
+            "settlement_source": "test_settlement",
+            "settlement_kind": "realized_settlement",
+            "settlement_basis": "market_net_realized",
+        }
+    )
+
+    status = rc.get_status()
+    assert status["daily_loss_monitor"]["breached"] is True
+    assert status["daily_loss_monitor"]["reason"] == "daily_loss_breach_persistent_until_day_rollover"
+    assert status["daily_loss_monitor"]["alert_count"] == 1
+    assert status["daily_loss_monitor"]["last_alert_event"] == "DAILY_LOSS_BREACH_TRIGGERED"
+
+
+@pytest.mark.integration
+def test_runtime_controller_daily_loss_monitor_rollover_uses_day_baseline_not_lifetime_realized():
+    rc, _ = _make_controller(responses=[{"available": 100.0}])
+    rc.mode = RuntimeMode.ACTIVE
+    rc.config.max_daily_loss = 10.0
+    rc.risk_desk.sync_bankroll(100.0)
+    rc.risk_desk.realized_pnl = -50.0
+
+    yesterday = (datetime.utcnow().date() - timedelta(days=1)).isoformat()
+    rc._daily_loss_monitor_state = {
+        "day_utc": yesterday,
+        "threshold": 10.0,
+        "realized_pnl_day_baseline": 0.0,
+        "realized_pnl": -50.0,
+        "intraday_realized_pnl": -50.0,
+        "daily_loss_amount": 50.0,
+        "breached": True,
+        "breached_at": "2026-04-17T00:00:00",
+        "last_status": "DAILY_LOSS_BREACHED",
+        "reason": "daily_loss_threshold_exceeded",
+        "alert_count": 1,
+        "last_alert_event": "DAILY_LOSS_BREACH_TRIGGERED",
+        "last_checked_at": "2026-04-17T23:59:59",
+    }
+
+    status = rc.get_status()
+    monitor = status["daily_loss_monitor"]
+    assert monitor["breached"] is False
+    assert monitor["daily_loss_amount"] == 0.0
+    assert monitor["intraday_realized_pnl"] == 0.0
+    assert monitor["realized_pnl_day_baseline"] == -50.0
 
 @pytest.mark.integration
 def test_runtime_controller_rejects_ambiguous_zero_fallback_balance_payload():
