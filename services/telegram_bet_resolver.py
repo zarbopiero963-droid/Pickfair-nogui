@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -82,6 +81,7 @@ class TelegramBetResolver:
     SCORE_RE = re.compile(r"(\d+)\s*[-–]\s*(\d+)")
     MINUTE_RE = re.compile(r"(\d+)\s*m\b", re.IGNORECASE)
     VS_RE = re.compile(r"([A-Za-z0-9 .'\-]+?)\s+v\s+([A-Za-z0-9 .'\-]+)", re.IGNORECASE)
+    TRADABLE_MARKET_STATUS = "OPEN"
 
     def __init__(self, client_getter):
         """
@@ -418,6 +418,13 @@ class TelegramBetResolver:
         market_book = self._get_market_book(client, market_id)
         if not market_book:
             return None
+        if not self._is_tradable_market_book(market_book):
+            logger.warning(
+                "[TelegramBetResolver] Mercato non tradabile market_id=%s status=%s",
+                market_id,
+                self._extract_market_status(market_book),
+            )
+            return None
 
         return {
             "market_id": market_id,
@@ -457,6 +464,25 @@ class TelegramBetResolver:
 
     def _wanted_market_name(self, target_line: float) -> str:
         return f"Over/Under {target_line:.1f} Goals"
+
+    def _is_tradable_market_book(self, market_book: Dict[str, Any]) -> bool:
+        market_status = self._extract_market_status(market_book)
+        if not market_status:
+            return True
+
+        return market_status == self.TRADABLE_MARKET_STATUS
+
+    def _extract_market_status(self, market_book: Dict[str, Any]) -> str:
+        direct_status = str(market_book.get("status") or "").strip().upper()
+        if direct_status:
+            return direct_status
+
+        market_definition = market_book.get("marketDefinition") or {}
+        definition_status = str(market_definition.get("status") or "").strip().upper()
+        if definition_status:
+            return definition_status
+
+        return ""
 
     # =========================================================
     # RUNNER RESOLUTION
