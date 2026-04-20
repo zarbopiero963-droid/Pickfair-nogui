@@ -1,0 +1,85 @@
+name: Telegram Live Integration Tests
+
+# Eseguito manualmente o ogni notte alle 02:00 UTC.
+# NON gira su ogni push per non consumare API Telegram.
+on:
+  workflow_dispatch:
+    inputs:
+      timeout:
+        description: "Timeout per ogni test (secondi)"
+        required: false
+        default: "30"
+  schedule:
+    - cron: "0 2 * * *"
+
+jobs:
+  telegram-live:
+    name: Telegram Live E2E
+    runs-on: ubuntu-latest
+
+    # Il job si salta se i secrets non sono configurati nel repo.
+    # Verifica fatta nel primo step — se mancano, tutti i test
+    # vengono saltati con pytest (skipif).
+    env:
+      TG_API_ID: ${{ secrets.TG_API_ID }}
+      TG_API_HASH: ${{ secrets.TG_API_HASH }}
+      TG_SESSION_STRING: ${{ secrets.TG_SESSION_STRING }}
+      TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+      TG_TEST_CHAT_ID: ${{ secrets.TG_TEST_CHAT_ID }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements-test.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-test.txt
+
+      - name: Check secrets presence
+        id: secrets_check
+        run: |
+          if [ -z "$TG_API_ID" ] || [ -z "$TG_API_HASH" ] || \
+             [ -z "$TG_SESSION_STRING" ] || [ -z "$TG_BOT_TOKEN" ] || \
+             [ -z "$TG_TEST_CHAT_ID" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "⚠️  Uno o più secrets Telegram non configurati — i test verranno saltati."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "✅ Secrets Telegram presenti."
+          fi
+
+      - name: Run Telegram Live E2E tests
+        env:
+          PYTHONPATH: .
+          PYTEST_TIMEOUT: ${{ github.event.inputs.timeout || '30' }}
+        run: |
+          pytest tests/integration/test_telegram_live_e2e.py \
+            -v \
+            --tb=short \
+            --timeout=$PYTEST_TIMEOUT \
+            -p no:randomly \
+            2>&1 | tee telegram_live_results.txt
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: telegram-live-results
+          path: telegram_live_results.txt
+          retention-days: 14
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Telegram Live Integration Results" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -30 telegram_live_results.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
