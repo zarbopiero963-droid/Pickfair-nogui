@@ -280,15 +280,15 @@ class _PatternDialog(ctk.CTkToplevel):
             text_color=COLORS["text_primary"],
         ).pack(side=tk.LEFT)
 
-        # Filtri numerici
+        # Filtri numerici (opzionali — vuoto = nessun filtro)
         filters = ctk.CTkFrame(outer, fg_color="transparent")
         filters.grid(row=10, column=0, columnspan=2, sticky="w", padx=10, pady=(8, 0))
 
-        def _lbl(text):
-            return ctk.CTkLabel(filters, text=text, text_color=COLORS["text_secondary"], font=("Segoe UI", 11))
+        def _lbl(text, parent=filters):
+            return ctk.CTkLabel(parent, text=text, text_color=COLORS["text_secondary"], font=("Segoe UI", 11))
 
-        def _num_entry(var, w=55):
-            return ctk.CTkEntry(filters, textvariable=var, width=w,
+        def _num_entry(var, w=55, parent=filters):
+            return ctk.CTkEntry(parent, textvariable=var, width=w,
                                 fg_color=COLORS["bg_card"], border_color=COLORS["border"])
 
         self._min_min_var = tk.StringVar(value="" if c.get("min_minute") is None else str(c["min_minute"]))
@@ -297,13 +297,13 @@ class _PatternDialog(ctk.CTkToplevel):
         self._max_sc_var  = tk.StringVar(value="" if c.get("max_score")  is None else str(c["max_score"]))
         self._prio_var    = tk.StringVar(value=str(c.get("priority", 100)))
 
-        _lbl("Minuti:").pack(side=tk.LEFT)
+        _lbl("Minuti (opz.):").pack(side=tk.LEFT)
         _lbl("da").pack(side=tk.LEFT, padx=(4, 2))
         _num_entry(self._min_min_var).pack(side=tk.LEFT, padx=(0, 4))
         _lbl("a").pack(side=tk.LEFT, padx=(0, 2))
         _num_entry(self._max_min_var).pack(side=tk.LEFT, padx=(0, 16))
 
-        _lbl("Score:").pack(side=tk.LEFT)
+        _lbl("Score (opz.):").pack(side=tk.LEFT)
         _lbl("da").pack(side=tk.LEFT, padx=(4, 2))
         _num_entry(self._min_sc_var).pack(side=tk.LEFT, padx=(0, 4))
         _lbl("a").pack(side=tk.LEFT, padx=(0, 2))
@@ -312,9 +312,75 @@ class _PatternDialog(ctk.CTkToplevel):
         _lbl("Priority:").pack(side=tk.LEFT)
         _num_entry(self._prio_var, w=50).pack(side=tk.LEFT, padx=(4, 0))
 
+        # ── Stake & Money Management ──────────────────────────────
+        stake_frame = ctk.CTkFrame(outer, fg_color=COLORS["bg_card"], corner_radius=6)
+        stake_frame.grid(row=11, column=0, columnspan=2, sticky="ew", padx=10, pady=(10, 0))
+
+        ctk.CTkLabel(
+            stake_frame, text="Stake & Money Management",
+            font=("Segoe UI", 11, "bold"),
+            text_color=COLORS["text_primary"],
+        ).grid(row=0, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 2))
+
+        # Stake Fisso
+        self._stake_fixed_var = tk.BooleanVar(value=bool(c.get("stake_fixed", False)))
+        ctk.CTkCheckBox(
+            stake_frame, text="Stake Fisso",
+            variable=self._stake_fixed_var,
+            fg_color=COLORS["back"], hover_color=COLORS["back_hover"],
+            text_color=COLORS["text_primary"],
+            command=self._on_stake_toggle,
+        ).grid(row=1, column=0, sticky="w", padx=(8, 4), pady=(4, 6))
+
+        self._stake_amt_var = tk.StringVar(value=str(c.get("stake_fixed_amount", "10.0")))
+        self._stake_amt_entry = ctk.CTkEntry(
+            stake_frame, textvariable=self._stake_amt_var, width=70,
+            fg_color=COLORS["bg_card"], border_color=COLORS["border"],
+            placeholder_text="es. 10",
+        )
+        self._stake_amt_entry.grid(row=1, column=1, sticky="w", padx=(0, 4), pady=(4, 6))
+        ctk.CTkLabel(
+            stake_frame, text="EUR",
+            text_color=COLORS["text_tertiary"], font=("Segoe UI", 10),
+        ).grid(row=1, column=2, sticky="w", padx=(0, 20), pady=(4, 6))
+
+        # MM Auto
+        self._mm_auto_var = tk.BooleanVar(value=bool(c.get("mm_auto", False)))
+        ctk.CTkCheckBox(
+            stake_frame, text="MM Auto",
+            variable=self._mm_auto_var,
+            fg_color=COLORS["button_primary"], hover_color=COLORS["back_hover"],
+            text_color=COLORS["text_primary"],
+            command=self._on_mm_toggle,
+        ).grid(row=1, column=3, sticky="w", padx=(0, 8), pady=(4, 6))
+        ctk.CTkLabel(
+            stake_frame,
+            text="(adatta lo stake al Money Management configurato)",
+            font=("Segoe UI", 9), text_color=COLORS["text_tertiary"],
+        ).grid(row=2, column=0, columnspan=4, sticky="w", padx=8, pady=(0, 4))
+
+        self._on_stake_toggle()
+
+        # ── Pre-match ────────────────────────────────────────────
+        prematch_frame = ctk.CTkFrame(outer, fg_color="transparent")
+        prematch_frame.grid(row=12, column=0, columnspan=2, sticky="w", padx=10, pady=(8, 0))
+
+        self._prematch_var = tk.BooleanVar(value=bool(c.get("prematch", False)))
+        ctk.CTkCheckBox(
+            prematch_frame, text="Pre-match",
+            variable=self._prematch_var,
+            fg_color=COLORS["button_secondary"], hover_color=COLORS["bg_hover"],
+            text_color=COLORS["text_primary"],
+        ).pack(side=tk.LEFT)
+        ctk.CTkLabel(
+            prematch_frame,
+            text="  cerca mercato non live (partita non ancora iniziata)",
+            font=("Segoe UI", 9), text_color=COLORS["text_tertiary"],
+        ).pack(side=tk.LEFT)
+
         # Bottoni
         btn_frame = ctk.CTkFrame(outer, fg_color="transparent")
-        btn_frame.grid(row=11, column=0, columnspan=2, pady=(14, 10))
+        btn_frame.grid(row=13, column=0, columnspan=2, pady=(14, 10))
 
         ctk.CTkButton(
             btn_frame, text="Annulla", width=110,
@@ -329,6 +395,20 @@ class _PatternDialog(ctk.CTkToplevel):
             hover_color=COLORS["back_hover"],
             command=self._on_save,
         ).pack(side=tk.LEFT, padx=8)
+
+    # ----------------------------------------------------------
+    def _on_stake_toggle(self):
+        """Abilita/disabilita il campo importo stake fisso. Se MM Auto è on, entrambi off."""
+        if self._mm_auto_var.get():
+            self._stake_fixed_var.set(False)
+        state = "normal" if self._stake_fixed_var.get() and not self._mm_auto_var.get() else "disabled"
+        self._stake_amt_entry.configure(state=state)
+
+    def _on_mm_toggle(self):
+        """Se MM Auto è attivato, disabilita stake fisso."""
+        if self._mm_auto_var.get():
+            self._stake_fixed_var.set(False)
+        self._on_stake_toggle()
 
     # ----------------------------------------------------------
     def _on_predef_select(self, choice: str):
@@ -368,6 +448,16 @@ class _PatternDialog(ctk.CTkToplevel):
         market_label = self._market_var.get()
         market_code = _MARKET_LABEL_TO_CODE.get(market_label, "MATCH_ODDS")
 
+        # Stake fisso e MM Auto si escludono a vicenda
+        stake_fixed = self._stake_fixed_var.get() and not self._mm_auto_var.get()
+        stake_fixed_amount = None
+        if stake_fixed:
+            try:
+                stake_fixed_amount = float(self._stake_amt_var.get().replace(",", "."))
+            except ValueError:
+                messagebox.showwarning("Attenzione", "Importo stake fisso non valido.", parent=self)
+                return
+
         self.result = {
             "label":              nome,
             "pattern":            regex,
@@ -376,12 +466,16 @@ class _PatternDialog(ctk.CTkToplevel):
             "bet_side":           "LAY" if self._lay_var.get() else "BACK",
             "selection_template": self._template_var.get().strip(),
             "live_only":          self._live_var.get(),
+            "prematch":           self._prematch_var.get(),
             "enabled":            self._active_var.get(),
             "min_minute":         self._parse_int_opt(self._min_min_var),
             "max_minute":         self._parse_int_opt(self._max_min_var),
             "min_score":          self._parse_int_opt(self._min_sc_var),
             "max_score":          self._parse_int_opt(self._max_sc_var),
             "priority":           self._parse_int_opt(self._prio_var) or 100,
+            "stake_fixed":        stake_fixed,
+            "stake_fixed_amount": stake_fixed_amount,
+            "mm_auto":            self._mm_auto_var.get(),
         }
         self.destroy()
 
@@ -1063,7 +1157,13 @@ class TelegramModule:
                 max_score=payload["max_score"],
                 live_only=payload["live_only"],
                 priority=payload["priority"],
-                extra={"keyword": payload.get("keyword", "")},
+                extra={
+                    "keyword":            payload.get("keyword", ""),
+                    "stake_fixed":        bool(payload.get("stake_fixed", False)),
+                    "stake_fixed_amount": payload.get("stake_fixed_amount"),
+                    "mm_auto":            bool(payload.get("mm_auto", False)),
+                    "prematch":           bool(payload.get("prematch", False)),
+                },
             )
             self._safe_refresh_rules_tree()
             messagebox.showinfo("Successo", "Regola aggiunta correttamente.")
@@ -1107,7 +1207,13 @@ class TelegramModule:
                 max_score=payload["max_score"],
                 live_only=payload["live_only"],
                 priority=payload["priority"],
-                extra={"keyword": payload.get("keyword", "")},
+                extra={
+                    "keyword":            payload.get("keyword", ""),
+                    "stake_fixed":        bool(payload.get("stake_fixed", False)),
+                    "stake_fixed_amount": payload.get("stake_fixed_amount"),
+                    "mm_auto":            bool(payload.get("mm_auto", False)),
+                    "prematch":           bool(payload.get("prematch", False)),
+                },
             )
             self._safe_refresh_rules_tree()
             messagebox.showinfo("Successo", "Regola aggiornata correttamente.")

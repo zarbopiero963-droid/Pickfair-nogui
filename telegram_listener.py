@@ -262,19 +262,30 @@ class TelegramListener:
 
                 min_minute = cp.get("min_minute")
                 max_minute = cp.get("max_minute")
-                min_score = cp.get("min_score")
-                max_score = cp.get("max_score")
-                live_only = bool(cp.get("live_only", False))
+                min_score  = cp.get("min_score")
+                max_score  = cp.get("max_score")
+                live_only  = bool(cp.get("live_only", False))
+                prematch   = bool(cp.get("prematch", False))
 
-                if min_minute is not None and minute < int(min_minute):
-                    continue
-                if max_minute is not None and minute > int(max_minute):
-                    continue
+                # Filtri opzionali — se il minuto non è nel messaggio (0)
+                # i filtri minuto vengono saltati per non bloccare inutilmente.
+                if minute > 0:
+                    if min_minute is not None and minute < int(min_minute):
+                        continue
+                    if max_minute is not None and minute > int(max_minute):
+                        continue
+                    if live_only and prematch:
+                        continue  # contraddizione: ignora
+                    if live_only and minute <= 0:
+                        continue
+                else:
+                    # Minuto assente: blocca solo se live_only richiede minuto presente
+                    if live_only:
+                        continue
+
                 if min_score is not None and total_goals < int(min_score):
                     continue
                 if max_score is not None and total_goals > int(max_score):
-                    continue
-                if live_only and minute <= 0:
                     continue
 
                 selection_template = str(cp.get("selection_template") or "").strip()
@@ -292,19 +303,33 @@ class TelegramListener:
                 if not selection:
                     selection = str(cp.get("label") or cp.get("name") or "Custom Pattern")
 
+                # Stake: priorità → stake_fisso dal pattern → testo messaggio → default
+                stake_fixed        = bool(cp.get("stake_fixed", False))
+                stake_fixed_amount = cp.get("stake_fixed_amount")
+                mm_auto            = bool(cp.get("mm_auto", False))
+
+                if stake_fixed and stake_fixed_amount is not None:
+                    stake = float(stake_fixed_amount)
+                else:
+                    stake = self._extract_stake(text) or 0.0  # 0 = lascia decidere al MM
+
                 return {
-                    "event_name": event_name,
-                    "selection": selection,
-                    "market_type": market_type,
-                    "bet_type": bet_side,
-                    "price": self._extract_odds(text) or 2.0,
-                    "stake": self._extract_stake(text) or 1.0,
-                    "minute": minute,
-                    "home_score": home_score,
-                    "away_score": away_score,
-                    "pattern_id": cp.get("id"),
-                    "pattern_label": cp.get("label") or cp.get("name") or "",
-                    "raw_text": text,
+                    "event_name":         event_name,
+                    "selection":          selection,
+                    "market_type":        market_type,
+                    "bet_type":           bet_side,
+                    "price":              self._extract_odds(text),   # None → broker cerca best price
+                    "stake":              stake,
+                    "minute":             minute,
+                    "home_score":         home_score,
+                    "away_score":         away_score,
+                    "pattern_id":         cp.get("id"),
+                    "pattern_label":      cp.get("label") or cp.get("name") or "",
+                    "stake_fixed":        stake_fixed,
+                    "stake_fixed_amount": stake_fixed_amount,
+                    "mm_auto":            mm_auto,
+                    "prematch":           prematch,
+                    "raw_text":           text,
                 }
 
             except Exception:
