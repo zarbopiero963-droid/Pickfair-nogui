@@ -257,31 +257,15 @@ class TelegramListener:
                         continue
 
                 home_score, away_score = self._extract_score(text)
-                minute = self._extract_minute(text)
                 total_goals = home_score + away_score
 
-                min_minute = cp.get("min_minute")
-                max_minute = cp.get("max_minute")
                 min_score  = cp.get("min_score")
                 max_score  = cp.get("max_score")
                 live_only  = bool(cp.get("live_only", False))
                 prematch   = bool(cp.get("prematch", False))
 
-                # Filtri opzionali — se il minuto non è nel messaggio (0)
-                # i filtri minuto vengono saltati per non bloccare inutilmente.
-                if minute > 0:
-                    if min_minute is not None and minute < int(min_minute):
-                        continue
-                    if max_minute is not None and minute > int(max_minute):
-                        continue
-                    if live_only and prematch:
-                        continue  # contraddizione: ignora
-                    if live_only and minute <= 0:
-                        continue
-                else:
-                    # Minuto assente: blocca solo se live_only richiede minuto presente
-                    if live_only:
-                        continue
+                if live_only and prematch:
+                    continue  # contraddizione: ignora
 
                 if min_score is not None and total_goals < int(min_score):
                     continue
@@ -293,7 +277,6 @@ class TelegramListener:
                     selection_template=selection_template,
                     home_score=home_score,
                     away_score=away_score,
-                    minute=minute,
                 )
 
                 event_name = self._extract_event_name(text)
@@ -320,7 +303,6 @@ class TelegramListener:
                     "bet_type":           bet_side,
                     "price":              self._extract_odds(text),   # None → broker cerca best price
                     "stake":              stake,
-                    "minute":             minute,
                     "home_score":         home_score,
                     "away_score":         away_score,
                     "pattern_id":         cp.get("id"),
@@ -343,7 +325,6 @@ class TelegramListener:
         selection_template: str,
         home_score: int,
         away_score: int,
-        minute: int,
     ) -> str:
         if not selection_template:
             return ""
@@ -355,7 +336,6 @@ class TelegramListener:
         rendered = rendered.replace("{home_score}", str(home_score))
         rendered = rendered.replace("{away_score}", str(away_score))
         rendered = rendered.replace("{total_goals}", str(total_goals))
-        rendered = rendered.replace("{minute}", str(minute))
         rendered = rendered.replace("{over_line}", str(over_line).replace(".0", ""))
         return rendered
 

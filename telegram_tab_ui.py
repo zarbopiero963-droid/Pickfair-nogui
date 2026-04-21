@@ -405,36 +405,36 @@ class TelegramTabUI:
                 "market",
                 "side",
                 "template",
-                "minute",
                 "score",
                 "live",
                 "priority",
+                "keyword",
                 "pattern",
             ),
             show="headings",
             height=10,
         )
-        self.app.rules_tree.heading("enabled", text="ON")
-        self.app.rules_tree.heading("name", text="Nome")
-        self.app.rules_tree.heading("market", text="Mercato")
-        self.app.rules_tree.heading("side", text="Side")
+        self.app.rules_tree.heading("enabled",  text="ON")
+        self.app.rules_tree.heading("name",     text="Nome")
+        self.app.rules_tree.heading("market",   text="Mercato")
+        self.app.rules_tree.heading("side",     text="Side")
         self.app.rules_tree.heading("template", text="Template")
-        self.app.rules_tree.heading("minute", text="Minuti")
-        self.app.rules_tree.heading("score", text="Score")
-        self.app.rules_tree.heading("live", text="Live")
+        self.app.rules_tree.heading("score",    text="Score")
+        self.app.rules_tree.heading("live",     text="Tipo")
         self.app.rules_tree.heading("priority", text="Prio")
-        self.app.rules_tree.heading("pattern", text="Pattern")
+        self.app.rules_tree.heading("keyword",  text="Parola Chiave")
+        self.app.rules_tree.heading("pattern",  text="Regex")
 
-        self.app.rules_tree.column("enabled", width=40, anchor="center")
-        self.app.rules_tree.column("name", width=110)
-        self.app.rules_tree.column("market", width=110)
-        self.app.rules_tree.column("side", width=55, anchor="center")
-        self.app.rules_tree.column("template", width=140)
-        self.app.rules_tree.column("minute", width=70, anchor="center")
-        self.app.rules_tree.column("score", width=70, anchor="center")
-        self.app.rules_tree.column("live", width=50, anchor="center")
-        self.app.rules_tree.column("priority", width=50, anchor="center")
-        self.app.rules_tree.column("pattern", width=220)
+        self.app.rules_tree.column("enabled",  width=40,  anchor="center")
+        self.app.rules_tree.column("name",     width=110)
+        self.app.rules_tree.column("market",   width=150)
+        self.app.rules_tree.column("side",     width=50,  anchor="center")
+        self.app.rules_tree.column("template", width=120)
+        self.app.rules_tree.column("score",    width=65,  anchor="center")
+        self.app.rules_tree.column("live",     width=55,  anchor="center")
+        self.app.rules_tree.column("priority", width=45,  anchor="center")
+        self.app.rules_tree.column("keyword",  width=110)
+        self.app.rules_tree.column("pattern",  width=190)
 
         rules_scroll = ttk.Scrollbar(rules_tree_container, orient=tk.VERTICAL, command=self.app.rules_tree.yview)
         self.app.rules_tree.configure(yscrollcommand=rules_scroll.set)
