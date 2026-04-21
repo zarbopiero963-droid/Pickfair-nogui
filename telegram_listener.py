@@ -232,12 +232,29 @@ class TelegramListener:
         for cp in patterns or []:
             try:
                 pattern = cp.get("pattern") or ""
-                if not pattern:
+                keyword = str(cp.get("keyword") or "").strip()
+
+                if not pattern and not keyword:
                     continue
 
-                m = re.search(pattern, text, flags=re.IGNORECASE | re.MULTILINE)
-                if not m:
-                    continue
+                regex_match = (
+                    re.search(pattern, text, flags=re.IGNORECASE | re.MULTILINE)
+                    if pattern else None
+                )
+
+                # Logica di attivazione:
+                # - Solo regex: deve matchare
+                # - Solo keyword: deve essere presente nel testo
+                # - Entrambi: entrambi devono essere soddisfatti
+                if pattern and keyword:
+                    if not regex_match or keyword.lower() not in text.lower():
+                        continue
+                elif pattern:
+                    if not regex_match:
+                        continue
+                elif keyword:
+                    if keyword.lower() not in text.lower():
+                        continue
 
                 home_score, away_score = self._extract_score(text)
                 minute = self._extract_minute(text)

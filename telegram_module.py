@@ -4,12 +4,386 @@ import logging
 import tkinter as tk
 from tkinter import messagebox, simpledialog
 
-from theme import COLORS
+import customtkinter as ctk
+
+from theme import COLORS, FONTS
 from services.telegram_signal_processor import TelegramSignalProcessor
 from services.telegram_bet_resolver import TelegramBetResolver
 from observability.sanitizers import sanitize_dict
 
 logger = logging.getLogger(__name__)
+
+# =========================================================
+# MERCATI BETFAIR — (codice, etichetta)
+# =========================================================
+_MARKET_OPTIONS: list[tuple[str, str]] = [
+    # 1X2
+    ("MATCH_ODDS",          "1X2 — Match Odds"),
+    # Over/Under FT
+    ("OVER_UNDER_05",       "Over/Under FT 0.5"),
+    ("OVER_UNDER_15",       "Over/Under FT 1.5"),
+    ("OVER_UNDER_25",       "Over/Under FT 2.5"),
+    ("OVER_UNDER_35",       "Over/Under FT 3.5"),
+    ("OVER_UNDER_45",       "Over/Under FT 4.5"),
+    ("OVER_UNDER_55",       "Over/Under FT 5.5"),
+    ("OVER_UNDER_65",       "Over/Under FT 6.5"),
+    ("OVER_UNDER_75",       "Over/Under FT 7.5"),
+    # Over/Under PT
+    ("OVER_UNDER_HT_05",    "Over/Under PT 0.5"),
+    ("OVER_UNDER_HT_15",    "Over/Under PT 1.5"),
+    ("OVER_UNDER_HT_25",    "Over/Under PT 2.5"),
+    ("OVER_UNDER_HT_35",    "Over/Under PT 3.5"),
+    ("OVER_UNDER_HT_45",    "Over/Under PT 4.5"),
+    # Entrambe segnano
+    ("BTTS_YES",            "Entrambe Segnano — Sì"),
+    ("BTTS_NO",             "Entrambe Segnano — No"),
+    # Risultato Esatto FT
+    ("CS_0_0",              "Ris. Esatto 0-0"),
+    ("CS_1_0",              "Ris. Esatto 1-0"),
+    ("CS_0_1",              "Ris. Esatto 0-1"),
+    ("CS_1_1",              "Ris. Esatto 1-1"),
+    ("CS_2_0",              "Ris. Esatto 2-0"),
+    ("CS_0_2",              "Ris. Esatto 0-2"),
+    ("CS_2_1",              "Ris. Esatto 2-1"),
+    ("CS_1_2",              "Ris. Esatto 1-2"),
+    ("CS_2_2",              "Ris. Esatto 2-2"),
+    ("CS_3_0",              "Ris. Esatto 3-0"),
+    ("CS_0_3",              "Ris. Esatto 0-3"),
+    ("CS_3_1",              "Ris. Esatto 3-1"),
+    ("CS_1_3",              "Ris. Esatto 1-3"),
+    ("CS_3_2",              "Ris. Esatto 3-2"),
+    ("CS_2_3",              "Ris. Esatto 2-3"),
+    ("CS_3_3",              "Ris. Esatto 3-3"),
+    ("CS_4_0",              "Ris. Esatto 4-0"),
+    ("CS_0_4",              "Ris. Esatto 0-4"),
+    ("CS_4_1",              "Ris. Esatto 4-1"),
+    ("CS_1_4",              "Ris. Esatto 1-4"),
+    ("CS_OTHER",            "Ris. Esatto — Altro"),
+    # Risultato Esatto PT
+    ("CS_HT_0_0",           "Ris. Esatto PT 0-0"),
+    ("CS_HT_1_0",           "Ris. Esatto PT 1-0"),
+    ("CS_HT_0_1",           "Ris. Esatto PT 0-1"),
+    ("CS_HT_1_1",           "Ris. Esatto PT 1-1"),
+    ("CS_HT_2_0",           "Ris. Esatto PT 2-0"),
+    ("CS_HT_0_2",           "Ris. Esatto PT 0-2"),
+    ("CS_HT_2_1",           "Ris. Esatto PT 2-1"),
+    ("CS_HT_1_2",           "Ris. Esatto PT 1-2"),
+    ("CS_HT_OTHER",         "Ris. Esatto PT — Altro"),
+    # Doppia Chance
+    ("DOUBLE_CHANCE_1X",    "Doppia Chance — 1X"),
+    ("DOUBLE_CHANCE_12",    "Doppia Chance — 12"),
+    ("DOUBLE_CHANCE_X2",    "Doppia Chance — X2"),
+    # Parziale / Finale
+    ("HT_FT_1_1",           "PT/FT — 1/1"),
+    ("HT_FT_1_X",           "PT/FT — 1/X"),
+    ("HT_FT_1_2",           "PT/FT — 1/2"),
+    ("HT_FT_X_1",           "PT/FT — X/1"),
+    ("HT_FT_X_X",           "PT/FT — X/X"),
+    ("HT_FT_X_2",           "PT/FT — X/2"),
+    ("HT_FT_2_1",           "PT/FT — 2/1"),
+    ("HT_FT_2_X",           "PT/FT — 2/X"),
+    ("HT_FT_2_2",           "PT/FT — 2/2"),
+    # Asian Handicap
+    ("ASIAN_HC_HOME_05",    "Handicap Casa +0.5"),
+    ("ASIAN_HC_AWAY_05",    "Handicap Ospite +0.5"),
+    ("ASIAN_HC_HOME_1",     "Handicap Casa +1"),
+    ("ASIAN_HC_AWAY_1",     "Handicap Ospite +1"),
+    ("ASIAN_HC_HOME_15",    "Handicap Casa +1.5"),
+    ("ASIAN_HC_AWAY_15",    "Handicap Ospite +1.5"),
+    ("ASIAN_HC_HOME_2",     "Handicap Casa +2"),
+    ("ASIAN_HC_AWAY_2",     "Handicap Ospite +2"),
+    # Prossimo Gol
+    ("NEXT_GOAL",           "Prossimo Gol"),
+]
+
+# label → codice per lookup rapido
+_MARKET_LABEL_TO_CODE: dict[str, str] = {label: code for code, label in _MARKET_OPTIONS}
+_MARKET_CODE_TO_LABEL: dict[str, str] = {code: label for code, label in _MARKET_OPTIONS}
+_MARKET_LABELS: list[str] = [label for _, label in _MARKET_OPTIONS]
+
+# =========================================================
+# PATTERN PREDEFINITI — (nome → {pattern, market_type})
+# =========================================================
+_PREDEFINED: dict[str, dict] = {
+    "-- Personalizzato --":     {"pattern": "", "market_type": "MATCH_ODDS"},
+    "Over 0.5 FT":              {"pattern": r"(?:OVER|O)\s*0[,.]?5\b", "market_type": "OVER_UNDER_05"},
+    "Over 1.5 FT":              {"pattern": r"(?:OVER|O)\s*1[,.]?5\b", "market_type": "OVER_UNDER_15"},
+    "Over 2.5 FT":              {"pattern": r"(?:OVER|O)\s*2[,.]?5\b", "market_type": "OVER_UNDER_25"},
+    "Over 3.5 FT":              {"pattern": r"(?:OVER|O)\s*3[,.]?5\b", "market_type": "OVER_UNDER_35"},
+    "Over 4.5 FT":              {"pattern": r"(?:OVER|O)\s*4[,.]?5\b", "market_type": "OVER_UNDER_45"},
+    "Under 2.5 FT":             {"pattern": r"(?:UNDER|U)\s*2[,.]?5\b", "market_type": "OVER_UNDER_25"},
+    "Under 3.5 FT":             {"pattern": r"(?:UNDER|U)\s*3[,.]?5\b", "market_type": "OVER_UNDER_35"},
+    "Over 0.5 PT":              {"pattern": r"(?:OVER|O)\s*0[,.]?5.{0,20}(?:PT|HT|PRIMO)", "market_type": "OVER_UNDER_HT_05"},
+    "Over 1.5 PT":              {"pattern": r"(?:OVER|O)\s*1[,.]?5.{0,20}(?:PT|HT|PRIMO)", "market_type": "OVER_UNDER_HT_15"},
+    "Over 2.5 PT":              {"pattern": r"(?:OVER|O)\s*2[,.]?5.{0,20}(?:PT|HT|PRIMO)", "market_type": "OVER_UNDER_HT_25"},
+    "Next Gol":                 {"pattern": r"NEXT\s*GOL|PROSSIMO\s*GOL", "market_type": "NEXT_GOAL"},
+    "Entrambe Segnano Sì":      {"pattern": r"(?:BTTS|ENTRAMBE|BOTH)\s*(?:SI|YES|S[IÌ])\b", "market_type": "BTTS_YES"},
+    "Entrambe Segnano No":      {"pattern": r"(?:BTTS|ENTRAMBE|BOTH)\s*NO\b", "market_type": "BTTS_NO"},
+    "1X2 — Casa vince":         {"pattern": r"(?:CASA|HOME)\s*(?:VINCE|WIN)|WIN\s*HOME\b", "market_type": "MATCH_ODDS"},
+    "1X2 — Pareggio":           {"pattern": r"\b(?:PAREGGIO|DRAW)\b", "market_type": "MATCH_ODDS"},
+    "1X2 — Ospite vince":       {"pattern": r"(?:OSPITE|AWAY)\s*(?:VINCE|WIN)|WIN\s*AWAY\b", "market_type": "MATCH_ODDS"},
+    "Doppia Chance 1X":         {"pattern": r"\b(?:DOPPIA|DC)\s*1X\b", "market_type": "DOUBLE_CHANCE_1X"},
+    "Doppia Chance X2":         {"pattern": r"\b(?:DOPPIA|DC)\s*X2\b", "market_type": "DOUBLE_CHANCE_X2"},
+    "Doppia Chance 12":         {"pattern": r"\b(?:DOPPIA|DC)\s*12\b", "market_type": "DOUBLE_CHANCE_12"},
+}
+_PREDEFINED_NAMES: list[str] = list(_PREDEFINED.keys())
+
+
+# =========================================================
+# DIALOG FORM — Nuova / Modifica Regola di Parsing
+# =========================================================
+class _PatternDialog(ctk.CTkToplevel):
+    """
+    Form modale per creare o modificare una regola di parsing.
+    result è None se l'utente annulla, altrimenti un dict con tutti i campi.
+    """
+
+    def __init__(self, parent, current: dict | None = None):
+        super().__init__(parent)
+        self.result: dict | None = None
+        self._current = current or {}
+        self._market_var = tk.StringVar()
+        self._predef_var = tk.StringVar(value="-- Personalizzato --")
+
+        self.title("Regola di Parsing")
+        self.resizable(False, False)
+        self.grab_set()
+        self._build()
+        self._center(parent)
+
+    def _center(self, parent):
+        self.update_idletasks()
+        px = parent.winfo_rootx() + parent.winfo_width() // 2
+        py = parent.winfo_rooty() + parent.winfo_height() // 2
+        w, h = self.winfo_width(), self.winfo_height()
+        self.geometry(f"+{px - w // 2}+{py - h // 2}")
+
+    # ----------------------------------------------------------
+    def _row(self, parent, label: str, row: int):
+        ctk.CTkLabel(
+            parent, text=label,
+            text_color=COLORS["text_secondary"],
+            font=("Segoe UI", 11),
+            anchor="w",
+        ).grid(row=row, column=0, sticky="w", padx=(10, 6), pady=(6, 0))
+
+    def _entry(self, parent, row: int, var: tk.StringVar, width: int = 320) -> ctk.CTkEntry:
+        e = ctk.CTkEntry(
+            parent, textvariable=var, width=width,
+            fg_color=COLORS["bg_card"], border_color=COLORS["border"],
+        )
+        e.grid(row=row, column=1, sticky="w", padx=(0, 10), pady=(6, 0))
+        return e
+
+    # ----------------------------------------------------------
+    def _build(self):
+        c = self._current
+        pad = {"padx": 10, "pady": 4}
+
+        outer = ctk.CTkFrame(self, fg_color=COLORS["bg_panel"], corner_radius=10)
+        outer.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+
+        ctk.CTkLabel(
+            outer,
+            text="Nuova Regola di Parsing" if not c else "Modifica Regola",
+            font=FONTS["heading"],
+            text_color=COLORS["text_primary"],
+        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(10, 4))
+
+        # Nome
+        self._row(outer, "Nome:", 1)
+        self._nome_var = tk.StringVar(value=c.get("label", ""))
+        self._entry(outer, 1, self._nome_var)
+
+        # Pattern Predefinito
+        self._row(outer, "Pattern Predefinito:", 2)
+        predef_box = ctk.CTkOptionMenu(
+            outer,
+            variable=self._predef_var,
+            values=_PREDEFINED_NAMES,
+            width=320,
+            command=self._on_predef_select,
+            fg_color=COLORS["bg_card"],
+            button_color=COLORS["button_primary"],
+        )
+        predef_box.grid(row=2, column=1, sticky="w", padx=(0, 10), pady=(6, 0))
+
+        # Pattern Regex
+        self._row(outer, "Pattern Regex:", 3)
+        self._regex_var = tk.StringVar(value=c.get("pattern", ""))
+        self._entry(outer, 3, self._regex_var)
+
+        # Parola Chiave
+        self._row(outer, "Parola Chiave:", 4)
+        self._keyword_var = tk.StringVar(value=c.get("keyword", ""))
+        self._entry(outer, 4, self._keyword_var)
+        ctk.CTkLabel(
+            outer,
+            text="(opzionale — se presente nel msg attiva il pattern)",
+            font=("Segoe UI", 9),
+            text_color=COLORS["text_tertiary"],
+        ).grid(row=5, column=1, sticky="w", padx=(0, 10))
+
+        # Tipo Mercato
+        self._row(outer, "Tipo Mercato:", 6)
+        current_code = c.get("market_type", "MATCH_ODDS")
+        self._market_var.set(_MARKET_CODE_TO_LABEL.get(current_code, _MARKET_LABELS[0]))
+        market_box = ctk.CTkOptionMenu(
+            outer,
+            variable=self._market_var,
+            values=_MARKET_LABELS,
+            width=320,
+            fg_color=COLORS["bg_card"],
+            button_color=COLORS["button_primary"],
+        )
+        market_box.grid(row=6, column=1, sticky="w", padx=(0, 10), pady=(6, 0))
+
+        # Selection Template
+        self._row(outer, "Selection Template:", 7)
+        self._template_var = tk.StringVar(value=c.get("selection_template", ""))
+        self._entry(outer, 7, self._template_var)
+        ctk.CTkLabel(
+            outer,
+            text="Token: {over_line} {total_goals} {home_score} {away_score} {minute}",
+            font=("Segoe UI", 9),
+            text_color=COLORS["text_tertiary"],
+        ).grid(row=8, column=1, sticky="w", padx=(0, 10))
+
+        # Checkboxes: LAY / LIVE / Attiva
+        chk_frame = ctk.CTkFrame(outer, fg_color="transparent")
+        chk_frame.grid(row=9, column=0, columnspan=2, sticky="w", padx=10, pady=(8, 0))
+
+        self._lay_var = tk.BooleanVar(value=(str(c.get("bet_side", "")).upper() == "LAY"))
+        ctk.CTkCheckBox(
+            chk_frame, text="LAY",
+            variable=self._lay_var,
+            fg_color=COLORS["loss"],
+            hover_color="#c62828",
+            text_color=COLORS["text_primary"],
+        ).pack(side=tk.LEFT, padx=(0, 16))
+
+        self._live_var = tk.BooleanVar(value=bool(c.get("live_only", False)))
+        ctk.CTkCheckBox(
+            chk_frame, text="Solo LIVE",
+            variable=self._live_var,
+            fg_color=COLORS["back"],
+            hover_color=COLORS["back_hover"],
+            text_color=COLORS["text_primary"],
+        ).pack(side=tk.LEFT, padx=(0, 16))
+
+        self._active_var = tk.BooleanVar(value=bool(c.get("enabled", True)))
+        ctk.CTkCheckBox(
+            chk_frame, text="Regola Attiva",
+            variable=self._active_var,
+            fg_color=COLORS["button_success"],
+            hover_color="#4caf50",
+            text_color=COLORS["text_primary"],
+        ).pack(side=tk.LEFT)
+
+        # Filtri numerici
+        filters = ctk.CTkFrame(outer, fg_color="transparent")
+        filters.grid(row=10, column=0, columnspan=2, sticky="w", padx=10, pady=(8, 0))
+
+        def _lbl(text):
+            return ctk.CTkLabel(filters, text=text, text_color=COLORS["text_secondary"], font=("Segoe UI", 11))
+
+        def _num_entry(var, w=55):
+            return ctk.CTkEntry(filters, textvariable=var, width=w,
+                                fg_color=COLORS["bg_card"], border_color=COLORS["border"])
+
+        self._min_min_var = tk.StringVar(value="" if c.get("min_minute") is None else str(c["min_minute"]))
+        self._max_min_var = tk.StringVar(value="" if c.get("max_minute") is None else str(c["max_minute"]))
+        self._min_sc_var  = tk.StringVar(value="" if c.get("min_score")  is None else str(c["min_score"]))
+        self._max_sc_var  = tk.StringVar(value="" if c.get("max_score")  is None else str(c["max_score"]))
+        self._prio_var    = tk.StringVar(value=str(c.get("priority", 100)))
+
+        _lbl("Minuti:").pack(side=tk.LEFT)
+        _lbl("da").pack(side=tk.LEFT, padx=(4, 2))
+        _num_entry(self._min_min_var).pack(side=tk.LEFT, padx=(0, 4))
+        _lbl("a").pack(side=tk.LEFT, padx=(0, 2))
+        _num_entry(self._max_min_var).pack(side=tk.LEFT, padx=(0, 16))
+
+        _lbl("Score:").pack(side=tk.LEFT)
+        _lbl("da").pack(side=tk.LEFT, padx=(4, 2))
+        _num_entry(self._min_sc_var).pack(side=tk.LEFT, padx=(0, 4))
+        _lbl("a").pack(side=tk.LEFT, padx=(0, 2))
+        _num_entry(self._max_sc_var).pack(side=tk.LEFT, padx=(0, 16))
+
+        _lbl("Priority:").pack(side=tk.LEFT)
+        _num_entry(self._prio_var, w=50).pack(side=tk.LEFT, padx=(4, 0))
+
+        # Bottoni
+        btn_frame = ctk.CTkFrame(outer, fg_color="transparent")
+        btn_frame.grid(row=11, column=0, columnspan=2, pady=(14, 10))
+
+        ctk.CTkButton(
+            btn_frame, text="Annulla", width=110,
+            fg_color=COLORS["button_secondary"],
+            hover_color=COLORS["bg_hover"],
+            command=self.destroy,
+        ).pack(side=tk.LEFT, padx=8)
+
+        ctk.CTkButton(
+            btn_frame, text="Salva", width=110,
+            fg_color=COLORS["button_primary"],
+            hover_color=COLORS["back_hover"],
+            command=self._on_save,
+        ).pack(side=tk.LEFT, padx=8)
+
+    # ----------------------------------------------------------
+    def _on_predef_select(self, choice: str):
+        entry = _PREDEFINED.get(choice, {})
+        if entry.get("pattern"):
+            self._regex_var.set(entry["pattern"])
+        code = entry.get("market_type", "")
+        if code and code in _MARKET_CODE_TO_LABEL:
+            self._market_var.set(_MARKET_CODE_TO_LABEL[code])
+
+    # ----------------------------------------------------------
+    def _parse_int_opt(self, var: tk.StringVar):
+        v = var.get().strip()
+        if not v:
+            return None
+        try:
+            return int(v)
+        except ValueError:
+            return None
+
+    def _on_save(self):
+        nome = self._nome_var.get().strip()
+        regex = self._regex_var.get().strip()
+        keyword = self._keyword_var.get().strip()
+
+        if not nome:
+            messagebox.showwarning("Attenzione", "Il campo Nome è obbligatorio.", parent=self)
+            return
+        if not regex and not keyword:
+            messagebox.showwarning(
+                "Attenzione",
+                "Inserisci almeno un Pattern Regex oppure una Parola Chiave.",
+                parent=self,
+            )
+            return
+
+        market_label = self._market_var.get()
+        market_code = _MARKET_LABEL_TO_CODE.get(market_label, "MATCH_ODDS")
+
+        self.result = {
+            "label":              nome,
+            "pattern":            regex,
+            "keyword":            keyword,
+            "market_type":        market_code,
+            "bet_side":           "LAY" if self._lay_var.get() else "BACK",
+            "selection_template": self._template_var.get().strip(),
+            "live_only":          self._live_var.get(),
+            "enabled":            self._active_var.get(),
+            "min_minute":         self._parse_int_opt(self._min_min_var),
+            "max_minute":         self._parse_int_opt(self._max_min_var),
+            "min_score":          self._parse_int_opt(self._min_sc_var),
+            "max_score":          self._parse_int_opt(self._max_sc_var),
+            "priority":           self._parse_int_opt(self._prio_var) or 100,
+        }
+        self.destroy()
 
 
 class TelegramModule:
@@ -623,111 +997,11 @@ class TelegramModule:
     # =========================================================
     # ADVANCED SIGNAL PATTERNS
     # =========================================================
-    def _prompt_signal_pattern_payload(self, current=None):
-        current = current or {}
-
-        label = simpledialog.askstring(
-            "Regola Pattern",
-            "Nome regola:",
-            initialvalue=current.get("label", ""),
-        )
-        if label is None or not str(label).strip():
-            return None
-
-        pattern = simpledialog.askstring(
-            "Regola Pattern",
-            "Regex pattern:",
-            initialvalue=current.get("pattern", ""),
-        )
-        if pattern is None or not str(pattern).strip():
-            return None
-
-        market_type = simpledialog.askstring(
-            "Regola Pattern",
-            "Market type (es. MATCH_ODDS, OVER_UNDER, NEXT_GOAL):",
-            initialvalue=current.get("market_type", "MATCH_ODDS"),
-        )
-        if market_type is None:
-            return None
-
-        bet_side = simpledialog.askstring(
-            "Regola Pattern",
-            "Bet side (BACK / LAY / vuoto):",
-            initialvalue=current.get("bet_side", ""),
-        )
-        if bet_side is None:
-            return None
-
-        selection_template = simpledialog.askstring(
-            "Regola Pattern",
-            "Selection template (es. Over {over_line} / vuoto):",
-            initialvalue=current.get("selection_template", ""),
-        )
-        if selection_template is None:
-            return None
-
-        min_minute = simpledialog.askstring(
-            "Regola Pattern",
-            "Min minuto (vuoto = nessun filtro):",
-            initialvalue="" if current.get("min_minute") is None else str(current.get("min_minute")),
-        )
-        if min_minute is None:
-            return None
-
-        max_minute = simpledialog.askstring(
-            "Regola Pattern",
-            "Max minuto (vuoto = nessun filtro):",
-            initialvalue="" if current.get("max_minute") is None else str(current.get("max_minute")),
-        )
-        if max_minute is None:
-            return None
-
-        min_score = simpledialog.askstring(
-            "Regola Pattern",
-            "Min score totale (vuoto = nessun filtro):",
-            initialvalue="" if current.get("min_score") is None else str(current.get("min_score")),
-        )
-        if min_score is None:
-            return None
-
-        max_score = simpledialog.askstring(
-            "Regola Pattern",
-            "Max score totale (vuoto = nessun filtro):",
-            initialvalue="" if current.get("max_score") is None else str(current.get("max_score")),
-        )
-        if max_score is None:
-            return None
-
-        live_only_txt = simpledialog.askstring(
-            "Regola Pattern",
-            "Solo live? (yes/no):",
-            initialvalue="yes" if current.get("live_only", False) else "no",
-        )
-        if live_only_txt is None:
-            return None
-
-        priority_txt = simpledialog.askstring(
-            "Regola Pattern",
-            "Priority (numero, default 100):",
-            initialvalue=str(current.get("priority", 100)),
-        )
-        if priority_txt is None:
-            return None
-
-        return {
-            "label": str(label).strip(),
-            "pattern": str(pattern).strip(),
-            "market_type": str(market_type or "MATCH_ODDS").strip() or "MATCH_ODDS",
-            "bet_side": str(bet_side or "").strip().upper(),
-            "selection_template": str(selection_template or "").strip(),
-            "min_minute": self._safe_parse_int_optional(min_minute),
-            "max_minute": self._safe_parse_int_optional(max_minute),
-            "min_score": self._safe_parse_int_optional(min_score),
-            "max_score": self._safe_parse_int_optional(max_score),
-            "live_only": self._safe_bool_from_text(live_only_txt, False),
-            "priority": self._safe_parse_int_optional(priority_txt) or 100,
-            "enabled": bool(current.get("enabled", True)),
-        }
+    def _open_pattern_form(self, current: dict | None = None) -> dict | None:
+        """Apre il form modale _PatternDialog e restituisce il payload, o None se annullato."""
+        dlg = _PatternDialog(self, current=current)
+        self.wait_window(dlg)
+        return dlg.result
 
     def _minute_range_text(self, rule):
         a = rule.get("min_minute")
@@ -771,7 +1045,7 @@ class TelegramModule:
             )
 
     def _add_signal_pattern(self):
-        payload = self._prompt_signal_pattern_payload()
+        payload = self._open_pattern_form()
         if not payload:
             return
 
@@ -779,7 +1053,7 @@ class TelegramModule:
             self.db.save_signal_pattern(
                 pattern=payload["pattern"],
                 label=payload["label"],
-                enabled=True,
+                enabled=payload.get("enabled", True),
                 bet_side=payload["bet_side"],
                 market_type=payload["market_type"],
                 selection_template=payload["selection_template"],
@@ -789,6 +1063,7 @@ class TelegramModule:
                 max_score=payload["max_score"],
                 live_only=payload["live_only"],
                 priority=payload["priority"],
+                extra={"keyword": payload.get("keyword", "")},
             )
             self._safe_refresh_rules_tree()
             messagebox.showinfo("Successo", "Regola aggiunta correttamente.")
@@ -813,7 +1088,7 @@ class TelegramModule:
             messagebox.showerror("Errore", "Regola non trovata nel database.")
             return
 
-        payload = self._prompt_signal_pattern_payload(current=current)
+        payload = self._open_pattern_form(current=current)
         if not payload:
             return
 
@@ -822,6 +1097,7 @@ class TelegramModule:
                 pattern_id=int(pattern_id),
                 pattern=payload["pattern"],
                 label=payload["label"],
+                enabled=payload.get("enabled", True),
                 bet_side=payload["bet_side"],
                 market_type=payload["market_type"],
                 selection_template=payload["selection_template"],
@@ -831,6 +1107,7 @@ class TelegramModule:
                 max_score=payload["max_score"],
                 live_only=payload["live_only"],
                 priority=payload["priority"],
+                extra={"keyword": payload.get("keyword", "")},
             )
             self._safe_refresh_rules_tree()
             messagebox.showinfo("Successo", "Regola aggiornata correttamente.")
