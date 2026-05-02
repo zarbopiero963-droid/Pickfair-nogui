@@ -327,6 +327,41 @@ def test_timeout_retry_has_no_double_exposure_and_reconcile_finds_ghost() -> Non
 
 
 @pytest.mark.integration
+def test_timeout_then_reconcile_preserves_evidence_without_contradictory_states() -> None:
+    exchange = FakeExchange(duplicate_mode="single_exposure")
+    exchange.force_timeout_on_next_submit()
+    engine, db, bus, _rec = _make_engine(exchange=exchange, client=FakeClient(exchange=exchange))
+
+    first = engine.submit_quick_bet(_payload("EVIDENCE-CHAIN-1"))
+    second = engine.submit_quick_bet(_payload("EVIDENCE-CHAIN-1"))
+
+    assert first["status"] == STATUS_AMBIGUOUS
+    assert second["status"] == STATUS_DUPLICATE_BLOCKED
+
+    ambiguous_events = [payload for name, payload in bus.events if name == "QUICK_BET_AMBIGUOUS"]
+    duplicate_events = [payload for name, payload in bus.events if name == "QUICK_BET_DUPLICATE"]
+    success_events = [payload for name, payload in bus.events if name == "QUICK_BET_SUCCESS"]
+    assert len(ambiguous_events) == 1
+    assert len(duplicate_events) == 1
+    assert all(event.get("order_id") != first["order_id"] for event in success_events)
+
+    remote = exchange.get_current_orders(customer_ref="EVIDENCE-CHAIN-1")
+    assert len(remote) == 1
+
+    runner = ReconcilePassRunner(db, FlakyRemoteFetcher([{"bet_id": remote[0]["bet_id"]}]))
+    assert runner.run_once(customer_ref="EVIDENCE-CHAIN-1") is True
+
+    order = db.get_order(first["order_id"])
+    assert order["status"] == STATUS_COMPLETED
+    assert order["remote_bet_id"] == remote[0]["bet_id"]
+
+    assert order["status"] != STATUS_AMBIGUOUS
+    assert order["status"] != STATUS_FAILED
+    non_duplicate_orders = [o for o in db.orders.values() if o.get("status") != STATUS_DUPLICATE_BLOCKED]
+    assert len(non_duplicate_orders) == 1
+
+
+@pytest.mark.integration
 def test_partial_fill_simulation_cancel_replace_and_reconcile_convergence() -> None:
     exchange = FakeExchange(duplicate_mode="return_existing")
     exchange.seed_liquidity(market_id="1.100", selection_id=10, side="LAY", size=2.0)
