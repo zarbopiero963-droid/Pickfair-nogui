@@ -1,0 +1,44 @@
+name: pr-guard
+
+on:
+  pull_request:
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build PR metadata (fail-closed)
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os
+          meta = {
+              "number": os.environ.get("PR_NUMBER", ""),
+              "title": os.environ.get("PR_TITLE", ""),
+              "base_ref": os.environ.get("PR_BASE_REF", ""),
+              "head_ref": os.environ.get("PR_HEAD_REF", ""),
+          }
+          with open("pr_meta.json", "w", encoding="utf-8") as f:
+              json.dump(meta, f)
+          PY
+          git diff --name-only "origin/${PR_BASE_REF:-main}"...HEAD > pr_files_raw.json
+
+      - name: Run guardrail check
+        run: |
+          set -euo pipefail
+          python scripts/guardrail_check.py
