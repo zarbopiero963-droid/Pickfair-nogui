@@ -201,3 +201,63 @@ def test_pressure_snapshot_exposes_queue_counters_and_high_watermark():
     assert snap["enqueued_total"] >= 1
     assert snap["dequeued_total"] >= 1
     assert snap["queue_high_watermark"] >= 1
+
+
+@pytest.mark.observability
+@pytest.mark.core
+def test_poison_pill_subscriber_isolation_and_observable_failure_metadata():
+    bus = EventBus(workers=1)
+    delivered = []
+
+    def poison(_payload):
+        raise RuntimeError("poison-pill")
+
+    def survivor(payload):
+        delivered.append(payload["id"])
+
+    bus.subscribe("SIG", poison)
+    bus.subscribe("SIG", survivor)
+
+    for i in range(3):
+        bus.publish("SIG", {"id": i})
+
+    bus.stop()
+
+    assert delivered == [0, 1, 2]
+    assert bus.delivered_total_count() == 3
+    assert bus.subscriber_error_counts().get("poison", 0) == 3
+
+
+@pytest.mark.observability
+@pytest.mark.core
+def test_partial_fanout_success_and_failure_are_both_detectable():
+    bus = EventBus(workers=1)
+    ok_a = []
+    ok_b = []
+
+    def broken(_payload):
+        raise ValueError("boom")
+
+    bus.subscribe("EV", lambda p: ok_a.append(p["n"]))
+    bus.subscribe("EV", broken)
+    bus.subscribe("EV", lambda p: ok_b.append(p["n"]))
+
+    for i in range(4):
+        bus.publish("EV", {"n": i})
+
+    bus.stop()
+
+    assert ok_a == [0, 1, 2, 3]
+    assert ok_b == [0, 1, 2, 3]
+    assert bus.delivered_total_count() == 8
+    assert bus.subscriber_error_counts().get("broken", 0) == 4
+
+
+@pytest.mark.observability
+@pytest.mark.core
+def test_eventbus_contract_has_no_critical_vs_noncritical_handler_mode():
+    """Lock current explicit contract: EventBus exposes isolation semantics only."""
+    bus = EventBus(workers=1)
+    assert not hasattr(bus, "subscribe_critical")
+    assert not hasattr(bus, "publish_fail_fast")
+    bus.stop()
