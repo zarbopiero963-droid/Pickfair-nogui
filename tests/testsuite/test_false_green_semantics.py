@@ -228,6 +228,44 @@ def test_mixed_case_unknown_task_is_recorded_normalized_and_fails():
         validate_task_selection(task, [], _ALLOWED, unknown)
 
 
+def test_legacy_pr_guard_task_passes():
+    task, source, unknown, ignored = resolve_task(
+        {"title": "[TASK: pr_guard]", "body": "", "branch": "", "latest_commit_message": ""},
+        [],
+        _ALLOWED,
+    )
+    assert task == "pr_guard"
+    assert source == "pr_title"
+    assert unknown == []
+    assert ignored == []
+
+
+def test_legacy_pr_guard_mixed_case_normalizes_and_passes():
+    task, source, unknown, ignored = resolve_task(
+        {"title": "[TASK: PR_GUARD]", "body": "", "branch": "", "latest_commit_message": ""},
+        [],
+        _ALLOWED,
+    )
+    assert task == "pr_guard"
+    assert source == "pr_title"
+    assert unknown == []
+    assert ignored == []
+
+
+def test_pr_random_still_fails():
+    task, source, unknown, ignored = resolve_task(
+        {"title": "[TASK: pr_random]", "body": "", "branch": "", "latest_commit_message": ""},
+        [],
+        _ALLOWED,
+    )
+    assert task is None
+    assert source is None
+    assert unknown == [("pr_title", "pr_random")]
+    assert ignored == []
+    with pytest.raises(SystemExit):
+        validate_task_selection(task, [], _ALLOWED, unknown)
+
+
 def test_observability_phase2_eventbus_contract_passes():
     task, source, _, _ = resolve_task(
         {"title": "[TASK: observability_phase2_eventbus_contract]", "body": "", "branch": "", "latest_commit_message": ""},

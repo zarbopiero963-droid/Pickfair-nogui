@@ -37,6 +37,7 @@ APPROVED_TASK_PREFIXES = (
     "runtime_",
     "betfair_",
 )
+EXACT_ALLOWED_TASKS = {"pr_guard"}
 
 
 def load_json(path: str) -> dict | list:
@@ -103,6 +104,10 @@ def _is_approved_task_family(task: str) -> bool:
     return any(task.startswith(prefix) for prefix in APPROVED_TASK_PREFIXES)
 
 
+def _is_allowed_task_key(task: str) -> bool:
+    return task in EXACT_ALLOWED_TASKS or _is_approved_task_family(task)
+
+
 def resolve_task(pr_meta: dict, changed_files: list[str], allowed_tasks: set[str]) -> tuple[str | None, str | None, list[tuple[str, str]], list[tuple[str, str]]]:
     sources = [
         ("pr_title", str(pr_meta.get("title", "") or "")),
@@ -118,9 +123,11 @@ def resolve_task(pr_meta: dict, changed_files: list[str], allowed_tasks: set[str
             if _is_placeholder_or_invalid(task_norm):
                 ignored_candidates.append((source_name, task_norm))
                 continue
-            if not _is_approved_task_family(task_norm):
+            if not _is_allowed_task_key(task_norm):
                 unknown_candidates.append((source_name, task_norm))
                 continue
+            if task_norm in EXACT_ALLOWED_TASKS:
+                return task_norm, source_name, unknown_candidates, ignored_candidates
             if task_norm in allowed_tasks:
                 return task_norm, source_name, unknown_candidates, ignored_candidates
             unknown_candidates.append((source_name, task_norm))
@@ -132,9 +139,11 @@ def resolve_task(pr_meta: dict, changed_files: list[str], allowed_tasks: set[str
                 if _is_placeholder_or_invalid(task_norm):
                     ignored_candidates.append(("commit_messages", task_norm))
                     continue
-                if not _is_approved_task_family(task_norm):
+                if not _is_allowed_task_key(task_norm):
                     unknown_candidates.append(("commit_messages", task_norm))
                     continue
+                if task_norm in EXACT_ALLOWED_TASKS:
+                    return task_norm, "commit_messages", unknown_candidates, ignored_candidates
                 if task_norm in allowed_tasks:
                     return task_norm, "commit_messages", unknown_candidates, ignored_candidates
                 unknown_candidates.append(("commit_messages", task_norm))
