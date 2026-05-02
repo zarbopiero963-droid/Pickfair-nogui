@@ -44,8 +44,21 @@ def test_distinct_context_not_collapsed_and_payload_fields_present():
     assert out
     for row in out:
         assert row["rule_name"]
+        assert row["timestamp"] == 101
+        assert row["evidence_summary"]["rule_hits_in_window"] >= 1
         assert row["reasoning_payload"]["anomaly_alert_count"] >= 0
+        assert row["reasoning_payload"]["anomaly_codes"]
         assert row["suggested_action"]
+
+
+def test_cooldown_does_not_erase_current_rule_truth_from_non_emitting_pass():
+    reviewer = CtoReviewer(history_window=4, cooldown_sec=60)
+    first = reviewer.evaluate(_payload(now_ts=10))
+    second = reviewer.evaluate(_payload(now_ts=20))
+    assert first
+    assert second == []
+    names = reviewer.current_rule_names(_payload(now_ts=21))
+    assert "SILENT_FAILURE_DETECTED" in names
 
 
 def test_diagnostics_metadata_participates_in_observability_untrusted():

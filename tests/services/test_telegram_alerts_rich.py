@@ -86,3 +86,42 @@ def test_telegram_alerts_rich_includes_timestamp_and_suggested_action():
     text = sender.messages[0][1]
     assert "Time: 2026-04-14 12:00:00 UTC" in text
     assert "Suggested action: Drain queue and inspect stalls" in text
+
+
+def test_telegram_alerts_rich_includes_source_and_sanitized_evidence_summary():
+    sender = _Sender()
+    svc = TelegramAlertsService(settings_service=_Settings(), telegram_sender=sender)
+    svc.notify_alert(
+        {
+            "severity": "critical",
+            "code": "CTO-2",
+            "source": "cto_reviewer",
+            "message": "operator evidence",
+            "details": {
+                "evidence_summary": {"rule_hits_in_window": 3},
+                "suggested_action": "Escalate",
+            },
+        }
+    )
+    text = sender.messages[0][1]
+    assert "Source: cto_reviewer" in text
+    assert "evidence_summary={'rule_hits_in_window': 3}" in text
+    assert "<object object at" not in text
+
+
+def test_telegram_alerts_rich_records_suppression_reason_for_critical_dedup_drop():
+    class _SettingsCooldown(_Settings):
+        def load_telegram_config_row(self):
+            data = super().load_telegram_config_row()
+            data["alert_dedup_enabled"] = True
+            data["telegram_alert_cooldown_sec"] = 999
+            return data
+
+    sender = _Sender()
+    svc = TelegramAlertsService(settings_service=_SettingsCooldown(), telegram_sender=sender)
+    alert = {"severity": "critical", "code": "CRIT-1", "message": "a"}
+    first = svc.notify_alert(alert)
+    second = svc.notify_alert(alert)
+    assert first["delivered"] is True
+    assert second["delivered"] is False
+    assert second["reason"] == "dedup_cooldown"

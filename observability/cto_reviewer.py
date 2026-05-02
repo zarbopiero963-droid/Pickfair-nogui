@@ -50,12 +50,19 @@ class CtoReviewer:
                 **finding,
                 "rule_name": rule_name,
                 "severity": severity,
+                "timestamp": now,
                 "evidence_count": evidence_count,
                 "history_size": len(self._history),
+                "evidence_summary": {
+                    "rule_hits_in_window": evidence_count,
+                    "history_window": len(self._history),
+                },
                 "reasoning_payload": {
                     "anomaly_alert_count": len(payload.get("anomaly_alerts") or []),
                     "forensics_alert_count": len(payload.get("forensics_alerts") or []),
                     "open_incidents": int((payload.get("incidents_snapshot") or {}).get("open_count", 0) or 0),
+                    "anomaly_codes": [str(x.get("code") or "") for x in (payload.get("anomaly_alerts") or []) if str(x.get("code") or "")],
+                    "forensics_codes": [str(x.get("code") or "") for x in (payload.get("forensics_alerts") or []) if str(x.get("code") or "")],
                 },
             }
             self._last_emit[emit_key] = now
