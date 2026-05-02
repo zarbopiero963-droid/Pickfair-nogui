@@ -22,11 +22,11 @@ def test_history_eviction_and_escalation():
     f2 = reviewer.evaluate(_payload(now_ts=2))
     f3 = reviewer.evaluate(_payload(now_ts=3))
     assert f1 and f2 and f3
-    assert max(x["history_size"] for x in f3) == 3
-    assert any(x["evidence_count"] >= 3 for x in f3)
+    assert max(x["evidence_summary"]["history_window"] for x in f3) == 3
+    assert any(x["evidence_summary"]["rule_hits_in_window"] >= 3 for x in f3)
     reviewer.evaluate(_payload(now_ts=4))
     out = reviewer.evaluate(_payload(now_ts=5))
-    assert max(x["history_size"] for x in out) == 3
+    assert max(x["evidence_summary"]["history_window"] for x in out) == 3
 
 
 def test_cooldown_suppresses_duplicate_same_context():
@@ -46,6 +46,8 @@ def test_distinct_context_not_collapsed_and_payload_fields_present():
         assert row["rule_name"]
         assert row["timestamp"] == 101
         assert row["evidence_summary"]["rule_hits_in_window"] >= 1
+        assert row["evidence_count"] == row["evidence_summary"]["rule_hits_in_window"]
+        assert row["history_size"] == row["evidence_summary"]["history_window"]
         assert row["reasoning_payload"]["anomaly_alert_count"] >= 0
         assert row["reasoning_payload"]["anomaly_codes"]
         assert row["suggested_action"]

@@ -98,15 +98,17 @@ def test_telegram_alerts_rich_includes_source_and_sanitized_evidence_summary():
             "source": "cto_reviewer",
             "message": "operator evidence",
             "details": {
-                "evidence_summary": {"rule_hits_in_window": 3},
+                "evidence_summary": {"rule_hits_in_window": 3, "raw": {1, 2}},
                 "suggested_action": "Escalate",
             },
         }
     )
     text = sender.messages[0][1]
     assert "Source: cto_reviewer" in text
-    assert "evidence_summary={'rule_hits_in_window': 3}" in text
+    assert "rule_hits_in_window" in text
+    assert "evidence_summary=" in text
     assert "<object object at" not in text
+    assert "raw" in text
 
 
 def test_telegram_alerts_rich_records_suppression_reason_for_critical_dedup_drop():

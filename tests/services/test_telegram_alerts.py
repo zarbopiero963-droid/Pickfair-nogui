@@ -1,1 +1,5 @@
-from tests.services.test_telegram_alerts_rich import *  # noqa: F401,F403
+from services.telegram_alerts_service import TelegramAlertsService
+
+
+def test_telegram_alerts_module_smoke_import():
+    assert TelegramAlertsService is not None

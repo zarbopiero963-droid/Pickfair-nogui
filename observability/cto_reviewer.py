@@ -46,17 +46,20 @@ class CtoReviewer:
             if evidence_count >= 3:
                 severity = self._bump(severity)
 
+            evidence_summary = {
+                "rule_hits_in_window": evidence_count,
+                "history_window": len(self._history),
+            }
+
             item = {
                 **finding,
                 "rule_name": rule_name,
                 "severity": severity,
                 "timestamp": now,
-                "evidence_count": evidence_count,
-                "history_size": len(self._history),
-                "evidence_summary": {
-                    "rule_hits_in_window": evidence_count,
-                    "history_window": len(self._history),
-                },
+                # Backward-compatible aliases derived from canonical evidence_summary.
+                "evidence_count": evidence_summary["rule_hits_in_window"],
+                "history_size": evidence_summary["history_window"],
+                "evidence_summary": evidence_summary,
                 "reasoning_payload": {
                     "anomaly_alert_count": len(payload.get("anomaly_alerts") or []),
                     "forensics_alert_count": len(payload.get("forensics_alerts") or []),
