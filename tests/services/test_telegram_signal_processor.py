@@ -1,11 +1,12 @@
 import copy
 
+import pytest
+
 from services.telegram_signal_processor import TelegramSignalProcessor
 
 
-def test_normalize_ingestion_signal_valid_payload_is_deterministic_and_preserves_fields():
-    p = TelegramSignalProcessor()
-    raw = {
+def _valid_signal(**overrides):
+    base = {
         "action": "lay",
         "price": "2,15",
         "market_id": "1.234",
@@ -20,6 +21,13 @@ def test_normalize_ingestion_signal_valid_payload_is_deterministic_and_preserves
         "signal_type": "OVER_SUCCESSIVO",
         "copy_meta": {"master_id": "M1"},
     }
+    base.update(overrides)
+    return base
+
+
+def test_normalize_ingestion_signal_valid_payload_is_deterministic_and_preserves_fields():
+    p = TelegramSignalProcessor()
+    raw = _valid_signal()
 
     out = p.normalize_ingestion_signal(raw)
 
@@ -49,27 +57,46 @@ def test_normalize_ingestion_signal_rejects_non_dict_and_ambiguous_meta_fail_clo
     }
 
     both = p.normalize_ingestion_signal(
-        {
-            "event_name": "Roma v Milan",
-            "copy_meta": {"master_id": "M1"},
-            "pattern_meta": {"pattern_id": "P1"},
-        }
+        {"event_name": "Roma v Milan", "copy_meta": {"master_id": "M1"}, "pattern_meta": {"pattern_id": "P1"}}
     )
     assert both["ok"] is False
     assert both["error_code"] == "COPY_PATTERN_MUTUALLY_EXCLUSIVE"
     assert both["normalized_signal"] == {}
 
 
-def test_normalize_action_unsupported_value_fails_closed_to_back_and_build_runtime_requires_ids_and_price():
+@pytest.mark.parametrize(
+    "raw_price, expected_price",
+    [
+        ("abc", None),
+        ("", None),
+    ],
+)
+def test_normalize_ingestion_signal_malformed_price_values_are_fail_closed(raw_price, expected_price):
     p = TelegramSignalProcessor()
+    out = p.normalize_ingestion_signal(_valid_signal(price=raw_price))
+    assert out["ok"] is True
+    assert out["normalized_signal"]["price"] is expected_price
 
-    n = p.normalize_ingestion_signal({"action": "CASHOUT", "event_name": "A v B"})
-    assert n["ok"] is True
-    assert n["normalized_signal"]["action"] == "BACK"
-    assert n["normalized_signal"]["bet_type"] == "BACK"
 
-    # Missing market/selection/price must not produce executable runtime payload.
-    assert p.build_runtime_signal({"action": "BACK", "event_name": "A v B"}, stake=2.0) is None
+def test_normalize_ingestion_signal_missing_action_uses_current_fail_closed_default_back():
+    p = TelegramSignalProcessor()
+    out = p.normalize_ingestion_signal(_valid_signal(action=None))
+    assert out["ok"] is True
+    assert out["normalized_signal"]["action"] == "BACK"
+    assert out["normalized_signal"]["bet_type"] == "BACK"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        _valid_signal(market_id=None),
+        _valid_signal(selection_id=None),
+        _valid_signal(selection_id="not-an-int"),
+    ],
+)
+def test_build_runtime_signal_missing_or_non_integer_keys_fail_closed(payload):
+    p = TelegramSignalProcessor()
+    assert p.build_runtime_signal(payload, stake=2.0) is None
 
 
 def test_normalize_ingestion_signal_does_not_mutate_input_and_output_is_resolver_safe_shape():
@@ -87,10 +114,9 @@ def test_normalize_ingestion_signal_does_not_mutate_input_and_output_is_resolver
 
     out = p.normalize_ingestion_signal(raw)
 
-    assert raw == before  # input unchanged
+    assert raw == before
     assert out["ok"] is True
     n = out["normalized_signal"]
-    # Stable downstream-friendly keys consumed by resolver/runtime boundaries
     for key in ["event_name", "market_name", "selection", "price", "market_id", "selection_id", "raw_text"]:
         assert key in n
     assert n["event_name"] == "Napoli v Inter"
