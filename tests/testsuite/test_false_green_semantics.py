@@ -1,4 +1,6 @@
 from pathlib import Path
+import re
+import importlib.util
 import pytest
 from scripts.guardrail_check import resolve_task, validate_task_selection
 
@@ -9,6 +11,38 @@ _ALLOWED = {
     "audit_runtime_cto_final_control",
     "ci_pr_guard_task_case_normalization",
 }
+
+def _read(path: str) -> str:
+    return Path(path).read_text(encoding="utf-8")
+
+
+def _workflow(path: str):
+    text = _read(path)
+    try:
+        import yaml  # type: ignore
+    except Exception:
+        return {"_text": text}
+    data = yaml.safe_load(text)
+    if isinstance(data, dict) and True in data and "on" not in data:
+        data["on"] = data[True]
+    return data if isinstance(data, dict) else {"_text": text}
+
+
+def _run_text(workflow_obj) -> str:
+    if not isinstance(workflow_obj, dict) or "_text" in workflow_obj:
+        return str((workflow_obj or {}).get("_text", ""))
+    runs = []
+    jobs = workflow_obj.get("jobs") or {}
+    if isinstance(jobs, dict):
+        for _, job in jobs.items():
+            if not isinstance(job, dict):
+                continue
+            steps = job.get("steps") or []
+            if isinstance(steps, list):
+                for step in steps:
+                    if isinstance(step, dict) and isinstance(step.get("run"), str):
+                        runs.append(step["run"])
+    return "\n".join(runs)
 
 
 def _validate_callable_methods(owner, required_methods):
@@ -40,6 +74,108 @@ def test_pr_guard_workflow_uses_fail_closed_markers_only():
     assert "python scripts/guardrail_check.py" in workflow
     assert "pr_meta.json" in workflow
     assert "pr_files_raw.json" in workflow
+
+
+def test_pr_check_workflow_keeps_pull_request_and_full_pytest_gate():
+    wf = _workflow(".github/workflows/pr-check.yml")
+    run_blocks = _run_text(wf)
+    trigger_block = (wf.get("on") if isinstance(wf, dict) and "_text" not in wf else None) or {}
+
+    if isinstance(trigger_block, dict) and trigger_block:
+        assert "pull_request" in trigger_block
+        pull = trigger_block.get("pull_request")
+        if isinstance(pull, dict):
+            branches = pull.get("branches")
+            assert isinstance(branches, list)
+            assert "main" in [str(x) for x in branches]
+    else:
+        raw = _read(".github/workflows/pr-check.yml")
+        assert re.search(r"(?m)^\s*pull_request\s*:", raw)
+        assert (
+            re.search(r"(?ms)^\s*pull_request\s*:\s*\n(?:[ \t]+.*\n)*?[ \t]+branches\s*:\s*\[\s*main\s*\]", raw)
+            or re.search(r"(?ms)^\s*pull_request\s*:\s*\n(?:[ \t]+.*\n)*?[ \t]+branches\s*:\s*\n(?:[ \t]+-\s*main\s*\n)", raw)
+        )
+
+    assert re.search(r"pytest\s+(-q\s+)?(?:-x\s+)?(?:tests?[\w/\s\.-]*)?$", run_blocks, flags=re.MULTILINE)
+
+
+def test_merge_simulation_hard_keeps_merge_validation_and_fail_closed_pytest():
+    wf = _workflow(".github/workflows/merge-simulation-hard.yml")
+    run_blocks = _run_text(wf)
+    trigger_block = (wf.get("on") if isinstance(wf, dict) and "_text" not in wf else None) or {}
+    raw = _read(".github/workflows/merge-simulation-hard.yml")
+
+    if isinstance(trigger_block, dict) and trigger_block:
+        assert "workflow_call" in trigger_block
+        assert "pull_request" in trigger_block
+    else:
+        assert re.search(r"(?m)^\s*workflow_call\s*:", raw)
+        assert re.search(r"(?m)^\s*pull_request\s*:", raw)
+
+    assert re.search(r"git\s+fetch\s+origin\s+main", run_blocks)
+    assert re.search(r"git\s+merge\b[^\n]*origin/main", run_blocks)
+    assert re.search(r"pytest\s+-q(?:\s+-x|\s+.*\s-x|\s+-x\s+.*)", run_blocks)
+
+
+def test_pr_guard_workflow_keeps_required_pr_metadata_and_shell_safety():
+    wf = _workflow(".github/workflows/pr-guard.yml")
+    raw = _read(".github/workflows/pr-guard.yml")
+    run_blocks = _run_text(wf)
+    trigger_block = (wf.get("on") if isinstance(wf, dict) and "_text" not in wf else None) or {}
+
+    if isinstance(trigger_block, dict) and trigger_block:
+        assert "pull_request" in trigger_block
+        pull = trigger_block.get("pull_request")
+        if isinstance(pull, dict) and isinstance(pull.get("types"), list):
+            types = {str(x) for x in pull.get("types")}
+            for required in {"opened", "edited", "synchronize", "reopened"}:
+                assert required in types
+    else:
+        assert re.search(r"(?m)^\s*pull_request\s*:", raw)
+
+    assert "set -euo pipefail" in run_blocks
+    assert re.search(r"python\s+scripts/guardrail_check\.py", run_blocks)
+    for marker in ["PR_TITLE", "PR_BODY", "PR_HEAD_REF", "LATEST_COMMIT_MESSAGE", "commit_messages", "pr_files_raw.json", "pr_meta.json"]:
+        assert marker in raw
+
+
+def test_observability_runtime_workflow_keeps_critical_path_filters():
+    workflow_path = ".github/workflows/observability-runtime.yml"
+    assert Path(workflow_path).exists()
+    workflow = _read(workflow_path)
+    assert "observability/**" in workflow
+    assert "services/telegram_alerts_service.py" in workflow
+    assert "tests/observability/**" in workflow
+    assert "tests/smoke/test_observability_full_flow.py" in workflow
+    assert "tests/services/test_telegram_alert_pipeline.py" in workflow
+
+
+def test_ci_dynamic_intelligent_and_changed_modules_cover_critical_routing():
+    workflow = _read(".github/workflows/ci-dynamic-intelligent.yml")
+    assert re.search(r"python\s+scripts/ci_changed_modules\.py\s+origin/main\s*>\s*changed_modules\.json", workflow)
+    assert "merge-simulation-hard:" in workflow
+
+    spec = importlib.util.spec_from_file_location("ci_changed_modules", "scripts/ci_changed_modules.py")
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    rules = getattr(mod, "MODULE_RULES")
+    assert isinstance(rules, list)
+    by_name = {r["name"]: set(r["paths"]) for r in rules if isinstance(r, dict) and "name" in r and "paths" in r}
+
+    required = {
+        "runtime-controller": {"core/runtime_controller.py", "tests/integration/test_runtime_controller"},
+        "chaos-critical": {"core/reconciliation_engine.py", "order_manager.py", "tests/chaos/"},
+        "trading-engine": {"core/trading_engine.py", "tests/integration/test_trading_engine"},
+        "order-manager": {"order_manager.py", "tests/integration/test_order_manager"},
+        "simulation-broker": {"simulation_broker.py", "tests/integration/test_simulation_broker"},
+    }
+    for rule_name, required_paths in required.items():
+        assert rule_name in by_name
+        assert required_paths.issubset(by_name[rule_name])
+        for path in required_paths:
+            owners = {name for name, paths in by_name.items() if path in paths}
+            assert rule_name in owners, f"{path} must be routed by {rule_name}, owners={sorted(owners)}"
 
 
 def test_pr_title_task_is_accepted():
