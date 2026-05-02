@@ -308,7 +308,16 @@ def test_timeout_retry_has_no_double_exposure_and_reconcile_finds_ghost() -> Non
 
     # Ambiguous event was published — operational observability proof
     ambiguous_events = [payload for name, payload in bus.events if name == "QUICK_BET_AMBIGUOUS"]
+    duplicate_events = [payload for name, payload in bus.events if name == "QUICK_BET_DUPLICATE"]
+    failed_events = [payload for name, payload in bus.events if name == "QUICK_BET_FAILED"]
+
     assert len(ambiguous_events) == 1
+    assert len(duplicate_events) == 1
+    assert not failed_events
+    assert ambiguous_events[0].get("customer_ref") == "GHOST-1"
+    assert duplicate_events[0].get("customer_ref") == "GHOST-1"
+    assert ambiguous_events[0].get("order_id") == first["order_id"]
+    assert duplicate_events[0].get("order_id") == second["order_id"]
 
     # Ghost resolved through reconcile pass (NOT via manual DB override):
     # ReconcilePassRunner fetches remote state and updates local only when remote confirms
