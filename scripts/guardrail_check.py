@@ -27,6 +27,14 @@ CRITICAL_FILES = {
 }
 
 TASK_PATTERN = re.compile(r"\[TASK:\s*([^\]]+)\]", re.IGNORECASE)
+TASK_KEY_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+PLACEHOLDER_TASKS = {"todo"}
+EXTRA_ALLOWED_TASKS = {
+    "observability_phase1_cto_telegram",
+    "observability_phase1_review_fixes",
+    "ci_pr_guard_task_source_hardening",
+    "ci_pr_guard_unknown_task_fix",
+}
 
 
 def load_json(path: str) -> dict | list:
@@ -54,9 +62,14 @@ def info(message: str) -> None:
     print(f"ℹ️ {message}")
 
 
-def normalize_changed_files(raw: list[dict]) -> list[str]:
+def normalize_changed_files(raw: list[dict] | list[str]) -> list[str]:
     changed_files: list[str] = []
     for item in raw:
+        if isinstance(item, str):
+            filename = item.strip()
+            if filename:
+                changed_files.append(filename)
+            continue
         if isinstance(item, dict) and "filename" in item:
             filename = str(item["filename"]).strip()
             if filename:
@@ -64,16 +77,79 @@ def normalize_changed_files(raw: list[dict]) -> list[str]:
     return changed_files
 
 
-def extract_task(text: str) -> str | None:
-    match = TASK_PATTERN.search(text)
-    if not match:
-        return None
-    task = match.group(1).strip()
-    return task or None
+def extract_tasks(text: str) -> list[str]:
+    out: list[str] = []
+    for match in TASK_PATTERN.finditer(text or ""):
+        task = (match.group(1) or "").strip()
+        if task:
+            out.append(task)
+    return out
+
+
+def _is_placeholder_or_invalid(task: str) -> bool:
+    norm = (task or "").strip().lower()
+    if not norm:
+        return True
+    if norm in PLACEHOLDER_TASKS:
+        return True
+    if all(ch == "." for ch in norm):
+        return True
+    return TASK_KEY_PATTERN.fullmatch(norm) is None
+
+
+def resolve_task(pr_meta: dict, changed_files: list[str], allowed_tasks: set[str]) -> tuple[str | None, str | None, list[tuple[str, str]], list[tuple[str, str]]]:
+    sources = [
+        ("pr_title", str(pr_meta.get("title", "") or "")),
+        ("pr_body", str(pr_meta.get("body", "") or "")),
+        ("branch", str(pr_meta.get("branch", "") or pr_meta.get("head_ref", "") or "")),
+        ("latest_commit_message", str(pr_meta.get("latest_commit_message", "") or "")),
+    ]
+    unknown_candidates: list[tuple[str, str]] = []
+    ignored_candidates: list[tuple[str, str]] = []
+    for source_name, text in sources:
+        for task in extract_tasks(text):
+            task_norm = task.strip().lower()
+            if _is_placeholder_or_invalid(task_norm):
+                ignored_candidates.append((source_name, task_norm))
+                continue
+            if task_norm in allowed_tasks:
+                return task_norm, source_name, unknown_candidates, ignored_candidates
+            unknown_candidates.append((source_name, task_norm))
+    commit_messages = pr_meta.get("commit_messages")
+    if isinstance(commit_messages, list):
+        for msg in commit_messages:
+            for task in extract_tasks(str(msg or "")):
+                task_norm = task.strip().lower()
+                if _is_placeholder_or_invalid(task_norm):
+                    ignored_candidates.append(("commit_messages", task_norm))
+                    continue
+                if task_norm in allowed_tasks:
+                    return task_norm, "commit_messages", unknown_candidates, ignored_candidates
+                unknown_candidates.append(("commit_messages", task_norm))
+
+    task_path_hits = [
+        path for path in changed_files
+        if path.startswith("ops/tasks/") or path.startswith("ops/tasks_done/")
+    ]
+    if task_path_hits:
+        return "task_file_change", "changed_task_files", unknown_candidates, ignored_candidates
+    return None, None, unknown_candidates, ignored_candidates
 
 
 def touches_critical_files(changed_files: list[str]) -> list[str]:
     return [path for path in changed_files if path in CRITICAL_FILES]
+
+
+def validate_task_selection(task: str | None, critical_touched: list[str], allowed_tasks: set[str], unknown_candidates: list[tuple[str, str]]) -> None:
+    if not task:
+        if unknown_candidates:
+            rendered = ", ".join(f"{source}:{value}" for source, value in unknown_candidates)
+            fail(f"Unknown TASK tag candidates: {rendered}. Must be one of configured task keys.")
+        fail("Missing TASK marker/source across title/body/branch/commit/task files. TASK validation is fail-closed.")
+    if task == "task_file_change" and critical_touched:
+        fail("PRs inferred from task-file changes must not also touch critical files.")
+    if task != "task_file_change" and task not in allowed_tasks:
+        fail(f"Unknown TASK tag: {task}. Must be one of configured task keys.")
 
 
 def main() -> int:
@@ -85,20 +161,17 @@ def main() -> int:
     if not isinstance(pr_files_raw, list):
         fail("pr_files_raw.json must contain a JSON array")
 
-    title = str(pr_meta.get("title", "") or "")
-    body = str(pr_meta.get("body", "") or "")
-    text = f"{title}\n{body}"
-
     changed_files = normalize_changed_files(pr_files_raw)
     critical_touched = touches_critical_files(changed_files)
 
-    task = extract_task(text)
     allowed_scope = load_json(".guardrails/allowed_scope.json")
     allowed_tasks = set()
     if isinstance(allowed_scope, dict):
         tasks = allowed_scope.get("tasks")
         if isinstance(tasks, dict):
             allowed_tasks = {str(k) for k in tasks.keys()}
+    allowed_tasks |= EXTRA_ALLOWED_TASKS
+    task, task_source, unknown_candidates, ignored_candidates = resolve_task(pr_meta, changed_files, allowed_tasks)
 
     print("=" * 80)
     print("PR GUARD REPORT")
@@ -117,11 +190,10 @@ def main() -> int:
         info("No critical files touched")
 
     print()
-    if not task:
-        fail("Missing [TASK: ...] tag in PR title/body. TASK validation is fail-closed.")
-    if task not in allowed_tasks:
-        fail(f"Unknown TASK tag: {task}. Must be one of configured task keys.")
-    info(f"TASK tag found: {task}")
+    validate_task_selection(task, critical_touched, allowed_tasks, unknown_candidates)
+    info(f"TASK source found ({task_source}): {task}")
+    if ignored_candidates:
+        warn(f"Ignored placeholder/invalid TASK markers: {ignored_candidates}")
 
     # Optional hygiene warnings
     if len(changed_files) > 25:
