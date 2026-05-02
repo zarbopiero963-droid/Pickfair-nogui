@@ -23,17 +23,23 @@ jobs:
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
+          LATEST_COMMIT_MESSAGE="$(git log -1 --pretty=%B || true)"
+          export LATEST_COMMIT_MESSAGE
           python - <<'PY'
           import json, os
           meta = {
               "number": os.environ.get("PR_NUMBER", ""),
               "title": os.environ.get("PR_TITLE", ""),
+              "body": os.environ.get("PR_BODY", ""),
               "base_ref": os.environ.get("PR_BASE_REF", ""),
               "head_ref": os.environ.get("PR_HEAD_REF", ""),
+              "branch": os.environ.get("PR_HEAD_REF", ""),
+              "latest_commit_message": os.environ.get("LATEST_COMMIT_MESSAGE", ""),
           }
           with open("pr_meta.json", "w", encoding="utf-8") as f:
               json.dump(meta, f)

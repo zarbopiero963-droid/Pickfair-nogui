@@ -54,9 +54,14 @@ def info(message: str) -> None:
     print(f"ℹ️ {message}")
 
 
-def normalize_changed_files(raw: list[dict]) -> list[str]:
+def normalize_changed_files(raw: list[dict] | list[str]) -> list[str]:
     changed_files: list[str] = []
     for item in raw:
+        if isinstance(item, str):
+            filename = item.strip()
+            if filename:
+                changed_files.append(filename)
+            continue
         if isinstance(item, dict) and "filename" in item:
             filename = str(item["filename"]).strip()
             if filename:
@@ -70,6 +75,27 @@ def extract_task(text: str) -> str | None:
         return None
     task = match.group(1).strip()
     return task or None
+
+
+def resolve_task(pr_meta: dict, changed_files: list[str]) -> tuple[str | None, str | None]:
+    sources = [
+        ("pr_title", str(pr_meta.get("title", "") or "")),
+        ("pr_body", str(pr_meta.get("body", "") or "")),
+        ("branch", str(pr_meta.get("branch", "") or pr_meta.get("head_ref", "") or "")),
+        ("latest_commit_message", str(pr_meta.get("latest_commit_message", "") or "")),
+    ]
+    for source_name, text in sources:
+        task = extract_task(text)
+        if task:
+            return task, source_name
+
+    task_path_hits = [
+        path for path in changed_files
+        if path.startswith("ops/tasks/") or path.startswith("ops/tasks_done/")
+    ]
+    if task_path_hits:
+        return "task_file_change", "changed_task_files"
+    return None, None
 
 
 def touches_critical_files(changed_files: list[str]) -> list[str]:
@@ -92,7 +118,7 @@ def main() -> int:
     changed_files = normalize_changed_files(pr_files_raw)
     critical_touched = touches_critical_files(changed_files)
 
-    task = extract_task(text)
+    task, task_source = resolve_task(pr_meta, changed_files)
     allowed_scope = load_json(".guardrails/allowed_scope.json")
     allowed_tasks = set()
     if isinstance(allowed_scope, dict):
@@ -118,10 +144,10 @@ def main() -> int:
 
     print()
     if not task:
-        fail("Missing [TASK: ...] tag in PR title/body. TASK validation is fail-closed.")
-    if task not in allowed_tasks:
+        fail("Missing TASK marker/source across title/body/branch/commit/task files. TASK validation is fail-closed.")
+    if task != "task_file_change" and task not in allowed_tasks:
         fail(f"Unknown TASK tag: {task}. Must be one of configured task keys.")
-    info(f"TASK tag found: {task}")
+    info(f"TASK source found ({task_source}): {task}")
 
     # Optional hygiene warnings
     if len(changed_files) > 25:

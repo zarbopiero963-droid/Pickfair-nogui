@@ -1,4 +1,5 @@
 from pathlib import Path
+from scripts.guardrail_check import resolve_task
 
 
 def _validate_callable_methods(owner, required_methods):
@@ -30,3 +31,43 @@ def test_pr_guard_workflow_uses_fail_closed_markers_only():
     assert "python scripts/guardrail_check.py" in workflow
     assert "pr_meta.json" in workflow
     assert "pr_files_raw.json" in workflow
+
+
+def test_task_marker_can_come_from_branch_or_commit_when_pr_text_missing():
+    task, source = resolve_task(
+        {
+            "title": "normal title",
+            "body": "",
+            "branch": "feature/[TASK: observability_phase1_review_fixes]",
+            "latest_commit_message": "no marker here",
+        },
+        [],
+    )
+    assert task == "observability_phase1_review_fixes"
+    assert source == "branch"
+
+    task2, source2 = resolve_task(
+        {
+            "title": "normal title",
+            "body": "",
+            "branch": "feature/no-marker",
+            "latest_commit_message": "commit subject [TASK: restore_pr_guard_workflow]",
+        },
+        [],
+    )
+    assert task2 == "restore_pr_guard_workflow"
+    assert source2 == "latest_commit_message"
+
+
+def test_task_guard_fails_when_no_source_exists_anywhere():
+    task, source = resolve_task(
+        {
+            "title": "normal title",
+            "body": "",
+            "branch": "feature/no-marker",
+            "latest_commit_message": "no task marker",
+        },
+        ["src/file.py"],
+    )
+    assert task is None
+    assert source is None
