@@ -88,6 +88,7 @@ def test_telegram_alerts_rich_includes_timestamp_and_suggested_action():
     assert "Suggested action: Drain queue and inspect stalls" in text
 
 
+@pytest.mark.smoke
 def test_telegram_alerts_rich_includes_source_and_sanitized_evidence_summary():
     sender = _Sender()
     svc = TelegramAlertsService(settings_service=_Settings(), telegram_sender=sender)
@@ -111,6 +112,7 @@ def test_telegram_alerts_rich_includes_source_and_sanitized_evidence_summary():
     assert "raw" in text
 
 
+@pytest.mark.smoke
 def test_telegram_alerts_rich_records_suppression_reason_for_critical_dedup_drop():
     class _SettingsCooldown(_Settings):
         def load_telegram_config_row(self):

@@ -11,6 +11,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -36,7 +38,9 @@ jobs:
           with open("pr_meta.json", "w", encoding="utf-8") as f:
               json.dump(meta, f)
           PY
-          git diff --name-only "origin/${PR_BASE_REF:-main}"...HEAD > pr_files_raw.json
+          git diff --name-only "origin/${PR_BASE_REF:-main}"...HEAD \
+            | jq -R -s 'split("\n") | map(select(length > 0))' \
+            > pr_files_raw.json
 
       - name: Run guardrail check
         run: |
