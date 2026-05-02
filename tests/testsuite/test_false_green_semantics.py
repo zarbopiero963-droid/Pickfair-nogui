@@ -4,10 +4,10 @@ from scripts.guardrail_check import resolve_task, validate_task_selection
 
 
 _ALLOWED = {
-    "observability_phase1_cto_telegram",
-    "observability_phase1_review_fixes",
-    "ci_pr_guard_task_source_hardening",
-    "ci_pr_guard_unknown_task_fix",
+    "observability_phase2_eventbus_contract",
+    "observability_phase3_contention_ambiguity",
+    "audit_runtime_cto_final_control",
+    "ci_pr_guard_task_case_normalization",
 }
 
 
@@ -42,34 +42,72 @@ def test_pr_guard_workflow_uses_fail_closed_markers_only():
     assert "pr_files_raw.json" in workflow
 
 
-def test_task_marker_can_come_from_branch_or_commit_when_pr_text_missing():
+def test_pr_title_task_is_accepted():
     task, source, unknown, ignored = resolve_task(
         {
-            "title": "normal title",
+            "title": "[TASK: observability_phase2_eventbus_contract]",
             "body": "",
-            "branch": "feature/[TASK: observability_phase1_review_fixes]",
+            "branch": "feature/no-marker",
             "latest_commit_message": "no marker here",
         },
         [],
         _ALLOWED,
     )
-    assert task == "observability_phase1_review_fixes"
-    assert source == "branch"
+    assert task == "observability_phase2_eventbus_contract"
+    assert source == "pr_title"
     assert unknown == []
     assert ignored == []
 
-    task2, source2, _, _ = resolve_task(
+
+def test_pr_body_task_is_accepted():
+    task, source, unknown, ignored = resolve_task(
         {
             "title": "normal title",
-            "body": "",
+            "body": "details [TASK: observability_phase3_contention_ambiguity]",
             "branch": "feature/no-marker",
-            "latest_commit_message": "commit subject [TASK: ci_pr_guard_unknown_task_fix]",
+            "latest_commit_message": "no marker here",
         },
         [],
         _ALLOWED,
     )
-    assert task2 == "ci_pr_guard_unknown_task_fix"
-    assert source2 == "latest_commit_message"
+    assert task == "observability_phase3_contention_ambiguity"
+    assert source == "pr_body"
+    assert unknown == []
+    assert ignored == []
+
+
+def test_branch_task_is_accepted():
+    task, source, unknown, ignored = resolve_task(
+        {
+            "title": "normal title",
+            "body": "",
+            "branch": "feature/[TASK: audit_runtime_cto_final_control]",
+            "latest_commit_message": "no marker here",
+        },
+        [],
+        _ALLOWED,
+    )
+    assert task == "audit_runtime_cto_final_control"
+    assert source == "branch"
+    assert unknown == []
+    assert ignored == []
+
+
+def test_latest_commit_task_is_accepted():
+    task, source, unknown, ignored = resolve_task(
+        {
+            "title": "normal title",
+            "body": "",
+            "branch": "feature/no-marker",
+            "latest_commit_message": "commit subject [TASK: ci_pr_guard_task_case_normalization]",
+        },
+        [],
+        _ALLOWED,
+    )
+    assert task == "ci_pr_guard_task_case_normalization"
+    assert source == "latest_commit_message"
+    assert unknown == []
+    assert ignored == []
 
 
 def test_task_marker_can_come_from_commit_messages_list():
@@ -79,12 +117,12 @@ def test_task_marker_can_come_from_commit_messages_list():
             "body": "",
             "branch": "feature/no-marker",
             "latest_commit_message": "no marker",
-            "commit_messages": ["misc", "[TASK: ci_pr_guard_task_source_hardening] extra"],
+            "commit_messages": ["misc", "[TASK: observability_phase2_eventbus_contract] extra"],
         },
         [],
         _ALLOWED,
     )
-    assert task == "ci_pr_guard_task_source_hardening"
+    assert task == "observability_phase2_eventbus_contract"
     assert source == "commit_messages"
 
 
@@ -127,12 +165,12 @@ def test_placeholder_is_ignored_when_allowlisted_commit_message_exists():
             "body": "",
             "branch": "work",
             "latest_commit_message": "",
-            "commit_messages": ["note", "[TASK: ci_pr_guard_task_source_hardening]"],
+            "commit_messages": ["note", "[TASK: ci_pr_guard_task_case_normalization]"],
         },
         [],
         _ALLOWED,
     )
-    assert task == "ci_pr_guard_task_source_hardening"
+    assert task == "ci_pr_guard_task_case_normalization"
     assert source == "commit_messages"
     assert unknown == []
     assert ignored
@@ -166,11 +204,11 @@ def test_unknown_valid_format_task_fails_allowlist_validation():
 
 def test_mixed_case_allowlisted_task_normalizes_and_passes():
     task, source, unknown, ignored = resolve_task(
-        {"title": "[TASK: Ci_Pr_Guard_Unknown_Task_Fix]", "body": "", "branch": "", "latest_commit_message": ""},
+        {"title": "[TASK: Ci_Pr_Guard_Task_Case_Normalization]", "body": "", "branch": "", "latest_commit_message": ""},
         [],
         _ALLOWED,
     )
-    assert task == "ci_pr_guard_unknown_task_fix"
+    assert task == "ci_pr_guard_task_case_normalization"
     assert source == "pr_title"
     assert unknown == []
     assert ignored == []
@@ -188,3 +226,33 @@ def test_mixed_case_unknown_task_is_recorded_normalized_and_fails():
     assert ignored == []
     with pytest.raises(SystemExit):
         validate_task_selection(task, [], _ALLOWED, unknown)
+
+
+def test_observability_phase2_eventbus_contract_passes():
+    task, source, _, _ = resolve_task(
+        {"title": "[TASK: observability_phase2_eventbus_contract]", "body": "", "branch": "", "latest_commit_message": ""},
+        [],
+        _ALLOWED,
+    )
+    assert task == "observability_phase2_eventbus_contract"
+    assert source == "pr_title"
+
+
+def test_observability_phase3_contention_ambiguity_passes():
+    task, source, _, _ = resolve_task(
+        {"title": "[TASK: observability_phase3_contention_ambiguity]", "body": "", "branch": "", "latest_commit_message": ""},
+        [],
+        _ALLOWED,
+    )
+    assert task == "observability_phase3_contention_ambiguity"
+    assert source == "pr_title"
+
+
+def test_audit_runtime_cto_final_control_passes():
+    task, source, _, _ = resolve_task(
+        {"title": "[TASK: audit_runtime_cto_final_control]", "body": "", "branch": "", "latest_commit_message": ""},
+        [],
+        _ALLOWED,
+    )
+    assert task == "audit_runtime_cto_final_control"
+    assert source == "pr_title"

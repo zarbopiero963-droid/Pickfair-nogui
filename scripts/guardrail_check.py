@@ -29,12 +29,14 @@ CRITICAL_FILES = {
 TASK_PATTERN = re.compile(r"\[TASK:\s*([^\]]+)\]", re.IGNORECASE)
 TASK_KEY_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 PLACEHOLDER_TASKS = {"todo"}
-EXTRA_ALLOWED_TASKS = {
-    "observability_phase1_cto_telegram",
-    "observability_phase1_review_fixes",
-    "ci_pr_guard_task_source_hardening",
-    "ci_pr_guard_unknown_task_fix",
-}
+APPROVED_TASK_PREFIXES = (
+    "audit_",
+    "ci_",
+    "commission_",
+    "observability_phase",
+    "runtime_",
+    "betfair_",
+)
 
 
 def load_json(path: str) -> dict | list:
@@ -97,6 +99,10 @@ def _is_placeholder_or_invalid(task: str) -> bool:
     return TASK_KEY_PATTERN.fullmatch(norm) is None
 
 
+def _is_approved_task_family(task: str) -> bool:
+    return any(task.startswith(prefix) for prefix in APPROVED_TASK_PREFIXES)
+
+
 def resolve_task(pr_meta: dict, changed_files: list[str], allowed_tasks: set[str]) -> tuple[str | None, str | None, list[tuple[str, str]], list[tuple[str, str]]]:
     sources = [
         ("pr_title", str(pr_meta.get("title", "") or "")),
@@ -112,6 +118,9 @@ def resolve_task(pr_meta: dict, changed_files: list[str], allowed_tasks: set[str
             if _is_placeholder_or_invalid(task_norm):
                 ignored_candidates.append((source_name, task_norm))
                 continue
+            if not _is_approved_task_family(task_norm):
+                unknown_candidates.append((source_name, task_norm))
+                continue
             if task_norm in allowed_tasks:
                 return task_norm, source_name, unknown_candidates, ignored_candidates
             unknown_candidates.append((source_name, task_norm))
@@ -122,6 +131,9 @@ def resolve_task(pr_meta: dict, changed_files: list[str], allowed_tasks: set[str
                 task_norm = task.strip().lower()
                 if _is_placeholder_or_invalid(task_norm):
                     ignored_candidates.append(("commit_messages", task_norm))
+                    continue
+                if not _is_approved_task_family(task_norm):
+                    unknown_candidates.append(("commit_messages", task_norm))
                     continue
                 if task_norm in allowed_tasks:
                     return task_norm, "commit_messages", unknown_candidates, ignored_candidates
@@ -170,7 +182,6 @@ def main() -> int:
         tasks = allowed_scope.get("tasks")
         if isinstance(tasks, dict):
             allowed_tasks = {str(k) for k in tasks.keys()}
-    allowed_tasks |= EXTRA_ALLOWED_TASKS
     task, task_source, unknown_candidates, ignored_candidates = resolve_task(pr_meta, changed_files, allowed_tasks)
 
     print("=" * 80)
