@@ -29,12 +29,12 @@ class _Snapshot:
         return None
 
 
-def _watchdog_for(probe):
+def _watchdog_for(probe, alerts_manager=None):
     return WatchdogService(
         probe=probe,
         health_registry=HealthRegistry(),
         metrics_registry=MetricsRegistry(),
-        alerts_manager=AlertsManager(),
+        alerts_manager=alerts_manager or AlertsManager(),
         incidents_manager=IncidentsManager(),
         snapshot_service=_Snapshot(),
     )
@@ -42,14 +42,7 @@ def _watchdog_for(probe):
 
 def test_contention_signal_flows_through_default_watchdog_path():
     alerts = AlertsManager()
-    watchdog = WatchdogService(
-        probe=_Probe(),
-        health_registry=HealthRegistry(),
-        metrics_registry=MetricsRegistry(),
-        alerts_manager=alerts,
-        incidents_manager=IncidentsManager(),
-        snapshot_service=_Snapshot(),
-    )
+    watchdog = _watchdog_for(_Probe(), alerts_manager=alerts)
     watchdog.tick()
     codes = {a["code"] for a in alerts.active_alerts()}
     assert "DB_CONTENTION_DETECTED" in codes
@@ -101,14 +94,7 @@ def test_canonical_contention_and_ambiguity_matrix_preserves_evidence_chain():
             }
 
     alerts = AlertsManager()
-    watchdog = WatchdogService(
-        probe=_MatrixProbe(),
-        health_registry=HealthRegistry(),
-        metrics_registry=MetricsRegistry(),
-        alerts_manager=alerts,
-        incidents_manager=IncidentsManager(),
-        snapshot_service=_Snapshot(),
-    )
+    watchdog = _watchdog_for(_MatrixProbe(), alerts_manager=alerts)
 
     watchdog.tick()
     active = {a["code"]: a for a in alerts.active_alerts()}
@@ -125,4 +111,14 @@ def test_canonical_contention_and_ambiguity_matrix_preserves_evidence_chain():
     assert risk_codes, "combined contention + ambiguity should escalate as operator actionable/critical"
 
     evidence = active["DB_CONTENTION_DETECTED"].get("details", {})
-    assert evidence != {}
+    assert evidence["contention_events"] == 3
+    assert evidence["db_writer_backlog"] == 150
+    assert evidence["db_writer_backlog_threshold"] == 50
+
+    stalled = active["CTO::STALLED_SYSTEM_DETECTED"]["details"]
+    assert stalled["key_metrics"]["stalled_ticks"] == 4
+    assert stalled["key_metrics"]["completed_delta"] == 0.0
+
+    cascade = active["CTO::CASCADE_FAILURE_RISK"]["details"]
+    assert cascade["key_metrics"]["ambiguous_submissions"] == 2
+    assert cascade["key_metrics"]["db_lock_errors"] == 3
