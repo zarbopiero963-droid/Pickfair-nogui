@@ -88,6 +88,12 @@ def resolve_task(pr_meta: dict, changed_files: list[str]) -> tuple[str | None, s
         task = extract_task(text)
         if task:
             return task, source_name
+    commit_messages = pr_meta.get("commit_messages")
+    if isinstance(commit_messages, list):
+        for msg in commit_messages:
+            task = extract_task(str(msg or ""))
+            if task:
+                return task, "commit_messages"
 
     task_path_hits = [
         path for path in changed_files
@@ -102,6 +108,15 @@ def touches_critical_files(changed_files: list[str]) -> list[str]:
     return [path for path in changed_files if path in CRITICAL_FILES]
 
 
+def validate_task_selection(task: str | None, critical_touched: list[str], allowed_tasks: set[str]) -> None:
+    if not task:
+        fail("Missing TASK marker/source across title/body/branch/commit/task files. TASK validation is fail-closed.")
+    if task == "task_file_change" and critical_touched:
+        fail("PRs inferred from task-file changes must not also touch critical files.")
+    if task != "task_file_change" and task not in allowed_tasks:
+        fail(f"Unknown TASK tag: {task}. Must be one of configured task keys.")
+
+
 def main() -> int:
     pr_meta = load_json("pr_meta.json")
     pr_files_raw = load_json("pr_files_raw.json")
@@ -110,10 +125,6 @@ def main() -> int:
         fail("pr_meta.json must contain a JSON object")
     if not isinstance(pr_files_raw, list):
         fail("pr_files_raw.json must contain a JSON array")
-
-    title = str(pr_meta.get("title", "") or "")
-    body = str(pr_meta.get("body", "") or "")
-    text = f"{title}\n{body}"
 
     changed_files = normalize_changed_files(pr_files_raw)
     critical_touched = touches_critical_files(changed_files)
@@ -143,10 +154,7 @@ def main() -> int:
         info("No critical files touched")
 
     print()
-    if not task:
-        fail("Missing TASK marker/source across title/body/branch/commit/task files. TASK validation is fail-closed.")
-    if task != "task_file_change" and task not in allowed_tasks:
-        fail(f"Unknown TASK tag: {task}. Must be one of configured task keys.")
+    validate_task_selection(task, critical_touched, allowed_tasks)
     info(f"TASK source found ({task_source}): {task}")
 
     # Optional hygiene warnings

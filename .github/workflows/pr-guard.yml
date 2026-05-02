@@ -31,15 +31,26 @@ jobs:
           LATEST_COMMIT_MESSAGE="$(git log -1 --pretty=%B || true)"
           export LATEST_COMMIT_MESSAGE
           python - <<'PY'
-          import json, os
+          import json, os, subprocess
+          base_ref = os.environ.get("PR_BASE_REF", "") or "main"
+          commit_messages = []
+          try:
+              out = subprocess.check_output(
+                  ["git", "log", "--pretty=%B%x1e", f"origin/{base_ref}...HEAD"],
+                  text=True,
+              )
+              commit_messages = [x.strip() for x in out.split("\x1e") if x.strip()]
+          except Exception:
+              commit_messages = []
           meta = {
               "number": os.environ.get("PR_NUMBER", ""),
               "title": os.environ.get("PR_TITLE", ""),
               "body": os.environ.get("PR_BODY", ""),
-              "base_ref": os.environ.get("PR_BASE_REF", ""),
+              "base_ref": base_ref,
               "head_ref": os.environ.get("PR_HEAD_REF", ""),
               "branch": os.environ.get("PR_HEAD_REF", ""),
               "latest_commit_message": os.environ.get("LATEST_COMMIT_MESSAGE", ""),
+              "commit_messages": commit_messages,
           }
           with open("pr_meta.json", "w", encoding="utf-8") as f:
               json.dump(meta, f)
