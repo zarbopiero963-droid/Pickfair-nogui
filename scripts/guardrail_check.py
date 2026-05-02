@@ -108,6 +108,16 @@ def _is_allowed_task_key(task: str) -> bool:
     return task in EXACT_ALLOWED_TASKS or _is_approved_task_family(task)
 
 
+def _select_task_candidate(task_norm: str, allowed_tasks: set[str]) -> bool:
+    if task_norm in allowed_tasks:
+        return True
+    if task_norm in EXACT_ALLOWED_TASKS:
+        return True
+    if _is_approved_task_family(task_norm):
+        return True
+    return False
+
+
 def resolve_task(pr_meta: dict, changed_files: list[str], allowed_tasks: set[str]) -> tuple[str | None, str | None, list[tuple[str, str]], list[tuple[str, str]]]:
     sources = [
         ("pr_title", str(pr_meta.get("title", "") or "")),
@@ -123,12 +133,7 @@ def resolve_task(pr_meta: dict, changed_files: list[str], allowed_tasks: set[str
             if _is_placeholder_or_invalid(task_norm):
                 ignored_candidates.append((source_name, task_norm))
                 continue
-            if not _is_allowed_task_key(task_norm):
-                unknown_candidates.append((source_name, task_norm))
-                continue
-            if task_norm in EXACT_ALLOWED_TASKS:
-                return task_norm, source_name, unknown_candidates, ignored_candidates
-            if task_norm in allowed_tasks:
+            if _select_task_candidate(task_norm, allowed_tasks):
                 return task_norm, source_name, unknown_candidates, ignored_candidates
             unknown_candidates.append((source_name, task_norm))
     commit_messages = pr_meta.get("commit_messages")
@@ -139,12 +144,7 @@ def resolve_task(pr_meta: dict, changed_files: list[str], allowed_tasks: set[str
                 if _is_placeholder_or_invalid(task_norm):
                     ignored_candidates.append(("commit_messages", task_norm))
                     continue
-                if not _is_allowed_task_key(task_norm):
-                    unknown_candidates.append(("commit_messages", task_norm))
-                    continue
-                if task_norm in EXACT_ALLOWED_TASKS:
-                    return task_norm, "commit_messages", unknown_candidates, ignored_candidates
-                if task_norm in allowed_tasks:
+                if _select_task_candidate(task_norm, allowed_tasks):
                     return task_norm, "commit_messages", unknown_candidates, ignored_candidates
                 unknown_candidates.append(("commit_messages", task_norm))
 
@@ -169,7 +169,7 @@ def validate_task_selection(task: str | None, critical_touched: list[str], allow
         fail("Missing TASK marker/source across title/body/branch/commit/task files. TASK validation is fail-closed.")
     if task == "task_file_change" and critical_touched:
         fail("PRs inferred from task-file changes must not also touch critical files.")
-    if task != "task_file_change" and task not in allowed_tasks:
+    if task != "task_file_change" and task not in allowed_tasks and task not in EXACT_ALLOWED_TASKS and not _is_approved_task_family(task):
         fail(f"Unknown TASK tag: {task}. Must be one of configured task keys.")
 
 

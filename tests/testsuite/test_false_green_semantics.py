@@ -266,6 +266,32 @@ def test_pr_random_still_fails():
         validate_task_selection(task, [], _ALLOWED, unknown)
 
 
+def test_explicit_allowlisted_task_outside_prefix_passes():
+    custom_allowed = set(_ALLOWED) | {"deploy_hotfix"}
+    task, source, unknown, ignored = resolve_task(
+        {"title": "[TASK: deploy_hotfix]", "body": "", "branch": "", "latest_commit_message": ""},
+        [],
+        custom_allowed,
+    )
+    assert task == "deploy_hotfix"
+    assert source == "pr_title"
+    assert unknown == []
+    assert ignored == []
+
+
+def test_explicit_allowlisted_task_mixed_case_normalizes_and_passes():
+    custom_allowed = set(_ALLOWED) | {"fix_regression"}
+    task, source, unknown, ignored = resolve_task(
+        {"title": "[TASK: FIX_REGRESSION]", "body": "", "branch": "", "latest_commit_message": ""},
+        [],
+        custom_allowed,
+    )
+    assert task == "fix_regression"
+    assert source == "pr_title"
+    assert unknown == []
+    assert ignored == []
+
+
 def test_observability_phase2_eventbus_contract_passes():
     task, source, _, _ = resolve_task(
         {"title": "[TASK: observability_phase2_eventbus_contract]", "body": "", "branch": "", "latest_commit_message": ""},
