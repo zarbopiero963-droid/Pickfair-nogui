@@ -259,9 +259,32 @@ def test_natural_dispatch_governance_lifecycle_repeated_cycles():
     assert len(reopened) == 1
     assert reopened[0]["code"] == code
 
-    state["event_bus"] = {"published_total": 70, "side_effects_confirmed": 70, "subscriber_errors": {"poisoned_subscriber": 0}, "poison_pill_threshold": 3}
-    watchdog.tick()
 
+@pytest.mark.chaos
+@pytest.mark.core
+def test_slow_subscriber_does_not_hide_signal_or_later_handlers():
+    bus = EventBus(workers=1)
+    delivered = []
+
+    def slow(_payload):
+        time.sleep(0.03)
+
+    def broken(_payload):
+        raise RuntimeError("late-failure")
+
+    def healthy(payload):
+        delivered.append(payload["id"])
+
+    bus.subscribe("FLOW", slow)
+    bus.subscribe("FLOW", broken)
+    bus.subscribe("FLOW", healthy)
+
+    bus.publish("FLOW", {"id": 1})
+    bus.stop()
+
+    assert delivered == [1], "slow handler must not suppress later successful handlers"
+    assert bus.subscriber_error_counts().get("broken", 0) == 1
+    assert bus.delivered_total_count() == 2, "slow + healthy callbacks are successful deliveries"
 
 @pytest.mark.chaos
 @pytest.mark.core
