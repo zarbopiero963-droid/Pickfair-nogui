@@ -108,22 +108,24 @@ def resolve_task(pr_meta: dict, changed_files: list[str], allowed_tasks: set[str
     ignored_candidates: list[tuple[str, str]] = []
     for source_name, text in sources:
         for task in extract_tasks(text):
-            if _is_placeholder_or_invalid(task):
-                ignored_candidates.append((source_name, task))
+            task_norm = task.strip().lower()
+            if _is_placeholder_or_invalid(task_norm):
+                ignored_candidates.append((source_name, task_norm))
                 continue
-            if task in allowed_tasks:
-                return task, source_name, unknown_candidates, ignored_candidates
-            unknown_candidates.append((source_name, task))
+            if task_norm in allowed_tasks:
+                return task_norm, source_name, unknown_candidates, ignored_candidates
+            unknown_candidates.append((source_name, task_norm))
     commit_messages = pr_meta.get("commit_messages")
     if isinstance(commit_messages, list):
         for msg in commit_messages:
             for task in extract_tasks(str(msg or "")):
-                if _is_placeholder_or_invalid(task):
-                    ignored_candidates.append(("commit_messages", task))
+                task_norm = task.strip().lower()
+                if _is_placeholder_or_invalid(task_norm):
+                    ignored_candidates.append(("commit_messages", task_norm))
                     continue
-                if task in allowed_tasks:
-                    return task, "commit_messages", unknown_candidates, ignored_candidates
-                unknown_candidates.append(("commit_messages", task))
+                if task_norm in allowed_tasks:
+                    return task_norm, "commit_messages", unknown_candidates, ignored_candidates
+                unknown_candidates.append(("commit_messages", task_norm))
 
     task_path_hits = [
         path for path in changed_files

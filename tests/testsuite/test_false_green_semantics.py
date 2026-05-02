@@ -162,3 +162,29 @@ def test_unknown_valid_format_task_fails_allowlist_validation():
     assert ignored == []
     with pytest.raises(SystemExit):
         validate_task_selection(task, [], _ALLOWED, unknown)
+
+
+def test_mixed_case_allowlisted_task_normalizes_and_passes():
+    task, source, unknown, ignored = resolve_task(
+        {"title": "[TASK: Ci_Pr_Guard_Unknown_Task_Fix]", "body": "", "branch": "", "latest_commit_message": ""},
+        [],
+        _ALLOWED,
+    )
+    assert task == "ci_pr_guard_unknown_task_fix"
+    assert source == "pr_title"
+    assert unknown == []
+    assert ignored == []
+
+
+def test_mixed_case_unknown_task_is_recorded_normalized_and_fails():
+    task, source, unknown, ignored = resolve_task(
+        {"title": "[TASK: UnKnown_New_Task]", "body": "", "branch": "", "latest_commit_message": ""},
+        [],
+        _ALLOWED,
+    )
+    assert task is None
+    assert source is None
+    assert unknown == [("pr_title", "unknown_new_task")]
+    assert ignored == []
+    with pytest.raises(SystemExit):
+        validate_task_selection(task, [], _ALLOWED, unknown)
