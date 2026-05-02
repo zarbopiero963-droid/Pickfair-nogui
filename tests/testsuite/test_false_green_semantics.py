@@ -42,6 +42,63 @@ def test_pr_guard_workflow_uses_fail_closed_markers_only():
     assert "pr_files_raw.json" in workflow
 
 
+def test_pr_check_workflow_keeps_pull_request_and_full_pytest_gate():
+    workflow = Path(".github/workflows/pr-check.yml").read_text(encoding="utf-8")
+    assert "pull_request:" in workflow
+    assert "branches: [main]" in workflow
+    assert "pytest -q" in workflow
+
+
+def test_merge_simulation_hard_keeps_merge_validation_and_fail_closed_pytest():
+    workflow = Path(".github/workflows/merge-simulation-hard.yml").read_text(encoding="utf-8")
+    assert "workflow_call:" in workflow
+    assert "pull_request:" in workflow
+    assert "git fetch origin main" in workflow
+    assert "git merge --no-ff --no-edit origin/main" in workflow
+    assert "pytest -q -x" in workflow
+
+
+def test_pr_guard_workflow_keeps_required_pr_metadata_and_shell_safety():
+    workflow = Path(".github/workflows/pr-guard.yml").read_text(encoding="utf-8")
+    assert "pull_request:" in workflow
+    assert "types: [opened, edited, synchronize, reopened, ready_for_review]" in workflow
+    assert "set -euo pipefail" in workflow
+    assert "PR_TITLE" in workflow
+    assert "PR_BODY" in workflow
+    assert "jq -R -s 'split(\"\\n\") | map(select(length > 0))'" in workflow
+    assert "python scripts/guardrail_check.py" in workflow
+
+
+def test_observability_runtime_workflow_keeps_critical_path_filters():
+    workflow_path = Path(".github/workflows/observability-runtime.yml")
+    assert workflow_path.exists()
+    workflow = workflow_path.read_text(encoding="utf-8")
+    assert "observability/**" in workflow
+    assert "services/telegram_alerts_service.py" in workflow
+    assert "tests/observability/**" in workflow
+    assert "tests/smoke/test_observability_full_flow.py" in workflow
+    assert "tests/services/test_telegram_alert_pipeline.py" in workflow
+
+
+def test_ci_dynamic_intelligent_and_changed_modules_cover_critical_routing():
+    workflow = Path(".github/workflows/ci-dynamic-intelligent.yml").read_text(encoding="utf-8")
+    router = Path("scripts/ci_changed_modules.py").read_text(encoding="utf-8")
+
+    assert "python scripts/ci_changed_modules.py origin/main > changed_modules.json" in workflow
+    assert "merge-simulation-hard:" in workflow
+
+    assert '"name": "runtime-controller"' in router
+    assert '"name": "chaos-critical"' in router
+    assert '"name": "trading-engine"' in router
+    assert '"name": "order-manager"' in router
+    assert '"name": "simulation-broker"' in router
+    assert '"core/runtime_controller.py"' in router
+    assert '"core/reconciliation_engine.py"' in router
+    assert '"core/trading_engine.py"' in router
+    assert '"order_manager.py"' in router
+    assert '"tests/chaos/"' in router
+
+
 def test_pr_title_task_is_accepted():
     task, source, unknown, ignored = resolve_task(
         {
