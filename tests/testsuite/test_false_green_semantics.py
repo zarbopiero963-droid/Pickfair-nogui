@@ -83,9 +83,18 @@ def test_pr_check_workflow_keeps_pull_request_and_full_pytest_gate():
 
     if isinstance(trigger_block, dict) and trigger_block:
         assert "pull_request" in trigger_block
+        pull = trigger_block.get("pull_request")
+        if isinstance(pull, dict):
+            branches = pull.get("branches")
+            assert isinstance(branches, list)
+            assert "main" in [str(x) for x in branches]
     else:
         raw = _read(".github/workflows/pr-check.yml")
         assert re.search(r"(?m)^\s*pull_request\s*:", raw)
+        assert (
+            re.search(r"(?ms)^\s*pull_request\s*:\s*\n(?:[ \t]+.*\n)*?[ \t]+branches\s*:\s*\[\s*main\s*\]", raw)
+            or re.search(r"(?ms)^\s*pull_request\s*:\s*\n(?:[ \t]+.*\n)*?[ \t]+branches\s*:\s*\n(?:[ \t]+-\s*main\s*\n)", raw)
+        )
 
     assert re.search(r"pytest\s+(-q\s+)?(?:-x\s+)?(?:tests?[\w/\s\.-]*)?$", run_blocks, flags=re.MULTILINE)
 
@@ -97,9 +106,11 @@ def test_merge_simulation_hard_keeps_merge_validation_and_fail_closed_pytest():
     raw = _read(".github/workflows/merge-simulation-hard.yml")
 
     if isinstance(trigger_block, dict) and trigger_block:
-        assert "workflow_call" in trigger_block or "pull_request" in trigger_block
+        assert "workflow_call" in trigger_block
+        assert "pull_request" in trigger_block
     else:
-        assert re.search(r"(?m)^\s*(workflow_call|pull_request)\s*:", raw)
+        assert re.search(r"(?m)^\s*workflow_call\s*:", raw)
+        assert re.search(r"(?m)^\s*pull_request\s*:", raw)
 
     assert re.search(r"git\s+fetch\s+origin\s+main", run_blocks)
     assert re.search(r"git\s+merge\b[^\n]*origin/main", run_blocks)
