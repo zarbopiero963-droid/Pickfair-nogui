@@ -1,4 +1,6 @@
-import asyncio
+import time
+
+import pytest
 
 from telegram_sender import TelegramSender
 
@@ -30,6 +32,32 @@ class _ClientFail:
         raise RuntimeError("boom")
 
 
+class _ClientFlakyThenOk:
+    def __init__(self):
+        self.send_attempts = 0
+
+    async def get_entity(self, chat_id):
+        return {"entity": chat_id}
+
+    async def send_message(self, entity, text):
+        self.send_attempts += 1
+        if self.send_attempts == 1:
+            raise RuntimeError("temporary send failure")
+        return _Msg(777)
+
+
+class _ClientGetEntityFail:
+    def __init__(self):
+        self.send_calls = 0
+
+    async def get_entity(self, chat_id):
+        raise RuntimeError("entity lookup failed")
+
+    async def send_message(self, entity, text):
+        self.send_calls += 1
+        return _Msg(999)
+
+
 def test_send_message_success_sends_once_and_returns_success():
     client = _ClientOk()
     sender = TelegramSender(client=client)
@@ -54,20 +82,60 @@ def test_send_message_failure_reports_failed_and_no_false_success():
     assert sender.get_stats()["messages_failed"] == 1
 
 
+def test_send_message_retries_then_succeeds(monkeypatch):
+    client = _ClientFlakyThenOk()
+    sender = TelegramSender(client=client)
+    
+    async def _no_sleep(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("telegram_sender.asyncio.sleep", _no_sleep)
+
+    result = sender.send_message_sync("123", "retry-ok", max_retries=3, message_type="CUSTOM")
+
+    assert result.success is True
+    assert result.message_id == 777
+    assert client.send_attempts == 2
+    stats = sender.get_stats()
+    assert stats["messages_sent"] == 1
+    assert stats["messages_failed"] == 0
+
+
+def test_send_message_get_entity_failure_is_reported_and_send_not_called(monkeypatch):
+    client = _ClientGetEntityFail()
+    sender = TelegramSender(client=client)
+    
+    async def _no_sleep(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("telegram_sender.asyncio.sleep", _no_sleep)
+
+    result = sender.send_message_sync("123", "won't-send", max_retries=1)
+
+    assert result.success is False
+    assert "entity lookup failed" in (result.error or "")
+    assert client.send_calls == 0
+    assert sender.get_stats()["messages_failed"] == 1
+
+
 def test_queue_start_worker_is_idempotent_and_not_duplicated(monkeypatch):
     sender = TelegramSender(client=None, queue_maxsize=3)
     calls = {"count": 0}
 
-    def _fake_start_worker():
+    real_start_worker = sender.start_worker
+
+    def _counting_start_worker():
         calls["count"] += 1
-        sender._running = True
+        return real_start_worker()
 
-    monkeypatch.setattr(sender, "start_worker", _fake_start_worker)
+    monkeypatch.setattr(sender, "start_worker", _counting_start_worker)
 
-    assert sender.queue_message("1", "m1") is True
-    assert sender.queue_message("1", "m2") is True
-
-    assert calls["count"] == 1
+    try:
+        assert sender.queue_message("1", "m1") is True
+        assert sender.queue_message("1", "m2") is True
+        assert calls["count"] == 1
+    finally:
+        sender.stop_worker()
 
 
 def test_queue_backpressure_returns_false_and_tracks_drops(monkeypatch):
@@ -83,16 +151,10 @@ def test_queue_backpressure_returns_false_and_tracks_drops(monkeypatch):
     assert stats["queue_backpressure"] is True
 
 
-def test_stop_worker_repeated_calls_are_safe_and_leave_stopped(monkeypatch):
+def test_stop_worker_repeated_calls_are_safe_and_leave_stopped():
     sender = TelegramSender(client=None)
 
-    class _NoopThread:
-        def join(self, timeout=None):
-            return None
-
-    sender._worker_thread = _NoopThread()
-    sender._running = True
-
+    sender.start_worker()
     sender.stop_worker()
     sender.stop_worker()
 
@@ -101,23 +163,21 @@ def test_stop_worker_repeated_calls_are_safe_and_leave_stopped(monkeypatch):
 
 def test_worker_drains_queued_message_before_stop():
     client = _ClientOk()
-    sender = TelegramSender(client=client, queue_maxsize=2)
+    sender = TelegramSender(client=client, queue_maxsize=2, base_delay=0.0)
 
-    async def _no_wait():
-        return None
+    try:
+        assert sender.queue_message("99", "drain-me") is True
 
-    sender.rate_limiter.wait_if_needed_async = _no_wait
+        deadline = time.monotonic() + 1.0
+        while len(client.send_calls) < 1 and sender.get_queue_size() > 0:
+            if time.monotonic() >= deadline:
+                pytest.fail("Timed out waiting for sender worker to drain queued message")
+            time.sleep(0.01)
 
-    assert sender.queue_message("99", "drain-me") is True
-
-    deadline = asyncio.get_event_loop().time() + 2.0
-    while sender.get_queue_size() > 0 and asyncio.get_event_loop().time() < deadline:
-        pass
-
-    sender.stop_worker()
-
-    assert sender.get_queue_size() == 0
-    assert len(client.send_calls) == 1
+        assert sender.get_queue_size() == 0
+        assert len(client.send_calls) == 1
+    finally:
+        sender.stop_worker()
 
 
 def test_sender_instances_have_isolated_state(monkeypatch):
