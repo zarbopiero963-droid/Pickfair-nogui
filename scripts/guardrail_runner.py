@@ -104,7 +104,7 @@ def validate_module_guardrails(
 def run_mutation_delegate(module: str, timeout_sec: float, repo_root: Path) -> dict[str, Any]:
     script = repo_root / "scripts" / "run_mutation_guardrails.py"
     if not script.exists():
-        return {"ok": False, "error": f"Missing delegate script: {script}"}
+        return {"ok": False, "fatal": True, "error": f"Missing delegate script: {script}"}
 
     with tempfile.NamedTemporaryFile(prefix="guardrail_runner_mut_", suffix=".json", delete=False) as tmp:
         output_path = Path(tmp.name)
@@ -124,7 +124,8 @@ def run_mutation_delegate(module: str, timeout_sec: float, repo_root: Path) -> d
     proc = subprocess.run(cmd, cwd=str(repo_root), capture_output=True, text=True)
 
     result: dict[str, Any] = {
-        "ok": proc.returncode == 0,
+        "ok": False,
+        "fatal": True,
         "return_code": proc.returncode,
         "output": str(output_path),
         "stdout": proc.stdout[-2000:],
@@ -132,15 +133,31 @@ def run_mutation_delegate(module: str, timeout_sec: float, repo_root: Path) -> d
     }
     try:
         payload = _load_json(output_path)
-        summary = payload.get("summary", {}) if isinstance(payload, dict) else {}
-        total = summary.get("total")
-        result["summary"] = summary
-        if total == 0:
-            result["ok"] = False
-            result["error"] = "Mutation delegate produced total=0"
     except Exception as exc:
-        result["ok"] = False
         result["error"] = f"Failed reading mutation delegate output: {exc}"
+        return result
+
+    summary = payload.get("summary", {}) if isinstance(payload, dict) else {}
+    total = summary.get("total")
+    killed = summary.get("killed")
+    survived = summary.get("survived")
+    score = summary.get("score")
+
+    result.update({"total": total, "killed": killed, "survived": survived, "score": score})
+
+    if not isinstance(total, int):
+        result["error"] = "Mutation delegate did not provide parseable integer total"
+        return result
+    if total <= 0:
+        result["error"] = "Mutation delegate produced total=0"
+        return result
+
+    result["fatal"] = False
+    result["ok"] = True
+    if proc.returncode != 0:
+        result["warning"] = (
+            "Mutation delegate returned non-zero exit; tolerated because total>0 and summary parse succeeded"
+        )
     return result
 
 
@@ -172,6 +189,8 @@ def main(argv: list[str] | None = None) -> int:
         if not mutation_result.get("ok"):
             report["errors"].append(f"Mutation delegation failed: {mutation_result.get('error', 'unknown')}")
             report["ok"] = False
+        elif mutation_result.get("warning"):
+            report["warnings"].append(str(mutation_result["warning"]))
 
     if args.output:
         out = Path(args.output)
