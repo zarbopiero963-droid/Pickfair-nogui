@@ -18,6 +18,30 @@ def test_sync_bankroll_updates_authoritative_state_and_is_idempotent_for_same_va
     assert desk.updated_at >= first_updated_at
 
 
+def test_sync_bankroll_updates_changing_values_and_preserves_monotonic_equity_peak():
+    desk = RiskDesk()
+
+    desk.sync_bankroll(100.0)
+    first_updated_at = desk.updated_at
+    assert desk.bankroll_start == 100.0
+    assert desk.bankroll_current == 100.0
+    assert desk.equity_peak == 100.0
+
+    desk.sync_bankroll(80.0)
+    second_updated_at = desk.updated_at
+    assert desk.bankroll_start == 100.0
+    assert desk.bankroll_current == 80.0
+    assert desk.equity_peak == 100.0
+    assert second_updated_at >= first_updated_at
+
+    desk.sync_bankroll(120.0)
+    third_updated_at = desk.updated_at
+    assert desk.bankroll_start == 100.0
+    assert desk.bankroll_current == 120.0
+    assert desk.equity_peak == 120.0
+    assert third_updated_at >= second_updated_at
+
+
 def test_sync_bankroll_coerces_none_and_non_finite_values_per_current_contract():
     desk = RiskDesk()
 
@@ -104,5 +128,30 @@ def test_apply_closed_pnl_and_unrealized_with_invalid_inputs_follow_current_fail
     assert desk.realized_pnl == 0.0
     assert desk.bankroll_current == 50.0
 
+    desk.apply_closed_pnl(float("nan"))
+    assert math.isnan(desk.realized_pnl)
+    assert math.isnan(desk.bankroll_current)
+
+    desk = RiskDesk()
+    desk.sync_bankroll(50.0)
+    desk.apply_closed_pnl(float("inf"))
+    assert math.isinf(desk.realized_pnl) and desk.realized_pnl > 0
+    assert math.isinf(desk.bankroll_current) and desk.bankroll_current > 0
+
+    desk = RiskDesk()
+    desk.sync_bankroll(50.0)
+    desk.apply_closed_pnl(-float("inf"))
+    assert math.isinf(desk.realized_pnl) and desk.realized_pnl < 0
+    assert math.isinf(desk.bankroll_current) and desk.bankroll_current < 0
+
     desk.set_unrealized_pnl("3.5")
     assert desk.unrealized_pnl == 3.5
+
+    desk.set_unrealized_pnl(float("nan"))
+    assert math.isnan(desk.unrealized_pnl)
+
+    desk.set_unrealized_pnl(float("inf"))
+    assert math.isinf(desk.unrealized_pnl) and desk.unrealized_pnl > 0
+
+    desk.set_unrealized_pnl(-float("inf"))
+    assert math.isinf(desk.unrealized_pnl) and desk.unrealized_pnl < 0

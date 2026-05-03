@@ -33,6 +33,18 @@ def test_shutdown_is_idempotent_after_first_run():
     assert second == []
 
 
+def test_shutdown_with_no_hooks_is_noop_and_marks_run_state():
+    manager = ShutdownManager()
+
+    result = manager.shutdown()
+
+    assert result == []
+    status = manager.status()
+    assert status["registered_hooks"] == 0
+    assert status["has_run"] is True
+    assert status["hooks"] == []
+
+
 def test_shutdown_contains_exception_and_continues_next_hooks():
     manager = ShutdownManager()
     calls: list[str] = []
@@ -83,6 +95,23 @@ def test_register_shutdown_hook_accepts_callable_form_and_same_name_replaces_old
 
     manager.shutdown()
     assert calls == ["new"]
+
+
+def test_register_shutdown_hook_accepts_required_arg_callable_and_fails_at_shutdown():
+    manager = ShutdownManager()
+    calls: list[str] = []
+
+    def hook_with_required_arg(arg):
+        calls.append(arg)
+
+    manager.register_shutdown_hook(hook_with_required_arg)
+    result = manager.shutdown()
+
+    assert calls == []
+    assert len(result) == 1
+    assert result[0]["name"] == "hook_with_required_arg"
+    assert result[0]["ok"] is False
+    assert "required positional argument" in result[0]["error"]
 
 
 def test_clear_resets_has_run_and_allows_fresh_shutdown_without_cross_instance_leakage():
