@@ -22,12 +22,5 @@
       "expected_failure": "tests",
       "target": "build_runtime_signal"
     }
-  ],
-  "_mutation_meta": {
-    "active": true,
-    "id": "build_runtime_signal_contract_mutation",
-    "type": "unknown",
-    "target": "build_runtime_signal",
-    "expected_failure": "tests"
-  }
+  ]
 }

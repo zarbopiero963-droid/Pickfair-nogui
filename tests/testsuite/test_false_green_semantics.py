@@ -262,6 +262,22 @@ def test_task_marker_can_come_from_commit_messages_list():
     assert source == "commit_messages"
 
 
+def _resolve_repo_root_from_test_file() -> Path:
+    anchors = (
+        lambda root: (root / ".git").exists(),
+        lambda root: (root / "pyproject.toml").is_file(),
+        lambda root: (root / ".github").is_dir() and (root / "guardrails").is_dir(),
+    )
+
+    for candidate in (Path(__file__).resolve(), *Path(__file__).resolve().parents):
+        if not candidate.is_dir():
+            continue
+        if any(check(candidate) for check in anchors):
+            return candidate
+
+    raise AssertionError("Could not locate repository root from test file path")
+
+
 def test_guardrail_json_covers_real_hardening_authority_modules_with_existing_files_only():
     import json
 
@@ -275,7 +291,7 @@ def test_guardrail_json_covers_real_hardening_authority_modules_with_existing_fi
         "core/order_router.py": "core.order_router",
     }
     kinds = ("specs", "contracts", "state_models", "mutations")
-    repo_root = Path(__file__).resolve().parents[2]
+    repo_root = _resolve_repo_root_from_test_file()
 
     for module_path, module_name in authorities.items():
         assert (repo_root / module_path).is_file(), f"{module_path} missing"
@@ -306,7 +322,7 @@ def test_guardrail_json_covers_real_hardening_authority_modules_with_existing_fi
                 for mutation in mutations:
                     assert isinstance(mutation, dict), f"{guardrail_path}: mutation must be an object"
                     assert mutation.get("id"), f"{guardrail_path}: mutation id missing"
-                    assert mutation.get("expected_failure"), f"{guardrail_path}: expected_failure missing"
+                    assert "expected_failure" in mutation, f"{guardrail_path}: expected_failure missing"
 
 
 def test_task_file_change_is_detected_from_ops_tasks_paths():

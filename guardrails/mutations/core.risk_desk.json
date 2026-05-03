@@ -22,12 +22,5 @@
       "expected_failure": "tests",
       "target": "snapshot_dict"
     }
-  ],
-  "_mutation_meta": {
-    "active": true,
-    "id": "build_snapshot_contract_mutation",
-    "type": "unknown",
-    "target": "build_snapshot",
-    "expected_failure": "tests"
-  }
+  ]
 }

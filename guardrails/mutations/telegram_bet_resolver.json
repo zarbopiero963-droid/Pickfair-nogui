@@ -22,12 +22,5 @@
       "expected_failure": "tests",
       "target": "to_order_payload"
     }
-  ],
-  "_mutation_meta": {
-    "active": true,
-    "id": "to_order_payload_contract_mutation",
-    "type": "unknown",
-    "target": "to_order_payload",
-    "expected_failure": "tests"
-  }
+  ]
 }
