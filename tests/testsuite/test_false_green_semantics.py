@@ -275,20 +275,38 @@ def test_guardrail_json_covers_real_hardening_authority_modules_with_existing_fi
         "core/order_router.py": "core.order_router",
     }
     kinds = ("specs", "contracts", "state_models", "mutations")
-    repo_root = Path(".")
+    repo_root = Path(__file__).resolve().parents[2]
 
     for module_path, module_name in authorities.items():
-        assert (repo_root / module_path).is_file()
+        assert (repo_root / module_path).is_file(), f"{module_path} missing"
+
         for kind in kinds:
             guardrail_path = repo_root / "guardrails" / kind / f"{module_name}.json"
-            assert guardrail_path.is_file()
+            assert guardrail_path.is_file(), f"{guardrail_path} missing"
+
             payload = json.loads(guardrail_path.read_text(encoding="utf-8"))
             assert payload.get("module") == module_name
+
             mapped_paths = payload.get("module_paths")
-            assert isinstance(mapped_paths, list)
-            assert module_path in mapped_paths
+            assert isinstance(mapped_paths, list), f"{guardrail_path}: module_paths must be a list"
+            assert module_path in mapped_paths, f"{guardrail_path}: {module_path} not mapped"
+
             for mapped in mapped_paths:
-                assert (repo_root / mapped).is_file()
+                assert (repo_root / mapped).is_file(), f"{guardrail_path}: mapped path missing: {mapped}"
+
+            focused_tests = payload.get("focused_tests", [])
+            assert isinstance(focused_tests, list), f"{guardrail_path}: focused_tests must be a list"
+            for test_path in focused_tests:
+                assert (repo_root / test_path).is_file(), f"{guardrail_path}: focused test missing: {test_path}"
+
+            if kind == "mutations":
+                mutations = payload.get("mutations")
+                assert isinstance(mutations, list), f"{guardrail_path}: mutations must be a list"
+                assert mutations, f"{guardrail_path}: mutations must not be empty"
+                for mutation in mutations:
+                    assert isinstance(mutation, dict), f"{guardrail_path}: mutation must be an object"
+                    assert mutation.get("id"), f"{guardrail_path}: mutation id missing"
+                    assert mutation.get("expected_failure"), f"{guardrail_path}: expected_failure missing"
 
 
 def test_task_file_change_is_detected_from_ops_tasks_paths():
