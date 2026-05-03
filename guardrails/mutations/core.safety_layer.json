@@ -10,5 +10,17 @@
     "validate_quick_bet_request",
     "safe_validate_quick_bet_request"
   ],
-  "expected_failure": "tests"
+  "expected_failure": "tests",
+  "mutations": [
+    {
+      "id": "validate_quick_bet_request_contract_mutation",
+      "expected_failure": "tests",
+      "target": "validate_quick_bet_request"
+    },
+    {
+      "id": "safe_validate_quick_bet_request_contract_mutation",
+      "expected_failure": "tests",
+      "target": "safe_validate_quick_bet_request"
+    }
+  ]
 }

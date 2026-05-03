@@ -10,5 +10,17 @@
     "normalize_ingestion_signal",
     "build_runtime_signal"
   ],
-  "expected_failure": "tests"
+  "expected_failure": "tests",
+  "mutations": [
+    {
+      "id": "normalize_ingestion_signal_contract_mutation",
+      "expected_failure": "tests",
+      "target": "normalize_ingestion_signal"
+    },
+    {
+      "id": "build_runtime_signal_contract_mutation",
+      "expected_failure": "tests",
+      "target": "build_runtime_signal"
+    }
+  ]
 }

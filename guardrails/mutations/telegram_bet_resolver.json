@@ -10,5 +10,17 @@
     "resolve",
     "to_order_payload"
   ],
-  "expected_failure": "tests"
+  "expected_failure": "tests",
+  "mutations": [
+    {
+      "id": "resolve_contract_mutation",
+      "expected_failure": "tests",
+      "target": "resolve"
+    },
+    {
+      "id": "to_order_payload_contract_mutation",
+      "expected_failure": "tests",
+      "target": "to_order_payload"
+    }
+  ]
 }

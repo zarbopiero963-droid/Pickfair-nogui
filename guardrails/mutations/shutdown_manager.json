@@ -10,5 +10,17 @@
     "register",
     "shutdown"
   ],
-  "expected_failure": "tests"
+  "expected_failure": "tests",
+  "mutations": [
+    {
+      "id": "register_contract_mutation",
+      "expected_failure": "tests",
+      "target": "register"
+    },
+    {
+      "id": "shutdown_contract_mutation",
+      "expected_failure": "tests",
+      "target": "shutdown"
+    }
+  ]
 }

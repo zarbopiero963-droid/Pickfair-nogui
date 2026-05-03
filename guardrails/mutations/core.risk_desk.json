@@ -10,5 +10,17 @@
     "build_snapshot",
     "snapshot_dict"
   ],
-  "expected_failure": "tests"
+  "expected_failure": "tests",
+  "mutations": [
+    {
+      "id": "build_snapshot_contract_mutation",
+      "expected_failure": "tests",
+      "target": "build_snapshot"
+    },
+    {
+      "id": "snapshot_dict_contract_mutation",
+      "expected_failure": "tests",
+      "target": "snapshot_dict"
+    }
+  ]
 }
