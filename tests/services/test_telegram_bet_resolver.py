@@ -59,6 +59,13 @@ def test_to_order_payload_live_and_simulation_have_same_invariants_and_real_mode
     for key in ["market_id", "selection_id", "bet_type", "price", "stake", "source"]:
         assert live_payload[key] == sim_payload[key]
 
+    assert live_payload["market_id"] == MARKET_ID
+    assert live_payload["selection_id"] == SELECTION_ID
+    assert live_payload["bet_type"] == "BACK"
+    assert live_payload["price"] == pytest.approx(2.02)
+    assert live_payload["stake"] == pytest.approx(3.0)
+    assert live_payload["source"] == "TELEGRAM"
+
     # Current production mode-specific difference is only simulation_mode flag.
     assert live_payload["simulation_mode"] is False
     assert sim_payload["simulation_mode"] is True

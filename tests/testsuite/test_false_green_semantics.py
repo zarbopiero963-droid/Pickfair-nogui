@@ -456,3 +456,39 @@ def test_audit_runtime_cto_final_control_passes():
     )
     assert task == "audit_runtime_cto_final_control"
     assert source == "pr_title"
+
+
+def test_hardening_phase1_telegram_ingestion_tests_passes():
+    task, source, unknown, ignored = resolve_task(
+        {"title": "[TASK: hardening_phase1_telegram_ingestion_tests]", "body": "", "branch": "", "latest_commit_message": ""},
+        [],
+        _ALLOWED,
+    )
+    assert task == "hardening_phase1_telegram_ingestion_tests"
+    assert source == "pr_title"
+    assert unknown == []
+    assert ignored == []
+
+
+def test_hardening_phase0_5_reality_remap_passes():
+    task, source, unknown, ignored = resolve_task(
+        {"title": "[TASK: hardening_phase0_5_reality_remap]", "body": "", "branch": "", "latest_commit_message": ""},
+        [],
+        _ALLOWED,
+    )
+    assert task == "hardening_phase0_5_reality_remap"
+    assert source == "pr_title"
+    assert unknown == []
+    assert ignored == []
+
+
+def test_hardening_mixed_case_normalizes_and_passes():
+    task, source, unknown, ignored = resolve_task(
+        {"title": "[TASK: HARDENING_PHASE1_TELEGRAM_INGESTION_TESTS]", "body": "", "branch": "", "latest_commit_message": ""},
+        [],
+        _ALLOWED,
+    )
+    assert task == "hardening_phase1_telegram_ingestion_tests"
+    assert source == "pr_title"
+    assert unknown == []
+    assert ignored == []
