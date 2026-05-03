@@ -10,5 +10,24 @@
     "send_message_sync",
     "queue_message"
   ],
-  "expected_failure": "tests"
+  "expected_failure": "tests",
+  "mutations": [
+    {
+      "id": "send_message_sync_contract_mutation",
+      "expected_failure": "tests",
+      "target": "send_message_sync"
+    },
+    {
+      "id": "queue_message_contract_mutation",
+      "expected_failure": "tests",
+      "target": "queue_message"
+    }
+  ],
+  "_mutation_meta": {
+    "active": true,
+    "id": "send_message_sync_contract_mutation",
+    "type": "unknown",
+    "target": "send_message_sync",
+    "expected_failure": "tests"
+  }
 }
