@@ -1,0 +1,17 @@
+{
+  "module": "core.risk_desk",
+  "module_paths": [
+    "core/risk_desk.py"
+  ],
+  "focused_tests": [
+    "tests/core/test_risk_desk.py"
+  ],
+  "state_boundaries": [
+    "INPUT_VALIDATION",
+    "AUTHORITY_DECISION",
+    "OUTPUT_EMISSION"
+  ],
+  "forbidden": [
+    "silent_success_on_invalid_input"
+  ]
+}

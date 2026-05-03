@@ -1,0 +1,14 @@
+{
+  "module": "telegram_signal_processor",
+  "module_paths": [
+    "services/telegram_signal_processor.py"
+  ],
+  "focused_tests": [
+    "tests/services/test_telegram_signal_processor.py"
+  ],
+  "mutation_targets": [
+    "normalize_ingestion_signal",
+    "build_runtime_signal"
+  ],
+  "expected_failure": "tests"
+}

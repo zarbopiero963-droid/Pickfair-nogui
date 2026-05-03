@@ -1,0 +1,14 @@
+{
+  "module": "core.order_router",
+  "authority_role": "order routing authority",
+  "module_paths": [
+    "core/order_router.py"
+  ],
+  "focused_tests": [
+    "tests/core/test_order_router.py"
+  ],
+  "required_functions": [
+    "place"
+  ],
+  "must_fail_closed": true
+}

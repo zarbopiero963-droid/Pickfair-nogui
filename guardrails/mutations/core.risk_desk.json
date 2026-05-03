@@ -1,0 +1,14 @@
+{
+  "module": "core.risk_desk",
+  "module_paths": [
+    "core/risk_desk.py"
+  ],
+  "focused_tests": [
+    "tests/core/test_risk_desk.py"
+  ],
+  "mutation_targets": [
+    "build_snapshot",
+    "snapshot_dict"
+  ],
+  "expected_failure": "tests"
+}

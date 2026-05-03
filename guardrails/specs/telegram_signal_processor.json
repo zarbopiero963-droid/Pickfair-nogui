@@ -1,0 +1,15 @@
+{
+  "module": "telegram_signal_processor",
+  "authority_role": "telegram signal normalization authority",
+  "module_paths": [
+    "services/telegram_signal_processor.py"
+  ],
+  "focused_tests": [
+    "tests/services/test_telegram_signal_processor.py"
+  ],
+  "required_functions": [
+    "normalize_ingestion_signal",
+    "build_runtime_signal"
+  ],
+  "must_fail_closed": true
+}

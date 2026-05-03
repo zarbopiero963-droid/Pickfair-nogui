@@ -1,0 +1,13 @@
+{
+  "module": "telegram_signal_processor",
+  "module_paths": [
+    "services/telegram_signal_processor.py"
+  ],
+  "focused_tests": [
+    "tests/services/test_telegram_signal_processor.py"
+  ],
+  "critical_behaviors": [
+    "fail_closed_on_invalid_input",
+    "deterministic_output_shape"
+  ]
+}

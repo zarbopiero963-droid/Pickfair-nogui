@@ -1,0 +1,17 @@
+{
+  "module": "telegram_sender",
+  "authority_role": "telegram outbound delivery authority",
+  "module_paths": [
+    "telegram_sender.py"
+  ],
+  "focused_tests": [
+    "tests/services/test_telegram_sender.py"
+  ],
+  "required_functions": [
+    "send_message_sync",
+    "queue_message",
+    "start_worker",
+    "stop_worker"
+  ],
+  "must_fail_closed": true
+}

@@ -1,0 +1,17 @@
+{
+  "module": "telegram_sender",
+  "module_paths": [
+    "telegram_sender.py"
+  ],
+  "focused_tests": [
+    "tests/services/test_telegram_sender.py"
+  ],
+  "state_boundaries": [
+    "INPUT_VALIDATION",
+    "AUTHORITY_DECISION",
+    "OUTPUT_EMISSION"
+  ],
+  "forbidden": [
+    "silent_success_on_invalid_input"
+  ]
+}

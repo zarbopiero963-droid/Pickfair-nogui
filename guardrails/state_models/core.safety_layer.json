@@ -1,0 +1,17 @@
+{
+  "module": "core.safety_layer",
+  "module_paths": [
+    "core/safety_layer.py"
+  ],
+  "focused_tests": [
+    "tests/core/test_safety_layer.py"
+  ],
+  "state_boundaries": [
+    "INPUT_VALIDATION",
+    "AUTHORITY_DECISION",
+    "OUTPUT_EMISSION"
+  ],
+  "forbidden": [
+    "silent_success_on_invalid_input"
+  ]
+}

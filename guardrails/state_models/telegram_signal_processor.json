@@ -1,0 +1,17 @@
+{
+  "module": "telegram_signal_processor",
+  "module_paths": [
+    "services/telegram_signal_processor.py"
+  ],
+  "focused_tests": [
+    "tests/services/test_telegram_signal_processor.py"
+  ],
+  "state_boundaries": [
+    "INPUT_VALIDATION",
+    "AUTHORITY_DECISION",
+    "OUTPUT_EMISSION"
+  ],
+  "forbidden": [
+    "silent_success_on_invalid_input"
+  ]
+}
