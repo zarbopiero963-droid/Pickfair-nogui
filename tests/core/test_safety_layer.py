@@ -31,24 +31,31 @@ def test_validate_quick_bet_request_missing_required_field_fails_closed():
     payload = _valid_quick_bet_payload()
     payload.pop("market_id")
 
-    with pytest.raises(PayloadValidationError, match="market_id: missing"):
+    with pytest.raises(PayloadValidationError) as exc:
         sl.validate_quick_bet_request(payload)
+    assert "market_id" in str(exc.value)
 
 
 def test_validate_quick_bet_request_invalid_numeric_boundaries_fail_closed():
     sl = SafetyLayer()
 
-    with pytest.raises(RiskInvariantError, match="stake <= 0"):
+    with pytest.raises(RiskInvariantError):
         sl.validate_quick_bet_request({**_valid_quick_bet_payload(), "stake": -1.0})
 
-    with pytest.raises(MarketSanityError, match="price <= 1.0"):
+    with pytest.raises(MarketSanityError):
         sl.validate_quick_bet_request({**_valid_quick_bet_payload(), "price": 1.0})
 
-    # Current contract: non-finite float is accepted by safe_float and passes this gate.
-    assert sl.validate_quick_bet_request({**_valid_quick_bet_payload(), "price": math.inf}) is True
+    for bad_price in (math.inf, -math.inf, math.nan):
+        with pytest.raises(MarketSanityError):
+            sl.validate_quick_bet_request({**_valid_quick_bet_payload(), "price": bad_price})
 
-    with pytest.raises(PayloadValidationError, match="price: None non consentito"):
+    for bad_stake in (math.inf, -math.inf, math.nan):
+        with pytest.raises(RiskInvariantError):
+            sl.validate_quick_bet_request({**_valid_quick_bet_payload(), "stake": bad_stake})
+
+    with pytest.raises(PayloadValidationError) as exc:
         sl.validate_quick_bet_request({**_valid_quick_bet_payload(), "price": None})
+    assert "price" in str(exc.value)
 
 
 def test_assert_live_gate_or_refuse_is_deterministic_and_fail_closed():
@@ -94,14 +101,12 @@ def test_safety_layer_instances_do_not_leak_watchdog_state():
     assert "core-loop" not in second.get_watchdog_status()
 
 
-def test_watchdog_stale_signal_transitions_to_triggered():
-    sl = SafetyLayer()
+def test_watchdog_stale_signal_transitions_to_triggered_without_private_internals():
+    now = [100.0]
+    sl = SafetyLayer(clock=lambda: now[0])
     sl.register_watchdog("pulse", timeout_sec=0.5)
-
-    state = sl._watchdogs["pulse"]
-    state.last_ping -= 1.0
-
-    sl._run_watchdog_check()
+    now[0] = 101.0
+    sl.check_watchdogs()
 
     status = sl.get_watchdog_status()["pulse"]
     assert status["triggered"] is True

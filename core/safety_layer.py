@@ -14,6 +14,7 @@ Obiettivi:
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from dataclasses import dataclass, field
@@ -229,13 +230,14 @@ class SafetyLayer:
         SchemaField("recovered", False, (bool,)),
     ]
 
-    def __init__(self):
+    def __init__(self, clock: Optional[Callable[[], float]] = None):
         self._lock = threading.RLock()
         self._watchdogs: Dict[str, WatchdogState] = {}
         self._watchdog_thread: Optional[threading.Thread] = None
         self._watchdog_stop = threading.Event()
         self._watchdog_interval_sec = 1.0
         self._watchdog_callback: Optional[Callable[[str, str], None]] = None
+        self._clock = clock or time.time
 
     # =========================================================
     # SAFE CASTS
@@ -254,7 +256,7 @@ class SafetyLayer:
         if created_at in (None, ""):
             return stale_after_sec + 1.0
 
-        now = time.time()
+        now = self._clock()
         try:
             if isinstance(created_at, (int, float)):
                 return max(0.0, now - float(created_at))
@@ -392,9 +394,13 @@ class SafetyLayer:
 
         if price <= 1.0:
             raise MarketSanityError("price <= 1.0")
+        if not math.isfinite(price):
+            raise MarketSanityError("price non finite")
 
         if stake <= 0:
             raise RiskInvariantError("stake <= 0")
+        if not math.isfinite(stake):
+            raise RiskInvariantError("stake non finite")
 
         if not allow_micro and stake < 2.0:
             raise RiskInvariantError("stake < 2.0 non consentito")
@@ -541,7 +547,7 @@ class SafetyLayer:
         with self._lock:
             self._watchdogs[wd_name] = WatchdogState(
                 name=wd_name,
-                last_ping=time.time(),
+                last_ping=self._clock(),
                 timeout_sec=max(0.5, float(timeout_sec or 5.0)),
                 enabled=True,
                 triggered=False,
@@ -558,13 +564,13 @@ class SafetyLayer:
         with self._lock:
             state = self._watchdogs.get(wd_name)
             if state:
-                state.last_ping = time.time()
+                state.last_ping = self._clock()
                 state.triggered = False
                 state.last_error = ""
 
     def get_watchdog_status(self) -> Dict[str, Dict[str, Any]]:
         with self._lock:
-            now = time.time()
+            now = self._clock()
             status: Dict[str, Dict[str, Any]] = {}
             for name, s in self._watchdogs.items():
                 age = max(0.0, now - s.last_ping)
@@ -614,7 +620,7 @@ class SafetyLayer:
         to_notify: List[Tuple[str, str]] = []
 
         with self._lock:
-            now = time.time()
+            now = self._clock()
             for name, state in self._watchdogs.items():
                 if not state.enabled:
                     continue
@@ -635,6 +641,10 @@ class SafetyLayer:
                     callback(name, error)
                 except Exception:
                     logger.exception("[SafetyLayer] watchdog callback error")
+
+    def check_watchdogs(self) -> None:
+        """Public wrapper per eseguire un check watchdog singolo in modo deterministico."""
+        self._run_watchdog_check()
 
     # =========================================================
     # HELPERS READY-TO-USE
