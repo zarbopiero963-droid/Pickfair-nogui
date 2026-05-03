@@ -36,6 +36,7 @@ APPROVED_TASK_PREFIXES = (
     "observability_phase",
     "runtime_",
     "betfair_",
+    "hardening_",
 )
 EXACT_ALLOWED_TASKS = {"pr_guard"}
 
