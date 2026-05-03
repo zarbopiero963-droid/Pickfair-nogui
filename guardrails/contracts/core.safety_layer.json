@@ -1,0 +1,13 @@
+{
+  "module": "core.safety_layer",
+  "module_paths": [
+    "core/safety_layer.py"
+  ],
+  "focused_tests": [
+    "tests/core/test_safety_layer.py"
+  ],
+  "critical_behaviors": [
+    "fail_closed_on_invalid_input",
+    "deterministic_output_shape"
+  ]
+}

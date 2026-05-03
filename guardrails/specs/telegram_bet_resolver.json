@@ -1,0 +1,15 @@
+{
+  "module": "telegram_bet_resolver",
+  "authority_role": "telegram bet resolution authority",
+  "module_paths": [
+    "services/telegram_bet_resolver.py"
+  ],
+  "focused_tests": [
+    "tests/services/test_telegram_bet_resolver.py"
+  ],
+  "required_functions": [
+    "resolve",
+    "to_order_payload"
+  ],
+  "must_fail_closed": true
+}

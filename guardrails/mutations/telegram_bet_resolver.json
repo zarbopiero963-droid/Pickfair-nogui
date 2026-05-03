@@ -1,0 +1,14 @@
+{
+  "module": "telegram_bet_resolver",
+  "module_paths": [
+    "services/telegram_bet_resolver.py"
+  ],
+  "focused_tests": [
+    "tests/services/test_telegram_bet_resolver.py"
+  ],
+  "mutation_targets": [
+    "resolve",
+    "to_order_payload"
+  ],
+  "expected_failure": "tests"
+}

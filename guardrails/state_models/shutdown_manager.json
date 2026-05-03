@@ -1,0 +1,17 @@
+{
+  "module": "shutdown_manager",
+  "module_paths": [
+    "shutdown_manager.py"
+  ],
+  "focused_tests": [
+    "tests/unit/test_shutdown_manager.py"
+  ],
+  "state_boundaries": [
+    "INPUT_VALIDATION",
+    "AUTHORITY_DECISION",
+    "OUTPUT_EMISSION"
+  ],
+  "forbidden": [
+    "silent_success_on_invalid_input"
+  ]
+}

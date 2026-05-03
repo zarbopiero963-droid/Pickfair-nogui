@@ -1,0 +1,14 @@
+{
+  "module": "shutdown_manager",
+  "module_paths": [
+    "shutdown_manager.py"
+  ],
+  "focused_tests": [
+    "tests/unit/test_shutdown_manager.py"
+  ],
+  "mutation_targets": [
+    "register",
+    "shutdown"
+  ],
+  "expected_failure": "tests"
+}

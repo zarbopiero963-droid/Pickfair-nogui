@@ -1,0 +1,13 @@
+{
+  "module": "telegram_bet_resolver",
+  "module_paths": [
+    "services/telegram_bet_resolver.py"
+  ],
+  "focused_tests": [
+    "tests/services/test_telegram_bet_resolver.py"
+  ],
+  "critical_behaviors": [
+    "fail_closed_on_invalid_input",
+    "deterministic_output_shape"
+  ]
+}

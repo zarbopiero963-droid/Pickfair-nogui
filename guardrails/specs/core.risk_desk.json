@@ -1,0 +1,16 @@
+{
+  "module": "core.risk_desk",
+  "authority_role": "risk desk state authority",
+  "module_paths": [
+    "core/risk_desk.py"
+  ],
+  "focused_tests": [
+    "tests/core/test_risk_desk.py"
+  ],
+  "required_functions": [
+    "build_snapshot",
+    "snapshot_dict",
+    "load_from_dict"
+  ],
+  "must_fail_closed": true
+}

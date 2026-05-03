@@ -1,0 +1,14 @@
+{
+  "module": "telegram_sender",
+  "module_paths": [
+    "telegram_sender.py"
+  ],
+  "focused_tests": [
+    "tests/services/test_telegram_sender.py"
+  ],
+  "mutation_targets": [
+    "send_message_sync",
+    "queue_message"
+  ],
+  "expected_failure": "tests"
+}

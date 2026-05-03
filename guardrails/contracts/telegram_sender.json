@@ -1,0 +1,13 @@
+{
+  "module": "telegram_sender",
+  "module_paths": [
+    "telegram_sender.py"
+  ],
+  "focused_tests": [
+    "tests/services/test_telegram_sender.py"
+  ],
+  "critical_behaviors": [
+    "fail_closed_on_invalid_input",
+    "deterministic_output_shape"
+  ]
+}

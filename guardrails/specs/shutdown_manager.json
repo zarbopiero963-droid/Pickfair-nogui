@@ -1,0 +1,16 @@
+{
+  "module": "shutdown_manager",
+  "authority_role": "shutdown lifecycle authority",
+  "module_paths": [
+    "shutdown_manager.py"
+  ],
+  "focused_tests": [
+    "tests/unit/test_shutdown_manager.py"
+  ],
+  "required_functions": [
+    "register",
+    "shutdown",
+    "status"
+  ],
+  "must_fail_closed": true
+}

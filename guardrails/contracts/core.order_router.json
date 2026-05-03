@@ -1,0 +1,13 @@
+{
+  "module": "core.order_router",
+  "module_paths": [
+    "core/order_router.py"
+  ],
+  "focused_tests": [
+    "tests/core/test_order_router.py"
+  ],
+  "critical_behaviors": [
+    "fail_closed_on_invalid_input",
+    "deterministic_output_shape"
+  ]
+}

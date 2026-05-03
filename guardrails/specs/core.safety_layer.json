@@ -1,0 +1,16 @@
+{
+  "module": "core.safety_layer",
+  "authority_role": "safety gate authority",
+  "module_paths": [
+    "core/safety_layer.py"
+  ],
+  "focused_tests": [
+    "tests/core/test_safety_layer.py"
+  ],
+  "required_functions": [
+    "validate_quick_bet_request",
+    "safe_validate_quick_bet_request",
+    "validate_cashout_request"
+  ],
+  "must_fail_closed": true
+}

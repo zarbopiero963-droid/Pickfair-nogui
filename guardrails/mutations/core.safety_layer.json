@@ -1,0 +1,14 @@
+{
+  "module": "core.safety_layer",
+  "module_paths": [
+    "core/safety_layer.py"
+  ],
+  "focused_tests": [
+    "tests/core/test_safety_layer.py"
+  ],
+  "mutation_targets": [
+    "validate_quick_bet_request",
+    "safe_validate_quick_bet_request"
+  ],
+  "expected_failure": "tests"
+}

@@ -262,6 +262,35 @@ def test_task_marker_can_come_from_commit_messages_list():
     assert source == "commit_messages"
 
 
+def test_guardrail_json_covers_real_hardening_authority_modules_with_existing_files_only():
+    import json
+
+    authorities = {
+        "services/telegram_signal_processor.py": "telegram_signal_processor",
+        "services/telegram_bet_resolver.py": "telegram_bet_resolver",
+        "telegram_sender.py": "telegram_sender",
+        "shutdown_manager.py": "shutdown_manager",
+        "core/risk_desk.py": "core.risk_desk",
+        "core/safety_layer.py": "core.safety_layer",
+        "core/order_router.py": "core.order_router",
+    }
+    kinds = ("specs", "contracts", "state_models", "mutations")
+    repo_root = Path(".")
+
+    for module_path, module_name in authorities.items():
+        assert (repo_root / module_path).is_file()
+        for kind in kinds:
+            guardrail_path = repo_root / "guardrails" / kind / f"{module_name}.json"
+            assert guardrail_path.is_file()
+            payload = json.loads(guardrail_path.read_text(encoding="utf-8"))
+            assert payload.get("module") == module_name
+            mapped_paths = payload.get("module_paths")
+            assert isinstance(mapped_paths, list)
+            assert module_path in mapped_paths
+            for mapped in mapped_paths:
+                assert (repo_root / mapped).is_file()
+
+
 def test_task_file_change_is_detected_from_ops_tasks_paths():
     task, source, _, _ = resolve_task(
         {"title": "", "body": "", "branch": "", "latest_commit_message": ""},
