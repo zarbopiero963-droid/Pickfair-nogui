@@ -129,3 +129,175 @@ def test_telegram_alerts_rich_records_suppression_reason_for_critical_dedup_drop
     assert first["delivered"] is True
     assert second["delivered"] is False
     assert second["reason"] == "dedup_cooldown"
+
+
+@pytest.mark.smoke
+def test_telegram_alerts_rich_redacts_expanded_sensitive_keyset_case_insensitive():
+    sender = _Sender()
+    svc = TelegramAlertsService(settings_service=_Settings(), telegram_sender=sender)
+    svc.notify_alert(
+        {
+            "severity": "critical",
+            "code": "CTO-KEYS",
+            "message": "sanitizer coverage",
+            "details": {
+                "token": "tkn",
+                "auth_token": "auth",
+                "access_token": "acc",
+                "bearer": "bear",
+                "user_session": "us",
+                "session": "sess",
+                "session_token": "st",
+                "api_key": "api",
+                "secret": "sec",
+                "password": "pwd",
+                "authorization": "authz",
+                "Authorization": "AUTHZ_UPPER",
+                "market_id": "1.234",
+            },
+        }
+    )
+    text = sender.messages[0][1]
+    assert "[REDACTED]" in text
+    for raw in (
+        "token=tkn",
+        "auth_token=auth",
+        "access_token=acc",
+        "bearer=bear",
+        "user_session=us",
+        "session=sess",
+        "session_token=st",
+        "api_key=api",
+        "secret=sec",
+        "password=pwd",
+        "authorization=authz",
+        "Authorization=AUTHZ_UPPER",
+    ):
+        assert raw not in text
+    for key in (
+        "token=[REDACTED]",
+        "auth_token=[REDACTED]",
+        "access_token=[REDACTED]",
+        "bearer=[REDACTED]",
+        "user_session=[REDACTED]",
+        "session=[REDACTED]",
+        "session_token=[REDACTED]",
+        "api_key=[REDACTED]",
+        "secret=[REDACTED]",
+        "password=[REDACTED]",
+        "authorization=[REDACTED]",
+        "Authorization=[REDACTED]",
+    ):
+        assert key in text
+    assert "market_id=1.234" in text
+
+
+@pytest.mark.smoke
+def test_telegram_alerts_rich_non_rich_format_still_redacts_sensitive_keys():
+    class _SettingsNonRich(_Settings):
+        def load_telegram_config_row(self):
+            data = super().load_telegram_config_row()
+            data["alert_format_rich"] = False
+            return data
+
+    sender = _Sender()
+    svc = TelegramAlertsService(settings_service=_SettingsNonRich(), telegram_sender=sender)
+    svc.notify_alert(
+        {
+            "severity": "error",
+            "code": "CTO-NONRICH",
+            "message": "non-rich format test",
+            "details": {
+                "token": "secret_token",
+                "market_id": "1.99",
+                "password": "hunter2",
+            },
+        }
+    )
+    text = sender.messages[0][1]
+    assert "secret_token" not in text
+    assert "hunter2" not in text
+    assert "[REDACTED]" in text
+    assert "1.99" in text
+
+
+@pytest.mark.smoke
+def test_telegram_alerts_rich_no_details_does_not_redact_anything():
+    sender = _Sender()
+    svc = TelegramAlertsService(settings_service=_Settings(), telegram_sender=sender)
+    svc.notify_alert(
+        {
+            "severity": "info",
+            "code": "CTO-NODET",
+            "message": "no details alert",
+        }
+    )
+    text = sender.messages[0][1]
+    assert "[REDACTED]" not in text
+    assert "Details:" not in text
+
+
+@pytest.mark.smoke
+def test_telegram_alerts_rich_sanitizes_nested_sensitive_keys_in_details():
+    sender = _Sender()
+    svc = TelegramAlertsService(settings_service=_Settings(), telegram_sender=sender)
+    svc.notify_alert(
+        {
+            "severity": "critical",
+            "code": "CTO-NESTED",
+            "message": "nested sensitive",
+            "details": {
+                "market_id": "1.500",
+                "auth": {"token": "nested_tok", "name": "player"},
+            },
+        }
+    )
+    text = sender.messages[0][1]
+    assert "nested_tok" not in text
+    assert "market_id=1.500" in text
+
+
+@pytest.mark.smoke
+def test_telegram_alerts_rich_sanitizes_error_fallback_with_safe_key():
+    """When observability.sanitizers raises, the fallback dict is also sanitized."""
+    import sys
+    from unittest.mock import patch
+
+    sender = _Sender()
+    svc = TelegramAlertsService(settings_service=_Settings(), telegram_sender=sender)
+
+    # Force observability.sanitizers import to fail so the except branch is taken
+    with patch.dict(sys.modules, {"observability.sanitizers": None}):
+        result = svc.notify_alert(
+            {
+                "severity": "error",
+                "code": "CTO-ERR",
+                "message": "error path test",
+                "details": {"token": "tok"},
+            }
+        )
+
+    assert result["delivered"] is True
+    text = sender.messages[0][1]
+    # The fallback dict {"details": "***REDACTED_ERROR***"} is sanitized too:
+    # "details" is not a sensitive key, so the value passes through
+    assert "REDACTED_ERROR" in text
+
+
+@pytest.mark.smoke
+def test_telegram_alerts_rich_safe_key_session_token_redacted():
+    """Regression: session_token must be redacted (was missing in earlier versions)."""
+    sender = _Sender()
+    svc = TelegramAlertsService(settings_service=_Settings(), telegram_sender=sender)
+    svc.notify_alert(
+        {
+            "severity": "warning",
+            "code": "CTO-ST",
+            "message": "session_token regression",
+            "details": {"session_token": "st_value", "market_id": "2.0"},
+        }
+    )
+    text = sender.messages[0][1]
+    assert "st_value" not in text
+    assert "session_token=[REDACTED]" in text
+    assert "market_id=2.0" in text
