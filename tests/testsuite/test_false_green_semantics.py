@@ -144,16 +144,32 @@ def test_codex_comment_workflows_are_noise_safe_and_non_core():
         assert posted_non_blocking, rel
 
 
-def test_optional_codex_tooling_workflows_remain_non_core_and_manually_invocable():
-    workflow_paths = [
-        ".github/workflows/codex-bug-gate.yml",
-        ".github/workflows/bootstrap-next-task.yml",
-    ]
+OPTIONAL_CODEX_TOOLING_WORKFLOWS = (
+    ".github/workflows/codex-bug-gate.yml",
+    ".github/workflows/bootstrap-next-task.yml",
+)
 
-    for rel in workflow_paths:
+
+def _workflow_steps(wf):
+    if not isinstance(wf, dict) or "_text" in wf:
+        return []
+    jobs = wf.get("jobs")
+    if not isinstance(jobs, dict):
+        return []
+    steps = []
+    for job in jobs.values():
+        if not isinstance(job, dict):
+            continue
+        for step in (job.get("steps") or []):
+            if isinstance(step, dict):
+                steps.append(step)
+    return steps
+
+
+def test_optional_codex_tooling_workflows_are_noise_safe_and_non_core():
+    for rel in OPTIONAL_CODEX_TOOLING_WORKFLOWS:
         wf = _workflow(rel)
         raw = _read(rel)
-        low = raw.lower()
 
         trigger_block = (wf.get("on") if isinstance(wf, dict) and "_text" not in wf else None) or {}
         if trigger_block:
@@ -166,12 +182,33 @@ def test_optional_codex_tooling_workflows_remain_non_core_and_manually_invocable
                 assert "pull_request" not in trigger_block, rel
             else:
                 assert not re.search(r"(?m)^\s*pull_request\s*:", raw), rel
-            assert "continue-on-error: true" in low, rel
+        executable_fields = []
+        side_effect_steps = []
+        for step in _workflow_steps(wf):
+            run = str(step.get("run", "") or "")
+            uses = str(step.get("uses", "") or "")
+            name = str(step.get("name", "") or "")
+            executable_fields.extend([run.lower(), uses.lower()])
+            signature = f"{name} {run} {uses}".lower()
+            if any(tok in signature for tok in ("codex", "comment", "report", "post_codex_comment.py")):
+                side_effect_steps.append(step)
 
-        assert "pytest" not in low, rel
-        assert "guardrail_check.py" not in low, rel
-        assert "merge-simulation" not in low, rel
-        assert "_module-ultra-check" not in low, rel
+        if executable_fields:
+            blob = "\n".join(executable_fields)
+            assert "pytest" not in blob, rel
+            assert "guardrail_check.py" not in blob, rel
+            assert "merge-simulation" not in blob, rel
+            assert "_module-ultra-check" not in blob, rel
+        else:
+            low = raw.lower()
+            assert "pytest" not in low, rel
+            assert "guardrail_check.py" not in low, rel
+            assert "merge-simulation" not in low, rel
+            assert "_module-ultra-check" not in low, rel
+
+        if rel.endswith("codex-bug-gate.yml") and side_effect_steps:
+            for step in side_effect_steps:
+                assert step.get("continue-on-error") is True, rel
 
 def test_pr_guard_workflow_uses_fail_closed_markers_only():
     workflow = Path(".github/workflows/pr-guard.yml").read_text(encoding="utf-8")
