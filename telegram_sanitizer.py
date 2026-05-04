@@ -32,8 +32,8 @@ TELEGRAM_SENSITIVE_KEY_FRAGMENTS = {
     "bearer",
     "key",
     "session",
+    "api",
 }
-_CREDENTIAL_PARTS = {"token", "secret", "password", "key", "session", "auth", "bearer", "api"}
 
 
 def _key_parts(key: str) -> list[str]:
@@ -45,7 +45,7 @@ def _has_sensitive_fragment(parts: list[str]) -> bool:
 
 
 def _has_sensitive_part_combo(parts: list[str]) -> bool:
-    return sum(1 for part in parts if part in _CREDENTIAL_PARTS) >= 2
+    return sum(1 for part in parts if part in TELEGRAM_SENSITIVE_KEY_FRAGMENTS) >= 2
 
 
 def _is_sensitive_key(key: str) -> bool:
