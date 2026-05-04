@@ -928,33 +928,37 @@ BROAD_SUITE_WORKFLOWS = {
     ),
 }
 
+BROAD_SUITE_FORBIDDEN_COUPLING_TOKENS = (
+    "_module-ultra-check",
+    "pr-guard",
+    "merge-simulation",
+    "module-wrapper",
+)
+
 
 def _workflow_is_pr_activated(rel: str) -> bool:
     return _workflow_has_trigger(rel, "pull_request")
 
 
 def _workflow_invokes_pytest_or_tests(rel: str) -> bool:
-    raw = _read(rel)
     run_blocks = _run_text(_workflow(rel))
-    blob = f"{raw}\n{run_blocks}".lower()
-    return ("pytest" in blob) or ("python -m pytest" in blob) or ("tests/" in blob)
+    blob = run_blocks.lower()
+    return ("pytest" in blob) or ("python -m pytest" in blob)
 
 
 def test_broad_suite_ownership_map_and_redundancy_control_semantics():
-    forbidden = ("_module-ultra-check", "pr-guard", "merge-simulation", "module-wrapper")
-
     all_targets = tuple(BROAD_SUITE_WORKFLOWS["critical_specialist"]) + tuple(BROAD_SUITE_WORKFLOWS["future_candidates"])
+    raw_by_rel = {rel: _read(rel) for rel in all_targets}
     for rel in all_targets:
         assert Path(rel).is_file(), rel
-        assert "jobs:" in _read(rel), rel
+        assert "jobs:" in raw_by_rel[rel], rel
+        low = raw_by_rel[rel].lower()
+        for token in BROAD_SUITE_FORBIDDEN_COUPLING_TOKENS:
+            assert token not in low, f"{rel} contains forbidden token: {token}"
 
     for rel in BROAD_SUITE_WORKFLOWS["critical_specialist"]:
-        raw = _read(rel)
-        low = raw.lower()
         assert _workflow_is_pr_activated(rel), rel
         assert _workflow_invokes_pytest_or_tests(rel), rel
-        for token in forbidden:
-            assert token not in low, f"{rel} contains forbidden token: {token}"
 
     obs = _read(".github/workflows/observability-tests.yml").lower()
     assert (
