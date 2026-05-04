@@ -65,6 +65,84 @@ def test_callable_validation_rejects_hasattr_only_false_green():
     ) is False
 
 
+
+def test_codex_comment_workflows_are_noise_safe_and_non_core():
+    workflow_paths = [
+        ".github/workflows/codex-comment-on-pr-conflict.yml",
+        ".github/workflows/codex-comment-on-pr-check-failure.yml",
+    ]
+
+    for rel in workflow_paths:
+        wf = _workflow(rel)
+        raw = _read(rel)
+        low = raw.lower()
+
+        trigger_block = (wf.get("on") if isinstance(wf, dict) and "_text" not in wf else None) or {}
+        if trigger_block:
+            assert "workflow_dispatch" in trigger_block, rel
+            dispatch = trigger_block.get("workflow_dispatch")
+            assert isinstance(dispatch, dict), rel
+            inputs = dispatch.get("inputs")
+            assert isinstance(inputs, dict), rel
+            pr_input = inputs.get("pr_number")
+            assert isinstance(pr_input, dict), rel
+            assert pr_input.get("required") is True, rel
+
+            if rel.endswith("check-failure.yml"):
+                assert "workflow_run" in trigger_block, rel
+                assert "pull_request_target" not in trigger_block, rel
+            if rel.endswith("conflict.yml"):
+                assert "pull_request_target" in trigger_block, rel
+                assert "workflow_run" not in trigger_block, rel
+
+            assert "pull_request" not in trigger_block, rel
+        else:
+            assert re.search(r"(?m)^\s*workflow_dispatch\s*:", raw), rel
+            assert re.search(r"(?ms)^\s*workflow_dispatch\s*:\s*\n(?:[ \t]+.*\n)*?[ \t]+pr_number\s*:", raw), rel
+            assert re.search(r"(?ms)^\s*workflow_dispatch\s*:\s*\n(?:[ \t]+.*\n)*?[ \t]+required\s*:\s*true", raw), rel
+            assert not re.search(r"(?m)^\s*pull_request\s*:", raw), rel
+            if rel.endswith("check-failure.yml"):
+                assert re.search(r"(?m)^\s*workflow_run\s*:", raw), rel
+            if rel.endswith("conflict.yml"):
+                assert re.search(r"(?m)^\s*pull_request_target\s*:", raw), rel
+
+        assert "github.event.inputs.pr_number" in raw, rel
+        assert "pytest" not in low, rel
+        assert "guardrail_check.py" not in low, rel
+        assert "merge-simulation" not in low, rel
+        assert "_module-ultra-check" not in low, rel
+
+        if rel.endswith("check-failure.yml"):
+            assert "github.event_name == 'workflow_dispatch'" in raw, rel
+            assert "github.event.inputs.pr_number != ''" in raw, rel
+
+        posted_non_blocking = False
+        jobs = wf.get("jobs") if isinstance(wf, dict) and "_text" not in wf else None
+        if isinstance(jobs, dict):
+            for job in jobs.values():
+                if not isinstance(job, dict):
+                    continue
+                for step in job.get("steps") or []:
+                    if not isinstance(step, dict):
+                        continue
+                    step_name = str(step.get("name", "")).lower()
+                    step_run = str(step.get("run", "")).lower()
+                    step_uses = str(step.get("uses", "")).lower()
+                    looks_like_comment = (
+                        ("codex" in step_name and "comment" in step_name)
+                        or ("codex" in step_run and "comment" in step_run)
+                        or "post_codex_comment.py" in step_run
+                        or ("codex" in step_uses and "comment" in step_uses)
+                    )
+                    if looks_like_comment:
+                        posted_non_blocking = True
+                        assert step.get("continue-on-error") is True, rel
+        else:
+            assert "continue-on-error: true" in low, rel
+            posted_non_blocking = True
+
+        assert posted_non_blocking, rel
+
 def test_pr_guard_workflow_uses_fail_closed_markers_only():
     workflow = Path(".github/workflows/pr-guard.yml").read_text(encoding="utf-8")
 

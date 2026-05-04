@@ -1,17 +1,28 @@
-name: codex-comment-on-pr-conflict
+name: codex-comment-on-pr-check-failure
 
 on:
-  pull_request_target:
-    types: [opened, reopened, synchronize]
+  workflow_run:
+    workflows: ["pr-check"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       pr_number:
-        description: "Pull request number to inspect"
+        description: "Pull request number to comment on"
         required: true
         type: string
 
 jobs:
-  detect-conflict:
+  comment-on-failure:
+    if: >
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'failure' &&
+        github.event.workflow_run.event == 'pull_request' &&
+        github.event.workflow_run.pull_requests[0].number != null
+      ) || (
+        github.event_name == 'workflow_dispatch' &&
+        github.event.inputs.pr_number != ''
+      )
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -26,13 +37,13 @@ jobs:
         id: prnum
         env:
           EVENT_NAME: ${{ github.event_name }}
-          PR_FROM_PR_TARGET: ${{ github.event.pull_request.number }}
+          PR_FROM_WORKFLOW_RUN: ${{ github.event.workflow_run.pull_requests[0].number }}
           PR_FROM_INPUT: ${{ github.event.inputs.pr_number }}
         run: |
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             PR_NUMBER="$PR_FROM_INPUT"
           else
-            PR_NUMBER="$PR_FROM_PR_TARGET"
+            PR_NUMBER="$PR_FROM_WORKFLOW_RUN"
           fi
           if [ -z "$PR_NUMBER" ]; then
             echo "PR number is required" >&2
@@ -40,31 +51,16 @@ jobs:
           fi
           echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
 
-      - name: Wait briefly for mergeability calculation
-        run: sleep 10
-
-      - name: Read PR mergeability
-        id: pr
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ steps.prnum.outputs.pr_number }}
-        run: |
-          STATE=$(gh pr view "$PR_NUMBER" --json mergeStateStatus -q .mergeStateStatus)
-          echo "merge_state=$STATE" >> "$GITHUB_OUTPUT"
-          echo "mergeStateStatus=$STATE"
-
       - name: Set up Python
-        if: steps.pr.outputs.merge_state == 'DIRTY'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Post @codex follow-up on conflict
-        if: steps.pr.outputs.merge_state == 'DIRTY'
+      - name: Post @codex follow-up on failing PR
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ steps.prnum.outputs.pr_number }}
-          MODE: base_conflict
+          MODE: ci_failure
         run: python .github/scripts/post_codex_comment.py

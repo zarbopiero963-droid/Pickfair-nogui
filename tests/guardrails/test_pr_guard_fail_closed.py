@@ -83,3 +83,20 @@ def test_valid_task_passes(tmp_path: Path):
     result = _run_guard(tmp_path, title="[TASK: pr_guard] Guardrail update")
     assert result.returncode == 0
     assert "✅ PR guard completed" in result.stdout
+
+
+def test_workflow_hygiene_task_passes(tmp_path: Path):
+    result = _run_guard(tmp_path, title="[TASK: workflow_hygiene_pr1_comment_noise] Guardrail update")
+    assert result.returncode == 0
+    assert "TASK source found" in result.stdout
+
+
+def test_workflow_hygiene_task_mixed_case_passes(tmp_path: Path):
+    result = _run_guard(tmp_path, title="[TASK: WorkFlow_Hygiene_PR1_Comment_Noise] Guardrail update")
+    assert result.returncode == 0
+
+
+def test_unknown_non_workflow_hygiene_task_still_fails_closed(tmp_path: Path):
+    result = _run_guard(tmp_path, title="[TASK: workflow_hygieneX_pr1] Guardrail update")
+    assert result.returncode != 0
+    assert "Unknown TASK tag" in result.stdout
