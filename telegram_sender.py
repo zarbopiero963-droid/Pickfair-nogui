@@ -411,27 +411,35 @@ class TelegramSender:
         )
 
     def start_worker(self):
+        started = False
         with self._worker_lock:
-            if self._running:
+            worker_thread = self._worker_thread
+            if worker_thread and worker_thread.is_alive():
                 return
 
             self._running = True
-            self._worker_thread = threading.Thread(
+            worker_thread = threading.Thread(
                 target=self._worker_loop,
                 daemon=True,
                 name="TelegramSenderWorker",
             )
-            self._worker_thread.start()
-        logger.info("[TG_SENDER] Worker started")
+            self._worker_thread = worker_thread
+            worker_thread.start()
+            started = True
+
+        if started:
+            logger.info("[TG_SENDER] Worker started")
 
     def stop_worker(self):
         with self._worker_lock:
             self._running = False
             worker_thread = self._worker_thread
-            self._worker_thread = None
 
         if worker_thread:
             worker_thread.join(timeout=5)
+            with self._worker_lock:
+                if self._worker_thread is worker_thread and not worker_thread.is_alive():
+                    self._worker_thread = None
         logger.info("[TG_SENDER] Worker stopped")
 
     def _worker_loop(self):
