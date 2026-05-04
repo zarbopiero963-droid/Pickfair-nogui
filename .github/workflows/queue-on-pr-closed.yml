@@ -38,16 +38,18 @@ jobs:
             exit 1
           fi
           case "$TASK_FILE" in
+            *..* | */*/* )
+              echo "task_file must not contain .. or nested paths" >&2
+              exit 1 ;;
             ops/tasks/*.md) ;;
             *)
-              echo "task_file must match ops/tasks/*.md" >&2
-              exit 1
-              ;;
+              echo "task_file must match ops/tasks/<name>.md" >&2
+              exit 1 ;;
           esac
 
       - name: Move completed task
         env:
-          TASK_PATH: ${{ github.event.inputs.task_file }}
+          PR_BODY: "Task-File: ${{ github.event.inputs.task_file }}"
         run: python .github/scripts/complete_current_task.py
 
       - name: Commit queue update
