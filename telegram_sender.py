@@ -12,6 +12,7 @@ import asyncio
 import logging
 import re
 import threading
+import time
 from dataclasses import dataclass
 from queue import Empty, Full, Queue
 from typing import Any, Callable, Dict, Optional
@@ -88,12 +89,12 @@ class AdaptiveRateLimiter:
         with self._lock:
             current_delay = self.current_delay
             last_send = self.last_send_time
-        now = asyncio.get_event_loop().time()
+        now = time.monotonic()
         elapsed = now - last_send
         if elapsed < current_delay:
             await asyncio.sleep(current_delay - elapsed)
         with self._lock:
-            self.last_send_time = asyncio.get_event_loop().time()
+            self.last_send_time = time.monotonic()
 
     def record_success(self):
         with self._lock:
