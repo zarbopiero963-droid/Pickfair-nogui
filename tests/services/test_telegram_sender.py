@@ -281,6 +281,54 @@ def test_send_message_sync_closes_event_loop_on_exception(monkeypatch):
 
 
 
+
+def test_start_during_stop_join_requests_restart_and_ends_running(monkeypatch):
+    sender = TelegramSender(client=None)
+
+    created = []
+
+    class _ThreadFactoryFake:
+        def __init__(self, *args, **kwargs):
+            self.kind = "new"
+            self._alive = False
+            created.append(self)
+
+        def start(self):
+            self._alive = True
+
+        def join(self, timeout=None):
+            self._alive = False
+
+        def is_alive(self):
+            return self._alive
+
+    class _OldWorker:
+        def __init__(self):
+            self._alive = True
+            self.join_calls = 0
+
+        def join(self, timeout=None):
+            self.join_calls += 1
+            sender.start_worker()
+            self._alive = False
+
+        def is_alive(self):
+            return self._alive
+
+    monkeypatch.setattr("telegram_sender.threading.Thread", _ThreadFactoryFake)
+
+    old_worker = _OldWorker()
+    sender._worker_thread = old_worker
+    sender._running = True
+
+    sender.stop_worker()
+
+    assert old_worker.join_calls == 1
+    assert len(created) == 1
+    assert sender._worker_thread is created[0]
+    assert sender.get_stats()["worker_running"] is True
+
+
 def test_stop_worker_keeps_reference_when_join_times_out_with_alive_worker(monkeypatch):
     sender = TelegramSender(client=None)
 

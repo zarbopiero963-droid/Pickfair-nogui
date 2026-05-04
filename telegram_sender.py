@@ -150,6 +150,8 @@ class TelegramSender:
         self._queue = Queue(maxsize=self._queue_maxsize)
         self._running = False
         self._worker_thread = None
+        self._stopping = False
+        self._restart_requested = False
         # FIX #21: lock used by queue_message to prevent duplicate worker threads
         self._worker_lock = threading.RLock()
 
@@ -415,9 +417,12 @@ class TelegramSender:
         with self._worker_lock:
             worker_thread = self._worker_thread
             if worker_thread and worker_thread.is_alive():
+                if self._stopping and not self._running:
+                    self._restart_requested = True
                 return
 
             self._running = True
+            self._stopping = False
             worker_thread = threading.Thread(
                 target=self._worker_loop,
                 daemon=True,
@@ -431,8 +436,10 @@ class TelegramSender:
             logger.info("[TG_SENDER] Worker started")
 
     def stop_worker(self):
+        restart_after_stop = False
         with self._worker_lock:
             self._running = False
+            self._stopping = True
             worker_thread = self._worker_thread
 
         if worker_thread:
@@ -440,7 +447,19 @@ class TelegramSender:
             with self._worker_lock:
                 if self._worker_thread is worker_thread and not worker_thread.is_alive():
                     self._worker_thread = None
+                    restart_after_stop = self._restart_requested
+                    self._restart_requested = False
+                self._stopping = False
+        else:
+            with self._worker_lock:
+                restart_after_stop = self._restart_requested
+                self._restart_requested = False
+                self._stopping = False
+
         logger.info("[TG_SENDER] Worker stopped")
+
+        if restart_after_stop:
+            self.start_worker()
 
     def _worker_loop(self):
         loop = asyncio.new_event_loop()
