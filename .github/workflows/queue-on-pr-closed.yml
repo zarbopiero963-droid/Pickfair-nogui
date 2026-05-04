@@ -2,10 +2,14 @@ name: queue-on-pr-closed
 
 on:
   workflow_dispatch:
+    inputs:
+      task_file:
+        description: "Task file path to complete, e.g. ops/tasks/example.md"
+        required: true
+        type: string
 
 jobs:
   advance:
-    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -23,30 +27,27 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Determine current task path from PR body
-        id: prmeta
+      - name: Validate manual recovery task_file input
+        env:
+          TASK_FILE: ${{ github.event.inputs.task_file }}
         shell: bash
         run: |
-          BODY_FILE=$(mktemp)
-          cat <<'EOF' > "$BODY_FILE"
-          ${{ github.event.pull_request.body }}
-          EOF
-
-          TASK_PATH=$(python - <<'PY'
-          import re
-          from pathlib import Path
-
-          body = Path("$BODY_FILE").read_text(encoding="utf-8")
-          m = re.search(r"Task-File:\s*(ops/tasks/[^\s]+\.md)", body)
-          print(m.group(1) if m else "")
-          PY
-          )
-          echo "task_path=$TASK_PATH" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          if [ -z "${TASK_FILE:-}" ]; then
+            echo "task_file input is required" >&2
+            exit 1
+          fi
+          case "$TASK_FILE" in
+            ops/tasks/*.md) ;;
+            *)
+              echo "task_file must match ops/tasks/*.md" >&2
+              exit 1
+              ;;
+          esac
 
       - name: Move completed task
-        if: steps.prmeta.outputs.task_path != ''
         env:
-          TASK_PATH: ${{ steps.prmeta.outputs.task_path }}
+          TASK_PATH: ${{ github.event.inputs.task_file }}
         run: python .github/scripts/complete_current_task.py
 
       - name: Commit queue update
