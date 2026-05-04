@@ -864,6 +864,7 @@ def test_chaos_workflow_ownership_preserves_canonical_and_demotes_noisy_duplicat
         low = text.lower()
         assert _workflow_has_trigger(rel, "workflow_dispatch"), rel
         assert not _workflow_has_trigger(rel, "pull_request"), rel
+        assert not _workflow_has_trigger(rel, "push"), rel
         assert "jobs:" in text, rel
         assert any(tok in low for tok in ("chaos", "stateful", "recovery", "pytest")), rel
         assert "_module-ultra-check" not in low, rel
