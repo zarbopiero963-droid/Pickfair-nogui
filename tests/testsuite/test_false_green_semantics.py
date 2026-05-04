@@ -837,3 +837,36 @@ def test_hardening_mixed_case_normalizes_and_passes():
     assert source == "pr_title"
     assert unknown == []
     assert ignored == []
+
+
+def test_chaos_workflow_ownership_preserves_canonical_and_demotes_noisy_duplicates():
+    canonical = _read(".github/workflows/chaos-critical.yml")
+    assert _workflow_has_trigger(".github/workflows/chaos-critical.yml", "workflow_call")
+    assert _workflow_has_trigger(".github/workflows/chaos-critical.yml", "workflow_dispatch")
+    assert "tests/chaos" in canonical
+
+    recovery = _read(".github/workflows/recovery-guardrails.yml")
+    assert _workflow_has_trigger(".github/workflows/recovery-guardrails.yml", "pull_request")
+    assert "tests/recovery" in recovery
+
+    stateful_rel = ".github/workflows/stateful-integrity.yml"
+    if Path(stateful_rel).exists():
+        stateful = _read(stateful_rel)
+        assert _workflow_has_trigger(stateful_rel, "pull_request")
+        assert ("tests/recovery" in stateful) or ("tests/reconciliation" in stateful)
+
+    for rel in (
+        ".github/workflows/core-chaos.yml",
+        ".github/workflows/chaos-runtime.yml",
+        ".github/workflows/chaos-stateful.yml",
+    ):
+        text = _read(rel)
+        low = text.lower()
+        assert _workflow_has_trigger(rel, "workflow_dispatch"), rel
+        assert not _workflow_has_trigger(rel, "pull_request"), rel
+        assert "jobs:" in text, rel
+        assert any(tok in low for tok in ("chaos", "stateful", "recovery", "pytest")), rel
+        assert "_module-ultra-check" not in low, rel
+        assert "guardrail_check.py" not in low, rel
+        assert "merge-simulation" not in low, rel
+
