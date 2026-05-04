@@ -19,8 +19,8 @@ class _ClientOk:
         self.entity_calls.append(chat_id)
         return {"entity": chat_id}
 
-    async def send_message(self, entity, text):
-        self.send_calls.append((entity, text))
+    async def send_message(self, entity, text, **kwargs):
+        self.send_calls.append((entity, text, kwargs))
         return _Msg(321)
 
 
@@ -28,7 +28,7 @@ class _ClientFail:
     async def get_entity(self, chat_id):
         return {"entity": chat_id}
 
-    async def send_message(self, entity, text):
+    async def send_message(self, entity, text, **kwargs):
         raise RuntimeError("boom")
 
 
@@ -39,7 +39,7 @@ class _ClientFlakyThenOk:
     async def get_entity(self, chat_id):
         return {"entity": chat_id}
 
-    async def send_message(self, entity, text):
+    async def send_message(self, entity, text, **kwargs):
         self.send_attempts += 1
         if self.send_attempts == 1:
             raise RuntimeError("temporary send failure")
@@ -53,7 +53,7 @@ class _ClientGetEntityFail:
     async def get_entity(self, chat_id):
         raise RuntimeError("entity lookup failed")
 
-    async def send_message(self, entity, text):
+    async def send_message(self, entity, text, **kwargs):
         self.send_calls += 1
         return _Msg(999)
 
@@ -68,7 +68,7 @@ def test_send_message_success_sends_once_and_returns_success():
     assert result.message_id == 321
     assert result.error is None
     assert client.entity_calls == [123]
-    assert client.send_calls == [({"entity": 123}, "hello")]
+    assert client.send_calls == [({"entity": 123}, "hello", {"parse_mode": "MarkdownV2"})]
     assert sender.get_stats()["messages_sent"] == 1
 
 
@@ -194,3 +194,41 @@ def test_sender_instances_have_isolated_state(monkeypatch):
     assert b.get_stats()["messages_dropped"] == 0
     assert a.get_queue_size() == 1
     assert b.get_queue_size() == 1
+
+
+def test_send_message_escapes_markdown_v2_special_characters():
+    client = _ClientOk()
+    sender = TelegramSender(client=client)
+
+    raw = r"_*[]()~`>#+-=|{}.!"
+    result = sender.send_message_sync("123", raw, max_retries=1)
+
+    assert result.success is True
+    assert len(client.send_calls) == 1
+    sent_entity, sent_text, sent_kwargs = client.send_calls[0]
+    assert sent_entity == {"entity": 123}
+    assert sent_text == r"\_\*\[\]\(\)\~\`\>\#\+\-\=\|\{\}\.\!"
+    assert sent_kwargs == {"parse_mode": "MarkdownV2"}
+
+
+def test_queue_full_behavior_is_deterministic_with_explicit_db_log(monkeypatch):
+    sender = TelegramSender(client=None, queue_maxsize=1)
+    monkeypatch.setattr(sender, "start_worker", lambda: None)
+
+    events = []
+
+    def _capture(**kwargs):
+        events.append(kwargs)
+
+    monkeypatch.setattr(sender, "_db_log", _capture)
+
+    assert sender.queue_message("1", "first", message_type="ALERT") is True
+    assert sender.queue_message("1", "second", message_type="ALERT") is False
+
+    assert events[0]["status"] == "QUEUED"
+    assert events[0]["error"] is None
+    assert events[1]["status"] == "DROPPED_QUEUE_FULL"
+    assert events[1]["error"] == "queue_full"
+    stats = sender.get_stats()
+    assert stats["messages_dropped"] == 1
+    assert stats["queue_backpressure"] is True
