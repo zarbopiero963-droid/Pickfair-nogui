@@ -211,6 +211,25 @@ def test_send_message_escapes_markdown_v2_special_characters():
     assert sent_kwargs == {"parse_mode": "MarkdownV2"}
 
 
+def test_rate_limiter_uses_monotonic_not_event_loop_time(monkeypatch):
+    sender = TelegramSender(client=None, base_delay=0.01)
+
+    class _BadLoop:
+        def time(self):
+            raise AssertionError("event loop time should not be used for rate limiting")
+
+    async def _no_sleep(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("telegram_sender.asyncio.get_event_loop", lambda: _BadLoop())
+    monkeypatch.setattr("telegram_sender.asyncio.sleep", _no_sleep)
+
+    sender.rate_limiter.last_send_time = 0.0
+    sender.send_message_sync("123", "hello", max_retries=1)
+
+    assert sender.rate_limiter.last_send_time > 0
+
+
 def test_queue_full_behavior_is_deterministic_with_explicit_db_log(monkeypatch):
     sender = TelegramSender(client=None, queue_maxsize=1)
     monkeypatch.setattr(sender, "start_worker", lambda: None)
