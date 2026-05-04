@@ -155,7 +155,7 @@ class TelegramModule:
             return
 
         try:
-            payload = dict(signal or {})
+            payload = _sanitize_telegram_payload(signal or {})
             payload.update(
                 {
                     "selection": selection,
@@ -912,4 +912,3 @@ class TelegramModule:
                     values=(date_str, sel, action, price, stake, status),
                     tags=(tag,) if tag else (),
                 )
-

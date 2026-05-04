@@ -15,7 +15,29 @@ TELEGRAM_SENSITIVE_KEYS = {
     "secret",
     "password",
     "authorization",
+    "refresh_token",
+    "bot_token",
+    "client_secret",
+    "private_key",
+    "api_secret",
+    "authorization_header",
 }
+TELEGRAM_SENSITIVE_KEY_FRAGMENTS = {
+    "token",
+    "secret",
+    "password",
+    "auth",
+    "bearer",
+    "key",
+    "session",
+}
+
+
+def _is_sensitive_key(key: str) -> bool:
+    key_l = str(key or "").lower()
+    if key_l in TELEGRAM_SENSITIVE_KEYS:
+        return True
+    return any(fragment in key_l for fragment in TELEGRAM_SENSITIVE_KEY_FRAGMENTS)
 
 
 def sanitize_telegram_payload(value: Any) -> Any:
@@ -23,7 +45,7 @@ def sanitize_telegram_payload(value: Any) -> Any:
         out = {}
         for k, v in value.items():
             key = str(k)
-            if key.lower() in TELEGRAM_SENSITIVE_KEYS:
+            if _is_sensitive_key(key):
                 out[k] = REDACTED
             else:
                 out[k] = sanitize_telegram_payload(v)
