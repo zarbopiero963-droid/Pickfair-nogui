@@ -238,6 +238,32 @@ def test_delegate_missing_script(tmp_path: Path) -> None:
     assert "Missing delegate script" in res["error"]
 
 
+def test_delegate_invalid_module_names_fail_closed_without_subprocess(monkeypatch: object) -> None:
+    called = {"run": False}
+
+    def fake_run(*args: object, **kwargs: object):
+        called["run"] = True
+        raise AssertionError("subprocess.run should not be called for invalid module input")
+
+    monkeypatch.setattr(guardrail_runner.subprocess, "run", fake_run)
+    repo_root = guardrail_runner.find_repo_root()
+    for module_name in ["../evil", "bad;rm -rf", "bad module", "/abs/path"]:
+        res = guardrail_runner.run_mutation_delegate(module_name, 1, repo_root)
+        assert res["ok"] is False
+        assert res["fatal"] is True
+        assert "Invalid module name" in res["error"]
+    assert called["run"] is False
+
+
+def test_delegate_script_not_file_fail_closed(tmp_path: Path) -> None:
+    repo = tmp_path
+    _mk_file(repo / ".git")
+    (repo / "scripts" / "run_mutation_guardrails.py").mkdir(parents=True)
+    res = guardrail_runner.run_mutation_delegate("mod", 1, repo)
+    assert res["ok"] is False
+    assert "not a file" in res["error"]
+
+
 def test_delegate_invalid_json_output(monkeypatch: object) -> None:
     def fake_run(*args: object, **kwargs: object):
         out = Path(args[0][-1])

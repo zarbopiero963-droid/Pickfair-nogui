@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -10,6 +11,7 @@ from typing import Any
 
 
 REQUIRED_KINDS = ("specs", "contracts", "state_models", "mutations")
+_MODULE_ARG_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 def find_repo_root(start: Path | None = None) -> Path:
@@ -118,9 +120,19 @@ def validate_module_guardrails(
 
 
 def run_mutation_delegate(module: str, timeout_sec: int, repo_root: Path) -> dict[str, Any]:
-    script = (repo_root / "scripts" / "run_mutation_guardrails.py").resolve()
+    if not isinstance(module, str) or not module.strip() or not _MODULE_ARG_RE.fullmatch(module.strip()):
+        return {"ok": False, "fatal": True, "error": f"Invalid module name: {module!r}"}
+    safe_module = module.strip()
+    resolved_repo_root = repo_root.resolve()
+    script = (resolved_repo_root / "scripts" / "run_mutation_guardrails.py").resolve()
     if not script.exists():
         return {"ok": False, "fatal": True, "error": f"Missing delegate script: {script}"}
+    if not script.is_file():
+        return {"ok": False, "fatal": True, "error": f"Delegate script is not a file: {script}"}
+    try:
+        script.relative_to(resolved_repo_root)
+    except ValueError:
+        return {"ok": False, "fatal": True, "error": f"Delegate script is not repo-local: {script}"}
 
     with tempfile.TemporaryDirectory(prefix="guardrail_runner_mut_") as tmp_dir:
         output_path = Path(tmp_dir) / "report.json"
@@ -128,9 +140,9 @@ def run_mutation_delegate(module: str, timeout_sec: int, repo_root: Path) -> dic
             sys.executable,
             str(script),
             "--repo-root",
-            str(repo_root),
+            str(resolved_repo_root),
             "--module",
-            module,
+            safe_module,
             "--timeout-sec",
             str(timeout_sec),
             "--output",
@@ -139,10 +151,11 @@ def run_mutation_delegate(module: str, timeout_sec: int, repo_root: Path) -> dic
         try:
             wrapper_timeout = max(timeout_sec + 30, timeout_sec * 4)
             # Security: command is an argv list, shell=False (default), with repo-local resolved script path.
-            # User/module values are passed as argv elements and not shell-interpolated.
+            # Module input is allowlist-validated and passed as argv (no shell interpolation).
+            # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
             proc = subprocess.run(
                 cmd,
-                cwd=str(repo_root),
+                cwd=str(resolved_repo_root),
                 capture_output=True,
                 text=True,
                 timeout=wrapper_timeout,
