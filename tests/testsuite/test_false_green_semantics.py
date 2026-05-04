@@ -65,6 +65,34 @@ def test_callable_validation_rejects_hasattr_only_false_green():
     ) is False
 
 
+
+def test_codex_comment_workflows_are_noise_safe_and_non_core():
+    workflow_paths = [
+        ".github/workflows/codex-comment-on-pr-conflict.yml",
+        ".github/workflows/codex-comment-on-pr-check-failure.yml",
+    ]
+
+    for rel in workflow_paths:
+        wf = _workflow(rel)
+        raw = _read(rel)
+
+        trigger_block = (wf.get("on") if isinstance(wf, dict) and "_text" not in wf else None) or {}
+        if trigger_block:
+            assert "workflow_dispatch" in trigger_block, rel
+            assert "pull_request" not in trigger_block, rel
+        else:
+            assert re.search(r"(?m)^\s*workflow_dispatch\s*:", raw), rel
+            assert not re.search(r"(?m)^\s*pull_request\s*:", raw), rel
+
+        low = raw.lower()
+        assert "pytest" not in low, rel
+        assert "guardrail_check.py" not in low, rel
+        assert "merge-simulation" not in low, rel
+        assert "_module-ultra-check" not in low, rel
+
+        assert "continue-on-error: true" in low, rel
+
+
 def test_pr_guard_workflow_uses_fail_closed_markers_only():
     workflow = Path(".github/workflows/pr-guard.yml").read_text(encoding="utf-8")
 

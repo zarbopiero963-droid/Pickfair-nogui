@@ -3,6 +3,7 @@ name: codex-comment-on-pr-conflict
 on:
   pull_request_target:
     types: [opened, reopened, synchronize]
+  workflow_dispatch:
 
 jobs:
   detect-conflict:
@@ -37,9 +38,10 @@ jobs:
 
       - name: Post @codex follow-up on conflict
         if: steps.pr.outputs.merge_state == 'DIRTY'
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           MODE: base_conflict
-        run: python .github/scripts/post_codex_comment.py 
+        run: python .github/scripts/post_codex_comment.py
