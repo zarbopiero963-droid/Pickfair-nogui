@@ -37,6 +37,7 @@ APPROVED_TASK_PREFIXES = (
     "runtime_",
     "betfair_",
     "hardening_",
+    "workflow_hygiene_",
 )
 EXACT_ALLOWED_TASKS = {"pr_guard"}
 

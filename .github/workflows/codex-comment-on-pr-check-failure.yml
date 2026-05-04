@@ -5,13 +5,24 @@ on:
     workflows: ["pr-check"]
     types: [completed]
   workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull request number to comment on"
+        required: true
+        type: string
 
 jobs:
   comment-on-failure:
     if: >
-      github.event.workflow_run.conclusion == 'failure' &&
-      github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.pull_requests[0].number != null
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'failure' &&
+        github.event.workflow_run.event == 'pull_request' &&
+        github.event.workflow_run.pull_requests[0].number != null
+      ) || (
+        github.event_name == 'workflow_dispatch' &&
+        github.event.inputs.pr_number != ''
+      )
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -21,6 +32,24 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Resolve PR number
+        id: prnum
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_FROM_WORKFLOW_RUN: ${{ github.event.workflow_run.pull_requests[0].number }}
+          PR_FROM_INPUT: ${{ github.event.inputs.pr_number }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            PR_NUMBER="$PR_FROM_INPUT"
+          else
+            PR_NUMBER="$PR_FROM_WORKFLOW_RUN"
+          fi
+          if [ -z "$PR_NUMBER" ]; then
+            echo "PR number is required" >&2
+            exit 1
+          fi
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -32,6 +61,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          PR_NUMBER: ${{ steps.prnum.outputs.pr_number }}
           MODE: ci_failure
         run: python .github/scripts/post_codex_comment.py
