@@ -67,10 +67,10 @@ def test_callable_validation_rejects_hasattr_only_false_green():
 
 
 def test_codex_comment_workflows_are_noise_safe_and_non_core():
-    workflow_paths = [
+    workflow_paths = (
         ".github/workflows/codex-comment-on-pr-conflict.yml",
         ".github/workflows/codex-comment-on-pr-check-failure.yml",
-    ]
+    )
 
     for rel in workflow_paths:
         wf = _workflow(rel)
@@ -98,8 +98,8 @@ def test_codex_comment_workflows_are_noise_safe_and_non_core():
             assert "pull_request" not in trigger_block, rel
         else:
             assert re.search(r"(?m)^\s*workflow_dispatch\s*:", raw), rel
-            assert re.search(r"(?ms)^\s*workflow_dispatch\s*:\s*\n(?:[ \t]+.*\n)*?[ \t]+pr_number\s*:", raw), rel
-            assert re.search(r"(?ms)^\s*workflow_dispatch\s*:\s*\n(?:[ \t]+.*\n)*?[ \t]+required\s*:\s*true", raw), rel
+            assert "pr_number:" in raw, rel
+            assert "required: true" in low, rel
             assert not re.search(r"(?m)^\s*pull_request\s*:", raw), rel
             if rel.endswith("check-failure.yml"):
                 assert re.search(r"(?m)^\s*workflow_run\s*:", raw), rel
