@@ -143,6 +143,36 @@ def test_codex_comment_workflows_are_noise_safe_and_non_core():
 
         assert posted_non_blocking, rel
 
+
+def test_optional_codex_tooling_workflows_remain_non_core_and_manually_invocable():
+    workflow_paths = [
+        ".github/workflows/codex-bug-gate.yml",
+        ".github/workflows/bootstrap-next-task.yml",
+    ]
+
+    for rel in workflow_paths:
+        wf = _workflow(rel)
+        raw = _read(rel)
+        low = raw.lower()
+
+        trigger_block = (wf.get("on") if isinstance(wf, dict) and "_text" not in wf else None) or {}
+        if trigger_block:
+            assert "workflow_dispatch" in trigger_block, rel
+        else:
+            assert re.search(r"(?m)^\s*workflow_dispatch\s*:", raw), rel
+
+        if rel.endswith("codex-bug-gate.yml"):
+            if trigger_block:
+                assert "pull_request" not in trigger_block, rel
+            else:
+                assert not re.search(r"(?m)^\s*pull_request\s*:", raw), rel
+            assert "continue-on-error: true" in low, rel
+
+        assert "pytest" not in low, rel
+        assert "guardrail_check.py" not in low, rel
+        assert "merge-simulation" not in low, rel
+        assert "_module-ultra-check" not in low, rel
+
 def test_pr_guard_workflow_uses_fail_closed_markers_only():
     workflow = Path(".github/workflows/pr-guard.yml").read_text(encoding="utf-8")
 
