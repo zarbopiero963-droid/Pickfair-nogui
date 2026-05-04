@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -10,6 +11,7 @@ from typing import Any
 
 
 REQUIRED_KINDS = ("specs", "contracts", "state_models", "mutations")
+_MODULE_ARG_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 def find_repo_root(start: Path | None = None) -> Path:
@@ -29,6 +31,25 @@ def _load_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"JSON must be object: {path}")
     return payload
+
+
+def _validate_relative_file_path(value: Any, *, repo_root: Path, source: Path, label: str) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return f"Missing {label} path in {source}"
+    rel_str = value.strip()
+    rel_path = Path(rel_str)
+    if rel_path.is_absolute():
+        return f"{label}: path is absolute: {rel_str}"
+    resolved = (repo_root / rel_path).resolve()
+    try:
+        resolved.relative_to(repo_root.resolve())
+    except ValueError:
+        return f"{label} path '{rel_str}' escapes repo_root"
+    if not resolved.exists():
+        return f"Missing {label} path '{rel_str}' referenced by {source}"
+    if not resolved.is_file():
+        return f"{label} path '{rel_str}' not a file"
+    return None
 
 
 def validate_module_guardrails(
@@ -62,21 +83,18 @@ def validate_module_guardrails(
             errors.append(f"module_paths missing/empty in {path}")
         else:
             for rel in module_paths:
-                rel_str = str(rel).strip()
-                if not rel_str:
-                    errors.append(f"Empty module_paths entry in {path}")
-                    continue
-                if not (repo_root / rel_str).exists():
-                    errors.append(f"Missing module path '{rel_str}' referenced by {path}")
+                err = _validate_relative_file_path(rel, repo_root=repo_root, source=path, label="module_paths")
+                if err:
+                    errors.append(err)
 
         focused_tests = payload.get("focused_tests")
         if focused_tests is not None and not isinstance(focused_tests, list):
             errors.append(f"focused_tests must be list in {path}")
         elif fail_on_missing_tests and isinstance(focused_tests, list):
             for rel in focused_tests:
-                rel_str = str(rel).strip()
-                if rel_str and not (repo_root / rel_str).exists():
-                    errors.append(f"Missing focused test '{rel_str}' referenced by {path}")
+                err = _validate_relative_file_path(rel, repo_root=repo_root, source=path, label="focused_tests")
+                if err:
+                    errors.append(err)
 
         if kind == "mutations":
             mutations = payload.get("mutations")
@@ -101,41 +119,66 @@ def validate_module_guardrails(
     }
 
 
-def run_mutation_delegate(module: str, timeout_sec: float, repo_root: Path) -> dict[str, Any]:
-    script = repo_root / "scripts" / "run_mutation_guardrails.py"
+def run_mutation_delegate(module: str, timeout_sec: int, repo_root: Path) -> dict[str, Any]:
+    if not isinstance(module, str) or not module.strip() or not _MODULE_ARG_RE.fullmatch(module.strip()):
+        return {"ok": False, "fatal": True, "error": f"Invalid module name: {module!r}"}
+    safe_module = module.strip()
+    resolved_repo_root = repo_root.resolve()
+    script = (resolved_repo_root / "scripts" / "run_mutation_guardrails.py").resolve()
     if not script.exists():
         return {"ok": False, "fatal": True, "error": f"Missing delegate script: {script}"}
-
-    with tempfile.NamedTemporaryFile(prefix="guardrail_runner_mut_", suffix=".json", delete=False) as tmp:
-        output_path = Path(tmp.name)
-
-    cmd = [
-        sys.executable,
-        str(script),
-        "--repo-root",
-        str(repo_root),
-        "--module",
-        module,
-        "--timeout-sec",
-        str(int(timeout_sec) if float(timeout_sec).is_integer() else timeout_sec),
-        "--output",
-        str(output_path),
-    ]
-    proc = subprocess.run(cmd, cwd=str(repo_root), capture_output=True, text=True)
-
-    result: dict[str, Any] = {
-        "ok": False,
-        "fatal": True,
-        "return_code": proc.returncode,
-        "output": str(output_path),
-        "stdout": proc.stdout[-2000:],
-        "stderr": proc.stderr[-2000:],
-    }
+    if not script.is_file():
+        return {"ok": False, "fatal": True, "error": f"Delegate script is not a file: {script}"}
     try:
-        payload = _load_json(output_path)
-    except Exception as exc:
-        result["error"] = f"Failed reading mutation delegate output: {exc}"
-        return result
+        script.relative_to(resolved_repo_root)
+    except ValueError:
+        return {"ok": False, "fatal": True, "error": f"Delegate script is not repo-local: {script}"}
+
+    with tempfile.TemporaryDirectory(prefix="guardrail_runner_mut_") as tmp_dir:
+        output_path = Path(tmp_dir) / "report.json"
+        cmd = [
+            sys.executable,
+            str(script),
+            "--repo-root",
+            str(resolved_repo_root),
+            "--module",
+            safe_module,
+            "--timeout-sec",
+            str(timeout_sec),
+            "--output",
+            str(output_path),
+        ]
+        try:
+            wrapper_timeout = max(timeout_sec + 30, timeout_sec * 4)
+            # Security: command is an argv list, shell=False (default), with repo-local resolved script path.
+            # Module input is allowlist-validated and passed as argv (no shell interpolation).
+            # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
+            proc = subprocess.run(
+                cmd,
+                cwd=str(resolved_repo_root),
+                capture_output=True,
+                text=True,
+                timeout=wrapper_timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "ok": False,
+                "fatal": True,
+                "error": f"Mutation delegate wrapper timeout after {wrapper_timeout}s",
+            }
+
+        result: dict[str, Any] = {
+            "ok": False,
+            "fatal": True,
+            "return_code": proc.returncode,
+            "stdout": proc.stdout[-2000:],
+            "stderr": proc.stderr[-2000:],
+        }
+        try:
+            payload = _load_json(output_path)
+        except Exception as exc:
+            result["error"] = f"Failed reading mutation delegate output: {exc}"
+            return result
 
     summary = payload.get("summary", {}) if isinstance(payload, dict) else {}
     total = summary.get("total")
@@ -148,8 +191,11 @@ def run_mutation_delegate(module: str, timeout_sec: float, repo_root: Path) -> d
     if not isinstance(total, int):
         result["error"] = "Mutation delegate did not provide parseable integer total"
         return result
-    if total <= 0:
+    if total == 0:
         result["error"] = "Mutation delegate produced total=0"
+        return result
+    if total < 0:
+        result["error"] = f"Mutation delegate produced total < 0 ({total})"
         return result
 
     result["fatal"] = False
@@ -166,7 +212,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--module", required=True)
     parser.add_argument("--guardrails-root", default="guardrails")
     parser.add_argument("--run-mutations", action="store_true")
-    parser.add_argument("--mutation-timeout-sec", type=float, default=1)
+    parser.add_argument("--mutation-timeout-sec", type=int, default=1)
     parser.add_argument("--output")
     parser.add_argument("--fail-on-missing-tests", default="true", choices=["true", "false"])
     return parser
@@ -174,6 +220,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+    if args.mutation_timeout_sec <= 0:
+        print("Invalid --mutation-timeout-sec: must be > 0")
+        return 1
     repo_root = find_repo_root()
     fail_on_missing_tests = args.fail_on_missing_tests.lower() == "true"
     report = validate_module_guardrails(
