@@ -354,6 +354,60 @@ def test_stop_worker_keeps_reference_when_join_times_out_with_alive_worker(monke
     assert sender.get_stats()["worker_running"] is False
 
 
+
+def test_stop_worker_timeout_clears_stale_restart_request_and_later_stop_no_spurious_restart(monkeypatch):
+    sender = TelegramSender(client=None)
+
+    starts = []
+
+    class _NewThread:
+        def __init__(self, *args, **kwargs):
+            self._alive = False
+            starts.append(self)
+
+        def start(self):
+            self._alive = True
+
+        def join(self, timeout=None):
+            self._alive = False
+
+        def is_alive(self):
+            return self._alive
+
+    class _OldWorker:
+        def __init__(self):
+            self.alive_states = [True, False]
+            self.idx = 0
+            self.join_calls = 0
+
+        def join(self, timeout=None):
+            self.join_calls += 1
+            if self.join_calls == 1:
+                sender._restart_requested = True
+
+        def is_alive(self):
+            val = self.alive_states[min(self.idx, len(self.alive_states)-1)]
+            self.idx += 1
+            return val
+
+    monkeypatch.setattr("telegram_sender.threading.Thread", _NewThread)
+
+    old = _OldWorker()
+    sender._worker_thread = old
+    sender._running = True
+
+    sender.stop_worker()
+
+    assert sender._restart_requested is False
+    assert sender._worker_thread is old
+    assert starts == []
+
+    sender.stop_worker()
+
+    assert sender._worker_thread is None
+    assert starts == []
+
+
 def test_stop_worker_clears_reference_after_stopped_joined_worker(monkeypatch):
     sender = TelegramSender(client=None)
 

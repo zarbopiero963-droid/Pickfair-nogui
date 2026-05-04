@@ -445,10 +445,11 @@ class TelegramSender:
         if worker_thread:
             worker_thread.join(timeout=5)
             with self._worker_lock:
+                restart_requested = self._restart_requested
+                self._restart_requested = False
                 if self._worker_thread is worker_thread and not worker_thread.is_alive():
                     self._worker_thread = None
-                    restart_after_stop = self._restart_requested
-                    self._restart_requested = False
+                    restart_after_stop = restart_requested
                 self._stopping = False
         else:
             with self._worker_lock:
