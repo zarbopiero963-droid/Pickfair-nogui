@@ -225,6 +225,52 @@ def test_pr_guard_workflow_uses_fail_closed_markers_only():
     assert "pr_files_raw.json" in workflow
 
 
+def test_post_merge_task_automation_has_canonical_owner_and_no_duplicate_closed_pr_path():
+    canonical_rel = ".github/workflows/complete-task-on-merge.yml"
+    legacy_rel = ".github/workflows/queue-on-pr-closed.yml"
+
+    canonical_wf = _workflow(canonical_rel)
+    canonical_raw = _read(canonical_rel)
+    canonical_low = canonical_raw.lower()
+    canonical_triggers = (canonical_wf.get("on") if isinstance(canonical_wf, dict) and "_text" not in canonical_wf else None) or {}
+
+    if canonical_triggers:
+        assert "pull_request" in canonical_triggers, canonical_rel
+        pull = canonical_triggers.get("pull_request")
+        if isinstance(pull, dict):
+            types = [str(x) for x in (pull.get("types") or [])]
+            assert "closed" in types, canonical_rel
+    else:
+        assert re.search(r"(?m)^\s*pull_request\s*:", canonical_raw), canonical_rel
+        assert re.search(r"(?m)^\s*types:\s*\[closed\]\s*$", canonical_raw), canonical_rel
+
+    assert "github.event.pull_request.merged == true" in canonical_raw, canonical_rel
+    assert "python .github/scripts/complete_current_task.py" in canonical_raw, canonical_rel
+    assert "python .github/scripts/next_task.py" in canonical_raw, canonical_rel
+    assert "Task-File:" not in canonical_raw, canonical_rel
+    assert "pytest" not in canonical_low, canonical_rel
+    assert "guardrail_check.py" not in canonical_low, canonical_rel
+    assert "merge-simulation" not in canonical_low, canonical_rel
+    assert "_module-ultra-check" not in canonical_low, canonical_rel
+
+    legacy_wf = _workflow(legacy_rel)
+    legacy_raw = _read(legacy_rel)
+    legacy_low = legacy_raw.lower()
+    legacy_triggers = (legacy_wf.get("on") if isinstance(legacy_wf, dict) and "_text" not in legacy_wf else None) or {}
+
+    if legacy_triggers:
+        assert "pull_request" not in legacy_triggers, legacy_rel
+        assert "workflow_dispatch" in legacy_triggers, legacy_rel
+    else:
+        assert not re.search(r"(?m)^\s*pull_request\s*:", legacy_raw), legacy_rel
+        assert re.search(r"(?m)^\s*workflow_dispatch\s*:", legacy_raw), legacy_rel
+
+    assert "pytest" not in legacy_low, legacy_rel
+    assert "guardrail_check.py" not in legacy_low, legacy_rel
+    assert "merge-simulation" not in legacy_low, legacy_rel
+    assert "_module-ultra-check" not in legacy_low, legacy_rel
+
+
 def test_pr_check_workflow_keeps_pull_request_and_full_pytest_gate():
     wf = _workflow(".github/workflows/pr-check.yml")
     run_blocks = _run_text(wf)
