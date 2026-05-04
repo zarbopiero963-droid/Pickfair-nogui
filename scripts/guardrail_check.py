@@ -39,6 +39,7 @@ APPROVED_TASK_PREFIXES = (
     "hardening_",
     "workflow_hygiene_",
 )
+CLAUDE_BUG_TASK_PATTERN = re.compile(r"^claude_bug_pr\d+[a-z]_[a-z0-9_]+$")
 EXACT_ALLOWED_TASKS = {"pr_guard"}
 
 
@@ -103,7 +104,9 @@ def _is_placeholder_or_invalid(task: str) -> bool:
 
 
 def _is_approved_task_family(task: str) -> bool:
-    return any(task.startswith(prefix) for prefix in APPROVED_TASK_PREFIXES)
+    if any(task.startswith(prefix) for prefix in APPROVED_TASK_PREFIXES):
+        return True
+    return CLAUDE_BUG_TASK_PATTERN.fullmatch(task) is not None
 
 
 def _is_allowed_task_key(task: str) -> bool:

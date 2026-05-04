@@ -100,3 +100,29 @@ def test_unknown_non_workflow_hygiene_task_still_fails_closed(tmp_path: Path):
     result = _run_guard(tmp_path, title="[TASK: workflow_hygieneX_pr1] Guardrail update")
     assert result.returncode != 0
     assert "Unknown TASK tag" in result.stdout
+
+
+def test_claude_bug_task_passes(tmp_path: Path):
+    result = _run_guard(
+        tmp_path,
+        title="[TASK: claude_bug_pr1a_telegram_sender_escape_queue] Guardrail update",
+    )
+    assert result.returncode == 0
+    assert "TASK source found" in result.stdout
+
+
+def test_claude_bug_task_mixed_case_passes(tmp_path: Path):
+    result = _run_guard(
+        tmp_path,
+        title="[TASK: Claude_Bug_PR1A_Telegram_Sender_Escape_Queue] Guardrail update",
+    )
+    assert result.returncode == 0
+
+
+def test_unknown_claude_bug_like_task_fails_closed(tmp_path: Path):
+    result = _run_guard(
+        tmp_path,
+        title="[TASK: claude_bug_prx_telegram_sender_escape_queue] Guardrail update",
+    )
+    assert result.returncode != 0
+    assert "Unknown TASK tag" in result.stdout

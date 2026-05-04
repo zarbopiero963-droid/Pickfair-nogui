@@ -17,6 +17,7 @@ from queue import Empty, Full, Queue
 from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger("TG_SENDER")
+MARKDOWN_V2_SPECIALS_RE = re.compile(r"([_\*\[\]\(\)~`>#+\-=|{}\.!])")
 
 
 def format_bet_message(
@@ -167,11 +168,11 @@ class TelegramSender:
             return ""
         return str(value)
 
-    def _escape_markdown_v2(self, text: str) -> str:
+    def _escape_markdown_v2(self, text: Optional[str]) -> str:
         if text is None:
             return ""
         raw_text = str(text)
-        return re.sub(r"([_\*\[\]\(\)~`>#+\-=|{}\.!])", r"\\\1", raw_text)
+        return MARKDOWN_V2_SPECIALS_RE.sub(r"\\\1", raw_text)
 
     def _db_log(
         self,
@@ -218,7 +219,7 @@ class TelegramSender:
             try:
                 entity = await self.client.get_entity(int(chat_id))
                 escaped_text = self._escape_markdown_v2(text)
-                msg = await self.client.send_message(entity, escaped_text)
+                msg = await self.client.send_message(entity, escaped_text, parse_mode="MarkdownV2")
 
                 result.success = True
                 result.message_id = msg.id if hasattr(msg, "id") else None
@@ -231,7 +232,7 @@ class TelegramSender:
                 self._db_log(
                     chat_id=chat_id,
                     message_type=message_type,
-                    text=escaped_text,
+                    text=text,
                     status="SENT",
                     message_id=result.message_id,
                     error=None,
