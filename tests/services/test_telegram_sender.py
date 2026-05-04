@@ -1,8 +1,9 @@
+import threading
 import time
 
 import pytest
 
-from telegram_sender import TelegramSender
+from telegram_sender import QueuedMessage, TelegramSender
 
 
 class _Msg:
@@ -159,6 +160,325 @@ def test_stop_worker_repeated_calls_are_safe_and_leave_stopped():
     sender.stop_worker()
 
     assert sender.get_stats()["worker_running"] is False
+
+
+
+
+def test_start_worker_repeated_calls_are_idempotent(monkeypatch):
+    sender = TelegramSender(client=None)
+
+    starts = {"count": 0}
+    real_thread = threading.Thread
+
+    def _counting_thread(*args, **kwargs):
+        if kwargs.get("name") == "TelegramSenderWorker":
+            starts["count"] += 1
+        return real_thread(*args, **kwargs)
+
+    monkeypatch.setattr("telegram_sender.threading.Thread", _counting_thread)
+
+    sender.start_worker()
+    sender.start_worker()
+
+    try:
+        assert starts["count"] == 1
+        assert sender.get_stats()["worker_running"] is True
+    finally:
+        sender.stop_worker()
+
+
+def test_start_worker_is_race_safe_under_concurrent_calls(monkeypatch):
+    sender = TelegramSender(client=None)
+
+    starts = {"count": 0}
+    real_thread = threading.Thread
+
+    def _counting_thread(*args, **kwargs):
+        if kwargs.get("name") == "TelegramSenderWorker":
+            starts["count"] += 1
+        return real_thread(*args, **kwargs)
+
+    monkeypatch.setattr("telegram_sender.threading.Thread", _counting_thread)
+
+    workers = [real_thread(target=sender.start_worker) for _ in range(10)]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join()
+
+    try:
+        assert starts["count"] == 1
+        assert sender.get_stats()["worker_running"] is True
+    finally:
+        sender.stop_worker()
+
+
+def test_worker_loop_closes_event_loop_on_send_exception(monkeypatch):
+    sender = TelegramSender(client=None)
+
+    class _FakeLoop:
+        def __init__(self):
+            self.closed = False
+            self.shutdown_called = False
+            self.calls = 0
+
+        def run_until_complete(self, _coro):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("boom")
+            self.shutdown_called = True
+            return None
+
+        async def shutdown_asyncgens(self):
+            self.shutdown_called = True
+
+        def close(self):
+            self.closed = True
+
+    fake_loop = _FakeLoop()
+
+    monkeypatch.setattr("telegram_sender.asyncio.new_event_loop", lambda: fake_loop)
+    monkeypatch.setattr("telegram_sender.asyncio.set_event_loop", lambda _loop: None)
+
+    sender._queue.put(QueuedMessage(chat_id="1", text="x", max_retries=1, callback=None, message_type="GENERIC"))
+    sender._running = True
+
+    original_get = sender._queue.get
+
+    def _one_then_stop(*args, **kwargs):
+        item = original_get(*args, **kwargs)
+        sender._running = False
+        return item
+
+    monkeypatch.setattr(sender._queue, "get", _one_then_stop)
+
+    sender._worker_loop()
+
+    assert fake_loop.closed is True
+
+
+def test_send_message_sync_closes_event_loop_on_exception(monkeypatch):
+    sender = TelegramSender(client=None)
+
+    class _FakeLoop:
+        def __init__(self):
+            self.closed = False
+
+        def run_until_complete(self, _coro):
+            raise RuntimeError("sync boom")
+
+        def close(self):
+            self.closed = True
+
+    fake_loop = _FakeLoop()
+
+    monkeypatch.setattr("telegram_sender.asyncio.new_event_loop", lambda: fake_loop)
+
+    with pytest.raises(RuntimeError, match="sync boom"):
+        sender.send_message_sync("1", "x", max_retries=1)
+
+    assert fake_loop.closed is True
+
+
+
+
+def test_start_during_stop_join_requests_restart_and_ends_running(monkeypatch):
+    sender = TelegramSender(client=None)
+
+    created = []
+
+    class _ThreadFactoryFake:
+        def __init__(self, *args, **kwargs):
+            self.kind = "new"
+            self._alive = False
+            created.append(self)
+
+        def start(self):
+            self._alive = True
+
+        def join(self, timeout=None):
+            self._alive = False
+
+        def is_alive(self):
+            return self._alive
+
+    class _OldWorker:
+        def __init__(self):
+            self._alive = True
+            self.join_calls = 0
+
+        def join(self, timeout=None):
+            self.join_calls += 1
+            sender.start_worker()
+            self._alive = False
+
+        def is_alive(self):
+            return self._alive
+
+    monkeypatch.setattr("telegram_sender.threading.Thread", _ThreadFactoryFake)
+
+    old_worker = _OldWorker()
+    sender._worker_thread = old_worker
+    sender._running = True
+
+    sender.stop_worker()
+
+    assert old_worker.join_calls == 1
+    assert len(created) == 1
+    assert sender._worker_thread is created[0]
+    assert sender.get_stats()["worker_running"] is True
+
+
+def test_stop_worker_keeps_reference_when_join_times_out_with_alive_worker(monkeypatch):
+    sender = TelegramSender(client=None)
+
+    class _FakeThread:
+        def __init__(self):
+            self.join_calls = []
+            self._alive = True
+
+        def join(self, timeout=None):
+            self.join_calls.append(timeout)
+
+        def is_alive(self):
+            return self._alive
+
+    fake_thread = _FakeThread()
+    sender._worker_thread = fake_thread
+    sender._running = True
+
+    sender.stop_worker()
+
+    assert sender._worker_thread is fake_thread
+    assert fake_thread.join_calls == [5]
+    assert sender.get_stats()["worker_running"] is False
+
+
+
+def test_stop_worker_timeout_clears_stale_restart_request_and_later_stop_no_spurious_restart(monkeypatch):
+    sender = TelegramSender(client=None)
+
+    starts = []
+
+    class _NewThread:
+        def __init__(self, *args, **kwargs):
+            self._alive = False
+            starts.append(self)
+
+        def start(self):
+            self._alive = True
+
+        def join(self, timeout=None):
+            self._alive = False
+
+        def is_alive(self):
+            return self._alive
+
+    class _OldWorker:
+        def __init__(self):
+            self.alive_states = [True, False]
+            self.idx = 0
+            self.join_calls = 0
+
+        def join(self, timeout=None):
+            self.join_calls += 1
+            if self.join_calls == 1:
+                sender._restart_requested = True
+
+        def is_alive(self):
+            val = self.alive_states[min(self.idx, len(self.alive_states)-1)]
+            self.idx += 1
+            return val
+
+    monkeypatch.setattr("telegram_sender.threading.Thread", _NewThread)
+
+    old = _OldWorker()
+    sender._worker_thread = old
+    sender._running = True
+
+    sender.stop_worker()
+
+    assert sender._restart_requested is False
+    assert sender._worker_thread is old
+    assert starts == []
+
+    sender.stop_worker()
+
+    assert sender._worker_thread is None
+    assert starts == []
+
+
+def test_stop_worker_clears_reference_after_stopped_joined_worker(monkeypatch):
+    sender = TelegramSender(client=None)
+
+    class _FakeThread:
+        def __init__(self):
+            self._alive = True
+
+        def join(self, timeout=None):
+            self._alive = False
+
+        def is_alive(self):
+            return self._alive
+
+    fake_thread = _FakeThread()
+    sender._worker_thread = fake_thread
+    sender._running = True
+
+    sender.stop_worker()
+
+    assert sender._worker_thread is None
+
+
+def test_start_worker_does_not_create_second_worker_if_existing_alive(monkeypatch):
+    sender = TelegramSender(client=None)
+
+    class _AliveThread:
+        def is_alive(self):
+            return True
+
+    sender._worker_thread = _AliveThread()
+    sender._running = False
+
+    start_calls = {"count": 0}
+
+    def _unexpected_thread(*args, **kwargs):
+        start_calls["count"] += 1
+        raise AssertionError("must not create a second worker when one is alive")
+
+    monkeypatch.setattr("telegram_sender.threading.Thread", _unexpected_thread)
+
+    sender.start_worker()
+
+    assert start_calls["count"] == 0
+
+
+def test_start_worker_logs_only_on_real_new_start(monkeypatch):
+    sender = TelegramSender(client=None)
+
+    logs = []
+    monkeypatch.setattr("telegram_sender.logger.info", lambda msg: logs.append(msg))
+
+    class _FakeThread:
+        def __init__(self, *args, **kwargs):
+            self._alive = False
+
+        def start(self):
+            self._alive = True
+
+        def join(self, timeout=None):
+            self._alive = False
+
+        def is_alive(self):
+            return self._alive
+
+    monkeypatch.setattr("telegram_sender.threading.Thread", _FakeThread)
+
+    sender.start_worker()
+    sender.start_worker()
+
+    assert logs.count("[TG_SENDER] Worker started") == 1
+    sender.stop_worker()
 
 
 def test_worker_drains_queued_message_before_stop():

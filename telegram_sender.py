@@ -150,8 +150,10 @@ class TelegramSender:
         self._queue = Queue(maxsize=self._queue_maxsize)
         self._running = False
         self._worker_thread = None
+        self._stopping = False
+        self._restart_requested = False
         # FIX #21: lock used by queue_message to prevent duplicate worker threads
-        self._worker_lock = threading.Lock()
+        self._worker_lock = threading.RLock()
 
         self._messages_sent = 0
         self._messages_failed = 0
@@ -411,23 +413,54 @@ class TelegramSender:
         )
 
     def start_worker(self):
-        if self._running:
-            return
+        started = False
+        with self._worker_lock:
+            worker_thread = self._worker_thread
+            if worker_thread and worker_thread.is_alive():
+                if self._stopping and not self._running:
+                    self._restart_requested = True
+                return
 
-        self._running = True
-        self._worker_thread = threading.Thread(
-            target=self._worker_loop,
-            daemon=True,
-            name="TelegramSenderWorker",
-        )
-        self._worker_thread.start()
-        logger.info("[TG_SENDER] Worker started")
+            self._running = True
+            self._stopping = False
+            worker_thread = threading.Thread(
+                target=self._worker_loop,
+                daemon=True,
+                name="TelegramSenderWorker",
+            )
+            self._worker_thread = worker_thread
+            worker_thread.start()
+            started = True
+
+        if started:
+            logger.info("[TG_SENDER] Worker started")
 
     def stop_worker(self):
-        self._running = False
-        if self._worker_thread:
-            self._worker_thread.join(timeout=5)
+        restart_after_stop = False
+        with self._worker_lock:
+            self._running = False
+            self._stopping = True
+            worker_thread = self._worker_thread
+
+        if worker_thread:
+            worker_thread.join(timeout=5)
+            with self._worker_lock:
+                restart_requested = self._restart_requested
+                self._restart_requested = False
+                if self._worker_thread is worker_thread and not worker_thread.is_alive():
+                    self._worker_thread = None
+                    restart_after_stop = restart_requested
+                self._stopping = False
+        else:
+            with self._worker_lock:
+                restart_after_stop = self._restart_requested
+                self._restart_requested = False
+                self._stopping = False
+
         logger.info("[TG_SENDER] Worker stopped")
+
+        if restart_after_stop:
+            self.start_worker()
 
     def _worker_loop(self):
         loop = asyncio.new_event_loop()
