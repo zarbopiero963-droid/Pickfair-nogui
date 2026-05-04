@@ -28,9 +28,6 @@ class _Tree:
         self._items = {}
 
     def delete(self, *item_ids):
-        if not item_ids:
-            self._items.clear()
-            return
         for item_id in item_ids:
             self._items.pop(item_id, None)
 
@@ -121,15 +118,18 @@ def _install_fake_telethon(monkeypatch):
     monkeypatch.setitem(__import__("sys").modules, "telethon.errors", errors_mod)
 
 
-
-
 def _silence_messageboxes(monkeypatch):
     monkeypatch.setattr("controllers.telegram_controller.messagebox.showinfo", lambda *a, **k: None)
     monkeypatch.setattr("controllers.telegram_controller.messagebox.showwarning", lambda *a, **k: None)
     monkeypatch.setattr("controllers.telegram_controller.messagebox.showerror", lambda *a, **k: None)
 
 
-def _closed_loop_context_and_run_spy(monkeypatch):
+def _run_with_closed_current_loop(monkeypatch, fn):
+    try:
+        previous_loop = asyncio.get_event_loop()
+    except RuntimeError:
+        previous_loop = None
+
     closed = asyncio.new_event_loop()
     closed.close()
     asyncio.set_event_loop(closed)
@@ -142,6 +142,15 @@ def _closed_loop_context_and_run_spy(monkeypatch):
         return real_run(coro)
 
     monkeypatch.setattr(asyncio, "run", _tracking_run)
+
+    try:
+        fn()
+    finally:
+        if previous_loop is not None and not previous_loop.is_closed():
+            asyncio.set_event_loop(previous_loop)
+        else:
+            asyncio.set_event_loop(asyncio.new_event_loop())
+
     return calls
 
 
@@ -150,9 +159,8 @@ def test_send_code_uses_asyncio_run_and_keeps_public_behavior(monkeypatch):
     controller = TelegramController(app)
     _install_fake_telethon(monkeypatch)
     _silence_messageboxes(monkeypatch)
-    calls = _closed_loop_context_and_run_spy(monkeypatch)
 
-    controller.send_code()
+    calls = _run_with_closed_current_loop(monkeypatch, controller.send_code)
 
     assert calls == ["run"]
     assert app.db.saved is not None
@@ -164,9 +172,8 @@ def test_verify_code_uses_asyncio_run_and_keeps_public_behavior(monkeypatch):
     controller = TelegramController(app)
     _install_fake_telethon(monkeypatch)
     _silence_messageboxes(monkeypatch)
-    calls = _closed_loop_context_and_run_spy(monkeypatch)
 
-    controller.verify_code()
+    calls = _run_with_closed_current_loop(monkeypatch, controller.verify_code)
 
     assert calls == ["run"]
     assert app.db.saved is not None
@@ -178,9 +185,8 @@ def test_load_dialogs_uses_asyncio_run_and_keeps_public_behavior(monkeypatch):
     controller = TelegramController(app)
     _install_fake_telethon(monkeypatch)
     _silence_messageboxes(monkeypatch)
-    calls = _closed_loop_context_and_run_spy(monkeypatch)
 
-    controller.load_dialogs()
+    calls = _run_with_closed_current_loop(monkeypatch, controller.load_dialogs)
 
     assert calls == ["run"]
     assert app.tg_available_status.last == {"text": "1 chat disponibili"}
