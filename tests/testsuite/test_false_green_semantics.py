@@ -180,15 +180,70 @@ def test_ci_dynamic_intelligent_and_changed_modules_cover_critical_routing():
 
 def test_module_ultra_check_uses_validation_only_guardrail_runner_fail_closed():
     wf = _workflow(".github/workflows/_module-ultra-check.yml")
-    run_blocks = _run_text(wf)
     raw = _read(".github/workflows/_module-ultra-check.yml")
 
-    assert "python scripts/guardrail_runner.py --module" in run_blocks
+    target_steps = None
+    if isinstance(wf, dict) and "_text" not in wf:
+        jobs = wf.get("jobs")
+        assert isinstance(jobs, dict)
+        for job in jobs.values():
+            if not isinstance(job, dict):
+                continue
+            steps = job.get("steps")
+            if not isinstance(steps, list):
+                continue
+            if any(isinstance(s, dict) and "python scripts/guardrail_runner.py --module" in str(s.get("run", "")) for s in steps):
+                target_steps = steps
+                break
+    else:
+        runner_pos = raw.find("python scripts/guardrail_runner.py --module")
+        json_pos = raw.find("- name: Validate guardrail JSON syntax")
+        focused_pos = raw.find("- name: Run module-focused tests")
+        full_pos = raw.find("- name: Run full test suite (backstop)")
+        assert json_pos != -1
+        assert runner_pos != -1
+        assert focused_pos != -1
+        assert full_pos != -1
+        assert json_pos < runner_pos < focused_pos
+        assert json_pos < runner_pos < full_pos
+        assert "set -euo pipefail" in raw
+        assert "--run-mutations" not in raw
+        assert "--mutation-timeout-sec" not in raw
+        assert "inputs.module_path" in raw
+        return
+
+    assert isinstance(target_steps, list)
+
+    json_idx = None
+    runner_idx = None
+    focused_idx = None
+    full_idx = None
+    runner_run = ""
+
+    for idx, step in enumerate(target_steps):
+        if not isinstance(step, dict):
+            continue
+        step_name = str(step.get("name", ""))
+        step_run = str(step.get("run", ""))
+        if "Validate guardrail JSON syntax" in step_name:
+            json_idx = idx
+        if "python scripts/guardrail_runner.py --module" in step_run:
+            runner_idx = idx
+            runner_run = step_run
+        if "Run module-focused tests" in step_name:
+            focused_idx = idx
+        if "Run full test suite (backstop)" in step_name:
+            full_idx = idx
+
+    assert json_idx is not None
+    assert runner_idx is not None
+    assert runner_idx == json_idx + 1
+    assert focused_idx is not None and runner_idx < focused_idx
+    assert full_idx is not None and runner_idx < full_idx
+    assert "set -euo pipefail" in runner_run
+    assert "--run-mutations" not in runner_run
+    assert "--mutation-timeout-sec" not in runner_run
     assert "inputs.module_path" in raw
-    assert "--run-mutations" not in run_blocks
-    assert "--mutation-timeout-sec" not in run_blocks
-    assert "set -euo pipefail" in run_blocks
-    assert "python - <<'PY'" in run_blocks
 
 
 def test_pr_title_task_is_accepted():

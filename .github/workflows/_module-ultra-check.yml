@@ -124,7 +124,7 @@ jobs:
           MUTATION_PATH: ${{ inputs.mutation_path }}
 
       # =========================================================
-      # GUARDRIAL RUNNER VALIDATION-ONLY (HARD FAIL)
+      # GUARDRAIL RUNNER VALIDATION-ONLY (HARD FAIL)
       # =========================================================
       - name: Run guardrail runner (validation-only)
         shell: bash
