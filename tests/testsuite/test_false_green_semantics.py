@@ -331,6 +331,36 @@ def test_merge_simulation_hard_keeps_merge_validation_and_fail_closed_pytest():
     assert re.search(r"pytest\s+-q(?:\s+-x|\s+.*\s-x|\s+-x\s+.*)", run_blocks)
 
 
+def test_merge_simulation_legacy_is_manual_only_diagnostic_fallback():
+    hard = _workflow(".github/workflows/merge-simulation-hard.yml")
+    hard_raw = _read(".github/workflows/merge-simulation-hard.yml")
+    hard_trigger_block = (hard.get("on") if isinstance(hard, dict) and "_text" not in hard else None) or {}
+    hard_run = _run_text(hard)
+
+    if isinstance(hard_trigger_block, dict) and hard_trigger_block:
+        assert "pull_request" in hard_trigger_block or "workflow_call" in hard_trigger_block
+    else:
+        assert re.search(r"(?m)^\s*pull_request\s*:", hard_raw) or re.search(r"(?m)^\s*workflow_call\s*:", hard_raw)
+    assert re.search(r"git\s+merge\b", hard_run) or ("origin/main" in hard_run) or ("fetch-depth" in hard_raw)
+    assert "pytest" in hard_run
+    if "validate_guardrails.py" in hard_raw:
+        assert re.search(r"python\s+scripts/validate_guardrails\.py", hard_run)
+
+    legacy = _workflow(".github/workflows/merge-simulation.yml")
+    legacy_raw = _read(".github/workflows/merge-simulation.yml")
+    legacy_trigger_block = (legacy.get("on") if isinstance(legacy, dict) and "_text" not in legacy else None) or {}
+
+    assert Path(".github/workflows/merge-simulation.yml").exists()
+    if isinstance(legacy_trigger_block, dict) and legacy_trigger_block:
+        assert "workflow_dispatch" in legacy_trigger_block
+        assert "pull_request" not in legacy_trigger_block
+    else:
+        assert re.search(r"(?m)^\s*workflow_dispatch\s*:", legacy_raw)
+        assert not re.search(r"(?m)^\s*pull_request\s*:", legacy_raw)
+    assert "_module-ultra-check" not in legacy_raw
+    assert "pr-guard" not in legacy_raw
+
+
 def test_pr_guard_workflow_keeps_required_pr_metadata_and_shell_safety():
     wf = _workflow(".github/workflows/pr-guard.yml")
     raw = _read(".github/workflows/pr-guard.yml")
