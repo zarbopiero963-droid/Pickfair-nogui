@@ -178,6 +178,19 @@ def test_ci_dynamic_intelligent_and_changed_modules_cover_critical_routing():
             assert rule_name in owners, f"{path} must be routed by {rule_name}, owners={sorted(owners)}"
 
 
+def test_module_ultra_check_uses_validation_only_guardrail_runner_fail_closed():
+    wf = _workflow(".github/workflows/_module-ultra-check.yml")
+    run_blocks = _run_text(wf)
+    raw = _read(".github/workflows/_module-ultra-check.yml")
+
+    assert "python scripts/guardrail_runner.py --module" in run_blocks
+    assert "inputs.module_path" in raw
+    assert "--run-mutations" not in run_blocks
+    assert "--mutation-timeout-sec" not in run_blocks
+    assert "set -euo pipefail" in run_blocks
+    assert "python - <<'PY'" in run_blocks
+
+
 def test_pr_title_task_is_accepted():
     task, source, unknown, ignored = resolve_task(
         {

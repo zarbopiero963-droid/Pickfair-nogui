@@ -124,6 +124,19 @@ jobs:
           MUTATION_PATH: ${{ inputs.mutation_path }}
 
       # =========================================================
+      # GUARDRIAL RUNNER VALIDATION-ONLY (HARD FAIL)
+      # =========================================================
+      - name: Run guardrail runner (validation-only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          module_path="${{ inputs.module_path }}"
+          module_name="${module_path%.py}"
+          module_name="${module_name//\//.}"
+
+          python scripts/guardrail_runner.py --module "$module_name"
+
+      # =========================================================
       # DETECT EXISTING TEST FILES
       # =========================================================
       - name: Detect existing focused tests
