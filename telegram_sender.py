@@ -151,7 +151,7 @@ class TelegramSender:
         self._running = False
         self._worker_thread = None
         # FIX #21: lock used by queue_message to prevent duplicate worker threads
-        self._worker_lock = threading.Lock()
+        self._worker_lock = threading.RLock()
 
         self._messages_sent = 0
         self._messages_failed = 0
@@ -411,22 +411,27 @@ class TelegramSender:
         )
 
     def start_worker(self):
-        if self._running:
-            return
+        with self._worker_lock:
+            if self._running:
+                return
 
-        self._running = True
-        self._worker_thread = threading.Thread(
-            target=self._worker_loop,
-            daemon=True,
-            name="TelegramSenderWorker",
-        )
-        self._worker_thread.start()
+            self._running = True
+            self._worker_thread = threading.Thread(
+                target=self._worker_loop,
+                daemon=True,
+                name="TelegramSenderWorker",
+            )
+            self._worker_thread.start()
         logger.info("[TG_SENDER] Worker started")
 
     def stop_worker(self):
-        self._running = False
-        if self._worker_thread:
-            self._worker_thread.join(timeout=5)
+        with self._worker_lock:
+            self._running = False
+            worker_thread = self._worker_thread
+            self._worker_thread = None
+
+        if worker_thread:
+            worker_thread.join(timeout=5)
         logger.info("[TG_SENDER] Worker stopped")
 
     def _worker_loop(self):

@@ -1,8 +1,9 @@
+import threading
 import time
 
 import pytest
 
-from telegram_sender import TelegramSender
+from telegram_sender import QueuedMessage, TelegramSender
 
 
 class _Msg:
@@ -159,6 +160,124 @@ def test_stop_worker_repeated_calls_are_safe_and_leave_stopped():
     sender.stop_worker()
 
     assert sender.get_stats()["worker_running"] is False
+
+
+
+
+def test_start_worker_repeated_calls_are_idempotent(monkeypatch):
+    sender = TelegramSender(client=None)
+
+    starts = {"count": 0}
+    real_thread = threading.Thread
+
+    def _counting_thread(*args, **kwargs):
+        if kwargs.get("name") == "TelegramSenderWorker":
+            starts["count"] += 1
+        return real_thread(*args, **kwargs)
+
+    monkeypatch.setattr("telegram_sender.threading.Thread", _counting_thread)
+
+    sender.start_worker()
+    sender.start_worker()
+
+    try:
+        assert starts["count"] == 1
+        assert sender.get_stats()["worker_running"] is True
+    finally:
+        sender.stop_worker()
+
+
+def test_start_worker_is_race_safe_under_concurrent_calls(monkeypatch):
+    sender = TelegramSender(client=None)
+
+    starts = {"count": 0}
+    real_thread = threading.Thread
+
+    def _counting_thread(*args, **kwargs):
+        if kwargs.get("name") == "TelegramSenderWorker":
+            starts["count"] += 1
+        return real_thread(*args, **kwargs)
+
+    monkeypatch.setattr("telegram_sender.threading.Thread", _counting_thread)
+
+    workers = [real_thread(target=sender.start_worker) for _ in range(10)]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join()
+
+    try:
+        assert starts["count"] == 1
+        assert sender.get_stats()["worker_running"] is True
+    finally:
+        sender.stop_worker()
+
+
+def test_worker_loop_closes_event_loop_on_send_exception(monkeypatch):
+    sender = TelegramSender(client=None)
+
+    class _FakeLoop:
+        def __init__(self):
+            self.closed = False
+            self.shutdown_called = False
+            self.calls = 0
+
+        def run_until_complete(self, _coro):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("boom")
+            self.shutdown_called = True
+            return None
+
+        async def shutdown_asyncgens(self):
+            self.shutdown_called = True
+
+        def close(self):
+            self.closed = True
+
+    fake_loop = _FakeLoop()
+
+    monkeypatch.setattr("telegram_sender.asyncio.new_event_loop", lambda: fake_loop)
+    monkeypatch.setattr("telegram_sender.asyncio.set_event_loop", lambda _loop: None)
+
+    sender._queue.put(QueuedMessage(chat_id="1", text="x", max_retries=1, callback=None, message_type="GENERIC"))
+    sender._running = True
+
+    original_get = sender._queue.get
+
+    def _one_then_stop(*args, **kwargs):
+        item = original_get(*args, **kwargs)
+        sender._running = False
+        return item
+
+    monkeypatch.setattr(sender._queue, "get", _one_then_stop)
+
+    sender._worker_loop()
+
+    assert fake_loop.closed is True
+
+
+def test_send_message_sync_closes_event_loop_on_exception(monkeypatch):
+    sender = TelegramSender(client=None)
+
+    class _FakeLoop:
+        def __init__(self):
+            self.closed = False
+
+        def run_until_complete(self, _coro):
+            raise RuntimeError("sync boom")
+
+        def close(self):
+            self.closed = True
+
+    fake_loop = _FakeLoop()
+
+    monkeypatch.setattr("telegram_sender.asyncio.new_event_loop", lambda: fake_loop)
+
+    with pytest.raises(RuntimeError, match="sync boom"):
+        sender.send_message_sync("1", "x", max_retries=1)
+
+    assert fake_loop.closed is True
 
 
 def test_worker_drains_queued_message_before_stop():
