@@ -52,7 +52,10 @@ class TelegramModule:
             elif hasattr(self, "runtime") and getattr(self.runtime, "betfair_service", None) is not None:
                 client_getter = self.runtime.betfair_service.get_client
             elif hasattr(self, "betfair_client"):
-                client_getter = lambda: getattr(self, "betfair_client", None)
+                def _local_client_getter():
+                    return getattr(self, "betfair_client", None)
+
+                client_getter = _local_client_getter
 
             resolver = TelegramBetResolver(client_getter=client_getter)
             self._telegram_bet_resolver = resolver
@@ -113,7 +116,8 @@ class TelegramModule:
             return
 
         try:
-            future = submit_fn(task_name, worker_fn)
+            submit_callable = submit_fn
+            future = submit_callable(task_name, worker_fn)
         except Exception as exc:
             on_error(exc)
             return
@@ -414,7 +418,6 @@ class TelegramModule:
 
             action = processor.normalize_action(signal_data)
             selection_id = processor.parse_selection_id(signal_data)
-            market_id = processor.parse_market_id(signal_data)
             original_price = processor.parse_price(signal_data)
             selection_name = processor.parse_selection_name(signal_data, selection_id)
             stake = self._safe_parse_stake()

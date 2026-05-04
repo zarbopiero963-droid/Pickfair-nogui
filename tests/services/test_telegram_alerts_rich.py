@@ -4,7 +4,8 @@ from services.telegram_alerts_service import TelegramAlertsService
 
 
 class _Settings:
-    def load_telegram_config_row(self):
+    @staticmethod
+    def load_telegram_config_row():
         return {
             "alerts_enabled": True,
             "alerts_chat_id": "9988",
