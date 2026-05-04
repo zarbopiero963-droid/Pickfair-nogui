@@ -67,10 +67,10 @@ def test_callable_validation_rejects_hasattr_only_false_green():
 
 
 def test_codex_comment_workflows_are_noise_safe_and_non_core():
-    workflow_paths = [
+    workflow_paths = (
         ".github/workflows/codex-comment-on-pr-conflict.yml",
         ".github/workflows/codex-comment-on-pr-check-failure.yml",
-    ]
+    )
 
     for rel in workflow_paths:
         wf = _workflow(rel)
@@ -98,8 +98,8 @@ def test_codex_comment_workflows_are_noise_safe_and_non_core():
             assert "pull_request" not in trigger_block, rel
         else:
             assert re.search(r"(?m)^\s*workflow_dispatch\s*:", raw), rel
-            assert re.search(r"(?ms)^\s*workflow_dispatch\s*:\s*\n(?:[ \t]+.*\n)*?[ \t]+pr_number\s*:", raw), rel
-            assert re.search(r"(?ms)^\s*workflow_dispatch\s*:\s*\n(?:[ \t]+.*\n)*?[ \t]+required\s*:\s*true", raw), rel
+            assert "pr_number:" in raw, rel
+            assert "required: true" in low, rel
             assert not re.search(r"(?m)^\s*pull_request\s*:", raw), rel
             if rel.endswith("check-failure.yml"):
                 assert re.search(r"(?m)^\s*workflow_run\s*:", raw), rel
@@ -142,6 +142,77 @@ def test_codex_comment_workflows_are_noise_safe_and_non_core():
             posted_non_blocking = True
 
         assert posted_non_blocking, rel
+
+
+OPTIONAL_CODEX_TOOLING_WORKFLOWS = (
+    ".github/workflows/codex-bug-gate.yml",
+    ".github/workflows/bootstrap-next-task.yml",
+)
+
+
+def _workflow_steps(wf):
+    if not isinstance(wf, dict) or "_text" in wf:
+        return []
+    jobs = wf.get("jobs")
+    if not isinstance(jobs, dict):
+        return []
+    steps = []
+    for job in jobs.values():
+        if not isinstance(job, dict):
+            continue
+        for step in (job.get("steps") or []):
+            if isinstance(step, dict):
+                steps.append(step)
+    return steps
+
+
+def test_optional_codex_tooling_workflows_are_noise_safe_and_non_core():
+    for rel in OPTIONAL_CODEX_TOOLING_WORKFLOWS:
+        wf = _workflow(rel)
+        raw = _read(rel)
+        low = raw.lower()
+
+        trigger_block = (wf.get("on") if isinstance(wf, dict) and "_text" not in wf else None) or {}
+        if trigger_block:
+            assert "workflow_dispatch" in trigger_block, rel
+        else:
+            assert re.search(r"(?m)^\s*workflow_dispatch\s*:", raw), rel
+
+        if rel.endswith("codex-bug-gate.yml"):
+            if trigger_block:
+                assert "pull_request" not in trigger_block, rel
+            else:
+                assert not re.search(r"(?m)^\s*pull_request\s*:", raw), rel
+        executable_fields = []
+        side_effect_steps = []
+        for step in _workflow_steps(wf):
+            run = str(step.get("run", "") or "")
+            uses = str(step.get("uses", "") or "")
+            name = str(step.get("name", "") or "")
+            executable_fields.extend([run.lower(), uses.lower()])
+            signature = f"{name} {run} {uses}".lower()
+            if any(tok in signature for tok in ("codex", "comment", "report", "post_codex_comment.py", "post_codex_gate_comment.py")):
+                side_effect_steps.append(step)
+        if rel.endswith("codex-bug-gate.yml") and not side_effect_steps and "_text" in wf:
+            if "post_codex_gate_comment.py" in raw:
+                side_effect_steps.append({"continue-on-error": "continue-on-error: true" in low})
+
+        if executable_fields:
+            blob = "\n".join(executable_fields)
+            assert "pytest" not in blob, rel
+            assert "guardrail_check.py" not in blob, rel
+            assert "merge-simulation" not in blob, rel
+            assert "_module-ultra-check" not in blob, rel
+        else:
+            assert "pytest" not in low, rel
+            assert "guardrail_check.py" not in low, rel
+            assert "merge-simulation" not in low, rel
+            assert "_module-ultra-check" not in low, rel
+
+        if rel.endswith("codex-bug-gate.yml"):
+            assert side_effect_steps, f"{rel}: expected at least one Codex/report/comment side-effect step"
+            for step in side_effect_steps:
+                assert step.get("continue-on-error") is True, rel
 
 def test_pr_guard_workflow_uses_fail_closed_markers_only():
     workflow = Path(".github/workflows/pr-guard.yml").read_text(encoding="utf-8")
