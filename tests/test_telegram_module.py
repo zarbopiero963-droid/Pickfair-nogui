@@ -13,7 +13,16 @@ def test_telegram_sanitizer_redacts_nested_and_compound_keys_without_mutation():
                 {"access_token": "a1", "client_secret": "cs"},
                 {"bot_token": "bt", "api_secret": "as", "private_key": "pk", "market_id": "1.22"},
             ],
+            "token_count": 17,
+            "tokenizer": "keep-tokenizer",
+            "author": "keep-author",
+            "authored_by": "keep-authored-by",
+            "keyboard": "keep-keyboard",
+            "monkey": "keep-monkey",
+            "jockey": "keep-jockey",
         },
+        "runner_name": "Runner",
+        "selection_id": 123,
     }
     out = sanitize_telegram_payload(raw_signal)
 
@@ -27,6 +36,15 @@ def test_telegram_sanitizer_redacts_nested_and_compound_keys_without_mutation():
     assert out["nested"]["list"][1]["api_secret"] == "[REDACTED]"
     assert out["nested"]["list"][1]["private_key"] == "[REDACTED]"
     assert out["nested"]["list"][1]["market_id"] == "1.22"
+    assert out["nested"]["token_count"] == 17
+    assert out["nested"]["tokenizer"] == "keep-tokenizer"
+    assert out["nested"]["author"] == "keep-author"
+    assert out["nested"]["authored_by"] == "keep-authored-by"
+    assert out["nested"]["keyboard"] == "keep-keyboard"
+    assert out["nested"]["monkey"] == "keep-monkey"
+    assert out["nested"]["jockey"] == "keep-jockey"
+    assert out["runner_name"] == "Runner"
+    assert out["selection_id"] == 123
     assert out["raw_text"] == "operator text"
     assert raw_signal["refresh_token"] == "r1"
 
