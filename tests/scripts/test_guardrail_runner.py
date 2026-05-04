@@ -70,7 +70,7 @@ def test_missing_module_path_fail_closed(tmp_path: Path) -> None:
     for kind in ["specs", "contracts", "state_models", "mutations"]:
         _mk_guardrail(repo / "guardrails" / kind / "mod.json", "mod", ["src/missing.py"])
     report = guardrail_runner.validate_module_guardrails("mod", repo / "guardrails", repo, True)
-    assert any("Missing module path" in e for e in report["errors"])
+    assert any("Missing module_paths path" in e for e in report["errors"])
 
 
 def test_module_path_validation_safe_relative_file(tmp_path: Path) -> None:
@@ -96,8 +96,8 @@ def test_module_path_must_be_file_and_non_empty(tmp_path: Path) -> None:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(payload), encoding="utf-8")
     report = guardrail_runner.validate_module_guardrails("mod", repo / "guardrails", repo, True)
-    assert any("not a file" in e for e in report["errors"])
-    assert any("Missing module path" in e for e in report["errors"])
+    assert any("module_paths path" in e and "not a file" in e for e in report["errors"])
+    assert any("Missing module_paths path" in e for e in report["errors"])
 
 
 def test_missing_focused_test_fail_closed(tmp_path: Path) -> None:
@@ -107,7 +107,7 @@ def test_missing_focused_test_fail_closed(tmp_path: Path) -> None:
     for kind in ["specs", "contracts", "state_models", "mutations"]:
         _mk_guardrail(repo / "guardrails" / kind / "mod.json", "mod", ["src/m.py"], ["tests/missing.py"])
     report = guardrail_runner.validate_module_guardrails("mod", repo / "guardrails", repo, True)
-    assert any("Missing module path" in e and "focused_tests" in e for e in report["errors"])
+    assert any("Missing focused_tests path" in e for e in report["errors"])
 
 
 def test_focused_tests_validation_absolute_escape_and_file(tmp_path: Path) -> None:
@@ -226,7 +226,8 @@ def test_delegate_timeout(monkeypatch: object) -> None:
     monkeypatch.setattr(guardrail_runner.subprocess, "run", fake_run)
     res = guardrail_runner.run_mutation_delegate("telegram_signal_processor", 1, guardrail_runner.find_repo_root())
     assert res["ok"] is False
-    assert "timeout" in res["error"]
+    assert res["fatal"] is True
+    assert "Mutation delegate wrapper timeout after" in res["error"]
 
 
 def test_delegate_missing_script(tmp_path: Path) -> None:
@@ -292,3 +293,23 @@ def test_cli_help() -> None:
     repo_root = guardrail_runner.find_repo_root()
     proc = subprocess.run([sys.executable, "scripts/guardrail_runner.py", "--help"], cwd=repo_root, capture_output=True, text=True)
     assert proc.returncode == 0
+
+
+def test_cli_invalid_mutation_timeout_zero_and_negative() -> None:
+    repo_root = guardrail_runner.find_repo_root()
+    proc_zero = subprocess.run(
+        [sys.executable, "scripts/guardrail_runner.py", "--module", "telegram_signal_processor", "--mutation-timeout-sec", "0"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    proc_neg = subprocess.run(
+        [sys.executable, "scripts/guardrail_runner.py", "--module", "telegram_signal_processor", "--mutation-timeout-sec", "-1"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    assert proc_zero.returncode != 0
+    assert proc_neg.returncode != 0
+    assert "Invalid --mutation-timeout-sec: must be > 0" in proc_zero.stdout
+    assert "Invalid --mutation-timeout-sec: must be > 0" in proc_neg.stdout

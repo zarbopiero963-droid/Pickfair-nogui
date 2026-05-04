@@ -33,7 +33,7 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 def _validate_relative_file_path(value: Any, *, repo_root: Path, source: Path, label: str) -> str | None:
     if not isinstance(value, str) or not value.strip():
-        return f"{label}: Missing module path in {source}"
+        return f"Missing {label} path in {source}"
     rel_str = value.strip()
     rel_path = Path(rel_str)
     if rel_path.is_absolute():
@@ -42,11 +42,11 @@ def _validate_relative_file_path(value: Any, *, repo_root: Path, source: Path, l
     try:
         resolved.relative_to(repo_root.resolve())
     except ValueError:
-        return f"{label}: path escapes repo_root: {rel_str}"
+        return f"{label} path '{rel_str}' escapes repo_root"
     if not resolved.exists():
-        return f"{label}: Missing module path '{rel_str}' referenced by {source}"
+        return f"Missing {label} path '{rel_str}' referenced by {source}"
     if not resolved.is_file():
-        return f"{label}: path not a file: {rel_str}"
+        return f"{label} path '{rel_str}' not a file"
     return None
 
 
@@ -118,7 +118,7 @@ def validate_module_guardrails(
 
 
 def run_mutation_delegate(module: str, timeout_sec: int, repo_root: Path) -> dict[str, Any]:
-    script = repo_root / "scripts" / "run_mutation_guardrails.py"
+    script = (repo_root / "scripts" / "run_mutation_guardrails.py").resolve()
     if not script.exists():
         return {"ok": False, "fatal": True, "error": f"Missing delegate script: {script}"}
 
@@ -137,21 +137,27 @@ def run_mutation_delegate(module: str, timeout_sec: int, repo_root: Path) -> dic
             str(output_path),
         ]
         try:
+            wrapper_timeout = max(timeout_sec + 30, timeout_sec * 4)
+            # Security: command is an argv list, shell=False (default), with repo-local resolved script path.
+            # User/module values are passed as argv elements and not shell-interpolated.
             proc = subprocess.run(
                 cmd,
                 cwd=str(repo_root),
                 capture_output=True,
                 text=True,
-                timeout=timeout_sec,
+                timeout=wrapper_timeout,
             )
         except subprocess.TimeoutExpired:
-            return {"ok": False, "fatal": True, "error": f"Mutation delegate timeout after {timeout_sec}s"}
+            return {
+                "ok": False,
+                "fatal": True,
+                "error": f"Mutation delegate wrapper timeout after {wrapper_timeout}s",
+            }
 
         result: dict[str, Any] = {
             "ok": False,
             "fatal": True,
             "return_code": proc.returncode,
-            "output": str(output_path),
             "stdout": proc.stdout[-2000:],
             "stderr": proc.stderr[-2000:],
         }
