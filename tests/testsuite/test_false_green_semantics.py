@@ -170,6 +170,7 @@ def test_optional_codex_tooling_workflows_are_noise_safe_and_non_core():
     for rel in OPTIONAL_CODEX_TOOLING_WORKFLOWS:
         wf = _workflow(rel)
         raw = _read(rel)
+        low = raw.lower()
 
         trigger_block = (wf.get("on") if isinstance(wf, dict) and "_text" not in wf else None) or {}
         if trigger_block:
@@ -190,8 +191,11 @@ def test_optional_codex_tooling_workflows_are_noise_safe_and_non_core():
             name = str(step.get("name", "") or "")
             executable_fields.extend([run.lower(), uses.lower()])
             signature = f"{name} {run} {uses}".lower()
-            if any(tok in signature for tok in ("codex", "comment", "report", "post_codex_comment.py")):
+            if any(tok in signature for tok in ("codex", "comment", "report", "post_codex_comment.py", "post_codex_gate_comment.py")):
                 side_effect_steps.append(step)
+        if rel.endswith("codex-bug-gate.yml") and not side_effect_steps and "_text" in wf:
+            if "post_codex_gate_comment.py" in raw:
+                side_effect_steps.append({"continue-on-error": "continue-on-error: true" in low})
 
         if executable_fields:
             blob = "\n".join(executable_fields)
@@ -200,13 +204,13 @@ def test_optional_codex_tooling_workflows_are_noise_safe_and_non_core():
             assert "merge-simulation" not in blob, rel
             assert "_module-ultra-check" not in blob, rel
         else:
-            low = raw.lower()
             assert "pytest" not in low, rel
             assert "guardrail_check.py" not in low, rel
             assert "merge-simulation" not in low, rel
             assert "_module-ultra-check" not in low, rel
 
-        if rel.endswith("codex-bug-gate.yml") and side_effect_steps:
+        if rel.endswith("codex-bug-gate.yml"):
+            assert side_effect_steps, f"{rel}: expected at least one Codex/report/comment side-effect step"
             for step in side_effect_steps:
                 assert step.get("continue-on-error") is True, rel
 
