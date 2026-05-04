@@ -7,6 +7,7 @@ from tkinter import messagebox, simpledialog
 from theme import COLORS
 from services.telegram_signal_processor import TelegramSignalProcessor
 from services.telegram_bet_resolver import TelegramBetResolver
+from telegram_sanitizer import sanitize_telegram_payload as _sanitize_telegram_payload
 from observability.sanitizers import sanitize_dict
 
 logger = logging.getLogger(__name__)
@@ -911,36 +912,4 @@ class TelegramModule:
                     values=(date_str, sel, action, price, stake, status),
                     tags=(tag,) if tag else (),
                 )
-_REDACTED = "[REDACTED]"
-_TELEGRAM_SENSITIVE_KEYS = {
-    "token",
-    "auth_token",
-    "access_token",
-    "bearer",
-    "user_session",
-    "session",
-    "session_token",
-    "api_key",
-    "secret",
-    "password",
-    "authorization",
-}
-
-
-def _sanitize_telegram_payload(value):
-    if isinstance(value, dict):
-        out = {}
-        for k, v in value.items():
-            key = str(k)
-            if key.lower() in _TELEGRAM_SENSITIVE_KEYS:
-                out[k] = _REDACTED
-            else:
-                out[k] = _sanitize_telegram_payload(v)
-        return out
-    if isinstance(value, list):
-        return [_sanitize_telegram_payload(v) for v in value]
-    if isinstance(value, tuple):
-        return tuple(_sanitize_telegram_payload(v) for v in value)
-    return value
-
 
