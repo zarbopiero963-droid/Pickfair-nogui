@@ -10,6 +10,7 @@ HEDGE-FUND STABLE:
 
 import asyncio
 import logging
+import re
 import threading
 from dataclasses import dataclass
 from queue import Empty, Full, Queue
@@ -166,6 +167,12 @@ class TelegramSender:
             return ""
         return str(value)
 
+    def _escape_markdown_v2(self, text: str) -> str:
+        if text is None:
+            return ""
+        raw_text = str(text)
+        return re.sub(r"([_\*\[\]\(\)~`>#+\-=|{}\.!])", r"\\\1", raw_text)
+
     def _db_log(
         self,
         chat_id,
@@ -210,7 +217,8 @@ class TelegramSender:
 
             try:
                 entity = await self.client.get_entity(int(chat_id))
-                msg = await self.client.send_message(entity, text)
+                escaped_text = self._escape_markdown_v2(text)
+                msg = await self.client.send_message(entity, escaped_text)
 
                 result.success = True
                 result.message_id = msg.id if hasattr(msg, "id") else None
@@ -223,7 +231,7 @@ class TelegramSender:
                 self._db_log(
                     chat_id=chat_id,
                     message_type=message_type,
-                    text=text,
+                    text=escaped_text,
                     status="SENT",
                     message_id=result.message_id,
                     error=None,
