@@ -908,3 +908,67 @@ def test_chaos_workflow_ownership_preserves_canonical_and_demotes_noisy_duplicat
         assert "guardrail_check.py" not in low, rel
         assert "merge-simulation" not in low, rel
 
+
+BROAD_SUITE_WORKFLOWS = {
+    "critical_specialist": (
+        ".github/workflows/smoke-core-fast.yml",
+        ".github/workflows/failure.yml",
+        ".github/workflows/e2e.yml",
+        ".github/workflows/core-guardrails.yml",
+        ".github/workflows/core-invariants.yml",
+        ".github/workflows/recovery-guardrails.yml",
+        ".github/workflows/repo-guardrails.yml",
+        ".github/workflows/observability-tests.yml",
+    ),
+    "future_candidates": (
+        ".github/workflows/unit.yml",
+        ".github/workflows/smoke.yml",
+        ".github/workflows/integration.yml",
+        ".github/workflows/net.yml",
+    ),
+}
+
+
+def _workflow_is_pr_activated(rel: str) -> bool:
+    return _workflow_has_trigger(rel, "pull_request")
+
+
+def _workflow_invokes_pytest_or_tests(rel: str) -> bool:
+    raw = _read(rel)
+    run_blocks = _run_text(_workflow(rel))
+    blob = f"{raw}\n{run_blocks}".lower()
+    return ("pytest" in blob) or ("python -m pytest" in blob) or ("tests/" in blob)
+
+
+def test_broad_suite_ownership_map_and_redundancy_control_semantics():
+    forbidden = ("_module-ultra-check", "pr-guard", "merge-simulation", "module-wrapper")
+
+    all_targets = tuple(BROAD_SUITE_WORKFLOWS["critical_specialist"]) + tuple(BROAD_SUITE_WORKFLOWS["future_candidates"])
+    for rel in all_targets:
+        assert Path(rel).is_file(), rel
+        assert "jobs:" in _read(rel), rel
+
+    for rel in BROAD_SUITE_WORKFLOWS["critical_specialist"]:
+        raw = _read(rel)
+        low = raw.lower()
+        assert _workflow_is_pr_activated(rel), rel
+        assert _workflow_invokes_pytest_or_tests(rel), rel
+        for token in forbidden:
+            assert token not in low, f"{rel} contains forbidden token: {token}"
+
+    obs = _read(".github/workflows/observability-tests.yml").lower()
+    assert (
+        "observability/**" in obs
+        or "tests/observability/**" in obs
+        or "pytest tests/observability" in obs
+        or "observability" in _run_text(_workflow(".github/workflows/observability-tests.yml")).lower()
+    )
+
+    assert "guardrail" in _read(".github/workflows/core-guardrails.yml").lower()
+    assert "invariant" in _read(".github/workflows/core-invariants.yml").lower()
+    assert "recovery" in _read(".github/workflows/recovery-guardrails.yml").lower()
+    assert "guardrail" in _read(".github/workflows/repo-guardrails.yml").lower()
+
+    for rel in BROAD_SUITE_WORKFLOWS["future_candidates"]:
+        assert Path(rel).is_file(), rel
+        assert _workflow_invokes_pytest_or_tests(rel), rel
