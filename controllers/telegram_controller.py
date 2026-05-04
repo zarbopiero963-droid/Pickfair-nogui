@@ -15,6 +15,9 @@ class TelegramController:
     def __init__(self, app):
         self.app = app
 
+    def _run_coroutine_sync(self, coro):
+        return asyncio.run(coro)
+
     # =========================================================
     # DB HELPERS
     # =========================================================
@@ -128,10 +131,7 @@ class TelegramController:
                     await client.disconnect()
                     return False, "", "Codice inviato. Inseriscilo e clicca Verifica."
 
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                authorized, session_string, msg = loop.run_until_complete(run())
-                loop.close()
+                authorized, session_string, msg = self._run_coroutine_sync(run())
 
                 if authorized:
                     settings = self._get_settings()
@@ -222,10 +222,7 @@ class TelegramController:
                     await client.disconnect()
                     return True, session_string
 
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                success, result = loop.run_until_complete(run())
-                loop.close()
+                success, result = self._run_coroutine_sync(run())
 
                 if success:
                     settings = self._get_settings()
@@ -370,10 +367,7 @@ class TelegramController:
                     await client.disconnect()
                     return dialogs
 
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                dialogs = loop.run_until_complete(run())
-                loop.close()
+                dialogs = self._run_coroutine_sync(run())
 
                 if dialogs is None:
                     self.app.uiq.post(
