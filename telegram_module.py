@@ -116,8 +116,7 @@ class TelegramModule:
             return
 
         try:
-            submit_callable = submit_fn
-            future = submit_callable(task_name, worker_fn)
+            future = submit_fn(task_name, worker_fn)
         except Exception as exc:
             on_error(exc)
             return
@@ -534,7 +533,7 @@ class TelegramModule:
                     price=payload.get("price", original_price),
                     stake=payload.get("stake", stake),
                     status="SUBMITTED",
-                    signal=_sanitize_telegram_payload({**signal_data, "resolved_payload": payload}),
+                    signal=_sanitize_telegram_payload({**(signal_data or {}), "resolved_payload": payload}),
                 )
                 self._safe_refresh_telegram_signals_tree()
 

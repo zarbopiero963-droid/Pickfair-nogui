@@ -6,6 +6,11 @@ def test_telegram_sanitizer_redacts_nested_and_compound_keys_without_mutation():
     raw_signal = {
         "raw_text": "operator text",
         "refresh_token": "r1",
+        "auth": "auth-only",
+        "bearer_token": "bearer",
+        "secret_key": "sec-key",
+        "prefix_api_key_id": "api-key-id",
+        "internal_session_token_value": "sess-token",
         "nested": {
             "Authorization": "Bearer abc",
             "user_session": "u1",
@@ -23,11 +28,20 @@ def test_telegram_sanitizer_redacts_nested_and_compound_keys_without_mutation():
         },
         "runner_name": "Runner",
         "selection_id": 123,
+        "tuple_payload": (
+            {"api_secret": "tuple-secret", "auth_token": "tuple-auth", "author": "tuple-author"},
+            "plain-value",
+        ),
     }
     out = sanitize_telegram_payload(raw_signal)
 
     assert out is not raw_signal
     assert out["refresh_token"] == "[REDACTED]"
+    assert out["auth"] == "[REDACTED]"
+    assert out["bearer_token"] == "[REDACTED]"
+    assert out["secret_key"] == "[REDACTED]"
+    assert out["prefix_api_key_id"] == "[REDACTED]"
+    assert out["internal_session_token_value"] == "[REDACTED]"
     assert out["nested"]["Authorization"] == "[REDACTED]"
     assert out["nested"]["user_session"] == "[REDACTED]"
     assert out["nested"]["list"][0]["access_token"] == "[REDACTED]"
@@ -45,6 +59,10 @@ def test_telegram_sanitizer_redacts_nested_and_compound_keys_without_mutation():
     assert out["nested"]["jockey"] == "keep-jockey"
     assert out["runner_name"] == "Runner"
     assert out["selection_id"] == 123
+    assert out["tuple_payload"][0]["api_secret"] == "[REDACTED]"
+    assert out["tuple_payload"][0]["auth_token"] == "[REDACTED]"
+    assert out["tuple_payload"][0]["author"] == "tuple-author"
+    assert out["tuple_payload"][1] == "plain-value"
     assert out["raw_text"] == "operator text"
     assert raw_signal["refresh_token"] == "r1"
 

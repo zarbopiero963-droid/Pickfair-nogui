@@ -16,6 +16,7 @@ TELEGRAM_SENSITIVE_KEYS = {
     "secret",
     "password",
     "authorization",
+    "auth",
     "refresh_token",
     "bot_token",
     "client_secret",
@@ -32,19 +33,7 @@ TELEGRAM_SENSITIVE_KEY_FRAGMENTS = {
     "key",
     "session",
 }
-_CREDENTIAL_PARTS = {"token", "secret", "password", "key", "session", "auth", "bearer"}
-_CREDENTIAL_QUALIFIERS = {
-    "refresh",
-    "bot",
-    "client",
-    "private",
-    "api",
-    "auth",
-    "access",
-    "session",
-    "user",
-    "authorization",
-}
+_CREDENTIAL_PARTS = {"token", "secret", "password", "key", "session", "auth", "bearer", "api"}
 
 
 def _is_sensitive_key(key: str) -> bool:
@@ -56,11 +45,8 @@ def _is_sensitive_key(key: str) -> bool:
         return False
     if not any(part in TELEGRAM_SENSITIVE_KEY_FRAGMENTS for part in parts):
         return False
-    if (parts[-1] in _CREDENTIAL_PARTS and any(p in _CREDENTIAL_QUALIFIERS for p in parts[:-1])) or (
-        parts[0] in _CREDENTIAL_PARTS and any(p in _CREDENTIAL_QUALIFIERS for p in parts[1:])
-    ):
-        return True
-    return False
+    credential_count = sum(1 for part in parts if part in _CREDENTIAL_PARTS)
+    return credential_count >= 2
 
 
 def sanitize_telegram_payload(value: Any) -> Any:
