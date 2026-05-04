@@ -405,7 +405,7 @@ class TelegramModule:
                     signal={
                         "error_code": error_code,
                         "error_reason": error_reason,
-                        "raw_signal": signal,
+                        "raw_signal": _sanitize_telegram_payload(signal),
                     },
                 )
                 self._safe_refresh_telegram_signals_tree()
@@ -427,7 +427,7 @@ class TelegramModule:
                 price=original_price,
                 stake=stake,
                 status="RECEIVED",
-                signal=signal_data,
+                signal=_sanitize_telegram_payload(signal_data),
             )
             self._safe_refresh_telegram_signals_tree()
 
@@ -458,7 +458,7 @@ class TelegramModule:
                             price=original_price,
                             stake=stake,
                             status="IGNORED",
-                            signal=signal_data,
+                            signal=_sanitize_telegram_payload(signal_data),
                         )
                         self._safe_refresh_telegram_signals_tree()
                         return
@@ -469,7 +469,7 @@ class TelegramModule:
                         price=original_price,
                         stake=stake,
                         status="IGNORED",
-                        signal=signal_data,
+                        signal=_sanitize_telegram_payload(signal_data),
                     )
                     self._safe_refresh_telegram_signals_tree()
                     return
@@ -486,7 +486,7 @@ class TelegramModule:
                         "stake": stake,
                     }
 
-                payload["raw_signal"] = dict(signal_data or {})
+                payload["raw_signal"] = _sanitize_telegram_payload(dict(signal_data or {}))
                 payload["resolution_mode"] = resolution_mode
 
                 logger.info(
@@ -518,7 +518,7 @@ class TelegramModule:
                         price=result.get("price", original_price),
                         stake=result.get("stake", stake),
                         status="ERROR",
-                        signal=signal_data,
+                        signal=_sanitize_telegram_payload(signal_data),
                     )
                     self._safe_refresh_telegram_signals_tree()
                     return
@@ -530,7 +530,7 @@ class TelegramModule:
                     price=payload.get("price", original_price),
                     stake=payload.get("stake", stake),
                     status="SUBMITTED",
-                    signal={**signal_data, "resolved_payload": payload},
+                    signal=_sanitize_telegram_payload({**signal_data, "resolved_payload": payload}),
                 )
                 self._safe_refresh_telegram_signals_tree()
 
@@ -543,7 +543,7 @@ class TelegramModule:
                     price=original_price,
                     stake=stake,
                     status="ERROR",
-                    signal=signal_data,
+                    signal=_sanitize_telegram_payload(signal_data),
                 )
                 self._safe_refresh_telegram_signals_tree()
 
@@ -911,3 +911,36 @@ class TelegramModule:
                     values=(date_str, sel, action, price, stake, status),
                     tags=(tag,) if tag else (),
                 )
+_REDACTED = "[REDACTED]"
+_TELEGRAM_SENSITIVE_KEYS = {
+    "token",
+    "auth_token",
+    "access_token",
+    "bearer",
+    "user_session",
+    "session",
+    "session_token",
+    "api_key",
+    "secret",
+    "password",
+    "authorization",
+}
+
+
+def _sanitize_telegram_payload(value):
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            key = str(k)
+            if key.lower() in _TELEGRAM_SENSITIVE_KEYS:
+                out[k] = _REDACTED
+            else:
+                out[k] = _sanitize_telegram_payload(v)
+        return out
+    if isinstance(value, list):
+        return [_sanitize_telegram_payload(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_sanitize_telegram_payload(v) for v in value)
+    return value
+
+

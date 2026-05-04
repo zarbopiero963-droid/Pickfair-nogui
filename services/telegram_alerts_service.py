@@ -16,6 +16,39 @@ SEVERITY_RANK = {
 }
 
 
+
+_REDACTED = "[REDACTED]"
+_TELEGRAM_SENSITIVE_KEYS = {
+    "token",
+    "auth_token",
+    "access_token",
+    "bearer",
+    "user_session",
+    "session",
+    "session_token",
+    "api_key",
+    "secret",
+    "password",
+    "authorization",
+}
+
+
+def _sanitize_telegram_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            key = str(k)
+            if key.lower() in _TELEGRAM_SENSITIVE_KEYS:
+                out[k] = _REDACTED
+            else:
+                out[k] = _sanitize_telegram_payload(v)
+        return out
+    if isinstance(value, list):
+        return [_sanitize_telegram_payload(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_sanitize_telegram_payload(v) for v in value)
+    return value
+
 class TelegramAlertsService:
     """
     Notificatore alert verso Telegram.
@@ -297,9 +330,10 @@ class TelegramAlertsService:
         if details:
             try:
                 from observability.sanitizers import sanitize_value as _san
-                safe_details = _san(dict(details))
+                safe_details = _sanitize_telegram_payload(_san(dict(details)))
             except Exception:
                 safe_details = {"details": "***REDACTED_ERROR***"}
+            safe_details = _sanitize_telegram_payload(safe_details)
             if bool(settings.get("alert_format_rich", True)):
                 rendered = ", ".join(f"{k}={v}" for k, v in sorted(safe_details.items()))
                 lines.append(f"• Details: {rendered}")

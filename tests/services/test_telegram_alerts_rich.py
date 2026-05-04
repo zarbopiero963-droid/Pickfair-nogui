@@ -129,3 +129,64 @@ def test_telegram_alerts_rich_records_suppression_reason_for_critical_dedup_drop
     assert first["delivered"] is True
     assert second["delivered"] is False
     assert second["reason"] == "dedup_cooldown"
+
+
+@pytest.mark.smoke
+def test_telegram_alerts_rich_redacts_expanded_sensitive_keyset_case_insensitive():
+    sender = _Sender()
+    svc = TelegramAlertsService(settings_service=_Settings(), telegram_sender=sender)
+    svc.notify_alert(
+        {
+            "severity": "critical",
+            "code": "CTO-KEYS",
+            "message": "sanitizer coverage",
+            "details": {
+                "token": "tkn",
+                "auth_token": "auth",
+                "access_token": "acc",
+                "bearer": "bear",
+                "user_session": "us",
+                "session": "sess",
+                "session_token": "st",
+                "api_key": "api",
+                "secret": "sec",
+                "password": "pwd",
+                "authorization": "authz",
+                "Authorization": "AUTHZ_UPPER",
+                "market_id": "1.234",
+            },
+        }
+    )
+    text = sender.messages[0][1]
+    assert "[REDACTED]" in text
+    for raw in (
+        "token=tkn",
+        "auth_token=auth",
+        "access_token=acc",
+        "bearer=bear",
+        "user_session=us",
+        "session=sess",
+        "session_token=st",
+        "api_key=api",
+        "secret=sec",
+        "password=pwd",
+        "authorization=authz",
+        "Authorization=AUTHZ_UPPER",
+    ):
+        assert raw not in text
+    for key in (
+        "token=[REDACTED]",
+        "auth_token=[REDACTED]",
+        "access_token=[REDACTED]",
+        "bearer=[REDACTED]",
+        "user_session=[REDACTED]",
+        "session=[REDACTED]",
+        "session_token=[REDACTED]",
+        "api_key=[REDACTED]",
+        "secret=[REDACTED]",
+        "password=[REDACTED]",
+        "authorization=[REDACTED]",
+        "Authorization=[REDACTED]",
+    ):
+        assert key in text
+    assert "market_id=1.234" in text
