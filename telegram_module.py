@@ -386,6 +386,7 @@ class TelegramModule:
     # =========================================================
     # SIGNAL FLOW
     # =========================================================
+    # skipcq: PY-R1000 - pre-existing signal-flow complexity; out of PR2A sanitizer scope
     def _handle_telegram_signal(self, signal):
         """
         Listener -> handler -> direct payload or resolver -> publish order signal
