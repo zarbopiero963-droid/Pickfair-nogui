@@ -43,6 +43,7 @@ WORKFLOW_EXPECTATIONS = {
 }
 
 CHECKBOX_RE = re.compile(r"^\s*[-*+]\s*\[\s*([xX ]?)\s*\]\s+(.+?)\s*$")
+TRIGGER_KEY_RE = re.compile(r"^\s*(pull_request|push|workflow_dispatch|schedule|workflow_run):\s*$")
 
 
 def _checklist_ids_from_markdown(path: Path) -> tuple[list[str], list[str]]:
@@ -60,8 +61,66 @@ def _checklist_ids_from_markdown(path: Path) -> tuple[list[str], list[str]]:
     return checked_ids, all_ids
 
 
-def _extract_paths_from_workflow_text(text: str) -> set[str]:
-    return set(re.findall(r"-\s*[\"']?([^\"'\n]+)[\"']?\s*$", text, flags=re.MULTILINE))
+def _extract_trigger_paths_from_workflow_yaml(text: str) -> set[str]:
+    lines = text.splitlines()
+    on_idx = next((i for i, l in enumerate(lines) if re.match(r"^\s*on\s*:\s*$", l)), None)
+    if on_idx is None:
+        raise AssertionError("workflow missing 'on:' trigger block")
+
+    on_indent = len(lines[on_idx]) - len(lines[on_idx].lstrip(" "))
+    trigger_indent: int | None = None
+    in_paths = False
+    paths_indent = -1
+    extracted: set[str] = set()
+
+    i = on_idx + 1
+    while i < len(lines):
+        line = lines[i]
+        if not line.strip() or line.strip().startswith("#"):
+            i += 1
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        stripped = line.strip()
+
+        if indent <= on_indent:
+            break
+
+        if TRIGGER_KEY_RE.match(stripped):
+            trigger_indent = indent
+            in_paths = False
+            i += 1
+            continue
+
+        if trigger_indent is None:
+            i += 1
+            continue
+
+        if indent <= trigger_indent:
+            in_paths = False
+            i += 1
+            continue
+
+        if re.match(r"^paths\s*:\s*$", stripped):
+            in_paths = True
+            paths_indent = indent
+            i += 1
+            continue
+
+        if in_paths and indent > paths_indent and stripped.startswith("-"):
+            value = stripped[1:].strip().strip('"\'')
+            if value:
+                extracted.add(value)
+            i += 1
+            continue
+
+        if in_paths and indent <= paths_indent:
+            in_paths = False
+
+        i += 1
+
+    if not extracted:
+        raise AssertionError("no trigger paths found under on.<trigger>.paths")
+    return extracted
 
 
 def _extract_run_blocks_from_workflow_text(text: str) -> list[str]:
@@ -103,8 +162,8 @@ def test_ops_docs_and_scripts_exist() -> None:
         assert Path(rel).exists(), rel
 
 
-def test_markdown_parser_accepts_checkbox_variants() -> None:
-    sample = Path("/tmp/ops_alignment_parser_sample.md")
+def test_markdown_parser_accepts_checkbox_variants(tmp_path: Path) -> None:
+    sample = tmp_path / "ops_alignment_parser_sample.md"
     sample.write_text(
         "\n".join(
             [
@@ -203,7 +262,7 @@ def test_workflows_cover_ops_paths_and_invoke_tests() -> None:
         assert workflow.exists(), workflow_path
 
         text = workflow.read_text(encoding="utf-8")
-        paths = _extract_paths_from_workflow_text(text)
+        paths = _extract_trigger_paths_from_workflow_yaml(text)
         for rel in expected_paths:
             assert rel in paths, f"{workflow_path} missing path: {rel}"
 
