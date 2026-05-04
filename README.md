@@ -1,5 +1,7 @@
 # Pickfair
 
+[![Codacy Badge](https://api.codacy.com/project/badge/Grade/2140d214f5344955beb7bb7cd7a03b9c)](https://app.codacy.com/gh/zarbopiero963-droid/Pickfair-nogui?utm_source=github.com&utm_medium=referral&utm_content=zarbopiero963-droid/Pickfair-nogui&utm_campaign=Badge_Grade)
+
 Automated sports-betting trading system for the Betfair exchange.
 
 ## Architecture overview
