@@ -1,9 +1,11 @@
+"""PR2A rich alert formatting and sanitizer regression tests."""
+
 import unittest
 
 from services.telegram_alerts_service import TelegramAlertsService
 
 
-def _v(tag: str) -> str:
+def make_value(tag: str) -> str:
     return f"value-{tag}"
 
 
@@ -87,7 +89,7 @@ class TelegramAlertsRichTests(unittest.TestCase):
         self.assertIn("Time: 2026-04-14 12:00:00 UTC", text)
         self.assertIn("Suggested action: Drain queue and inspect stalls", text)
 
-    def test_includes_source_and_sanitized_summary(self):
+    def test_source_and_summary(self):
         sender = _Sender()
         svc = TelegramAlertsService(settings_service=_Settings(), telegram_sender=sender)
         svc.notify_alert(
@@ -133,18 +135,18 @@ class TelegramAlertsRichTests(unittest.TestCase):
                 "code": "CTO-KEYS",
                 "message": "sanitizer coverage",
                 "details": {
-                    "token": _v("token"),
-                    "auth_token": _v("auth"),
-                    "access_token": _v("access"),
-                    "bearer": _v("bearer"),
-                    "user_session": _v("user-session"),
-                    "session": _v("session"),
-                    "session_token": _v("session-token"),
-                    "api_key": _v("api-key"),
-                    "secret": _v("secret"),
-                    "password": _v("password"),
-                    "authorization": _v("authorization"),
-                    "Authorization": _v("authorization-upper"),
+                    "token": make_value("token"),
+                    "auth_token": make_value("auth"),
+                    "access_token": make_value("access"),
+                    "bearer": make_value("bearer"),
+                    "user_session": make_value("user-session"),
+                    "session": make_value("session"),
+                    "session_token": make_value("session-token"),
+                    "api_key": make_value("api-key"),
+                    "secret": make_value("secret"),
+                    "password": make_value("password"),
+                    "authorization": make_value("authorization"),
+                    "Authorization": make_value("authorization-upper"),
                     "market_id": "1.234",
                 },
             }

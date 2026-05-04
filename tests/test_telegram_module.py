@@ -1,3 +1,5 @@
+"""PR2A sanitizer and defensive DB-save characterization tests."""
+
 import unittest
 
 from telegram_module import TelegramModule
@@ -8,15 +10,19 @@ class TelegramSanitizerTests(unittest.TestCase):
     """Focused sanitizer and defensive DB-save tests for PR2A."""
 
     @staticmethod
+    def _sv(tag: str) -> str:
+        return f"value-{tag}"
+
+    @staticmethod
     def _build_signal():
         return {
             "raw_text": "operator text",
-            "refresh_token": "rv",
-            "auth": "av",
-            "bearer_token": "bv",
-            "secret_key": "skv",
-            "prefix_api_key_id": "akid",
-            "internal_session_token_value": "isv",
+            "refresh_token": TelegramSanitizerTests._sv("refresh"),
+            "auth": TelegramSanitizerTests._sv("auth"),
+            "bearer_token": TelegramSanitizerTests._sv("bearer"),
+            "secret_key": TelegramSanitizerTests._sv("secret-key"),
+            "prefix_api_key_id": TelegramSanitizerTests._sv("api-key-id"),
+            "internal_session_token_value": TelegramSanitizerTests._sv("session-token"),
             "nested": {
                 "Authorization": "bearer-value",
                 "user_session": "uv",
@@ -35,12 +41,16 @@ class TelegramSanitizerTests(unittest.TestCase):
             "runner_name": "Runner",
             "selection_id": 123,
             "tuple_payload": (
-                {"api_secret": "tuple-secret", "auth_token": "tuple-auth", "author": "tuple-author"},
+                {
+                    "api_secret": TelegramSanitizerTests._sv("tuple-api-secret"),
+                    "auth_token": TelegramSanitizerTests._sv("tuple-auth"),
+                    "author": "tuple-author",
+                },
                 "plain-value",
             ),
         }
 
-    def test_sanitizer_redacts_credentials_and_preserves_diagnostics(self):
+    def test_redacts_and_keeps_fields(self):
         raw_signal = self._build_signal()
         out = sanitize_telegram_payload(raw_signal)
 
@@ -71,14 +81,14 @@ class TelegramSanitizerTests(unittest.TestCase):
         self.assertEqual(out["selection_id"], 123)
         self.assertEqual(out["raw_text"], "operator text")
 
-    def test_sanitizer_handles_tuple_recursion(self):
+    def test_tuple_recursion(self):
         raw_signal = self._build_signal()
         out = sanitize_telegram_payload(raw_signal)
         self.assertEqual(out["tuple_payload"][0]["api_secret"], "[REDACTED]")
         self.assertEqual(out["tuple_payload"][0]["auth_token"], "[REDACTED]")
         self.assertEqual(out["tuple_payload"][0]["author"], "tuple-author")
         self.assertEqual(out["tuple_payload"][1], "plain-value")
-        self.assertEqual(raw_signal["refresh_token"], "rv")
+        self.assertEqual(raw_signal["refresh_token"], self._sv("refresh"))
 
 
 class _DbStub:
@@ -97,11 +107,11 @@ class _Host(TelegramModule):
 class TelegramModuleDbSaveTests(unittest.TestCase):
     """Defensive save path remains sanitized and non-mutating."""
 
-    def test_defensive_save_sanitizes_without_mutation(self):
+    def test_defensive_save_sanitizes(self):
         host = _Host()
         raw = {
-            "token": "tv",
-            "authorization_header": "bh",
+            "token": "value-token",
+            "authorization_header": "value-authz-header",
             "runner_name": "Runner A",
             "selection_id": 123,
         }
@@ -120,5 +130,5 @@ class TelegramModuleDbSaveTests(unittest.TestCase):
         self.assertEqual(saved["authorization_header"], "[REDACTED]")
         self.assertEqual(saved["runner_name"], "Runner A")
         self.assertEqual(saved["selection_id"], 123)
-        self.assertEqual(raw["token"], "tv")
-        self.assertEqual(raw["authorization_header"], "bh")
+        self.assertEqual(raw["token"], "value-token")
+        self.assertEqual(raw["authorization_header"], "value-authz-header")
