@@ -26,7 +26,6 @@ class DatabaseUnitTests(unittest.TestCase):  # noqa: D203,D211
     def _resolve_method(self, name: str) -> Callable[..., object]:
         """Resolve a protected Database method with callable guard."""
         method_obj = getattr(Database, name, None)
-        self.assertTrue(callable(method_obj))
         if not callable(method_obj):
             self.fail(f"expected callable method: {name}")
         return cast(Callable[..., object], method_obj)
@@ -38,7 +37,6 @@ class DatabaseUnitTests(unittest.TestCase):  # noqa: D203,D211
             database_under_test = Database(str(db_path))
             self.assertTrue(db_path.exists())
             execute_method = getattr(database_under_test, "_execute", None)
-            self.assertTrue(callable(execute_method))
             if not callable(execute_method):
                 self.fail("expected _execute to be callable")
             execute_fn = cast(Callable[..., list[sqlite3.Row]], execute_method)
@@ -121,7 +119,6 @@ class DatabaseUnitTests(unittest.TestCase):  # noqa: D203,D211
         trace: list[str] = []
         conn.set_trace_callback(cast(Callable[[str], None], trace.append))
         set_depth = getattr(database_under_test, "_set_tx_depth", None)
-        self.assertTrue(callable(set_depth))
         if not callable(set_depth):
             self.fail("expected _set_tx_depth to be callable")
         set_depth(1)
@@ -138,7 +135,6 @@ class DatabaseUnitTests(unittest.TestCase):  # noqa: D203,D211
         trace: list[str] = []
         conn.set_trace_callback(cast(Callable[[str], None], trace.append))
         set_depth = getattr(database_under_test, "_set_tx_depth", None)
-        self.assertTrue(callable(set_depth))
         if not callable(set_depth):
             self.fail("expected _set_tx_depth to be callable")
         set_depth(1)
@@ -152,7 +148,6 @@ class DatabaseUnitTests(unittest.TestCase):  # noqa: D203,D211
         database_obj = self._build_db()
         database_obj.__dict__["_local"] = threading.local()
         set_depth = getattr(database_obj, "_set_tx_depth", None)
-        self.assertTrue(callable(set_depth))
         if not callable(set_depth):
             self.fail("expected _set_tx_depth to be callable")
         set_depth(2)
@@ -169,7 +164,6 @@ class DatabaseUnitTests(unittest.TestCase):  # noqa: D203,D211
         database_obj = self._build_db()
         database_obj.__dict__["_local"] = threading.local()
         set_depth = getattr(database_obj, "_set_tx_depth", None)
-        self.assertTrue(callable(set_depth))
         if not callable(set_depth):
             self.fail("expected _set_tx_depth to be callable")
         set_depth(3)
