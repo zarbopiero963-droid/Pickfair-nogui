@@ -78,6 +78,8 @@ def test_validate_market_book_valid_back_ladder_returns_true():
     ("available_to_back", "message"),
     [
         ([], "vuoto o invalido"),
+        (None, "vuoto o invalido"),
+        (0, "vuoto o invalido"),
         (["bad-offer"], "non dict"),
         ([{"size": 10.0}], "price missing"),
     ],

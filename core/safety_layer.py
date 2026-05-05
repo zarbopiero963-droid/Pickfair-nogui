@@ -433,8 +433,9 @@ class SafetyLayer:
         ladder: Any,
         runner_idx: int,
         ladder_name: str,
-        label: str,
     ) -> None:
+        """Validate the first offer in a price ladder, fail-closed on any invalid shape."""
+        label = "best back" if "Back" in ladder_name else "best lay"
         if not isinstance(ladder, (list, tuple)) or not ladder:
             raise MarketSanityError(f"runner[{runner_idx}].ex.{ladder_name} vuoto o invalido")
 
@@ -445,8 +446,8 @@ class SafetyLayer:
         if "price" not in best_offer:
             raise MarketSanityError(f"runner[{runner_idx}].ex.{ladder_name}[0].price missing")
 
-        p = self._safe_float(best_offer.get("price"), 0.0)
-        if p <= 1.0:
+        price = self._safe_float(best_offer.get("price"), 0.0)
+        if price <= 1.0:
             raise MarketSanityError(f"runner[{runner_idx}] {label} <= 1.0")
 
     def validate_market_book(self, market_book: Dict[str, Any]) -> bool:
@@ -475,7 +476,6 @@ class SafetyLayer:
                 available_to_back,
                 idx,
                 "availableToBack",
-                "best back",
             )
 
             if available_to_lay:
@@ -483,7 +483,6 @@ class SafetyLayer:
                     available_to_lay,
                     idx,
                     "availableToLay",
-                    "best lay",
                 )
 
         return True
