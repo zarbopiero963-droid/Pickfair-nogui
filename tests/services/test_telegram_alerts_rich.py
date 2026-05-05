@@ -14,6 +14,7 @@ def make_value(tag: str) -> str:
 
 
 class _Settings:
+
     """Settings stub for rich-alert tests."""
     @staticmethod
     def load_telegram_config_row():
@@ -34,6 +35,7 @@ class _Settings:
 
 
 class _Sender:
+
     """Sender stub collecting emitted messages."""
     def __init__(self):
         self.messages = []
@@ -102,16 +104,14 @@ class TelegramAlertsRichTests(unittest.TestCase):
         """Source and summary fields remain visible after sanitization."""
         sender = _Sender()
         svc = TelegramAlertsSvc(**{_SETTINGS_KEY: _Settings(), "telegram_sender": sender})
+        details = {"evidence_summary": {"rule_hits_in_window": 3, "raw": {1, 2}}, "suggested_action": "Escalate"}
         svc.notify_alert(
             {
                 "severity": "critical",
                 "code": "CTO-2",
                 "source": "cto_reviewer",
                 "message": "operator evidence",
-                "details": {
-                    "evidence_summary": {"rule_hits_in_window": 3, "raw": {1, 2}},
-                    "suggested_action": "Escalate",
-                },
+                "details": details,
             }
         )
         text = sender.messages[0][1]
@@ -140,62 +140,69 @@ class TelegramAlertsRichTests(unittest.TestCase):
         self.assertFalse(second["delivered"])
         self.assertEqual(second["reason"], "dedup_cooldown")
 
-    def test_redacts_keys(self):
-        """Sensitive key values are redacted in rendered details."""
+    @staticmethod
+    def _details_payload():
+        """Build details payload covering sensitive and safe keys."""
+        return {
+            "token": make_value("token"),
+            "auth_token": make_value("auth"),
+            "access_token": make_value("access"),
+            "bearer": make_value("bearer"),
+            "user_session": make_value("user-session"),
+            "session": make_value("session"),
+            "session_token": make_value("session-token"),
+            "api_key": make_value("api-key"),
+            "secret": make_value("secret"),
+            "password": make_value("password"),
+            "authorization": make_value("authorization"),
+            "Authorization": make_value("authorization-upper"),
+            "market_id": "1.234",
+        }
+
+    def _send_redaction_case(self):
         sender = _Sender()
         svc = TelegramAlertsSvc(**{_SETTINGS_KEY: _Settings(), "telegram_sender": sender})
-        svc.notify_alert(
-            {
-                "severity": "critical",
-                "code": "CTO-KEYS",
-                "message": "sanitizer coverage",
-                "details": {
-                    "token": make_value("token"),
-                    "auth_token": make_value("auth"),
-                    "access_token": make_value("access"),
-                    "bearer": make_value("bearer"),
-                    "user_session": make_value("user-session"),
-                    "session": make_value("session"),
-                    "session_token": make_value("session-token"),
-                    "api_key": make_value("api-key"),
-                    "secret": make_value("secret"),
-                    "password": make_value("password"),
-                    "authorization": make_value("authorization"),
-                    "Authorization": make_value("authorization-upper"),
-                    "market_id": "1.234",
-                },
-            }
-        )
-        text = sender.messages[0][1]
+        alert = {
+            "severity": "critical",
+            "code": "CTO-KEYS",
+            "message": "sanitizer coverage",
+            "details": self._details_payload(),
+        }
+        svc.notify_alert(alert)
+        return sender.messages[0][1]
+
+    def test_redacts_core_keys(self):
+        """Core sensitive details are redacted."""
+        text = self._send_redaction_case()
         self.assertIn("[REDACTED]", text)
+        for key in ("token", "auth_token", "access_token", "bearer", "user_session", "session", "session_token"):
+            self.assertIn(f"{key}=[REDACTED]", text)
+
+    def test_redacts_compound_keys(self):
+        """Compound details are redacted and raw values are absent."""
+        text = self._send_redaction_case()
+        for key in ("api_key", "secret", "password", "authorization", "Authorization"):
+            self.assertIn(f"{key}=[REDACTED]", text)
         for raw in (
-            "token=value-token",
-            "auth_token=value-auth",
-            "access_token=value-access",
-            "bearer=value-bearer",
-            "user_session=value-user-session",
-            "session=value-session",
-            "session_token=value-session-token",
-            "api_key=value-api-key",
-            "secret=value-secret",
-            "password=value-password",
-            "authorization=value-authorization",
-            "Authorization=value-authorization-upper",
+            "value-api-key",
+            "value-secret",
+            "value-password",
+            "value-authorization",
+            "value-authorization-upper",
         ):
             self.assertNotIn(raw, text)
-        for key in (
-            "token=[REDACTED]",
-            "auth_token=[REDACTED]",
-            "access_token=[REDACTED]",
-            "bearer=[REDACTED]",
-            "user_session=[REDACTED]",
-            "session=[REDACTED]",
-            "session_token=[REDACTED]",
-            "api_key=[REDACTED]",
-            "secret=[REDACTED]",
-            "password=[REDACTED]",
-            "authorization=[REDACTED]",
-            "Authorization=[REDACTED]",
+        for raw in (
+            f"token={make_value('token')}",
+            f"auth_token={make_value('auth')}",
+            f"access_token={make_value('access')}",
+            f"bearer={make_value('bearer')}",
+            f"user_session={make_value('user-session')}",
+            f"session={make_value('session')}",
+            f"session_token={make_value('session-token')}",
         ):
-            self.assertIn(key, text)
+            self.assertNotIn(raw, text)
+
+    def test_keeps_safe_fields(self):
+        """Safe operational fields remain visible."""
+        text = self._send_redaction_case()
         self.assertIn("market_id=1.234", text)
