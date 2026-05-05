@@ -10,11 +10,11 @@ def make_value(tag: str) -> str:
 
 
 class _Settings:
-
     """Settings stub for rich-alert tests."""
 
     @staticmethod
     def load_telegram_config_row():
+        """Return alert-related config row for tests."""
         return {
             "alerts_enabled": True,
             "alerts_chat_id": "9988",
@@ -32,7 +32,6 @@ class _Settings:
 
 
 class _Sender:
-
     """Sender stub collecting emitted messages."""
 
     def __init__(self):
@@ -43,7 +42,6 @@ class _Sender:
 
 
 class TelegramAlertsRichTests(unittest.TestCase):
-
     """Rich alert formatting and redaction coverage for PR2A."""
 
     def test_settings_sender(self):

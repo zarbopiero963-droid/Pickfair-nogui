@@ -9,7 +9,6 @@ from telegram_sanitizer import sanitize_telegram_payload
 
 
 class TelegramSanitizerTests(unittest.TestCase):
-
     """Focused sanitizer and defensive DB-save tests for PR2A."""
 
     @staticmethod
@@ -154,7 +153,6 @@ def _make_module():
 
 
 class TelegramModuleDbSaveTests(unittest.TestCase):
-
     """Defensive save path remains sanitized and non-mutating."""
 
     @staticmethod
@@ -162,8 +160,28 @@ class TelegramModuleDbSaveTests(unittest.TestCase):
         """Return deterministic non-secret value payloads."""
         return f"row-{tag}"
 
+    def _save_signal_callable(self):
+        """Resolve defensive-save function and ensure it is callable."""
+        save_signal = getattr(TelegramModule, "_safe_db_save_received_signal", None)
+        self.assertTrue(callable(save_signal))
+        if not callable(save_signal):
+            self.fail("expected _safe_db_save_received_signal to be callable")
+        return save_signal
 
-    def test_defensive_save_masks(self):
+    @staticmethod
+    def _invoke_save(save_signal, module, raw):
+        """Invoke defensive-save function with stable call arguments."""
+        save_signal(
+            module,
+            selection="Runner A",
+            action="BACK",
+            price="2.5",
+            stake="1.0",
+            status="RECEIVED",
+            signal=raw,
+        )
+
+    def test_save_redacts(self):
         """Defensive save sanitizes sensitive fields and keeps original input."""
         module, saved_rows = _make_module()
         raw = {
@@ -172,23 +190,13 @@ class TelegramModuleDbSaveTests(unittest.TestCase):
             "runner_name": "Runner A",
             "selection_id": 123,
         }
-
-        save_signal = getattr(TelegramModule, "_safe_db_save_received_signal", None)
-        self.assertTrue(callable(save_signal))
-        save_signal(module,
-            selection="Runner A",
-            action="BACK",
-            price="2.5",
-            stake="1.0",
-            status="RECEIVED",
-            signal=raw,
-        )
-
+        save_signal = self._save_signal_callable()
+        self._invoke_save(save_signal, module, raw)
         saved = saved_rows[0]
         self.assertEqual(saved["token"], "[REDACTED]")
         self.assertEqual(saved["authorization_header"], "[REDACTED]")
 
-    def test_save_keeps_input(self):
+    def test_input_stays_same(self):
         """Defensive save keeps original input object values unchanged."""
         module, saved_rows = _make_module()
         raw = {
@@ -197,16 +205,8 @@ class TelegramModuleDbSaveTests(unittest.TestCase):
             "runner_name": "Runner A",
             "selection_id": 123,
         }
-        save_signal = getattr(TelegramModule, "_safe_db_save_received_signal", None)
-        self.assertTrue(callable(save_signal))
-        save_signal(module,
-            selection="Runner A",
-            action="BACK",
-            price="2.5",
-            stake="1.0",
-            status="RECEIVED",
-            signal=raw,
-        )
+        save_signal = self._save_signal_callable()
+        self._invoke_save(save_signal, module, raw)
         saved = saved_rows[0]
         self.assertEqual(saved["runner_name"], "Runner A")
         self.assertEqual(saved["selection_id"], 123)
