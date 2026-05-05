@@ -387,7 +387,7 @@ class TelegramModule:
     # SIGNAL FLOW
     # =========================================================
     # pre-existing signal-flow complexity; out of PR2A sanitizer scope.
-    def _handle_telegram_signal(self, signal):  # skipcq: PY-R1000
+    def _handle_telegram_signal(self, signal):  # skipcq: PY-R1000  # pylint: disable=too-many-statements
         """
         Listener -> handler -> direct payload or resolver -> publish order signal
         """

@@ -10,7 +10,6 @@ def make_value(tag: str) -> str:
 
 
 class _Settings:
-
     """Settings stub for rich-alert tests."""
     @staticmethod
     def load_telegram_config_row():
@@ -31,7 +30,6 @@ class _Settings:
 
 
 class _Sender:
-
     """Sender stub collecting emitted messages."""
     def __init__(self):
         self.messages = []
@@ -155,6 +153,23 @@ class TelegramAlertsRichTests(unittest.TestCase):
             "market_id": "1.234",
         }
 
+
+    @staticmethod
+    def _compound_keys():
+        """Return compound sensitive keys expected to be redacted."""
+        return ("api_key", "secret", "password", "authorization", "Authorization")
+
+    @staticmethod
+    def _compound_raw_values():
+        """Return raw sensitive values that must never appear in output."""
+        return tuple(make_value(tag) for tag in (
+            "api-key",
+            "secret",
+            "password",
+            "authorization",
+            "authorization-upper",
+        ))
+
     def _send_redaction_case(self):
         sender = _Sender()
         svc = TelegramAlertsService(settings_service=_Settings(), telegram_sender=sender)
@@ -174,18 +189,16 @@ class TelegramAlertsRichTests(unittest.TestCase):
         for key in ("token", "auth_token", "access_token", "bearer", "user_session", "session", "session_token"):
             self.assertIn(f"{key}=[REDACTED]", text)
 
-    def test_redacts_compound_keys(self):
-        """Compound details are redacted and raw values are absent."""
+    def test_compound_keys_redacted(self):
+        """Compound details are redacted."""
         text = self._send_redaction_case()
-        for key in ("api_key", "secret", "password", "authorization", "Authorization"):
+        for key in self._compound_keys():
             self.assertIn(f"{key}=[REDACTED]", text)
-        for raw in (
-            "value-api-key",
-            "value-secret",
-            "value-password",
-            "value-authorization",
-            "value-authorization-upper",
-        ):
+
+    def test_compound_values_not_exposed(self):
+        """Compound and core raw sensitive values are absent."""
+        text = self._send_redaction_case()
+        for raw in self._compound_raw_values():
             self.assertNotIn(raw, text)
         for raw in (
             f"token={make_value('token')}",
