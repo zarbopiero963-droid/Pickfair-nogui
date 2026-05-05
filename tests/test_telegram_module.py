@@ -144,22 +144,15 @@ class TelegramSanitizerTests(unittest.TestCase):
 
 
 def _make_host():
-    """Create host with DB stub without short attribute assignment syntax."""
+    """Create host with DB stub without fake classes or bound private-method assignment."""
     saved_rows = []
 
-    class _Database:
-        """Tiny in-memory DB stub for defensive save characterization."""
-        def save_received_signal(self, payload):
-            saved_rows.append(payload)
+    def save_received_signal(payload):
+        """Capture saved payload for characterization."""
+        saved_rows.append(payload)
 
-    host = SimpleNamespace(database=_Database())
-    setattr(host, "db", host.database)
-    setattr(
-        host,
-        "_safe_db_save_received_signal",
-        TelegramModule._safe_db_save_received_signal.__get__(host, TelegramModule),
-    )
-    setattr(host, "_saved_rows", saved_rows)
+    database = SimpleNamespace(save_received_signal=save_received_signal)
+    host = SimpleNamespace(database=database, db=database, _saved_rows=saved_rows)
     return host
 
 
@@ -176,8 +169,8 @@ class TelegramModuleDbSaveTests(unittest.TestCase):
             "selection_id": 123,
         }
 
-        save_signal = getattr(host, "_safe_db_save_received_signal")
-        save_signal(
+        save_signal = TelegramModule._safe_db_save_received_signal
+        save_signal(host,
             selection="Runner A",
             action="BACK",
             price="2.5",
@@ -199,8 +192,8 @@ class TelegramModuleDbSaveTests(unittest.TestCase):
             "runner_name": "Runner A",
             "selection_id": 123,
         }
-        save_signal = getattr(host, "_safe_db_save_received_signal")
-        save_signal(
+        save_signal = TelegramModule._safe_db_save_received_signal
+        save_signal(host,
             selection="Runner A",
             action="BACK",
             price="2.5",

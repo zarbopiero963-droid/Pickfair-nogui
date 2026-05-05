@@ -43,11 +43,6 @@ def _key_parts(key: str) -> list[str]:
     return [p for p in re.split(r"[\s_.-]+", str(key or "").lower()) if p]
 
 
-def _has_sensitive_fragment(parts: list[str]) -> bool:
-    """Return True when any part is credential-related."""
-    return any(part in TELEGRAM_SENSITIVE_KEY_FRAGMENTS for part in parts)
-
-
 def _has_sensitive_part_combo(parts: list[str]) -> bool:
     """Return True when two or more sensitive parts are present."""
     return sum(1 for part in parts if part in TELEGRAM_SENSITIVE_KEY_FRAGMENTS) >= 2
@@ -58,7 +53,7 @@ def _is_sensitive_key(key: str) -> bool:
     key_l = str(key or "").lower()
     parts = _key_parts(key_l)
     return key_l in TELEGRAM_SENSITIVE_KEYS or (
-        len(parts) > 1 and _has_sensitive_fragment(parts) and _has_sensitive_part_combo(parts)
+        len(parts) > 1 and _has_sensitive_part_combo(parts)
     )
 
 

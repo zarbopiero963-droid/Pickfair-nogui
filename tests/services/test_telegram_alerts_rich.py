@@ -1,11 +1,7 @@
 """PR2A rich alert formatting and sanitizer regression tests."""
 
 import unittest
-import importlib
-
-_alerts_mod = importlib.import_module("se" + "r" + "vices.telegram_alerts_se" + "r" + "vice")
-TelegramAlertsSvc = getattr(_alerts_mod, "TelegramAlerts" + "Se" + "r" + "vice")
-_SETTINGS_KEY = "settings_se" + "r" + "vice"
+from services.telegram_alerts_service import TelegramAlertsService
 
 
 def make_value(tag: str) -> str:
@@ -50,7 +46,7 @@ class TelegramAlertsRichTests(unittest.TestCase):
     def test_settings_sender(self):
         """Status fields and sender delivery remain truthful."""
         sender = _Sender()
-        svc = TelegramAlertsSvc(**{_SETTINGS_KEY: _Settings(), "telegram_sender": sender})
+        svc = TelegramAlertsService(settings_service=_Settings(), telegram_sender=sender)
         status = svc.availability_status()
         self.assertTrue(status["alerts_enabled"])
         self.assertTrue(status["sender_available"])
@@ -64,7 +60,7 @@ class TelegramAlertsRichTests(unittest.TestCase):
     def test_governance_fields(self):
         """Governance details are rendered in rich text."""
         sender = _Sender()
-        svc = TelegramAlertsSvc(**{_SETTINGS_KEY: _Settings(), "telegram_sender": sender})
+        svc = TelegramAlertsService(settings_service=_Settings(), telegram_sender=sender)
         result = svc.notify_alert(
             {
                 "severity": "critical",
@@ -86,7 +82,7 @@ class TelegramAlertsRichTests(unittest.TestCase):
     def test_timestamp_action(self):
         """Timestamp and action are included when provided."""
         sender = _Sender()
-        svc = TelegramAlertsSvc(**{_SETTINGS_KEY: _Settings(), "telegram_sender": sender})
+        svc = TelegramAlertsService(settings_service=_Settings(), telegram_sender=sender)
         svc.notify_alert(
             {
                 "severity": "high",
@@ -103,7 +99,7 @@ class TelegramAlertsRichTests(unittest.TestCase):
     def test_source_summary(self):
         """Source and summary fields remain visible after sanitization."""
         sender = _Sender()
-        svc = TelegramAlertsSvc(**{_SETTINGS_KEY: _Settings(), "telegram_sender": sender})
+        svc = TelegramAlertsService(settings_service=_Settings(), telegram_sender=sender)
         details = {"evidence_summary": {"rule_hits_in_window": 3, "raw": {1, 2}}, "suggested_action": "Escalate"}
         svc.notify_alert(
             {
@@ -132,7 +128,7 @@ class TelegramAlertsRichTests(unittest.TestCase):
                 return data
 
         sender = _Sender()
-        svc = TelegramAlertsSvc(**{_SETTINGS_KEY: _SettingsCooldown(), "telegram_sender": sender})
+        svc = TelegramAlertsService(settings_service=_SettingsCooldown(), telegram_sender=sender)
         alert = {"severity": "critical", "code": "CRIT-1", "message": "a"}
         first = svc.notify_alert(alert)
         second = svc.notify_alert(alert)
@@ -161,7 +157,7 @@ class TelegramAlertsRichTests(unittest.TestCase):
 
     def _send_redaction_case(self):
         sender = _Sender()
-        svc = TelegramAlertsSvc(**{_SETTINGS_KEY: _Settings(), "telegram_sender": sender})
+        svc = TelegramAlertsService(settings_service=_Settings(), telegram_sender=sender)
         alert = {
             "severity": "critical",
             "code": "CTO-KEYS",
