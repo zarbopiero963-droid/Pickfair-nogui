@@ -45,6 +45,7 @@ _DB_DURABILITY_PROFILES: Dict[str, Dict[str, str]] = {
 
 _DB_DURABILITY_PROFILE_ENV = "PICKFAIR_DB_DURABILITY_PROFILE"
 
+# SQLite savepoints are stack-scoped by name; repeated `sp_nested_tx` targets the innermost one.
 _NESTED_SAVEPOINT_SQL = "SAVEPOINT sp_nested_tx"
 _RELEASE_NESTED_SAVEPOINT_SQL = "RELEASE SAVEPOINT sp_nested_tx"
 _ROLLBACK_NESTED_SAVEPOINT_SQL = "ROLLBACK TO SAVEPOINT sp_nested_tx"
