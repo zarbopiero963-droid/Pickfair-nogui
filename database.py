@@ -45,6 +45,11 @@ _DB_DURABILITY_PROFILES: Dict[str, Dict[str, str]] = {
 
 _DB_DURABILITY_PROFILE_ENV = "PICKFAIR_DB_DURABILITY_PROFILE"
 
+# SQLite savepoints are stack-scoped by name; repeated `sp_nested_tx` targets the innermost one.
+_NESTED_SAVEPOINT_SQL = "SAVEPOINT sp_nested_tx"
+_RELEASE_NESTED_SAVEPOINT_SQL = "RELEASE SAVEPOINT sp_nested_tx"
+_ROLLBACK_NESTED_SAVEPOINT_SQL = "ROLLBACK TO SAVEPOINT sp_nested_tx"
+
 
 class Database:
     def __init__(self, db_path: str = "pickfair.db"):
@@ -91,8 +96,20 @@ class Database:
 
     def _apply_durability_pragmas(self, conn: sqlite3.Connection) -> None:
         profile = _DB_DURABILITY_PROFILES[self._durability_profile]
-        conn.execute(f"PRAGMA journal_mode={profile['journal_mode']}")
-        conn.execute(f"PRAGMA synchronous={profile['synchronous']}")
+        journal_mode = str(profile["journal_mode"]).strip().upper()
+        synchronous = str(profile["synchronous"]).strip().upper()
+
+        if journal_mode == "WAL":
+            conn.execute("PRAGMA journal_mode=WAL")
+        else:
+            raise ValueError(f"Unsupported journal_mode pragma value: {journal_mode}")
+
+        if synchronous == "FULL":
+            conn.execute("PRAGMA synchronous=FULL")
+        elif synchronous == "NORMAL":
+            conn.execute("PRAGMA synchronous=NORMAL")
+        else:
+            raise ValueError(f"Unsupported synchronous pragma value: {synchronous}")
 
     def get_durability_profile(self) -> str:
         return self._durability_profile
@@ -117,40 +134,38 @@ class Database:
         conn = self._get_connection()
 
         with self._write_lock:
-            depth = self._get_tx_depth()
-            savepoint_name = None
+            original_depth = self._get_tx_depth()
+            if original_depth < 0:
+                raise RuntimeError("invalid transaction depth")
+
+            is_nested = original_depth > 0
+            self._set_tx_depth(original_depth + 1)
 
             try:
-                if depth == 0:
-                    conn.execute("BEGIN")
+                if is_nested:
+                    conn.execute(_NESTED_SAVEPOINT_SQL)
                 else:
-                    savepoint_name = f"sp_{depth}"
-                    conn.execute(f"SAVEPOINT {savepoint_name}")
+                    conn.execute("BEGIN")
 
-                self._set_tx_depth(depth + 1)
                 yield conn
 
-                new_depth = self._get_tx_depth() - 1
-                self._set_tx_depth(new_depth)
-
-                if savepoint_name:
-                    conn.execute(f"RELEASE SAVEPOINT {savepoint_name}")
-                elif new_depth == 0:
+                if is_nested:
+                    conn.execute(_RELEASE_NESTED_SAVEPOINT_SQL)
+                else:
                     conn.commit()
 
             except Exception:
-                current_depth = max(0, self._get_tx_depth() - 1)
-                self._set_tx_depth(current_depth)
-
                 try:
-                    if savepoint_name:
-                        conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name}")
-                        conn.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+                    if is_nested:
+                        conn.execute(_ROLLBACK_NESTED_SAVEPOINT_SQL)
+                        conn.execute(_RELEASE_NESTED_SAVEPOINT_SQL)
                     else:
                         conn.rollback()
                 except Exception:
                     logger.exception("Errore rollback transaction")
                 raise
+            finally:
+                self._set_tx_depth(original_depth)
 
     def _execute(
         self,
