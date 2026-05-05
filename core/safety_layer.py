@@ -428,6 +428,27 @@ class SafetyLayer:
     # MARKET SANITY
     # =========================================================
 
+    def _validate_best_market_offer(
+        self,
+        ladder: Any,
+        runner_idx: int,
+        ladder_name: str,
+        label: str,
+    ) -> None:
+        if not isinstance(ladder, (list, tuple)) or not ladder:
+            raise MarketSanityError(f"runner[{runner_idx}].ex.{ladder_name} vuoto o invalido")
+
+        best_offer = ladder[0]
+        if not isinstance(best_offer, dict):
+            raise MarketSanityError(f"runner[{runner_idx}].ex.{ladder_name}[0] non dict")
+
+        if "price" not in best_offer:
+            raise MarketSanityError(f"runner[{runner_idx}].ex.{ladder_name}[0].price missing")
+
+        p = self._safe_float(best_offer.get("price"), 0.0)
+        if p <= 1.0:
+            raise MarketSanityError(f"runner[{runner_idx}] {label} <= 1.0")
+
     def validate_market_book(self, market_book: Dict[str, Any]) -> bool:
         if not isinstance(market_book, dict):
             raise MarketSanityError("market_book non dict")
@@ -444,18 +465,26 @@ class SafetyLayer:
             if not isinstance(ex, dict):
                 raise MarketSanityError(f"runner[{idx}].ex non dict")
 
-            available_to_back = ex.get("availableToBack", []) or []
+            if "availableToBack" not in ex:
+                raise MarketSanityError(f"runner[{idx}].ex.availableToBack missing")
+
+            available_to_back = ex.get("availableToBack")
             available_to_lay = ex.get("availableToLay", []) or []
 
-            if available_to_back:
-                p = self._safe_float(available_to_back[0].get("price"), 0.0)
-                if p <= 1.0:
-                    raise MarketSanityError(f"runner[{idx}] best back <= 1.0")
+            self._validate_best_market_offer(
+                available_to_back,
+                idx,
+                "availableToBack",
+                "best back",
+            )
 
             if available_to_lay:
-                p = self._safe_float(available_to_lay[0].get("price"), 0.0)
-                if p <= 1.0:
-                    raise MarketSanityError(f"runner[{idx}] best lay <= 1.0")
+                self._validate_best_market_offer(
+                    available_to_lay,
+                    idx,
+                    "availableToLay",
+                    "best lay",
+                )
 
         return True
 

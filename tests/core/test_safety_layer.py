@@ -58,6 +58,50 @@ def test_validate_quick_bet_request_invalid_numeric_boundaries_fail_closed():
     assert "price" in str(exc.value)
 
 
+def test_validate_market_book_valid_back_ladder_returns_true():
+    sl = SafetyLayer()
+    market_book = {
+        "runners": [
+            {
+                "ex": {
+                    "availableToBack": [{"price": 2.5, "size": 10.0}],
+                    "availableToLay": [{"price": 2.7, "size": 12.0}],
+                }
+            }
+        ]
+    }
+
+    assert sl.validate_market_book(market_book) is True
+
+
+@pytest.mark.parametrize(
+    ("available_to_back", "message"),
+    [
+        ([], "vuoto o invalido"),
+        (["bad-offer"], "non dict"),
+        ([{"size": 10.0}], "price missing"),
+    ],
+)
+def test_validate_market_book_bad_back_ladder_fails_closed(available_to_back, message):
+    sl = SafetyLayer()
+    market_book = {"runners": [{"ex": {"availableToBack": available_to_back}}]}
+
+    with pytest.raises(MarketSanityError) as exc:
+        sl.validate_market_book(market_book)
+
+    assert message in str(exc.value)
+
+
+def test_validate_market_book_missing_back_ladder_fails_closed():
+    sl = SafetyLayer()
+    market_book = {"runners": [{"ex": {}}]}
+
+    with pytest.raises(MarketSanityError) as exc:
+        sl.validate_market_book(market_book)
+
+    assert "availableToBack missing" in str(exc.value)
+
+
 def test_assert_live_gate_or_refuse_is_deterministic_and_fail_closed():
     kwargs = dict(
         execution_mode="LIVE",
