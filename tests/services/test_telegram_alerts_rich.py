@@ -9,7 +9,7 @@ def make_value(tag: str) -> str:
     return "-".join(("sample", tag))
 
 
-class _Settings:
+class _Settings:  # noqa: D203,D211
     """Settings stub for rich-alert tests."""
 
     @staticmethod
@@ -31,7 +31,7 @@ class _Settings:
         }
 
 
-class _Sender:
+class _Sender:  # noqa: D203,D211
     """Sender stub collecting emitted messages."""
 
     def __init__(self):
@@ -41,7 +41,7 @@ class _Sender:
         self.messages.append((chat_id, text))
 
 
-class TelegramAlertsRichTests(unittest.TestCase):
+class TelegramAlertsRichTests(unittest.TestCase):  # noqa: D203,D211
     """Rich alert formatting and redaction coverage for PR2A."""
 
     def test_settings_sender(self):

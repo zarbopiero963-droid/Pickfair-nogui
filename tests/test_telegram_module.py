@@ -8,7 +8,7 @@ from telegram_module import TelegramModule
 from telegram_sanitizer import sanitize_telegram_payload
 
 
-class TelegramSanitizerTests(unittest.TestCase):
+class TelegramSanitizerTests(unittest.TestCase):  # noqa: D203,D211
     """Focused sanitizer and defensive DB-save tests for PR2A."""
 
     @staticmethod
@@ -167,7 +167,7 @@ def _make_module():
     return module, saved_rows
 
 
-class TelegramModuleDbSaveTests(unittest.TestCase):
+class TelegramModuleDbSaveTests(unittest.TestCase):  # noqa: D203,D211
     """Defensive save path remains sanitized and non-mutating."""
 
     @staticmethod
