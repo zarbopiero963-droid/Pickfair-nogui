@@ -10,6 +10,7 @@ def make_value(tag: str) -> str:
 
 
 class _Settings:
+
     """Settings stub for rich-alert tests."""
 
     @staticmethod
@@ -32,6 +33,7 @@ class _Settings:
 
 
 class _Sender:
+
     """Sender stub collecting emitted messages."""
 
     def __init__(self):
@@ -42,6 +44,7 @@ class _Sender:
 
 
 class TelegramAlertsRichTests(unittest.TestCase):
+
     """Rich alert formatting and redaction coverage for PR2A."""
 
     def test_settings_sender(self):

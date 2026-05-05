@@ -9,6 +9,7 @@ from telegram_sanitizer import sanitize_telegram_payload
 
 
 class TelegramSanitizerTests(unittest.TestCase):
+
     """Focused sanitizer and defensive DB-save tests for PR2A."""
 
     @staticmethod
@@ -114,12 +115,27 @@ class TelegramSanitizerTests(unittest.TestCase):
         self.assertEqual(out["nested"]["list"][1]["api_secret"], "[REDACTED]")
         self.assertEqual(out["nested"]["list"][1]["private_key"], "[REDACTED]")
 
+
+    def _assert_safe_keys_not_redacted(self, out):
+        """Assert diagnostic keys stay visible and are not redacted."""
+        for key, expected in (
+            ("token_count", self._count_value()),
+            ("tokenizer", "keep-tokenizer"),
+            ("authored_by", "keep-authored-by"),
+            ("keyboard", "keep-keyboard"),
+            ("monkey", "keep-monkey"),
+            ("jockey", "keep-jockey"),
+        ):
+            self.assertEqual(out["nested"][key], expected)
+            self.assertNotEqual(out["nested"][key], "[REDACTED]")
+
     def test_keeps_diagnostics(self):
         """Diagnostic fields remain visible after sanitization."""
         out = sanitize_telegram_payload(self._build_signal())
         self.assertEqual(out["runner_name"], "Runner")
         self.assertEqual(out["selection_id"], 123)
         self.assertEqual(out["raw_text"], "operator text")
+        self._assert_safe_keys_not_redacted(out)
 
     def test_no_mutation(self):
         """Sanitization does not mutate input payload values."""
@@ -153,6 +169,7 @@ def _make_module():
 
 
 class TelegramModuleDbSaveTests(unittest.TestCase):
+
     """Defensive save path remains sanitized and non-mutating."""
 
     @staticmethod

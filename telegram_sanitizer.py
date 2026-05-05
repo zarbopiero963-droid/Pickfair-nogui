@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 REDACTED = "[REDACTED]"
-TELEGRAM_SENSITIVE_KEYS = {
+TELEGRAM_SENSITIVE_KEYS = frozenset({
     "token",
     "auth_token",
     "access_token",
@@ -25,8 +25,8 @@ TELEGRAM_SENSITIVE_KEYS = {
     "private_key",
     "api_secret",
     "authorization_header",
-}
-TELEGRAM_SENSITIVE_KEY_FRAGMENTS = {
+})
+TELEGRAM_SENSITIVE_KEY_FRAGMENTS = frozenset({
     "token",
     "secret",
     "password",
@@ -35,7 +35,7 @@ TELEGRAM_SENSITIVE_KEY_FRAGMENTS = {
     "key",
     "session",
     "api",
-}
+})
 
 
 def _key_parts(key: str) -> list[str]:
