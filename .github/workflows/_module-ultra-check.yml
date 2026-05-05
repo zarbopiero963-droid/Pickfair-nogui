@@ -73,6 +73,14 @@ jobs:
           MODULE_PATH: ${{ inputs.module_path }}
         run: |
           set -euo pipefail
+          module_path="$MODULE_PATH"
+          if [[ ! "$module_path" =~ ^[A-Za-z0-9_./-]+\.py$ ]] \
+            || [[ "$module_path" == /* ]] \
+            || [[ "$module_path" =~ (^|/)\.\.(/|$) ]] \
+            || [[ "$module_path" =~ (^|/)- ]]; then
+            echo "Invalid module path: $module_path"
+            exit 1
+          fi
           if [ ! -f "$MODULE_PATH" ]; then
             echo "❌ Module not found: $MODULE_PATH"
             exit 1
@@ -110,7 +118,9 @@ jobs:
       # GUARDRAIL JSON VALIDATION (HARD FAIL)
       # =========================================================
       - name: Validate guardrail JSON syntax
+        shell: bash
         run: |
+          set -euo pipefail
           python - <<'PY'
           import json
           import os
@@ -146,7 +156,8 @@ jobs:
           module_path="$MODULE_PATH"
           if [[ ! "$module_path" =~ ^[A-Za-z0-9_./-]+\.py$ ]] \
             || [[ "$module_path" == /* ]] \
-            || [[ "$module_path" =~ (^|/)\.\.(/|$) ]]; then
+            || [[ "$module_path" =~ (^|/)\.\.(/|$) ]] \
+            || [[ "$module_path" =~ (^|/)- ]]; then
             echo "Invalid module path: $module_path"
             exit 1
           fi
@@ -224,7 +235,9 @@ jobs:
       # FULL SUITE BACKSTOP (SEMPRE)
       # =========================================================
       - name: Run full test suite (backstop)
+        shell: bash
         run: |
+          set -euo pipefail
           pytest -q
 
       # =========================================================
