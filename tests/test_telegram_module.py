@@ -9,7 +9,6 @@ from telegram_sanitizer import sanitize_telegram_payload
 
 
 class TelegramSanitizerTests(unittest.TestCase):
-
     """Focused sanitizer and defensive DB-save tests for PR2A."""
 
     @staticmethod
@@ -169,7 +168,6 @@ def _make_module():
 
 
 class TelegramModuleDbSaveTests(unittest.TestCase):
-
     """Defensive save path remains sanitized and non-mutating."""
 
     @staticmethod
