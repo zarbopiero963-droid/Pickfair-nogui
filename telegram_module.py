@@ -7,6 +7,7 @@ from tkinter import messagebox, simpledialog
 from theme import COLORS
 from services.telegram_signal_processor import TelegramSignalProcessor
 from services.telegram_bet_resolver import TelegramBetResolver
+from telegram_sanitizer import sanitize_telegram_payload as _sanitize_telegram_payload
 from observability.sanitizers import sanitize_dict
 
 logger = logging.getLogger(__name__)
@@ -51,7 +52,10 @@ class TelegramModule:
             elif hasattr(self, "runtime") and getattr(self.runtime, "betfair_service", None) is not None:
                 client_getter = self.runtime.betfair_service.get_client
             elif hasattr(self, "betfair_client"):
-                client_getter = lambda: getattr(self, "betfair_client", None)
+                def _local_client_getter():
+                    return getattr(self, "betfair_client", None)
+
+                client_getter = _local_client_getter
 
             resolver = TelegramBetResolver(client_getter=client_getter)
             self._telegram_bet_resolver = resolver
@@ -154,7 +158,7 @@ class TelegramModule:
             return
 
         try:
-            payload = dict(signal or {})
+            payload = _sanitize_telegram_payload(signal or {})
             payload.update(
                 {
                     "selection": selection,
@@ -382,7 +386,8 @@ class TelegramModule:
     # =========================================================
     # SIGNAL FLOW
     # =========================================================
-    def _handle_telegram_signal(self, signal):
+    # pre-existing signal-flow complexity; out of PR2A sanitizer scope.
+    def _handle_telegram_signal(self, signal):  # skipcq: PY-R1000  # pylint: disable=too-many-statements
         """
         Listener -> handler -> direct payload or resolver -> publish order signal
         """
@@ -405,7 +410,7 @@ class TelegramModule:
                     signal={
                         "error_code": error_code,
                         "error_reason": error_reason,
-                        "raw_signal": signal,
+                        "raw_signal": _sanitize_telegram_payload(signal),
                     },
                 )
                 self._safe_refresh_telegram_signals_tree()
@@ -413,7 +418,6 @@ class TelegramModule:
 
             action = processor.normalize_action(signal_data)
             selection_id = processor.parse_selection_id(signal_data)
-            market_id = processor.parse_market_id(signal_data)
             original_price = processor.parse_price(signal_data)
             selection_name = processor.parse_selection_name(signal_data, selection_id)
             stake = self._safe_parse_stake()
@@ -427,7 +431,7 @@ class TelegramModule:
                 price=original_price,
                 stake=stake,
                 status="RECEIVED",
-                signal=signal_data,
+                signal=_sanitize_telegram_payload(signal_data),
             )
             self._safe_refresh_telegram_signals_tree()
 
@@ -458,7 +462,7 @@ class TelegramModule:
                             price=original_price,
                             stake=stake,
                             status="IGNORED",
-                            signal=signal_data,
+                            signal=_sanitize_telegram_payload(signal_data),
                         )
                         self._safe_refresh_telegram_signals_tree()
                         return
@@ -469,7 +473,7 @@ class TelegramModule:
                         price=original_price,
                         stake=stake,
                         status="IGNORED",
-                        signal=signal_data,
+                        signal=_sanitize_telegram_payload(signal_data),
                     )
                     self._safe_refresh_telegram_signals_tree()
                     return
@@ -486,7 +490,7 @@ class TelegramModule:
                         "stake": stake,
                     }
 
-                payload["raw_signal"] = dict(signal_data or {})
+                payload["raw_signal"] = _sanitize_telegram_payload(dict(signal_data or {}))
                 payload["resolution_mode"] = resolution_mode
 
                 logger.info(
@@ -518,7 +522,7 @@ class TelegramModule:
                         price=result.get("price", original_price),
                         stake=result.get("stake", stake),
                         status="ERROR",
-                        signal=signal_data,
+                        signal=_sanitize_telegram_payload(signal_data),
                     )
                     self._safe_refresh_telegram_signals_tree()
                     return
@@ -530,7 +534,7 @@ class TelegramModule:
                     price=payload.get("price", original_price),
                     stake=payload.get("stake", stake),
                     status="SUBMITTED",
-                    signal={**signal_data, "resolved_payload": payload},
+                    signal=_sanitize_telegram_payload({**(signal_data or {}), "resolved_payload": payload}),
                 )
                 self._safe_refresh_telegram_signals_tree()
 
@@ -543,7 +547,7 @@ class TelegramModule:
                     price=original_price,
                     stake=stake,
                     status="ERROR",
-                    signal=signal_data,
+                    signal=_sanitize_telegram_payload(signal_data),
                 )
                 self._safe_refresh_telegram_signals_tree()
 

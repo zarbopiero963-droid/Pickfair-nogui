@@ -4,6 +4,7 @@ import logging
 import time
 from collections import Counter
 from typing import Any, Dict
+from telegram_sanitizer import sanitize_telegram_payload as _sanitize_telegram_payload
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,7 @@ SEVERITY_RANK = {
     "HIGH": 35,
     "CRITICAL": 40,
 }
+
 
 
 class TelegramAlertsService:
@@ -297,9 +299,9 @@ class TelegramAlertsService:
         if details:
             try:
                 from observability.sanitizers import sanitize_value as _san
-                safe_details = _san(dict(details))
+                safe_details = _sanitize_telegram_payload(_san(dict(details)))
             except Exception:
-                safe_details = {"details": "***REDACTED_ERROR***"}
+                safe_details = _sanitize_telegram_payload({"details": "***REDACTED_ERROR***"})
             if bool(settings.get("alert_format_rich", True)):
                 rendered = ", ".join(f"{k}={v}" for k, v in sorted(safe_details.items()))
                 lines.append(f"• Details: {rendered}")
