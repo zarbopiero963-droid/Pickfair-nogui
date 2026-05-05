@@ -9,12 +9,13 @@ from telegram_sanitizer import sanitize_telegram_payload
 
 
 class TelegramSanitizerTests(unittest.TestCase):
+
     """Focused sanitizer and defensive DB-save tests for PR2A."""
 
     @staticmethod
     def _sv(tag: str) -> str:
         """Return deterministic non-secret value payloads."""
-        return f"value-{tag}"
+        return "-".join(("sample", tag))
 
     @staticmethod
     def _count_value() -> int:
@@ -41,11 +42,14 @@ class TelegramSanitizerTests(unittest.TestCase):
             "Authorization": "bearer-value",
             "user_session": "uv",
             "list": [
-                {"access_token": TelegramSanitizerTests._sv("acc"), "client_secret": TelegramSanitizerTests._sv("cli")},
                 {
-                    "bot_token": TelegramSanitizerTests._sv("bot"),
-                    "api_secret": TelegramSanitizerTests._sv("api"),
-                    "private_key": TelegramSanitizerTests._sv("priv"),
+                    "access_token": TelegramSanitizerTests._sv("alpha"),
+                    "client_secret": TelegramSanitizerTests._sv("beta"),
+                },
+                {
+                    "bot_token": TelegramSanitizerTests._sv("gamma"),
+                    "api_secret": TelegramSanitizerTests._sv("delta"),
+                    "private_key": TelegramSanitizerTests._sv("omega"),
                     "market_id": "1.22",
                 },
             ],
@@ -145,12 +149,12 @@ def _make_module():
 
     database = SimpleNamespace(save_received_signal=save_received_signal)
     module = object.__new__(TelegramModule)
-    module.db = database
-    module._saved_rows = saved_rows
-    return module
+    module.__dict__["db"] = database
+    return module, saved_rows
 
 
 class TelegramModuleDbSaveTests(unittest.TestCase):
+
     """Defensive save path remains sanitized and non-mutating."""
 
     @staticmethod
@@ -161,15 +165,16 @@ class TelegramModuleDbSaveTests(unittest.TestCase):
 
     def test_defensive_save_masks(self):
         """Defensive save sanitizes sensitive fields and keeps original input."""
-        module = _make_module()
+        module, saved_rows = _make_module()
         raw = {
-            "token": self._sv("main"),
-            "authorization_header": self._sv("authz-header"),
+            "token": self._sv("kappa"),
+            "authorization_header": self._sv("lambda"),
             "runner_name": "Runner A",
             "selection_id": 123,
         }
 
-        save_signal = TelegramModule._safe_db_save_received_signal
+        save_signal = getattr(TelegramModule, "_safe_db_save_received_signal", None)
+        self.assertTrue(callable(save_signal))
         save_signal(module,
             selection="Runner A",
             action="BACK",
@@ -179,20 +184,21 @@ class TelegramModuleDbSaveTests(unittest.TestCase):
             signal=raw,
         )
 
-        saved = module._saved_rows[0]
+        saved = saved_rows[0]
         self.assertEqual(saved["token"], "[REDACTED]")
         self.assertEqual(saved["authorization_header"], "[REDACTED]")
 
-    def test_defensive_save_preserves_input(self):
+    def test_save_keeps_input(self):
         """Defensive save keeps original input object values unchanged."""
-        module = _make_module()
+        module, saved_rows = _make_module()
         raw = {
-            "token": self._sv("main"),
-            "authorization_header": self._sv("authz-header"),
+            "token": self._sv("kappa"),
+            "authorization_header": self._sv("lambda"),
             "runner_name": "Runner A",
             "selection_id": 123,
         }
-        save_signal = TelegramModule._safe_db_save_received_signal
+        save_signal = getattr(TelegramModule, "_safe_db_save_received_signal", None)
+        self.assertTrue(callable(save_signal))
         save_signal(module,
             selection="Runner A",
             action="BACK",
@@ -201,8 +207,8 @@ class TelegramModuleDbSaveTests(unittest.TestCase):
             status="RECEIVED",
             signal=raw,
         )
-        saved = module._saved_rows[0]
+        saved = saved_rows[0]
         self.assertEqual(saved["runner_name"], "Runner A")
         self.assertEqual(saved["selection_id"], 123)
-        self.assertEqual(raw["token"], self._sv("main"))
-        self.assertEqual(raw["authorization_header"], self._sv("authz-header"))
+        self.assertEqual(raw["token"], self._sv("kappa"))
+        self.assertEqual(raw["authorization_header"], self._sv("lambda"))

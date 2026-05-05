@@ -5,12 +5,14 @@ from services.telegram_alerts_service import TelegramAlertsService
 
 
 def make_value(tag: str) -> str:
-    """Return deterministic non-secret test values."""
-    return f"value-{tag}"
+    """Return deterministic neutral test values."""
+    return "-".join(("sample", tag))
 
 
 class _Settings:
+
     """Settings stub for rich-alert tests."""
+
     @staticmethod
     def load_telegram_config_row():
         return {
@@ -30,7 +32,9 @@ class _Settings:
 
 
 class _Sender:
+
     """Sender stub collecting emitted messages."""
+
     def __init__(self):
         self.messages = []
 
@@ -39,6 +43,7 @@ class _Sender:
 
 
 class TelegramAlertsRichTests(unittest.TestCase):
+
     """Rich alert formatting and redaction coverage for PR2A."""
 
     def test_settings_sender(self):
@@ -195,7 +200,7 @@ class TelegramAlertsRichTests(unittest.TestCase):
         for key in self._compound_keys():
             self.assertIn(f"{key}=[REDACTED]", text)
 
-    def test_compound_values_not_exposed(self):
+    def test_compound_hidden(self):
         """Compound and core raw sensitive values are absent."""
         text = self._send_redaction_case()
         for raw in self._compound_raw_values():
