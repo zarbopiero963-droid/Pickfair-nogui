@@ -68,6 +68,7 @@ jobs:
       # MODULE EXISTENCE (HARD FAIL)
       # =========================================================
       - name: Validate target module exists
+        shell: bash
         env:
           MODULE_PATH: ${{ inputs.module_path }}
         run: |
@@ -81,6 +82,7 @@ jobs:
       # GUARDRAIL FILES EXISTENCE (HARD FAIL IF PROVIDED)
       # =========================================================
       - name: Validate guardrail files exist when provided
+        shell: bash
         env:
           SPEC_PATH: ${{ inputs.spec_path }}
           CONTRACT_PATH: ${{ inputs.contract_path }}
@@ -142,7 +144,9 @@ jobs:
         run: |
           set -euo pipefail
           module_path="$MODULE_PATH"
-          if [[ ! "$module_path" =~ ^[A-Za-z0-9_./-]+\.py$ ]]; then
+          if [[ ! "$module_path" =~ ^[A-Za-z0-9_./-]+\.py$ ]] \
+            || [[ "$module_path" == /* ]] \
+            || [[ "$module_path" =~ (^|/)\.\.(/|$) ]]; then
             echo "Invalid module path: $module_path"
             exit 1
           fi
@@ -162,9 +166,12 @@ jobs:
         run: |
           set -euo pipefail
           EXISTING_TESTS=""
-
+          set -f
           for path in $TEST_PATHS; do
-            if [[ ! "$path" =~ ^[A-Za-z0-9_./-]+$ ]]; then
+            if [[ ! "$path" =~ ^[A-Za-z0-9_./-]+$ ]] \
+              || [[ "$path" == /* ]] \
+              || [[ "$path" =~ (^|/)\.\.(/|$) ]] \
+              || [[ "$path" =~ (^|/)- ]]; then
               echo "⚠️ Skipping invalid test path -> $path"
               continue
             fi
@@ -174,6 +181,7 @@ jobs:
               echo "⚠️ Missing focused test -> $path"
             fi
           done
+          set +f
 
           EXISTING_TESTS="$(echo "$EXISTING_TESTS" | xargs)"
 
@@ -190,6 +198,7 @@ jobs:
       # =========================================================
       - name: Run module-focused tests
         if: ${{ steps.tests_check.outputs.has_tests == 'true' }}
+        shell: bash
         env:
           EXISTING_TESTS: ${{ steps.tests_check.outputs.existing_tests }}
         run: |
@@ -197,13 +206,14 @@ jobs:
           echo "Running focused tests:"
           echo "$EXISTING_TESTS"
 
-          pytest -q -x $EXISTING_TESTS
+          pytest -q -x -- $EXISTING_TESTS
 
       # =========================================================
       # WARNING IF NO TESTS
       # =========================================================
       - name: Advisory if module exists but no focused tests
         if: ${{ steps.tests_check.outputs.has_tests != 'true' }}
+        shell: bash
         env:
           MODULE_PATH: ${{ inputs.module_path }}
         run: |
