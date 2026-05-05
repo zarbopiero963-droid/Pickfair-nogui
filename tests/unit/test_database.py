@@ -168,9 +168,8 @@ class TestDatabase(unittest.TestCase):
         conn.set_trace_callback(trace.append)
 
         db.__dict__["_local"].tx_depth = 1
-        with self.assertRaises(RuntimeError):
-            with db.transaction():
-                raise RuntimeError("boom")
+        with self.assertRaises(RuntimeError), db.transaction():
+            raise RuntimeError("boom")
 
         self.assertIn("ROLLBACK TO SAVEPOINT sp_nested_tx", trace)
         self.assertIn("RELEASE SAVEPOINT sp_nested_tx", trace)
@@ -200,9 +199,8 @@ class TestDatabase(unittest.TestCase):
         conn_key = "_get" + "_connection"
         db.__dict__[conn_key] = lambda: sqlite3.connect(":memory:")
 
-        with self.assertRaises(RuntimeError):
-            with db.transaction():
-                raise RuntimeError("fail")
+        with self.assertRaises(RuntimeError), db.transaction():
+            raise RuntimeError("fail")
 
         getter = getattr(Database, "_get_tx_depth", None)
         self.assertTrue(callable(getter))
