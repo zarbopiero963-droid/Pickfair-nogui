@@ -9,7 +9,7 @@ def make_value(tag: str) -> str:
     return "-".join(("sample", tag))
 
 
-class _Settings:  # noqa: D203,D211
+class _Settings:  # noqa: D203,D211  # pylint: disable=too-few-public-methods
     """Settings stub for rich-alert tests."""
 
     @staticmethod
@@ -31,7 +31,7 @@ class _Settings:  # noqa: D203,D211
         }
 
 
-class _Sender:  # noqa: D203,D211
+class _Sender:  # noqa: D203,D211  # pylint: disable=too-few-public-methods
     """Sender stub collecting emitted messages."""
 
     def __init__(self):
