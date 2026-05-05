@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 import os
 import re
-from urllib.parse import urlunparse
+from urllib.parse import urlparse, urlunparse
 import urllib.request
 from typing import Any
 
 
 GITHUB_API = "https://api.github.com"
+_GITHUB_API_URL = urlparse(GITHUB_API)
 _REPO_PART_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
@@ -36,6 +37,8 @@ def gh_request(
 
 
 def _validate_repo_slug(repo: str) -> tuple[str, str]:
+    if repo.count("/") != 1:
+        raise ValueError("GITHUB_REPOSITORY must be in owner/repo format")
     owner, name = repo.split("/", 1)
     if not owner or not name:
         raise ValueError("GITHUB_REPOSITORY must be in owner/repo format")
@@ -57,7 +60,7 @@ def _build_github_comments_url(owner: str, repo: str, issue_number: int) -> str:
     if issue_number <= 0:
         raise ValueError("issue_number must be a positive integer")
     path = f"/repos/{owner}/{repo}/issues/{issue_number}/comments"
-    return urlunparse(("https", "api.github.com", path, "", "", ""))
+    return urlunparse((_GITHUB_API_URL.scheme, _GITHUB_API_URL.netloc, path, "", "", ""))
 
 
 def build_comment(mode: str) -> str:
