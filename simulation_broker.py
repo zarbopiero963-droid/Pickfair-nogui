@@ -254,7 +254,7 @@ class SimulationBroker:
     # =========================================================
     # SESSION
     # =========================================================
-    def login(self, password: str = "SIMULATION") -> Dict[str, Any]:
+    def login(self, password: Optional[str] = None) -> Dict[str, Any]:
         _ = password
         self.connected = True
         self.session_token = "SIM-" + uuid.uuid4().hex[:16]
