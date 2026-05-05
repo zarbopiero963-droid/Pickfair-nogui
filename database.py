@@ -91,8 +91,20 @@ class Database:
 
     def _apply_durability_pragmas(self, conn: sqlite3.Connection) -> None:
         profile = _DB_DURABILITY_PROFILES[self._durability_profile]
-        conn.execute(f"PRAGMA journal_mode={profile['journal_mode']}")
-        conn.execute(f"PRAGMA synchronous={profile['synchronous']}")
+        journal_mode = str(profile["journal_mode"]).strip().upper()
+        synchronous = str(profile["synchronous"]).strip().upper()
+
+        if journal_mode == "WAL":
+            conn.execute("PRAGMA journal_mode=WAL")
+        else:
+            raise ValueError(f"Unsupported journal_mode pragma value: {journal_mode}")
+
+        if synchronous == "FULL":
+            conn.execute("PRAGMA synchronous=FULL")
+        elif synchronous == "NORMAL":
+            conn.execute("PRAGMA synchronous=NORMAL")
+        else:
+            raise ValueError(f"Unsupported synchronous pragma value: {synchronous}")
 
     def get_durability_profile(self) -> str:
         return self._durability_profile
@@ -124,8 +136,10 @@ class Database:
                 if depth == 0:
                     conn.execute("BEGIN")
                 else:
-                    savepoint_name = f"sp_{depth}"
-                    conn.execute(f"SAVEPOINT {savepoint_name}")
+                    if depth < 1:
+                        raise RuntimeError("invalid nested transaction depth")
+                    savepoint_name = "sp_" + str(depth)
+                    conn.execute("SAVEPOINT " + savepoint_name)
 
                 self._set_tx_depth(depth + 1)
                 yield conn
@@ -134,7 +148,7 @@ class Database:
                 self._set_tx_depth(new_depth)
 
                 if savepoint_name:
-                    conn.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+                    conn.execute("RELEASE SAVEPOINT " + savepoint_name)
                 elif new_depth == 0:
                     conn.commit()
 
@@ -144,8 +158,8 @@ class Database:
 
                 try:
                     if savepoint_name:
-                        conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name}")
-                        conn.execute(f"RELEASE SAVEPOINT {savepoint_name}")
+                        conn.execute("ROLLBACK TO SAVEPOINT " + savepoint_name)
+                        conn.execute("RELEASE SAVEPOINT " + savepoint_name)
                     else:
                         conn.rollback()
                 except Exception:
