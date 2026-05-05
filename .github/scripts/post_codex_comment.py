@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from urllib.parse import urlunparse
 import urllib.request
 from typing import Any
 
 
 GITHUB_API = "https://api.github.com"
+_REPO_PART_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 def gh_request(
@@ -30,6 +33,31 @@ def gh_request(
     with urllib.request.urlopen(req) as resp:
         payload = resp.read().decode("utf-8")
         return json.loads(payload) if payload else None
+
+
+def _validate_repo_slug(repo: str) -> tuple[str, str]:
+    owner, name = repo.split("/", 1)
+    if not owner or not name:
+        raise ValueError("GITHUB_REPOSITORY must be in owner/repo format")
+    if not _REPO_PART_PATTERN.fullmatch(owner) or not _REPO_PART_PATTERN.fullmatch(name):
+        raise ValueError("GITHUB_REPOSITORY contains invalid characters")
+    return owner, name
+
+
+def _validate_issue_number(value: str) -> int:
+    issue_number = int(value)
+    if issue_number <= 0:
+        raise ValueError("PR_NUMBER must be a positive integer")
+    return issue_number
+
+
+def _build_github_comments_url(owner: str, repo: str, issue_number: int) -> str:
+    if not _REPO_PART_PATTERN.fullmatch(owner) or not _REPO_PART_PATTERN.fullmatch(repo):
+        raise ValueError("owner/repo contains invalid characters")
+    if issue_number <= 0:
+        raise ValueError("issue_number must be a positive integer")
+    path = f"/repos/{owner}/{repo}/issues/{issue_number}/comments"
+    return urlunparse(("https", "api.github.com", path, "", "", ""))
 
 
 def build_comment(mode: str) -> str:
@@ -63,7 +91,7 @@ def already_commented(
     token: str,
     marker: str,
 ) -> bool:
-    url = f"{GITHUB_API}/repos/{owner}/{repo}/issues/{pr_number}/comments?per_page=100"
+    url = f"{_build_github_comments_url(owner, repo, pr_number)}?per_page=100"
     comments = gh_request("GET", url, token)
     assert isinstance(comments, list)
 
@@ -77,10 +105,10 @@ def already_commented(
 def main() -> int:
     token = os.environ["GITHUB_TOKEN"]
     repository = os.environ["GITHUB_REPOSITORY"]
-    pr_number = int(os.environ["PR_NUMBER"])
+    pr_number = _validate_issue_number(os.environ["PR_NUMBER"])
     mode = os.environ["MODE"].strip()
 
-    owner, repo = repository.split("/", 1)
+    owner, repo = _validate_repo_slug(repository)
     marker = (
         "<!-- codex-auto:ci-failure -->"
         if mode == "ci_failure"
@@ -92,7 +120,7 @@ def main() -> int:
         return 0
 
     comment_body = build_comment(mode)
-    url = f"{GITHUB_API}/repos/{owner}/{repo}/issues/{pr_number}/comments"
+    url = _build_github_comments_url(owner, repo, pr_number)
     gh_request("POST", url, token, {"body": comment_body})
     print(f"Posted {mode} comment on PR #{pr_number}")
     return 0
