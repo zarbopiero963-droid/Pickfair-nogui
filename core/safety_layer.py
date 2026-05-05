@@ -429,30 +429,20 @@ class SafetyLayer:
     # =========================================================
 
     def _validate_best_market_offer(
-        self,
-        ladder: Any,
-        runner_idx: int,
-        ladder_name: str,
+        self, ladder: Any, runner_idx: int, ladder_name: str,
     ) -> None:
-        """Validate first offer in a price ladder, fail-closed on invalid shape.
-
-        Cyclomatic complexity kept at 5 by merging the missing-price and
-        invalid-price branches (missing key -> safe_float returns 0.0 -> fails).
-        """
+        """Validate first price ladder offer, fail-closed on invalid shape."""
         if not isinstance(ladder, (list, tuple)) or not ladder:
             raise MarketSanityError(
-                f"runner[{runner_idx}].ex.{ladder_name} vuoto o invalido"
-            )
+                f"runner[{runner_idx}].ex.{ladder_name} vuoto o invalido")
         best = ladder[0]
         if not isinstance(best, dict):
             raise MarketSanityError(
-                f"runner[{runner_idx}].ex.{ladder_name}[0] non dict"
-            )
+                f"runner[{runner_idx}].ex.{ladder_name}[0] non dict")
         price = self._safe_float(best.get("price"), 0.0)
         if price <= 1.0:
             raise MarketSanityError(
-                f"runner[{runner_idx}].ex.{ladder_name}[0] price invalido"
-            )
+                f"runner[{runner_idx}].ex.{ladder_name}[0] price invalido")
 
     def validate_market_book(self, market_book: Dict[str, Any]) -> bool:
         if not isinstance(market_book, dict):
