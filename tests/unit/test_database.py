@@ -1,4 +1,5 @@
 import tempfile
+import threading
 from pathlib import Path
 
 import pytest
@@ -102,3 +103,94 @@ def test_order_saga_upsert_and_payload_decode():
         row2 = db.get_order_saga("C1")
         assert row2["status"] == "PLACED"
         assert row2["bet_id"] == "BET1"
+
+def test_apply_durability_pragmas_allowlist_and_fail_closed():
+    db = object.__new__(Database)
+    db._durability_profile = "live_safe"
+
+    class Conn:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, sql):
+            self.calls.append(sql)
+            return self
+
+    conn = Conn()
+    db._apply_durability_pragmas(conn)
+    assert conn.calls == ["PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL"]
+
+    db._durability_profile = "balanced"
+    conn2 = Conn()
+    db._apply_durability_pragmas(conn2)
+    assert conn2.calls == ["PRAGMA journal_mode=WAL", "PRAGMA synchronous=NORMAL"]
+
+    bad = object.__new__(Database)
+    bad._durability_profile = "x"
+    try:
+        _ = bad._apply_durability_pragmas(conn2)
+        assert False, "expected KeyError for unknown profile"
+    except KeyError:
+        pass
+
+
+def test_transaction_nested_uses_static_savepoint_and_restores_depth():
+    class FakeConn:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, sql):
+            self.calls.append(sql)
+            return self
+
+        def commit(self):
+            self.calls.append("COMMIT")
+
+        def rollback(self):
+            self.calls.append("ROLLBACK")
+
+    db = object.__new__(Database)
+    db._local = threading.local()
+    db._write_lock = threading.RLock()
+    db._local.tx_depth = 1
+    conn = FakeConn()
+    db._get_connection = lambda: conn
+
+    with db.transaction():
+        pass
+
+    assert "SAVEPOINT sp_nested_tx" in conn.calls
+    assert "RELEASE SAVEPOINT sp_nested_tx" in conn.calls
+    assert db._get_tx_depth() == 1
+
+
+def test_transaction_nested_rollback_uses_static_sql_and_restores_depth():
+    class FakeConn:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, sql):
+            self.calls.append(sql)
+            return self
+
+        def commit(self):
+            self.calls.append("COMMIT")
+
+        def rollback(self):
+            self.calls.append("ROLLBACK")
+
+    db = object.__new__(Database)
+    db._local = threading.local()
+    db._write_lock = threading.RLock()
+    db._local.tx_depth = 1
+    conn = FakeConn()
+    db._get_connection = lambda: conn
+
+    with pytest.raises(RuntimeError):
+        with db.transaction():
+            raise RuntimeError("boom")
+
+    assert "SAVEPOINT sp_nested_tx" in conn.calls
+    assert "ROLLBACK TO SAVEPOINT sp_nested_tx" in conn.calls
+    assert "RELEASE SAVEPOINT sp_nested_tx" in conn.calls
+    assert db._get_tx_depth() == 1
