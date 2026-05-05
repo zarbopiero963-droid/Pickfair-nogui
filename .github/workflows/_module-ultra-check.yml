@@ -68,9 +68,21 @@ jobs:
       # MODULE EXISTENCE (HARD FAIL)
       # =========================================================
       - name: Validate target module exists
+        shell: bash
+        env:
+          MODULE_PATH: ${{ inputs.module_path }}
         run: |
-          if [ ! -f "${{ inputs.module_path }}" ]; then
-            echo "❌ Module not found: ${{ inputs.module_path }}"
+          set -euo pipefail
+          module_path="$MODULE_PATH"
+          if [[ ! "$module_path" =~ ^[A-Za-z0-9_./-]+\.py$ ]] \
+            || [[ "$module_path" == /* ]] \
+            || [[ "$module_path" =~ (^|/)\.\.(/|$) ]] \
+            || [[ "$module_path" =~ (^|/)- ]]; then
+            echo "Invalid module path: $module_path"
+            exit 1
+          fi
+          if [ ! -f "$MODULE_PATH" ]; then
+            echo "❌ Module not found: $MODULE_PATH"
             exit 1
           fi
 
@@ -78,28 +90,37 @@ jobs:
       # GUARDRAIL FILES EXISTENCE (HARD FAIL IF PROVIDED)
       # =========================================================
       - name: Validate guardrail files exist when provided
+        shell: bash
+        env:
+          SPEC_PATH: ${{ inputs.spec_path }}
+          CONTRACT_PATH: ${{ inputs.contract_path }}
+          STATE_MODEL_PATH: ${{ inputs.state_model_path }}
+          MUTATION_PATH: ${{ inputs.mutation_path }}
         run: |
-          if [ -n "${{ inputs.spec_path }}" ]; then
-            test -f "${{ inputs.spec_path }}" || (echo "Missing spec file" && exit 1)
+          set -euo pipefail
+          if [ -n "$SPEC_PATH" ]; then
+            test -f "$SPEC_PATH" || (echo "Missing spec file" && exit 1)
           fi
 
-          if [ -n "${{ inputs.contract_path }}" ]; then
-            test -f "${{ inputs.contract_path }}" || (echo "Missing contract file" && exit 1)
+          if [ -n "$CONTRACT_PATH" ]; then
+            test -f "$CONTRACT_PATH" || (echo "Missing contract file" && exit 1)
           fi
 
-          if [ -n "${{ inputs.state_model_path }}" ]; then
-            test -f "${{ inputs.state_model_path }}" || (echo "Missing state model file" && exit 1)
+          if [ -n "$STATE_MODEL_PATH" ]; then
+            test -f "$STATE_MODEL_PATH" || (echo "Missing state model file" && exit 1)
           fi
 
-          if [ -n "${{ inputs.mutation_path }}" ]; then
-            test -f "${{ inputs.mutation_path }}" || (echo "Missing mutation file" && exit 1)
+          if [ -n "$MUTATION_PATH" ]; then
+            test -f "$MUTATION_PATH" || (echo "Missing mutation file" && exit 1)
           fi
 
       # =========================================================
       # GUARDRAIL JSON VALIDATION (HARD FAIL)
       # =========================================================
       - name: Validate guardrail JSON syntax
+        shell: bash
         run: |
+          set -euo pipefail
           python - <<'PY'
           import json
           import os
@@ -128,9 +149,18 @@ jobs:
       # =========================================================
       - name: Run guardrail runner (validation-only)
         shell: bash
+        env:
+          MODULE_PATH: ${{ inputs.module_path }}
         run: |
           set -euo pipefail
-          module_path="${{ inputs.module_path }}"
+          module_path="$MODULE_PATH"
+          if [[ ! "$module_path" =~ ^[A-Za-z0-9_./-]+\.py$ ]] \
+            || [[ "$module_path" == /* ]] \
+            || [[ "$module_path" =~ (^|/)\.\.(/|$) ]] \
+            || [[ "$module_path" =~ (^|/)- ]]; then
+            echo "Invalid module path: $module_path"
+            exit 1
+          fi
           module_name="${module_path%.py}"
           module_name="${module_name//\//.}"
 
@@ -142,16 +172,27 @@ jobs:
       - name: Detect existing focused tests
         id: tests_check
         shell: bash
+        env:
+          TEST_PATHS: ${{ inputs.test_paths }}
         run: |
+          set -euo pipefail
           EXISTING_TESTS=""
-
-          for path in ${{ inputs.test_paths }}; do
+          set -f
+          for path in $TEST_PATHS; do
+            if [[ ! "$path" =~ ^[A-Za-z0-9_./-]+$ ]] \
+              || [[ "$path" == /* ]] \
+              || [[ "$path" =~ (^|/)\.\.(/|$) ]] \
+              || [[ "$path" =~ (^|/)- ]]; then
+              echo "⚠️ Skipping invalid test path -> $path"
+              continue
+            fi
             if [ -f "$path" ]; then
               EXISTING_TESTS="$EXISTING_TESTS $path"
             else
               echo "⚠️ Missing focused test -> $path"
             fi
           done
+          set +f
 
           EXISTING_TESTS="$(echo "$EXISTING_TESTS" | xargs)"
 
@@ -168,25 +209,35 @@ jobs:
       # =========================================================
       - name: Run module-focused tests
         if: ${{ steps.tests_check.outputs.has_tests == 'true' }}
+        shell: bash
+        env:
+          EXISTING_TESTS: ${{ steps.tests_check.outputs.existing_tests }}
         run: |
+          set -euo pipefail
           echo "Running focused tests:"
-          echo "${{ steps.tests_check.outputs.existing_tests }}"
+          echo "$EXISTING_TESTS"
 
-          pytest -q -x ${{ steps.tests_check.outputs.existing_tests }}
+          pytest -q -x -- $EXISTING_TESTS
 
       # =========================================================
       # WARNING IF NO TESTS
       # =========================================================
       - name: Advisory if module exists but no focused tests
         if: ${{ steps.tests_check.outputs.has_tests != 'true' }}
+        shell: bash
+        env:
+          MODULE_PATH: ${{ inputs.module_path }}
         run: |
-          echo "::warning::No focused tests found for module ${{ inputs.module_path }}"
+          set -euo pipefail
+          echo "::warning::No focused tests found for module $MODULE_PATH"
 
       # =========================================================
       # FULL SUITE BACKSTOP (SEMPRE)
       # =========================================================
       - name: Run full test suite (backstop)
+        shell: bash
         run: |
+          set -euo pipefail
           pytest -q
 
       # =========================================================
