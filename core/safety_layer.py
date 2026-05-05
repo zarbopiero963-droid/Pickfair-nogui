@@ -434,21 +434,25 @@ class SafetyLayer:
         runner_idx: int,
         ladder_name: str,
     ) -> None:
-        """Validate the first offer in a price ladder, fail-closed on any invalid shape."""
-        label = "best back" if "Back" in ladder_name else "best lay"
+        """Validate first offer in a price ladder, fail-closed on invalid shape.
+
+        Cyclomatic complexity kept at 5 by merging the missing-price and
+        invalid-price branches (missing key -> safe_float returns 0.0 -> fails).
+        """
         if not isinstance(ladder, (list, tuple)) or not ladder:
-            raise MarketSanityError(f"runner[{runner_idx}].ex.{ladder_name} vuoto o invalido")
-
-        best_offer = ladder[0]
-        if not isinstance(best_offer, dict):
-            raise MarketSanityError(f"runner[{runner_idx}].ex.{ladder_name}[0] non dict")
-
-        if "price" not in best_offer:
-            raise MarketSanityError(f"runner[{runner_idx}].ex.{ladder_name}[0].price missing")
-
-        price = self._safe_float(best_offer.get("price"), 0.0)
+            raise MarketSanityError(
+                f"runner[{runner_idx}].ex.{ladder_name} vuoto o invalido"
+            )
+        best = ladder[0]
+        if not isinstance(best, dict):
+            raise MarketSanityError(
+                f"runner[{runner_idx}].ex.{ladder_name}[0] non dict"
+            )
+        price = self._safe_float(best.get("price"), 0.0)
         if price <= 1.0:
-            raise MarketSanityError(f"runner[{runner_idx}] {label} <= 1.0")
+            raise MarketSanityError(
+                f"runner[{runner_idx}].ex.{ladder_name}[0] price invalido"
+            )
 
     def validate_market_book(self, market_book: Dict[str, Any]) -> bool:
         if not isinstance(market_book, dict):
@@ -466,17 +470,20 @@ class SafetyLayer:
             if not isinstance(ex, dict):
                 raise MarketSanityError(f"runner[{idx}].ex non dict")
 
-            if "availableToBack" not in ex:
-                raise MarketSanityError(f"runner[{idx}].ex.availableToBack missing")
-
-            available_to_back = ex.get("availableToBack")
+            # C13: guard available_to_back[0] access — validate shape IF
+            # the ladder is present and non-empty.  In thin or suspended
+            # Betfair markets a runner may temporarily have no back offers;
+            # that is normal market data, not a malformed payload.
+            # Lay validation follows the same optional pattern.
+            available_to_back = ex.get("availableToBack", []) or []
             available_to_lay = ex.get("availableToLay", []) or []
 
-            self._validate_best_market_offer(
-                available_to_back,
-                idx,
-                "availableToBack",
-            )
+            if available_to_back:
+                self._validate_best_market_offer(
+                    available_to_back,
+                    idx,
+                    "availableToBack",
+                )
 
             if available_to_lay:
                 self._validate_best_market_offer(
