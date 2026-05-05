@@ -11,6 +11,7 @@ from typing import Any
 GITHUB_API = "https://api.github.com"
 _GITHUB_API_URL = urlparse(GITHUB_API)
 _REPO_PART_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+_REPO_SLUG_PATTERN = re.compile(r"^([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$")
 
 
 def gh_request(
@@ -37,24 +38,24 @@ def gh_request(
 
 
 def _validate_repo_slug(repo: str) -> tuple[str, str]:
-    if repo.count("/") != 1:
+    match = _REPO_SLUG_PATTERN.fullmatch(repo)
+    if not match:
         raise ValueError("GITHUB_REPOSITORY must be in owner/repo format")
-    owner, name = repo.split("/", 1)
-    if not owner or not name:
-        raise ValueError("GITHUB_REPOSITORY must be in owner/repo format")
-    if not _REPO_PART_PATTERN.fullmatch(owner) or not _REPO_PART_PATTERN.fullmatch(name):
-        raise ValueError("GITHUB_REPOSITORY contains invalid characters")
-    return owner, name
+    return match.group(1), match.group(2)
 
 
 def _validate_issue_number(value: str) -> int:
-    issue_number = int(value)
+    value_text = str(value).strip()
+    if not value_text.isdecimal():
+        raise ValueError("PR_NUMBER must be a positive integer")
+    issue_number = int(value_text)
     if issue_number <= 0:
         raise ValueError("PR_NUMBER must be a positive integer")
     return issue_number
 
 
 def _build_github_comments_url(owner: str, repo: str, issue_number: int) -> str:
+    """Build a comments URL with defensive re-validation for standalone-safe use."""
     if not _REPO_PART_PATTERN.fullmatch(owner) or not _REPO_PART_PATTERN.fullmatch(repo):
         raise ValueError("owner/repo contains invalid characters")
     if issue_number <= 0:
