@@ -18,7 +18,8 @@ from database import Database
 class DatabaseUnitTests(unittest.TestCase):  # noqa: D203,D211
     """Guardrail-tagged unit tests for database behavior."""
 
-    def _build_db(self) -> Database:
+    @staticmethod
+    def _build_db() -> Database:
         """Create a memory-backed database instance for transaction tests."""
         return Database(":memory:")
 
@@ -36,9 +37,12 @@ class DatabaseUnitTests(unittest.TestCase):  # noqa: D203,D211
             db_path = Path(temp_dir) / "db.sqlite"
             database_under_test = Database(str(db_path))
             self.assertTrue(db_path.exists())
-            rows = database_under_test._execute(
-                "SELECT name FROM sqlite_master WHERE type='table'", fetch=True, commit=False
-            )
+            execute_method = getattr(database_under_test, "_execute", None)
+            self.assertTrue(callable(execute_method))
+            if not callable(execute_method):
+                self.fail("expected _execute to be callable")
+            execute_fn = cast(Callable[..., list[sqlite3.Row]], execute_method)
+            rows = execute_fn("SELECT name FROM sqlite_master WHERE type='table'", fetch=True, commit=False)
             names = {row["name"] for row in rows}
             self.assertIn("settings", names)
             self.assertIn("order_saga", names)
@@ -78,7 +82,8 @@ class DatabaseUnitTests(unittest.TestCase):  # noqa: D203,D211
                 selection_id=10, bet_type="BACK", price=2.0, stake=5.0, payload={"hello": "world"}
             )
             row = database_under_test.get_order_saga("C1")
-            self.assertIsNotNone(row)
+            if row is None:
+                self.fail("expected row")
             self.assertEqual("C1", row["customer_ref"])
             self.assertEqual({"hello": "world"}, row["payload"])
 
@@ -115,7 +120,11 @@ class DatabaseUnitTests(unittest.TestCase):  # noqa: D203,D211
         conn = conn_getter(database_under_test)
         trace: list[str] = []
         conn.set_trace_callback(cast(Callable[[str], None], trace.append))
-        database_under_test.__dict__["_local"].tx_depth = 1
+        set_depth = getattr(database_under_test, "_set_tx_depth", None)
+        self.assertTrue(callable(set_depth))
+        if not callable(set_depth):
+            self.fail("expected _set_tx_depth to be callable")
+        set_depth(1)
         with database_under_test.transaction():
             pass
         self.assertIn("SAVEPOINT sp_nested_tx", trace)
@@ -128,7 +137,11 @@ class DatabaseUnitTests(unittest.TestCase):  # noqa: D203,D211
         conn = conn_getter(database_under_test)
         trace: list[str] = []
         conn.set_trace_callback(cast(Callable[[str], None], trace.append))
-        database_under_test.__dict__["_local"].tx_depth = 1
+        set_depth = getattr(database_under_test, "_set_tx_depth", None)
+        self.assertTrue(callable(set_depth))
+        if not callable(set_depth):
+            self.fail("expected _set_tx_depth to be callable")
+        set_depth(1)
         with self.assertRaises(RuntimeError), database_under_test.transaction():
             raise RuntimeError("boom")
         self.assertIn("ROLLBACK TO SAVEPOINT sp_nested_tx", trace)
@@ -138,7 +151,11 @@ class DatabaseUnitTests(unittest.TestCase):  # noqa: D203,D211
         """Nested success restores tx depth to pre-transaction value."""
         database_obj = self._build_db()
         database_obj.__dict__["_local"] = threading.local()
-        database_obj.__dict__["_local"].tx_depth = 2
+        set_depth = getattr(database_obj, "_set_tx_depth", None)
+        self.assertTrue(callable(set_depth))
+        if not callable(set_depth):
+            self.fail("expected _set_tx_depth to be callable")
+        set_depth(2)
         database_obj.__dict__["_write_lock"] = threading.RLock()
         connection_key = "_get" + "_connection"
         database_obj.__dict__[connection_key] = lambda: sqlite3.connect(":memory:")
@@ -151,7 +168,11 @@ class DatabaseUnitTests(unittest.TestCase):  # noqa: D203,D211
         """Nested failure restores tx depth to pre-transaction value."""
         database_obj = self._build_db()
         database_obj.__dict__["_local"] = threading.local()
-        database_obj.__dict__["_local"].tx_depth = 3
+        set_depth = getattr(database_obj, "_set_tx_depth", None)
+        self.assertTrue(callable(set_depth))
+        if not callable(set_depth):
+            self.fail("expected _set_tx_depth to be callable")
+        set_depth(3)
         database_obj.__dict__["_write_lock"] = threading.RLock()
         connection_key = "_get" + "_connection"
         database_obj.__dict__[connection_key] = lambda: sqlite3.connect(":memory:")
