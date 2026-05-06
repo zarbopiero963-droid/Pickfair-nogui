@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -15,9 +16,12 @@ logger = logging.getLogger(__name__)
 
 def _to_float(value: Any, default: float = 0.0) -> float:
     try:
-        return float(value)
+        parsed = float(value)
     except (TypeError, ValueError):
         return default
+    if not math.isfinite(parsed):
+        return default
+    return parsed
 
 
 def _to_int(value: Any, default: int = 0) -> int:
@@ -474,10 +478,13 @@ class SimulationBroker:
             runner_name=str(runner_name or ""),
         )
 
+        order_to_persist = None
         with self._lock:
             self._match_order(order)
             self.state.orders[order.bet_id] = order
-            self._persist_order(order)
+            order_to_persist = order
+        if order_to_persist is not None:
+            self._persist_order(order_to_persist)
 
         return {
             "status": "SUCCESS",
@@ -595,12 +602,8 @@ class SimulationBroker:
                     "simulated": True,
                 }
 
-            target_bet_ids = {
-                str(item.get("betId") or item.get("bet_id") or "")
-                for item in instructions
-            }
-
-            for bet_id in target_bet_ids:
+            for item in instructions:
+                bet_id = str(item.get("betId") or item.get("bet_id") or "")
                 if not bet_id:
                     continue
                 order = self.state.orders.get(bet_id)
@@ -738,7 +741,7 @@ class SimulationBroker:
         - mercato: commissione su market-net realizzato (non per singolo leg positivo)
         """
         with self._lock:
-            gross = float(gross_pnl or 0.0)
+            gross = _to_float(value=gross_pnl, default=0.0)
             market_key = str(market_id or "").strip()
             if not market_key:
                 raise ValueError("market_id is required for record_realized_settlement")

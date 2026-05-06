@@ -8,7 +8,8 @@ from simulation_broker import SimulationBroker, SimulationState
 class TestSimBrokerRuntime(unittest.TestCase):
     """Covers malformed runtime input hardening scenarios."""
 
-    def make_book(self, selection_id=10, lay_size=10.0):
+    @staticmethod
+    def make_book(selection_id=10, lay_size=10.0):
         """Build a minimal market book fixture."""
         return {
             "marketId": "1.100",
@@ -24,11 +25,13 @@ class TestSimBrokerRuntime(unittest.TestCase):
         broker.update_market_book(self.make_book(lay_size=lay_size))
         return broker
 
-    def first_report(self, output):
+    @staticmethod
+    def first_report(output):
         """Return first instruction report from place_orders/place_bet output."""
         return output["instructionReports"][0]
 
-    def stored_order(self, broker, report):
+    @staticmethod
+    def stored_order(broker, report):
         """Resolve stored order from an instruction report."""
         return broker.state.orders[report["betId"]]
 
@@ -43,8 +46,8 @@ class TestSimBrokerRuntime(unittest.TestCase):
         """Malformed state restore values should not crash."""
         state = SimulationState(starting_balance=1000.0, commission_pct=4.5)
         payload = {
-            "starting_balance": None,
-            "balance": "oops",
+            "starting_balance": float("nan"),
+            "balance": float("inf"),
             "orders": {"b1": {"selection_id": "bad", "price": "nan?", "size": None}},
             "position_ledgers": {"1.1::x": {"market_id": "1.1", "runner_id": "bad"}},
         }
