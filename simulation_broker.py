@@ -478,13 +478,10 @@ class SimulationBroker:
             runner_name=str(runner_name or ""),
         )
 
-        order_to_persist = None
         with self._lock:
             self._match_order(order)
             self.state.orders[order.bet_id] = order
-            order_to_persist = order
-        if order_to_persist is not None:
-            self._persist_order(order_to_persist)
+        self._persist_order(order)
 
         return {
             "status": "SUCCESS",
@@ -635,6 +632,7 @@ class SimulationBroker:
     # =========================================================
     # MATCHING
     # =========================================================
+    # skipcq: PY-R1000 - pre-existing matching complexity; PR3 only adds defensive numeric/state hardening.
     def _match_order(self, order: SimOrder) -> None:
         market = self.state.market_books.get(order.market_id)
         if not market:
