@@ -119,10 +119,10 @@ class ExecutorManager:
         with self._lock:
             out: Dict[str, str] = {}
             for name, future in self._futures.items():
+                if future.done():
+                    continue
                 if future.cancelled():
                     state = "CANCELLED"
-                elif future.done():
-                    state = "DONE"
                 elif future.running():
                     state = "RUNNING"
                 else:
@@ -131,10 +131,19 @@ class ExecutorManager:
             return out
 
     def wait(self, task_name: str, timeout: Optional[float] = None) -> Any:
-        future = self.get_future(task_name)
+        key = str(task_name)
+        with self._lock:
+            future = self._futures.get(key)
         if future is None:
             raise RuntimeError(f"Task non trovata: {task_name}")
-        return future.result(timeout=timeout if timeout is not None else self.default_timeout)
+
+        try:
+            return future.result(timeout=timeout if timeout is not None else self.default_timeout)
+        finally:
+            with self._lock:
+                current = self._futures.get(key)
+                if current is future:
+                    self._futures.pop(key, None)
 
     def shutdown(self, wait: bool = True, cancel_futures: bool = False) -> None:
         with self._lock:

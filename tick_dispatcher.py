@@ -7,6 +7,7 @@ Soluzione: UI throttled a 4 update/s, tick storage full-speed, automazioni preci
 Impatto: -60/70% carico CPU
 """
 
+import logging
 import threading
 import time
 from dataclasses import dataclass, field
@@ -34,6 +35,9 @@ class TickData:
     lay_sizes: List[float] = field(default_factory=list)
     last_traded_price: Optional[float] = None
     total_matched: Optional[float] = None
+
+
+logger = logging.getLogger(__name__)
 
 
 class TickDispatcher:
@@ -76,35 +80,43 @@ class TickDispatcher:
     def automation_interval(self) -> float:
         return self.SIM_AUTOMATION_INTERVAL if self._mode == DispatchMode.SIMULATION else self.MIN_AUTOMATION_INTERVAL
 
-    def _invalid_tick_reason(self, tick: Any) -> Optional[str]:
+    @staticmethod
+    def _invalid_tick_reason(tick: Any) -> Optional[str]:
+        """Return a deterministic invalid reason for malformed ticks."""
         if not isinstance(tick, TickData):
             return "not_tickdata"
         if not tick.market_id:
             return "missing_market_id"
         return None
 
-    def _record_invalid_tick(self, _tick: Any, _reason: str) -> None:
+    def _record_invalid_tick(self, _tick: Any, reason: str) -> None:
+        """Count invalid ticks and emit reason for observability."""
         with self._lock:
             self._invalid_tick_count += 1
+        logger.warning("Invalid tick dropped: %s", reason)
 
     def _snapshot_callbacks(self):
         return list(self._storage_callbacks), list(self._ui_callbacks), list(self._automation_callbacks)
 
-    def _dispatch_storage_callbacks(self, callbacks, tick: TickData) -> None:
+    @staticmethod
+    def _dispatch_storage_callbacks(callbacks, tick: TickData) -> None:
+        """Dispatch storage callbacks while preserving caller flow on errors."""
         for cb in callbacks:
             try:
                 cb(tick)
             except Exception:
-                pass
+                logger.exception("Tick batch callback failed")
 
-    def _dispatch_batch_callbacks(self, callbacks, ticks: Optional[Dict[tuple[str, int], TickData]]) -> None:
+    @staticmethod
+    def _dispatch_batch_callbacks(callbacks, ticks: Optional[Dict[tuple[str, int], TickData]]) -> None:
+        """Dispatch UI/automation callbacks while preserving deterministic flow."""
         if not ticks:
             return
         for cb in callbacks:
             try:
                 cb(ticks)
             except Exception:
-                pass
+                logger.exception("Tick storage callback failed")
 
     def register_ui_callback(self, callback: Callable[[Dict[tuple[str, int], TickData]], None]):
         with self._lock:

@@ -4,6 +4,7 @@ import threading
 import unittest
 from typing import Any, cast
 
+import tick_dispatcher as tick_module
 from auto_throttle import AutoThrottle
 from executor_manager import ExecutorManager
 from tick_dispatcher import TickData, TickDispatcher, get_tick_dispatcher
@@ -30,9 +31,14 @@ class TestPR4Determinism(unittest.TestCase):
     def test_throttle_update_ok(self) -> None:
         """Positive api_calls_min updates max_calls and returns True."""
         throttle = AutoThrottle(max_calls=1, period=60)
-        changed = throttle.update(api_calls_min=120)
-        self.assertTrue(changed)
+        self.assertTrue(throttle.update(api_calls_min=120))
         self.assertEqual(throttle.max_calls, 120)
+
+    def test_throttle_no_up_round(self) -> None:
+        """Conversion must not round upward past requested cap."""
+        throttle = AutoThrottle(max_calls=1, period=1)
+        self.assertTrue(throttle.update(api_calls_min=90))
+        self.assertEqual(throttle.max_calls, 1)
 
     def test_throttle_update_nonpos(self) -> None:
         """Non-positive api_calls_min is deterministically rejected."""
@@ -69,6 +75,8 @@ class TestPR4Determinism(unittest.TestCase):
         future = manager.submit("fast", lambda: 7)
         self.assertEqual(future.result(timeout=2), 7)
         self.assertEqual(manager.wait("fast", timeout=2), 7)
+        self.assertNotIn("fast", manager.active_tasks())
+        self.assertNotIn("fast", manager.status()["tasks"])
         manager.shutdown(wait=True)
 
     def test_exec_error_explicit(self) -> None:
@@ -77,6 +85,8 @@ class TestPR4Determinism(unittest.TestCase):
         future = manager.submit("boom", lambda: (_ for _ in ()).throw(ValueError("err")))
         with self.assertRaises(ValueError):
             future.result(timeout=2)
+        with self.assertRaises(ValueError):
+            manager.wait("boom", timeout=2)
         manager.shutdown(wait=True)
 
     def test_tick_ui_auto_indep(self) -> None:
@@ -84,6 +94,7 @@ class TestPR4Determinism(unittest.TestCase):
         dispatcher = TickDispatcher()
         dispatcher._last_ui_update = 0.0
         import time
+
         dispatcher._last_automation_check = time.time()
         ui_seen: list[int] = []
         auto_seen: list[int] = []
@@ -98,19 +109,27 @@ class TestPR4Determinism(unittest.TestCase):
 
     def test_singleton_serialized(self) -> None:
         """Singleton init is guarded and returns one instance."""
+        original = tick_module._dispatcher
+        tick_module._dispatcher = None
         instances: list[TickDispatcher] = []
+        barrier = threading.Barrier(3)
 
         def _target() -> None:
+            barrier.wait()
             instances.append(get_tick_dispatcher())
 
-        t1 = threading.Thread(target=_target)
-        t2 = threading.Thread(target=_target)
-        t1.start()
-        t2.start()
-        t1.join()
-        t2.join()
-        self.assertEqual(len(instances), 2)
-        self.assertIs(instances[0], instances[1])
+        try:
+            t1 = threading.Thread(target=_target)
+            t2 = threading.Thread(target=_target)
+            t1.start()
+            t2.start()
+            barrier.wait()
+            t1.join()
+            t2.join()
+            self.assertEqual(len(instances), 2)
+            self.assertIs(instances[0], instances[1])
+        finally:
+            tick_module._dispatcher = original
 
 
 if __name__ == "__main__":

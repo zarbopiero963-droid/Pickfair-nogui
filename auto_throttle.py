@@ -187,7 +187,8 @@ class AutoThrottle:
                 return False
             if parsed <= 0:
                 return False
-            self.max_calls = max(1, int(round((parsed * self.period) / 60.0)))
+            allowed_calls = int((parsed * self.period) / 60.0)
+            self.max_calls = max(1, allowed_calls)
             self._timestamps.clear()
             self._last_delay = 0.0
             self._backoff = self.base_backoff
