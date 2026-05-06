@@ -192,6 +192,7 @@ class AutoThrottle:
             self._last_delay = 0.0
             self._backoff = self.base_backoff
             self._last_call_time = None
+            self._blocked = False
             return True
 
     def reset(self) -> None:

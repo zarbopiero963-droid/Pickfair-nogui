@@ -44,9 +44,6 @@ class ExecutorManager:
         self._futures: Dict[str, concurrent.futures.Future] = {}
         self._counter = 0
 
-    # =========================================================
-    # INTERNAL
-    # =========================================================
     def _next_task_name(self) -> str:
         with self._lock:
             self._counter += 1
@@ -82,15 +79,7 @@ class ExecutorManager:
         finally:
             logger.debug("Executor task end: %s", task_name)
 
-    # =========================================================
-    # PUBLIC API
-    # =========================================================
     def submit(self, *args, **kwargs):
-        """
-        Supporta:
-        - submit("name", fn, *args, **kwargs)
-        - submit(fn, *args, **kwargs)
-        """
         task_name, fn, fn_args, fn_kwargs = self._normalize_submit_call(*args, **kwargs)
 
         with self._lock:
@@ -104,14 +93,6 @@ class ExecutorManager:
                 **fn_kwargs,
             )
             self._futures[task_name] = future
-
-            def _cleanup(_done_future):
-                with self._lock:
-                    current = self._futures.get(task_name)
-                    if current is _done_future:
-                        self._futures.pop(task_name, None)
-
-            future.add_done_callback(_cleanup)
             return future
 
     def map(self, fn: Callable, iterable, timeout: Optional[float] = None):
@@ -167,9 +148,6 @@ class ExecutorManager:
             with self._lock:
                 self._futures.clear()
 
-    # =========================================================
-    # STATUS
-    # =========================================================
     def status(self) -> Dict[str, Any]:
         with self._lock:
             return {
