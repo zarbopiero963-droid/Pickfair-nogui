@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -97,21 +98,33 @@ class SimulationState:
         }
 
     def load_from_dict(self, data: Dict[str, Any]) -> None:
+        def _to_float(value: Any, default: float = 0.0) -> float:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        def _to_int(value: Any, default: int = 0) -> int:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
         data = dict(data or {})
-        self.starting_balance = float(data.get("starting_balance", self.starting_balance))
-        self.balance = float(data.get("balance", self.starting_balance))
-        self.exposure = float(data.get("exposure", 0.0))
-        self.unrealized_pnl = float(data.get("unrealized_pnl", 0.0))
-        self.commission_pct = float(data.get("commission_pct", self.commission_pct))
-        self.realized_pnl = float(data.get("realized_pnl", 0.0))
-        self.realized_commission = float(data.get("realized_commission", 0.0))
+        self.starting_balance = _to_float(data.get("starting_balance"), self.starting_balance)
+        self.balance = _to_float(data.get("balance"), self.starting_balance)
+        self.exposure = _to_float(data.get("exposure"), 0.0)
+        self.unrealized_pnl = _to_float(data.get("unrealized_pnl"), 0.0)
+        self.commission_pct = _to_float(data.get("commission_pct"), self.commission_pct)
+        self.realized_pnl = _to_float(data.get("realized_pnl"), 0.0)
+        self.realized_commission = _to_float(data.get("realized_commission"), 0.0)
         raw_ledger = data.get("market_commission_ledger") or {}
         self.market_commission_ledger = {}
         for market_id, item in dict(raw_ledger).items():
             row = dict(item or {})
             self.market_commission_ledger[str(market_id)] = {
-                "gross": float(row.get("gross", 0.0)),
-                "commission": float(row.get("commission", 0.0)),
+                "gross": _to_float(row.get("gross"), 0.0),
+                "commission": _to_float(row.get("commission"), 0.0),
             }
         self.last_settlement = dict(data.get("last_settlement") or {})
 
@@ -121,12 +134,12 @@ class SimulationState:
             self.orders[bet_id] = SimOrder(
                 bet_id=str(p.get("bet_id") or bet_id),
                 market_id=str(p.get("market_id") or ""),
-                selection_id=int(p.get("selection_id") or 0),
+                selection_id=_to_int(p.get("selection_id"), 0),
                 side=str(p.get("side") or "BACK"),
-                price=float(p.get("price") or 0.0),
-                size=float(p.get("size") or 0.0),
-                matched_size=float(p.get("matched_size") or 0.0),
-                avg_price_matched=float(p.get("avg_price_matched") or 0.0),
+                price=_to_float(p.get("price"), 0.0),
+                size=_to_float(p.get("size"), 0.0),
+                matched_size=_to_float(p.get("matched_size"), 0.0),
+                avg_price_matched=_to_float(p.get("avg_price_matched"), 0.0),
                 status=str(p.get("status") or "EXECUTABLE"),
                 customer_ref=str(p.get("customer_ref") or ""),
                 event_key=str(p.get("event_key") or ""),
@@ -146,14 +159,14 @@ class SimulationState:
         for key, payload in dict(raw_ledgers).items():
             item = dict(payload or {})
             market_id = str(item.get("market_id") or "")
-            runner_id = int(item.get("runner_id") or 0)
+            runner_id = _to_int(item.get("runner_id"), 0)
             if not market_id or runner_id <= 0:
                 continue
             ledger = PositionLedger(market_id=market_id, runner_id=runner_id)
             snap = dict(item.get("snapshot") or {})
             open_side = str(snap.get("open_side") or "").strip().upper()
-            open_size = float(snap.get("open_size") or 0.0)
-            avg_price = float(snap.get("avg_entry_price") or 0.0)
+            open_size = _to_float(snap.get("open_size"), 0.0)
+            avg_price = _to_float(snap.get("avg_entry_price"), 0.0)
             if open_side in {"BACK", "LAY"} and open_size > 0.0 and avg_price > 1.0:
                 ledger.apply_fill(
                     fill_id=f"restore:{key}:open",
@@ -201,6 +214,7 @@ class SimulationBroker:
             context="simulation_broker_settlement",
         )
         self._market_net_realized_aggregator.ledger = self.state.market_commission_ledger
+        self._lock = threading.RLock()
 
     @staticmethod
     def _ledger_key(market_id: str, selection_id: int) -> str:
@@ -273,12 +287,13 @@ class SimulationBroker:
     # ACCOUNT
     # =========================================================
     def get_account_funds(self) -> Dict[str, float]:
-        return {
-            "available": float(self.state.balance),
-            "exposure": float(self.state.exposure),
-            "total": float(self.state.balance + self.state.exposure),
-            "simulated": True,
-        }
+        with self._lock:
+            return {
+                "available": float(self.state.balance),
+                "exposure": float(self.state.exposure),
+                "total": float(self.state.balance + self.state.exposure),
+                "simulated": True,
+            }
 
     # =========================================================
     # EVENT / MARKET DATA INDEX
@@ -312,8 +327,9 @@ class SimulationBroker:
         normalized["marketId"] = market_id
         normalized["market_id"] = market_id
 
-        self.state.market_books[market_id] = normalized
-        self._refresh_unrealized_for_market(market_id)
+        with self._lock:
+            self.state.market_books[market_id] = normalized
+            self._refresh_unrealized_for_market(market_id)
 
         event_name = str(
             normalized.get("event_name")
@@ -456,9 +472,10 @@ class SimulationBroker:
             runner_name=str(runner_name or ""),
         )
 
-        self._match_order(order)
-        self.state.orders[order.bet_id] = order
-        self._persist_order(order)
+        with self._lock:
+            self._match_order(order)
+            self.state.orders[order.bet_id] = order
+            self._persist_order(order)
 
         return {
             "status": "SUCCESS",
@@ -488,9 +505,13 @@ class SimulationBroker:
     ) -> Dict[str, Any]:
         reports = []
         for item in instructions or []:
+            try:
+                selection_id = int(item.get("selection_id", item.get("selectionId")))
+            except (TypeError, ValueError):
+                selection_id = 0
             result = self.place_bet(
                 market_id=str(market_id),
-                selection_id=int(item.get("selection_id", item.get("selectionId"))),
+                selection_id=selection_id,
                 side=str(item.get("side") or item.get("bet_type") or "BACK"),
                 price=float(item.get("price") or 0.0),
                 size=float(item.get("size", item.get("stake")) or 0.0),
@@ -512,28 +533,29 @@ class SimulationBroker:
         }
 
     def list_current_orders(self, market_ids: Optional[List[str]] = None) -> Dict[str, Any]:
-        orders = []
-        wanted = {str(m) for m in (market_ids or [])}
+        with self._lock:
+            orders = []
+            wanted = {str(m) for m in (market_ids or [])}
 
-        for order in self.state.orders.values():
-            if wanted and order.market_id not in wanted:
-                continue
+            for order in self.state.orders.values():
+                if wanted and order.market_id not in wanted:
+                    continue
 
-            orders.append(
-                {
-                    "betId": order.bet_id,
-                    "marketId": order.market_id,
-                    "selectionId": order.selection_id,
-                    "side": order.side,
-                    "priceSize": {
-                        "price": order.price,
-                        "size": order.size,
-                    },
-                    "sizeMatched": order.matched_size,
-                    "sizeRemaining": max(0.0, order.size - order.matched_size),
-                    "status": order.status,
-                }
-            )
+                orders.append(
+                    {
+                        "betId": order.bet_id,
+                        "marketId": order.market_id,
+                        "selectionId": order.selection_id,
+                        "side": order.side,
+                        "priceSize": {
+                            "price": order.price,
+                            "size": order.size,
+                        },
+                        "sizeMatched": order.matched_size,
+                        "sizeRemaining": max(0.0, order.size - order.matched_size),
+                        "status": order.status,
+                    }
+                )
 
         return {
             "currentOrders": orders,
@@ -550,11 +572,42 @@ class SimulationBroker:
     ) -> Dict[str, Any]:
         _ = customer_ref
         reports = []
+        with self._lock:
+            if not instructions:
+                for order in self.state.orders.values():
+                    if market_id and str(order.market_id) != str(market_id):
+                        continue
+                    if order.status == "EXECUTABLE":
+                        order.status = "CANCELLED"
+                        order.updated_at = datetime.utcnow().isoformat()
+                        reports.append(
+                            {
+                                "status": "SUCCESS",
+                                "sizeCancelled": max(0.0, order.size - order.matched_size),
+                            }
+                        )
+                return {
+                    "status": "SUCCESS",
+                    "instructionReports": reports,
+                    "simulated": True,
+                }
 
-        if not instructions:
-            for order in self.state.orders.values():
-                if market_id and str(order.market_id) != str(market_id):
+            target_bet_ids = {
+                str(item.get("betId") or item.get("bet_id") or "")
+                for item in instructions
+            }
+
+            for bet_id in target_bet_ids:
+                if not bet_id:
                     continue
+                order = self.state.orders.get(bet_id)
+                if not order:
+                    reports.append({"status": "FAILURE", "sizeCancelled": 0.0})
+                    continue
+                if market_id and str(order.market_id) != str(market_id):
+                    reports.append({"status": "FAILURE", "sizeCancelled": 0.0})
+                    continue
+
                 if order.status == "EXECUTABLE":
                     order.status = "CANCELLED"
                     order.updated_at = datetime.utcnow().isoformat()
@@ -564,39 +617,8 @@ class SimulationBroker:
                             "sizeCancelled": max(0.0, order.size - order.matched_size),
                         }
                     )
-            return {
-                "status": "SUCCESS",
-                "instructionReports": reports,
-                "simulated": True,
-            }
-
-        target_bet_ids = {
-            str(item.get("betId") or item.get("bet_id") or "")
-            for item in instructions
-        }
-
-        for bet_id in target_bet_ids:
-            if not bet_id:
-                continue
-            order = self.state.orders.get(bet_id)
-            if not order:
-                reports.append({"status": "FAILURE", "sizeCancelled": 0.0})
-                continue
-            if market_id and str(order.market_id) != str(market_id):
-                reports.append({"status": "FAILURE", "sizeCancelled": 0.0})
-                continue
-
-            if order.status == "EXECUTABLE":
-                order.status = "CANCELLED"
-                order.updated_at = datetime.utcnow().isoformat()
-                reports.append(
-                    {
-                        "status": "SUCCESS",
-                        "sizeCancelled": max(0.0, order.size - order.matched_size),
-                    }
-                )
-            else:
-                reports.append({"status": "FAILURE", "sizeCancelled": 0.0})
+                else:
+                    reports.append({"status": "FAILURE", "sizeCancelled": 0.0})
 
         return {
             "status": "SUCCESS",
@@ -615,7 +637,11 @@ class SimulationBroker:
 
         runner = None
         for r in market.get("runners") or []:
-            if int(r.get("selectionId") or r.get("selection_id") or 0) == int(order.selection_id):
+            try:
+                runner_selection_id = int(r.get("selectionId") or r.get("selection_id") or 0)
+            except (TypeError, ValueError):
+                runner_selection_id = 0
+            if runner_selection_id == int(order.selection_id):
                 runner = r
                 break
 
@@ -708,66 +734,68 @@ class SimulationBroker:
         - nessuna commissione su pnl <= 0
         - mercato: commissione su market-net realizzato (non per singolo leg positivo)
         """
-        gross = float(gross_pnl or 0.0)
-        market_key = str(market_id or "").strip()
-        if not market_key:
-            raise ValueError("market_id is required for record_realized_settlement")
-        legacy_market_key = "__GLOBAL__"
-        if market_key != legacy_market_key and market_key not in self.state.market_commission_ledger:
-            legacy_row = self.state.market_commission_ledger.get(legacy_market_key)
-            if isinstance(legacy_row, dict):
-                non_legacy_market_keys = [
-                    str(k)
-                    for k in self.state.market_commission_ledger.keys()
-                    if str(k) and str(k) != legacy_market_key
-                ]
-                if not non_legacy_market_keys:
-                    self.state.market_commission_ledger[market_key] = {
-                        "gross": float(legacy_row.get("gross", 0.0) or 0.0),
-                        "commission": float(legacy_row.get("commission", 0.0) or 0.0),
-                    }
-                    self.state.market_commission_ledger.pop(legacy_market_key, None)
-        realized = self._market_net_realized_aggregator.apply(
-            market_id=market_key,
-            gross_pnl=gross,
-        )
-        commission = float(realized["commission_amount"])
-        net = float(realized["net_pnl"])
+        with self._lock:
+            gross = float(gross_pnl or 0.0)
+            market_key = str(market_id or "").strip()
+            if not market_key:
+                raise ValueError("market_id is required for record_realized_settlement")
+            legacy_market_key = "__GLOBAL__"
+            if market_key != legacy_market_key and market_key not in self.state.market_commission_ledger:
+                legacy_row = self.state.market_commission_ledger.get(legacy_market_key)
+                if isinstance(legacy_row, dict):
+                    non_legacy_market_keys = [
+                        str(k)
+                        for k in self.state.market_commission_ledger.keys()
+                        if str(k) and str(k) != legacy_market_key
+                    ]
+                    if not non_legacy_market_keys:
+                        self.state.market_commission_ledger[market_key] = {
+                            "gross": float(legacy_row.get("gross", 0.0) or 0.0),
+                            "commission": float(legacy_row.get("commission", 0.0) or 0.0),
+                        }
+                        self.state.market_commission_ledger.pop(legacy_market_key, None)
+            realized = self._market_net_realized_aggregator.apply(
+                market_id=market_key,
+                gross_pnl=gross,
+            )
+            commission = float(realized["commission_amount"])
+            net = float(realized["net_pnl"])
 
-        self.state.realized_pnl += net
-        self.state.realized_commission += commission
-        self.state.balance += net
-        settlement = {
-            "market_id": market_id,
-            "gross_pnl": gross,
-            "commission_amount": commission,
-            "net_pnl": net,
-            "commission_pct": float(realized["commission_pct"]),
-            "market_net_gross": float(realized["market_net_gross"]),
-            "market_commission_amount_total": float(realized["market_commission_amount_total"]),
-            "settlement_basis": str(realized["settlement_basis"]),
-            "settlement_source": "simulation_broker",
-            "settlement_kind": "realized_settlement",
-            "realized_pnl": self.state.realized_pnl,
-            "realized_commission": self.state.realized_commission,
-        }
-        # legacy alias retained for downstream compatibility
-        settlement["pnl"] = settlement["net_pnl"]
-        self.state.last_settlement = {
-            "gross_pnl": float(settlement["gross_pnl"]),
-            "commission_amount": float(settlement["commission_amount"]),
-            "net_pnl": float(settlement["net_pnl"]),
-            "commission_pct": float(settlement["commission_pct"]),
-            "settlement_source": str(settlement["settlement_source"]),
-            "settlement_kind": str(settlement["settlement_kind"]),
-        }
-        return settlement
+            self.state.realized_pnl += net
+            self.state.realized_commission += commission
+            self.state.balance += net
+            settlement = {
+                "market_id": market_id,
+                "gross_pnl": gross,
+                "commission_amount": commission,
+                "net_pnl": net,
+                "commission_pct": float(realized["commission_pct"]),
+                "market_net_gross": float(realized["market_net_gross"]),
+                "market_commission_amount_total": float(realized["market_commission_amount_total"]),
+                "settlement_basis": str(realized["settlement_basis"]),
+                "settlement_source": "simulation_broker",
+                "settlement_kind": "realized_settlement",
+                "realized_pnl": self.state.realized_pnl,
+                "realized_commission": self.state.realized_commission,
+            }
+            # legacy alias retained for downstream compatibility
+            settlement["pnl"] = settlement["net_pnl"]
+            self.state.last_settlement = {
+                "gross_pnl": float(settlement["gross_pnl"]),
+                "commission_amount": float(settlement["commission_amount"]),
+                "net_pnl": float(settlement["net_pnl"]),
+                "commission_pct": float(settlement["commission_pct"]),
+                "settlement_source": str(settlement["settlement_source"]),
+                "settlement_kind": str(settlement["settlement_kind"]),
+            }
+            return settlement
 
     # =========================================================
     # UTILS
     # =========================================================
     def snapshot(self) -> Dict[str, Any]:
-        return {
+        with self._lock:
+            return {
             "connected": self.connected,
             "simulated": True,
             "balance": self.state.balance,
@@ -785,22 +813,23 @@ class SimulationBroker:
         }
 
     def reset(self, starting_balance: float | None = None) -> Dict[str, Any]:
-        new_balance = float(
-            starting_balance
-            if starting_balance is not None
-            else self.state.starting_balance
-        )
-        self.state = SimulationState(
-            starting_balance=new_balance,
-            commission_pct=self.state.commission_pct,
-        )
-        self._market_net_realized_aggregator = MarketNetRealizedSettlementAggregator(
-            commission_pct=self.state.commission_pct,
-            context="simulation_broker_settlement",
-        )
-        self._market_net_realized_aggregator.ledger = self.state.market_commission_ledger
-        return {
-            "ok": True,
-            "starting_balance": new_balance,
-            "simulated": True,
-        }
+        with self._lock:
+            new_balance = float(
+                starting_balance
+                if starting_balance is not None
+                else self.state.starting_balance
+            )
+            self.state = SimulationState(
+                starting_balance=new_balance,
+                commission_pct=self.state.commission_pct,
+            )
+            self._market_net_realized_aggregator = MarketNetRealizedSettlementAggregator(
+                commission_pct=self.state.commission_pct,
+                context="simulation_broker_settlement",
+            )
+            self._market_net_realized_aggregator.ledger = self.state.market_commission_ledger
+            return {
+                "ok": True,
+                "starting_balance": new_balance,
+                "simulated": True,
+            }
