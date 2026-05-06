@@ -510,37 +510,36 @@ class SimulationBroker:
         market_name: str = "",
     ) -> Dict[str, Any]:
         reports = []
-        with self._lock:
-            for item in instructions or []:
-                if not isinstance(item, dict):
-                    reports.append(
-                        {
-                            "status": "FAILURE",
-                            "betId": "",
-                            "sizeMatched": 0.0,
-                            "averagePriceMatched": 0.0,
-                        }
-                    )
-                    continue
-                raw_selection_id = item.get("selection_id", item.get("selectionId"))
-                raw_price = item.get("price")
-                raw_size = item.get("size", item.get("stake"))
-                selection_id = _to_int(raw_selection_id, 0)
-                result = self.place_bet(
-                    market_id=str(market_id),
-                    selection_id=selection_id,
-                    side=str(item.get("side") or item.get("bet_type") or "BACK"),
-                    price=_to_float(raw_price, 0.0),
-                    size=_to_float(raw_size, 0.0),
-                    customer_ref=customer_ref,
-                    event_key=event_key,
-                    table_id=table_id,
-                    batch_id=batch_id,
-                    event_name=event_name,
-                    market_name=market_name,
-                    runner_name=str(item.get("runner_name") or item.get("runnerName") or ""),
+        for item in instructions or []:
+            if not isinstance(item, dict):
+                reports.append(
+                    {
+                        "status": "FAILURE",
+                        "betId": "",
+                        "sizeMatched": 0.0,
+                        "averagePriceMatched": 0.0,
+                    }
                 )
-                reports.extend(result.get("instructionReports") or [])
+                continue
+            raw_selection_id = item.get("selection_id", item.get("selectionId"))
+            raw_price = item.get("price")
+            raw_size = item.get("size", item.get("stake"))
+            selection_id = _to_int(raw_selection_id, 0)
+            result = self.place_bet(
+                market_id=str(market_id),
+                selection_id=selection_id,
+                side=str(item.get("side") or item.get("bet_type") or "BACK"),
+                price=_to_float(raw_price, 0.0),
+                size=_to_float(raw_size, 0.0),
+                customer_ref=customer_ref,
+                event_key=event_key,
+                table_id=table_id,
+                batch_id=batch_id,
+                event_name=event_name,
+                market_name=market_name,
+                runner_name=str(item.get("runner_name") or item.get("runnerName") or ""),
+            )
+            reports.extend(result.get("instructionReports") or [])
 
         return {
             "status": "SUCCESS",
