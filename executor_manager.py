@@ -81,10 +81,6 @@ class ExecutorManager:
             raise
         finally:
             logger.debug("Executor task end: %s", task_name)
-            with self._lock:
-                current = self._futures.get(task_name)
-                if current is not None and current.done():
-                    self._futures.pop(task_name, None)
 
     # =========================================================
     # PUBLIC API
@@ -95,24 +91,28 @@ class ExecutorManager:
         - submit("name", fn, *args, **kwargs)
         - submit(fn, *args, **kwargs)
         """
+        task_name, fn, fn_args, fn_kwargs = self._normalize_submit_call(*args, **kwargs)
+
         with self._lock:
             if self._shutdown:
                 raise RuntimeError("ExecutorManager già chiuso")
-
-        task_name, fn, fn_args, fn_kwargs = self._normalize_submit_call(*args, **kwargs)
-
-        future = self._executor.submit(
-            self._wrap_task,
-            task_name,
-            fn,
-            *fn_args,
-            **fn_kwargs,
-        )
-
-        with self._lock:
+            future = self._executor.submit(
+                self._wrap_task,
+                task_name,
+                fn,
+                *fn_args,
+                **fn_kwargs,
+            )
             self._futures[task_name] = future
 
-        return future
+            def _cleanup(_done_future):
+                with self._lock:
+                    current = self._futures.get(task_name)
+                    if current is _done_future:
+                        self._futures.pop(task_name, None)
+
+            future.add_done_callback(_cleanup)
+            return future
 
     def map(self, fn: Callable, iterable, timeout: Optional[float] = None):
         with self._lock:

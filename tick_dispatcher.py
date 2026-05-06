@@ -37,14 +37,6 @@ class TickData:
 
 
 class TickDispatcher:
-    """
-    Dispatcher tick con coalescing e throttling.
-
-    - UI aggiornata max 4 volte/sec (250ms)
-    - Tick storage riceve tutti i tick
-    - Automazioni ricevono tick filtrati per relevanza
-    """
-
     MIN_UI_UPDATE_INTERVAL = 0.25
     MIN_AUTOMATION_INTERVAL = 0.10
     SIM_UI_UPDATE_INTERVAL = 0.50
@@ -53,22 +45,16 @@ class TickDispatcher:
     def __init__(self):
         self._lock = threading.Lock()
         self._mode = DispatchMode.LIVE
-
         self._last_ui_update: float = 0.0
         self._last_automation_check: float = 0.0
-
-        # Chiave robusta: evita overwrite di runner diversi sullo stesso market_id
         self._pending_ticks: Dict[tuple[str, int], TickData] = {}
-
         self._ui_callbacks: List[Callable[[Dict[tuple[str, int], TickData]], None]] = []
         self._storage_callbacks: List[Callable[[TickData], None]] = []
-        self._automation_callbacks: List[
-            Callable[[Dict[tuple[str, int], TickData]], None]
-        ] = []
-
+        self._automation_callbacks: List[Callable[[Dict[tuple[str, int], TickData]], None]] = []
         self._tick_count = 0
         self._ui_dispatch_count = 0
         self._automation_dispatch_count = 0
+        self._invalid_tick_count = 0
 
     @property
     def mode(self) -> DispatchMode:
@@ -81,61 +67,43 @@ class TickDispatcher:
 
     @property
     def ui_interval(self) -> float:
-        """Intervallo UI in base alla modalità."""
         if self._mode == DispatchMode.SIMULATION:
             return self.SIM_UI_UPDATE_INTERVAL
         return self.MIN_UI_UPDATE_INTERVAL
 
     @property
     def automation_interval(self) -> float:
-        """Intervallo automazioni in base alla modalità."""
         if self._mode == DispatchMode.SIMULATION:
             return self.SIM_AUTOMATION_INTERVAL
         return self.MIN_AUTOMATION_INTERVAL
 
-    def register_ui_callback(
-        self, callback: Callable[[Dict[tuple[str, int], TickData]], None]
-    ):
-        """Registra callback per aggiornamenti UI (throttled)."""
+    def register_ui_callback(self, callback: Callable[[Dict[tuple[str, int], TickData]], None]):
         with self._lock:
             self._ui_callbacks.append(callback)
 
     def register_storage_callback(self, callback: Callable[[TickData], None]):
-        """Registra callback per tick storage (full-speed)."""
         with self._lock:
             self._storage_callbacks.append(callback)
 
-    def register_automation_callback(
-        self, callback: Callable[[Dict[tuple[str, int], TickData]], None]
-    ):
-        """Registra callback per automazioni (throttled)."""
+    def register_automation_callback(self, callback: Callable[[Dict[tuple[str, int], TickData]], None]):
         with self._lock:
             self._automation_callbacks.append(callback)
 
     def dispatch_tick(self, tick: TickData):
-        """
-        Processa un tick in arrivo.
-
-        - Storage: sempre chiamato (full-speed)
-        - UI: throttled a intervallo configurato
-        - Automazioni: throttled con intervallo separato
-        """
         now = time.time()
+        if not isinstance(tick, TickData) or not tick.market_id:
+            with self._lock:
+                self._invalid_tick_count += 1
+            return
 
         with self._lock:
             self._tick_count += 1
-            # FIX #26: snapshot storage callbacks inside lock, call outside.
-            # Old code called potentially-slow storage callbacks while holding
-            # the lock, blocking every concurrent dispatch_tick call.
             storage_cbs = list(self._storage_callbacks)
-
+            ui_cbs = list(self._ui_callbacks)
+            automation_cbs = list(self._automation_callbacks)
             self._pending_ticks[(tick.market_id, tick.selection_id)] = tick
-
             should_update_ui = (now - self._last_ui_update) >= self.ui_interval
-            should_check_automation = (
-                now - self._last_automation_check
-            ) >= self.automation_interval
-
+            should_check_automation = (now - self._last_automation_check) >= self.automation_interval
             snapshot = dict(self._pending_ticks)
             ui_ticks = None
             auto_ticks = None
@@ -152,7 +120,6 @@ class TickDispatcher:
                 self._automation_dispatch_count += 1
                 self._pending_ticks.clear()
 
-        # Call storage callbacks outside the lock.
         for cb in storage_cbs:
             try:
                 cb(tick)
@@ -160,40 +127,37 @@ class TickDispatcher:
                 pass
 
         if ui_ticks:
-            for cb in self._ui_callbacks:
+            for cb in ui_cbs:
                 try:
                     cb(ui_ticks)
                 except Exception:
                     pass
 
         if auto_ticks:
-            for cb in self._automation_callbacks:
+            for cb in automation_cbs:
                 try:
                     cb(auto_ticks)
                 except Exception:
                     pass
 
     def get_stats(self) -> Dict[str, Any]:
-        """Statistiche del dispatcher."""
         with self._lock:
             return {
                 "total_ticks": self._tick_count,
                 "ui_dispatches": self._ui_dispatch_count,
                 "automation_dispatches": self._automation_dispatch_count,
-                "reduction_ratio": (
-                    1 - (self._ui_dispatch_count / max(1, self._tick_count))
-                )
-                * 100,
+                "invalid_ticks": self._invalid_tick_count,
+                "reduction_ratio": (1 - (self._ui_dispatch_count / max(1, self._tick_count))) * 100,
                 "mode": self._mode.value,
                 "pending_ticks": len(self._pending_ticks),
             }
 
     def reset_stats(self):
-        """Reset statistiche."""
         with self._lock:
             self._tick_count = 0
             self._ui_dispatch_count = 0
             self._automation_dispatch_count = 0
+            self._invalid_tick_count = 0
             self._pending_ticks.clear()
 
 
@@ -201,7 +165,6 @@ _dispatcher: Optional[TickDispatcher] = None
 
 
 def get_tick_dispatcher() -> TickDispatcher:
-    """Ottiene l'istanza singleton del TickDispatcher."""
     global _dispatcher
     if _dispatcher is None:
         _dispatcher = TickDispatcher()
