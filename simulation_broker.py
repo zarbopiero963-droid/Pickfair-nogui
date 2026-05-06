@@ -510,6 +510,9 @@ class SimulationBroker:
         market_name: str = "",
     ) -> Dict[str, Any]:
         reports = []
+        # NOTE: place_orders is intentionally not batch-atomic. Each valid instruction
+        # is processed through place_bet, which acquires the broker lock for its own
+        # state mutation/persistence path.
         for item in instructions or []:
             if not isinstance(item, dict):
                 reports.append(
