@@ -118,6 +118,19 @@ class TestSimBrokerRuntime(unittest.TestCase):
         self.assertEqual(after["available"], before["available"])
         self.assertEqual(after["exposure"], before["exposure"])
 
+    def test_non_dict_item_fails(self):
+        """Non-dict instruction should fail and not block later valid item."""
+        broker = self.make_broker()
+        out = broker.place_orders(market_id="1.100", instructions=[
+            "bad",
+            {"selectionId": 10, "side": "BACK", "price": 2.0, "size": 1.0},
+        ])
+        self.assertEqual(out["instructionReports"][0]["status"], "FAILURE")
+        self.assertEqual(out["instructionReports"][0]["betId"], "")
+        self.assertEqual(out["instructionReports"][0]["sizeMatched"], 0.0)
+        self.assertEqual(out["instructionReports"][0]["averagePriceMatched"], 0.0)
+        self.assertTrue(bool(out["instructionReports"][1]["betId"]))
+
 
 if __name__ == "__main__":
     unittest.main()

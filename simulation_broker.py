@@ -512,6 +512,16 @@ class SimulationBroker:
         reports = []
         with self._lock:
             for item in instructions or []:
+                if not isinstance(item, dict):
+                    reports.append(
+                        {
+                            "status": "FAILURE",
+                            "betId": "",
+                            "sizeMatched": 0.0,
+                            "averagePriceMatched": 0.0,
+                        }
+                    )
+                    continue
                 raw_selection_id = item.get("selection_id", item.get("selectionId"))
                 raw_price = item.get("price")
                 raw_size = item.get("size", item.get("stake"))
