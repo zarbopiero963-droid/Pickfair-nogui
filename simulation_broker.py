@@ -111,6 +111,7 @@ class SimulationState:
             },
         }
 
+    # skipcq: PY-R1000 - pre-existing state-restoration complexity; PR3 only adds defensive parsing.
     def load_from_dict(self, data: Dict[str, Any]) -> None:
         data = dict(data or {})
         self.starting_balance = _to_float(data.get("starting_balance"), self.starting_balance)
