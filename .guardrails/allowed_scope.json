@@ -20,6 +20,46 @@
       ],
       "max_files": 10,
       "allow_tests": true
+    },
+    "claude_bug_pr6_safety_layer_market_shape": {
+      "files": [
+        "core/safety_layer.py"
+      ],
+      "max_files": 8,
+      "allow_tests": true
+    },
+    "claude_bug_pr3_simulation_broker_runtime": {
+      "files": [
+        "simulation_broker.py"
+      ],
+      "max_files": 8,
+      "allow_tests": true
+    },
+    "claude_bug_pr4_tick_throttle_executor_determinism": {
+      "files": [
+        "tick_dispatcher.py",
+        "auto_throttle.py",
+        "executor_manager.py"
+      ],
+      "max_files": 10,
+      "allow_tests": true
+    },
+    "claude_bug_pr5_money_dutching_numeric_guardrails": {
+      "files": [
+        "dutching.py",
+        "dutching_state.py"
+      ],
+      "max_files": 8,
+      "allow_tests": true
+    },
+    "claude_bug_pr7_order_reconciliation_characterization": {
+      "files": [
+        "order_manager.py",
+        "core/reconciliation_engine.py",
+        "database.py"
+      ],
+      "max_files": 10,
+      "allow_tests": true
     }
   }
 }

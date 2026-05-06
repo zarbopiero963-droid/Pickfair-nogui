@@ -58,6 +58,83 @@ def test_validate_quick_bet_request_invalid_numeric_boundaries_fail_closed():
     assert "price" in str(exc.value)
 
 
+def test_market_book_valid_back():  # noqa: D103
+    """Verify valid back+lay ladder passes market book validation."""
+    sl = SafetyLayer()
+    market_book = {
+        "runners": [
+            {
+                "ex": {
+                    "availableToBack": [{"price": 2.5, "size": 10.0}],
+                    "availableToLay": [{"price": 2.7, "size": 12.0}],
+                }
+            }
+        ]
+    }
+
+    result = sl.validate_market_book(market_book)
+    assert result is True  # nosec B101
+
+
+@pytest.mark.parametrize(
+    ("available_to_back", "message"),
+    [
+        (["bad-offer"], "non dict"),
+        ([{"size": 10.0}], "price invalido"),
+    ],
+)
+def test_market_book_bad_back(available_to_back, message):  # noqa: D103
+    """Verify malformed non-empty back ladders are rejected fail-closed."""
+    sl = SafetyLayer()
+    market_book = {"runners": [{"ex": {"availableToBack": available_to_back}}]}
+
+    with pytest.raises(MarketSanityError) as exc:
+        sl.validate_market_book(market_book)
+
+    err = str(exc.value)
+    assert message in err  # nosec B101
+
+
+def test_market_book_thin_back_ok():  # noqa: D103
+    """Verify empty/missing back ladder is accepted for thin markets."""
+    sl = SafetyLayer()
+    # Empty back ladder — valid in thin/suspended markets
+    mb_empty = {"runners": [{"ex": {"availableToBack": []}}]}
+    assert sl.validate_market_book(mb_empty) is True  # nosec B101
+
+    # Missing back key entirely — also valid
+    mb_missing = {"runners": [{"ex": {}}]}
+    assert sl.validate_market_book(mb_missing) is True  # nosec B101
+
+
+@pytest.mark.parametrize(
+    ("available_to_lay", "message"),
+    [
+        (["bad-offer"], "non dict"),
+        ([{"size": 10.0}], "price invalido"),
+    ],
+)
+def test_market_book_bad_lay(available_to_lay, message):  # noqa: D103
+    """Verify malformed lay ladders are rejected fail-closed."""
+    sl = SafetyLayer()
+    market_book = {
+        "runners": [
+            {
+                "ex": {
+                    "availableToBack": [{"price": 2.5, "size": 10.0}],
+                    "availableToLay": available_to_lay,
+                }
+            }
+        ]
+    }
+
+    with pytest.raises(MarketSanityError) as exc:
+        sl.validate_market_book(market_book)
+
+    err = str(exc.value)
+    assert message in err  # nosec B101
+
+
 def test_assert_live_gate_or_refuse_is_deterministic_and_fail_closed():
     kwargs = dict(
         execution_mode="LIVE",
