@@ -43,6 +43,7 @@ def test_load_from_dict_invalid_numeric_values_do_not_crash():
     assert state.balance == state.starting_balance
     assert state.orders["b1"].selection_id == 0
     assert state.orders["b1"].size == 0.0
+    assert "1.1::x" not in state.position_ledgers
 
 
 def test_partial_fill_then_cancel_keeps_state_consistent():
@@ -79,3 +80,29 @@ def test_place_orders_with_none_selection_id_does_not_crash_and_fails_match():
     order = broker.state.orders[report["betId"]]
     assert order.selection_id == 0
     assert order.status == "EXECUTABLE"
+
+
+def test_place_orders_with_malformed_inputs_do_not_crash_or_move_funds():
+    broker = SimulationBroker()
+    broker.update_market_book(_book())
+    before = broker.get_account_funds()
+
+    out = broker.place_orders(
+        market_id="1.100",
+        instructions=[
+            {"selectionId": "bad", "side": "BACK", "price": 2.0, "size": 1.0},
+            {"selection_id": None, "selectionId": "bad", "side": "BACK", "price": "bad", "size": 1.0},
+            {"selectionId": 10, "side": "BACK", "price": 2.0, "size": "bad"},
+            {"selectionId": 10, "side": "BACK", "price": 2.0, "stake": "bad"},
+        ],
+    )
+
+    for report in out["instructionReports"]:
+        assert report["status"] == "FAILURE"
+        order = broker.state.orders[report["betId"]]
+        assert order.matched_size == 0.0
+        assert order.status == "EXECUTABLE"
+
+    after = broker.get_account_funds()
+    assert after["available"] == before["available"]
+    assert after["exposure"] == before["exposure"]

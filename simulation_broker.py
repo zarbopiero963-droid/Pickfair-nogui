@@ -13,6 +13,20 @@ from core.position_ledger import PositionLedger
 logger = logging.getLogger(__name__)
 
 
+def _to_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _to_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 @dataclass
 class SimOrder:
     bet_id: str
@@ -98,18 +112,6 @@ class SimulationState:
         }
 
     def load_from_dict(self, data: Dict[str, Any]) -> None:
-        def _to_float(value: Any, default: float = 0.0) -> float:
-            try:
-                return float(value)
-            except (TypeError, ValueError):
-                return default
-
-        def _to_int(value: Any, default: int = 0) -> int:
-            try:
-                return int(value)
-            except (TypeError, ValueError):
-                return default
-
         data = dict(data or {})
         self.starting_balance = _to_float(data.get("starting_balance"), self.starting_balance)
         self.balance = _to_float(data.get("balance"), self.starting_balance)
@@ -330,41 +332,40 @@ class SimulationBroker:
         with self._lock:
             self.state.market_books[market_id] = normalized
             self._refresh_unrealized_for_market(market_id)
+            event_name = str(
+                normalized.get("event_name")
+                or normalized.get("eventName")
+                or normalized.get("event")
+                or ""
+            ).strip()
+            event_id = str(
+                normalized.get("event_id")
+                or normalized.get("eventId")
+                or event_name
+                or market_id
+            ).strip()
+            market_name = str(
+                normalized.get("market_name")
+                or normalized.get("marketName")
+                or ""
+            ).strip()
 
-        event_name = str(
-            normalized.get("event_name")
-            or normalized.get("eventName")
-            or normalized.get("event")
-            or ""
-        ).strip()
-        event_id = str(
-            normalized.get("event_id")
-            or normalized.get("eventId")
-            or event_name
-            or market_id
-        ).strip()
-        market_name = str(
-            normalized.get("market_name")
-            or normalized.get("marketName")
-            or ""
-        ).strip()
-
-        if event_id:
-            event_entry = self.state.event_index.setdefault(
-                event_id,
-                {
-                    "event_id": event_id,
-                    "event_name": event_name or event_id,
-                    "markets": {},
-                    "inplay": bool(normalized.get("inplay", True)),
-                },
-            )
-            if event_name:
-                event_entry["event_name"] = event_name
-            event_entry["markets"][market_id] = {
-                "market_id": market_id,
-                "market_name": market_name,
-            }
+            if event_id:
+                event_entry = self.state.event_index.setdefault(
+                    event_id,
+                    {
+                        "event_id": event_id,
+                        "event_name": event_name or event_id,
+                        "markets": {},
+                        "inplay": bool(normalized.get("inplay", True)),
+                    },
+                )
+                if event_name:
+                    event_entry["event_name"] = event_name
+                event_entry["markets"][market_id] = {
+                    "market_id": market_id,
+                    "market_name": market_name,
+                }
 
         return {"ok": True, "market_id": market_id, "simulated": True}
 
@@ -504,26 +505,27 @@ class SimulationBroker:
         market_name: str = "",
     ) -> Dict[str, Any]:
         reports = []
-        for item in instructions or []:
-            try:
-                selection_id = int(item.get("selection_id", item.get("selectionId")))
-            except (TypeError, ValueError):
-                selection_id = 0
-            result = self.place_bet(
-                market_id=str(market_id),
-                selection_id=selection_id,
-                side=str(item.get("side") or item.get("bet_type") or "BACK"),
-                price=float(item.get("price") or 0.0),
-                size=float(item.get("size", item.get("stake")) or 0.0),
-                customer_ref=customer_ref,
-                event_key=event_key,
-                table_id=table_id,
-                batch_id=batch_id,
-                event_name=event_name,
-                market_name=market_name,
-                runner_name=str(item.get("runner_name") or item.get("runnerName") or ""),
-            )
-            reports.extend(result.get("instructionReports") or [])
+        with self._lock:
+            for item in instructions or []:
+                raw_selection_id = item.get("selection_id", item.get("selectionId"))
+                raw_price = item.get("price")
+                raw_size = item.get("size", item.get("stake"))
+                selection_id = _to_int(raw_selection_id, 0)
+                result = self.place_bet(
+                    market_id=str(market_id),
+                    selection_id=selection_id,
+                    side=str(item.get("side") or item.get("bet_type") or "BACK"),
+                    price=_to_float(raw_price, 0.0),
+                    size=_to_float(raw_size, 0.0),
+                    customer_ref=customer_ref,
+                    event_key=event_key,
+                    table_id=table_id,
+                    batch_id=batch_id,
+                    event_name=event_name,
+                    market_name=market_name,
+                    runner_name=str(item.get("runner_name") or item.get("runnerName") or ""),
+                )
+                reports.extend(result.get("instructionReports") or [])
 
         return {
             "status": "SUCCESS",
@@ -745,7 +747,7 @@ class SimulationBroker:
                 if isinstance(legacy_row, dict):
                     non_legacy_market_keys = [
                         str(k)
-                        for k in self.state.market_commission_ledger.keys()
+                        for k in self.state.market_commission_ledger
                         if str(k) and str(k) != legacy_market_key
                     ]
                     if not non_legacy_market_keys:
