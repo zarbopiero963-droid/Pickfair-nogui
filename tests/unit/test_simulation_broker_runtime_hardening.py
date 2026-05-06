@@ -1,11 +1,12 @@
 """Static-analysis friendly runtime hardening tests for simulation broker."""
 
 import unittest
+from typing import Any, cast
 
 from simulation_broker import SimulationBroker, SimulationState
 
 
-class TestSimBrokerRuntime(unittest.TestCase):
+class TestSimBrokerRuntime(unittest.TestCase):  # noqa: D203,D211
     """Covers malformed runtime input hardening scenarios."""
 
     @staticmethod
@@ -121,8 +122,9 @@ class TestSimBrokerRuntime(unittest.TestCase):
     def test_non_dict_item_fails(self):
         """Non-dict instruction should fail and not block later valid item."""
         broker = self.make_broker()
+        malformed = cast(Any, "bad")
         out = broker.place_orders(market_id="1.100", instructions=[
-            "bad",
+            malformed,
             {"selectionId": 10, "side": "BACK", "price": 2.0, "size": 1.0},
         ])
         self.assertEqual(out["instructionReports"][0]["status"], "FAILURE")
