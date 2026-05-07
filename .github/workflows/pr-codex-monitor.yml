@@ -7,16 +7,18 @@ on:
     types: [submitted, edited, dismissed]
   pull_request_review_comment:
     types: [created, edited]
+  schedule:
+    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       pr_number:
         description: "PR number to monitor"
-        required: true
+        required: false
         type: string
 
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write
   issues: write
   checks: read
   actions: read
@@ -36,9 +38,10 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          PR_INPUT: ${{ github.event.inputs.pr_number }}
+          PR_INPUT: ${{ github.event.inputs.pr_number || '' }}
           AI_REVIEWERS: sourcery-ai,sourcery-ai[bot],coderabbitai,coderabbitai[bot],codacy-production,deepsource-io,gitar-bot,gitar-bot[bot],chatgpt-codex-connector
         with:
+          github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
@@ -99,84 +102,127 @@ jobs:
               return true;
             }
 
-            let prNumber = null;
+            async function getPrNumbersToMonitor() {
+              if (context.payload.pull_request) {
+                return [context.payload.pull_request.number];
+              }
 
-            if (context.payload.pull_request) {
-              prNumber = context.payload.pull_request.number;
-            } else if (context.payload.issue && context.payload.issue.pull_request) {
-              prNumber = context.payload.issue.number;
-            } else if (context.eventName === "workflow_dispatch") {
-              prNumber = Number(process.env.PR_INPUT);
+              if (context.payload.issue && context.payload.issue.pull_request) {
+                return [context.payload.issue.number];
+              }
+
+              if (context.eventName === "workflow_dispatch") {
+                const input = process.env.PR_INPUT;
+                if (input && input.trim()) {
+                  return [Number(input)];
+                }
+              }
+
+              const openPrs = await github.paginate(github.rest.pulls.list, {
+                owner,
+                repo,
+                state: "open",
+                per_page: 100,
+              });
+
+              return openPrs
+                .filter(pr =>
+                  pr.title.includes("[TASK:") ||
+                  pr.head.ref.startsWith("codex/") ||
+                  pr.head.ref.startsWith("feat/")
+                )
+                .map(pr => pr.number);
             }
 
-            if (!prNumber || Number.isNaN(prNumber)) {
-              core.info("No valid PR number found. Exiting.");
-              return;
-            }
+            async function monitorPr(prNumber) {
+              if (!prNumber || Number.isNaN(prNumber)) {
+                core.info("Invalid PR number. Skipping.");
+                return;
+              }
 
-            const { data: pr } = await github.rest.pulls.get({
-              owner,
-              repo,
-              pull_number: prNumber,
-            });
+              const { data: pr } = await github.rest.pulls.get({
+                owner,
+                repo,
+                pull_number: prNumber,
+              });
 
-            if (pr.state !== "open") {
-              core.info(`PR #${prNumber} is not open. Exiting.`);
-              return;
-            }
+              if (pr.state !== "open") {
+                core.info(`PR #${prNumber} is not open. Skipping.`);
+                return;
+              }
 
-            const headSha = pr.head.sha;
-            const headBranch = pr.head.ref;
-            const title = pr.title;
-            const prUrl = pr.html_url;
+              const headSha = pr.head.sha;
+              const headBranch = pr.head.ref;
+              const title = pr.title;
+              const prUrl = pr.html_url;
 
-            core.info(`Monitoring PR #${prNumber}: ${title}`);
-            core.info(`Head branch: ${headBranch}`);
-            core.info(`Head SHA: ${headSha}`);
+              core.info(`Monitoring PR #${prNumber}: ${title}`);
+              core.info(`Head branch: ${headBranch}`);
+              core.info(`Head SHA: ${headSha}`);
 
-            const checksResponse = await github.rest.checks.listForRef({
-              owner,
-              repo,
-              ref: headSha,
-              per_page: 100,
-            });
+              const checksResponse = await github.rest.checks.listForRef({
+                owner,
+                repo,
+                ref: headSha,
+                per_page: 100,
+              });
 
-            const allCheckRuns = checksResponse.data.check_runs || [];
+              const allCheckRuns = checksResponse.data.check_runs || [];
 
-            const checkRuns = allCheckRuns.filter(check => {
-              const name = (check.name || "").toLowerCase();
-              return !name.includes("pr-codex-monitor");
-            });
+              const checkRuns = allCheckRuns.filter(check => {
+                const name = (check.name || "").toLowerCase();
+                return !name.includes("pr-codex-monitor");
+              });
 
-            const pending = checkRuns.filter(check =>
-              ["queued", "in_progress", "waiting", "requested", "pending"].includes(check.status)
-            );
+              if (checkRuns.length === 0) {
+                const marker = `<!-- pickfair-codex-monitor:no-checks:${headSha} -->`;
 
-            const failed = checkRuns.filter(check =>
-              check.status === "completed" &&
-              ["failure", "cancelled", "timed_out", "action_required", "startup_failure"].includes(check.conclusion)
-            );
+                const body = `${marker}
+            ⚠️ PR monitor: nessun check trovato
 
-            if (pending.length > 0) {
-              core.info(`Checks still pending/in progress: ${pending.map(c => c.name).join(", ")}`);
+            PR: #${prNumber}
+            Titolo: ${title}
+            Branch: ${headBranch}
+            Head SHA: ${headSha}
 
-              await sendTelegram(
-                `⏳ Pickfair PR #${prNumber}: workflow/check ancora in corso.\n\n` +
-                `Aspetta che finiscano tutti, poi rilancia manualmente PR Codex Monitor con numero ${prNumber}.\n\n` +
-                `${prUrl}`
+            Non ho trovato check run per questo commit.
+            Verifica manualmente su GitHub prima di fare micro-audit o merge.
+            `;
+
+                const posted = await postOnce(prNumber, marker, body);
+
+                if (posted) {
+                  await sendTelegram(
+                    `⚠️ Pickfair PR #${prNumber}: nessun check trovato.\n\n` +
+                    `Verifica manualmente su GitHub.\n\n${prUrl}`
+                  );
+                }
+
+                return;
+              }
+
+              const pending = checkRuns.filter(check =>
+                ["queued", "in_progress", "waiting", "requested", "pending"].includes(check.status)
               );
 
-              return;
-            }
+              const failed = checkRuns.filter(check =>
+                check.status === "completed" &&
+                ["failure", "cancelled", "timed_out", "action_required", "startup_failure"].includes(check.conclusion)
+              );
 
-            if (failed.length > 0) {
-              const marker = `<!-- pickfair-codex-monitor:checks-failed:${headSha} -->`;
+              if (pending.length > 0) {
+                core.info(`Checks still pending/in progress: ${pending.map(c => c.name).join(", ")}`);
+                return;
+              }
 
-              const failedText = failed.map(check =>
-                `- ${check.name}: ${check.conclusion}\n  ${check.html_url}`
-              ).join("\n");
+              if (failed.length > 0) {
+                const marker = `<!-- pickfair-codex-monitor:checks-failed:${headSha} -->`;
 
-              const body = `${marker}
+                const failedText = failed.map(check =>
+                  `- ${check.name}: ${check.conclusion}\n  ${check.html_url}`
+                ).join("\n");
+
+                const body = `${marker}
             @codex
 
             PR WORKFLOWS FAILED — FIX REQUIRED
@@ -198,43 +244,43 @@ jobs:
             - Pusha sulla stessa branch della PR.
             `;
 
-              const posted = await postOnce(prNumber, marker, body);
+                const posted = await postOnce(prNumber, marker, body);
 
-              if (posted) {
-                await sendTelegram(
-                  `⛔ Pickfair PR #${prNumber}: workflow/check rossi.\n\n` +
-                  `Ho commentato la PR con il prompt per Codex.\n\n` +
-                  `${prUrl}`
-                );
+                if (posted) {
+                  await sendTelegram(
+                    `⛔ Pickfair PR #${prNumber}: workflow/check rossi.\n\n` +
+                    `Ho commentato la PR con il prompt per Codex.\n\n${prUrl}`
+                  );
+                }
+
+                return;
               }
 
-              return;
-            }
+              const aiReviewers = process.env.AI_REVIEWERS
+                .split(",")
+                .map(item => item.trim().toLowerCase())
+                .filter(Boolean);
 
-            const aiReviewers = process.env.AI_REVIEWERS
-              .split(",")
-              .map(item => item.trim().toLowerCase())
-              .filter(Boolean);
-
-            const query = `
-              query($owner: String!, $repo: String!, $number: Int!) {
-                repository(owner: $owner, name: $repo) {
-                  pullRequest(number: $number) {
-                    reviewThreads(first: 100) {
-                      nodes {
-                        id
-                        isResolved
-                        isOutdated
-                        path
-                        line
-                        comments(first: 20) {
-                          nodes {
-                            id
-                            body
-                            url
-                            createdAt
-                            author {
-                              login
+              const query = `
+                query($owner: String!, $repo: String!, $number: Int!) {
+                  repository(owner: $owner, name: $repo) {
+                    pullRequest(number: $number) {
+                      reviewThreads(first: 100) {
+                        nodes {
+                          id
+                          isResolved
+                          isOutdated
+                          path
+                          line
+                          comments(first: 20) {
+                            nodes {
+                              id
+                              body
+                              url
+                              createdAt
+                              author {
+                                login
+                              }
                             }
                           }
                         }
@@ -242,46 +288,45 @@ jobs:
                     }
                   }
                 }
-              }
-            `;
+              `;
 
-            const result = await github.graphql(query, {
-              owner,
-              repo,
-              number: prNumber,
-            });
+              const result = await github.graphql(query, {
+                owner,
+                repo,
+                number: prNumber,
+              });
 
-            const threads = result.repository.pullRequest.reviewThreads.nodes || [];
+              const threads = result.repository.pullRequest.reviewThreads.nodes || [];
 
-            const activeAiThreads = threads.filter(thread => {
-              if (thread.isResolved || thread.isOutdated) return false;
+              const activeAiThreads = threads.filter(thread => {
+                if (thread.isResolved || thread.isOutdated) return false;
 
-              const firstComment = thread.comments.nodes[0];
-              const author = firstComment?.author?.login?.toLowerCase();
-
-              if (!author) return false;
-
-              return aiReviewers.includes(author);
-            });
-
-            if (activeAiThreads.length > 0) {
-              const marker = `<!-- pickfair-codex-monitor:review-comments:${headSha} -->`;
-
-              const commentsText = activeAiThreads.map((thread, index) => {
                 const firstComment = thread.comments.nodes[0];
+                const author = firstComment?.author?.login?.toLowerCase();
 
-                return [
-                  `### ${index + 1}. ${firstComment.author.login}`,
-                  `Thread ID: ${thread.id}`,
-                  `File: ${thread.path || "n/a"}`,
-                  `Line: ${thread.line || "n/a"}`,
-                  `URL: ${firstComment.url}`,
-                  "",
-                  firstComment.body,
-                ].join("\n");
-              }).join("\n\n---\n\n");
+                if (!author) return false;
 
-              const body = `${marker}
+                return aiReviewers.includes(author);
+              });
+
+              if (activeAiThreads.length > 0) {
+                const marker = `<!-- pickfair-codex-monitor:review-comments:${headSha} -->`;
+
+                const commentsText = activeAiThreads.map((thread, index) => {
+                  const firstComment = thread.comments.nodes[0];
+
+                  return [
+                    `### ${index + 1}. ${firstComment.author.login}`,
+                    `Thread ID: ${thread.id}`,
+                    `File: ${thread.path || "n/a"}`,
+                    `Line: ${thread.line || "n/a"}`,
+                    `URL: ${firstComment.url}`,
+                    "",
+                    firstComment.body,
+                  ].join("\n");
+                }).join("\n\n---\n\n");
+
+                const body = `${marker}
             @codex
 
             PR REVIEW COMMENTS FOUND — FIX REQUIRED
@@ -312,23 +357,22 @@ jobs:
             - Pusha sulla stessa branch della PR.
             `;
 
-              const posted = await postOnce(prNumber, marker, body);
+                const posted = await postOnce(prNumber, marker, body);
 
-              if (posted) {
-                await sendTelegram(
-                  `🟡 Pickfair PR #${prNumber}: commenti AI review trovati.\n\n` +
-                  `Ho commentato la PR con il prompt per Codex.\n\n` +
-                  `Reviewer mancanti = non bloccanti.\n\n` +
-                  `${prUrl}`
-                );
+                if (posted) {
+                  await sendTelegram(
+                    `🟡 Pickfair PR #${prNumber}: commenti AI review trovati.\n\n` +
+                    `Ho commentato la PR con il prompt per Codex.\n\n` +
+                    `Reviewer mancanti = non bloccanti.\n\n${prUrl}`
+                  );
+                }
+
+                return;
               }
 
-              return;
-            }
+              const marker = `<!-- pickfair-codex-monitor:ready-for-audit:${headSha} -->`;
 
-            const marker = `<!-- pickfair-codex-monitor:ready-for-audit:${headSha} -->`;
-
-            const body = `${marker}
+              const body = `${marker}
             ✅ PR pronta per micro-audit
 
             PR: #${prNumber}
@@ -344,15 +388,26 @@ jobs:
             Ora manda a Codex il micro-audit read-only.
             `;
 
-            const posted = await postOnce(prNumber, marker, body);
+              const posted = await postOnce(prNumber, marker, body);
 
-            if (posted) {
-              await sendTelegram(
-                `✅ Pickfair PR #${prNumber} pronta per micro-audit.\n\n` +
-                `✅ Workflow/check completi\n` +
-                `✅ Nessun check rosso\n` +
-                `✅ Nessun commento AI attivo\n\n` +
-                `Ora manda il micro-audit a Codex.\n\n` +
-                `${prUrl}`
-              );
+              if (posted) {
+                await sendTelegram(
+                  `✅ Pickfair PR #${prNumber} pronta per micro-audit.\n\n` +
+                  `✅ Workflow/check completi\n` +
+                  `✅ Nessun check rosso\n` +
+                  `✅ Nessun commento AI attivo\n\n` +
+                  `Ora manda il micro-audit a Codex.\n\n${prUrl}`
+                );
+              }
+            }
+
+            const prNumbers = await getPrNumbersToMonitor();
+
+            if (!prNumbers.length) {
+              core.info("No PRs to monitor.");
+              return;
+            }
+
+            for (const prNumber of prNumbers) {
+              await monitorPr(prNumber);
             }
