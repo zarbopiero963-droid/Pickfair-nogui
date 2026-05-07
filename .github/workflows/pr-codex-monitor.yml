@@ -48,7 +48,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           PR_INPUT: ${{ github.event.inputs.pr_number || '' }}
-          AI_REVIEWERS: sourcery-ai,sourcery-ai[bot],coderabbitai,coderabbitai[bot],codacy-production,deepsource-io,gitar-bot,gitar-bot[bot],chatgpt-codex-connector,chatgpt-codex-connector[bot]
+          AI_REVIEWERS: sourcery-ai,sourcery-ai[bot],coderabbitai,coderabbitai[bot],codacy-production,codacy-production[bot],deepsource-io,deepsource-io[bot],gitar-bot,gitar-bot[bot],chatgpt-codex-connector,chatgpt-codex-connector[bot]
         with:
           github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
           script: |
@@ -59,6 +59,11 @@ jobs:
 
             function hashText(text) {
               return crypto.createHash("sha256").update(text).digest("hex").slice(0, 16);
+            }
+
+            function hourBucket() {
+              const now = new Date();
+              return now.toISOString().slice(0, 13).replace(/[-T:]/g, "");
             }
 
             async function sendTelegram(text) {
@@ -179,6 +184,7 @@ jobs:
 
               if (context.eventName === "status" && context.payload.sha) {
                 const openPrs = await getOpenPrs();
+
                 const matchingPrs = openPrs
                   .filter(pr => pr.head && pr.head.sha === context.payload.sha)
                   .map(pr => pr.number);
@@ -190,6 +196,7 @@ jobs:
 
               if (context.eventName === "workflow_dispatch") {
                 const input = process.env.PR_INPUT;
+
                 if (input && input.trim()) {
                   return [Number(input)];
                 }
@@ -206,6 +213,34 @@ jobs:
                 .map(pr => pr.number);
             }
 
+            async function getAnnotationsForCheckRun(checkRunId) {
+              try {
+                const annotations = await github.paginate(
+                  github.rest.checks.listAnnotations,
+                  {
+                    owner,
+                    repo,
+                    check_run_id: checkRunId,
+                    per_page: 100,
+                  }
+                );
+
+                return annotations.slice(0, 25).map(annotation => {
+                  return [
+                    `File: ${annotation.path || "n/a"}`,
+                    `Line: ${annotation.start_line || "n/a"}-${annotation.end_line || annotation.start_line || "n/a"}`,
+                    `Level: ${annotation.annotation_level || "n/a"}`,
+                    `Title: ${annotation.title || "n/a"}`,
+                    `Message: ${annotation.message || "n/a"}`,
+                    annotation.raw_details ? `Details: ${annotation.raw_details}` : null,
+                  ].filter(Boolean).join("\n");
+                });
+              } catch (error) {
+                core.warning(`Could not fetch annotations for check run ${checkRunId}: ${error.message}`);
+                return [];
+              }
+            }
+
             async function getAllChecksForSha(headSha) {
               const checksResponse = await github.rest.checks.listForRef({
                 owner,
@@ -214,13 +249,24 @@ jobs:
                 per_page: 100,
               });
 
-              const checkRuns = (checksResponse.data.check_runs || []).map(check => ({
-                name: check.name,
-                status: check.status,
-                conclusion: check.conclusion,
-                html_url: check.html_url,
-                source: "check_run",
-              }));
+              const checkRuns = [];
+
+              for (const check of checksResponse.data.check_runs || []) {
+                const annotations = await getAnnotationsForCheckRun(check.id);
+
+                checkRuns.push({
+                  id: check.id,
+                  name: check.name,
+                  status: check.status,
+                  conclusion: check.conclusion,
+                  html_url: check.html_url,
+                  source: "check_run",
+                  output_title: check.output?.title || "",
+                  output_summary: check.output?.summary || "",
+                  output_text: check.output?.text || "",
+                  annotations,
+                });
+              }
 
               const statusResponse = await github.rest.repos.getCombinedStatusForRef({
                 owner,
@@ -229,6 +275,7 @@ jobs:
               });
 
               const statuses = (statusResponse.data.statuses || []).map(status => ({
+                id: null,
                 name: status.context,
                 status: status.state === "pending" ? "pending" : "completed",
                 conclusion:
@@ -239,6 +286,10 @@ jobs:
                   status.state,
                 html_url: status.target_url,
                 source: "status",
+                output_title: "",
+                output_summary: status.description || "",
+                output_text: "",
+                annotations: [],
               }));
 
               return [...checkRuns, ...statuses].filter(check => {
@@ -309,21 +360,57 @@ jobs:
               });
             }
 
-            function buildStateHash(failedChecks, activeAiThreads) {
+            function buildStateHash(failedChecks, activeAiThreads, pendingChecks) {
               const failedPart = failedChecks
-                .map(check => `${check.name}:${check.conclusion}`)
+                .map(check => `${check.name}:${check.conclusion}:${check.html_url || ""}`)
+                .sort()
+                .join("|");
+
+              const pendingPart = pendingChecks
+                .map(check => `${check.name}:${check.status}`)
                 .sort()
                 .join("|");
 
               const reviewPart = activeAiThreads
                 .map(thread => {
                   const firstComment = thread.comments.nodes[0];
+
                   return `${thread.id}:${firstComment?.id || ""}:${thread.path || ""}:${thread.line || ""}`;
                 })
                 .sort()
                 .join("|");
 
-              return hashText(`${failedPart}---${reviewPart}`);
+              return hashText(`${failedPart}---${pendingPart}---${reviewPart}`);
+            }
+
+            function formatCheckDetails(checks) {
+              if (!checks.length) {
+                return "Nessun check in questa categoria.";
+              }
+
+              return checks.map(check => {
+                const lines = [
+                  `## ${check.name}`,
+                  `Source: ${check.source}`,
+                  `Status: ${check.status}`,
+                  `Conclusion: ${check.conclusion || "pending"}`,
+                  check.html_url ? `URL: ${check.html_url}` : null,
+                  check.output_title ? `Output title: ${check.output_title}` : null,
+                  check.output_summary ? `Output summary:\n${check.output_summary}` : null,
+                  check.output_text ? `Output text:\n${check.output_text}` : null,
+                ].filter(Boolean);
+
+                if (check.annotations && check.annotations.length) {
+                  lines.push("");
+                  lines.push("GitHub check annotations:");
+                  lines.push(check.annotations.join("\n\n---\n\n"));
+                } else {
+                  lines.push("");
+                  lines.push("GitHub check annotations: nessuna annotation esposta da GitHub per questo check/status.");
+                }
+
+                return lines.join("\n");
+              }).join("\n\n---\n\n");
             }
 
             async function monitorPr(prNumber) {
@@ -355,7 +442,7 @@ jobs:
               const checkRuns = await getAllChecksForSha(headSha);
 
               if (checkRuns.length === 0) {
-                const marker = `<!-- pickfair-codex-monitor:no-checks:v6:${headSha} -->`;
+                const marker = `<!-- pickfair-codex-monitor:no-checks:v7:${headSha} -->`;
 
                 const body = [
                   marker,
@@ -387,11 +474,6 @@ jobs:
                 check.conclusion === null
               );
 
-              if (pending.length > 0) {
-                core.info(`Checks still pending/in progress: ${pending.map(c => c.name).join(", ")}`);
-                return;
-              }
-
               const failed = checkRuns.filter(check =>
                 check.status === "completed" &&
                 ["failure", "cancelled", "timed_out", "action_required", "startup_failure"].includes(check.conclusion)
@@ -400,13 +482,21 @@ jobs:
               const threads = await getReviewThreads(prNumber);
               const activeAiThreads = getActiveAiThreads(threads);
 
+              const hasPendingChecks = pending.length > 0;
               const hasFailedChecks = failed.length > 0;
               const hasActiveReviewComments = activeAiThreads.length > 0;
 
+              if (!hasFailedChecks && !hasActiveReviewComments && hasPendingChecks) {
+                core.info(`Only pending checks remain: ${pending.map(c => c.name).join(", ")}`);
+                return;
+              }
+
               if (hasFailedChecks || hasActiveReviewComments) {
-                const stateHash = buildStateHash(failed, activeAiThreads);
-                const issueMarker = `<!-- pickfair-codex-monitor:needs-action:v6:${headSha}:${stateHash} -->`;
-                const replyMarker = `<!-- pickfair-codex-monitor:review-thread-forwarded:v6:${headSha} -->`;
+                const stateHash = buildStateHash(failed, activeAiThreads, pending);
+                const hourly = hourBucket();
+
+                const issueMarker = `<!-- pickfair-codex-monitor:needs-action:v7:${headSha}:${stateHash}:${hourly} -->`;
+                const replyMarker = `<!-- pickfair-codex-monitor:review-thread-forwarded:v7:${headSha} -->`;
 
                 if (hasActiveReviewComments) {
                   for (const thread of activeAiThreads) {
@@ -436,10 +526,12 @@ jobs:
                 }
 
                 const failedText = hasFailedChecks
-                  ? failed.map(check =>
-                      `- ${check.name}: ${check.conclusion}\n  ${check.html_url || ""}`
-                    ).join("\n")
+                  ? formatCheckDetails(failed)
                   : "Nessun check rosso rilevato.";
+
+                const pendingText = hasPendingChecks
+                  ? formatCheckDetails(pending)
+                  : "Nessun check pending rilevato.";
 
                 const commentsText = hasActiveReviewComments
                   ? activeAiThreads.map((thread, index) => {
@@ -471,20 +563,31 @@ jobs:
                   "Stato monitor:",
                   hasFailedChecks ? "⛔ Ci sono workflow/check rossi." : "✅ Nessun workflow/check rosso rilevato.",
                   hasActiveReviewComments ? "🟡 Ci sono review comment AI attivi." : "✅ Nessun review comment AI attivo rilevato.",
+                  hasPendingChecks ? "⏳ Ci sono ancora check pending, ma ci sono già problemi visibili da correggere." : "✅ Nessun check pending rilevato.",
                   "",
-                  "Workflow/check rossi:",
+                  "Workflow/check rossi con dettagli GitHub disponibili:",
                   "",
                   failedText,
+                  "",
+                  "Workflow/check ancora pending:",
+                  "",
+                  pendingText,
                   "",
                   "Review comment AI attivi:",
                   "",
                   commentsText,
+                  "",
+                  "Nota importante:",
+                  "- Per Codacy/DeepSource usa anche gli URL sopra.",
+                  "- Se GitHub non espone annotations per quel check/status, apri il link del report e correggi le issue mostrate lì.",
+                  "- Non ignorare Codacy action_required o DeepSource Python failure.",
                   "",
                   "Regole:",
                   "- Lavora solo sulla PR corrente.",
                   "- Non aprire una nuova PR.",
                   "- Non fare merge.",
                   "- Correggi tutti i workflow/check rossi indicati.",
+                  "- Correggi anche Codacy/DeepSource usando i report linkati sopra.",
                   "- Risolvi tutti i review comment AI attivi indicati.",
                   "- Non modificare file fuori scope rispetto alla PR.",
                   "- Per ogni review comment realmente risolto, rispondi nel relativo thread GitHub:",
@@ -509,9 +612,10 @@ jobs:
                   await sendTelegram(
                     `🟡 Pickfair PR #${prNumber}: azione Codex richiesta.\n\n` +
                     `${hasFailedChecks ? "⛔ Check/workflow rossi\n" : "✅ Check senza rossi\n"}` +
-                    `${hasActiveReviewComments ? "🟡 Review comment AI attivi\n" : "✅ Nessun review comment AI attivo\n"}\n` +
-                    `Ho commentato automaticamente la PR con @codex.\n\n` +
-                    `Il monitor ripartirà automaticamente dopo nuovi push/check, oppure al massimo entro 5 minuti.\n\n` +
+                    `${hasActiveReviewComments ? "🟡 Review comment AI attivi\n" : "✅ Nessun review comment AI attivo\n"}` +
+                    `${hasPendingChecks ? "⏳ Alcuni check ancora pending, ma ho inviato comunque i problemi già visibili\n" : "✅ Nessun pending\n"}\n` +
+                    `Ho commentato automaticamente la PR con @codex.\n` +
+                    `Reminder massimo 1 volta ogni ora per stesso commit/stato.\n\n` +
                     `${prUrl}`
                   );
                 }
@@ -519,7 +623,7 @@ jobs:
                 return;
               }
 
-              const marker = `<!-- pickfair-codex-monitor:ready-for-audit:v6:${headSha} -->`;
+              const marker = `<!-- pickfair-codex-monitor:ready-for-audit:v7:${headSha} -->`;
 
               const body = [
                 marker,
@@ -533,6 +637,7 @@ jobs:
                 "Stato:",
                 "✅ Tutti i workflow/check sono completati",
                 "✅ Nessun check rosso rilevato",
+                "✅ Nessun check pending rilevato",
                 "✅ Nessun review thread AI attivo non risolto/non outdated",
                 "",
                 "Ora manda a Codex il micro-audit read-only."
@@ -545,6 +650,7 @@ jobs:
                   `✅ Pickfair PR #${prNumber} pronta per micro-audit.\n\n` +
                   `✅ Workflow/check completi\n` +
                   `✅ Nessun check rosso\n` +
+                  `✅ Nessun pending\n` +
                   `✅ Nessun commento AI attivo\n\n` +
                   `Ora manda il micro-audit a Codex.\n\n${prUrl}`
                 );
