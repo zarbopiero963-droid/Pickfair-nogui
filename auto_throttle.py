@@ -177,7 +177,7 @@ class AutoThrottle:
             rate = used * (60.0 / self.period)
             return max(0.0, rate)
 
-    def update(self, *args, **kwargs) -> bool:
+    def update(self, **kwargs) -> bool:
         api_calls_min = kwargs.get("api_calls_min")
         with self._lock:
             if api_calls_min is None:
@@ -188,7 +188,12 @@ class AutoThrottle:
                 return False
             if parsed <= 0 or not math.isfinite(parsed):
                 return False
-            allowed_calls = int((parsed * self.period) / 60.0)
+            if not math.isfinite(self.period):
+                return False
+            try:
+                allowed_calls = int((parsed * self.period) / 60.0)
+            except (OverflowError, ValueError):
+                return False
             self.max_calls = max(1, allowed_calls)
             self._timestamps.clear()
             self._last_delay = 0.0

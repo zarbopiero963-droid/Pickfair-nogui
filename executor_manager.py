@@ -147,11 +147,13 @@ class ExecutorManager:
         if future is None:
             raise RuntimeError(f"Task non trovata: {task_name}")
 
-        result = future.result(timeout=timeout if timeout is not None else self.default_timeout)
-        with self._lock:
-            current_completed = self._completed_futures.get(key)
-            if current_completed is future:
-                self._completed_futures.pop(key, None)
+        try:
+            result = future.result(timeout=timeout if timeout is not None else self.default_timeout)
+        finally:
+            with self._lock:
+                current_completed = self._completed_futures.get(key)
+                if current_completed is future:
+                    self._completed_futures.pop(key, None)
         return result
 
     def shutdown(self, wait: bool = True, cancel_futures: bool = False) -> None:

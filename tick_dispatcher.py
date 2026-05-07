@@ -87,6 +87,8 @@ class TickDispatcher:
             return "not_tickdata"
         if not tick.market_id:
             return "missing_market_id"
+        if not isinstance(tick.selection_id, int) or tick.selection_id <= 0:
+            return "invalid_selection_id"
         return None
 
     def _record_invalid_tick(self, _tick: Any, reason: str) -> None:
