@@ -7,8 +7,16 @@ on:
     types: [submitted, edited, dismissed]
   pull_request_review_comment:
     types: [created, edited]
+
+  check_run:
+    types: [completed]
+  check_suite:
+    types: [completed]
+  status: {}
+
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "*/5 * * * *"
+
   workflow_dispatch:
     inputs:
       pr_number:
@@ -25,7 +33,7 @@ permissions:
   statuses: read
 
 concurrency:
-  group: pr-codex-monitor-${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr_number || github.run_id }}
+  group: pr-codex-monitor-${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr_number || github.event.check_run.head_sha || github.event.check_suite.head_sha || github.event.sha || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -44,8 +52,14 @@ jobs:
         with:
           github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
           script: |
+            const crypto = require("crypto");
+
             const owner = context.repo.owner;
             const repo = context.repo.repo;
+
+            function hashText(text) {
+              return crypto.createHash("sha256").update(text).digest("hex").slice(0, 16);
+            }
 
             async function sendTelegram(text) {
               const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -133,6 +147,15 @@ jobs:
               return true;
             }
 
+            async function getOpenPrs() {
+              return await github.paginate(github.rest.pulls.list, {
+                owner,
+                repo,
+                state: "open",
+                per_page: 100,
+              });
+            }
+
             async function getPrNumbersToMonitor() {
               if (context.payload.pull_request) {
                 return [context.payload.pull_request.number];
@@ -142,6 +165,29 @@ jobs:
                 return [context.payload.issue.number];
               }
 
+              if (context.payload.check_run?.pull_requests?.length) {
+                return context.payload.check_run.pull_requests
+                  .map(pr => pr.number)
+                  .filter(Boolean);
+              }
+
+              if (context.payload.check_suite?.pull_requests?.length) {
+                return context.payload.check_suite.pull_requests
+                  .map(pr => pr.number)
+                  .filter(Boolean);
+              }
+
+              if (context.eventName === "status" && context.payload.sha) {
+                const openPrs = await getOpenPrs();
+                const matchingPrs = openPrs
+                  .filter(pr => pr.head && pr.head.sha === context.payload.sha)
+                  .map(pr => pr.number);
+
+                if (matchingPrs.length) {
+                  return matchingPrs;
+                }
+              }
+
               if (context.eventName === "workflow_dispatch") {
                 const input = process.env.PR_INPUT;
                 if (input && input.trim()) {
@@ -149,12 +195,7 @@ jobs:
                 }
               }
 
-              const openPrs = await github.paginate(github.rest.pulls.list, {
-                owner,
-                repo,
-                state: "open",
-                per_page: 100,
-              });
+              const openPrs = await getOpenPrs();
 
               return openPrs
                 .filter(pr =>
@@ -202,7 +243,11 @@ jobs:
 
               return [...checkRuns, ...statuses].filter(check => {
                 const name = (check.name || "").toLowerCase();
-                return !name.includes("pr-codex-monitor");
+
+                return (
+                  !name.includes("pr-codex-monitor") &&
+                  !name.includes("audit result telegram")
+                );
               });
             }
 
@@ -264,6 +309,23 @@ jobs:
               });
             }
 
+            function buildStateHash(failedChecks, activeAiThreads) {
+              const failedPart = failedChecks
+                .map(check => `${check.name}:${check.conclusion}`)
+                .sort()
+                .join("|");
+
+              const reviewPart = activeAiThreads
+                .map(thread => {
+                  const firstComment = thread.comments.nodes[0];
+                  return `${thread.id}:${firstComment?.id || ""}:${thread.path || ""}:${thread.line || ""}`;
+                })
+                .sort()
+                .join("|");
+
+              return hashText(`${failedPart}---${reviewPart}`);
+            }
+
             async function monitorPr(prNumber) {
               if (!prNumber || Number.isNaN(prNumber)) {
                 core.info("Invalid PR number. Skipping.");
@@ -293,7 +355,7 @@ jobs:
               const checkRuns = await getAllChecksForSha(headSha);
 
               if (checkRuns.length === 0) {
-                const marker = `<!-- pickfair-codex-monitor:no-checks:v5:${headSha} -->`;
+                const marker = `<!-- pickfair-codex-monitor:no-checks:v6:${headSha} -->`;
 
                 const body = [
                   marker,
@@ -342,8 +404,9 @@ jobs:
               const hasActiveReviewComments = activeAiThreads.length > 0;
 
               if (hasFailedChecks || hasActiveReviewComments) {
-                const issueMarker = `<!-- pickfair-codex-monitor:needs-action:v5:${headSha} -->`;
-                const replyMarker = `<!-- pickfair-codex-monitor:review-thread-forwarded:v5:${headSha} -->`;
+                const stateHash = buildStateHash(failed, activeAiThreads);
+                const issueMarker = `<!-- pickfair-codex-monitor:needs-action:v6:${headSha}:${stateHash} -->`;
+                const replyMarker = `<!-- pickfair-codex-monitor:review-thread-forwarded:v6:${headSha} -->`;
 
                 if (hasActiveReviewComments) {
                   for (const thread of activeAiThreads) {
@@ -363,7 +426,7 @@ jobs:
                       "",
                       "Codex deve rispondere qui con:",
                       "",
-                      'Fatto in commit <SHA>',
+                      "Fatto in commit <SHA>",
                       "",
                       "oppure indicare skipped con motivo se il commento è outdated o già risolto nel codice corrente."
                     ].join("\n");
@@ -425,7 +488,7 @@ jobs:
                   "- Risolvi tutti i review comment AI attivi indicati.",
                   "- Non modificare file fuori scope rispetto alla PR.",
                   "- Per ogni review comment realmente risolto, rispondi nel relativo thread GitHub:",
-                  '  "Fatto in commit <SHA>"',
+                  "  \"Fatto in commit <SHA>\"",
                   "- Se un commento è outdated o già risolto nel codice corrente, annotalo come skipped con motivo.",
                   "- Devi aggiornare realmente la branch GitHub della PR.",
                   "- Pusha/applica le modifiche sulla stessa branch della PR.",
@@ -447,7 +510,8 @@ jobs:
                     `🟡 Pickfair PR #${prNumber}: azione Codex richiesta.\n\n` +
                     `${hasFailedChecks ? "⛔ Check/workflow rossi\n" : "✅ Check senza rossi\n"}` +
                     `${hasActiveReviewComments ? "🟡 Review comment AI attivi\n" : "✅ Nessun review comment AI attivo\n"}\n` +
-                    `Ho commentato la PR con @codex e, se presenti, ho marcato i review comment come inoltrati.\n\n` +
+                    `Ho commentato automaticamente la PR con @codex.\n\n` +
+                    `Il monitor ripartirà automaticamente dopo nuovi push/check, oppure al massimo entro 5 minuti.\n\n` +
                     `${prUrl}`
                   );
                 }
@@ -455,7 +519,7 @@ jobs:
                 return;
               }
 
-              const marker = `<!-- pickfair-codex-monitor:ready-for-audit:v5:${headSha} -->`;
+              const marker = `<!-- pickfair-codex-monitor:ready-for-audit:v6:${headSha} -->`;
 
               const body = [
                 marker,
@@ -494,6 +558,8 @@ jobs:
               return;
             }
 
-            for (const prNumber of prNumbers) {
+            const uniquePrNumbers = [...new Set(prNumbers)];
+
+            for (const prNumber of uniquePrNumbers) {
               await monitorPr(prNumber);
             }
