@@ -14,17 +14,6 @@ on:
   check_run:
     types: [completed]
 
-  status:
-
-  issue_comment:
-    types: [created]
-
-  pull_request_review:
-    types: [submitted]
-
-  pull_request_review_comment:
-    types: [created]
-
   schedule:
     - cron: "*/15 * * * *"
 
@@ -37,8 +26,8 @@ permissions:
   actions: read
 
 concurrency:
-  group: pr-telegram-notify-${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr_number || github.sha }}
-  cancel-in-progress: true
+  group: pr-telegram-notify-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.sha }}
+  cancel-in-progress: false
 
 jobs:
   notify:
@@ -112,38 +101,19 @@ jobs:
                 return Number(context.payload.inputs.pr_number);
               }
 
-              if (context.payload.issue?.pull_request && context.payload.issue?.number) {
-                return context.payload.issue.number;
-              }
-
-              if (context.payload.comment?.pull_request_url) {
-                const url = context.payload.comment.pull_request_url;
-                const m = url.match(/\/pulls\/(\d+)$/);
-                if (m) return Number(m[1]);
-              }
-
-              if (context.payload.review?.pull_request_url) {
-                const url = context.payload.review.pull_request_url;
-                const m = url.match(/\/pulls\/(\d+)$/);
-                if (m) return Number(m[1]);
-              }
-
               if (context.payload.check_run?.pull_requests?.length) {
                 return context.payload.check_run.pull_requests[0].number;
               }
 
-              if (context.eventName === "status" && context.payload.sha) {
-                const prs = await github.paginate(github.rest.pulls.list, {
-                  owner,
-                  repo,
-                  state: "open",
-                  per_page: 100,
-                });
+              if (context.eventName === "check_run") {
+                const checkName = context.payload.check_run?.name || "";
+                if (checkName.includes("Send PR failure/comment report to Telegram")) {
+                  core.info("Skipping self check_run.");
+                  return null;
+                }
 
-                const match = prs.find(pr => pr.head.sha === context.payload.sha);
-                if (match) return match.number;
-
-                if (prs.length === 1) return prs[0].number;
+                core.info("check_run has no linked PR; skipping and waiting for schedule/manual run.");
+                return null;
               }
 
               const openPrs = await github.paginate(github.rest.pulls.list, {
@@ -155,6 +125,7 @@ jobs:
 
               if (openPrs.length === 1) return openPrs[0].number;
 
+              core.info(`Open PR count is ${openPrs.length}; cannot infer safely.`);
               return null;
             }
 
