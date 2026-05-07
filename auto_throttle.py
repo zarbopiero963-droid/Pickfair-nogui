@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from typing import List, Optional
@@ -185,7 +186,7 @@ class AutoThrottle:
                 parsed = float(api_calls_min)
             except (TypeError, ValueError):
                 return False
-            if parsed <= 0:
+            if parsed <= 0 or not math.isfinite(parsed):
                 return False
             allowed_calls = int((parsed * self.period) / 60.0)
             self.max_calls = max(1, allowed_calls)
