@@ -1,0 +1,143 @@
+name: Audit Result Telegram
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+  pull-requests: read
+
+jobs:
+  audit-result:
+    if: github.event.issue.pull_request
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Watch audit result and notify Telegram
+        uses: actions/github-script@v7
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        with:
+          github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issueNumber = context.payload.issue.number;
+            const commentId = context.payload.comment.id;
+            const commentBody = context.payload.comment.body || "";
+            const commentUrl = context.payload.comment.html_url;
+
+            async function sendTelegram(text) {
+              const token = process.env.TELEGRAM_BOT_TOKEN;
+              const chatId = process.env.TELEGRAM_CHAT_ID;
+
+              if (!token || !chatId) {
+                core.warning("Telegram secrets missing; skipping Telegram notification.");
+                return;
+              }
+
+              const url = `https://api.telegram.org/bot${token}/sendMessage`;
+              const body = new URLSearchParams();
+              body.append("chat_id", chatId);
+              body.append("text", text);
+
+              const response = await fetch(url, {
+                method: "POST",
+                body,
+              });
+
+              if (!response.ok) {
+                const errorText = await response.text();
+                core.warning(`Telegram notification failed: ${response.status} ${errorText}`);
+              }
+            }
+
+            function isPromptNotResult(body) {
+              const lower = body.toLowerCase();
+              return (
+                lower.includes("@codex") ||
+                body.includes("MERGE / DO NOT MERGE") ||
+                body.includes("Return only:") ||
+                body.includes("CURRENT MICRO-AUDIT")
+              );
+            }
+
+            if (isPromptNotResult(commentBody)) {
+              core.info("Comment looks like an audit prompt, not an audit result. Skipping.");
+              return;
+            }
+
+            const hasMerge = commentBody.includes("Final merge recommendation: MERGE");
+            const hasDoNotMerge = commentBody.includes("Final merge recommendation: DO NOT MERGE");
+
+            if (!hasMerge && !hasDoNotMerge) {
+              core.info("No audit recommendation found. Skipping.");
+              return;
+            }
+
+            const marker = `<!-- pickfair-audit-result:${commentId} -->`;
+
+            const existingComments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+
+            const alreadyPosted = existingComments.some(comment =>
+              comment.body && comment.body.includes(marker)
+            );
+
+            if (alreadyPosted) {
+              core.info("Audit result already handled. Skipping.");
+              return;
+            }
+
+            if (hasMerge) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: issueNumber,
+                body: `${marker}
+            ✅ Micro-audit passato.
+
+            Puoi fare merge manuale su GitHub.
+
+            Audit result comment:
+            ${commentUrl}`
+              });
+
+              await sendTelegram(
+                `✅ Pickfair PR #${issueNumber} pronta per merge.\n\n` +
+                `Micro-audit passato.\n` +
+                `Puoi fare merge manuale su GitHub.\n\n` +
+                `${commentUrl}`
+              );
+
+              return;
+            }
+
+            if (hasDoNotMerge) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: issueNumber,
+                body: `${marker}
+            ⛔ Micro-audit NON passato.
+
+            Non fare merge.
+            Correggi i problemi indicati e rilancia il micro-audit.
+
+            Audit result comment:
+            ${commentUrl}`
+              });
+
+              await sendTelegram(
+                `⛔ Pickfair PR #${issueNumber}: NON fare merge.\n\n` +
+                `Micro-audit dice DO NOT MERGE.\n` +
+                `Correggi e rilancia audit.\n\n` +
+                `${commentUrl}`
+              );
+            }
