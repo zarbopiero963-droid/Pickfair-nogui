@@ -31,11 +31,11 @@ concurrency:
 
 jobs:
   notify:
-    name: Send PR failure/comment report to Telegram
+    name: Send PR status report to Telegram
     runs-on: ubuntu-latest
 
     steps:
-      - name: Collect PR status, annotations and comments
+      - name: Collect PR status, annotations, comments and unresolved threads
         id: collect
         uses: actions/github-script@v7
         with:
@@ -56,9 +56,10 @@ jobs:
             const MAX_FAILED_RUNS = 8;
             const MAX_FAILED_JOBS_PER_RUN = 4;
             const MAX_LOG_CHARS_PER_JOB = 3200;
-            const MAX_COMMENT_CHARS = 1200;
-            const MAX_ANNOTATIONS_PER_CHECK = 30;
-            const MAX_ANNOTATION_CHARS = 700;
+            const MAX_COMMENT_CHARS = 1400;
+            const MAX_THREAD_COMMENT_CHARS = 1400;
+            const MAX_ANNOTATIONS_PER_CHECK = 40;
+            const MAX_ANNOTATION_CHARS = 900;
 
             function sha256(text) {
               return crypto.createHash("sha256").update(text).digest("hex");
@@ -93,6 +94,15 @@ jobs:
               return false;
             }
 
+            function isSelfCheckName(name) {
+              const value = String(name || "").toLowerCase();
+              return (
+                value.includes("pr telegram notify") ||
+                value.includes("send pr status report to telegram") ||
+                value.includes("send pr failure/comment report to telegram")
+              );
+            }
+
             async function inferPrNumber() {
               if (context.payload.pull_request?.number) {
                 return context.payload.pull_request.number;
@@ -108,7 +118,7 @@ jobs:
 
               if (context.eventName === "check_run") {
                 const checkName = context.payload.check_run?.name || "";
-                if (checkName.includes("Send PR failure/comment report to Telegram")) {
+                if (isSelfCheckName(checkName)) {
                   core.info("Skipping self check_run.");
                   return null;
                 }
@@ -164,17 +174,19 @@ jobs:
                   per_page: 100,
                 });
 
-                return (data.statuses || []).map(s => ({
-                  kind: "status",
-                  id: null,
-                  name: s.context,
-                  state: s.state,
-                  status: s.state,
-                  conclusion: s.state,
-                  url: s.target_url || "",
-                  description: s.description || "",
-                  summary: "",
-                }));
+                return (data.statuses || [])
+                  .filter(s => !isSelfCheckName(s.context))
+                  .map(s => ({
+                    kind: "status",
+                    id: null,
+                    name: s.context,
+                    state: s.state,
+                    status: s.state,
+                    conclusion: s.state,
+                    url: s.target_url || "",
+                    description: s.description || "",
+                    summary: "",
+                  }));
               } catch (err) {
                 core.warning(`Could not read combined statuses: ${err.message}`);
                 return [];
@@ -190,17 +202,19 @@ jobs:
                   per_page: 100,
                 });
 
-                return runs.map(r => ({
-                  kind: "check_run",
-                  id: r.id,
-                  name: r.name,
-                  status: r.status,
-                  conclusion: r.conclusion,
-                  url: r.html_url || r.details_url || "",
-                  details_url: r.details_url || "",
-                  description: "",
-                  summary: clean(r.output?.summary || r.output?.text || ""),
-                }));
+                return runs
+                  .filter(r => !isSelfCheckName(r.name))
+                  .map(r => ({
+                    kind: "check_run",
+                    id: r.id,
+                    name: r.name,
+                    status: r.status,
+                    conclusion: r.conclusion,
+                    url: r.html_url || r.details_url || "",
+                    details_url: r.details_url || "",
+                    description: "",
+                    summary: clean(r.output?.summary || r.output?.text || ""),
+                  }));
               } catch (err) {
                 core.warning(`Could not read check runs: ${err.message}`);
                 return [];
@@ -261,7 +275,7 @@ jobs:
                   }
                 );
 
-                return data.workflow_runs || [];
+                return (data.workflow_runs || []).filter(r => !isSelfCheckName(r.name));
               } catch (err) {
                 core.warning(`Could not read workflow runs: ${err.message}`);
                 return [];
@@ -472,7 +486,78 @@ jobs:
 
               out.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 
-              return out.slice(0, 40);
+              return out.slice(0, 80);
+            }
+
+            async function getUnresolvedReviewThreads(prNumber) {
+              const query = `
+                query($owner:String!, $repo:String!, $number:Int!, $after:String) {
+                  repository(owner:$owner, name:$repo) {
+                    pullRequest(number:$number) {
+                      reviewThreads(first:100, after:$after) {
+                        pageInfo {
+                          hasNextPage
+                          endCursor
+                        }
+                        nodes {
+                          id
+                          isResolved
+                          isOutdated
+                          path
+                          line
+                          comments(first:30) {
+                            nodes {
+                              id
+                              databaseId
+                              body
+                              url
+                              createdAt
+                              author {
+                                login
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              `;
+
+              const allThreads = [];
+              let after = null;
+
+              while (true) {
+                const data = await github.graphql(query, {
+                  owner,
+                  repo,
+                  number: prNumber,
+                  after,
+                });
+
+                const conn = data.repository.pullRequest.reviewThreads;
+                const nodes = conn.nodes || [];
+                allThreads.push(...nodes);
+
+                if (!conn.pageInfo.hasNextPage) break;
+                after = conn.pageInfo.endCursor;
+              }
+
+              return allThreads
+                .filter(t => !t.isResolved && !t.isOutdated)
+                .map(t => ({
+                  id: t.id,
+                  path: t.path,
+                  line: t.line,
+                  comments: (t.comments?.nodes || []).map(c => ({
+                    id: c.id,
+                    databaseId: c.databaseId,
+                    author: c.author?.login || "unknown",
+                    createdAt: c.createdAt,
+                    url: c.url,
+                    body: truncate(clean(c.body), MAX_THREAD_COMMENT_CHARS),
+                  })),
+                }));
             }
 
             function formatFailedChecks(failedChecks) {
@@ -576,6 +661,26 @@ jobs:
               }).join("\n\n");
             }
 
+            function formatUnresolvedReviewThreads(threads) {
+              if (!threads.length) {
+                return "Nessun review thread unresolved e non outdated.";
+              }
+
+              return threads.map((t, index) => {
+                const header = `THREAD ${index + 1}: ${t.path || "unknown"}:${t.line || "n/a"}\nThread ID: ${t.id}`;
+
+                const comments = t.comments.map(c => {
+                  return [
+                    `- by ${c.author} at ${c.createdAt}`,
+                    c.url ? `  ${c.url}` : "",
+                    c.body ? `  ${c.body.replace(/\n/g, "\n  ")}` : "",
+                  ].filter(Boolean).join("\n");
+                }).join("\n\n");
+
+                return `${header}\n${comments}`;
+              }).join("\n\n");
+            }
+
             async function main() {
               const prNumber = await inferPrNumber();
 
@@ -617,6 +722,7 @@ jobs:
               }
 
               const newComments = await getNewCommentsAfter(prNumber, commitDate);
+              const unresolvedReviewThreads = await getUnresolvedReviewThreads(prNumber);
 
               if (WAIT_UNTIL_CHECKS_SETTLED && pendingChecks.length > 0 && !IS_MANUAL_RUN) {
                 core.info(`Checks still pending (${pendingChecks.length}); waiting before Telegram report.`);
@@ -624,30 +730,60 @@ jobs:
                 return;
               }
 
-              const shouldNotify = IS_MANUAL_RUN || failedChecks.length > 0 || newComments.length > 0;
+              const allGreen =
+                failedChecks.length === 0 &&
+                pendingChecks.length === 0 &&
+                unresolvedReviewThreads.length === 0;
+
+              const shouldNotify =
+                IS_MANUAL_RUN ||
+                allGreen ||
+                failedChecks.length > 0 ||
+                newComments.length > 0 ||
+                unresolvedReviewThreads.length > 0;
 
               if (!shouldNotify) {
-                core.info("No failed checks and no new comments after commit.");
+                core.info("No failed checks, no unresolved threads and no new comments after commit.");
                 core.setOutput("should_notify", "false");
                 return;
               }
 
               const workflowDetails = await getFailedWorkflowDetails(headSha);
 
+              const statusTitle = allGreen
+                ? `✅ Pickfair PR #${prNumber}: tutto verde`
+                : `🟡 Pickfair PR #${prNumber}: report dopo commit`;
+
               const statePayload = {
                 pr: prNumber,
                 headSha,
                 manual: IS_MANUAL_RUN,
+                allGreen,
                 failedChecks: failedChecks.map(c => `${c.name}:${c.kind}:${c.status || c.state}:${c.conclusion || ""}:${c.url || ""}`),
                 pendingChecks: pendingChecks.map(c => `${c.name}:${c.kind}:${c.status || c.state}:${c.conclusion || ""}`),
                 annotations: Object.entries(annotationMap).map(([name, annotations]) => `${name}:${annotations.length}`),
                 newComments: newComments.map(c => `${c.type}:${c.id}:${c.created_at}`),
+                unresolvedReviewThreads: unresolvedReviewThreads.map(t => `${t.id}:${t.path}:${t.line}:${t.comments.length}`),
               };
 
               const stateHash = sha256(JSON.stringify(statePayload)).slice(0, 20);
 
+              const greenMessage = allGreen
+                ? [
+                    "✅ STATO FINALE",
+                    "Tutti i check visibili sono verdi.",
+                    "Nessun check pending.",
+                    "Nessun review thread unresolved e non outdated.",
+                    "La PR è pronta per micro-audit / verifica finale."
+                  ].join("\n")
+                : [
+                    "🟡 STATO ATTUALE",
+                    "Ci sono ancora elementi da verificare o risolvere.",
+                    "Guarda le sezioni CHECK ROSSI, REVIEW THREAD UNRESOLVED e NUOVI COMMENTI."
+                  ].join("\n");
+
               const report = [
-                `🟡 Pickfair PR #${prNumber}: report dopo commit`,
+                statusTitle,
                 "",
                 `Repo: ${repoFull}`,
                 `Branch: ${branch}`,
@@ -657,10 +793,13 @@ jobs:
                 `Manual run: ${IS_MANUAL_RUN ? "yes" : "no"}`,
                 `PR: ${pr.html_url}`,
                 "",
+                greenMessage,
+                "",
                 `Check rossi: ${failedChecks.length}`,
                 `Check pending: ${pendingChecks.length}`,
                 `Check con annotations: ${Object.keys(annotationMap).length}`,
                 `Nuovi commenti dopo commit: ${newComments.length}`,
+                `Review thread unresolved non outdated: ${unresolvedReviewThreads.length}`,
                 "",
                 "==============================",
                 "CHECK ROSSI",
@@ -683,6 +822,11 @@ jobs:
                 formatWorkflowDetails(workflowDetails),
                 "",
                 "==============================",
+                "REVIEW THREAD UNRESOLVED NON OUTDATED",
+                "==============================",
+                formatUnresolvedReviewThreads(unresolvedReviewThreads),
+                "",
+                "==============================",
                 "NUOVI COMMENTI DOPO COMMIT",
                 "==============================",
                 formatNewComments(newComments),
@@ -694,8 +838,9 @@ jobs:
               core.setOutput("should_notify", "true");
               core.setOutput("state_hash", stateHash);
               core.setOutput("pr_number", String(prNumber));
+              core.setOutput("all_green", allGreen ? "true" : "false");
 
-              core.info(`Prepared Telegram report for PR #${prNumber}, state ${stateHash}.`);
+              core.info(`Prepared Telegram report for PR #${prNumber}, state ${stateHash}, allGreen=${allGreen}.`);
             }
 
             await main();
@@ -720,6 +865,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           STATE_HASH: ${{ steps.collect.outputs.state_hash }}
           PR_NUMBER: ${{ steps.collect.outputs.pr_number }}
+          ALL_GREEN: ${{ steps.collect.outputs.all_green }}
         with:
           script: |
             const fs = require("fs");
@@ -727,6 +873,7 @@ jobs:
             const token = process.env.TELEGRAM_BOT_TOKEN;
             const chatId = process.env.TELEGRAM_CHAT_ID;
             const prNumber = process.env.PR_NUMBER || "unknown";
+            const allGreen = process.env.ALL_GREEN === "true";
 
             if (!token || !chatId) {
               core.setFailed("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID.");
@@ -771,7 +918,9 @@ jobs:
               form.append("chat_id", chatId);
               form.append(
                 "caption",
-                `📄 Report completo PR #${prNumber}\nHash: ${process.env.STATE_HASH}`
+                allGreen
+                  ? `✅ Report completo PR #${prNumber} — tutto verde\nHash: ${process.env.STATE_HASH}`
+                  : `📄 Report completo PR #${prNumber}\nHash: ${process.env.STATE_HASH}`
               );
 
               const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
@@ -810,7 +959,7 @@ jobs:
 
             fs.writeFileSync(
               ".telegram-notify-state/sent.txt",
-              `sent=${new Date().toISOString()}\nhash=${process.env.STATE_HASH}\n`
+              `sent=${new Date().toISOString()}\nhash=${process.env.STATE_HASH}\nall_green=${allGreen}\n`
             );
 
       - name: Skip duplicate Telegram report
