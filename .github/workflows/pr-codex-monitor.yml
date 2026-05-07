@@ -22,6 +22,7 @@ permissions:
   issues: write
   checks: read
   actions: read
+  statuses: read
 
 concurrency:
   group: pr-codex-monitor-${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr_number || github.run_id }}
@@ -134,6 +135,47 @@ jobs:
                 .map(pr => pr.number);
             }
 
+            async function getAllChecksForSha(headSha) {
+              const checksResponse = await github.rest.checks.listForRef({
+                owner,
+                repo,
+                ref: headSha,
+                per_page: 100,
+              });
+
+              const checkRuns = (checksResponse.data.check_runs || []).map(check => ({
+                name: check.name,
+                status: check.status,
+                conclusion: check.conclusion,
+                html_url: check.html_url,
+                source: "check_run",
+              }));
+
+              const statusResponse = await github.rest.repos.getCombinedStatusForRef({
+                owner,
+                repo,
+                ref: headSha,
+              });
+
+              const statuses = (statusResponse.data.statuses || []).map(status => ({
+                name: status.context,
+                status: "completed",
+                conclusion:
+                  status.state === "success" ? "success" :
+                  status.state === "failure" ? "failure" :
+                  status.state === "error" ? "failure" :
+                  status.state === "pending" ? null :
+                  status.state,
+                html_url: status.target_url,
+                source: "status",
+              }));
+
+              return [...checkRuns, ...statuses].filter(check => {
+                const name = (check.name || "").toLowerCase();
+                return !name.includes("pr-codex-monitor");
+              });
+            }
+
             async function monitorPr(prNumber) {
               if (!prNumber || Number.isNaN(prNumber)) {
                 core.info("Invalid PR number. Skipping.");
@@ -160,34 +202,23 @@ jobs:
               core.info(`Head branch: ${headBranch}`);
               core.info(`Head SHA: ${headSha}`);
 
-              const checksResponse = await github.rest.checks.listForRef({
-                owner,
-                repo,
-                ref: headSha,
-                per_page: 100,
-              });
-
-              const allCheckRuns = checksResponse.data.check_runs || [];
-
-              const checkRuns = allCheckRuns.filter(check => {
-                const name = (check.name || "").toLowerCase();
-                return !name.includes("pr-codex-monitor");
-              });
+              const checkRuns = await getAllChecksForSha(headSha);
 
               if (checkRuns.length === 0) {
-                const marker = `<!-- pickfair-codex-monitor:no-checks:${headSha} -->`;
+                const marker = `<!-- pickfair-codex-monitor:no-checks:v3:${headSha} -->`;
 
-                const body = `${marker}
-            ⚠️ PR monitor: nessun check trovato
-
-            PR: #${prNumber}
-            Titolo: ${title}
-            Branch: ${headBranch}
-            Head SHA: ${headSha}
-
-            Non ho trovato check run per questo commit.
-            Verifica manualmente su GitHub prima di fare micro-audit o merge.
-            `;
+                const body = [
+                  marker,
+                  "⚠️ PR monitor: nessun check trovato",
+                  "",
+                  `PR: #${prNumber}`,
+                  `Titolo: ${title}`,
+                  `Branch: ${headBranch}`,
+                  `Head SHA: ${headSha}`,
+                  "",
+                  "Non ho trovato check run/status per questo commit.",
+                  "Verifica manualmente su GitHub prima di fare micro-audit o merge."
+                ].join("\n");
 
                 const posted = await postOnce(prNumber, marker, body);
 
@@ -202,7 +233,8 @@ jobs:
               }
 
               const pending = checkRuns.filter(check =>
-                ["queued", "in_progress", "waiting", "requested", "pending"].includes(check.status)
+                ["queued", "in_progress", "waiting", "requested", "pending"].includes(check.status) ||
+                check.conclusion === null
               );
 
               const failed = checkRuns.filter(check =>
@@ -212,44 +244,53 @@ jobs:
 
               if (pending.length > 0) {
                 core.info(`Checks still pending/in progress: ${pending.map(c => c.name).join(", ")}`);
+
+                await sendTelegram(
+                  `⏳ Pickfair PR #${prNumber}: workflow/check ancora in corso.\n\n` +
+                  `Aspetta che finiscano tutti. Il monitor ricontrolla automaticamente ogni 15 minuti.\n\n` +
+                  `${prUrl}`
+                );
+
                 return;
               }
 
               if (failed.length > 0) {
-                const marker = `<!-- pickfair-codex-monitor:checks-failed:${headSha} -->`;
+                const marker = `<!-- pickfair-codex-monitor:checks-failed:v3:${headSha} -->`;
 
                 const failedText = failed.map(check =>
-                  `- ${check.name}: ${check.conclusion}\n  ${check.html_url}`
+                  `- ${check.name}: ${check.conclusion}\n  ${check.html_url || ""}`
                 ).join("\n");
 
-                const body = `${marker}
-            @codex
-
-            PR WORKFLOWS FAILED — FIX REQUIRED
-
-            Repo: ${owner}/${repo}
-            PR: #${prNumber}
-            Branch: ${headBranch}
-            Head SHA: ${headSha}
-
-            Tutti i workflow/check sono completati, ma questi sono rossi:
-
-            ${failedText}
-
-            Regole:
-            - Lavora solo sulla PR corrente.
-            - Non aprire una nuova PR.
-            - Non fare merge.
-            - Correggi solo i failure indicati.
-            - Pusha sulla stessa branch della PR.
-            `;
+                const body = [
+                  marker,
+                  "@codex",
+                  "",
+                  "PR WORKFLOWS FAILED — FIX REQUIRED",
+                  "",
+                  `Repo: ${owner}/${repo}`,
+                  `PR: #${prNumber}`,
+                  `Branch: ${headBranch}`,
+                  `Head SHA: ${headSha}`,
+                  "",
+                  "Tutti i workflow/check sono completati, ma questi sono rossi:",
+                  "",
+                  failedText,
+                  "",
+                  "Regole:",
+                  "- Lavora solo sulla PR corrente.",
+                  "- Non aprire una nuova PR.",
+                  "- Non fare merge.",
+                  "- Correggi solo i failure indicati.",
+                  "- Pusha sulla stessa branch della PR.",
+                  "- Quando hai corretto, rispondi qui con cosa hai fatto e commit SHA."
+                ].join("\n");
 
                 const posted = await postOnce(prNumber, marker, body);
 
                 if (posted) {
                   await sendTelegram(
                     `⛔ Pickfair PR #${prNumber}: workflow/check rossi.\n\n` +
-                    `Ho commentato la PR con il prompt per Codex.\n\n${prUrl}`
+                    `Ho commentato la PR con @codex e prompt automatico.\n\n${prUrl}`
                   );
                 }
 
@@ -310,7 +351,7 @@ jobs:
               });
 
               if (activeAiThreads.length > 0) {
-                const marker = `<!-- pickfair-codex-monitor:review-comments:${headSha} -->`;
+                const marker = `<!-- pickfair-codex-monitor:review-comments:v3:${headSha} -->`;
 
                 const commentsText = activeAiThreads.map((thread, index) => {
                   const firstComment = thread.comments.nodes[0];
@@ -326,43 +367,44 @@ jobs:
                   ].join("\n");
                 }).join("\n\n---\n\n");
 
-                const body = `${marker}
-            @codex
-
-            PR REVIEW COMMENTS FOUND — FIX REQUIRED
-
-            Repo: ${owner}/${repo}
-            PR: #${prNumber}
-            Branch: ${headBranch}
-            Head SHA: ${headSha}
-
-            Tutti i workflow/check sono completati e non risultano check rossi.
-
-            Sono stati trovati questi commenti AI review ancora attivi.
-            Se un reviewer AI non compare, ignoralo: non è bloccante.
-            I commenti outdated o già resolved non sono bloccanti.
-
-            Commenti da risolvere:
-
-            ${commentsText}
-
-            Regole:
-            - Lavora solo sulla PR corrente.
-            - Non aprire una nuova PR.
-            - Non fare merge.
-            - Non modificare file fuori scope.
-            - Per ogni commento realmente risolto, rispondi nel thread GitHub:
-              "Fatto in commit <SHA>"
-            - Se un commento è outdated o già risolto nel codice corrente, annotalo come skipped con motivo.
-            - Pusha sulla stessa branch della PR.
-            `;
+                const body = [
+                  marker,
+                  "@codex",
+                  "",
+                  "PR REVIEW COMMENTS FOUND — FIX REQUIRED",
+                  "",
+                  `Repo: ${owner}/${repo}`,
+                  `PR: #${prNumber}`,
+                  `Branch: ${headBranch}`,
+                  `Head SHA: ${headSha}`,
+                  "",
+                  "Tutti i workflow/check sono completati e non risultano check rossi.",
+                  "",
+                  "Sono stati trovati questi commenti AI review ancora attivi.",
+                  "Se un reviewer AI non compare, ignoralo: non è bloccante.",
+                  "I commenti outdated o già resolved non sono bloccanti.",
+                  "",
+                  "Commenti da risolvere:",
+                  "",
+                  commentsText,
+                  "",
+                  "Regole:",
+                  "- Lavora solo sulla PR corrente.",
+                  "- Non aprire una nuova PR.",
+                  "- Non fare merge.",
+                  "- Non modificare file fuori scope.",
+                  "- Per ogni commento realmente risolto, rispondi nel thread GitHub:",
+                  '  "Fatto in commit <SHA>"',
+                  "- Se un commento è outdated o già risolto nel codice corrente, annotalo come skipped con motivo.",
+                  "- Pusha sulla stessa branch della PR."
+                ].join("\n");
 
                 const posted = await postOnce(prNumber, marker, body);
 
                 if (posted) {
                   await sendTelegram(
                     `🟡 Pickfair PR #${prNumber}: commenti AI review trovati.\n\n` +
-                    `Ho commentato la PR con il prompt per Codex.\n\n` +
+                    `Ho commentato la PR con @codex e prompt automatico.\n\n` +
                     `Reviewer mancanti = non bloccanti.\n\n${prUrl}`
                   );
                 }
@@ -370,23 +412,24 @@ jobs:
                 return;
               }
 
-              const marker = `<!-- pickfair-codex-monitor:ready-for-audit:${headSha} -->`;
+              const marker = `<!-- pickfair-codex-monitor:ready-for-audit:v3:${headSha} -->`;
 
-              const body = `${marker}
-            ✅ PR pronta per micro-audit
-
-            PR: #${prNumber}
-            Titolo: ${title}
-            Branch: ${headBranch}
-            Head SHA: ${headSha}
-
-            Stato:
-            ✅ Tutti i workflow/check sono completati
-            ✅ Nessun check rosso rilevato
-            ✅ Nessun review thread AI attivo non risolto/non outdated
-
-            Ora manda a Codex il micro-audit read-only.
-            `;
+              const body = [
+                marker,
+                "✅ PR pronta per micro-audit",
+                "",
+                `PR: #${prNumber}`,
+                `Titolo: ${title}`,
+                `Branch: ${headBranch}`,
+                `Head SHA: ${headSha}`,
+                "",
+                "Stato:",
+                "✅ Tutti i workflow/check sono completati",
+                "✅ Nessun check rosso rilevato",
+                "✅ Nessun review thread AI attivo non risolto/non outdated",
+                "",
+                "Ora manda a Codex il micro-audit read-only."
+              ].join("\n");
 
               const posted = await postOnce(prNumber, marker, body);
 
