@@ -38,8 +38,6 @@ jobs:
       - name: Collect PR status, annotations and comments
         id: collect
         uses: actions/github-script@v7
-        env:
-          TELEGRAM_MAX_CHUNKS: "3"
         with:
           github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
           script: |
@@ -51,6 +49,9 @@ jobs:
             const repoFull = `${owner}/${repo}`;
 
             const WAIT_UNTIL_CHECKS_SETTLED = true;
+            const IS_MANUAL_RUN = context.eventName === "workflow_dispatch";
+
+            core.setOutput("is_manual_run", IS_MANUAL_RUN ? "true" : "false");
 
             const MAX_FAILED_RUNS = 8;
             const MAX_FAILED_JOBS_PER_RUN = 4;
@@ -617,13 +618,13 @@ jobs:
 
               const newComments = await getNewCommentsAfter(prNumber, commitDate);
 
-              if (WAIT_UNTIL_CHECKS_SETTLED && pendingChecks.length > 0) {
+              if (WAIT_UNTIL_CHECKS_SETTLED && pendingChecks.length > 0 && !IS_MANUAL_RUN) {
                 core.info(`Checks still pending (${pendingChecks.length}); waiting before Telegram report.`);
                 core.setOutput("should_notify", "false");
                 return;
               }
 
-              const shouldNotify = failedChecks.length > 0 || newComments.length > 0;
+              const shouldNotify = IS_MANUAL_RUN || failedChecks.length > 0 || newComments.length > 0;
 
               if (!shouldNotify) {
                 core.info("No failed checks and no new comments after commit.");
@@ -636,7 +637,9 @@ jobs:
               const statePayload = {
                 pr: prNumber,
                 headSha,
+                manual: IS_MANUAL_RUN,
                 failedChecks: failedChecks.map(c => `${c.name}:${c.kind}:${c.status || c.state}:${c.conclusion || ""}:${c.url || ""}`),
+                pendingChecks: pendingChecks.map(c => `${c.name}:${c.kind}:${c.status || c.state}:${c.conclusion || ""}`),
                 annotations: Object.entries(annotationMap).map(([name, annotations]) => `${name}:${annotations.length}`),
                 newComments: newComments.map(c => `${c.type}:${c.id}:${c.created_at}`),
               };
@@ -651,6 +654,7 @@ jobs:
                 `Head SHA: ${headSha}`,
                 `Short SHA: ${shortSha(headSha)}`,
                 `Commit date: ${commitDate.toISOString()}`,
+                `Manual run: ${IS_MANUAL_RUN ? "yes" : "no"}`,
                 `PR: ${pr.html_url}`,
                 "",
                 `Check rossi: ${failedChecks.length}`,
@@ -662,6 +666,11 @@ jobs:
                 "CHECK ROSSI",
                 "==============================",
                 formatFailedChecks(failedChecks),
+                "",
+                "==============================",
+                "CHECK PENDING",
+                "==============================",
+                formatPendingChecks(pendingChecks),
                 "",
                 "==============================",
                 "CHECK ANNOTATIONS",
@@ -696,7 +705,7 @@ jobs:
         run: mkdir -p .telegram-notify-state
 
       - name: Deduplicate Telegram report
-        if: steps.collect.outputs.should_notify == 'true'
+        if: steps.collect.outputs.should_notify == 'true' && steps.collect.outputs.is_manual_run != 'true'
         id: telegram_cache
         uses: actions/cache@v4
         with:
@@ -704,7 +713,7 @@ jobs:
           key: pr-telegram-notify-${{ steps.collect.outputs.state_hash }}
 
       - name: Send Telegram report
-        if: steps.collect.outputs.should_notify == 'true' && steps.telegram_cache.outputs.cache-hit != 'true'
+        if: steps.collect.outputs.should_notify == 'true' && (steps.collect.outputs.is_manual_run == 'true' || steps.telegram_cache.outputs.cache-hit != 'true')
         uses: actions/github-script@v7
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -805,6 +814,6 @@ jobs:
             );
 
       - name: Skip duplicate Telegram report
-        if: steps.collect.outputs.should_notify == 'true' && steps.telegram_cache.outputs.cache-hit == 'true'
+        if: steps.collect.outputs.should_notify == 'true' && steps.collect.outputs.is_manual_run != 'true' && steps.telegram_cache.outputs.cache-hit == 'true'
         run: |
           echo "Telegram report already sent for this PR/head/check/comment state."
