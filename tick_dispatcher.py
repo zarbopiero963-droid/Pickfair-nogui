@@ -105,7 +105,7 @@ class TickDispatcher:
             try:
                 cb(tick)
             except Exception:
-                logger.exception("Tick batch callback failed")
+                logger.exception("Tick storage callback failed")
 
     @staticmethod
     def _dispatch_batch_callbacks(callbacks, ticks: Optional[Dict[tuple[str, int], TickData]]) -> None:
@@ -116,7 +116,7 @@ class TickDispatcher:
             try:
                 cb(ticks)
             except Exception:
-                logger.exception("Tick storage callback failed")
+                logger.exception("Tick batch callback failed")
 
     def register_ui_callback(self, callback: Callable[[Dict[tuple[str, int], TickData]], None]):
         with self._lock:
