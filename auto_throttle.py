@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from typing import List, Optional
@@ -176,17 +177,30 @@ class AutoThrottle:
             rate = used * (60.0 / self.period)
             return max(0.0, rate)
 
-    def update(self, *args, **kwargs) -> None:
+    def update(self, **kwargs) -> bool:
         api_calls_min = kwargs.get("api_calls_min")
         with self._lock:
-            if api_calls_min is not None:
-                try:
-                    self._last_delay = 0.0
-                    self._backoff = self.base_backoff
-                except Exception:
-                    self._last_delay = 0.0
-                    self._backoff = self.base_backoff
-        return None
+            if api_calls_min is None:
+                return False
+            try:
+                parsed = float(api_calls_min)
+            except (TypeError, ValueError):
+                return False
+            if parsed <= 0 or not math.isfinite(parsed):
+                return False
+            if not math.isfinite(self.period):
+                return False
+            try:
+                allowed_calls = int((parsed * self.period) / 60.0)
+            except (OverflowError, ValueError):
+                return False
+            self.max_calls = max(1, allowed_calls)
+            self._timestamps.clear()
+            self._last_delay = 0.0
+            self._backoff = self.base_backoff
+            self._last_call_time = None
+            self._blocked = False
+            return True
 
     def reset(self) -> None:
         with self._lock:
