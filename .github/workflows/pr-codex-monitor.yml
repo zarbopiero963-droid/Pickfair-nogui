@@ -40,7 +40,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           PR_INPUT: ${{ github.event.inputs.pr_number || '' }}
-          AI_REVIEWERS: sourcery-ai,sourcery-ai[bot],coderabbitai,coderabbitai[bot],codacy-production,deepsource-io,gitar-bot,gitar-bot[bot],chatgpt-codex-connector
+          AI_REVIEWERS: sourcery-ai,sourcery-ai[bot],coderabbitai,coderabbitai[bot],codacy-production,deepsource-io,gitar-bot,gitar-bot[bot],chatgpt-codex-connector,chatgpt-codex-connector[bot]
         with:
           github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
           script: |
@@ -81,7 +81,7 @@ jobs:
               });
             }
 
-            async function postOnce(issueNumber, marker, body) {
+            async function postIssueCommentOnce(issueNumber, marker, body) {
               const existingComments = await getExistingIssueComments(issueNumber);
 
               const alreadyPosted = existingComments.some(comment =>
@@ -89,7 +89,7 @@ jobs:
               );
 
               if (alreadyPosted) {
-                core.info(`Comment with marker already exists: ${marker}`);
+                core.info(`Issue comment marker already exists: ${marker}`);
                 return false;
               }
 
@@ -97,6 +97,36 @@ jobs:
                 owner,
                 repo,
                 issue_number: issueNumber,
+                body,
+              });
+
+              return true;
+            }
+
+            async function replyToReviewCommentOnce(prNumber, thread, marker, body) {
+              const comments = thread.comments.nodes || [];
+
+              const alreadyPosted = comments.some(comment =>
+                comment.body && comment.body.includes(marker)
+              );
+
+              if (alreadyPosted) {
+                core.info(`Review thread marker already exists: ${marker}`);
+                return false;
+              }
+
+              const firstComment = comments[0];
+
+              if (!firstComment || !firstComment.databaseId) {
+                core.warning(`Cannot reply to thread ${thread.id}: missing first comment databaseId.`);
+                return false;
+              }
+
+              await github.rest.pulls.createReplyForReviewComment({
+                owner,
+                repo,
+                pull_number: prNumber,
+                comment_id: firstComment.databaseId,
                 body,
               });
 
@@ -159,7 +189,7 @@ jobs:
 
               const statuses = (statusResponse.data.statuses || []).map(status => ({
                 name: status.context,
-                status: "completed",
+                status: status.state === "pending" ? "pending" : "completed",
                 conclusion:
                   status.state === "success" ? "success" :
                   status.state === "failure" ? "failure" :
@@ -173,6 +203,64 @@ jobs:
               return [...checkRuns, ...statuses].filter(check => {
                 const name = (check.name || "").toLowerCase();
                 return !name.includes("pr-codex-monitor");
+              });
+            }
+
+            async function getReviewThreads(prNumber) {
+              const query = `
+                query($owner: String!, $repo: String!, $number: Int!) {
+                  repository(owner: $owner, name: $repo) {
+                    pullRequest(number: $number) {
+                      reviewThreads(first: 100) {
+                        nodes {
+                          id
+                          isResolved
+                          isOutdated
+                          path
+                          line
+                          comments(first: 30) {
+                            nodes {
+                              id
+                              databaseId
+                              body
+                              url
+                              createdAt
+                              author {
+                                login
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              `;
+
+              const result = await github.graphql(query, {
+                owner,
+                repo,
+                number: prNumber,
+              });
+
+              return result.repository.pullRequest.reviewThreads.nodes || [];
+            }
+
+            function getActiveAiThreads(threads) {
+              const aiReviewers = process.env.AI_REVIEWERS
+                .split(",")
+                .map(item => item.trim().toLowerCase())
+                .filter(Boolean);
+
+              return threads.filter(thread => {
+                if (thread.isResolved || thread.isOutdated) return false;
+
+                const firstComment = thread.comments.nodes[0];
+                const author = firstComment?.author?.login?.toLowerCase();
+
+                if (!author) return false;
+
+                return aiReviewers.includes(author);
               });
             }
 
@@ -205,7 +293,7 @@ jobs:
               const checkRuns = await getAllChecksForSha(headSha);
 
               if (checkRuns.length === 0) {
-                const marker = `<!-- pickfair-codex-monitor:no-checks:v3:${headSha} -->`;
+                const marker = `<!-- pickfair-codex-monitor:no-checks:v5:${headSha} -->`;
 
                 const body = [
                   marker,
@@ -220,7 +308,7 @@ jobs:
                   "Verifica manualmente su GitHub prima di fare micro-audit o merge."
                 ].join("\n");
 
-                const posted = await postOnce(prNumber, marker, body);
+                const posted = await postIssueCommentOnce(prNumber, marker, body);
 
                 if (posted) {
                   await sendTelegram(
@@ -237,154 +325,95 @@ jobs:
                 check.conclusion === null
               );
 
+              if (pending.length > 0) {
+                core.info(`Checks still pending/in progress: ${pending.map(c => c.name).join(", ")}`);
+                return;
+              }
+
               const failed = checkRuns.filter(check =>
                 check.status === "completed" &&
                 ["failure", "cancelled", "timed_out", "action_required", "startup_failure"].includes(check.conclusion)
               );
 
-              if (pending.length > 0) {
-                core.info(`Checks still pending/in progress: ${pending.map(c => c.name).join(", ")}`);
+              const threads = await getReviewThreads(prNumber);
+              const activeAiThreads = getActiveAiThreads(threads);
 
-                await sendTelegram(
-                  `⏳ Pickfair PR #${prNumber}: workflow/check ancora in corso.\n\n` +
-                  `Aspetta che finiscano tutti. Il monitor ricontrolla automaticamente ogni 15 minuti.\n\n` +
-                  `${prUrl}`
-                );
+              const hasFailedChecks = failed.length > 0;
+              const hasActiveReviewComments = activeAiThreads.length > 0;
 
-                return;
-              }
+              if (hasFailedChecks || hasActiveReviewComments) {
+                const issueMarker = `<!-- pickfair-codex-monitor:needs-action:v5:${headSha} -->`;
+                const replyMarker = `<!-- pickfair-codex-monitor:review-thread-forwarded:v5:${headSha} -->`;
 
-              if (failed.length > 0) {
-                const marker = `<!-- pickfair-codex-monitor:checks-failed:v3:${headSha} -->`;
+                if (hasActiveReviewComments) {
+                  for (const thread of activeAiThreads) {
+                    const firstComment = thread.comments.nodes[0];
+                    const author = firstComment?.author?.login || "unknown";
 
-                const failedText = failed.map(check =>
-                  `- ${check.name}: ${check.conclusion}\n  ${check.html_url || ""}`
-                ).join("\n");
+                    const replyBody = [
+                      replyMarker,
+                      "🟡 Rilevato dal monitor automatico.",
+                      "",
+                      "Questo review comment AI è stato inoltrato a Codex nel commento generale della PR per la risoluzione.",
+                      "",
+                      `Autore: ${author}`,
+                      `File: ${thread.path || "n/a"}`,
+                      `Line: ${thread.line || "n/a"}`,
+                      `PR head SHA: ${headSha}`,
+                      "",
+                      "Codex deve rispondere qui con:",
+                      "",
+                      'Fatto in commit <SHA>',
+                      "",
+                      "oppure indicare skipped con motivo se il commento è outdated o già risolto nel codice corrente."
+                    ].join("\n");
+
+                    await replyToReviewCommentOnce(prNumber, thread, replyMarker, replyBody);
+                  }
+                }
+
+                const failedText = hasFailedChecks
+                  ? failed.map(check =>
+                      `- ${check.name}: ${check.conclusion}\n  ${check.html_url || ""}`
+                    ).join("\n")
+                  : "Nessun check rosso rilevato.";
+
+                const commentsText = hasActiveReviewComments
+                  ? activeAiThreads.map((thread, index) => {
+                      const firstComment = thread.comments.nodes[0];
+
+                      return [
+                        `### ${index + 1}. ${firstComment.author.login}`,
+                        `Thread ID: ${thread.id}`,
+                        `File: ${thread.path || "n/a"}`,
+                        `Line: ${thread.line || "n/a"}`,
+                        `URL: ${firstComment.url}`,
+                        "",
+                        firstComment.body,
+                      ].join("\n");
+                    }).join("\n\n---\n\n")
+                  : "Nessun review comment AI attivo rilevato.";
 
                 const body = [
-                  marker,
+                  issueMarker,
                   "@codex",
                   "",
-                  "PR WORKFLOWS FAILED — FIX REQUIRED",
+                  "PR NEEDS FIXES — CHECKS AND REVIEW COMMENTS",
                   "",
                   `Repo: ${owner}/${repo}`,
                   `PR: #${prNumber}`,
                   `Branch: ${headBranch}`,
                   `Head SHA: ${headSha}`,
                   "",
-                  "Tutti i workflow/check sono completati, ma questi sono rossi:",
+                  "Stato monitor:",
+                  hasFailedChecks ? "⛔ Ci sono workflow/check rossi." : "✅ Nessun workflow/check rosso rilevato.",
+                  hasActiveReviewComments ? "🟡 Ci sono review comment AI attivi." : "✅ Nessun review comment AI attivo rilevato.",
+                  "",
+                  "Workflow/check rossi:",
                   "",
                   failedText,
                   "",
-                  "Regole:",
-                  "- Lavora solo sulla PR corrente.",
-                  "- Non aprire una nuova PR.",
-                  "- Non fare merge.",
-                  "- Correggi solo i failure indicati.",
-                  "- Pusha sulla stessa branch della PR.",
-                  "- Quando hai corretto, rispondi qui con cosa hai fatto e commit SHA."
-                ].join("\n");
-
-                const posted = await postOnce(prNumber, marker, body);
-
-                if (posted) {
-                  await sendTelegram(
-                    `⛔ Pickfair PR #${prNumber}: workflow/check rossi.\n\n` +
-                    `Ho commentato la PR con @codex e prompt automatico.\n\n${prUrl}`
-                  );
-                }
-
-                return;
-              }
-
-              const aiReviewers = process.env.AI_REVIEWERS
-                .split(",")
-                .map(item => item.trim().toLowerCase())
-                .filter(Boolean);
-
-              const query = `
-                query($owner: String!, $repo: String!, $number: Int!) {
-                  repository(owner: $owner, name: $repo) {
-                    pullRequest(number: $number) {
-                      reviewThreads(first: 100) {
-                        nodes {
-                          id
-                          isResolved
-                          isOutdated
-                          path
-                          line
-                          comments(first: 20) {
-                            nodes {
-                              id
-                              body
-                              url
-                              createdAt
-                              author {
-                                login
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              `;
-
-              const result = await github.graphql(query, {
-                owner,
-                repo,
-                number: prNumber,
-              });
-
-              const threads = result.repository.pullRequest.reviewThreads.nodes || [];
-
-              const activeAiThreads = threads.filter(thread => {
-                if (thread.isResolved || thread.isOutdated) return false;
-
-                const firstComment = thread.comments.nodes[0];
-                const author = firstComment?.author?.login?.toLowerCase();
-
-                if (!author) return false;
-
-                return aiReviewers.includes(author);
-              });
-
-              if (activeAiThreads.length > 0) {
-                const marker = `<!-- pickfair-codex-monitor:review-comments:v3:${headSha} -->`;
-
-                const commentsText = activeAiThreads.map((thread, index) => {
-                  const firstComment = thread.comments.nodes[0];
-
-                  return [
-                    `### ${index + 1}. ${firstComment.author.login}`,
-                    `Thread ID: ${thread.id}`,
-                    `File: ${thread.path || "n/a"}`,
-                    `Line: ${thread.line || "n/a"}`,
-                    `URL: ${firstComment.url}`,
-                    "",
-                    firstComment.body,
-                  ].join("\n");
-                }).join("\n\n---\n\n");
-
-                const body = [
-                  marker,
-                  "@codex",
-                  "",
-                  "PR REVIEW COMMENTS FOUND — FIX REQUIRED",
-                  "",
-                  `Repo: ${owner}/${repo}`,
-                  `PR: #${prNumber}`,
-                  `Branch: ${headBranch}`,
-                  `Head SHA: ${headSha}`,
-                  "",
-                  "Tutti i workflow/check sono completati e non risultano check rossi.",
-                  "",
-                  "Sono stati trovati questi commenti AI review ancora attivi.",
-                  "Se un reviewer AI non compare, ignoralo: non è bloccante.",
-                  "I commenti outdated o già resolved non sono bloccanti.",
-                  "",
-                  "Commenti da risolvere:",
+                  "Review comment AI attivi:",
                   "",
                   commentsText,
                   "",
@@ -392,27 +421,41 @@ jobs:
                   "- Lavora solo sulla PR corrente.",
                   "- Non aprire una nuova PR.",
                   "- Non fare merge.",
-                  "- Non modificare file fuori scope.",
-                  "- Per ogni commento realmente risolto, rispondi nel thread GitHub:",
+                  "- Correggi tutti i workflow/check rossi indicati.",
+                  "- Risolvi tutti i review comment AI attivi indicati.",
+                  "- Non modificare file fuori scope rispetto alla PR.",
+                  "- Per ogni review comment realmente risolto, rispondi nel relativo thread GitHub:",
                   '  "Fatto in commit <SHA>"',
                   "- Se un commento è outdated o già risolto nel codice corrente, annotalo come skipped con motivo.",
-                  "- Pusha sulla stessa branch della PR."
+                  "- Devi aggiornare realmente la branch GitHub della PR.",
+                  "- Pusha/applica le modifiche sulla stessa branch della PR.",
+                  "- Non basta preparare un commit nel task Codex.",
+                  "- Prima di rispondere, verifica che la PR head SHA sia cambiata rispetto a quella iniziale.",
+                  "- Se non puoi aggiornare la branch automaticamente, rispondi esattamente: NEEDS_MANUAL_UPDATE_BRANCH.",
+                  "- Quando hai corretto, rispondi nel commento generale con:",
+                  "  1. cosa hai fatto",
+                  "  2. commit SHA",
+                  "  3. nuova PR head SHA",
+                  "  4. quali review comment hai commentato con Fatto in commit <SHA>",
+                  "  5. stato finale DONE / PARTIAL / NOT DONE"
                 ].join("\n");
 
-                const posted = await postOnce(prNumber, marker, body);
+                const posted = await postIssueCommentOnce(prNumber, issueMarker, body);
 
                 if (posted) {
                   await sendTelegram(
-                    `🟡 Pickfair PR #${prNumber}: commenti AI review trovati.\n\n` +
-                    `Ho commentato la PR con @codex e prompt automatico.\n\n` +
-                    `Reviewer mancanti = non bloccanti.\n\n${prUrl}`
+                    `🟡 Pickfair PR #${prNumber}: azione Codex richiesta.\n\n` +
+                    `${hasFailedChecks ? "⛔ Check/workflow rossi\n" : "✅ Check senza rossi\n"}` +
+                    `${hasActiveReviewComments ? "🟡 Review comment AI attivi\n" : "✅ Nessun review comment AI attivo\n"}\n` +
+                    `Ho commentato la PR con @codex e, se presenti, ho marcato i review comment come inoltrati.\n\n` +
+                    `${prUrl}`
                   );
                 }
 
                 return;
               }
 
-              const marker = `<!-- pickfair-codex-monitor:ready-for-audit:v3:${headSha} -->`;
+              const marker = `<!-- pickfair-codex-monitor:ready-for-audit:v5:${headSha} -->`;
 
               const body = [
                 marker,
@@ -431,7 +474,7 @@ jobs:
                 "Ora manda a Codex il micro-audit read-only."
               ].join("\n");
 
-              const posted = await postOnce(prNumber, marker, body);
+              const posted = await postIssueCommentOnce(prNumber, marker, body);
 
               if (posted) {
                 await sendTelegram(
