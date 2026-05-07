@@ -7,8 +7,6 @@ on:
     types: [submitted, edited, dismissed]
   pull_request_review_comment:
     types: [created, edited]
-  workflow_run:
-    types: [completed]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -24,7 +22,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: pr-codex-monitor-${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.id || github.run_id }}
+  group: pr-codex-monitor-${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr_number || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -38,7 +36,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          PR_INPUT: ${{ inputs.pr_number }}
+          PR_INPUT: ${{ github.event.inputs.pr_number }}
           AI_REVIEWERS: sourcery-ai,sourcery-ai[bot],coderabbitai,coderabbitai[bot],codacy-production,deepsource-io,gitar-bot,gitar-bot[bot],chatgpt-codex-connector
         with:
           script: |
@@ -65,18 +63,18 @@ jobs:
               });
 
               if (!response.ok) {
-                core.warning(`Telegram notification failed: ${response.status}`);
+                const errorText = await response.text();
+                core.warning(`Telegram notification failed: ${response.status} ${errorText}`);
               }
             }
 
             async function getExistingIssueComments(issueNumber) {
-              const comments = await github.paginate(github.rest.issues.listComments, {
+              return await github.paginate(github.rest.issues.listComments, {
                 owner,
                 repo,
                 issue_number: issueNumber,
                 per_page: 100,
               });
-              return comments;
             }
 
             async function postOnce(issueNumber, marker, body) {
@@ -109,12 +107,10 @@ jobs:
               prNumber = context.payload.issue.number;
             } else if (context.eventName === "workflow_dispatch") {
               prNumber = Number(process.env.PR_INPUT);
-            } else if (context.payload.workflow_run && context.payload.workflow_run.pull_requests?.length) {
-              prNumber = context.payload.workflow_run.pull_requests[0].number;
             }
 
-            if (!prNumber) {
-              core.info("No PR number found. Exiting.");
+            if (!prNumber || Number.isNaN(prNumber)) {
+              core.info("No valid PR number found. Exiting.");
               return;
             }
 
@@ -163,6 +159,13 @@ jobs:
 
             if (pending.length > 0) {
               core.info(`Checks still pending/in progress: ${pending.map(c => c.name).join(", ")}`);
+
+              await sendTelegram(
+                `⏳ Pickfair PR #${prNumber}: workflow/check ancora in corso.\n\n` +
+                `Aspetta che finiscano tutti, poi rilancia manualmente PR Codex Monitor con numero ${prNumber}.\n\n` +
+                `${prUrl}`
+              );
+
               return;
             }
 
@@ -198,7 +201,11 @@ jobs:
               const posted = await postOnce(prNumber, marker, body);
 
               if (posted) {
-                await sendTelegram(`⛔ Pickfair PR #${prNumber}: workflow/check rossi.\n\nHo commentato la PR con il prompt per Codex.\n\n${prUrl}`);
+                await sendTelegram(
+                  `⛔ Pickfair PR #${prNumber}: workflow/check rossi.\n\n` +
+                  `Ho commentato la PR con il prompt per Codex.\n\n` +
+                  `${prUrl}`
+                );
               }
 
               return;
@@ -308,7 +315,12 @@ jobs:
               const posted = await postOnce(prNumber, marker, body);
 
               if (posted) {
-                await sendTelegram(`🟡 Pickfair PR #${prNumber}: commenti AI review trovati.\n\nHo commentato la PR con il prompt per Codex.\n\nReviewer mancanti = non bloccanti.\n\n${prUrl}`);
+                await sendTelegram(
+                  `🟡 Pickfair PR #${prNumber}: commenti AI review trovati.\n\n` +
+                  `Ho commentato la PR con il prompt per Codex.\n\n` +
+                  `Reviewer mancanti = non bloccanti.\n\n` +
+                  `${prUrl}`
+                );
               }
 
               return;
@@ -335,5 +347,12 @@ jobs:
             const posted = await postOnce(prNumber, marker, body);
 
             if (posted) {
-              await sendTelegram(`✅ Pickfair PR #${prNumber} pronta per micro-audit.\n\n✅ Workflow/check completi\n✅ Nessun check rosso\n✅ Nessun commento AI attivo\n\nOra manda il micro-audit a Codex.\n\n${prUrl}`);
+              await sendTelegram(
+                `✅ Pickfair PR #${prNumber} pronta per micro-audit.\n\n` +
+                `✅ Workflow/check completi\n` +
+                `✅ Nessun check rosso\n` +
+                `✅ Nessun commento AI attivo\n\n` +
+                `Ora manda il micro-audit a Codex.\n\n` +
+                `${prUrl}`
+              );
             }
