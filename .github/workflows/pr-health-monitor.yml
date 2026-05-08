@@ -56,9 +56,7 @@ jobs:
           import os
           import re
           import sys
-          import textwrap
           import urllib.error
-          import urllib.parse
           import urllib.request
 
           TOKEN = os.environ["GH_TOKEN"]
@@ -72,7 +70,7 @@ jobs:
           GRAPHQL = "https://api.github.com/graphql"
 
           STATUS_CONTEXT = "pr-health-monitor"
-          COMMENT_MARKER = "<!-- pr-health-monitor:v2 -->"
+          COMMENT_MARKER = "<!-- pr-health-monitor:v3 -->"
 
           RED_CHECK_CONCLUSIONS = {
               "failure",
@@ -99,11 +97,8 @@ jobs:
               r"monitor automatico",
               r"pr-health-monitor",
               r"PR Health Monitor",
+              r"pickfair-codex-monitor",
           ]
-
-
-          def now_utc():
-              return dt.datetime.now(dt.timezone.utc)
 
 
           def parse_ts(value):
@@ -150,6 +145,7 @@ jobs:
           def rest_paginated(path):
               items = []
               page = 1
+
               while True:
                   sep = "&" if "?" in path else "?"
                   page_path = f"{path}{sep}per_page=100&page={page}"
@@ -169,6 +165,7 @@ jobs:
 
                   if len(chunk) < 100:
                       break
+
                   page += 1
 
               return items
@@ -179,10 +176,24 @@ jobs:
                   "query": query,
                   "variables": variables,
               }
+
               data = request_json("POST", GRAPHQL, payload)
+
               if data.get("errors"):
                   raise RuntimeError(json.dumps(data["errors"], ensure_ascii=False)[:2000])
+
               return data["data"]
+
+
+          def strip_4byte_unicode(text):
+              text = text or ""
+              return "".join(ch for ch in text if ord(ch) <= 0xFFFF)
+
+
+          def safe_status_description(text):
+              text = strip_4byte_unicode(text)
+              text = re.sub(r"\s+", " ", text).strip()
+              return text[:140]
 
 
           def is_noise_comment(body, author_login=None):
@@ -231,6 +242,7 @@ jobs:
                   return [int(PR_NUMBER_INPUT)]
 
               prs = rest_paginated(f"/repos/{REPO}/pulls?state=open")
+
               return [
                   int(pr["number"])
                   for pr in prs
@@ -278,10 +290,10 @@ jobs:
 
               for status in combined.get("statuses", []):
                   context = status.get("context") or ""
+
                   if ignore_status_context(context):
                       continue
 
-                  # GitHub returns newest first. Keep newest per context.
                   if context not in latest_by_context:
                       latest_by_context[context] = status
 
@@ -292,6 +304,7 @@ jobs:
               runs = rest_paginated(
                   f"/repos/{REPO}/commits/{sha}/check-runs?filter=latest"
               )
+
               return [
                   run
                   for run in runs
@@ -311,26 +324,27 @@ jobs:
 
               red_items = []
               pending_items = []
+              annotation_runs = []
+              annotations = []
 
               for status in statuses:
                   state = status.get("state")
+                  name = status.get("context") or "status"
+
                   if state in {"failure", "error"}:
                       red_items.append({
                           "kind": "status",
-                          "name": status.get("context") or "status",
+                          "name": name,
                           "state": state,
                           "url": status.get("target_url") or status.get("url"),
                       })
                   elif state == "pending":
                       pending_items.append({
                           "kind": "status",
-                          "name": status.get("context") or "status",
+                          "name": name,
                           "state": state,
                           "url": status.get("target_url") or status.get("url"),
                       })
-
-              annotation_runs = []
-              annotations = []
 
               for run in check_runs:
                   name = run.get("name") or "check"
@@ -462,12 +476,12 @@ jobs:
               raw_unresolved_non_outdated = 0
               noise_only_threads = 0
               duplicate_threads = 0
-
               deduped = {}
 
               for thread in threads:
                   if thread.get("isResolved"):
                       continue
+
                   if thread.get("isOutdated"):
                       continue
 
@@ -478,6 +492,7 @@ jobs:
 
                   for comment in comments:
                       author = ((comment.get("author") or {}).get("login") or "")
+
                       if not is_noise_comment(comment.get("body") or "", author):
                           useful_comments.append(comment)
 
@@ -485,7 +500,6 @@ jobs:
                       noise_only_threads += 1
                       continue
 
-                  # Latest useful comment usually contains the current actionable signal.
                   comment = useful_comments[-1]
 
                   path = (
@@ -493,6 +507,7 @@ jobs:
                       or thread.get("path")
                       or ""
                   )
+
                   line = (
                       comment.get("line")
                       or comment.get("originalLine")
@@ -536,10 +551,12 @@ jobs:
 
               for comment in review_comments + issue_comments:
                   created_raw = comment.get("created_at")
+
                   if not created_raw:
                       continue
 
                   created = parse_ts(created_raw)
+
                   if created <= commit_dt:
                       continue
 
@@ -567,9 +584,10 @@ jobs:
               payload = {
                   "state": state,
                   "context": STATUS_CONTEXT,
-                  "description": description[:140],
+                  "description": safe_status_description(description),
                   "target_url": RUN_URL,
               }
+
               request_json("POST", f"/repos/{REPO}/statuses/{sha}", payload)
 
 
@@ -586,8 +604,9 @@ jobs:
               actionable_threads = threads["actionable_threads"]
 
               lines = []
+
               lines.append(COMMENT_MARKER)
-              lines.append(f"## 🩺 PR Health Monitor")
+              lines.append("## 🩺 PR Health Monitor")
               lines.append("")
               lines.append(f"PR: [#{pr_number} — {md_escape(title)}]({html_url})")
               lines.append(f"Head commit: `{sha[:12]}`")
@@ -616,46 +635,58 @@ jobs:
               if red_items:
                   lines.append("### 🔴 Check rossi")
                   lines.append("")
+
                   for item in red_items[:30]:
                       url = item.get("url")
                       name = md_escape(item.get("name") or item.get("kind") or "check")
                       state_raw = item.get("state") or "failure"
+
                       if url:
                           lines.append(f"- [{name}]({url}) — `{state_raw}`")
                       else:
                           lines.append(f"- {name} — `{state_raw}`")
+
                   if len(red_items) > 30:
                       lines.append(f"- … altri {len(red_items) - 30}")
+
                   lines.append("")
 
               if pending_items:
                   lines.append("### 🟡 Check pending")
                   lines.append("")
+
                   for item in pending_items[:30]:
                       url = item.get("url")
                       name = md_escape(item.get("name") or item.get("kind") or "check")
                       state_raw = item.get("state") or "pending"
+
                       if url:
                           lines.append(f"- [{name}]({url}) — `{state_raw}`")
                       else:
                           lines.append(f"- {name} — `{state_raw}`")
+
                   if len(pending_items) > 30:
                       lines.append(f"- … altri {len(pending_items) - 30}")
+
                   lines.append("")
 
               if annotation_runs:
                   lines.append("### 📝 Check con annotations")
                   lines.append("")
+
                   for item in annotation_runs[:30]:
                       name = md_escape(item["name"])
                       count = item["count"]
                       url = item.get("url")
+
                       if url:
                           lines.append(f"- [{name}]({url}) — `{count}` annotation(s)")
                       else:
                           lines.append(f"- {name} — `{count}` annotation(s)")
+
                   if len(annotation_runs) > 30:
                       lines.append(f"- … altri {len(annotation_runs) - 30}")
+
                   lines.append("")
 
               if annotations:
@@ -663,6 +694,7 @@ jobs:
                   lines.append("")
                   lines.append("| Check | Level | File | Line | Messaggio |")
                   lines.append("|---|---|---|---:|---|")
+
                   for ann in annotations[:20]:
                       check = md_escape(ann.get("check") or "")
                       level = md_escape(ann.get("level") or "")
@@ -670,14 +702,17 @@ jobs:
                       line = ann.get("line") or ""
                       msg = md_escape(short(ann.get("message") or ann.get("title") or "", 140))
                       lines.append(f"| {check} | {level} | `{path}` | {line} | {msg} |")
+
                   if len(annotations) > 20:
-                      lines.append(f"")
+                      lines.append("")
                       lines.append(f"_Altre annotations non mostrate: {len(annotations) - 20}_")
+
                   lines.append("")
 
               if actionable_threads:
                   lines.append("### 🧵 Review thread actionable, deduplicati")
                   lines.append("")
+
                   for item in actionable_threads[:30]:
                       path = item.get("path") or ""
                       line = item.get("line") or ""
@@ -686,14 +721,17 @@ jobs:
                       body = short(item.get("body") or "", 260)
 
                       location = f"`{path}:{line}`" if line else f"`{path}`"
+
                       if url:
                           lines.append(f"- {location} — @{author} — [link]({url})")
                       else:
                           lines.append(f"- {location} — @{author}")
+
                       lines.append(f"  - {md_escape(body)}")
 
                   if len(actionable_threads) > 30:
                       lines.append(f"- … altri {len(actionable_threads) - 30}")
+
                   lines.append("")
 
               if not red_items and not pending_items and not annotation_runs and not actionable_threads:
@@ -714,7 +752,8 @@ jobs:
 
               for comment in comments:
                   existing_body = comment.get("body") or ""
-                  if COMMENT_MARKER in existing_body:
+
+                  if "<!-- pr-health-monitor:" in existing_body:
                       comment_id = comment["id"]
                       request_json(
                           "PATCH",
@@ -728,6 +767,7 @@ jobs:
                   f"/repos/{REPO}/issues/{pr_number}/comments",
                   {"body": body},
               )
+
               return "created"
 
 
@@ -745,24 +785,26 @@ jobs:
               ):
                   return (
                       "success",
-                      "✅ PR verde: nessun check rosso, pending, annotation o thread actionable",
+                      "PR verde: nessun check rosso, pending, annotation o thread actionable",
                   )
 
               parts = []
+
               if red_count:
                   parts.append(f"{red_count} rossi")
+
               if pending_count:
                   parts.append(f"{pending_count} pending")
+
               if annotation_run_count:
                   parts.append(f"{annotation_run_count} check con annotations")
+
               if actionable_thread_count:
                   parts.append(f"{actionable_thread_count} thread actionable")
 
-              # Usiamo pending/giallo: il monitor segnala che la PR non è verde
-              # senza aggiungere un ulteriore check rosso artificiale.
               return (
                   "pending",
-                  "🟡 PR non verde: " + ", ".join(parts),
+                  "PR non verde: " + ", ".join(parts),
               )
 
 
@@ -797,7 +839,8 @@ jobs:
                   print(f"PR #{pr_number}: {state} — {description}")
 
               except Exception as exc:
-                  error_description = f"❌ PR monitor error: {short(str(exc), 110)}"
+                  error_description = f"PR monitor error: {short(str(exc), 110)}"
+
                   try:
                       create_status(sha, "error", error_description)
                   finally:
@@ -823,8 +866,10 @@ jobs:
               if errors:
                   print("")
                   print("Monitor errors:")
+
                   for pr_number, exc in errors:
                       print(f"- PR #{pr_number}: {exc}")
+
                   sys.exit(1)
 
 
