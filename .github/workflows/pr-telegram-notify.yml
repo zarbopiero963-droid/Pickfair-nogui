@@ -26,7 +26,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: pr-telegram-notify-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.event.check_run.pull_requests[0].number || github.sha }}
+  group: pr-telegram-notify-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.sha }}
   cancel-in-progress: false
 
 jobs:
@@ -60,8 +60,8 @@ jobs:
             const MAX_ANNOTATION_CHARS = 900;
             const MAX_REVIEW_THREADS = 80;
             const MAX_THREAD_COMMENT_CHARS = 1800;
-            const MAX_NEW_COMMENTS = 80;
-            const MAX_NEW_COMMENT_CHARS = 1600;
+            const MAX_NEW_COMMENTS = 60;
+            const MAX_NEW_COMMENT_CHARS = 1500;
 
             function sha256(text) {
               return crypto.createHash("sha256").update(text).digest("hex");
@@ -84,10 +84,6 @@ jobs:
               return text.slice(0, max) + "\n...[truncated]...";
             }
 
-            function mdEscape(text) {
-              return String(text || "").replace(/\|/g, "\\|");
-            }
-
             function oneLine(text, max = 180) {
               const value = clean(text).replace(/\s+/g, " ");
               if (value.length <= max) return value;
@@ -96,20 +92,24 @@ jobs:
 
             function isSelfCheckName(name) {
               const value = String(name || "").toLowerCase();
+
               return (
                 value.includes("pr telegram notify") ||
                 value.includes("build codex handoff") ||
                 value.includes("codex handoff") ||
                 value.includes("send pr status report to telegram") ||
-                value.includes("send pr failure/comment report to telegram")
+                value.includes("send pr failure/comment report to telegram") ||
+                value.includes("pr health monitor") ||
+                value.includes("pr-health-monitor") ||
+                value.includes("monitor pr health") ||
+                value.includes("pr codex monitor") ||
+                value.includes("pr-codex-monitor")
               );
             }
 
             function isMonitorNoise(login, body) {
               const user = String(login || "").toLowerCase();
               const text = String(body || "").toLowerCase();
-
-              if (user === "github-actions[bot]" && text.includes("monitor")) return true;
 
               const patterns = [
                 "pickfair-codex-monitor",
@@ -122,9 +122,34 @@ jobs:
                 "review comment ai",
                 "inoltrato a codex",
                 "questo review comment ai",
+                "codex-auto:ci-failure",
+                "@codex continue on the same open pr",
+                "@codex"
               ];
 
+              if (user === "github-actions[bot]" && text.includes("monitor")) return true;
               return patterns.some(p => text.includes(p));
+            }
+
+            function isAnnotationNoise(annotation, checkName) {
+              const text = [
+                checkName,
+                annotation.title,
+                annotation.message,
+                annotation.raw_details,
+                annotation.path,
+              ].join("\n").toLowerCase();
+
+              if (isSelfCheckName(checkName)) return true;
+              if (text.includes("node.js 20 actions are deprecated")) return true;
+              if (text.includes("node.js 20") && text.includes("deprecated")) return true;
+              if (text.includes("actions/upload-artifact") && text.includes("node.js 20")) return true;
+              if (text.includes("actions/github-script") && text.includes("node.js 20")) return true;
+              if (text.includes("pr-health-monitor")) return true;
+              if (text.includes("pr-codex-monitor")) return true;
+              if (text.includes("pr telegram notify")) return true;
+
+              return false;
             }
 
             function normalizeProblem(body) {
@@ -139,6 +164,224 @@ jobs:
               text = text.replace(/\s+/g, " ").trim();
 
               return text.slice(0, 800);
+            }
+
+            const ISSUE_DEFINITIONS = {
+              auto_throttle_update_signature: {
+                title: "Restore AutoThrottle.update public API compatibility",
+                file: "auto_throttle.py",
+                location: "AutoThrottle.update",
+                priority: "P1",
+                problem:
+                  "AutoThrottle.update was narrowed from variadic (*args, **kwargs) to kwargs-only (**kwargs). This is a backward-incompatible public API break and fails the repository public API guardrail snapshot.",
+                requiredFix:
+                  "Restore the public signature to def update(self, *args, **kwargs) -> bool while keeping the current validation and boolean success/failure behavior.",
+                expectedShape:
+                  "def update(self, *args, **kwargs) -> bool:",
+              },
+              auto_throttle_period_isfinite: {
+                title: "Reject non-finite period in AutoThrottle.__init__",
+                file: "auto_throttle.py",
+                location: "AutoThrottle.__init__",
+                priority: "P1",
+                problem:
+                  "The constructor can allow period=float('inf') or NaN. That can make _prune() never evict timestamps and can keep the limiter permanently saturated.",
+                requiredFix:
+                  "After parsing period, add if not math.isfinite(parsed_period): parsed_period = 1.0 before assigning self.period = max(0.0001, parsed_period). Do not change unrelated throttle behavior.",
+                expectedShape:
+                  "try:\n    parsed_period = float(period)\nexcept Exception:\n    parsed_period = 1.0\nif not math.isfinite(parsed_period):\n    parsed_period = 1.0\nself.period = max(0.0001, parsed_period)",
+              },
+              executor_wait_cleanup_race: {
+                title: "Fix ExecutorManager.wait cleanup race",
+                file: "executor_manager.py",
+                location: "ExecutorManager.wait finally block",
+                priority: "P1",
+                problem:
+                  "wait() removes from _completed_futures but leaves the same future in _futures. If future.result() returns before the done callback runs, the callback can later reinsert the completed future into _completed_futures, causing stale completed futures to accumulate.",
+                requiredFix:
+                  "Inside the finally block, remove the future from _futures first with an identity check, then remove it from _completed_futures with an identity check.",
+                expectedShape:
+                  "finally:\n    with self._lock:\n        if self._futures.get(key) is future:\n            self._futures.pop(key, None)\n        current_completed = self._completed_futures.get(key)\n        if current_completed is future:\n            self._completed_futures.pop(key, None)",
+              },
+              tick_dispatcher_monotonic: {
+                title: "Use monotonic clock in TickDispatcher.dispatch_tick",
+                file: "tick_dispatcher.py",
+                location: "dispatch_tick",
+                priority: "P2",
+                problem:
+                  "dispatch_tick uses time.time(), which can jump because of system clock, NTP or DST changes. This can break throttle cadence.",
+                requiredFix:
+                  "Replace now = time.time() with now = time.monotonic(). No import change is needed if import time already exists.",
+                expectedShape:
+                  "now = time.monotonic()",
+              },
+              tick_dispatcher_selection_id_validation: {
+                title: "Validate selection_id in TickDispatcher invalid tick handling",
+                file: "tick_dispatcher.py",
+                location: "dispatch_tick",
+                priority: "P2",
+                problem:
+                  "The dispatcher validates market_id but can still allow invalid or missing selection_id. Later code uses (market_id, selection_id) as a composite key.",
+                requiredFix:
+                  "Reject invalid ticks when the value is not TickData, market_id is missing/empty, or selection_id is missing/invalid. Keep the change minimal. Add logging only if there is already a logger pattern in the file; otherwise increment the invalid counter and return.",
+                expectedShape:
+                  "Validate tick type, market_id and selection_id before using the composite key.",
+              },
+              auto_throttle_api_calls_min_non_positive: {
+                title: "Clarify non-positive api_calls_min behavior",
+                file: "auto_throttle.py",
+                location: "AutoThrottle.update",
+                priority: "P2",
+                problem:
+                  "The new behavior rejects api_calls_min <= 0 by returning False. Reviewers flagged this as potentially breaking if callers used 0 to disable or reset throttling.",
+                requiredFix:
+                  "Either document clearly that api_calls_min <= 0 is rejected and returns False, or preserve old semantics if tests show 0 had a defined meaning. Prefer the smallest change that satisfies existing tests and the boolean success/failure contract.",
+                expectedShape:
+                  "Minimal code/docstring clarification or compatibility-preserving behavior.",
+              },
+              tick_dispatcher_complexity: {
+                title: "Reduce TickDispatcher.dispatch_tick complexity if still required by Codacy",
+                file: "tick_dispatcher.py",
+                location: "dispatch_tick",
+                priority: "P3",
+                problem:
+                  "Codacy may flag dispatch_tick cyclomatic complexity. This is lower priority than the behavioral fixes.",
+                requiredFix:
+                  "Only if Codacy remains blocking after the functional fixes, extract small private helpers for validation/callback execution without changing behavior.",
+                expectedShape:
+                  "Minimal helper extraction; no broad refactor.",
+              },
+              docstring_style_modified_files: {
+                title: "Restore missing docstrings/style only in modified files if still blocking",
+                file: "auto_throttle.py / tick_dispatcher.py / tests",
+                location: "modified files only",
+                priority: "P3",
+                problem:
+                  "Codacy may flag missing docstrings or minor style issues in modified files.",
+                requiredFix:
+                  "Fix only blocking Codacy issues in files touched by this PR. Do not do broad style cleanup outside PR scope.",
+                expectedShape:
+                  "Minimal docstrings/style cleanup in modified files only.",
+              },
+            };
+
+            function classifyText(text, path = "") {
+              const value = `${path}\n${text}`.toLowerCase();
+
+              if (
+                value.includes("autothrottle.update") &&
+                (
+                  value.includes("*args") ||
+                  value.includes("kwargs-only") ||
+                  value.includes("variadic") ||
+                  value.includes("positional") ||
+                  value.includes("public api") ||
+                  value.includes("contract snapshot") ||
+                  value.includes("signature")
+                )
+              ) {
+                return "auto_throttle_update_signature";
+              }
+
+              if (
+                value.includes("auto_throttle") &&
+                (
+                  value.includes("math.isfinite") ||
+                  value.includes("non-finite") ||
+                  value.includes("float(\"inf\")") ||
+                  value.includes("float('inf')") ||
+                  value.includes("_prune") ||
+                  value.includes("period")
+                )
+              ) {
+                return "auto_throttle_period_isfinite";
+              }
+
+              if (
+                value.includes("executor_manager") ||
+                (
+                  value.includes("wait()") &&
+                  value.includes("_completed_futures") &&
+                  value.includes("_futures")
+                ) ||
+                (
+                  value.includes("completed future") &&
+                  value.includes("future.result")
+                )
+              ) {
+                return "executor_wait_cleanup_race";
+              }
+
+              if (
+                value.includes("tick_dispatcher") &&
+                (
+                  value.includes("time.time") ||
+                  value.includes("time.monotonic") ||
+                  value.includes("ntp") ||
+                  value.includes("dst") ||
+                  value.includes("monotonic clock")
+                )
+              ) {
+                return "tick_dispatcher_monotonic";
+              }
+
+              if (
+                value.includes("tick_dispatcher") &&
+                (
+                  value.includes("selection_id") ||
+                  value.includes("invalid tick") ||
+                  value.includes("composite key") ||
+                  value.includes("market_id")
+                )
+              ) {
+                return "tick_dispatcher_selection_id_validation";
+              }
+
+              if (
+                value.includes("api_calls_min") &&
+                (
+                  value.includes("<= 0") ||
+                  value.includes("non-positive") ||
+                  value.includes("negative") ||
+                  value.includes("0")
+                )
+              ) {
+                return "auto_throttle_api_calls_min_non_positive";
+              }
+
+              if (
+                value.includes("cyclomatic complexity") &&
+                value.includes("tick_dispatcher")
+              ) {
+                return "tick_dispatcher_complexity";
+              }
+
+              if (
+                value.includes("missing function or method docstring") ||
+                value.includes("restore the module and class docstrings") ||
+                value.includes("docstring") ||
+                value.includes("d203")
+              ) {
+                return "docstring_style_modified_files";
+              }
+
+              return null;
+            }
+
+            function issueFromKey(key) {
+              return ISSUE_DEFINITIONS[key] ? { key, ...ISSUE_DEFINITIONS[key], evidence: [] } : null;
+            }
+
+            function addIssue(map, key, evidence) {
+              if (!key || !ISSUE_DEFINITIONS[key]) return;
+
+              if (!map.has(key)) {
+                map.set(key, issueFromKey(key));
+              }
+
+              if (evidence) {
+                map.get(key).evidence.push(evidence);
+              }
             }
 
             async function inferPrNumber() {
@@ -271,7 +514,7 @@ jobs:
               }
             }
 
-            async function getCheckAnnotations(checkRunId) {
+            async function getCheckAnnotations(checkRunId, checkName) {
               try {
                 const annotations = await github.paginate(github.rest.checks.listAnnotations, {
                   owner,
@@ -280,15 +523,17 @@ jobs:
                   per_page: 100,
                 });
 
-                return annotations.map(a => ({
-                  path: a.path || "",
-                  start_line: a.start_line || a.end_line || "",
-                  end_line: a.end_line || "",
-                  annotation_level: a.annotation_level || "",
-                  message: truncate(clean(a.message || ""), MAX_ANNOTATION_CHARS),
-                  title: truncate(clean(a.title || ""), MAX_ANNOTATION_CHARS),
-                  raw_details: truncate(clean(a.raw_details || ""), MAX_ANNOTATION_CHARS),
-                }));
+                return annotations
+                  .map(a => ({
+                    path: a.path || "",
+                    start_line: a.start_line || a.end_line || "",
+                    end_line: a.end_line || "",
+                    annotation_level: a.annotation_level || "",
+                    message: truncate(clean(a.message || ""), MAX_ANNOTATION_CHARS),
+                    title: truncate(clean(a.title || ""), MAX_ANNOTATION_CHARS),
+                    raw_details: truncate(clean(a.raw_details || ""), MAX_ANNOTATION_CHARS),
+                  }))
+                  .filter(a => !isAnnotationNoise(a, checkName));
               } catch (err) {
                 core.warning(`Could not read annotations for check ${checkRunId}: ${err.message}`);
                 return [];
@@ -394,6 +639,8 @@ jobs:
                 /pylint/i,
                 /mypy/i,
                 /pytest/i,
+                /guardrail/i,
+                /contract_snapshot/i,
               ];
 
               const hits = [];
@@ -572,22 +819,33 @@ jobs:
                   t.originalLine ||
                   "";
 
-                const normalized = normalizeProblem(lastUseful.body || "");
-                const key = `${path}:${line}:${normalized}`;
+                const body = truncate(clean(lastUseful.body || ""), MAX_THREAD_COMMENT_CHARS);
+                const issueKey = classifyText(body, path);
+
+                const key = issueKey || `${path}:${line}:${normalizeProblem(body)}`;
 
                 const item = {
+                  key,
+                  issue_key: issueKey,
                   thread_id: t.id,
                   path,
                   line,
                   author: lastUseful.author?.login || "unknown",
                   created_at: lastUseful.createdAt,
                   url: lastUseful.url,
-                  body: truncate(clean(lastUseful.body || ""), MAX_THREAD_COMMENT_CHARS),
+                  body,
                   comment_count: usefulComments.length,
+                  duplicate_count: 0,
+                  evidence_urls: [lastUseful.url].filter(Boolean),
                 };
 
                 if (deduped.has(key)) {
                   duplicateThreads += 1;
+                  const existing = deduped.get(key);
+                  existing.duplicate_count += 1;
+                  if (lastUseful.url && !existing.evidence_urls.includes(lastUseful.url)) {
+                    existing.evidence_urls.push(lastUseful.url);
+                  }
                 } else {
                   deduped.set(key, item);
                 }
@@ -698,6 +956,111 @@ jobs:
               };
             }
 
+            function buildDetectedIssues({
+              pr,
+              branch,
+              failedChecks,
+              annotationsByCheck,
+              reviewThreadAnalysis,
+              newComments,
+            }) {
+              const issues = new Map();
+
+              const forceKnownIssues =
+                Number(pr.number) === 220 ||
+                String(branch || "").includes("harden-tick-throttle-executor-determinism");
+
+              if (forceKnownIssues) {
+                [
+                  "auto_throttle_update_signature",
+                  "auto_throttle_period_isfinite",
+                  "executor_wait_cleanup_race",
+                  "tick_dispatcher_monotonic",
+                  "tick_dispatcher_selection_id_validation",
+                  "auto_throttle_api_calls_min_non_positive",
+                ].forEach(key => addIssue(issues, key, "Known required fix detected for this PR."));
+              }
+
+              for (const t of reviewThreadAnalysis.actionable_threads) {
+                const key = t.issue_key || classifyText(t.body, t.path);
+                addIssue(issues, key, `${t.path}:${t.line} ${t.url || ""}`);
+              }
+
+              for (const [checkName, annotations] of Object.entries(annotationsByCheck)) {
+                for (const a of annotations) {
+                  const text = [a.title, a.message, a.raw_details].join("\n");
+                  const key = classifyText(text, a.path);
+                  addIssue(issues, key, `${checkName} ${a.path}:${a.start_line || "n/a"}`);
+                }
+              }
+
+              for (const c of newComments.actionable) {
+                const key = classifyText(c.body, c.path || "");
+                addIssue(issues, key, `${c.type} ${c.url || ""}`);
+              }
+
+              return Array.from(issues.values());
+            }
+
+            function formatFixTheseIssuesOnly(issues) {
+              if (!issues.length) {
+                return [
+                  "No deduplicated code issues were detected.",
+                  "",
+                  "If checks are still red, inspect the failing check logs below and fix only current PR failures.",
+                ].join("\n");
+              }
+
+              const blocks = [];
+
+              blocks.push("You must fix ONLY the issues in this section first. These are deduplicated and rewritten as direct coding tasks for Codex.");
+              blocks.push("");
+              blocks.push("Global rules:");
+              blocks.push("- Continue on the existing PR branch.");
+              blocks.push("- Do not create a new PR.");
+              blocks.push("- Do not merge.");
+              blocks.push("- Do not work on main.");
+              blocks.push("- Do not modify unrelated files.");
+              blocks.push("- Do not chase duplicated old monitor comments.");
+              blocks.push("- Ignore PR Health Monitor / PR Telegram Notify / PR Codex Monitor self-check noise.");
+              blocks.push("- Ignore Node.js 20 deprecation annotations unless they directly fail this PR.");
+              blocks.push("");
+
+              issues.forEach((issue, index) => {
+                blocks.push(`## ${index + 1}. ${issue.title}`);
+                blocks.push("");
+                blocks.push(`Priority: ${issue.priority}`);
+                blocks.push(`File: ${issue.file}`);
+                blocks.push(`Location: ${issue.location}`);
+                blocks.push("");
+                blocks.push("Problem:");
+                blocks.push(issue.problem);
+                blocks.push("");
+                blocks.push("Required fix:");
+                blocks.push(issue.requiredFix);
+                blocks.push("");
+                blocks.push("Expected shape:");
+                blocks.push("```text");
+                blocks.push(issue.expectedShape);
+                blocks.push("```");
+
+                const evidence = (issue.evidence || []).filter(Boolean).slice(0, 6);
+                if (evidence.length) {
+                  blocks.push("");
+                  blocks.push("Evidence:");
+                  for (const e of evidence) {
+                    blocks.push(`- ${e}`);
+                  }
+                }
+
+                blocks.push("");
+                blocks.push("---");
+                blocks.push("");
+              });
+
+              return blocks.join("\n");
+            }
+
             function formatFailedChecksMarkdown(failedChecks) {
               if (!failedChecks.length) return "Nessun check rosso.";
 
@@ -751,7 +1114,7 @@ jobs:
                 blocks.push("");
               }
 
-              return blocks.length ? blocks.join("\n") : "Nessuna annotation disponibile.";
+              return blocks.length ? blocks.join("\n") : "Nessuna useful check annotation disponibile.";
             }
 
             function formatWorkflowDetailsMarkdown(details) {
@@ -800,20 +1163,29 @@ jobs:
               if (!threads.length) return "Nessun review thread actionable.";
 
               return threads.map((t, index) => {
+                const issueLabel = t.issue_key && ISSUE_DEFINITIONS[t.issue_key]
+                  ? ISSUE_DEFINITIONS[t.issue_key].title
+                  : "Unclassified review issue";
+
                 return [
-                  `### ${index + 1}. ${t.path || "unknown"}:${t.line || "n/a"}`,
+                  `### ${index + 1}. ${issueLabel}`,
                   "",
+                  `- File: ${t.path || "unknown"}:${t.line || "n/a"}`,
                   `- Author: ${t.author}`,
                   `- URL: ${t.url || "n/a"}`,
                   `- Thread ID: ${t.thread_id}`,
-                  `- Useful comments in thread: ${t.comment_count}`,
+                  `- Useful comments in group: ${t.comment_count}`,
+                  `- Duplicates collapsed into this group: ${t.duplicate_count || 0}`,
                   "",
                   "Problem / suggestion:",
                   "",
                   "```text",
                   t.body,
                   "```",
-                ].join("\n");
+                  "",
+                  t.evidence_urls?.length > 1 ? "Additional duplicate evidence URLs:" : "",
+                  ...(t.evidence_urls || []).slice(1, 8).map(url => `- ${url}`),
+                ].filter(Boolean).join("\n");
               }).join("\n\n");
             }
 
@@ -836,34 +1208,24 @@ jobs:
               }).join("\n\n");
             }
 
-            function buildFixPlan(failedChecks, annotationsByCheck, reviewThreads) {
+            function buildFixPlan(issues, failedChecks, annotationsByCheck, reviewThreads) {
               const lines = [];
 
-              lines.push("Codex must fix only the current PR branch.");
-              lines.push("Do not create a new PR.");
-              lines.push("Do not merge.");
-              lines.push("Do not work on main.");
-              lines.push("Do not chase duplicated old monitor comments.");
-              lines.push("");
+              lines.push("1. Start from `FIX THESE ISSUES ONLY` and implement those fixes first.");
+              lines.push("2. Re-run the smallest relevant tests:");
+              lines.push("   - pytest -q tests/unit/test_tick_throttle_executor_determinism.py tests/unit/test_auto_throttle.py");
+              lines.push("3. Re-run guardrail/contract tests if available from CI logs.");
+              lines.push("4. If Codacy/DeepSource still fail, fix only in-scope issues in modified files.");
+              lines.push("5. Push the fix commit to the same PR branch.");
+              lines.push("6. Do not create a new PR and do not merge.");
 
-              if (failedChecks.length) {
-                lines.push("1. Fix the failing checks listed in `Failing Checks To Fix`.");
+              if (issues.length) {
+                lines.push("");
+                lines.push("Detected issue order:");
+                issues.forEach((issue, index) => {
+                  lines.push(`${index + 1}. ${issue.title}`);
+                });
               }
-
-              const annotationCount = Object.values(annotationsByCheck).reduce((sum, arr) => sum + arr.length, 0);
-
-              if (annotationCount) {
-                lines.push("2. Fix the static analysis annotations listed in `Static Analysis Annotations` when they are in scope for this PR.");
-              }
-
-              if (reviewThreads.length) {
-                lines.push("3. Address the unresolved, non-outdated review threads listed in `Actionable Review Threads`.");
-              }
-
-              lines.push("4. Keep changes minimal and limited to files required by the current PR.");
-              lines.push("5. Run the smallest relevant tests first, then the full required suite if available.");
-              lines.push("6. Push the fix commit to the same PR branch.");
-              lines.push("7. Reply with the required response format at the end of this file.");
 
               return lines.join("\n");
             }
@@ -879,6 +1241,7 @@ jobs:
               workflowDetails,
               reviewThreadAnalysis,
               newComments,
+              detectedIssues,
               allClean,
             }) {
               const annotationCount = Object.values(annotationsByCheck).reduce((sum, arr) => sum + arr.length, 0);
@@ -898,15 +1261,11 @@ jobs:
                 `Short SHA: ${shortSha(headSha)}`,
                 `Commit date: ${commitDate.toISOString()}`,
                 "",
-                "Rules:",
+                "---",
                 "",
-                "- Continue on the existing PR branch.",
-                "- Do not create a new PR.",
-                "- Do not merge.",
-                "- Do not modify unrelated files.",
-                "- Do not refactor unrelated code.",
-                "- Treat duplicated old monitor comments as noise.",
-                "- Fix only actionable issues listed below.",
+                "# FIX THESE ISSUES ONLY",
+                "",
+                formatFixTheseIssuesOnly(detectedIssues),
                 "",
                 "---",
                 "",
@@ -917,10 +1276,10 @@ jobs:
                   : "Status: NOT GREEN / ACTION REQUIRED",
                 "",
                 `- Red checks: ${failedChecks.length}`,
-                `- Pending checks: ${pendingChecks.length}`,
-                `- Static analysis annotations included: ${annotationCount}`,
+                `- Pending checks, excluding self-monitor checks: ${pendingChecks.length}`,
+                `- Useful static analysis annotations included: ${annotationCount}`,
                 `- Review thread unresolved non-outdated raw: ${reviewThreadAnalysis.raw_unresolved_non_outdated}`,
-                `- Review thread actionable deduplicated: ${reviewThreadAnalysis.actionable_threads.length}`,
+                `- Review thread actionable deduplicated groups: ${reviewThreadAnalysis.actionable_threads.length}`,
                 `- Review thread noise-only ignored: ${reviewThreadAnalysis.noise_only_threads}`,
                 `- Review thread duplicates collapsed: ${reviewThreadAnalysis.duplicate_threads}`,
                 `- New comments after commit raw: ${newComments.raw_count}`,
@@ -941,9 +1300,9 @@ jobs:
                 "",
                 "---",
                 "",
-                "## Static Analysis Annotations",
+                "## Useful Static Analysis Annotations",
                 "",
-                "Includes Codacy, DeepSource, GitHub annotations, and any check annotations exposed through GitHub.",
+                "Includes useful Codacy, DeepSource, GitHub annotations, and check annotations exposed through GitHub. Self-monitor and Node.js deprecation noise are filtered out.",
                 "",
                 formatAnnotationsMarkdown(annotationsByCheck),
                 "",
@@ -955,9 +1314,9 @@ jobs:
                 "",
                 "---",
                 "",
-                "## Actionable Review Threads",
+                "## Deduplicated Review Thread Evidence",
                 "",
-                "Only unresolved, non-outdated review threads are included. Old monitor noise is filtered out and duplicates are collapsed.",
+                "Only unresolved, non-outdated review threads are included. Old monitor noise is filtered out. Repeated AutoThrottle.update / ExecutorManager.wait comments are collapsed into one group.",
                 "",
                 formatThreadsMarkdown(reviewThreadAnalysis.actionable_threads),
                 "",
@@ -971,7 +1330,7 @@ jobs:
                 "",
                 "## Deduplicated Fix Plan",
                 "",
-                buildFixPlan(failedChecks, annotationsByCheck, reviewThreadAnalysis.actionable_threads),
+                buildFixPlan(detectedIssues, failedChecks, annotationsByCheck, reviewThreadAnalysis.actionable_threads),
                 "",
                 "---",
                 "",
@@ -1017,6 +1376,7 @@ jobs:
               annotationsByCheck,
               reviewThreadAnalysis,
               newComments,
+              detectedIssues,
               allClean,
               handoffFilename,
             }) {
@@ -1033,17 +1393,18 @@ jobs:
                 `Head: ${shortSha(headSha)}`,
                 `PR: ${pr.html_url}`,
                 "",
+                `Problemi Codex deduplicati: ${detectedIssues.length}`,
                 `Check rossi: ${failedChecks.length}`,
-                `Check pending: ${pendingChecks.length}`,
-                `Annotations Codacy/DeepSource/GitHub: ${annotationCount}`,
+                `Check pending veri: ${pendingChecks.length}`,
+                `Annotations utili Codacy/DeepSource/GitHub: ${annotationCount}`,
                 `Review thread raw: ${reviewThreadAnalysis.raw_unresolved_non_outdated}`,
-                `Review thread actionable deduplicati: ${reviewThreadAnalysis.actionable_threads.length}`,
+                `Review thread deduplicati/gruppi: ${reviewThreadAnalysis.actionable_threads.length}`,
                 `Rumore vecchio monitor ignorato: ${reviewThreadAnalysis.noise_only_threads}`,
                 `Duplicati accorpati: ${reviewThreadAnalysis.duplicate_threads}`,
                 `Nuovi commenti actionable dopo commit: ${newComments.actionable_count}`,
                 "",
                 allClean
-                  ? "✅ Tutti i check sono verdi e non risultano thread actionable."
+                  ? "✅ Tutti i check sono verdi e non risultano problemi actionable."
                   : `📎 Allego file pronto per Codex: ${handoffFilename}`,
               ].join("\n");
             }
@@ -1094,7 +1455,7 @@ jobs:
 
               for (const c of checks) {
                 if (c.kind === "check_run" && c.id) {
-                  const annotations = await getCheckAnnotations(c.id);
+                  const annotations = await getCheckAnnotations(c.id, c.name);
 
                   if (annotations.length) {
                     const remaining = Math.max(0, MAX_ANNOTATIONS_TOTAL - totalAnnotations);
@@ -1114,11 +1475,21 @@ jobs:
               const reviewThreadAnalysis = await getUnresolvedReviewThreads(prNumber);
               const newComments = await getNewCommentsAfter(prNumber, commitDate);
 
+              const detectedIssues = buildDetectedIssues({
+                pr,
+                branch,
+                failedChecks,
+                annotationsByCheck,
+                reviewThreadAnalysis,
+                newComments,
+              });
+
               const allClean =
                 failedChecks.length === 0 &&
                 pendingChecks.length === 0 &&
                 totalAnnotations === 0 &&
-                reviewThreadAnalysis.actionable_threads.length === 0;
+                reviewThreadAnalysis.actionable_threads.length === 0 &&
+                detectedIssues.length === 0;
 
               const shouldNotify =
                 IS_MANUAL_RUN ||
@@ -1126,7 +1497,8 @@ jobs:
                 failedChecks.length > 0 ||
                 totalAnnotations > 0 ||
                 reviewThreadAnalysis.actionable_threads.length > 0 ||
-                newComments.actionable_count > 0;
+                newComments.actionable_count > 0 ||
+                detectedIssues.length > 0;
 
               if (!shouldNotify) {
                 core.info("No relevant PR health changes to notify.");
@@ -1142,7 +1514,8 @@ jobs:
                 failedChecks: failedChecks.map(c => `${c.name}:${c.kind}:${c.status || c.state}:${c.conclusion || ""}:${c.url || ""}`),
                 pendingChecks: pendingChecks.map(c => `${c.name}:${c.kind}:${c.status || c.state}:${c.conclusion || ""}`),
                 annotations: Object.entries(annotationsByCheck).map(([name, annotations]) => `${name}:${annotations.length}`),
-                actionableThreads: reviewThreadAnalysis.actionable_threads.map(t => `${t.path}:${t.line}:${t.url}:${oneLine(t.body, 80)}`),
+                issues: detectedIssues.map(i => i.key),
+                actionableThreads: reviewThreadAnalysis.actionable_threads.map(t => `${t.key}:${t.path}:${t.line}:${t.url}`),
                 newComments: newComments.actionable.map(c => `${c.type}:${c.id}:${c.created_at}`),
                 clean: allClean,
               };
@@ -1161,6 +1534,7 @@ jobs:
                 workflowDetails,
                 reviewThreadAnalysis,
                 newComments,
+                detectedIssues,
                 allClean,
               });
 
@@ -1173,6 +1547,7 @@ jobs:
                 annotationsByCheck,
                 reviewThreadAnalysis,
                 newComments,
+                detectedIssues,
                 allClean,
                 handoffFilename,
               });
