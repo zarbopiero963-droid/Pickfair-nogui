@@ -44,7 +44,7 @@ jobs:
     steps:
       - name: Analyze PR status, checks, annotations and review threads
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
           REPOSITORY: ${{ github.repository }}
           PR_NUMBER_INPUT: ${{ github.event.pull_request.number || github.event.inputs.pr_number || '' }}
           POST_COMMENT: ${{ github.event.inputs.post_comment || 'true' }}
@@ -59,18 +59,21 @@ jobs:
           import urllib.error
           import urllib.request
 
-          TOKEN = os.environ["GH_TOKEN"]
+          TOKEN = os.environ.get("GH_TOKEN", "").strip()
           REPO = os.environ["REPOSITORY"]
           OWNER, NAME = REPO.split("/", 1)
           PR_NUMBER_INPUT = os.environ.get("PR_NUMBER_INPUT", "").strip()
           POST_COMMENT = os.environ.get("POST_COMMENT", "true").lower() == "true"
           RUN_URL = os.environ["RUN_URL"]
 
+          if not TOKEN:
+              raise RuntimeError("Missing PICKFAIR_ACTIONS_TOKEN secret. Add it in Settings > Secrets and variables > Actions.")
+
           API = "https://api.github.com"
           GRAPHQL = "https://api.github.com/graphql"
 
           STATUS_CONTEXT = "pr-health-monitor"
-          COMMENT_MARKER = "<!-- pr-health-monitor:v3 -->"
+          COMMENT_MARKER = "<!-- pr-health-monitor:v4 -->"
 
           RED_CHECK_CONCLUSIONS = {
               "failure",
@@ -199,7 +202,7 @@ jobs:
           def is_noise_comment(body, author_login=None):
               text = body or ""
 
-              if COMMENT_MARKER in text:
+              if "<!-- pr-health-monitor:" in text:
                   return True
 
               for pattern in NOISE_PATTERNS:
@@ -563,7 +566,7 @@ jobs:
                   body = comment.get("body") or ""
                   user = ((comment.get("user") or {}).get("login") or "")
 
-                  if COMMENT_MARKER in body:
+                  if "<!-- pr-health-monitor:" in body:
                       continue
 
                   raw += 1
@@ -813,38 +816,33 @@ jobs:
               sha = pr["head"]["sha"]
               commit_dt = get_head_commit_datetime(sha)
 
-              try:
-                  checks = analyze_checks_and_statuses(sha)
-                  threads = analyze_review_threads(pr_number)
-                  comments = get_new_comments_after_commit(pr_number, commit_dt)
+              checks = analyze_checks_and_statuses(sha)
+              threads = analyze_review_threads(pr_number)
+              comments = get_new_comments_after_commit(pr_number, commit_dt)
 
-                  state, description = determine_state_and_description(checks, threads)
+              state, description = determine_state_and_description(checks, threads)
 
-                  report = build_report(
-                      pr=pr,
-                      commit_dt=commit_dt,
-                      checks=checks,
-                      threads=threads,
-                      comments=comments,
-                      state=state,
-                      description=description,
-                  )
+              report = build_report(
+                  pr=pr,
+                  commit_dt=commit_dt,
+                  checks=checks,
+                  threads=threads,
+                  comments=comments,
+                  state=state,
+                  description=description,
+              )
 
-                  create_status(sha, state, description)
+              create_status(sha, state, description)
 
-                  if POST_COMMENT:
+              if POST_COMMENT:
+                  try:
                       action = upsert_pr_comment(pr_number, report)
                       print(f"PR #{pr_number}: comment {action}")
+                  except Exception as exc:
+                      print(f"WARNING: could not create/update PR comment: {exc}", file=sys.stderr)
+                      print("Status was created anyway. Check PICKFAIR_ACTIONS_TOKEN repo permissions if comments still fail.", file=sys.stderr)
 
-                  print(f"PR #{pr_number}: {state} — {description}")
-
-              except Exception as exc:
-                  error_description = f"PR monitor error: {short(str(exc), 110)}"
-
-                  try:
-                      create_status(sha, "error", error_description)
-                  finally:
-                      raise
+              print(f"PR #{pr_number}: {state} — {description}")
 
 
           def main():
