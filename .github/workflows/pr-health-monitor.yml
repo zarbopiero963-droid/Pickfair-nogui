@@ -1,0 +1,833 @@
+name: PR Health Monitor
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Numero PR da controllare. Vuoto = tutte le PR aperte."
+        required: false
+        type: number
+      post_comment:
+        description: "Aggiorna/crea il commento riepilogativo nella PR"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+  statuses: write
+  issues: write
+  actions: read
+
+concurrency:
+  group: pr-health-monitor-${{ github.repository }}-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  monitor:
+    name: Monitor PR health
+    runs-on: ubuntu-latest
+
+    if: ${{ github.event_name != 'pull_request_target' || github.event.pull_request.draft == false }}
+
+    steps:
+      - name: Analyze PR status, checks, annotations and review threads
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER_INPUT: ${{ github.event.pull_request.number || github.event.inputs.pr_number || '' }}
+          POST_COMMENT: ${{ github.event.inputs.post_comment || 'true' }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 <<'PY'
+          import datetime as dt
+          import json
+          import os
+          import re
+          import sys
+          import textwrap
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          TOKEN = os.environ["GH_TOKEN"]
+          REPO = os.environ["REPOSITORY"]
+          OWNER, NAME = REPO.split("/", 1)
+          PR_NUMBER_INPUT = os.environ.get("PR_NUMBER_INPUT", "").strip()
+          POST_COMMENT = os.environ.get("POST_COMMENT", "true").lower() == "true"
+          RUN_URL = os.environ["RUN_URL"]
+
+          API = "https://api.github.com"
+          GRAPHQL = "https://api.github.com/graphql"
+
+          STATUS_CONTEXT = "pr-health-monitor"
+          COMMENT_MARKER = "<!-- pr-health-monitor:v2 -->"
+
+          RED_CHECK_CONCLUSIONS = {
+              "failure",
+              "cancelled",
+              "timed_out",
+              "action_required",
+              "startup_failure",
+          }
+
+          PENDING_CHECK_STATUSES = {
+              "queued",
+              "in_progress",
+              "requested",
+              "waiting",
+              "pending",
+          }
+
+          NOISE_PATTERNS = [
+              r"Rilevato dal monitor automatico",
+              r"review comment AI.*inoltrato a Codex",
+              r"Questo review comment AI.*inoltrato a Codex",
+              r"\binoltrato a Codex\b",
+              r"automatic monitor",
+              r"monitor automatico",
+              r"pr-health-monitor",
+              r"PR Health Monitor",
+          ]
+
+
+          def now_utc():
+              return dt.datetime.now(dt.timezone.utc)
+
+
+          def parse_ts(value):
+              return dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+          def request_json(method, url_or_path, payload=None):
+              if url_or_path.startswith("http"):
+                  url = url_or_path
+              else:
+                  url = API + url_or_path
+
+              data = None
+              if payload is not None:
+                  data = json.dumps(payload).encode("utf-8")
+
+              headers = {
+                  "Authorization": f"Bearer {TOKEN}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "pr-health-monitor",
+              }
+
+              req = urllib.request.Request(
+                  url,
+                  data=data,
+                  headers=headers,
+                  method=method,
+              )
+
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as resp:
+                      raw = resp.read().decode("utf-8")
+                      if not raw:
+                          return None
+                      return json.loads(raw)
+              except urllib.error.HTTPError as exc:
+                  body = exc.read().decode("utf-8", errors="replace")
+                  raise RuntimeError(
+                      f"{method} {url} failed with HTTP {exc.code}: {body[:1500]}"
+                  ) from exc
+
+
+          def rest_paginated(path):
+              items = []
+              page = 1
+              while True:
+                  sep = "&" if "?" in path else "?"
+                  page_path = f"{path}{sep}per_page=100&page={page}"
+                  data = request_json("GET", page_path)
+
+                  if isinstance(data, list):
+                      chunk = data
+                  elif isinstance(data, dict):
+                      if "check_runs" in data:
+                          chunk = data.get("check_runs", [])
+                      else:
+                          chunk = data.get("items", [])
+                  else:
+                      chunk = []
+
+                  items.extend(chunk)
+
+                  if len(chunk) < 100:
+                      break
+                  page += 1
+
+              return items
+
+
+          def graphql(query, variables):
+              payload = {
+                  "query": query,
+                  "variables": variables,
+              }
+              data = request_json("POST", GRAPHQL, payload)
+              if data.get("errors"):
+                  raise RuntimeError(json.dumps(data["errors"], ensure_ascii=False)[:2000])
+              return data["data"]
+
+
+          def is_noise_comment(body, author_login=None):
+              text = body or ""
+
+              if COMMENT_MARKER in text:
+                  return True
+
+              for pattern in NOISE_PATTERNS:
+                  if re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL):
+                      return True
+
+              author = author_login or ""
+              lowered = text.lower()
+
+              if author.endswith("[bot]") and "monitor" in lowered:
+                  return True
+
+              return False
+
+
+          def normalize_body(body):
+              text = body or ""
+              text = re.sub(r"<!--.*?-->", " ", text, flags=re.DOTALL)
+              text = re.sub(r"https?://\S+", " ", text)
+              text = re.sub(r"`{1,3}.*?`{1,3}", " ", text, flags=re.DOTALL)
+              text = re.sub(r"\b[0-9a-f]{7,40}\b", "<sha>", text, flags=re.IGNORECASE)
+              text = re.sub(r"\b\d+\b", "<n>", text)
+              text = re.sub(r"\s+", " ", text)
+              return text.strip().lower()[:700]
+
+
+          def short(text, limit=180):
+              text = re.sub(r"\s+", " ", text or "").strip()
+              if len(text) <= limit:
+                  return text
+              return text[: limit - 1].rstrip() + "…"
+
+
+          def md_escape(text):
+              return (text or "").replace("|", "\\|").replace("\n", " ")
+
+
+          def get_open_pr_numbers():
+              if PR_NUMBER_INPUT:
+                  return [int(PR_NUMBER_INPUT)]
+
+              prs = rest_paginated(f"/repos/{REPO}/pulls?state=open")
+              return [
+                  int(pr["number"])
+                  for pr in prs
+                  if not pr.get("draft")
+              ]
+
+
+          def get_pr(pr_number):
+              return request_json("GET", f"/repos/{REPO}/pulls/{pr_number}")
+
+
+          def get_head_commit_datetime(sha):
+              commit = request_json("GET", f"/repos/{REPO}/commits/{sha}")
+              commit_date = commit["commit"]["committer"]["date"]
+              return parse_ts(commit_date)
+
+
+          def ignore_status_context(context):
+              return (context or "").strip().lower() == STATUS_CONTEXT.lower()
+
+
+          def ignore_check_run(run):
+              name = (run.get("name") or "").strip().lower()
+              app_slug = ((run.get("app") or {}).get("slug") or "").strip().lower()
+
+              if name in {
+                  "monitor pr health",
+                  "pr health monitor",
+                  "pr-health-monitor",
+              }:
+                  return True
+
+              if STATUS_CONTEXT in name:
+                  return True
+
+              if app_slug == "github-actions" and STATUS_CONTEXT in name:
+                  return True
+
+              return False
+
+
+          def get_combined_statuses(sha):
+              combined = request_json("GET", f"/repos/{REPO}/commits/{sha}/status")
+              latest_by_context = {}
+
+              for status in combined.get("statuses", []):
+                  context = status.get("context") or ""
+                  if ignore_status_context(context):
+                      continue
+
+                  # GitHub returns newest first. Keep newest per context.
+                  if context not in latest_by_context:
+                      latest_by_context[context] = status
+
+              return list(latest_by_context.values())
+
+
+          def get_check_runs(sha):
+              runs = rest_paginated(
+                  f"/repos/{REPO}/commits/{sha}/check-runs?filter=latest"
+              )
+              return [
+                  run
+                  for run in runs
+                  if not ignore_check_run(run)
+              ]
+
+
+          def get_check_annotations(check_run_id):
+              return rest_paginated(
+                  f"/repos/{REPO}/check-runs/{check_run_id}/annotations"
+              )
+
+
+          def analyze_checks_and_statuses(sha):
+              statuses = get_combined_statuses(sha)
+              check_runs = get_check_runs(sha)
+
+              red_items = []
+              pending_items = []
+
+              for status in statuses:
+                  state = status.get("state")
+                  if state in {"failure", "error"}:
+                      red_items.append({
+                          "kind": "status",
+                          "name": status.get("context") or "status",
+                          "state": state,
+                          "url": status.get("target_url") or status.get("url"),
+                      })
+                  elif state == "pending":
+                      pending_items.append({
+                          "kind": "status",
+                          "name": status.get("context") or "status",
+                          "state": state,
+                          "url": status.get("target_url") or status.get("url"),
+                      })
+
+              annotation_runs = []
+              annotations = []
+
+              for run in check_runs:
+                  name = run.get("name") or "check"
+                  status = run.get("status")
+                  conclusion = run.get("conclusion")
+                  url = run.get("html_url")
+
+                  if status != "completed" or not conclusion:
+                      if status in PENDING_CHECK_STATUSES or not conclusion:
+                          pending_items.append({
+                              "kind": "check",
+                              "name": name,
+                              "state": status or "pending",
+                              "url": url,
+                          })
+                  elif conclusion in RED_CHECK_CONCLUSIONS:
+                      red_items.append({
+                          "kind": "check",
+                          "name": name,
+                          "state": conclusion,
+                          "url": url,
+                      })
+
+                  annotation_count = (
+                      (run.get("output") or {}).get("annotations_count") or 0
+                  )
+
+                  if annotation_count > 0:
+                      annotation_runs.append({
+                          "name": name,
+                          "count": annotation_count,
+                          "url": url,
+                      })
+
+                      try:
+                          for ann in get_check_annotations(run["id"]):
+                              annotations.append({
+                                  "check": name,
+                                  "level": ann.get("annotation_level"),
+                                  "path": ann.get("path"),
+                                  "line": ann.get("start_line") or ann.get("end_line"),
+                                  "message": ann.get("message"),
+                                  "title": ann.get("title"),
+                                  "url": url,
+                              })
+                      except Exception as exc:
+                          annotations.append({
+                              "check": name,
+                              "level": "unknown",
+                              "path": "",
+                              "line": "",
+                              "message": f"Unable to fetch annotations: {exc}",
+                              "title": "",
+                              "url": url,
+                          })
+
+              return {
+                  "red_items": red_items,
+                  "pending_items": pending_items,
+                  "annotation_runs": annotation_runs,
+                  "annotations": annotations,
+              }
+
+
+          def get_review_threads(pr_number):
+              query = """
+              query($owner: String!, $name: String!, $number: Int!, $after: String) {
+                repository(owner: $owner, name: $name) {
+                  pullRequest(number: $number) {
+                    reviewThreads(first: 100, after: $after) {
+                      pageInfo {
+                        hasNextPage
+                        endCursor
+                      }
+                      nodes {
+                        isResolved
+                        isOutdated
+                        path
+                        line
+                        originalLine
+                        comments(first: 100) {
+                          nodes {
+                            body
+                            createdAt
+                            url
+                            path
+                            line
+                            originalLine
+                            author {
+                              login
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+              """
+
+              after = None
+              threads = []
+
+              while True:
+                  data = graphql(
+                      query,
+                      {
+                          "owner": OWNER,
+                          "name": NAME,
+                          "number": int(pr_number),
+                          "after": after,
+                      },
+                  )
+
+                  conn = data["repository"]["pullRequest"]["reviewThreads"]
+                  threads.extend(conn["nodes"])
+
+                  if not conn["pageInfo"]["hasNextPage"]:
+                      break
+
+                  after = conn["pageInfo"]["endCursor"]
+
+              return threads
+
+
+          def analyze_review_threads(pr_number):
+              threads = get_review_threads(pr_number)
+
+              raw_unresolved_non_outdated = 0
+              noise_only_threads = 0
+              duplicate_threads = 0
+
+              deduped = {}
+
+              for thread in threads:
+                  if thread.get("isResolved"):
+                      continue
+                  if thread.get("isOutdated"):
+                      continue
+
+                  raw_unresolved_non_outdated += 1
+
+                  comments = ((thread.get("comments") or {}).get("nodes") or [])
+                  useful_comments = []
+
+                  for comment in comments:
+                      author = ((comment.get("author") or {}).get("login") or "")
+                      if not is_noise_comment(comment.get("body") or "", author):
+                          useful_comments.append(comment)
+
+                  if not useful_comments:
+                      noise_only_threads += 1
+                      continue
+
+                  # Latest useful comment usually contains the current actionable signal.
+                  comment = useful_comments[-1]
+
+                  path = (
+                      comment.get("path")
+                      or thread.get("path")
+                      or ""
+                  )
+                  line = (
+                      comment.get("line")
+                      or comment.get("originalLine")
+                      or thread.get("line")
+                      or thread.get("originalLine")
+                      or 0
+                  )
+
+                  normalized = normalize_body(comment.get("body") or "")
+                  key = f"{path}:{line}:{normalized}"
+
+                  item = {
+                      "path": path,
+                      "line": line,
+                      "author": ((comment.get("author") or {}).get("login") or ""),
+                      "created_at": comment.get("createdAt"),
+                      "url": comment.get("url"),
+                      "body": comment.get("body") or "",
+                  }
+
+                  if key in deduped:
+                      duplicate_threads += 1
+                  else:
+                      deduped[key] = item
+
+              return {
+                  "raw_unresolved_non_outdated": raw_unresolved_non_outdated,
+                  "noise_only_threads": noise_only_threads,
+                  "duplicate_threads": duplicate_threads,
+                  "actionable_threads": list(deduped.values()),
+              }
+
+
+          def get_new_comments_after_commit(pr_number, commit_dt):
+              review_comments = rest_paginated(f"/repos/{REPO}/pulls/{pr_number}/comments")
+              issue_comments = rest_paginated(f"/repos/{REPO}/issues/{pr_number}/comments")
+
+              raw = 0
+              actionable = 0
+              ignored_noise = 0
+
+              for comment in review_comments + issue_comments:
+                  created_raw = comment.get("created_at")
+                  if not created_raw:
+                      continue
+
+                  created = parse_ts(created_raw)
+                  if created <= commit_dt:
+                      continue
+
+                  body = comment.get("body") or ""
+                  user = ((comment.get("user") or {}).get("login") or "")
+
+                  if COMMENT_MARKER in body:
+                      continue
+
+                  raw += 1
+
+                  if is_noise_comment(body, user):
+                      ignored_noise += 1
+                  else:
+                      actionable += 1
+
+              return {
+                  "raw": raw,
+                  "actionable": actionable,
+                  "ignored_noise": ignored_noise,
+              }
+
+
+          def create_status(sha, state, description):
+              payload = {
+                  "state": state,
+                  "context": STATUS_CONTEXT,
+                  "description": description[:140],
+                  "target_url": RUN_URL,
+              }
+              request_json("POST", f"/repos/{REPO}/statuses/{sha}", payload)
+
+
+          def build_report(pr, commit_dt, checks, threads, comments, state, description):
+              pr_number = pr["number"]
+              sha = pr["head"]["sha"]
+              title = pr.get("title") or ""
+              html_url = pr.get("html_url") or ""
+
+              red_items = checks["red_items"]
+              pending_items = checks["pending_items"]
+              annotation_runs = checks["annotation_runs"]
+              annotations = checks["annotations"]
+              actionable_threads = threads["actionable_threads"]
+
+              lines = []
+              lines.append(COMMENT_MARKER)
+              lines.append(f"## 🩺 PR Health Monitor")
+              lines.append("")
+              lines.append(f"PR: [#{pr_number} — {md_escape(title)}]({html_url})")
+              lines.append(f"Head commit: `{sha[:12]}`")
+              lines.append(f"Commit timestamp: `{commit_dt.isoformat()}`")
+              lines.append(f"Monitor run: [GitHub Actions run]({RUN_URL})")
+              lines.append("")
+              lines.append(f"**Stato sintetico:** `{state}` — {description}")
+              lines.append("")
+              lines.append("### Riepilogo")
+              lines.append("")
+              lines.append("| Voce | Valore |")
+              lines.append("|---|---:|")
+              lines.append(f"| Check rossi | {len(red_items)} |")
+              lines.append(f"| Check pending | {len(pending_items)} |")
+              lines.append(f"| Check con annotations | {len(annotation_runs)} |")
+              lines.append(f"| Annotazioni totali lette | {len(annotations)} |")
+              lines.append(f"| Nuovi commenti dopo commit, raw | {comments['raw']} |")
+              lines.append(f"| Nuovi commenti dopo commit, actionable | {comments['actionable']} |")
+              lines.append(f"| Nuovi commenti ignorati come rumore monitor | {comments['ignored_noise']} |")
+              lines.append(f"| Review thread unresolved non outdated, raw | {threads['raw_unresolved_non_outdated']} |")
+              lines.append(f"| Review thread actionable deduplicati | {len(actionable_threads)} |")
+              lines.append(f"| Review thread ignorati perché solo rumore monitor | {threads['noise_only_threads']} |")
+              lines.append(f"| Review thread duplicati accorpati | {threads['duplicate_threads']} |")
+              lines.append("")
+
+              if red_items:
+                  lines.append("### 🔴 Check rossi")
+                  lines.append("")
+                  for item in red_items[:30]:
+                      url = item.get("url")
+                      name = md_escape(item.get("name") or item.get("kind") or "check")
+                      state_raw = item.get("state") or "failure"
+                      if url:
+                          lines.append(f"- [{name}]({url}) — `{state_raw}`")
+                      else:
+                          lines.append(f"- {name} — `{state_raw}`")
+                  if len(red_items) > 30:
+                      lines.append(f"- … altri {len(red_items) - 30}")
+                  lines.append("")
+
+              if pending_items:
+                  lines.append("### 🟡 Check pending")
+                  lines.append("")
+                  for item in pending_items[:30]:
+                      url = item.get("url")
+                      name = md_escape(item.get("name") or item.get("kind") or "check")
+                      state_raw = item.get("state") or "pending"
+                      if url:
+                          lines.append(f"- [{name}]({url}) — `{state_raw}`")
+                      else:
+                          lines.append(f"- {name} — `{state_raw}`")
+                  if len(pending_items) > 30:
+                      lines.append(f"- … altri {len(pending_items) - 30}")
+                  lines.append("")
+
+              if annotation_runs:
+                  lines.append("### 📝 Check con annotations")
+                  lines.append("")
+                  for item in annotation_runs[:30]:
+                      name = md_escape(item["name"])
+                      count = item["count"]
+                      url = item.get("url")
+                      if url:
+                          lines.append(f"- [{name}]({url}) — `{count}` annotation(s)")
+                      else:
+                          lines.append(f"- {name} — `{count}` annotation(s)")
+                  if len(annotation_runs) > 30:
+                      lines.append(f"- … altri {len(annotation_runs) - 30}")
+                  lines.append("")
+
+              if annotations:
+                  lines.append("### Prime annotations")
+                  lines.append("")
+                  lines.append("| Check | Level | File | Line | Messaggio |")
+                  lines.append("|---|---|---|---:|---|")
+                  for ann in annotations[:20]:
+                      check = md_escape(ann.get("check") or "")
+                      level = md_escape(ann.get("level") or "")
+                      path = md_escape(ann.get("path") or "")
+                      line = ann.get("line") or ""
+                      msg = md_escape(short(ann.get("message") or ann.get("title") or "", 140))
+                      lines.append(f"| {check} | {level} | `{path}` | {line} | {msg} |")
+                  if len(annotations) > 20:
+                      lines.append(f"")
+                      lines.append(f"_Altre annotations non mostrate: {len(annotations) - 20}_")
+                  lines.append("")
+
+              if actionable_threads:
+                  lines.append("### 🧵 Review thread actionable, deduplicati")
+                  lines.append("")
+                  for item in actionable_threads[:30]:
+                      path = item.get("path") or ""
+                      line = item.get("line") or ""
+                      author = item.get("author") or "unknown"
+                      url = item.get("url")
+                      body = short(item.get("body") or "", 260)
+
+                      location = f"`{path}:{line}`" if line else f"`{path}`"
+                      if url:
+                          lines.append(f"- {location} — @{author} — [link]({url})")
+                      else:
+                          lines.append(f"- {location} — @{author}")
+                      lines.append(f"  - {md_escape(body)}")
+
+                  if len(actionable_threads) > 30:
+                      lines.append(f"- … altri {len(actionable_threads) - 30}")
+                  lines.append("")
+
+              if not red_items and not pending_items and not annotation_runs and not actionable_threads:
+                  lines.append("### ✅ Nessun problema rilevato")
+                  lines.append("")
+                  lines.append("La PR risulta verde dopo filtro del rumore e deduplica.")
+                  lines.append("")
+
+              lines.append("---")
+              lines.append("")
+              lines.append("_Questo commento viene aggiornato automaticamente. Il monitor ignora i commenti duplicati del vecchio monitor e deduplica i thread uguali._")
+
+              return "\n".join(lines)
+
+
+          def upsert_pr_comment(pr_number, body):
+              comments = rest_paginated(f"/repos/{REPO}/issues/{pr_number}/comments")
+
+              for comment in comments:
+                  existing_body = comment.get("body") or ""
+                  if COMMENT_MARKER in existing_body:
+                      comment_id = comment["id"]
+                      request_json(
+                          "PATCH",
+                          f"/repos/{REPO}/issues/comments/{comment_id}",
+                          {"body": body},
+                      )
+                      return "updated"
+
+              request_json(
+                  "POST",
+                  f"/repos/{REPO}/issues/{pr_number}/comments",
+                  {"body": body},
+              )
+              return "created"
+
+
+          def determine_state_and_description(checks, threads):
+              red_count = len(checks["red_items"])
+              pending_count = len(checks["pending_items"])
+              annotation_run_count = len(checks["annotation_runs"])
+              actionable_thread_count = len(threads["actionable_threads"])
+
+              if (
+                  red_count == 0
+                  and pending_count == 0
+                  and annotation_run_count == 0
+                  and actionable_thread_count == 0
+              ):
+                  return (
+                      "success",
+                      "✅ PR verde: nessun check rosso, pending, annotation o thread actionable",
+                  )
+
+              parts = []
+              if red_count:
+                  parts.append(f"{red_count} rossi")
+              if pending_count:
+                  parts.append(f"{pending_count} pending")
+              if annotation_run_count:
+                  parts.append(f"{annotation_run_count} check con annotations")
+              if actionable_thread_count:
+                  parts.append(f"{actionable_thread_count} thread actionable")
+
+              # Usiamo pending/giallo: il monitor segnala che la PR non è verde
+              # senza aggiungere un ulteriore check rosso artificiale.
+              return (
+                  "pending",
+                  "🟡 PR non verde: " + ", ".join(parts),
+              )
+
+
+          def analyze_one_pr(pr_number):
+              pr = get_pr(pr_number)
+              sha = pr["head"]["sha"]
+              commit_dt = get_head_commit_datetime(sha)
+
+              try:
+                  checks = analyze_checks_and_statuses(sha)
+                  threads = analyze_review_threads(pr_number)
+                  comments = get_new_comments_after_commit(pr_number, commit_dt)
+
+                  state, description = determine_state_and_description(checks, threads)
+
+                  report = build_report(
+                      pr=pr,
+                      commit_dt=commit_dt,
+                      checks=checks,
+                      threads=threads,
+                      comments=comments,
+                      state=state,
+                      description=description,
+                  )
+
+                  create_status(sha, state, description)
+
+                  if POST_COMMENT:
+                      action = upsert_pr_comment(pr_number, report)
+                      print(f"PR #{pr_number}: comment {action}")
+
+                  print(f"PR #{pr_number}: {state} — {description}")
+
+              except Exception as exc:
+                  error_description = f"❌ PR monitor error: {short(str(exc), 110)}"
+                  try:
+                      create_status(sha, "error", error_description)
+                  finally:
+                      raise
+
+
+          def main():
+              pr_numbers = get_open_pr_numbers()
+
+              if not pr_numbers:
+                  print("No PRs to monitor.")
+                  return
+
+              errors = []
+
+              for pr_number in pr_numbers:
+                  try:
+                      analyze_one_pr(pr_number)
+                  except Exception as exc:
+                      errors.append((pr_number, exc))
+                      print(f"ERROR on PR #{pr_number}: {exc}", file=sys.stderr)
+
+              if errors:
+                  print("")
+                  print("Monitor errors:")
+                  for pr_number, exc in errors:
+                      print(f"- PR #{pr_number}: {exc}")
+                  sys.exit(1)
+
+
+          if __name__ == "__main__":
+              main()
+          PY
