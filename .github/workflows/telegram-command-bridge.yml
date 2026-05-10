@@ -1,0 +1,372 @@
+name: Telegram Command Bridge
+
+on:
+  workflow_dispatch:
+    inputs:
+      process_existing:
+        description: "Process existing pending Telegram updates instead of only initializing offset"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+  schedule:
+    - cron: "*/5 * * * *"
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: telegram-command-bridge
+  cancel-in-progress: false
+
+jobs:
+  telegram-bridge:
+    name: Poll Telegram commands and dispatch controller
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Poll Telegram and dispatch PR Automation Controller
+        uses: actions/github-script@v7
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PROCESS_EXISTING: ${{ github.event.inputs.process_existing || 'false' }}
+        with:
+          github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const token = process.env.TELEGRAM_BOT_TOKEN;
+            const chatId = String(process.env.TELEGRAM_CHAT_ID || "").trim();
+            const processExisting = process.env.PROCESS_EXISTING === "true";
+
+            const STATE_VARIABLE = "TELEGRAM_LAST_UPDATE_ID";
+
+            if (!token || !chatId) {
+              core.setFailed("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID.");
+              return;
+            }
+
+            async function telegram(method, params) {
+              const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+                method: "POST",
+                body: new URLSearchParams(params),
+              });
+
+              const body = await response.text();
+
+              if (!response.ok) {
+                throw new Error(`Telegram ${method} failed: ${response.status} ${body}`);
+              }
+
+              return JSON.parse(body);
+            }
+
+            async function sendMessage(text) {
+              await telegram("sendMessage", {
+                chat_id: chatId,
+                text,
+                disable_web_page_preview: "true",
+              });
+            }
+
+            async function getRepoVariable(name) {
+              try {
+                const { data } = await github.rest.actions.getRepoVariable({
+                  owner,
+                  repo,
+                  name,
+                });
+
+                return data.value || "";
+              } catch (err) {
+                if (err.status === 404) return null;
+                throw err;
+              }
+            }
+
+            async function setRepoVariable(name, value) {
+              const current = await getRepoVariable(name);
+
+              if (current === null) {
+                await github.rest.actions.createRepoVariable({
+                  owner,
+                  repo,
+                  name,
+                  value: String(value),
+                });
+              } else {
+                await github.rest.actions.updateRepoVariable({
+                  owner,
+                  repo,
+                  name,
+                  value: String(value),
+                });
+              }
+            }
+
+            async function dispatchController({ mode, prNumber, force, dryRun, runCodexSmoke }) {
+              const repoInfo = await github.rest.repos.get({
+                owner,
+                repo,
+              });
+
+              const ref = repoInfo.data.default_branch;
+
+              await github.rest.actions.createWorkflowDispatch({
+                owner,
+                repo,
+                workflow_id: "pr-automation-controller.yml",
+                ref,
+                inputs: {
+                  mode,
+                  pr_number: prNumber || "",
+                  force: force ? "true" : "false",
+                  dry_run: dryRun ? "true" : "false",
+                  run_codex_smoke: runCodexSmoke ? "true" : "false",
+                },
+              });
+            }
+
+            function normalizeCommand(text) {
+              return String(text || "")
+                .trim()
+                .replace(/\s+/g, " ");
+            }
+
+            function parseCommand(text) {
+              const raw = normalizeCommand(text);
+
+              if (!raw.startsWith("/")) {
+                return null;
+              }
+
+              const parts = raw.split(" ");
+              const command = parts[0].split("@")[0].toLowerCase();
+              const args = parts.slice(1);
+
+              const hasForce = args.some(a => a.toLowerCase() === "force" || a.toLowerCase() === "--force");
+              const hasDry = args.some(a => a.toLowerCase() === "dry" || a.toLowerCase() === "--dry" || a.toLowerCase() === "dry_run");
+              const hasSmoke = args.some(a => a.toLowerCase() === "smoke" || a.toLowerCase() === "--smoke");
+
+              const firstNumber = args.find(a => /^\d+$/.test(a));
+
+              if (command === "/help" || command === "/start") {
+                return {
+                  kind: "help",
+                };
+              }
+
+              if (command === "/full") {
+                if (!firstNumber) {
+                  return {
+                    kind: "error",
+                    message: "Uso corretto: /full 220",
+                  };
+                }
+
+                return {
+                  kind: "dispatch",
+                  mode: "full",
+                  prNumber: firstNumber,
+                  force: hasForce,
+                  dryRun: hasDry,
+                  runCodexSmoke: false,
+                };
+              }
+
+              if (command === "/report") {
+                if (!firstNumber) {
+                  return {
+                    kind: "error",
+                    message: "Uso corretto: /report 220",
+                  };
+                }
+
+                return {
+                  kind: "dispatch",
+                  mode: "report",
+                  prNumber: firstNumber,
+                  force: false,
+                  dryRun: false,
+                  runCodexSmoke: false,
+                };
+              }
+
+              if (command === "/fix") {
+                if (!firstNumber) {
+                  return {
+                    kind: "error",
+                    message: "Uso corretto: /fix 220 oppure /fix 220 force dry",
+                  };
+                }
+
+                return {
+                  kind: "dispatch",
+                  mode: "fix-latest",
+                  prNumber: firstNumber,
+                  force: hasForce,
+                  dryRun: hasDry,
+                  runCodexSmoke: false,
+                };
+              }
+
+              if (command === "/health") {
+                return {
+                  kind: "dispatch",
+                  mode: "health",
+                  prNumber: "",
+                  force: false,
+                  dryRun: false,
+                  runCodexSmoke: hasSmoke,
+                };
+              }
+
+              return {
+                kind: "error",
+                message: [
+                  `Comando non riconosciuto: ${command}`,
+                  "",
+                  "Comandi disponibili:",
+                  "/full 220",
+                  "/report 220",
+                  "/fix 220",
+                  "/fix 220 force",
+                  "/fix 220 dry",
+                  "/fix 220 force dry",
+                  "/health",
+                  "/health smoke",
+                ].join("\n"),
+              };
+            }
+
+            function helpText() {
+              return [
+                "🤖 Pickfair automation commands",
+                "",
+                "/full 220",
+                "Genera nuovo handoff .md e poi avvia Codex fix automatico.",
+                "",
+                "/report 220",
+                "Genera solo report/handoff .md su Telegram.",
+                "",
+                "/fix 220",
+                "Usa ultimo handoff .md e avvia Codex CLI sul VPS.",
+                "",
+                "/fix 220 force",
+                "Forza nuovo tentativo anche se già provato.",
+                "",
+                "/fix 220 dry",
+                "Esegue Codex ma non committa/pusha.",
+                "",
+                "/fix 220 force dry",
+                "Forza tentativo in dry run.",
+                "",
+                "/health",
+                "Controlla VPS runner e Codex CLI.",
+                "",
+                "/health smoke",
+                "Controlla VPS runner e fa mini test Codex CLI.",
+              ].join("\n");
+            }
+
+            const lastValue = await getRepoVariable(STATE_VARIABLE);
+            const lastUpdateId = lastValue ? Number(lastValue) : 0;
+
+            const offset = lastUpdateId > 0 ? lastUpdateId + 1 : undefined;
+
+            const params = {
+              timeout: "0",
+              allowed_updates: JSON.stringify(["message"]),
+            };
+
+            if (offset) {
+              params.offset = String(offset);
+            }
+
+            const updatesResponse = await telegram("getUpdates", params);
+            const updates = updatesResponse.result || [];
+
+            if (!updates.length) {
+              core.info("No Telegram updates.");
+              return;
+            }
+
+            const maxUpdateId = Math.max(...updates.map(u => u.update_id));
+
+            if (!lastValue && !processExisting) {
+              await setRepoVariable(STATE_VARIABLE, String(maxUpdateId));
+              core.info(`Initialized ${STATE_VARIABLE}=${maxUpdateId}. Existing updates ignored.`);
+              await sendMessage(
+                [
+                  "✅ Telegram Command Bridge inizializzato.",
+                  "",
+                  "I vecchi messaggi sono stati ignorati.",
+                  "Da ora puoi usare:",
+                  "",
+                  "/help",
+                ].join("\n")
+              );
+              return;
+            }
+
+            let processed = 0;
+
+            for (const update of updates) {
+              const message = update.message;
+              const text = message?.text || "";
+
+              const messageChatId = String(message?.chat?.id || "");
+
+              if (messageChatId !== chatId) {
+                core.info(`Ignoring message from unauthorized chat: ${messageChatId}`);
+                continue;
+              }
+
+              const parsed = parseCommand(text);
+
+              if (!parsed) {
+                core.info(`Ignoring non-command message: ${text}`);
+                continue;
+              }
+
+              processed += 1;
+
+              if (parsed.kind === "help") {
+                await sendMessage(helpText());
+                continue;
+              }
+
+              if (parsed.kind === "error") {
+                await sendMessage(`⚠️ ${parsed.message}`);
+                continue;
+              }
+
+              if (parsed.kind === "dispatch") {
+                await dispatchController(parsed);
+
+                await sendMessage(
+                  [
+                    "✅ Comando ricevuto e dispatch avviato",
+                    "",
+                    `Mode: ${parsed.mode}`,
+                    `PR: ${parsed.prNumber || "n/a"}`,
+                    `Force: ${parsed.force ? "true" : "false"}`,
+                    `Dry run: ${parsed.dryRun ? "true" : "false"}`,
+                    `Codex smoke: ${parsed.runCodexSmoke ? "true" : "false"}`,
+                    "",
+                    `Controller: https://github.com/${owner}/${repo}/actions/workflows/pr-automation-controller.yml`,
+                  ].join("\n")
+                );
+              }
+            }
+
+            await setRepoVariable(STATE_VARIABLE, String(maxUpdateId));
+
+            core.info(`Processed commands: ${processed}`);
+            core.info(`Updated ${STATE_VARIABLE}=${maxUpdateId}`);
