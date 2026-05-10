@@ -110,7 +110,15 @@ jobs:
               }
             }
 
-            async function dispatchController({ mode, prNumber, force, dryRun, runCodexSmoke }) {
+            async function dispatchController({
+              mode,
+              prNumber,
+              taskTitle,
+              taskText,
+              force,
+              dryRun,
+              runCodexSmoke,
+            }) {
               const repoInfo = await github.rest.repos.get({
                 owner,
                 repo,
@@ -126,6 +134,8 @@ jobs:
                 inputs: {
                   mode,
                   pr_number: prNumber || "",
+                  task_title: taskTitle || "",
+                  task_text: taskText || "",
                   force: force ? "true" : "false",
                   dry_run: dryRun ? "true" : "false",
                   run_codex_smoke: runCodexSmoke ? "true" : "false",
@@ -139,20 +149,71 @@ jobs:
                 .replace(/\s+/g, " ");
             }
 
-            function parseCommand(text) {
-              const raw = normalizeCommand(text);
+            function parseTaskCommand(rawText, dryRun) {
+              const raw = String(rawText || "").trim();
 
-              if (!raw.startsWith("/")) {
+              const withoutCommand = raw
+                .replace(/^\/task-dry(@[A-Za-z0-9_]+)?\s*/i, "")
+                .replace(/^\/task(@[A-Za-z0-9_]+)?\s*/i, "")
+                .trim();
+
+              if (!withoutCommand) {
+                return {
+                  kind: "error",
+                  message: dryRun
+                    ? "Uso corretto: /task-dry Titolo | Descrizione lunga"
+                    : "Uso corretto: /task Titolo | Descrizione lunga",
+                };
+              }
+
+              const parts = withoutCommand.split("|");
+              const taskTitle = String(parts.shift() || "").trim();
+              const taskText = parts.join("|").trim() || taskTitle;
+
+              if (!taskTitle || !taskText) {
+                return {
+                  kind: "error",
+                  message: dryRun
+                    ? "Uso corretto: /task-dry Titolo | Descrizione lunga"
+                    : "Uso corretto: /task Titolo | Descrizione lunga",
+                };
+              }
+
+              return {
+                kind: "dispatch",
+                mode: "new-task",
+                prNumber: "",
+                taskTitle,
+                taskText,
+                force: false,
+                dryRun,
+                runCodexSmoke: false,
+              };
+            }
+
+            function parseCommand(text) {
+              const rawText = String(text || "").trim();
+
+              if (!rawText.startsWith("/")) {
                 return null;
               }
 
-              const parts = raw.split(" ");
+              const compact = normalizeCommand(rawText);
+              const parts = compact.split(" ");
               const command = parts[0].split("@")[0].toLowerCase();
               const args = parts.slice(1);
 
-              const hasForce = args.some(a => a.toLowerCase() === "force" || a.toLowerCase() === "--force");
-              const hasDry = args.some(a => a.toLowerCase() === "dry" || a.toLowerCase() === "--dry" || a.toLowerCase() === "dry_run");
-              const hasSmoke = args.some(a => a.toLowerCase() === "smoke" || a.toLowerCase() === "--smoke");
+              const hasForce = args.some(a =>
+                ["force", "--force"].includes(a.toLowerCase())
+              );
+
+              const hasDry = args.some(a =>
+                ["dry", "--dry", "dry_run", "--dry-run"].includes(a.toLowerCase())
+              );
+
+              const hasSmoke = args.some(a =>
+                ["smoke", "--smoke"].includes(a.toLowerCase())
+              );
 
               const firstNumber = args.find(a => /^\d+$/.test(a));
 
@@ -160,6 +221,14 @@ jobs:
                 return {
                   kind: "help",
                 };
+              }
+
+              if (command === "/task") {
+                return parseTaskCommand(rawText, false);
+              }
+
+              if (command === "/task-dry") {
+                return parseTaskCommand(rawText, true);
               }
 
               if (command === "/full") {
@@ -174,6 +243,8 @@ jobs:
                   kind: "dispatch",
                   mode: "full",
                   prNumber: firstNumber,
+                  taskTitle: "",
+                  taskText: "",
                   force: hasForce,
                   dryRun: hasDry,
                   runCodexSmoke: false,
@@ -192,6 +263,8 @@ jobs:
                   kind: "dispatch",
                   mode: "report",
                   prNumber: firstNumber,
+                  taskTitle: "",
+                  taskText: "",
                   force: false,
                   dryRun: false,
                   runCodexSmoke: false,
@@ -210,6 +283,8 @@ jobs:
                   kind: "dispatch",
                   mode: "fix-latest",
                   prNumber: firstNumber,
+                  taskTitle: "",
+                  taskText: "",
                   force: hasForce,
                   dryRun: hasDry,
                   runCodexSmoke: false,
@@ -221,6 +296,8 @@ jobs:
                   kind: "dispatch",
                   mode: "health",
                   prNumber: "",
+                  taskTitle: "",
+                  taskText: "",
                   force: false,
                   dryRun: false,
                   runCodexSmoke: hasSmoke,
@@ -233,6 +310,8 @@ jobs:
                   `Comando non riconosciuto: ${command}`,
                   "",
                   "Comandi disponibili:",
+                  "/task Titolo | Descrizione lunga",
+                  "/task-dry Titolo | Descrizione lunga",
                   "/full 220",
                   "/report 220",
                   "/fix 220",
@@ -241,6 +320,7 @@ jobs:
                   "/fix 220 force dry",
                   "/health",
                   "/health smoke",
+                  "/help",
                 ].join("\n"),
               };
             }
@@ -248,6 +328,12 @@ jobs:
             function helpText() {
               return [
                 "🤖 Pickfair automation commands",
+                "",
+                "/task Titolo | Descrizione lunga",
+                "Crea una nuova branch, fa lavorare Codex CLI sul VPS, committa, pusha e crea una PR.",
+                "",
+                "/task-dry Titolo | Descrizione lunga",
+                "Esegue il task su VPS senza commit, push o PR.",
                 "",
                 "/full 220",
                 "Genera nuovo handoff .md e poi avvia Codex fix automatico.",
@@ -278,15 +364,13 @@ jobs:
             const lastValue = await getRepoVariable(STATE_VARIABLE);
             const lastUpdateId = lastValue ? Number(lastValue) : 0;
 
-            const offset = lastUpdateId > 0 ? lastUpdateId + 1 : undefined;
-
             const params = {
               timeout: "0",
               allowed_updates: JSON.stringify(["message"]),
             };
 
-            if (offset) {
-              params.offset = String(offset);
+            if (lastUpdateId > 0) {
+              params.offset = String(lastUpdateId + 1);
             }
 
             const updatesResponse = await telegram("getUpdates", params);
@@ -301,7 +385,9 @@ jobs:
 
             if (!lastValue && !processExisting) {
               await setRepoVariable(STATE_VARIABLE, String(maxUpdateId));
+
               core.info(`Initialized ${STATE_VARIABLE}=${maxUpdateId}. Existing updates ignored.`);
+
               await sendMessage(
                 [
                   "✅ Telegram Command Bridge inizializzato.",
@@ -312,6 +398,7 @@ jobs:
                   "/help",
                 ].join("\n")
               );
+
               return;
             }
 
@@ -320,7 +407,6 @@ jobs:
             for (const update of updates) {
               const message = update.message;
               const text = message?.text || "";
-
               const messageChatId = String(message?.chat?.id || "");
 
               if (messageChatId !== chatId) {
@@ -356,6 +442,7 @@ jobs:
                     "",
                     `Mode: ${parsed.mode}`,
                     `PR: ${parsed.prNumber || "n/a"}`,
+                    `Task title: ${parsed.taskTitle || "n/a"}`,
                     `Force: ${parsed.force ? "true" : "false"}`,
                     `Dry run: ${parsed.dryRun ? "true" : "false"}`,
                     `Codex smoke: ${parsed.runCodexSmoke ? "true" : "false"}`,
