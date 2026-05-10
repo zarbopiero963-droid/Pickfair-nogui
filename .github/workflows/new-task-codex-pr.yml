@@ -1,0 +1,629 @@
+name: New Task Codex PR
+on: workflow_dispatch: inputs: task_text: description: "Task text to implement" required: true type: string task_title: description: "Optional PR/task title" required: false type: string dry_run: description: "Run Codex but do not commit/push/create PR" required: false default: "false" type: choice options: - "false" - "true"
+repository_dispatch: types: - telegram_new_task
+permissions: contents: write pull-requests: write issues: read actions: read
+concurrency: group: new-task-codex-pr-${{ github.event.inputs.task_title || github.event.client_payload.task_title || github.run_id }} cancel-in-progress: false
+jobs: new-task: name: Create PR from new task using Codex CLI runs-on: self-hosted
+env:
+  GH_TOKEN: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+  GITHUB_TOKEN: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+steps:
+  - name: Resolve task input and check open PR guard
+    id: task
+    uses: actions/github-script@v7
+    with:
+      github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+      script: |
+        const crypto = require("crypto");
+
+        const owner = context.repo.owner;
+        const repo = context.repo.repo;
+
+        const payload = context.payload.client_payload || {};
+        const inputs = context.payload.inputs || {};
+
+        const taskText = String(inputs.task_text || payload.task_text || "").trim();
+        const taskTitleRaw = String(inputs.task_title || payload.task_title || "").trim();
+        const dryRun = String(inputs.dry_run || payload.dry_run || "false").trim();
+
+        if (!taskText) {
+          core.setFailed("Missing task_text.");
+          return;
+        }
+
+        const prs = await github.paginate(github.rest.pulls.list, {
+          owner,
+          repo,
+          state: "open",
+          per_page: 100,
+        });
+
+        const nonDraftOpenPrs = prs.filter(pr => !pr.draft);
+
+        if (nonDraftOpenPrs.length > 0) {
+          const list = nonDraftOpenPrs
+            .map(pr => `#${pr.number} ${pr.head.ref} ${pr.html_url}`)
+            .join("\n");
+
+          core.setFailed(
+            [
+              "BLOCKED",
+              "",
+              "Reason:",
+              "- An open PR already exists. New tasks cannot start while another PR is open.",
+              "",
+              "Open PRs:",
+              list,
+              "",
+              "Required owner action:",
+              "- Finish/merge/close the open PR first, or send a current-PR repair handoff instead.",
+            ].join("\n")
+          );
+          return;
+        }
+
+        const repoInfo = await github.rest.repos.get({ owner, repo });
+        const baseBranch = repoInfo.data.default_branch || "main";
+
+        function slugify(value) {
+          return value
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-+|-+$/g, "")
+            .slice(0, 60) || "telegram-task";
+        }
+
+        const firstLine = taskText.split("\n").find(Boolean) || "Telegram task";
+        const title = taskTitleRaw || firstLine.slice(0, 120);
+        const hash = crypto.createHash("sha256").update(taskText).digest("hex").slice(0, 10);
+        const branch = `codex/${slugify(title)}-${hash}`;
+
+        core.setOutput("task_text", taskText);
+        core.setOutput("task_title", title);
+        core.setOutput("task_hash", hash);
+        core.setOutput("branch", branch);
+        core.setOutput("base_branch", baseBranch);
+        core.setOutput("dry_run", dryRun === "true" ? "true" : "false");
+
+        core.info(`Task title: ${title}`);
+        core.info(`Branch: ${branch}`);
+        core.info(`Base branch: ${baseBranch}`);
+
+  - name: Notify Telegram task accepted
+    env:
+      TASK_TITLE: ${{ steps.task.outputs.task_title }}
+      BRANCH: ${{ steps.task.outputs.branch }}
+      DRY_RUN: ${{ steps.task.outputs.dry_run }}
+    run: |
+      set -euo pipefail
+
+      if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+        echo "Telegram secrets missing. Skipping notification."
+        exit 0
+      fi
+
+      TEXT="$(cat <<EOF
+      🆕 New task accepted
+
+      Title: $TASK_TITLE
+      Branch: $BRANCH
+      Dry run: $DRY_RUN
+
+      Codex CLI will run on the VPS self-hosted runner.
+      EOF
+      )"
+
+      curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+        -d "chat_id=${TELEGRAM_CHAT_ID}" \
+        --data-urlencode "text=$TEXT" \
+        -d "disable_web_page_preview=true" >/dev/null
+
+  - name: Checkout base branch
+    uses: actions/checkout@v4
+    with:
+      token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+      fetch-depth: 0
+      ref: ${{ steps.task.outputs.base_branch }}
+      persist-credentials: true
+
+  - name: Configure git identity
+    run: |
+      set -euo pipefail
+      git config user.name "pickfair-codex-auto"
+      git config user.email "actions@github.com"
+      git remote -v
+      git branch --show-current
+
+  - name: Create task branch
+    env:
+      BRANCH: ${{ steps.task.outputs.branch }}
+      BASE_BRANCH: ${{ steps.task.outputs.base_branch }}
+    run: |
+      set -euo pipefail
+
+      git fetch origin "$BASE_BRANCH"
+      git checkout "$BASE_BRANCH"
+      git reset --hard "origin/$BASE_BRANCH"
+      git checkout -B "$BRANCH"
+
+      CURRENT_BRANCH="$(git branch --show-current)"
+
+      if [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
+        echo "Failed to switch to task branch."
+        echo "Current: $CURRENT_BRANCH"
+        echo "Expected: $BRANCH"
+        exit 1
+      fi
+
+      if [ "$CURRENT_BRANCH" = "main" ] || [ "$CURRENT_BRANCH" = "master" ]; then
+        echo "Refusing to work directly on main/master."
+        exit 1
+      fi
+
+  - name: Verify Codex CLI login
+    run: |
+      set -euo pipefail
+
+      if ! command -v codex >/dev/null 2>&1; then
+        echo "Codex CLI not found on self-hosted runner."
+        echo "Install it first: npm install -g @openai/codex"
+        exit 1
+      fi
+
+      codex --version || true
+
+      if [ ! -d "$HOME/.codex" ]; then
+        echo "Codex config directory not found: $HOME/.codex"
+        echo "Run codex login once on the VPS runner user."
+        exit 1
+      fi
+
+      echo "Codex CLI available."
+
+  - name: Build Codex new-task prompt
+    env:
+      TASK_TEXT: ${{ steps.task.outputs.task_text }}
+      TASK_TITLE: ${{ steps.task.outputs.task_title }}
+      BRANCH: ${{ steps.task.outputs.branch }}
+      BASE_BRANCH: ${{ steps.task.outputs.base_branch }}
+      REPOSITORY: ${{ github.repository }}
+    run: |
+      set -euo pipefail
+      mkdir -p codex-output
+
+      cat > codex-new-task-prompt.md <<'EOF'
+      # CODEX TASK COMMAND
+
+      CTO MODE: LOCKED IN — NEW TASK / CREATE ONE PR
+
+      ## Auto mode detection
+
+      This is NEW TASK MODE.
+
+      No open PR should exist for this task.
+
+      ## Target
+
+      Repository: __REPOSITORY__
+      Base branch: __BASE_BRANCH__
+      Task branch: __BRANCH__
+      Task title: __TASK_TITLE__
+
+      ## Branch rules
+
+      - Create and use only the task branch listed above.
+      - Do NOT work directly on main.
+      - Do NOT merge.
+      - Do NOT create multiple branches.
+      - Do NOT create multiple PRs.
+      - Do NOT force-push unless explicitly required and safe.
+      - If git remote or credentials are missing and push is required, respond with NEEDS_MANUAL_UPDATE_BRANCH.
+
+      ## Strict scope
+
+      Implement only the task below.
+
+      Do NOT modify:
+      - unrelated workflows
+      - unrelated scripts
+      - unrelated tests
+      - guardrail JSON unless the task explicitly requires it
+      - secrets or credentials
+      - generated local logs/caches
+      - unrelated business logic files
+
+      Do not broad-refactor.
+      Do not expand scope.
+      Do not silence tests/checks.
+      Do not remove guardrails.
+
+      ## Task
+
+      __TASK_TEXT__
+
+      ## First inspect
+
+      ```bash
+      git status --short
+      git branch --show-current
+      find . -maxdepth 3 -type f | sort | sed -n '1,200p'
+      ```
+
+      ## After changes
+
+      ```bash
+      git status --short
+      git diff --stat
+      git diff
+      ```
+
+      ## Recommended checks
+
+      Run relevant checks for the files you changed.
+
+      At minimum, for Python files changed:
+
+      ```bash
+      python -m py_compile <changed python files>
+      ```
+
+      If relevant tests are obvious, run them.
+
+      ## Return only
+
+      ```text
+      DONE / PARTIAL / NOT DONE
+
+      Summary:
+      - <what changed>
+
+      Branch:
+      - <branch used>
+
+      Commit:
+      - <commit SHA>
+
+      PR:
+      - <PR URL or pending>
+
+      Checks:
+      - <exact commands and results>
+
+      Files changed:
+      - <files>
+
+      Files created:
+      - <files>
+
+      Push:
+      - succeeded / failed
+
+      Final factual status:
+      - DONE / PARTIAL / NOT DONE
+      ```
+
+      ## Real execution rules
+
+      - Inspect first.
+      - Implement only the requested task.
+      - No broad refactor.
+      - No unrelated hardening.
+      - No workflow edits unless explicitly required by the task.
+      - No guardrail JSON edits unless explicitly required by the task.
+      - Make at most one implementation commit for this attempt.
+      EOF
+
+      python3 <<'PY'
+      from pathlib import Path
+      import os
+
+      path = Path("codex-new-task-prompt.md")
+      text = path.read_text(encoding="utf-8")
+
+      replacements = {
+          "__REPOSITORY__": os.environ["REPOSITORY"],
+          "__BASE_BRANCH__": os.environ["BASE_BRANCH"],
+          "__BRANCH__": os.environ["BRANCH"],
+          "__TASK_TITLE__": os.environ["TASK_TITLE"],
+          "__TASK_TEXT__": os.environ["TASK_TEXT"],
+      }
+
+      for key, value in replacements.items():
+          text = text.replace(key, value)
+
+      path.write_text(text, encoding="utf-8")
+      PY
+
+      echo "Built Codex prompt:"
+      sed -n '1,240p' codex-new-task-prompt.md
+
+  - name: Run Codex CLI for new task
+    run: |
+      set -euo pipefail
+
+      echo "Starting Codex CLI for new task..."
+
+      set +e
+      codex exec --full-auto \
+        --output-last-message "codex-output/codex-new-task-result.md" \
+        < codex-new-task-prompt.md \
+        2>&1 | tee "codex-output/codex-new-task.log"
+      CODEX_EXIT="${PIPESTATUS[0]}"
+      set -e
+
+      echo "$CODEX_EXIT" > "codex-output/codex-exit-code.txt"
+
+      if [ "$CODEX_EXIT" -ne 0 ]; then
+        echo "Codex CLI exited with code $CODEX_EXIT"
+        exit "$CODEX_EXIT"
+      fi
+
+  - name: Validate branch and changed files
+    run: |
+      set -euo pipefail
+
+      CURRENT_BRANCH="$(git branch --show-current)"
+      EXPECTED_BRANCH="${{ steps.task.outputs.branch }}"
+
+      if [ "$CURRENT_BRANCH" != "$EXPECTED_BRANCH" ]; then
+        echo "Wrong branch after Codex."
+        echo "Current: $CURRENT_BRANCH"
+        echo "Expected: $EXPECTED_BRANCH"
+        exit 1
+      fi
+
+      if [ "$CURRENT_BRANCH" = "main" ] || [ "$CURRENT_BRANCH" = "master" ]; then
+        echo "Refusing to continue on main/master."
+        exit 1
+      fi
+
+      git status --short
+
+      git diff --name-only > codex-output/changed-files.txt || true
+
+      if [ ! -s codex-output/changed-files.txt ]; then
+        echo "No changes detected."
+        exit 1
+      fi
+
+      echo "Changed files:"
+      cat codex-output/changed-files.txt
+
+      if grep -E '(^|/)(\.env|id_rsa|id_ed25519|secrets?|token|credential)' codex-output/changed-files.txt; then
+        echo "Potential secret/credential file changed. Blocking."
+        exit 1
+      fi
+
+  - name: Smoke check changed Python files
+    run: |
+      set -euo pipefail
+
+      CHANGED_PY="$(cat codex-output/changed-files.txt | grep '\.py$' || true)"
+
+      if [ -z "$CHANGED_PY" ]; then
+        echo "No changed Python files to py_compile."
+        exit 0
+      fi
+
+      echo "Running py_compile on changed Python files:"
+      echo "$CHANGED_PY"
+
+      python3 -m py_compile $CHANGED_PY
+
+  - name: Show diff summary
+    run: |
+      set -euo pipefail
+      git status --short
+      git diff --stat
+      git diff -- . ':!codex-output' ':!codex-new-task-prompt.md' > codex-output/git-diff.patch || true
+
+  - name: Commit and push task branch
+    if: steps.task.outputs.dry_run != 'true'
+    id: push
+    env:
+      BRANCH: ${{ steps.task.outputs.branch }}
+      TASK_TITLE: ${{ steps.task.outputs.task_title }}
+    run: |
+      set -euo pipefail
+
+      git add -A
+
+      git reset -- codex-output || true
+      git reset -- codex-new-task-prompt.md || true
+
+      if git diff --cached --quiet; then
+        echo "No staged changes to commit."
+        exit 1
+      fi
+
+      git commit -m "Implement task: ${TASK_TITLE}"
+      git push origin "HEAD:${BRANCH}"
+
+      NEW_SHA="$(git rev-parse HEAD)"
+      echo "new_sha=$NEW_SHA" >> "$GITHUB_OUTPUT"
+      echo "Pushed new SHA: $NEW_SHA"
+
+  - name: Create pull request
+    if: steps.task.outputs.dry_run != 'true'
+    id: pr
+    uses: actions/github-script@v7
+    env:
+      BRANCH: ${{ steps.task.outputs.branch }}
+      BASE_BRANCH: ${{ steps.task.outputs.base_branch }}
+      TASK_TITLE: ${{ steps.task.outputs.task_title }}
+      TASK_TEXT: ${{ steps.task.outputs.task_text }}
+      NEW_SHA: ${{ steps.push.outputs.new_sha }}
+    with:
+      github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+      script: |
+        const fs = require("fs");
+
+        const owner = context.repo.owner;
+        const repo = context.repo.repo;
+
+        const branch = process.env.BRANCH;
+        const base = process.env.BASE_BRANCH;
+        const title = process.env.TASK_TITLE;
+        const taskText = process.env.TASK_TEXT;
+        const sha = process.env.NEW_SHA;
+
+        let result = "";
+        try {
+          result = fs.readFileSync("codex-output/codex-new-task-result.md", "utf8").slice(0, 12000);
+        } catch {
+          result = "";
+        }
+
+        const body = [
+          "## Summary",
+          "",
+          "Created automatically from a Telegram/new-task handoff using Codex CLI on the VPS self-hosted runner.",
+          "",
+          "## Task",
+          "",
+          "```text",
+          taskText,
+          "```",
+          "",
+          "## Commit",
+          "",
+          `- ${sha}`,
+          "",
+          "## Codex result",
+          "",
+          "```text",
+          result || "No Codex result captured.",
+          "```",
+          "",
+          "## Rules",
+          "",
+          "- One PR only.",
+          "- Do not merge automatically.",
+          "- Follow AGENTS.md.",
+          "- Follow-up fixes must continue on this PR branch.",
+        ].join("\n");
+
+        const { data: pr } = await github.rest.pulls.create({
+          owner,
+          repo,
+          title,
+          head: branch,
+          base,
+          body,
+          draft: false,
+        });
+
+        core.setOutput("pr_number", String(pr.number));
+        core.setOutput("pr_url", pr.html_url);
+
+        core.info(`Created PR #${pr.number}: ${pr.html_url}`);
+
+  - name: Dry run summary
+    if: steps.task.outputs.dry_run == 'true'
+    run: |
+      echo "Dry run enabled. No commit/push/PR performed."
+      git status --short || true
+
+  - name: Upload new-task Codex logs
+    if: always()
+    uses: actions/upload-artifact@v4
+    with:
+      name: new-task-codex-pr-logs-${{ github.run_id }}
+      path: |
+        codex-output/**
+        codex-new-task-prompt.md
+      if-no-files-found: ignore
+
+  - name: Notify Telegram success
+    if: success()
+    env:
+      TASK_TITLE: ${{ steps.task.outputs.task_title }}
+      BRANCH: ${{ steps.task.outputs.branch }}
+      NEW_SHA: ${{ steps.push.outputs.new_sha }}
+      PR_URL: ${{ steps.pr.outputs.pr_url }}
+      DRY_RUN: ${{ steps.task.outputs.dry_run }}
+    run: |
+      set -euo pipefail
+
+      if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+        echo "Telegram secrets missing. Skipping notification."
+        exit 0
+      fi
+
+      TEXT="$(cat <<EOF
+      ✅ New task Codex PR completed
+
+      Title: $TASK_TITLE
+      Branch: $BRANCH
+      Commit: ${NEW_SHA:-n/a}
+      PR: ${PR_URL:-dry-run/no-pr}
+      Dry run: $DRY_RUN
+
+      If a PR was created, normal PR automation can now monitor/fix it.
+      EOF
+      )"
+
+      curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+        -d "chat_id=${TELEGRAM_CHAT_ID}" \
+        --data-urlencode "text=$TEXT" \
+        -d "disable_web_page_preview=true" >/dev/null
+
+      if [ -f "codex-output/codex-new-task-result.md" ]; then
+        curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+          -F "chat_id=${TELEGRAM_CHAT_ID}" \
+          -F "document=@codex-output/codex-new-task-result.md" \
+          -F "caption=Output finale Codex new task" >/dev/null
+      fi
+
+      if [ -f "codex-output/codex-new-task.log" ]; then
+        curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+          -F "chat_id=${TELEGRAM_CHAT_ID}" \
+          -F "document=@codex-output/codex-new-task.log" \
+          -F "caption=Log Codex new task" >/dev/null
+      fi
+
+  - name: Notify Telegram failure
+    if: failure()
+    env:
+      TASK_TITLE: ${{ steps.task.outputs.task_title || 'unknown' }}
+      BRANCH: ${{ steps.task.outputs.branch || 'unknown' }}
+    run: |
+      set -euo pipefail
+
+      if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+        echo "Telegram secrets missing. Skipping notification."
+        exit 0
+      fi
+
+      TEXT="$(cat <<EOF
+      ❌ New task Codex PR failed
+
+      Title: $TASK_TITLE
+      Branch: $BRANCH
+      Run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+      Check artifact:
+      new-task-codex-pr-logs
+      EOF
+      )"
+
+      curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+        -d "chat_id=${TELEGRAM_CHAT_ID}" \
+        --data-urlencode "text=$TEXT" \
+        -d "disable_web_page_preview=true" >/dev/null
+
+      if [ -f "codex-output/codex-new-task-result.md" ]; then
+        curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+          -F "chat_id=${TELEGRAM_CHAT_ID}" \
+          -F "document=@codex-output/codex-new-task-result.md" \
+          -F "caption=Output Codex new task prima del fallimento" >/dev/null
+      fi
+
+      if [ -f "codex-output/codex-new-task.log" ]; then
+        curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+          -F "chat_id=${TELEGRAM_CHAT_ID}" \
+          -F "document=@codex-output/codex-new-task.log" \
+          -F "caption=Log Codex new task fallito" >/dev/null
