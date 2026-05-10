@@ -1,0 +1,330 @@
+name: PR Automation Controller
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Automation mode"
+        required: true
+        default: "full"
+        type: choice
+        options:
+          - "full"
+          - "report"
+          - "fix-latest"
+          - "health"
+      pr_number:
+        description: "PR number. Required for full/report/fix-latest."
+        required: false
+        type: string
+      force:
+        description: "Force auto-fix even if same handoff/head was already attempted"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      dry_run:
+        description: "Run Codex without commit/push"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      run_codex_smoke:
+        description: "For health mode: run tiny Codex smoke test"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+  repository_dispatch:
+    types:
+      - pickfair_telegram_command
+      - telegram_pr_full
+      - telegram_pr_report
+      - telegram_pr_fix_latest
+      - telegram_vps_health
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: pr-automation-controller-${{ github.event.inputs.pr_number || github.event.client_payload.pr_number || github.event_name }}-${{ github.event.inputs.mode || github.event.client_payload.mode || github.event.action }}
+  cancel-in-progress: false
+
+jobs:
+  controller:
+    name: Dispatch requested automation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve command
+        id: command
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+          script: |
+            const payload = context.payload.client_payload || {};
+            const action = context.payload.action || "";
+
+            let mode =
+              context.payload.inputs?.mode ||
+              payload.mode ||
+              "";
+
+            if (!mode) {
+              if (action === "telegram_pr_full") mode = "full";
+              else if (action === "telegram_pr_report") mode = "report";
+              else if (action === "telegram_pr_fix_latest") mode = "fix-latest";
+              else if (action === "telegram_vps_health") mode = "health";
+              else mode = "full";
+            }
+
+            const prNumber =
+              context.payload.inputs?.pr_number ||
+              payload.pr_number ||
+              payload.pr ||
+              "";
+
+            const force =
+              context.payload.inputs?.force ||
+              payload.force ||
+              "false";
+
+            const dryRun =
+              context.payload.inputs?.dry_run ||
+              payload.dry_run ||
+              "false";
+
+            const runCodexSmoke =
+              context.payload.inputs?.run_codex_smoke ||
+              payload.run_codex_smoke ||
+              "false";
+
+            const allowedModes = new Set(["full", "report", "fix-latest", "health"]);
+
+            if (!allowedModes.has(mode)) {
+              core.setFailed(`Invalid mode: ${mode}`);
+              return;
+            }
+
+            if (mode !== "health" && !prNumber) {
+              core.setFailed(`pr_number is required for mode: ${mode}`);
+              return;
+            }
+
+            core.setOutput("mode", mode);
+            core.setOutput("pr_number", String(prNumber));
+            core.setOutput("force", String(force));
+            core.setOutput("dry_run", String(dryRun));
+            core.setOutput("run_codex_smoke", String(runCodexSmoke));
+
+            core.info(`mode=${mode}`);
+            core.info(`pr_number=${prNumber}`);
+            core.info(`force=${force}`);
+            core.info(`dry_run=${dryRun}`);
+            core.info(`run_codex_smoke=${runCodexSmoke}`);
+
+      - name: Notify Telegram command accepted
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MODE: ${{ steps.command.outputs.mode }}
+          PR_NUMBER: ${{ steps.command.outputs.pr_number }}
+          FORCE: ${{ steps.command.outputs.force }}
+          DRY_RUN: ${{ steps.command.outputs.dry_run }}
+          RUN_CODEX_SMOKE: ${{ steps.command.outputs.run_codex_smoke }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "Telegram secrets missing. Skipping notification."
+            exit 0
+          fi
+
+          TEXT="$(cat <<EOF
+🕹️ PR Automation Controller received command
+
+Mode: $MODE
+PR: ${PR_NUMBER:-n/a}
+Force: $FORCE
+Dry run: $DRY_RUN
+Codex smoke: $RUN_CODEX_SMOKE
+
+Run:
+https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+EOF
+)"
+
+          curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=$TEXT" \
+            -d "disable_web_page_preview=true" >/dev/null
+
+      - name: Dispatch PR Telegram Notify for full/report
+        if: steps.command.outputs.mode == 'full' || steps.command.outputs.mode == 'report'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const prNumber = "${{ steps.command.outputs.pr_number }}";
+
+            const repoInfo = await github.rest.repos.get({ owner, repo });
+            const ref = repoInfo.data.default_branch;
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner,
+              repo,
+              workflow_id: "pr-telegram-notify.yml",
+              ref,
+              inputs: {
+                pr_number: prNumber,
+              },
+            });
+
+            core.info(`Dispatched pr-telegram-notify.yml for PR #${prNumber}`);
+
+      - name: Dispatch Auto PR Codex Fix for fix-latest
+        if: steps.command.outputs.mode == 'fix-latest'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const prNumber = "${{ steps.command.outputs.pr_number }}";
+            const force = "${{ steps.command.outputs.force }}";
+            const dryRun = "${{ steps.command.outputs.dry_run }}";
+
+            const repoInfo = await github.rest.repos.get({ owner, repo });
+            const ref = repoInfo.data.default_branch;
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner,
+              repo,
+              workflow_id: "auto-pr-codex-fix.yml",
+              ref,
+              inputs: {
+                pr_number: prNumber,
+                force,
+                dry_run: dryRun,
+              },
+            });
+
+            core.info(`Dispatched auto-pr-codex-fix.yml for PR #${prNumber}`);
+
+      - name: Dispatch VPS Runner Health
+        if: steps.command.outputs.mode == 'health'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const runCodexSmoke = "${{ steps.command.outputs.run_codex_smoke }}";
+
+            const repoInfo = await github.rest.repos.get({ owner, repo });
+            const ref = repoInfo.data.default_branch;
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner,
+              repo,
+              workflow_id: "vps-runner-health.yml",
+              ref,
+              inputs: {
+                run_codex_smoke: runCodexSmoke,
+              },
+            });
+
+            core.info(`Dispatched vps-runner-health.yml`);
+
+      - name: Explain full mode chain
+        if: steps.command.outputs.mode == 'full'
+        run: |
+          cat <<'EOF'
+          Full mode dispatched PR Telegram Notify.
+
+          Expected chain:
+          1. PR Telegram Notify generates codex-pr-<PR>-task-handoff-<hash>.md
+          2. PR Telegram Notify uploads artifact
+          3. Auto PR Codex Fix starts automatically from workflow_run
+          4. Auto PR Codex Fix runs on self-hosted VPS
+          5. Codex CLI receives the .md task
+          6. Codex edits code
+          7. Workflow commits and pushes to the existing PR branch
+          8. GitHub checks run again
+          EOF
+
+      - name: Notify Telegram command dispatched
+        if: success()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MODE: ${{ steps.command.outputs.mode }}
+          PR_NUMBER: ${{ steps.command.outputs.pr_number }}
+          FORCE: ${{ steps.command.outputs.force }}
+          DRY_RUN: ${{ steps.command.outputs.dry_run }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "Telegram secrets missing. Skipping notification."
+            exit 0
+          fi
+
+          TEXT="$(cat <<EOF
+✅ PR Automation Controller dispatched
+
+Mode: $MODE
+PR: ${PR_NUMBER:-n/a}
+Force: $FORCE
+Dry run: $DRY_RUN
+
+Run:
+https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+EOF
+)"
+
+          curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=$TEXT" \
+            -d "disable_web_page_preview=true" >/dev/null
+
+      - name: Notify Telegram controller failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MODE: ${{ steps.command.outputs.mode || 'unknown' }}
+          PR_NUMBER: ${{ steps.command.outputs.pr_number || 'unknown' }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "Telegram secrets missing. Skipping notification."
+            exit 0
+          fi
+
+          TEXT="$(cat <<EOF
+❌ PR Automation Controller failed
+
+Mode: $MODE
+PR: $PR_NUMBER
+
+Run:
+https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+EOF
+)"
+
+          curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=$TEXT" \
+            -d "disable_web_page_preview=true" >/dev/null
