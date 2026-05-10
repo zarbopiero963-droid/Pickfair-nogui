@@ -54,13 +54,13 @@ jobs:
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
     steps:
-      - name: Prepare workspace
+      - name: Prepare directories
         run: |
           set -euo pipefail
-          mkdir -p handoff
-          mkdir -p codex-output
+          mkdir -p "$RUNNER_TEMP/handoff"
+          mkdir -p "$GITHUB_WORKSPACE/codex-output"
           mkdir -p "$HOME/pickfair-auto-state"
-          echo "Workspace prepared."
+          echo "Directories prepared."
 
       - name: Download Codex task handoff from PR Telegram Notify run
         if: ${{ github.event_name == 'workflow_run' }}
@@ -71,13 +71,14 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           pattern: codex-pr-*-task-handoff
           merge-multiple: true
-          path: handoff
+          path: ${{ runner.temp }}/handoff
 
       - name: Find latest Codex task handoff for manual run
         if: ${{ github.event_name == 'workflow_dispatch' }}
         uses: actions/github-script@v7
         env:
           PR_NUMBER: ${{ github.event.inputs.pr_number }}
+          HANDOFF_DIR: ${{ runner.temp }}/handoff
         with:
           github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
           script: |
@@ -87,6 +88,9 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const prNumber = process.env.PR_NUMBER;
+            const handoffDir = process.env.HANDOFF_DIR;
+
+            fs.mkdirSync(handoffDir, { recursive: true });
 
             const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
               owner,
@@ -119,10 +123,9 @@ jobs:
                 archive_format: "zip",
               });
 
-              fs.mkdirSync("handoff", { recursive: true });
-              fs.writeFileSync("handoff/handoff.zip", Buffer.from(zip.data));
+              const zipPath = path.join(handoffDir, "handoff.zip");
+              fs.writeFileSync(zipPath, Buffer.from(zip.data));
 
-              core.setOutput("artifact_found", "true");
               core.info(`Downloaded artifact ${artifact.name} from run ${run.id}`);
               return;
             }
@@ -133,8 +136,8 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           set -euo pipefail
-          if [ -f handoff/handoff.zip ]; then
-            cd handoff
+          if [ -f "$RUNNER_TEMP/handoff/handoff.zip" ]; then
+            cd "$RUNNER_TEMP/handoff"
             unzip -o handoff.zip
             rm -f handoff.zip
           fi
@@ -144,11 +147,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          HANDOFF_FILE="$(find handoff -maxdepth 2 -type f -name 'codex-pr-*-task-handoff-*.md' | head -n 1 || true)"
+          HANDOFF_FILE="$(find "$RUNNER_TEMP/handoff" -maxdepth 3 -type f -name 'codex-pr-*-task-handoff-*.md' | head -n 1 || true)"
 
           if [ -z "$HANDOFF_FILE" ]; then
             echo "No handoff file found."
-            find handoff -maxdepth 3 -type f -print || true
+            find "$RUNNER_TEMP/handoff" -maxdepth 4 -type f -print || true
             exit 1
           fi
 
@@ -196,7 +199,7 @@ jobs:
         run: |
           echo "No Codex run needed because handoff is clean/all green."
 
-      - name: Check duplicate attempt guard
+      - name: Check duplicate and attempt guard
         if: steps.handoff.outputs.should_run == 'true'
         id: guard
         env:
@@ -204,6 +207,7 @@ jobs:
           PR_NUMBER: ${{ steps.handoff.outputs.pr_number }}
           HEAD_SHA: ${{ steps.handoff.outputs.head_sha }}
           HANDOFF_HASH: ${{ steps.handoff.outputs.handoff_hash }}
+          MAX_ATTEMPTS_PER_HEAD: "3"
         run: |
           set -euo pipefail
 
@@ -211,6 +215,9 @@ jobs:
           mkdir -p "$STATE_DIR"
 
           ATTEMPT_FILE="$STATE_DIR/${HEAD_SHA}-${HANDOFF_HASH}.attempted"
+          HEAD_ATTEMPTS="$(find "$STATE_DIR" -maxdepth 1 -type f -name "${HEAD_SHA}-*.attempted" | wc -l | tr -d ' ')"
+
+          echo "Existing attempts for this head: $HEAD_ATTEMPTS"
 
           if [ "$FORCE" != "true" ] && [ -f "$ATTEMPT_FILE" ]; then
             echo "Already attempted this PR/head/handoff state."
@@ -218,13 +225,19 @@ jobs:
             exit 0
           fi
 
+          if [ "$FORCE" != "true" ] && [ "$HEAD_ATTEMPTS" -ge "$MAX_ATTEMPTS_PER_HEAD" ]; then
+            echo "Maximum attempts reached for this PR head."
+            echo "should_continue=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           touch "$ATTEMPT_FILE"
           echo "should_continue=true" >> "$GITHUB_OUTPUT"
 
-      - name: Stop duplicate attempt
+      - name: Stop duplicate or max attempts
         if: steps.handoff.outputs.should_run == 'true' && steps.guard.outputs.should_continue == 'false'
         run: |
-          echo "Duplicate auto-fix attempt skipped."
+          echo "Auto-fix attempt skipped because this state was already attempted or max attempts were reached."
 
       - name: Checkout PR branch
         if: steps.handoff.outputs.should_run == 'true' && steps.guard.outputs.should_continue == 'true'
@@ -232,7 +245,6 @@ jobs:
         with:
           token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
           fetch-depth: 0
-          ref: ${{ steps.handoff.outputs.branch }}
           persist-credentials: true
 
       - name: Configure git identity
@@ -242,14 +254,16 @@ jobs:
           git config user.name "pickfair-codex-auto"
           git config user.email "actions@github.com"
           git remote -v
-          git branch --show-current
 
-      - name: Verify branch and remote
+      - name: Checkout and verify exact PR branch
         if: steps.handoff.outputs.should_run == 'true' && steps.guard.outputs.should_continue == 'true'
         env:
           EXPECTED_BRANCH: ${{ steps.handoff.outputs.branch }}
         run: |
           set -euo pipefail
+
+          git fetch origin "+refs/heads/${EXPECTED_BRANCH}:refs/remotes/origin/${EXPECTED_BRANCH}"
+          git checkout -B "$EXPECTED_BRANCH" "origin/$EXPECTED_BRANCH"
 
           CURRENT_BRANCH="$(git branch --show-current)"
 
@@ -271,7 +285,6 @@ jobs:
             exit 1
           fi
 
-          git fetch origin "$EXPECTED_BRANCH"
           git reset --hard "origin/$EXPECTED_BRANCH"
 
       - name: Verify Codex CLI login
@@ -302,7 +315,7 @@ jobs:
           PR_NUMBER: ${{ steps.handoff.outputs.pr_number }}
         run: |
           set -euo pipefail
-          cp "$GITHUB_WORKSPACE/$HANDOFF_SOURCE" "codex-task-handoff-pr-${PR_NUMBER}.md"
+          cp "$HANDOFF_SOURCE" "codex-task-handoff-pr-${PR_NUMBER}.md"
           echo "Copied handoff into workspace:"
           ls -lh "codex-task-handoff-pr-${PR_NUMBER}.md"
 
@@ -313,6 +326,7 @@ jobs:
         run: |
           set -euo pipefail
 
+          mkdir -p codex-output
           HANDOFF="codex-task-handoff-pr-${PR_NUMBER}.md"
 
           echo "Starting Codex CLI..."
@@ -340,78 +354,86 @@ jobs:
         run: |
           set -euo pipefail
 
-          HANDOFF="codex-task-handoff-pr-${PR_NUMBER}.md"
-
           python3 <<'PY'
           from pathlib import Path
           import subprocess
           import sys
+          import os
 
-          handoff = Path(f"codex-task-handoff-pr-{Path('codex-output/codex-exit-code.txt').read_text().strip() and ''}")
-          PY
-
-          python3 <<'PY'
-          from pathlib import Path
-          import subprocess
-          import sys
-
-          pr_number = "${{ steps.handoff.outputs.pr_number }}"
+          pr_number = os.environ["PR_NUMBER"]
           handoff = Path(f"codex-task-handoff-pr-{pr_number}.md")
           text = handoff.read_text(encoding="utf-8")
 
-          def collect_section(title):
+          def read_list_after(marker):
               lines = text.splitlines()
-              out = []
+              values = []
               inside = False
+
               for line in lines:
-                  if line.strip() == title:
+                  stripped = line.strip()
+
+                  if stripped == marker:
                       inside = True
                       continue
-                  if inside and line.startswith("Do NOT modify:"):
-                      break
-                  if inside and line.startswith("## ") and line.strip() != title:
-                      break
-                  if inside and line.startswith("- "):
-                      value = line[2:].strip()
-                      if value and not value.lower().startswith("none detected"):
-                          out.append(value)
-              return out
+
+                  if inside:
+                      if not stripped:
+                          break
+                      if stripped.startswith("- "):
+                          value = stripped[2:].strip()
+                          if (
+                              value
+                              and not value.lower().startswith("none detected")
+                              and "*" not in value
+                              and value.endswith(".py")
+                              and " " not in value
+                          ):
+                              values.append(value)
+                      elif stripped.startswith("## "):
+                          break
+
+              return values
 
           allowed = []
-          for marker in ["Allowed production files:", "Allowed test files:"]:
-              lines = text.splitlines()
-              inside = False
-              for line in lines:
-                  if line.strip() == marker:
-                      inside = True
-                      continue
-                  if inside and not line.strip():
-                      break
-                  if inside and line.startswith("- "):
-                      value = line[2:].strip()
-                      if value and not value.lower().startswith("none detected"):
-                          allowed.append(value)
+          allowed.extend(read_list_after("Allowed production files:"))
+          allowed.extend(read_list_after("Allowed test files:"))
 
-          allowed = [a for a in allowed if "*" not in a and " " not in a and a.endswith(".py")]
           allowed_set = set(allowed)
 
-          changed = subprocess.check_output(
-              ["git", "diff", "--name-only"],
+          status = subprocess.check_output(
+              ["git", "status", "--porcelain=v1"],
               text=True,
           ).splitlines()
 
-          staged = subprocess.check_output(
-              ["git", "diff", "--cached", "--name-only"],
-              text=True,
-          ).splitlines()
+          changed = []
 
-          changed = sorted(set(changed + staged))
+          for line in status:
+              if not line.strip():
+                  continue
 
-          ignored = {
+              path = line[3:].strip()
+
+              if " -> " in path:
+                  path = path.split(" -> ", 1)[1].strip()
+
+              changed.append(path)
+
+          ignored_exact = {
               f"codex-task-handoff-pr-{pr_number}.md",
           }
 
-          changed = [c for c in changed if c not in ignored and not c.startswith("codex-output/")]
+          ignored_prefixes = (
+              "codex-output/",
+              ".git/",
+          )
+
+          changed = sorted(
+              set(
+                  c for c in changed
+                  if c not in ignored_exact
+                  and not any(c.startswith(prefix) for prefix in ignored_prefixes)
+              )
+          )
 
           Path("codex-output/changed-files.txt").write_text(
               "\n".join(changed) + ("\n" if changed else ""),
@@ -429,6 +451,7 @@ jobs:
 
           if allowed_set:
               unexpected = [c for c in changed if c not in allowed_set]
+
               if unexpected:
                   print("Scope violation: Codex changed files outside allowed list.")
                   print("Allowed:")
@@ -466,7 +489,7 @@ jobs:
         run: |
           set -euo pipefail
           git status --short
-          git diff --stat
+          git diff --stat || true
           git diff -- . ':!codex-output' ':!codex-task-handoff-*.md' > codex-output/git-diff.patch || true
 
       - name: Commit and push changes
