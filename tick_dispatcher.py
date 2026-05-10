@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 
 class TickDispatcher:
+
     """Dispatcher tick con coalescing e throttling per UI e automazioni."""
 
     MIN_UI_UPDATE_INTERVAL = 0.25
@@ -103,9 +104,9 @@ class TickDispatcher:
     @staticmethod
     def _dispatch_storage_callbacks(callbacks, tick: TickData) -> None:
         """Dispatch storage callbacks while preserving caller flow on errors."""
-        for cb in callbacks:
+        for callback in callbacks:
             try:
-                cb(tick)
+                callback(tick)
             except Exception:
                 logger.exception("Tick storage callback failed")
 
@@ -114,9 +115,9 @@ class TickDispatcher:
         """Dispatch UI/automation callbacks while preserving deterministic flow."""
         if not ticks:
             return
-        for cb in callbacks:
+        for callback in callbacks:
             try:
-                cb(ticks)
+                callback(ticks)
             except Exception:
                 logger.exception("Tick batch callback failed")
 
@@ -133,12 +134,13 @@ class TickDispatcher:
             self._automation_callbacks.append(callback)
 
     def dispatch_tick(self, tick: TickData):
+        """Dispatch one valid tick to storage and throttled batch callbacks."""
         invalid_reason = self._invalid_tick_reason(tick)
         if invalid_reason is not None:
             self._record_invalid_tick(tick, invalid_reason)
             return
 
-        now = time.time()
+        now = time.monotonic()
         with self._lock:
             self._tick_count += 1
             storage_cbs, ui_cbs, automation_cbs = self._snapshot_callbacks()

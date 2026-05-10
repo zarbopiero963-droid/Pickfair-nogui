@@ -47,6 +47,8 @@ class AutoThrottle:
             parsed_period = float(period)
         except Exception:
             parsed_period = 1.0
+        if not math.isfinite(parsed_period):
+            parsed_period = 1.0
 
         try:
             parsed_base_backoff = float(base_backoff)
@@ -177,19 +179,30 @@ class AutoThrottle:
             rate = used * (60.0 / self.period)
             return max(0.0, rate)
 
-    def update(self, **kwargs) -> bool:
-        api_calls_min = kwargs.get("api_calls_min")
+    @staticmethod
+    def _parse_api_calls_min(value) -> Optional[float]:
+        """Return a positive finite API call rate, or ``None`` when invalid."""
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        if parsed <= 0 or not math.isfinite(parsed):
+            return None
+        return parsed
+
+    def update(self, *args, **kwargs) -> bool:
+        """
+        Update throttle limits from keyword configuration.
+
+        ``api_calls_min`` must be a positive finite number; non-positive,
+        missing, positional, or non-finite values are rejected with ``False``.
+        """
+        if args:
+            return False
+        parsed = self._parse_api_calls_min(kwargs.get("api_calls_min"))
+        if parsed is None or not math.isfinite(self.period):
+            return False
         with self._lock:
-            if api_calls_min is None:
-                return False
-            try:
-                parsed = float(api_calls_min)
-            except (TypeError, ValueError):
-                return False
-            if parsed <= 0 or not math.isfinite(parsed):
-                return False
-            if not math.isfinite(self.period):
-                return False
             try:
                 allowed_calls = int((parsed * self.period) / 60.0)
             except (OverflowError, ValueError):

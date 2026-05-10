@@ -1,6 +1,9 @@
 """Focused PR4 deterministic tests for tick/throttle/executor blockers."""
 
+# pylint: disable=protected-access
+
 import threading
+import time
 import unittest
 from typing import Any, cast
 
@@ -11,6 +14,7 @@ from tick_dispatcher import TickData, TickDispatcher, get_tick_dispatcher
 
 
 class TestPR4Determinism(unittest.TestCase):
+
     """Review-fix tests for deterministic behavior."""
 
     def test_tick_valid_kept(self) -> None:
@@ -93,9 +97,8 @@ class TestPR4Determinism(unittest.TestCase):
         """UI and automation pending buffers do not clear each other."""
         dispatcher = TickDispatcher()
         dispatcher._last_ui_update = 0.0
-        import time
 
-        dispatcher._last_automation_check = time.time()
+        dispatcher._last_automation_check = time.monotonic()
         ui_seen: list[int] = []
         auto_seen: list[int] = []
         dispatcher.register_ui_callback(lambda ticks: ui_seen.append(len(ticks)))
@@ -119,13 +122,13 @@ class TestPR4Determinism(unittest.TestCase):
             instances.append(get_tick_dispatcher())
 
         try:
-            t1 = threading.Thread(target=_target)
-            t2 = threading.Thread(target=_target)
-            t1.start()
-            t2.start()
+            first_thread = threading.Thread(target=_target)
+            second_thread = threading.Thread(target=_target)
+            first_thread.start()
+            second_thread.start()
             barrier.wait()
-            t1.join()
-            t2.join()
+            first_thread.join()
+            second_thread.join()
             self.assertEqual(len(instances), 2)
             self.assertIs(instances[0], instances[1])
         finally:
