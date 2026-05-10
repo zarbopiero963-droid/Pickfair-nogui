@@ -30,7 +30,6 @@ jobs:
 
     outputs:
       runner_online: ${{ steps.check.outputs.runner_online }}
-      runner_summary: ${{ steps.check.outputs.runner_summary }}
 
     steps:
       - name: Check repo self-hosted runners
@@ -82,8 +81,6 @@ jobs:
             const summary = summaryLines.join("\n");
 
             core.setOutput("runner_online", runnerOnline ? "true" : "false");
-            core.setOutput("runner_summary", summary.replace(/\n/g, "%0A"));
-
             core.info(summary);
 
             async function sendTelegram(text) {
