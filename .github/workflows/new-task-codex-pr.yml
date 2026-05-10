@@ -34,18 +34,16 @@ steps:
           return;
         }
 
-        const prs = await github.paginate(github.rest.pulls.list, {
+        const openPrs = await github.paginate(github.rest.pulls.list, {
           owner,
           repo,
           state: "open",
           per_page: 100,
         });
 
-        const nonDraftOpenPrs = prs.filter(pr => !pr.draft);
-
-        if (nonDraftOpenPrs.length > 0) {
-          const list = nonDraftOpenPrs
-            .map(pr => `#${pr.number} ${pr.head.ref} ${pr.html_url}`)
+        if (openPrs.length > 0) {
+          const list = openPrs
+            .map(pr => `#${pr.number} ${pr.draft ? "(draft) " : ""}${pr.head.ref} ${pr.html_url}`)
             .join("\n");
 
           core.setFailed(
@@ -106,17 +104,10 @@ steps:
       fi
 
       TEXT="$(cat <<EOF
-      🆕 New task accepted
-
-      Title: $TASK_TITLE
-      Branch: $BRANCH
-      Dry run: $DRY_RUN
-
-      Codex CLI will run on the VPS self-hosted runner.
-      EOF
-      )"
-
-      curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+🆕 New task accepted
+Title: $TASK_TITLE Branch: $BRANCH Dry run: $DRY_RUN
+Codex CLI will run on the VPS self-hosted runner. EOF )"
+curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
         -d "chat_id=${TELEGRAM_CHAT_ID}" \
         --data-urlencode "text=$TEXT" \
         -d "disable_web_page_preview=true" >/dev/null
@@ -195,378 +186,380 @@ steps:
       mkdir -p codex-output
 
       cat > codex-new-task-prompt.md <<'EOF'
-      # CODEX TASK COMMAND
+CODEX TASK COMMAND
+CTO MODE: LOCKED IN — NEW TASK / CREATE ONE PR
+Auto mode detection
+This is NEW TASK MODE.
+No open PR should exist for this task.
+Target
+Repository: REPOSITORY Base branch: BASE_BRANCH Task branch: BRANCH Task title: TASK_TITLE
+Branch rules
+Create and use only the task branch listed above.
+Do NOT work directly on main.
+Do NOT merge.
+Do NOT create multiple branches.
+Do NOT create multiple PRs.
+Do NOT force-push unless explicitly required and safe.
+Do NOT commit, push, or create the PR yourself. The workflow will commit, push, and create the PR after your changes.
+If git remote or credentials are missing and push is required, respond with NEEDS_MANUAL_UPDATE_BRANCH.
+Strict scope
+Implement only the task below.
+Do NOT modify:
+unrelated workflows
+unrelated scripts
+unrelated tests
+guardrail JSON unless the task explicitly requires it
+secrets or credentials
+generated local logs/caches
+unrelated business logic files
+Do not broad-refactor. Do not expand scope. Do not silence tests/checks. Do not remove guardrails.
+Task
+TASK_TEXT
+First inspect
+Run: git status --short git branch --show-current find . -maxdepth 3 -type f | sort | sed -n '1,200p'
+After changes
+Run: git status --short git diff --stat git diff
+Recommended checks
+Run relevant checks for the files you changed.
+At minimum, for Python files changed: python -m py_compile 
+If relevant tests are obvious, run them.
+Return only
+DONE / PARTIAL / NOT DONE
+Summary:
+�
 
-      CTO MODE: LOCKED IN — NEW TASK / CREATE ONE PR
+Branch:
+�
 
-      ## Auto mode detection
+Commit:
+workflow will create commit after your changes
+PR:
+workflow will create PR after your changes
+Checks:
+�
 
-      This is NEW TASK MODE.
+Files changed:
+�
 
-      No open PR should exist for this task.
+Files created:
+�
 
-      ## Target
+Push:
+workflow handles push
+Final factual status:
+DONE / PARTIAL / NOT DONE
+Real execution rules
+Inspect first.
+Implement only the requested task.
+No broad refactor.
+No unrelated hardening.
+No workflow edits unless explicitly required by the task.
+No guardrail JSON edits unless explicitly required by the task.
+Make source changes only. The workflow handles commit, push, and PR creation. EOF
+python3 <<'PY'
+    from pathlib import Path
+    import os
 
-      Repository: __REPOSITORY__
-      Base branch: __BASE_BRANCH__
-      Task branch: __BRANCH__
-      Task title: __TASK_TITLE__
+    path = Path("codex-new-task-prompt.md")
+    text = path.read_text(encoding="utf-8")
 
-      ## Branch rules
+    replacements = {
+        "__REPOSITORY__": os.environ["REPOSITORY"],
+        "__BASE_BRANCH__": os.environ["BASE_BRANCH"],
+        "__BRANCH__": os.environ["BRANCH"],
+        "__TASK_TITLE__": os.environ["TASK_TITLE"],
+        "__TASK_TEXT__": os.environ["TASK_TEXT"],
+    }
 
-      - Create and use only the task branch listed above.
-      - Do NOT work directly on main.
-      - Do NOT merge.
-      - Do NOT create multiple branches.
-      - Do NOT create multiple PRs.
-      - Do NOT force-push unless explicitly required and safe.
-      - If git remote or credentials are missing and push is required, respond with NEEDS_MANUAL_UPDATE_BRANCH.
+    for key, value in replacements.items():
+        text = text.replace(key, value)
 
-      ## Strict scope
+    path.write_text(text, encoding="utf-8")
+    PY
 
-      Implement only the task below.
+    echo "Built Codex prompt:"
+    sed -n '1,260p' codex-new-task-prompt.md
 
-      Do NOT modify:
-      - unrelated workflows
-      - unrelated scripts
-      - unrelated tests
-      - guardrail JSON unless the task explicitly requires it
-      - secrets or credentials
-      - generated local logs/caches
-      - unrelated business logic files
+- name: Run Codex CLI for new task
+  run: |
+    set -euo pipefail
 
-      Do not broad-refactor.
-      Do not expand scope.
-      Do not silence tests/checks.
-      Do not remove guardrails.
+    echo "Starting Codex CLI for new task..."
 
-      ## Task
+    set +e
+    codex exec --full-auto \
+      --output-last-message "codex-output/codex-new-task-result.md" \
+      < codex-new-task-prompt.md \
+      2>&1 | tee "codex-output/codex-new-task.log"
+    CODEX_EXIT="${PIPESTATUS[0]}"
+    set -e
 
-      __TASK_TEXT__
+    echo "$CODEX_EXIT" > "codex-output/codex-exit-code.txt"
 
-      ## First inspect
+    if [ "$CODEX_EXIT" -ne 0 ]; then
+      echo "Codex CLI exited with code $CODEX_EXIT"
+      exit "$CODEX_EXIT"
+    fi
 
-      ```bash
-      git status --short
-      git branch --show-current
-      find . -maxdepth 3 -type f | sort | sed -n '1,200p'
-      ```
+- name: Validate branch and changed files
+  run: |
+    set -euo pipefail
 
-      ## After changes
+    CURRENT_BRANCH="$(git branch --show-current)"
+    EXPECTED_BRANCH="${{ steps.task.outputs.branch }}"
 
-      ```bash
-      git status --short
-      git diff --stat
-      git diff
-      ```
+    if [ "$CURRENT_BRANCH" != "$EXPECTED_BRANCH" ]; then
+      echo "Wrong branch after Codex."
+      echo "Current: $CURRENT_BRANCH"
+      echo "Expected: $EXPECTED_BRANCH"
+      exit 1
+    fi
 
-      ## Recommended checks
+    if [ "$CURRENT_BRANCH" = "main" ] || [ "$CURRENT_BRANCH" = "master" ]; then
+      echo "Refusing to continue on main/master."
+      exit 1
+    fi
 
-      Run relevant checks for the files you changed.
+    git status --short
 
-      At minimum, for Python files changed:
+    python3 <<'PY'
+    from pathlib import Path
+    import subprocess
+    import sys
 
-      ```bash
-      python -m py_compile <changed python files>
-      ```
+    status = subprocess.check_output(
+        ["git", "status", "--porcelain=v1"],
+        text=True,
+    ).splitlines()
 
-      If relevant tests are obvious, run them.
+    changed = []
 
-      ## Return only
+    for line in status:
+        if not line.strip():
+            continue
 
-      ```text
-      DONE / PARTIAL / NOT DONE
+        path = line[3:].strip()
 
-      Summary:
-      - <what changed>
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1].strip()
 
-      Branch:
-      - <branch used>
+        changed.append(path)
 
-      Commit:
-      - <commit SHA>
+    ignored_exact = {
+        "codex-new-task-prompt.md",
+    }
 
-      PR:
-      - <PR URL or pending>
+    ignored_prefixes = (
+        "codex-output/",
+        ".git/",
+    )
 
-      Checks:
-      - <exact commands and results>
+    changed = sorted(
+        set(
+            c for c in changed
+            if c not in ignored_exact
+            and not any(c.startswith(prefix) for prefix in ignored_prefixes)
+        )
+    )
 
-      Files changed:
-      - <files>
+    Path("codex-output/changed-files.txt").write_text(
+        "\n".join(changed) + ("\n" if changed else ""),
+        encoding="utf-8",
+    )
 
-      Files created:
-      - <files>
+    if not changed:
+        print("No changes detected.")
+        sys.exit(1)
 
-      Push:
-      - succeeded / failed
+    forbidden_patterns = [
+        ".env",
+        "id_rsa",
+        "id_ed25519",
+        "secret",
+        "secrets",
+        "token",
+        "credential",
+        ".pem",
+        ".key",
+    ]
 
-      Final factual status:
-      - DONE / PARTIAL / NOT DONE
-      ```
+    bad = [
+        c for c in changed
+        if any(pattern in c.lower() for pattern in forbidden_patterns)
+    ]
 
-      ## Real execution rules
+    if bad:
+        print("Potential secret/credential file changed. Blocking.")
+        for item in bad:
+            print(f"  - {item}")
+        sys.exit(1)
 
-      - Inspect first.
-      - Implement only the requested task.
-      - No broad refactor.
-      - No unrelated hardening.
-      - No workflow edits unless explicitly required by the task.
-      - No guardrail JSON edits unless explicitly required by the task.
-      - Make at most one implementation commit for this attempt.
-      EOF
+    print("Changed files:")
+    for item in changed:
+        print(f"  - {item}")
+    PY
 
-      python3 <<'PY'
-      from pathlib import Path
-      import os
+- name: Smoke check changed Python files
+  run: |
+    set -euo pipefail
 
-      path = Path("codex-new-task-prompt.md")
-      text = path.read_text(encoding="utf-8")
+    CHANGED_PY="$(cat codex-output/changed-files.txt | grep '\.py$' || true)"
 
-      replacements = {
-          "__REPOSITORY__": os.environ["REPOSITORY"],
-          "__BASE_BRANCH__": os.environ["BASE_BRANCH"],
-          "__BRANCH__": os.environ["BRANCH"],
-          "__TASK_TITLE__": os.environ["TASK_TITLE"],
-          "__TASK_TEXT__": os.environ["TASK_TEXT"],
+    if [ -z "$CHANGED_PY" ]; then
+      echo "No changed Python files to py_compile."
+      exit 0
+    fi
+
+    echo "Running py_compile on changed Python files:"
+    echo "$CHANGED_PY"
+
+    python3 -m py_compile $CHANGED_PY
+
+- name: Show diff summary
+  run: |
+    set -euo pipefail
+    git status --short
+    git diff --stat || true
+    git diff -- . ':!codex-output' ':!codex-new-task-prompt.md' > codex-output/git-diff.patch || true
+
+- name: Commit and push task branch
+  if: steps.task.outputs.dry_run != 'true'
+  id: push
+  env:
+    BRANCH: ${{ steps.task.outputs.branch }}
+    TASK_TITLE: ${{ steps.task.outputs.task_title }}
+  run: |
+    set -euo pipefail
+
+    while IFS= read -r file; do
+      [ -z "$file" ] && continue
+      git add -- "$file"
+    done < codex-output/changed-files.txt
+
+    if git diff --cached --quiet; then
+      echo "No staged changes to commit."
+      exit 1
+    fi
+
+    git commit -m "Implement task: ${TASK_TITLE}"
+    git push origin "HEAD:${BRANCH}"
+
+    NEW_SHA="$(git rev-parse HEAD)"
+    echo "new_sha=$NEW_SHA" >> "$GITHUB_OUTPUT"
+    echo "Pushed new SHA: $NEW_SHA"
+
+- name: Create pull request
+  if: steps.task.outputs.dry_run != 'true'
+  id: pr
+  uses: actions/github-script@v7
+  env:
+    BRANCH: ${{ steps.task.outputs.branch }}
+    BASE_BRANCH: ${{ steps.task.outputs.base_branch }}
+    TASK_TITLE: ${{ steps.task.outputs.task_title }}
+    TASK_TEXT: ${{ steps.task.outputs.task_text }}
+    NEW_SHA: ${{ steps.push.outputs.new_sha }}
+  with:
+    github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+    script: |
+      const fs = require("fs");
+
+      const owner = context.repo.owner;
+      const repo = context.repo.repo;
+
+      const branch = process.env.BRANCH;
+      const base = process.env.BASE_BRANCH;
+      const title = process.env.TASK_TITLE;
+      const taskText = process.env.TASK_TEXT;
+      const sha = process.env.NEW_SHA;
+
+      let result = "";
+      try {
+        result = fs.readFileSync("codex-output/codex-new-task-result.md", "utf8").slice(0, 12000);
+      } catch {
+        result = "";
       }
 
-      for key, value in replacements.items():
-          text = text.replace(key, value)
+      const body = [
+        "## Summary",
+        "",
+        "Created automatically from a Telegram/new-task handoff using Codex CLI on the VPS self-hosted runner.",
+        "",
+        "## Task",
+        "",
+        "```text",
+        taskText,
+        "```",
+        "",
+        "## Commit",
+        "",
+        `- ${sha}`,
+        "",
+        "## Codex result",
+        "",
+        "```text",
+        result || "No Codex result captured.",
+        "```",
+        "",
+        "## Rules",
+        "",
+        "- One PR only.",
+        "- Do not merge automatically.",
+        "- Follow AGENTS.md.",
+        "- Follow-up fixes must continue on this PR branch.",
+      ].join("\n");
 
-      path.write_text(text, encoding="utf-8")
-      PY
+      const { data: pr } = await github.rest.pulls.create({
+        owner,
+        repo,
+        title,
+        head: branch,
+        base,
+        body,
+        draft: false,
+      });
 
-      echo "Built Codex prompt:"
-      sed -n '1,240p' codex-new-task-prompt.md
+      core.setOutput("pr_number", String(pr.number));
+      core.setOutput("pr_url", pr.html_url);
 
-  - name: Run Codex CLI for new task
-    run: |
-      set -euo pipefail
+      core.info(`Created PR #${pr.number}: ${pr.html_url}`);
 
-      echo "Starting Codex CLI for new task..."
+- name: Dry run summary
+  if: steps.task.outputs.dry_run == 'true'
+  run: |
+    echo "Dry run enabled. No commit/push/PR performed."
+    git status --short || true
 
-      set +e
-      codex exec --full-auto \
-        --output-last-message "codex-output/codex-new-task-result.md" \
-        < codex-new-task-prompt.md \
-        2>&1 | tee "codex-output/codex-new-task.log"
-      CODEX_EXIT="${PIPESTATUS[0]}"
-      set -e
+- name: Upload new-task Codex logs
+  if: always()
+  uses: actions/upload-artifact@v4
+  with:
+    name: new-task-codex-pr-logs-${{ github.run_id }}
+    path: |
+      codex-output/**
+      codex-new-task-prompt.md
+    if-no-files-found: ignore
 
-      echo "$CODEX_EXIT" > "codex-output/codex-exit-code.txt"
+- name: Notify Telegram success
+  if: success()
+  env:
+    TASK_TITLE: ${{ steps.task.outputs.task_title }}
+    BRANCH: ${{ steps.task.outputs.branch }}
+    NEW_SHA: ${{ steps.push.outputs.new_sha }}
+    PR_URL: ${{ steps.pr.outputs.pr_url }}
+    DRY_RUN: ${{ steps.task.outputs.dry_run }}
+  run: |
+    set -euo pipefail
 
-      if [ "$CODEX_EXIT" -ne 0 ]; then
-        echo "Codex CLI exited with code $CODEX_EXIT"
-        exit "$CODEX_EXIT"
-      fi
+    if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+      echo "Telegram secrets missing. Skipping notification."
+      exit 0
+    fi
 
-  - name: Validate branch and changed files
-    run: |
-      set -euo pipefail
-
-      CURRENT_BRANCH="$(git branch --show-current)"
-      EXPECTED_BRANCH="${{ steps.task.outputs.branch }}"
-
-      if [ "$CURRENT_BRANCH" != "$EXPECTED_BRANCH" ]; then
-        echo "Wrong branch after Codex."
-        echo "Current: $CURRENT_BRANCH"
-        echo "Expected: $EXPECTED_BRANCH"
-        exit 1
-      fi
-
-      if [ "$CURRENT_BRANCH" = "main" ] || [ "$CURRENT_BRANCH" = "master" ]; then
-        echo "Refusing to continue on main/master."
-        exit 1
-      fi
-
-      git status --short
-
-      git diff --name-only > codex-output/changed-files.txt || true
-
-      if [ ! -s codex-output/changed-files.txt ]; then
-        echo "No changes detected."
-        exit 1
-      fi
-
-      echo "Changed files:"
-      cat codex-output/changed-files.txt
-
-      if grep -E '(^|/)(\.env|id_rsa|id_ed25519|secrets?|token|credential)' codex-output/changed-files.txt; then
-        echo "Potential secret/credential file changed. Blocking."
-        exit 1
-      fi
-
-  - name: Smoke check changed Python files
-    run: |
-      set -euo pipefail
-
-      CHANGED_PY="$(cat codex-output/changed-files.txt | grep '\.py$' || true)"
-
-      if [ -z "$CHANGED_PY" ]; then
-        echo "No changed Python files to py_compile."
-        exit 0
-      fi
-
-      echo "Running py_compile on changed Python files:"
-      echo "$CHANGED_PY"
-
-      python3 -m py_compile $CHANGED_PY
-
-  - name: Show diff summary
-    run: |
-      set -euo pipefail
-      git status --short
-      git diff --stat
-      git diff -- . ':!codex-output' ':!codex-new-task-prompt.md' > codex-output/git-diff.patch || true
-
-  - name: Commit and push task branch
-    if: steps.task.outputs.dry_run != 'true'
-    id: push
-    env:
-      BRANCH: ${{ steps.task.outputs.branch }}
-      TASK_TITLE: ${{ steps.task.outputs.task_title }}
-    run: |
-      set -euo pipefail
-
-      git add -A
-
-      git reset -- codex-output || true
-      git reset -- codex-new-task-prompt.md || true
-
-      if git diff --cached --quiet; then
-        echo "No staged changes to commit."
-        exit 1
-      fi
-
-      git commit -m "Implement task: ${TASK_TITLE}"
-      git push origin "HEAD:${BRANCH}"
-
-      NEW_SHA="$(git rev-parse HEAD)"
-      echo "new_sha=$NEW_SHA" >> "$GITHUB_OUTPUT"
-      echo "Pushed new SHA: $NEW_SHA"
-
-  - name: Create pull request
-    if: steps.task.outputs.dry_run != 'true'
-    id: pr
-    uses: actions/github-script@v7
-    env:
-      BRANCH: ${{ steps.task.outputs.branch }}
-      BASE_BRANCH: ${{ steps.task.outputs.base_branch }}
-      TASK_TITLE: ${{ steps.task.outputs.task_title }}
-      TASK_TEXT: ${{ steps.task.outputs.task_text }}
-      NEW_SHA: ${{ steps.push.outputs.new_sha }}
-    with:
-      github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
-      script: |
-        const fs = require("fs");
-
-        const owner = context.repo.owner;
-        const repo = context.repo.repo;
-
-        const branch = process.env.BRANCH;
-        const base = process.env.BASE_BRANCH;
-        const title = process.env.TASK_TITLE;
-        const taskText = process.env.TASK_TEXT;
-        const sha = process.env.NEW_SHA;
-
-        let result = "";
-        try {
-          result = fs.readFileSync("codex-output/codex-new-task-result.md", "utf8").slice(0, 12000);
-        } catch {
-          result = "";
-        }
-
-        const body = [
-          "## Summary",
-          "",
-          "Created automatically from a Telegram/new-task handoff using Codex CLI on the VPS self-hosted runner.",
-          "",
-          "## Task",
-          "",
-          "```text",
-          taskText,
-          "```",
-          "",
-          "## Commit",
-          "",
-          `- ${sha}`,
-          "",
-          "## Codex result",
-          "",
-          "```text",
-          result || "No Codex result captured.",
-          "```",
-          "",
-          "## Rules",
-          "",
-          "- One PR only.",
-          "- Do not merge automatically.",
-          "- Follow AGENTS.md.",
-          "- Follow-up fixes must continue on this PR branch.",
-        ].join("\n");
-
-        const { data: pr } = await github.rest.pulls.create({
-          owner,
-          repo,
-          title,
-          head: branch,
-          base,
-          body,
-          draft: false,
-        });
-
-        core.setOutput("pr_number", String(pr.number));
-        core.setOutput("pr_url", pr.html_url);
-
-        core.info(`Created PR #${pr.number}: ${pr.html_url}`);
-
-  - name: Dry run summary
-    if: steps.task.outputs.dry_run == 'true'
-    run: |
-      echo "Dry run enabled. No commit/push/PR performed."
-      git status --short || true
-
-  - name: Upload new-task Codex logs
-    if: always()
-    uses: actions/upload-artifact@v4
-    with:
-      name: new-task-codex-pr-logs-${{ github.run_id }}
-      path: |
-        codex-output/**
-        codex-new-task-prompt.md
-      if-no-files-found: ignore
-
-  - name: Notify Telegram success
-    if: success()
-    env:
-      TASK_TITLE: ${{ steps.task.outputs.task_title }}
-      BRANCH: ${{ steps.task.outputs.branch }}
-      NEW_SHA: ${{ steps.push.outputs.new_sha }}
-      PR_URL: ${{ steps.pr.outputs.pr_url }}
-      DRY_RUN: ${{ steps.task.outputs.dry_run }}
-    run: |
-      set -euo pipefail
-
-      if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
-        echo "Telegram secrets missing. Skipping notification."
-        exit 0
-      fi
-
-      TEXT="$(cat <<EOF
-      ✅ New task Codex PR completed
-
-      Title: $TASK_TITLE
-      Branch: $BRANCH
-      Commit: ${NEW_SHA:-n/a}
-      PR: ${PR_URL:-dry-run/no-pr}
-      Dry run: $DRY_RUN
-
-      If a PR was created, normal PR automation can now monitor/fix it.
-      EOF
-      )"
-
-      curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+    TEXT="$(cat <<EOF
+✅ New task Codex PR completed
+Title: $TASK_TITLE Branch: $BRANCH Commit: ${NEW_SHA:-n/a} PR: ${PR_URL:-dry-run/no-pr} Dry run: $DRY_RUN
+If a PR was created, normal PR automation can now monitor/fix it. EOF )"
+curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
         -d "chat_id=${TELEGRAM_CHAT_ID}" \
         --data-urlencode "text=$TEXT" \
         -d "disable_web_page_preview=true" >/dev/null
@@ -599,18 +592,10 @@ steps:
       fi
 
       TEXT="$(cat <<EOF
-      ❌ New task Codex PR failed
-
-      Title: $TASK_TITLE
-      Branch: $BRANCH
-      Run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
-
-      Check artifact:
-      new-task-codex-pr-logs
-      EOF
-      )"
-
-      curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+❌ New task Codex PR failed
+Title: $TASK_TITLE Branch: $BRANCH Run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}⁠�
+Check artifact: new-task-codex-pr-logs EOF )"
+curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
         -d "chat_id=${TELEGRAM_CHAT_ID}" \
         --data-urlencode "text=$TEXT" \
         -d "disable_web_page_preview=true" >/dev/null
@@ -627,3 +612,4 @@ steps:
           -F "chat_id=${TELEGRAM_CHAT_ID}" \
           -F "document=@codex-output/codex-new-task.log" \
           -F "caption=Log Codex new task fallito" >/dev/null
+      fi
