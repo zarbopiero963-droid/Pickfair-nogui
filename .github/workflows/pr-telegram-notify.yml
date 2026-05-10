@@ -31,11 +31,11 @@ concurrency:
 
 jobs:
   notify:
-    name: Build Codex handoff and notify Telegram
+    name: Build Codex task handoff and notify Telegram
     runs-on: ubuntu-latest
 
     steps:
-      - name: Collect PR health and build Codex handoff
+      - name: Collect PR health and build Codex task handoff
         id: collect
         uses: actions/github-script@v7
         with:
@@ -55,13 +55,13 @@ jobs:
 
             const MAX_FAILED_RUNS = 8;
             const MAX_FAILED_JOBS_PER_RUN = 4;
-            const MAX_LOG_CHARS_PER_JOB = 3500;
-            const MAX_ANNOTATIONS_TOTAL = 120;
-            const MAX_ANNOTATION_CHARS = 900;
+            const MAX_LOG_CHARS_PER_JOB = 4500;
+            const MAX_ANNOTATIONS_TOTAL = 140;
+            const MAX_ANNOTATION_CHARS = 1000;
             const MAX_REVIEW_THREADS = 80;
             const MAX_THREAD_COMMENT_CHARS = 1800;
-            const MAX_NEW_COMMENTS = 60;
-            const MAX_NEW_COMMENT_CHARS = 1500;
+            const MAX_NEW_COMMENTS = 80;
+            const MAX_NEW_COMMENT_CHARS = 1600;
 
             function sha256(text) {
               return crypto.createHash("sha256").update(text).digest("hex");
@@ -124,10 +124,10 @@ jobs:
                 "questo review comment ai",
                 "codex-auto:ci-failure",
                 "@codex continue on the same open pr",
-                "@codex"
               ];
 
               if (user === "github-actions[bot]" && text.includes("monitor")) return true;
+
               return patterns.some(p => text.includes(p));
             }
 
@@ -163,105 +163,139 @@ jobs:
               text = text.replace(/\b\d+\b/g, "<n>");
               text = text.replace(/\s+/g, " ").trim();
 
-              return text.slice(0, 800);
+              return text.slice(0, 900);
             }
 
             const ISSUE_DEFINITIONS = {
-              auto_throttle_update_signature: {
-                title: "Restore AutoThrottle.update public API compatibility",
-                file: "auto_throttle.py",
-                location: "AutoThrottle.update",
-                priority: "P1",
+              tick_staticmethods: {
+                title: "Fix tick_dispatcher.py DeepSource staticmethod residues",
+                file: "tick_dispatcher.py",
+                location: "_invalid_tick_reason / _dispatch_storage_callbacks / _dispatch_batch_callbacks",
+                priority: "P2",
                 problem:
-                  "AutoThrottle.update was narrowed from variadic (*args, **kwargs) to kwargs-only (**kwargs). This is a backward-incompatible public API break and fails the repository public API guardrail snapshot.",
+                  "DeepSource may report helper methods that do not use self and should be static methods.",
                 requiredFix:
-                  "Restore the public signature to def update(self, *args, **kwargs) -> bool while keeping the current validation and boolean success/failure behavior.",
+                  "If these helpers do not use self, decorate them with @staticmethod while preserving behavior. Add/keep helper docstrings only if style/docstring checks require it.",
                 expectedShape:
-                  "def update(self, *args, **kwargs) -> bool:",
+                  "@staticmethod\n" +
+                  "def _invalid_tick_reason(...):\n" +
+                  "    ...\n\n" +
+                  "@staticmethod\n" +
+                  "def _dispatch_storage_callbacks(...):\n" +
+                  "    ...\n\n" +
+                  "@staticmethod\n" +
+                  "def _dispatch_batch_callbacks(...):\n" +
+                  "    ...",
               },
-              auto_throttle_period_isfinite: {
-                title: "Reject non-finite period in AutoThrottle.__init__",
-                file: "auto_throttle.py",
-                location: "AutoThrottle.__init__",
-                priority: "P1",
-                problem:
-                  "The constructor can allow period=float('inf') or NaN. That can make _prune() never evict timestamps and can keep the limiter permanently saturated.",
-                requiredFix:
-                  "After parsing period, add if not math.isfinite(parsed_period): parsed_period = 1.0 before assigning self.period = max(0.0001, parsed_period). Do not change unrelated throttle behavior.",
-                expectedShape:
-                  "try:\n    parsed_period = float(period)\nexcept Exception:\n    parsed_period = 1.0\nif not math.isfinite(parsed_period):\n    parsed_period = 1.0\nself.period = max(0.0001, parsed_period)",
-              },
+
               executor_wait_cleanup_race: {
-                title: "Fix ExecutorManager.wait cleanup race",
+                title: "Fix ExecutorManager future cleanup without wait race",
                 file: "executor_manager.py",
-                location: "ExecutorManager.wait finally block",
+                location: "ExecutorManager.submit / ExecutorManager.wait / active/status APIs",
                 priority: "P1",
                 problem:
-                  "wait() removes from _completed_futures but leaves the same future in _futures. If future.result() returns before the done callback runs, the callback can later reinsert the completed future into _completed_futures, causing stale completed futures to accumulate.",
+                  "Completed named futures must remain observable by wait(name), but waited futures must be cleaned afterward. Cleanup must not register callbacks while holding self._lock or create a callback lock/deadlock race.",
                 requiredFix:
-                  "Inside the finally block, remove the future from _futures first with an identity check, then remove it from _completed_futures with an identity check.",
+                  "Use a minimal deterministic design: submit stores the future under lock and returns it; wait(name) retrieves the future under lock, calls future.result(timeout) outside lock, then removes that exact future from _futures under lock. active_tasks/status must not report completed futures as active.",
                 expectedShape:
-                  "finally:\n    with self._lock:\n        if self._futures.get(key) is future:\n            self._futures.pop(key, None)\n        current_completed = self._completed_futures.get(key)\n        if current_completed is future:\n            self._completed_futures.pop(key, None)",
+                  "future = self._futures.get(task_name)\n" +
+                  "result = future.result(timeout=timeout)\n" +
+                  "with self._lock:\n" +
+                  "    if self._futures.get(task_name) is future:\n" +
+                  "        self._futures.pop(task_name, None)",
               },
-              tick_dispatcher_monotonic: {
-                title: "Use monotonic clock in TickDispatcher.dispatch_tick",
-                file: "tick_dispatcher.py",
-                location: "dispatch_tick",
-                priority: "P2",
-                problem:
-                  "dispatch_tick uses time.time(), which can jump because of system clock, NTP or DST changes. This can break throttle cadence.",
-                requiredFix:
-                  "Replace now = time.time() with now = time.monotonic(). No import change is needed if import time already exists.",
-                expectedShape:
-                  "now = time.monotonic()",
-              },
-              tick_dispatcher_selection_id_validation: {
-                title: "Validate selection_id in TickDispatcher invalid tick handling",
-                file: "tick_dispatcher.py",
-                location: "dispatch_tick",
-                priority: "P2",
-                problem:
-                  "The dispatcher validates market_id but can still allow invalid or missing selection_id. Later code uses (market_id, selection_id) as a composite key.",
-                requiredFix:
-                  "Reject invalid ticks when the value is not TickData, market_id is missing/empty, or selection_id is missing/invalid. Keep the change minimal. Add logging only if there is already a logger pattern in the file; otherwise increment the invalid counter and return.",
-                expectedShape:
-                  "Validate tick type, market_id and selection_id before using the composite key.",
-              },
-              auto_throttle_api_calls_min_non_positive: {
-                title: "Clarify non-positive api_calls_min behavior",
+
+              auto_throttle_no_round_up: {
+                title: "Fix AutoThrottle api_calls_min conversion so it never rounds upward",
                 file: "auto_throttle.py",
                 location: "AutoThrottle.update",
+                priority: "P1",
+                problem:
+                  "api_calls_min conversion must not use round(), because rounding can exceed the upstream per-minute cap.",
+                requiredFix:
+                  "Replace round-based conversion with floor-like conversion using math.floor or int() truncation after positive parse. Keep max_calls at least 1 only for positive api_calls_min where computed allowed calls would otherwise be 0. Ensure accepted update resets _blocked = False.",
+                expectedShape:
+                  "allowed_calls = int((parsed * self.period) / 60.0)\n" +
+                  "self.max_calls = max(1, allowed_calls)\n" +
+                  "self._blocked = False",
+              },
+
+              callback_exception_logging: {
+                title: "Make TickDispatcher callback failures visible via logging",
+                file: "tick_dispatcher.py",
+                location: "_dispatch_storage_callbacks / _dispatch_batch_callbacks",
                 priority: "P2",
                 problem:
-                  "The new behavior rejects api_calls_min <= 0 by returning False. Reviewers flagged this as potentially breaking if callers used 0 to disable or reset throttling.",
+                  "Callback helper exceptions must not be silently swallowed with bare except Exception: pass.",
                 requiredFix:
-                  "Either document clearly that api_calls_min <= 0 is rejected and returns False, or preserve old semantics if tests show 0 had a defined meaning. Prefer the smallest change that satisfies existing tests and the boolean success/failure contract.",
+                  "Replace silent pass with logger.exception(...) or logger.warning(..., exc_info=True). Preserve existing behavior by not raising callback exceptions to the dispatch caller unless existing behavior requires raising.",
                 expectedShape:
-                  "Minimal code/docstring clarification or compatibility-preserving behavior.",
+                  "except Exception:\n" +
+                  "    logger.exception(\"...\")",
               },
-              tick_dispatcher_complexity: {
-                title: "Reduce TickDispatcher.dispatch_tick complexity if still required by Codacy",
+
+              invalid_tick_reason_handling: {
+                title: "Preserve or log invalid tick reason",
                 file: "tick_dispatcher.py",
-                location: "dispatch_tick",
-                priority: "P3",
+                location: "_invalid_tick_reason / _record_invalid_tick / dispatch_tick",
+                priority: "P2",
                 problem:
-                  "Codacy may flag dispatch_tick cyclomatic complexity. This is lower priority than the behavioral fixes.",
+                  "_invalid_tick_reason may return a reason that is discarded by _record_invalid_tick.",
                 requiredFix:
-                  "Only if Codacy remains blocking after the functional fixes, extract small private helpers for validation/callback execution without changing behavior.",
+                  "Use the reason minimally: log it when recording the invalid tick, or store minimal last_invalid_reason / count-by-reason only if already consistent with stats. Do not broaden public metrics unless tests require it.",
                 expectedShape:
-                  "Minimal helper extraction; no broad refactor.",
+                  "reason = self._invalid_tick_reason(tick)\n" +
+                  "if reason is not None:\n" +
+                  "    self._record_invalid_tick(tick, reason)\n" +
+                  "    return",
               },
-              docstring_style_modified_files: {
-                title: "Restore missing docstrings/style only in modified files if still blocking",
-                file: "auto_throttle.py / tick_dispatcher.py / tests",
-                location: "modified files only",
+
+              test_codacy_cleanup: {
+                title: "Fix focused PR4 test Codacy residues without weakening coverage",
+                file: "tests/unit/test_tick_throttle_executor_determinism.py",
+                location: "focused PR4 tests",
                 priority: "P3",
                 problem:
-                  "Codacy may flag missing docstrings or minor style issues in modified files.",
+                  "Codacy may flag test-only residues such as no module docstring, bare assert/B101, long test names, method length, invalid type calls, or duplicated clones.",
                 requiredFix:
-                  "Fix only blocking Codacy issues in files touched by this PR. Do not do broad style cleanup outside PR scope.",
+                  "Fix only still-valid test issues. Do not weaken coverage. Use pytest assertions/helpers, module docstring, shorter names, cast(Any, ...) or type ignore for intentional invalid calls, and small helpers only when useful.",
                 expectedShape:
-                  "Minimal docstrings/style cleanup in modified files only.",
+                  "\"\"\"Focused PR4 determinism regression tests.\"\"\"\n" +
+                  "from typing import Any, cast\n" +
+                  "...\n" +
+                  "pytest.fail(...) or explicit helper assertions instead of bare assert",
+              },
+
+              singleton_race_test: {
+                title: "Improve TickDispatcher singleton race test only if still valid",
+                file: "tests/unit/test_tick_throttle_executor_determinism.py",
+                location: "singleton race test",
+                priority: "P3",
+                problem:
+                  "CodeRabbit may flag that the singleton race test does not actually reset the module global or exercise the lock.",
+                requiredFix:
+                  "If still valid and low-risk, reset tick_dispatcher._dispatcher to None with cleanup restore and use threading.Barrier to start threads together. If fragile, skip with reason.",
+                expectedShape:
+                  "old_dispatcher = tick_dispatcher._dispatcher\n" +
+                  "tick_dispatcher._dispatcher = None\n" +
+                  "barrier = threading.Barrier(worker_count)\n" +
+                  "try:\n" +
+                  "    ...\n" +
+                  "finally:\n" +
+                  "    tick_dispatcher._dispatcher = old_dispatcher",
+              },
+
+              docstring_changed_helpers: {
+                title: "Add docstrings only to changed PR4 helpers/tests if required",
+                file: "tick_dispatcher.py / auto_throttle.py / executor_manager.py / tests/unit/test_tick_throttle_executor_determinism.py",
+                location: "changed helpers/tests only",
+                priority: "P3",
+                problem:
+                  "Docstring coverage warnings may appear, but they are not a required blocker unless configured as required.",
+                requiredFix:
+                  "Do not mass-docstring the repository. Add docstrings only to new/changed PR4 helpers/tests where local static tools complain.",
+                expectedShape:
+                  "Minimal helper/test docstrings only where needed.",
               },
             };
 
@@ -269,100 +303,89 @@ jobs:
               const value = `${path}\n${text}`.toLowerCase();
 
               if (
-                value.includes("autothrottle.update") &&
-                (
-                  value.includes("*args") ||
-                  value.includes("kwargs-only") ||
-                  value.includes("variadic") ||
-                  value.includes("positional") ||
-                  value.includes("public api") ||
-                  value.includes("contract snapshot") ||
-                  value.includes("signature")
-                )
+                value.includes("staticmethod") ||
+                value.includes("does not use self") ||
+                value.includes("_invalid_tick_reason") ||
+                value.includes("_dispatch_storage_callbacks") ||
+                value.includes("_dispatch_batch_callbacks")
               ) {
-                return "auto_throttle_update_signature";
-              }
-
-              if (
-                value.includes("auto_throttle") &&
-                (
-                  value.includes("math.isfinite") ||
-                  value.includes("non-finite") ||
-                  value.includes("float(\"inf\")") ||
-                  value.includes("float('inf')") ||
-                  value.includes("_prune") ||
-                  value.includes("period")
-                )
-              ) {
-                return "auto_throttle_period_isfinite";
+                if (value.includes("tick_dispatcher")) return "tick_staticmethods";
               }
 
               if (
                 value.includes("executor_manager") ||
-                (
-                  value.includes("wait()") &&
-                  value.includes("_completed_futures") &&
-                  value.includes("_futures")
-                ) ||
-                (
-                  value.includes("completed future") &&
-                  value.includes("future.result")
-                )
+                value.includes("future cleanup") ||
+                value.includes("_futures") ||
+                value.includes("wait(\"fast\"") ||
+                value.includes("fast") && value.includes("wait") && value.includes("future") ||
+                value.includes("add_done_callback") ||
+                value.includes("callback deadlock")
               ) {
                 return "executor_wait_cleanup_race";
               }
 
               if (
-                value.includes("tick_dispatcher") &&
-                (
-                  value.includes("time.time") ||
-                  value.includes("time.monotonic") ||
-                  value.includes("ntp") ||
-                  value.includes("dst") ||
-                  value.includes("monotonic clock")
-                )
+                value.includes("api_calls_min") ||
+                value.includes("round(") ||
+                value.includes("round upward") ||
+                value.includes("per-minute cap") ||
+                value.includes("_blocked") ||
+                value.includes("max_calls")
               ) {
-                return "tick_dispatcher_monotonic";
+                return "auto_throttle_no_round_up";
               }
 
               if (
-                value.includes("tick_dispatcher") &&
-                (
-                  value.includes("selection_id") ||
-                  value.includes("invalid tick") ||
-                  value.includes("composite key") ||
-                  value.includes("market_id")
-                )
+                value.includes("except exception") ||
+                value.includes("bare except") ||
+                value.includes("silently swallowed") ||
+                value.includes("callback exception") ||
+                value.includes("logger.exception") ||
+                value.includes("logger.warning")
               ) {
-                return "tick_dispatcher_selection_id_validation";
+                if (value.includes("tick_dispatcher") || value.includes("callback")) {
+                  return "callback_exception_logging";
+                }
               }
 
               if (
-                value.includes("api_calls_min") &&
-                (
-                  value.includes("<= 0") ||
-                  value.includes("non-positive") ||
-                  value.includes("negative") ||
-                  value.includes("0")
-                )
+                value.includes("invalid reason") ||
+                value.includes("invalid_tick_reason") ||
+                value.includes("record_invalid") ||
+                value.includes("last_invalid") ||
+                value.includes("invalid tick reason")
               ) {
-                return "auto_throttle_api_calls_min_non_positive";
+                return "invalid_tick_reason_handling";
               }
 
               if (
-                value.includes("cyclomatic complexity") &&
-                value.includes("tick_dispatcher")
+                value.includes("b101") ||
+                value.includes("bare assert") ||
+                value.includes("module docstring") ||
+                value.includes("test name") ||
+                value.includes("test_tick_throttle_executor_determinism") ||
+                value.includes("cast(any") ||
+                value.includes("type: ignore")
               ) {
-                return "tick_dispatcher_complexity";
+                return "test_codacy_cleanup";
               }
 
               if (
+                value.includes("_dispatcher") ||
+                value.includes("barrier") ||
+                value.includes("singleton") ||
+                value.includes("race test")
+              ) {
+                return "singleton_race_test";
+              }
+
+              if (
+                value.includes("docstring coverage") ||
                 value.includes("missing function or method docstring") ||
-                value.includes("restore the module and class docstrings") ||
-                value.includes("docstring") ||
-                value.includes("d203")
+                value.includes("d203") ||
+                value.includes("docstring")
               ) {
-                return "docstring_style_modified_files";
+                return "docstring_changed_helpers";
               }
 
               return null;
@@ -430,6 +453,20 @@ jobs:
               });
 
               return data;
+            }
+
+            async function getPrFiles(prNumber) {
+              try {
+                return await github.paginate(github.rest.pulls.listFiles, {
+                  owner,
+                  repo,
+                  pull_number: prNumber,
+                  per_page: 100,
+                });
+              } catch (err) {
+                core.warning(`Could not read PR files: ${err.message}`);
+                return [];
+              }
             }
 
             async function getHeadCommitDate(headSha) {
@@ -630,1051 +667,4 @@ jobs:
                 /Traceback/i,
                 /Error:/i,
                 /ERROR/i,
-                /Process completed with exit code/i,
-                /Signature cambiata/i,
-                /expected=.*actual=/i,
-                /Codacy/i,
-                /DeepSource/i,
-                /ruff/i,
-                /pylint/i,
-                /mypy/i,
-                /pytest/i,
-                /guardrail/i,
-                /contract_snapshot/i,
-              ];
-
-              const hits = [];
-
-              for (let i = 0; i < lines.length; i++) {
-                if (patterns.some(p => p.test(lines[i]))) {
-                  hits.push(i);
-                }
-              }
-
-              if (!hits.length) {
-                return truncate(lines.slice(-100).join("\n"), MAX_LOG_CHARS_PER_JOB);
-              }
-
-              const out = [];
-
-              for (const idx of hits.slice(0, 5)) {
-                const start = Math.max(0, idx - 12);
-                const end = Math.min(lines.length, idx + 40);
-                out.push(`--- log lines ${start + 1}-${end} ---`);
-                out.push(lines.slice(start, end).join("\n"));
-              }
-
-              return truncate(out.join("\n"), MAX_LOG_CHARS_PER_JOB);
-            }
-
-            async function getFailedWorkflowDetails(headSha) {
-              const runs = await getWorkflowRuns(headSha);
-
-              const failedRuns = runs
-                .filter(r => [
-                  "failure",
-                  "timed_out",
-                  "cancelled",
-                  "action_required",
-                  "startup_failure",
-                ].includes(r.conclusion || ""))
-                .slice(0, MAX_FAILED_RUNS);
-
-              const details = [];
-
-              for (const run of failedRuns) {
-                const jobs = await getWorkflowJobs(run.id);
-
-                const failedJobs = jobs
-                  .filter(j => [
-                    "failure",
-                    "timed_out",
-                    "cancelled",
-                    "action_required",
-                    "startup_failure",
-                  ].includes(j.conclusion || ""))
-                  .slice(0, MAX_FAILED_JOBS_PER_RUN);
-
-                const jobDetails = [];
-
-                for (const job of failedJobs) {
-                  const log = await getJobLog(job.id);
-                  const snippet = extractFailureSnippet(log);
-
-                  const failedSteps = (job.steps || [])
-                    .filter(s => [
-                      "failure",
-                      "timed_out",
-                      "cancelled",
-                      "action_required",
-                      "startup_failure",
-                    ].includes(s.conclusion || ""))
-                    .map(s => `#${s.number} ${s.name}: ${s.conclusion}`);
-
-                  jobDetails.push({
-                    name: job.name,
-                    conclusion: job.conclusion,
-                    url: job.html_url,
-                    failedSteps,
-                    snippet,
-                  });
-                }
-
-                details.push({
-                  name: run.name,
-                  conclusion: run.conclusion,
-                  url: run.html_url,
-                  jobs: jobDetails,
-                });
-              }
-
-              return details;
-            }
-
-            async function getUnresolvedReviewThreads(prNumber) {
-              const query = `
-                query($owner:String!, $repo:String!, $number:Int!, $after:String) {
-                  repository(owner:$owner, name:$repo) {
-                    pullRequest(number:$number) {
-                      reviewThreads(first:100, after:$after) {
-                        pageInfo {
-                          hasNextPage
-                          endCursor
-                        }
-                        nodes {
-                          id
-                          isResolved
-                          isOutdated
-                          path
-                          line
-                          originalLine
-                          comments(first:50) {
-                            nodes {
-                              id
-                              databaseId
-                              body
-                              url
-                              createdAt
-                              path
-                              line
-                              originalLine
-                              author {
-                                login
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              `;
-
-              const allThreads = [];
-              let after = null;
-
-              while (true) {
-                const data = await github.graphql(query, {
-                  owner,
-                  repo,
-                  number: prNumber,
-                  after,
-                });
-
-                const conn = data.repository.pullRequest.reviewThreads;
-                allThreads.push(...(conn.nodes || []));
-
-                if (!conn.pageInfo.hasNextPage) break;
-                after = conn.pageInfo.endCursor;
-              }
-
-              let rawUnresolvedNonOutdated = 0;
-              let noiseOnlyThreads = 0;
-              let duplicateThreads = 0;
-              const deduped = new Map();
-
-              for (const t of allThreads) {
-                if (t.isResolved || t.isOutdated) continue;
-
-                rawUnresolvedNonOutdated += 1;
-
-                const comments = t.comments?.nodes || [];
-                const usefulComments = comments.filter(c => {
-                  const author = c.author?.login || "";
-                  return !isMonitorNoise(author, c.body || "");
-                });
-
-                if (!usefulComments.length) {
-                  noiseOnlyThreads += 1;
-                  continue;
-                }
-
-                const lastUseful = usefulComments[usefulComments.length - 1];
-
-                const path = lastUseful.path || t.path || "";
-                const line =
-                  lastUseful.line ||
-                  lastUseful.originalLine ||
-                  t.line ||
-                  t.originalLine ||
-                  "";
-
-                const body = truncate(clean(lastUseful.body || ""), MAX_THREAD_COMMENT_CHARS);
-                const issueKey = classifyText(body, path);
-
-                const key = issueKey || `${path}:${line}:${normalizeProblem(body)}`;
-
-                const item = {
-                  key,
-                  issue_key: issueKey,
-                  thread_id: t.id,
-                  path,
-                  line,
-                  author: lastUseful.author?.login || "unknown",
-                  created_at: lastUseful.createdAt,
-                  url: lastUseful.url,
-                  body,
-                  comment_count: usefulComments.length,
-                  duplicate_count: 0,
-                  evidence_urls: [lastUseful.url].filter(Boolean),
-                };
-
-                if (deduped.has(key)) {
-                  duplicateThreads += 1;
-                  const existing = deduped.get(key);
-                  existing.duplicate_count += 1;
-                  if (lastUseful.url && !existing.evidence_urls.includes(lastUseful.url)) {
-                    existing.evidence_urls.push(lastUseful.url);
-                  }
-                } else {
-                  deduped.set(key, item);
-                }
-              }
-
-              return {
-                raw_unresolved_non_outdated: rawUnresolvedNonOutdated,
-                noise_only_threads: noiseOnlyThreads,
-                duplicate_threads: duplicateThreads,
-                actionable_threads: Array.from(deduped.values()).slice(0, MAX_REVIEW_THREADS),
-              };
-            }
-
-            async function getNewCommentsAfter(prNumber, sinceDate) {
-              const sinceMs = sinceDate.getTime();
-
-              const issueComments = await github.paginate(github.rest.issues.listComments, {
-                owner,
-                repo,
-                issue_number: prNumber,
-                per_page: 100,
-              });
-
-              const reviewComments = await github.paginate(github.rest.pulls.listReviewComments, {
-                owner,
-                repo,
-                pull_number: prNumber,
-                per_page: 100,
-              });
-
-              const reviews = await github.paginate(github.rest.pulls.listReviews, {
-                owner,
-                repo,
-                pull_number: prNumber,
-                per_page: 100,
-              });
-
-              const raw = [];
-              const actionable = [];
-              const ignoredNoise = [];
-
-              function addComment(item) {
-                raw.push(item);
-
-                if (isMonitorNoise(item.author, item.body)) {
-                  ignoredNoise.push(item);
-                } else {
-                  actionable.push(item);
-                }
-              }
-
-              for (const c of issueComments) {
-                const created = new Date(c.created_at).getTime();
-                if (created <= sinceMs) continue;
-
-                addComment({
-                  type: "conversation",
-                  id: c.id,
-                  author: c.user?.login || "unknown",
-                  created_at: c.created_at,
-                  url: c.html_url,
-                  body: truncate(clean(c.body), MAX_NEW_COMMENT_CHARS),
-                });
-              }
-
-              for (const c of reviewComments) {
-                const created = new Date(c.created_at).getTime();
-                if (created <= sinceMs) continue;
-
-                addComment({
-                  type: "review_comment",
-                  id: c.id,
-                  author: c.user?.login || "unknown",
-                  created_at: c.created_at,
-                  url: c.html_url,
-                  path: c.path,
-                  line: c.line || c.original_line,
-                  body: truncate(clean(c.body), MAX_NEW_COMMENT_CHARS),
-                });
-              }
-
-              for (const r of reviews) {
-                const submittedAt = r.submitted_at || r.submittedAt;
-                const submitted = new Date(submittedAt || 0).getTime();
-                const body = clean(r.body || "");
-
-                if (!submitted || submitted <= sinceMs) continue;
-                if (!body) continue;
-
-                addComment({
-                  type: "review",
-                  id: r.id,
-                  author: r.user?.login || "unknown",
-                  created_at: submittedAt,
-                  url: r.html_url || "",
-                  state: r.state,
-                  body: truncate(body, MAX_NEW_COMMENT_CHARS),
-                });
-              }
-
-              actionable.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-
-              return {
-                raw_count: raw.length,
-                actionable_count: actionable.length,
-                ignored_noise_count: ignoredNoise.length,
-                actionable: actionable.slice(0, MAX_NEW_COMMENTS),
-              };
-            }
-
-            function buildDetectedIssues({
-              pr,
-              branch,
-              failedChecks,
-              annotationsByCheck,
-              reviewThreadAnalysis,
-              newComments,
-            }) {
-              const issues = new Map();
-
-              const forceKnownIssues =
-                Number(pr.number) === 220 ||
-                String(branch || "").includes("harden-tick-throttle-executor-determinism");
-
-              if (forceKnownIssues) {
-                [
-                  "auto_throttle_update_signature",
-                  "auto_throttle_period_isfinite",
-                  "executor_wait_cleanup_race",
-                  "tick_dispatcher_monotonic",
-                  "tick_dispatcher_selection_id_validation",
-                  "auto_throttle_api_calls_min_non_positive",
-                ].forEach(key => addIssue(issues, key, "Known required fix detected for this PR."));
-              }
-
-              for (const t of reviewThreadAnalysis.actionable_threads) {
-                const key = t.issue_key || classifyText(t.body, t.path);
-                addIssue(issues, key, `${t.path}:${t.line} ${t.url || ""}`);
-              }
-
-              for (const [checkName, annotations] of Object.entries(annotationsByCheck)) {
-                for (const a of annotations) {
-                  const text = [a.title, a.message, a.raw_details].join("\n");
-                  const key = classifyText(text, a.path);
-                  addIssue(issues, key, `${checkName} ${a.path}:${a.start_line || "n/a"}`);
-                }
-              }
-
-              for (const c of newComments.actionable) {
-                const key = classifyText(c.body, c.path || "");
-                addIssue(issues, key, `${c.type} ${c.url || ""}`);
-              }
-
-              return Array.from(issues.values());
-            }
-
-            function formatFixTheseIssuesOnly(issues) {
-              if (!issues.length) {
-                return [
-                  "No deduplicated code issues were detected.",
-                  "",
-                  "If checks are still red, inspect the failing check logs below and fix only current PR failures.",
-                ].join("\n");
-              }
-
-              const blocks = [];
-
-              blocks.push("You must fix ONLY the issues in this section first. These are deduplicated and rewritten as direct coding tasks for Codex.");
-              blocks.push("");
-              blocks.push("Global rules:");
-              blocks.push("- Continue on the existing PR branch.");
-              blocks.push("- Do not create a new PR.");
-              blocks.push("- Do not merge.");
-              blocks.push("- Do not work on main.");
-              blocks.push("- Do not modify unrelated files.");
-              blocks.push("- Do not chase duplicated old monitor comments.");
-              blocks.push("- Ignore PR Health Monitor / PR Telegram Notify / PR Codex Monitor self-check noise.");
-              blocks.push("- Ignore Node.js 20 deprecation annotations unless they directly fail this PR.");
-              blocks.push("");
-
-              issues.forEach((issue, index) => {
-                blocks.push(`## ${index + 1}. ${issue.title}`);
-                blocks.push("");
-                blocks.push(`Priority: ${issue.priority}`);
-                blocks.push(`File: ${issue.file}`);
-                blocks.push(`Location: ${issue.location}`);
-                blocks.push("");
-                blocks.push("Problem:");
-                blocks.push(issue.problem);
-                blocks.push("");
-                blocks.push("Required fix:");
-                blocks.push(issue.requiredFix);
-                blocks.push("");
-                blocks.push("Expected shape:");
-                blocks.push("```text");
-                blocks.push(issue.expectedShape);
-                blocks.push("```");
-
-                const evidence = (issue.evidence || []).filter(Boolean).slice(0, 6);
-                if (evidence.length) {
-                  blocks.push("");
-                  blocks.push("Evidence:");
-                  for (const e of evidence) {
-                    blocks.push(`- ${e}`);
-                  }
-                }
-
-                blocks.push("");
-                blocks.push("---");
-                blocks.push("");
-              });
-
-              return blocks.join("\n");
-            }
-
-            function formatFailedChecksMarkdown(failedChecks) {
-              if (!failedChecks.length) return "Nessun check rosso.";
-
-              return failedChecks.map((c, index) => {
-                const state = c.kind === "status"
-                  ? c.state
-                  : `${c.status || ""}/${c.conclusion || ""}`;
-
-                return [
-                  `### ${index + 1}. ${c.name}`,
-                  "",
-                  `- Kind: ${c.kind}`,
-                  `- Status: ${state}`,
-                  c.url ? `- URL: ${c.url}` : "",
-                  c.description ? `- Description: ${c.description}` : "",
-                  c.summary ? `- Summary: ${truncate(c.summary, 900)}` : "",
-                ].filter(Boolean).join("\n");
-              }).join("\n\n");
-            }
-
-            function formatPendingChecksMarkdown(pendingChecks) {
-              if (!pendingChecks.length) return "Nessun check pending.";
-
-              return pendingChecks.map(c => {
-                const state = c.kind === "status"
-                  ? c.state
-                  : `${c.status || ""}/${c.conclusion || ""}`;
-
-                return `- ${c.name}: ${state}${c.url ? `\n  ${c.url}` : ""}`;
-              }).join("\n");
-            }
-
-            function formatAnnotationsMarkdown(annotationsByCheck) {
-              const blocks = [];
-
-              for (const [checkName, annotations] of Object.entries(annotationsByCheck)) {
-                if (!annotations.length) continue;
-
-                blocks.push(`### ${checkName}`);
-                blocks.push("");
-
-                for (const a of annotations) {
-                  blocks.push([
-                    `- ${a.annotation_level || "annotation"} ${a.path || ""}:${a.start_line || "n/a"}`,
-                    a.title ? `  - Title: ${a.title}` : "",
-                    a.message ? `  - Message: ${a.message}` : "",
-                    a.raw_details ? `  - Details: ${a.raw_details}` : "",
-                  ].filter(Boolean).join("\n"));
-                }
-
-                blocks.push("");
-              }
-
-              return blocks.length ? blocks.join("\n") : "Nessuna useful check annotation disponibile.";
-            }
-
-            function formatWorkflowDetailsMarkdown(details) {
-              if (!details.length) return "Nessun workflow failure dettagliato trovato.";
-
-              const blocks = [];
-
-              for (const run of details) {
-                blocks.push(`### Workflow: ${run.name}`);
-                blocks.push("");
-                blocks.push(`- Conclusion: ${run.conclusion}`);
-                blocks.push(`- Run: ${run.url}`);
-                blocks.push("");
-
-                for (const job of run.jobs || []) {
-                  blocks.push(`#### Job: ${job.name}`);
-                  blocks.push("");
-                  blocks.push(`- Conclusion: ${job.conclusion}`);
-                  if (job.url) blocks.push(`- Job URL: ${job.url}`);
-
-                  if (job.failedSteps?.length) {
-                    blocks.push("");
-                    blocks.push("Failed steps:");
-                    for (const step of job.failedSteps) {
-                      blocks.push(`- ${step}`);
-                    }
-                  }
-
-                  if (job.snippet) {
-                    blocks.push("");
-                    blocks.push("Useful log snippet:");
-                    blocks.push("");
-                    blocks.push("```text");
-                    blocks.push(job.snippet);
-                    blocks.push("```");
-                  }
-
-                  blocks.push("");
-                }
-              }
-
-              return blocks.join("\n");
-            }
-
-            function formatThreadsMarkdown(threads) {
-              if (!threads.length) return "Nessun review thread actionable.";
-
-              return threads.map((t, index) => {
-                const issueLabel = t.issue_key && ISSUE_DEFINITIONS[t.issue_key]
-                  ? ISSUE_DEFINITIONS[t.issue_key].title
-                  : "Unclassified review issue";
-
-                return [
-                  `### ${index + 1}. ${issueLabel}`,
-                  "",
-                  `- File: ${t.path || "unknown"}:${t.line || "n/a"}`,
-                  `- Author: ${t.author}`,
-                  `- URL: ${t.url || "n/a"}`,
-                  `- Thread ID: ${t.thread_id}`,
-                  `- Useful comments in group: ${t.comment_count}`,
-                  `- Duplicates collapsed into this group: ${t.duplicate_count || 0}`,
-                  "",
-                  "Problem / suggestion:",
-                  "",
-                  "```text",
-                  t.body,
-                  "```",
-                  "",
-                  t.evidence_urls?.length > 1 ? "Additional duplicate evidence URLs:" : "",
-                  ...(t.evidence_urls || []).slice(1, 8).map(url => `- ${url}`),
-                ].filter(Boolean).join("\n");
-              }).join("\n\n");
-            }
-
-            function formatNewCommentsMarkdown(comments) {
-              if (!comments.length) return "Nessun nuovo commento actionable dopo l'ultimo commit.";
-
-              return comments.map((c, index) => {
-                const loc = c.path ? `${c.path}:${c.line || "n/a"}` : "";
-                return [
-                  `### ${index + 1}. ${c.type} by ${c.author}${loc ? ` on ${loc}` : ""}`,
-                  "",
-                  c.state ? `- State: ${c.state}` : "",
-                  c.url ? `- URL: ${c.url}` : "",
-                  `- Created: ${c.created_at}`,
-                  "",
-                  "```text",
-                  c.body || "",
-                  "```",
-                ].filter(Boolean).join("\n");
-              }).join("\n\n");
-            }
-
-            function buildFixPlan(issues, failedChecks, annotationsByCheck, reviewThreads) {
-              const lines = [];
-
-              lines.push("1. Start from `FIX THESE ISSUES ONLY` and implement those fixes first.");
-              lines.push("2. Re-run the smallest relevant tests:");
-              lines.push("   - pytest -q tests/unit/test_tick_throttle_executor_determinism.py tests/unit/test_auto_throttle.py");
-              lines.push("3. Re-run guardrail/contract tests if available from CI logs.");
-              lines.push("4. If Codacy/DeepSource still fail, fix only in-scope issues in modified files.");
-              lines.push("5. Push the fix commit to the same PR branch.");
-              lines.push("6. Do not create a new PR and do not merge.");
-
-              if (issues.length) {
-                lines.push("");
-                lines.push("Detected issue order:");
-                issues.forEach((issue, index) => {
-                  lines.push(`${index + 1}. ${issue.title}`);
-                });
-              }
-
-              return lines.join("\n");
-            }
-
-            function buildHandoffMarkdown({
-              pr,
-              headSha,
-              branch,
-              commitDate,
-              failedChecks,
-              pendingChecks,
-              annotationsByCheck,
-              workflowDetails,
-              reviewThreadAnalysis,
-              newComments,
-              detectedIssues,
-              allClean,
-            }) {
-              const annotationCount = Object.values(annotationsByCheck).reduce((sum, arr) => sum + arr.length, 0);
-
-              return [
-                "# Codex PR Fix Handoff",
-                "",
-                "## Mission",
-                "",
-                "Fix the current PR only.",
-                "",
-                `Repository: ${repoFull}`,
-                `PR: #${pr.number}`,
-                `PR URL: ${pr.html_url}`,
-                `Branch: ${branch}`,
-                `Head SHA: ${headSha}`,
-                `Short SHA: ${shortSha(headSha)}`,
-                `Commit date: ${commitDate.toISOString()}`,
-                "",
-                "---",
-                "",
-                "# FIX THESE ISSUES ONLY",
-                "",
-                formatFixTheseIssuesOnly(detectedIssues),
-                "",
-                "---",
-                "",
-                "## Current PR Health",
-                "",
-                allClean
-                  ? "Status: CLEAN / ALL GREEN"
-                  : "Status: NOT GREEN / ACTION REQUIRED",
-                "",
-                `- Red checks: ${failedChecks.length}`,
-                `- Pending checks, excluding self-monitor checks: ${pendingChecks.length}`,
-                `- Useful static analysis annotations included: ${annotationCount}`,
-                `- Review thread unresolved non-outdated raw: ${reviewThreadAnalysis.raw_unresolved_non_outdated}`,
-                `- Review thread actionable deduplicated groups: ${reviewThreadAnalysis.actionable_threads.length}`,
-                `- Review thread noise-only ignored: ${reviewThreadAnalysis.noise_only_threads}`,
-                `- Review thread duplicates collapsed: ${reviewThreadAnalysis.duplicate_threads}`,
-                `- New comments after commit raw: ${newComments.raw_count}`,
-                `- New comments after commit actionable: ${newComments.actionable_count}`,
-                `- New comments ignored as monitor noise: ${newComments.ignored_noise_count}`,
-                "",
-                "---",
-                "",
-                "## Failing Checks To Fix",
-                "",
-                formatFailedChecksMarkdown(failedChecks),
-                "",
-                "---",
-                "",
-                "## Pending Checks",
-                "",
-                formatPendingChecksMarkdown(pendingChecks),
-                "",
-                "---",
-                "",
-                "## Useful Static Analysis Annotations",
-                "",
-                "Includes useful Codacy, DeepSource, GitHub annotations, and check annotations exposed through GitHub. Self-monitor and Node.js deprecation noise are filtered out.",
-                "",
-                formatAnnotationsMarkdown(annotationsByCheck),
-                "",
-                "---",
-                "",
-                "## Failed Workflow / Job Log Snippets",
-                "",
-                formatWorkflowDetailsMarkdown(workflowDetails),
-                "",
-                "---",
-                "",
-                "## Deduplicated Review Thread Evidence",
-                "",
-                "Only unresolved, non-outdated review threads are included. Old monitor noise is filtered out. Repeated AutoThrottle.update / ExecutorManager.wait comments are collapsed into one group.",
-                "",
-                formatThreadsMarkdown(reviewThreadAnalysis.actionable_threads),
-                "",
-                "---",
-                "",
-                "## New Actionable Comments After Latest Commit",
-                "",
-                formatNewCommentsMarkdown(newComments.actionable),
-                "",
-                "---",
-                "",
-                "## Deduplicated Fix Plan",
-                "",
-                buildFixPlan(detectedIssues, failedChecks, annotationsByCheck, reviewThreadAnalysis.actionable_threads),
-                "",
-                "---",
-                "",
-                "## Required After-Fix Response",
-                "",
-                "Respond with:",
-                "",
-                "```text",
-                "DONE / PARTIAL / NOT DONE",
-                "",
-                "Summary:",
-                "- <what was changed>",
-                "",
-                "Commit:",
-                "- <commit SHA>",
-                "",
-                "New PR head SHA:",
-                "- <new PR head SHA>",
-                "",
-                "Checks:",
-                "- <check name>: expected status or result",
-                "",
-                "Review comments handled:",
-                "- <thread URL>: fixed in commit <SHA>",
-                "- <thread URL>: skipped because <reason>",
-                "",
-                "Files changed:",
-                "- <file path>",
-                "",
-                "Notes:",
-                "- <anything the repository owner must know>",
-                "```",
-                "",
-              ].join("\n");
-            }
-
-            function buildTelegramSummary({
-              pr,
-              headSha,
-              branch,
-              failedChecks,
-              pendingChecks,
-              annotationsByCheck,
-              reviewThreadAnalysis,
-              newComments,
-              detectedIssues,
-              allClean,
-              handoffFilename,
-            }) {
-              const annotationCount = Object.values(annotationsByCheck).reduce((sum, arr) => sum + arr.length, 0);
-
-              const title = allClean
-                ? `✅ Pickfair PR #${pr.number}: tutto verde`
-                : `🟡 Pickfair PR #${pr.number}: file Codex pronto`;
-
-              return [
-                title,
-                "",
-                `Branch: ${branch}`,
-                `Head: ${shortSha(headSha)}`,
-                `PR: ${pr.html_url}`,
-                "",
-                `Problemi Codex deduplicati: ${detectedIssues.length}`,
-                `Check rossi: ${failedChecks.length}`,
-                `Check pending veri: ${pendingChecks.length}`,
-                `Annotations utili Codacy/DeepSource/GitHub: ${annotationCount}`,
-                `Review thread raw: ${reviewThreadAnalysis.raw_unresolved_non_outdated}`,
-                `Review thread deduplicati/gruppi: ${reviewThreadAnalysis.actionable_threads.length}`,
-                `Rumore vecchio monitor ignorato: ${reviewThreadAnalysis.noise_only_threads}`,
-                `Duplicati accorpati: ${reviewThreadAnalysis.duplicate_threads}`,
-                `Nuovi commenti actionable dopo commit: ${newComments.actionable_count}`,
-                "",
-                allClean
-                  ? "✅ Tutti i check sono verdi e non risultano problemi actionable."
-                  : `📎 Allego file pronto per Codex: ${handoffFilename}`,
-              ].join("\n");
-            }
-
-            async function main() {
-              const prNumber = await inferPrNumber();
-
-              if (!prNumber) {
-                core.info("No PR number found.");
-                core.setOutput("should_notify", "false");
-                return;
-              }
-
-              const pr = await getPr(prNumber);
-
-              if (pr.state !== "open") {
-                core.info(`PR #${prNumber} is not open.`);
-                core.setOutput("should_notify", "false");
-                return;
-              }
-
-              if (pr.draft) {
-                core.info(`PR #${prNumber} is draft.`);
-                core.setOutput("should_notify", "false");
-                return;
-              }
-
-              const headSha = pr.head.sha;
-              const branch = pr.head.ref;
-              const commitDate = await getHeadCommitDate(headSha);
-
-              const checks = [
-                ...(await getStatuses(headSha)),
-                ...(await getCheckRuns(headSha)),
-              ];
-
-              const failedChecks = checks.filter(isFailedCheck);
-              const pendingChecks = checks.filter(isPendingCheck);
-
-              if (WAIT_UNTIL_CHECKS_SETTLED && pendingChecks.length > 0 && !IS_MANUAL_RUN) {
-                core.info(`Checks still pending (${pendingChecks.length}); waiting before Telegram report.`);
-                core.setOutput("should_notify", "false");
-                return;
-              }
-
-              const annotationsByCheck = {};
-              let totalAnnotations = 0;
-
-              for (const c of checks) {
-                if (c.kind === "check_run" && c.id) {
-                  const annotations = await getCheckAnnotations(c.id, c.name);
-
-                  if (annotations.length) {
-                    const remaining = Math.max(0, MAX_ANNOTATIONS_TOTAL - totalAnnotations);
-                    const selected = annotations.slice(0, remaining);
-
-                    if (selected.length) {
-                      annotationsByCheck[c.name] = selected;
-                      totalAnnotations += selected.length;
-                    }
-                  }
-
-                  if (totalAnnotations >= MAX_ANNOTATIONS_TOTAL) break;
-                }
-              }
-
-              const workflowDetails = await getFailedWorkflowDetails(headSha);
-              const reviewThreadAnalysis = await getUnresolvedReviewThreads(prNumber);
-              const newComments = await getNewCommentsAfter(prNumber, commitDate);
-
-              const detectedIssues = buildDetectedIssues({
-                pr,
-                branch,
-                failedChecks,
-                annotationsByCheck,
-                reviewThreadAnalysis,
-                newComments,
-              });
-
-              const allClean =
-                failedChecks.length === 0 &&
-                pendingChecks.length === 0 &&
-                totalAnnotations === 0 &&
-                reviewThreadAnalysis.actionable_threads.length === 0 &&
-                detectedIssues.length === 0;
-
-              const shouldNotify =
-                IS_MANUAL_RUN ||
-                allClean ||
-                failedChecks.length > 0 ||
-                totalAnnotations > 0 ||
-                reviewThreadAnalysis.actionable_threads.length > 0 ||
-                newComments.actionable_count > 0 ||
-                detectedIssues.length > 0;
-
-              if (!shouldNotify) {
-                core.info("No relevant PR health changes to notify.");
-                core.setOutput("should_notify", "false");
-                return;
-              }
-
-              const statePayload = {
-                pr: prNumber,
-                headSha,
-                manual: IS_MANUAL_RUN,
-                allClean,
-                failedChecks: failedChecks.map(c => `${c.name}:${c.kind}:${c.status || c.state}:${c.conclusion || ""}:${c.url || ""}`),
-                pendingChecks: pendingChecks.map(c => `${c.name}:${c.kind}:${c.status || c.state}:${c.conclusion || ""}`),
-                annotations: Object.entries(annotationsByCheck).map(([name, annotations]) => `${name}:${annotations.length}`),
-                issues: detectedIssues.map(i => i.key),
-                actionableThreads: reviewThreadAnalysis.actionable_threads.map(t => `${t.key}:${t.path}:${t.line}:${t.url}`),
-                newComments: newComments.actionable.map(c => `${c.type}:${c.id}:${c.created_at}`),
-                clean: allClean,
-              };
-
-              const stateHash = sha256(JSON.stringify(statePayload)).slice(0, 20);
-              const handoffFilename = `codex-pr-${prNumber}-handoff-${stateHash}.md`;
-
-              const handoff = buildHandoffMarkdown({
-                pr,
-                headSha,
-                branch,
-                commitDate,
-                failedChecks,
-                pendingChecks,
-                annotationsByCheck,
-                workflowDetails,
-                reviewThreadAnalysis,
-                newComments,
-                detectedIssues,
-                allClean,
-              });
-
-              const summary = buildTelegramSummary({
-                pr,
-                headSha,
-                branch,
-                failedChecks,
-                pendingChecks,
-                annotationsByCheck,
-                reviewThreadAnalysis,
-                newComments,
-                detectedIssues,
-                allClean,
-                handoffFilename,
-              });
-
-              fs.writeFileSync(handoffFilename, handoff);
-              fs.writeFileSync("telegram-summary.txt", summary);
-              fs.mkdirSync(".telegram-notify-state", { recursive: true });
-
-              core.setOutput("should_notify", "true");
-              core.setOutput("state_hash", stateHash);
-              core.setOutput("pr_number", String(prNumber));
-              core.setOutput("handoff_filename", handoffFilename);
-              core.setOutput("all_clean", allClean ? "true" : "false");
-
-              core.info(`Prepared Telegram summary and ${handoffFilename}. state=${stateHash}, allClean=${allClean}`);
-            }
-
-            await main();
-
-      - name: Prepare cache directory
-        if: steps.collect.outputs.should_notify == 'true'
-        run: mkdir -p .telegram-notify-state
-
-      - name: Deduplicate automatic Telegram report
-        if: steps.collect.outputs.should_notify == 'true' && steps.collect.outputs.is_manual_run != 'true'
-        id: telegram_cache
-        uses: actions/cache@v4
-        with:
-          path: .telegram-notify-state
-          key: pr-telegram-codex-handoff-${{ steps.collect.outputs.state_hash }}
-
-      - name: Send Telegram summary and Codex handoff file
-        if: steps.collect.outputs.should_notify == 'true' && (steps.collect.outputs.is_manual_run == 'true' || steps.telegram_cache.outputs.cache-hit != 'true')
-        uses: actions/github-script@v7
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          STATE_HASH: ${{ steps.collect.outputs.state_hash }}
-          PR_NUMBER: ${{ steps.collect.outputs.pr_number }}
-          HANDOFF_FILENAME: ${{ steps.collect.outputs.handoff_filename }}
-          ALL_CLEAN: ${{ steps.collect.outputs.all_clean }}
-        with:
-          script: |
-            const fs = require("fs");
-
-            const token = process.env.TELEGRAM_BOT_TOKEN;
-            const chatId = process.env.TELEGRAM_CHAT_ID;
-            const prNumber = process.env.PR_NUMBER || "unknown";
-            const handoffFilename = process.env.HANDOFF_FILENAME;
-            const allClean = process.env.ALL_CLEAN === "true";
-
-            if (!token || !chatId) {
-              core.setFailed("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID.");
-              return;
-            }
-
-            if (!handoffFilename || !fs.existsSync(handoffFilename)) {
-              core.setFailed(`Missing handoff file: ${handoffFilename}`);
-              return;
-            }
-
-            const summary = fs.readFileSync("telegram-summary.txt", "utf8");
-            const handoff = fs.readFileSync(handoffFilename, "utf8");
-
-            async function sendMessage(text) {
-              const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-                method: "POST",
-                body: new URLSearchParams({
-                  chat_id: chatId,
-                  text,
-                  disable_web_page_preview: "true",
-                }),
-              });
-
-              if (!response.ok) {
-                throw new Error(`Telegram sendMessage failed: ${response.status} ${await response.text()}`);
-              }
-            }
-
-            async function sendDocument(filename, content) {
-              const form = new FormData();
-
-              form.append("chat_id", chatId);
-              form.append(
-                "caption",
-                allClean
-                  ? `✅ PR #${prNumber} tutto verde — handoff finale\nHash: ${process.env.STATE_HASH}`
-                  : `📎 File Codex pronto per PR #${prNumber}\nHash: ${process.env.STATE_HASH}`
-              );
-
-              const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
-              form.append("document", blob, filename);
-
-              const response = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
-                method: "POST",
-                body: form,
-              });
-
-              if (!response.ok) {
-                throw new Error(`Telegram sendDocument failed: ${response.status} ${await response.text()}`);
-              }
-            }
-
-            await sendMessage(summary);
-            await sendDocument(handoffFilename, handoff);
-
-            fs.writeFileSync(
-              ".telegram-notify-state/sent.txt",
-              [
-                `sent=${new Date().toISOString()}`,
-                `hash=${process.env.STATE_HASH}`,
-                `pr=${prNumber}`,
-                `handoff=${handoffFilename}`,
-                `all_clean=${allClean}`,
-                "",
-              ].join("\n")
-            );
-
-      - name: Upload Codex handoff artifact
-        if: steps.collect.outputs.should_notify == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: codex-pr-${{ steps.collect.outputs.pr_number }}-handoff
-          path: ${{ steps.collect.outputs.handoff_filename }}
-          if-no-files-found: error
-
-      - name: Skip duplicate Telegram report
-        if: steps.collect.outputs.should_notify == 'true' && steps.collect.outputs.is_manual_run != 'true' && steps.telegram_cache.outputs.cache-hit == 'true'
-        run: |
-          echo "Telegram Codex handoff already sent for this PR/head/state."
+                /Process completed with exit
