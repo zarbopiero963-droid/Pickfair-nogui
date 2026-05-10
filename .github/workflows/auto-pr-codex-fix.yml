@@ -1,0 +1,618 @@
+name: Auto PR Codex Fix
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to fix"
+        required: true
+        type: string
+      force:
+        description: "Force run even if this handoff/head was already attempted"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      dry_run:
+        description: "Run Codex and checks but do not commit/push"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+  workflow_run:
+    workflows: ["PR Telegram Notify"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: read
+  issues: write
+  checks: read
+  statuses: read
+  actions: read
+
+concurrency:
+  group: auto-pr-codex-fix-${{ github.event.inputs.pr_number || github.event.workflow_run.id || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  auto-fix:
+    name: Run Codex CLI on VPS and push PR fix
+    runs-on: self-hosted
+
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+
+    env:
+      GH_TOKEN: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+    steps:
+      - name: Prepare workspace
+        run: |
+          set -euo pipefail
+          mkdir -p handoff
+          mkdir -p codex-output
+          mkdir -p "$HOME/pickfair-auto-state"
+          echo "Workspace prepared."
+
+      - name: Download Codex task handoff from PR Telegram Notify run
+        if: ${{ github.event_name == 'workflow_run' }}
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+          pattern: codex-pr-*-task-handoff
+          merge-multiple: true
+          path: handoff
+
+      - name: Find latest Codex task handoff for manual run
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ github.event.inputs.pr_number }}
+        with:
+          github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+          script: |
+            const fs = require("fs");
+            const path = require("path");
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const prNumber = process.env.PR_NUMBER;
+
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              owner,
+              repo,
+              workflow_id: "pr-telegram-notify.yml",
+              status: "completed",
+              per_page: 50,
+            });
+
+            for (const run of runs) {
+              if (run.conclusion !== "success") continue;
+
+              const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+                owner,
+                repo,
+                run_id: run.id,
+                per_page: 100,
+              });
+
+              const artifact = artifacts.find(a =>
+                a.name === `codex-pr-${prNumber}-task-handoff`
+              );
+
+              if (!artifact) continue;
+
+              const zip = await github.rest.actions.downloadArtifact({
+                owner,
+                repo,
+                artifact_id: artifact.id,
+                archive_format: "zip",
+              });
+
+              fs.mkdirSync("handoff", { recursive: true });
+              fs.writeFileSync("handoff/handoff.zip", Buffer.from(zip.data));
+
+              core.setOutput("artifact_found", "true");
+              core.info(`Downloaded artifact ${artifact.name} from run ${run.id}`);
+              return;
+            }
+
+            core.setFailed(`No codex-pr-${prNumber}-task-handoff artifact found. Run PR Telegram Notify manually first for PR ${prNumber}.`);
+
+      - name: Unzip manual handoff artifact
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          set -euo pipefail
+          if [ -f handoff/handoff.zip ]; then
+            cd handoff
+            unzip -o handoff.zip
+            rm -f handoff.zip
+          fi
+
+      - name: Select handoff file and extract PR metadata
+        id: handoff
+        run: |
+          set -euo pipefail
+
+          HANDOFF_FILE="$(find handoff -maxdepth 2 -type f -name 'codex-pr-*-task-handoff-*.md' | head -n 1 || true)"
+
+          if [ -z "$HANDOFF_FILE" ]; then
+            echo "No handoff file found."
+            find handoff -maxdepth 3 -type f -print || true
+            exit 1
+          fi
+
+          echo "Handoff file: $HANDOFF_FILE"
+
+          PR_NUMBER="$(grep -m1 '^PR: #' "$HANDOFF_FILE" | sed -E 's/^PR: #([0-9]+).*/\1/' || true)"
+          BRANCH="$(grep -m1 '^Branch:' "$HANDOFF_FILE" | sed -E 's/^Branch:[[:space:]]*//' || true)"
+          HEAD_SHA="$(grep -m1 '^Head SHA:' "$HANDOFF_FILE" | sed -E 's/^Head SHA:[[:space:]]*//' || true)"
+          BASE_BRANCH="$(grep -m1 '^Base branch:' "$HANDOFF_FILE" | sed -E 's/^Base branch:[[:space:]]*//' || true)"
+
+          if [ -z "$PR_NUMBER" ] || [ -z "$BRANCH" ] || [ -z "$HEAD_SHA" ]; then
+            echo "Could not parse PR_NUMBER / BRANCH / HEAD_SHA from handoff."
+            echo "Parsed:"
+            echo "PR_NUMBER=$PR_NUMBER"
+            echo "BRANCH=$BRANCH"
+            echo "HEAD_SHA=$HEAD_SHA"
+            exit 1
+          fi
+
+          if grep -q 'Status: CLEAN / ALL GREEN' "$HANDOFF_FILE"; then
+            echo "Handoff says PR is already clean/all green. Skipping Codex."
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          HASH="$(sha256sum "$HANDOFF_FILE" | awk '{print $1}')"
+          SHORT_HASH="${HASH:0:20}"
+
+          echo "handoff_file=$HANDOFF_FILE" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          echo "base_branch=${BASE_BRANCH:-main}" >> "$GITHUB_OUTPUT"
+          echo "handoff_hash=$SHORT_HASH" >> "$GITHUB_OUTPUT"
+
+          echo "PR_NUMBER=$PR_NUMBER"
+          echo "BRANCH=$BRANCH"
+          echo "HEAD_SHA=$HEAD_SHA"
+          echo "BASE_BRANCH=${BASE_BRANCH:-main}"
+          echo "HANDOFF_HASH=$SHORT_HASH"
+
+      - name: Stop if clean
+        if: steps.handoff.outputs.should_run == 'false'
+        run: |
+          echo "No Codex run needed because handoff is clean/all green."
+
+      - name: Check duplicate attempt guard
+        if: steps.handoff.outputs.should_run == 'true'
+        id: guard
+        env:
+          FORCE: ${{ github.event.inputs.force || 'false' }}
+          PR_NUMBER: ${{ steps.handoff.outputs.pr_number }}
+          HEAD_SHA: ${{ steps.handoff.outputs.head_sha }}
+          HANDOFF_HASH: ${{ steps.handoff.outputs.handoff_hash }}
+        run: |
+          set -euo pipefail
+
+          STATE_DIR="$HOME/pickfair-auto-state/pr-$PR_NUMBER"
+          mkdir -p "$STATE_DIR"
+
+          ATTEMPT_FILE="$STATE_DIR/${HEAD_SHA}-${HANDOFF_HASH}.attempted"
+
+          if [ "$FORCE" != "true" ] && [ -f "$ATTEMPT_FILE" ]; then
+            echo "Already attempted this PR/head/handoff state."
+            echo "should_continue=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          touch "$ATTEMPT_FILE"
+          echo "should_continue=true" >> "$GITHUB_OUTPUT"
+
+      - name: Stop duplicate attempt
+        if: steps.handoff.outputs.should_run == 'true' && steps.guard.outputs.should_continue == 'false'
+        run: |
+          echo "Duplicate auto-fix attempt skipped."
+
+      - name: Checkout PR branch
+        if: steps.handoff.outputs.should_run == 'true' && steps.guard.outputs.should_continue == 'true'
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+          fetch-depth: 0
+          ref: ${{ steps.handoff.outputs.branch }}
+          persist-credentials: true
+
+      - name: Configure git identity
+        if: steps.handoff.outputs.should_run == 'true' && steps.guard.outputs.should_continue == 'true'
+        run: |
+          set -euo pipefail
+          git config user.name "pickfair-codex-auto"
+          git config user.email "actions@github.com"
+          git remote -v
+          git branch --show-current
+
+      - name: Verify branch and remote
+        if: steps.handoff.outputs.should_run == 'true' && steps.guard.outputs.should_continue == 'true'
+        env:
+          EXPECTED_BRANCH: ${{ steps.handoff.outputs.branch }}
+        run: |
+          set -euo pipefail
+
+          CURRENT_BRANCH="$(git branch --show-current)"
+
+          if [ "$CURRENT_BRANCH" != "$EXPECTED_BRANCH" ]; then
+            echo "Wrong branch."
+            echo "Current: $CURRENT_BRANCH"
+            echo "Expected: $EXPECTED_BRANCH"
+            exit 1
+          fi
+
+          if [ "$CURRENT_BRANCH" = "main" ] || [ "$CURRENT_BRANCH" = "master" ]; then
+            echo "Refusing to work on main/master."
+            exit 1
+          fi
+
+          if ! git remote -v | grep -q origin; then
+            echo "NEEDS_MANUAL_UPDATE_BRANCH"
+            echo "No origin remote configured."
+            exit 1
+          fi
+
+          git fetch origin "$EXPECTED_BRANCH"
+          git reset --hard "origin/$EXPECTED_BRANCH"
+
+      - name: Verify Codex CLI login
+        if: steps.handoff.outputs.should_run == 'true' && steps.guard.outputs.should_continue == 'true'
+        run: |
+          set -euo pipefail
+
+          if ! command -v codex >/dev/null 2>&1; then
+            echo "Codex CLI not found on self-hosted runner."
+            echo "Install it first: npm install -g @openai/codex"
+            exit 1
+          fi
+
+          codex --version || true
+
+          if [ ! -d "$HOME/.codex" ]; then
+            echo "Codex config directory not found: $HOME/.codex"
+            echo "Run codex login once on the VPS runner user."
+            exit 1
+          fi
+
+          echo "Codex CLI available."
+
+      - name: Copy handoff into repo workspace
+        if: steps.handoff.outputs.should_run == 'true' && steps.guard.outputs.should_continue == 'true'
+        env:
+          HANDOFF_SOURCE: ${{ steps.handoff.outputs.handoff_file }}
+          PR_NUMBER: ${{ steps.handoff.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          cp "$GITHUB_WORKSPACE/$HANDOFF_SOURCE" "codex-task-handoff-pr-${PR_NUMBER}.md"
+          echo "Copied handoff into workspace:"
+          ls -lh "codex-task-handoff-pr-${PR_NUMBER}.md"
+
+      - name: Run Codex CLI with task handoff
+        if: steps.handoff.outputs.should_run == 'true' && steps.guard.outputs.should_continue == 'true'
+        env:
+          PR_NUMBER: ${{ steps.handoff.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+
+          HANDOFF="codex-task-handoff-pr-${PR_NUMBER}.md"
+
+          echo "Starting Codex CLI..."
+          echo "Handoff: $HANDOFF"
+
+          set +e
+          codex exec --full-auto \
+            --output-last-message "codex-output/codex-result-pr-${PR_NUMBER}.md" \
+            < "$HANDOFF" \
+            2>&1 | tee "codex-output/codex-cli-pr-${PR_NUMBER}.log"
+          CODEX_EXIT="${PIPESTATUS[0]}"
+          set -e
+
+          echo "$CODEX_EXIT" > "codex-output/codex-exit-code.txt"
+
+          if [ "$CODEX_EXIT" -ne 0 ]; then
+            echo "Codex CLI exited with code $CODEX_EXIT"
+            exit "$CODEX_EXIT"
+          fi
+
+      - name: Validate scope of changed files
+        if: steps.handoff.outputs.should_run == 'true' && steps.guard.outputs.should_continue == 'true'
+        env:
+          PR_NUMBER: ${{ steps.handoff.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+
+          HANDOFF="codex-task-handoff-pr-${PR_NUMBER}.md"
+
+          python3 <<'PY'
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          handoff = Path(f"codex-task-handoff-pr-{Path('codex-output/codex-exit-code.txt').read_text().strip() and ''}")
+          PY
+
+          python3 <<'PY'
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          pr_number = "${{ steps.handoff.outputs.pr_number }}"
+          handoff = Path(f"codex-task-handoff-pr-{pr_number}.md")
+          text = handoff.read_text(encoding="utf-8")
+
+          def collect_section(title):
+              lines = text.splitlines()
+              out = []
+              inside = False
+              for line in lines:
+                  if line.strip() == title:
+                      inside = True
+                      continue
+                  if inside and line.startswith("Do NOT modify:"):
+                      break
+                  if inside and line.startswith("## ") and line.strip() != title:
+                      break
+                  if inside and line.startswith("- "):
+                      value = line[2:].strip()
+                      if value and not value.lower().startswith("none detected"):
+                          out.append(value)
+              return out
+
+          allowed = []
+          for marker in ["Allowed production files:", "Allowed test files:"]:
+              lines = text.splitlines()
+              inside = False
+              for line in lines:
+                  if line.strip() == marker:
+                      inside = True
+                      continue
+                  if inside and not line.strip():
+                      break
+                  if inside and line.startswith("- "):
+                      value = line[2:].strip()
+                      if value and not value.lower().startswith("none detected"):
+                          allowed.append(value)
+
+          allowed = [a for a in allowed if "*" not in a and " " not in a and a.endswith(".py")]
+          allowed_set = set(allowed)
+
+          changed = subprocess.check_output(
+              ["git", "diff", "--name-only"],
+              text=True,
+          ).splitlines()
+
+          staged = subprocess.check_output(
+              ["git", "diff", "--cached", "--name-only"],
+              text=True,
+          ).splitlines()
+
+          changed = sorted(set(changed + staged))
+
+          ignored = {
+              f"codex-task-handoff-pr-{pr_number}.md",
+          }
+
+          changed = [c for c in changed if c not in ignored and not c.startswith("codex-output/")]
+
+          Path("codex-output/changed-files.txt").write_text(
+              "\n".join(changed) + ("\n" if changed else ""),
+              encoding="utf-8",
+          )
+
+          Path("codex-output/allowed-files.txt").write_text(
+              "\n".join(sorted(allowed_set)) + ("\n" if allowed_set else ""),
+              encoding="utf-8",
+          )
+
+          if not changed:
+              print("No code changes detected.")
+              sys.exit(0)
+
+          if allowed_set:
+              unexpected = [c for c in changed if c not in allowed_set]
+              if unexpected:
+                  print("Scope violation: Codex changed files outside allowed list.")
+                  print("Allowed:")
+                  for item in sorted(allowed_set):
+                      print(f"  - {item}")
+                  print("Unexpected:")
+                  for item in unexpected:
+                      print(f"  - {item}")
+                  sys.exit(1)
+
+          print("Changed files are within allowed scope:")
+          for item in changed:
+              print(f"  - {item}")
+          PY
+
+      - name: Smoke check changed Python files
+        if: steps.handoff.outputs.should_run == 'true' && steps.guard.outputs.should_continue == 'true'
+        run: |
+          set -euo pipefail
+
+          CHANGED_PY="$(cat codex-output/changed-files.txt 2>/dev/null | grep '\.py$' || true)"
+
+          if [ -z "$CHANGED_PY" ]; then
+            echo "No changed Python files to py_compile."
+            exit 0
+          fi
+
+          echo "Running py_compile on changed Python files:"
+          echo "$CHANGED_PY"
+
+          python3 -m py_compile $CHANGED_PY
+
+      - name: Show diff summary
+        if: steps.handoff.outputs.should_run == 'true' && steps.guard.outputs.should_continue == 'true'
+        run: |
+          set -euo pipefail
+          git status --short
+          git diff --stat
+          git diff -- . ':!codex-output' ':!codex-task-handoff-*.md' > codex-output/git-diff.patch || true
+
+      - name: Commit and push changes
+        if: steps.handoff.outputs.should_run == 'true' && steps.guard.outputs.should_continue == 'true' && github.event.inputs.dry_run != 'true'
+        id: push
+        env:
+          PR_NUMBER: ${{ steps.handoff.outputs.pr_number }}
+          BRANCH: ${{ steps.handoff.outputs.branch }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -s codex-output/changed-files.txt ]; then
+            echo "No changes to commit."
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            echo "new_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            git add -- "$file"
+          done < codex-output/changed-files.txt
+
+          if git diff --cached --quiet; then
+            echo "No staged changes to commit."
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            echo "new_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git commit -m "Auto-fix PR ${PR_NUMBER} from Codex task handoff"
+          git push origin "HEAD:${BRANCH}"
+
+          NEW_SHA="$(git rev-parse HEAD)"
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+          echo "new_sha=$NEW_SHA" >> "$GITHUB_OUTPUT"
+
+          echo "Pushed new SHA: $NEW_SHA"
+
+      - name: Dry run summary
+        if: steps.handoff.outputs.should_run == 'true' && steps.guard.outputs.should_continue == 'true' && github.event.inputs.dry_run == 'true'
+        run: |
+          echo "Dry run enabled. No commit/push performed."
+          git status --short || true
+
+      - name: Upload Codex auto-fix logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auto-pr-codex-fix-logs-${{ steps.handoff.outputs.pr_number || github.run_id }}
+          path: |
+            codex-output/**
+            codex-task-handoff-pr-*.md
+          if-no-files-found: ignore
+
+      - name: Notify Telegram success
+        if: success() && steps.handoff.outputs.should_run == 'true' && steps.guard.outputs.should_continue == 'true'
+        env:
+          PR_NUMBER: ${{ steps.handoff.outputs.pr_number }}
+          BRANCH: ${{ steps.handoff.outputs.branch }}
+          OLD_SHA: ${{ steps.handoff.outputs.head_sha }}
+          NEW_SHA: ${{ steps.push.outputs.new_sha }}
+          PUSHED: ${{ steps.push.outputs.pushed }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "Telegram secrets missing. Skipping notification."
+            exit 0
+          fi
+
+          TEXT="$(cat <<EOF
+🤖 Auto PR Codex Fix completato
+
+PR: #$PR_NUMBER
+Branch: $BRANCH
+Old head: ${OLD_SHA:0:12}
+New head: ${NEW_SHA:-unknown}
+Pushed: ${PUSHED:-false}
+Dry run: $DRY_RUN
+
+Ora GitHub rilancerà i check.
+Se restano rossi, verrà generato un nuovo handoff .md.
+EOF
+)"
+
+          curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=$TEXT" \
+            -d "disable_web_page_preview=true" >/dev/null
+
+          if [ -f "codex-output/codex-result-pr-${PR_NUMBER}.md" ]; then
+            curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+              -F "chat_id=${TELEGRAM_CHAT_ID}" \
+              -F "document=@codex-output/codex-result-pr-${PR_NUMBER}.md" \
+              -F "caption=Output finale Codex CLI PR #${PR_NUMBER}" >/dev/null
+          fi
+
+          if [ -f "codex-output/codex-cli-pr-${PR_NUMBER}.log" ]; then
+            curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+              -F "chat_id=${TELEGRAM_CHAT_ID}" \
+              -F "document=@codex-output/codex-cli-pr-${PR_NUMBER}.log" \
+              -F "caption=Log Codex CLI PR #${PR_NUMBER}" >/dev/null
+          fi
+
+      - name: Notify Telegram failure
+        if: failure()
+        env:
+          PR_NUMBER: ${{ steps.handoff.outputs.pr_number || github.event.inputs.pr_number || 'unknown' }}
+          BRANCH: ${{ steps.handoff.outputs.branch || 'unknown' }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "Telegram secrets missing. Skipping failure notification."
+            exit 0
+          fi
+
+          TEXT="$(cat <<EOF
+❌ Auto PR Codex Fix fallito
+
+PR: #$PR_NUMBER
+Branch: $BRANCH
+Run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+Controlla artifact:
+auto-pr-codex-fix-logs
+EOF
+)"
+
+          curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=$TEXT" \
+            -d "disable_web_page_preview=true" >/dev/null
+
+          if [ -f "codex-output/codex-result-pr-${PR_NUMBER}.md" ]; then
+            curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+              -F "chat_id=${TELEGRAM_CHAT_ID}" \
+              -F "document=@codex-output/codex-result-pr-${PR_NUMBER}.md" \
+              -F "caption=Output Codex CLI prima del fallimento PR #${PR_NUMBER}" >/dev/null
+          fi
+
+          if [ -f "codex-output/codex-cli-pr-${PR_NUMBER}.log" ]; then
+            curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+              -F "chat_id=${TELEGRAM_CHAT_ID}" \
+              -F "document=@codex-output/codex-cli-pr-${PR_NUMBER}.log" \
+              -F "caption=Log Codex CLI fallito PR #${PR_NUMBER}" >/dev/null
+          fi
