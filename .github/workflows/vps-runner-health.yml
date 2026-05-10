@@ -1,0 +1,291 @@
+name: VPS Runner Health
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_codex_smoke:
+        description: "Run a tiny Codex CLI smoke test that consumes model usage"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+  schedule:
+    - cron: "0 */6 * * *"
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: vps-runner-health
+  cancel-in-progress: false
+
+jobs:
+  check-runner-api:
+    name: Check self-hosted runner status from GitHub API
+    runs-on: ubuntu-latest
+
+    outputs:
+      runner_online: ${{ steps.check.outputs.runner_online }}
+      runner_summary: ${{ steps.check.outputs.runner_summary }}
+
+    steps:
+      - name: Check repo self-hosted runners
+        id: check
+        uses: actions/github-script@v7
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          IS_MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
+        with:
+          github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const isManual = process.env.IS_MANUAL === "true";
+
+            const { data } = await github.rest.actions.listSelfHostedRunnersForRepo({
+              owner,
+              repo,
+              per_page: 100,
+            });
+
+            const runners = data.runners || [];
+
+            const selfHosted = runners.filter(r =>
+              (r.labels || []).some(label => label.name === "self-hosted")
+            );
+
+            const online = selfHosted.filter(r => r.status === "online");
+
+            const summaryLines = [];
+
+            summaryLines.push(`Repo: ${owner}/${repo}`);
+            summaryLines.push(`Self-hosted runners found: ${selfHosted.length}`);
+            summaryLines.push(`Online self-hosted runners: ${online.length}`);
+            summaryLines.push("");
+
+            if (selfHosted.length) {
+              summaryLines.push("Runners:");
+              for (const r of selfHosted) {
+                const labels = (r.labels || []).map(l => l.name).join(", ");
+                summaryLines.push(`- ${r.name}: ${r.status} / ${r.busy ? "busy" : "idle"} / labels: ${labels}`);
+              }
+            } else {
+              summaryLines.push("No self-hosted runner found for this repository.");
+            }
+
+            const runnerOnline = online.length > 0;
+            const summary = summaryLines.join("\n");
+
+            core.setOutput("runner_online", runnerOnline ? "true" : "false");
+            core.setOutput("runner_summary", summary.replace(/\n/g, "%0A"));
+
+            core.info(summary);
+
+            async function sendTelegram(text) {
+              const token = process.env.TELEGRAM_BOT_TOKEN;
+              const chatId = process.env.TELEGRAM_CHAT_ID;
+
+              if (!token || !chatId) {
+                core.info("Telegram secrets missing. Skipping Telegram notification.");
+                return;
+              }
+
+              const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+                method: "POST",
+                body: new URLSearchParams({
+                  chat_id: chatId,
+                  text,
+                  disable_web_page_preview: "true",
+                }),
+              });
+
+              if (!response.ok) {
+                core.warning(`Telegram sendMessage failed: ${response.status} ${await response.text()}`);
+              }
+            }
+
+            if (!runnerOnline) {
+              await sendTelegram([
+                "❌ VPS self-hosted runner OFFLINE",
+                "",
+                summary,
+                "",
+                `Run: https://github.com/${owner}/${repo}/actions/runs/${context.runId}`,
+              ].join("\n"));
+            } else if (isManual) {
+              await sendTelegram([
+                "✅ VPS self-hosted runner ONLINE",
+                "",
+                summary,
+                "",
+                `Run: https://github.com/${owner}/${repo}/actions/runs/${context.runId}`,
+              ].join("\n"));
+            }
+
+      - name: Fail if no self-hosted runner is online
+        if: steps.check.outputs.runner_online != 'true'
+        run: |
+          echo "No online self-hosted runner found."
+          exit 1
+
+  codex-cli-health:
+    name: Check Codex CLI on VPS runner
+    needs: check-runner-api
+    if: needs.check-runner-api.outputs.runner_online == 'true'
+    runs-on: self-hosted
+
+    steps:
+      - name: Check basic tools
+        run: |
+          set -euo pipefail
+
+          echo "Runner health check"
+          echo "User: $(whoami)"
+          echo "Host: $(hostname)"
+          echo "PWD: $(pwd)"
+          echo ""
+
+          echo "Git:"
+          git --version
+          echo ""
+
+          echo "Python:"
+          python3 --version
+          echo ""
+
+          echo "Node:"
+          node --version
+          echo ""
+
+          echo "NPM:"
+          npm --version
+          echo ""
+
+          echo "Codex CLI:"
+          codex --version
+          echo ""
+
+      - name: Check Codex login/config directory
+        run: |
+          set -euo pipefail
+
+          if [ ! -d "$HOME/.codex" ]; then
+            echo "Missing $HOME/.codex"
+            echo "Run this once on the VPS with the same runner user:"
+            echo "codex login"
+            exit 1
+          fi
+
+          echo "Codex config directory exists:"
+          ls -la "$HOME/.codex"
+
+          if [ -f "$HOME/.codex/auth.json" ]; then
+            echo "Codex auth.json exists."
+          else
+            echo "WARNING: $HOME/.codex/auth.json not found."
+            echo "Codex may still use a different auth location depending on CLI version."
+          fi
+
+      - name: Check Codex exec help
+        run: |
+          set -euo pipefail
+
+          codex exec --help >/tmp/codex-exec-help.txt 2>&1 || {
+            echo "codex exec --help failed"
+            cat /tmp/codex-exec-help.txt
+            exit 1
+          }
+
+          echo "codex exec command is available."
+
+      - name: Optional tiny Codex smoke test
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_codex_smoke == 'true'
+        run: |
+          set -euo pipefail
+
+          WORKDIR="$(mktemp -d)"
+          cd "$WORKDIR"
+
+          git init
+          echo "hello" > smoke.txt
+
+          echo "Running tiny Codex CLI smoke test..."
+          timeout 180 codex exec --full-auto \
+            --output-last-message codex-smoke-result.md \
+            "Read smoke.txt and reply with exactly: CODEX_SMOKE_OK. Do not modify files."
+
+          echo "Codex smoke result:"
+          cat codex-smoke-result.md
+
+          if ! grep -q "CODEX_SMOKE_OK" codex-smoke-result.md; then
+            echo "Codex smoke test did not return expected marker."
+            exit 1
+          fi
+
+      - name: Notify Telegram health success
+        if: success() && github.event_name == 'workflow_dispatch'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "Telegram secrets missing. Skipping notification."
+            exit 0
+          fi
+
+          TEXT="$(cat <<EOF
+✅ VPS Codex health OK
+
+Runner: $(hostname)
+User: $(whoami)
+Codex: $(codex --version 2>/dev/null || echo unknown)
+
+GitHub Actions self-hosted runner is usable.
+Codex CLI is installed.
+Codex config directory exists.
+
+Run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+EOF
+)"
+
+          curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=$TEXT" \
+            -d "disable_web_page_preview=true" >/dev/null
+
+      - name: Notify Telegram health failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "Telegram secrets missing. Skipping notification."
+            exit 0
+          fi
+
+          TEXT="$(cat <<EOF
+❌ VPS Codex health FAILED
+
+Runner: $(hostname 2>/dev/null || echo unknown)
+User: $(whoami 2>/dev/null || echo unknown)
+
+Run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+Check the workflow logs.
+EOF
+)"
+
+          curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=$TEXT" \
+            -d "disable_web_page_preview=true" >/dev/null
