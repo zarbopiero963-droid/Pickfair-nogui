@@ -1,10 +1,10 @@
 name: Telegram Command Bridge
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       process_existing:
-        description: "Process existing pending Telegram updates instead of only initializing offset"
+        description: "Process old pending Telegram messages"
         required: false
         default: "false"
         type: choice
@@ -24,12 +24,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  telegram-bridge:
-    name: Poll Telegram commands and dispatch controller
+  bridge:
+    name: Poll Telegram and dispatch CloudCLI Controller
     runs-on: ubuntu-latest
 
     steps:
-      - name: Poll Telegram and dispatch PR Automation Controller
+      - name: Poll Telegram commands
         uses: actions/github-script@v7
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -41,13 +41,13 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
 
-            const token = process.env.TELEGRAM_BOT_TOKEN;
-            const chatId = String(process.env.TELEGRAM_CHAT_ID || "").trim();
-            const processExisting = process.env.PROCESS_EXISTING === "true";
+            const token = String(process.env.TELEGRAM_BOT_TOKEN || "").trim();
+            const allowedChatId = String(process.env.TELEGRAM_CHAT_ID || "").trim();
+            const processExisting = String(process.env.PROCESS_EXISTING || "false") === "true";
 
             const STATE_VARIABLE = "TELEGRAM_LAST_UPDATE_ID";
 
-            if (!token || !chatId) {
+            if (!token || !allowedChatId) {
               core.setFailed("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID.");
               return;
             }
@@ -69,7 +69,7 @@ jobs:
 
             async function sendMessage(text) {
               await telegram("sendMessage", {
-                chat_id: chatId,
+                chat_id: allowedChatId,
                 text,
                 disable_web_page_preview: "true",
               });
@@ -110,49 +110,65 @@ jobs:
               }
             }
 
-            async function dispatchController({
-              mode,
-              prNumber,
-              taskTitle,
-              taskText,
-              force,
-              dryRun,
-              runCodexSmoke,
-            }) {
+            async function dispatchController(inputs) {
               const repoInfo = await github.rest.repos.get({
                 owner,
                 repo,
               });
 
-              const ref = repoInfo.data.default_branch;
+              const ref = repoInfo.data.default_branch || "main";
 
               await github.rest.actions.createWorkflowDispatch({
                 owner,
                 repo,
-                workflow_id: "pr-automation-controller.yml",
+                workflow_id: "cloudcli-controller.yml",
                 ref,
-                inputs: {
-                  mode,
-                  pr_number: prNumber || "",
-                  task_title: taskTitle || "",
-                  task_text: taskText || "",
-                  force: force ? "true" : "false",
-                  dry_run: dryRun ? "true" : "false",
-                  run_codex_smoke: runCodexSmoke ? "true" : "false",
-                },
+                inputs,
               });
             }
 
-            function normalizeCommand(text) {
-              return String(text || "")
-                .trim()
-                .replace(/\s+/g, " ");
+            function helpText() {
+              return [
+                "Pickfair CloudCLI commands",
+                "",
+                "/task Title | Long task description",
+                "Create a new branch and PR through CloudCLI. Real execution.",
+                "",
+                "/task-dry Title | Long task description",
+                "Send a new task to CloudCLI in dry-run mode. No edits, commits, push, or PR.",
+                "",
+                "/fix 220",
+                "Run PR fix handoff for PR #220 in dry-run mode.",
+                "",
+                "/fix 220 real",
+                "Run PR fix handoff for PR #220 and allow commit/push to same PR branch.",
+                "",
+                "/fix 220 force",
+                "Force PR fix dry-run.",
+                "",
+                "/fix 220 real force",
+                "Force PR fix real execution.",
+                "",
+                "/health",
+                "Run CloudCLI API health check.",
+                "",
+                "/health smoke",
+                "Run CloudCLI health check plus Codex agent smoke.",
+                "",
+                "/help",
+              ].join("\n");
             }
 
-            function parseTaskCommand(rawText, dryRun) {
-              const raw = String(rawText || "").trim();
+            function normalizeText(value) {
+              return String(value || "").trim();
+            }
 
-              const withoutCommand = raw
+            function compactWords(value) {
+              return String(value || "").trim().replace(/\s+/g, " ");
+            }
+
+            function parseTask(rawText, dryRun) {
+              const withoutCommand = rawText
                 .replace(/^\/task-dry(@[A-Za-z0-9_]+)?\s*/i, "")
                 .replace(/^\/task(@[A-Za-z0-9_]+)?\s*/i, "")
                 .trim();
@@ -161,61 +177,55 @@ jobs:
                 return {
                   kind: "error",
                   message: dryRun
-                    ? "Uso corretto: /task-dry Titolo | Descrizione lunga"
-                    : "Uso corretto: /task Titolo | Descrizione lunga",
+                    ? "Usage: /task-dry Title | Long task description"
+                    : "Usage: /task Title | Long task description",
                 };
               }
 
               const parts = withoutCommand.split("|");
-              const taskTitle = String(parts.shift() || "").trim();
-              const taskText = parts.join("|").trim() || taskTitle;
+              const title = String(parts.shift() || "").trim();
+              const text = parts.join("|").trim() || title;
 
-              if (!taskTitle || !taskText) {
+              if (!title || !text) {
                 return {
                   kind: "error",
                   message: dryRun
-                    ? "Uso corretto: /task-dry Titolo | Descrizione lunga"
-                    : "Uso corretto: /task Titolo | Descrizione lunga",
+                    ? "Usage: /task-dry Title | Long task description"
+                    : "Usage: /task Title | Long task description",
                 };
               }
 
               return {
                 kind: "dispatch",
-                mode: "new-task",
-                prNumber: "",
-                taskTitle,
-                taskText,
-                force: false,
-                dryRun,
-                runCodexSmoke: false,
+                inputs: {
+                  mode: "new-task",
+                  pr_number: "",
+                  task_title: title,
+                  task_text: text,
+                  dry_run: dryRun ? "true" : "false",
+                  force: "false",
+                  run_agent_smoke: "false",
+                  extra_handoff: "",
+                },
               };
             }
 
             function parseCommand(text) {
-              const rawText = String(text || "").trim();
+              const rawText = normalizeText(text);
 
               if (!rawText.startsWith("/")) {
                 return null;
               }
 
-              const compact = normalizeCommand(rawText);
-              const parts = compact.split(" ");
-              const command = parts[0].split("@")[0].toLowerCase();
-              const args = parts.slice(1);
+              const compact = compactWords(rawText);
+              const words = compact.split(" ");
+              const command = words[0].split("@")[0].toLowerCase();
+              const args = words.slice(1);
 
-              const hasForce = args.some(a =>
-                ["force", "--force"].includes(a.toLowerCase())
-              );
-
-              const hasDry = args.some(a =>
-                ["dry", "--dry", "dry_run", "--dry-run"].includes(a.toLowerCase())
-              );
-
-              const hasSmoke = args.some(a =>
-                ["smoke", "--smoke"].includes(a.toLowerCase())
-              );
-
-              const firstNumber = args.find(a => /^\d+$/.test(a));
+              const hasSmoke = args.some(arg => ["smoke", "--smoke"].includes(arg.toLowerCase()));
+              const hasForce = args.some(arg => ["force", "--force"].includes(arg.toLowerCase()));
+              const isReal = args.some(arg => ["real", "--real", "live", "--live"].includes(arg.toLowerCase()));
+              const firstNumber = args.find(arg => /^\d+$/.test(arg));
 
               if (command === "/help" || command === "/start") {
                 return {
@@ -223,142 +233,61 @@ jobs:
                 };
               }
 
+              if (command === "/health") {
+                return {
+                  kind: "dispatch",
+                  inputs: {
+                    mode: "health",
+                    pr_number: "",
+                    task_title: "",
+                    task_text: "",
+                    dry_run: "true",
+                    force: "false",
+                    run_agent_smoke: hasSmoke ? "true" : "false",
+                    extra_handoff: "",
+                  },
+                };
+              }
+
               if (command === "/task") {
-                return parseTaskCommand(rawText, false);
+                return parseTask(rawText, false);
               }
 
               if (command === "/task-dry") {
-                return parseTaskCommand(rawText, true);
-              }
-
-              if (command === "/full") {
-                if (!firstNumber) {
-                  return {
-                    kind: "error",
-                    message: "Uso corretto: /full 220",
-                  };
-                }
-
-                return {
-                  kind: "dispatch",
-                  mode: "full",
-                  prNumber: firstNumber,
-                  taskTitle: "",
-                  taskText: "",
-                  force: hasForce,
-                  dryRun: hasDry,
-                  runCodexSmoke: false,
-                };
-              }
-
-              if (command === "/report") {
-                if (!firstNumber) {
-                  return {
-                    kind: "error",
-                    message: "Uso corretto: /report 220",
-                  };
-                }
-
-                return {
-                  kind: "dispatch",
-                  mode: "report",
-                  prNumber: firstNumber,
-                  taskTitle: "",
-                  taskText: "",
-                  force: false,
-                  dryRun: false,
-                  runCodexSmoke: false,
-                };
+                return parseTask(rawText, true);
               }
 
               if (command === "/fix") {
                 if (!firstNumber) {
                   return {
                     kind: "error",
-                    message: "Uso corretto: /fix 220 oppure /fix 220 force dry",
+                    message: "Usage: /fix 220 OR /fix 220 real OR /fix 220 real force",
                   };
                 }
 
                 return {
                   kind: "dispatch",
-                  mode: "fix-latest",
-                  prNumber: firstNumber,
-                  taskTitle: "",
-                  taskText: "",
-                  force: hasForce,
-                  dryRun: hasDry,
-                  runCodexSmoke: false,
-                };
-              }
-
-              if (command === "/health") {
-                return {
-                  kind: "dispatch",
-                  mode: "health",
-                  prNumber: "",
-                  taskTitle: "",
-                  taskText: "",
-                  force: false,
-                  dryRun: false,
-                  runCodexSmoke: hasSmoke,
+                  inputs: {
+                    mode: "pr-fix",
+                    pr_number: firstNumber,
+                    task_title: "",
+                    task_text: "",
+                    dry_run: isReal ? "false" : "true",
+                    force: hasForce ? "true" : "false",
+                    run_agent_smoke: "false",
+                    extra_handoff: "",
+                  },
                 };
               }
 
               return {
                 kind: "error",
                 message: [
-                  `Comando non riconosciuto: ${command}`,
+                  `Unknown command: ${command}`,
                   "",
-                  "Comandi disponibili:",
-                  "/task Titolo | Descrizione lunga",
-                  "/task-dry Titolo | Descrizione lunga",
-                  "/full 220",
-                  "/report 220",
-                  "/fix 220",
-                  "/fix 220 force",
-                  "/fix 220 dry",
-                  "/fix 220 force dry",
-                  "/health",
-                  "/health smoke",
-                  "/help",
+                  helpText(),
                 ].join("\n"),
               };
-            }
-
-            function helpText() {
-              return [
-                "🤖 Pickfair automation commands",
-                "",
-                "/task Titolo | Descrizione lunga",
-                "Crea una nuova branch, fa lavorare Codex CLI sul VPS, committa, pusha e crea una PR.",
-                "",
-                "/task-dry Titolo | Descrizione lunga",
-                "Esegue il task su VPS senza commit, push o PR.",
-                "",
-                "/full 220",
-                "Genera nuovo handoff .md e poi avvia Codex fix automatico.",
-                "",
-                "/report 220",
-                "Genera solo report/handoff .md su Telegram.",
-                "",
-                "/fix 220",
-                "Usa ultimo handoff .md e avvia Codex CLI sul VPS.",
-                "",
-                "/fix 220 force",
-                "Forza nuovo tentativo anche se già provato.",
-                "",
-                "/fix 220 dry",
-                "Esegue Codex ma non committa/pusha.",
-                "",
-                "/fix 220 force dry",
-                "Forza tentativo in dry run.",
-                "",
-                "/health",
-                "Controlla VPS runner e Codex CLI.",
-                "",
-                "/health smoke",
-                "Controlla VPS runner e fa mini test Codex CLI.",
-              ].join("\n");
             }
 
             const lastValue = await getRepoVariable(STATE_VARIABLE);
@@ -381,43 +310,40 @@ jobs:
               return;
             }
 
-            const maxUpdateId = Math.max(...updates.map(u => u.update_id));
+            const maxUpdateId = Math.max(...updates.map(update => update.update_id));
 
             if (!lastValue && !processExisting) {
               await setRepoVariable(STATE_VARIABLE, String(maxUpdateId));
 
-              core.info(`Initialized ${STATE_VARIABLE}=${maxUpdateId}. Existing updates ignored.`);
+              await sendMessage([
+                "Telegram Command Bridge initialized.",
+                "",
+                "Old pending messages were ignored.",
+                "Now send:",
+                "",
+                "/help",
+              ].join("\n"));
 
-              await sendMessage(
-                [
-                  "✅ Telegram Command Bridge inizializzato.",
-                  "",
-                  "I vecchi messaggi sono stati ignorati.",
-                  "Da ora puoi usare:",
-                  "",
-                  "/help",
-                ].join("\n")
-              );
-
+              core.info(`Initialized ${STATE_VARIABLE}=${maxUpdateId}`);
               return;
             }
 
             let processed = 0;
 
             for (const update of updates) {
-              const message = update.message;
-              const text = message?.text || "";
-              const messageChatId = String(message?.chat?.id || "");
+              const message = update.message || {};
+              const messageText = message.text || "";
+              const chatId = String(message.chat?.id || "");
 
-              if (messageChatId !== chatId) {
-                core.info(`Ignoring message from unauthorized chat: ${messageChatId}`);
+              if (chatId !== allowedChatId) {
+                core.info(`Ignoring message from unauthorized chat: ${chatId}`);
                 continue;
               }
 
-              const parsed = parseCommand(text);
+              const parsed = parseCommand(messageText);
 
               if (!parsed) {
-                core.info(`Ignoring non-command message: ${text}`);
+                core.info(`Ignoring non-command message: ${messageText}`);
                 continue;
               }
 
@@ -429,27 +355,25 @@ jobs:
               }
 
               if (parsed.kind === "error") {
-                await sendMessage(`⚠️ ${parsed.message}`);
+                await sendMessage(`Error:\n${parsed.message}`);
                 continue;
               }
 
               if (parsed.kind === "dispatch") {
-                await dispatchController(parsed);
+                await dispatchController(parsed.inputs);
 
-                await sendMessage(
-                  [
-                    "✅ Comando ricevuto e dispatch avviato",
-                    "",
-                    `Mode: ${parsed.mode}`,
-                    `PR: ${parsed.prNumber || "n/a"}`,
-                    `Task title: ${parsed.taskTitle || "n/a"}`,
-                    `Force: ${parsed.force ? "true" : "false"}`,
-                    `Dry run: ${parsed.dryRun ? "true" : "false"}`,
-                    `Codex smoke: ${parsed.runCodexSmoke ? "true" : "false"}`,
-                    "",
-                    `Controller: https://github.com/${owner}/${repo}/actions/workflows/pr-automation-controller.yml`,
-                  ].join("\n")
-                );
+                await sendMessage([
+                  "Command received and dispatched to CloudCLI Controller.",
+                  "",
+                  `Mode: ${parsed.inputs.mode}`,
+                  `PR: ${parsed.inputs.pr_number || "n/a"}`,
+                  `Task title: ${parsed.inputs.task_title || "n/a"}`,
+                  `Dry run: ${parsed.inputs.dry_run}`,
+                  `Force: ${parsed.inputs.force}`,
+                  `Agent smoke: ${parsed.inputs.run_agent_smoke}`,
+                  "",
+                  `Controller: https://github.com/${owner}/${repo}/actions/workflows/cloudcli-controller.yml`,
+                ].join("\n"));
               }
             }
 
