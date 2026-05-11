@@ -1,0 +1,687 @@
+name: CloudCLI PR Fix
+
+"on":
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull request number to fix"
+        required: true
+        type: string
+      dry_run:
+        description: "Run agent without commit/push"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      force:
+        description: "Force execution even if already attempted"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      extra_handoff:
+        description: "Optional extra handoff text"
+        required: false
+        type: string
+
+  repository_dispatch:
+    types:
+      - cloudcli_pr_fix
+      - telegram_pr_fix_latest
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+  checks: read
+  actions: read
+
+concurrency:
+  group: cloudcli-pr-fix-${{ github.event.inputs.pr_number || github.event.client_payload.pr_number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  pr-fix:
+    name: Send PR fix handoff to CloudCLI Codex
+    runs-on: ubuntu-latest
+
+    env:
+      CLOUDCLI_API_KEY: ${{ secrets.CLOUDCLI_API_KEY }}
+      CLOUDCLI_BASE_URL: ${{ secrets.CLOUDCLI_BASE_URL }}
+      CLOUDCLI_ENVIRONMENT_ID: ${{ secrets.CLOUDCLI_ENVIRONMENT_ID }}
+      CLOUDCLI_PROJECT_NAME: ${{ secrets.CLOUDCLI_PROJECT_NAME }}
+      CLOUDCLI_REPO_PATH: ${{ secrets.CLOUDCLI_REPO_PATH }}
+      CLOUDCLI_PROVIDER: ${{ secrets.CLOUDCLI_PROVIDER }}
+      CLOUDCLI_MODEL: ${{ secrets.CLOUDCLI_MODEL }}
+      GH_TOKEN_FOR_AGENT: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+    steps:
+      - name: Build PR handoff
+        id: handoff
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+          script: |
+            const fs = require("fs");
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const payload = context.payload.client_payload || {};
+            const inputs = context.payload.inputs || {};
+
+            const prNumberRaw = String(inputs.pr_number || payload.pr_number || payload.pr || "").trim();
+            const dryRun = String(inputs.dry_run || payload.dry_run || "true").trim() === "true";
+            const force = String(inputs.force || payload.force || "false").trim() === "true";
+            const extraHandoff = String(inputs.extra_handoff || payload.extra_handoff || payload.handoff_text || "").trim();
+
+            if (!prNumberRaw || !/^\d+$/.test(prNumberRaw)) {
+              core.setFailed("Missing or invalid pr_number.");
+              return;
+            }
+
+            const prNumber = Number(prNumberRaw);
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: prNumber,
+            });
+
+            if (pr.state !== "open") {
+              core.setFailed(`PR #${prNumber} is not open. Current state: ${pr.state}`);
+              return;
+            }
+
+            const issueComments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: prNumber,
+              per_page: 100,
+            });
+
+            const reviewComments = await github.paginate(github.rest.pulls.listReviewComments, {
+              owner,
+              repo,
+              pull_number: prNumber,
+              per_page: 100,
+            });
+
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner,
+              repo,
+              pull_number: prNumber,
+              per_page: 100,
+            });
+
+            let checkRuns = [];
+            try {
+              const checkData = await github.paginate(github.rest.checks.listForRef, {
+                owner,
+                repo,
+                ref: pr.head.sha,
+                per_page: 100,
+              });
+              checkRuns = checkData;
+            } catch (err) {
+              core.warning(`Could not list check runs: ${err.message}`);
+            }
+
+            const failingChecks = checkRuns.filter(check => {
+              const conclusion = check.conclusion || "";
+              const status = check.status || "";
+              return status === "completed" && !["success", "neutral", "skipped"].includes(conclusion);
+            });
+
+            const pendingChecks = checkRuns.filter(check => {
+              const status = check.status || "";
+              return status !== "completed";
+            });
+
+            function shortText(value, max = 3000) {
+              const text = String(value || "").trim();
+              if (text.length <= max) return text;
+              return text.slice(0, max) + "\n...[truncated]";
+            }
+
+            function commentBlock(comment) {
+              return [
+                `- author: ${comment.user?.login || "unknown"}`,
+                `  created_at: ${comment.created_at || ""}`,
+                `  url: ${comment.html_url || ""}`,
+                "  body:",
+                "  ```",
+                shortText(comment.body || "", 2000),
+                "  ```",
+              ].join("\n");
+            }
+
+            function reviewCommentBlock(comment) {
+              return [
+                `- author: ${comment.user?.login || "unknown"}`,
+                `  path: ${comment.path || ""}`,
+                `  line: ${comment.line || comment.original_line || ""}`,
+                `  side: ${comment.side || ""}`,
+                `  created_at: ${comment.created_at || ""}`,
+                `  url: ${comment.html_url || ""}`,
+                "  body:",
+                "  ```",
+                shortText(comment.body || "", 2000),
+                "  ```",
+              ].join("\n");
+            }
+
+            function reviewBlock(review) {
+              return [
+                `- author: ${review.user?.login || "unknown"}`,
+                `  state: ${review.state || ""}`,
+                `  submitted_at: ${review.submitted_at || ""}`,
+                `  url: ${review.html_url || ""}`,
+                "  body:",
+                "  ```",
+                shortText(review.body || "", 1500),
+                "  ```",
+              ].join("\n");
+            }
+
+            function checkBlock(check) {
+              return [
+                `- name: ${check.name}`,
+                `  status: ${check.status}`,
+                `  conclusion: ${check.conclusion || ""}`,
+                `  details_url: ${check.details_url || ""}`,
+                `  html_url: ${check.html_url || ""}`,
+                "  output_title:",
+                "  ```",
+                shortText(check.output?.title || "", 500),
+                "  ```",
+                "  output_summary:",
+                "  ```",
+                shortText(check.output?.summary || "", 2500),
+                "  ```",
+              ].join("\n");
+            }
+
+            fs.mkdirSync("cloudcli-output", { recursive: true });
+
+            const handoff = [
+              "# CLOUDCLI PR FIX HANDOFF",
+              "",
+              "## FIX THESE ISSUES ONLY",
+              "",
+              `Repository: ${owner}/${repo}`,
+              `PR: #${prNumber}`,
+              `PR URL: ${pr.html_url}`,
+              `PR title: ${pr.title}`,
+              `Base branch: ${pr.base.ref}`,
+              `Head branch: ${pr.head.ref}`,
+              `Head SHA: ${pr.head.sha}`,
+              `Draft: ${pr.draft}`,
+              "",
+              "## Critical branch rules",
+              "",
+              "- Continue on the existing PR branch only.",
+              "- Do NOT create a new branch.",
+              "- Do NOT create a new PR.",
+              "- Do NOT merge.",
+              "- Do NOT work directly on main/master.",
+              "- Do NOT force-push unless explicitly required and safe.",
+              "- Do NOT modify unrelated files.",
+              "- Fix only issues listed in this handoff and still valid in the repo.",
+              "",
+              "## Failing checks",
+              "",
+              failingChecks.length ? failingChecks.map(checkBlock).join("\n\n") : "No failing completed check runs found via GitHub API.",
+              "",
+              "## Pending checks",
+              "",
+              pendingChecks.length ? pendingChecks.map(checkBlock).join("\n\n") : "No pending check runs found via GitHub API.",
+              "",
+              "## PR reviews",
+              "",
+              reviews.length ? reviews.map(reviewBlock).join("\n\n") : "No PR reviews found.",
+              "",
+              "## PR review comments",
+              "",
+              reviewComments.length ? reviewComments.map(reviewCommentBlock).join("\n\n") : "No PR review comments found.",
+              "",
+              "## PR issue comments",
+              "",
+              issueComments.length ? issueComments.map(commentBlock).join("\n\n") : "No PR issue comments found.",
+              "",
+              "## Extra handoff text",
+              "",
+              extraHandoff || "No extra handoff text provided.",
+              "",
+              "## Required final behavior",
+              "",
+              "- Apply only valid requested fixes.",
+              "- Run relevant tests/checks.",
+              "- Commit only intended changes.",
+              "- Push to the existing PR branch.",
+              "- Return final status with commit SHA and checks run.",
+              "",
+            ].join("\n");
+
+            fs.writeFileSync("cloudcli-output/handoff.md", handoff, "utf8");
+
+            fs.writeFileSync(
+              "cloudcli-output/pr-metadata.json",
+              JSON.stringify(
+                {
+                  owner,
+                  repo,
+                  repository: `${owner}/${repo}`,
+                  prNumber,
+                  prUrl: pr.html_url,
+                  title: pr.title,
+                  baseBranch: pr.base.ref,
+                  headBranch: pr.head.ref,
+                  headSha: pr.head.sha,
+                  dryRun,
+                  force,
+                },
+                null,
+                2
+              ),
+              "utf8"
+            );
+
+            core.setOutput("repository", `${owner}/${repo}`);
+            core.setOutput("pr_number", String(prNumber));
+            core.setOutput("pr_url", pr.html_url);
+            core.setOutput("title", pr.title);
+            core.setOutput("base_branch", pr.base.ref);
+            core.setOutput("head_branch", pr.head.ref);
+            core.setOutput("head_sha", pr.head.sha);
+            core.setOutput("dry_run", dryRun ? "true" : "false");
+            core.setOutput("force", force ? "true" : "false");
+
+      - name: Execute CloudCLI PR fix
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.request
+          from pathlib import Path
+
+          out_dir = Path("cloudcli-output")
+          out_dir.mkdir(exist_ok=True)
+
+          api_key = os.environ.get("CLOUDCLI_API_KEY", "").strip()
+          base_url = os.environ.get("CLOUDCLI_BASE_URL", "").strip() or "https://cloudcli.ai/api/v1"
+          env_id = os.environ.get("CLOUDCLI_ENVIRONMENT_ID", "").strip()
+          project = os.environ.get("CLOUDCLI_PROJECT_NAME", "").strip()
+          repo_path = os.environ.get("CLOUDCLI_REPO_PATH", "").strip()
+          provider = os.environ.get("CLOUDCLI_PROVIDER", "").strip() or "codex"
+          model = os.environ.get("CLOUDCLI_MODEL", "").strip() or "gpt-5.3-codex"
+          github_token = os.environ.get("GH_TOKEN_FOR_AGENT", "").strip()
+
+          metadata = json.loads(Path("cloudcli-output/pr-metadata.json").read_text(encoding="utf-8"))
+          handoff = Path("cloudcli-output/handoff.md").read_text(encoding="utf-8")
+
+          repository = metadata["repository"]
+          pr_number = metadata["prNumber"]
+          pr_url = metadata["prUrl"]
+          title = metadata["title"]
+          base_branch = metadata["baseBranch"]
+          head_branch = metadata["headBranch"]
+          head_sha = metadata["headSha"]
+          dry_run = bool(metadata["dryRun"])
+
+          required = {
+              "CLOUDCLI_API_KEY": api_key,
+              "CLOUDCLI_ENVIRONMENT_ID": env_id,
+              "CLOUDCLI_PROJECT_NAME": project,
+              "CLOUDCLI_REPO_PATH": repo_path,
+              "PICKFAIR_ACTIONS_TOKEN": github_token,
+          }
+
+          missing = [name for name, value in required.items() if not value]
+          if missing:
+              raise SystemExit("Missing required config: " + ", ".join(missing))
+
+          def request_json(method, path, payload=None):
+              url = base_url.rstrip("/") + path
+              data = None
+              headers = {
+                  "X-API-KEY": api_key,
+                  "Accept": "application/json",
+              }
+
+              if payload is not None:
+                  data = json.dumps(payload).encode("utf-8")
+                  headers["Content-Type"] = "application/json"
+
+              req = urllib.request.Request(url, data=data, headers=headers, method=method)
+
+              try:
+                  with urllib.request.urlopen(req, timeout=120) as resp:
+                      raw = resp.read().decode("utf-8", errors="replace")
+              except urllib.error.HTTPError as exc:
+                  body = exc.read().decode("utf-8", errors="replace")
+                  raise SystemExit(f"HTTP {exc.code} {method} {url}\n{body}") from exc
+
+              if not raw.strip():
+                  return {}
+
+              return json.loads(raw)
+
+          env_info = request_json("GET", f"/environments/{env_id}")
+          status = str(env_info.get("status", ""))
+
+          print(f"CloudCLI environment status: {status}")
+
+          if status != "running":
+              print("Starting CloudCLI environment...")
+              request_json("POST", f"/environments/{env_id}/start")
+
+              for attempt in range(1, 37):
+                  time.sleep(5)
+                  env_info = request_json("GET", f"/environments/{env_id}")
+                  status = str(env_info.get("status", ""))
+                  print(f"Start poll {attempt}: {status}")
+
+                  if status == "running":
+                      break
+
+              if status != "running":
+                  raise SystemExit("CloudCLI environment did not become running.")
+
+          if dry_run:
+              execution_rules = f"""
+          DRY RUN MODE.
+
+          Do not edit files.
+          Do not commit.
+          Do not push.
+          Do not create a PR.
+
+          Inspect the PR branch and explain what would be fixed.
+          """
+          else:
+              execution_rules = f"""
+          REAL EXECUTION MODE.
+
+          You must:
+          - Work only in this repo path: {repo_path}
+          - Fetch latest refs.
+          - Checkout the existing PR branch: {head_branch}
+          - Pull latest origin/{head_branch}.
+          - Do NOT create a new branch.
+          - Do NOT create a new PR.
+          - Do NOT merge.
+          - Do NOT work directly on main/master.
+          - Fix only valid issues listed in the handoff.
+          - Run relevant checks/tests.
+          - Commit only intended changes.
+          - Push only to the same PR branch: {head_branch}
+          """
+
+          message = f"""
+          CTO MODE: LOCKED IN — CLOUDCLI EXISTING PR FIX
+
+          Repository: {repository}
+          Repo path: {repo_path}
+          PR: #{pr_number}
+          PR URL: {pr_url}
+          PR title: {title}
+          Base branch: {base_branch}
+          Existing PR branch: {head_branch}
+          Current PR head SHA before work: {head_sha}
+
+          {execution_rules}
+
+          Important:
+          - Continue on the existing PR branch only.
+          - Do not create a new PR.
+          - Do not create a new branch.
+          - Do not merge.
+          - Fix only the handoff issues that are still valid.
+          - Ignore duplicated/noisy comments.
+          - Preserve existing project behavior unless a listed issue requires a focused change.
+          - Follow AGENTS.md if present.
+
+          First inspect:
+          - pwd
+          - cd "{repo_path}" && git status --short
+          - cd "{repo_path}" && git branch --show-current
+          - cd "{repo_path}" && git remote -v
+          - cd "{repo_path}" && git fetch origin
+          - cd "{repo_path}" && git checkout "{head_branch}"
+          - cd "{repo_path}" && git pull --ff-only origin "{head_branch}"
+
+          Handoff:
+
+          {handoff}
+
+          If push is unavailable, report NEEDS_MANUAL_UPDATE_BRANCH.
+
+          Return final output only in this format:
+
+          CLOUDCLI_PR_FIX_DONE
+
+          Final factual status:
+          - DONE / PARTIAL / NOT DONE
+
+          PR:
+          - {pr_url}
+
+          Branch:
+          - {head_branch}
+
+          Commit:
+          - <new commit SHA or none>
+
+          Checks:
+          - <exact commands and results>
+
+          Files changed:
+          - <files>
+
+          Files created:
+          - <files>
+
+          Issues fixed:
+          - <items>
+
+          Findings skipped with reason:
+          - <items>
+
+          What was not done:
+          - <items>
+
+          Push:
+          - succeeded / failed / skipped dry-run
+          """
+
+          payload = {
+              "environmentId": env_id,
+              "projectName": project,
+              "message": message,
+              "provider": provider,
+              "model": model,
+              "createBranch": False,
+              "createPR": False,
+              "githubToken": github_token,
+          }
+
+          redacted_payload = dict(payload)
+          redacted_payload["githubToken"] = "***"
+
+          Path("cloudcli-output/agent-payload-redacted.json").write_text(
+              json.dumps(redacted_payload, ensure_ascii=False, indent=2),
+              encoding="utf-8",
+          )
+
+          url = base_url.rstrip("/") + "/agent/execute"
+          req = urllib.request.Request(
+              url,
+              data=json.dumps(payload).encode("utf-8"),
+              headers={
+                  "X-API-KEY": api_key,
+                  "Content-Type": "application/json",
+                  "Accept": "text/event-stream",
+              },
+              method="POST",
+          )
+
+          print("Calling CloudCLI agent execute...")
+          chunks = []
+
+          try:
+              with urllib.request.urlopen(req, timeout=3600) as resp:
+                  for raw_line in resp:
+                      line = raw_line.decode("utf-8", errors="replace")
+                      print(line, end="")
+                      chunks.append(line)
+          except urllib.error.HTTPError as exc:
+              body = exc.read().decode("utf-8", errors="replace")
+              raise SystemExit(f"HTTP {exc.code} POST {url}\n{body}") from exc
+
+          sse_text = "".join(chunks)
+
+          Path("cloudcli-output/agent-sse.log").write_text(
+              sse_text,
+              encoding="utf-8",
+          )
+
+          if "CLOUDCLI_PR_FIX_DONE" not in sse_text:
+              raise SystemExit("CloudCLI PR fix marker CLOUDCLI_PR_FIX_DONE not found in agent output.")
+
+          print("CloudCLI PR fix execution completed.")
+          PY
+
+      - name: Verify PR state after fix
+        id: verify_pr
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const prNumber = Number("${{ steps.handoff.outputs.pr_number }}");
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: prNumber,
+            });
+
+            core.setOutput("pr_url", pr.html_url);
+            core.setOutput("head_sha", pr.head.sha);
+            core.setOutput("head_branch", pr.head.ref);
+
+      - name: Upload CloudCLI PR fix logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudcli-pr-fix-logs-${{ github.run_id }}
+          path: cloudcli-output/**
+          if-no-files-found: ignore
+
+      - name: Notify Telegram success
+        if: success()
+        env:
+          PR_NUMBER: ${{ steps.handoff.outputs.pr_number }}
+          PR_URL: ${{ steps.verify_pr.outputs.pr_url }}
+          BRANCH: ${{ steps.verify_pr.outputs.head_branch }}
+          HEAD_SHA: ${{ steps.verify_pr.outputs.head_sha }}
+          DRY_RUN: ${{ steps.handoff.outputs.dry_run }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "Telegram secrets missing. Skipping notification."
+            exit 0
+          fi
+
+          python3 <<'PY'
+          import os
+          import urllib.parse
+          import urllib.request
+
+          token = os.environ["TELEGRAM_BOT_TOKEN"]
+          chat_id = os.environ["TELEGRAM_CHAT_ID"]
+
+          text = "\n".join([
+              "CloudCLI PR fix completed",
+              "",
+              f"PR: #{os.environ.get('PR_NUMBER', '')}",
+              f"URL: {os.environ.get('PR_URL', '')}",
+              f"Branch: {os.environ.get('BRANCH', '')}",
+              f"Head SHA: {os.environ.get('HEAD_SHA', '')}",
+              f"Dry run: {os.environ.get('DRY_RUN', '')}",
+              "",
+              f"Run: https://github.com/{os.environ.get('GITHUB_REPOSITORY')}/actions/runs/{os.environ.get('GITHUB_RUN_ID')}",
+          ])
+
+          data = urllib.parse.urlencode({
+              "chat_id": chat_id,
+              "text": text,
+              "disable_web_page_preview": "true",
+          }).encode()
+
+          urllib.request.urlopen(
+              f"https://api.telegram.org/bot{token}/sendMessage",
+              data=data,
+              timeout=60,
+          ).read()
+          PY
+
+      - name: Notify Telegram failure
+        if: failure()
+        env:
+          PR_NUMBER: ${{ steps.handoff.outputs.pr_number }}
+          BRANCH: ${{ steps.handoff.outputs.head_branch }}
+          DRY_RUN: ${{ steps.handoff.outputs.dry_run }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "Telegram secrets missing. Skipping notification."
+            exit 0
+          fi
+
+          python3 <<'PY'
+          import os
+          import urllib.parse
+          import urllib.request
+
+          token = os.environ["TELEGRAM_BOT_TOKEN"]
+          chat_id = os.environ["TELEGRAM_CHAT_ID"]
+
+          text = "\n".join([
+              "CloudCLI PR fix failed",
+              "",
+              f"PR: #{os.environ.get('PR_NUMBER', 'unknown')}",
+              f"Branch: {os.environ.get('BRANCH', 'unknown')}",
+              f"Dry run: {os.environ.get('DRY_RUN', 'unknown')}",
+              "",
+              f"Run: https://github.com/{os.environ.get('GITHUB_REPOSITORY')}/actions/runs/{os.environ.get('GITHUB_RUN_ID')}",
+              "",
+              "Check artifact: cloudcli-pr-fix-logs",
+          ])
+
+          data = urllib.parse.urlencode({
+              "chat_id": chat_id,
+              "text": text,
+              "disable_web_page_preview": "true",
+          }).encode()
+
+          urllib.request.urlopen(
+              f"https://api.telegram.org/bot{token}/sendMessage",
+              data=data,
+              timeout=60,
+          ).read()
+          PY
