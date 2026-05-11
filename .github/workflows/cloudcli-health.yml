@@ -1,0 +1,292 @@
+name: CloudCLI Health
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_agent_smoke:
+        description: "Run CloudCLI Codex agent smoke test"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudcli-health
+  cancel-in-progress: false
+
+jobs:
+  cloudcli-health:
+    name: Check CloudCLI environment and Codex agent
+    runs-on: ubuntu-latest
+
+    env:
+      CLOUDCLI_API_KEY: ${{ secrets.CLOUDCLI_API_KEY }}
+      CLOUDCLI_BASE_URL: ${{ secrets.CLOUDCLI_BASE_URL }}
+      CLOUDCLI_ENVIRONMENT_ID: ${{ secrets.CLOUDCLI_ENVIRONMENT_ID }}
+      CLOUDCLI_PROJECT_NAME: ${{ secrets.CLOUDCLI_PROJECT_NAME }}
+      CLOUDCLI_REPO_PATH: ${{ secrets.CLOUDCLI_REPO_PATH }}
+      CLOUDCLI_PROVIDER: ${{ secrets.CLOUDCLI_PROVIDER }}
+      CLOUDCLI_MODEL: ${{ secrets.CLOUDCLI_MODEL }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+    steps:
+      - name: Validate CloudCLI configuration
+        run: |
+          set -euo pipefail
+
+          : "${CLOUDCLI_API_KEY:?Missing CLOUDCLI_API_KEY}"
+          : "${CLOUDCLI_ENVIRONMENT_ID:?Missing CLOUDCLI_ENVIRONMENT_ID}"
+          : "${CLOUDCLI_PROJECT_NAME:?Missing CLOUDCLI_PROJECT_NAME}"
+          : "${CLOUDCLI_REPO_PATH:?Missing CLOUDCLI_REPO_PATH}"
+
+          if [ -z "${CLOUDCLI_BASE_URL:-}" ]; then
+            echo "CLOUDCLI_BASE_URL is empty, using default."
+            echo "CLOUDCLI_BASE_URL=https://cloudcli.ai/api/v1" >> "$GITHUB_ENV"
+          fi
+
+          if [ -z "${CLOUDCLI_PROVIDER:-}" ]; then
+            echo "CLOUDCLI_PROVIDER is empty, using codex."
+            echo "CLOUDCLI_PROVIDER=codex" >> "$GITHUB_ENV"
+          fi
+
+          if [ -z "${CLOUDCLI_MODEL:-}" ]; then
+            echo "CLOUDCLI_MODEL is empty, using gpt-5.3-codex."
+            echo "CLOUDCLI_MODEL=gpt-5.3-codex" >> "$GITHUB_ENV"
+          fi
+
+          mkdir -p cloudcli-output
+
+          echo "CloudCLI config OK"
+          echo "Project: $CLOUDCLI_PROJECT_NAME"
+          echo "Repo path: $CLOUDCLI_REPO_PATH"
+
+      - name: Get CloudCLI environment status
+        id: env_status
+        run: |
+          set -euo pipefail
+
+          curl -fsS \
+            "${CLOUDCLI_BASE_URL}/environments/${CLOUDCLI_ENVIRONMENT_ID}" \
+            -H "X-API-KEY: ${CLOUDCLI_API_KEY}" \
+            -H "Accept: application/json" \
+            -o cloudcli-output/environment.json
+
+          STATUS="$(jq -r '.status // empty' cloudcli-output/environment.json)"
+          NAME="$(jq -r '.name // empty' cloudcli-output/environment.json)"
+          ACCESS_URL="$(jq -r '.access_url // empty' cloudcli-output/environment.json)"
+
+          if [ -z "$STATUS" ]; then
+            echo "Could not read CloudCLI environment status."
+            cat cloudcli-output/environment.json
+            exit 1
+          fi
+
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "access_url=$ACCESS_URL" >> "$GITHUB_OUTPUT"
+
+          echo "Environment name: $NAME"
+          echo "Environment status: $STATUS"
+          echo "Environment URL: $ACCESS_URL"
+
+      - name: Start CloudCLI environment if stopped
+        if: steps.env_status.outputs.status != 'running'
+        run: |
+          set -euo pipefail
+
+          echo "Starting CloudCLI environment..."
+
+          curl -fsS \
+            -X POST \
+            "${CLOUDCLI_BASE_URL}/environments/${CLOUDCLI_ENVIRONMENT_ID}/start" \
+            -H "X-API-KEY: ${CLOUDCLI_API_KEY}" \
+            -H "Accept: application/json" \
+            -o cloudcli-output/start.json || true
+
+          for i in $(seq 1 36); do
+            curl -fsS \
+              "${CLOUDCLI_BASE_URL}/environments/${CLOUDCLI_ENVIRONMENT_ID}" \
+              -H "X-API-KEY: ${CLOUDCLI_API_KEY}" \
+              -H "Accept: application/json" \
+              -o cloudcli-output/environment-after-start.json
+
+            STATUS="$(jq -r '.status // empty' cloudcli-output/environment-after-start.json)"
+
+            echo "Attempt $i: status=$STATUS"
+
+            if [ "$STATUS" = "running" ]; then
+              echo "CloudCLI environment is running."
+              exit 0
+            fi
+
+            sleep 5
+          done
+
+          echo "CloudCLI environment did not become running in time."
+          cat cloudcli-output/environment-after-start.json
+          exit 1
+
+      - name: Build CloudCLI health prompt
+        if: github.event.inputs.run_agent_smoke == 'true'
+        run: |
+          set -euo pipefail
+
+          cat > cloudcli-output/health-message.txt <<EOF
+CLOUDCLI HEALTH CHECK — TEST ONLY.
+
+Do not modify files.
+Do not commit.
+Do not push.
+Do not create a PR.
+
+Work only in this repository path:
+
+${CLOUDCLI_REPO_PATH}
+
+Run shell commands if available:
+
+pwd
+cd "${CLOUDCLI_REPO_PATH}" && git status --short
+cd "${CLOUDCLI_REPO_PATH}" && git branch --show-current
+cd "${CLOUDCLI_REPO_PATH}" && git remote -v
+
+Return only:
+
+CLOUDCLI_HEALTH_OK
+project_path: <path>
+branch: <branch>
+git_status: <status>
+git_remote: <remote>
+ready: yes/no
+EOF
+
+          python3 <<'PY'
+          from pathlib import Path
+          import json
+          import os
+
+          payload = {
+              "environmentId": os.environ["CLOUDCLI_ENVIRONMENT_ID"],
+              "projectName": os.environ["CLOUDCLI_PROJECT_NAME"],
+              "message": Path("cloudcli-output/health-message.txt").read_text(encoding="utf-8"),
+              "provider": os.environ.get("CLOUDCLI_PROVIDER") or "codex",
+              "model": os.environ.get("CLOUDCLI_MODEL") or "gpt-5.3-codex",
+              "createBranch": False,
+              "createPR": False,
+          }
+
+          Path("cloudcli-output/health-payload.json").write_text(
+              json.dumps(payload, ensure_ascii=False),
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Run CloudCLI Codex health smoke
+        if: github.event.inputs.run_agent_smoke == 'true'
+        run: |
+          set -euo pipefail
+
+          echo "Calling CloudCLI agent execute..."
+
+          set +e
+          curl -fsS -N \
+            --max-time 900 \
+            -X POST \
+            "${CLOUDCLI_BASE_URL}/agent/execute" \
+            -H "X-API-KEY: ${CLOUDCLI_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -H "Accept: text/event-stream" \
+            --data-binary @cloudcli-output/health-payload.json \
+            2>&1 | tee cloudcli-output/cloudcli-health-sse.log
+          CURL_EXIT="${PIPESTATUS[0]}"
+          set -e
+
+          echo "$CURL_EXIT" > cloudcli-output/curl-exit-code.txt
+
+          if [ "$CURL_EXIT" -ne 0 ]; then
+            echo "CloudCLI agent execute failed with curl exit code $CURL_EXIT"
+            exit "$CURL_EXIT"
+          fi
+
+          if ! grep -q "CLOUDCLI_HEALTH_OK" cloudcli-output/cloudcli-health-sse.log; then
+            echo "CloudCLI health marker not found in SSE output."
+            echo "Output:"
+            cat cloudcli-output/cloudcli-health-sse.log
+            exit 1
+          fi
+
+          echo "CloudCLI health smoke OK."
+
+      - name: Upload CloudCLI health logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudcli-health-logs-${{ github.run_id }}
+          path: |
+            cloudcli-output/**
+          if-no-files-found: ignore
+
+      - name: Notify Telegram success
+        if: success()
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "Telegram secrets missing. Skipping notification."
+            exit 0
+          fi
+
+          TEXT="$(cat <<EOF
+✅ CloudCLI health OK
+
+Environment: ${CLOUDCLI_ENVIRONMENT_ID}
+Project: ${CLOUDCLI_PROJECT_NAME}
+Repo path: ${CLOUDCLI_REPO_PATH}
+Provider: ${CLOUDCLI_PROVIDER}
+Model: ${CLOUDCLI_MODEL}
+
+Run:
+https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+EOF
+)"
+
+          curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=$TEXT" \
+            -d "disable_web_page_preview=true" >/dev/null
+
+      - name: Notify Telegram failure
+        if: failure()
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "Telegram secrets missing. Skipping notification."
+            exit 0
+          fi
+
+          TEXT="$(cat <<EOF
+❌ CloudCLI health FAILED
+
+Environment: ${CLOUDCLI_ENVIRONMENT_ID}
+Project: ${CLOUDCLI_PROJECT_NAME}
+Repo path: ${CLOUDCLI_REPO_PATH}
+
+Run:
+https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+Check artifact:
+cloudcli-health-logs
+EOF
+)"
+
+          curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=$TEXT" \
+            -d "disable_web_page_preview=true" >/dev/null
