@@ -1,527 +1,558 @@
 name: CloudCLI New Task
-on: workflow_dispatch: inputs: task_title: description: "Task title / PR title" required: true type: string task_text: description: "Task text to implement" required: true type: string dry_run: description: "Run agent without commit/push/PR" required: false default: "true" type: choice options: - "true" - "false"
-repository_dispatch: types: - cloudcli_new_task - telegram_new_task
-permissions: contents: read pull-requests: read issues: read
-concurrency: group: cloudcli-new-task-${{ github.run_id }} cancel-in-progress: false
-jobs: new-task: name: Send new task to CloudCLI Codex runs-on: ubuntu-latest
-env:
-  CLOUDCLI_API_KEY: ${{ secrets.CLOUDCLI_API_KEY }}
-  CLOUDCLI_BASE_URL: ${{ secrets.CLOUDCLI_BASE_URL }}
-  CLOUDCLI_ENVIRONMENT_ID: ${{ secrets.CLOUDCLI_ENVIRONMENT_ID }}
-  CLOUDCLI_PROJECT_NAME: ${{ secrets.CLOUDCLI_PROJECT_NAME }}
-  CLOUDCLI_REPO_PATH: ${{ secrets.CLOUDCLI_REPO_PATH }}
-  CLOUDCLI_PROVIDER: ${{ secrets.CLOUDCLI_PROVIDER }}
-  CLOUDCLI_MODEL: ${{ secrets.CLOUDCLI_MODEL }}
-  GH_TOKEN_FOR_AGENT: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
-  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
-steps:
-  - name: Resolve task and guard open PRs
-    id: resolve
-    uses: actions/github-script@v7
-    with:
-      github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
-      script: |
-        const fs = require("fs");
-        const crypto = require("crypto");
+"on":
+  workflow_dispatch:
+    inputs:
+      task_title:
+        description: "Task title / PR title"
+        required: true
+        type: string
+      task_text:
+        description: "Task text to implement"
+        required: true
+        type: string
+      dry_run:
+        description: "Run agent without commit/push/PR"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
 
-        const owner = context.repo.owner;
-        const repo = context.repo.repo;
+  repository_dispatch:
+    types:
+      - cloudcli_new_task
+      - telegram_new_task
 
-        const payload = context.payload.client_payload || {};
-        const inputs = context.payload.inputs || {};
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
 
-        const taskTitleRaw = String(inputs.task_title || payload.task_title || "").trim();
-        const taskText = String(inputs.task_text || payload.task_text || "").trim();
-        const dryRun = String(inputs.dry_run || payload.dry_run || "true").trim() === "true";
+concurrency:
+  group: cloudcli-new-task-${{ github.run_id }}
+  cancel-in-progress: false
 
-        if (!taskTitleRaw) {
-          core.setFailed("Missing task_title.");
-          return;
-        }
+jobs:
+  new-task:
+    name: Send new task to CloudCLI Codex
+    runs-on: ubuntu-latest
 
-        if (!taskText) {
-          core.setFailed("Missing task_text.");
-          return;
-        }
+    env:
+      CLOUDCLI_API_KEY: ${{ secrets.CLOUDCLI_API_KEY }}
+      CLOUDCLI_BASE_URL: ${{ secrets.CLOUDCLI_BASE_URL }}
+      CLOUDCLI_ENVIRONMENT_ID: ${{ secrets.CLOUDCLI_ENVIRONMENT_ID }}
+      CLOUDCLI_PROJECT_NAME: ${{ secrets.CLOUDCLI_PROJECT_NAME }}
+      CLOUDCLI_REPO_PATH: ${{ secrets.CLOUDCLI_REPO_PATH }}
+      CLOUDCLI_PROVIDER: ${{ secrets.CLOUDCLI_PROVIDER }}
+      CLOUDCLI_MODEL: ${{ secrets.CLOUDCLI_MODEL }}
+      GH_TOKEN_FOR_AGENT: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
-        const openPrs = await github.paginate(github.rest.pulls.list, {
-          owner,
-          repo,
-          state: "open",
-          per_page: 100,
-        });
+    steps:
+      - name: Resolve task
+        id: resolve
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+          script: |
+            const fs = require("fs");
+            const crypto = require("crypto");
 
-        const nonDraftOpenPrs = openPrs.filter(pr => !pr.draft);
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const payload = context.payload.client_payload || {};
+            const inputs = context.payload.inputs || {};
 
-        if (!dryRun && nonDraftOpenPrs.length > 0) {
-          const list = nonDraftOpenPrs
-            .map(pr => `#${pr.number} ${pr.head.ref} ${pr.html_url}`)
-            .join("\n");
+            const taskTitleRaw = String(inputs.task_title || payload.task_title || "").trim();
+            const taskText = String(inputs.task_text || payload.task_text || "").trim();
+            const dryRun = String(inputs.dry_run || payload.dry_run || "true").trim() === "true";
 
-          core.setFailed(
-            [
-              "BLOCKED",
-              "",
-              "Reason:",
-              "- An open PR already exists. New tasks cannot start while another PR is open.",
-              "",
-              "Open PRs:",
-              list,
-              "",
-              "Required action:",
-              "- Finish/merge/close the open PR first, or use the PR fix workflow instead.",
-            ].join("\n")
-          );
-          return;
-        }
+            if (!taskTitleRaw) {
+              core.setFailed("Missing task_title.");
+              return;
+            }
 
-        const repoInfo = await github.rest.repos.get({
-          owner,
-          repo,
-        });
+            if (!taskText) {
+              core.setFailed("Missing task_text.");
+              return;
+            }
 
-        const baseBranch = repoInfo.data.default_branch || "main";
-
-        function slugify(value) {
-          return value
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(/^-+|-+$/g, "")
-            .slice(0, 60) || "cloudcli-task";
-        }
-
-        const taskTitle = taskTitleRaw.slice(0, 120);
-        const hash = crypto.createHash("sha256").update(taskText).digest("hex").slice(0, 10);
-        const branch = `cloudcli/${slugify(taskTitle)}-${hash}`;
-
-        fs.mkdirSync("cloudcli-output", { recursive: true });
-        fs.writeFileSync("cloudcli-output/task-title.txt", taskTitle, "utf8");
-        fs.writeFileSync("cloudcli-output/task-text.txt", taskText, "utf8");
-
-        fs.writeFileSync(
-          "cloudcli-output/task-metadata.json",
-          JSON.stringify(
-            {
+            const openPrs = await github.paginate(github.rest.pulls.list, {
               owner,
               repo,
-              repository: `${owner}/${repo}`,
-              taskTitle,
-              branch,
-              baseBranch,
-              dryRun,
-            },
-            null,
-            2
-          ),
-          "utf8"
-        );
+              state: "open",
+              per_page: 100,
+            });
 
-        core.setOutput("repository", `${owner}/${repo}`);
-        core.setOutput("task_title", taskTitle);
-        core.setOutput("branch", branch);
-        core.setOutput("base_branch", baseBranch);
-        core.setOutput("dry_run", dryRun ? "true" : "false");
+            const nonDraftOpenPrs = openPrs.filter(pr => !pr.draft);
 
-  - name: Execute CloudCLI new task
-    run: |
-      set -euo pipefail
+            if (!dryRun && nonDraftOpenPrs.length > 0) {
+              const list = nonDraftOpenPrs
+                .map(pr => `#${pr.number} ${pr.head.ref} ${pr.html_url}`)
+                .join("\n");
 
-      python3 <<'PY'
-      import json
-      import os
-      import time
-      import urllib.error
-      import urllib.request
-      from pathlib import Path
+              core.setFailed([
+                "BLOCKED",
+                "",
+                "Reason:",
+                "- An open PR already exists. New tasks cannot start while another PR is open.",
+                "",
+                "Open PRs:",
+                list,
+                "",
+                "Required action:",
+                "- Finish/merge/close the open PR first, or use the PR fix workflow instead."
+              ].join("\n"));
+              return;
+            }
 
-      out_dir = Path("cloudcli-output")
-      out_dir.mkdir(exist_ok=True)
+            const repoInfo = await github.rest.repos.get({
+              owner,
+              repo,
+            });
 
-      api_key = os.environ.get("CLOUDCLI_API_KEY", "").strip()
-      base_url = os.environ.get("CLOUDCLI_BASE_URL", "").strip() or "https://cloudcli.ai/api/v1"
-      env_id = os.environ.get("CLOUDCLI_ENVIRONMENT_ID", "").strip()
-      project = os.environ.get("CLOUDCLI_PROJECT_NAME", "").strip()
-      repo_path = os.environ.get("CLOUDCLI_REPO_PATH", "").strip()
-      provider = os.environ.get("CLOUDCLI_PROVIDER", "").strip() or "codex"
-      model = os.environ.get("CLOUDCLI_MODEL", "").strip() or "gpt-5.3-codex"
-      github_token = os.environ.get("GH_TOKEN_FOR_AGENT", "").strip()
+            const baseBranch = repoInfo.data.default_branch || "main";
 
-      metadata = json.loads(Path("cloudcli-output/task-metadata.json").read_text(encoding="utf-8"))
-      task_title = Path("cloudcli-output/task-title.txt").read_text(encoding="utf-8").strip()
-      task_text = Path("cloudcli-output/task-text.txt").read_text(encoding="utf-8").strip()
+            function slugify(value) {
+              return value
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "-")
+                .replace(/^-+|-+$/g, "")
+                .slice(0, 60) || "cloudcli-task";
+            }
 
-      repository = metadata["repository"]
-      branch = metadata["branch"]
-      base_branch = metadata["baseBranch"]
-      dry_run = bool(metadata["dryRun"])
+            const taskTitle = taskTitleRaw.slice(0, 120);
+            const hash = crypto.createHash("sha256").update(taskText).digest("hex").slice(0, 10);
+            const branch = `cloudcli/${slugify(taskTitle)}-${hash}`;
 
-      required = {
-          "CLOUDCLI_API_KEY": api_key,
-          "CLOUDCLI_ENVIRONMENT_ID": env_id,
-          "CLOUDCLI_PROJECT_NAME": project,
-          "CLOUDCLI_REPO_PATH": repo_path,
-          "PICKFAIR_ACTIONS_TOKEN": github_token,
-      }
+            fs.mkdirSync("cloudcli-output", { recursive: true });
+            fs.writeFileSync("cloudcli-output/task-title.txt", taskTitle, "utf8");
+            fs.writeFileSync("cloudcli-output/task-text.txt", taskText, "utf8");
 
-      missing = [name for name, value in required.items() if not value]
+            fs.writeFileSync(
+              "cloudcli-output/task-metadata.json",
+              JSON.stringify(
+                {
+                  owner,
+                  repo,
+                  repository: `${owner}/${repo}`,
+                  taskTitle,
+                  branch,
+                  baseBranch,
+                  dryRun,
+                },
+                null,
+                2
+              ),
+              "utf8"
+            );
 
-      if missing:
-          raise SystemExit("Missing required config: " + ", ".join(missing))
+            core.setOutput("repository", `${owner}/${repo}`);
+            core.setOutput("task_title", taskTitle);
+            core.setOutput("branch", branch);
+            core.setOutput("base_branch", baseBranch);
+            core.setOutput("dry_run", dryRun ? "true" : "false");
 
-      def request_json(method, path, payload=None):
-          url = base_url.rstrip("/") + path
-          data = None
-          headers = {
-              "X-API-KEY": api_key,
-              "Accept": "application/json",
+      - name: Execute CloudCLI new task
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.request
+          from pathlib import Path
+
+          out_dir = Path("cloudcli-output")
+          out_dir.mkdir(exist_ok=True)
+
+          api_key = os.environ.get("CLOUDCLI_API_KEY", "").strip()
+          base_url = os.environ.get("CLOUDCLI_BASE_URL", "").strip() or "https://cloudcli.ai/api/v1"
+          env_id = os.environ.get("CLOUDCLI_ENVIRONMENT_ID", "").strip()
+          project = os.environ.get("CLOUDCLI_PROJECT_NAME", "").strip()
+          repo_path = os.environ.get("CLOUDCLI_REPO_PATH", "").strip()
+          provider = os.environ.get("CLOUDCLI_PROVIDER", "").strip() or "codex"
+          model = os.environ.get("CLOUDCLI_MODEL", "").strip() or "gpt-5.3-codex"
+          github_token = os.environ.get("GH_TOKEN_FOR_AGENT", "").strip()
+
+          metadata = json.loads(Path("cloudcli-output/task-metadata.json").read_text(encoding="utf-8"))
+          task_title = Path("cloudcli-output/task-title.txt").read_text(encoding="utf-8").strip()
+          task_text = Path("cloudcli-output/task-text.txt").read_text(encoding="utf-8").strip()
+
+          repository = metadata["repository"]
+          branch = metadata["branch"]
+          base_branch = metadata["baseBranch"]
+          dry_run = bool(metadata["dryRun"])
+
+          required = {
+              "CLOUDCLI_API_KEY": api_key,
+              "CLOUDCLI_ENVIRONMENT_ID": env_id,
+              "CLOUDCLI_PROJECT_NAME": project,
+              "CLOUDCLI_REPO_PATH": repo_path,
+              "PICKFAIR_ACTIONS_TOKEN": github_token,
           }
 
-          if payload is not None:
-              data = json.dumps(payload).encode("utf-8")
-              headers["Content-Type"] = "application/json"
+          missing = [name for name, value in required.items() if not value]
+          if missing:
+              raise SystemExit("Missing required config: " + ", ".join(missing))
 
-          req = urllib.request.Request(url, data=data, headers=headers, method=method)
+          def request_json(method, path, payload=None):
+              url = base_url.rstrip("/") + path
+              data = None
+              headers = {
+                  "X-API-KEY": api_key,
+                  "Accept": "application/json",
+              }
 
-          try:
-              with urllib.request.urlopen(req, timeout=120) as resp:
-                  raw = resp.read().decode("utf-8", errors="replace")
-          except urllib.error.HTTPError as exc:
-              body = exc.read().decode("utf-8", errors="replace")
-              raise SystemExit(f"HTTP {exc.code} {method} {url}\n{body}") from exc
+              if payload is not None:
+                  data = json.dumps(payload).encode("utf-8")
+                  headers["Content-Type"] = "application/json"
 
-          if not raw.strip():
-              return {}
+              req = urllib.request.Request(url, data=data, headers=headers, method=method)
 
-          return json.loads(raw)
+              try:
+                  with urllib.request.urlopen(req, timeout=120) as resp:
+                      raw = resp.read().decode("utf-8", errors="replace")
+              except urllib.error.HTTPError as exc:
+                  body = exc.read().decode("utf-8", errors="replace")
+                  raise SystemExit(f"HTTP {exc.code} {method} {url}\n{body}") from exc
 
-      env_info = request_json("GET", f"/environments/{env_id}")
-      status = str(env_info.get("status", ""))
+              if not raw.strip():
+                  return {}
 
-      print(f"CloudCLI environment status: {status}")
+              return json.loads(raw)
 
-      if status != "running":
-          print("Starting CloudCLI environment...")
-          request_json("POST", f"/environments/{env_id}/start")
+          env_info = request_json("GET", f"/environments/{env_id}")
+          status = str(env_info.get("status", ""))
 
-          for attempt in range(1, 37):
-              time.sleep(5)
-              env_info = request_json("GET", f"/environments/{env_id}")
-              status = str(env_info.get("status", ""))
-              print(f"Start poll {attempt}: {status}")
-
-              if status == "running":
-                  break
+          print(f"CloudCLI environment status: {status}")
 
           if status != "running":
-              raise SystemExit("CloudCLI environment did not become running.")
+              print("Starting CloudCLI environment...")
+              request_json("POST", f"/environments/{env_id}/start")
 
-      if dry_run:
-          execution_rules = f"""
-      DRY RUN MODE.
+              for attempt in range(1, 37):
+                  time.sleep(5)
+                  env_info = request_json("GET", f"/environments/{env_id}")
+                  status = str(env_info.get("status", ""))
+                  print(f"Start poll {attempt}: {status}")
 
-      Do not edit files.
-      Do not commit.
-      Do not push.
-      Do not create a PR.
+                  if status == "running":
+                      break
 
-      Inspect only this repo path:
-      {repo_path}
-      """
-      else:
-          execution_rules = f"""
-      REAL EXECUTION MODE.
+              if status != "running":
+                  raise SystemExit("CloudCLI environment did not become running.")
 
-      You must:
-      - Work only in this repo path: {repo_path}
-      - Fetch latest refs.
-      - Start from base branch: {base_branch}
-      - Create and use exactly this branch: {branch}
-      - Implement only the requested task.
-      - Run relevant checks/tests.
-      - Commit the changes.
-      - Push only this branch to origin: {branch}
-      - Create exactly one PR from {branch} into {base_branch}.
-      - Do not merge.
-      - Do not work directly on main/master.
-      - Do not create a second PR.
-      """
+          if dry_run:
+              execution_rules = f"""
+          DRY RUN MODE.
 
-      message = f"""
-      CTO MODE: LOCKED IN — CLOUDCLI NEW TASK
+          Do not edit files.
+          Do not commit.
+          Do not push.
+          Do not create a PR.
 
-      Repository: {repository}
-      Repo path: {repo_path}
-      Base branch: {base_branch}
-      Required task branch: {branch}
-      PR title: {task_title}
+          Inspect only this repo path:
+          {repo_path}
+          """
+          else:
+              execution_rules = f"""
+          REAL EXECUTION MODE.
 
-      {execution_rules}
+          You must:
+          - Work only in this repo path: {repo_path}
+          - Fetch latest refs.
+          - Start from base branch: {base_branch}
+          - Create and use exactly this branch: {branch}
+          - Implement only the requested task.
+          - Run relevant checks/tests.
+          - Commit the changes.
+          - Push only this branch to origin: {branch}
+          - Create exactly one PR from {branch} into {base_branch}.
+          - Do not merge.
+          - Do not work directly on main/master.
+          - Do not create a second PR.
+          """
 
-      Strict scope:
-      - Implement only the task below.
-      - Do not broad-refactor.
-      - Do not modify unrelated workflows.
-      - Do not modify unrelated scripts.
-      - Do not modify unrelated tests.
-      - Do not modify guardrail JSON unless the task explicitly requires it.
-      - Do not touch secrets, credentials, generated caches, or local logs.
-      - Follow existing project rules and AGENTS.md if present.
+          message = f"""
+          CTO MODE: LOCKED IN — CLOUDCLI NEW TASK
 
-      Task:
-      {task_text}
+          Repository: {repository}
+          Repo path: {repo_path}
+          Base branch: {base_branch}
+          Required task branch: {branch}
+          PR title: {task_title}
 
-      First inspect:
-      - pwd
-      - cd "{repo_path}" && git status --short
-      - cd "{repo_path}" && git branch --show-current
-      - cd "{repo_path}" && git remote -v
+          {execution_rules}
 
-      If this is real execution mode:
-      - cd "{repo_path}"
-      - git fetch origin
-      - git checkout "{base_branch}"
-      - git pull --ff-only origin "{base_branch}"
-      - git checkout -B "{branch}"
-      - implement the task
-      - run relevant checks/tests
-      - git status --short
-      - git diff --stat
-      - git add only intended files
-      - git commit -m "Implement task: {task_title}"
-      - git push origin "HEAD:{branch}"
-      - create PR with title: {task_title}
+          Strict scope:
+          - Implement only the task below.
+          - Do not broad-refactor.
+          - Do not modify unrelated workflows.
+          - Do not modify unrelated scripts.
+          - Do not modify unrelated tests.
+          - Do not modify guardrail JSON unless the task explicitly requires it.
+          - Do not touch secrets, credentials, generated caches, or local logs.
+          - Follow existing project rules and AGENTS.md if present.
 
-      If GitHub auth or PR creation is unavailable, still push the branch if possible and report NEEDS_MANUAL_PR_CREATE.
-      If push is unavailable, report NEEDS_MANUAL_UPDATE_BRANCH.
+          Task:
+          {task_text}
 
-      Return final output only in this format:
+          First inspect:
+          - pwd
+          - cd "{repo_path}" && git status --short
+          - cd "{repo_path}" && git branch --show-current
+          - cd "{repo_path}" && git remote -v
 
-      CLOUDCLI_NEW_TASK_DONE
+          If this is real execution mode:
+          - cd "{repo_path}"
+          - git fetch origin
+          - git checkout "{base_branch}"
+          - git pull --ff-only origin "{base_branch}"
+          - git checkout -B "{branch}"
+          - implement the task
+          - run relevant checks/tests
+          - git status --short
+          - git diff --stat
+          - git add only intended files
+          - git commit -m "Implement task: {task_title}"
+          - git push origin "HEAD:{branch}"
+          - create PR with title: {task_title}
 
-      Final factual status:
-      - DONE / PARTIAL / NOT DONE
+          If GitHub auth or PR creation is unavailable, still push the branch if possible and report NEEDS_MANUAL_PR_CREATE.
+          If push is unavailable, report NEEDS_MANUAL_UPDATE_BRANCH.
 
-      Branch:
-      - {branch}
+          Return final output only in this format:
 
-      PR:
-      - <PR URL or none>
+          CLOUDCLI_NEW_TASK_DONE
 
-      Commit:
-      - <commit SHA or none>
+          Final factual status:
+          - DONE / PARTIAL / NOT DONE
 
-      Checks:
-      - <exact commands and results>
+          Branch:
+          - {branch}
 
-      Files changed:
-      - <files>
+          PR:
+          - <PR URL or none>
 
-      Files created:
-      - <files>
+          Commit:
+          - <commit SHA or none>
 
-      What was not done:
-      - <items>
+          Checks:
+          - <exact commands and results>
 
-      Push:
-      - succeeded / failed / skipped dry-run
-      """
+          Files changed:
+          - <files>
 
-      payload = {
-          "environmentId": env_id,
-          "projectName": project,
-          "message": message,
-          "provider": provider,
-          "model": model,
-          "createBranch": False,
-          "createPR": False,
-          "githubToken": github_token,
-      }
+          Files created:
+          - <files>
 
-      redacted_payload = dict(payload)
-      redacted_payload["githubToken"] = "***"
+          What was not done:
+          - <items>
 
-      Path("cloudcli-output/agent-payload-redacted.json").write_text(
-          json.dumps(redacted_payload, ensure_ascii=False, indent=2),
-          encoding="utf-8",
-      )
+          Push:
+          - succeeded / failed / skipped dry-run
+          """
 
-      url = base_url.rstrip("/") + "/agent/execute"
-      req = urllib.request.Request(
-          url,
-          data=json.dumps(payload).encode("utf-8"),
-          headers={
-              "X-API-KEY": api_key,
-              "Content-Type": "application/json",
-              "Accept": "text/event-stream",
-          },
-          method="POST",
-      )
+          payload = {
+              "environmentId": env_id,
+              "projectName": project,
+              "message": message,
+              "provider": provider,
+              "model": model,
+              "createBranch": False,
+              "createPR": False,
+              "githubToken": github_token,
+          }
 
-      print("Calling CloudCLI agent execute...")
-      chunks = []
+          redacted_payload = dict(payload)
+          redacted_payload["githubToken"] = "***"
 
-      try:
-          with urllib.request.urlopen(req, timeout=3600) as resp:
-              for raw_line in resp:
-                  line = raw_line.decode("utf-8", errors="replace")
-                  print(line, end="")
-                  chunks.append(line)
-      except urllib.error.HTTPError as exc:
-          body = exc.read().decode("utf-8", errors="replace")
-          raise SystemExit(f"HTTP {exc.code} POST {url}\n{body}") from exc
+          Path("cloudcli-output/agent-payload-redacted.json").write_text(
+              json.dumps(redacted_payload, ensure_ascii=False, indent=2),
+              encoding="utf-8",
+          )
 
-      sse_text = "".join(chunks)
+          url = base_url.rstrip("/") + "/agent/execute"
+          req = urllib.request.Request(
+              url,
+              data=json.dumps(payload).encode("utf-8"),
+              headers={
+                  "X-API-KEY": api_key,
+                  "Content-Type": "application/json",
+                  "Accept": "text/event-stream",
+              },
+              method="POST",
+          )
 
-      Path("cloudcli-output/agent-sse.log").write_text(
-          sse_text,
-          encoding="utf-8",
-      )
+          print("Calling CloudCLI agent execute...")
+          chunks = []
 
-      if "CLOUDCLI_NEW_TASK_DONE" not in sse_text:
-          raise SystemExit("CloudCLI new task marker CLOUDCLI_NEW_TASK_DONE not found in agent output.")
+          try:
+              with urllib.request.urlopen(req, timeout=3600) as resp:
+                  for raw_line in resp:
+                      line = raw_line.decode("utf-8", errors="replace")
+                      print(line, end="")
+                      chunks.append(line)
+          except urllib.error.HTTPError as exc:
+              body = exc.read().decode("utf-8", errors="replace")
+              raise SystemExit(f"HTTP {exc.code} POST {url}\n{body}") from exc
 
-      print("CloudCLI new task execution completed.")
-      PY
+          sse_text = "".join(chunks)
 
-  - name: Verify PR created
-    if: steps.resolve.outputs.dry_run != 'true'
-    id: verify_pr
-    uses: actions/github-script@v7
-    with:
-      github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
-      script: |
-        const owner = context.repo.owner;
-        const repo = context.repo.repo;
-        const branch = "${{ steps.resolve.outputs.branch }}";
+          Path("cloudcli-output/agent-sse.log").write_text(
+              sse_text,
+              encoding="utf-8",
+          )
 
-        const pulls = await github.paginate(github.rest.pulls.list, {
-          owner,
-          repo,
-          state: "open",
-          head: `${owner}:${branch}`,
-          per_page: 20,
-        });
+          if "CLOUDCLI_NEW_TASK_DONE" not in sse_text:
+              raise SystemExit("CloudCLI new task marker CLOUDCLI_NEW_TASK_DONE not found in agent output.")
 
-        if (!pulls.length) {
-          core.setFailed(`No open PR found for branch ${branch}. Check CloudCLI logs.`);
-          return;
-        }
+          print("CloudCLI new task execution completed.")
+          PY
 
-        const pr = pulls[0];
+      - name: Verify PR created
+        if: steps.resolve.outputs.dry_run != 'true'
+        id: verify_pr
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const branch = "${{ steps.resolve.outputs.branch }}";
 
-        core.setOutput("pr_number", String(pr.number));
-        core.setOutput("pr_url", pr.html_url);
-        core.setOutput("head_sha", pr.head.sha);
+            const pulls = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: "open",
+              head: `${owner}:${branch}`,
+              per_page: 20,
+            });
 
-  - name: Upload CloudCLI new task logs
-    if: always()
-    uses: actions/upload-artifact@v4
-    with:
-      name: cloudcli-new-task-logs-${{ github.run_id }}
-      path: cloudcli-output/**
-      if-no-files-found: ignore
+            if (!pulls.length) {
+              core.setFailed(`No open PR found for branch ${branch}. Check CloudCLI logs.`);
+              return;
+            }
 
-  - name: Notify Telegram success
-    if: success()
-    env:
-      TASK_TITLE: ${{ steps.resolve.outputs.task_title }}
-      BRANCH: ${{ steps.resolve.outputs.branch }}
-      DRY_RUN: ${{ steps.resolve.outputs.dry_run }}
-      PR_URL: ${{ steps.verify_pr.outputs.pr_url }}
-      HEAD_SHA: ${{ steps.verify_pr.outputs.head_sha }}
-    run: |
-      set -euo pipefail
+            const pr = pulls[0];
 
-      if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
-        echo "Telegram secrets missing. Skipping notification."
-        exit 0
-      fi
+            core.setOutput("pr_number", String(pr.number));
+            core.setOutput("pr_url", pr.html_url);
+            core.setOutput("head_sha", pr.head.sha);
 
-      PR_URL="${PR_URL:-dry-run/no-pr}"
-      HEAD_SHA="${HEAD_SHA:-n/a}"
+      - name: Upload CloudCLI new task logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudcli-new-task-logs-${{ github.run_id }}
+          path: cloudcli-output/**
+          if-no-files-found: ignore
 
-      python3 <<'PY'
-      import os
-      import urllib.parse
-      import urllib.request
+      - name: Notify Telegram success
+        if: success()
+        env:
+          TASK_TITLE: ${{ steps.resolve.outputs.task_title }}
+          BRANCH: ${{ steps.resolve.outputs.branch }}
+          DRY_RUN: ${{ steps.resolve.outputs.dry_run }}
+          PR_URL: ${{ steps.verify_pr.outputs.pr_url }}
+          HEAD_SHA: ${{ steps.verify_pr.outputs.head_sha }}
+        run: |
+          set -euo pipefail
 
-      token = os.environ["TELEGRAM_BOT_TOKEN"]
-      chat_id = os.environ["TELEGRAM_CHAT_ID"]
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "Telegram secrets missing. Skipping notification."
+            exit 0
+          fi
 
-      text = "\n".join([
-          "CloudCLI new task completed",
-          "",
-          f"Title: {os.environ.get('TASK_TITLE', '')}",
-          f"Branch: {os.environ.get('BRANCH', '')}",
-          f"Dry run: {os.environ.get('DRY_RUN', '')}",
-          f"PR: {os.environ.get('PR_URL', 'dry-run/no-pr')}",
-          f"Head SHA: {os.environ.get('HEAD_SHA', 'n/a')}",
-          "",
-          f"Run: https://github.com/{os.environ.get('GITHUB_REPOSITORY')}/actions/runs/{os.environ.get('GITHUB_RUN_ID')}",
-      ])
+          PR_URL="${PR_URL:-dry-run/no-pr}"
+          HEAD_SHA="${HEAD_SHA:-n/a}"
 
-      data = urllib.parse.urlencode({
-          "chat_id": chat_id,
-          "text": text,
-          "disable_web_page_preview": "true",
-      }).encode()
+          python3 <<'PY'
+          import os
+          import urllib.parse
+          import urllib.request
 
-      urllib.request.urlopen(
-          f"https://api.telegram.org/bot{token}/sendMessage",
-          data=data,
-          timeout=60,
-      ).read()
-      PY
+          token = os.environ["TELEGRAM_BOT_TOKEN"]
+          chat_id = os.environ["TELEGRAM_CHAT_ID"]
 
-  - name: Notify Telegram failure
-    if: failure()
-    env:
-      TASK_TITLE: ${{ steps.resolve.outputs.task_title }}
-      BRANCH: ${{ steps.resolve.outputs.branch }}
-      DRY_RUN: ${{ steps.resolve.outputs.dry_run }}
-    run: |
-      set -euo pipefail
+          text = "\n".join([
+              "CloudCLI new task completed",
+              "",
+              f"Title: {os.environ.get('TASK_TITLE', '')}",
+              f"Branch: {os.environ.get('BRANCH', '')}",
+              f"Dry run: {os.environ.get('DRY_RUN', '')}",
+              f"PR: {os.environ.get('PR_URL', 'dry-run/no-pr')}",
+              f"Head SHA: {os.environ.get('HEAD_SHA', 'n/a')}",
+              "",
+              f"Run: https://github.com/{os.environ.get('GITHUB_REPOSITORY')}/actions/runs/{os.environ.get('GITHUB_RUN_ID')}",
+          ])
 
-      if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
-        echo "Telegram secrets missing. Skipping notification."
-        exit 0
-      fi
+          data = urllib.parse.urlencode({
+              "chat_id": chat_id,
+              "text": text,
+              "disable_web_page_preview": "true",
+          }).encode()
 
-      TASK_TITLE="${TASK_TITLE:-unknown}"
-      BRANCH="${BRANCH:-unknown}"
-      DRY_RUN="${DRY_RUN:-unknown}"
+          urllib.request.urlopen(
+              f"https://api.telegram.org/bot{token}/sendMessage",
+              data=data,
+              timeout=60,
+          ).read()
+          PY
 
-      python3 <<'PY'
-      import os
-      import urllib.parse
-      import urllib.request
+      - name: Notify Telegram failure
+        if: failure()
+        env:
+          TASK_TITLE: ${{ steps.resolve.outputs.task_title }}
+          BRANCH: ${{ steps.resolve.outputs.branch }}
+          DRY_RUN: ${{ steps.resolve.outputs.dry_run }}
+        run: |
+          set -euo pipefail
 
-      token = os.environ["TELEGRAM_BOT_TOKEN"]
-      chat_id = os.environ["TELEGRAM_CHAT_ID"]
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "Telegram secrets missing. Skipping notification."
+            exit 0
+          fi
 
-      text = "\n".join([
-          "CloudCLI new task failed",
-          "",
-          f"Title: {os.environ.get('TASK_TITLE', 'unknown')}",
-          f"Branch: {os.environ.get('BRANCH', 'unknown')}",
-          f"Dry run: {os.environ.get('DRY_RUN', 'unknown')}",
-          "",
-          f"Run: https://github.com/{os.environ.get('GITHUB_REPOSITORY')}/actions/runs/{os.environ.get('GITHUB_RUN_ID')}",
-          "",
-          "Check artifact: cloudcli-new-task-logs",
-      ])
+          TASK_TITLE="${TASK_TITLE:-unknown}"
+          BRANCH="${BRANCH:-unknown}"
+          DRY_RUN="${DRY_RUN:-unknown}"
 
-      data = urllib.parse.urlencode({
-          "chat_id": chat_id,
-          "text": text,
-          "disable_web_page_preview": "true",
-      }).encode()
+          python3 <<'PY'
+          import os
+          import urllib.parse
+          import urllib.request
 
-      urllib.request.urlopen(
-          f"https://api.telegram.org/bot{token}/sendMessage",
-          data=data,
-          timeout=60,
-      ).read()
-      PY
+          token = os.environ["TELEGRAM_BOT_TOKEN"]
+          chat_id = os.environ["TELEGRAM_CHAT_ID"]
+
+          text = "\n".join([
+              "CloudCLI new task failed",
+              "",
+              f"Title: {os.environ.get('TASK_TITLE', 'unknown')}",
+              f"Branch: {os.environ.get('BRANCH', 'unknown')}",
+              f"Dry run: {os.environ.get('DRY_RUN', 'unknown')}",
+              "",
+              f"Run: https://github.com/{os.environ.get('GITHUB_REPOSITORY')}/actions/runs/{os.environ.get('GITHUB_RUN_ID')}",
+              "",
+              "Check artifact: cloudcli-new-task-logs",
+          ])
+
+          data = urllib.parse.urlencode({
+              "chat_id": chat_id,
+              "text": text,
+              "disable_web_page_preview": "true",
+          }).encode()
+
+          urllib.request.urlopen(
+              f"https://api.telegram.org/bot{token}/sendMessage",
+              data=data,
+              timeout=60,
+          ).read()
+          PY
