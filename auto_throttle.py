@@ -99,6 +99,15 @@ class AutoThrottle:
         self._prune(now)
         return now, len(self._timestamps)
 
+    def _apply_new_rate(self, calls: int) -> None:
+        """Reset state for a new call cap; must be called under self._lock."""
+        self.max_calls = max(1, calls)
+        self._timestamps.clear()
+        self._last_delay = 0.0
+        self._backoff = self.base_backoff
+        self._last_call_time = None
+        self._blocked = False
+
     # =========================================================
     # CORE LOGIC
     # =========================================================
@@ -207,12 +216,7 @@ class AutoThrottle:
                 allowed_calls = int((parsed * self.period) / 60.0)
             except (OverflowError, ValueError):
                 return False
-            self.max_calls = max(1, allowed_calls)
-            self._timestamps.clear()
-            self._last_delay = 0.0
-            self._backoff = self.base_backoff
-            self._last_call_time = None
-            self._blocked = False
+            self._apply_new_rate(allowed_calls)
             return True
 
     def reset(self) -> None:

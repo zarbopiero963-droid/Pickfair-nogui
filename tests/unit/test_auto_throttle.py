@@ -117,6 +117,7 @@ def test_invalid_inputs_are_sanitized():
 
 
 @pytest.mark.unit
-def test_non_finite_period_uses_default():
-    assert AutoThrottle(period=float("inf")).period == 1.0
-    assert AutoThrottle(period=float("nan")).period == 1.0
+def test_nonfinite_period_default():
+    """Non-finite period values fall back to 1.0."""
+    assert AutoThrottle(period=float("inf")).period == 1.0  # nosec B101
+    assert AutoThrottle(period=float("nan")).period == 1.0  # nosec B101

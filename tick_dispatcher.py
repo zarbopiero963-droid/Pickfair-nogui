@@ -41,7 +41,6 @@ logger = logging.getLogger(__name__)
 
 
 class TickDispatcher:
-
     """Dispatcher tick con coalescing e throttling per UI e automazioni."""
 
     MIN_UI_UPDATE_INTERVAL = 0.25
@@ -122,6 +121,7 @@ class TickDispatcher:
                 logger.exception("Tick batch callback failed")
 
     def register_ui_callback(self, callback: Callable[[Dict[tuple[str, int], TickData]], None]):
+        """Register a callback invoked on each throttled UI tick batch."""
         with self._lock:
             self._ui_callbacks.append(callback)
 
@@ -130,6 +130,7 @@ class TickDispatcher:
             self._storage_callbacks.append(callback)
 
     def register_automation_callback(self, callback: Callable[[Dict[tuple[str, int], TickData]], None]):
+        """Register a callback invoked on each throttled automation tick batch."""
         with self._lock:
             self._automation_callbacks.append(callback)
 

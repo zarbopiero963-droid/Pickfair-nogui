@@ -14,7 +14,6 @@ from tick_dispatcher import TickData, TickDispatcher, get_tick_dispatcher
 
 
 class TestPR4Determinism(unittest.TestCase):
-
     """Review-fix tests for deterministic behavior."""
 
     def test_tick_valid_kept(self) -> None:
