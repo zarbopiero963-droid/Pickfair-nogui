@@ -126,8 +126,8 @@ class TestPR4Determinism(unittest.TestCase):
 
     def test_singleton_serialized(self) -> None:
         """Singleton init is guarded and returns one instance."""
-        original = tick_module._dispatcher
-        tick_module._dispatcher = None
+        original = tick_module._dispatcher  # noqa: SLF001
+        tick_module._dispatcher = None  # noqa: SLF001
         instances: list[TickDispatcher] = []
         barrier = threading.Barrier(3)
 
@@ -146,7 +146,7 @@ class TestPR4Determinism(unittest.TestCase):
             self.assertEqual(len(instances), 2)
             self.assertIs(instances[0], instances[1])
         finally:
-            tick_module._dispatcher = original
+            tick_module._dispatcher = original  # noqa: SLF001
 
 
 if __name__ == "__main__":
