@@ -14,6 +14,7 @@ from tick_dispatcher import TickData, TickDispatcher, get_tick_dispatcher
 
 
 class TestPR4Determinism(unittest.TestCase):
+
     """Review-fix tests for deterministic behavior."""
 
     def test_tick_valid_kept(self) -> None:
@@ -57,7 +58,7 @@ class TestPR4Determinism(unittest.TestCase):
     def test_throttle_update_unblock(self) -> None:
         """Successful update unblocks limiter."""
         throttle = AutoThrottle(max_calls=1, period=60)
-        throttle._blocked = True
+        throttle._blocked = True  # noqa: SLF001
         self.assertFalse(throttle.allow_call())
         self.assertTrue(throttle.update(api_calls_min=60))
         self.assertFalse(throttle.is_blocked())
@@ -110,9 +111,8 @@ class TestPR4Determinism(unittest.TestCase):
     def test_tick_ui_auto_indep(self) -> None:
         """UI and automation pending buffers do not clear each other."""
         dispatcher = TickDispatcher()
-        dispatcher._last_ui_update = 0.0
-
-        dispatcher._last_automation_check = time.monotonic()
+        dispatcher._last_ui_update = 0.0  # noqa: SLF001
+        dispatcher._last_automation_check = time.monotonic()  # noqa: SLF001
         ui_seen: list[int] = []
         auto_seen: list[int] = []
         dispatcher.register_ui_callback(lambda ticks: ui_seen.append(len(ticks)))
@@ -120,7 +120,7 @@ class TestPR4Determinism(unittest.TestCase):
         dispatcher.dispatch_tick(TickData(market_id="1.2", selection_id=9, timestamp=1.0))
         self.assertEqual(ui_seen, [1])
         self.assertEqual(auto_seen, [])
-        dispatcher._last_automation_check = 0.0
+        dispatcher._last_automation_check = 0.0  # noqa: SLF001
         dispatcher.dispatch_tick(TickData(market_id="1.2", selection_id=9, timestamp=2.0))
         self.assertEqual(auto_seen, [1])
 

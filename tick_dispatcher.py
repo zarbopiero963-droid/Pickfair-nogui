@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 
 class DispatchMode(Enum):
+
     """Modalità di dispatch."""
 
     LIVE = "live"
@@ -24,6 +25,7 @@ class DispatchMode(Enum):
 
 @dataclass
 class TickData:
+
     """Dati di un singolo tick."""
 
     market_id: str
@@ -41,6 +43,7 @@ logger = logging.getLogger(__name__)
 
 
 class TickDispatcher:
+
     """Dispatcher tick con coalescing e throttling per UI e automazioni."""
 
     MIN_UI_UPDATE_INTERVAL = 0.25
