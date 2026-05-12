@@ -151,7 +151,7 @@ class ExecutorManager:
             result = future.result(timeout=timeout if timeout is not None else self.default_timeout)
         finally:
             with self._lock:
-                if self._futures.get(key) is future:
+                if future.done() and self._futures.get(key) is future:
                     self._futures.pop(key, None)
                 current_completed = self._completed_futures.get(key)
                 if current_completed is future:

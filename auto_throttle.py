@@ -193,7 +193,7 @@ class AutoThrottle:
         """Return a positive finite API call rate, or ``None`` when invalid."""
         try:
             parsed = float(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return None
         if parsed <= 0 or not math.isfinite(parsed):
             return None

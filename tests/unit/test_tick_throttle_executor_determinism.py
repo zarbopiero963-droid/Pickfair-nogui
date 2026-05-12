@@ -49,6 +49,11 @@ class TestPR4Determinism(unittest.TestCase):
         self.assertFalse(throttle.update(api_calls_min=0))
         self.assertFalse(throttle.update(api_calls_min=-5))
 
+    def test_throttle_update_overflow_input(self) -> None:
+        """Huge numeric input is rejected without raising."""
+        throttle = AutoThrottle(max_calls=1, period=60)
+        self.assertFalse(throttle.update(api_calls_min=10**10000))
+
     def test_throttle_update_unblock(self) -> None:
         """Successful update unblocks limiter."""
         throttle = AutoThrottle(max_calls=1, period=60)
@@ -90,6 +95,16 @@ class TestPR4Determinism(unittest.TestCase):
             future.result(timeout=2)
         with self.assertRaises(ValueError):
             manager.wait("boom", timeout=2)
+        manager.shutdown(wait=True)
+
+    def test_exec_wait_timeout_keeps_tracking(self) -> None:
+        """Timeout does not drop task tracking for still-running jobs."""
+        manager = ExecutorManager(max_workers=1)
+        future = manager.submit("slow", lambda: (time.sleep(0.2), 7)[1])
+        with self.assertRaises(TimeoutError):
+            manager.wait("slow", timeout=0.01)
+        self.assertIs(manager.get_future("slow"), future)
+        self.assertEqual(future.result(timeout=2), 7)
         manager.shutdown(wait=True)
 
     def test_tick_ui_auto_indep(self) -> None:
