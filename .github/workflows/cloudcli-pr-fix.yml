@@ -48,28 +48,28 @@ concurrency:
 
 jobs:
   pr-fix:
-    name: Send lite full-context instructions to CloudCLI Codex
+    name: Send guarded PR fix to CloudCLI Codex
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
     env:
-      CLOUDCLI_API_KEY: ${{ secrets.CLOUDCLI_API_KEY }}
-      CLOUDCLI_BASE_URL: ${{ vars.CLOUDCLI_BASE_URL || secrets.CLOUDCLI_BASE_URL || 'https://cloudcli.ai/api/v1' }}
-      CLOUDCLI_ENVIRONMENT_ID: ${{ secrets.CLOUDCLI_ENVIRONMENT_ID || vars.CLOUDCLI_ENVIRONMENT_ID }}
-      CLOUDCLI_PROJECT_NAME: ${{ secrets.CLOUDCLI_PROJECT_NAME || vars.CLOUDCLI_PROJECT_NAME }}
-      CLOUDCLI_REPO_PATH: ${{ secrets.CLOUDCLI_REPO_PATH || vars.CLOUDCLI_REPO_PATH }}
-      CLOUDCLI_PROVIDER: ${{ vars.CLOUDCLI_PROVIDER || secrets.CLOUDCLI_PROVIDER || 'codex' }}
-      CLOUDCLI_MODEL: ${{ vars.CLOUDCLI_MODEL || secrets.CLOUDCLI_MODEL || 'gpt-5.2' }}
-      GH_TOKEN_FOR_AGENT: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      CLOUDCLI_API_KEY: "${{ secrets.CLOUDCLI_API_KEY }}"
+      CLOUDCLI_BASE_URL: "${{ vars.CLOUDCLI_BASE_URL || secrets.CLOUDCLI_BASE_URL || 'https://cloudcli.ai/api/v1' }}"
+      CLOUDCLI_ENVIRONMENT_ID: "${{ secrets.CLOUDCLI_ENVIRONMENT_ID || vars.CLOUDCLI_ENVIRONMENT_ID }}"
+      CLOUDCLI_PROJECT_NAME: "${{ secrets.CLOUDCLI_PROJECT_NAME || vars.CLOUDCLI_PROJECT_NAME }}"
+      CLOUDCLI_REPO_PATH: "${{ secrets.CLOUDCLI_REPO_PATH || vars.CLOUDCLI_REPO_PATH }}"
+      CLOUDCLI_PROVIDER: "${{ vars.CLOUDCLI_PROVIDER || secrets.CLOUDCLI_PROVIDER || 'codex' }}"
+      CLOUDCLI_MODEL: "${{ vars.CLOUDCLI_MODEL || secrets.CLOUDCLI_MODEL || 'gpt-5.2' }}"
+      GH_TOKEN_FOR_AGENT: "${{ secrets.PICKFAIR_ACTIONS_TOKEN }}"
+      TELEGRAM_BOT_TOKEN: "${{ secrets.TELEGRAM_BOT_TOKEN }}"
+      TELEGRAM_CHAT_ID: "${{ secrets.TELEGRAM_CHAT_ID }}"
 
     steps:
-      - name: Build lite handoff and full context artifact
+      - name: Build guarded handoff
         id: handoff
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+          github-token: "${{ secrets.PICKFAIR_ACTIONS_TOKEN }}"
           script: |
             const fs = require("fs");
 
@@ -109,16 +109,6 @@ jobs:
               }
             }
 
-            async function restSafe(label, fn, args, fallback) {
-              try {
-                const response = await fn(args);
-                return response.data;
-              } catch (err) {
-                core.warning(`${label} failed: ${err.message}`);
-                return fallback;
-              }
-            }
-
             async function graphqlSafe(label, query, variables, fallback) {
               try {
                 return await github.graphql(query, variables);
@@ -136,7 +126,7 @@ jobs:
               );
             }
 
-            function clip(value, max = 1200) {
+            function clip(value, max = 1600) {
               const text = String(value || "").trim();
               if (text.length <= max) return text;
               return text.slice(0, max) + "\n...[truncated]";
@@ -152,11 +142,10 @@ jobs:
                 author: authorOf(item),
                 path: item.path || null,
                 line: item.line || item.original_line || item.originalLine || null,
-                state: item.state || null,
                 created_at: item.created_at || item.createdAt || null,
                 updated_at: item.updated_at || item.updatedAt || null,
                 url: item.html_url || item.url || null,
-                body: clip(item.body || "", 900),
+                body: clip(item.body || "", 1200),
               };
             }
 
@@ -166,13 +155,11 @@ jobs:
                 name: check.name,
                 status: check.status,
                 conclusion: check.conclusion,
-                started_at: check.started_at,
-                completed_at: check.completed_at,
                 details_url: check.details_url,
                 html_url: check.html_url,
-                output_title: clip(check.output?.title || "", 500),
-                output_summary: clip(check.output?.summary || "", 1200),
-                output_text: clip(check.output?.text || "", 1200),
+                output_title: clip(check.output?.title || "", 600),
+                output_summary: clip(check.output?.summary || "", 1600),
+                output_text: clip(check.output?.text || "", 1600),
               };
             }
 
@@ -198,40 +185,6 @@ jobs:
               return;
             }
 
-            const prPatch = await restSafe(
-              "pull request patch",
-              (args) =>
-                github.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
-                  ...args,
-                  headers: {
-                    accept: "application/vnd.github.patch",
-                  },
-                }),
-              {
-                owner,
-                repo,
-                pull_number: prNumber,
-              },
-              ""
-            );
-
-            const prDiff = await restSafe(
-              "pull request diff",
-              (args) =>
-                github.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
-                  ...args,
-                  headers: {
-                    accept: "application/vnd.github.diff",
-                  },
-                }),
-              {
-                owner,
-                repo,
-                pull_number: prNumber,
-              },
-              ""
-            );
-
             const files = await paginateSafe(
               "changed files",
               github.rest.pulls.listFiles,
@@ -254,8 +207,8 @@ jobs:
               }
             );
 
-            const reviewCommentsRest = await paginateSafe(
-              "pull request review comments",
+            const reviewComments = await paginateSafe(
+              "review comments",
               github.rest.pulls.listReviewComments,
               {
                 owner,
@@ -265,8 +218,8 @@ jobs:
               }
             );
 
-            const reviewsRest = await paginateSafe(
-              "pull request reviews",
+            const reviews = await paginateSafe(
+              "reviews",
               github.rest.pulls.listReviews,
               {
                 owner,
@@ -276,40 +229,16 @@ jobs:
               }
             );
 
-            const timelineEvents = await paginateSafe(
-              "issue timeline events",
-              github.rest.issues.listEventsForTimeline,
-              {
-                owner,
-                repo,
-                issue_number: prNumber,
-                per_page: 100,
-              }
-            );
+            const checkRunsResponse = await github.rest.checks.listForRef({
+              owner,
+              repo,
+              ref: pr.head.sha,
+              per_page: 100,
+            });
 
-            const checkRuns = await paginateSafe(
-              "check runs",
-              github.rest.checks.listForRef,
-              {
-                owner,
-                repo,
-                ref: pr.head.sha,
-                per_page: 100,
-              }
-            );
+            const checkRuns = checkRunsResponse.data.check_runs || [];
 
-            const checkSuites = await paginateSafe(
-              "check suites",
-              github.rest.checks.listSuitesForRef,
-              {
-                owner,
-                repo,
-                ref: pr.head.sha,
-                per_page: 100,
-              }
-            );
-
-            const commitStatuses = await paginateSafe(
+            const statuses = await paginateSafe(
               "commit statuses",
               github.rest.repos.listCommitStatusesForRef,
               {
@@ -320,161 +249,106 @@ jobs:
               }
             );
 
-            const workflowRuns = await paginateSafe(
-              "workflow runs for PR head sha",
-              github.rest.actions.listWorkflowRunsForRepo,
-              {
-                owner,
-                repo,
-                head_sha: pr.head.sha,
-                per_page: 100,
-              }
-            );
-
-            const annotationsByCheckRunId = {};
-
-            for (const check of checkRuns.filter((item) => !item.__fetch_error && item.id)) {
-              const conclusion = String(check.conclusion || "").toLowerCase();
-              const status = String(check.status || "").toLowerCase();
-
-              if (status !== "completed" || !["success", "neutral"].includes(conclusion)) {
-                annotationsByCheckRunId[String(check.id)] = await paginateSafe(
-                  `annotations for check run ${check.id} ${check.name || ""}`,
-                  github.rest.checks.listAnnotations,
-                  {
-                    owner,
-                    repo,
-                    check_run_id: check.id,
-                    per_page: 100,
-                  }
-                );
-              }
-            }
-
-            const codeScanningAlerts = await paginateSafe(
-              "code scanning alerts",
-              github.rest.codeScanning.listAlertsForRepo,
-              {
-                owner,
-                repo,
-                state: "open",
-                per_page: 100,
-              }
-            );
-
-            async function fetchAllReviewThreads() {
-              const query = `
-                query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
-                  repository(owner: $owner, name: $repo) {
-                    pullRequest(number: $number) {
-                      reviewThreads(first: 100, after: $cursor) {
-                        pageInfo {
-                          hasNextPage
-                          endCursor
-                        }
-                        nodes {
-                          id
-                          isResolved
-                          isOutdated
-                          path
-                          line
-                          startLine
-                          originalLine
-                          originalStartLine
-                          resolvedBy {
-                            login
-                          }
-                          comments(first: 100) {
-                            nodes {
-                              id
-                              databaseId
-                              author {
-                                login
-                              }
-                              body
-                              createdAt
-                              updatedAt
-                              url
-                              path
-                              line
-                              originalLine
-                              diffHunk
+            const reviewThreadsQuery = `
+              query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $number) {
+                    reviewThreads(first: 100, after: $cursor) {
+                      pageInfo {
+                        hasNextPage
+                        endCursor
+                      }
+                      nodes {
+                        id
+                        isResolved
+                        isOutdated
+                        path
+                        line
+                        originalLine
+                        comments(first: 30) {
+                          nodes {
+                            id
+                            databaseId
+                            author {
+                              login
                             }
+                            body
+                            createdAt
+                            updatedAt
+                            url
+                            path
+                            line
+                            originalLine
+                            diffHunk
                           }
                         }
                       }
                     }
                   }
                 }
-              `;
+              }
+            `;
 
-              const threads = [];
-              let cursor = null;
+            const reviewThreads = [];
+            let cursor = null;
 
-              while (true) {
-                const data = await graphqlSafe(
-                  "review threads graphql",
-                  query,
-                  {
-                    owner,
-                    repo,
-                    number: prNumber,
-                    cursor,
-                  },
-                  {
-                    __fetch_error: true,
-                    label: "review threads graphql",
-                    message: "GraphQL request failed",
-                  }
-                );
-
-                if (data.__fetch_error) {
-                  return [data];
+            while (true) {
+              const result = await graphqlSafe(
+                "review threads graphql",
+                reviewThreadsQuery,
+                {
+                  owner,
+                  repo,
+                  number: prNumber,
+                  cursor,
+                },
+                {
+                  __fetch_error: true,
+                  message: "GraphQL review threads failed",
                 }
+              );
 
-                const connection = data?.repository?.pullRequest?.reviewThreads;
-                if (!connection) {
-                  break;
-                }
-
-                for (const thread of connection.nodes || []) {
-                  threads.push({
-                    ...thread,
-                    comments: thread.comments?.nodes || [],
-                  });
-                }
-
-                if (!connection.pageInfo?.hasNextPage) {
-                  break;
-                }
-
-                cursor = connection.pageInfo.endCursor;
+              if (result.__fetch_error) {
+                reviewThreads.push(result);
+                break;
               }
 
-              return threads;
+              const connection = result?.repository?.pullRequest?.reviewThreads;
+              if (!connection) {
+                break;
+              }
+
+              for (const thread of connection.nodes || []) {
+                reviewThreads.push({
+                  ...thread,
+                  comments: thread.comments?.nodes || [],
+                });
+              }
+
+              if (!connection.pageInfo?.hasNextPage) {
+                break;
+              }
+
+              cursor = connection.pageInfo.endCursor;
             }
 
-            const reviewThreadsGraphql = await fetchAllReviewThreads();
-
-            const allCheckRuns = checkRuns.filter((item) => !item.__fetch_error);
-
-            const failedCheckRuns = allCheckRuns.filter((check) => {
-              const conclusion = String(check.conclusion || "").toLowerCase();
+            const failedCheckRuns = checkRuns.filter((check) => {
               const status = String(check.status || "").toLowerCase();
+              const conclusion = String(check.conclusion || "").toLowerCase();
               return status === "completed" && !["success", "neutral", "skipped"].includes(conclusion);
             });
 
-            const skippedCheckRuns = allCheckRuns.filter((check) => {
+            const skippedCheckRuns = checkRuns.filter((check) => {
               return String(check.conclusion || "").toLowerCase() === "skipped";
             });
 
-            const pendingCheckRuns = allCheckRuns.filter((check) => {
+            const pendingCheckRuns = checkRuns.filter((check) => {
               return String(check.status || "").toLowerCase() !== "completed";
             });
 
             const latestStatusesByContext = new Map();
 
-            for (const status of commitStatuses.filter((item) => !item.__fetch_error)) {
+            for (const status of statuses.filter((item) => !item.__fetch_error)) {
               const key = status.context || String(status.id) || "unknown";
               if (!latestStatusesByContext.has(key)) {
                 latestStatusesByContext.set(key, status);
@@ -484,68 +358,54 @@ jobs:
             const latestStatuses = Array.from(latestStatusesByContext.values());
 
             const failedOrPendingStatuses = latestStatuses.filter((status) => {
-              const state = String(status.state || "").toLowerCase();
-              return state !== "success";
+              return String(status.state || "").toLowerCase() !== "success";
             });
 
             const botCommentSummary = {};
 
-            for (const comment of [
-              ...issueComments.filter((item) => !item.__fetch_error),
-              ...reviewCommentsRest.filter((item) => !item.__fetch_error),
-            ]) {
+            for (const comment of [...issueComments, ...reviewComments].filter((item) => !item.__fetch_error)) {
               const login = authorOf(comment);
               botCommentSummary[login] = (botCommentSummary[login] || 0) + 1;
             }
 
-            const unresolvedThreads = reviewThreadsGraphql.filter((thread) => {
+            const unresolvedThreads = reviewThreads.filter((thread) => {
               return !thread.__fetch_error && thread.isResolved === false;
             });
 
-            const resolvedThreads = reviewThreadsGraphql.filter((thread) => {
-              return !thread.__fetch_error && thread.isResolved === true;
-            });
+            const hasBlockingFailure = failedCheckRuns.length > 0 || failedOrPendingStatuses.length > 0;
 
-            const outdatedThreads = reviewThreadsGraphql.filter((thread) => {
-              return !thread.__fetch_error && thread.isOutdated === true;
-            });
+            const failedNames = [
+              ...failedCheckRuns.map((check) => check.name),
+              ...failedOrPendingStatuses.map((status) => status.context),
+            ].filter(Boolean);
 
-            const contextSummary = {
+            const summary = {
               repository,
               prNumber,
               prUrl: pr.html_url,
               title: pr.title,
-              state: pr.state,
-              draft: pr.draft,
-              mergeable: pr.mergeable,
               baseBranch: pr.base.ref,
               baseSha: pr.base.sha,
               headBranch: pr.head.ref,
               headSha: pr.head.sha,
               dryRun,
               force,
+              hasBlockingFailure,
+              failedNames,
               counts: {
                 changedFiles: files.length,
                 issueComments: issueComments.length,
-                reviewCommentsRest: reviewCommentsRest.length,
-                reviewsRest: reviewsRest.length,
-                reviewThreadsGraphql: reviewThreadsGraphql.length,
+                reviewComments: reviewComments.length,
+                reviews: reviews.length,
+                reviewThreads: reviewThreads.length,
                 unresolvedThreads: unresolvedThreads.length,
-                resolvedThreads: resolvedThreads.length,
-                outdatedThreads: outdatedThreads.length,
-                timelineEvents: timelineEvents.length,
                 checkRuns: checkRuns.length,
                 failedCheckRuns: failedCheckRuns.length,
                 skippedCheckRuns: skippedCheckRuns.length,
                 pendingCheckRuns: pendingCheckRuns.length,
-                checkSuites: checkSuites.length,
-                commitStatusesRaw: commitStatuses.length,
-                commitStatusesLatestByContext: latestStatuses.length,
+                statuses: latestStatuses.length,
                 failedOrPendingStatuses: failedOrPendingStatuses.length,
-                workflowRuns: workflowRuns.length,
-                codeScanningAlerts: codeScanningAlerts.length,
               },
-              botCommentSummary,
               changedFiles: files.map((file) => ({
                 filename: file.filename,
                 status: file.status,
@@ -559,8 +419,9 @@ jobs:
               skippedCheckRuns: skippedCheckRuns.map(shortCheck),
               pendingCheckRuns: pendingCheckRuns.map(shortCheck),
               failedOrPendingStatuses: failedOrPendingStatuses.map(shortStatus),
-              recentIssueComments: issueComments.filter((item) => !item.__fetch_error).slice(-25).map(shortComment),
-              recentReviewComments: reviewCommentsRest.filter((item) => !item.__fetch_error).slice(-45).map(shortComment),
+              botCommentSummary,
+              recentIssueComments: issueComments.filter((item) => !item.__fetch_error).slice(-30).map(shortComment),
+              recentReviewComments: reviewComments.filter((item) => !item.__fetch_error).slice(-60).map(shortComment),
               unresolvedThreads: unresolvedThreads.slice(0, 100).map((thread) => ({
                 id: thread.id,
                 isResolved: thread.isResolved,
@@ -568,75 +429,21 @@ jobs:
                 path: thread.path,
                 line: thread.line,
                 originalLine: thread.originalLine,
-                resolvedBy: thread.resolvedBy?.login || null,
                 comments: (thread.comments || []).map(shortComment),
               })),
             };
 
-            const fullContext = {
-              summary: contextSummary,
-              pr,
-              files,
-              prDiff,
-              prPatch,
-              issueComments,
-              reviewCommentsRest,
-              reviewsRest,
-              reviewThreadsGraphql,
-              timelineEvents,
-              checkRuns,
-              checkSuites,
-              commitStatuses,
-              latestStatuses,
-              failedOrPendingStatuses,
-              workflowRuns,
-              annotationsByCheckRunId,
-              codeScanningAlerts,
-              extraHandoff,
-            };
-
-            writeJson("summary.json", contextSummary);
-            writeJson("pr.json", pr);
+            writeJson("summary.json", summary);
             writeJson("files.json", files);
             writeJson("issue-comments.json", issueComments);
-            writeJson("review-comments-rest.json", reviewCommentsRest);
-            writeJson("reviews-rest.json", reviewsRest);
-            writeJson("review-threads-graphql.json", reviewThreadsGraphql);
-            writeJson("timeline-events.json", timelineEvents);
+            writeJson("review-comments.json", reviewComments);
+            writeJson("reviews.json", reviews);
+            writeJson("review-threads.json", reviewThreads);
             writeJson("check-runs.json", checkRuns);
-            writeJson("check-suites.json", checkSuites);
-            writeJson("commit-statuses.json", commitStatuses);
-            writeJson("latest-statuses.json", latestStatuses);
-            writeJson("workflow-runs.json", workflowRuns);
-            writeJson("annotations-by-check-run-id.json", annotationsByCheckRunId);
-            writeJson("code-scanning-alerts.json", codeScanningAlerts);
-            writeJson("full-context.json", fullContext);
+            writeJson("statuses.json", statuses);
 
-            fs.writeFileSync("cloudcli-output/context/pr.diff", String(prDiff || ""), "utf8");
-            fs.writeFileSync("cloudcli-output/context/pr.patch", String(prPatch || ""), "utf8");
-
-            const apiCommands = [
-              "mkdir -p /tmp/pickfair-pr-context",
-              `curl -fsSL -H "Authorization: Bearer $GH_TOKEN_FOR_AGENT" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${repository}/pulls/${prNumber}" > /tmp/pickfair-pr-context/pr.json`,
-              `curl -fsSL -H "Authorization: Bearer $GH_TOKEN_FOR_AGENT" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${repository}/pulls/${prNumber}/files?per_page=100" > /tmp/pickfair-pr-context/files-page-1.json`,
-              `for p in 1 2 3 4 5; do curl -fsSL -H "Authorization: Bearer $GH_TOKEN_FOR_AGENT" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${repository}/issues/${prNumber}/comments?per_page=100&page=$p" > "/tmp/pickfair-pr-context/issue-comments-$p.json"; done`,
-              `for p in 1 2 3 4 5; do curl -fsSL -H "Authorization: Bearer $GH_TOKEN_FOR_AGENT" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${repository}/pulls/${prNumber}/comments?per_page=100&page=$p" > "/tmp/pickfair-pr-context/review-comments-$p.json"; done`,
-              `for p in 1 2 3 4 5; do curl -fsSL -H "Authorization: Bearer $GH_TOKEN_FOR_AGENT" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${repository}/pulls/${prNumber}/reviews?per_page=100&page=$p" > "/tmp/pickfair-pr-context/reviews-$p.json"; done`,
-              `curl -fsSL -H "Authorization: Bearer $GH_TOKEN_FOR_AGENT" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${repository}/commits/${pr.head.sha}/check-runs?per_page=100" > /tmp/pickfair-pr-context/check-runs.json`,
-              `curl -fsSL -H "Authorization: Bearer $GH_TOKEN_FOR_AGENT" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${repository}/commits/${pr.head.sha}/statuses?per_page=100" > /tmp/pickfair-pr-context/statuses.json`,
-              `curl -fsSL -H "Authorization: Bearer $GH_TOKEN_FOR_AGENT" -H "Accept: application/vnd.github.diff" "https://api.github.com/repos/${repository}/pulls/${prNumber}" > /tmp/pickfair-pr-context/pr.diff`,
-              `curl -fsSL -H "Authorization: Bearer $GH_TOKEN_FOR_AGENT" -H "Accept: application/vnd.github.patch" "https://api.github.com/repos/${repository}/pulls/${prNumber}" > /tmp/pickfair-pr-context/pr.patch`,
-            ];
-
-            const liteHandoff = [
-              "# CLOUDCLI PR FIX LITE HANDOFF",
-              "",
-              "This is intentionally small to avoid CloudCLI HTTP 413 payload limit.",
-              "The full context bundle is uploaded as workflow artifact.",
-              "Codex should try to re-fetch current PR context directly from GitHub inside CloudCLI.",
-              "If gh, token env, GraphQL, REST, or rate limit blocks the re-fetch, Codex must continue from this summary and local repository state.",
-              "",
-              "## PR",
+            const handoff = [
+              "# CLOUDCLI PR FIX GUARDED HANDOFF",
               "",
               `Repository: ${repository}`,
               `PR: #${prNumber}`,
@@ -647,71 +454,45 @@ jobs:
               `Head SHA: ${pr.head.sha}`,
               `Dry run: ${dryRun}`,
               `Force: ${force}`,
+              `Has blocking failure: ${hasBlockingFailure}`,
+              `Failed names: ${failedNames.join(", ") || "none"}`,
               "",
-              "## Context counts collected by GitHub Actions",
+              "## Context counts",
               "",
               "```json",
-              JSON.stringify(contextSummary.counts, null, 2),
+              JSON.stringify(summary.counts, null, 2),
               "```",
               "",
-              "## Bot/comment author counts",
+              "## Failed checks/statuses",
               "",
               "```json",
-              JSON.stringify(botCommentSummary, null, 2),
+              JSON.stringify(
+                {
+                  failedCheckRuns: summary.failedCheckRuns,
+                  failedOrPendingStatuses: summary.failedOrPendingStatuses,
+                },
+                null,
+                2
+              ),
               "```",
               "",
               "## Changed files",
               "",
               "```json",
-              JSON.stringify(contextSummary.changedFiles, null, 2),
+              JSON.stringify(summary.changedFiles, null, 2),
               "```",
               "",
-              "## Failed checks",
+              "## Recent review comments and unresolved threads sample",
               "",
               "```json",
-              JSON.stringify(contextSummary.failedCheckRuns, null, 2),
-              "```",
-              "",
-              "## Skipped checks",
-              "",
-              "```json",
-              JSON.stringify(contextSummary.skippedCheckRuns, null, 2),
-              "```",
-              "",
-              "## Pending checks",
-              "",
-              "```json",
-              JSON.stringify(contextSummary.pendingCheckRuns, null, 2),
-              "```",
-              "",
-              "## Failed or pending statuses",
-              "",
-              "```json",
-              JSON.stringify(contextSummary.failedOrPendingStatuses, null, 2),
-              "```",
-              "",
-              "## Unresolved review threads sample",
-              "",
-              "```json",
-              JSON.stringify(contextSummary.unresolvedThreads, null, 2),
-              "```",
-              "",
-              "## Recent issue comments sample",
-              "",
-              "```json",
-              JSON.stringify(contextSummary.recentIssueComments, null, 2),
-              "```",
-              "",
-              "## Recent review comments sample",
-              "",
-              "```json",
-              JSON.stringify(contextSummary.recentReviewComments, null, 2),
-              "```",
-              "",
-              "## Commands Codex may try inside CloudCLI to re-fetch full live context",
-              "",
-              "```bash",
-              ...apiCommands,
+              JSON.stringify(
+                {
+                  recentReviewComments: summary.recentReviewComments,
+                  unresolvedThreads: summary.unresolvedThreads,
+                },
+                null,
+                2
+              ),
               "```",
               "",
               "## Extra handoff",
@@ -720,25 +501,26 @@ jobs:
               "",
               "## Hard rules",
               "",
-              "- Do not rely only on failed checks.",
-              "- Do not rely only on DeepSource.",
-              "- Try to re-fetch PR comments, review comments, checks, statuses, diff, and changed files inside CloudCLI before deciding.",
-              "- If re-fetch is blocked by missing gh, missing token env, API permission, GraphQL limit, REST rate limit, or another network issue, continue from the handoff summary and local repository state.",
-              "- Do not fail or stop only because GitHub live re-fetch is unavailable.",
-              "- Continue on the existing PR branch only.",
+              "- Work only on the existing PR branch.",
               "- Do not create a new branch.",
               "- Do not create a new PR.",
+              "- Do not work on main/master.",
               "- Do not merge.",
-              "- Do not work directly on main/master.",
-              "- Do not force-push unless explicitly required and safe.",
-              "- Do not use rg. ripgrep is not installed in this environment. Use grep, sed, find, or python3 instead.",
-              "- Python may be available only as python3, not python.",
-              "- Fix all still-valid blocking issues from Codacy, DeepSource, CodeRabbit, Codex review comments, GitHub checks, statuses, skipped checks, issue comments, and review comments.",
-              "- Ignore duplicates/outdated/resolved items only after explaining why.",
+              "- Do not use rg. ripgrep is not installed. Use grep, sed, find, or python3.",
+              "- Python may be available only as python3.",
+              "- Do not run non-existing tests. Discover test files with find/ls first.",
+              "- Do not rely only on local pytest if GitHub checks/statuses are red.",
+              "- If DeepSource: Python, Codacy, or any required check/status is failing, real mode is not allowed to no-op.",
+              "- In real mode with any failing check/status, either commit and push a targeted fix, or output NEEDS_DEEPSOURCE_DETAILS / NEEDS_STATIC_ANALYSIS_DETAILS with Push: failed.",
+              "- Never return Files changed: none plus Push: skipped dry-run in real mode while a check/status is failing.",
+              "- Never return Commit: none in real mode while a check/status is failing.",
+              "- If live external check details are unavailable, infer likely static-analysis fixes from current code and PR comments.",
+              "- For this repo, likely static-analysis fixes include D203 blank line before class docstrings and SLF001 noqa only in tests where private access is intentional.",
+              "- Run py_compile and targeted existing tests after edits.",
               "",
             ].join("\n");
 
-            fs.writeFileSync("cloudcli-output/handoff-lite.md", liteHandoff, "utf8");
+            fs.writeFileSync("cloudcli-output/handoff-lite.md", handoff, "utf8");
 
             fs.writeFileSync(
               "cloudcli-output/pr-metadata.json",
@@ -756,7 +538,9 @@ jobs:
                   headSha: pr.head.sha,
                   dryRun,
                   force,
-                  counts: contextSummary.counts,
+                  hasBlockingFailure,
+                  failedNames,
+                  counts: summary.counts,
                 },
                 null,
                 2
@@ -775,10 +559,12 @@ jobs:
             core.setOutput("force", force ? "true" : "false");
             core.setOutput("failed_checks", String(failedCheckRuns.length));
             core.setOutput("skipped_checks", String(skippedCheckRuns.length));
-            core.setOutput("review_threads", String(reviewThreadsGraphql.length));
+            core.setOutput("review_threads", String(reviewThreads.length));
             core.setOutput("issue_comments", String(issueComments.length));
-            core.setOutput("review_comments", String(reviewCommentsRest.length));
-            core.setOutput("prompt_mode", "lite-refetch-fallback");
+            core.setOutput("review_comments", String(reviewComments.length));
+            core.setOutput("has_blocking_failure", hasBlockingFailure ? "true" : "false");
+            core.setOutput("failed_names", failedNames.join(", "));
+            core.setOutput("prompt_mode", "guarded-no-noop");
 
       - name: Execute CloudCLI PR fix
         id: execute
@@ -816,6 +602,8 @@ jobs:
           head_branch = metadata["headBranch"]
           head_sha = metadata["headSha"]
           dry_run = bool(metadata["dryRun"])
+          has_blocking_failure = bool(metadata.get("hasBlockingFailure"))
+          failed_names = metadata.get("failedNames") or []
 
           required = {
               "CLOUDCLI_API_KEY": api_key,
@@ -829,8 +617,8 @@ jobs:
           if missing:
               raise SystemExit("Missing required config: " + ", ".join(missing))
 
-          if len(handoff_lite) > 120000:
-              handoff_lite = handoff_lite[:120000] + "\n\n...[handoff-lite truncated to avoid CloudCLI payload limit]"
+          if len(handoff_lite) > 140000:
+              handoff_lite = handoff_lite[:140000] + "\n\n...[handoff-lite truncated to avoid CloudCLI payload limit]"
 
           def request_json(method, path, payload=None):
               url = base_url.rstrip("/") + path
@@ -888,8 +676,8 @@ jobs:
           Do not push.
           Do not create a PR.
 
-          You must still inspect the local PR branch, try live GitHub context re-fetch, and produce a concrete fix plan.
-          If live GitHub context re-fetch is blocked, continue using the handoff-lite summary and local repository state.
+          You must inspect the local PR branch and produce a concrete fix plan.
+          If checks/statuses are failing, do not say no work is needed.
           """
           else:
               execution_rules = f"""
@@ -904,18 +692,23 @@ jobs:
           - Do NOT create a new PR.
           - Do NOT merge.
           - Do NOT work directly on main/master.
-          - Try to re-fetch full live GitHub PR context before editing.
-          - If live GitHub context re-fetch is blocked, continue using the handoff-lite summary and local repository state.
           - Fix all still-valid blocking issues.
           - Run relevant checks/tests.
           - Commit only intended changes.
           - Push only to the same PR branch: {head_branch}
           - Prefer: git push origin HEAD:{head_branch}
-          - If push fails, report NEEDS_MANUAL_UPDATE_BRANCH and Push: failed.
+
+          Real-mode no-op guard:
+          - has_blocking_failure={has_blocking_failure}
+          - failed_names={failed_names}
+          - If has_blocking_failure is true, you are NOT allowed to finish with Files changed: none.
+          - If has_blocking_failure is true, you are NOT allowed to finish with Commit: none.
+          - If has_blocking_failure is true, you are NOT allowed to finish with Push: skipped dry-run.
+          - If you cannot determine a safe fix, output NEEDS_DEEPSOURCE_DETAILS or NEEDS_STATIC_ANALYSIS_DETAILS and Push: failed.
           """
 
           message = f"""
-          CTO MODE: LOCKED IN - CLOUDCLI EXISTING PR FIX - LITE REFRESH FALLBACK MODE
+          CTO MODE: CLOUDCLI EXISTING PR FIX - GUARDED NO-NOOP MODE
 
           Repository: {repository}
           Repo path: {repo_path}
@@ -928,26 +721,17 @@ jobs:
 
           {execution_rules}
 
-          Why this prompt is lite:
-          - The previous full-context prompt was too large and CloudCLI returned HTTP 413.
-          - GitHub Actions collected the context and uploaded it as an artifact.
-          - You must NOT rely only on failed checks or only on DeepSource.
-          - Try to re-fetch full live GitHub context inside CloudCLI using gh/curl.
-          - If gh is unavailable, GitHub token env is missing, GraphQL is unavailable, or API rate limit blocks the fetch, do NOT stop.
-          - Continue using the handoff-lite summary, collected counts, current local PR branch code, and local tests.
-
-          Non-negotiable context rules:
-          - This PR has review comments and bot comments beyond failing checks.
-          - Do not rely only on DeepSource.
-          - Do not rely only on failed checks.
-          - Review comments, review threads, skipped checks, neutral checks, commit statuses, annotations, workflow jobs, issue comments, and timeline events matter.
-          - Treat Codacy, DeepSource, CodeRabbit, Codex review comments, GitHub checks, GitHub statuses, and human comments as potential blockers.
-          - Fix every still-valid blocking issue.
-          - Ignore duplicates/outdated/resolved comments only after explaining why.
-          - Do not use rg. ripgrep is not installed in this environment. Use grep, sed, find, or python3 instead.
-          - Python may be available only as python3, not python.
-          - Do not fail or stop only because GitHub live re-fetch is unavailable.
-          - End your final response with the marker CLOUDCLI_PR_FIX_DONE.
+          Non-negotiable rules:
+          - Do not use rg. ripgrep is not installed. Use grep, sed, find, or python3.
+          - Python may be available only as python3.
+          - Discover test file names before running tests.
+          - Do not run non-existing tests.
+          - Do not rely only on local pytest while GitHub checks/statuses are red.
+          - If DeepSource: Python or Codacy is failing, real mode must either push a fix commit or explicitly fail with NEEDS_DEEPSOURCE_DETAILS / NEEDS_STATIC_ANALYSIS_DETAILS.
+          - Never report Push: skipped dry-run in real mode.
+          - Never report Commit: none in real mode while checks/statuses are failing.
+          - Never report Files changed: none in real mode while checks/statuses are failing.
+          - End final response with marker CLOUDCLI_PR_FIX_DONE.
 
           Initial commands:
           - pwd
@@ -958,17 +742,7 @@ jobs:
           - cd "{repo_path}" && git checkout "{head_branch}"
           - cd "{repo_path}" && git pull --ff-only origin "{head_branch}"
 
-          GitHub context re-fetch:
-          - Try to use curl or gh to fetch PR metadata, files, diff, issue comments, review comments, reviews, check runs, and statuses.
-          - Store fetched JSON/text under /tmp/pickfair-pr-context when possible.
-          - Do not paste huge JSON into the final answer.
-          - Inspect fetched context locally and act on it.
-          - If authenticated requests are unavailable, try unauthenticated requests.
-          - If unauthenticated requests hit rate limits, continue from the handoff summary and current local code.
-          - If GraphQL review threads are unavailable, use REST review comments plus current code to decide validity.
-          - Do not mark the task failed only because GitHub live re-fetch is blocked.
-
-          Handoff-lite follows:
+          Handoff follows:
 
           {handoff_lite}
 
@@ -977,7 +751,7 @@ jobs:
           CLOUDCLI_PR_FIX_DONE
 
           Final factual status:
-          - DONE / PARTIAL / NOT DONE
+          - DONE / PARTIAL / NOT DONE / NEEDS_DEEPSOURCE_DETAILS / NEEDS_STATIC_ANALYSIS_DETAILS
 
           PR:
           - {pr_url}
@@ -1024,7 +798,9 @@ jobs:
           redacted_payload = dict(payload)
           redacted_payload["githubToken"] = "***"
           redacted_payload["message_length"] = len(message)
-          redacted_payload["message"] = message[:20000] + ("\n...[truncated in redacted log only]" if len(message) > 20000 else "")
+          redacted_payload["message"] = message[:20000] + (
+              "\n...[truncated in redacted log only]" if len(message) > 20000 else ""
+          )
 
           Path("cloudcli-output/agent-payload-redacted.json").write_text(
               json.dumps(redacted_payload, ensure_ascii=False, indent=2),
@@ -1108,12 +884,13 @@ jobs:
           if not marker_found:
               if dry_run:
                   print("WARNING: CLOUDCLI_PR_FIX_DONE marker not found in dry-run output.")
-                  print("Dry-run will not fail only for missing marker.")
               else:
                   raise SystemExit("CloudCLI PR fix marker CLOUDCLI_PR_FIX_DONE not found in agent output.")
 
           hard_fail_indicators = [
               "needs_manual_update_branch",
+              "needs_deepsource_details",
+              "needs_static_analysis_details",
               "fatal: could not read username",
               "authentication failed",
               "permission denied",
@@ -1124,15 +901,26 @@ jobs:
           ]
 
           if any(indicator in combined_lower for indicator in hard_fail_indicators):
-              raise SystemExit("CloudCLI reported push/auth/manual-update failure. Failing workflow intentionally.")
+              raise SystemExit("CloudCLI reported push/auth/manual-update/details-needed failure. Failing workflow intentionally.")
 
           if not dry_run:
-              real_mode_bad_indicators = [
+              bad_real_outputs = [
                   "push:\n- skipped dry-run",
+                  "push:\n- skipped",
+                  "files changed:\n- none",
+                  "commit:\n- none",
               ]
 
-              if any(indicator in plain_lower for indicator in real_mode_bad_indicators):
-                  raise SystemExit("CloudCLI real mode did not push or reported dry-run push. Failing workflow intentionally.")
+              if has_blocking_failure and any(indicator in plain_lower for indicator in bad_real_outputs):
+                  raise SystemExit("Real mode had blocking failures but CloudCLI produced no commit/push. Failing workflow intentionally.")
+
+              push_success_markers = [
+                  "push:\n- succeeded",
+                  "push: succeeded",
+              ]
+
+              if has_blocking_failure and not any(marker in plain_lower for marker in push_success_markers):
+                  raise SystemExit("Real mode had blocking failures but CloudCLI did not clearly report Push: succeeded.")
 
               if "final factual status:\n- not done" in combined_lower:
                   raise SystemExit("CloudCLI reported NOT DONE. Failing workflow intentionally.")
@@ -1145,7 +933,7 @@ jobs:
         if: always()
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+          github-token: "${{ secrets.PICKFAIR_ACTIONS_TOKEN }}"
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
@@ -1174,24 +962,26 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cloudcli-pr-fix-lite-context-${{ github.run_id }}
+          name: cloudcli-pr-fix-guarded-${{ github.run_id }}
           path: cloudcli-output/**
           if-no-files-found: ignore
 
       - name: Notify Telegram success
         if: success()
         env:
-          PR_NUMBER: ${{ steps.handoff.outputs.pr_number }}
-          PR_URL: ${{ steps.verify.outputs.pr_url || steps.handoff.outputs.pr_url }}
-          BRANCH: ${{ steps.verify.outputs.head_branch || steps.handoff.outputs.head_branch }}
-          HEAD_SHA: ${{ steps.verify.outputs.head_sha || steps.handoff.outputs.head_sha }}
-          DRY_RUN: ${{ steps.handoff.outputs.dry_run }}
-          FAILED_CHECKS: ${{ steps.handoff.outputs.failed_checks }}
-          SKIPPED_CHECKS: ${{ steps.handoff.outputs.skipped_checks }}
-          REVIEW_THREADS: ${{ steps.handoff.outputs.review_threads }}
-          ISSUE_COMMENTS: ${{ steps.handoff.outputs.issue_comments }}
-          REVIEW_COMMENTS: ${{ steps.handoff.outputs.review_comments }}
-          PROMPT_MODE: ${{ steps.handoff.outputs.prompt_mode }}
+          PR_NUMBER: "${{ steps.handoff.outputs.pr_number }}"
+          PR_URL: "${{ steps.verify.outputs.pr_url || steps.handoff.outputs.pr_url }}"
+          BRANCH: "${{ steps.verify.outputs.head_branch || steps.handoff.outputs.head_branch }}"
+          HEAD_SHA: "${{ steps.verify.outputs.head_sha || steps.handoff.outputs.head_sha }}"
+          DRY_RUN: "${{ steps.handoff.outputs.dry_run }}"
+          FAILED_CHECKS: "${{ steps.handoff.outputs.failed_checks }}"
+          SKIPPED_CHECKS: "${{ steps.handoff.outputs.skipped_checks }}"
+          REVIEW_THREADS: "${{ steps.handoff.outputs.review_threads }}"
+          ISSUE_COMMENTS: "${{ steps.handoff.outputs.issue_comments }}"
+          REVIEW_COMMENTS: "${{ steps.handoff.outputs.review_comments }}"
+          HAS_BLOCKING_FAILURE: "${{ steps.handoff.outputs.has_blocking_failure }}"
+          FAILED_NAMES: "${{ steps.handoff.outputs.failed_names }}"
+          PROMPT_MODE: "${{ steps.handoff.outputs.prompt_mode }}"
         run: |
           set -euo pipefail
 
@@ -1217,6 +1007,8 @@ jobs:
               f"Head SHA: {os.environ.get('HEAD_SHA', '')}",
               f"Dry run: {os.environ.get('DRY_RUN', '')}",
               f"Prompt mode: {os.environ.get('PROMPT_MODE', '')}",
+              f"Blocking failure: {os.environ.get('HAS_BLOCKING_FAILURE', '')}",
+              f"Failed names: {os.environ.get('FAILED_NAMES', '')}",
               "",
               "Context collected:",
               f"- Failed checks: {os.environ.get('FAILED_CHECKS', '')}",
@@ -1244,17 +1036,19 @@ jobs:
       - name: Notify Telegram failure
         if: failure()
         env:
-          PR_NUMBER: ${{ steps.handoff.outputs.pr_number || github.event.inputs.pr_number || github.event.client_payload.pr_number || github.event.client_payload.pr || 'unknown' }}
-          PR_URL: ${{ steps.verify.outputs.pr_url || steps.handoff.outputs.pr_url || '' }}
-          BRANCH: ${{ steps.verify.outputs.head_branch || steps.handoff.outputs.head_branch || '' }}
-          HEAD_SHA: ${{ steps.verify.outputs.head_sha || steps.handoff.outputs.head_sha || '' }}
-          DRY_RUN: ${{ steps.handoff.outputs.dry_run || github.event.inputs.dry_run || github.event.client_payload.dry_run || 'unknown' }}
-          FAILED_CHECKS: ${{ steps.handoff.outputs.failed_checks || 'unknown' }}
-          SKIPPED_CHECKS: ${{ steps.handoff.outputs.skipped_checks || 'unknown' }}
-          REVIEW_THREADS: ${{ steps.handoff.outputs.review_threads || 'unknown' }}
-          ISSUE_COMMENTS: ${{ steps.handoff.outputs.issue_comments || 'unknown' }}
-          REVIEW_COMMENTS: ${{ steps.handoff.outputs.review_comments || 'unknown' }}
-          PROMPT_MODE: ${{ steps.handoff.outputs.prompt_mode || 'unknown' }}
+          PR_NUMBER: "${{ steps.handoff.outputs.pr_number || github.event.inputs.pr_number || github.event.client_payload.pr_number || github.event.client_payload.pr || 'unknown' }}"
+          PR_URL: "${{ steps.verify.outputs.pr_url || steps.handoff.outputs.pr_url || '' }}"
+          BRANCH: "${{ steps.verify.outputs.head_branch || steps.handoff.outputs.head_branch || '' }}"
+          HEAD_SHA: "${{ steps.verify.outputs.head_sha || steps.handoff.outputs.head_sha || '' }}"
+          DRY_RUN: "${{ steps.handoff.outputs.dry_run || github.event.inputs.dry_run || github.event.client_payload.dry_run || 'unknown' }}"
+          FAILED_CHECKS: "${{ steps.handoff.outputs.failed_checks || 'unknown' }}"
+          SKIPPED_CHECKS: "${{ steps.handoff.outputs.skipped_checks || 'unknown' }}"
+          REVIEW_THREADS: "${{ steps.handoff.outputs.review_threads || 'unknown' }}"
+          ISSUE_COMMENTS: "${{ steps.handoff.outputs.issue_comments || 'unknown' }}"
+          REVIEW_COMMENTS: "${{ steps.handoff.outputs.review_comments || 'unknown' }}"
+          HAS_BLOCKING_FAILURE: "${{ steps.handoff.outputs.has_blocking_failure || 'unknown' }}"
+          FAILED_NAMES: "${{ steps.handoff.outputs.failed_names || 'unknown' }}"
+          PROMPT_MODE: "${{ steps.handoff.outputs.prompt_mode || 'unknown' }}"
         run: |
           set -euo pipefail
 
@@ -1280,6 +1074,8 @@ jobs:
               f"Head SHA: {os.environ.get('HEAD_SHA', '')}",
               f"Dry run: {os.environ.get('DRY_RUN', '')}",
               f"Prompt mode: {os.environ.get('PROMPT_MODE', '')}",
+              f"Blocking failure: {os.environ.get('HAS_BLOCKING_FAILURE', '')}",
+              f"Failed names: {os.environ.get('FAILED_NAMES', '')}",
               "",
               "Context collected before failure:",
               f"- Failed checks: {os.environ.get('FAILED_CHECKS', '')}",
@@ -1290,7 +1086,7 @@ jobs:
               "",
               f"Run: https://github.com/{os.environ.get('GITHUB_REPOSITORY')}/actions/runs/{os.environ.get('GITHUB_RUN_ID')}",
               "",
-              "Open artifact cloudcli-pr-fix-lite-context-* for logs and context bundle.",
+              "Open artifact cloudcli-pr-fix-guarded-* for logs and context bundle.",
           ])
 
           data = urllib.parse.urlencode({
