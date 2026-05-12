@@ -27,6 +27,7 @@ on:
         description: "Optional extra handoff text"
         required: false
         type: string
+
   repository_dispatch:
     types:
       - cloudcli_pr_fix
@@ -49,6 +50,7 @@ jobs:
     name: Send PR fix handoff to CloudCLI Codex
     runs-on: ubuntu-latest
     timeout-minutes: 90
+
     env:
       CLOUDCLI_API_KEY: ${{ secrets.CLOUDCLI_API_KEY }}
       CLOUDCLI_BASE_URL: ${{ vars.CLOUDCLI_BASE_URL || 'https://cloudcli.ai/api/v1' }}
@@ -156,7 +158,9 @@ jobs:
               return status === "completed" && !["success", "neutral", "skipped"].includes(conclusion);
             });
 
-            const pendingChecks = checkRuns.filter((check) => (check.status || "") !== "completed");
+            const pendingChecks = checkRuns.filter((check) => {
+              return (check.status || "") !== "completed";
+            });
 
             const latestStatusesByContext = new Map();
             for (const status of commitStatuses) {
@@ -582,8 +586,8 @@ jobs:
           - Ignore duplicated/noisy comments.
           - Preserve existing project behavior unless a listed issue requires a focused change.
           - Follow AGENTS.md if present.
-          - If `rg` is unavailable, use `grep`.
-          - If `pytest` is unavailable as a command, use `python3 -m pytest`.
+          - If rg is unavailable, use grep.
+          - If pytest is unavailable as a command, use python3 -m pytest.
 
           First inspect:
           - pwd
@@ -737,8 +741,8 @@ jobs:
           if not dry_run:
               real_mode_bad_indicators = [
                   "push:\n- skipped dry-run",
-                  "do not push",
               ]
+
               if any(indicator in plain_lower for indicator in real_mode_bad_indicators):
                   raise SystemExit("CloudCLI real mode did not push or reported dry-run push. Failing workflow intentionally.")
 
