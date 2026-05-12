@@ -471,14 +471,6 @@ jobs:
               return String(check.conclusion || "").toLowerCase() === "skipped";
             });
 
-            const neutralCheckRuns = allCheckRuns.filter((check) => {
-              return String(check.conclusion || "").toLowerCase() === "neutral";
-            });
-
-            const successfulCheckRuns = allCheckRuns.filter((check) => {
-              return String(check.conclusion || "").toLowerCase() === "success";
-            });
-
             const pendingCheckRuns = allCheckRuns.filter((check) => {
               return String(check.status || "").toLowerCase() !== "completed";
             });
@@ -548,8 +540,6 @@ jobs:
                 checkRuns: checkRuns.length,
                 failedCheckRuns: failedCheckRuns.length,
                 skippedCheckRuns: skippedCheckRuns.length,
-                neutralCheckRuns: neutralCheckRuns.length,
-                successfulCheckRuns: successfulCheckRuns.length,
                 pendingCheckRuns: pendingCheckRuns.length,
                 checkSuites: checkSuites.length,
                 commitStatusesRaw: commitStatuses.length,
@@ -630,15 +620,15 @@ jobs:
 
             const apiCommands = [
               "mkdir -p /tmp/pickfair-pr-context",
-              `curl -fsSL "https://api.github.com/repos/${repository}/pulls/${prNumber}" > /tmp/pickfair-pr-context/pr.json`,
-              `curl -fsSL "https://api.github.com/repos/${repository}/pulls/${prNumber}/files?per_page=100" > /tmp/pickfair-pr-context/files-page-1.json`,
-              `for p in 1 2 3 4 5; do curl -fsSL "https://api.github.com/repos/${repository}/issues/${prNumber}/comments?per_page=100&page=$p" > "/tmp/pickfair-pr-context/issue-comments-$p.json"; done`,
-              `for p in 1 2 3 4 5; do curl -fsSL "https://api.github.com/repos/${repository}/pulls/${prNumber}/comments?per_page=100&page=$p" > "/tmp/pickfair-pr-context/review-comments-$p.json"; done`,
-              `for p in 1 2 3 4 5; do curl -fsSL "https://api.github.com/repos/${repository}/pulls/${prNumber}/reviews?per_page=100&page=$p" > "/tmp/pickfair-pr-context/reviews-$p.json"; done`,
-              `curl -fsSL "https://api.github.com/repos/${repository}/commits/${pr.head.sha}/check-runs?per_page=100" > /tmp/pickfair-pr-context/check-runs.json`,
-              `curl -fsSL "https://api.github.com/repos/${repository}/commits/${pr.head.sha}/statuses?per_page=100" > /tmp/pickfair-pr-context/statuses.json`,
-              `curl -fsSL -H "Accept: application/vnd.github.diff" "https://api.github.com/repos/${repository}/pulls/${prNumber}" > /tmp/pickfair-pr-context/pr.diff`,
-              `curl -fsSL -H "Accept: application/vnd.github.patch" "https://api.github.com/repos/${repository}/pulls/${prNumber}" > /tmp/pickfair-pr-context/pr.patch`,
+              `curl -fsSL -H "Authorization: Bearer $GH_TOKEN_FOR_AGENT" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${repository}/pulls/${prNumber}" > /tmp/pickfair-pr-context/pr.json`,
+              `curl -fsSL -H "Authorization: Bearer $GH_TOKEN_FOR_AGENT" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${repository}/pulls/${prNumber}/files?per_page=100" > /tmp/pickfair-pr-context/files-page-1.json`,
+              `for p in 1 2 3 4 5; do curl -fsSL -H "Authorization: Bearer $GH_TOKEN_FOR_AGENT" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${repository}/issues/${prNumber}/comments?per_page=100&page=$p" > "/tmp/pickfair-pr-context/issue-comments-$p.json"; done`,
+              `for p in 1 2 3 4 5; do curl -fsSL -H "Authorization: Bearer $GH_TOKEN_FOR_AGENT" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${repository}/pulls/${prNumber}/comments?per_page=100&page=$p" > "/tmp/pickfair-pr-context/review-comments-$p.json"; done`,
+              `for p in 1 2 3 4 5; do curl -fsSL -H "Authorization: Bearer $GH_TOKEN_FOR_AGENT" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${repository}/pulls/${prNumber}/reviews?per_page=100&page=$p" > "/tmp/pickfair-pr-context/reviews-$p.json"; done`,
+              `curl -fsSL -H "Authorization: Bearer $GH_TOKEN_FOR_AGENT" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${repository}/commits/${pr.head.sha}/check-runs?per_page=100" > /tmp/pickfair-pr-context/check-runs.json`,
+              `curl -fsSL -H "Authorization: Bearer $GH_TOKEN_FOR_AGENT" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${repository}/commits/${pr.head.sha}/statuses?per_page=100" > /tmp/pickfair-pr-context/statuses.json`,
+              `curl -fsSL -H "Authorization: Bearer $GH_TOKEN_FOR_AGENT" -H "Accept: application/vnd.github.diff" "https://api.github.com/repos/${repository}/pulls/${prNumber}" > /tmp/pickfair-pr-context/pr.diff`,
+              `curl -fsSL -H "Authorization: Bearer $GH_TOKEN_FOR_AGENT" -H "Accept: application/vnd.github.patch" "https://api.github.com/repos/${repository}/pulls/${prNumber}" > /tmp/pickfair-pr-context/pr.patch`,
             ];
 
             const liteHandoff = [
@@ -739,6 +729,7 @@ jobs:
               "- Do not merge.",
               "- Do not work directly on main/master.",
               "- Do not force-push unless explicitly required and safe.",
+              "- Do not use rg. ripgrep is not installed in this environment. Use grep, sed, find, or python instead.",
               "- Fix all still-valid blocking issues from Codacy, DeepSource, CodeRabbit, Codex review comments, GitHub checks, statuses, skipped checks, issue comments, and review comments.",
               "- Ignore duplicates/outdated/resolved items only after explaining why.",
               "",
@@ -946,6 +937,8 @@ jobs:
           - Treat Codacy, DeepSource, CodeRabbit, Codex review comments, GitHub checks, GitHub statuses, and human comments as potential blockers.
           - Fix every still-valid blocking issue.
           - Ignore duplicates/outdated/resolved comments only after explaining why.
+          - Do not use rg. ripgrep is not installed in this environment. Use grep, sed, find, or python instead.
+          - End your final response with the marker CLOUDCLI_PR_FIX_DONE.
 
           Initial commands:
           - pwd
@@ -961,7 +954,7 @@ jobs:
           - Store fetched JSON/text under /tmp/pickfair-pr-context.
           - Do not paste huge JSON into the final answer.
           - Inspect it locally and act on it.
-          - If authenticated gh is unavailable, use public GitHub REST endpoints with curl.
+          - Prefer authenticated requests with the provided GitHub token.
           - If GraphQL review threads are unavailable, use REST review comments plus current code to decide validity.
 
           Handoff-lite follows:
@@ -1094,8 +1087,19 @@ jobs:
           combined_lower = (sse_text + "\n" + plain_text).lower()
           plain_lower = plain_text.lower()
 
-          if "cloudcli_pr_fix_done" not in combined_lower:
-              raise SystemExit("CloudCLI PR fix marker CLOUDCLI_PR_FIX_DONE not found in agent output.")
+          marker_found = "cloudcli_pr_fix_done" in combined_lower
+
+          Path("cloudcli-output/agent-marker-status.txt").write_text(
+              "marker_found=true\n" if marker_found else "marker_found=false\n",
+              encoding="utf-8",
+          )
+
+          if not marker_found:
+              if dry_run:
+                  print("WARNING: CLOUDCLI_PR_FIX_DONE marker not found in dry-run output.")
+                  print("Dry-run will not fail only for missing marker.")
+              else:
+                  raise SystemExit("CloudCLI PR fix marker CLOUDCLI_PR_FIX_DONE not found in agent output.")
 
           hard_fail_indicators = [
               "needs_manual_update_branch",
