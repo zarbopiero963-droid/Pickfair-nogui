@@ -53,12 +53,12 @@ jobs:
 
     env:
       CLOUDCLI_API_KEY: ${{ secrets.CLOUDCLI_API_KEY }}
-      CLOUDCLI_BASE_URL: ${{ vars.CLOUDCLI_BASE_URL || 'https://cloudcli.ai/api/v1' }}
+      CLOUDCLI_BASE_URL: ${{ vars.CLOUDCLI_BASE_URL || secrets.CLOUDCLI_BASE_URL || 'https://cloudcli.ai/api/v1' }}
       CLOUDCLI_ENVIRONMENT_ID: ${{ secrets.CLOUDCLI_ENVIRONMENT_ID || vars.CLOUDCLI_ENVIRONMENT_ID }}
-      CLOUDCLI_PROJECT_NAME: ${{ vars.CLOUDCLI_PROJECT_NAME }}
-      CLOUDCLI_REPO_PATH: ${{ vars.CLOUDCLI_REPO_PATH }}
-      CLOUDCLI_PROVIDER: ${{ vars.CLOUDCLI_PROVIDER || 'codex' }}
-      CLOUDCLI_MODEL: ${{ vars.CLOUDCLI_MODEL || 'gpt-5.2' }}
+      CLOUDCLI_PROJECT_NAME: ${{ secrets.CLOUDCLI_PROJECT_NAME || vars.CLOUDCLI_PROJECT_NAME }}
+      CLOUDCLI_REPO_PATH: ${{ secrets.CLOUDCLI_REPO_PATH || vars.CLOUDCLI_REPO_PATH }}
+      CLOUDCLI_PROVIDER: ${{ vars.CLOUDCLI_PROVIDER || secrets.CLOUDCLI_PROVIDER || 'codex' }}
+      CLOUDCLI_MODEL: ${{ vars.CLOUDCLI_MODEL || secrets.CLOUDCLI_MODEL || 'gpt-5.2' }}
       GH_TOKEN_FOR_AGENT: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -163,6 +163,7 @@ jobs:
             });
 
             const latestStatusesByContext = new Map();
+
             for (const status of commitStatuses) {
               const key = status.context || String(status.id) || "unknown";
               if (!latestStatusesByContext.has(key)) {
@@ -171,6 +172,7 @@ jobs:
             }
 
             const latestStatuses = Array.from(latestStatusesByContext.values());
+
             const latestFailingStatuses = latestStatuses.filter((status) => {
               return String(status.state || "").toLowerCase() !== "success";
             });
@@ -184,19 +186,22 @@ jobs:
                   per_page: 100,
                 });
               } catch (err) {
-                return [{
-                  path: "",
-                  start_line: "",
-                  end_line: "",
-                  annotation_level: "warning",
-                  title: "annotation_fetch_failed",
-                  message: `Could not fetch annotations for check ${check.name}: ${err.message}`,
-                  raw_details: "",
-                }];
+                return [
+                  {
+                    path: "",
+                    start_line: "",
+                    end_line: "",
+                    annotation_level: "warning",
+                    title: "annotation_fetch_failed",
+                    message: `Could not fetch annotations for check ${check.name}: ${err.message}`,
+                    raw_details: "",
+                  },
+                ];
               }
             }
 
             const failingCheckAnnotations = {};
+
             for (const check of failingChecks.slice(0, 25)) {
               failingCheckAnnotations[check.name || String(check.id)] = await getCheckAnnotations(check);
             }
@@ -212,7 +217,10 @@ jobs:
             }
 
             function indentBlock(text, prefix) {
-              return String(text || "").split("\n").map((line) => `${prefix}${line}`).join("\n");
+              return String(text || "")
+                .split("\n")
+                .map((line) => `${prefix}${line}`)
+                .join("\n");
             }
 
             function fileBlock(file) {
@@ -245,6 +253,7 @@ jobs:
 
             function checkBlock(check) {
               const annotations = failingCheckAnnotations[check.name || String(check.id)] || [];
+
               return [
                 `- name: ${check.name}`,
                 `  id: ${check.id}`,
@@ -395,33 +404,37 @@ jobs:
 
             fs.writeFileSync(
               "cloudcli-output/pr-metadata.json",
-              JSON.stringify({
-                owner,
-                repo,
-                repository: `${owner}/${repo}`,
-                prNumber,
-                prUrl: pr.html_url,
-                title: pr.title,
-                baseBranch: pr.base.ref,
-                baseSha: pr.base.sha,
-                headBranch: pr.head.ref,
-                headSha: pr.head.sha,
-                dryRun,
-                force,
-                changedFiles: files.map((file) => file.filename),
-                failingChecks: failingChecks.map((check) => ({
-                  name: check.name,
-                  conclusion: check.conclusion,
-                  details_url: check.details_url,
-                  html_url: check.html_url,
-                })),
-                failingStatuses: latestFailingStatuses.map((status) => ({
-                  context: status.context,
-                  state: status.state,
-                  description: status.description,
-                  target_url: status.target_url,
-                })),
-              }, null, 2),
+              JSON.stringify(
+                {
+                  owner,
+                  repo,
+                  repository: `${owner}/${repo}`,
+                  prNumber,
+                  prUrl: pr.html_url,
+                  title: pr.title,
+                  baseBranch: pr.base.ref,
+                  baseSha: pr.base.sha,
+                  headBranch: pr.head.ref,
+                  headSha: pr.head.sha,
+                  dryRun,
+                  force,
+                  changedFiles: files.map((file) => file.filename),
+                  failingChecks: failingChecks.map((check) => ({
+                    name: check.name,
+                    conclusion: check.conclusion,
+                    details_url: check.details_url,
+                    html_url: check.html_url,
+                  })),
+                  failingStatuses: latestFailingStatuses.map((status) => ({
+                    context: status.context,
+                    state: status.state,
+                    description: status.description,
+                    target_url: status.target_url,
+                  })),
+                },
+                null,
+                2
+              ),
               "utf8"
             );
 
@@ -661,6 +674,7 @@ jobs:
           )
 
           url = base_url.rstrip("/") + "/agent/execute"
+
           req = urllib.request.Request(
               url,
               data=json.dumps(payload).encode("utf-8"),
@@ -673,6 +687,7 @@ jobs:
           )
 
           print("Calling CloudCLI agent execute...")
+
           chunks = []
 
           try:
@@ -689,12 +704,15 @@ jobs:
           Path("cloudcli-output/agent-sse.log").write_text(sse_text, encoding="utf-8")
 
           plain_parts = []
+
           for line in sse_text.splitlines():
               line = line.strip()
+
               if not line.startswith("data:"):
                   continue
 
               raw = line[5:].strip()
+
               if not raw:
                   continue
 
