@@ -337,10 +337,7 @@ jobs:
               const conclusion = String(check.conclusion || "").toLowerCase();
               const status = String(check.status || "").toLowerCase();
 
-              if (
-                status !== "completed" ||
-                !["success", "neutral"].includes(conclusion)
-              ) {
+              if (status !== "completed" || !["success", "neutral"].includes(conclusion)) {
                 annotationsByCheckRunId[String(check.id)] = await paginateSafe(
                   `annotations for check run ${check.id} ${check.name || ""}`,
                   github.rest.checks.listAnnotations,
@@ -635,7 +632,9 @@ jobs:
               "# CLOUDCLI PR FIX LITE HANDOFF",
               "",
               "This is intentionally small to avoid CloudCLI HTTP 413 payload limit.",
-              "The full context bundle is uploaded as workflow artifact, but Codex must re-fetch current PR context directly from GitHub inside CloudCLI.",
+              "The full context bundle is uploaded as workflow artifact.",
+              "Codex should try to re-fetch current PR context directly from GitHub inside CloudCLI.",
+              "If gh, token env, GraphQL, REST, or rate limit blocks the re-fetch, Codex must continue from this summary and local repository state.",
               "",
               "## PR",
               "",
@@ -709,7 +708,7 @@ jobs:
               JSON.stringify(contextSummary.recentReviewComments, null, 2),
               "```",
               "",
-              "## Commands Codex must run inside CloudCLI to re-fetch full live context",
+              "## Commands Codex may try inside CloudCLI to re-fetch full live context",
               "",
               "```bash",
               ...apiCommands,
@@ -721,15 +720,19 @@ jobs:
               "",
               "## Hard rules",
               "",
-              "- Do not rely only on this summary.",
-              "- Re-fetch PR comments, review comments, checks, statuses, diff, and changed files inside CloudCLI before deciding.",
+              "- Do not rely only on failed checks.",
+              "- Do not rely only on DeepSource.",
+              "- Try to re-fetch PR comments, review comments, checks, statuses, diff, and changed files inside CloudCLI before deciding.",
+              "- If re-fetch is blocked by missing gh, missing token env, API permission, GraphQL limit, REST rate limit, or another network issue, continue from the handoff summary and local repository state.",
+              "- Do not fail or stop only because GitHub live re-fetch is unavailable.",
               "- Continue on the existing PR branch only.",
               "- Do not create a new branch.",
               "- Do not create a new PR.",
               "- Do not merge.",
               "- Do not work directly on main/master.",
               "- Do not force-push unless explicitly required and safe.",
-              "- Do not use rg. ripgrep is not installed in this environment. Use grep, sed, find, or python instead.",
+              "- Do not use rg. ripgrep is not installed in this environment. Use grep, sed, find, or python3 instead.",
+              "- Python may be available only as python3, not python.",
               "- Fix all still-valid blocking issues from Codacy, DeepSource, CodeRabbit, Codex review comments, GitHub checks, statuses, skipped checks, issue comments, and review comments.",
               "- Ignore duplicates/outdated/resolved items only after explaining why.",
               "",
@@ -775,7 +778,7 @@ jobs:
             core.setOutput("review_threads", String(reviewThreadsGraphql.length));
             core.setOutput("issue_comments", String(issueComments.length));
             core.setOutput("review_comments", String(reviewCommentsRest.length));
-            core.setOutput("prompt_mode", "lite-refetch");
+            core.setOutput("prompt_mode", "lite-refetch-fallback");
 
       - name: Execute CloudCLI PR fix
         id: execute
@@ -885,7 +888,8 @@ jobs:
           Do not push.
           Do not create a PR.
 
-          You must still re-fetch full live GitHub context and produce a concrete fix plan.
+          You must still inspect the local PR branch, try live GitHub context re-fetch, and produce a concrete fix plan.
+          If live GitHub context re-fetch is blocked, continue using the handoff-lite summary and local repository state.
           """
           else:
               execution_rules = f"""
@@ -900,7 +904,8 @@ jobs:
           - Do NOT create a new PR.
           - Do NOT merge.
           - Do NOT work directly on main/master.
-          - Re-fetch full live GitHub PR context before editing.
+          - Try to re-fetch full live GitHub PR context before editing.
+          - If live GitHub context re-fetch is blocked, continue using the handoff-lite summary and local repository state.
           - Fix all still-valid blocking issues.
           - Run relevant checks/tests.
           - Commit only intended changes.
@@ -910,7 +915,7 @@ jobs:
           """
 
           message = f"""
-          CTO MODE: LOCKED IN - CLOUDCLI EXISTING PR FIX - LITE REFRESH MODE
+          CTO MODE: LOCKED IN - CLOUDCLI EXISTING PR FIX - LITE REFRESH FALLBACK MODE
 
           Repository: {repository}
           Repo path: {repo_path}
@@ -926,8 +931,10 @@ jobs:
           Why this prompt is lite:
           - The previous full-context prompt was too large and CloudCLI returned HTTP 413.
           - GitHub Actions collected the context and uploaded it as an artifact.
-          - You must NOT rely only on the summary.
-          - You must re-fetch full live GitHub context directly inside CloudCLI using the commands in the handoff.
+          - You must NOT rely only on failed checks or only on DeepSource.
+          - Try to re-fetch full live GitHub context inside CloudCLI using gh/curl.
+          - If gh is unavailable, GitHub token env is missing, GraphQL is unavailable, or API rate limit blocks the fetch, do NOT stop.
+          - Continue using the handoff-lite summary, collected counts, current local PR branch code, and local tests.
 
           Non-negotiable context rules:
           - This PR has review comments and bot comments beyond failing checks.
@@ -937,7 +944,9 @@ jobs:
           - Treat Codacy, DeepSource, CodeRabbit, Codex review comments, GitHub checks, GitHub statuses, and human comments as potential blockers.
           - Fix every still-valid blocking issue.
           - Ignore duplicates/outdated/resolved comments only after explaining why.
-          - Do not use rg. ripgrep is not installed in this environment. Use grep, sed, find, or python instead.
+          - Do not use rg. ripgrep is not installed in this environment. Use grep, sed, find, or python3 instead.
+          - Python may be available only as python3, not python.
+          - Do not fail or stop only because GitHub live re-fetch is unavailable.
           - End your final response with the marker CLOUDCLI_PR_FIX_DONE.
 
           Initial commands:
@@ -950,12 +959,14 @@ jobs:
           - cd "{repo_path}" && git pull --ff-only origin "{head_branch}"
 
           GitHub context re-fetch:
-          - Use curl or gh to fetch PR metadata, files, diff, issue comments, review comments, reviews, check runs, and statuses.
-          - Store fetched JSON/text under /tmp/pickfair-pr-context.
+          - Try to use curl or gh to fetch PR metadata, files, diff, issue comments, review comments, reviews, check runs, and statuses.
+          - Store fetched JSON/text under /tmp/pickfair-pr-context when possible.
           - Do not paste huge JSON into the final answer.
-          - Inspect it locally and act on it.
-          - Prefer authenticated requests with the provided GitHub token.
+          - Inspect fetched context locally and act on it.
+          - If authenticated requests are unavailable, try unauthenticated requests.
+          - If unauthenticated requests hit rate limits, continue from the handoff summary and current local code.
           - If GraphQL review threads are unavailable, use REST review comments plus current code to decide validity.
+          - Do not mark the task failed only because GitHub live re-fetch is blocked.
 
           Handoff-lite follows:
 
