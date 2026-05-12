@@ -40,6 +40,7 @@ permissions:
   checks: read
   statuses: read
   actions: read
+  security-events: read
 
 concurrency:
   group: cloudcli-pr-fix-${{ github.event.inputs.pr_number || github.event.client_payload.pr_number || github.event.client_payload.pr || github.run_id }}
@@ -47,9 +48,9 @@ concurrency:
 
 jobs:
   pr-fix:
-    name: Send PR fix handoff to CloudCLI Codex
+    name: Send full PR context to CloudCLI Codex
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
 
     env:
       CLOUDCLI_API_KEY: ${{ secrets.CLOUDCLI_API_KEY }}
@@ -64,7 +65,7 @@ jobs:
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
     steps:
-      - name: Build PR handoff
+      - name: Build full PR context handoff
         id: handoff
         uses: actions/github-script@v7
         with:
@@ -74,6 +75,8 @@ jobs:
 
             const owner = context.repo.owner;
             const repo = context.repo.repo;
+            const repository = `${owner}/${repo}`;
+
             const payload = context.payload.client_payload || {};
             const inputs = context.payload.inputs || {};
 
@@ -89,6 +92,72 @@ jobs:
 
             const prNumber = Number(prNumberRaw);
 
+            fs.mkdirSync("cloudcli-output/context", { recursive: true });
+
+            async function paginateSafe(label, fn, args) {
+              try {
+                return await github.paginate(fn, args);
+              } catch (err) {
+                core.warning(`${label} failed: ${err.message}`);
+                return [
+                  {
+                    __fetch_error: true,
+                    label,
+                    message: err.message,
+                  },
+                ];
+              }
+            }
+
+            async function restSafe(label, fn, args, fallback) {
+              try {
+                const response = await fn(args);
+                return response.data;
+              } catch (err) {
+                core.warning(`${label} failed: ${err.message}`);
+                return fallback;
+              }
+            }
+
+            async function graphqlSafe(label, query, variables, fallback) {
+              try {
+                return await github.graphql(query, variables);
+              } catch (err) {
+                core.warning(`${label} failed: ${err.message}`);
+                return fallback;
+              }
+            }
+
+            function writeJson(name, value) {
+              fs.writeFileSync(
+                `cloudcli-output/context/${name}`,
+                JSON.stringify(value, null, 2),
+                "utf8"
+              );
+            }
+
+            function jsonBlock(title, value) {
+              return [
+                `## ${title}`,
+                "",
+                "```json",
+                JSON.stringify(value, null, 2),
+                "```",
+                "",
+              ].join("\n");
+            }
+
+            function textBlock(title, value) {
+              return [
+                `## ${title}`,
+                "",
+                "```text",
+                String(value || ""),
+                "```",
+                "",
+              ].join("\n");
+            }
+
             const { data: pr } = await github.rest.pulls.get({
               owner,
               repo,
@@ -100,71 +169,383 @@ jobs:
               return;
             }
 
-            const issueComments = await github.paginate(github.rest.issues.listComments, {
-              owner,
-              repo,
-              issue_number: prNumber,
-              per_page: 100,
-            });
+            const prPatch = await restSafe(
+              "pull request patch",
+              (args) =>
+                github.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
+                  ...args,
+                  headers: {
+                    accept: "application/vnd.github.patch",
+                  },
+                }),
+              {
+                owner,
+                repo,
+                pull_number: prNumber,
+              },
+              ""
+            );
 
-            const reviewComments = await github.paginate(github.rest.pulls.listReviewComments, {
-              owner,
-              repo,
-              pull_number: prNumber,
-              per_page: 100,
-            });
+            const prDiff = await restSafe(
+              "pull request diff",
+              (args) =>
+                github.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
+                  ...args,
+                  headers: {
+                    accept: "application/vnd.github.diff",
+                  },
+                }),
+              {
+                owner,
+                repo,
+                pull_number: prNumber,
+              },
+              ""
+            );
 
-            const reviews = await github.paginate(github.rest.pulls.listReviews, {
-              owner,
-              repo,
-              pull_number: prNumber,
-              per_page: 100,
-            });
+            const files = await paginateSafe(
+              "changed files",
+              github.rest.pulls.listFiles,
+              {
+                owner,
+                repo,
+                pull_number: prNumber,
+                per_page: 100,
+              }
+            );
 
-            const files = await github.paginate(github.rest.pulls.listFiles, {
-              owner,
-              repo,
-              pull_number: prNumber,
-              per_page: 100,
-            });
+            const issueComments = await paginateSafe(
+              "issue comments",
+              github.rest.issues.listComments,
+              {
+                owner,
+                repo,
+                issue_number: prNumber,
+                per_page: 100,
+              }
+            );
 
-            let checkRuns = [];
-            try {
-              checkRuns = await github.paginate(github.rest.checks.listForRef, {
+            const reviewCommentsRest = await paginateSafe(
+              "pull request review comments",
+              github.rest.pulls.listReviewComments,
+              {
+                owner,
+                repo,
+                pull_number: prNumber,
+                per_page: 100,
+              }
+            );
+
+            const reviewsRest = await paginateSafe(
+              "pull request reviews",
+              github.rest.pulls.listReviews,
+              {
+                owner,
+                repo,
+                pull_number: prNumber,
+                per_page: 100,
+              }
+            );
+
+            const timelineEvents = await paginateSafe(
+              "issue timeline events",
+              github.rest.issues.listEventsForTimeline,
+              {
+                owner,
+                repo,
+                issue_number: prNumber,
+                per_page: 100,
+              }
+            );
+
+            const checkRuns = await paginateSafe(
+              "check runs",
+              github.rest.checks.listForRef,
+              {
                 owner,
                 repo,
                 ref: pr.head.sha,
                 per_page: 100,
-              });
-            } catch (err) {
-              core.warning(`Could not list check runs: ${err.message}`);
-            }
+              }
+            );
 
-            let commitStatuses = [];
-            try {
-              commitStatuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, {
+            const checkSuites = await paginateSafe(
+              "check suites",
+              github.rest.checks.listSuitesForRef,
+              {
                 owner,
                 repo,
                 ref: pr.head.sha,
                 per_page: 100,
-              });
-            } catch (err) {
-              core.warning(`Could not list commit statuses: ${err.message}`);
+              }
+            );
+
+            const commitStatuses = await paginateSafe(
+              "commit statuses",
+              github.rest.repos.listCommitStatusesForRef,
+              {
+                owner,
+                repo,
+                ref: pr.head.sha,
+                per_page: 100,
+              }
+            );
+
+            const workflowRuns = await paginateSafe(
+              "workflow runs for PR head sha",
+              github.rest.actions.listWorkflowRunsForRepo,
+              {
+                owner,
+                repo,
+                head_sha: pr.head.sha,
+                per_page: 100,
+              }
+            );
+
+            const workflowJobsByRunId = {};
+            for (const run of workflowRuns.filter((item) => !item.__fetch_error && item.id)) {
+              workflowJobsByRunId[String(run.id)] = await paginateSafe(
+                `workflow jobs for run ${run.id}`,
+                github.rest.actions.listJobsForWorkflowRun,
+                {
+                  owner,
+                  repo,
+                  run_id: run.id,
+                  filter: "latest",
+                  per_page: 100,
+                }
+              );
             }
 
-            const failingChecks = checkRuns.filter((check) => {
-              const conclusion = check.conclusion || "";
-              const status = check.status || "";
+            const workflowArtifactsByRunId = {};
+            for (const run of workflowRuns.filter((item) => !item.__fetch_error && item.id)) {
+              workflowArtifactsByRunId[String(run.id)] = await paginateSafe(
+                `workflow artifacts for run ${run.id}`,
+                github.rest.actions.listWorkflowRunArtifacts,
+                {
+                  owner,
+                  repo,
+                  run_id: run.id,
+                  per_page: 100,
+                }
+              );
+            }
+
+            const annotationsByCheckRunId = {};
+            for (const check of checkRuns.filter((item) => !item.__fetch_error && item.id)) {
+              annotationsByCheckRunId[String(check.id)] = await paginateSafe(
+                `annotations for check run ${check.id} ${check.name || ""}`,
+                github.rest.checks.listAnnotations,
+                {
+                  owner,
+                  repo,
+                  check_run_id: check.id,
+                  per_page: 100,
+                }
+              );
+            }
+
+            const codeScanningAlerts = await paginateSafe(
+              "code scanning alerts",
+              github.rest.codeScanning.listAlertsForRepo,
+              {
+                owner,
+                repo,
+                state: "open",
+                per_page: 100,
+              }
+            );
+
+            async function fetchAllReviewThreads() {
+              const firstQuery = `
+                query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+                  repository(owner: $owner, name: $repo) {
+                    pullRequest(number: $number) {
+                      reviewThreads(first: 100, after: $cursor) {
+                        pageInfo {
+                          hasNextPage
+                          endCursor
+                        }
+                        nodes {
+                          id
+                          isResolved
+                          isOutdated
+                          path
+                          line
+                          startLine
+                          originalLine
+                          originalStartLine
+                          resolvedBy {
+                            login
+                          }
+                          comments(first: 100) {
+                            pageInfo {
+                              hasNextPage
+                              endCursor
+                            }
+                            nodes {
+                              id
+                              databaseId
+                              author {
+                                login
+                              }
+                              body
+                              createdAt
+                              updatedAt
+                              url
+                              path
+                              line
+                              originalLine
+                              diffHunk
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              `;
+
+              const moreCommentsQuery = `
+                query($threadId: ID!, $cursor: String) {
+                  node(id: $threadId) {
+                    ... on PullRequestReviewThread {
+                      comments(first: 100, after: $cursor) {
+                        pageInfo {
+                          hasNextPage
+                          endCursor
+                        }
+                        nodes {
+                          id
+                          databaseId
+                          author {
+                            login
+                          }
+                          body
+                          createdAt
+                          updatedAt
+                          url
+                          path
+                          line
+                          originalLine
+                          diffHunk
+                        }
+                      }
+                    }
+                  }
+                }
+              `;
+
+              const threads = [];
+              let cursor = null;
+
+              while (true) {
+                const data = await graphqlSafe(
+                  "review threads graphql",
+                  firstQuery,
+                  {
+                    owner,
+                    repo,
+                    number: prNumber,
+                    cursor,
+                  },
+                  {
+                    __fetch_error: true,
+                    label: "review threads graphql",
+                    message: "GraphQL request failed",
+                  }
+                );
+
+                if (data.__fetch_error) {
+                  return [data];
+                }
+
+                const connection = data?.repository?.pullRequest?.reviewThreads;
+                if (!connection) {
+                  break;
+                }
+
+                for (const thread of connection.nodes || []) {
+                  const commentsConnection = thread.comments || {};
+                  const comments = Array.from(commentsConnection.nodes || []);
+                  let commentsCursor = commentsConnection.pageInfo?.endCursor || null;
+                  let hasMoreComments = Boolean(commentsConnection.pageInfo?.hasNextPage);
+
+                  while (hasMoreComments) {
+                    const more = await graphqlSafe(
+                      `review thread comments graphql ${thread.id}`,
+                      moreCommentsQuery,
+                      {
+                        threadId: thread.id,
+                        cursor: commentsCursor,
+                      },
+                      {
+                        __fetch_error: true,
+                        label: `review thread comments graphql ${thread.id}`,
+                        message: "GraphQL comments request failed",
+                      }
+                    );
+
+                    if (more.__fetch_error) {
+                      comments.push(more);
+                      break;
+                    }
+
+                    const moreConnection = more?.node?.comments;
+                    if (!moreConnection) {
+                      break;
+                    }
+
+                    comments.push(...(moreConnection.nodes || []));
+                    commentsCursor = moreConnection.pageInfo?.endCursor || null;
+                    hasMoreComments = Boolean(moreConnection.pageInfo?.hasNextPage);
+                  }
+
+                  threads.push({
+                    ...thread,
+                    comments,
+                  });
+                }
+
+                if (!connection.pageInfo?.hasNextPage) {
+                  break;
+                }
+
+                cursor = connection.pageInfo.endCursor;
+              }
+
+              return threads;
+            }
+
+            const reviewThreadsGraphql = await fetchAllReviewThreads();
+
+            const allCheckRuns = checkRuns.filter((item) => !item.__fetch_error);
+
+            const failedCheckRuns = allCheckRuns.filter((check) => {
+              const conclusion = String(check.conclusion || "").toLowerCase();
+              const status = String(check.status || "").toLowerCase();
               return status === "completed" && !["success", "neutral", "skipped"].includes(conclusion);
             });
 
-            const pendingChecks = checkRuns.filter((check) => {
-              return (check.status || "") !== "completed";
+            const skippedCheckRuns = allCheckRuns.filter((check) => {
+              return String(check.conclusion || "").toLowerCase() === "skipped";
+            });
+
+            const neutralCheckRuns = allCheckRuns.filter((check) => {
+              return String(check.conclusion || "").toLowerCase() === "neutral";
+            });
+
+            const successfulCheckRuns = allCheckRuns.filter((check) => {
+              return String(check.conclusion || "").toLowerCase() === "success";
+            });
+
+            const pendingCheckRuns = allCheckRuns.filter((check) => {
+              return String(check.status || "").toLowerCase() !== "completed";
             });
 
             const latestStatusesByContext = new Map();
 
-            for (const status of commitStatuses) {
+            for (const status of commitStatuses.filter((item) => !item.__fetch_error)) {
               const key = status.context || String(status.id) || "unknown";
               if (!latestStatusesByContext.has(key)) {
                 latestStatusesByContext.set(key, status);
@@ -173,175 +554,169 @@ jobs:
 
             const latestStatuses = Array.from(latestStatusesByContext.values());
 
-            const latestFailingStatuses = latestStatuses.filter((status) => {
-              return String(status.state || "").toLowerCase() !== "success";
+            const failedOrPendingStatuses = latestStatuses.filter((status) => {
+              const state = String(status.state || "").toLowerCase();
+              return state !== "success";
             });
 
-            async function getCheckAnnotations(check) {
-              try {
-                return await github.paginate(github.rest.checks.listAnnotations, {
-                  owner,
-                  repo,
-                  check_run_id: check.id,
-                  per_page: 100,
-                });
-              } catch (err) {
-                return [
-                  {
-                    path: "",
-                    start_line: "",
-                    end_line: "",
-                    annotation_level: "warning",
-                    title: "annotation_fetch_failed",
-                    message: `Could not fetch annotations for check ${check.name}: ${err.message}`,
-                    raw_details: "",
-                  },
-                ];
-              }
+            const botCommentSummary = {};
+
+            for (const comment of [
+              ...issueComments.filter((item) => !item.__fetch_error),
+              ...reviewCommentsRest.filter((item) => !item.__fetch_error),
+            ]) {
+              const login = comment.user?.login || comment.author?.login || "unknown";
+              botCommentSummary[login] = (botCommentSummary[login] || 0) + 1;
             }
 
-            const failingCheckAnnotations = {};
+            const contextSummary = {
+              repository,
+              prNumber,
+              prUrl: pr.html_url,
+              title: pr.title,
+              state: pr.state,
+              draft: pr.draft,
+              mergeable: pr.mergeable,
+              baseBranch: pr.base.ref,
+              baseSha: pr.base.sha,
+              headBranch: pr.head.ref,
+              headSha: pr.head.sha,
+              dryRun,
+              force,
+              counts: {
+                changedFiles: files.length,
+                issueComments: issueComments.length,
+                reviewCommentsRest: reviewCommentsRest.length,
+                reviewsRest: reviewsRest.length,
+                reviewThreadsGraphql: reviewThreadsGraphql.length,
+                timelineEvents: timelineEvents.length,
+                checkRuns: checkRuns.length,
+                failedCheckRuns: failedCheckRuns.length,
+                skippedCheckRuns: skippedCheckRuns.length,
+                neutralCheckRuns: neutralCheckRuns.length,
+                successfulCheckRuns: successfulCheckRuns.length,
+                pendingCheckRuns: pendingCheckRuns.length,
+                checkSuites: checkSuites.length,
+                commitStatusesRaw: commitStatuses.length,
+                commitStatusesLatestByContext: latestStatuses.length,
+                failedOrPendingStatuses: failedOrPendingStatuses.length,
+                workflowRuns: workflowRuns.length,
+                codeScanningAlerts: codeScanningAlerts.length,
+              },
+              botCommentSummary,
+              failedCheckRuns: failedCheckRuns.map((check) => ({
+                id: check.id,
+                name: check.name,
+                status: check.status,
+                conclusion: check.conclusion,
+                details_url: check.details_url,
+                html_url: check.html_url,
+                started_at: check.started_at,
+                completed_at: check.completed_at,
+              })),
+              skippedCheckRuns: skippedCheckRuns.map((check) => ({
+                id: check.id,
+                name: check.name,
+                status: check.status,
+                conclusion: check.conclusion,
+                details_url: check.details_url,
+                html_url: check.html_url,
+              })),
+              failedOrPendingStatuses: failedOrPendingStatuses.map((status) => ({
+                context: status.context,
+                state: status.state,
+                description: status.description,
+                target_url: status.target_url,
+                created_at: status.created_at,
+                updated_at: status.updated_at,
+              })),
+              changedFiles: files.map((file) => ({
+                filename: file.filename,
+                status: file.status,
+                additions: file.additions,
+                deletions: file.deletions,
+                changes: file.changes,
+                blob_url: file.blob_url,
+                raw_url: file.raw_url,
+              })),
+            };
 
-            for (const check of failingChecks.slice(0, 25)) {
-              failingCheckAnnotations[check.name || String(check.id)] = await getCheckAnnotations(check);
-            }
+            const fullContext = {
+              summary: contextSummary,
+              pr,
+              files,
+              prDiff,
+              prPatch,
+              issueComments,
+              reviewCommentsRest,
+              reviewsRest,
+              reviewThreadsGraphql,
+              timelineEvents,
+              checkRuns,
+              checkSuites,
+              commitStatuses,
+              latestStatuses,
+              failedOrPendingStatuses,
+              workflowRuns,
+              workflowJobsByRunId,
+              workflowArtifactsByRunId,
+              annotationsByCheckRunId,
+              codeScanningAlerts,
+              extraHandoff,
+            };
 
-            function shortText(value, max = 3000) {
-              const text = String(value || "").trim();
-              if (text.length <= max) return text;
-              return text.slice(0, max) + "\n...[truncated]";
-            }
+            writeJson("summary.json", contextSummary);
+            writeJson("pr.json", pr);
+            writeJson("files.json", files);
+            writeJson("issue-comments.json", issueComments);
+            writeJson("review-comments-rest.json", reviewCommentsRest);
+            writeJson("reviews-rest.json", reviewsRest);
+            writeJson("review-threads-graphql.json", reviewThreadsGraphql);
+            writeJson("timeline-events.json", timelineEvents);
+            writeJson("check-runs.json", checkRuns);
+            writeJson("check-suites.json", checkSuites);
+            writeJson("commit-statuses.json", commitStatuses);
+            writeJson("latest-statuses.json", latestStatuses);
+            writeJson("workflow-runs.json", workflowRuns);
+            writeJson("workflow-jobs-by-run-id.json", workflowJobsByRunId);
+            writeJson("workflow-artifacts-by-run-id.json", workflowArtifactsByRunId);
+            writeJson("annotations-by-check-run-id.json", annotationsByCheckRunId);
+            writeJson("code-scanning-alerts.json", codeScanningAlerts);
+            writeJson("full-context.json", fullContext);
 
-            function fenced(value, max = 3000) {
-              return ["```", shortText(value || "", max), "```"].join("\n");
-            }
+            fs.writeFileSync("cloudcli-output/context/pr.diff", String(prDiff || ""), "utf8");
+            fs.writeFileSync("cloudcli-output/context/pr.patch", String(prPatch || ""), "utf8");
 
-            function indentBlock(text, prefix) {
-              return String(text || "")
-                .split("\n")
-                .map((line) => `${prefix}${line}`)
-                .join("\n");
-            }
-
-            function fileBlock(file) {
-              return [
-                `- filename: ${file.filename}`,
-                `  status: ${file.status}`,
-                `  additions: ${file.additions}`,
-                `  deletions: ${file.deletions}`,
-                `  changes: ${file.changes}`,
-                `  blob_url: ${file.blob_url || ""}`,
-                `  raw_url: ${file.raw_url || ""}`,
-                "  patch:",
-                indentBlock(fenced(file.patch || "No patch available from GitHub API.", 12000), "  "),
-              ].join("\n");
-            }
-
-            function annotationBlock(annotation) {
-              return [
-                `- path: ${annotation.path || ""}`,
-                `  start_line: ${annotation.start_line || ""}`,
-                `  end_line: ${annotation.end_line || ""}`,
-                `  level: ${annotation.annotation_level || ""}`,
-                `  title: ${annotation.title || ""}`,
-                "  message:",
-                indentBlock(fenced(annotation.message || "", 1500), "  "),
-                "  raw_details:",
-                indentBlock(fenced(annotation.raw_details || "", 2000), "  "),
-              ].join("\n");
-            }
-
-            function checkBlock(check) {
-              const annotations = failingCheckAnnotations[check.name || String(check.id)] || [];
-
-              return [
-                `- name: ${check.name}`,
-                `  id: ${check.id}`,
-                `  status: ${check.status}`,
-                `  conclusion: ${check.conclusion || ""}`,
-                `  started_at: ${check.started_at || ""}`,
-                `  completed_at: ${check.completed_at || ""}`,
-                `  details_url: ${check.details_url || ""}`,
-                `  html_url: ${check.html_url || ""}`,
-                "  output_title:",
-                indentBlock(fenced(check.output?.title || "", 800), "  "),
-                "  output_summary:",
-                indentBlock(fenced(check.output?.summary || "", 4000), "  "),
-                "  output_text:",
-                indentBlock(fenced(check.output?.text || "", 4000), "  "),
-                "  annotations:",
-                annotations.length ? indentBlock(annotations.map(annotationBlock).join("\n\n"), "  ") : "  No annotations found via GitHub API.",
-              ].join("\n");
-            }
-
-            function statusBlock(status) {
-              return [
-                `- context: ${status.context || ""}`,
-                `  state: ${status.state || ""}`,
-                `  description: ${status.description || ""}`,
-                `  target_url: ${status.target_url || ""}`,
-                `  created_at: ${status.created_at || ""}`,
-                `  updated_at: ${status.updated_at || ""}`,
-              ].join("\n");
-            }
-
-            function reviewBlock(review) {
-              return [
-                `- author: ${review.user?.login || "unknown"}`,
-                `  state: ${review.state || ""}`,
-                `  submitted_at: ${review.submitted_at || ""}`,
-                `  url: ${review.html_url || ""}`,
-                "  body:",
-                indentBlock(fenced(review.body || "", 1800), "  "),
-              ].join("\n");
-            }
-
-            function reviewCommentBlock(comment) {
-              return [
-                `- author: ${comment.user?.login || "unknown"}`,
-                `  path: ${comment.path || ""}`,
-                `  line: ${comment.line || comment.original_line || ""}`,
-                `  side: ${comment.side || ""}`,
-                `  created_at: ${comment.created_at || ""}`,
-                `  updated_at: ${comment.updated_at || ""}`,
-                `  url: ${comment.html_url || ""}`,
-                "  body:",
-                indentBlock(fenced(comment.body || "", 2500), "  "),
-              ].join("\n");
-            }
-
-            function issueCommentBlock(comment) {
-              return [
-                `- author: ${comment.user?.login || "unknown"}`,
-                `  created_at: ${comment.created_at || ""}`,
-                `  updated_at: ${comment.updated_at || ""}`,
-                `  url: ${comment.html_url || ""}`,
-                "  body:",
-                indentBlock(fenced(comment.body || "", 2500), "  "),
-              ].join("\n");
-            }
-
-            fs.mkdirSync("cloudcli-output", { recursive: true });
-
-            const handoff = [
-              "# CLOUDCLI PR FIX HANDOFF",
+            const refetchInstructions = [
+              "# Remote re-fetch commands for Codex",
               "",
-              "## PR metadata",
+              "If gh is available inside CloudCLI, run:",
               "",
-              `Repository: ${owner}/${repo}`,
-              `PR: #${prNumber}`,
-              `PR URL: ${pr.html_url}`,
-              `PR title: ${pr.title}`,
-              `Base branch: ${pr.base.ref}`,
-              `Base SHA: ${pr.base.sha}`,
-              `Head branch: ${pr.head.ref}`,
-              `Head SHA: ${pr.head.sha}`,
-              `Draft: ${pr.draft}`,
-              `Mergeable: ${pr.mergeable}`,
-              `Dry run: ${dryRun}`,
-              `Force: ${force}`,
+              "```bash",
+              "export GH_TOKEN=\"$GH_TOKEN_FOR_AGENT\"",
+              `gh api repos/${repository}/pulls/${prNumber} > /tmp/pr.json`,
+              `gh api --paginate repos/${repository}/pulls/${prNumber}/files > /tmp/pr-files.json`,
+              `gh api --paginate repos/${repository}/issues/${prNumber}/comments > /tmp/issue-comments.json`,
+              `gh api --paginate repos/${repository}/pulls/${prNumber}/comments > /tmp/review-comments.json`,
+              `gh api --paginate repos/${repository}/pulls/${prNumber}/reviews > /tmp/reviews.json`,
+              `gh api --paginate repos/${repository}/commits/${pr.head.sha}/check-runs > /tmp/check-runs.json`,
+              `gh api --paginate repos/${repository}/commits/${pr.head.sha}/statuses > /tmp/statuses.json`,
+              `gh api repos/${repository}/pulls/${prNumber} -H 'Accept: application/vnd.github.diff' > /tmp/pr.diff`,
+              `gh api repos/${repository}/pulls/${prNumber} -H 'Accept: application/vnd.github.patch' > /tmp/pr.patch`,
+              "```",
               "",
-              "## Rules",
+              "If gh is unavailable, use Python stdlib or curl with the provided GitHub token.",
+              "GraphQL review threads matter because REST review comments alone do not show resolved/outdated state.",
+              "",
+            ].join("\n");
+
+            const fullContextMarkdown = [
+              "# CLOUDCLI FULL PR CONTEXT HANDOFF",
+              "",
+              "This handoff includes full PR context, not only failing checks.",
+              "Codex must read all sections before deciding what to edit.",
+              "",
+              "## Hard rules",
               "",
               "- Continue on the existing PR branch only.",
               "- Do NOT create a new branch.",
@@ -350,46 +725,35 @@ jobs:
               "- Do NOT work directly on main/master.",
               "- Do NOT force-push unless explicitly required and safe.",
               "- Do NOT modify unrelated files.",
-              "- Fix only issues listed here that are still valid in the repo.",
-              "- If a requested issue is already fixed, report it as skipped with reason.",
+              "- Do NOT ignore skipped checks; inspect them and decide whether they matter.",
+              "- Do NOT ignore resolved/outdated review threads blindly; verify whether each finding is still valid in current code.",
+              "- Fix all still-valid blocking issues from checks, statuses, review comments, review threads, bot comments, and issue comments.",
+              "- Ignore duplicates/noise only after proving they are duplicates, outdated, resolved, or no longer valid.",
+              "- Codacy, DeepSource, CodeRabbit, Codex review comments, GitHub checks, commit statuses, skipped checks, and review threads all matter.",
               "",
-              "## Changed files and PR patch",
-              "",
-              files.length ? files.map(fileBlock).join("\n\n") : "No changed files found.",
-              "",
-              "## Failing GitHub check runs",
-              "",
-              failingChecks.length ? failingChecks.map(checkBlock).join("\n\n") : "No failing completed GitHub check runs found via Checks API.",
-              "",
-              "## Pending GitHub check runs",
-              "",
-              pendingChecks.length ? pendingChecks.map(checkBlock).join("\n\n") : "No pending GitHub check runs found via Checks API.",
-              "",
-              "## Commit statuses",
-              "",
-              latestStatuses.length ? latestStatuses.map(statusBlock).join("\n\n") : "No commit statuses found via Statuses API.",
-              "",
-              "## Failing commit statuses",
-              "",
-              latestFailingStatuses.length ? latestFailingStatuses.map(statusBlock).join("\n\n") : "No failing commit statuses found via Statuses API.",
-              "",
-              "## PR reviews",
-              "",
-              reviews.length ? reviews.map(reviewBlock).join("\n\n") : "No PR reviews found.",
-              "",
-              "## PR review comments",
-              "",
-              reviewComments.length ? reviewComments.map(reviewCommentBlock).join("\n\n") : "No PR review comments found.",
-              "",
-              "## PR issue comments",
-              "",
-              issueComments.length ? issueComments.map(issueCommentBlock).join("\n\n") : "No PR issue comments found.",
-              "",
-              "## Extra handoff text",
-              "",
-              extraHandoff || "No extra handoff text provided.",
-              "",
-              "## Required final behavior",
+              refetchInstructions,
+              jsonBlock("Context summary", contextSummary),
+              jsonBlock("PR metadata", pr),
+              jsonBlock("Changed files with patches", files),
+              textBlock("Full PR diff", prDiff || ""),
+              textBlock("Full PR patch", prPatch || ""),
+              jsonBlock("All issue comments / conversation comments", issueComments),
+              jsonBlock("All REST review comments", reviewCommentsRest),
+              jsonBlock("All review submissions", reviewsRest),
+              jsonBlock("All GraphQL review threads with resolved/outdated state", reviewThreadsGraphql),
+              jsonBlock("All timeline events", timelineEvents),
+              jsonBlock("All check runs including success/failure/neutral/skipped/pending", checkRuns),
+              jsonBlock("All check suites", checkSuites),
+              jsonBlock("All commit statuses", commitStatuses),
+              jsonBlock("Latest commit statuses by context", latestStatuses),
+              jsonBlock("Failed or pending latest statuses", failedOrPendingStatuses),
+              jsonBlock("Workflow runs for PR head SHA", workflowRuns),
+              jsonBlock("Workflow jobs by run id", workflowJobsByRunId),
+              jsonBlock("Workflow artifacts by run id", workflowArtifactsByRunId),
+              jsonBlock("Check annotations by check run id", annotationsByCheckRunId),
+              jsonBlock("Code scanning alerts if accessible", codeScanningAlerts),
+              textBlock("Extra handoff text", extraHandoff || "No extra handoff text provided."),
+              "## Required Codex final behavior",
               "",
               "- Apply only valid requested fixes.",
               "- Run relevant tests/checks.",
@@ -400,7 +764,7 @@ jobs:
               "",
             ].join("\n");
 
-            fs.writeFileSync("cloudcli-output/handoff.md", handoff, "utf8");
+            fs.writeFileSync("cloudcli-output/handoff.md", fullContextMarkdown, "utf8");
 
             fs.writeFileSync(
               "cloudcli-output/pr-metadata.json",
@@ -408,7 +772,7 @@ jobs:
                 {
                   owner,
                   repo,
-                  repository: `${owner}/${repo}`,
+                  repository,
                   prNumber,
                   prUrl: pr.html_url,
                   title: pr.title,
@@ -418,19 +782,7 @@ jobs:
                   headSha: pr.head.sha,
                   dryRun,
                   force,
-                  changedFiles: files.map((file) => file.filename),
-                  failingChecks: failingChecks.map((check) => ({
-                    name: check.name,
-                    conclusion: check.conclusion,
-                    details_url: check.details_url,
-                    html_url: check.html_url,
-                  })),
-                  failingStatuses: latestFailingStatuses.map((status) => ({
-                    context: status.context,
-                    state: status.state,
-                    description: status.description,
-                    target_url: status.target_url,
-                  })),
+                  counts: contextSummary.counts,
                 },
                 null,
                 2
@@ -438,7 +790,7 @@ jobs:
               "utf8"
             );
 
-            core.setOutput("repository", `${owner}/${repo}`);
+            core.setOutput("repository", repository);
             core.setOutput("pr_number", String(prNumber));
             core.setOutput("pr_url", pr.html_url);
             core.setOutput("title", pr.title);
@@ -447,6 +799,11 @@ jobs:
             core.setOutput("head_sha", pr.head.sha);
             core.setOutput("dry_run", dryRun ? "true" : "false");
             core.setOutput("force", force ? "true" : "false");
+            core.setOutput("failed_checks", String(failedCheckRuns.length));
+            core.setOutput("skipped_checks", String(skippedCheckRuns.length));
+            core.setOutput("review_threads", String(reviewThreadsGraphql.length));
+            core.setOutput("issue_comments", String(issueComments.length));
+            core.setOutput("review_comments", String(reviewCommentsRest.length));
 
       - name: Execute CloudCLI PR fix
         id: execute
@@ -532,7 +889,7 @@ jobs:
               print("Starting CloudCLI environment...")
               request_json("POST", f"/environments/{env_id}/start")
 
-              for attempt in range(1, 37):
+              for attempt in range(1, 49):
                   time.sleep(5)
                   env_info = request_json("GET", f"/environments/{env_id}")
                   status = str(env_info.get("status", ""))
@@ -553,7 +910,8 @@ jobs:
           Do not push.
           Do not create a PR.
 
-          Inspect the PR branch and explain what would be fixed.
+          Inspect the PR branch and explain exactly what would be fixed.
+          You must still read the full context and produce a concrete fix plan.
           """
           else:
               execution_rules = f"""
@@ -568,7 +926,7 @@ jobs:
           - Do NOT create a new PR.
           - Do NOT merge.
           - Do NOT work directly on main/master.
-          - Fix only valid issues listed in the handoff.
+          - Fix all still-valid blocking issues listed in the full context.
           - Run relevant checks/tests.
           - Commit only intended changes.
           - Push only to the same PR branch: {head_branch}
@@ -577,7 +935,7 @@ jobs:
           """
 
           message = f"""
-          CTO MODE: LOCKED IN — CLOUDCLI EXISTING PR FIX
+          CTO MODE: LOCKED IN — CLOUDCLI EXISTING PR FIX — FULL CONTEXT
 
           Repository: {repository}
           Repo path: {repo_path}
@@ -590,19 +948,18 @@ jobs:
 
           {execution_rules}
 
-          Important:
-          - Continue on the existing PR branch only.
-          - Do not create a new PR.
-          - Do not create a new branch.
-          - Do not merge.
-          - Fix only the handoff issues that are still valid.
-          - Ignore duplicated/noisy comments.
-          - Preserve existing project behavior unless a listed issue requires a focused change.
-          - Follow AGENTS.md if present.
-          - If rg is unavailable, use grep.
-          - If pytest is unavailable as a command, use python3 -m pytest.
+          Non-negotiable context rules:
+          - This PR has review comments and bot comments beyond failing checks.
+          - You must inspect all included context before editing.
+          - Do not rely only on DeepSource.
+          - Do not rely only on failed checks.
+          - Review comments, review threads, skipped checks, neutral checks, commit statuses, annotations, workflow jobs, issue comments, and timeline events are included.
+          - GraphQL review threads include isResolved and isOutdated; use those fields, but still verify against current code.
+          - Treat Codacy, DeepSource, CodeRabbit, Codex review comments, GitHub checks, GitHub statuses, and human comments as potential blockers.
+          - Fix every still-valid blocking issue.
+          - Ignore duplicates/outdated/resolved comments only after explaining why.
 
-          First inspect:
+          Initial commands:
           - pwd
           - cd "{repo_path}" && git status --short
           - cd "{repo_path}" && git branch --show-current
@@ -611,7 +968,12 @@ jobs:
           - cd "{repo_path}" && git checkout "{head_branch}"
           - cd "{repo_path}" && git pull --ff-only origin "{head_branch}"
 
-          Handoff:
+          GitHub context re-fetch:
+          - If gh is installed, export GH_TOKEN from the provided token and re-fetch PR comments/checks before editing.
+          - If gh is not installed, use the full handoff below.
+          - If the full handoff and current GitHub state disagree, current GitHub state wins.
+
+          Full handoff follows.
 
           {handoff}
 
@@ -666,7 +1028,8 @@ jobs:
 
           redacted_payload = dict(payload)
           redacted_payload["githubToken"] = "***"
-          redacted_payload["message"] = message[:10000] + ("\n...[truncated]" if len(message) > 10000 else "")
+          redacted_payload["message_length"] = len(message)
+          redacted_payload["message"] = message[:20000] + ("\n...[truncated in redacted log only]" if len(message) > 20000 else "")
 
           Path("cloudcli-output/agent-payload-redacted.json").write_text(
               json.dumps(redacted_payload, ensure_ascii=False, indent=2),
@@ -687,11 +1050,12 @@ jobs:
           )
 
           print("Calling CloudCLI agent execute...")
+          print(f"Prompt length: {len(message)} characters")
 
           chunks = []
 
           try:
-              with urllib.request.urlopen(req, timeout=5400) as resp:
+              with urllib.request.urlopen(req, timeout=7200) as resp:
                   for raw_line in resp:
                       line = raw_line.decode("utf-8", errors="replace")
                       print(line, end="")
@@ -785,6 +1149,7 @@ jobs:
               core.setOutput("pr_url", "");
               core.setOutput("head_sha", "");
               core.setOutput("head_branch", "");
+              core.setOutput("state", "");
               return;
             }
 
@@ -797,12 +1162,13 @@ jobs:
             core.setOutput("pr_url", pr.html_url);
             core.setOutput("head_sha", pr.head.sha);
             core.setOutput("head_branch", pr.head.ref);
+            core.setOutput("state", pr.state);
 
       - name: Upload CloudCLI PR fix logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cloudcli-pr-fix-logs-${{ github.run_id }}
+          name: cloudcli-pr-fix-full-context-${{ github.run_id }}
           path: cloudcli-output/**
           if-no-files-found: ignore
 
@@ -814,6 +1180,11 @@ jobs:
           BRANCH: ${{ steps.verify.outputs.head_branch || steps.handoff.outputs.head_branch }}
           HEAD_SHA: ${{ steps.verify.outputs.head_sha || steps.handoff.outputs.head_sha }}
           DRY_RUN: ${{ steps.handoff.outputs.dry_run }}
+          FAILED_CHECKS: ${{ steps.handoff.outputs.failed_checks }}
+          SKIPPED_CHECKS: ${{ steps.handoff.outputs.skipped_checks }}
+          REVIEW_THREADS: ${{ steps.handoff.outputs.review_threads }}
+          ISSUE_COMMENTS: ${{ steps.handoff.outputs.issue_comments }}
+          REVIEW_COMMENTS: ${{ steps.handoff.outputs.review_comments }}
         run: |
           set -euo pipefail
 
@@ -839,6 +1210,13 @@ jobs:
               f"Head SHA: {os.environ.get('HEAD_SHA', '')}",
               f"Dry run: {os.environ.get('DRY_RUN', '')}",
               "",
+              "Full context passed:",
+              f"- Failed checks: {os.environ.get('FAILED_CHECKS', '')}",
+              f"- Skipped checks: {os.environ.get('SKIPPED_CHECKS', '')}",
+              f"- Review threads: {os.environ.get('REVIEW_THREADS', '')}",
+              f"- Issue comments: {os.environ.get('ISSUE_COMMENTS', '')}",
+              f"- Review comments: {os.environ.get('REVIEW_COMMENTS', '')}",
+              "",
               f"Run: https://github.com/{os.environ.get('GITHUB_REPOSITORY')}/actions/runs/{os.environ.get('GITHUB_RUN_ID')}",
           ])
 
@@ -863,6 +1241,11 @@ jobs:
           BRANCH: ${{ steps.verify.outputs.head_branch || steps.handoff.outputs.head_branch || '' }}
           HEAD_SHA: ${{ steps.verify.outputs.head_sha || steps.handoff.outputs.head_sha || '' }}
           DRY_RUN: ${{ steps.handoff.outputs.dry_run || github.event.inputs.dry_run || github.event.client_payload.dry_run || 'unknown' }}
+          FAILED_CHECKS: ${{ steps.handoff.outputs.failed_checks || 'unknown' }}
+          SKIPPED_CHECKS: ${{ steps.handoff.outputs.skipped_checks || 'unknown' }}
+          REVIEW_THREADS: ${{ steps.handoff.outputs.review_threads || 'unknown' }}
+          ISSUE_COMMENTS: ${{ steps.handoff.outputs.issue_comments || 'unknown' }}
+          REVIEW_COMMENTS: ${{ steps.handoff.outputs.review_comments || 'unknown' }}
         run: |
           set -euo pipefail
 
@@ -880,7 +1263,7 @@ jobs:
           chat_id = os.environ["TELEGRAM_CHAT_ID"]
 
           text = "\n".join([
-              "❌ CloudCLI PR fix failed",
+              "CloudCLI PR fix failed",
               "",
               f"PR: #{os.environ.get('PR_NUMBER', '')}",
               f"URL: {os.environ.get('PR_URL', '')}",
@@ -888,10 +1271,16 @@ jobs:
               f"Head SHA: {os.environ.get('HEAD_SHA', '')}",
               f"Dry run: {os.environ.get('DRY_RUN', '')}",
               "",
+              "Context collected before failure:",
+              f"- Failed checks: {os.environ.get('FAILED_CHECKS', '')}",
+              f"- Skipped checks: {os.environ.get('SKIPPED_CHECKS', '')}",
+              f"- Review threads: {os.environ.get('REVIEW_THREADS', '')}",
+              f"- Issue comments: {os.environ.get('ISSUE_COMMENTS', '')}",
+              f"- Review comments: {os.environ.get('REVIEW_COMMENTS', '')}",
+              "",
               f"Run: https://github.com/{os.environ.get('GITHUB_REPOSITORY')}/actions/runs/{os.environ.get('GITHUB_RUN_ID')}",
               "",
-              "Check artifact:",
-              f"cloudcli-pr-fix-logs-{os.environ.get('GITHUB_RUN_ID')}",
+              "Open artifact cloudcli-pr-fix-full-context-* for handoff, logs, and full context bundle.",
           ])
 
           data = urllib.parse.urlencode({
