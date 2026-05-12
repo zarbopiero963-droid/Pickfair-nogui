@@ -1,6 +1,5 @@
 name: CloudCLI PR Fix
-on: workflow_dispatch: inputs: pr_number: description: "Pull request number to fix" required: true type: string dry_run: description: "Inspect only. Do not edit/commit/push." required: false default: "true" type: choice options: - "true" - "false" force: description: "Force run even if guard conditions would normally skip" required: false default: "false" type: choice options: - "false" - "true" extra_handoff: description: "Optional extra handoff text" required: false type: string
-repository_dispatch: types: - cloudcli_pr_fix - telegram_pr_fix
+"on": workflow_dispatch: inputs: pr_number: description: "Pull request number to fix" required: true type: string dry_run: description: "Inspect only. Do not edit/commit/push." required: false default: "true" type: choice options: - "true" - "false" force: description: "Force run even if guard conditions would normally skip" required: false default: "false" type: choice options: - "false" - "true" extra_handoff: description: "Optional extra handoff text" required: false type: string repository_dispatch: types: - cloudcli_pr_fix - telegram_pr_fix
 permissions: contents: read pull-requests: read issues: read checks: read statuses: read actions: read
 concurrency: group: cloudcli-pr-fix-${{ github.event.inputs.pr_number || github.event.client_payload.pr_number || github.event.client_payload.pr || github.run_id }} cancel-in-progress: false
 jobs: pr-fix: name: Send PR fix handoff to CloudCLI Codex runs-on: ubuntu-latest timeout-minutes: 90
@@ -27,7 +26,6 @@ steps:
 
         const owner = context.repo.owner;
         const repo = context.repo.repo;
-
         const payload = context.payload.client_payload || {};
         const inputs = context.payload.inputs || {};
 
@@ -106,57 +104,46 @@ steps:
           core.warning(`Could not list commit statuses: ${err.message}`);
         }
 
-        const failingChecks = checkRuns.filter(check => {
+        const failingChecks = checkRuns.filter((check) => {
           const conclusion = check.conclusion || "";
           const status = check.status || "";
           return status === "completed" && !["success", "neutral", "skipped"].includes(conclusion);
         });
 
-        const pendingChecks = checkRuns.filter(check => {
-          const status = check.status || "";
-          return status !== "completed";
-        });
-
-        const failingStatuses = commitStatuses.filter(status => {
-          return !["success"].includes(String(status.state || "").toLowerCase());
-        });
+        const pendingChecks = checkRuns.filter((check) => (check.status || "") !== "completed");
 
         const latestStatusesByContext = new Map();
         for (const status of commitStatuses) {
-          const key = status.context || status.id || "unknown";
+          const key = status.context || String(status.id) || "unknown";
           if (!latestStatusesByContext.has(key)) {
             latestStatusesByContext.set(key, status);
           }
         }
 
         const latestStatuses = Array.from(latestStatusesByContext.values());
-        const latestFailingStatuses = latestStatuses.filter(status => {
-          return !["success"].includes(String(status.state || "").toLowerCase());
+        const latestFailingStatuses = latestStatuses.filter((status) => {
+          return String(status.state || "").toLowerCase() !== "success";
         });
 
         async function getCheckAnnotations(check) {
-          const annotations = [];
           try {
-            const rows = await github.paginate(github.rest.checks.listAnnotations, {
+            return await github.paginate(github.rest.checks.listAnnotations, {
               owner,
               repo,
               check_run_id: check.id,
               per_page: 100,
             });
-            for (const annotation of rows.slice(0, 100)) {
-              annotations.push(annotation);
-            }
           } catch (err) {
-            annotations.push({
+            return [{
               path: "",
               start_line: "",
               end_line: "",
               annotation_level: "warning",
+              title: "annotation_fetch_failed",
               message: `Could not fetch annotations for check ${check.name}: ${err.message}`,
               raw_details: "",
-            });
+            }];
           }
-          return annotations;
         }
 
         const failingCheckAnnotations = {};
@@ -174,50 +161,21 @@ steps:
           return ["```", shortText(value || "", max), "```"].join("\n");
         }
 
-        function commentBlock(comment) {
-          return [
-            `- author: ${comment.user?.login || "unknown"}`,
-            `  created_at: ${comment.created_at || ""}`,
-            `  updated_at: ${comment.updated_at || ""}`,
-            `  url: ${comment.html_url || ""}`,
-            "  body:",
-            indentBlock(fenced(comment.body || "", 2500), "  "),
-          ].join("\n");
+        function indentBlock(text, prefix) {
+          return String(text || "").split("\n").map((line) => `${prefix}${line}`).join("\n");
         }
 
-        function reviewCommentBlock(comment) {
+        function fileBlock(file) {
           return [
-            `- author: ${comment.user?.login || "unknown"}`,
-            `  path: ${comment.path || ""}`,
-            `  line: ${comment.line || comment.original_line || ""}`,
-            `  side: ${comment.side || ""}`,
-            `  created_at: ${comment.created_at || ""}`,
-            `  updated_at: ${comment.updated_at || ""}`,
-            `  url: ${comment.html_url || ""}`,
-            "  body:",
-            indentBlock(fenced(comment.body || "", 2500), "  "),
-          ].join("\n");
-        }
-
-        function reviewBlock(review) {
-          return [
-            `- author: ${review.user?.login || "unknown"}`,
-            `  state: ${review.state || ""}`,
-            `  submitted_at: ${review.submitted_at || ""}`,
-            `  url: ${review.html_url || ""}`,
-            "  body:",
-            indentBlock(fenced(review.body || "", 1800), "  "),
-          ].join("\n");
-        }
-
-        function statusBlock(status) {
-          return [
-            `- context: ${status.context || ""}`,
-            `  state: ${status.state || ""}`,
-            `  description: ${status.description || ""}`,
-            `  target_url: ${status.target_url || ""}`,
-            `  created_at: ${status.created_at || ""}`,
-            `  updated_at: ${status.updated_at || ""}`,
+            `- filename: ${file.filename}`,
+            `  status: ${file.status}`,
+            `  additions: ${file.additions}`,
+            `  deletions: ${file.deletions}`,
+            `  changes: ${file.changes}`,
+            `  blob_url: ${file.blob_url || ""}`,
+            `  raw_url: ${file.raw_url || ""}`,
+            "  patch:",
+            indentBlock(fenced(file.patch || "No patch available from GitHub API.", 12000), "  "),
           ].join("\n");
         }
 
@@ -257,25 +215,51 @@ steps:
           ].join("\n");
         }
 
-        function fileBlock(file) {
+        function statusBlock(status) {
           return [
-            `- filename: ${file.filename}`,
-            `  status: ${file.status}`,
-            `  additions: ${file.additions}`,
-            `  deletions: ${file.deletions}`,
-            `  changes: ${file.changes}`,
-            `  blob_url: ${file.blob_url || ""}`,
-            `  raw_url: ${file.raw_url || ""}`,
-            "  patch:",
-            indentBlock(fenced(file.patch || "No patch available from GitHub API.", 12000), "  "),
+            `- context: ${status.context || ""}`,
+            `  state: ${status.state || ""}`,
+            `  description: ${status.description || ""}`,
+            `  target_url: ${status.target_url || ""}`,
+            `  created_at: ${status.created_at || ""}`,
+            `  updated_at: ${status.updated_at || ""}`,
           ].join("\n");
         }
 
-        function indentBlock(text, prefix) {
-          return String(text || "")
-            .split("\n")
-            .map(line => `${prefix}${line}`)
-            .join("\n");
+        function reviewBlock(review) {
+          return [
+            `- author: ${review.user?.login || "unknown"}`,
+            `  state: ${review.state || ""}`,
+            `  submitted_at: ${review.submitted_at || ""}`,
+            `  url: ${review.html_url || ""}`,
+            "  body:",
+            indentBlock(fenced(review.body || "", 1800), "  "),
+          ].join("\n");
+        }
+
+        function reviewCommentBlock(comment) {
+          return [
+            `- author: ${comment.user?.login || "unknown"}`,
+            `  path: ${comment.path || ""}`,
+            `  line: ${comment.line || comment.original_line || ""}`,
+            `  side: ${comment.side || ""}`,
+            `  created_at: ${comment.created_at || ""}`,
+            `  updated_at: ${comment.updated_at || ""}`,
+            `  url: ${comment.html_url || ""}`,
+            "  body:",
+            indentBlock(fenced(comment.body || "", 2500), "  "),
+          ].join("\n");
+        }
+
+        function issueCommentBlock(comment) {
+          return [
+            `- author: ${comment.user?.login || "unknown"}`,
+            `  created_at: ${comment.created_at || ""}`,
+            `  updated_at: ${comment.updated_at || ""}`,
+            `  url: ${comment.html_url || ""}`,
+            "  body:",
+            indentBlock(fenced(comment.body || "", 2500), "  "),
+          ].join("\n");
         }
 
         fs.mkdirSync("cloudcli-output", { recursive: true });
@@ -283,7 +267,7 @@ steps:
         const handoff = [
           "# CLOUDCLI PR FIX HANDOFF",
           "",
-          "## FIX THESE ISSUES ONLY",
+          "## PR metadata",
           "",
           `Repository: ${owner}/${repo}`,
           `PR: #${prNumber}`,
@@ -298,7 +282,7 @@ steps:
           `Dry run: ${dryRun}`,
           `Force: ${force}`,
           "",
-          "## Critical branch rules",
+          "## Rules",
           "",
           "- Continue on the existing PR branch only.",
           "- Do NOT create a new branch.",
@@ -307,9 +291,8 @@ steps:
           "- Do NOT work directly on main/master.",
           "- Do NOT force-push unless explicitly required and safe.",
           "- Do NOT modify unrelated files.",
-          "- Fix only issues listed in this handoff and still valid in the repo.",
+          "- Fix only issues listed here that are still valid in the repo.",
           "- If a requested issue is already fixed, report it as skipped with reason.",
-          "- If external tool details are unavailable, use the GitHub status/check context, PR diff, comments, and local tests to infer the minimal valid fix.",
           "",
           "## Changed files and PR patch",
           "",
@@ -341,7 +324,7 @@ steps:
           "",
           "## PR issue comments",
           "",
-          issueComments.length ? issueComments.map(commentBlock).join("\n\n") : "No PR issue comments found.",
+          issueComments.length ? issueComments.map(issueCommentBlock).join("\n\n") : "No PR issue comments found.",
           "",
           "## Extra handoff text",
           "",
@@ -362,37 +345,33 @@ steps:
 
         fs.writeFileSync(
           "cloudcli-output/pr-metadata.json",
-          JSON.stringify(
-            {
-              owner,
-              repo,
-              repository: `${owner}/${repo}`,
-              prNumber,
-              prUrl: pr.html_url,
-              title: pr.title,
-              baseBranch: pr.base.ref,
-              baseSha: pr.base.sha,
-              headBranch: pr.head.ref,
-              headSha: pr.head.sha,
-              dryRun,
-              force,
-              changedFiles: files.map(file => file.filename),
-              failingChecks: failingChecks.map(check => ({
-                name: check.name,
-                conclusion: check.conclusion,
-                details_url: check.details_url,
-                html_url: check.html_url,
-              })),
-              failingStatuses: latestFailingStatuses.map(status => ({
-                context: status.context,
-                state: status.state,
-                description: status.description,
-                target_url: status.target_url,
-              })),
-            },
-            null,
-            2
-          ),
+          JSON.stringify({
+            owner,
+            repo,
+            repository: `${owner}/${repo}`,
+            prNumber,
+            prUrl: pr.html_url,
+            title: pr.title,
+            baseBranch: pr.base.ref,
+            baseSha: pr.base.sha,
+            headBranch: pr.head.ref,
+            headSha: pr.head.sha,
+            dryRun,
+            force,
+            changedFiles: files.map((file) => file.filename),
+            failingChecks: failingChecks.map((check) => ({
+              name: check.name,
+              conclusion: check.conclusion,
+              details_url: check.details_url,
+              html_url: check.html_url,
+            })),
+            failingStatuses: latestFailingStatuses.map((status) => ({
+              context: status.context,
+              state: status.state,
+              description: status.description,
+              target_url: status.target_url,
+            })),
+          }, null, 2),
           "utf8"
         );
 
@@ -657,14 +636,9 @@ steps:
           raise SystemExit(f"HTTP {exc.code} POST {url}\n{body}") from exc
 
       sse_text = "".join(chunks)
-
-      Path("cloudcli-output/agent-sse.log").write_text(
-          sse_text,
-          encoding="utf-8",
-      )
+      Path("cloudcli-output/agent-sse.log").write_text(sse_text, encoding="utf-8")
 
       plain_parts = []
-
       for line in sse_text.splitlines():
           line = line.strip()
           if not line.startswith("data:"):
@@ -692,10 +666,7 @@ steps:
                   plain_parts.append("$ " + command)
 
       plain_text = "\n".join(plain_parts)
-      Path("cloudcli-output/agent-text.log").write_text(
-          plain_text,
-          encoding="utf-8",
-      )
+      Path("cloudcli-output/agent-text.log").write_text(plain_text, encoding="utf-8")
 
       combined_lower = (sse_text + "\n" + plain_text).lower()
       plain_lower = plain_text.lower()
@@ -709,7 +680,6 @@ steps:
           "authentication failed",
           "permission denied",
           "push:\n- failed",
-          "push:\\n- failed",
           "push failed",
           "failed to push",
           "could not read from remote repository",
@@ -721,13 +691,12 @@ steps:
       if not dry_run:
           real_mode_bad_indicators = [
               "push:\n- skipped dry-run",
-              "push:\\n- skipped dry-run",
               "do not push",
           ]
           if any(indicator in plain_lower for indicator in real_mode_bad_indicators):
               raise SystemExit("CloudCLI real mode did not push or reported dry-run push. Failing workflow intentionally.")
 
-          if "final factual status:\n- not done" in plain_lower or "final factual status:\\n- not done" in combined_lower:
+          if "final factual status:\n- not done" in combined_lower:
               raise SystemExit("CloudCLI reported NOT DONE. Failing workflow intentionally.")
 
       print("CloudCLI PR fix execution completed.")
