@@ -50,7 +50,6 @@ jobs:
           set -euo pipefail
 
           echo "Resolving PR #${PR_NUMBER} in ${REPO}"
-
           gh auth status
 
           gh pr view "${PR_NUMBER}" \
@@ -80,7 +79,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Prepare git identity and auth
+      - name: Prepare repo auth and Python
         run: |
           set -euo pipefail
 
@@ -102,19 +101,6 @@ jobs:
             echo "*.pyc"
           } >> .git/info/exclude
 
-          echo "Current branch:"
-          git branch --show-current
-
-          echo "Current SHA:"
-          git rev-parse HEAD
-
-          echo "Repo status:"
-          git status --short
-
-      - name: Prepare Python environment
-        run: |
-          set -euo pipefail
-
           python3 -m venv .venv
           . .venv/bin/activate
 
@@ -133,10 +119,18 @@ jobs:
           fi
 
           python -m pip install pytest
-
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
-          echo "PYTHON_ENV_READY"
+          echo "Current branch:"
+          git branch --show-current
+
+          echo "Current SHA:"
+          git rev-parse HEAD
+
+          echo "Repo status:"
+          git status --short
+
+          echo "PREPARE_OK"
 
       - name: Autofix loop
         run: |
@@ -152,21 +146,18 @@ jobs:
             exit 1
           fi
 
-          mkdir -p .autofix
+          mkdir -p .autofix/context
 
-          is_green() {
+          check_green() {
             gh pr checks "${PR_NUMBER}" \
               --repo "${REPO}" \
               --json name,state,bucket,description,link,workflow \
               > .autofix/pr-checks-current.json || return 1
 
             echo "Current PR checks:"
-            cat .autofix/pr-checks-current.json | jq -r '.[] | "- \(.name): \(.bucket) / \(.state) / \(.description // "")"'
+            jq -r '.[] | "- \(.name): \(.bucket) / \(.state) / \(.description // "")"' .autofix/pr-checks-current.json
 
-            BLOCKERS="$(
-              cat .autofix/pr-checks-current.json \
-                | jq '[.[] | select(.bucket == "fail" or .bucket == "pending" or .bucket == "cancel")] | length'
-            )"
+            BLOCKERS="$(jq '[.[] | select(.bucket == "fail" or .bucket == "pending" or .bucket == "cancel")] | length' .autofix/pr-checks-current.json)"
 
             if [ "${BLOCKERS}" = "0" ]; then
               return 0
@@ -198,247 +189,49 @@ jobs:
             gh api "repos/${REPO}/commits/${sha}/check-runs?per_page=100" \
               --paginate \
               --slurp \
-              > .autofix/context/check-runs.json || echo '[]' > .autofix/context/check-runs.json
+              > .autofix/context/check-runs-pages.json || echo '[]' > .autofix/context/check-runs-pages.json
 
             gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" \
               --paginate \
               --slurp \
-              > .autofix/context/issue-comments.json || echo '[]' > .autofix/context/issue-comments.json
+              > .autofix/context/issue-comments-pages.json || echo '[]' > .autofix/context/issue-comments-pages.json
 
             gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments?per_page=100" \
               --paginate \
               --slurp \
-              > .autofix/context/review-comments.json || echo '[]' > .autofix/context/review-comments.json
+              > .autofix/context/review-comments-pages.json || echo '[]' > .autofix/context/review-comments-pages.json
 
             gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews?per_page=100" \
               --paginate \
               --slurp \
-              > .autofix/context/reviews.json || echo '[]' > .autofix/context/reviews.json
+              > .autofix/context/reviews-pages.json || echo '[]' > .autofix/context/reviews-pages.json
 
             : > .autofix/context/annotations.jsonl
 
-            python3 <<'PY'
-import json
-import os
-import subprocess
-from pathlib import Path
+            jq -r '.[]?.check_runs[]? | select(((.status // "") != "completed") or ((.conclusion // "") as $c | ($c != "success" and $c != "neutral" and $c != "skipped"))) | .id' \
+              .autofix/context/check-runs-pages.json \
+              | head -80 \
+              | while read -r check_id; do
+                  if [ -n "${check_id}" ] && [ "${check_id}" != "null" ]; then
+                    gh api "repos/${REPO}/check-runs/${check_id}/annotations?per_page=100" \
+                      --paginate \
+                      --slurp \
+                      >> .autofix/context/annotations.jsonl || true
+                    echo >> .autofix/context/annotations.jsonl
+                  fi
+                done
 
-ctx = Path(".autofix/context")
+            cat > .autofix/context/README.md <<'EOF'
+This directory contains the live GitHub PR context for Codex:
 
-def load_json(name, default):
-    path = ctx / name
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return default
-
-def flatten(value):
-    if value is None:
-        return []
-    if isinstance(value, list):
-        out = []
-        for item in value:
-            out.extend(flatten(item))
-        return out
-    return [value]
-
-raw_check_runs = load_json("check-runs.json", [])
-check_run_ids = []
-
-for page in flatten(raw_check_runs):
-    if isinstance(page, dict):
-        for check in page.get("check_runs", []) or []:
-            conclusion = check.get("conclusion") or ""
-            status = check.get("status") or ""
-            if status != "completed" or conclusion not in {"success", "neutral", "skipped"}:
-                check_id = check.get("id")
-                if check_id:
-                    check_run_ids.append(str(check_id))
-
-for check_id in check_run_ids[:80]:
-    try:
-        result = subprocess.run(
-            [
-                "gh",
-                "api",
-                f"repos/{os.environ['REPO']}/check-runs/{check_id}/annotations?per_page=100",
-                "--paginate",
-                "--slurp",
-            ],
-            check=False,
-            text=True,
-            capture_output=True,
-        )
-        if result.stdout.strip():
-            with (ctx / "annotations.jsonl").open("a", encoding="utf-8") as fh:
-                fh.write(result.stdout.strip() + "\n")
-    except Exception:
-        pass
-PY
-
-            python3 <<'PY'
-import json
-from pathlib import Path
-
-ctx = Path(".autofix/context")
-
-def load_json(name, default):
-    path = ctx / name
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return default
-
-def flatten(value):
-    if value is None:
-        return []
-    if isinstance(value, list):
-        out = []
-        for item in value:
-            out.extend(flatten(item))
-        return out
-    return [value]
-
-def clip(text, n=1400):
-    text = str(text or "").strip()
-    if len(text) <= n:
-        return text
-    return text[:n] + "\n...[truncated]"
-
-pr = load_json("pr-view.json", {})
-checks = load_json("pr-checks.json", [])
-
-raw_check_runs = load_json("check-runs.json", [])
-check_runs = []
-for page in flatten(raw_check_runs):
-    if isinstance(page, dict):
-        check_runs.extend(page.get("check_runs", []) or [])
-
-issue_comments = [
-    item for item in flatten(load_json("issue-comments.json", []))
-    if isinstance(item, dict)
-]
-
-review_comments = [
-    item for item in flatten(load_json("review-comments.json", []))
-    if isinstance(item, dict)
-]
-
-reviews = [
-    item for item in flatten(load_json("reviews.json", []))
-    if isinstance(item, dict)
-]
-
-annotations = []
-ann_path = ctx / "annotations.jsonl"
-if ann_path.exists():
-    for line in ann_path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            parsed = json.loads(line)
-        except Exception:
-            continue
-        for item in flatten(parsed):
-            if isinstance(item, dict):
-                annotations.append(item)
-
-failed_checks = [
-    c for c in checks
-    if c.get("bucket") in {"fail", "pending", "cancel"}
-]
-
-failed_check_runs = [
-    {
-        "name": c.get("name"),
-        "status": c.get("status"),
-        "conclusion": c.get("conclusion"),
-        "details_url": c.get("details_url"),
-        "html_url": c.get("html_url"),
-        "output": {
-            "title": clip((c.get("output") or {}).get("title"), 400),
-            "summary": clip((c.get("output") or {}).get("summary"), 1200),
-            "text": clip((c.get("output") or {}).get("text"), 1200),
-        },
-    }
-    for c in check_runs
-    if (c.get("conclusion") or "") not in {"success", "neutral", "skipped"}
-]
-
-recent_issue_comments = [
-    {
-        "user": (c.get("user") or {}).get("login"),
-        "created_at": c.get("created_at"),
-        "updated_at": c.get("updated_at"),
-        "body": clip(c.get("body"), 1200),
-        "url": c.get("html_url"),
-    }
-    for c in issue_comments[-50:]
-]
-
-recent_review_comments = [
-    {
-        "user": (c.get("user") or {}).get("login"),
-        "path": c.get("path"),
-        "line": c.get("line") or c.get("original_line"),
-        "created_at": c.get("created_at"),
-        "updated_at": c.get("updated_at"),
-        "body": clip(c.get("body"), 1200),
-        "url": c.get("html_url"),
-    }
-    for c in review_comments[-100:]
-]
-
-recent_reviews = [
-    {
-        "user": (r.get("user") or {}).get("login"),
-        "state": r.get("state"),
-        "submitted_at": r.get("submitted_at"),
-        "body": clip(r.get("body"), 1200),
-        "url": r.get("html_url"),
-    }
-    for r in reviews[-40:]
-]
-
-annotations_small = [
-    {
-        "path": a.get("path"),
-        "start_line": a.get("start_line"),
-        "end_line": a.get("end_line"),
-        "annotation_level": a.get("annotation_level"),
-        "message": clip(a.get("message"), 1200),
-        "title": clip(a.get("title"), 500),
-        "raw_details": clip(a.get("raw_details"), 1200),
-    }
-    for a in annotations[:300]
-]
-
-context = {
-    "pr": {
-        "number": pr.get("number"),
-        "title": pr.get("title"),
-        "url": pr.get("url"),
-        "headRefName": pr.get("headRefName"),
-        "headRefOid": pr.get("headRefOid"),
-        "baseRefName": pr.get("baseRefName"),
-        "mergeStateStatus": pr.get("mergeStateStatus"),
-        "reviewDecision": pr.get("reviewDecision"),
-    },
-    "changed_files": pr.get("files", []),
-    "failed_or_pending_checks": failed_checks,
-    "failed_check_runs": failed_check_runs,
-    "annotations": annotations_small,
-    "recent_issue_comments": recent_issue_comments,
-    "recent_review_comments": recent_review_comments,
-    "recent_reviews": recent_reviews,
-}
-
-Path(".autofix/context-small.json").write_text(
-    json.dumps(context, indent=2, ensure_ascii=False),
-    encoding="utf-8",
-)
-PY
+- pr-view.json: PR title, branch, files, comments, reviews, status rollup
+- pr-checks.json: current PR checks and links
+- check-runs-pages.json: check run summaries/output published to GitHub
+- issue-comments-pages.json: top-level PR conversation comments
+- review-comments-pages.json: inline review comments
+- reviews-pages.json: review submissions
+- annotations.jsonl: check-run annotations published to GitHub, if any
+EOF
 
             cat > .autofix/prompt.md <<'EOF'
 You are running inside a GitHub self-hosted runner on the existing PR branch.
@@ -453,19 +246,24 @@ Hard rules:
 - Do not merge.
 - Do not post GitHub comments.
 - Do not use external Codacy or DeepSource APIs.
-- Use the provided GitHub context, annotations, PR comments, review comments, changed files, and local tests.
+- Use the local repository plus the GitHub context files in .autofix/context/.
 - If Codacy or DeepSource only expose "failed" without detailed annotations, infer likely static-analysis fixes from code and comments.
 - Prefer small targeted fixes.
 - Do not delete tests to make checks pass.
 - Preserve public API compatibility.
 - Do not edit generated caches, virtualenv files, or .autofix internals except your own scratch notes.
 - When changing Python, run or account for py_compile and relevant pytest.
-- End with a concise summary.
+- End with a concise summary of files changed and checks run.
 
-Current GitHub context is in:
-.autofix/context-small.json
+Start by reading:
+- .autofix/context/README.md
+- .autofix/context/pr-checks.json
+- .autofix/context/check-runs-pages.json
+- .autofix/context/annotations.jsonl
+- .autofix/context/issue-comments-pages.json
+- .autofix/context/review-comments-pages.json
 
-Start by reading that file, then inspect the repository files directly.
+Then inspect the repository files directly and apply the smallest safe fix.
 EOF
           }
 
@@ -502,7 +300,6 @@ EOF
             run_local_tests
 
             git add -A
-
             git reset -- .autofix || true
             git reset -- .venv || true
 
@@ -523,7 +320,7 @@ EOF
           }
 
           echo "Initial PR check state:"
-          if is_green; then
+          if check_green; then
             echo "PR already green. Nothing to do."
             exit 0
           fi
@@ -565,7 +362,7 @@ EOF
             echo "Waiting ${WAIT_SECONDS}s for GitHub/Codacy/DeepSource checks..."
             sleep "${WAIT_SECONDS}"
 
-            if is_green; then
+            if check_green; then
               echo "PR_AUTOFIX_GREEN"
               exit 0
             fi
