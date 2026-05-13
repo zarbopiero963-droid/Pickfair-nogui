@@ -52,8 +52,11 @@ class RoserpinaMoneyManagement:
     # SAFE HELPERS
     # =========================================================
     def _safe_float(self, value: Any, default: float = 0.0) -> float:
+        default = safe_float(default, 0.0)
+        if not math.isfinite(default):
+            default = 0.0
         converted = safe_float(value, default)
-        return converted if math.isfinite(converted) else float(default)
+        return converted if math.isfinite(converted) else default
 
     def _clamp(self, value: float, min_value: float, max_value: float) -> float:
         return max(min_value, min(float(value), max_value))
