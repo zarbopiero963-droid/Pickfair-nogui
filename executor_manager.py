@@ -106,6 +106,7 @@ class ExecutorManager:
                 *fn_args,
                 **fn_kwargs,
             )
+            self._completed_futures.pop(task_name, None)
             self._futures[task_name] = future
 
         def _cleanup(done_future: concurrent.futures.Future) -> None:
