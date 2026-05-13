@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+# pylint: disable=too-many-instance-attributes
+
 import logging
+import math
 import threading
 import time
 from typing import List, Optional
@@ -9,6 +12,7 @@ logger = logging.getLogger("AutoThrottle")
 
 
 class AutoThrottle:
+
     """
     OMS-Level Rate Limiter con compatibilità legacy.
 
@@ -46,6 +50,8 @@ class AutoThrottle:
             parsed_period = float(period)
         except Exception:
             parsed_period = 1.0
+        if not math.isfinite(parsed_period):
+            parsed_period = 1.0
 
         try:
             parsed_base_backoff = float(base_backoff)
@@ -74,7 +80,8 @@ class AutoThrottle:
     # =========================================================
     # INTERNAL
     # =========================================================
-    def _now(self) -> float:
+    @staticmethod
+    def _now() -> float:
         return time.monotonic()
 
     def _prune(self, now: float) -> None:
@@ -95,6 +102,15 @@ class AutoThrottle:
         self._reset_if_idle(now)
         self._prune(now)
         return now, len(self._timestamps)
+
+    def _apply_new_rate(self, calls: int) -> None:
+        """Reset state for a new call cap; must be called under self._lock."""
+        self.max_calls = max(1, calls)
+        self._timestamps.clear()
+        self._last_delay = 0.0
+        self._backoff = self.base_backoff
+        self._last_call_time = None
+        self._blocked = False
 
     # =========================================================
     # CORE LOGIC
@@ -176,17 +192,46 @@ class AutoThrottle:
             rate = used * (60.0 / self.period)
             return max(0.0, rate)
 
-    def update(self, *args, **kwargs) -> None:
-        api_calls_min = kwargs.get("api_calls_min")
+    @staticmethod
+    def _parse_api_calls_min(value) -> Optional[float]:
+        """Return a positive finite API call rate, or ``None`` when invalid."""
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if parsed <= 0 or not math.isfinite(parsed):
+            return None
+        return parsed
+
+    def _allowed_calls_for_period(self, rate_per_minute: float) -> Optional[int]:
+        """Return the representable call cap for the current period."""
+        if not math.isfinite(self.period):
+            return None
+        try:
+            allowed_calls = int((rate_per_minute * self.period) / 60.0)
+        except (OverflowError, ValueError):
+            return None
+        return allowed_calls if allowed_calls >= 1 else None
+
+    def update(self, *args, **kwargs) -> bool:
+        """
+        Update throttle limits from keyword configuration.
+
+        ``api_calls_min`` must be a positive finite number; non-positive,
+        missing, positional, or non-finite values are rejected with ``False``.
+        """
+        if args:
+            return False
+        parsed = self._parse_api_calls_min(kwargs.get("api_calls_min"))
+        if parsed is None:
+            return False
+        allowed_calls = self._allowed_calls_for_period(parsed)
+        if allowed_calls is None:
+            return False
+
         with self._lock:
-            if api_calls_min is not None:
-                try:
-                    self._last_delay = 0.0
-                    self._backoff = self.base_backoff
-                except Exception:
-                    self._last_delay = 0.0
-                    self._backoff = self.base_backoff
-        return None
+            self._apply_new_rate(allowed_calls)
+            return True
 
     def reset(self) -> None:
         with self._lock:

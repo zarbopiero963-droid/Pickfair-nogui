@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+# pylint: disable=too-many-instance-attributes
+
 import concurrent.futures
 import logging
 import threading
+from collections import OrderedDict
 from typing import Any, Callable, Dict, Optional
 
 
@@ -10,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class ExecutorManager:
+
     """
     Gestore centralizzato executor/thread pool.
 
@@ -42,11 +46,10 @@ class ExecutorManager:
         )
         self._shutdown = False
         self._futures: Dict[str, concurrent.futures.Future] = {}
+        self._completed_futures: OrderedDict[str, concurrent.futures.Future] = OrderedDict()
+        self._max_completed_futures = 128
         self._counter = 0
 
-    # =========================================================
-    # INTERNAL
-    # =========================================================
     def _next_task_name(self) -> str:
         with self._lock:
             self._counter += 1
@@ -72,46 +75,48 @@ class ExecutorManager:
         fn_args = args[2:]
         return task_name, fn, fn_args, kwargs
 
-    def _wrap_task(self, task_name: str, fn: Callable, *args, **kwargs):
+    @staticmethod
+    def _wrap_task(task_name: str, task_callable: Callable, *args, **kwargs):
         logger.debug("Executor task start: %s", task_name)
         try:
-            return fn(*args, **kwargs)
+            return task_callable(*args, **kwargs)
         except Exception:
             logger.exception("Executor task failed: %s", task_name)
             raise
         finally:
             logger.debug("Executor task end: %s", task_name)
-            with self._lock:
-                current = self._futures.get(task_name)
-                if current is not None and current.done():
-                    self._futures.pop(task_name, None)
 
-    # =========================================================
-    # PUBLIC API
-    # =========================================================
+    def _remember_completed_future(self, task_name: str, future: concurrent.futures.Future) -> None:
+        self._completed_futures[task_name] = future
+        self._completed_futures.move_to_end(task_name)
+        while len(self._completed_futures) > self._max_completed_futures:
+            self._completed_futures.popitem(last=False)
+
     def submit(self, *args, **kwargs):
-        """
-        Supporta:
-        - submit("name", fn, *args, **kwargs)
-        - submit(fn, *args, **kwargs)
-        """
+        """Submit a callable and track its future by task name."""
+        task_name, fn, fn_args, fn_kwargs = self._normalize_submit_call(*args, **kwargs)
+
         with self._lock:
             if self._shutdown:
                 raise RuntimeError("ExecutorManager già chiuso")
-
-        task_name, fn, fn_args, fn_kwargs = self._normalize_submit_call(*args, **kwargs)
-
-        future = self._executor.submit(
-            self._wrap_task,
-            task_name,
-            fn,
-            *fn_args,
-            **fn_kwargs,
-        )
-
-        with self._lock:
+            future = self._executor.submit(
+                self._wrap_task,
+                task_name,
+                fn,
+                *fn_args,
+                **fn_kwargs,
+            )
+            self._completed_futures.pop(task_name, None)
             self._futures[task_name] = future
 
+        def _cleanup(done_future: concurrent.futures.Future) -> None:
+            with self._lock:
+                current = self._futures.get(task_name)
+                if current is done_future:
+                    self._futures.pop(task_name, None)
+                    self._remember_completed_future(task_name, done_future)
+
+        future.add_done_callback(_cleanup)
         return future
 
     def map(self, fn: Callable, iterable, timeout: Optional[float] = None):
@@ -122,7 +127,7 @@ class ExecutorManager:
 
     def get_future(self, task_name: str):
         with self._lock:
-            return self._futures.get(str(task_name))
+            return self._futures.get(str(task_name)) or self._completed_futures.get(str(task_name))
 
     def cancel(self, task_name: str) -> bool:
         with self._lock:
@@ -138,10 +143,10 @@ class ExecutorManager:
         with self._lock:
             out: Dict[str, str] = {}
             for name, future in self._futures.items():
+                if future.done():
+                    continue
                 if future.cancelled():
                     state = "CANCELLED"
-                elif future.done():
-                    state = "DONE"
                 elif future.running():
                     state = "RUNNING"
                 else:
@@ -150,10 +155,20 @@ class ExecutorManager:
             return out
 
     def wait(self, task_name: str, timeout: Optional[float] = None) -> Any:
-        future = self.get_future(task_name)
+        key = str(task_name)
+        with self._lock:
+            future = self._futures.get(key) or self._completed_futures.get(key)
         if future is None:
             raise RuntimeError(f"Task non trovata: {task_name}")
-        return future.result(timeout=timeout if timeout is not None else self.default_timeout)
+
+        result = future.result(timeout=timeout if timeout is not None else self.default_timeout)
+        with self._lock:
+            if future.done() and self._futures.get(key) is future:
+                self._futures.pop(key, None)
+            current_completed = self._completed_futures.get(key)
+            if current_completed is future:
+                self._completed_futures.pop(key, None)
+        return result
 
     def shutdown(self, wait: bool = True, cancel_futures: bool = False) -> None:
         with self._lock:
@@ -166,10 +181,8 @@ class ExecutorManager:
         finally:
             with self._lock:
                 self._futures.clear()
+                self._completed_futures.clear()
 
-    # =========================================================
-    # STATUS
-    # =========================================================
     def status(self) -> Dict[str, Any]:
         with self._lock:
             return {
