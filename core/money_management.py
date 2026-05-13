@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from typing import Any, Dict, Optional
 
 from core.system_state import DeskMode, RiskProfile, RoserpinaConfig
@@ -51,7 +52,8 @@ class RoserpinaMoneyManagement:
     # SAFE HELPERS
     # =========================================================
     def _safe_float(self, value: Any, default: float = 0.0) -> float:
-        return safe_float(value, default)
+        converted = safe_float(value, default)
+        return converted if math.isfinite(converted) else float(default)
 
     def _clamp(self, value: float, min_value: float, max_value: float) -> float:
         return max(min_value, min(float(value), max_value))

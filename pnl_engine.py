@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
+import math
 from typing import Any, Dict, Optional
 
 from core.type_helpers import safe_side
@@ -51,6 +52,12 @@ class PnLEngine:
     def _safe_side(self, side: Any) -> str:
         return safe_side(side)
 
+    def _finite_float(self, value: Any, *, default: float = 0.0) -> float:
+        converted = float(value if value not in (None, "") else default)
+        if not math.isfinite(converted):
+            raise ValueError("non-finite numeric input")
+        return converted
+
     def _commission_amount(
         self,
         gross_pnl: float,
@@ -64,7 +71,7 @@ class PnLEngine:
         return gross_pnl * (pct / 100.0)
 
     def _resolve_policy_commission_pct(self, commission_pct: Optional[float], *, preview_only: bool = False) -> float:
-        pct = self.commission_pct if commission_pct is None else float(commission_pct or 0.0)
+        pct = self.commission_pct if commission_pct is None else self._finite_float(commission_pct, default=0.0)
         if pct <= 0.0:
             # preview-only helper paths (mark-to-market / preview) can disable commission explicitly.
             if preview_only:
@@ -108,9 +115,9 @@ class PnLEngine:
         market_id = str(market_id or "")
         selection_id = int(selection_id)
         side = self._safe_side(side)
-        entry_price = float(entry_price or 0.0)
-        exit_price = float(exit_price or 0.0)
-        size = float(size or 0.0)
+        entry_price = self._finite_float(entry_price, default=0.0)
+        exit_price = self._finite_float(exit_price, default=0.0)
+        size = self._finite_float(size, default=0.0)
 
         if entry_price <= 1.0:
             raise ValueError("entry_price non valido")
@@ -164,8 +171,8 @@ class PnLEngine:
             lose -> gross = -(size * (price - 1))
         """
         side = self._safe_side(side)
-        price = float(price or 0.0)
-        size = float(size or 0.0)
+        price = self._finite_float(price, default=0.0)
+        size = self._finite_float(size, default=0.0)
 
         if price <= 1.0:
             raise ValueError("price non valido")
@@ -208,9 +215,9 @@ class PnLEngine:
             back_size = (lay_price * lay_stake) / back_price
         """
         entry_side = self._safe_side(entry_side)
-        entry_price = float(entry_price or 0.0)
-        entry_size = float(entry_size or 0.0)
-        hedge_price = float(hedge_price or 0.0)
+        entry_price = self._finite_float(entry_price, default=0.0)
+        entry_size = self._finite_float(entry_size, default=0.0)
+        hedge_price = self._finite_float(hedge_price, default=0.0)
 
         if entry_price <= 1.0:
             raise ValueError("entry_price non valido")

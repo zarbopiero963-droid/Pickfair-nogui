@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_HALF_UP
+import math
 from typing import Any, Dict, List
 
 from trading_config import enforce_betfair_italy_commission_pct
@@ -14,7 +15,10 @@ def _d(value: Any, default: str = "0") -> Decimal:
     try:
         if value in (None, ""):
             return Decimal(default)
-        return Decimal(str(value).replace(",", "."))
+        text = str(value).replace(",", ".").strip().lower()
+        if text in {"nan", "inf", "+inf", "-inf", "infinity", "+infinity", "-infinity"}:
+            return Decimal(default)
+        return Decimal(text)
     except Exception:
         return Decimal(default)
 
@@ -163,7 +167,7 @@ def calculate_dutching_stakes(
             "avg_net_profit": 0.0,
         }
 
-    if any(o <= Decimal("1.0") for o in odds_d):
+    if any((not o.is_finite()) or o <= Decimal("1.0") for o in odds_d):
         return {
             "stakes": [],
             "profits": [],
@@ -175,7 +179,7 @@ def calculate_dutching_stakes(
         }
 
     inv_sum = sum((Decimal("1") / o) for o in odds_d)
-    if inv_sum <= Decimal("0"):
+    if (not inv_sum.is_finite()) or inv_sum <= Decimal("0"):
         return {
             "stakes": [],
             "profits": [],
