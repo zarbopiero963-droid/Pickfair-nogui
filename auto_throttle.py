@@ -200,6 +200,16 @@ class AutoThrottle:
             return None
         return parsed
 
+    def _allowed_calls_for_period(self, rate_per_minute: float) -> Optional[int]:
+        """Return the representable call cap for the current period."""
+        if not math.isfinite(self.period):
+            return None
+        try:
+            allowed_calls = int((rate_per_minute * self.period) / 60.0)
+        except (OverflowError, ValueError):
+            return None
+        return allowed_calls if allowed_calls >= 1 else None
+
     def update(self, *args, **kwargs) -> bool:
         """
         Update throttle limits from keyword configuration.
@@ -210,15 +220,13 @@ class AutoThrottle:
         if args:
             return False
         parsed = self._parse_api_calls_min(kwargs.get("api_calls_min"))
-        if parsed is None or not math.isfinite(self.period):
+        if parsed is None:
             return False
+        allowed_calls = self._allowed_calls_for_period(parsed)
+        if allowed_calls is None:
+            return False
+
         with self._lock:
-            try:
-                allowed_calls = int((parsed * self.period) / 60.0)
-            except (OverflowError, ValueError):
-                return False
-            if allowed_calls < 1:
-                return False
             self._apply_new_rate(allowed_calls)
             return True
 
