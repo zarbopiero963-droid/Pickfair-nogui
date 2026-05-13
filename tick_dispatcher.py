@@ -40,6 +40,7 @@ class TickData:
 logger = logging.getLogger(__name__)
 
 
+# pylint: disable=too-many-instance-attributes
 class TickDispatcher:  # noqa: D203
     """Dispatcher tick con coalescing e throttling per UI e automazioni."""
 
