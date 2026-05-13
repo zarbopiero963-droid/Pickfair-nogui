@@ -10,6 +10,7 @@ logger = logging.getLogger("AutoThrottle")
 
 
 class AutoThrottle:
+
     """
     OMS-Level Rate Limiter con compatibilità legacy.
 
@@ -215,6 +216,8 @@ class AutoThrottle:
             try:
                 allowed_calls = int((parsed * self.period) / 60.0)
             except (OverflowError, ValueError):
+                return False
+            if allowed_calls < 1:
                 return False
             self._apply_new_rate(allowed_calls)
             return True

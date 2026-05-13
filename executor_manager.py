@@ -3,6 +3,7 @@ from __future__ import annotations
 import concurrent.futures
 import logging
 import threading
+from collections import OrderedDict
 from typing import Any, Callable, Dict, Optional
 
 
@@ -10,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class ExecutorManager:
+
     """
     Gestore centralizzato executor/thread pool.
 
@@ -42,7 +44,8 @@ class ExecutorManager:
         )
         self._shutdown = False
         self._futures: Dict[str, concurrent.futures.Future] = {}
-        self._completed_futures: Dict[str, concurrent.futures.Future] = {}
+        self._completed_futures: OrderedDict[str, concurrent.futures.Future] = OrderedDict()
+        self._max_completed_futures = 128
         self._counter = 0
 
     def _next_task_name(self) -> str:
@@ -80,6 +83,12 @@ class ExecutorManager:
         finally:
             logger.debug("Executor task end: %s", task_name)
 
+    def _remember_completed_future(self, task_name: str, future: concurrent.futures.Future) -> None:
+        self._completed_futures[task_name] = future
+        self._completed_futures.move_to_end(task_name)
+        while len(self._completed_futures) > self._max_completed_futures:
+            self._completed_futures.popitem(last=False)
+
     def submit(self, *args, **kwargs):
         task_name, fn, fn_args, fn_kwargs = self._normalize_submit_call(*args, **kwargs)
 
@@ -100,7 +109,7 @@ class ExecutorManager:
                 current = self._futures.get(task_name)
                 if current is done_future:
                     self._futures.pop(task_name, None)
-                    self._completed_futures[task_name] = done_future
+                    self._remember_completed_future(task_name, done_future)
 
         future.add_done_callback(_cleanup)
         return future
@@ -147,15 +156,13 @@ class ExecutorManager:
         if future is None:
             raise RuntimeError(f"Task non trovata: {task_name}")
 
-        try:
-            result = future.result(timeout=timeout if timeout is not None else self.default_timeout)
-        finally:
-            with self._lock:
-                if future.done() and self._futures.get(key) is future:
-                    self._futures.pop(key, None)
-                current_completed = self._completed_futures.get(key)
-                if current_completed is future:
-                    self._completed_futures.pop(key, None)
+        result = future.result(timeout=timeout if timeout is not None else self.default_timeout)
+        with self._lock:
+            if future.done() and self._futures.get(key) is future:
+                self._futures.pop(key, None)
+            current_completed = self._completed_futures.get(key)
+            if current_completed is future:
+                self._completed_futures.pop(key, None)
         return result
 
     def shutdown(self, wait: bool = True, cancel_futures: bool = False) -> None:

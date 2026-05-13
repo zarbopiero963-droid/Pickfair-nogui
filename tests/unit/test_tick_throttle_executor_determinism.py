@@ -14,7 +14,6 @@ from tick_dispatcher import TickData, TickDispatcher, get_tick_dispatcher
 
 
 class TestPR4Determinism(unittest.TestCase):
-
     """Review-fix tests for deterministic behavior."""
 
     def test_tick_valid_kept(self) -> None:
@@ -50,15 +49,21 @@ class TestPR4Determinism(unittest.TestCase):
         self.assertFalse(throttle.update(api_calls_min=0))
         self.assertFalse(throttle.update(api_calls_min=-5))
 
-    def test_throttle_update_overflow_input(self) -> None:
+    def test_throttle_overflow_input(self) -> None:
         """Huge numeric input is rejected without raising."""
         throttle = AutoThrottle(max_calls=1, period=60)
         self.assertFalse(throttle.update(api_calls_min=10**10000))
 
+    def test_throttle_low_rate_reject(self) -> None:
+        """Rates below period granularity are rejected."""
+        throttle = AutoThrottle(max_calls=2, period=1)
+        self.assertFalse(throttle.update(api_calls_min=1))
+        self.assertEqual(throttle.max_calls, 2)
+
     def test_throttle_update_unblock(self) -> None:
         """Successful update unblocks limiter."""
         throttle = AutoThrottle(max_calls=1, period=60)
-        throttle._blocked = True  # noqa: SLF001
+        setattr(throttle, "_blocked", True)
         self.assertFalse(throttle.allow_call())
         self.assertTrue(throttle.update(api_calls_min=60))
         self.assertFalse(throttle.is_blocked())
@@ -98,10 +103,11 @@ class TestPR4Determinism(unittest.TestCase):
             manager.wait("boom", timeout=2)
         manager.shutdown(wait=True)
 
-    def test_exec_wait_timeout_keeps_tracking(self) -> None:
+    def test_exec_wait_timeout_tracks(self) -> None:
         """Timeout does not drop task tracking for still-running jobs."""
         manager = ExecutorManager(max_workers=1)
-        future = manager.submit("slow", lambda: (time.sleep(0.2), 7)[1])
+        gate = threading.Event()
+        future = manager.submit("slow", lambda: (gate.wait(0.2), 7)[1])
         with self.assertRaises(TimeoutError):
             manager.wait("slow", timeout=0.01)
         self.assertIs(manager.get_future("slow"), future)
@@ -111,8 +117,8 @@ class TestPR4Determinism(unittest.TestCase):
     def test_tick_ui_auto_indep(self) -> None:
         """UI and automation pending buffers do not clear each other."""
         dispatcher = TickDispatcher()
-        dispatcher._last_ui_update = 0.0  # noqa: SLF001
-        dispatcher._last_automation_check = time.monotonic()  # noqa: SLF001
+        setattr(dispatcher, "_last_ui_update", 0.0)
+        setattr(dispatcher, "_last_automation_check", time.monotonic())
         ui_seen: list[int] = []
         auto_seen: list[int] = []
         dispatcher.register_ui_callback(lambda ticks: ui_seen.append(len(ticks)))
@@ -120,7 +126,7 @@ class TestPR4Determinism(unittest.TestCase):
         dispatcher.dispatch_tick(TickData(market_id="1.2", selection_id=9, timestamp=1.0))
         self.assertEqual(ui_seen, [1])
         self.assertEqual(auto_seen, [])
-        dispatcher._last_automation_check = 0.0  # noqa: SLF001
+        setattr(dispatcher, "_last_automation_check", 0.0)
         dispatcher.dispatch_tick(TickData(market_id="1.2", selection_id=9, timestamp=2.0))
         self.assertEqual(auto_seen, [1])
 
