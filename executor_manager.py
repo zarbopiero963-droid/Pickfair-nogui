@@ -76,10 +76,10 @@ class ExecutorManager:
         return task_name, fn, fn_args, kwargs
 
     @staticmethod
-    def _wrap_task(task_name: str, fn: Callable, *args, **kwargs):
+    def _wrap_task(task_name: str, task_callable: Callable, *args, **kwargs):
         logger.debug("Executor task start: %s", task_name)
         try:
-            return fn(*args, **kwargs)
+            return task_callable(*args, **kwargs)
         except Exception:
             logger.exception("Executor task failed: %s", task_name)
             raise
