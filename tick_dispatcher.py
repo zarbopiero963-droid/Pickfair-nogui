@@ -7,6 +7,8 @@ Soluzione: UI throttled a 4 update/s, tick storage full-speed, automazioni preci
 Impatto: -60/70% carico CPU
 """
 
+# pylint: disable=too-many-instance-attributes
+
 import logging
 import threading
 import time
@@ -40,7 +42,6 @@ class TickData:
 logger = logging.getLogger(__name__)
 
 
-# pylint: disable=too-many-instance-attributes
 class TickDispatcher:  # noqa: D203
     """Dispatcher tick con coalescing e throttling per UI e automazioni."""
 
