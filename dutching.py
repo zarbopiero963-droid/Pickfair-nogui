@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_HALF_UP
-import math
 from typing import Any, Dict, List
 
 from trading_config import enforce_betfair_italy_commission_pct
@@ -178,7 +177,7 @@ def calculate_dutching_stakes(
             "error": "Invalid odds <= 1.0",
         }
 
-    inv_sum = sum((Decimal("1") / o) for o in odds_d)
+    inv_sum = sum(((Decimal("1") / o) for o in odds_d), Decimal("0"))
     if (not inv_sum.is_finite()) or inv_sum <= Decimal("0"):
         return {
             "stakes": [],

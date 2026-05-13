@@ -71,7 +71,10 @@ class PnLEngine:
         return gross_pnl * (pct / 100.0)
 
     def _resolve_policy_commission_pct(self, commission_pct: Optional[float], *, preview_only: bool = False) -> float:
-        pct = self.commission_pct if commission_pct is None else self._finite_float(commission_pct, default=0.0)
+        pct = self._finite_float(
+            self.commission_pct if commission_pct is None else commission_pct,
+            default=0.0,
+        )
         if pct <= 0.0:
             # preview-only helper paths (mark-to-market / preview) can disable commission explicitly.
             if preview_only:
