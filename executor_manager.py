@@ -90,6 +90,7 @@ class ExecutorManager:
             self._completed_futures.popitem(last=False)
 
     def submit(self, *args, **kwargs):
+        """Submit a callable and track its future by task name."""
         task_name, fn, fn_args, fn_kwargs = self._normalize_submit_call(*args, **kwargs)
 
         with self._lock:
