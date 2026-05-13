@@ -75,7 +75,8 @@ class ExecutorManager:
         fn_args = args[2:]
         return task_name, fn, fn_args, kwargs
 
-    def _wrap_task(self, task_name: str, fn: Callable, *args, **kwargs):
+    @staticmethod
+    def _wrap_task(task_name: str, fn: Callable, *args, **kwargs):
         logger.debug("Executor task start: %s", task_name)
         try:
             return fn(*args, **kwargs)
