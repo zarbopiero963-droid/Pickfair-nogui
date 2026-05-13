@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# pylint: disable=too-many-instance-attributes
+
 import logging
 import math
 import threading
