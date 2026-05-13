@@ -13,7 +13,7 @@ from executor_manager import ExecutorManager
 from tick_dispatcher import TickData, TickDispatcher, get_tick_dispatcher
 
 
-class TestPR4Determinism(unittest.TestCase):
+class TestPR4Determinism(unittest.TestCase):  # noqa: D211
 
     """Review-fix tests for deterministic behavior."""
 
