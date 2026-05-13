@@ -42,7 +42,7 @@ jobs:
   autofix:
     name: Autofix PR until checks are green
     runs-on: [self-hosted, pickfair-fixer]
-    timeout-minutes: 360
+    timeout-minutes: 1200
 
     env:
       REPO: ${{ github.repository }}
@@ -50,6 +50,8 @@ jobs:
       MAX_ROUNDS: ${{ github.event.inputs.max_rounds || '5' }}
       WAIT_SECONDS: ${{ github.event.inputs.wait_seconds || '180' }}
       FINAL_REVIEW_WAIT_SECONDS: "90"
+      CODEX_QUOTA_SLEEP_SECONDS: "18600"
+      CODEX_MAX_ATTEMPTS: "3"
       CODEX_FIX_MODEL: gpt-5.3-codex
       CODEX_REVIEW_MODEL: gpt-5.5
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -61,8 +63,36 @@ jobs:
         run: |
           set -euo pipefail
 
+          telegram_send() {
+            local text="$1"
+
+            if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+              echo "Telegram secrets missing; skipping notification."
+              return 0
+            fi
+
+            curl -sS \
+              -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+              --data-urlencode "text=${text}" \
+              --data-urlencode "disable_web_page_preview=true" \
+              >/dev/null || true
+          }
+
           echo "Resolving PR #${PR_NUMBER} in ${REPO}"
-          gh auth status
+
+          if ! gh auth status >/tmp/gh-auth-status.log 2>&1; then
+            cat /tmp/gh-auth-status.log || true
+            telegram_send "❌ Pickfair Autofix: token GitHub scaduto/revocato o gh auth non valido.
+
+Repo: ${REPO}
+PR: #${PR_NUMBER}
+
+Serve intervento manuale sulla VPS:
+su - pickfair
+gh auth login"
+            exit 1
+          fi
 
           gh pr view "${PR_NUMBER}" \
             --repo "${REPO}" \
@@ -74,9 +104,26 @@ jobs:
           HEAD_REF="$(jq -r '.headRefName' /tmp/pr.json)"
           HEAD_SHA="$(jq -r '.headRefOid' /tmp/pr.json)"
           PR_URL="$(jq -r '.url' /tmp/pr.json)"
+          MERGE_STATE="$(jq -r '.mergeStateStatus // ""' /tmp/pr.json)"
 
           if [ -z "${HEAD_REF}" ] || [ "${HEAD_REF}" = "null" ]; then
-            echo "Could not resolve PR head branch"
+            telegram_send "❌ Pickfair Autofix: impossibile risolvere la branch della PR.
+
+Repo: ${REPO}
+PR: #${PR_NUMBER}
+URL: ${PR_URL}"
+            exit 1
+          fi
+
+          if [ "${MERGE_STATE}" = "DIRTY" ]; then
+            telegram_send "❌ Pickfair PR #${PR_NUMBER}: conflitto merge vero.
+
+Branch: ${HEAD_REF}
+SHA: ${HEAD_SHA}
+Merge state: ${MERGE_STATE}
+
+Serve intervento manuale/prodotto.
+URL: ${PR_URL}"
             exit 1
           fi
 
@@ -220,6 +267,171 @@ jobs:
             return 1
           }
 
+          notify_ready() {
+            local pr_url
+            local head_sha
+            local review_note
+
+            pr_url="$(gh pr view "${PR_NUMBER}" --repo "${REPO}" --json url --jq '.url')"
+            head_sha="$(gh pr view "${PR_NUMBER}" --repo "${REPO}" --json headRefOid --jq '.headRefOid')"
+
+            if [ -f .autofix/final-review-ready.txt ]; then
+              review_note="$(head -20 .autofix/final-review-ready.txt)"
+            else
+              review_note="Checks are green and final review sweep found no required code changes."
+            fi
+
+            telegram_send "✅ Pickfair PR #${PR_NUMBER} verde e pronta al merge.
+
+Branch: ${{ steps.pr.outputs.head_ref }}
+SHA: ${head_sha}
+Fix model: ${CODEX_FIX_MODEL}
+Final review model: ${CODEX_REVIEW_MODEL}
+
+Final review:
+${review_note}
+
+URL: ${pr_url}"
+          }
+
+          notify_failed() {
+            local reason="$1"
+            local pr_url
+            local head_sha
+            local blockers
+
+            pr_url="$(gh pr view "${PR_NUMBER}" --repo "${REPO}" --json url --jq '.url' || echo "${{ steps.pr.outputs.pr_url }}")"
+            head_sha="$(gh pr view "${PR_NUMBER}" --repo "${REPO}" --json headRefOid --jq '.headRefOid' || git rev-parse HEAD)"
+            blockers="$(blockers_text || true)"
+
+            telegram_send "❌ Pickfair PR #${PR_NUMBER} non è pronta al merge.
+
+Reason: ${reason}
+
+Branch: ${{ steps.pr.outputs.head_ref }}
+SHA: ${head_sha}
+
+Blocking checks/comments:
+${blockers}
+
+URL: ${pr_url}"
+          }
+
+          preflight_codex() {
+            echo "Running Codex preflight with ${CODEX_FIX_MODEL}..."
+
+            set +e
+            timeout 180s codex exec \
+              --model "${CODEX_FIX_MODEL}" \
+              --dangerously-bypass-approvals-and-sandbox \
+              "Rispondi solo: OK_CODEX_PREFLIGHT" \
+              > .autofix/codex-preflight.log 2>&1
+            result="$?"
+            set -e
+
+            cat .autofix/codex-preflight.log || true
+
+            if [ "${result}" != "0" ]; then
+              if grep -Eiq "login|auth|unauthorized|not logged|session|expired" .autofix/codex-preflight.log; then
+                telegram_send "❌ Pickfair Autofix: login Codex scaduto/non valido.
+
+Repo: ${REPO}
+PR: #${PR_NUMBER}
+Model: ${CODEX_FIX_MODEL}
+
+Serve intervento manuale sulla VPS:
+su - pickfair
+codex login"
+                exit 1
+              fi
+
+              if grep -Eiq "quota|rate limit|usage limit|try again|reset|too many requests" .autofix/codex-preflight.log; then
+                telegram_send "⏳ Pickfair Autofix: quota Codex già esaurita in preflight.
+
+Repo: ${REPO}
+PR: #${PR_NUMBER}
+Model: ${CODEX_FIX_MODEL}
+
+Riprovo tra $((CODEX_QUOTA_SLEEP_SECONDS / 60)) minuti."
+                sleep "${CODEX_QUOTA_SLEEP_SECONDS}"
+                return 0
+              fi
+
+              telegram_send "❌ Pickfair Autofix: Codex non disponibile in preflight.
+
+Repo: ${REPO}
+PR: #${PR_NUMBER}
+Model: ${CODEX_FIX_MODEL}
+
+Controlla VPS/Codex CLI."
+              exit 1
+            fi
+          }
+
+          run_codex_with_quota_retry() {
+            local model="$1"
+            local prompt_file="$2"
+            local timeout_seconds="$3"
+            local attempt=1
+            local result=1
+
+            while [ "${attempt}" -le "${CODEX_MAX_ATTEMPTS}" ]; do
+              echo "Codex attempt ${attempt}/${CODEX_MAX_ATTEMPTS} with model ${model}"
+
+              set +e
+              timeout "${timeout_seconds}s" codex exec \
+                --model "${model}" \
+                --dangerously-bypass-approvals-and-sandbox \
+                "$(cat "${prompt_file}")" \
+                2>&1 | tee .autofix/codex-last.log
+              result="${PIPESTATUS[0]}"
+              set -e
+
+              if [ "${result}" = "0" ]; then
+                return 0
+              fi
+
+              if grep -Eiq "quota|rate limit|usage limit|try again|reset|too many requests" .autofix/codex-last.log; then
+                telegram_send "⏳ Pickfair Autofix: quota Codex esaurita.
+
+Repo: ${REPO}
+PR: #${PR_NUMBER}
+Model: ${model}
+Attempt: ${attempt}/${CODEX_MAX_ATTEMPTS}
+
+Riprovo tra $((CODEX_QUOTA_SLEEP_SECONDS / 60)) minuti."
+                sleep "${CODEX_QUOTA_SLEEP_SECONDS}"
+                attempt=$((attempt + 1))
+                continue
+              fi
+
+              if grep -Eiq "login|auth|unauthorized|not logged|session|expired" .autofix/codex-last.log; then
+                telegram_send "❌ Pickfair Autofix: login Codex scaduto durante il run.
+
+Repo: ${REPO}
+PR: #${PR_NUMBER}
+Model: ${model}
+
+Serve intervento manuale sulla VPS:
+su - pickfair
+codex login"
+                return "${result}"
+              fi
+
+              return "${result}"
+            done
+
+            telegram_send "❌ Pickfair Autofix: quota Codex troppo lunga oltre i retry.
+
+Repo: ${REPO}
+PR: #${PR_NUMBER}
+Model: ${model}
+Attempts: ${CODEX_MAX_ATTEMPTS}
+
+Serve intervento manuale o attendere reset più lungo."
+            return 1
+          }
+
           write_fix_prompt() {
             {
               printf '%s\n' 'You are running inside a GitHub self-hosted runner on the existing PR branch.'
@@ -280,7 +492,6 @@ jobs:
               printf '%s\n' '- Check the latest issue comments, review comments, review threads, reviews, annotations, and current files.'
               printf '%s\n' '- Ignore duplicate, outdated, resolved, non-actionable, or already-fixed comments.'
               printf '%s\n' '- If you find a still-valid actionable comment, apply the smallest safe code/test fix.'
-              printf '%s\n' '- If you changed code, do not create marker files except scratch notes in .autofix.'
               printf '%s\n' '- If no code change is needed and the PR is merge-ready, create .autofix/final-review-ready.txt with a short reason.'
               printf '%s\n' '- If you find a still-valid actionable issue but cannot safely fix it, create .autofix/final-review-blocked.txt with the reason.'
               printf '%s\n' ''
@@ -318,6 +529,8 @@ jobs:
             local sha
             local owner
             local repo_name
+            local merge_state
+            local pr_url
 
             sha="$(git rev-parse HEAD)"
             owner="${REPO%%/*}"
@@ -332,6 +545,21 @@ jobs:
               --repo "${REPO}" \
               --json number,title,url,headRefName,headRefOid,baseRefName,mergeStateStatus,reviewDecision,comments,files,reviews,statusCheckRollup \
               > .autofix/context/pr-view.json
+
+            merge_state="$(jq -r '.mergeStateStatus // ""' .autofix/context/pr-view.json)"
+            pr_url="$(jq -r '.url // ""' .autofix/context/pr-view.json)"
+
+            if [ "${merge_state}" = "DIRTY" ]; then
+              telegram_send "❌ Pickfair PR #${PR_NUMBER}: conflitto merge vero rilevato.
+
+Branch: ${{ steps.pr.outputs.head_ref }}
+SHA: ${sha}
+Merge state: ${merge_state}
+
+Serve intervento manuale/prodotto.
+URL: ${pr_url}"
+              exit 1
+            fi
 
             gh pr checks "${PR_NUMBER}" \
               --repo "${REPO}" \
@@ -406,8 +634,11 @@ jobs:
             local round="$1"
             local phase="$2"
             local message
+            local status_snapshot
 
-            if git diff --quiet && git diff --cached --quiet; then
+            status_snapshot="$(git status --porcelain)"
+
+            if [ -z "${status_snapshot}" ]; then
               echo "No repository changes after Codex."
               return 10
             fi
@@ -443,99 +674,74 @@ jobs:
             return 0
           }
 
-          notify_ready() {
-            local pr_url
-            local head_sha
-            local review_note
+          final_review_sweep() {
+            local round="$1"
+            local final_push_result
 
-            pr_url="$(gh pr view "${PR_NUMBER}" --repo "${REPO}" --json url --jq '.url')"
-            head_sha="$(gh pr view "${PR_NUMBER}" --repo "${REPO}" --json headRefOid --jq '.headRefOid')"
-
-            if [ -f .autofix/final-review-ready.txt ]; then
-              review_note="$(head -20 .autofix/final-review-ready.txt)"
-            else
-              review_note="Checks are green and final review sweep found no required code changes."
-            fi
-
-            telegram_send "✅ Pickfair PR #${PR_NUMBER} verde e pronta al merge.
-
-Branch: ${{ steps.pr.outputs.head_ref }}
-SHA: ${head_sha}
-Fix model: ${CODEX_FIX_MODEL}
-Final review model: ${CODEX_REVIEW_MODEL}
-
-Final review:
-${review_note}
-
-URL: ${pr_url}"
-          }
-
-          notify_failed() {
-            local reason="$1"
-            local pr_url
-            local head_sha
-            local blockers
-
-            pr_url="$(gh pr view "${PR_NUMBER}" --repo "${REPO}" --json url --jq '.url' || echo "${{ steps.pr.outputs.pr_url }}")"
-            head_sha="$(gh pr view "${PR_NUMBER}" --repo "${REPO}" --json headRefOid --jq '.headRefOid' || git rev-parse HEAD)"
-            blockers="$(blockers_text || true)"
-
-            telegram_send "❌ Pickfair PR #${PR_NUMBER} non è pronta al merge.
-
-Reason: ${reason}
-
-Branch: ${{ steps.pr.outputs.head_ref }}
-SHA: ${head_sha}
-
-Blocking checks/comments:
-${blockers}
-
-URL: ${pr_url}"
-          }
-
-          echo "Initial PR check state:"
-          if check_green; then
-            echo "PR is green before fix loop. Waiting ${FINAL_REVIEW_WAIT_SECONDS}s for late review/check comments..."
+            echo "Checks are green. Waiting ${FINAL_REVIEW_WAIT_SECONDS}s for late reviewer/bot comments..."
             sleep "${FINAL_REVIEW_WAIT_SECONDS}"
 
             git fetch origin "${{ steps.pr.outputs.head_ref }}"
             git checkout -B "${{ steps.pr.outputs.head_ref }}" "origin/${{ steps.pr.outputs.head_ref }}"
 
-            collect_context "initial-final-review"
+            collect_context "${round}-final-review"
             write_final_review_prompt
 
             echo "Running final review sweep with ${CODEX_REVIEW_MODEL}..."
-            timeout 1800s codex exec \
-              --model "${CODEX_REVIEW_MODEL}" \
-              --dangerously-bypass-approvals-and-sandbox \
-              "$(cat .autofix/final-review-prompt.md)"
+
+            if ! run_codex_with_quota_retry "${CODEX_REVIEW_MODEL}" ".autofix/final-review-prompt.md" 1800; then
+              notify_failed "Final review Codex run failed."
+              exit 1
+            fi
 
             if [ -f .autofix/final-review-blocked.txt ]; then
               cat .autofix/final-review-blocked.txt
-              notify_failed "Final review sweep found actionable unresolved comments but could not safely fix them."
+              notify_failed "Final review sweep found actionable unresolved comments requiring human/product decision."
               exit 1
             fi
 
             set +e
-            commit_and_push_if_needed "initial-final-review" "final"
-            FINAL_PUSH_RESULT="$?"
+            commit_and_push_if_needed "${round}" "final"
+            final_push_result="$?"
             set -e
 
-            if [ "${FINAL_PUSH_RESULT}" = "0" ]; then
-              echo "Final review sweep pushed changes. Waiting ${WAIT_SECONDS}s for checks..."
-              sleep "${WAIT_SECONDS}"
-            elif [ "${FINAL_PUSH_RESULT}" = "10" ]; then
+            if [ "${final_push_result}" = "0" ]; then
+              echo "Final review sweep pushed another fix."
+              return 20
+            fi
+
+            if [ "${final_push_result}" = "10" ]; then
               if [ -f .autofix/final-review-ready.txt ]; then
-                notify_ready
-                echo "PR_AUTOFIX_GREEN_AND_FINAL_REVIEW_READY"
-                exit 0
+                if check_green; then
+                  notify_ready
+                  echo "PR_AUTOFIX_GREEN_AND_FINAL_REVIEW_READY"
+                  exit 0
+                fi
+
+                echo "Checks changed after final review sweep."
+                return 20
               fi
 
               notify_failed "Final review sweep made no code changes but did not write final-review-ready marker."
               exit 1
-            else
-              notify_failed "Final review sweep commit/push failed."
-              exit "${FINAL_PUSH_RESULT}"
+            fi
+
+            notify_failed "Final review sweep commit/push failed."
+            exit "${final_push_result}"
+          }
+
+          preflight_codex
+
+          echo "Initial PR check state:"
+          if check_green; then
+            set +e
+            final_review_sweep "initial"
+            sweep_result="$?"
+            set -e
+
+            if [ "${sweep_result}" = "20" ]; then
+              echo "Final review pushed changes. Waiting ${WAIT_SECONDS}s before continuing."
+              sleep "${WAIT_SECONDS}"
             fi
           fi
 
@@ -550,86 +756,60 @@ URL: ${pr_url}"
             BEFORE_SHA="$(git rev-parse HEAD)"
             echo "Before SHA: ${BEFORE_SHA}"
 
+            if check_green; then
+              set +e
+              final_review_sweep "${round}"
+              sweep_result="$?"
+              set -e
+
+              if [ "${sweep_result}" = "20" ]; then
+                echo "Final review pushed changes. Waiting ${WAIT_SECONDS}s before continuing."
+                sleep "${WAIT_SECONDS}"
+                continue
+              fi
+            fi
+
             collect_context "${round}"
             write_fix_prompt
 
             echo "Running Codex autofix with ${CODEX_FIX_MODEL}..."
-            timeout 2400s codex exec \
-              --model "${CODEX_FIX_MODEL}" \
-              --dangerously-bypass-approvals-and-sandbox \
-              "$(cat .autofix/prompt.md)"
+
+            if ! run_codex_with_quota_retry "${CODEX_FIX_MODEL}" ".autofix/prompt.md" 2400; then
+              notify_failed "Codex autofix failed during round ${round}."
+              exit 1
+            fi
 
             set +e
             commit_and_push_if_needed "${round}" "fix"
-            PUSH_RESULT="$?"
+            push_result="$?"
             set -e
 
-            if [ "${PUSH_RESULT}" = "10" ]; then
+            if [ "${push_result}" = "10" ]; then
               notify_failed "Codex produced no changes while PR checks/comments are still not clean."
               echo "Codex produced no changes while checks are not green."
               exit 1
             fi
 
-            if [ "${PUSH_RESULT}" != "0" ]; then
+            if [ "${push_result}" != "0" ]; then
               notify_failed "Commit/push failed during autofix round ${round}."
               echo "Commit/push failed."
-              exit "${PUSH_RESULT}"
+              exit "${push_result}"
             fi
 
             echo "Waiting ${WAIT_SECONDS}s for GitHub/Codacy/DeepSource checks..."
             sleep "${WAIT_SECONDS}"
 
             if check_green; then
-              echo "Checks are green. Waiting ${FINAL_REVIEW_WAIT_SECONDS}s for late Codex/Codacy/DeepSource/reviewer comments..."
-              sleep "${FINAL_REVIEW_WAIT_SECONDS}"
-
-              git fetch origin "${{ steps.pr.outputs.head_ref }}"
-              git checkout -B "${{ steps.pr.outputs.head_ref }}" "origin/${{ steps.pr.outputs.head_ref }}"
-
-              collect_context "${round}-final-review"
-              write_final_review_prompt
-
-              echo "Running final review sweep with ${CODEX_REVIEW_MODEL}..."
-              timeout 1800s codex exec \
-                --model "${CODEX_REVIEW_MODEL}" \
-                --dangerously-bypass-approvals-and-sandbox \
-                "$(cat .autofix/final-review-prompt.md)"
-
-              if [ -f .autofix/final-review-blocked.txt ]; then
-                cat .autofix/final-review-blocked.txt
-                notify_failed "Final review sweep found actionable unresolved comments but could not safely fix them."
-                exit 1
-              fi
-
               set +e
-              commit_and_push_if_needed "${round}" "final"
-              FINAL_PUSH_RESULT="$?"
+              final_review_sweep "${round}"
+              sweep_result="$?"
               set -e
 
-              if [ "${FINAL_PUSH_RESULT}" = "0" ]; then
-                echo "Final review sweep pushed another fix. Waiting ${WAIT_SECONDS}s for checks, then continuing loop..."
+              if [ "${sweep_result}" = "20" ]; then
+                echo "Final review pushed changes. Waiting ${WAIT_SECONDS}s before continuing."
                 sleep "${WAIT_SECONDS}"
                 continue
               fi
-
-              if [ "${FINAL_PUSH_RESULT}" = "10" ]; then
-                if [ -f .autofix/final-review-ready.txt ]; then
-                  if check_green; then
-                    notify_ready
-                    echo "PR_AUTOFIX_GREEN_AND_FINAL_REVIEW_READY"
-                    exit 0
-                  fi
-
-                  echo "Checks changed after final review sweep."
-                  continue
-                fi
-
-                notify_failed "Final review sweep made no code changes but did not write final-review-ready marker."
-                exit 1
-              fi
-
-              notify_failed "Final review sweep commit/push failed."
-              exit "${FINAL_PUSH_RESULT}"
             fi
 
             AFTER_SHA="$(gh pr view "${PR_NUMBER}" --repo "${REPO}" --json headRefOid --jq '.headRefOid')"
