@@ -36,7 +36,9 @@ jobs:
 
           echo "=== codex ==="
           codex --version
-          codex "Rispondi solo: OK_CODEX_SELFHOSTED"
+
+          echo "=== codex non-interactive test ==="
+          timeout 180s codex exec "Rispondi solo: OK_CODEX_SELFHOSTED"
 
           echo "=== gh ==="
           gh --version
