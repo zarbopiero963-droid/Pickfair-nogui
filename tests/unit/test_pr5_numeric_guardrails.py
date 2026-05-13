@@ -62,6 +62,13 @@ def test_dutching_rejects_non_finite_string_stake(stake):
 
 
 @pytest.mark.unit
+def test_dutching_accepts_normalized_string_inputs():
+    result = calculate_dutching_stakes(["2,0", " 3,0 "], " 100,0 ")
+    assert result["stakes"]
+    assert not (result.get("error") or "")
+
+
+@pytest.mark.unit
 def test_dutching_valid_allocation_preserved():
     result = calculate_dutching_stakes([2.0, 4.0], 100.0, commission=0.0)
     assert len(result["stakes"]) == 2
