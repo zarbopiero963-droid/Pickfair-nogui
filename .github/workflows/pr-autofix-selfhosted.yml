@@ -1,0 +1,468 @@
+name: PR Autofix Self-hosted
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull request number to autofix"
+        required: true
+        default: "220"
+        type: string
+      max_rounds:
+        description: "Maximum fix/check/push rounds"
+        required: true
+        default: "5"
+        type: string
+      wait_seconds:
+        description: "Seconds to wait after each push before reading checks"
+        required: true
+        default: "120"
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+  actions: read
+  checks: read
+  statuses: read
+
+concurrency:
+  group: pr-autofix-selfhosted-${{ github.event.inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  autofix:
+    name: Autofix PR until checks are green
+    runs-on: [self-hosted, pickfair-fixer]
+    timeout-minutes: 360
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.inputs.pr_number }}
+      MAX_ROUNDS: ${{ github.event.inputs.max_rounds }}
+      WAIT_SECONDS: ${{ github.event.inputs.wait_seconds }}
+
+    steps:
+      - name: Resolve PR branch
+        id: pr
+        run: |
+          set -euo pipefail
+
+          echo "Resolving PR #${PR_NUMBER} in ${REPO}"
+
+          gh pr view "${PR_NUMBER}" \
+            --repo "${REPO}" \
+            --json number,title,url,headRefName,headRefOid,baseRefName,mergeStateStatus,reviewDecision \
+            > /tmp/pr.json
+
+          cat /tmp/pr.json | jq .
+
+          HEAD_REF="$(jq -r '.headRefName' /tmp/pr.json)"
+          HEAD_SHA="$(jq -r '.headRefOid' /tmp/pr.json)"
+          PR_URL="$(jq -r '.url' /tmp/pr.json)"
+
+          if [ -z "${HEAD_REF}" ] || [ "${HEAD_REF}" = "null" ]; then
+            echo "Could not resolve PR head branch"
+            exit 1
+          fi
+
+          echo "head_ref=${HEAD_REF}" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
+          echo "pr_url=${PR_URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.head_ref }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Prepare git identity
+        run: |
+          set -euo pipefail
+
+          git config user.name "pickfair-autofix-bot"
+          git config user.email "pickfair-autofix-bot@users.noreply.github.com"
+
+          git fetch origin "${{ steps.pr.outputs.head_ref }}"
+          git checkout -B "${{ steps.pr.outputs.head_ref }}" "origin/${{ steps.pr.outputs.head_ref }}"
+
+          echo "Current branch:"
+          git branch --show-current
+
+          echo "Current SHA:"
+          git rev-parse HEAD
+
+          echo "Repo status:"
+          git status --short
+
+      - name: Autofix loop
+        run: |
+          set -euo pipefail
+
+          if ! [[ "${MAX_ROUNDS}" =~ ^[0-9]+$ ]]; then
+            echo "MAX_ROUNDS must be a number"
+            exit 1
+          fi
+
+          if ! [[ "${WAIT_SECONDS}" =~ ^[0-9]+$ ]]; then
+            echo "WAIT_SECONDS must be a number"
+            exit 1
+          fi
+
+          mkdir -p .autofix
+
+          is_green() {
+            gh pr checks "${PR_NUMBER}" \
+              --repo "${REPO}" \
+              --json name,state,bucket,description,link,workflow \
+              > .autofix/pr-checks-current.json || return 1
+
+            echo "Current PR checks:"
+            cat .autofix/pr-checks-current.json | jq -r '.[] | "- \(.name): \(.bucket) / \(.state) / \(.description // "")"'
+
+            BLOCKERS="$(
+              cat .autofix/pr-checks-current.json \
+                | jq '[.[] | select(.bucket == "fail" or .bucket == "pending" or .bucket == "cancel")] | length'
+            )"
+
+            if [ "${BLOCKERS}" = "0" ]; then
+              return 0
+            fi
+
+            return 1
+          }
+
+          collect_context() {
+            local round="$1"
+            local sha
+            sha="$(git rev-parse HEAD)"
+
+            rm -rf .autofix/context
+            mkdir -p .autofix/context
+
+            echo "Collecting GitHub context for round ${round}, SHA ${sha}"
+
+            gh pr view "${PR_NUMBER}" \
+              --repo "${REPO}" \
+              --json number,title,url,headRefName,headRefOid,baseRefName,mergeStateStatus,reviewDecision,comments,files,reviews,statusCheckRollup \
+              > .autofix/context/pr-view.json
+
+            gh pr checks "${PR_NUMBER}" \
+              --repo "${REPO}" \
+              --json name,state,bucket,description,link,workflow \
+              > .autofix/context/pr-checks.json || true
+
+            gh api "repos/${REPO}/commits/${sha}/check-runs" \
+              --paginate \
+              > .autofix/context/check-runs.json || echo '{"check_runs":[]}' > .autofix/context/check-runs.json
+
+            gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+              --paginate \
+              > .autofix/context/issue-comments.json || echo '[]' > .autofix/context/issue-comments.json
+
+            gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments" \
+              --paginate \
+              > .autofix/context/review-comments.json || echo '[]' > .autofix/context/review-comments.json
+
+            gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
+              --paginate \
+              > .autofix/context/reviews.json || echo '[]' > .autofix/context/reviews.json
+
+            : > .autofix/context/annotations.jsonl
+
+            if [ -s .autofix/context/check-runs.json ]; then
+              cat .autofix/context/check-runs.json \
+                | jq -r '.check_runs[]? | select((.conclusion // "") != "success" and (.conclusion // "") != "neutral" and (.conclusion // "") != "skipped") | .id' \
+                | while read -r check_id; do
+                    if [ -n "${check_id}" ] && [ "${check_id}" != "null" ]; then
+                      gh api "repos/${REPO}/check-runs/${check_id}/annotations" \
+                        --paginate \
+                        >> .autofix/context/annotations.jsonl || true
+                    fi
+                  done
+            fi
+
+            python3 <<'PY'
+          import json
+          from pathlib import Path
+
+          ctx = Path(".autofix/context")
+
+          def load_json(name, default):
+              path = ctx / name
+              try:
+                  return json.loads(path.read_text(encoding="utf-8"))
+              except Exception:
+                  return default
+
+          def clip(text, n=1400):
+              text = str(text or "").strip()
+              if len(text) <= n:
+                  return text
+              return text[:n] + "\n...[truncated]"
+
+          pr = load_json("pr-view.json", {})
+          checks = load_json("pr-checks.json", [])
+          check_runs = load_json("check-runs.json", {"check_runs": []})
+          issue_comments = load_json("issue-comments.json", [])
+          review_comments = load_json("review-comments.json", [])
+          reviews = load_json("reviews.json", [])
+
+          annotations = []
+          ann_path = ctx / "annotations.jsonl"
+          if ann_path.exists():
+              for line in ann_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                  line = line.strip()
+                  if not line:
+                      continue
+                  try:
+                      item = json.loads(line)
+                      if isinstance(item, list):
+                          annotations.extend(item)
+                      elif isinstance(item, dict):
+                          annotations.append(item)
+                  except Exception:
+                      pass
+
+          failed_checks = [
+              c for c in checks
+              if c.get("bucket") in {"fail", "pending", "cancel"}
+          ]
+
+          failed_check_runs = [
+              {
+                  "name": c.get("name"),
+                  "status": c.get("status"),
+                  "conclusion": c.get("conclusion"),
+                  "details_url": c.get("details_url"),
+                  "html_url": c.get("html_url"),
+                  "output": {
+                      "title": clip((c.get("output") or {}).get("title"), 400),
+                      "summary": clip((c.get("output") or {}).get("summary"), 1000),
+                      "text": clip((c.get("output") or {}).get("text"), 1000),
+                  },
+              }
+              for c in (check_runs.get("check_runs") or [])
+              if (c.get("conclusion") or "") not in {"success", "neutral", "skipped"}
+          ]
+
+          recent_issue_comments = [
+              {
+                  "user": (c.get("user") or {}).get("login"),
+                  "created_at": c.get("created_at"),
+                  "updated_at": c.get("updated_at"),
+                  "body": clip(c.get("body"), 1200),
+                  "url": c.get("html_url"),
+              }
+              for c in issue_comments[-30:]
+          ]
+
+          recent_review_comments = [
+              {
+                  "user": (c.get("user") or {}).get("login"),
+                  "path": c.get("path"),
+                  "line": c.get("line") or c.get("original_line"),
+                  "created_at": c.get("created_at"),
+                  "updated_at": c.get("updated_at"),
+                  "body": clip(c.get("body"), 1200),
+                  "url": c.get("html_url"),
+              }
+              for c in review_comments[-80:]
+          ]
+
+          recent_reviews = [
+              {
+                  "user": (r.get("user") or {}).get("login"),
+                  "state": r.get("state"),
+                  "submitted_at": r.get("submitted_at"),
+                  "body": clip(r.get("body"), 1200),
+                  "url": r.get("html_url"),
+              }
+              for r in reviews[-30:]
+          ]
+
+          annotations_small = [
+              {
+                  "path": a.get("path"),
+                  "start_line": a.get("start_line"),
+                  "end_line": a.get("end_line"),
+                  "annotation_level": a.get("annotation_level"),
+                  "message": clip(a.get("message"), 1000),
+                  "title": clip(a.get("title"), 400),
+                  "raw_details": clip(a.get("raw_details"), 1000),
+              }
+              for a in annotations[:200]
+          ]
+
+          context = {
+              "pr": {
+                  "number": pr.get("number"),
+                  "title": pr.get("title"),
+                  "url": pr.get("url"),
+                  "headRefName": pr.get("headRefName"),
+                  "headRefOid": pr.get("headRefOid"),
+                  "baseRefName": pr.get("baseRefName"),
+                  "mergeStateStatus": pr.get("mergeStateStatus"),
+                  "reviewDecision": pr.get("reviewDecision"),
+              },
+              "changed_files": pr.get("files", []),
+              "failed_or_pending_checks": failed_checks,
+              "failed_check_runs": failed_check_runs,
+              "annotations": annotations_small,
+              "recent_issue_comments": recent_issue_comments,
+              "recent_review_comments": recent_review_comments,
+              "recent_reviews": recent_reviews,
+          }
+
+          (Path(".autofix") / "context-small.json").write_text(
+              json.dumps(context, indent=2, ensure_ascii=False),
+              encoding="utf-8",
+          )
+          PY
+
+            cat > .autofix/prompt.md <<'EOF'
+          You are running inside a GitHub self-hosted runner on the existing PR branch.
+
+          Objective:
+          Make this PR merge-ready by fixing all still-valid red checks and review/comment issues visible from GitHub.
+
+          Hard rules:
+          - Work only on the current branch.
+          - Do not create a new branch.
+          - Do not create a new PR.
+          - Do not merge.
+          - Do not post GitHub comments.
+          - Do not use external Codacy or DeepSource APIs.
+          - Use the provided GitHub context, annotations, PR comments, review comments, changed files, and local tests.
+          - If Codacy or DeepSource only expose "failed" without detailed annotations, infer likely static-analysis fixes from code and comments.
+          - Prefer small targeted fixes.
+          - Do not delete tests to make checks pass.
+          - Preserve public API compatibility.
+          - If no safe fix can be made, create no commit and explain why in your final text.
+          - When changing Python, run or account for py_compile and relevant pytest.
+          - End with a concise summary.
+
+          Current GitHub context is in:
+          .autofix/context-small.json
+
+          Start by reading that file, then inspect the repository files directly.
+          EOF
+          }
+
+          run_local_tests() {
+            echo "Running local verification..."
+
+            CHANGED_PY="$(git diff --name-only HEAD -- '*.py' || true)"
+
+            if [ -n "${CHANGED_PY}" ]; then
+              echo "${CHANGED_PY}" | xargs -r python3 -m py_compile
+            fi
+
+            if [ -f tests/unit/test_tick_throttle_executor_determinism.py ] && [ -f tests/unit/test_auto_throttle.py ] && [ -f tests/guardrails/test_contract_snapshot_repo.py ]; then
+              python3 -m pytest -q \
+                tests/unit/test_tick_throttle_executor_determinism.py \
+                tests/unit/test_auto_throttle.py \
+                tests/guardrails/test_contract_snapshot_repo.py
+            else
+              python3 -m pytest -q tests/unit tests/guardrails
+            fi
+          }
+
+          commit_and_push_if_needed() {
+            local round="$1"
+
+            if git diff --quiet && git diff --cached --quiet; then
+              echo "No repository changes after Codex."
+              return 10
+            fi
+
+            echo "Repository changes:"
+            git status --short
+
+            run_local_tests
+
+            git add -A
+
+            if git diff --cached --quiet; then
+              echo "No staged changes."
+              return 10
+            fi
+
+            git commit -m "fix: address PR ${PR_NUMBER} checks round ${round}"
+
+            NEW_SHA="$(git rev-parse HEAD)"
+            echo "Created commit ${NEW_SHA}"
+
+            git push origin "HEAD:${{ steps.pr.outputs.head_ref }}"
+
+            echo "PUSHED_SHA=${NEW_SHA}"
+            return 0
+          }
+
+          echo "Initial PR check state:"
+          if is_green; then
+            echo "PR already green. Nothing to do."
+            exit 0
+          fi
+
+          for round in $(seq 1 "${MAX_ROUNDS}"); do
+            echo "=============================="
+            echo "AUTOFIX ROUND ${round}/${MAX_ROUNDS}"
+            echo "=============================="
+
+            git fetch origin "${{ steps.pr.outputs.head_ref }}"
+            git checkout -B "${{ steps.pr.outputs.head_ref }}" "origin/${{ steps.pr.outputs.head_ref }}"
+
+            BEFORE_SHA="$(git rev-parse HEAD)"
+            echo "Before SHA: ${BEFORE_SHA}"
+
+            collect_context "${round}"
+
+            echo "Running Codex autofix..."
+            timeout 2400s codex exec \
+              --full-auto \
+              --sandbox workspace-write \
+              --ask-for-approval never \
+              "$(cat .autofix/prompt.md)"
+
+            set +e
+            commit_and_push_if_needed "${round}"
+            PUSH_RESULT="$?"
+            set -e
+
+            if [ "${PUSH_RESULT}" = "10" ]; then
+              echo "Codex produced no changes while checks are not green."
+              echo "Failing intentionally so this does not look like a fake green."
+              exit 1
+            fi
+
+            if [ "${PUSH_RESULT}" != "0" ]; then
+              echo "Commit/push failed."
+              exit "${PUSH_RESULT}"
+            fi
+
+            echo "Waiting ${WAIT_SECONDS}s for GitHub/Codacy/DeepSource checks..."
+            sleep "${WAIT_SECONDS}"
+
+            if is_green; then
+              echo "PR_AUTOFIX_GREEN"
+              exit 0
+            fi
+
+            AFTER_SHA="$(gh pr view "${PR_NUMBER}" --repo "${REPO}" --json headRefOid --jq '.headRefOid')"
+            echo "After SHA from GitHub: ${AFTER_SHA}"
+
+            if [ "${AFTER_SHA}" = "${BEFORE_SHA}" ]; then
+              echo "SHA did not change after attempted push. Failing."
+              exit 1
+            fi
+          done
+
+          echo "Reached max rounds (${MAX_ROUNDS}) and PR is still not green."
+          echo "Latest checks:"
+          gh pr checks "${PR_NUMBER}" --repo "${REPO}" || true
+
+          exit 1
