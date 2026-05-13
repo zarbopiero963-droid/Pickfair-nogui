@@ -40,7 +40,7 @@ class TickData:
 logger = logging.getLogger(__name__)
 
 
-class TickDispatcher:
+class TickDispatcher:  # noqa: D203
     """Dispatcher tick con coalescing e throttling per UI e automazioni."""
 
     MIN_UI_UPDATE_INTERVAL = 0.25
