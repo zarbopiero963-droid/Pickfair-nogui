@@ -1,0 +1,147 @@
+name: Runner Watchdog Dispatch
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "*/15 * * * *"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: runner-watchdog-dispatch
+  cancel-in-progress: true
+
+jobs:
+  watchdog:
+    name: Watch self-hosted runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      GH_TOKEN: ${{ secrets.PICKFAIR_GH_PAT }}
+      REPO: ${{ github.repository }}
+      WATCHED_RUNNER_NAME: pickfair-fixer-1
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+    steps:
+      - name: Check self-hosted runner
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          notify() {
+            local text="$1"
+
+            if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+              echo "Telegram secrets missing; skip notification."
+              return 0
+            fi
+
+            curl -sS \
+              -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+              --data-urlencode "text=${text}" \
+              --data-urlencode "disable_web_page_preview=true" \
+              >/dev/null || true
+          }
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            notify "❌ Pickfair Watchdog: secret PICKFAIR_GH_PAT mancante."
+            exit 1
+          fi
+
+          echo "Checking runners for ${REPO}"
+
+          if ! gh api "repos/${REPO}/actions/runners?per_page=100" > runners.json 2> runner-api-error.log; then
+            cat runner-api-error.log || true
+            notify "❌ Pickfair Watchdog: impossibile leggere runner. Controlla PICKFAIR_GH_PAT e permesso Administration Read-only."
+            exit 1
+          fi
+
+          jq '.runners[] | {name, status, busy, labels: [.labels[].name]}' runners.json
+
+          RUNNER_JSON="$(
+            jq -c --arg name "${WATCHED_RUNNER_NAME}" \
+              '.runners[] | select(.name == $name)' runners.json \
+              | head -1
+          )"
+
+          if [ -z "${RUNNER_JSON}" ]; then
+            notify "❌ Pickfair Watchdog: runner ${WATCHED_RUNNER_NAME} non trovato nella repo ${REPO}."
+            exit 1
+          fi
+
+          STATUS="$(printf '%s\n' "${RUNNER_JSON}" | jq -r '.status')"
+          BUSY="$(printf '%s\n' "${RUNNER_JSON}" | jq -r '.busy')"
+          LABELS="$(printf '%s\n' "${RUNNER_JSON}" | jq -r '[.labels[].name] | join(", ")')"
+
+          echo "Runner: ${WATCHED_RUNNER_NAME}"
+          echo "Status: ${STATUS}"
+          echo "Busy: ${BUSY}"
+          echo "Labels: ${LABELS}"
+
+          if [ "${STATUS}" != "online" ]; then
+            notify "❌ Pickfair Watchdog: VPS/runner offline. Runner: ${WATCHED_RUNNER_NAME}. Status: ${STATUS}. Busy: ${BUSY}."
+            exit 1
+          fi
+
+          echo "RUNNER_ONLINE_OK"
+
+      - name: Check stuck autofix runs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          notify() {
+            local text="$1"
+
+            if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+              echo "Telegram secrets missing; skip notification."
+              return 0
+            fi
+
+            curl -sS \
+              -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+              --data-urlencode "text=${text}" \
+              --data-urlencode "disable_web_page_preview=true" \
+              >/dev/null || true
+          }
+
+          gh run list \
+            --repo "${REPO}" \
+            --workflow pr-autofix-selfhosted.yml \
+            --limit 10 \
+            --json databaseId,status,conclusion,createdAt,displayTitle,url \
+            > runs.json || echo '[]' > runs.json
+
+          jq '.' runs.json
+
+          NOW_EPOCH="$(date -u +%s)"
+
+          jq -c '.[] | select(.status == "queued" or .status == "in_progress")' runs.json \
+            | while read -r run; do
+                RUN_ID="$(printf '%s\n' "${run}" | jq -r '.databaseId')"
+                RUN_STATUS="$(printf '%s\n' "${run}" | jq -r '.status')"
+                RUN_TITLE="$(printf '%s\n' "${run}" | jq -r '.displayTitle')"
+                RUN_URL="$(printf '%s\n' "${run}" | jq -r '.url')"
+                CREATED_AT="$(printf '%s\n' "${run}" | jq -r '.createdAt')"
+
+                CREATED_EPOCH="$(date -u -d "${CREATED_AT}" +%s)"
+                AGE_SECONDS="$((NOW_EPOCH - CREATED_EPOCH))"
+
+                echo "Run ${RUN_ID} status=${RUN_STATUS} age=${AGE_SECONDS}s"
+
+                if [ "${RUN_STATUS}" = "queued" ] && [ "${AGE_SECONDS}" -gt 1800 ]; then
+                  notify "⚠️ Pickfair Watchdog: autofix queued da più di 30 minuti. Run: ${RUN_ID}. Title: ${RUN_TITLE}. URL: ${RUN_URL}"
+                fi
+
+                if [ "${RUN_STATUS}" = "in_progress" ] && [ "${AGE_SECONDS}" -gt 43200 ]; then
+                  notify "⚠️ Pickfair Watchdog: autofix in esecuzione da oltre 12 ore. Run: ${RUN_ID}. Title: ${RUN_TITLE}. URL: ${RUN_URL}"
+                fi
+              done
+
+          echo "WATCHDOG_OK"
