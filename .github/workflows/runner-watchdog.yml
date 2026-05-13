@@ -2,13 +2,12 @@ name: Runner Watchdog
 
 on:
   workflow_dispatch:
-
   schedule:
     - cron: "*/15 * * * *"
 
 permissions:
-  actions: read
   contents: read
+  actions: read
 
 concurrency:
   group: runner-watchdog
@@ -21,8 +20,8 @@ jobs:
     timeout-minutes: 10
 
     env:
-      GH_TOKEN: ${{ secrets.PICKFAIR_GH_PAT || github.token }}
       REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ secrets.PICKFAIR_GH_PAT }}
       WATCHED_RUNNER_NAME: pickfair-fixer-1
       WATCHED_RUNNER_LABEL: pickfair-fixer
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -30,6 +29,7 @@ jobs:
 
     steps:
       - name: Check runner status
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -49,9 +49,21 @@ jobs:
               >/dev/null || true
           }
 
+          if [ -z "${GH_TOKEN:-}" ]; then
+            telegram_send "❌ Pickfair Watchdog: secret PICKFAIR_GH_PAT mancante.
+
+Repo: ${REPO}
+
+Aggiungi il secret:
+Settings → Secrets and variables → Actions → PICKFAIR_GH_PAT
+
+Il PAT deve avere accesso alla repo Pickfair-nogui e permesso Repository administration: Read."
+            exit 1
+          fi
+
           echo "Checking self-hosted runners for ${REPO}"
 
-          if ! gh api "repos/${REPO}/actions/runners?per_page=100" > runners.json 2>runner-api-error.log; then
+          if ! gh api "repos/${REPO}/actions/runners?per_page=100" > runners.json 2> runner-api-error.log; then
             cat runner-api-error.log || true
 
             telegram_send "❌ Pickfair Watchdog: impossibile leggere lo stato runner.
@@ -60,16 +72,16 @@ Repo: ${REPO}
 Runner atteso: ${WATCHED_RUNNER_NAME}
 
 Possibili cause:
-- PICKFAIR_GH_PAT mancante/scaduto
-- PAT senza permesso Actions/Administration read
+- PICKFAIR_GH_PAT scaduto/revocato
+- PAT senza permesso Repository administration: Read
 - problema GitHub API
 
-Controlla secrets GitHub Actions."
-
+Controlla i secrets GitHub Actions."
             exit 1
           fi
 
-          cat runners.json | jq '.runners[] | {name, status, busy, labels: [.labels[].name]}'
+          echo "Available runners:"
+          jq '.runners[] | {name, status, busy, labels: [.labels[].name]}' runners.json
 
           RUNNER_JSON="$(
             jq -c --arg name "${WATCHED_RUNNER_NAME}" \
@@ -85,10 +97,9 @@ Runner atteso: ${WATCHED_RUNNER_NAME}
 
 Possibili cause:
 - runner disinstallato
-- repo cambiata
+- runner registrato con nome diverso
 - VPS reinstallata
-- nome runner diverso"
-
+- repo sbagliata"
             exit 1
           fi
 
@@ -114,20 +125,20 @@ Possibili cause:
 - VPS spenta
 - servizio runner fermo
 - rete VPS down
-- runner GitHub disconnesso
+- runner disconnesso da GitHub
 
-Comando VPS:
+Comandi VPS:
 su - pickfair
 cd ~/actions-runner
 sudo ./svc.sh status
 sudo ./svc.sh start"
-
             exit 1
           fi
 
           echo "RUNNER_ONLINE_OK"
 
       - name: Check stuck autofix runs
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -154,7 +165,8 @@ sudo ./svc.sh start"
             --json databaseId,status,conclusion,createdAt,displayTitle,url \
             > runs.json || echo '[]' > runs.json
 
-          cat runs.json | jq .
+          echo "Recent autofix runs:"
+          jq '.' runs.json
 
           NOW_EPOCH="$(date -u +%s)"
 
