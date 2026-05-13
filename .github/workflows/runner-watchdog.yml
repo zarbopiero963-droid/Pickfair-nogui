@@ -1,0 +1,199 @@
+name: Runner Watchdog
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: "*/15 * * * *"
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: runner-watchdog
+  cancel-in-progress: true
+
+jobs:
+  watchdog:
+    name: Watch self-hosted runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      GH_TOKEN: ${{ secrets.PICKFAIR_GH_PAT || github.token }}
+      REPO: ${{ github.repository }}
+      WATCHED_RUNNER_NAME: pickfair-fixer-1
+      WATCHED_RUNNER_LABEL: pickfair-fixer
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+    steps:
+      - name: Check runner status
+        run: |
+          set -euo pipefail
+
+          telegram_send() {
+            local text="$1"
+
+            if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+              echo "Telegram secrets missing; skipping notification."
+              return 0
+            fi
+
+            curl -sS \
+              -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+              --data-urlencode "text=${text}" \
+              --data-urlencode "disable_web_page_preview=true" \
+              >/dev/null || true
+          }
+
+          echo "Checking self-hosted runners for ${REPO}"
+
+          if ! gh api "repos/${REPO}/actions/runners?per_page=100" > runners.json 2>runner-api-error.log; then
+            cat runner-api-error.log || true
+
+            telegram_send "❌ Pickfair Watchdog: impossibile leggere lo stato runner.
+
+Repo: ${REPO}
+Runner atteso: ${WATCHED_RUNNER_NAME}
+
+Possibili cause:
+- PICKFAIR_GH_PAT mancante/scaduto
+- PAT senza permesso Actions/Administration read
+- problema GitHub API
+
+Controlla secrets GitHub Actions."
+
+            exit 1
+          fi
+
+          cat runners.json | jq '.runners[] | {name, status, busy, labels: [.labels[].name]}'
+
+          RUNNER_JSON="$(
+            jq -c --arg name "${WATCHED_RUNNER_NAME}" \
+              '.runners[] | select(.name == $name)' runners.json \
+              | head -1
+          )"
+
+          if [ -z "${RUNNER_JSON}" ]; then
+            telegram_send "❌ Pickfair Watchdog: runner non trovato.
+
+Repo: ${REPO}
+Runner atteso: ${WATCHED_RUNNER_NAME}
+
+Possibili cause:
+- runner disinstallato
+- repo cambiata
+- VPS reinstallata
+- nome runner diverso"
+
+            exit 1
+          fi
+
+          STATUS="$(printf '%s\n' "${RUNNER_JSON}" | jq -r '.status')"
+          BUSY="$(printf '%s\n' "${RUNNER_JSON}" | jq -r '.busy')"
+          LABELS="$(printf '%s\n' "${RUNNER_JSON}" | jq -r '[.labels[].name] | join(", ")')"
+
+          echo "Runner: ${WATCHED_RUNNER_NAME}"
+          echo "Status: ${STATUS}"
+          echo "Busy: ${BUSY}"
+          echo "Labels: ${LABELS}"
+
+          if [ "${STATUS}" != "online" ]; then
+            telegram_send "❌ Pickfair Watchdog: VPS/runner offline.
+
+Repo: ${REPO}
+Runner: ${WATCHED_RUNNER_NAME}
+Status: ${STATUS}
+Busy: ${BUSY}
+Labels: ${LABELS}
+
+Possibili cause:
+- VPS spenta
+- servizio runner fermo
+- rete VPS down
+- runner GitHub disconnesso
+
+Comando VPS:
+su - pickfair
+cd ~/actions-runner
+sudo ./svc.sh status
+sudo ./svc.sh start"
+
+            exit 1
+          fi
+
+          echo "RUNNER_ONLINE_OK"
+
+      - name: Check stuck autofix runs
+        run: |
+          set -euo pipefail
+
+          telegram_send() {
+            local text="$1"
+
+            if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+              echo "Telegram secrets missing; skipping notification."
+              return 0
+            fi
+
+            curl -sS \
+              -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+              --data-urlencode "text=${text}" \
+              --data-urlencode "disable_web_page_preview=true" \
+              >/dev/null || true
+          }
+
+          gh run list \
+            --repo "${REPO}" \
+            --workflow pr-autofix-selfhosted.yml \
+            --limit 10 \
+            --json databaseId,status,conclusion,createdAt,displayTitle,url \
+            > runs.json || echo '[]' > runs.json
+
+          cat runs.json | jq .
+
+          NOW_EPOCH="$(date -u +%s)"
+
+          jq -c '.[] | select(.status == "queued" or .status == "in_progress")' runs.json \
+            | while read -r run; do
+                RUN_ID="$(printf '%s\n' "${run}" | jq -r '.databaseId')"
+                RUN_STATUS="$(printf '%s\n' "${run}" | jq -r '.status')"
+                RUN_TITLE="$(printf '%s\n' "${run}" | jq -r '.displayTitle')"
+                RUN_URL="$(printf '%s\n' "${run}" | jq -r '.url')"
+                CREATED_AT="$(printf '%s\n' "${run}" | jq -r '.createdAt')"
+
+                CREATED_EPOCH="$(date -u -d "${CREATED_AT}" +%s)"
+                AGE_SECONDS="$((NOW_EPOCH - CREATED_EPOCH))"
+
+                echo "Run ${RUN_ID} status=${RUN_STATUS} age=${AGE_SECONDS}s"
+
+                if [ "${RUN_STATUS}" = "queued" ] && [ "${AGE_SECONDS}" -gt 1800 ]; then
+                  telegram_send "⚠️ Pickfair Watchdog: autofix queued da più di 30 minuti.
+
+Repo: ${REPO}
+Run: ${RUN_ID}
+Title: ${RUN_TITLE}
+Age: $((AGE_SECONDS / 60)) minuti
+
+Probabile runner offline/occupato.
+URL: ${RUN_URL}"
+                fi
+
+                if [ "${RUN_STATUS}" = "in_progress" ] && [ "${AGE_SECONDS}" -gt 43200 ]; then
+                  telegram_send "⚠️ Pickfair Watchdog: autofix in esecuzione da oltre 12 ore.
+
+Repo: ${REPO}
+Run: ${RUN_ID}
+Title: ${RUN_TITLE}
+Age: $((AGE_SECONDS / 3600)) ore
+
+Possibile quota Codex lunga, loop bloccato o runner stuck.
+URL: ${RUN_URL}"
+                fi
+              done
+
+          echo "WATCHDOG_STUCK_RUN_CHECK_OK"
