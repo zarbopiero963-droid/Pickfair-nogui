@@ -80,7 +80,8 @@ class AutoThrottle:
     # =========================================================
     # INTERNAL
     # =========================================================
-    def _now(self) -> float:
+    @staticmethod
+    def _now() -> float:
         return time.monotonic()
 
     def _prune(self, now: float) -> None:
