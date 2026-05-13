@@ -166,6 +166,55 @@ jobs:
             return 1
           }
 
+          write_prompt() {
+            {
+              printf '%s\n' 'You are running inside a GitHub self-hosted runner on the existing PR branch.'
+              printf '%s\n' ''
+              printf '%s\n' 'Objective:'
+              printf '%s\n' 'Make this PR merge-ready by fixing all still-valid red checks and review/comment issues visible from GitHub.'
+              printf '%s\n' ''
+              printf '%s\n' 'Hard rules:'
+              printf '%s\n' '- Work only on the current branch.'
+              printf '%s\n' '- Do not create a new branch.'
+              printf '%s\n' '- Do not create a new PR.'
+              printf '%s\n' '- Do not merge.'
+              printf '%s\n' '- Do not post GitHub comments.'
+              printf '%s\n' '- Do not use external Codacy or DeepSource APIs.'
+              printf '%s\n' '- Use the local repository plus the GitHub context files in .autofix/context/.'
+              printf '%s\n' '- If Codacy or DeepSource only expose failed checks without detailed annotations, infer likely static-analysis fixes from code and comments.'
+              printf '%s\n' '- Prefer small targeted fixes.'
+              printf '%s\n' '- Do not delete tests to make checks pass.'
+              printf '%s\n' '- Preserve public API compatibility.'
+              printf '%s\n' '- Do not edit generated caches, virtualenv files, or .autofix internals except your own scratch notes.'
+              printf '%s\n' '- When changing Python, run or account for py_compile and relevant pytest.'
+              printf '%s\n' '- End with a concise summary of files changed and checks run.'
+              printf '%s\n' ''
+              printf '%s\n' 'Start by reading:'
+              printf '%s\n' '- .autofix/context/README.md'
+              printf '%s\n' '- .autofix/context/pr-checks.json'
+              printf '%s\n' '- .autofix/context/check-runs-pages.json'
+              printf '%s\n' '- .autofix/context/annotations.jsonl'
+              printf '%s\n' '- .autofix/context/issue-comments-pages.json'
+              printf '%s\n' '- .autofix/context/review-comments-pages.json'
+              printf '%s\n' ''
+              printf '%s\n' 'Then inspect the repository files directly and apply the smallest safe fix.'
+            } > .autofix/prompt.md
+          }
+
+          write_context_readme() {
+            {
+              printf '%s\n' 'This directory contains the live GitHub PR context for Codex:'
+              printf '%s\n' ''
+              printf '%s\n' '- pr-view.json: PR title, branch, files, comments, reviews, status rollup'
+              printf '%s\n' '- pr-checks.json: current PR checks and links'
+              printf '%s\n' '- check-runs-pages.json: check run summaries/output published to GitHub'
+              printf '%s\n' '- issue-comments-pages.json: top-level PR conversation comments'
+              printf '%s\n' '- review-comments-pages.json: inline review comments'
+              printf '%s\n' '- reviews-pages.json: review submissions'
+              printf '%s\n' '- annotations.jsonl: check-run annotations published to GitHub, if any'
+            } > .autofix/context/README.md
+          }
+
           collect_context() {
             local round="$1"
             local sha
@@ -221,50 +270,8 @@ jobs:
                   fi
                 done
 
-            cat > .autofix/context/README.md <<'EOF'
-This directory contains the live GitHub PR context for Codex:
-
-- pr-view.json: PR title, branch, files, comments, reviews, status rollup
-- pr-checks.json: current PR checks and links
-- check-runs-pages.json: check run summaries/output published to GitHub
-- issue-comments-pages.json: top-level PR conversation comments
-- review-comments-pages.json: inline review comments
-- reviews-pages.json: review submissions
-- annotations.jsonl: check-run annotations published to GitHub, if any
-EOF
-
-            cat > .autofix/prompt.md <<'EOF'
-You are running inside a GitHub self-hosted runner on the existing PR branch.
-
-Objective:
-Make this PR merge-ready by fixing all still-valid red checks and review/comment issues visible from GitHub.
-
-Hard rules:
-- Work only on the current branch.
-- Do not create a new branch.
-- Do not create a new PR.
-- Do not merge.
-- Do not post GitHub comments.
-- Do not use external Codacy or DeepSource APIs.
-- Use the local repository plus the GitHub context files in .autofix/context/.
-- If Codacy or DeepSource only expose "failed" without detailed annotations, infer likely static-analysis fixes from code and comments.
-- Prefer small targeted fixes.
-- Do not delete tests to make checks pass.
-- Preserve public API compatibility.
-- Do not edit generated caches, virtualenv files, or .autofix internals except your own scratch notes.
-- When changing Python, run or account for py_compile and relevant pytest.
-- End with a concise summary of files changed and checks run.
-
-Start by reading:
-- .autofix/context/README.md
-- .autofix/context/pr-checks.json
-- .autofix/context/check-runs-pages.json
-- .autofix/context/annotations.jsonl
-- .autofix/context/issue-comments-pages.json
-- .autofix/context/review-comments-pages.json
-
-Then inspect the repository files directly and apply the smallest safe fix.
-EOF
+            write_context_readme
+            write_prompt
           }
 
           run_local_tests() {
