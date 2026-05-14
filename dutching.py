@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence
 
 from trading_config import enforce_betfair_italy_commission_pct
 
@@ -132,8 +132,8 @@ def _equalize_stakes_post_rounding(
 
 
 def calculate_dutching_stakes(
-    odds: List[float],
-    total_stake: float,
+    odds: Sequence[Any],
+    total_stake: Any,
     commission: float = 0.0,
     equalize: bool = True,
     commission_aware: bool = True,
