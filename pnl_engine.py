@@ -53,7 +53,8 @@ class PnLEngine:
     def _safe_side(side: Any) -> str:
         return safe_side(side)
 
-    def _finite_float(self, value: Any, *, default: float = 0.0) -> float:
+    @staticmethod
+    def _finite_float(value: Any, *, default: float = 0.0) -> float:
         converted = float(value if value not in (None, "") else default)
         if not math.isfinite(converted):
             raise ValueError("non-finite numeric input")
