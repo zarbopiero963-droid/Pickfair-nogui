@@ -246,6 +246,33 @@ def _build_dutching_result(
     return result
 
 
+def _validated_inverse_odds_sum(odds_d: List[Decimal]) -> Decimal | None:
+    """Return valid inverse odds sum, or None when inputs are invalid."""
+    inv_sum = _inverse_odds_sum(odds_d)
+    if (not inv_sum.is_finite()) or inv_sum <= Decimal("0"):
+        return None
+    return inv_sum
+
+
+def _maybe_equalize_stakes(
+    stakes: List[Decimal],
+    odds_d: List[Decimal],
+    total_stake_d: Decimal,
+    commission_d: Decimal,
+    *,
+    equalize: bool,
+    commission_aware: bool,
+) -> List[Decimal]:
+    if not equalize or len(stakes) < 2:
+        return stakes
+    return _equalize_stakes_post_rounding(
+        stakes=stakes,
+        odds_d=odds_d,
+        total_stake_d=total_stake_d,
+        commission=commission_d if commission_aware else Decimal("0"),
+    )
+
+
 def calculate_dutching_stakes(
     odds: Sequence[Any],
     total_stake: Any,
@@ -278,20 +305,20 @@ def calculate_dutching_stakes(
     if preflight_result is not None:
         return preflight_result
 
-    inv_sum = _inverse_odds_sum(odds_d)
-    if (not inv_sum.is_finite()) or inv_sum <= Decimal("0"):
+    inv_sum = _validated_inverse_odds_sum(odds_d)
+    if inv_sum is None:
         return _empty_dutching_result("Invalid inverse odds sum")
 
     commission_d = _resolve_policy_commission_pct(commission)
     stakes = _initial_dutching_stakes(odds_d, total_stake_d, inv_sum)
-
-    if equalize and len(stakes) >= 2:
-        stakes = _equalize_stakes_post_rounding(
-            stakes=stakes,
-            odds_d=odds_d,
-            total_stake_d=total_stake_d,
-            commission=commission_d if commission_aware else Decimal("0"),
-        )
+    stakes = _maybe_equalize_stakes(
+        stakes=stakes,
+        odds_d=odds_d,
+        total_stake_d=total_stake_d,
+        commission_d=commission_d,
+        equalize=equalize,
+        commission_aware=commission_aware,
+    )
 
     profits, net_profits = _dutching_outcome_profits(
         stakes=stakes,

@@ -22,8 +22,7 @@ def test_mm_inputs_fail_closed() -> None:
         event_current_exposure=float("inf"),
         table={"id": 1, "loss": float("nan")},
     )
-    if decision.approved:
-        pytest.fail("decision must be rejected for non-finite inputs")
+    assert not decision.approved, "decision must be rejected for non-finite inputs"
     assert decision.recommended_stake == 0.0, "recommended stake must be exactly zero"
 
 
@@ -33,12 +32,9 @@ def test_dutching_rejects_nonfinite() -> None:
     bad_odds = calculate_dutching_stakes([2.0, float("inf")], 100.0)
     bad_stake = calculate_dutching_stakes([2.0, 3.0], float("nan"))
 
-    if bad_odds["stakes"] != []:
-        pytest.fail("expected no stakes for invalid odds")
-    if bad_odds.get("error") != "Invalid odds <= 1.0":
-        pytest.fail("expected invalid-odds error")
-    if bad_stake["stakes"] != []:
-        pytest.fail("expected no stakes for invalid stake")
+    assert bad_odds["stakes"] == [], "expected no stakes for invalid odds"
+    assert bad_odds.get("error") == "Invalid odds <= 1.0", "expected invalid-odds error"
+    assert bad_stake["stakes"] == [], "expected no stakes for invalid stake"
 
 
 @pytest.mark.unit
@@ -55,10 +51,8 @@ def test_dutching_rejects_nonfinite() -> None:
 def test_dutching_rejects_bad_str(odds: list[str]) -> None:
     """Dutching should reject textual NaN/Inf odds variants."""
     result = calculate_dutching_stakes(cast(list[float], odds), cast(float, "100.0"))
-    if result["stakes"] != []:
-        pytest.fail("expected no stakes for invalid textual odds")
-    if "Invalid odds" not in (result.get("error") or ""):
-        pytest.fail("expected invalid-odds error for textual non-finite values")
+    assert result["stakes"] == [], "expected no stakes for invalid textual odds"
+    assert "Invalid odds" in (result.get("error") or ""), "expected invalid-odds error for textual non-finite values"
 
 
 @pytest.mark.unit
@@ -66,8 +60,7 @@ def test_dutching_rejects_bad_str(odds: list[str]) -> None:
 def test_dutching_rejects_bad_stake(stake: str) -> None:
     """Dutching should reject textual NaN/Inf stake variants."""
     result = calculate_dutching_stakes(cast(list[float], ["2.0", "3.0"]), cast(float, stake))
-    if result["stakes"] != []:
-        pytest.fail("expected no stakes for invalid textual stake")
+    assert result["stakes"] == [], "expected no stakes for invalid textual stake"
 
 
 @pytest.mark.unit
@@ -77,20 +70,16 @@ def test_dutching_accepts_norm_text() -> None:
         cast(list[float], ["2,0", " 3,0 "]),
         cast(float, " 100,0 "),
     )
-    if not result["stakes"]:
-        pytest.fail("expected stake allocation for normalized textual values")
-    if result.get("error"):
-        pytest.fail("did not expect error for normalized textual values")
+    assert result["stakes"], "expected stake allocation for normalized textual values"
+    assert not result.get("error"), "did not expect error for normalized textual values"
 
 
 @pytest.mark.unit
 def test_dutching_allocation_valid() -> None:
     """Valid dutching allocation should still sum to total stake."""
     result = calculate_dutching_stakes([2.0, 4.0], 100.0, commission=0.0)
-    if len(result["stakes"]) != 2:
-        pytest.fail("expected two stake entries")
-    if abs(sum(result["stakes"]) - 100.0) >= 0.01:
-        pytest.fail("stakes should sum to total stake within rounding tolerance")
+    assert len(result["stakes"]) == 2, "expected two stake entries"
+    assert abs(sum(result["stakes"]) - 100.0) < 0.01, "stakes should sum to total stake within rounding tolerance"
 
 
 @pytest.mark.unit
@@ -208,12 +197,9 @@ def test_pnl_valid_output_unchanged() -> None:
         exit_price=3.0,
         size=10.0,
     )
-    if result.gross_pnl != pytest.approx(5.0):
-        pytest.fail("unexpected gross pnl")
-    if result.commission_amount != pytest.approx(0.225):
-        pytest.fail("unexpected commission amount")
-    if result.net_pnl != pytest.approx(4.775):
-        pytest.fail("unexpected net pnl")
+    assert result.gross_pnl == pytest.approx(5.0), "unexpected gross pnl"
+    assert result.commission_amount == pytest.approx(0.225), "unexpected commission amount"
+    assert result.net_pnl == pytest.approx(4.775), "unexpected net pnl"
 
 
 @pytest.mark.unit
