@@ -638,17 +638,18 @@ jobs:
             exit 0
           fi
 
-            TEXT="🤖 Auto PR Codex Fix completato
-
-PR: #${PR_NUMBER}
-Branch: ${BRANCH}
-Old head: ${OLD_SHA:0:12}
-New head: ${NEW_SHA:-unknown}
-Pushed: ${PUSHED:-false}
-Dry run: ${DRY_RUN}
-
-Ora GitHub rilancerà i check.
-Se restano rossi, verrà generato un nuovo handoff .md."
+            TEXT="$(printf '%s\n' \
+              "🤖 Auto PR Codex Fix completato" \
+              "" \
+              "PR: #${PR_NUMBER}" \
+              "Branch: ${BRANCH}" \
+              "Old head: ${OLD_SHA:0:12}" \
+              "New head: ${NEW_SHA:-unknown}" \
+              "Pushed: ${PUSHED:-false}" \
+              "Dry run: ${DRY_RUN}" \
+              "" \
+              "Ora GitHub rilancerà i check." \
+              "Se restano rossi, verrà generato un nuovo handoff .md.")"
 
           curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -d "chat_id=${TELEGRAM_CHAT_ID}" \
@@ -682,17 +683,15 @@ Se restano rossi, verrà generato un nuovo handoff .md."
             exit 0
           fi
 
-          TEXT="$(cat <<EOF
-❌ Auto PR Codex Fix fallito
+            TEXT="$(printf '%s\n' \
+              "❌ Auto PR Codex Fix fallito" \
+              "" \
+              "PR: #${PR_NUMBER:-unknown}" \
+              "Branch: ${BRANCH:-unknown}" \
+              "Dry run: ${DRY_RUN:-false}" \
+              "" \
+              "Controlla i log del workflow Auto PR Codex Fix.")"
 
-PR: #$PR_NUMBER
-Branch: $BRANCH
-Run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
-
-Controlla artifact:
-auto-pr-codex-fix-logs
-EOF
-)"
 
           curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -d "chat_id=${TELEGRAM_CHAT_ID}" \
