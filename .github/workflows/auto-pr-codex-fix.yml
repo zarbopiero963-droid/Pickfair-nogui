@@ -616,6 +616,15 @@ jobs:
           git status --porcelain=v1 -- . ':!codex-output' ':!codex-task-handoff-*.md' ':!.autofix' > codex-output/noop-status-after-retry.txt
 
           if [ ! -s codex-output/noop-status-after-retry.txt ]; then
+            echo "Codex retry still produced no code changes. Running deterministic fallback for known numeric-guardrail blockers..."
+            if ! python3 .github/scripts/autofix_known_numeric_guardrails.py | tee codex-output/deterministic-fallback.log; then
+              echo "::error::Deterministic fallback failed."
+              exit 1
+            fi
+            git status --porcelain=v1 -- . ':!codex-output' ':!codex-task-handoff-*.md' ':!.autofix' > codex-output/noop-status-after-retry.txt
+          fi
+
+          if [ ! -s codex-output/noop-status-after-retry.txt ]; then
             {
               echo "Codex made no code changes even after aggressive retry."
               echo "Blocking external checks: $BLOCKING_CHECKS_COUNT"
