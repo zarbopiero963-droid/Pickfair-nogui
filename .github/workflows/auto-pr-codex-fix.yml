@@ -316,7 +316,14 @@ jobs:
         run: |
           set -euo pipefail
           cp "$HANDOFF_SOURCE" "codex-task-handoff-pr-${PR_NUMBER}.md"
-          echo "Copied handoff into workspace:"
+
+          {
+            echo
+            echo "## Rich PR context"
+            cat .autofix/context/codex-prompt-context.txt 2>/dev/null || true
+          } >> "codex-task-handoff-pr-${PR_NUMBER}.md"
+
+          echo "Copied enriched handoff into workspace:"
           ls -lh "codex-task-handoff-pr-${PR_NUMBER}.md"
 
       - name: Run Codex CLI with task handoff
