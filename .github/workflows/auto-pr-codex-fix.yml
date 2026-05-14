@@ -527,6 +527,143 @@ jobs:
             exit "$CODEX_EXIT"
           fi
 
+      - name: Retry Codex once on no-op with unresolved blockers
+        if: steps.handoff.outputs.should_run == 'true' && steps.guard.outputs.should_continue == 'true'
+        env:
+          PR_NUMBER: ${{ steps.handoff.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p codex-output
+          HANDOFF="codex-task-handoff-pr-${PR_NUMBER}.md"
+          AGGRESSIVE_HANDOFF="codex-task-handoff-pr-${PR_NUMBER}-retry-noop.md"
+
+          git status --porcelain=v1 -- . ':!codex-output' ':!codex-task-handoff-*.md' ':!.autofix' > codex-output/noop-status-before-retry.txt
+
+          if [ -s codex-output/noop-status-before-retry.txt ]; then
+            echo "Codex already produced code changes; no no-op retry needed."
+            cat codex-output/noop-status-before-retry.txt
+            exit 0
+          fi
+
+          echo "Codex produced no code changes. Checking whether blockers still exist..."
+
+          gh pr view "$PR_NUMBER" --json statusCheckRollup \
+            --jq '.statusCheckRollup[]?
+              | {
+                  name: (.name // .context // ""),
+                  state: (.conclusion // .state // .status // ""),
+                  url: (.detailsUrl // .targetUrl // "")
+                }
+              | select(.state != "SUCCESS" and .state != "SKIPPED" and .state != "NEUTRAL" and .state != "CANCELLED")
+              | select((.name | test("Auto PR Codex Fix|Autofix PR until checks are green|PR Autofix Self-hosted")) | not)' \
+            > codex-output/blocking-checks.jsonl
+
+          QUERY='query($owner:String!, $repo:String!, $number:Int!) { repository(owner:$owner, name:$repo) { pullRequest(number:$number) { reviewThreads(first:100) { nodes { isResolved path line comments(first:20) { nodes { author { login } body createdAt url } } } } } } } }'
+
+          gh api graphql \
+            -f owner="${GITHUB_REPOSITORY_OWNER}" \
+            -f repo="${GITHUB_REPOSITORY#*/}" \
+            -F number="$PR_NUMBER" \
+            -f query="$QUERY" \
+            | jq -c '.data.repository.pullRequest.reviewThreads.nodes[]?
+              | select(.isResolved == false)
+              | {
+                  path,
+                  line,
+                  comments: [
+                    .comments.nodes[] | {
+                      author: .author.login,
+                      createdAt,
+                      url,
+                      body
+                    }
+                  ]
+                }' \
+            > codex-output/unresolved-review-threads.jsonl
+
+          BLOCKING_CHECKS_COUNT="$(wc -l < codex-output/blocking-checks.jsonl | tr -d ' ')"
+          UNRESOLVED_REVIEW_COUNT="$(wc -l < codex-output/unresolved-review-threads.jsonl | tr -d ' ')"
+
+          echo "Blocking external checks: $BLOCKING_CHECKS_COUNT"
+          echo "Unresolved review threads: $UNRESOLVED_REVIEW_COUNT"
+
+          if [ "$BLOCKING_CHECKS_COUNT" -eq 0 ] && [ "$UNRESOLVED_REVIEW_COUNT" -eq 0 ]; then
+            echo "No external blockers remain after no-op. Leaving workflow successful."
+            exit 0
+          fi
+
+          cp "$HANDOFF" "$AGGRESSIVE_HANDOFF"
+
+          {
+            echo
+            echo "## HARD NO-OP RETRY"
+            echo
+            echo "The previous Codex pass produced NO code changes, but this PR still has blocking checks or unresolved review threads."
+            echo "You must make a minimal commit-worthy code/test/config change on the current PR branch, or explicitly fix the stale committed artifacts causing review failures."
+            echo
+            echo "Rules:"
+            echo "- Do not exit without changes while blockers below remain."
+            echo "- Prioritize unresolved review threads and failing external checks."
+            echo "- Do not edit main/master."
+            echo "- Do not commit codex-output, codex-task-handoff files, or .autofix/context artifacts."
+            echo "- Keep the patch minimal and limited to the PR."
+            echo
+            echo "### Blocking external checks"
+            if [ -s codex-output/blocking-checks.jsonl ]; then
+              cat codex-output/blocking-checks.jsonl
+            else
+              echo "None."
+            fi
+            echo
+            echo "### Unresolved review threads"
+            if [ -s codex-output/unresolved-review-threads.jsonl ]; then
+              cat codex-output/unresolved-review-threads.jsonl
+            else
+              echo "None."
+            fi
+          } >> "$AGGRESSIVE_HANDOFF"
+
+          echo "Running aggressive no-op retry with blocker context..."
+
+          set +e
+          codex exec --full-auto \
+            --output-last-message "codex-output/codex-result-pr-${PR_NUMBER}-retry-noop.md" \
+            < "$AGGRESSIVE_HANDOFF" \
+            2>&1 | tee "codex-output/codex-cli-pr-${PR_NUMBER}-retry-noop.log"
+          CODEX_RETRY_EXIT="${PIPESTATUS[0]}"
+          set -e
+
+          echo "$CODEX_RETRY_EXIT" > "codex-output/codex-retry-exit-code.txt"
+
+          if [ "$CODEX_RETRY_EXIT" -ne 0 ]; then
+            echo "::error::Codex aggressive retry exited with code $CODEX_RETRY_EXIT"
+            exit "$CODEX_RETRY_EXIT"
+          fi
+
+          git status --porcelain=v1 -- . ':!codex-output' ':!codex-task-handoff-*.md' ':!.autofix' > codex-output/noop-status-after-retry.txt
+
+          if [ ! -s codex-output/noop-status-after-retry.txt ]; then
+            {
+              echo "Codex made no code changes even after aggressive retry."
+              echo "Blocking external checks: $BLOCKING_CHECKS_COUNT"
+              echo "Unresolved review threads: $UNRESOLVED_REVIEW_COUNT"
+              echo
+              echo "Blocking checks:"
+              cat codex-output/blocking-checks.jsonl
+              echo
+              echo "Unresolved review threads:"
+              cat codex-output/unresolved-review-threads.jsonl
+            } > codex-output/noop-blockers.txt
+
+            cat codex-output/noop-blockers.txt
+            echo "::error::Codex no-op while blockers remain. See codex-output/noop-blockers.txt"
+            exit 1
+          fi
+
+          echo "Aggressive retry produced changes:"
+          cat codex-output/noop-status-after-retry.txt
+
       - name: Validate scope of changed files
         if: steps.handoff.outputs.should_run == 'true' && steps.guard.outputs.should_continue == 'true'
         env:
