@@ -559,7 +559,7 @@ jobs:
               | select((.name | test("Auto PR Codex Fix|Autofix PR until checks are green|PR Autofix Self-hosted")) | not)' \
             > codex-output/blocking-checks.jsonl
 
-          QUERY='query($owner:String!, $repo:String!, $number:Int!) { repository(owner:$owner, name:$repo) { pullRequest(number:$number) { reviewThreads(first:100) { nodes { isResolved path line comments(first:20) { nodes { author { login } body createdAt url } } } } } } } }'
+          QUERY='query($owner:String!, $repo:String!, $number:Int!) { repository(owner:$owner, name:$repo) { pullRequest(number:$number) { reviewThreads(first:100) { nodes { isResolved path line comments(first:20) { nodes { author { login } body createdAt url } } } } } } }'
 
           gh api graphql \
             -f owner="${GITHUB_REPOSITORY_OWNER}" \
