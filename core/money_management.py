@@ -51,7 +51,8 @@ class RoserpinaMoneyManagement:
     # =========================================================
     # SAFE HELPERS
     # =========================================================
-    def _safe_float(self, value: Any, default: float = 0.0) -> float:
+    @staticmethod
+    def _safe_float(value: Any, default: float = 0.0) -> float:
         default = safe_float(default, 0.0)
         if not math.isfinite(default):
             default = 0.0
