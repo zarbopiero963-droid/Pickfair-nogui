@@ -8,11 +8,10 @@ name: Auto PR Codex Supervisor
         required: true
         type: string
       max_reruns:
-        description: "Max automatic reruns per PR head"
+        description: "Maximum Auto PR Codex Fix reruns"
         required: false
         default: "3"
         type: string
-
   workflow_run:
     workflows: ["Auto PR Codex Fix"]
     types: [completed]
