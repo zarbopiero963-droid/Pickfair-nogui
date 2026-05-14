@@ -155,20 +155,6 @@ def test_green_up_rejects_nonfinite(
 
 
 @pytest.mark.unit
-def test_engine_rejects_bad_comm() -> None:
-    """Engine should reject non-finite commission at construction."""
-    with pytest.raises(ValueError):
-        PnLEngine(commission_pct=float("nan")).calculate_position_pnl(
-            market_id="1.1",
-            selection_id=1,
-            side="BACK",
-            entry_price=2.0,
-            exit_price=2.2,
-            size=10.0,
-        )
-
-
-@pytest.mark.unit
 @pytest.mark.parametrize("commission_pct", [float("nan"), float("inf"), float("-inf")])
 def test_engine_rejects_comm_pct(commission_pct: float) -> None:
     """Explicit commission override should reject non-finite values."""
