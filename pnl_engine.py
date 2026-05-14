@@ -22,6 +22,7 @@ class PnLResult:
     net_pnl: float
 
     def to_dict(self) -> Dict[str, Any]:
+        """Return this PnL result as a plain dictionary."""
         return asdict(self)
 
 
@@ -44,6 +45,7 @@ class PnLEngine:
     """
 
     def __init__(self, commission_pct: float = 4.5):
+        """Initialize the engine with a finite default commission percentage."""
         self.commission_pct = self._finite_float(commission_pct, default=0.0)
 
     # =========================================================
@@ -51,10 +53,12 @@ class PnLEngine:
     # =========================================================
     @staticmethod
     def _safe_side(side: Any) -> str:
+        """Normalize a user supplied side value."""
         return safe_side(side)
 
     @staticmethod
     def _finite_float(value: Any, *, default: float = 0.0) -> float:
+        """Convert a numeric input to float and reject NaN or infinity."""
         converted = float(value if value not in (None, "") else default)
         if not math.isfinite(converted):
             raise ValueError("non-finite numeric input")
@@ -67,12 +71,14 @@ class PnLEngine:
         *,
         preview_only: bool = False,
     ) -> float:
+        """Calculate commission only on positive gross PnL."""
         pct = self._resolve_policy_commission_pct(commission_pct, preview_only=preview_only)
         if gross_pnl <= 0:
             return 0.0
         return gross_pnl * (pct / 100.0)
 
     def _resolve_policy_commission_pct(self, commission_pct: Optional[float], *, preview_only: bool = False) -> float:
+        """Resolve and enforce a finite commission percentage for helper calculations."""
         pct = self._finite_float(
             self.commission_pct if commission_pct is None else commission_pct,
             default=0.0,
@@ -281,6 +287,7 @@ class PnLEngine:
         current_price: float,
         size: float,
     ) -> float:
+        """Return gross mark-to-market PnL for a preview-only position snapshot."""
         result = self.calculate_position_pnl(
             market_id="",
             selection_id=0,
