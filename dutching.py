@@ -22,6 +22,25 @@ def _d(value: Any, default: str = "0") -> Decimal:
         return Decimal(default)
 
 
+def _is_non_finite_numeric_literal(value: Any) -> bool:
+    """Return True when value is an explicit NaN/Infinity input."""
+    try:
+        text = str(value).replace(",", ".").strip().lower()
+    except Exception:
+        return False
+    return text in {
+        "nan",
+        "+nan",
+        "-nan",
+        "inf",
+        "+inf",
+        "-inf",
+        "infinity",
+        "+infinity",
+        "-infinity",
+    }
+
+
 def _round_step(value: Decimal, step: Decimal = TWOPLACES) -> Decimal:
     if step <= 0:
         return value
@@ -153,8 +172,20 @@ def calculate_dutching_stakes(
     - avg_net_profit
     """
     odds_d = [_d(x, "0") for x in (odds or [])]
+    total_stake_is_non_finite = _is_non_finite_numeric_literal(total_stake)
     total_stake_d = _d(total_stake, "0")
     commission_d = _resolve_policy_commission_pct(commission)
+
+    if total_stake_is_non_finite:
+        return {
+            "stakes": [],
+            "profits": [],
+            "net_profits": [],
+            "book_pct": 0.0,
+            "avg_profit": 0.0,
+            "avg_net_profit": 0.0,
+            "error": "Invalid stake",
+        }
 
     if not odds_d or total_stake_d <= Decimal("0"):
         return {
