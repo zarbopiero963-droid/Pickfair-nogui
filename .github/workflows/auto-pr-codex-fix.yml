@@ -465,7 +465,7 @@ jobs:
           {
             echo
             echo "## Rich PR context"
-            cat "$RUNNER_TEMP/autofix-context/codex-prompt-context.txt" 2>/dev/null || true
+            cat ".autofix/context/codex-prompt-context.txt" 2>/dev/null || true
           } >> "codex-task-handoff-pr-${PR_NUMBER}.md"
 
           echo "Copied enriched handoff into workspace:"
@@ -503,6 +503,8 @@ jobs:
         if: steps.handoff.outputs.should_run == 'true' && steps.guard.outputs.should_continue == 'true'
         env:
           PR_NUMBER: ${{ steps.handoff.outputs.pr_number }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          MAX_STALE_NOOP_RETRIGGERS: "1"
         run: |
           set -euo pipefail
 
@@ -638,8 +640,40 @@ jobs:
             } > codex-output/noop-blockers.txt
 
             cat codex-output/noop-blockers.txt
-            echo "::error::Codex no-op while blockers remain. See codex-output/noop-blockers.txt"
-            exit 1
+
+            if [ "${DRY_RUN:-false}" = "true" ]; then
+              echo "::error::Dry run: Codex no-op with blockers; would create one empty retrigger commit."
+              exit 1
+            fi
+
+            CURRENT_BRANCH="$(git branch --show-current || true)"
+            if [ -z "$CURRENT_BRANCH" ] || [ "$CURRENT_BRANCH" = "main" ] || [ "$CURRENT_BRANCH" = "master" ]; then
+              echo "::error::Refusing empty retrigger commit on unsafe branch: ${CURRENT_BRANCH:-unknown}"
+              exit 1
+            fi
+
+            RETRIGGER_STATE_DIR="$HOME/pickfair-auto-state/pr-$PR_NUMBER"
+            mkdir -p "$RETRIGGER_STATE_DIR"
+            RETRIGGER_COUNT_FILE="$RETRIGGER_STATE_DIR/stale-noop-retrigger.count"
+            RETRIGGER_COUNT="$(cat "$RETRIGGER_COUNT_FILE" 2>/dev/null | tr -dc '0-9' || true)"
+            RETRIGGER_COUNT="${RETRIGGER_COUNT:-0}"
+
+            echo "Stale no-op retrigger count: $RETRIGGER_COUNT / $MAX_STALE_NOOP_RETRIGGERS"
+
+            if [ "$RETRIGGER_COUNT" -ge "$MAX_STALE_NOOP_RETRIGGERS" ]; then
+              echo "::error::Codex no-op while blockers remain. Empty-check retrigger budget exhausted. See codex-output/noop-blockers.txt"
+              exit 1
+            fi
+
+            NEXT_RETRIGGER_COUNT="$((RETRIGGER_COUNT + 1))"
+            echo "$NEXT_RETRIGGER_COUNT" > "$RETRIGGER_COUNT_FILE"
+
+            git commit --allow-empty -m "Retrigger PR checks after no-op blocker scan"
+            git push origin "$CURRENT_BRANCH"
+
+            echo "Pushed empty retrigger commit on $CURRENT_BRANCH."
+            echo "This intentionally retriggers external PR checks once, then stops if blockers remain."
+            exit 0
           fi
 
           echo "Aggressive retry produced changes:"
