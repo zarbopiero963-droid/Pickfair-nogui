@@ -619,8 +619,18 @@ jobs:
 
           if [ ! -s codex-output/noop-status-after-retry.txt ]; then
             echo "Codex retry still produced no code changes. Running deterministic fallback for known numeric-guardrail blockers..."
-            if ! python3 .github/scripts/autofix_known_numeric_guardrails.py | tee codex-output/deterministic-fallback.log; then
+            FALLBACK_SCRIPT=".github/scripts/autofix_known_numeric_guardrails.py"
+            if [ ! -f "$FALLBACK_SCRIPT" ]; then
+              echo "Fallback script not present on PR branch; loading it from origin/main."
+              git fetch --no-tags origin main
+              FALLBACK_SCRIPT="$RUNNER_TEMP/autofix_known_numeric_guardrails.py"
+              git show origin/main:.github/scripts/autofix_known_numeric_guardrails.py > "$FALLBACK_SCRIPT"
+              chmod +x "$FALLBACK_SCRIPT"
+            fi
+
+            if ! python3 "$FALLBACK_SCRIPT" | tee codex-output/deterministic-fallback.log; then
               echo "::error::Deterministic fallback failed."
+              cat codex-output/deterministic-fallback.log || true
               exit 1
             fi
             git status --porcelain=v1 -- . ':!codex-output' ':!codex-task-handoff-*.md' ':!.autofix' > codex-output/noop-status-after-retry.txt
