@@ -273,6 +273,36 @@ def _maybe_equalize_stakes(
     )
 
 
+def _calculate_dutching_from_inputs(
+    odds_d: List[Decimal],
+    total_stake_d: Decimal,
+    commission: float,
+    *,
+    equalize: bool,
+    commission_aware: bool,
+) -> Dict[str, Any]:
+    inv_sum = _validated_inverse_odds_sum(odds_d)
+    if inv_sum is None:
+        return _empty_dutching_result("Invalid inverse odds sum")
+
+    commission_d = _resolve_policy_commission_pct(commission)
+    stakes = _initial_dutching_stakes(odds_d, total_stake_d, inv_sum)
+    stakes = _maybe_equalize_stakes(
+        stakes=stakes,
+        odds_d=odds_d,
+        total_stake_d=total_stake_d,
+        commission_d=commission_d,
+        equalize=equalize,
+        commission_aware=commission_aware,
+    )
+    profits, net_profits = _dutching_outcome_profits(
+        stakes=stakes,
+        odds_d=odds_d,
+        commission_d=commission_d,
+    )
+    return _build_dutching_result(stakes, profits, net_profits, inv_sum)
+
+
 def calculate_dutching_stakes(
     odds: Sequence[Any],
     total_stake: Any,
@@ -304,28 +334,14 @@ def calculate_dutching_stakes(
     )
     if preflight_result is not None:
         return preflight_result
-
-    inv_sum = _validated_inverse_odds_sum(odds_d)
-    if inv_sum is None:
-        return _empty_dutching_result("Invalid inverse odds sum")
-
-    commission_d = _resolve_policy_commission_pct(commission)
-    stakes = _initial_dutching_stakes(odds_d, total_stake_d, inv_sum)
-    stakes = _maybe_equalize_stakes(
-        stakes=stakes,
+    return _calculate_dutching_from_inputs(
         odds_d=odds_d,
         total_stake_d=total_stake_d,
-        commission_d=commission_d,
+        commission=commission,
         equalize=equalize,
         commission_aware=commission_aware,
     )
 
-    profits, net_profits = _dutching_outcome_profits(
-        stakes=stakes,
-        odds_d=odds_d,
-        commission_d=commission_d,
-    )
-    return _build_dutching_result(stakes, profits, net_profits, inv_sum)
 
 def _normalize_selection_side(selection: Dict[str, Any]) -> str:
     item = selection or {}
