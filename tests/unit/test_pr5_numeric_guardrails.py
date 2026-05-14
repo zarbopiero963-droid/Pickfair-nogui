@@ -24,12 +24,12 @@ def test_mm_inputs_fail_closed() -> None:
     )
     if decision.approved:
         pytest.fail("decision must be rejected for non-finite inputs")
-    if decision.recommended_stake != 0.0:
+    if decision.recommended_stake:
         pytest.fail("recommended stake must be zero for rejected decisions")
 
 
 @pytest.mark.unit
-def test_dutching_rejects_non_finite_values() -> None:
+def test_dutching_rejects_nonfinite_vals() -> None:
     """Dutching should fail closed on non-finite odds and stake."""
     bad_odds = calculate_dutching_stakes([2.0, float("inf")], 100.0)
     bad_stake = calculate_dutching_stakes([2.0, 3.0], float("nan"))
@@ -53,7 +53,7 @@ def test_dutching_rejects_non_finite_values() -> None:
         ["-INF", "2.0"],
     ],
 )
-def test_dutching_rejects_non_finite_strings(odds: list[str]) -> None:
+def test_dutching_rejects_nonfinite_str(odds: list[str]) -> None:
     """Dutching should reject textual NaN/Inf odds variants."""
     result = calculate_dutching_stakes(cast(list[float], odds), cast(float, "100.0"))
     if result["stakes"] != []:
@@ -64,7 +64,7 @@ def test_dutching_rejects_non_finite_strings(odds: list[str]) -> None:
 
 @pytest.mark.unit
 @pytest.mark.parametrize("stake", ["NaN", "nan", " INF ", "+infinity", "-INF"])
-def test_dutching_rejects_non_finite_stake_text(stake: str) -> None:
+def test_dutching_rejects_nonfinite_stk(stake: str) -> None:
     """Dutching should reject textual NaN/Inf stake variants."""
     result = calculate_dutching_stakes(cast(list[float], ["2.0", "3.0"]), cast(float, stake))
     if result["stakes"] != []:
@@ -72,7 +72,7 @@ def test_dutching_rejects_non_finite_stake_text(stake: str) -> None:
 
 
 @pytest.mark.unit
-def test_dutching_accepts_normalized_text() -> None:
+def test_dutching_accepts_norm_text() -> None:
     """Dutching should normalize comma/space formatted inputs."""
     result = calculate_dutching_stakes(
         cast(list[float], ["2,0", " 3,0 "]),
@@ -85,7 +85,7 @@ def test_dutching_accepts_normalized_text() -> None:
 
 
 @pytest.mark.unit
-def test_dutching_allocation_stays_valid() -> None:
+def test_dutching_allocation_valid() -> None:
     """Valid dutching allocation should still sum to total stake."""
     result = calculate_dutching_stakes([2.0, 4.0], 100.0, commission=0.0)
     if len(result["stakes"]) != 2:
@@ -95,7 +95,7 @@ def test_dutching_allocation_stays_valid() -> None:
 
 
 @pytest.mark.unit
-def test_pnl_rejects_non_finite_preview() -> None:
+def test_pnl_rejects_nonfinite_prev() -> None:
     """Position preview should reject non-finite entry values."""
     engine = PnLEngine(commission_pct=4.5)
     with pytest.raises(ValueError):
@@ -118,7 +118,7 @@ def test_pnl_rejects_non_finite_preview() -> None:
         (2.0, float("-inf")),
     ],
 )
-def test_settlement_rejects_non_finite(price: float, size: float) -> None:
+def test_settlement_rejects_nonfinite(price: float, size: float) -> None:
     """Settlement calculation should reject non-finite numbers."""
     engine = PnLEngine(commission_pct=4.5)
     with pytest.raises(ValueError):
@@ -134,7 +134,7 @@ def test_settlement_rejects_non_finite(price: float, size: float) -> None:
         (1.5, 1.0, float("-inf")),
     ],
 )
-def test_green_up_rejects_non_finite(
+def test_green_up_rejects_nonfinite(
     entry_price: float,
     entry_size: float,
     hedge_price: float,
@@ -151,7 +151,7 @@ def test_green_up_rejects_non_finite(
 
 
 @pytest.mark.unit
-def test_engine_rejects_non_finite_commission() -> None:
+def test_engine_rejects_nonfinite_comm() -> None:
     """Engine should reject non-finite commission during computation."""
     with pytest.raises(ValueError):
         PnLEngine(commission_pct=float("nan")).calculate_position_pnl(
