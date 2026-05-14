@@ -2,7 +2,7 @@
 
 from typing import cast
 
-import pytest
+import pytest  # type: ignore[reportMissingImports]
 
 from core.money_management import RoserpinaMoneyManagement
 from core.system_state import RoserpinaConfig
@@ -29,7 +29,7 @@ def test_mm_inputs_fail_closed() -> None:
 
 
 @pytest.mark.unit
-def test_dutching_rejects_nonfinite_vals() -> None:
+def test_dutching_rejects_nonfinite() -> None:
     """Dutching should fail closed on non-finite odds and stake."""
     bad_odds = calculate_dutching_stakes([2.0, float("inf")], 100.0)
     bad_stake = calculate_dutching_stakes([2.0, 3.0], float("nan"))
@@ -53,7 +53,7 @@ def test_dutching_rejects_nonfinite_vals() -> None:
         ["-INF", "2.0"],
     ],
 )
-def test_dutching_rejects_nonfinite_str(odds: list[str]) -> None:
+def test_dutching_rejects_bad_str(odds: list[str]) -> None:
     """Dutching should reject textual NaN/Inf odds variants."""
     result = calculate_dutching_stakes(cast(list[float], odds), cast(float, "100.0"))
     if result["stakes"] != []:
@@ -64,7 +64,7 @@ def test_dutching_rejects_nonfinite_str(odds: list[str]) -> None:
 
 @pytest.mark.unit
 @pytest.mark.parametrize("stake", ["NaN", "nan", " INF ", "+infinity", "-INF"])
-def test_dutching_rejects_nonfinite_stk(stake: str) -> None:
+def test_dutching_rejects_bad_stake(stake: str) -> None:
     """Dutching should reject textual NaN/Inf stake variants."""
     result = calculate_dutching_stakes(cast(list[float], ["2.0", "3.0"]), cast(float, stake))
     if result["stakes"] != []:
@@ -118,7 +118,7 @@ def test_pnl_rejects_nonfinite_prev() -> None:
         (2.0, float("-inf")),
     ],
 )
-def test_settlement_rejects_nonfinite(price: float, size: float) -> None:
+def test_settlement_rejects_bad_num(price: float, size: float) -> None:
     """Settlement calculation should reject non-finite numbers."""
     engine = PnLEngine(commission_pct=4.5)
     with pytest.raises(ValueError):
@@ -151,7 +151,7 @@ def test_green_up_rejects_nonfinite(
 
 
 @pytest.mark.unit
-def test_engine_rejects_nonfinite_comm() -> None:
+def test_engine_rejects_bad_comm() -> None:
     """Engine should reject non-finite commission during computation."""
     with pytest.raises(ValueError):
         PnLEngine(commission_pct=float("nan")).calculate_position_pnl(
