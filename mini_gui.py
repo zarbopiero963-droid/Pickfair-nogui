@@ -6,27 +6,34 @@ try:
     from tkinter import ttk, messagebox
 except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
     class _DummyWidget:
-        def __init__(self, *args, **kwargs):
+        @staticmethod
+        def __init__(*args, **kwargs):
             _ = args, kwargs
 
-        def pack(self, *args, **kwargs):
+        @staticmethod
+        def pack(*args, **kwargs):
             return None
 
-        def grid(self, *args, **kwargs):
+        @staticmethod
+        def grid(*args, **kwargs):
             return None
 
-        def place(self, *args, **kwargs):
+        @staticmethod
+        def place(*args, **kwargs):
             return None
 
-        def configure(self, *args, **kwargs):
+        @staticmethod
+        def configure(*args, **kwargs):
             return None
 
         config = configure
 
-        def bind(self, *args, **kwargs):
+        @staticmethod
+        def bind(*args, **kwargs):
             return None
 
-        def destroy(self):
+        @staticmethod
+        def destroy():
             return None
 
     class _DummyVar:

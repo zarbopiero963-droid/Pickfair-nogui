@@ -24,7 +24,7 @@ def test_mm_inputs_fail_closed() -> None:
     )
     if decision.approved:
         pytest.fail("decision must be rejected for non-finite inputs")
-    assert decision.recommended_stake == pytest.approx(0.0), "recommended stake must be exactly zero"
+    assert decision.recommended_stake == 0.0, "recommended stake must be exactly zero"
 
 
 @pytest.mark.unit
@@ -167,7 +167,7 @@ def test_green_up_rejects_nonfinite(
 
 @pytest.mark.unit
 def test_engine_rejects_bad_comm() -> None:
-    """Engine should reject non-finite commission during computation."""
+    """Engine should reject non-finite commission at construction."""
     with pytest.raises(ValueError):
         PnLEngine(commission_pct=float("nan")).calculate_position_pnl(
             market_id="1.1",
