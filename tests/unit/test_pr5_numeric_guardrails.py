@@ -127,6 +127,22 @@ def test_settlement_rejects_bad_num(price: float, size: float) -> None:
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
+    "price,size",
+    [
+        (float("nan"), 1.0),
+        (2.0, float("inf")),
+        (2.0, float("-inf")),
+    ],
+)
+def test_settlement_rejects_bad_num_lay(price: float, size: float) -> None:
+    """Settlement calculation should reject non-finite numbers for LAY side too."""
+    engine = PnLEngine(commission_pct=4.5)
+    with pytest.raises(ValueError):
+        engine.calculate_settlement_pnl(side="LAY", price=price, size=size, won=False)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
     "entry_price,entry_size,hedge_price",
     [
         (float("nan"), 1.0, 2.0),
@@ -193,7 +209,7 @@ def test_pnl_valid_output_unchanged() -> None:
         exit_price=3.0,
         size=10.0,
     )
-    if result.gross_pnl != 5.0:
+    if result.gross_pnl != pytest.approx(5.0):
         pytest.fail("unexpected gross pnl")
     if result.commission_amount != pytest.approx(0.225):
         pytest.fail("unexpected commission amount")
