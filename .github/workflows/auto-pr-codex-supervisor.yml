@@ -31,13 +31,11 @@ jobs:
   supervise:
     name: Rerun Auto PR Codex Fix if blockers remain
     runs-on: self-hosted
-
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'failure' }}
 
     env:
       GH_TOKEN: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
-      EVENT_NAME: ${{ github.event_name }}
       SOURCE_RUN_ID: ${{ github.event.workflow_run.id || '' }}
       INPUT_PR_NUMBER: ${{ github.event.inputs.pr_number || '' }}
       MAX_RERUNS: ${{ github.event.inputs.max_reruns || '3' }}
@@ -77,42 +75,25 @@ jobs:
           set -euo pipefail
           mkdir -p supervisor-output
 
+          gh pr view "$PR_NUMBER" \
+            --json headRefOid,statusCheckRollup \
+            --jq '.headRefOid' \
+            > supervisor-output/head-sha.txt
+
+          HEAD_SHA="$(cat supervisor-output/head-sha.txt)"
+
           gh pr view "$PR_NUMBER" --json statusCheckRollup \
             --jq '.statusCheckRollup[]?
               | {
                   name: (.name // .context // ""),
-                  workflow: (.workflowName // ""),
                   state: (.conclusion // .state // .status // ""),
                   url: (.detailsUrl // .targetUrl // "")
                 }
               | select(.state != "SUCCESS" and .state != "SKIPPED" and .state != "NEUTRAL" and .state != "CANCELLED")
-              | select(((.name + " " + .workflow) | test("Auto PR Codex Fix|Auto PR Codex Supervisor|Autofix PR until checks are green|PR Autofix Self-hosted")) | not)' \
+              | select((.name | test("Auto PR Codex Fix|Auto PR Codex Supervisor")) | not)' \
             > supervisor-output/blocking-checks.jsonl
 
-          QUERY="$(cat <<'GRAPHQL'
-query($owner:String!, $repo:String!, $number:Int!) {
-  repository(owner:$owner, name:$repo) {
-    pullRequest(number:$number) {
-      reviewThreads(first:100) {
-        nodes {
-          isResolved
-          path
-          line
-          comments(first:20) {
-            nodes {
-              author { login }
-              body
-              createdAt
-              url
-            }
-          }
-        }
-      }
-    }
-  }
-}
-GRAPHQL
-)"
+          QUERY='query($owner:String!, $repo:String!, $number:Int!) { repository(owner:$owner, name:$repo) { pullRequest(number:$number) { reviewThreads(first:100) { nodes { isResolved path line comments(first:20) { nodes { author { login } body createdAt url } } } } } } }'
 
           gh api graphql \
             -f owner="${GITHUB_REPOSITORY_OWNER}" \
@@ -138,61 +119,74 @@ GRAPHQL
           BLOCKING_CHECKS_COUNT="$(wc -l < supervisor-output/blocking-checks.jsonl | tr -d ' ')"
           UNRESOLVED_REVIEW_COUNT="$(wc -l < supervisor-output/unresolved-review-threads.jsonl | tr -d ' ')"
 
-          echo "blocking_checks=$BLOCKING_CHECKS_COUNT" >> "$GITHUB_OUTPUT"
-          echo "unresolved_reviews=$UNRESOLVED_REVIEW_COUNT" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          echo "blocking_checks_count=$BLOCKING_CHECKS_COUNT" >> "$GITHUB_OUTPUT"
+          echo "unresolved_review_count=$UNRESOLVED_REVIEW_COUNT" >> "$GITHUB_OUTPUT"
 
-          echo "Blocking external checks: $BLOCKING_CHECKS_COUNT"
-          cat supervisor-output/blocking-checks.jsonl || true
-          echo
+          echo "Head SHA: $HEAD_SHA"
+          echo "Blocking checks: $BLOCKING_CHECKS_COUNT"
           echo "Unresolved review threads: $UNRESOLVED_REVIEW_COUNT"
-          cat supervisor-output/unresolved-review-threads.jsonl || true
 
-      - name: Stop if no blockers remain
-        if: steps.blockers.outputs.blocking_checks == '0' && steps.blockers.outputs.unresolved_reviews == '0'
+          if [ "$BLOCKING_CHECKS_COUNT" -gt 0 ]; then
+            echo "Blocking checks:"
+            cat supervisor-output/blocking-checks.jsonl
+          fi
+
+          if [ "$UNRESOLVED_REVIEW_COUNT" -gt 0 ]; then
+            echo "Unresolved review threads:"
+            cat supervisor-output/unresolved-review-threads.jsonl
+          fi
+
+      - name: Stop if no blockers
+        if: steps.blockers.outputs.blocking_checks_count == '0' && steps.blockers.outputs.unresolved_review_count == '0'
         run: |
-          echo "No external blockers remain. Supervisor stops."
+          echo "No blockers remain. Supervisor will not rerun Auto PR Codex Fix."
 
-      - name: Check rerun budget
-        id: budget
-        if: steps.blockers.outputs.blocking_checks != '0' || steps.blockers.outputs.unresolved_reviews != '0'
+      - name: Guard max reruns
+        id: guard
+        if: steps.blockers.outputs.blocking_checks_count != '0' || steps.blockers.outputs.unresolved_review_count != '0'
         env:
           PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+          HEAD_SHA: ${{ steps.blockers.outputs.head_sha }}
         run: |
           set -euo pipefail
 
-          HEAD_SHA="$(gh pr view "$PR_NUMBER" --json headRefOid --jq .headRefOid)"
-          STATE_DIR="$HOME/pickfair-auto-state/pr-$PR_NUMBER/supervisor"
+          STATE_DIR="$HOME/pickfair-auto-state/supervisor/pr-$PR_NUMBER"
           mkdir -p "$STATE_DIR"
 
-          COUNT_FILE="$STATE_DIR/${HEAD_SHA}.count"
-          COUNT="0"
+          COUNT_FILE="$STATE_DIR/${HEAD_SHA}.reruns"
+          CURRENT_COUNT="0"
 
           if [ -f "$COUNT_FILE" ]; then
-            COUNT="$(cat "$COUNT_FILE")"
+            CURRENT_COUNT="$(cat "$COUNT_FILE" | tr -dc '0-9' || true)"
+            CURRENT_COUNT="${CURRENT_COUNT:-0}"
           fi
 
-          echo "Current supervisor reruns for PR #$PR_NUMBER head $HEAD_SHA: $COUNT / $MAX_RERUNS"
+          echo "Current supervisor reruns for PR $PR_NUMBER head $HEAD_SHA: $CURRENT_COUNT"
+          echo "Max reruns: $MAX_RERUNS"
 
-          if [ "$COUNT" -ge "$MAX_RERUNS" ]; then
-            echo "::error::Max supervisor reruns reached for PR #$PR_NUMBER head $HEAD_SHA."
+          if [ "$CURRENT_COUNT" -ge "$MAX_RERUNS" ]; then
+            echo "::error::Max supervisor reruns reached for PR $PR_NUMBER head $HEAD_SHA."
             echo "should_rerun=false" >> "$GITHUB_OUTPUT"
             exit 1
           fi
 
-          NEXT_COUNT="$((COUNT + 1))"
+          NEXT_COUNT="$((CURRENT_COUNT + 1))"
           echo "$NEXT_COUNT" > "$COUNT_FILE"
 
           echo "should_rerun=true" >> "$GITHUB_OUTPUT"
-          echo "Supervisor rerun budget consumed: $NEXT_COUNT / $MAX_RERUNS"
+          echo "next_count=$NEXT_COUNT" >> "$GITHUB_OUTPUT"
 
-      - name: Dispatch Auto PR Codex Fix again
-        if: steps.budget.outputs.should_rerun == 'true'
+      - name: Rerun Auto PR Codex Fix
+        if: steps.guard.outputs.should_rerun == 'true'
         env:
           PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
         run: |
           set -euo pipefail
 
           echo "Rerunning Auto PR Codex Fix for PR #$PR_NUMBER"
+          echo "Supervisor rerun number: ${{ steps.guard.outputs.next_count }}"
+
           gh workflow run auto-pr-codex-fix.yml \
             -f pr_number="$PR_NUMBER" \
             -f force=true \
