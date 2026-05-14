@@ -130,7 +130,43 @@ jobs:
               return;
             }
 
-            core.setFailed(`No codex-pr-${prNumber}-task-handoff artifact found. Run PR Telegram Notify manually first for PR ${prNumber}.`);
+            core.warning(`No codex-pr-${prNumber}-task-handoff artifact found. Generating fallback handoff for PR ${prNumber}.`);
+
+            const pr = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: Number(prNumber),
+            });
+
+            const fallback = [
+              "# Codex PR task handoff",
+              "",
+              `PR: #${prNumber}`,
+              `Branch: ${pr.data.head.ref}`,
+              `Head SHA: ${pr.data.head.sha}`,
+              `Base branch: ${pr.data.base.ref}`,
+              "Status: REPAIR REQUIRED / FALLBACK HANDOFF",
+              "",
+              "This fallback handoff was generated because no PR Telegram Notify artifact was found.",
+              "The Auto PR Codex Fix workflow will append rich PR context before invoking Codex.",
+              "",
+              "Instructions:",
+              "- Repair only the current PR.",
+              "- Read the rich PR context appended below.",
+              "- Prioritize failing checks, review comments, and bot feedback.",
+              "- Keep changes minimal.",
+              "- Run focused tests when possible.",
+              "",
+            ].join("\n");
+
+            const fallbackPath = path.join(
+              handoffDir,
+              `codex-pr-${prNumber}-task-handoff-fallback.md`
+            );
+
+            fs.writeFileSync(fallbackPath, fallback, "utf8");
+            core.info(`Generated fallback handoff: ${fallbackPath}`);
+            return;
 
       - name: Unzip manual handoff artifact
         if: ${{ github.event_name == 'workflow_dispatch' }}
