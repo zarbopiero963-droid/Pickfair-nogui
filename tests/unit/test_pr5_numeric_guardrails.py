@@ -61,6 +61,7 @@ def test_dutching_rejects_bad_stake(stake: str) -> None:
     """Dutching should reject textual NaN/Inf stake variants."""
     result = calculate_dutching_stakes(cast(list[float], ["2.0", "3.0"]), cast(float, stake))
     assert result["stakes"] == [], "expected no stakes for invalid textual stake"
+    assert "Invalid stake" in (result.get("error") or ""), "expected invalid-stake error for textual non-finite values"
 
 
 @pytest.mark.unit
