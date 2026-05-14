@@ -50,6 +50,8 @@ jobs:
       PR_NUMBER_FROM_EVENT: ${{ github.event.pull_request.number }}
       MAX_ROUNDS_FROM_INPUT: ${{ inputs.max_rounds }}
       WAIT_SECONDS_FROM_INPUT: ${{ inputs.wait_seconds }}
+      PENDING_POLL_SECONDS: "60"
+      PENDING_WAIT_SECONDS: "2700"
       FINAL_REVIEW_WAIT_SECONDS: "90"
       CODEX_QUOTA_SLEEP_SECONDS: "18600"
       CODEX_MAX_ATTEMPTS: "3"
@@ -131,7 +133,7 @@ jobs:
             echo "Latest PR head commit message:"
             printf '%s\n' "${LATEST_MSG}"
 
-            if printf '%s\n' "${LATEST_MSG}" | grep -Eq '^(fix: address PR|fix: address final PR review sweep|chore: autofix)'; then
+            if printf '%s\n' "${LATEST_MSG}" | grep -Eq '^(fix: address PR|fix: address final PR review sweep|fix: restore autofix rescue|chore: autofix)'; then
               echo "Self-triggered autofix commit detected; skipping duplicate run."
               echo "skip_autofix=true" >> "$GITHUB_OUTPUT"
               exit 0
@@ -200,6 +202,7 @@ jobs:
         shell: bash
         env:
           PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+          PR_HEAD_REF: ${{ steps.pr.outputs.head_ref }}
         run: |
           set -euo pipefail
 
@@ -240,22 +243,62 @@ jobs:
               return 0
             fi
 
-            jq -r '.[] | select(.bucket == "fail" or .bucket == "pending" or .bucket == "cancel") | "- \(.name): \(.bucket) / \(.state) / \(.description // "")"' .autofix/pr-checks-current.json | head -40
+            jq -r '.[] | select(.bucket == "fail" or .bucket == "cancel" or .state == "FAILURE" or .state == "ACTION_REQUIRED" or .state == "ERROR" or .state == "CANCELLED" or .state == "TIMED_OUT") | "- \(.name): \(.bucket) / \(.state) / \(.description // "")"' .autofix/pr-checks-current.json | head -40
           }
 
           check_green() {
-            gh pr checks "${PR_NUMBER}" \
-              --repo "${REPO}" \
-              --json name,state,bucket,description,link,workflow \
-              > .autofix/pr-checks-current.json || return 1
+            local max_wait="${PENDING_WAIT_SECONDS:-2700}"
+            local poll="${PENDING_POLL_SECONDS:-60}"
+            local elapsed=0
+            local total_count
+            local red_count
+            local pending_count
 
-            echo "Current PR checks:"
-            jq -r '.[] | "- \(.name): \(.bucket) / \(.state) / \(.description // "")"' .autofix/pr-checks-current.json
+            while true; do
+              if ! gh pr checks "${PR_NUMBER}" \
+                --repo "${REPO}" \
+                --json name,state,bucket,description,link,workflow \
+                > .autofix/pr-checks-current.json 2>.autofix/pr-checks-error.log; then
+                cat .autofix/pr-checks-error.log || true
+                return 1
+              fi
 
-            local blockers
-            blockers="$(jq '[.[] | select(.bucket == "fail" or .bucket == "pending" or .bucket == "cancel")] | length' .autofix/pr-checks-current.json)"
+              echo "Current PR checks:"
+              jq -r '.[] | "- \(.name): \(.bucket) / \(.state) / \(.description // "")"' .autofix/pr-checks-current.json
 
-            [ "${blockers}" = "0" ]
+              total_count="$(
+                jq '[.[] | select(.name != "Autofix PR until checks are green") | select((.workflow // "") != "PR Autofix Self-hosted") | select((.bucket // "") != "skipping") | select((.state // "") != "SKIPPED")] | length' .autofix/pr-checks-current.json
+              )"
+
+              red_count="$(
+                jq '[.[] | select(.name != "Autofix PR until checks are green") | select((.workflow // "") != "PR Autofix Self-hosted") | select((.bucket // "") != "skipping") | select((.state // "") != "SKIPPED") | select((.bucket == "fail") or (.bucket == "cancel") or (.state == "FAILURE") or (.state == "ACTION_REQUIRED") or (.state == "ERROR") or (.state == "CANCELLED") or (.state == "TIMED_OUT"))] | length' .autofix/pr-checks-current.json
+              )"
+
+              pending_count="$(
+                jq '[.[] | select(.name != "Autofix PR until checks are green") | select((.workflow // "") != "PR Autofix Self-hosted") | select((.bucket // "") != "skipping") | select((.state // "") != "SKIPPED") | select((.bucket == "pending") or (.state == "QUEUED") or (.state == "IN_PROGRESS") or (.state == "PENDING") or (.state == "WAITING") or (.state == "REQUESTED"))] | length' .autofix/pr-checks-current.json
+              )"
+
+              echo "Check classification: total=${total_count}, red=${red_count}, pending=${pending_count}, elapsed=${elapsed}s"
+
+              if [ "${red_count}" != "0" ]; then
+                echo "Real failing checks found."
+                return 1
+              fi
+
+              if [ "${pending_count}" = "0" ] && [ "${total_count}" != "0" ]; then
+                echo "All non-self checks are green."
+                return 0
+              fi
+
+              if [ "${elapsed}" -ge "${max_wait}" ]; then
+                notify_failed "Only pending/queued/in-progress checks remained for too long; no real failure available for Codex to fix."
+                exit 1
+              fi
+
+              echo "Only pending/queued/in-progress checks. Waiting ${poll}s..."
+              sleep "${poll}"
+              elapsed=$((elapsed + poll))
+            done
           }
 
           notify_ready() {
@@ -508,6 +551,22 @@ jobs:
 
             status_snapshot="$(git status --porcelain)"
 
+            local ahead_count
+            ahead_count="0"
+
+            if git rev-parse "origin/${PR_HEAD_REF}" >/dev/null 2>&1; then
+              ahead_count="$(git rev-list --count "origin/${PR_HEAD_REF}..HEAD" 2>/dev/null || echo 0)"
+            fi
+
+            if [ -z "${status_snapshot}" ] && [ "${ahead_count}" != "0" ]; then
+              echo "Local commits ahead of origin detected: ${ahead_count}"
+              git push origin "HEAD:${PR_HEAD_REF}"
+              local pushed_sha
+              pushed_sha="$(git rev-parse HEAD)"
+              echo "PUSHED_SHA=${pushed_sha}"
+              return 0
+            fi
+
             if [ -z "${status_snapshot}" ]; then
               echo "No repository changes after Codex."
               return 10
@@ -527,6 +586,8 @@ jobs:
 
             if [ "${phase}" = "final" ]; then
               message="fix: address final PR review sweep round ${round}"
+            elif [ "${phase}" = "rescue" ]; then
+              message="fix: restore autofix rescue round ${round}"
             else
               message="fix: address PR ${PR_NUMBER} checks round ${round}"
             fi
@@ -553,6 +614,7 @@ jobs:
 
             git fetch origin "${{ steps.pr.outputs.head_ref }}"
             git checkout -B "${{ steps.pr.outputs.head_ref }}" "origin/${{ steps.pr.outputs.head_ref }}"
+            restore_rescue_patch_if_available
 
             collect_context "${round}-final-review"
             write_final_review_prompt
@@ -598,6 +660,119 @@ jobs:
             exit "${final_push_result}"
           }
 
+
+          save_rescue_patch() {
+            local exit_code="$1"
+            local ts
+            local dir
+            local ahead_count
+            local has_rescue=0
+
+            if [ "${exit_code}" = "0" ]; then
+              return 0
+            fi
+
+            ts="$(date -u +%Y%m%d-%H%M%S)"
+            dir="${HOME}/autofix-rescue/pr-${PR_NUMBER}/${ts}"
+            mkdir -p "${dir}"
+
+            {
+              echo "repo=${REPO}"
+              echo "pr_number=${PR_NUMBER}"
+              echo "branch=${PR_HEAD_REF}"
+              echo "exit_code=${exit_code}"
+              echo "date_utc=${ts}"
+              echo "head=$(git rev-parse HEAD 2>/dev/null || true)"
+              echo "origin_branch=origin/${PR_HEAD_REF}"
+            } > "${dir}/state.txt" || true
+
+            git status --short > "${dir}/git-status.txt" 2>/dev/null || true
+            git diff > "${dir}/worktree.diff" 2>/dev/null || true
+            git diff --cached > "${dir}/staged.diff" 2>/dev/null || true
+
+            ahead_count="0"
+            if git rev-parse "origin/${PR_HEAD_REF}" >/dev/null 2>&1; then
+              ahead_count="$(git rev-list --count "origin/${PR_HEAD_REF}..HEAD" 2>/dev/null || echo 0)"
+              if [ "${ahead_count}" != "0" ]; then
+                git format-patch --stdout "origin/${PR_HEAD_REF}..HEAD" > "${dir}/commits.patch" 2>/dev/null || true
+              fi
+            fi
+
+            if [ -s "${dir}/worktree.diff" ] || [ -s "${dir}/staged.diff" ] || [ -s "${dir}/commits.patch" ]; then
+              has_rescue=1
+            fi
+
+            if [ "${has_rescue}" = "1" ]; then
+              cp .autofix/codex-last.log "${dir}/codex-last.log" 2>/dev/null || true
+              cp .autofix/pr-checks-current.json "${dir}/pr-checks-current.json" 2>/dev/null || true
+              mkdir -p "${HOME}/autofix-rescue/pr-${PR_NUMBER}"
+              echo "${dir}" > "${HOME}/autofix-rescue/pr-${PR_NUMBER}/latest.txt"
+              notify "🛟 Pickfair Autofix rescue salvato. PR: #${PR_NUMBER}. Branch: ${PR_HEAD_REF}. Path VPS: ${dir}. Al prossimo run provo a recuperarlo automaticamente."
+            else
+              rm -rf "${dir}" || true
+            fi
+
+            return "${exit_code}"
+          }
+
+          restore_rescue_patch_if_available() {
+            local latest
+            local dir
+            local restored=0
+
+            latest="${HOME}/autofix-rescue/pr-${PR_NUMBER}/latest.txt"
+
+            if [ ! -f "${latest}" ]; then
+              return 0
+            fi
+
+            dir="$(cat "${latest}")"
+
+            if [ ! -d "${dir}" ]; then
+              rm -f "${latest}" || true
+              return 0
+            fi
+
+            if ! git diff --quiet || ! git diff --cached --quiet; then
+              echo "Working tree not clean; skipping rescue restore."
+              return 0
+            fi
+
+            echo "Found rescue patch: ${dir}"
+
+            if [ -s "${dir}/commits.patch" ]; then
+              if git am --3way "${dir}/commits.patch"; then
+                notify "🛟 Pickfair Autofix: rescue commits.patch ripristinata automaticamente. PR: #${PR_NUMBER}. Branch: ${PR_HEAD_REF}. Path: ${dir}"
+                rm -f "${latest}" || true
+                return 0
+              fi
+              git am --abort || true
+            fi
+
+            if [ -s "${dir}/staged.diff" ]; then
+              if git apply --index "${dir}/staged.diff"; then
+                restored=1
+              fi
+            fi
+
+            if [ -s "${dir}/worktree.diff" ]; then
+              if git apply "${dir}/worktree.diff"; then
+                restored=1
+              fi
+            fi
+
+            if [ "${restored}" = "1" ]; then
+              notify "🛟 Pickfair Autofix: rescue patch ripristinata automaticamente. PR: #${PR_NUMBER}. Branch: ${PR_HEAD_REF}. Path: ${dir}"
+              rm -f "${latest}" || true
+              return 0
+            fi
+
+            notify "⚠️ Pickfair Autofix: rescue patch trovata ma non applicabile automaticamente. PR: #${PR_NUMBER}. Branch: ${PR_HEAD_REF}. Path VPS: ${dir}. Serve controllo manuale con git apply o git am."
+            return 1
+          }
+
+          trap 'save_rescue_patch "$?"' EXIT
+
           preflight_codex
 
           if check_green; then
@@ -618,6 +793,27 @@ jobs:
 
             git fetch origin "${{ steps.pr.outputs.head_ref }}"
             git checkout -B "${{ steps.pr.outputs.head_ref }}" "origin/${{ steps.pr.outputs.head_ref }}"
+
+            if ! restore_rescue_patch_if_available; then
+              notify_failed "Rescue patch exists but cannot be applied automatically."
+              exit 1
+            fi
+
+            set +e
+            commit_and_push_if_needed "${round}" "rescue"
+            rescue_push_result="$?"
+            set -e
+
+            if [ "${rescue_push_result}" = "0" ]; then
+              echo "Rescue restored and pushed. Waiting ${WAIT_SECONDS}s for checks."
+              sleep "${WAIT_SECONDS}"
+              continue
+            fi
+
+            if [ "${rescue_push_result}" != "10" ]; then
+              notify_failed "Rescue commit/push failed."
+              exit "${rescue_push_result}"
+            fi
 
             before_sha="$(git rev-parse HEAD)"
             echo "Before SHA: ${before_sha}"
