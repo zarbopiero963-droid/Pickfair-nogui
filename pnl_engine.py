@@ -49,7 +49,8 @@ class PnLEngine:
     # =========================================================
     # HELPERS
     # =========================================================
-    def _safe_side(self, side: Any) -> str:
+    @staticmethod
+    def _safe_side(side: Any) -> str:
         return safe_side(side)
 
     def _finite_float(self, value: Any, *, default: float = 0.0) -> float:

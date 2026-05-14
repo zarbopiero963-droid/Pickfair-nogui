@@ -1,4 +1,12 @@
 {
+  "module": "pnl_engine",
+  "module_paths": [
+    "pnl_engine.py"
+  ],
+  "focused_tests": [
+    "tests/invariant/test_pnl_engine_drift_and_stress.py",
+    "tests/invariant/test_core_pnl_engine_drift_and_stress.py"
+  ],
   "states": {
     "OPEN": ["PARTIAL", "CLOSED"],
     "PARTIAL": ["CLOSED"],
