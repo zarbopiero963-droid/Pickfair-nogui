@@ -350,137 +350,109 @@ jobs:
           PR_NUMBER: ${{ steps.handoff.outputs.pr_number }}
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/autofix-context"
 
-          gh pr view "$PR_NUMBER" \
+          mkdir -p .autofix/context codex-output
+
+          echo "Building rich Codex prompt context for PR #${PR_NUMBER}"
+
+          if ! gh pr view "$PR_NUMBER" \
             --json number,title,url,headRefName,headRefOid,mergeStateStatus,comments,reviews,files,statusCheckRollup \
-            > "$RUNNER_TEMP/autofix-context/pr-view.json"
+            > .autofix/context/pr-view.json; then
+            echo "::warning::gh pr view failed; using minimal PR context"
+            printf '{"number":%s,"comments":[],"reviews":[],"files":[],"statusCheckRollup":[]}\n' "$PR_NUMBER" \
+              > .autofix/context/pr-view.json
+          fi
 
-          cat > .autofix/context/review-threads.graphql <<'GRAPHQL'
-          query($owner:String!, $repo:String!, $number:Int!) {
-            repository(owner:$owner, name:$repo) {
-              pullRequest(number:$number) {
-                reviewThreads(first:100) {
-                  nodes {
-                    isResolved
-                    path
-                    line
-                    comments(first:20) {
-                      nodes {
-                        author { login }
-                        body
-                        createdAt
-                        url
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-          GRAPHQL
+          QUERY='query($owner:String!, $repo:String!, $number:Int!) { repository(owner:$owner, name:$repo) { pullRequest(number:$number) { reviewThreads(first:100) { nodes { isResolved path line comments(first:20) { nodes { author { login } body createdAt url } } } } } } } }'
 
-          gh api graphql \
+          if ! gh api graphql \
             -f owner="${GITHUB_REPOSITORY_OWNER}" \
             -f repo="${GITHUB_REPOSITORY#*/}" \
             -F number="$PR_NUMBER" \
-            -f query="$(cat .autofix/context/review-threads.graphql)" \
-            > "$RUNNER_TEMP/autofix-context/review-threads.json"
+            -f query="$QUERY" \
+            > .autofix/context/review-threads-raw.json; then
+            echo "::warning::Could not fetch review threads; continuing with empty review thread context"
+            echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}' \
+              > .autofix/context/review-threads-raw.json
+          fi
 
-          jq '{
-            pr: {
-              number,
-              title,
-              url,
-              headRefName,
-              headRefOid,
-              mergeStateStatus
-            },
-            failing_checks: [
-              .statusCheckRollup[]?
-              | select(
-                (.conclusion // "") == "FAILURE"
-                or (.conclusion // "") == "ERROR"
-                or (.conclusion // "") == "ACTION_REQUIRED"
-                or (.state // "") == "FAILURE"
-                or (.state // "") == "ERROR"
-                or (.status // "") == "FAILURE"
-              )
-            ],
-            pending_checks: [
-              .statusCheckRollup[]?
-              | select((.status // "") == "IN_PROGRESS" or (.status // "") == "QUEUED")
-            ],
-            review_comments: [
-              .reviews[]?
-              | select((.body // "") != "")
-              | {
-                author: .author.login,
-                state,
-                submittedAt,
-                commit: .commit.oid,
-                body
-              }
-            ],
-            issue_comments: [
-              .comments[]?
-              | select((.body // "") != "")
-              | {
-                author: .author.login,
-                createdAt,
-                url,
-                body
-              }
-            ],
-            files
-          }' "$RUNNER_TEMP/autofix-context/pr-view.json" > "$RUNNER_TEMP/autofix-context/codex-rich-context.json"
-
-          python3 <<'PY_SANITIZE'
-          import json
-          import re
-          from pathlib import Path
-
-          pattern = re.compile(
-              r"<!-- internal state start -->.*?<!-- internal state end -->",
-              re.DOTALL,
-          )
-
-          def clean(value):
-              if isinstance(value, str):
-                  return pattern.sub("[internal state stripped]", value)
-              if isinstance(value, list):
-                  return [clean(item) for item in value]
-              if isinstance(value, dict):
-                  return {key: clean(item) for key, item in value.items()}
-              return value
-
-          for filename in (
-              ""$RUNNER_TEMP/autofix-context/codex-rich-context.json"",
-              ""$RUNNER_TEMP/autofix-context/review-threads.json"",
-          ):
-              path = Path(filename)
-              if not path.exists():
-                  continue
-              data = json.loads(path.read_text(encoding="utf-8"))
-              path.write_text(
-                  json.dumps(clean(data), ensure_ascii=False, indent=2),
-                  encoding="utf-8",
-              )
-          PY_SANITIZE
+          if ! jq -c '.data.repository.pullRequest.reviewThreads.nodes[]?
+            | select(.isResolved == false)
+            | {
+                path,
+                line,
+                comments: [
+                  .comments.nodes[] | {
+                    author: .author.login,
+                    createdAt,
+                    url,
+                    body
+                  }
+                ]
+              }' .autofix/context/review-threads-raw.json \
+            > .autofix/context/review-threads.jsonl; then
+            echo "::warning::Could not parse review threads; continuing with empty review thread context"
+            : > .autofix/context/review-threads.jsonl
+          fi
 
           {
-            echo "## Rich PR context"
-            cat "$RUNNER_TEMP/autofix-context/codex-rich-context.json"
+            echo "# Codex rich PR context"
+            echo
+            echo "## PR metadata"
+            jq -r '"PR: #\(.number // "'"$PR_NUMBER"'")\nTitle: \(.title // "")\nURL: \(.url // "")\nBranch: \(.headRefName // "")\nHead SHA: \(.headRefOid // "")\nMerge state: \(.mergeStateStatus // "")"' \
+              .autofix/context/pr-view.json || true
+
+            echo
+            echo "## Blocking checks"
+            jq -r '.statusCheckRollup[]?
+              | {
+                  name: (.name // .context // ""),
+                  workflow: (.workflowName // ""),
+                  state: (.conclusion // .state // .status // ""),
+                  url: (.detailsUrl // .targetUrl // "")
+                }
+              | select(.state != "SUCCESS" and .state != "SKIPPED" and .state != "NEUTRAL" and .state != "CANCELLED")
+              | "- \(.name) [\(.state)] \(.url)"' \
+              .autofix/context/pr-view.json || true
+
+            echo
+            echo "## PR comments"
+            jq -r '.comments[]?
+              | "- @" + (.author.login // "unknown") + ": " + ((.body // "") | gsub("\n"; " ") | .[0:2000])' \
+              .autofix/context/pr-view.json || true
+
+            echo
+            echo "## Reviews"
+            jq -r '.reviews[]?
+              | "- @" + (.author.login // "unknown") + " [" + (.state // "") + "]: " + ((.body // "") | gsub("\n"; " ") | .[0:2000])' \
+              .autofix/context/pr-view.json || true
 
             echo
             echo "## Review threads / inline review comments"
-            cat "$RUNNER_TEMP/autofix-context/review-threads.json"
-          } > "$RUNNER_TEMP/autofix-context/codex-prompt-context.txt"
+            if [ -s .autofix/context/review-threads.jsonl ]; then
+              cat .autofix/context/review-threads.jsonl
+            else
+              echo "None fetched or none unresolved."
+            fi
+
+            echo
+            echo "## Changed files"
+            jq -r '.files[]?
+              | "- \(.path) additions=\(.additions // 0) deletions=\(.deletions // 0) changeType=\(.changeType // "")"' \
+              .autofix/context/pr-view.json || true
+          } > .autofix/context/codex-prompt-context.txt
+
+          jq -n \
+            --slurpfile pr .autofix/context/pr-view.json \
+            --rawfile review_threads .autofix/context/review-threads.jsonl \
+            '{
+              pr: ($pr[0] // {}),
+              unresolved_review_threads_jsonl: $review_threads
+            }' \
+            > .autofix/context/codex-rich-context.json
 
           echo "Built rich Codex prompt context:"
-          wc -c "$RUNNER_TEMP/autofix-context/codex-prompt-context.txt"
-          grep -c "coderabbitai\|sourcery-ai\|deepsource-io\|codacy-production\|DeepSource: Python" "$RUNNER_TEMP/autofix-context/codex-prompt-context.txt" || true
-
+          wc -c .autofix/context/codex-prompt-context.txt .autofix/context/codex-rich-context.json
       - name: Copy handoff into repo workspace
         if: steps.handoff.outputs.should_run == 'true' && steps.guard.outputs.should_continue == 'true'
         env:
