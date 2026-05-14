@@ -182,7 +182,7 @@ def _preflight_dutching_inputs(
 
 
 def _inverse_odds_sum(odds_d: List[Decimal]) -> Decimal:
-    return sum([Decimal("1") / odd for odd in odds_d], Decimal("0"))
+    return sum(((Decimal("1") / odd) for odd in odds_d), Decimal("0"))
 
 
 def _initial_dutching_stakes(
