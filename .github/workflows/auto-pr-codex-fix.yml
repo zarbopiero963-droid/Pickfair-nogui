@@ -350,11 +350,11 @@ jobs:
           PR_NUMBER: ${{ steps.handoff.outputs.pr_number }}
         run: |
           set -euo pipefail
-          mkdir -p .autofix/context
+          mkdir -p "$RUNNER_TEMP/autofix-context"
 
           gh pr view "$PR_NUMBER" \
             --json number,title,url,headRefName,headRefOid,mergeStateStatus,comments,reviews,files,statusCheckRollup \
-            > .autofix/context/pr-view.json
+            > "$RUNNER_TEMP/autofix-context/pr-view.json"
 
           cat > .autofix/context/review-threads.graphql <<'GRAPHQL'
           query($owner:String!, $repo:String!, $number:Int!) {
@@ -385,7 +385,7 @@ jobs:
             -f repo="${GITHUB_REPOSITORY#*/}" \
             -F number="$PR_NUMBER" \
             -f query="$(cat .autofix/context/review-threads.graphql)" \
-            > .autofix/context/review-threads.json
+            > "$RUNNER_TEMP/autofix-context/review-threads.json"
 
           jq '{
             pr: {
@@ -433,7 +433,7 @@ jobs:
               }
             ],
             files
-          }' .autofix/context/pr-view.json > .autofix/context/codex-rich-context.json
+          }' "$RUNNER_TEMP/autofix-context/pr-view.json" > "$RUNNER_TEMP/autofix-context/codex-rich-context.json"
 
           python3 <<'PY_SANITIZE'
           import json
@@ -455,8 +455,8 @@ jobs:
               return value
 
           for filename in (
-              ".autofix/context/codex-rich-context.json",
-              ".autofix/context/review-threads.json",
+              ""$RUNNER_TEMP/autofix-context/codex-rich-context.json"",
+              ""$RUNNER_TEMP/autofix-context/review-threads.json"",
           ):
               path = Path(filename)
               if not path.exists():
@@ -470,16 +470,16 @@ jobs:
 
           {
             echo "## Rich PR context"
-            cat .autofix/context/codex-rich-context.json
+            cat "$RUNNER_TEMP/autofix-context/codex-rich-context.json"
 
             echo
             echo "## Review threads / inline review comments"
-            cat .autofix/context/review-threads.json
-          } > .autofix/context/codex-prompt-context.txt
+            cat "$RUNNER_TEMP/autofix-context/review-threads.json"
+          } > "$RUNNER_TEMP/autofix-context/codex-prompt-context.txt"
 
           echo "Built rich Codex prompt context:"
-          wc -c .autofix/context/codex-prompt-context.txt
-          grep -c "coderabbitai\|sourcery-ai\|deepsource-io\|codacy-production\|DeepSource: Python" .autofix/context/codex-prompt-context.txt || true
+          wc -c "$RUNNER_TEMP/autofix-context/codex-prompt-context.txt"
+          grep -c "coderabbitai\|sourcery-ai\|deepsource-io\|codacy-production\|DeepSource: Python" "$RUNNER_TEMP/autofix-context/codex-prompt-context.txt" || true
 
       - name: Copy handoff into repo workspace
         if: steps.handoff.outputs.should_run == 'true' && steps.guard.outputs.should_continue == 'true'
@@ -493,7 +493,7 @@ jobs:
           {
             echo
             echo "## Rich PR context"
-            cat .autofix/context/codex-prompt-context.txt 2>/dev/null || true
+            cat "$RUNNER_TEMP/autofix-context/codex-prompt-context.txt" 2>/dev/null || true
           } >> "codex-task-handoff-pr-${PR_NUMBER}.md"
 
           echo "Copied enriched handoff into workspace:"
