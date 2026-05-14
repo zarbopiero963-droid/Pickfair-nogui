@@ -203,6 +203,7 @@ jobs:
         env:
           PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
           PR_HEAD_REF: ${{ steps.pr.outputs.head_ref }}
+          PR_URL: ${{ steps.pr.outputs.pr_url }}
         run: |
           set -euo pipefail
 
@@ -315,7 +316,7 @@ jobs:
               review_note="Checks green and final review sweep clean."
             fi
 
-            notify "✅ Pickfair PR #${PR_NUMBER} verde e pronta al merge. Branch: ${{ steps.pr.outputs.head_ref }}. SHA: ${head_sha}. Fix model: ${CODEX_FIX_MODEL}. Review model: ${CODEX_REVIEW_MODEL}. Final review: ${review_note}. URL: ${pr_url}"
+            notify "✅ Pickfair PR #${PR_NUMBER} verde e pronta al merge. Branch: ${PR_HEAD_REF}. SHA: ${head_sha}. Fix model: ${CODEX_FIX_MODEL}. Review model: ${CODEX_REVIEW_MODEL}. Final review: ${review_note}. URL: ${pr_url}"
           }
 
           notify_failed() {
@@ -324,11 +325,11 @@ jobs:
             local head_sha
             local blockers
 
-            pr_url="$(gh pr view "${PR_NUMBER}" --repo "${REPO}" --json url --jq '.url' || echo "${{ steps.pr.outputs.pr_url }}")"
+            pr_url="$(gh pr view "${PR_NUMBER}" --repo "${REPO}" --json url --jq '.url' || echo "${PR_URL:-}")"
             head_sha="$(gh pr view "${PR_NUMBER}" --repo "${REPO}" --json headRefOid --jq '.headRefOid' || git rev-parse HEAD)"
             blockers="$(blockers_text || true)"
 
-            notify "❌ Pickfair PR #${PR_NUMBER} non pronta. Reason: ${reason}. Branch: ${{ steps.pr.outputs.head_ref }}. SHA: ${head_sha}. Blockers: ${blockers}. URL: ${pr_url}"
+            notify "❌ Pickfair PR #${PR_NUMBER} non pronta. Reason: ${reason}. Branch: ${PR_HEAD_REF}. SHA: ${head_sha}. Blockers: ${blockers}. URL: ${pr_url}"
           }
 
           preflight_codex() {
@@ -599,7 +600,7 @@ jobs:
 
             echo "Created commit ${new_sha}"
 
-            git push origin "HEAD:${{ steps.pr.outputs.head_ref }}"
+            git push origin "HEAD:${PR_HEAD_REF}"
 
             echo "PUSHED_SHA=${new_sha}"
             return 0
@@ -612,8 +613,8 @@ jobs:
             echo "Checks are green. Waiting ${FINAL_REVIEW_WAIT_SECONDS}s for late reviewer/bot comments..."
             sleep "${FINAL_REVIEW_WAIT_SECONDS}"
 
-            git fetch origin "${{ steps.pr.outputs.head_ref }}"
-            git checkout -B "${{ steps.pr.outputs.head_ref }}" "origin/${{ steps.pr.outputs.head_ref }}"
+            git fetch origin "${PR_HEAD_REF}"
+            git checkout -B "${PR_HEAD_REF}" "origin/${PR_HEAD_REF}"
             restore_rescue_patch_if_available
 
             collect_context "${round}-final-review"
@@ -791,8 +792,8 @@ jobs:
             echo "AUTOFIX ROUND ${round}/${MAX_ROUNDS}"
             echo "=============================="
 
-            git fetch origin "${{ steps.pr.outputs.head_ref }}"
-            git checkout -B "${{ steps.pr.outputs.head_ref }}" "origin/${{ steps.pr.outputs.head_ref }}"
+            git fetch origin "${PR_HEAD_REF}"
+            git checkout -B "${PR_HEAD_REF}" "origin/${PR_HEAD_REF}"
 
             if ! restore_rescue_patch_if_available; then
               notify_failed "Rescue patch exists but cannot be applied automatically."
