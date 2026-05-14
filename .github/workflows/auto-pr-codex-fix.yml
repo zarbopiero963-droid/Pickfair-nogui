@@ -308,6 +308,75 @@ jobs:
 
           echo "Codex CLI available."
 
+      - name: Build rich Codex prompt context
+        if: steps.handoff.outputs.should_run == 'true' && steps.guard.outputs.should_continue == 'true'
+        env:
+          PR_NUMBER: ${{ steps.handoff.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          mkdir -p .autofix/context
+
+          gh pr view "$PR_NUMBER" \
+            --json number,title,url,headRefName,headRefOid,mergeStateStatus,comments,reviews,files,statusCheckRollup \
+            > .autofix/context/pr-view.json
+
+          jq '{
+            pr: {
+              number,
+              title,
+              url,
+              headRefName,
+              headRefOid,
+              mergeStateStatus
+            },
+            failing_checks: [
+              .statusCheckRollup[]?
+              | select(
+                (.conclusion // "") == "FAILURE"
+                or (.conclusion // "") == "ERROR"
+                or (.conclusion // "") == "ACTION_REQUIRED"
+                or (.state // "") == "FAILURE"
+                or (.state // "") == "ERROR"
+                or (.status // "") == "FAILURE"
+              )
+            ],
+            pending_checks: [
+              .statusCheckRollup[]?
+              | select((.status // "") == "IN_PROGRESS" or (.status // "") == "QUEUED")
+            ],
+            review_comments: [
+              .reviews[]?
+              | select((.body // "") != "")
+              | {
+                author: .author.login,
+                state,
+                submittedAt,
+                commit: .commit.oid,
+                body
+              }
+            ],
+            issue_comments: [
+              .comments[]?
+              | select((.body // "") != "")
+              | {
+                author: .author.login,
+                createdAt,
+                url,
+                body
+              }
+            ],
+            files
+          }' .autofix/context/pr-view.json > .autofix/context/codex-rich-context.json
+
+          {
+            echo "## Rich PR context"
+            cat .autofix/context/codex-rich-context.json
+          } > .autofix/context/codex-prompt-context.txt
+
+          echo "Built rich Codex prompt context:"
+          wc -c .autofix/context/codex-prompt-context.txt
+          grep -c "coderabbitai\|sourcery-ai\|deepsource-io\|codacy-production\|DeepSource: Python" .autofix/context/codex-prompt-context.txt || true
+
       - name: Copy handoff into repo workspace
         if: steps.handoff.outputs.should_run == 'true' && steps.guard.outputs.should_continue == 'true'
         env:
