@@ -638,20 +638,17 @@ jobs:
             exit 0
           fi
 
-          TEXT="$(cat <<EOF
-🤖 Auto PR Codex Fix completato
+            TEXT="🤖 Auto PR Codex Fix completato
 
-PR: #$PR_NUMBER
-Branch: $BRANCH
+PR: #${PR_NUMBER}
+Branch: ${BRANCH}
 Old head: ${OLD_SHA:0:12}
 New head: ${NEW_SHA:-unknown}
 Pushed: ${PUSHED:-false}
-Dry run: $DRY_RUN
+Dry run: ${DRY_RUN}
 
 Ora GitHub rilancerà i check.
-Se restano rossi, verrà generato un nuovo handoff .md.
-EOF
-)"
+Se restano rossi, verrà generato un nuovo handoff .md."
 
           curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -d "chat_id=${TELEGRAM_CHAT_ID}" \
