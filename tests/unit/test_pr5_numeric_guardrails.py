@@ -24,8 +24,7 @@ def test_mm_inputs_fail_closed() -> None:
     )
     if decision.approved:
         pytest.fail("decision must be rejected for non-finite inputs")
-    if decision.recommended_stake:
-        pytest.fail("recommended stake must be zero for rejected decisions")
+    assert decision.recommended_stake == pytest.approx(0.0), "recommended stake must be exactly zero"
 
 
 @pytest.mark.unit
@@ -215,3 +214,9 @@ def test_pnl_valid_output_unchanged() -> None:
         pytest.fail("unexpected commission amount")
     if result.net_pnl != pytest.approx(4.775):
         pytest.fail("unexpected net pnl")
+
+
+@pytest.mark.unit
+def test_pnl_engine_rejects_non_finite_commission_pct():
+    with pytest.raises(ValueError):
+        PnLEngine(commission_pct=float("nan"))

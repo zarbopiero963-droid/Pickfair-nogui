@@ -44,7 +44,7 @@ class PnLEngine:
     """
 
     def __init__(self, commission_pct: float = 4.5):
-        self.commission_pct = float(commission_pct or 0.0)
+        self.commission_pct = self._finite_float(commission_pct, default=0.0)
 
     # =========================================================
     # HELPERS
