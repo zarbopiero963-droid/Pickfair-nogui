@@ -5,6 +5,7 @@
   ],
   "focused_tests": [
     "tests/unit/test_dutching_failures.py",
+    "tests/unit/test_pr5_numeric_guardrails.py",
     "tests/invariant/test_dutching_drift_and_stress.py",
     "tests/smoke/test_dutching_smoke.py"
   ],
