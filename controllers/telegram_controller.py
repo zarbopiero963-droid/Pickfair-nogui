@@ -8,7 +8,27 @@ Non esegue trading e non chiama mai direttamente il client di betting.
 
 import asyncio
 import os
-from tkinter import messagebox
+try:
+    from tkinter import messagebox
+except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
+    class _MessageBoxFallback:
+        @staticmethod
+        def showwarning(*_args, **_kwargs):
+            return None
+
+        @staticmethod
+        def showinfo(*_args, **_kwargs):
+            return None
+
+        @staticmethod
+        def showerror(*_args, **_kwargs):
+            return None
+
+        @staticmethod
+        def askyesno(*_args, **_kwargs):
+            return True
+
+    messagebox = _MessageBoxFallback()
 
 
 class TelegramController:

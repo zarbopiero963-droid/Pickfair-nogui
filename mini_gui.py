@@ -1,7 +1,77 @@
 from __future__ import annotations
 
-import tkinter as tk
-from tkinter import ttk, messagebox
+import types
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox
+except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
+    class _DummyWidget:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+
+        def pack(self, *args, **kwargs):
+            return None
+
+        def grid(self, *args, **kwargs):
+            return None
+
+        def place(self, *args, **kwargs):
+            return None
+
+        def configure(self, *args, **kwargs):
+            return None
+
+        config = configure
+
+        def bind(self, *args, **kwargs):
+            return None
+
+        def destroy(self):
+            return None
+
+    class _DummyVar:
+        def __init__(self, value=None):
+            self._value = value
+
+        def get(self):
+            return self._value
+
+        def set(self, value):
+            self._value = value
+
+    tk = types.SimpleNamespace(
+        Tk=_DummyWidget,
+        Frame=_DummyWidget,
+        Label=_DummyWidget,
+        Button=_DummyWidget,
+        Entry=_DummyWidget,
+        Checkbutton=_DummyWidget,
+        Text=_DummyWidget,
+        StringVar=_DummyVar,
+        BooleanVar=_DummyVar,
+        IntVar=_DummyVar,
+        END="end",
+    )
+    ttk = types.SimpleNamespace(Combobox=_DummyWidget)
+
+    class _MessageBoxFallback:
+        @staticmethod
+        def showwarning(*_args, **_kwargs):
+            return None
+
+        @staticmethod
+        def showinfo(*_args, **_kwargs):
+            return None
+
+        @staticmethod
+        def showerror(*_args, **_kwargs):
+            return None
+
+        @staticmethod
+        def askyesno(*_args, **_kwargs):
+            return True
+
+    messagebox = _MessageBoxFallback()
 from typing import Callable
 
 try:
