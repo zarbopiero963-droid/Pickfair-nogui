@@ -1,0 +1,280 @@
+name: Auto PR E2E Autofix
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR number to repair
+        required: true
+      max_rounds:
+        description: Max repair rounds
+        required: false
+        default: "5"
+      pending_wait_seconds:
+        description: Max seconds to wait for pending checks each round
+        required: false
+        default: "2700"
+      stale_retrigger_limit:
+        description: Max empty retrigger commits per PR head
+        required: false
+        default: "1"
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+  checks: read
+  statuses: read
+
+concurrency:
+  group: auto-pr-e2e-${{ github.event.inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  e2e-autofix:
+    name: Autofix PR end-to-end
+    runs-on: self-hosted
+    timeout-minutes: 360
+
+    env:
+      GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
+      GITHUB_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
+      PR_NUMBER: ${{ github.event.inputs.pr_number }}
+      MAX_ROUNDS: ${{ github.event.inputs.max_rounds || '5' }}
+      PENDING_WAIT_SECONDS: ${{ github.event.inputs.pending_wait_seconds || '2700' }}
+      STALE_RETRIGGER_LIMIT: ${{ github.event.inputs.stale_retrigger_limit || '1' }}
+
+    steps:
+      - name: Checkout orchestrator source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_TOKEN || github.token }}
+
+      - name: Run E2E autofix loop
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          export PAGER=cat
+          export GH_PAGER=cat
+          export GIT_PAGER=cat
+
+          REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+          PR="$PR_NUMBER"
+          WORKDIR="$PWD/.autofix-e2e"
+          STATE_DIR="$HOME/pickfair-auto-state/e2e/pr-$PR"
+          mkdir -p "$WORKDIR" "$STATE_DIR"
+
+          echo "Repo: $REPO"
+          echo "PR:   #$PR"
+
+          get_pr_json() {
+            gh pr view "$PR" --repo "$REPO" \
+              --json number,headRefName,headRefOid,mergeStateStatus,isDraft,statusCheckRollup \
+              > "$WORKDIR/pr.json"
+          }
+
+          blockers_json() {
+            jq '
+              [
+                .statusCheckRollup[]?
+                | {
+                    name: (.name // .context // ""),
+                    state: (.conclusion // .state // .status // ""),
+                    url: (.detailsUrl // .targetUrl // "")
+                  }
+                | select(.state == "FAILURE" or .state == "ERROR" or .state == "ACTION_REQUIRED")
+                | select(
+                    (.name | test("Auto PR Codex Fix|Auto PR Codex Supervisor|Auto PR E2E Autofix"; "i") | not)
+                  )
+              ]
+            ' "$WORKDIR/pr.json"
+          }
+
+          pending_count() {
+            jq '
+              [
+                .statusCheckRollup[]?
+                | {
+                    name: (.name // .context // ""),
+                    state: (.conclusion // .state // .status // "")
+                  }
+                | select(.state == "PENDING" or .state == "" or .state == null or .state == "IN_PROGRESS" or .state == "QUEUED")
+              ] | length
+            ' "$WORKDIR/pr.json"
+          }
+
+          blocker_count() {
+            blockers_json | jq 'length'
+          }
+
+          print_state() {
+            get_pr_json
+            echo "Head:       $(jq -r .headRefOid "$WORKDIR/pr.json")"
+            echo "Branch:     $(jq -r .headRefName "$WORKDIR/pr.json")"
+            echo "MergeState: $(jq -r .mergeStateStatus "$WORKDIR/pr.json")"
+            echo "Pending:    $(pending_count)"
+            echo "Blockers:"
+            blockers_json | jq -r '.[] | "- \(.name) [\(.state)] \(.url)"'
+          }
+
+          wait_until_not_pending_only() {
+            local waited=0
+            while true; do
+              get_pr_json
+              local red
+              local pending
+              red="$(blocker_count)"
+              pending="$(pending_count)"
+
+              echo "Check state: red=$red pending=$pending waited=${waited}s"
+
+              if [ "$red" -gt 0 ]; then
+                return 0
+              fi
+
+              if [ "$pending" -eq 0 ]; then
+                return 0
+              fi
+
+              if [ "$waited" -ge "$PENDING_WAIT_SECONDS" ]; then
+                echo "Pending wait budget exhausted; continuing with current state."
+                return 0
+              fi
+
+              sleep 60
+              waited="$((waited + 60))"
+            done
+          }
+
+          retrigger_once_if_needed() {
+            get_pr_json
+            local head branch key count_file count next
+            head="$(jq -r .headRefOid "$WORKDIR/pr.json")"
+            branch="$(jq -r .headRefName "$WORKDIR/pr.json")"
+            key="$STATE_DIR/stale-retrigger-$head.count"
+            count="$(cat "$key" 2>/dev/null | tr -dc '0-9' || true)"
+            count="${count:-0}"
+
+            echo "Stale retrigger count for $head: $count / $STALE_RETRIGGER_LIMIT"
+
+            if [ "$count" -ge "$STALE_RETRIGGER_LIMIT" ]; then
+              echo "No stale retrigger budget left."
+              return 10
+            fi
+
+            git fetch origin "$branch"
+            git checkout -B "$branch" "origin/$branch"
+            git reset --hard "origin/$branch"
+            rm -rf .autofix codex-output codex-task-handoff-pr-*.md
+
+            git commit --allow-empty -m "Retrigger PR checks after stale external blocker scan"
+            git push origin "HEAD:$branch"
+
+            next="$((count + 1))"
+            echo "$next" > "$key"
+
+            echo "Pushed one empty retrigger commit on $branch."
+            return 0
+          }
+
+          run_codex_fix_workflow() {
+            echo "Cleaning stale rescue patches for PR #$PR"
+            rm -rf "$HOME/autofix-rescue/pr-$PR" || true
+
+            local before after run_id
+            get_pr_json
+            before="$(jq -r .headRefOid "$WORKDIR/pr.json")"
+
+            echo "Dispatching Auto PR Codex Fix for PR #$PR"
+            gh workflow run auto-pr-codex-fix.yml \
+              --repo "$REPO" \
+              -f pr_number="$PR" || true
+
+            sleep 15
+
+            run_id="$(
+              gh run list \
+                --repo "$REPO" \
+                --workflow='Auto PR Codex Fix' \
+                --limit 1 \
+                --json databaseId \
+                --jq '.[0].databaseId'
+            )"
+
+            echo "Watching Auto PR Codex Fix run: $run_id"
+            gh run watch "$run_id" --repo "$REPO" || true
+
+            get_pr_json
+            after="$(jq -r .headRefOid "$WORKDIR/pr.json")"
+
+            echo "Before SHA: $before"
+            echo "After SHA:  $after"
+
+            if [ "$after" = "$before" ]; then
+              echo "Auto PR Codex Fix did not change the PR head."
+              return 20
+            fi
+
+            return 0
+          }
+
+          for round in $(seq 1 "$MAX_ROUNDS"); do
+            echo "=============================="
+            echo "E2E AUTOFIX ROUND $round/$MAX_ROUNDS"
+            echo "=============================="
+
+            print_state
+            wait_until_not_pending_only
+            print_state
+
+            RED="$(blocker_count)"
+            PENDING="$(pending_count)"
+
+            if [ "$RED" -eq 0 ] && [ "$PENDING" -eq 0 ]; then
+              echo "PR #$PR is clean."
+              exit 0
+            fi
+
+            if [ "$RED" -eq 0 ] && [ "$PENDING" -gt 0 ]; then
+              echo "No real blockers; only pending checks remain. Continuing."
+              continue
+            fi
+
+            set +e
+            run_codex_fix_workflow
+            FIX_RESULT="$?"
+            set -e
+
+            if [ "$FIX_RESULT" = "0" ]; then
+              echo "Fix workflow changed PR head. Waiting for checks."
+              sleep 180
+              continue
+            fi
+
+            if [ "$FIX_RESULT" = "20" ]; then
+              echo "No code changes from fix workflow. Trying bounded stale-check retrigger."
+              if retrigger_once_if_needed; then
+                sleep 180
+                continue
+              fi
+            fi
+
+            echo "::warning::Round $round did not clear blockers."
+            sleep 60
+          done
+
+          echo "Final PR state:"
+          print_state
+
+          RED="$(blocker_count)"
+          PENDING="$(pending_count)"
+
+          if [ "$RED" -eq 0 ] && [ "$PENDING" -eq 0 ]; then
+            echo "PR #$PR is clean."
+            exit 0
+          fi
+
+          echo "::error::E2E autofix reached max rounds and PR is still not clean."
+          exit 1
