@@ -356,6 +356,37 @@ jobs:
             --json number,title,url,headRefName,headRefOid,mergeStateStatus,comments,reviews,files,statusCheckRollup \
             > .autofix/context/pr-view.json
 
+          cat > .autofix/context/review-threads.graphql <<'GRAPHQL'
+          query($owner:String!, $repo:String!, $number:Int!) {
+            repository(owner:$owner, name:$repo) {
+              pullRequest(number:$number) {
+                reviewThreads(first:100) {
+                  nodes {
+                    isResolved
+                    path
+                    line
+                    comments(first:20) {
+                      nodes {
+                        author { login }
+                        body
+                        createdAt
+                        url
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          GRAPHQL
+
+          gh api graphql \
+            -f owner="${GITHUB_REPOSITORY_OWNER}" \
+            -f repo="${GITHUB_REPOSITORY#*/}" \
+            -F number="$PR_NUMBER" \
+            -f query="$(cat .autofix/context/review-threads.graphql)" \
+            > .autofix/context/review-threads.json
+
           jq '{
             pr: {
               number,
@@ -404,9 +435,46 @@ jobs:
             files
           }' .autofix/context/pr-view.json > .autofix/context/codex-rich-context.json
 
+          python3 <<'PY_SANITIZE'
+          import json
+          import re
+          from pathlib import Path
+
+          pattern = re.compile(
+              r"<!-- internal state start -->.*?<!-- internal state end -->",
+              re.DOTALL,
+          )
+
+          def clean(value):
+              if isinstance(value, str):
+                  return pattern.sub("[internal state stripped]", value)
+              if isinstance(value, list):
+                  return [clean(item) for item in value]
+              if isinstance(value, dict):
+                  return {key: clean(item) for key, item in value.items()}
+              return value
+
+          for filename in (
+              ".autofix/context/codex-rich-context.json",
+              ".autofix/context/review-threads.json",
+          ):
+              path = Path(filename)
+              if not path.exists():
+                  continue
+              data = json.loads(path.read_text(encoding="utf-8"))
+              path.write_text(
+                  json.dumps(clean(data), ensure_ascii=False, indent=2),
+                  encoding="utf-8",
+              )
+          PY_SANITIZE
+
           {
             echo "## Rich PR context"
             cat .autofix/context/codex-rich-context.json
+
+            echo
+            echo "## Review threads / inline review comments"
+            cat .autofix/context/review-threads.json
           } > .autofix/context/codex-prompt-context.txt
 
           echo "Built rich Codex prompt context:"
@@ -536,6 +604,7 @@ jobs:
 
           ignored_prefixes = (
               "codex-output/",
+              ".autofix/",
               ".git/",
           )
 
