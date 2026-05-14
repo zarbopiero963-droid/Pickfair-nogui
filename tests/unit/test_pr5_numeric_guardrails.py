@@ -166,7 +166,7 @@ def test_engine_rejects_bad_comm() -> None:
 
 @pytest.mark.unit
 @pytest.mark.parametrize("commission_pct", [float("nan"), float("inf"), float("-inf")])
-def test_engine_rejects_nonfinite_commission_override(commission_pct: float) -> None:
+def test_engine_rejects_comm_pct(commission_pct: float) -> None:
     """Explicit commission override should reject non-finite values."""
     engine = PnLEngine(commission_pct=4.5)
     with pytest.raises(ValueError):
