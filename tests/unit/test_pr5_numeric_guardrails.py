@@ -134,7 +134,7 @@ def test_settlement_rejects_bad_num(price: float, size: float) -> None:
         (2.0, float("-inf")),
     ],
 )
-def test_settlement_rejects_bad_num_lay(price: float, size: float) -> None:
+def test_settlement_bad_num_lay(price: float, size: float) -> None:
     """Settlement calculation should reject non-finite numbers for LAY side too."""
     engine = PnLEngine(commission_pct=4.5)
     with pytest.raises(ValueError):
