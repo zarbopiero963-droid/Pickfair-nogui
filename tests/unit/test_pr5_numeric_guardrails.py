@@ -165,6 +165,23 @@ def test_engine_rejects_bad_comm() -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("commission_pct", [float("nan"), float("inf"), float("-inf")])
+def test_engine_rejects_nonfinite_commission_override(commission_pct: float) -> None:
+    """Explicit commission override should reject non-finite values."""
+    engine = PnLEngine(commission_pct=4.5)
+    with pytest.raises(ValueError):
+        engine.calculate_position_pnl(
+            market_id="1.1",
+            selection_id=1,
+            side="BACK",
+            entry_price=2.0,
+            exit_price=2.2,
+            size=10.0,
+            commission_pct=commission_pct,
+        )
+
+
+@pytest.mark.unit
 def test_pnl_valid_output_unchanged() -> None:
     """Finite valid input path should preserve expected PnL numbers."""
     engine = PnLEngine(commission_pct=4.5)
