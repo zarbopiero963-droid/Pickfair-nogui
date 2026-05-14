@@ -150,6 +150,102 @@ def _equalize_stakes_post_rounding(
     return stakes
 
 
+def _empty_dutching_result(error: str | None = None) -> Dict[str, Any]:
+    result: Dict[str, Any] = {
+        "stakes": [],
+        "profits": [],
+        "net_profits": [],
+        "book_pct": 0.0,
+        "avg_profit": 0.0,
+        "avg_net_profit": 0.0,
+    }
+    if error:
+        result["error"] = error
+    return result
+
+
+def _preflight_dutching_inputs(
+    odds_d: List[Decimal],
+    total_stake: Any,
+    total_stake_d: Decimal,
+) -> Dict[str, Any] | None:
+    if _is_non_finite_numeric_literal(total_stake):
+        return _empty_dutching_result("Invalid stake")
+
+    if not odds_d or total_stake_d <= Decimal("0"):
+        return _empty_dutching_result()
+
+    if any((not odd.is_finite()) or odd <= Decimal("1.0") for odd in odds_d):
+        return _empty_dutching_result("Invalid odds <= 1.0")
+
+    return None
+
+
+def _inverse_odds_sum(odds_d: List[Decimal]) -> Decimal:
+    return sum([Decimal("1") / odd for odd in odds_d], Decimal("0"))
+
+
+def _initial_dutching_stakes(
+    odds_d: List[Decimal],
+    total_stake_d: Decimal,
+    inv_sum: Decimal,
+) -> List[Decimal]:
+    stakes = [
+        _round_step(total_stake_d * ((Decimal("1") / odd) / inv_sum))
+        for odd in odds_d
+    ]
+
+    diff = total_stake_d - sum(stakes)
+    if stakes:
+        stakes[-1] = _round_step(stakes[-1] + diff)
+
+    return stakes
+
+
+def _dutching_outcome_profits(
+    stakes: List[Decimal],
+    odds_d: List[Decimal],
+    commission_d: Decimal,
+) -> tuple[List[Decimal], List[Decimal]]:
+    profits: List[Decimal] = []
+    net_profits: List[Decimal] = []
+
+    for idx in range(len(stakes)):
+        gross_profit = _round_step(_profit_for_outcome(stakes, odds_d, idx))
+        net_profit = _round_step(_apply_commission(gross_profit, commission_d))
+        profits.append(gross_profit)
+        net_profits.append(net_profit)
+
+    return profits, net_profits
+
+
+def _average_decimal(values: List[Decimal]) -> Decimal:
+    return sum(values) / Decimal(len(values)) if values else Decimal("0")
+
+
+def _build_dutching_result(
+    stakes: List[Decimal],
+    profits: List[Decimal],
+    net_profits: List[Decimal],
+    inv_sum: Decimal,
+) -> Dict[str, Any]:
+    avg_profit = _average_decimal(profits)
+    avg_net_profit = _average_decimal(net_profits)
+    book_pct = inv_sum * Decimal("100")
+
+    result = {
+        "stakes": [float(stake) for stake in stakes],
+        "profits": [float(profit) for profit in profits],
+        "net_profits": [float(profit) for profit in net_profits],
+        "book_pct": float(_round_step(book_pct)),
+        "avg_profit": float(_round_step(avg_profit)),
+        "avg_net_profit": float(_round_step(avg_net_profit)),
+    }
+    for key in _NON_AUTHORITATIVE_SETTLEMENT_KEYS:
+        result.pop(key, None)
+    return result
+
+
 def calculate_dutching_stakes(
     odds: Sequence[Any],
     total_stake: Any,
@@ -171,63 +267,23 @@ def calculate_dutching_stakes(
     - avg_profit
     - avg_net_profit
     """
-    odds_d = [_d(x, "0") for x in (odds or [])]
-    total_stake_is_non_finite = _is_non_finite_numeric_literal(total_stake)
+    odds_d = [_d(value, "0") for value in (odds or [])]
     total_stake_d = _d(total_stake, "0")
-    commission_d = _resolve_policy_commission_pct(commission)
 
-    if total_stake_is_non_finite:
-        return {
-            "stakes": [],
-            "profits": [],
-            "net_profits": [],
-            "book_pct": 0.0,
-            "avg_profit": 0.0,
-            "avg_net_profit": 0.0,
-            "error": "Invalid stake",
-        }
+    preflight_result = _preflight_dutching_inputs(
+        odds_d=odds_d,
+        total_stake=total_stake,
+        total_stake_d=total_stake_d,
+    )
+    if preflight_result is not None:
+        return preflight_result
 
-    if not odds_d or total_stake_d <= Decimal("0"):
-        return {
-            "stakes": [],
-            "profits": [],
-            "net_profits": [],
-            "book_pct": 0.0,
-            "avg_profit": 0.0,
-            "avg_net_profit": 0.0,
-        }
-
-    if any((not o.is_finite()) or o <= Decimal("1.0") for o in odds_d):
-        return {
-            "stakes": [],
-            "profits": [],
-            "net_profits": [],
-            "book_pct": 0.0,
-            "avg_profit": 0.0,
-            "avg_net_profit": 0.0,
-            "error": "Invalid odds <= 1.0",
-        }
-
-    inv_sum = sum((Decimal("1") / o for o in odds_d), Decimal("0"))
+    inv_sum = _inverse_odds_sum(odds_d)
     if (not inv_sum.is_finite()) or inv_sum <= Decimal("0"):
-        return {
-            "stakes": [],
-            "profits": [],
-            "net_profits": [],
-            "book_pct": 0.0,
-            "avg_profit": 0.0,
-            "avg_net_profit": 0.0,
-            "error": "Invalid inverse odds sum",
-        }
+        return _empty_dutching_result("Invalid inverse odds sum")
 
-    stakes: List[Decimal] = []
-    for odd in odds_d:
-        stake = total_stake_d * ((Decimal("1") / odd) / inv_sum)
-        stakes.append(_round_step(stake))
-
-    diff = total_stake_d - sum(stakes)
-    if stakes:
-        stakes[-1] = _round_step(stakes[-1] + diff)
+    commission_d = _resolve_policy_commission_pct(commission)
+    stakes = _initial_dutching_stakes(odds_d, total_stake_d, inv_sum)
 
     if equalize and len(stakes) >= 2:
         stakes = _equalize_stakes_post_rounding(
@@ -237,35 +293,12 @@ def calculate_dutching_stakes(
             commission=commission_d if commission_aware else Decimal("0"),
         )
 
-    profits: List[Decimal] = []
-    net_profits: List[Decimal] = []
-
-    for idx in range(len(stakes)):
-        gross_profit = _round_step(_profit_for_outcome(stakes, odds_d, idx))
-        net_profit = _round_step(_apply_commission(gross_profit, commission_d))
-        profits.append(gross_profit)
-        net_profits.append(net_profit)
-
-    avg_profit = sum(profits) / Decimal(len(profits)) if profits else Decimal("0")
-    avg_net_profit = (
-        sum(net_profits) / Decimal(len(net_profits))
-        if net_profits
-        else Decimal("0")
+    profits, net_profits = _dutching_outcome_profits(
+        stakes=stakes,
+        odds_d=odds_d,
+        commission_d=commission_d,
     )
-    book_pct = inv_sum * Decimal("100")
-
-    result = {
-        "stakes": [float(s) for s in stakes],
-        "profits": [float(p) for p in profits],
-        "net_profits": [float(p) for p in net_profits],
-        "book_pct": float(_round_step(book_pct)),
-        "avg_profit": float(_round_step(avg_profit)),
-        "avg_net_profit": float(_round_step(avg_net_profit)),
-    }
-    for key in _NON_AUTHORITATIVE_SETTLEMENT_KEYS:
-        result.pop(key, None)
-    return result
-
+    return _build_dutching_result(stakes, profits, net_profits, inv_sum)
 
 def _normalize_selection_side(selection: Dict[str, Any]) -> str:
     item = selection or {}
