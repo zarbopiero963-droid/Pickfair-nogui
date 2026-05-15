@@ -87,18 +87,29 @@ jobs:
           OWNER="${REPO%/*}"
           NAME="${REPO#*/}"
 
-          PR_META="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json state,closed,mergedAt,headRefName,url)"
+          if [ -z "${PR_NUMBER:-}" ] || [ "$PR_NUMBER" = "null" ]; then
+            echo "::notice::No PR number available for this event. Skipping safe supervisor."
+            exit 0
+          fi
+
+          PR_META="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json state,closed,mergedAt,isDraft,headRefName,url)"
           echo "$PR_META" > .autofix-pr-meta.json
 
           PR_STATE="$(jq -r '.state // ""' .autofix-pr-meta.json)"
           PR_CLOSED="$(jq -r '.closed // false' .autofix-pr-meta.json)"
           PR_MERGED="$(jq -r '(.mergedAt // "") != ""' .autofix-pr-meta.json)"
+          PR_DRAFT="$(jq -r '.isDraft // false' .autofix-pr-meta.json)"
           PR_URL="$(jq -r '.url // ""' .autofix-pr-meta.json)"
 
-          echo "PR state: $PR_STATE closed=$PR_CLOSED merged=$PR_MERGED url=$PR_URL"
+          echo "PR state: $PR_STATE closed=$PR_CLOSED merged=$PR_MERGED draft=$PR_DRAFT url=$PR_URL"
 
           if [ "$PR_STATE" != "OPEN" ] || [ "$PR_CLOSED" = "true" ] || [ "$PR_MERGED" = "true" ]; then
             echo "::notice::PR #$PR_NUMBER is not open. Safe supervisor will not collect fix context or run Codex."
+            exit 0
+          fi
+
+          if [ "$PR_DRAFT" = "true" ]; then
+            echo "::notice::PR #$PR_NUMBER is draft. Safe supervisor will wait until ready_for_review."
             exit 0
           fi
 
