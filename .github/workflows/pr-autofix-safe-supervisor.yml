@@ -34,7 +34,7 @@ on:
 
 concurrency:
   group: pr-autofix-safe-${{ github.event.inputs.pr_number || github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -211,6 +211,12 @@ jobs:
             else
               echo "::error::Codex failed."
               exit 1
+            fi
+
+            after_codex_sha="$(git rev-parse HEAD)"
+            if [ "$after_codex_sha" != "$before_sha" ]; then
+              echo "::warning::Codex created commit(s). Rewinding to supervisor-controlled working-tree diff."
+              git reset --mixed "$before_sha"
             fi
 
             if git diff --quiet; then
