@@ -151,7 +151,6 @@ except Exception:  # pragma: no cover
 
         def select(self):
             _ = self
-            return None
 
     class _FallbackComboBox(ttk.Combobox):
         def __init__(self, master=None, variable=None, values=None, width=None, **kwargs):
