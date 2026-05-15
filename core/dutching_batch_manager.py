@@ -259,6 +259,7 @@ class DutchingBatchManager:
 
         batch = self.get_batch(batch_id)
         self._publish("DUTCHING_BATCH_CREATED", {"batch": batch})
+        assert batch is not None
         return batch
 
     def get_batch(self, batch_id: str) -> Optional[Dict[str, Any]]:
