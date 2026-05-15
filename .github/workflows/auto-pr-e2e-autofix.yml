@@ -43,6 +43,8 @@ jobs:
       MAX_ROUNDS: ${{ github.event.inputs.max_rounds || '5' }}
       PENDING_WAIT_SECONDS: ${{ github.event.inputs.pending_wait_seconds || '2700' }}
       STALE_RETRIGGER_LIMIT: ${{ github.event.inputs.stale_retrigger_limit || '1' }}
+      CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
+      DEEPSOURCE_API_TOKEN: ${{ secrets.DEEPSOURCE_API_TOKEN }}
 
     steps:
       - name: Checkout orchestrator source
