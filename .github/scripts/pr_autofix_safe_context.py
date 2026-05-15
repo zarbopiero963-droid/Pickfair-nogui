@@ -322,14 +322,21 @@ def main() -> int:
 
     all_issues = codacy_issues + ds_issues + review_threads
 
-    safe_files = sorted({
-        i["file"] for i in all_issues
-        if i.get("file") and i.get("safe_autofix") is True
-    })
     risky_files = sorted({
         i["file"] for i in all_issues
         if i.get("file") and i.get("requires_manual_or_config") is True
     })
+    risky_file_set = set(risky_files)
+
+    safe_candidate_files = {
+        i["file"] for i in all_issues
+        if i.get("file") and i.get("safe_autofix") is True
+    }
+
+    # Safety rule:
+    # if any analyzer marks a file as risky/manual/config-only,
+    # the file must not be sent to Codex even if an older review thread also mentions it.
+    safe_files = sorted(safe_candidate_files - risky_file_set)
 
     (OUT / "issues.jsonl").write_text(
         "".join(json.dumps(i, sort_keys=True) + "\n" for i in all_issues),
@@ -340,6 +347,30 @@ def main() -> int:
         encoding="utf-8",
     )
 
+    codacy_blocking = any(
+        "codacy" in ((b.get("name") or "") + " " + (b.get("url") or "")).lower()
+        for b in blockers
+    )
+    codacy_safe_count = sum(1 for i in codacy_issues if i.get("safe_autofix") is True)
+    codacy_risky_count = sum(1 for i in codacy_issues if i.get("requires_manual_or_config") is True)
+    codacy_manual_only = codacy_blocking and bool(codacy_issues) and codacy_safe_count == 0 and codacy_risky_count > 0
+
+    manual_reasons: list[str] = []
+    if codacy_manual_only:
+        manual_reasons.append("Codacy is blocking, but all Codacy API issues are risky/manual/config-only.")
+    if bool(blockers) and not pending and not safe_files:
+        manual_reasons.append("No safe allowed files remain after excluding risky/manual/config-only files.")
+
+    fatal_context_error = bool(errors)
+    requires_manual = bool(blockers) and not pending and bool(manual_reasons)
+    should_fix = (
+        bool(blockers)
+        and not pending
+        and bool(safe_files)
+        and not fatal_context_error
+        and not requires_manual
+    )
+
     summary = {
         "head": pr.get("headRefOid"),
         "branch": pr.get("headRefName"),
@@ -348,13 +379,13 @@ def main() -> int:
         "blockers": blockers,
         "safe_files": safe_files,
         "risky_files": risky_files,
+        "codacy_blocking": codacy_blocking,
+        "codacy_safe_count": codacy_safe_count,
+        "codacy_risky_count": codacy_risky_count,
+        "manual_reasons": manual_reasons,
         "errors": errors,
     }
     write_json(str(OUT / "decision.json"), summary)
-
-    should_fix = bool(blockers) and not pending and bool(safe_files) and not errors
-    requires_manual = bool(blockers) and not pending and not safe_files
-    fatal_context_error = bool(errors)
 
     task = [
         f"# Safe autofix handoff for PR #{PR_NUMBER}",
