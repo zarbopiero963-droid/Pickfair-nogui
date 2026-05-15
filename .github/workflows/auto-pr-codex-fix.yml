@@ -54,6 +54,10 @@ jobs:
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
       DEEPSOURCE_API_TOKEN: ${{ secrets.DEEPSOURCE_API_TOKEN }}
+      REVIEW_CONTEXT_MIN_GRACE_SECONDS: "180"
+      REVIEW_CONTEXT_MAX_WAIT_SECONDS: "900"
+      REVIEW_CONTEXT_POLL_SECONDS: "60"
+      REVIEW_CONTEXT_STABLE_POLLS: "2"
 
     steps:
       - name: Prepare directories
@@ -353,7 +357,28 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p .autofix/context codex-output
+          mkdir -p .autofix/context codex-output .autofix/orchestrator/scripts
+
+          for autofix_script in wait_for_pr_context_stability.py collect_github_review_threads_context.py collect_external_review_context.py; do
+            if gh api "repos/${REPO}/contents/.github/scripts/${autofix_script}?ref=main" --jq .content > ".autofix/orchestrator/${autofix_script}.b64" 2>/dev/null; then
+              base64 -d ".autofix/orchestrator/${autofix_script}.b64" > ".autofix/orchestrator/scripts/${autofix_script}"
+              chmod +x ".autofix/orchestrator/scripts/${autofix_script}"
+            elif [ -f ".github/scripts/${autofix_script}" ]; then
+              cp ".github/scripts/${autofix_script}" ".autofix/orchestrator/scripts/${autofix_script}"
+              chmod +x ".autofix/orchestrator/scripts/${autofix_script}"
+            else
+              echo "::warning::Autofix helper ${autofix_script} not available"
+            fi
+          done
+
+          echo "Waiting for GitHub/Codacy/DeepSource review context to stabilize..."
+          python3 .autofix/orchestrator/scripts/wait_for_pr_context_stability.py || true
+
+          echo "Collecting normalized GitHub review threads..."
+          python3 .autofix/orchestrator/scripts/collect_github_review_threads_context.py || true
+
+          echo "Collecting Codacy and DeepSource API context for PR #${PR_NUMBER}"
+          python3 .autofix/orchestrator/scripts/collect_external_review_context.py || true
 
           echo "Collecting Codacy and DeepSource API context for PR #${PR_NUMBER}"
           python3 .github/scripts/collect_external_review_context.py || true
@@ -441,6 +466,10 @@ jobs:
             fi
 
             echo
+            echo
+            echo "## Normalized unresolved GitHub review threads"
+            cat .autofix/context/github-review-threads.md 2>/dev/null || echo "No unresolved GitHub review threads collected."
+
             echo "## External analyzer API issues"
             cat .autofix/context/external-review-context.md 2>/dev/null || echo "No external analyzer API context collected."
 
