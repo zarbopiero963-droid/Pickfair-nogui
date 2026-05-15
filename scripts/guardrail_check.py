@@ -26,7 +26,14 @@ CRITICAL_FILES = {
     "live_gate.py",
 }
 
-TASK_PATTERN = re.compile(r"\[TASK:\s*([^\]]+)\]", re.IGNORECASE)
+TASK_PATTERNS = (
+    # Legacy/explicit format: [TASK: task_key]
+    re.compile(r"\[TASK:\s*([^\]]+)\]", re.IGNORECASE),
+    # Plain marker accepted by PR body, commit subject, and task marker files:
+    # TASK: task_key
+    # # TASK: task_key
+    re.compile(r"(?im)^\s*(?:[#>*-]\s*)*TASK:\s*([a-z0-9][a-z0-9_-]*)\b"),
+)
 TASK_KEY_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 PLACEHOLDER_TASKS = {"todo"}
 APPROVED_TASK_PREFIXES = (
@@ -85,10 +92,14 @@ def normalize_changed_files(raw: list[dict] | list[str]) -> list[str]:
 
 def extract_tasks(text: str) -> list[str]:
     out: list[str] = []
-    for match in TASK_PATTERN.finditer(text or ""):
-        task = (match.group(1) or "").strip()
-        if task:
-            out.append(task)
+    seen: set[str] = set()
+    for pattern in TASK_PATTERNS:
+        for match in pattern.finditer(text or ""):
+            task = (match.group(1) or "").strip()
+            task_norm = task.lower()
+            if task and task_norm not in seen:
+                out.append(task)
+                seen.add(task_norm)
     return out
 
 

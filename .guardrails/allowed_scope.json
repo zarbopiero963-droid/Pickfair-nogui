@@ -1,65 +1,68 @@
 {
   "default": {
-    "max_files": 8,
-    "allow_tests": true
+    "allow_tests": true,
+    "max_files": 8
   },
   "tasks": {
-    "trading_engine": {
-      "files": [
-        "core/trading_engine.py",
-        "database.py"
-      ],
-      "max_files": 12,
-      "allow_tests": true
-    },
-    "lifecycle": {
-      "files": [
-        "core/trading_engine.py",
-        "core/runtime_controller.py",
-        "order_manager.py"
-      ],
-      "max_files": 10,
-      "allow_tests": true
-    },
-    "claude_bug_pr6_safety_layer_market_shape": {
-      "files": [
-        "core/safety_layer.py"
-      ],
-      "max_files": 8,
-      "allow_tests": true
-    },
     "claude_bug_pr3_simulation_broker_runtime": {
+      "allow_tests": true,
       "files": [
         "simulation_broker.py"
       ],
-      "max_files": 8,
-      "allow_tests": true
+      "max_files": 8
     },
     "claude_bug_pr4_tick_throttle_executor_determinism": {
+      "allow_tests": true,
       "files": [
         "tick_dispatcher.py",
         "auto_throttle.py",
         "executor_manager.py"
       ],
-      "max_files": 10,
-      "allow_tests": true
+      "max_files": 10
     },
     "claude_bug_pr5_money_dutching_numeric_guardrails": {
+      "allow_tests": true,
       "files": [
         "dutching.py",
         "dutching_state.py"
       ],
-      "max_files": 8,
-      "allow_tests": true
+      "max_files": 8
+    },
+    "claude_bug_pr6_safety_layer_market_shape": {
+      "allow_tests": true,
+      "files": [
+        "core/safety_layer.py"
+      ],
+      "max_files": 8
     },
     "claude_bug_pr7_order_reconciliation_characterization": {
+      "allow_tests": true,
       "files": [
         "order_manager.py",
         "core/reconciliation_engine.py",
         "database.py"
       ],
-      "max_files": 10,
-      "allow_tests": true
+      "max_files": 10
+    },
+    "lifecycle": {
+      "allow_tests": true,
+      "files": [
+        "core/trading_engine.py",
+        "core/runtime_controller.py",
+        "order_manager.py"
+      ],
+      "max_files": 10
+    },
+    "safe-autofix-auto-trigger-test": {
+      "description": "Temporary safe autofix automatic trigger validation task."
+    },
+    "trading_engine": {
+      "allow_tests": true,
+      "files": [
+        "core/trading_engine.py",
+        "database.py"
+      ],
+      "max_files": 12
     }
   }
 }
