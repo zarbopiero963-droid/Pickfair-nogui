@@ -77,18 +77,22 @@ except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
     class _MessageBoxFallback:
         @staticmethod
         def showwarning(*_args, **_kwargs):
+            """No-op warning dialog in headless mode."""
             _ = _args, _kwargs
 
         @staticmethod
         def showinfo(*_args, **_kwargs):
+            """No-op info dialog in headless mode."""
             _ = _args, _kwargs
 
         @staticmethod
         def showerror(*_args, **_kwargs):
+            """No-op error dialog in headless mode."""
             _ = _args, _kwargs
 
         @staticmethod
         def askyesno(*_args, **_kwargs):
+            """Deterministic positive answer for non-interactive flows."""
             return True
 
     messagebox = _MessageBoxFallback()
