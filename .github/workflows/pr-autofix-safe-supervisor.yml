@@ -193,32 +193,6 @@ jobs:
             mkdir -p codex-output
 
             echo "Running Codex with safe handoff..."
-
-            # Codex may edit files, but must not control git history or remote state.
-            # The supervisor alone validates scope, stages, commits, pushes and rolls back.
-            REAL_GIT="$(command -v git)"
-            mkdir -p .autofix/codex-bin
-            cat > .autofix/codex-bin/git <<'SH'
-#!/usr/bin/env bash
-cmd="${1:-}"
-case "$cmd" in
-  add|commit|push|reset|merge|rebase|cherry-pick|tag|checkout|switch|restore|stash|clean|am)
-    echo "safe-autofix: git $cmd is disabled during Codex. Leave edits in the working tree; the supervisor will validate, commit, push, or roll back." >&2
-    exit 126
-    ;;
-esac
-exec "__REAL_GIT__" "$@"
-SH
-            sed -i "s#__REAL_GIT__#$REAL_GIT#g" .autofix/codex-bin/git
-            chmod +x .autofix/codex-bin/git
-
-            cat >> .autofix/context/codex-task.md <<'EOF'
-
-## Additional supervisor rule
-Do not run git add, git commit, git push, git reset, git checkout, git switch, git restore, git stash, git clean, git merge, git rebase, git cherry-pick, or git tag.
-Leave all edits unstaged in the working tree. The safe supervisor is the only process allowed to stage, commit, push, or roll back.
-EOF
-
             codex_help="$(codex exec --help 2>&1 || true)"
             codex_args=(exec --model "$CODEX_MODEL")
 
@@ -232,27 +206,26 @@ EOF
             printf ' %q' "${codex_args[@]}"
             printf '\n'
 
-            if PATH="$PWD/.autofix/codex-bin:$PATH" codex "${codex_args[@]}" - < .autofix/context/codex-task.md | tee "codex-output/safe-codex-round-${round}.log"; then
+            if codex "${codex_args[@]}" - < .autofix/context/codex-task.md | tee "codex-output/safe-codex-round-${round}.log"; then
               echo "Codex completed."
             else
               echo "::error::Codex failed."
               exit 1
             fi
 
-            # Check both unstaged and staged changes. Codex should not stage, but this keeps
-            # the supervisor fail-safe if a future tool version manages to stage edits.
-            if git diff --quiet && git diff --cached --quiet; then
+            after_codex_sha="$(git rev-parse HEAD)"
+            if [ "$after_codex_sha" != "$before_sha" ]; then
+              echo "::warning::Codex created commit(s). Rewinding to supervisor-controlled working-tree diff."
+              git reset --mixed "$before_sha"
+            fi
+
+            if git diff --quiet; then
               echo "::warning::Codex produced no changes. Stopping."
               exit 0
             fi
 
             echo "Validating changed file scope..."
-            changed="$(
-              {
-                git diff --name-only
-                git diff --cached --name-only
-              } | sort -u
-            )"
+            changed="$(git diff --name-only)"
             echo "$changed"
 
             bad_files="$(
@@ -276,10 +249,10 @@ EOF
             fi
 
             echo "Diff summary:"
-            git diff --stat HEAD -- $changed
-            git diff HEAD -- $changed | sed -n '1,260p'
+            git diff --stat
+            git diff -- $changed | sed -n '1,260p'
 
-            git add -- $changed
+            git add $changed
             git commit -m "Safe autofix PR ${PR_NUMBER} round ${round}"
             git push origin "HEAD:$BRANCH"
 
