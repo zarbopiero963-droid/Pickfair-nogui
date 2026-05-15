@@ -28,6 +28,7 @@ except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
 
         @staticmethod
         def configure(*args, **kwargs):
+            """No-op configure fallback."""
             _ = args, kwargs
 
         @staticmethod
@@ -42,16 +43,18 @@ except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
         def destroy(*args, **kwargs):
             """Compatibility no-op for headless/test GUI adapters."""
             _ = args, kwargs
-            return None
 
     class _DummyVar:
         def __init__(self, value=None):
+            """Store a simple scalar value in headless mode."""
             self._value = value
 
         def get(self):
+            """Return the current scalar value."""
             return self._value
 
         def set(self, value):
+            """Update the current scalar value."""
             self._value = value
 
     tk = types.SimpleNamespace(
