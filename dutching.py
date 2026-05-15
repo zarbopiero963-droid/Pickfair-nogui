@@ -260,7 +260,6 @@ def _maybe_equalize_stakes(
     commission_d: Decimal,
     *,
     equalize: bool,
-    commission_aware: bool,
 ) -> List[Decimal]:
     if not equalize or len(stakes) < 2:
         return stakes
@@ -268,7 +267,7 @@ def _maybe_equalize_stakes(
         stakes=stakes,
         odds_d=odds_d,
         total_stake_d=total_stake_d,
-        commission=commission_d if commission_aware else Decimal("0"),
+        commission=commission_d,
     )
 
 
@@ -290,9 +289,8 @@ def _calculate_dutching_from_inputs(
         stakes=stakes,
         odds_d=odds_d,
         total_stake_d=total_stake_d,
-        commission_d=commission_d,
+        commission_d=commission_d if commission_aware else Decimal("0"),
         equalize=equalize,
-        commission_aware=commission_aware,
     )
     profits, net_profits = _dutching_outcome_profits(
         stakes=stakes,

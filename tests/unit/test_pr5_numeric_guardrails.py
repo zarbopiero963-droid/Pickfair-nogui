@@ -40,7 +40,9 @@ def test_dutching_rejects_nonfinite() -> None:
     assert bad_odds.get("error") == "Invalid non-finite odds", (
         "expected invalid-odds error"
     )  # nosec B101 - pytest assertion in test code
-    assert bad_stake["stakes"] == [], "expected no stakes for invalid stake"  # nosec B101 - pytest assertion in test code
+    assert bad_stake["stakes"] == [], (
+        "expected no stakes for invalid stake"
+    )  # nosec B101 - pytest assertion in test code
 
 
 @pytest.mark.unit
