@@ -33,7 +33,7 @@ def test_dutching_rejects_nonfinite() -> None:
     bad_stake = calculate_dutching_stakes([2.0, 3.0], float("nan"))
 
     assert bad_odds["stakes"] == [], "expected no stakes for invalid odds"
-    assert bad_odds.get("error") == "Invalid odds <= 1.0", "expected invalid-odds error"
+    assert bad_odds.get("error") == "Invalid non-finite odds", "expected invalid-odds error"
     assert bad_stake["stakes"] == [], "expected no stakes for invalid stake"
 
 
@@ -52,7 +52,7 @@ def test_dutching_rejects_bad_str(odds: list[str]) -> None:
     """Dutching should reject textual NaN/Inf odds variants."""
     result = calculate_dutching_stakes(cast(list[float], odds), cast(float, "100.0"))
     assert result["stakes"] == [], "expected no stakes for invalid textual odds"
-    assert "Invalid odds" in (result.get("error") or ""), "expected invalid-odds error for textual non-finite values"
+    assert result.get("error") == "Invalid non-finite odds", "expected invalid-odds error for textual non-finite values"
 
 
 @pytest.mark.unit

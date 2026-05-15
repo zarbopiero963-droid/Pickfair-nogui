@@ -175,7 +175,10 @@ def _preflight_dutching_inputs(
     if not odds_d or total_stake_d <= Decimal("0"):
         return _empty_dutching_result()
 
-    if any((not odd.is_finite()) or odd <= Decimal("1.0") for odd in odds_d):
+    if any(not odd.is_finite() for odd in odds_d):
+        return _empty_dutching_result("Invalid non-finite odds")
+
+    if any(odd <= Decimal("1.0") for odd in odds_d):
         return _empty_dutching_result("Invalid odds <= 1.0")
 
     return None
@@ -324,6 +327,9 @@ def calculate_dutching_stakes(
     - avg_profit
     - avg_net_profit
     """
+    if any(_is_non_finite_numeric_literal(value) for value in (odds or [])):
+        return _empty_dutching_result("Invalid non-finite odds")
+
     odds_d = [_d(value, "0") for value in (odds or [])]
     total_stake_d = _d(total_stake, "0")
 
