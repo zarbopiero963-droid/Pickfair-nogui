@@ -164,18 +164,26 @@ def _empty_dutching_result(error: str | None = None) -> Dict[str, Any]:
     return result
 
 
+def _has_non_finite_odds(odds_d: List[Decimal]) -> bool:
+    return any(not odd.is_finite() for odd in odds_d)
+
+
+def _has_invalid_odds(odds_d: List[Decimal]) -> bool:
+    return any(odd <= Decimal("1.0") for odd in odds_d)
+
+
 def _preflight_dutching_inputs(
     odds_d: List[Decimal],
     total_stake: Any,
     total_stake_d: Decimal,
-) -> Dict[str, Any] | None:  # noqa: C901 - keep fail-closed guards readable and local.
+) -> Dict[str, Any] | None:
     if _is_non_finite_numeric_literal(total_stake):
         return _empty_dutching_result("Invalid stake")
     if not odds_d or total_stake_d <= Decimal("0"):
         return _empty_dutching_result()
-    if any(not odd.is_finite() for odd in odds_d):
+    if _has_non_finite_odds(odds_d):
         return _empty_dutching_result("Invalid non-finite odds")
-    if any(odd <= Decimal("1.0") for odd in odds_d):
+    if _has_invalid_odds(odds_d):
         return _empty_dutching_result("Invalid odds <= 1.0")
     return None
 
@@ -257,17 +265,36 @@ def _maybe_equalize_stakes(
     stakes: List[Decimal],
     odds_d: List[Decimal],
     total_stake_d: Decimal,
-    commission_d: Decimal,
+    effective_commission_d: Decimal,
     *,
     equalize: bool,
-) -> List[Decimal]:  # noqa: PLR0913 - arguments mirror dutching surface inputs.
+) -> List[Decimal]:
     if not equalize or len(stakes) < 2:
         return stakes
     return _equalize_stakes_post_rounding(
         stakes=stakes,
         odds_d=odds_d,
         total_stake_d=total_stake_d,
-        commission=commission_d,
+        commission=effective_commission_d,
+    )
+
+
+def _equalized_stakes_for_inputs(
+    odds_d: List[Decimal],
+    total_stake_d: Decimal,
+    inv_sum: Decimal,
+    commission_d: Decimal,
+    *,
+    equalize: bool,
+    commission_aware: bool,
+) -> List[Decimal]:
+    stakes = _initial_dutching_stakes(odds_d, total_stake_d, inv_sum)
+    return _maybe_equalize_stakes(
+        stakes=stakes,
+        odds_d=odds_d,
+        total_stake_d=total_stake_d,
+        effective_commission_d=commission_d if commission_aware else Decimal("0"),
+        equalize=equalize,
     )
 
 
@@ -278,19 +305,19 @@ def _calculate_dutching_from_inputs(
     *,
     equalize: bool,
     commission_aware: bool,
-) -> Dict[str, Any]:  # noqa: PLR0913, PLR0915 - explicit values improve auditability.
+) -> Dict[str, Any]:
     inv_sum = _validated_inverse_odds_sum(odds_d)
     if inv_sum is None:
         return _empty_dutching_result("Invalid inverse odds sum")
 
     commission_d = _resolve_policy_commission_pct(commission)
-    stakes = _initial_dutching_stakes(odds_d, total_stake_d, inv_sum)
-    stakes = _maybe_equalize_stakes(
-        stakes=stakes,
+    stakes = _equalized_stakes_for_inputs(
         odds_d=odds_d,
         total_stake_d=total_stake_d,
-        commission_d=commission_d if commission_aware else Decimal("0"),
+        inv_sum=inv_sum,
+        commission_d=commission_d,
         equalize=equalize,
+        commission_aware=commission_aware,
     )
     profits, net_profits = _dutching_outcome_profits(
         stakes=stakes,
@@ -300,13 +327,19 @@ def _calculate_dutching_from_inputs(
     return _build_dutching_result(stakes, profits, net_profits, inv_sum)
 
 
+def _parse_dutching_inputs(odds: Sequence[Any], total_stake: Any) -> tuple[List[Decimal], Decimal]:
+    odds_d = [_d(value, "0") for value in (odds or [])]
+    total_stake_d = _d(total_stake, "0")
+    return odds_d, total_stake_d
+
+
 def calculate_dutching_stakes(
     odds: Sequence[Any],
     total_stake: Any,
     commission: float = 0.0,
     equalize: bool = True,
     commission_aware: bool = True,
-) -> Dict[str, Any]:  # noqa: C901, PLR0915 - validations intentionally kept inline.
+) -> Dict[str, Any]:
     """
     Dutching helper (preview-only, non-authoritative settlement surface):
     - stake distribution corretta
@@ -324,8 +357,7 @@ def calculate_dutching_stakes(
     if any(_is_non_finite_numeric_literal(value) for value in (odds or [])):
         return _empty_dutching_result("Invalid non-finite odds")
 
-    odds_d = [_d(value, "0") for value in (odds or [])]
-    total_stake_d = _d(total_stake, "0")
+    odds_d, total_stake_d = _parse_dutching_inputs(odds, total_stake)
 
     preflight_result = _preflight_dutching_inputs(
         odds_d=odds_d,

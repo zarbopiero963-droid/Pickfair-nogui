@@ -18,10 +18,12 @@ except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
 
         @staticmethod
         def grid(*args, **kwargs):
+            """No-op grid manager fallback."""
             _ = args, kwargs
 
         @staticmethod
         def place(*args, **kwargs):
+            """No-op placement fallback."""
             _ = args, kwargs
 
         @staticmethod

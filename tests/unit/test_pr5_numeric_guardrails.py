@@ -25,7 +25,7 @@ def test_mm_inputs_fail_closed() -> None:
     assert not decision.approved, (
         "decision must be rejected for non-finite inputs"
     )  # nosec B101 - pytest assertion in test code
-    assert decision.recommended_stake == 0.0, (
+    assert not decision.recommended_stake, (
         "recommended stake must be exactly zero"
     )  # nosec B101 - pytest assertion in test code
 
