@@ -181,6 +181,8 @@ def _preflight_dutching_inputs(
     if any(odd <= Decimal("1.0") for odd in odds_d):
         return _empty_dutching_result("Invalid odds <= 1.0")
 
+    return None
+
 def _inverse_odds_sum(odds_d: List[Decimal]) -> Decimal:
     return sum(((Decimal("1") / odd) for odd in odds_d), Decimal("0"))
 
