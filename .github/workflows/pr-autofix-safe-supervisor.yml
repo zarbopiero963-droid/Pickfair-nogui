@@ -1,0 +1,233 @@
+name: PR Autofix Safe Supervisor
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number"
+        required: true
+      max_rounds:
+        description: "Maximum safe fix rounds"
+        required: false
+        default: "3"
+      pending_wait_seconds:
+        description: "Maximum seconds to wait for pending checks"
+        required: false
+        default: "2700"
+      dry_run:
+        description: "Collect context but do not run Codex/push"
+        required: false
+        default: "false"
+
+concurrency:
+  group: pr-autofix-safe-${{ github.event.inputs.pr_number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: read
+  checks: read
+  statuses: read
+  actions: read
+
+jobs:
+  safe-autofix:
+    name: Safe PR autofix
+    runs-on: [self-hosted, Linux, X64, pickfair-fixer, codex]
+
+    env:
+      GH_TOKEN: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+      CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
+      DEEPSOURCE_API_TOKEN: ${{ secrets.DEEPSOURCE_API_TOKEN }}
+      REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.inputs.pr_number }}
+      MAX_ROUNDS: ${{ github.event.inputs.max_rounds || '3' }}
+      PENDING_WAIT_SECONDS: ${{ github.event.inputs.pending_wait_seconds || '2700' }}
+      DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+      CODEX_MODEL: gpt-5.3-codex
+
+    steps:
+      - name: Checkout supervisor source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+          fetch-depth: 0
+
+      - name: Copy safe collector
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/safe-autofix-tools"
+          cp .github/scripts/pr_autofix_safe_context.py "$RUNNER_TEMP/safe-autofix-tools/pr_autofix_safe_context.py"
+          chmod +x "$RUNNER_TEMP/safe-autofix-tools/pr_autofix_safe_context.py"
+
+      - name: Configure git identity
+        run: |
+          git config --global user.name "pickfair-safe-autofix-bot"
+          git config --global user.email "pickfair-autofix-bot@users.noreply.github.com"
+
+      - name: Safe autofix loop
+        run: |
+          set -euo pipefail
+
+          OWNER="${REPO%/*}"
+          NAME="${REPO#*/}"
+
+          BRANCH="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefName --jq '.headRefName')"
+          echo "PR branch: $BRANCH"
+
+          git fetch origin "$BRANCH"
+          git checkout -B "$BRANCH" "origin/$BRANCH"
+
+          round=1
+          while [ "$round" -le "$MAX_ROUNDS" ]; do
+            echo "=============================="
+            echo "SAFE AUTOFIX ROUND $round/$MAX_ROUNDS"
+            echo "=============================="
+
+            waited=0
+            while true; do
+              rm -rf .autofix/context
+              mkdir -p .autofix/context
+
+              python3 "$RUNNER_TEMP/safe-autofix-tools/pr_autofix_safe_context.py"
+              set -a
+              . .autofix/context/decision.env
+              set +a
+
+              echo "head=$HEAD_SHA pending=$PENDING_COUNT blockers=$BLOCKER_COUNT safe_files=$SAFE_FILE_COUNT should_fix=$SHOULD_FIX manual=$REQUIRES_MANUAL fatal=$FATAL_CONTEXT_ERROR"
+
+              if [ "$PENDING_COUNT" = "0" ]; then
+                break
+              fi
+
+              if [ "$waited" -ge "$PENDING_WAIT_SECONDS" ]; then
+                echo "::warning::Pending checks did not finish within wait budget."
+                exit 0
+              fi
+
+              echo "Pending checks remain. Waiting 60s..."
+              sleep 60
+              waited=$((waited + 60))
+            done
+
+            if [ "$BLOCKER_COUNT" = "0" ]; then
+              echo "PR #$PR_NUMBER is clean."
+              exit 0
+            fi
+
+            if [ "$FATAL_CONTEXT_ERROR" = "true" ]; then
+              echo "::error::Required analyzer context could not be collected. Refusing to run Codex blindly."
+              cat .autofix/context/decision.json
+              exit 1
+            fi
+
+            if [ "$REQUIRES_MANUAL" = "true" ] || [ "$SAFE_FILE_COUNT" = "0" ]; then
+              echo "::warning::Only manual/config/risky issues remain. Refusing unsafe code refactor."
+              cat .autofix/context/codex-task.md
+              exit 0
+            fi
+
+            echo "Allowed files:"
+            cat .autofix/context/allowed-files.txt
+
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "Dry run requested. Stopping before Codex."
+              cat .autofix/context/codex-task.md
+              exit 0
+            fi
+
+            before_sha="$(git rev-parse HEAD)"
+            echo "Before SHA: $before_sha"
+
+            mkdir -p codex-output
+
+            echo "Running Codex with safe handoff..."
+            if codex exec --model "$CODEX_MODEL" --approval-policy never --sandbox danger-full-access < .autofix/context/codex-task.md | tee "codex-output/safe-codex-round-${round}.log"; then
+              echo "Codex completed."
+            else
+              echo "::error::Codex failed."
+              exit 1
+            fi
+
+            if git diff --quiet; then
+              echo "::warning::Codex produced no changes. Stopping."
+              exit 0
+            fi
+
+            echo "Validating changed file scope..."
+            changed="$(git diff --name-only)"
+            echo "$changed"
+
+            bad_files="$(
+              comm -23 \
+                <(printf '%s\n' "$changed" | sort -u) \
+                <(sort -u .autofix/context/allowed-files.txt) || true
+            )"
+
+            if [ -n "$bad_files" ]; then
+              echo "::error::Codex changed files outside allowlist:"
+              echo "$bad_files"
+              git diff --stat
+              git reset --hard "$before_sha"
+              exit 1
+            fi
+
+            echo "Compile changed Python files..."
+            py_files="$(printf '%s\n' "$changed" | grep -E '\.py$' || true)"
+            if [ -n "$py_files" ]; then
+              python3 -m compileall $py_files
+            fi
+
+            echo "Diff summary:"
+            git diff --stat
+            git diff -- $changed | sed -n '1,260p'
+
+            git add $changed
+            git commit -m "Safe autofix PR ${PR_NUMBER} round ${round}"
+            git push origin "HEAD:$BRANCH"
+
+            echo "Waiting for checks after safe push..."
+            sleep 90
+
+            # Rollback if core tests become red.
+            post_json="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefOid,statusCheckRollup)"
+            echo "$post_json" > .autofix/context/post-push-pr.json
+
+            new_bad="$(
+              jq -r '
+                .statusCheckRollup[]?
+                | {
+                    name: (.name // .context // ""),
+                    state: (.conclusion // .state // .status // "")
+                  }
+                | select(.state == "FAILURE" or .state == "ERROR" or .state == "ACTION_REQUIRED")
+                | select(.name | test("unit|smoke|test-core-components|Integration Tests|core-invariants|End-to-End Tests"; "i"))
+                | "\(.name) \(.state)"
+              ' .autofix/context/post-push-pr.json
+            )"
+
+            if [ -n "$new_bad" ]; then
+              echo "::error::Safe autofix made core checks red. Rolling back."
+              echo "$new_bad"
+              git reset --hard "$before_sha"
+              git push --force-with-lease origin "HEAD:$BRANCH"
+              exit 1
+            fi
+
+            round=$((round + 1))
+          done
+
+          echo "::warning::Reached max safe rounds."
+          exit 0
+
+      - name: Upload safe autofix context
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-autofix-safe-context-${{ github.event.inputs.pr_number }}
+          path: |
+            .autofix/context/**
+            codex-output/**
+          if-no-files-found: ignore
