@@ -37,9 +37,9 @@ except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
             _ = args, kwargs
 
         @staticmethod
-        def destroy():
+        def destroy(*args, **kwargs):
             """Compatibility no-op for headless/test GUI adapters."""
-            pass
+            _ = args, kwargs
 
     class _DummyVar:
         def __init__(self, value=None):
