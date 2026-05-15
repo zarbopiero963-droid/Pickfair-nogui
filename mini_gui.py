@@ -12,19 +12,19 @@ except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
 
         @staticmethod
         def pack(*args, **kwargs):
-            return None
+            _ = args, kwargs
 
         @staticmethod
         def grid(*args, **kwargs):
-            return None
+            _ = args, kwargs
 
         @staticmethod
         def place(*args, **kwargs):
-            return None
+            _ = args, kwargs
 
         @staticmethod
         def configure(*args, **kwargs):
-            return None
+            _ = args, kwargs
 
         @staticmethod
         def config(*args, **kwargs):
@@ -32,11 +32,11 @@ except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
 
         @staticmethod
         def bind(*args, **kwargs):
-            return None
+            _ = args, kwargs
 
         @staticmethod
         def destroy():
-            return None
+            pass
 
     class _DummyVar:
         def __init__(self, value=None):
@@ -66,15 +66,15 @@ except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
     class _MessageBoxFallback:
         @staticmethod
         def showwarning(*_args, **_kwargs):
-            return None
+            _ = _args, _kwargs
 
         @staticmethod
         def showinfo(*_args, **_kwargs):
-            return None
+            _ = _args, _kwargs
 
         @staticmethod
         def showerror(*_args, **_kwargs):
-            return None
+            _ = _args, _kwargs
 
         @staticmethod
         def askyesno(*_args, **_kwargs):
