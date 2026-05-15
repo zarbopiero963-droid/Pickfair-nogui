@@ -185,7 +185,6 @@ def _preflight_dutching_inputs(
         return _empty_dutching_result("Invalid non-finite odds")
     if _has_invalid_odds(odds_d):
         return _empty_dutching_result("Invalid odds <= 1.0")
-    return None
 
 
 def _inverse_odds_sum(odds_d: List[Decimal]) -> Decimal:
