@@ -1,7 +1,101 @@
 from __future__ import annotations
 
-import tkinter as tk
-from tkinter import ttk, messagebox
+import types
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox
+except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
+    class _DummyWidget:
+        @staticmethod
+        def __init__(*args, **kwargs):
+            """No-op constructor for headless widget fallback."""
+            _ = args, kwargs
+
+        @staticmethod
+        def pack(*args, **kwargs):
+            """No-op geometry manager fallback."""
+            _ = args, kwargs
+
+        @staticmethod
+        def grid(*args, **kwargs):
+            """No-op grid geometry manager fallback."""
+            _ = args, kwargs
+
+        @staticmethod
+        def place(*args, **kwargs):
+            """No-op place geometry manager fallback."""
+            _ = args, kwargs
+
+        @staticmethod
+        def configure(*args, **kwargs):
+            """Headless GUI compatibility fallback."""
+            _ = args, kwargs
+
+        @staticmethod
+        def config(*args, **kwargs):
+            """Headless GUI compatibility fallback."""
+            return _DummyWidget.configure(*args, **kwargs)
+
+        @staticmethod
+        def bind(*args, **kwargs):
+            """Headless GUI compatibility fallback."""
+            _ = args, kwargs
+
+        @staticmethod
+        def destroy(*args, **kwargs):
+            """Compatibility no-op for headless/test GUI adapters."""
+            _ = args, kwargs
+
+    class _DummyVar:
+        def __init__(self, value=None):
+            """Headless GUI compatibility fallback."""
+            self._value = value
+
+        def get(self):
+            """Headless GUI compatibility fallback."""
+            return self._value
+
+        def set(self, value):
+            """Headless GUI compatibility fallback."""
+            self._value = value
+
+    tk = types.SimpleNamespace(
+        Tk=_DummyWidget,
+        Frame=_DummyWidget,
+        Label=_DummyWidget,
+        Button=_DummyWidget,
+        Entry=_DummyWidget,
+        Checkbutton=_DummyWidget,
+        Text=_DummyWidget,
+        StringVar=_DummyVar,
+        BooleanVar=_DummyVar,
+        IntVar=_DummyVar,
+        END="end",
+    )
+    ttk = types.SimpleNamespace(Combobox=_DummyWidget)
+
+    class _MessageBoxFallback:
+        @staticmethod
+        def showwarning(*_args, **_kwargs):
+            """Headless GUI compatibility fallback."""
+            _ = _args, _kwargs
+
+        @staticmethod
+        def showinfo(*_args, **_kwargs):
+            """Headless GUI compatibility fallback."""
+            _ = _args, _kwargs
+
+        @staticmethod
+        def showerror(*_args, **_kwargs):
+            """Headless GUI compatibility fallback."""
+            _ = _args, _kwargs
+
+        @staticmethod
+        def askyesno(*_args, **_kwargs):
+            """Headless GUI compatibility fallback."""
+            return True
+
+    messagebox = _MessageBoxFallback()
 from typing import Callable
 
 try:
@@ -12,7 +106,8 @@ except Exception:  # pragma: no cover
 
     class _FallbackFrame(tk.Frame):
         def __init__(self, master=None, fg_color=None, **kwargs):
-            super().__init__(master, **kwargs)
+            """Headless GUI compatibility fallback."""
+            tk.Frame.__init__(self, master, **kwargs)
 
     class _FallbackLabel(tk.Label):
         def __init__(
@@ -26,7 +121,8 @@ except Exception:  # pragma: no cover
             width=None,
             **kwargs,
         ):
-            super().__init__(
+            tk.Label.__init__(
+                self,
                 master,
                 text=text,
                 textvariable=textvariable,
@@ -39,15 +135,15 @@ except Exception:  # pragma: no cover
 
     class _FallbackButton(tk.Button):
         def __init__(self, master=None, text="", command=None, **kwargs):
-            super().__init__(master, text=text, command=command, **kwargs)
+            tk.Button.__init__(self, master, text=text, command=command, **kwargs)
 
     class _FallbackEntry(tk.Entry):
         def __init__(self, master=None, textvariable=None, width=None, show=None, **kwargs):
-            super().__init__(master, textvariable=textvariable, show=show, **kwargs)
+            tk.Entry.__init__(self, master, textvariable=textvariable, show=show, **kwargs)
 
     class _FallbackCheckBox(tk.Checkbutton):
         def __init__(self, master=None, text="", variable=None, **kwargs):
-            super().__init__(master, text=text, variable=variable, **kwargs)
+            tk.Checkbutton.__init__(self, master, text=text, variable=variable, **kwargs)
 
     class _FallbackSwitch(tk.Checkbutton):
         def __init__(
@@ -60,7 +156,8 @@ except Exception:  # pragma: no cover
             offvalue=False,
             **kwargs,
         ):
-            super().__init__(
+            tk.Checkbutton.__init__(
+                self,
                 master,
                 text=text,
                 variable=variable,
@@ -70,19 +167,16 @@ except Exception:  # pragma: no cover
                 **kwargs,
             )
 
-        def select(self):
-            return None
-
     class _FallbackComboBox(ttk.Combobox):
         def __init__(self, master=None, variable=None, values=None, width=None, **kwargs):
-            super().__init__(master, textvariable=variable, values=values or [], width=width, **kwargs)
+            ttk.Combobox.__init__(self, master, textvariable=variable, values=values or [], width=width, **kwargs)
 
     class _FallbackText(tk.Text):
         pass
 
     class _FallbackScrollableFrame(tk.Frame):
         def __init__(self, master=None, **kwargs):
-            super().__init__(master, **kwargs)
+            tk.Frame.__init__(self, master, **kwargs)
 
     class _FallbackTabview(tk.Frame):
         def __init__(self, master=None, **kwargs):
@@ -145,13 +239,13 @@ try:
 except Exception:  # pragma: no cover
     class TelegramTabUI:
         def __init__(self, parent, app):
-            _ = app
-            frame = ctk.CTkFrame(parent)
-            if hasattr(frame, "pack"):
-                frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
-            label = ctk.CTkLabel(frame, text="Telegram UI non disponibile")
-            if hasattr(label, "pack"):
-                label.pack(anchor="w", padx=12, pady=12)
+            self.app = app
+            self.frame = ctk.CTkFrame(parent)
+            if hasattr(self.frame, "pack"):
+                self.frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+            self.label = ctk.CTkLabel(self.frame, text="Telegram UI non disponibile")
+            if hasattr(self.label, "pack"):
+                self.label.pack(anchor="w", padx=12, pady=12)
 
 try:
     from theme import COLORS, FONTS

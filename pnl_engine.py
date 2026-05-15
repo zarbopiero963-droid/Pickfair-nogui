@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
+import math
 from typing import Any, Dict, Optional
 
 from core.type_helpers import safe_side
@@ -21,6 +22,7 @@ class PnLResult:
     net_pnl: float
 
     def to_dict(self) -> Dict[str, Any]:
+        """Return this PnL result as a plain dictionary."""
         return asdict(self)
 
 
@@ -43,13 +45,24 @@ class PnLEngine:
     """
 
     def __init__(self, commission_pct: float = 4.5):
-        self.commission_pct = float(commission_pct or 0.0)
+        """Initialize the engine with a finite default commission percentage."""
+        self.commission_pct = self._finite_float(commission_pct, default=0.0)
 
     # =========================================================
     # HELPERS
     # =========================================================
-    def _safe_side(self, side: Any) -> str:
+    @staticmethod
+    def _safe_side(side: Any) -> str:
+        """Normalize a user supplied side value."""
         return safe_side(side)
+
+    @staticmethod
+    def _finite_float(value: Any, *, default: float = 0.0) -> float:
+        """Convert a numeric input to float and reject NaN or infinity."""
+        converted = float(value if value not in (None, "") else default)
+        if not math.isfinite(converted):
+            raise ValueError("non-finite numeric input")
+        return converted
 
     def _commission_amount(
         self,
@@ -58,13 +71,18 @@ class PnLEngine:
         *,
         preview_only: bool = False,
     ) -> float:
+        """Calculate commission only on positive gross PnL."""
         pct = self._resolve_policy_commission_pct(commission_pct, preview_only=preview_only)
         if gross_pnl <= 0:
             return 0.0
         return gross_pnl * (pct / 100.0)
 
     def _resolve_policy_commission_pct(self, commission_pct: Optional[float], *, preview_only: bool = False) -> float:
-        pct = self.commission_pct if commission_pct is None else float(commission_pct or 0.0)
+        """Resolve and enforce a finite commission percentage for helper calculations."""
+        pct = self._finite_float(
+            self.commission_pct if commission_pct is None else commission_pct,
+            default=0.0,
+        )
         if pct <= 0.0:
             # preview-only helper paths (mark-to-market / preview) can disable commission explicitly.
             if preview_only:
@@ -108,9 +126,9 @@ class PnLEngine:
         market_id = str(market_id or "")
         selection_id = int(selection_id)
         side = self._safe_side(side)
-        entry_price = float(entry_price or 0.0)
-        exit_price = float(exit_price or 0.0)
-        size = float(size or 0.0)
+        entry_price = self._finite_float(entry_price, default=0.0)
+        exit_price = self._finite_float(exit_price, default=0.0)
+        size = self._finite_float(size, default=0.0)
 
         if entry_price <= 1.0:
             raise ValueError("entry_price non valido")
@@ -164,8 +182,8 @@ class PnLEngine:
             lose -> gross = -(size * (price - 1))
         """
         side = self._safe_side(side)
-        price = float(price or 0.0)
-        size = float(size or 0.0)
+        price = self._finite_float(price, default=0.0)
+        size = self._finite_float(size, default=0.0)
 
         if price <= 1.0:
             raise ValueError("price non valido")
@@ -208,9 +226,9 @@ class PnLEngine:
             back_size = (lay_price * lay_stake) / back_price
         """
         entry_side = self._safe_side(entry_side)
-        entry_price = float(entry_price or 0.0)
-        entry_size = float(entry_size or 0.0)
-        hedge_price = float(hedge_price or 0.0)
+        entry_price = self._finite_float(entry_price, default=0.0)
+        entry_size = self._finite_float(entry_size, default=0.0)
+        hedge_price = self._finite_float(hedge_price, default=0.0)
 
         if entry_price <= 1.0:
             raise ValueError("entry_price non valido")
@@ -269,6 +287,7 @@ class PnLEngine:
         current_price: float,
         size: float,
     ) -> float:
+        """Return gross mark-to-market PnL for a preview-only position snapshot."""
         result = self.calculate_position_pnl(
             market_id="",
             selection_id=0,

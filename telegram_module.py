@@ -1,8 +1,38 @@
 from __future__ import annotations
 
 import logging
-import tkinter as tk
-from tkinter import messagebox, simpledialog
+import types
+
+try:
+    import tkinter as tk
+    from tkinter import messagebox, simpledialog
+except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
+    tk = types.SimpleNamespace(END="end")
+
+    class _MessageBoxFallback:
+        @staticmethod
+        def showwarning(*_args, **_kwargs):
+            return None
+
+        @staticmethod
+        def showinfo(*_args, **_kwargs):
+            return None
+
+        @staticmethod
+        def showerror(*_args, **_kwargs):
+            return None
+
+        @staticmethod
+        def askyesno(*_args, **_kwargs):
+            return True
+
+    class _SimpleDialogFallback:
+        @staticmethod
+        def askstring(*_args, **_kwargs):
+            return None
+
+    messagebox = _MessageBoxFallback()
+    simpledialog = _SimpleDialogFallback()
 
 from theme import COLORS
 from services.telegram_signal_processor import TelegramSignalProcessor

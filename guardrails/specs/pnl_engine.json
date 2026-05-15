@@ -1,5 +1,13 @@
 {
   "module": "pnl_engine",
+  "module_paths": [
+    "pnl_engine.py"
+  ],
+  "focused_tests": [
+    "tests/unit/test_pr5_numeric_guardrails.py",
+    "tests/invariant/test_pnl_engine_drift_and_stress.py",
+    "tests/invariant/test_core_pnl_engine_drift_and_stress.py"
+  ],
   "required_functions": [
     "calculate_pnl",
     "update_position",

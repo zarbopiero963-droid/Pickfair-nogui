@@ -259,6 +259,8 @@ class DutchingBatchManager:
 
         batch = self.get_batch(batch_id)
         self._publish("DUTCHING_BATCH_CREATED", {"batch": batch})
+        if batch is None:
+            raise RuntimeError(f"Failed to create batch {batch_id}: row not found after upsert")
         return batch
 
     def get_batch(self, batch_id: str) -> Optional[Dict[str, Any]]:

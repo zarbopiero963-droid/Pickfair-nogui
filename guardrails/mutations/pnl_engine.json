@@ -1,5 +1,12 @@
 {
   "module": "pnl_engine",
+  "module_paths": [
+    "pnl_engine.py"
+  ],
+  "focused_tests": [
+    "tests/invariant/test_pnl_engine_drift_and_stress.py",
+    "tests/invariant/test_core_pnl_engine_drift_and_stress.py"
+  ],
   "description": "Hardcore mutations for PnL integrity, exposure closeout, and sign correctness.",
   "mutations": [
     {
