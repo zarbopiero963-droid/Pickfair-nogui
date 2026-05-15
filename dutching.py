@@ -168,7 +168,7 @@ def _preflight_dutching_inputs(
     odds_d: List[Decimal],
     total_stake: Any,
     total_stake_d: Decimal,
-) -> Dict[str, Any] | None:  # noqa: C901 - keep fail-closed guards readable and local.
+) -> Dict[str, Any]:  # noqa: C901 - keep fail-closed guards readable and local.
     if _is_non_finite_numeric_literal(total_stake):
         return _empty_dutching_result("Invalid stake")
     if not odds_d or total_stake_d <= Decimal("0"):
@@ -177,7 +177,7 @@ def _preflight_dutching_inputs(
         return _empty_dutching_result("Invalid non-finite odds")
     if any(odd <= Decimal("1.0") for odd in odds_d):
         return _empty_dutching_result("Invalid odds <= 1.0")
-    return None
+    return {}
 
 
 def _inverse_odds_sum(odds_d: List[Decimal]) -> Decimal:
@@ -332,7 +332,7 @@ def calculate_dutching_stakes(
         total_stake=total_stake,
         total_stake_d=total_stake_d,
     )
-    if preflight_result is not None:
+    if preflight_result:
         return preflight_result
     return _calculate_dutching_from_inputs(
         odds_d=odds_d,

@@ -190,11 +190,11 @@ except Exception:  # pragma: no cover
 
         @staticmethod
         def set_appearance_mode(_mode: str):
-            return None
+            _ = _mode
 
         @staticmethod
         def set_default_color_theme(_theme: str):
-            return None
+            _ = _theme
 
     ctk = _FallbackModule()
 
