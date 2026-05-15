@@ -48,12 +48,15 @@ except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
 
     class _DummyVar:
         def __init__(self, value=None):
+            """Store a lightweight tkinter-like variable value."""
             self._value = value
 
         def get(self):
+            """Return the current variable value."""
             return self._value
 
         def set(self, value):
+            """Update the current variable value."""
             self._value = value
 
     tk = types.SimpleNamespace(

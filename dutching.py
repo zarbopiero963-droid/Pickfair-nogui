@@ -181,12 +181,10 @@ def _preflight_dutching_inputs(
         return _empty_dutching_result("Invalid stake")
     if not odds_d or total_stake_d <= Decimal("0"):
         return _empty_dutching_result()
-    for is_invalid, error in (
-        (_has_non_finite_odds(odds_d), "Invalid non-finite odds"),
-        (_has_invalid_odds(odds_d), "Invalid odds <= 1.0"),
-    ):
-        if is_invalid:
-            return _empty_dutching_result(error)
+    if _has_non_finite_odds(odds_d):
+        return _empty_dutching_result("Invalid non-finite odds")
+    if _has_invalid_odds(odds_d):
+        return _empty_dutching_result("Invalid odds <= 1.0")
     return None
 
 
@@ -306,7 +304,7 @@ def _parse_dutching_inputs(odds: Sequence[Any], total_stake: Any) -> tuple[List[
     return odds_d, total_stake_d
 
 
-def _resolve_equalization_commission(
+def _resolve_eq_commission(
     commission: float,
     *,
     equalize: bool,
@@ -325,10 +323,10 @@ def calculate_dutching_stakes(
     commission_aware: bool = True,
 ) -> Dict[str, Any]:
     """Preview-only dutching allocation helper."""
+    odds_d, total_stake_d = _parse_dutching_inputs(odds, total_stake)
     if any(_is_non_finite_numeric_literal(value) for value in (odds or [])):
         return _empty_dutching_result("Invalid non-finite odds")
 
-    odds_d, total_stake_d = _parse_dutching_inputs(odds, total_stake)
     preflight_result = _preflight_dutching_inputs(
         odds_d=odds_d,
         total_stake=total_stake,
@@ -336,7 +334,8 @@ def calculate_dutching_stakes(
     )
     if preflight_result is not None:
         return preflight_result
-    equalization_commission_d = _resolve_equalization_commission(
+
+    equalization_commission_d = _resolve_eq_commission(
         commission,
         equalize=equalize,
         commission_aware=commission_aware,
