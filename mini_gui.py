@@ -8,10 +8,12 @@ except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
     class _DummyWidget:
         @staticmethod
         def __init__(*args, **kwargs):
+            """No-op constructor for headless widget fallback."""
             _ = args, kwargs
 
         @staticmethod
         def pack(*args, **kwargs):
+            """No-op geometry manager fallback."""
             _ = args, kwargs
 
         @staticmethod

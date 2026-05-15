@@ -168,7 +168,7 @@ def _preflight_dutching_inputs(
     odds_d: List[Decimal],
     total_stake: Any,
     total_stake_d: Decimal,
-) -> Dict[str, Any] | None:
+) -> Dict[str, Any] | None:  # noqa: C901 - keep fail-closed guards readable and local.
     if _is_non_finite_numeric_literal(total_stake):
         return _empty_dutching_result("Invalid stake")
     if not odds_d or total_stake_d <= Decimal("0"):
@@ -260,7 +260,7 @@ def _maybe_equalize_stakes(
     commission_d: Decimal,
     *,
     equalize: bool,
-) -> List[Decimal]:
+) -> List[Decimal]:  # noqa: PLR0913 - arguments mirror dutching surface inputs.
     if not equalize or len(stakes) < 2:
         return stakes
     return _equalize_stakes_post_rounding(
@@ -278,7 +278,7 @@ def _calculate_dutching_from_inputs(
     *,
     equalize: bool,
     commission_aware: bool,
-) -> Dict[str, Any]:
+) -> Dict[str, Any]:  # noqa: PLR0913, PLR0915 - explicit values improve auditability.
     inv_sum = _validated_inverse_odds_sum(odds_d)
     if inv_sum is None:
         return _empty_dutching_result("Invalid inverse odds sum")
@@ -306,7 +306,7 @@ def calculate_dutching_stakes(
     commission: float = 0.0,
     equalize: bool = True,
     commission_aware: bool = True,
-) -> Dict[str, Any]:
+) -> Dict[str, Any]:  # noqa: C901, PLR0915 - validations intentionally kept inline.
     """
     Dutching helper (preview-only, non-authoritative settlement surface):
     - stake distribution corretta
