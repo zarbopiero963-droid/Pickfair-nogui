@@ -173,6 +173,14 @@ def test_engine_rejects_comm_pct(commission_pct: float) -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("commission_pct", [float("nan"), float("inf"), float("-inf")])
+def test_engine_rejects_nonfinite_constructor_commission(commission_pct: float) -> None:
+    """Engine constructor should reject non-finite default commission values."""
+    with pytest.raises(ValueError):
+        PnLEngine(commission_pct=commission_pct)
+
+
+@pytest.mark.unit
 def test_pnl_valid_output_unchanged() -> None:
     """Finite valid input path should preserve expected PnL numbers."""
     engine = PnLEngine(commission_pct=4.5)
