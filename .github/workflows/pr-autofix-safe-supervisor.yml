@@ -74,12 +74,12 @@ jobs:
           OWNER="${REPO%/*}"
           NAME="${REPO#*/}"
 
-          PR_META="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json state,closed,merged,headRefName,url)"
+          PR_META="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json state,closed,mergedAt,headRefName,url)"
           echo "$PR_META" > .autofix-pr-meta.json
 
           PR_STATE="$(jq -r '.state // ""' .autofix-pr-meta.json)"
           PR_CLOSED="$(jq -r '.closed // false' .autofix-pr-meta.json)"
-          PR_MERGED="$(jq -r '.merged // false' .autofix-pr-meta.json)"
+          PR_MERGED="$(jq -r '(.mergedAt // "") != ""' .autofix-pr-meta.json)"
           PR_URL="$(jq -r '.url // ""' .autofix-pr-meta.json)"
 
           echo "PR state: $PR_STATE closed=$PR_CLOSED merged=$PR_MERGED url=$PR_URL"
