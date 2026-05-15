@@ -38,6 +38,7 @@ except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
 
         @staticmethod
         def destroy():
+            """Compatibility no-op for headless/test GUI adapters."""
             pass
 
     class _DummyVar:
