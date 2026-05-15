@@ -18,10 +18,12 @@ except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
 
         @staticmethod
         def grid(*args, **kwargs):
+            """No-op grid geometry manager fallback."""
             _ = args, kwargs
 
         @staticmethod
         def place(*args, **kwargs):
+            """No-op place geometry manager fallback."""
             _ = args, kwargs
 
         @staticmethod
@@ -40,6 +42,7 @@ except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
         def destroy(*args, **kwargs):
             """Compatibility no-op for headless/test GUI adapters."""
             _ = args, kwargs
+            return None
 
     class _DummyVar:
         def __init__(self, value=None):

@@ -249,7 +249,7 @@ def test_dutching_rejects_non_finite_string_odds(odds):
     result = calculate_dutching_stakes(odds, "100.0")
 
     assert result["stakes"] == []
-    assert "Invalid odds" in (result.get("error") or "")
+    assert result.get("error") == "Invalid non-finite odds"
 
 
 @pytest.mark.unit
