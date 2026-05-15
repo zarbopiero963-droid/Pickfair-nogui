@@ -28,14 +28,17 @@ except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
 
         @staticmethod
         def configure(*args, **kwargs):
+            """Headless GUI compatibility fallback."""
             _ = args, kwargs
 
         @staticmethod
         def config(*args, **kwargs):
+            """Headless GUI compatibility fallback."""
             return _DummyWidget.configure(*args, **kwargs)
 
         @staticmethod
         def bind(*args, **kwargs):
+            """Headless GUI compatibility fallback."""
             _ = args, kwargs
 
         @staticmethod
@@ -45,12 +48,15 @@ except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
 
     class _DummyVar:
         def __init__(self, value=None):
+            """Headless GUI compatibility fallback."""
             self._value = value
 
         def get(self):
+            """Headless GUI compatibility fallback."""
             return self._value
 
         def set(self, value):
+            """Headless GUI compatibility fallback."""
             self._value = value
 
     tk = types.SimpleNamespace(
@@ -71,18 +77,22 @@ except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
     class _MessageBoxFallback:
         @staticmethod
         def showwarning(*_args, **_kwargs):
+            """Headless GUI compatibility fallback."""
             _ = _args, _kwargs
 
         @staticmethod
         def showinfo(*_args, **_kwargs):
+            """Headless GUI compatibility fallback."""
             _ = _args, _kwargs
 
         @staticmethod
         def showerror(*_args, **_kwargs):
+            """Headless GUI compatibility fallback."""
             _ = _args, _kwargs
 
         @staticmethod
         def askyesno(*_args, **_kwargs):
+            """Headless GUI compatibility fallback."""
             return True
 
     messagebox = _MessageBoxFallback()
@@ -96,6 +106,7 @@ except Exception:  # pragma: no cover
 
     class _FallbackFrame(tk.Frame):
         def __init__(self, master=None, fg_color=None, **kwargs):
+            """Headless GUI compatibility fallback."""
             tk.Frame.__init__(self, master, **kwargs)
 
     class _FallbackLabel(tk.Label):
