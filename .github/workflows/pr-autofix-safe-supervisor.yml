@@ -193,25 +193,25 @@ jobs:
             mkdir -p codex-output
 
             echo "Running Codex with safe handoff..."
-  codex_help="$(codex exec --help 2>&1 || true)"
-  codex_args=(exec --model "$CODEX_MODEL")
+            codex_help="$(codex exec --help 2>&1 || true)"
+            codex_args=(exec --model "$CODEX_MODEL")
 
-  if printf '%s\n' "$codex_help" | grep -q -- '--dangerously-bypass-approvals-and-sandbox'; then
-    codex_args+=(--dangerously-bypass-approvals-and-sandbox)
-  elif printf '%s\n' "$codex_help" | grep -q -- '--sandbox'; then
-    codex_args+=(--sandbox danger-full-access)
-  fi
+            if printf '%s\n' "$codex_help" | grep -q -- '--dangerously-bypass-approvals-and-sandbox'; then
+              codex_args+=(--dangerously-bypass-approvals-and-sandbox)
+            elif printf '%s\n' "$codex_help" | grep -q -- '--sandbox'; then
+              codex_args+=(--sandbox danger-full-access)
+            fi
 
-  printf 'Codex command: codex'
-  printf ' %q' "${codex_args[@]}"
-  printf '\n'
+            printf 'Codex command: codex'
+            printf ' %q' "${codex_args[@]}"
+            printf '\n'
 
-  if codex "${codex_args[@]}" - < .autofix/context/codex-task.md | tee "codex-output/safe-codex-round-${round}.log"; then
-    echo "Codex completed."
-  else
-    echo "::error::Codex failed."
-    exit 1
-  fi
+            if codex "${codex_args[@]}" - < .autofix/context/codex-task.md | tee "codex-output/safe-codex-round-${round}.log"; then
+              echo "Codex completed."
+            else
+              echo "::error::Codex failed."
+              exit 1
+            fi
 
   if git diff --quiet; then
               echo "::warning::Codex produced no changes. Stopping."
