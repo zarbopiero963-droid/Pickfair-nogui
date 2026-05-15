@@ -77,8 +77,18 @@ jobs:
           BRANCH="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefName --jq '.headRefName')"
           echo "PR branch: $BRANCH"
 
-          git fetch origin "$BRANCH"
-          git checkout -B "$BRANCH" "origin/$BRANCH"
+          # Checkout robusto:
+          # 1. prova branch remoto normale
+          # 2. fallback su refs/pull/<PR>/head, che esiste anche quando il branch non è fetchabile direttamente
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            echo "Fetching PR branch from refs/heads/$BRANCH"
+            git fetch origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+            git checkout -B "$BRANCH" "refs/remotes/origin/$BRANCH"
+          else
+            echo "::warning::Remote branch $BRANCH not found directly. Falling back to refs/pull/$PR_NUMBER/head."
+            git fetch origin "refs/pull/$PR_NUMBER/head:refs/remotes/origin/pr-$PR_NUMBER-head"
+            git checkout -B "$BRANCH" "refs/remotes/origin/pr-$PR_NUMBER-head"
+          fi
 
           round=1
           while [ "$round" -le "$MAX_ROUNDS" ]; do
