@@ -150,19 +150,21 @@ def collect_github() -> dict[str, Any]:
               }
             }
           }
-          statusCheckRollup(first:100) {
-            nodes {
-              __typename
-              ... on CheckRun {
-                name
-                status
-                conclusion
-                detailsUrl
-              }
-              ... on StatusContext {
-                context
-                state
-                targetUrl
+          statusCheckRollup {
+            contexts(first:100) {
+              nodes {
+                __typename
+                ... on CheckRun {
+                  name
+                  status
+                  conclusion
+                  detailsUrl
+                }
+                ... on StatusContext {
+                  context
+                  state
+                  targetUrl
+                }
               }
             }
           }
@@ -172,7 +174,9 @@ def collect_github() -> dict[str, Any]:
     """
     data = gh_graphql(query, {"owner": OWNER, "repo": REPO_NAME, "number": PR_NUMBER})
     pr = data["data"]["repository"]["pullRequest"]
-    checks = [normalize_check(n) for n in pr.get("statusCheckRollup", {}).get("nodes", [])]
+    rollup = pr.get("statusCheckRollup") or {}
+    contexts = rollup.get("contexts") or {}
+    checks = [normalize_check(n) for n in contexts.get("nodes", [])]
     blockers = [c for c in checks if is_red(c["state"])]
     pending = [c for c in checks if is_pending(c["state"])]
     pr["normalizedChecks"] = checks
