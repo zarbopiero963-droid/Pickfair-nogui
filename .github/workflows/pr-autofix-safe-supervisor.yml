@@ -33,7 +33,7 @@ on:
     types: [completed]
 
 concurrency:
-  group: pr-autofix-safe-${{ github.event.inputs.pr_number || github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.run_id }}
+  group: pr-autofix-safe-${{ github.event.inputs.pr_number || github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 permissions:
