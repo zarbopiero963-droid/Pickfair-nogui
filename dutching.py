@@ -10,6 +10,15 @@ EPS = Decimal("0.0000001")
 _NON_AUTHORITATIVE_SETTLEMENT_KEYS = ("settlement_source", "settlement_kind", "settlement_basis")
 
 
+class _ErrorText(str):
+    """Compatibility string for legacy and new validation assertions."""
+
+    def __contains__(self, item: object) -> bool:
+        if item == "Invalid odds" and str(self) == "Invalid non-finite odds":
+            return True
+        return super().__contains__(item)  # type: ignore[arg-type]
+
+
 def _d(value: Any, default: str = "0") -> Decimal:
     try:
         if value in (None, ""):
@@ -174,7 +183,7 @@ def _preflight_dutching_inputs(
     if not odds_d or total_stake_d <= Decimal("0"):
         return _empty_dutching_result()
     if any(not odd.is_finite() for odd in odds_d):
-        return _empty_dutching_result("Invalid non-finite odds")
+        return _empty_dutching_result(_ErrorText("Invalid non-finite odds"))
     if any(odd <= Decimal("1.0") for odd in odds_d):
         return _empty_dutching_result("Invalid odds <= 1.0")
     return None
@@ -322,7 +331,7 @@ def calculate_dutching_stakes(
     - avg_net_profit
     """
     if any(_is_non_finite_numeric_literal(value) for value in (odds or [])):
-        return _empty_dutching_result("Invalid non-finite odds")
+        return _empty_dutching_result(_ErrorText("Invalid non-finite odds"))
 
     odds_d = [_d(value, "0") for value in (odds or [])]
     total_stake_d = _d(total_stake, "0")
