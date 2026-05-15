@@ -89,7 +89,7 @@ except Exception:  # pragma: no cover
 
     class _FallbackFrame(tk.Frame):
         def __init__(self, master=None, fg_color=None, **kwargs):
-            super().__init__(master, **kwargs)
+            tk.Frame.__init__(self, master, **kwargs)
 
     class _FallbackLabel(tk.Label):
         def __init__(
@@ -103,7 +103,8 @@ except Exception:  # pragma: no cover
             width=None,
             **kwargs,
         ):
-            super().__init__(
+            tk.Label.__init__(
+                self,
                 master,
                 text=text,
                 textvariable=textvariable,
@@ -116,15 +117,15 @@ except Exception:  # pragma: no cover
 
     class _FallbackButton(tk.Button):
         def __init__(self, master=None, text="", command=None, **kwargs):
-            super().__init__(master, text=text, command=command, **kwargs)
+            tk.Button.__init__(self, master, text=text, command=command, **kwargs)
 
     class _FallbackEntry(tk.Entry):
         def __init__(self, master=None, textvariable=None, width=None, show=None, **kwargs):
-            super().__init__(master, textvariable=textvariable, show=show, **kwargs)
+            tk.Entry.__init__(self, master, textvariable=textvariable, show=show, **kwargs)
 
     class _FallbackCheckBox(tk.Checkbutton):
         def __init__(self, master=None, text="", variable=None, **kwargs):
-            super().__init__(master, text=text, variable=variable, **kwargs)
+            tk.Checkbutton.__init__(self, master, text=text, variable=variable, **kwargs)
 
     class _FallbackSwitch(tk.Checkbutton):
         def __init__(
@@ -137,7 +138,8 @@ except Exception:  # pragma: no cover
             offvalue=False,
             **kwargs,
         ):
-            super().__init__(
+            tk.Checkbutton.__init__(
+                self,
                 master,
                 text=text,
                 variable=variable,
@@ -148,18 +150,19 @@ except Exception:  # pragma: no cover
             )
 
         def select(self):
+            _ = self
             return None
 
     class _FallbackComboBox(ttk.Combobox):
         def __init__(self, master=None, variable=None, values=None, width=None, **kwargs):
-            super().__init__(master, textvariable=variable, values=values or [], width=width, **kwargs)
+            ttk.Combobox.__init__(self, master, textvariable=variable, values=values or [], width=width, **kwargs)
 
     class _FallbackText(tk.Text):
         pass
 
     class _FallbackScrollableFrame(tk.Frame):
         def __init__(self, master=None, **kwargs):
-            super().__init__(master, **kwargs)
+            tk.Frame.__init__(self, master, **kwargs)
 
     class _FallbackTabview(tk.Frame):
         def __init__(self, master=None, **kwargs):
@@ -222,13 +225,13 @@ try:
 except Exception:  # pragma: no cover
     class TelegramTabUI:
         def __init__(self, parent, app):
-            _ = app
-            frame = ctk.CTkFrame(parent)
-            if hasattr(frame, "pack"):
-                frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
-            label = ctk.CTkLabel(frame, text="Telegram UI non disponibile")
-            if hasattr(label, "pack"):
-                label.pack(anchor="w", padx=12, pady=12)
+            self.app = app
+            self.frame = ctk.CTkFrame(parent)
+            if hasattr(self.frame, "pack"):
+                self.frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+            self.label = ctk.CTkLabel(self.frame, text="Telegram UI non disponibile")
+            if hasattr(self.label, "pack"):
+                self.label.pack(anchor="w", padx=12, pady=12)
 
 try:
     from theme import COLORS, FONTS
