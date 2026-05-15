@@ -149,9 +149,6 @@ except Exception:  # pragma: no cover
                 **kwargs,
             )
 
-        def select(self):
-            _ = self
-
     class _FallbackComboBox(ttk.Combobox):
         def __init__(self, master=None, variable=None, values=None, width=None, **kwargs):
             ttk.Combobox.__init__(self, master, textvariable=variable, values=values or [], width=width, **kwargs)
