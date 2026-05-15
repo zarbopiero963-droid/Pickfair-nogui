@@ -28,14 +28,17 @@ except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
 
         @staticmethod
         def configure(*args, **kwargs):
+            """No-op configuration fallback."""
             _ = args, kwargs
 
         @staticmethod
         def config(*args, **kwargs):
+            """Alias to configure for tkinter compatibility."""
             return _DummyWidget.configure(*args, **kwargs)
 
         @staticmethod
         def bind(*args, **kwargs):
+            """No-op event binding fallback."""
             _ = args, kwargs
 
         @staticmethod
