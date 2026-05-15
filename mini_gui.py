@@ -26,7 +26,9 @@ except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
         def configure(*args, **kwargs):
             return None
 
-        config = configure
+        @staticmethod
+        def config(*args, **kwargs):
+            return _DummyWidget.configure(*args, **kwargs)
 
         @staticmethod
         def bind(*args, **kwargs):
