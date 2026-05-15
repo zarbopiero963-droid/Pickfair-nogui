@@ -169,19 +169,19 @@ def _preflight_dutching_inputs(
     total_stake: Any,
     total_stake_d: Decimal,
 ) -> Dict[str, Any] | None:
+    result: Dict[str, Any] | None = None
+
     if _is_non_finite_numeric_literal(total_stake):
-        return _empty_dutching_result("Invalid stake")
+        result = _empty_dutching_result("Invalid stake")
+    elif not odds_d or total_stake_d <= Decimal("0"):
+        result = _empty_dutching_result()
+    elif any(not odd.is_finite() for odd in odds_d):
+        result = _empty_dutching_result("Invalid non-finite odds")
+    elif any(odd <= Decimal("1.0") for odd in odds_d):
+        result = _empty_dutching_result("Invalid odds <= 1.0")
 
-    if not odds_d or total_stake_d <= Decimal("0"):
-        return _empty_dutching_result()
+    return result
 
-    if any(not odd.is_finite() for odd in odds_d):
-        return _empty_dutching_result("Invalid non-finite odds")
-
-    if any(odd <= Decimal("1.0") for odd in odds_d):
-        return _empty_dutching_result("Invalid odds <= 1.0")
-
-    return None
 
 def _inverse_odds_sum(odds_d: List[Decimal]) -> Decimal:
     return sum(((Decimal("1") / odd) for odd in odds_d), Decimal("0"))
