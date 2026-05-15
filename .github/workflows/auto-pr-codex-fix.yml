@@ -381,7 +381,28 @@ jobs:
           python3 .autofix/orchestrator/scripts/collect_external_review_context.py || true
 
           echo "Collecting Codacy and DeepSource API context for PR #${PR_NUMBER}"
-          python3 .github/scripts/collect_external_review_context.py || true
+          mkdir -p "$RUNNER_TEMP/autofix-tools" .autofix/context
+
+          if [ -f .github/scripts/collect_external_review_context.py ]; then
+            cp .github/scripts/collect_external_review_context.py "$RUNNER_TEMP/autofix-tools/collect_external_review_context.py"
+          elif git show origin/main:.github/scripts/collect_external_review_context.py > "$RUNNER_TEMP/autofix-tools/collect_external_review_context.py" 2>/dev/null; then
+            echo "Loaded external collector from origin/main"
+          else
+            echo "::warning::External analyzer collector script not found."
+            printf "External analyzer collector script not found.\n" > .autofix/context/external-review-context.md
+          fi
+
+          if [ -f "$RUNNER_TEMP/autofix-tools/collect_external_review_context.py" ]; then
+            chmod +x "$RUNNER_TEMP/autofix-tools/collect_external_review_context.py"
+            python3 "$RUNNER_TEMP/autofix-tools/collect_external_review_context.py" || {
+              echo "::warning::External analyzer collector failed."
+              printf "External analyzer collector failed. See workflow log.\n" > .autofix/context/external-review-context.md
+            }
+          fi
+
+          if [ ! -s .autofix/context/external-review-context.md ]; then
+            printf "No external analyzer API context collected.\n" > .autofix/context/external-review-context.md
+          fi
 
           echo "Building rich Codex prompt context for PR #${PR_NUMBER}"
 
