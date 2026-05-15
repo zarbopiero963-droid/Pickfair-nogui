@@ -22,8 +22,8 @@ def test_mm_inputs_fail_closed() -> None:
         event_current_exposure=float("inf"),
         table={"id": 1, "loss": float("nan")},
     )
-    assert not decision.approved, "decision must be rejected for non-finite inputs"
-    assert decision.recommended_stake == 0.0, "recommended stake must be exactly zero"
+    assert not decision.approved, "decision must be rejected for non-finite inputs"  # nosec B101 - pytest assertion in test code
+    assert decision.recommended_stake == 0.0, "recommended stake must be exactly zero"  # nosec B101 - pytest assertion in test code
 
 
 @pytest.mark.unit
@@ -32,9 +32,9 @@ def test_dutching_rejects_nonfinite() -> None:
     bad_odds = calculate_dutching_stakes([2.0, float("inf")], 100.0)
     bad_stake = calculate_dutching_stakes([2.0, 3.0], float("nan"))
 
-    assert bad_odds["stakes"] == [], "expected no stakes for invalid odds"
-    assert bad_odds.get("error") == "Invalid non-finite odds", "expected invalid-odds error"
-    assert bad_stake["stakes"] == [], "expected no stakes for invalid stake"
+    assert bad_odds["stakes"] == [], "expected no stakes for invalid odds"  # nosec B101 - pytest assertion in test code
+    assert bad_odds.get("error") == "Invalid non-finite odds", "expected invalid-odds error"  # nosec B101 - pytest assertion in test code
+    assert bad_stake["stakes"] == [], "expected no stakes for invalid stake"  # nosec B101 - pytest assertion in test code
 
 
 @pytest.mark.unit
@@ -51,8 +51,8 @@ def test_dutching_rejects_nonfinite() -> None:
 def test_dutching_rejects_bad_str(odds: list[str]) -> None:
     """Dutching should reject textual NaN/Inf odds variants."""
     result = calculate_dutching_stakes(cast(list[float], odds), cast(float, "100.0"))
-    assert result["stakes"] == [], "expected no stakes for invalid textual odds"
-    assert result.get("error") == "Invalid non-finite odds", "expected invalid-odds error for textual non-finite values"
+    assert result["stakes"] == [], "expected no stakes for invalid textual odds"  # nosec B101 - pytest assertion in test code
+    assert result.get("error") == "Invalid non-finite odds", "expected invalid-odds error for textual non-finite values"  # nosec B101 - pytest assertion in test code
 
 
 @pytest.mark.unit
@@ -60,8 +60,8 @@ def test_dutching_rejects_bad_str(odds: list[str]) -> None:
 def test_dutching_rejects_bad_stake(stake: str) -> None:
     """Dutching should reject textual NaN/Inf stake variants."""
     result = calculate_dutching_stakes(cast(list[float], ["2.0", "3.0"]), cast(float, stake))
-    assert result["stakes"] == [], "expected no stakes for invalid textual stake"
-    assert "Invalid stake" in (result.get("error") or ""), "expected invalid-stake error for textual non-finite values"
+    assert result["stakes"] == [], "expected no stakes for invalid textual stake"  # nosec B101 - pytest assertion in test code
+    assert "Invalid stake" in (result.get("error") or ""), "expected invalid-stake error for textual non-finite values"  # nosec B101 - pytest assertion in test code
 
 
 @pytest.mark.unit
@@ -71,16 +71,16 @@ def test_dutching_accepts_norm_text() -> None:
         cast(list[float], ["2,0", " 3,0 "]),
         cast(float, " 100,0 "),
     )
-    assert result["stakes"], "expected stake allocation for normalized textual values"
-    assert not result.get("error"), "did not expect error for normalized textual values"
+    assert result["stakes"], "expected stake allocation for normalized textual values"  # nosec B101 - pytest assertion in test code
+    assert not result.get("error"), "did not expect error for normalized textual values"  # nosec B101 - pytest assertion in test code
 
 
 @pytest.mark.unit
 def test_dutching_allocation_valid() -> None:
     """Valid dutching allocation should still sum to total stake."""
     result = calculate_dutching_stakes([2.0, 4.0], 100.0, commission=0.0)
-    assert len(result["stakes"]) == 2, "expected two stake entries"
-    assert abs(sum(result["stakes"]) - 100.0) < 0.01, "stakes should sum to total stake within rounding tolerance"
+    assert len(result["stakes"]) == 2, "expected two stake entries"  # nosec B101 - pytest assertion in test code
+    assert abs(sum(result["stakes"]) - 100.0) < 0.01, "stakes should sum to total stake within rounding tolerance"  # nosec B101 - pytest assertion in test code
 
 
 @pytest.mark.unit
@@ -174,7 +174,7 @@ def test_engine_rejects_comm_pct(commission_pct: float) -> None:
 
 @pytest.mark.unit
 @pytest.mark.parametrize("commission_pct", [float("nan"), float("inf"), float("-inf")])
-def test_engine_rejects_nonfinite_constructor_commission(commission_pct: float) -> None:
+def test_engine_rejects_nonfinite_ctor_commission(commission_pct: float) -> None:
     """Engine constructor should reject non-finite default commission values."""
     with pytest.raises(ValueError):
         PnLEngine(commission_pct=commission_pct)
@@ -192,6 +192,6 @@ def test_pnl_valid_output_unchanged() -> None:
         exit_price=3.0,
         size=10.0,
     )
-    assert result.gross_pnl == pytest.approx(5.0), "unexpected gross pnl"
-    assert result.commission_amount == pytest.approx(0.225), "unexpected commission amount"
-    assert result.net_pnl == pytest.approx(4.775), "unexpected net pnl"
+    assert result.gross_pnl == pytest.approx(5.0), "unexpected gross pnl"  # nosec B101 - pytest assertion in test code
+    assert result.commission_amount == pytest.approx(0.225), "unexpected commission amount"  # nosec B101 - pytest assertion in test code
+    assert result.net_pnl == pytest.approx(4.775), "unexpected net pnl"  # nosec B101 - pytest assertion in test code
