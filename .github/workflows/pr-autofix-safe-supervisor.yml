@@ -213,7 +213,7 @@ jobs:
               exit 1
             fi
 
-  if git diff --quiet; then
+            if git diff --quiet; then
               echo "::warning::Codex produced no changes. Stopping."
               exit 0
             fi
