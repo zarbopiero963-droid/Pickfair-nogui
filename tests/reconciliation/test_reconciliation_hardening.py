@@ -91,7 +91,7 @@ class FakeClient:
 
 
 class _MissingCurrentOrdersService:
-    pass
+    """Test double intentionally missing current-orders APIs."""
 
 
 @pytest.fixture
