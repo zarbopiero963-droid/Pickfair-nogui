@@ -185,6 +185,40 @@ def collect_github() -> dict[str, Any]:
     return pr
 
 
+def _compact_text(value: Any, limit: int = 300) -> str:
+    text = " ".join(str(value or "").split())
+    return text[:limit]
+
+
+def build_codacy_fix_instruction(issue: dict[str, Any]) -> str:
+    rule = str(issue.get("rule") or "").strip()
+    tool = str(issue.get("tool") or "").strip()
+    path = str(issue.get("file") or "").strip()
+    line = issue.get("line")
+    message = _compact_text(issue.get("message"))
+    line_text = _compact_text(issue.get("lineText"))
+
+    base = (
+        f"Codacy reported {tool or 'tool'} rule {rule or 'unknown-rule'} "
+        f"at {path}:{line}. Current line text: {line_text!r}. "
+        f"Message: {message!r}. Inspect that exact file and line, then make the smallest code/style change that satisfies the reported rule."
+    )
+
+    rule_l = rule.lower()
+    if rule_l == "markdownlint_md043":
+        return (
+            base
+            + " This is markdownlint MD043 required-headings. Make the heading structure match the configured required headings. "
+              "If Codacy says Expected: [None], remove the Markdown heading marker from that line. "
+              "For example change '# TASK: value' to 'TASK: value' when the TASK marker should remain but must not be a Markdown heading."
+        )
+
+    if rule_l.startswith("markdownlint_"):
+        return base + " This is a markdownlint finding; fix the Markdown formatting on the reported line without changing the task meaning."
+
+    return base + " Use Codacy file, line, rule, message, and current line text as the primary repair instruction."
+
+
 def collect_codacy(blockers: list[dict[str, str]]) -> tuple[list[dict[str, Any]], str | None]:
     if not any("codacy" in (b["name"] + " " + b["url"]).lower() for b in blockers):
         return [], None
@@ -228,10 +262,17 @@ def collect_codacy(blockers: list[dict[str, str]]) -> tuple[list[dict[str, Any]]
             "tool": tool.get("name") or "",
             "level": level,
             "message": message,
+            "lineText": issue.get("lineText") or "",
             "deltaType": item.get("deltaType"),
             "safe_autofix": not risky_info,
             "requires_manual_or_config": risky_info,
         })
+
+    for codacy_issue in issues:
+
+
+        codacy_issue["codex_fix_instruction"] = build_codacy_fix_instruction(codacy_issue)
+
 
     return issues, None
 
@@ -420,6 +461,24 @@ def main() -> int:
         "- Do not create empty retrigger commits.",
         "- Do not merge or create PRs.",
     ]
+    codacy_fix_instructions = [
+
+        i.get("codex_fix_instruction")
+
+        for i in all_issues
+
+        if i.get("source") == "codacy" and i.get("codex_fix_instruction")
+
+    ]
+
+    if codacy_fix_instructions:
+
+        task.append("## Codacy fix instructions for Codex")
+
+        for instruction in codacy_fix_instructions:
+
+            task.append(f"- {instruction}")
+
     (OUT / "codex-task.md").write_text("\n".join(task) + "\n", encoding="utf-8")
 
     (OUT / "decision.env").write_text(
