@@ -143,7 +143,8 @@ class TestContractShape:
         assert result["status"] == OrderStatus.AMBIGUOUS.value
         assert result["reason_code"] == ReasonCode.AMBIGUOUS_OUTCOME.value
 
-    def test_success_without_bet_id_fails_closed(self) -> None:
+    @staticmethod
+    def test_success_without_bet_id_fails_closed() -> None:
         client = MagicMock()
         client.place_bet = MagicMock(
             return_value={

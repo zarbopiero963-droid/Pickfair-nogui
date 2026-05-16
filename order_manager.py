@@ -716,6 +716,9 @@ class OrderManager:
             reason_code = ReasonCode.BROKER_REJECTED
 
         remaining = max(0.0, stake - size_matched)
+        remaining_size = (
+            remaining if saga_status == OrderStatus.PARTIALLY_MATCHED else None
+        )
 
         self._transition_saga(
             customer_ref=customer_ref,
@@ -724,7 +727,7 @@ class OrderManager:
             error_text="" if saga_status not in (OrderStatus.FAILED, OrderStatus.AMBIGUOUS) else str(response),
             reason_code=reason_code,
             matched_size=size_matched,
-            remaining_size=remaining if saga_status == OrderStatus.PARTIALLY_MATCHED else None,
+            remaining_size=remaining_size,
         )
 
         event_name = ORDER_STATUS_EVENT_MAP.get(
@@ -739,7 +742,7 @@ class OrderManager:
             "response": response,
             "order_status": saga_status.value,
             "matched_size": size_matched,
-            "remaining_size": remaining,
+            "remaining_size": remaining_size,
             "reason_code": reason_code.value,
             "simulation_mode": bool(payload.get("simulation_mode", False)),
         }
@@ -751,7 +754,7 @@ class OrderManager:
             "customer_ref": customer_ref,
             "bet_id": bet_id,
             "matched_size": size_matched,
-            "remaining_size": remaining,
+            "remaining_size": remaining_size,
             "reason_code": reason_code.value,
             "response": response,
         }
