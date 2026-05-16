@@ -1,0 +1,3 @@
+exclude_paths:
+  - "scripts/pr_automation_controller.py"
+  - "scripts/pr_clean_scope_rebuild.py"
