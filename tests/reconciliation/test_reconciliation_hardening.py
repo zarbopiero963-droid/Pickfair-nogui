@@ -22,7 +22,8 @@ class FakeDB:
     def get_reconcile_marker(self, batch_id):
         return self.markers.get(batch_id)
 
-    def get_pending_sagas(self):
+    @staticmethod
+    def get_pending_sagas():
         return []
 
 
@@ -64,13 +65,15 @@ class FakeBatchManager:
     def recompute_batch_status(self, batch_id):
         return self.batches[batch_id]
 
-    def release_runtime_artifacts(self, **kwargs):
+    @staticmethod
+    def release_runtime_artifacts(**kwargs):
         pass
 
     def get_open_batches(self):
         return list(self.batches.values())
 
-    def mark_batch_failed(self, *args, **kwargs):
+    @staticmethod
+    def mark_batch_failed(*args, **kwargs):
         pass
 
 
