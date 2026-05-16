@@ -3,10 +3,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -16,6 +14,7 @@ PENDING_STATES = {"", "PENDING", "QUEUED", "IN_PROGRESS", "REQUESTED", "WAITING"
 CANCELLED_STATES = {"CANCELLED", "CANCELED"}
 
 SAFE_AUTOFIX_WORKFLOW = "277606083"
+CONTROLLER_WORKFLOW = "PR Automation Controller V2"
 
 SELF_CHECK_NAMES = {
     "safe pr autofix",
@@ -29,6 +28,11 @@ DO_NOT_LAUNCH_AUTOFIX_FOR = {
     "pr merge readiness",
     "pr flow guardrails",
     "refresh stale self checks",
+}
+
+FORBIDDEN_PATHS = {
+    "order_manager.py",
+    "core/reconciliation_engine.py",
 }
 
 
@@ -128,7 +132,7 @@ def active_safe_autofix_runs(repo: str) -> list[dict[str, Any]]:
             "--limit",
             "30",
             "--json",
-            "databaseId,status,conclusion,event,createdAt,url",
+            "databaseId,status,conclusion,event,createdAt,url,headBranch,displayTitle",
         ],
         json_out=True,
         check=False,
@@ -138,22 +142,45 @@ def active_safe_autofix_runs(repo: str) -> list[dict[str, Any]]:
     return [r for r in runs if str(r.get("status") or "") != "completed"]
 
 
-def rerun_cancelled_checks(
-    *,
-    repo: str,
-    checks: list[dict[str, Any]],
-    dry_run: bool,
-    max_reruns: int,
-) -> list[dict[str, Any]]:
+def active_controller_rebuild_runs(repo: str, pr: str) -> list[dict[str, Any]]:
+    runs = run(
+        [
+            "gh",
+            "run",
+            "list",
+            "--repo",
+            repo,
+            "--workflow",
+            CONTROLLER_WORKFLOW,
+            "--limit",
+            "40",
+            "--json",
+            "databaseId,status,conclusion,event,displayTitle,url",
+        ],
+        json_out=True,
+        check=False,
+    )
+    if not isinstance(runs, list):
+        return []
+    needle = f"pr {pr}"
+    out: list[dict[str, Any]] = []
+    for r in runs:
+        if str(r.get("status") or "") == "completed":
+            continue
+        low = str(r.get("displayTitle") or "").lower()
+        if needle in low and "clean" in low:
+            out.append(r)
+    return out
+
+
+def rerun_cancelled_checks(*, repo: str, checks: list[dict[str, Any]], dry_run: bool, max_reruns: int) -> list[dict[str, Any]]:
     rerun: list[dict[str, Any]] = []
     seen: set[str] = set()
 
     for check in checks:
         if len(rerun) >= max_reruns:
             break
-        if not is_cancelled(check):
-            continue
-        if is_self_check(check):
+        if not is_cancelled(check) or is_self_check(check):
             continue
 
         run_id = extract_run_id(url_of(check))
@@ -161,83 +188,80 @@ def rerun_cancelled_checks(
             continue
         seen.add(run_id)
 
-        item = {
-            "run_id": run_id,
-            "check": name_of(check),
-            "url": url_of(check),
-            "action": "would_rerun" if dry_run else "rerun",
-        }
-
+        item = {"run_id": run_id, "check": name_of(check), "url": url_of(check), "action": "would_rerun" if dry_run else "rerun"}
         if not dry_run:
             out = run(["gh", "run", "rerun", run_id, "--repo", repo], check=False)
             item["output"] = out.strip()[-500:]
-
         rerun.append(item)
 
     return rerun
 
 
-def launch_safe_autofix(
-    *,
-    repo: str,
-    pr: str,
-    dry_run: bool,
-    max_rounds: str,
-    pending_wait_seconds: str,
-) -> dict[str, Any]:
+def launch_safe_autofix(*, repo: str, pr: str, dry_run: bool, max_rounds: str, pending_wait_seconds: str) -> dict[str, Any]:
     active = active_safe_autofix_runs(repo)
     if active:
-        return {
-            "action": "skip_launch_safe_autofix",
-            "reason": "safe_autofix_already_active",
-            "active": active,
-        }
+        return {"action": "skip_launch_safe_autofix", "reason": "safe_autofix_already_active", "active": active}
 
     cmd = [
-        "gh",
-        "workflow",
-        "run",
-        SAFE_AUTOFIX_WORKFLOW,
-        "--repo",
-        repo,
-        "--ref",
-        "main",
-        "-f",
-        f"pr_number={pr}",
-        "-f",
-        f"max_rounds={max_rounds}",
-        "-f",
-        f"pending_wait_seconds={pending_wait_seconds}",
-        "-f",
-        "dry_run=false",
+        "gh", "workflow", "run", SAFE_AUTOFIX_WORKFLOW, "--repo", repo, "--ref", "main",
+        "-f", f"pr_number={pr}",
+        "-f", f"max_rounds={max_rounds}",
+        "-f", f"pending_wait_seconds={pending_wait_seconds}",
+        "-f", "dry_run=false",
     ]
-
     if dry_run:
         return {"action": "would_launch_safe_autofix", "cmd": cmd}
-
     out = run(cmd, check=False)
-    return {
-        "action": "launch_safe_autofix",
-        "output": out.strip()[-1000:],
-    }
+    return {"action": "launch_safe_autofix", "output": out.strip()[-1000:]}
 
 
 def should_launch_autofix(checks: list[dict[str, Any]]) -> tuple[bool, list[dict[str, Any]]]:
     launchable: list[dict[str, Any]] = []
-
     for check in checks:
-        if not is_failure(check):
+        if not is_failure(check) or is_self_check(check):
             continue
-        if is_self_check(check):
-            continue
-
         name = name_of(check).lower()
         if name in DO_NOT_LAUNCH_AUTOFIX_FOR:
             continue
-
         launchable.append(compact_check(check))
-
     return bool(launchable), launchable
+
+
+def list_changed_files(head_ref: str) -> list[str]:
+    run(["git", "fetch", "origin", "main", head_ref], check=False)
+    out = run(["git", "diff", "--name-only", f"origin/main...origin/{head_ref}"], check=False)
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def is_forbidden(path: str) -> bool:
+    if path in FORBIDDEN_PATHS:
+        return True
+    if path.startswith("guardrails/"):
+        return True
+    if path.startswith(".github/scripts/"):
+        return True
+    if path.startswith(".github/workflows/") and path != ".github/workflows/pr-automation-controller-v2.yml":
+        return True
+    return False
+
+
+def safe_autofix_history(repo: str, head_branch: str) -> dict[str, Any]:
+    runs = run(
+        [
+            "gh", "run", "list", "--repo", repo, "--workflow", SAFE_AUTOFIX_WORKFLOW, "--limit", "25",
+            "--json", "databaseId,status,conclusion,headBranch,createdAt,url"
+        ],
+        json_out=True,
+        check=False,
+    )
+    if not isinstance(runs, list):
+        runs = []
+    same_branch = [r for r in runs if str(r.get("headBranch") or "") == head_branch and str(r.get("status") or "") == "completed"]
+    recent = same_branch[:6]
+    conclusions = [norm_state(r.get("conclusion")) for r in recent]
+    exhausted = len(recent) >= 3 and all(c in FAIL_STATES | CANCELLED_STATES for c in conclusions[:3])
+    oscillating = len(conclusions) >= 4 and len(set(conclusions[:4])) > 1 and all(c in FAIL_STATES | CANCELLED_STATES for c in conclusions[:4])
+    return {"recent": recent, "conclusions": conclusions, "exhausted": exhausted, "oscillating": oscillating}
 
 
 def main() -> int:
@@ -251,18 +275,12 @@ def main() -> int:
     ap.add_argument("--max-reruns", type=int, default=6)
     ap.add_argument("--safe-max-rounds", default="1")
     ap.add_argument("--safe-pending-wait-seconds", default="600")
+    ap.add_argument("--clean-scope-rebuild", default="auto")
+    ap.add_argument("--clean-scope-rebuild-mode", default="auto")
     args = ap.parse_args()
 
     started = time.time()
-    decision: dict[str, Any] = {
-        "repo": args.repo,
-        "pr": args.pr,
-        "dry_run": args.dry_run,
-        "actions": [],
-        "warnings": [],
-        "errors": [],
-    }
-
+    decision: dict[str, Any] = {"repo": args.repo, "pr": args.pr, "dry_run": args.dry_run, "actions": [], "warnings": [], "errors": []}
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -274,48 +292,36 @@ def main() -> int:
         print(json.dumps(decision, indent=2, sort_keys=True))
         return 0
 
-    checks = pr.get("statusCheckRollup") or []
-
-    decision.update(
-        {
-            "state": pr.get("state"),
-            "isDraft": pr.get("isDraft"),
-            "mergeable": pr.get("mergeable"),
-            "mergeStateStatus": pr.get("mergeStateStatus"),
-            "headRefName": pr.get("headRefName"),
-            "headRefOid": pr.get("headRefOid"),
-            "url": pr.get("url"),
-        }
-    )
+    decision.update({
+        "state": pr.get("state"), "isDraft": pr.get("isDraft"), "mergeable": pr.get("mergeable"),
+        "mergeStateStatus": pr.get("mergeStateStatus"), "headRefName": pr.get("headRefName"),
+        "headRefOid": pr.get("headRefOid"), "url": pr.get("url"),
+        "clean_scope_rebuild": args.clean_scope_rebuild, "clean_scope_rebuild_mode": args.clean_scope_rebuild_mode,
+    })
 
     if pr.get("state") != "OPEN":
         decision["next_action"] = "skip_not_open"
         Path(args.output).write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
         print(json.dumps(decision, indent=2, sort_keys=True))
         return 0
-
     if pr.get("isDraft"):
         decision["next_action"] = "skip_draft"
         Path(args.output).write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
         print(json.dumps(decision, indent=2, sort_keys=True))
         return 0
 
-    # Wait for pending checks before taking action.
     while True:
         checks = pr.get("statusCheckRollup") or []
         pending = [compact_check(c) for c in checks if is_pending(c) and not is_self_check(c)]
         decision["pending_count"] = len(pending)
         decision["pending"] = pending[:40]
-
         if not pending:
             break
-
         elapsed = time.time() - started
         if elapsed >= args.pending_wait_seconds:
             decision["next_action"] = "pending_wait_budget_exhausted"
             decision["warnings"].append("pending checks still present after wait budget")
             break
-
         time.sleep(max(1, args.poll_interval_seconds))
         pr = pr_view(args.repo, args.pr)
 
@@ -323,14 +329,8 @@ def main() -> int:
 
     cancelled = [compact_check(c) for c in checks if is_cancelled(c) and not is_self_check(c)]
     decision["cancelled"] = cancelled
-
     if cancelled:
-        rerun = rerun_cancelled_checks(
-            repo=args.repo,
-            checks=checks,
-            dry_run=args.dry_run,
-            max_reruns=args.max_reruns,
-        )
+        rerun = rerun_cancelled_checks(repo=args.repo, checks=checks, dry_run=args.dry_run, max_reruns=args.max_reruns)
         decision["actions"].append({"type": "rerun_cancelled", "items": rerun})
         decision["next_action"] = "rerun_cancelled_checks" if rerun else "cancelled_checks_no_rerun_target"
         Path(args.output).write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
@@ -338,14 +338,47 @@ def main() -> int:
         return 0
 
     blockers = [compact_check(c) for c in checks if is_failure(c) and not is_self_check(c)]
-    ignored_self = [compact_check(c) for c in checks if (is_failure(c) or is_cancelled(c) or is_pending(c)) and is_self_check(c)]
     decision["blockers"] = blockers
-    decision["ignored_self_checks"] = ignored_self
+
+    changed_files = list_changed_files(str(pr.get("headRefName") or ""))
+    forbidden = [p for p in changed_files if is_forbidden(p)]
+    decision["diff_files"] = changed_files
+    decision["forbidden_in_diff"] = forbidden
+
+    history = safe_autofix_history(args.repo, str(pr.get("headRefName") or ""))
+    decision["safe_autofix_history"] = history
+
+    should_rebuild = False
+    rebuild_reasons: list[str] = []
+
+    csr = str(args.clean_scope_rebuild or "auto").lower()
+    mode = str(args.clean_scope_rebuild_mode or "auto").lower()
+    if csr in {"true", "1", "yes", "on", "force"}:
+        should_rebuild = True
+        rebuild_reasons.append("manual_clean_scope_rebuild")
+    elif csr in {"auto", ""}:
+        if forbidden:
+            should_rebuild = True
+            rebuild_reasons.append("forbidden_or_out_of_scope_files_in_diff")
+        if history.get("exhausted"):
+            should_rebuild = True
+            rebuild_reasons.append("safe_autofix_exhausted")
+        if history.get("oscillating"):
+            should_rebuild = True
+            rebuild_reasons.append("safe_autofix_oscillating")
 
     should_launch, launchable = should_launch_autofix(checks)
     decision["launchable_for_safe_autofix"] = launchable
 
-    if should_launch:
+    if should_rebuild:
+        active_rebuild = active_controller_rebuild_runs(args.repo, args.pr)
+        if active_rebuild:
+            decision["actions"].append({"type": "clean_scope_rebuild", "action": "skip", "reason": "rebuild_already_active", "active": active_rebuild})
+            decision["next_action"] = "skip_launch_clean_scope_rebuild"
+        else:
+            decision["actions"].append({"type": "clean_scope_rebuild", "action": "launch", "mode": mode, "reasons": rebuild_reasons})
+            decision["next_action"] = "launch_clean_scope_rebuild"
+    elif should_launch:
         action = launch_safe_autofix(
             repo=args.repo,
             pr=args.pr,
