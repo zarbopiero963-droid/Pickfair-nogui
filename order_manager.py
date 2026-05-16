@@ -412,6 +412,33 @@ class OrderManager:
             return {}
         return reports[0] or {}
 
+    def _interpret_placement_response(
+        self, *, response: Dict[str, Any], stake: float
+    ) -> tuple[OrderStatus, ReasonCode, str, float, Optional[float]]:
+        """Map broker placement response to stable saga state and payload fields."""
+        instruction_report = self._extract_instruction_report(response)
+        leg_status = str(instruction_report.get("status") or "").upper()
+        bet_id = str(instruction_report.get("betId") or "")
+        size_matched = self._safe_float(instruction_report.get("sizeMatched"), 0.0)
+        overall_status = str(response.get("status") or "").upper()
+
+        saga_status, reason_code = map_betfair_status(
+            leg_status, overall_status, size_matched, stake
+        )
+
+        # Fail closed: a non-failed placement without exchange bet_id is
+        # not a valid accepted order and must not look successful.
+        if saga_status not in (OrderStatus.FAILED, OrderStatus.AMBIGUOUS) and not bet_id:
+            saga_status = OrderStatus.FAILED
+            reason_code = ReasonCode.BROKER_REJECTED
+
+        remaining_size = (
+            max(0.0, stake - size_matched)
+            if saga_status == OrderStatus.PARTIALLY_MATCHED
+            else None
+        )
+        return saga_status, reason_code, bet_id, size_matched, remaining_size
+
     # ---------------------------------------------------------
     # NORMALISE & VALIDATE
     # ---------------------------------------------------------
@@ -696,29 +723,9 @@ class OrderManager:
                 "reason_code": rc.value,
             }
 
-        # --- interpret response ---
-        instruction_report = self._extract_instruction_report(response)
-        leg_status = str(instruction_report.get("status") or "").upper()
-        bet_id = str(instruction_report.get("betId") or "")
-        size_matched = self._safe_float(
-            instruction_report.get("sizeMatched"), 0.0
+        saga_status, reason_code, bet_id, size_matched, remaining_size = (
+            self._interpret_placement_response(response=response, stake=stake)
         )
-        overall_status = str(response.get("status") or "").upper()
-
-        saga_status, reason_code = map_betfair_status(
-            leg_status, overall_status, size_matched, stake
-        )
-
-        # Fail closed: a non-failed placement without exchange bet_id is
-        # not a valid accepted order and must not look successful.
-        if saga_status not in (OrderStatus.FAILED, OrderStatus.AMBIGUOUS) and not bet_id:
-            saga_status = OrderStatus.FAILED
-            reason_code = ReasonCode.BROKER_REJECTED
-
-        if saga_status == OrderStatus.PARTIALLY_MATCHED:
-            remaining_size = max(0.0, stake - size_matched)
-        else:
-            remaining_size = None
 
         self._transition_saga(
             customer_ref=customer_ref,
