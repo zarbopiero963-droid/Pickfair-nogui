@@ -152,19 +152,24 @@ jobs:
             exit 0
           fi
 
-          args=""
+          controller_args=(
+            --repo "$REPO"
+            --pr "$PR_NUMBER"
+            --pending-wait-seconds "$PENDING_WAIT_SECONDS"
+            --output pr-controller/decision.json
+          )
+
+          if python3 scripts/pr_automation_controller.py --help | grep -q -- "--clean-scope-rebuild"; then
+            controller_args+=(--clean-scope-rebuild "$CLEAN_SCOPE_REBUILD")
+          fi
+          if python3 scripts/pr_automation_controller.py --help | grep -q -- "--clean-scope-rebuild-mode"; then
+            controller_args+=(--clean-scope-rebuild-mode "$CLEAN_SCOPE_REBUILD_MODE")
+          fi
           if [ "$DRY_RUN" = "true" ]; then
-            args="--dry-run"
+            controller_args+=(--dry-run)
           fi
 
-          python3 scripts/pr_automation_controller.py \
-            --repo "$REPO" \
-            --pr "$PR_NUMBER" \
-            --pending-wait-seconds "$PENDING_WAIT_SECONDS" \
-            --clean-scope-rebuild "$CLEAN_SCOPE_REBUILD" \
-            --clean-scope-rebuild-mode "$CLEAN_SCOPE_REBUILD_MODE" \
-            --output pr-controller/decision.json \
-            $args
+          python3 scripts/pr_automation_controller.py "${controller_args[@]}"
 
       - name: Export controller decision outputs
         id: decision
