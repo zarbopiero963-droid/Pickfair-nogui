@@ -241,16 +241,22 @@ def is_forbidden(path: str) -> bool:
     return False
 
 
-def analyze_recent_history(conclusions: list[str]) -> tuple[bool, bool]:
-    latest_three = conclusions[:3]
-    latest_four = conclusions[:4]
-    exhausted = len(latest_three) == 3 and all(state in FAIL_STATES | CANCELLED_STATES for state in latest_three)
-    oscillating = (
-        len(latest_four) == 4
-        and len(set(latest_four)) > 1
-        and all(state in FAIL_STATES | CANCELLED_STATES for state in latest_four)
-    )
-    return exhausted, oscillating
+def _is_failure_family(state: str) -> bool:
+    return state in FAIL_STATES or state in CANCELLED_STATES
+
+
+def is_exhausted(conclusions: list[str]) -> bool:
+    latest = conclusions[:3]
+    return len(latest) == 3 and all(_is_failure_family(state) for state in latest)
+
+
+def is_oscillating(conclusions: list[str]) -> bool:
+    latest = conclusions[:4]
+    if len(latest) != 4:
+        return False
+    if not all(_is_failure_family(state) for state in latest):
+        return False
+    return len(set(latest)) > 1
 
 
 def completed_runs_for_branch(runs: list[dict[str, Any]], head_branch: str) -> list[dict[str, Any]]:
@@ -263,12 +269,11 @@ def completed_runs_for_branch(runs: list[dict[str, Any]], head_branch: str) -> l
 
 def build_history_summary(recent: list[dict[str, Any]]) -> dict[str, Any]:
     conclusions = [norm_state(item.get("conclusion")) for item in recent]
-    exhausted, oscillating = analyze_recent_history(conclusions)
     return {
         "recent": recent,
         "conclusions": conclusions,
-        "exhausted": exhausted,
-        "oscillating": oscillating,
+        "exhausted": is_exhausted(conclusions),
+        "oscillating": is_oscillating(conclusions),
     }
 
 

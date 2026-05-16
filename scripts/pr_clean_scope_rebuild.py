@@ -48,22 +48,19 @@ def _run_gh(cmd: list[str]) -> tuple[str, int]:
 
 
 def _run_git(cmd: list[str]) -> tuple[str, int]:
-    if cmd[:2] == ["git", "fetch"] and len(cmd) >= 3:
-        return _run_checked(["git", "fetch", *cmd[2:]])
-    if cmd[:3] == ["git", "diff", "--name-only"] and len(cmd) == 4:
-        return _run_checked(["git", "diff", "--name-only", cmd[3]])
-    if cmd[:2] == ["git", "push"] and len(cmd) >= 3:
-        return _run_checked(["git", "push", *cmd[2:]])
-    if cmd[:3] == ["git", "ls-remote", "--heads"] and len(cmd) == 5:
-        return _run_checked(["git", "ls-remote", "--heads", cmd[3], cmd[4]])
-    if cmd[:2] == ["git", "checkout"] and len(cmd) >= 3:
-        return _run_checked(["git", "checkout", *cmd[2:]])
-    if cmd[:3] == ["git", "diff", "--check"] and len(cmd) == 3:
-        return _run_checked(["git", "diff", "--check"])
-    if cmd[:3] == ["git", "add", "-A"] and len(cmd) == 3:
-        return _run_checked(["git", "add", "-A"])
-    if cmd[:2] == ["git", "commit"] and len(cmd) >= 3:
-        return _run_checked(["git", "commit", *cmd[2:]])
+    patterns: list[tuple[tuple[str, ...], int | None]] = [
+        (("git", "fetch"), 3),
+        (("git", "diff", "--name-only"), 4),
+        (("git", "push"), 3),
+        (("git", "ls-remote", "--heads"), 5),
+        (("git", "checkout"), 3),
+        (("git", "diff", "--check"), 3),
+        (("git", "add", "-A"), 3),
+        (("git", "commit"), 3),
+    ]
+    for prefix, min_len in patterns:
+        if cmd[: len(prefix)] == list(prefix) and len(cmd) >= min_len:
+            return _run_checked(cmd)
     raise ValueError(f"unsupported git command: {' '.join(cmd)}")
 
 
