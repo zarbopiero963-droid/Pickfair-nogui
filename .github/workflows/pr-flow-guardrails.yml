@@ -60,7 +60,7 @@ jobs:
       - name: Cleanup stale flow runs
         if: env.PR_NUMBER != '' && env.PR_NUMBER != 'null'
         run: |
-          mkdir -p .pr-flow
+          mkdir -p pr-flow
           args=""
           if [ "$DRY_RUN" = "true" ]; then
             args="--dry-run"
@@ -68,27 +68,27 @@ jobs:
           python3 scripts/pr_flow_automation.py cleanup \
             --repo "$REPO" \
             --pr "$PR_NUMBER" \
-            --output .pr-flow/cleanup.json \
+            --output pr-flow/cleanup.json \
             $args
 
       - name: Preflight secrets, limits, oscillation
         if: env.PR_NUMBER != '' && env.PR_NUMBER != 'null'
         run: |
-          mkdir -p .pr-flow
+          mkdir -p pr-flow
           python3 scripts/pr_flow_automation.py preflight \
             --repo "$REPO" \
             --pr "$PR_NUMBER" \
             --comment \
-            --output .pr-flow/preflight.json
+            --output pr-flow/preflight.json
 
       - name: Build final flow report
         if: always() && env.PR_NUMBER != '' && env.PR_NUMBER != 'null'
         run: |
-          mkdir -p .pr-flow
+          mkdir -p pr-flow
           python3 scripts/pr_flow_automation.py report \
             --repo "$REPO" \
             --pr "$PR_NUMBER" \
-            --outdir .pr-flow \
+            --outdir pr-flow \
             --comment \
             --no-fail
 
@@ -97,5 +97,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pr-flow-decision-${{ env.PR_NUMBER || github.run_id }}
-          path: .pr-flow/
+          path: pr-flow/
           if-no-files-found: ignore
