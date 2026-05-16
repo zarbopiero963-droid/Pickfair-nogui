@@ -709,6 +709,12 @@ class OrderManager:
             leg_status, overall_status, size_matched, stake
         )
 
+        # Fail closed: a non-failed placement without exchange bet_id is
+        # not a valid accepted order and must not look successful.
+        if saga_status not in (OrderStatus.FAILED, OrderStatus.AMBIGUOUS) and not bet_id:
+            saga_status = OrderStatus.FAILED
+            reason_code = ReasonCode.BROKER_REJECTED
+
         remaining = max(0.0, stake - size_matched)
 
         self._transition_saga(

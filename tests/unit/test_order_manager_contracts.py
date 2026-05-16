@@ -143,6 +143,24 @@ class TestContractShape:
         assert result["status"] == OrderStatus.AMBIGUOUS.value
         assert result["reason_code"] == ReasonCode.AMBIGUOUS_OUTCOME.value
 
+    def test_success_without_bet_id_fails_closed(self) -> None:
+        client = MagicMock()
+        client.place_bet = MagicMock(
+            return_value={
+                "status": "SUCCESS",
+                "instructionReports": [
+                    {"status": "SUCCESS", "betId": "", "sizeMatched": 0.0}
+                ],
+            }
+        )
+        om = _make_om(client=client)
+
+        result = om.place_order(_payload(customer_ref="CONTRACT-NO-BETID"))
+
+        assert result["ok"] is False
+        assert result["status"] == OrderStatus.FAILED.value
+        assert result["reason_code"] == ReasonCode.BROKER_REJECTED.value
+
 
 class TestValidation:
     def test_missing_market_id_raises(self) -> None:

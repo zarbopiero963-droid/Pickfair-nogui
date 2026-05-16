@@ -83,6 +83,10 @@ class FakeClient:
         return []
 
 
+class _MissingCurrentOrdersService:
+    pass
+
+
 @pytest.fixture
 def engine():
     db = FakeDB()
@@ -250,6 +254,28 @@ def test_placed_beyond_explicit_timeout_resolves_to_failed(engine, batch):
         ReasonCode.CONVERGED.value,
         ReasonCode.TERMINAL_FINALIZED.value,
     }
+
+
+def test_fetch_startup_active_orders_fails_closed_when_service_missing() -> None:
+    eng = ReconciliationEngine(
+        db=FakeDB(),
+        batch_manager=FakeBatchManager(),
+        betfair_service=None,
+    )
+
+    with pytest.raises(RuntimeError, match="CURRENT_ORDERS_API_UNAVAILABLE"):
+        eng.fetch_startup_active_orders()
+
+
+def test_fetch_startup_active_orders_fails_closed_when_interfaces_missing() -> None:
+    eng = ReconciliationEngine(
+        db=FakeDB(),
+        batch_manager=FakeBatchManager(),
+        betfair_service=_MissingCurrentOrdersService(),
+    )
+
+    with pytest.raises(RuntimeError, match="CURRENT_ORDERS_API_UNAVAILABLE"):
+        eng.fetch_startup_active_orders()
 
 
 def test_unknown_not_starved_by_first_cycle_idempotency_after_grace(engine, batch):
