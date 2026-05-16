@@ -16,6 +16,19 @@ PENDING_STATES = {"", "PENDING", "QUEUED", "IN_PROGRESS", "REQUESTED", "WAITING"
 CANCELLED_STATES = {"CANCELLED", "CANCELED"}
 
 SAFE_AUTOFIX_WORKFLOW = "277606083"
+AUTOFIX_COMMIT_ACTOR_ALLOWLIST = {"github-actions[bot]", "codex[bot]"}
+CLEAN_SCOPE_ALLOWED_DEFAULT = [
+    "scripts/pr_automation_controller.py",
+    ".github/workflows/pr-automation-controller-v2.yml",
+    "scripts/pr_clean_scope_rebuild.py",
+]
+CLEAN_SCOPE_FORBIDDEN_DEFAULT = [
+    "order_manager.py",
+    "core/reconciliation_engine.py",
+    "guardrails/",
+    "scripts/pr_flow_automation.py",
+    ".github/scripts/",
+]
 
 SELF_CHECK_NAMES = {
     "safe pr autofix",
@@ -42,6 +55,13 @@ def run(cmd: list[str], *, json_out: bool = False, check: bool = True) -> Any:
     if json_out:
         return json.loads(out or "null")
     return out
+
+
+def parse_csvish(value: str | None) -> list[str]:
+    if not value:
+        return []
+    parts = re.split(r"[,\n]", value)
+    return [p.strip() for p in parts if p.strip()]
 
 
 def norm_state(value: Any) -> str:
@@ -104,6 +124,33 @@ def pr_view(repo: str, pr: str) -> dict[str, Any]:
         ],
         json_out=True,
     )
+
+
+def pr_files(repo: str, pr: str) -> list[str]:
+    out = run(
+        ["gh", "api", f"repos/{repo}/pulls/{pr}/files", "--paginate"],
+        json_out=True,
+        check=False,
+    )
+    if not isinstance(out, list):
+        return []
+    files: list[str] = []
+    for row in out:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("filename") or "").strip()
+        if name:
+            files.append(name)
+    return files
+
+
+def pr_commits(repo: str, pr: str) -> list[dict[str, Any]]:
+    out = run(
+        ["gh", "api", f"repos/{repo}/pulls/{pr}/commits", "--paginate"],
+        json_out=True,
+        check=False,
+    )
+    return out if isinstance(out, list) else []
 
 
 def compact_check(check: dict[str, Any]) -> dict[str, Any]:
@@ -240,6 +287,100 @@ def should_launch_autofix(checks: list[dict[str, Any]]) -> tuple[bool, list[dict
     return bool(launchable), launchable
 
 
+def path_matches(path: str, pattern: str) -> bool:
+    p = pattern.strip()
+    if not p:
+        return False
+    if p.endswith("/"):
+        return path.startswith(p)
+    return path == p
+
+
+def find_forbidden_files(files: list[str], forbidden_patterns: list[str]) -> list[str]:
+    hit: list[str] = []
+    for f in files:
+        if any(path_matches(f, p) for p in forbidden_patterns):
+            hit.append(f)
+    return sorted(set(hit))
+
+
+def has_allowlisted_file(files: list[str], allowlist_patterns: list[str]) -> bool:
+    for f in files:
+        if any(path_matches(f, p) for p in allowlist_patterns):
+            return True
+    return False
+
+
+def detect_autofix_limit_exceeded(
+    commits: list[dict[str, Any]],
+    commit_limit: int,
+) -> tuple[bool, int]:
+    count = 0
+    for c in commits:
+        if not isinstance(c, dict):
+            continue
+        author = (c.get("author") or {}) if isinstance(c.get("author"), dict) else {}
+        login = str(author.get("login") or "").strip().lower()
+        msg = str(((c.get("commit") or {}).get("message") if isinstance(c.get("commit"), dict) else "") or "")
+        first = msg.splitlines()[0].lower() if msg else ""
+        if login in AUTOFIX_COMMIT_ACTOR_ALLOWLIST or "autofix" in first:
+            count += 1
+    return count > max(0, commit_limit), count
+
+
+def detect_possible_oscillation(commits: list[dict[str, Any]]) -> bool:
+    normalized: list[str] = []
+    for c in commits[:8]:
+        if not isinstance(c, dict):
+            continue
+        msg = str(((c.get("commit") or {}).get("message") if isinstance(c.get("commit"), dict) else "") or "")
+        first = msg.splitlines()[0].strip().lower()
+        if first:
+            normalized.append(first)
+    if len(normalized) < 4:
+        return False
+    repeats = len(normalized) - len(set(normalized))
+    return repeats >= 2
+
+
+def run_clean_scope_rebuild(
+    *,
+    repo: str,
+    pr: str,
+    head_branch: str,
+    dry_run: bool,
+    allowlist: list[str],
+    forbidden: list[str],
+) -> dict[str, Any]:
+    decision_path = f"pr-clean-scope-rebuild-{pr}/decision.json"
+    cmd = [
+        sys.executable,
+        "scripts/pr_clean_scope_rebuild.py",
+        "--repo",
+        repo,
+        "--pr",
+        pr,
+        "--branch",
+        head_branch,
+        "--decision-out",
+        decision_path,
+    ]
+    if allowlist:
+        cmd.extend(["--allowlist", ",".join(allowlist)])
+    if forbidden:
+        cmd.extend(["--forbidden", ",".join(forbidden)])
+    if dry_run:
+        cmd.append("--dry-run")
+
+    out = run(cmd, check=False)
+    return {
+        "action": "would_launch_clean_scope_rebuild" if dry_run else "launch_clean_scope_rebuild",
+        "cmd": cmd,
+        "output_tail": str(out).strip()[-2000:],
+        "decision_path": decision_path,
+    }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", required=True)
@@ -251,6 +392,11 @@ def main() -> int:
     ap.add_argument("--max-reruns", type=int, default=6)
     ap.add_argument("--safe-max-rounds", default="1")
     ap.add_argument("--safe-pending-wait-seconds", default="600")
+    ap.add_argument("--clean-scope-rebuild", action="store_true")
+    ap.add_argument("--clean-scope-rebuild-mode", default="disabled", choices=["disabled", "detect", "execute"])
+    ap.add_argument("--clean-scope-commit-limit", type=int, default=3)
+    ap.add_argument("--clean-scope-allowlist", default="")
+    ap.add_argument("--clean-scope-forbidden", default="")
     args = ap.parse_args()
 
     started = time.time()
@@ -275,6 +421,8 @@ def main() -> int:
         return 0
 
     checks = pr.get("statusCheckRollup") or []
+    files = pr_files(args.repo, args.pr)
+    commits = pr_commits(args.repo, args.pr)
 
     decision.update(
         {
@@ -285,6 +433,8 @@ def main() -> int:
             "headRefName": pr.get("headRefName"),
             "headRefOid": pr.get("headRefOid"),
             "url": pr.get("url"),
+            "clean_scope_rebuild": bool(args.clean_scope_rebuild),
+            "clean_scope_rebuild_mode": args.clean_scope_rebuild_mode,
         }
     )
 
@@ -345,7 +495,55 @@ def main() -> int:
     should_launch, launchable = should_launch_autofix(checks)
     decision["launchable_for_safe_autofix"] = launchable
 
-    if should_launch:
+    allowlist = parse_csvish(args.clean_scope_allowlist) or CLEAN_SCOPE_ALLOWED_DEFAULT
+    forbidden = parse_csvish(args.clean_scope_forbidden) or CLEAN_SCOPE_FORBIDDEN_DEFAULT
+    forbidden_files = find_forbidden_files(files, forbidden)
+    has_allowed = has_allowlisted_file(files, allowlist)
+    limit_exceeded, autofix_commit_count = detect_autofix_limit_exceeded(commits, args.clean_scope_commit_limit)
+    possible_oscillation = detect_possible_oscillation(commits)
+    clean_scope_enabled = args.clean_scope_rebuild or args.clean_scope_rebuild_mode != "disabled"
+
+    decision["clean_scope"] = {
+        "enabled": clean_scope_enabled,
+        "mode": args.clean_scope_rebuild_mode,
+        "allowlist": allowlist,
+        "forbidden": forbidden,
+        "forbidden_files": forbidden_files,
+        "has_allowlisted_file": has_allowed,
+        "autofix_commit_limit": args.clean_scope_commit_limit,
+        "autofix_commit_count": autofix_commit_count,
+        "autofix_commit_limit_exceeded": limit_exceeded,
+        "possible_autofix_oscillation": possible_oscillation,
+    }
+
+    scope_contaminated = bool(forbidden_files)
+    rebuild_triggered = clean_scope_enabled and (scope_contaminated or limit_exceeded or possible_oscillation)
+    safe_first_ok = should_launch and not scope_contaminated and not limit_exceeded and not possible_oscillation
+
+    if safe_first_ok:
+        action = launch_safe_autofix(
+            repo=args.repo,
+            pr=args.pr,
+            dry_run=args.dry_run,
+            max_rounds=args.safe_max_rounds,
+            pending_wait_seconds=args.safe_pending_wait_seconds,
+        )
+        decision["actions"].append(action)
+        decision["next_action"] = action.get("action")
+    elif rebuild_triggered and args.clean_scope_rebuild_mode == "execute":
+        action = run_clean_scope_rebuild(
+            repo=args.repo,
+            pr=args.pr,
+            head_branch=str(pr.get("headRefName") or ""),
+            dry_run=args.dry_run,
+            allowlist=allowlist,
+            forbidden=forbidden,
+        )
+        decision["actions"].append(action)
+        decision["next_action"] = action.get("action")
+    elif rebuild_triggered and args.clean_scope_rebuild_mode == "detect":
+        decision["next_action"] = "clean_scope_rebuild_required_detect_mode"
+    elif should_launch:
         action = launch_safe_autofix(
             repo=args.repo,
             pr=args.pr,
