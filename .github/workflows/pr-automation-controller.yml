@@ -108,6 +108,13 @@ JSON
           echo "=== pr-controller ==="
           find pr-controller -maxdepth 2 -type f -print -exec sed -n '1,220p' {} \;
 
+      - name: List controller decision
+        if: always()
+        run: |
+          set -euo pipefail
+          echo "=== .pr-controller before upload ==="
+          find .pr-controller -maxdepth 2 -type f -print -exec sed -n '1,220p' {} \; || true
+
       - name: Upload controller decision
         if: always()
         uses: actions/upload-artifact@v4
@@ -115,3 +122,4 @@ JSON
           name: pr-automation-controller-${{ env.PR_NUMBER || github.run_id }}
           path: pr-controller/
           if-no-files-found: error
+          include-hidden-files: true
