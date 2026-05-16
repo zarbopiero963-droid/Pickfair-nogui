@@ -155,27 +155,19 @@ class TestContractShape:
     @staticmethod
     def test_no_bet_id_fails_closed() -> None:
         """A success response without betId is treated as failed."""
-        client = MagicMock()
-        client.configure_mock(
-            place_bet=MagicMock(
-                return_value={
-                    "status": "SUCCESS",
-                    "instructionReports": [
-                        {"status": "SUCCESS", "betId": "", "sizeMatched": 0.0}
-                    ],
-                }
-            )
-        )
+        response = {
+            "status": "SUCCESS",
+            "instructionReports": [{"status": "SUCCESS", "betId": "", "sizeMatched": 0.0}],
+        }
+        client = MagicMock(place_bet=MagicMock(return_value=response))
         om = _make_om(client=client)
 
         result = om.place_order(_payload(customer_ref="CONTRACT-NO-BETID"))
 
         assert result["ok"] is False
         assert result["status"] == OrderStatus.FAILED.value
-        if result["remaining_size"] is not None:
-            pytest.fail("expected remaining_size to be None when betId is missing")
-        if result["reason_code"] != ReasonCode.BROKER_REJECTED.value:
-            pytest.fail("expected BROKER_REJECTED reason code when betId is missing")
+        assert result["remaining_size"] is None
+        assert result["reason_code"] == ReasonCode.BROKER_REJECTED.value
 
 
 class TestValidation:
