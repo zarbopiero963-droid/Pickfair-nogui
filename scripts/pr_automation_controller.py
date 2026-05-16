@@ -564,11 +564,15 @@ def main() -> int:
     ap.add_argument("--safe-max-rounds", default="1")
     ap.add_argument("--safe-pending-wait-seconds", default="600")
     ap.add_argument("--clean-scope-rebuild", action="store_true")
-    ap.add_argument("--clean-scope-rebuild-mode", default="disabled", choices=["disabled", "detect", "execute"])
+    ap.add_argument("--clean-scope-rebuild-mode", default="disabled", choices=["disabled", "detect", "execute", "auto"])
     ap.add_argument("--clean-scope-commit-limit", type=int, default=3)
     ap.add_argument("--clean-scope-allowlist", default="")
     ap.add_argument("--clean-scope-forbidden", default="")
     args = ap.parse_args()
+
+    # Normalize clean scope rebuild auto mode.
+    if getattr(args, "clean_scope_rebuild_mode", None) == "auto":
+        args.clean_scope_rebuild_mode = "execute" if getattr(args, "clean_scope_rebuild", False) else "disabled"
 
     started = time.time()
     decision: dict[str, Any] = {
