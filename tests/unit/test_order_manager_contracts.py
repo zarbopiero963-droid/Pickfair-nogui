@@ -196,7 +196,8 @@ class TestErrorClassification:
             ("PROCESSED_WITH_ERRORS", ErrorClass.AMBIGUOUS),
         ],
     )
-    def test_reason_code_mapping(self, code: str, expected: ErrorClass) -> None:
+    @staticmethod
+    def test_reason_code_mapping(code: str, expected: ErrorClass) -> None:
         assert classify_error(code) == expected
 
     def test_connection_error_is_transient(self) -> None:
