@@ -253,6 +253,25 @@ def analyze_recent_history(conclusions: list[str]) -> tuple[bool, bool]:
     return exhausted, oscillating
 
 
+def completed_runs_for_branch(runs: list[dict[str, Any]], head_branch: str) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in runs
+        if str(item.get("headBranch") or "") == head_branch and str(item.get("status") or "") == "completed"
+    ]
+
+
+def build_history_summary(recent: list[dict[str, Any]]) -> dict[str, Any]:
+    conclusions = [norm_state(item.get("conclusion")) for item in recent]
+    exhausted, oscillating = analyze_recent_history(conclusions)
+    return {
+        "recent": recent,
+        "conclusions": conclusions,
+        "exhausted": exhausted,
+        "oscillating": oscillating,
+    }
+
+
 def wait_for_pending_checks(
     *,
     pr_data: dict[str, Any],
@@ -311,20 +330,8 @@ def safe_autofix_history(repo: str, head_branch: str) -> dict[str, Any]:
     )
     if not isinstance(runs, list):
         runs = []
-
-    completed_for_branch = [
-        item for item in runs
-        if str(item.get("headBranch") or "") == head_branch and str(item.get("status") or "") == "completed"
-    ]
-    recent = completed_for_branch[:6]
-    conclusions = [norm_state(item.get("conclusion")) for item in recent]
-    exhausted, oscillating = analyze_recent_history(conclusions)
-    return {
-        "recent": recent,
-        "conclusions": conclusions,
-        "exhausted": exhausted,
-        "oscillating": oscillating,
-    }
+    recent = completed_runs_for_branch(runs, head_branch)[:6]
+    return build_history_summary(recent)
 
 
 def parse_args() -> argparse.Namespace:
