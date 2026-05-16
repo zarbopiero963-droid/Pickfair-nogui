@@ -78,7 +78,8 @@ def _make_om(*, client: Any) -> OrderManager:
 
 
 class TestContractShape:
-    def test_success_contract_shape(self) -> None:
+    @staticmethod
+    def test_success_contract_shape() -> None:
         client = MagicMock()
         client.place_bet = MagicMock(
             return_value={
@@ -105,7 +106,8 @@ class TestContractShape:
         assert result["ok"] is True
         assert result["status"] == OrderStatus.MATCHED.value
 
-    def test_failure_contract_shape(self) -> None:
+    @staticmethod
+    def test_failure_contract_shape() -> None:
         client = MagicMock()
         client.place_bet = MagicMock(side_effect=RuntimeError("INSUFFICIENT_FUNDS"))
         om = _make_om(client=client)
@@ -124,7 +126,8 @@ class TestContractShape:
         assert result["status"] == OrderStatus.FAILED.value
         assert result["error_class"] == ErrorClass.PERMANENT.value
 
-    def test_ambiguous_contract_shape(self) -> None:
+    @staticmethod
+    def test_ambiguous_contract_shape() -> None:
         client = MagicMock()
         client.place_bet = MagicMock(side_effect=RuntimeError("PROCESSED_WITH_ERRORS"))
         om = _make_om(client=client)
@@ -168,13 +171,15 @@ class TestContractShape:
 
 
 class TestValidation:
-    def test_missing_market_id_raises(self) -> None:
+    @staticmethod
+    def test_missing_market_id_raises() -> None:
         om = _make_om(client=MagicMock())
 
         with pytest.raises(ValidationError, match="market_id"):
             om.place_order({"stake": 10, "price": 2.0, "selection_id": 1})
 
-    def test_invalid_price_raises(self) -> None:
+    @staticmethod
+    def test_invalid_price_raises() -> None:
         om = _make_om(client=MagicMock())
 
         with pytest.raises(ValidationError, match="price"):
@@ -203,8 +208,10 @@ class TestErrorClassification:
         """Maps broker/transport error codes to stable error classes."""
         assert classify_error(code) == expected
 
-    def test_connection_error_is_transient(self) -> None:
+    @staticmethod
+    def test_connection_error_is_transient() -> None:
         assert classify_error("", ConnectionError("x")) == ErrorClass.TRANSIENT
 
-    def test_unknown_string_is_ambiguous(self) -> None:
+    @staticmethod
+    def test_unknown_string_is_ambiguous() -> None:
         assert classify_error("NEVER_SEEN") == ErrorClass.AMBIGUOUS
