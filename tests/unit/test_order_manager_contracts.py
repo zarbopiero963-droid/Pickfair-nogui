@@ -105,7 +105,8 @@ class TestContractShape:
 
         result = om.place_order(_payload(customer_ref="CONTRACT-SUCCESS"))
 
-        assert set(result.keys()) == TestContractShape.SUCCESS_RESULT_KEYS
+        if set(result.keys()) != TestContractShape.SUCCESS_RESULT_KEYS:
+            pytest.fail("success contract keys mismatch")
         assert result["ok"] is True
         assert result["status"] == OrderStatus.MATCHED.value
 
@@ -217,7 +218,7 @@ class TestErrorClassification:
 
     @staticmethod
     def test_conn_error_transient() -> None:
-        """ConnectionError is classified as transient."""
+        """Classify ConnectionError as transient."""
         assert classify_error("", ConnectionError("x")) == ErrorClass.TRANSIENT
 
     @staticmethod
