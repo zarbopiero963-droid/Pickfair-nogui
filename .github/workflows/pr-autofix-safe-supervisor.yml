@@ -22,6 +22,9 @@ on:
         default: "false"
 
 
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
   check_run:
     types: [completed, rerequested]
   workflow_run:
