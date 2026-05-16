@@ -1,0 +1,158 @@
+name: PR Automation Controller V2
+
+on:
+  repository_dispatch:
+    types: [pr_automation_controller_v2]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number"
+        required: true
+      dry_run:
+        description: "Only report actions without executing"
+        required: false
+        default: "false"
+      pending_wait_seconds:
+        description: "Seconds to wait for pending checks"
+        required: false
+        default: "300"
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  check_run:
+    types: [completed, rerequested]
+  workflow_run:
+    workflows:
+      - PR Autofix Safe Supervisor
+      - PR Flow Guardrails
+      - PR Merge Readiness
+      - pr-check
+      - dutching
+      - pnl-engine
+      - stateful-integrity
+      - merge-simulation-hard
+      - CloudCLI PR Fix
+    types: [completed]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+concurrency:
+  group: pr-automation-controller-v2-${{ github.run_id }}
+  cancel-in-progress: false
+
+permissions:
+  actions: write
+  checks: read
+  contents: read
+  pull-requests: read
+  statuses: read
+
+jobs:
+  controller:
+    name: PR automation controller
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+      REPO: ${{ github.repository }}
+      INPUT_PR_NUMBER: ${{ inputs.pr_number || '' }}
+      INPUT_DRY_RUN: ${{ inputs.dry_run || '' }}
+      INPUT_PENDING_WAIT_SECONDS: ${{ inputs.pending_wait_seconds || '' }}
+      PAYLOAD_PR_NUMBER: ${{ github.event.client_payload.pr_number || '' }}
+      PAYLOAD_DRY_RUN: ${{ github.event.client_payload.dry_run || '' }}
+      PAYLOAD_PENDING_WAIT_SECONDS: ${{ github.event.client_payload.pending_wait_seconds || '' }}
+    steps:
+      - name: Checkout controller source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+
+      - name: Resolve controller inputs
+        run: |
+          set -euo pipefail
+
+          PR_NUMBER="${INPUT_PR_NUMBER:-}"
+          if [ -z "$PR_NUMBER" ]; then
+            PR_NUMBER="${PAYLOAD_PR_NUMBER:-}"
+          fi
+          if [ -z "$PR_NUMBER" ] || [ "$PR_NUMBER" = "null" ]; then
+            PR_NUMBER="$(
+              jq -r '
+                .pull_request.number //
+                .workflow_run.pull_requests[0].number //
+                .check_run.pull_requests[0].number //
+                empty
+              ' "$GITHUB_EVENT_PATH"
+            )"
+          fi
+
+          DRY_RUN="${INPUT_DRY_RUN:-}"
+          if [ -z "$DRY_RUN" ]; then
+            DRY_RUN="${PAYLOAD_DRY_RUN:-false}"
+          fi
+
+          PENDING_WAIT_SECONDS="${INPUT_PENDING_WAIT_SECONDS:-}"
+          if [ -z "$PENDING_WAIT_SECONDS" ]; then
+            PENDING_WAIT_SECONDS="${PAYLOAD_PENDING_WAIT_SECONDS:-300}"
+          fi
+
+          echo "PR_NUMBER=$PR_NUMBER" >> "$GITHUB_ENV"
+          echo "DRY_RUN=$DRY_RUN" >> "$GITHUB_ENV"
+          echo "PENDING_WAIT_SECONDS=$PENDING_WAIT_SECONDS" >> "$GITHUB_ENV"
+
+          echo "event=${GITHUB_EVENT_NAME}"
+          echo "PR_NUMBER=${PR_NUMBER:-}"
+          echo "DRY_RUN=${DRY_RUN:-}"
+          echo "PENDING_WAIT_SECONDS=${PENDING_WAIT_SECONDS:-}"
+
+      - name: Run PR automation controller
+        run: |
+          set -euo pipefail
+          mkdir -p pr-controller
+
+          if [ -z "${PR_NUMBER:-}" ] || [ "$PR_NUMBER" = "null" ]; then
+            printf '%s\n' \
+              '{' \
+              '  "next_action": "skip_no_pr_number",' \
+              '  "reason": "event did not include a pull request number"' \
+              '}' > pr-controller/decision.json
+            cat pr-controller/decision.json
+            exit 0
+          fi
+
+          args=""
+          if [ "$DRY_RUN" = "true" ]; then
+            args="--dry-run"
+          fi
+
+          python3 scripts/pr_automation_controller.py \
+            --repo "$REPO" \
+            --pr "$PR_NUMBER" \
+            --pending-wait-seconds "$PENDING_WAIT_SECONDS" \
+            --output pr-controller/decision.json \
+            $args
+
+      - name: Ensure controller decision exists
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p pr-controller
+          if [ ! -f pr-controller/decision.json ]; then
+            printf '%s\n' \
+              '{' \
+              '  "next_action": "controller_no_decision_file",' \
+              '  "reason": "controller completed without writing decision.json"' \
+              '}' > pr-controller/decision.json
+          fi
+          echo "=== pr-controller ==="
+          find pr-controller -maxdepth 2 -type f -print -exec sed -n '1,220p' {} \;
+
+      - name: Upload controller decision
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-automation-controller-v2-${{ github.run_id }}
+          path: pr-controller/
+          if-no-files-found: error

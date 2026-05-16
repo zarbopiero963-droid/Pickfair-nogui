@@ -109,6 +109,7 @@ def is_self_autofix_check(check: dict[str, str]) -> bool:
     name = (check.get("name") or check.get("context") or "").strip().lower()
     return name in {
         "safe pr autofix",
+            "autofix pr until checks are green",
         "pr autofix safe supervisor",
         "safe-autofix",
     }
@@ -548,58 +549,6 @@ def _ultra_is_risky_file(path: str) -> bool:
     )
 
 
-def _ultra_fetch_log(run_id: str, repo_full: str) -> str:
-    try:
-        return subprocess.check_output(
-            ["gh", "run", "view", run_id, "--repo", repo_full, "--log"],
-            text=True,
-            stderr=subprocess.STDOUT,
-            timeout=120,
-        )
-    except Exception as exc:
-        return f"Could not fetch ultra-check log for run {run_id}: {exc}"
-
-
-def _ultra_excerpt(log: str) -> str:
-    interesting_re = re.compile(
-        r"FAILED|FAILURES|ERROR|AssertionError|Traceback|pytest|ruff|mypy|flake|lint|guard|ultra|exit code",
-        re.IGNORECASE,
-    )
-    interesting = [line for line in log.splitlines() if interesting_re.search(line)]
-    excerpt = "\n".join(interesting[-90:]) if interesting else "\n".join(log.splitlines()[-120:])
-    return _ultra_compact_text(excerpt, 2200)
-
-
-def _ultra_issue_payload(file_path: str, line: int | None, excerpt: str) -> dict[str, Any]:
-    risky = _ultra_is_risky_file(file_path)
-    issue: dict[str, Any] = {
-        "source": "github_action_ultra_check",
-        "file": file_path or "__ultra_check_log__",
-        "line": line,
-        "rule": "ultra_check_failure",
-        "tool": "GitHub Actions ultra-check",
-        "level": "failure",
-        "message": _ultra_compact_text(excerpt, 1200),
-        "safe_autofix": not risky,
-        "requires_manual_or_config": risky,
-    }
-    if risky:
-        issue["codex_fix_instruction"] = (
-            "The GitHub Actions run / ultra-check failed, but the failing file could not be mapped "
-            "to a safe source/test file. Do not guess. Inspect the ultra-check log and stop if the "
-            "fix would require workflows, scripts, guardrail JSON, or unrelated files."
-        )
-    else:
-        issue["codex_fix_instruction"] = (
-            f"GitHub Actions run / ultra-check failed and points to {file_path}:{line}. "
-            "Inspect the reported file and failure log, verify the failure is still valid, then make "
-            "the smallest safe source/test change. Do not edit workflows, scripts, guardrail JSON, "
-            "or unrelated files. Relevant ultra-check excerpt: "
-            f"{excerpt!r}"
-        )
-    return issue
-
-
 def collect_ultra_check_issues(blockers: list[dict[str, str]]) -> list[dict[str, Any]]:
     targets = [
         b for b in blockers
@@ -618,10 +567,55 @@ def collect_ultra_check_issues(blockers: list[dict[str, str]]) -> list[dict[str,
             continue
         seen.add(run_id)
 
-        log = _ultra_fetch_log(run_id, repo_full)
-        excerpt = _ultra_excerpt(log)
+        try:
+            log = subprocess.check_output(
+                ["gh", "run", "view", run_id, "--repo", repo_full, "--log"],
+                text=True,
+                stderr=subprocess.STDOUT,
+                timeout=120,
+            )
+        except Exception as exc:
+            log = f"Could not fetch ultra-check log for run {run_id}: {exc}"
+
+        interesting_re = re.compile(
+            r"FAILED|FAILURES|ERROR|AssertionError|Traceback|pytest|ruff|mypy|flake|lint|guard|ultra|exit code",
+            re.IGNORECASE,
+        )
+        interesting = [line for line in log.splitlines() if interesting_re.search(line)]
+        excerpt = "\n".join(interesting[-90:]) if interesting else "\n".join(log.splitlines()[-120:])
+        excerpt = _ultra_compact_text(excerpt, 2200)
+
         file_path, line = _ultra_candidate_file(excerpt or log)
-        issues.append(_ultra_issue_payload(file_path, line, excerpt))
+        risky = _ultra_is_risky_file(file_path)
+
+        issue = {
+            "source": "github_action_ultra_check",
+            "file": file_path or "__ultra_check_log__",
+            "line": line,
+            "rule": "ultra_check_failure",
+            "tool": "GitHub Actions ultra-check",
+            "level": "failure",
+            "message": _ultra_compact_text(excerpt, 1200),
+            "safe_autofix": not risky,
+            "requires_manual_or_config": risky,
+        }
+
+        if risky:
+            issue["codex_fix_instruction"] = (
+                "The GitHub Actions run / ultra-check failed, but the failing file could not be mapped "
+                "to a safe source/test file. Do not guess. Inspect the ultra-check log and stop if the "
+                "fix would require workflows, scripts, guardrail JSON, or unrelated files."
+            )
+        else:
+            issue["codex_fix_instruction"] = (
+                f"GitHub Actions run / ultra-check failed and points to {file_path}:{line}. "
+                "Inspect the reported file and failure log, verify the failure is still valid, then make "
+                "the smallest safe source/test change. Do not edit workflows, scripts, guardrail JSON, "
+                "or unrelated files. Relevant ultra-check excerpt: "
+                f"{excerpt!r}"
+            )
+
+        issues.append(issue)
 
     return issues
 
