@@ -161,7 +161,8 @@ class TestContractShape:
 
         assert result["ok"] is False
         assert result["status"] == OrderStatus.FAILED.value
-        assert result["reason_code"] == ReasonCode.BROKER_REJECTED.value
+        if result["reason_code"] != ReasonCode.BROKER_REJECTED.value:
+            pytest.fail("expected BROKER_REJECTED reason code when betId is missing")
 
 
 class TestValidation:
