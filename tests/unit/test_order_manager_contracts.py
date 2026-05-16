@@ -147,13 +147,15 @@ class TestContractShape:
     def test_no_bet_id_fails_closed() -> None:
         """A success response without betId is treated as failed."""
         client = MagicMock()
-        client.place_bet = MagicMock(
-            return_value={
-                "status": "SUCCESS",
-                "instructionReports": [
-                    {"status": "SUCCESS", "betId": "", "sizeMatched": 0.0}
-                ],
-            }
+        client.configure_mock(
+            place_bet=MagicMock(
+                return_value={
+                    "status": "SUCCESS",
+                    "instructionReports": [
+                        {"status": "SUCCESS", "betId": "", "sizeMatched": 0.0}
+                    ],
+                }
+            )
         )
         om = _make_om(client=client)
 
@@ -198,6 +200,7 @@ class TestErrorClassification:
     )
     @staticmethod
     def test_reason_code_mapping(code: str, expected: ErrorClass) -> None:
+        """Maps broker/transport error codes to stable error classes."""
         assert classify_error(code) == expected
 
     def test_connection_error_is_transient(self) -> None:
