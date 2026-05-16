@@ -72,6 +72,16 @@ def is_safe_autofix_self_check(check, url: str = "") -> bool:
     )
 
 
+
+def merge_state_is_effectively_clean(merge_state: str, blockers: list[dict[str, Any]], pending: list[dict[str, Any]]) -> bool:
+    state = norm_state(merge_state)
+    if state == "CLEAN":
+        return True
+    if state == "UNSTABLE" and not blockers and not pending:
+        return True
+    return False
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", default=os.environ.get("REPO", ""))
@@ -127,8 +137,8 @@ def main() -> int:
         reasons.append("PR is draft")
     if mergeable != "MERGEABLE":
         reasons.append(f"mergeable is {mergeable}, expected MERGEABLE")
-    if merge_state != "CLEAN":
-        reasons.append(f"mergeStateStatus is {merge_state}, expected CLEAN")
+    if not merge_state_is_effectively_clean(pr.get("mergeStateStatus"), blockers, pending):
+        reasons.append(f"mergeStateStatus is {pr.get('mergeStateStatus')}, expected CLEAN")
     if blockers:
         reasons.append(f"{len(blockers)} blocking check(s)")
     if pending:
