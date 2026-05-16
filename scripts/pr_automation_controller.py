@@ -458,6 +458,16 @@ def analyze_scope_and_history(
     return forbidden, history
 
 
+def set_default_next_action(*, blockers: list[dict[str, Any]], pending_count: int, decision: dict[str, Any]) -> None:
+    if blockers:
+        decision["next_action"] = "manual_or_infrastructure_blockers"
+        return
+    if pending_count:
+        decision["next_action"] = "wait_pending"
+        return
+    decision["next_action"] = "checks_green_or_no_action"
+
+
 def decide_next_action(args: argparse.Namespace, checks: list[dict[str, Any]], decision: dict[str, Any], pr_data: dict[str, Any]) -> None:
     blockers = [compact_check(check) for check in checks if is_failure(check) and not is_self_check(check)]
     decision["blockers"] = blockers
@@ -479,12 +489,11 @@ def decide_next_action(args: argparse.Namespace, checks: list[dict[str, Any]], d
     if maybe_launch_safe_autofix(args=args, checks=checks, decision=decision):
         return
 
-    if blockers:
-        decision["next_action"] = "manual_or_infrastructure_blockers"
-    elif decision.get("pending_count", 0):
-        decision["next_action"] = "wait_pending"
-    else:
-        decision["next_action"] = "checks_green_or_no_action"
+    set_default_next_action(
+        blockers=blockers,
+        pending_count=int(decision.get("pending_count", 0)),
+        decision=decision,
+    )
 
 
 def main() -> int:
