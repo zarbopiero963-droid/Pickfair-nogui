@@ -52,12 +52,23 @@ def check_state(check: dict[str, Any]) -> str:
     return norm_state(check.get("conclusion") or check.get("state") or check.get("status"))
 
 
-def is_safe_autofix_self_check(check: dict[str, Any]) -> bool:
-    name = check_name(check).lower()
-    url = check_url(check).lower()
+def is_safe_autofix_self_check(check, url: str = "") -> bool:
+    if isinstance(check, dict):
+        name = str(check.get("name") or check.get("context") or "").strip().lower()
+        url_l = str(check.get("url") or check.get("detailsUrl") or check.get("targetUrl") or "").strip().lower()
+    else:
+        name = str(check or "").strip().lower()
+        url_l = str(url or "").strip().lower()
+
     return (
-        name in {"safe pr autofix", "pr autofix safe supervisor"}
-        or "pr-autofix-safe-supervisor" in url
+        name in {
+            "safe pr autofix",
+            "pr autofix safe supervisor",
+            "merge readiness",
+            "pr merge readiness",
+        }
+        or "pr-autofix-safe-supervisor" in url_l
+        or "pr-merge-readiness" in url_l
     )
 
 
