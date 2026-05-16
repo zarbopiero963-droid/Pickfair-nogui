@@ -1890,6 +1890,9 @@ class ReconciliationEngine:
         Startup hook: snapshot ordini attivi remoti PRIMA del normale intake live.
         Nessuna chiamata reale in test: i test iniettano un service fake.
         """
+        if self.betfair_service is None:
+            raise RuntimeError("CURRENT_ORDERS_API_UNAVAILABLE: missing betfair_service")
+
         fn = getattr(self.betfair_service, "list_active_orders", None)
         if callable(fn):
             orders = fn() or []
@@ -1900,7 +1903,9 @@ class ReconciliationEngine:
             orders = fn() or []
             return [o for o in orders if isinstance(o, dict)]
 
-        return []
+        raise RuntimeError(
+            "CURRENT_ORDERS_API_UNAVAILABLE: missing list_active_orders/list_current_orders"
+        )
 
     def merge_startup_active_orders(self, remote_orders: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         """

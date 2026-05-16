@@ -709,7 +709,16 @@ class OrderManager:
             leg_status, overall_status, size_matched, stake
         )
 
-        remaining = max(0.0, stake - size_matched)
+        # Fail closed: a non-failed placement without exchange bet_id is
+        # not a valid accepted order and must not look successful.
+        if saga_status not in (OrderStatus.FAILED, OrderStatus.AMBIGUOUS) and not bet_id:
+            saga_status = OrderStatus.FAILED
+            reason_code = ReasonCode.BROKER_REJECTED
+
+        if saga_status == OrderStatus.PARTIALLY_MATCHED:
+            remaining_size = max(0.0, stake - size_matched)
+        else:
+            remaining_size = None
 
         self._transition_saga(
             customer_ref=customer_ref,
@@ -718,12 +727,17 @@ class OrderManager:
             error_text="" if saga_status not in (OrderStatus.FAILED, OrderStatus.AMBIGUOUS) else str(response),
             reason_code=reason_code,
             matched_size=size_matched,
-            remaining_size=remaining if saga_status == OrderStatus.PARTIALLY_MATCHED else None,
+            remaining_size=remaining_size,
         )
 
         event_name = ORDER_STATUS_EVENT_MAP.get(
             saga_status.value,
             LIFECYCLE_CONTRACT["ACCEPTED"]["event"],
+        )
+        out_remaining_size = (
+            remaining_size
+            if saga_status == OrderStatus.PARTIALLY_MATCHED
+            else None
         )
 
         out = {
@@ -733,7 +747,7 @@ class OrderManager:
             "response": response,
             "order_status": saga_status.value,
             "matched_size": size_matched,
-            "remaining_size": remaining,
+            "remaining_size": out_remaining_size,
             "reason_code": reason_code.value,
             "simulation_mode": bool(payload.get("simulation_mode", False)),
         }
@@ -745,7 +759,7 @@ class OrderManager:
             "customer_ref": customer_ref,
             "bet_id": bet_id,
             "matched_size": size_matched,
-            "remaining_size": remaining,
+            "remaining_size": out_remaining_size,
             "reason_code": reason_code.value,
             "response": response,
         }
