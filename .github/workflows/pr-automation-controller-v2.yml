@@ -72,12 +72,11 @@ jobs:
           mkdir -p pr-controller
 
           if [ -z "${PR_NUMBER:-}" ] || [ "$PR_NUMBER" = "null" ]; then
-            cat > pr-controller/decision.json <<'JSON'
-          {
-            "next_action": "skip_no_pr_number",
-            "reason": "event did not include a pull request number"
-          }
-          JSON
+            printf '%s\n' \
+              '{' \
+              '  "next_action": "skip_no_pr_number",' \
+              '  "reason": "event did not include a pull request number"' \
+              '}' > pr-controller/decision.json
             cat pr-controller/decision.json
             exit 0
           fi
@@ -100,12 +99,11 @@ jobs:
           set -euo pipefail
           mkdir -p pr-controller
           if [ ! -f pr-controller/decision.json ]; then
-            cat > pr-controller/decision.json <<'JSON'
-{
-  "next_action": "controller_no_decision_file",
-  "reason": "controller completed without writing decision.json"
-}
-JSON
+            printf '%s\n' \
+              '{' \
+              '  "next_action": "controller_no_decision_file",' \
+              '  "reason": "controller completed without writing decision.json"' \
+              '}' > pr-controller/decision.json
           fi
           echo "=== pr-controller ==="
           find pr-controller -maxdepth 2 -type f -print -exec sed -n '1,220p' {} \;
