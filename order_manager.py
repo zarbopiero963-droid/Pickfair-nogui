@@ -715,8 +715,7 @@ class OrderManager:
             saga_status = OrderStatus.FAILED
             reason_code = ReasonCode.BROKER_REJECTED
 
-        is_partial_match = saga_status == OrderStatus.PARTIALLY_MATCHED
-        if is_partial_match:
+        if saga_status == OrderStatus.PARTIALLY_MATCHED:
             remaining_size = max(0.0, stake - size_matched)
         else:
             remaining_size = None
@@ -744,7 +743,7 @@ class OrderManager:
             "matched_size": size_matched,
             "remaining_size": (
                 remaining_size
-                if is_partial_match
+                if saga_status == OrderStatus.PARTIALLY_MATCHED
                 else None
             ),
             "reason_code": reason_code.value,
@@ -758,7 +757,11 @@ class OrderManager:
             "customer_ref": customer_ref,
             "bet_id": bet_id,
             "matched_size": size_matched,
-            "remaining_size": remaining_size if is_partial_match else None,
+            "remaining_size": (
+                remaining_size
+                if saga_status == OrderStatus.PARTIALLY_MATCHED
+                else None
+            ),
             "reason_code": reason_code.value,
             "response": response,
         }

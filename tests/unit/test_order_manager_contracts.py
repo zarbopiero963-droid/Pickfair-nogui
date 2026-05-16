@@ -170,6 +170,7 @@ class TestContractShape:
             pytest.fail("remaining_size must be None for fail-closed outcome")
         if result["reason_code"] != ReasonCode.BROKER_REJECTED.value:
             pytest.fail("reason_code must be BROKER_REJECTED for fail-closed outcome")
+        assert om.bus is not None
         last_event = om.bus.events[-1][1]
         if last_event["remaining_size"] is not None:
             pytest.fail("event remaining_size must be None for fail-closed outcome")
