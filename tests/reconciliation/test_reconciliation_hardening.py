@@ -24,6 +24,7 @@ class FakeDB:
 
     @staticmethod
     def get_pending_sagas():
+        """Return no pending sagas for this test double."""
         return []
 
 
@@ -66,15 +67,17 @@ class FakeBatchManager:
         return self.batches[batch_id]
 
     @staticmethod
-    def release_runtime_artifacts(**kwargs):
-        pass
+    def release_runtime_artifacts(**_kwargs):
+        """No-op hook required by the reconciliation engine interface."""
+        return None
 
     def get_open_batches(self):
         return list(self.batches.values())
 
     @staticmethod
-    def mark_batch_failed(*args, **kwargs):
-        pass
+    def mark_batch_failed(*_args, **_kwargs):
+        """No-op hook required by the reconciliation engine interface."""
+        return None
 
 
 class FakeClient:
