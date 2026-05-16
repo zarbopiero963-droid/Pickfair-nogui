@@ -1,353 +1,101 @@
 name: PR Automation Controller
 
-on: workflow_dispatch: inputs: mode: description: "Automation mode" required: true default: "full" type: choice options: - "full" - "report" - "fix-latest" - "health" - "new-task" pr_number: description: "PR number. Required for full/report/fix-latest." required: false type: string task_title: description: "Task title. Required/optional for new-task." required: false type: string task_text: description: "Task text. Required for new-task." required: false type: string force: description: "Force auto-fix even if same handoff/head was already attempted" required: false default: "false" type: choice options: - "false" - "true" dry_run: description: "Run Codex without commit/push" required: false default: "false" type: choice options: - "false" - "true" run_codex_smoke: description: "For health mode: run tiny Codex smoke test" required: false default: "false" type: choice options: - "false" - "true"
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
-repository_dispatch: types: - pickfair_telegram_command - telegram_pr_full - telegram_pr_report - telegram_pr_fix_latest - telegram_vps_health - telegram_new_task
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number"
+        required: true
+      dry_run:
+        description: "Only report actions without executing"
+        required: false
+        default: "false"
+      pending_wait_seconds:
+        description: "Seconds to wait for pending checks"
+        required: false
+        default: "300"
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  check_run:
+    types: [completed, rerequested]
+  workflow_run:
+    workflows:
+      - PR Autofix Safe Supervisor
+      - PR Flow Guardrails
+      - PR Merge Readiness
+      - pr-check
+      - dutching
+      - pnl-engine
+      - stateful-integrity
+      - merge-simulation-hard
+      - CloudCLI PR Fix
+    types: [completed]
 
-permissions: actions: write contents: read
+concurrency:
+  group: pr-automation-controller-${{ github.event.inputs.pr_number || github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number || github.run_id }}
+  cancel-in-progress: true
 
-concurrency: group: pr-automation-controller-${{ github.event.inputs.pr_number || github.event.client_payload.pr_number || github.event.inputs.task_title || github.event.client_payload.task_title || github.event_name }}-${{ github.event.inputs.mode || github.event.client_payload.mode || github.event.action }} cancel-in-progress: false
+permissions:
+  actions: write
+  checks: read
+  contents: read
+  pull-requests: read
+  statuses: read
 
-jobs: controller: name: Dispatch requested automation runs-on: ubuntu-latest
-
-steps:
-  - name: Resolve command
-    id: command
-    uses: actions/github-script@v7
-    with:
-      github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
-      script: |
-        const payload = context.payload.client_payload || {};
-        const action = context.payload.action || "";
-        const inputs = context.payload.inputs || {};
-
-        let mode =
-          inputs.mode ||
-          payload.mode ||
-          "";
-
-        if (!mode) {
-          if (action === "telegram_pr_full") mode = "full";
-          else if (action === "telegram_pr_report") mode = "report";
-          else if (action === "telegram_pr_fix_latest") mode = "fix-latest";
-          else if (action === "telegram_vps_health") mode = "health";
-          else if (action === "telegram_new_task") mode = "new-task";
-          else mode = "full";
-        }
-
-        const prNumber =
-          inputs.pr_number ||
-          payload.pr_number ||
-          payload.pr ||
-          "";
-
-        const taskTitle =
-          inputs.task_title ||
-          payload.task_title ||
-          "";
-
-        const taskText =
-          inputs.task_text ||
-          payload.task_text ||
-          "";
-
-        const force =
-          inputs.force ||
-          payload.force ||
-          "false";
-
-        const dryRun =
-          inputs.dry_run ||
-          payload.dry_run ||
-          "false";
-
-        const runCodexSmoke =
-          inputs.run_codex_smoke ||
-          payload.run_codex_smoke ||
-          "false";
-
-        const allowedModes = new Set([
-          "full",
-          "report",
-          "fix-latest",
-          "health",
-          "new-task",
-        ]);
-
-        if (!allowedModes.has(mode)) {
-          core.setFailed(`Invalid mode: ${mode}`);
-          return;
-        }
-
-        if (["full", "report", "fix-latest"].includes(mode) && !prNumber) {
-          core.setFailed(`pr_number is required for mode: ${mode}`);
-          return;
-        }
-
-        if (mode === "new-task" && !taskText) {
-          core.setFailed("task_text is required for mode: new-task");
-          return;
-        }
-
-        core.setOutput("mode", mode);
-        core.setOutput("pr_number", String(prNumber));
-        core.setOutput("task_title", String(taskTitle));
-        core.setOutput("task_text", String(taskText));
-        core.setOutput("force", String(force) === "true" ? "true" : "false");
-        core.setOutput("dry_run", String(dryRun) === "true" ? "true" : "false");
-        core.setOutput("run_codex_smoke", String(runCodexSmoke) === "true" ? "true" : "false");
-
-        core.info(`mode=${mode}`);
-        core.info(`pr_number=${prNumber}`);
-        core.info(`task_title=${taskTitle}`);
-        core.info(`force=${force}`);
-        core.info(`dry_run=${dryRun}`);
-        core.info(`run_codex_smoke=${runCodexSmoke}`);
-
-  - name: Notify Telegram command accepted
+jobs:
+  controller:
+    name: PR automation controller
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      MODE: ${{ steps.command.outputs.mode }}
-      PR_NUMBER: ${{ steps.command.outputs.pr_number }}
-      TASK_TITLE: ${{ steps.command.outputs.task_title }}
-      FORCE: ${{ steps.command.outputs.force }}
-      DRY_RUN: ${{ steps.command.outputs.dry_run }}
-      RUN_CODEX_SMOKE: ${{ steps.command.outputs.run_codex_smoke }}
-    run: |
-      set -euo pipefail
+      GH_TOKEN: ${{ secrets.PICKFAIR_ACTIONS_TOKEN || github.token }}
+      GITHUB_TOKEN: ${{ secrets.PICKFAIR_ACTIONS_TOKEN || github.token }}
+      REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.inputs.pr_number || github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number }}
+      DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+      PENDING_WAIT_SECONDS: ${{ github.event.inputs.pending_wait_seconds || '300' }}
+    steps:
+      - name: Checkout controller source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN || github.token }}
 
-      if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
-        echo "Telegram secrets missing. Skipping notification."
-        exit 0
-      fi
+      - name: Run PR automation controller
+        run: |
+          set -euo pipefail
+          mkdir -p .pr-controller
 
-      TEXT="$(cat <<EOF
+          if [ -z "${PR_NUMBER:-}" ] || [ "$PR_NUMBER" = "null" ]; then
+            cat > .pr-controller/decision.json <<'JSON'
+          {
+            "next_action": "skip_no_pr_number",
+            "reason": "event did not include a pull request number"
+          }
+          JSON
+            cat .pr-controller/decision.json
+            exit 0
+          fi
 
-🕹️ PR Automation Controller received command
+          args=""
+          if [ "$DRY_RUN" = "true" ]; then
+            args="--dry-run"
+          fi
 
-Mode: $MODE PR: ${PR_NUMBER:-n/a} Task title: ${TASK_TITLE:-n/a} Force: $FORCE Dry run: $DRY_RUN Codex smoke: $RUN_CODEX_SMOKE
+          python3 scripts/pr_automation_controller.py \
+            --repo "$REPO" \
+            --pr "$PR_NUMBER" \
+            --pending-wait-seconds "$PENDING_WAIT_SECONDS" \
+            --output .pr-controller/decision.json \
+            $args
 
-Run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} EOF )"
-
-curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-        -d "chat_id=${TELEGRAM_CHAT_ID}" \
-        --data-urlencode "text=$TEXT" \
-        -d "disable_web_page_preview=true" >/dev/null
-
-  - name: Dispatch PR Telegram Notify for full/report
-    if: steps.command.outputs.mode == 'full' || steps.command.outputs.mode == 'report'
-    uses: actions/github-script@v7
-    with:
-      github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
-      script: |
-        const owner = context.repo.owner;
-        const repo = context.repo.repo;
-        const prNumber = "${{ steps.command.outputs.pr_number }}";
-
-        const repoInfo = await github.rest.repos.get({
-          owner,
-          repo,
-        });
-
-        const ref = repoInfo.data.default_branch;
-
-        await github.rest.actions.createWorkflowDispatch({
-          owner,
-          repo,
-          workflow_id: "pr-telegram-notify.yml",
-          ref,
-          inputs: {
-            pr_number: prNumber,
-          },
-        });
-
-        core.info(`Dispatched pr-telegram-notify.yml for PR #${prNumber}`);
-
-  - name: Dispatch Auto PR Codex Fix for fix-latest
-    if: steps.command.outputs.mode == 'fix-latest'
-    uses: actions/github-script@v7
-    with:
-      github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
-      script: |
-        const owner = context.repo.owner;
-        const repo = context.repo.repo;
-        const prNumber = "${{ steps.command.outputs.pr_number }}";
-        const force = "${{ steps.command.outputs.force }}";
-        const dryRun = "${{ steps.command.outputs.dry_run }}";
-
-        const repoInfo = await github.rest.repos.get({
-          owner,
-          repo,
-        });
-
-        const ref = repoInfo.data.default_branch;
-
-        await github.rest.actions.createWorkflowDispatch({
-          owner,
-          repo,
-          workflow_id: "auto-pr-codex-fix.yml",
-          ref,
-          inputs: {
-            pr_number: prNumber,
-            force,
-            dry_run: dryRun,
-          },
-        });
-
-        core.info(`Dispatched auto-pr-codex-fix.yml for PR #${prNumber}`);
-
-  - name: Dispatch VPS Runner Health
-    if: steps.command.outputs.mode == 'health'
-    uses: actions/github-script@v7
-    with:
-      github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
-      script: |
-        const owner = context.repo.owner;
-        const repo = context.repo.repo;
-        const runCodexSmoke = "${{ steps.command.outputs.run_codex_smoke }}";
-
-        const repoInfo = await github.rest.repos.get({
-          owner,
-          repo,
-        });
-
-        const ref = repoInfo.data.default_branch;
-
-        await github.rest.actions.createWorkflowDispatch({
-          owner,
-          repo,
-          workflow_id: "vps-runner-health.yml",
-          ref,
-          inputs: {
-            run_codex_smoke: runCodexSmoke,
-          },
-        });
-
-        core.info("Dispatched vps-runner-health.yml");
-
-  - name: Dispatch New Task Codex PR
-    if: steps.command.outputs.mode == 'new-task'
-    uses: actions/github-script@v7
-    with:
-      github-token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
-      script: |
-        const owner = context.repo.owner;
-        const repo = context.repo.repo;
-        const taskTitle = `${{ steps.command.outputs.task_title }}`;
-        const taskText = `${{ steps.command.outputs.task_text }}`;
-        const dryRun = "${{ steps.command.outputs.dry_run }}";
-
-        const repoInfo = await github.rest.repos.get({
-          owner,
-          repo,
-        });
-
-        const ref = repoInfo.data.default_branch;
-
-        await github.rest.actions.createWorkflowDispatch({
-          owner,
-          repo,
-          workflow_id: "new-task-codex-pr.yml",
-          ref,
-          inputs: {
-            task_title: taskTitle,
-            task_text: taskText,
-            dry_run: dryRun,
-          },
-        });
-
-        core.info("Dispatched new-task-codex-pr.yml");
-
-  - name: Explain full mode chain
-    if: steps.command.outputs.mode == 'full'
-    run: |
-      cat <<'EOF'
-      Full mode dispatched PR Telegram Notify.
-
-      Expected chain:
-      1. PR Telegram Notify generates codex-pr-<PR>-task-handoff-<hash>.md
-      2. PR Telegram Notify uploads artifact
-      3. Auto PR Codex Fix starts automatically from workflow_run
-      4. Auto PR Codex Fix runs on self-hosted VPS
-      5. Codex CLI receives the .md task
-      6. Codex edits code
-      7. Workflow commits and pushes to the existing PR branch
-      8. GitHub checks run again
-      EOF
-
-  - name: Explain new-task mode chain
-    if: steps.command.outputs.mode == 'new-task'
-    run: |
-      cat <<'EOF'
-      New-task mode dispatched New Task Codex PR.
-
-      Expected chain:
-      1. New Task Codex PR runs on self-hosted VPS
-      2. Codex CLI receives the task prompt
-      3. Codex edits code on a new task branch
-      4. Workflow commits and pushes the branch
-      5. Workflow creates one PR
-      6. PR Telegram Notify monitors the new PR
-      7. Auto PR Codex Fix repairs follow-up failures/comments if needed
-      EOF
-
-  - name: Notify Telegram command dispatched
-    if: success()
-    env:
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      MODE: ${{ steps.command.outputs.mode }}
-      PR_NUMBER: ${{ steps.command.outputs.pr_number }}
-      TASK_TITLE: ${{ steps.command.outputs.task_title }}
-      FORCE: ${{ steps.command.outputs.force }}
-      DRY_RUN: ${{ steps.command.outputs.dry_run }}
-    run: |
-      set -euo pipefail
-
-      if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
-        echo "Telegram secrets missing. Skipping notification."
-        exit 0
-      fi
-
-      TEXT="$(cat <<EOF
-
-✅ PR Automation Controller dispatched
-
-Mode: $MODE PR: ${PR_NUMBER:-n/a} Task title: ${TASK_TITLE:-n/a} Force: $FORCE Dry run: $DRY_RUN
-
-Run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} EOF )"
-
-curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-        -d "chat_id=${TELEGRAM_CHAT_ID}" \
-        --data-urlencode "text=$TEXT" \
-        -d "disable_web_page_preview=true" >/dev/null
-
-  - name: Notify Telegram controller failure
-    if: failure()
-    env:
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      MODE: ${{ steps.command.outputs.mode || 'unknown' }}
-      PR_NUMBER: ${{ steps.command.outputs.pr_number || 'unknown' }}
-      TASK_TITLE: ${{ steps.command.outputs.task_title || 'unknown' }}
-    run: |
-      set -euo pipefail
-
-      if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
-        echo "Telegram secrets missing. Skipping notification."
-        exit 0
-      fi
-
-      TEXT="$(cat <<EOF
-
-❌ PR Automation Controller failed
-
-Mode: $MODE PR: $PR_NUMBER Task title: $TASK_TITLE
-
-Run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} EOF )"
-
-curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-        -d "chat_id=${TELEGRAM_CHAT_ID}" \
-        --data-urlencode "text=$TEXT" \
-        -d "disable_web_page_preview=true" >/dev/null
+      - name: Upload controller decision
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-automation-controller-${{ env.PR_NUMBER || github.run_id }}
+          path: .pr-controller/
+          if-no-files-found: ignore
