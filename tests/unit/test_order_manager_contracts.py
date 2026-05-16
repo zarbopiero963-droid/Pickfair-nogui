@@ -166,8 +166,10 @@ class TestContractShape:
 
         assert result["ok"] is False
         assert result["status"] == OrderStatus.FAILED.value
-        assert result["remaining_size"] is None
-        assert result["reason_code"] == ReasonCode.BROKER_REJECTED.value
+        if result["remaining_size"] is not None:
+            pytest.fail("remaining_size must be None for fail-closed outcome")
+        if result["reason_code"] != ReasonCode.BROKER_REJECTED.value:
+            pytest.fail("reason_code must be BROKER_REJECTED for fail-closed outcome")
 
 
 class TestValidation:

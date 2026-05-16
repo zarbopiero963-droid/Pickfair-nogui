@@ -741,7 +741,11 @@ class OrderManager:
             "response": response,
             "order_status": saga_status.value,
             "matched_size": size_matched,
-            "remaining_size": remaining_size,
+            "remaining_size": (
+                remaining_size
+                if saga_status == OrderStatus.PARTIALLY_MATCHED
+                else None
+            ),
             "reason_code": reason_code.value,
             "simulation_mode": bool(payload.get("simulation_mode", False)),
         }
