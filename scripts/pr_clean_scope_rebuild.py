@@ -36,11 +36,61 @@ def run(cmd: list[str], check: bool = True) -> str:
     return out
 
 
+def _run_checked(command: list[str]) -> tuple[str, int]:
+    proc = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+    return (proc.stdout or ""), int(proc.returncode)
+
+
+def _run_gh(cmd: list[str]) -> tuple[str, int]:
+    if cmd[:3] == ["gh", "pr", "view"] and len(cmd) >= 4:
+        return _run_checked(["gh", "pr", "view", cmd[3], *cmd[4:]])
+    raise ValueError(f"unsupported gh command: {' '.join(cmd)}")
+
+
+def _run_git(cmd: list[str]) -> tuple[str, int]:
+    if cmd[:2] == ["git", "fetch"] and len(cmd) >= 3:
+        return _run_checked(["git", "fetch", *cmd[2:]])
+    if cmd[:3] == ["git", "diff", "--name-only"] and len(cmd) == 4:
+        return _run_checked(["git", "diff", "--name-only", cmd[3]])
+    if cmd[:2] == ["git", "push"] and len(cmd) >= 3:
+        return _run_checked(["git", "push", *cmd[2:]])
+    if cmd[:3] == ["git", "ls-remote", "--heads"] and len(cmd) == 5:
+        return _run_checked(["git", "ls-remote", "--heads", cmd[3], cmd[4]])
+    if cmd[:2] == ["git", "checkout"] and len(cmd) >= 3:
+        return _run_checked(["git", "checkout", *cmd[2:]])
+    if cmd[:3] == ["git", "diff", "--check"] and len(cmd) == 3:
+        return _run_checked(["git", "diff", "--check"])
+    if cmd[:3] == ["git", "add", "-A"] and len(cmd) == 3:
+        return _run_checked(["git", "add", "-A"])
+    if cmd[:2] == ["git", "commit"] and len(cmd) >= 3:
+        return _run_checked(["git", "commit", *cmd[2:]])
+    raise ValueError(f"unsupported git command: {' '.join(cmd)}")
+
+
+def _run_python(cmd: list[str]) -> tuple[str, int]:
+    if cmd[:3] == ["python3", "-m", "py_compile"] and len(cmd) == 4:
+        return _run_checked(["python3", "-m", "py_compile", cmd[3]])
+    raise ValueError(f"unsupported python command: {' '.join(cmd)}")
+
+
+def _run_pytest(cmd: list[str]) -> tuple[str, int]:
+    if cmd[:2] == ["pytest", "-q"] and len(cmd) >= 3:
+        return _run_checked(["pytest", "-q", *cmd[2:]])
+    raise ValueError(f"unsupported pytest command: {' '.join(cmd)}")
+
+
 def run_with_code(cmd: list[str]) -> tuple[str, int]:
     if not cmd or not _is_allowed_command(cmd):
         raise ValueError(f"unsupported command: {' '.join(cmd) if cmd else '<empty>'}")
-    proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
-    return (proc.stdout or ""), int(proc.returncode)
+    if cmd[0] == "gh":
+        return _run_gh(cmd)
+    if cmd[0] == "git":
+        return _run_git(cmd)
+    if cmd[0] == "python3":
+        return _run_python(cmd)
+    if cmd[0] == "pytest":
+        return _run_pytest(cmd)
+    raise ValueError(f"unsupported command: {' '.join(cmd)}")
 
 
 def pr_view(repo: str, pr_number: str) -> dict[str, Any]:

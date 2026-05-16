@@ -382,6 +382,54 @@ def run_cancelled_flow(args: argparse.Namespace, checks: list[dict[str, Any]], d
     return write_decision(output_path, decision)
 
 
+def maybe_launch_clean_scope_rebuild(
+    *,
+    args: argparse.Namespace,
+    decision: dict[str, Any],
+    should_rebuild: bool,
+    mode: str,
+    rebuild_reasons: list[str],
+) -> bool:
+    if not should_rebuild:
+        return False
+    active_rebuild = active_controller_rebuild_runs(args.repo, args.pr)
+    if active_rebuild:
+        decision["actions"].append(
+            {
+                "type": "clean_scope_rebuild",
+                "action": "skip",
+                "reason": "rebuild_already_active",
+                "active": active_rebuild,
+            }
+        )
+        decision["next_action"] = "skip_launch_clean_scope_rebuild"
+        return True
+    decision["actions"].append(
+        {"type": "clean_scope_rebuild", "action": "launch", "mode": mode, "reasons": rebuild_reasons}
+    )
+    decision["next_action"] = "launch_clean_scope_rebuild"
+    return True
+
+
+def maybe_launch_safe_autofix(
+    *, args: argparse.Namespace, checks: list[dict[str, Any]], decision: dict[str, Any]
+) -> bool:
+    should_launch, launchable = should_launch_autofix(checks)
+    decision["launchable_for_safe_autofix"] = launchable
+    if not should_launch:
+        return False
+    action = launch_safe_autofix(
+        repo=args.repo,
+        pr_number=args.pr,
+        dry_run=args.dry_run,
+        max_rounds=args.safe_max_rounds,
+        pending_wait_seconds=args.safe_pending_wait_seconds,
+    )
+    decision["actions"].append(action)
+    decision["next_action"] = action.get("action")
+    return True
+
+
 def decide_next_action(args: argparse.Namespace, checks: list[dict[str, Any]], decision: dict[str, Any], pr_data: dict[str, Any]) -> None:
     blockers = [compact_check(check) for check in checks if is_failure(check) and not is_self_check(check)]
     decision["blockers"] = blockers
@@ -397,39 +445,16 @@ def decide_next_action(args: argparse.Namespace, checks: list[dict[str, Any]], d
 
     should_rebuild, rebuild_reasons = should_rebuild_scope(args.clean_scope_rebuild, forbidden, history)
     mode = str(args.clean_scope_rebuild_mode or "auto").lower()
-
-    should_launch, launchable = should_launch_autofix(checks)
-    decision["launchable_for_safe_autofix"] = launchable
-
-    if should_rebuild:
-        active_rebuild = active_controller_rebuild_runs(args.repo, args.pr)
-        if active_rebuild:
-            decision["actions"].append(
-                {
-                    "type": "clean_scope_rebuild",
-                    "action": "skip",
-                    "reason": "rebuild_already_active",
-                    "active": active_rebuild,
-                }
-            )
-            decision["next_action"] = "skip_launch_clean_scope_rebuild"
-            return
-        decision["actions"].append(
-            {"type": "clean_scope_rebuild", "action": "launch", "mode": mode, "reasons": rebuild_reasons}
-        )
-        decision["next_action"] = "launch_clean_scope_rebuild"
+    if maybe_launch_clean_scope_rebuild(
+        args=args,
+        decision=decision,
+        should_rebuild=should_rebuild,
+        mode=mode,
+        rebuild_reasons=rebuild_reasons,
+    ):
         return
 
-    if should_launch:
-        action = launch_safe_autofix(
-            repo=args.repo,
-            pr_number=args.pr,
-            dry_run=args.dry_run,
-            max_rounds=args.safe_max_rounds,
-            pending_wait_seconds=args.safe_pending_wait_seconds,
-        )
-        decision["actions"].append(action)
-        decision["next_action"] = action.get("action")
+    if maybe_launch_safe_autofix(args=args, checks=checks, decision=decision):
         return
 
     if blockers:
