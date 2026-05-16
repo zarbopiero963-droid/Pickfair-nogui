@@ -172,7 +172,8 @@ class TestContractShape:
 
         assert result["ok"] is False
         assert result["status"] == OrderStatus.FAILED.value
-        assert result["remaining_size"] is None
+        if result["remaining_size"] is not None:
+            pytest.fail("expected remaining_size to be None when betId is missing")
         if result["reason_code"] != ReasonCode.BROKER_REJECTED.value:
             pytest.fail("expected BROKER_REJECTED reason code when betId is missing")
 
