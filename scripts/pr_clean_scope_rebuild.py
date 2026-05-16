@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 def run(cmd: list[str], check: bool = True) -> tuple[int, str]:
-    proc = subprocess.run(cmd, text=True, capture_output=True)
+    proc = subprocess.run(cmd, text=True, capture_output=True, check=False)
     out = (proc.stdout or "") + (proc.stderr or "")
     if check and proc.returncode != 0:
         raise RuntimeError(f"command failed ({proc.returncode}): {' '.join(cmd)}\n{out}")

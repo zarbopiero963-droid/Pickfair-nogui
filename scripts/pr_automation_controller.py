@@ -305,10 +305,28 @@ def find_forbidden_files(files: list[str], forbidden_patterns: list[str]) -> lis
 
 
 def has_allowlisted_file(files: list[str], allowlist_patterns: list[str]) -> bool:
-    for f in files:
-        if any(path_matches(f, p) for p in allowlist_patterns):
-            return True
-    return False
+    return any(any(path_matches(file_path, pattern) for pattern in allowlist_patterns) for file_path in files)
+
+
+def collect_clean_scope_signals(
+    *,
+    files: list[str],
+    commits: list[dict[str, Any]],
+    allowlist: list[str],
+    forbidden: list[str],
+    commit_limit: int,
+) -> dict[str, Any]:
+    forbidden_files = find_forbidden_files(files, forbidden)
+    has_allowed = has_allowlisted_file(files, allowlist)
+    limit_exceeded, autofix_commit_count = detect_autofix_limit_exceeded(commits, commit_limit)
+    possible_oscillation = detect_possible_oscillation(commits)
+    return {
+        "forbidden_files": forbidden_files,
+        "has_allowlisted_file": has_allowed,
+        "autofix_commit_count": autofix_commit_count,
+        "autofix_commit_limit_exceeded": limit_exceeded,
+        "possible_autofix_oscillation": possible_oscillation,
+    }
 
 
 def detect_autofix_limit_exceeded(
@@ -497,10 +515,18 @@ def main() -> int:
 
     allowlist = parse_csvish(args.clean_scope_allowlist) or CLEAN_SCOPE_ALLOWED_DEFAULT
     forbidden = parse_csvish(args.clean_scope_forbidden) or CLEAN_SCOPE_FORBIDDEN_DEFAULT
-    forbidden_files = find_forbidden_files(files, forbidden)
-    has_allowed = has_allowlisted_file(files, allowlist)
-    limit_exceeded, autofix_commit_count = detect_autofix_limit_exceeded(commits, args.clean_scope_commit_limit)
-    possible_oscillation = detect_possible_oscillation(commits)
+    clean_scope_signals = collect_clean_scope_signals(
+        files=files,
+        commits=commits,
+        allowlist=allowlist,
+        forbidden=forbidden,
+        commit_limit=args.clean_scope_commit_limit,
+    )
+    forbidden_files = clean_scope_signals["forbidden_files"]
+    has_allowed = bool(clean_scope_signals["has_allowlisted_file"])
+    limit_exceeded = bool(clean_scope_signals["autofix_commit_limit_exceeded"])
+    autofix_commit_count = int(clean_scope_signals["autofix_commit_count"])
+    possible_oscillation = bool(clean_scope_signals["possible_autofix_oscillation"])
     clean_scope_enabled = args.clean_scope_rebuild or args.clean_scope_rebuild_mode != "disabled"
 
     decision["clean_scope"] = {
