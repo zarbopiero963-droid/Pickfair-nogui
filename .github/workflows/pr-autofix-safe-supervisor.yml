@@ -72,6 +72,8 @@ jobs:
       PENDING_WAIT_SECONDS: ${{ github.event.inputs.pending_wait_seconds || '2700' }}
       DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
       CODEX_MODEL: gpt-5.3-codex
+      HAS_CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN != '' }}
+      HAS_PICKFAIR_ACTIONS_TOKEN: ${{ secrets.PICKFAIR_ACTIONS_TOKEN != '' }}
 
     steps:
       - name: Checkout supervisor source
@@ -92,6 +94,13 @@ jobs:
         run: |
           git config --global user.name "pickfair-safe-autofix-bot"
           git config --global user.email "pickfair-autofix-bot@users.noreply.github.com"
+
+      - name: Preflight safe autofix flow
+        run: |
+          python3 scripts/pr_flow_automation.py preflight \
+            --repo "$REPO" \
+            --pr "$PR_NUMBER" \
+            --comment
 
       - name: Safe autofix loop
         run: |

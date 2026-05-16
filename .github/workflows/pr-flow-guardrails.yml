@@ -1,0 +1,101 @@
+name: PR Flow Guardrails
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number"
+        required: true
+      dry_run:
+        description: "Do not cancel old runs"
+        required: false
+        default: "false"
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_run:
+    workflows:
+      - PR Merge Readiness
+      - PR Autofix Safe Supervisor
+      - PR Self Check Refresh
+    types: [completed]
+
+concurrency:
+  group: pr-flow-guardrails-${{ github.event.inputs.pr_number || github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  actions: write
+  checks: read
+  contents: read
+  pull-requests: read
+  statuses: read
+  issues: write
+
+jobs:
+  guardrails:
+    name: PR flow guardrails
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+      REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.inputs.pr_number || github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
+      DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+      HAS_CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN != '' }}
+      HAS_PICKFAIR_ACTIONS_TOKEN: ${{ secrets.PICKFAIR_ACTIONS_TOKEN != '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+          fetch-depth: 0
+
+      - name: Resolve PR number
+        run: |
+          if [ -z "${PR_NUMBER:-}" ] || [ "$PR_NUMBER" = "null" ]; then
+            echo "No PR number for this event; nothing to check."
+            exit 0
+          fi
+
+      - name: Cleanup stale flow runs
+        if: env.PR_NUMBER != '' && env.PR_NUMBER != 'null'
+        run: |
+          mkdir -p .pr-flow
+          args=""
+          if [ "$DRY_RUN" = "true" ]; then
+            args="--dry-run"
+          fi
+          python3 scripts/pr_flow_automation.py cleanup \
+            --repo "$REPO" \
+            --pr "$PR_NUMBER" \
+            --output .pr-flow/cleanup.json \
+            $args
+
+      - name: Preflight secrets, limits, oscillation
+        if: env.PR_NUMBER != '' && env.PR_NUMBER != 'null'
+        run: |
+          mkdir -p .pr-flow
+          python3 scripts/pr_flow_automation.py preflight \
+            --repo "$REPO" \
+            --pr "$PR_NUMBER" \
+            --comment \
+            --output .pr-flow/preflight.json
+
+      - name: Build final flow report
+        if: always() && env.PR_NUMBER != '' && env.PR_NUMBER != 'null'
+        run: |
+          mkdir -p .pr-flow
+          python3 scripts/pr_flow_automation.py report \
+            --repo "$REPO" \
+            --pr "$PR_NUMBER" \
+            --outdir .pr-flow \
+            --comment \
+            --no-fail
+
+      - name: Upload flow decision
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-flow-decision-${{ env.PR_NUMBER || github.run_id }}
+          path: .pr-flow/
+          if-no-files-found: ignore
