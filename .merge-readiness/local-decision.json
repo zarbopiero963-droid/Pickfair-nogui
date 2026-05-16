@@ -1,0 +1,66 @@
+{
+  "already_merged": false,
+  "baseRefName": "main",
+  "blockers": [
+    {
+      "ignored": false,
+      "is_self_check": false,
+      "name": "Codacy Static Code Analysis",
+      "state": "ACTION_REQUIRED",
+      "url": "https://app.codacy.com/gh/zarbopiero963-droid/Pickfair-nogui/pull-requests/225"
+    },
+    {
+      "ignored": false,
+      "is_self_check": false,
+      "name": "DeepSource: Python",
+      "state": "FAILURE",
+      "url": "https://app.deepsource.com/gh/zarbopiero963-droid/Pickfair-nogui/run/ba6bec30-5ec3-4ecd-bf3d-421e313073f1/python/"
+    }
+  ],
+  "can_merge": false,
+  "headRefName": "chore/clean-scope-rebuild-escalation",
+  "headRefOid": "69ab61225544456007d876ab5d8ae26652445ceb",
+  "ignored_self_checks": [
+    {
+      "ignored": true,
+      "is_self_check": true,
+      "name": "Merge readiness",
+      "state": "FAILURE",
+      "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/actions/runs/25970270331/job/76341200551"
+    }
+  ],
+  "mergeCommit": null,
+  "mergeStateStatus": "UNSTABLE",
+  "mergeable": "MERGEABLE",
+  "mergedAt": null,
+  "mergedBy": null,
+  "next_action": "blocked",
+  "pending": [
+    {
+      "ignored": false,
+      "is_self_check": false,
+      "name": "Autofix PR until checks are green",
+      "state": "IN_PROGRESS",
+      "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/actions/runs/25970270353/job/76340919978"
+    }
+  ],
+  "pr": "225",
+  "reasons": [
+    "mergeStateStatus is UNSTABLE, expected CLEAN",
+    "2 real blocking check(s)",
+    "1 real pending check(s)"
+  ],
+  "repo": "zarbopiero963-droid/Pickfair-nogui",
+  "reviewDecision": "",
+  "self_stale": [
+    {
+      "ignored": true,
+      "is_self_check": true,
+      "name": "Merge readiness",
+      "state": "FAILURE",
+      "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/actions/runs/25970270331/job/76341200551"
+    }
+  ],
+  "state": "OPEN",
+  "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/225"
+}
