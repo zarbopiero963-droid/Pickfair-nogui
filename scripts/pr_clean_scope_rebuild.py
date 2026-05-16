@@ -23,6 +23,16 @@ ALLOWED_COMMANDS = {
     ("python3", "-m", "py_compile"),
     ("pytest", "-q"),
 }
+GIT_PATTERNS: list[tuple[tuple[str, ...], int]] = [
+    (("git", "fetch"), 3),
+    (("git", "diff", "--name-only"), 4),
+    (("git", "push"), 3),
+    (("git", "ls-remote", "--heads"), 5),
+    (("git", "checkout"), 3),
+    (("git", "diff", "--check"), 3),
+    (("git", "add", "-A"), 3),
+    (("git", "commit"), 3),
+]
 
 
 def _is_allowed_command(cmd: list[str]) -> bool:
@@ -48,19 +58,12 @@ def _run_gh(cmd: list[str]) -> tuple[str, int]:
 
 
 def _run_git(cmd: list[str]) -> tuple[str, int]:
-    patterns: list[tuple[tuple[str, ...], int | None]] = [
-        (("git", "fetch"), 3),
-        (("git", "diff", "--name-only"), 4),
-        (("git", "push"), 3),
-        (("git", "ls-remote", "--heads"), 5),
-        (("git", "checkout"), 3),
-        (("git", "diff", "--check"), 3),
-        (("git", "add", "-A"), 3),
-        (("git", "commit"), 3),
-    ]
-    for prefix, min_len in patterns:
-        if cmd[: len(prefix)] == list(prefix) and len(cmd) >= min_len:
-            return _run_checked(cmd)
+    is_valid = any(
+        cmd[: len(prefix)] == list(prefix) and len(cmd) >= min_len
+        for prefix, min_len in GIT_PATTERNS
+    )
+    if is_valid:
+        return _run_checked(cmd)
     raise ValueError(f"unsupported git command: {' '.join(cmd)}")
 
 
@@ -270,7 +273,7 @@ def main() -> int:
             return fail_and_exit(outp, decision, "allowlist_empty_refuse_force_push")
 
         commit_and_push(args.repo, args.pr, pr_branch, old_head, decision)
-    except Exception as exc:
+    except (subprocess.CalledProcessError, ValueError, OSError, json.JSONDecodeError) as exc:
         decision["final_status"] = "exception"
         decision["error"] = str(exc)
 

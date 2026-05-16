@@ -277,6 +277,18 @@ def build_history_summary(recent: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def fetch_safe_autofix_runs(repo: str) -> list[dict[str, Any]]:
+    runs = run(
+        [
+            "gh", "run", "list", "--repo", repo, "--workflow", SAFE_AUTOFIX_WORKFLOW, "--limit", "25",
+            "--json", "databaseId,status,conclusion,headBranch,createdAt,url",
+        ],
+        json_out=True,
+        check=False,
+    )
+    return runs if isinstance(runs, list) else []
+
+
 def wait_for_pending_checks(
     *,
     pr_data: dict[str, Any],
@@ -325,16 +337,7 @@ def should_rebuild_scope(clean_scope_rebuild: str, forbidden: list[str], history
 
 
 def safe_autofix_history(repo: str, head_branch: str) -> dict[str, Any]:
-    runs = run(
-        [
-            "gh", "run", "list", "--repo", repo, "--workflow", SAFE_AUTOFIX_WORKFLOW, "--limit", "25",
-            "--json", "databaseId,status,conclusion,headBranch,createdAt,url",
-        ],
-        json_out=True,
-        check=False,
-    )
-    if not isinstance(runs, list):
-        runs = []
+    runs = fetch_safe_autofix_runs(repo)
     recent = completed_runs_for_branch(runs, head_branch)[:6]
     return build_history_summary(recent)
 
