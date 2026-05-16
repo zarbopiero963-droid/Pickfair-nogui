@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -96,6 +97,21 @@ def is_pending(state: str) -> bool:
     return state in {"", "PENDING", "QUEUED", "IN_PROGRESS", "REQUESTED", "WAITING", "EXPECTED"}
 
 
+
+def is_self_autofix_check(check: dict[str, str]) -> bool:
+    """Return True for this workflow's own PR status check.
+
+    The safe supervisor must not wait on, or be blocked by, its own check run.
+    Otherwise a pull_request-triggered run can wait for itself and keep the PR
+    UNSTABLE even when all real checks are green.
+    """
+    name = (check.get("name") or check.get("context") or "").strip().lower()
+    return name in {
+        "safe pr autofix",
+        "pr autofix safe supervisor",
+        "safe-autofix",
+    }
+
 def collect_github() -> dict[str, Any]:
     query = """
     query($owner:String!, $repo:String!, $number:Int!) {
@@ -177,12 +193,209 @@ def collect_github() -> dict[str, Any]:
     rollup = pr.get("statusCheckRollup") or {}
     contexts = rollup.get("contexts") or {}
     checks = [normalize_check(n) for n in contexts.get("nodes", [])]
-    blockers = [c for c in checks if is_red(c["state"])]
-    pending = [c for c in checks if is_pending(c["state"])]
+    decision_checks = [c for c in checks if not is_self_autofix_check(c)]
+    ignored_self_autofix_checks = [c for c in checks if is_self_autofix_check(c)]
+    blockers = [c for c in decision_checks if is_red(c["state"])]
+    pending = [c for c in decision_checks if is_pending(c["state"])]
     pr["normalizedChecks"] = checks
+    pr["decisionChecks"] = decision_checks
+    pr["ignoredSelfAutofixChecks"] = ignored_self_autofix_checks
     pr["blockers"] = blockers
     pr["pending"] = pending
     return pr
+
+
+def _compact_text(value: Any, limit: int = 300) -> str:
+    text = " ".join(str(value or "").split())
+    return text[:limit]
+
+
+def build_codacy_fix_instruction(issue: dict[str, Any]) -> str:
+    rule = str(issue.get("rule") or "").strip()
+    tool = str(issue.get("tool") or "").strip()
+    path = str(issue.get("file") or "").strip()
+    line = issue.get("line")
+    message = _compact_text(issue.get("message"))
+    line_text = _compact_text(issue.get("lineText"))
+
+    base = (
+        f"Codacy reported {tool or 'tool'} rule {rule or 'unknown-rule'} "
+        f"at {path}:{line}. Current line text: {line_text!r}. "
+        f"Message: {message!r}. Inspect that exact file and line, then make the smallest code/style change that satisfies the reported rule."
+    )
+
+    rule_l = rule.lower()
+    if rule_l == "markdownlint_md043":
+        return (
+            base
+            + " This is markdownlint MD043 required-headings. Make the heading structure match the configured required headings. "
+              "If Codacy says Expected: [None], remove the Markdown heading marker from that line. "
+              "For example change '# TASK: value' to 'TASK: value' when the TASK marker should remain but must not be a Markdown heading."
+        )
+
+    if rule_l.startswith("markdownlint_"):
+        return base + " This is a markdownlint finding; fix the Markdown formatting on the reported line without changing the task meaning."
+
+    return base + " Use Codacy file, line, rule, message, and current line text as the primary repair instruction."
+
+
+def _codacy_is_blocking(blockers: list[dict[str, str]]) -> bool:
+    return any("codacy" in ((b.get("name") or "") + " " + (b.get("url") or "")).lower() for b in blockers)
+
+
+def _extract_codacy_review_file(body: str) -> str:
+    matches = re.findall(r"`([^`]+\.(?:md|py|yml|yaml|json|toml|ini|txt|sh))`", body or "")
+    return matches[0] if matches else ""
+
+
+def _extract_codacy_review_line(body: str) -> int | None:
+    match = re.search(r"(?:line|Line)\s+(\d+)|`line\s+(\d+)`", body or "")
+    if not match:
+        return None
+    value = match.group(1) or match.group(2)
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _extract_codacy_review_rule(body: str) -> str:
+    rules = re.findall(r"\b(?:markdownlint_)?MD\d{3}\b", body or "", flags=re.IGNORECASE)
+    if not rules:
+        return "codacy_review"
+    rule = rules[0]
+    if rule.upper().startswith("MD"):
+        return f"markdownlint_{rule.upper()}"
+    return rule
+
+
+def _extract_codacy_suggestion(body: str) -> str:
+    match = re.search(r"```suggestion\s*\n(.*?)\n```", body or "", flags=re.DOTALL)
+    return _compact_text(match.group(1), 500) if match else ""
+
+
+def build_codacy_review_instruction(issue: dict[str, Any]) -> str:
+    body = _compact_text(issue.get("message"), 700)
+    suggestion = _compact_text(issue.get("suggestion"), 500)
+    rule = str(issue.get("rule") or "codacy_review")
+    path = str(issue.get("file") or "")
+    line = issue.get("line")
+
+    instruction = (
+        f"Codacy review/comment reported {rule} at {path}:{line}. "
+        f"Review text: {body!r}. "
+    )
+    if suggestion:
+        instruction += f"Codacy provided this suggestion: {suggestion!r}. Apply it if it does not break TASK marker semantics. "
+
+    instruction += (
+        "Use this Codacy review/comment as authoritative context in addition to the Codacy API issue. "
+        "Make the smallest safe change in the allowed file."
+    )
+    return instruction
+
+
+def collect_codacy_review_hints(blockers: list[dict[str, str]]) -> list[dict[str, Any]]:
+    if not _codacy_is_blocking(blockers):
+        return []
+
+    repo_full = os.environ.get("REPO") or f"{OWNER}/{REPO_NAME}"
+    try:
+        raw = subprocess.check_output(
+            ["gh", "pr", "view", str(PR_NUMBER), "--repo", repo_full, "--json", "comments,reviews"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+        data = json.loads(raw)
+    except Exception:
+        return []
+
+    bodies: list[str] = []
+    for item in data.get("comments") or []:
+        author = ((item.get("author") or {}).get("login") or "").lower()
+        body = item.get("body") or ""
+        if "codacy" in author or "codacy" in body.lower():
+            bodies.append(body)
+
+    for item in data.get("reviews") or []:
+        author = ((item.get("author") or {}).get("login") or "").lower()
+        body = item.get("body") or ""
+        if "codacy" in author or "codacy" in body.lower():
+            bodies.append(body)
+
+    hints: list[dict[str, Any]] = []
+    seen: set[tuple[str, int | None, str, str]] = set()
+    for body in bodies:
+        if not re.search(r"codacy|markdownlint|\bMD\d{3}\b|suggestion", body or "", flags=re.IGNORECASE):
+            continue
+        path = _extract_codacy_review_file(body)
+        if not path:
+            continue
+        line = _extract_codacy_review_line(body)
+        rule = _extract_codacy_review_rule(body)
+        suggestion = _extract_codacy_suggestion(body)
+        key = (path, line, rule, suggestion)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        issue = {
+            "source": "codacy_review",
+            "file": path,
+            "line": line,
+            "rule": rule,
+            "tool": "Codacy review",
+            "level": "review",
+            "message": _compact_text(body, 900),
+            "suggestion": suggestion,
+            "safe_autofix": True,
+            "requires_manual_or_config": False,
+        }
+        issue["codex_fix_instruction"] = build_codacy_review_instruction(issue)
+        hints.append(issue)
+
+    return hints
+
+
+def add_codacy_markdownlint_conflict_hints(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rules_by_file: dict[str, set[str]] = {}
+    for issue in issues:
+        if not str(issue.get("source") or "").startswith("codacy"):
+            continue
+        path = str(issue.get("file") or "")
+        rule = str(issue.get("rule") or "").lower()
+        if path and rule:
+            rules_by_file.setdefault(path, set()).add(rule)
+
+    existing = {
+        (str(i.get("source") or ""), str(i.get("file") or ""), str(i.get("rule") or ""))
+        for i in issues
+    }
+
+    for path, rules in sorted(rules_by_file.items()):
+        has_md041 = "markdownlint_md041" in rules or "md041" in rules
+        has_md043 = "markdownlint_md043" in rules or "md043" in rules
+        key = ("codacy_conflict", path, "markdownlint_MD041_MD043_conflict")
+        if has_md041 and has_md043 and key not in existing:
+            issues.append({
+                "source": "codacy_conflict",
+                "file": path,
+                "line": 1,
+                "rule": "markdownlint_MD041_MD043_conflict",
+                "tool": "Codacy review/API",
+                "level": "review",
+                "message": "Codacy reported conflicting markdownlint requirements MD041 and MD043 on the same file.",
+                "safe_autofix": True,
+                "requires_manual_or_config": False,
+                "codex_fix_instruction": (
+                    f"Codacy reports both MD041 first-line-heading and MD043 required-headings/no-heading constraints on {path}. "
+                    "Do not oscillate between adding and removing a heading. Use a file-local markdownlint disable for MD041 and MD043, "
+                    "then preserve the TASK marker exactly. For this temporary marker file, prefer: "
+                    "'<!-- markdownlint-disable MD041 MD043 -->' followed by the TASK marker and original test content."
+                ),
+            })
+
+    return issues
 
 
 def collect_codacy(blockers: list[dict[str, str]]) -> tuple[list[dict[str, Any]], str | None]:
@@ -228,10 +441,17 @@ def collect_codacy(blockers: list[dict[str, str]]) -> tuple[list[dict[str, Any]]
             "tool": tool.get("name") or "",
             "level": level,
             "message": message,
+            "lineText": issue.get("lineText") or "",
             "deltaType": item.get("deltaType"),
             "safe_autofix": not risky_info,
             "requires_manual_or_config": risky_info,
         })
+
+    for codacy_issue in issues:
+
+
+        codacy_issue["codex_fix_instruction"] = build_codacy_fix_instruction(codacy_issue)
+
 
     return issues, None
 
@@ -320,7 +540,9 @@ def main() -> int:
             "requires_manual_or_config": False,
         })
 
-    all_issues = codacy_issues + ds_issues + review_threads
+    codacy_review_hints = collect_codacy_review_hints(blockers)
+    all_issues = codacy_issues + ds_issues + review_threads + codacy_review_hints
+    all_issues = add_codacy_markdownlint_conflict_hints(all_issues)
 
     risky_files = sorted({
         i["file"] for i in all_issues
@@ -377,6 +599,7 @@ def main() -> int:
         "pending_count": len(pending),
         "blocker_count": len(blockers),
         "blockers": blockers,
+        "ignored_self_autofix_checks": pr.get("ignoredSelfAutofixChecks", []),
         "safe_files": safe_files,
         "risky_files": risky_files,
         "codacy_blocking": codacy_blocking,
@@ -420,6 +643,24 @@ def main() -> int:
         "- Do not create empty retrigger commits.",
         "- Do not merge or create PRs.",
     ]
+    codacy_fix_instructions = [
+
+        i.get("codex_fix_instruction")
+
+        for i in all_issues
+
+        if i.get("source") == "codacy" and i.get("codex_fix_instruction")
+
+    ]
+
+    if codacy_fix_instructions:
+
+        task.append("## Codacy fix instructions for Codex")
+
+        for instruction in codacy_fix_instructions:
+
+            task.append(f"- {instruction}")
+
     (OUT / "codex-task.md").write_text("\n".join(task) + "\n", encoding="utf-8")
 
     (OUT / "decision.env").write_text(

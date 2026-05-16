@@ -19,9 +19,9 @@ on:
         required: false
         default: "false"
 
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
 
+  check_run:
+    types: [completed, rerequested]
   workflow_run:
     workflows:
       - pr-check
@@ -33,7 +33,7 @@ on:
     types: [completed]
 
 concurrency:
-  group: pr-autofix-safe-${{ github.event.inputs.pr_number || github.event.pull_request.number || github.run_id }}
+  group: pr-autofix-safe-${{ github.event.inputs.pr_number || github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number || github.run_id }}
   cancel-in-progress: false
 
 permissions:
@@ -46,6 +46,19 @@ permissions:
 jobs:
   safe-autofix:
     name: Safe PR autofix
+    if: >-
+      ${{
+        github.event_name != 'check_run' ||
+        (
+          github.event.check_run.pull_requests[0].number &&
+          contains(github.event.check_run.name, 'Codacy') &&
+          (
+            github.event.check_run.conclusion == 'action_required' ||
+            github.event.check_run.conclusion == 'failure' ||
+            github.event.check_run.conclusion == 'timed_out'
+          )
+        )
+      }}
     runs-on: [self-hosted, Linux, X64, pickfair-fixer, codex]
 
     env:
@@ -54,7 +67,7 @@ jobs:
       CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
       DEEPSOURCE_API_TOKEN: ${{ secrets.DEEPSOURCE_API_TOKEN }}
       REPO: ${{ github.repository }}
-      PR_NUMBER: ${{ github.event.inputs.pr_number || github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
+      PR_NUMBER: ${{ github.event.inputs.pr_number || github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number }}
       MAX_ROUNDS: ${{ github.event.inputs.max_rounds || '3' }}
       PENDING_WAIT_SECONDS: ${{ github.event.inputs.pending_wait_seconds || '2700' }}
       DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
@@ -193,6 +206,34 @@ jobs:
             mkdir -p codex-output
 
             echo "Running Codex with safe handoff..."
+
+            # Codex may edit files, but must not control git history or remote state.
+            # The supervisor alone validates scope, stages, commits, pushes and rolls back.
+            REAL_GIT="$(command -v git)"
+            mkdir -p .autofix/codex-bin
+
+            {
+              printf '%s\n' '#!/usr/bin/env bash'
+              printf '%s\n' 'cmd="${1:-}"'
+              printf '%s\n' 'case "$cmd" in'
+              printf '%s\n' '  add|commit|push|reset|merge|rebase|cherry-pick|tag|checkout|switch|restore|stash|clean|am)'
+              printf '%s\n' '    echo "safe-autofix: git $cmd is disabled during Codex. Leave edits in the working tree; the supervisor will validate, commit, push, or roll back." >&2'
+              printf '%s\n' '    exit 126'
+              printf '%s\n' '    ;;'
+              printf '%s\n' 'esac'
+              printf '%s\n' 'exec "__REAL_GIT__" "$@"'
+            } > .autofix/codex-bin/git
+
+            sed -i "s#__REAL_GIT__#$REAL_GIT#g" .autofix/codex-bin/git
+            chmod +x .autofix/codex-bin/git
+
+            {
+              printf '%s\n' ''
+              printf '%s\n' '## Additional supervisor rule'
+              printf '%s\n' 'Do not run git add, git commit, git push, git reset, git checkout, git switch, git restore, git stash, git clean, git merge, git rebase, git cherry-pick, or git tag.'
+              printf '%s\n' 'Leave all edits unstaged in the working tree. The safe supervisor is the only process allowed to stage, commit, push, or roll back.'
+            } >> .autofix/context/codex-task.md
+
             codex_help="$(codex exec --help 2>&1 || true)"
             codex_args=(exec --model "$CODEX_MODEL")
 
@@ -206,26 +247,25 @@ jobs:
             printf ' %q' "${codex_args[@]}"
             printf '\n'
 
-            if codex "${codex_args[@]}" - < .autofix/context/codex-task.md | tee "codex-output/safe-codex-round-${round}.log"; then
+            if PATH="$PWD/.autofix/codex-bin:$PATH" codex "${codex_args[@]}" - < .autofix/context/codex-task.md | tee "codex-output/safe-codex-round-${round}.log"; then
               echo "Codex completed."
             else
               echo "::error::Codex failed."
               exit 1
             fi
 
-            after_codex_sha="$(git rev-parse HEAD)"
-            if [ "$after_codex_sha" != "$before_sha" ]; then
-              echo "::warning::Codex created commit(s). Rewinding to supervisor-controlled working-tree diff."
-              git reset --mixed "$before_sha"
-            fi
-
-            if git diff --quiet; then
+            if git diff --quiet && git diff --cached --quiet; then
               echo "::warning::Codex produced no changes. Stopping."
               exit 0
             fi
 
             echo "Validating changed file scope..."
-            changed="$(git diff --name-only)"
+            changed="$(
+              {
+                git diff --name-only
+                git diff --cached --name-only
+              } | sort -u
+            )"
             echo "$changed"
 
             bad_files="$(
@@ -249,10 +289,10 @@ jobs:
             fi
 
             echo "Diff summary:"
-            git diff --stat
-            git diff -- $changed | sed -n '1,260p'
+            git diff --stat HEAD -- $changed
+            git diff HEAD -- $changed | sed -n '1,260p'
 
-            git add $changed
+            git add -- $changed
             git commit -m "Safe autofix PR ${PR_NUMBER} round ${round}"
             git push origin "HEAD:$BRANCH"
 
