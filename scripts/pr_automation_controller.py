@@ -469,6 +469,7 @@ def main() -> int:
         return 0
 
     # Wait for pending checks before taking action.
+    pending_wait_exhausted = False
     while True:
         checks = pr.get("statusCheckRollup") or []
         pending = [compact_check(c) for c in checks if is_pending(c) and not is_self_check(c)]
@@ -482,12 +483,18 @@ def main() -> int:
         if elapsed >= args.pending_wait_seconds:
             decision["next_action"] = "pending_wait_budget_exhausted"
             decision["warnings"].append("pending checks still present after wait budget")
+            pending_wait_exhausted = True
             break
 
         time.sleep(max(1, args.poll_interval_seconds))
         pr = pr_view(args.repo, args.pr)
 
     checks = pr.get("statusCheckRollup") or []
+
+    if pending_wait_exhausted:
+        Path(args.output).write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
+        print(json.dumps(decision, indent=2, sort_keys=True))
+        return 0
 
     cancelled = [compact_check(c) for c in checks if is_cancelled(c) and not is_self_check(c)]
     decision["cancelled"] = cancelled
