@@ -58,9 +58,11 @@ def _run_gh(cmd: list[str]) -> tuple[str, int]:
 
 
 def _run_git(cmd: list[str]) -> tuple[str, int]:
-    for prefix, min_len in GIT_PATTERNS:
-        if cmd[: len(prefix)] == list(prefix) and len(cmd) >= min_len:
-            return _run_checked(cmd)
+    matches_allowed = any(
+        cmd[: len(prefix)] == list(prefix) and len(cmd) >= min_len for prefix, min_len in GIT_PATTERNS
+    )
+    if matches_allowed:
+        return _run_checked(cmd)
     raise ValueError(f"unsupported git command: {' '.join(cmd)}")
 
 

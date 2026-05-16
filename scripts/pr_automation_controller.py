@@ -445,18 +445,25 @@ def maybe_launch_safe_autofix(
     return True
 
 
-def decide_next_action(args: argparse.Namespace, checks: list[dict[str, Any]], decision: dict[str, Any], pr_data: dict[str, Any]) -> None:
-    blockers = [compact_check(check) for check in checks if is_failure(check) and not is_self_check(check)]
-    decision["blockers"] = blockers
-
-    head_ref = str(pr_data.get("headRefName") or "")
+def analyze_scope_and_history(
+    *, repo: str, head_ref: str, decision: dict[str, Any]
+) -> tuple[list[str], dict[str, Any]]:
     changed_files = list_changed_files(head_ref)
     forbidden = [path for path in changed_files if is_forbidden(path)]
     decision["diff_files"] = changed_files
     decision["forbidden_in_diff"] = forbidden
 
-    history = safe_autofix_history(args.repo, head_ref)
+    history = safe_autofix_history(repo, head_ref)
     decision["safe_autofix_history"] = history
+    return forbidden, history
+
+
+def decide_next_action(args: argparse.Namespace, checks: list[dict[str, Any]], decision: dict[str, Any], pr_data: dict[str, Any]) -> None:
+    blockers = [compact_check(check) for check in checks if is_failure(check) and not is_self_check(check)]
+    decision["blockers"] = blockers
+
+    head_ref = str(pr_data.get("headRefName") or "")
+    forbidden, history = analyze_scope_and_history(repo=args.repo, head_ref=head_ref, decision=decision)
 
     should_rebuild, rebuild_reasons = should_rebuild_scope(args.clean_scope_rebuild, forbidden, history)
     mode = str(args.clean_scope_rebuild_mode or "auto").lower()
