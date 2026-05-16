@@ -58,12 +58,9 @@ def _run_gh(cmd: list[str]) -> tuple[str, int]:
 
 
 def _run_git(cmd: list[str]) -> tuple[str, int]:
-    is_valid = any(
-        cmd[: len(prefix)] == list(prefix) and len(cmd) >= min_len
-        for prefix, min_len in GIT_PATTERNS
-    )
-    if is_valid:
-        return _run_checked(cmd)
+    for prefix, min_len in GIT_PATTERNS:
+        if cmd[: len(prefix)] == list(prefix) and len(cmd) >= min_len:
+            return _run_checked(cmd)
     raise ValueError(f"unsupported git command: {' '.join(cmd)}")
 
 
@@ -273,7 +270,7 @@ def main() -> int:
             return fail_and_exit(outp, decision, "allowlist_empty_refuse_force_push")
 
         commit_and_push(args.repo, args.pr, pr_branch, old_head, decision)
-    except (subprocess.CalledProcessError, ValueError, OSError, json.JSONDecodeError) as exc:
+    except (subprocess.CalledProcessError, ValueError, OSError) as exc:
         decision["final_status"] = "exception"
         decision["error"] = str(exc)
 
