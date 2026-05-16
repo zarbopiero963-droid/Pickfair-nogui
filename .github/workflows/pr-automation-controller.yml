@@ -61,6 +61,7 @@ jobs:
       - name: Checkout controller source
         uses: actions/checkout@v4
         with:
+          ref: main
           token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN || github.token }}
 
       - name: Run PR automation controller
