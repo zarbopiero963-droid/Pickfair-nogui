@@ -78,8 +78,20 @@ def _make_om(*, client: Any) -> OrderManager:
 
 
 class TestContractShape:
+    SUCCESS_RESULT_KEYS = {
+        "ok",
+        "status",
+        "customer_ref",
+        "bet_id",
+        "matched_size",
+        "remaining_size",
+        "reason_code",
+        "response",
+    }
+
     @staticmethod
     def test_success_contract_shape() -> None:
+        """Successful placement returns the stable success contract keys."""
         client = MagicMock()
         client.place_bet = MagicMock(
             return_value={
@@ -93,21 +105,13 @@ class TestContractShape:
 
         result = om.place_order(_payload(customer_ref="CONTRACT-SUCCESS"))
 
-        assert set(result.keys()) == {
-            "ok",
-            "status",
-            "customer_ref",
-            "bet_id",
-            "matched_size",
-            "remaining_size",
-            "reason_code",
-            "response",
-        }
+        assert set(result.keys()) == TestContractShape.SUCCESS_RESULT_KEYS
         assert result["ok"] is True
         assert result["status"] == OrderStatus.MATCHED.value
 
     @staticmethod
     def test_failure_contract_shape() -> None:
+        """Permanent broker errors return the stable failure contract keys."""
         client = MagicMock()
         client.place_bet = MagicMock(side_effect=RuntimeError("INSUFFICIENT_FUNDS"))
         om = _make_om(client=client)
@@ -128,6 +132,7 @@ class TestContractShape:
 
     @staticmethod
     def test_ambiguous_contract_shape() -> None:
+        """Ambiguous transport outcomes map to the ambiguous contract shape."""
         client = MagicMock()
         client.place_bet = MagicMock(side_effect=RuntimeError("PROCESSED_WITH_ERRORS"))
         om = _make_om(client=client)
@@ -173,6 +178,7 @@ class TestContractShape:
 class TestValidation:
     @staticmethod
     def test_missing_market_id_raises() -> None:
+        """Missing required market_id is rejected early."""
         om = _make_om(client=MagicMock())
 
         with pytest.raises(ValidationError, match="market_id"):
@@ -180,6 +186,7 @@ class TestValidation:
 
     @staticmethod
     def test_invalid_price_raises() -> None:
+        """Price below exchange minimum fails validation."""
         om = _make_om(client=MagicMock())
 
         with pytest.raises(ValidationError, match="price"):
@@ -209,9 +216,11 @@ class TestErrorClassification:
         assert classify_error(code) == expected
 
     @staticmethod
-    def test_connection_error_is_transient() -> None:
+    def test_conn_error_transient() -> None:
+        """ConnectionError is classified as transient."""
         assert classify_error("", ConnectionError("x")) == ErrorClass.TRANSIENT
 
     @staticmethod
-    def test_unknown_string_is_ambiguous() -> None:
+    def test_unknown_code_ambiguous() -> None:
+        """Unknown broker codes are treated as ambiguous."""
         assert classify_error("NEVER_SEEN") == ErrorClass.AMBIGUOUS
