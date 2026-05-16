@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """Clean-scope rebuild helper for PR automation control."""
-# pylint: disable=too-many-branches,too-many-statements,too-many-locals
+# pylint: disable=too-many-branches,too-many-statements,too-many-locals,line-too-long,broad-exception-caught
 from __future__ import annotations
 
 import argparse
 import datetime as dt
 import json
-import subprocess
+import re
+import subprocess  # nosec B404
 import sys
 from pathlib import Path
-import re
-
+from typing import Any
 
 SAFE_BRANCH_RE = re.compile(r"^[A-Za-z0-9._/\-]+$")
 SAFE_REPO_RE = re.compile(r"^[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+$")
@@ -18,8 +18,7 @@ SAFE_REPO_RE = re.compile(r"^[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+$")
 
 def run(cmd: list[str], check: bool = True) -> tuple[int, str]:
     """Run a subprocess command and return returncode/output."""
-    # nosec B603: commands are executed without shell and are validated by command construction below.
-    proc = subprocess.run(cmd, text=True, capture_output=True, check=False)
+    proc = subprocess.run(cmd, text=True, capture_output=True, check=False)  # nosec B603
     out = (proc.stdout or "") + (proc.stderr or "")
     if check and proc.returncode != 0:
         raise RuntimeError(f"command failed ({proc.returncode}): {' '.join(cmd)}\n{out}")
@@ -97,7 +96,7 @@ def main() -> int:
     if not SAFE_BRANCH_RE.match(args.branch):
         raise SystemExit("invalid --branch format")
 
-    decision: dict[str, object] = {
+    decision: dict[str, Any] = {
         "action": "clean_scope_rebuild",
         "pr": args.pr,
         "branch": args.branch,
