@@ -10,15 +10,21 @@ from typing import Any
 
 ALLOWED_WORKFLOW = ".github/workflows/pr-automation-controller-v2.yml"
 FORBIDDEN_EXACT = {"order_manager.py", "core/reconciliation_engine.py"}
+SAFE_COMMANDS = {"gh", "git", "python3", "pytest"}
 
 
 def run(cmd: list[str], check: bool = True) -> str:
-    try:
-        return subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)
-    except subprocess.CalledProcessError as exc:
-        if check:
-            raise
-        return exc.output or ""
+    out, code = run_with_code(cmd)
+    if check and code != 0:
+        raise subprocess.CalledProcessError(code, cmd, output=out)
+    return out
+
+
+def run_with_code(cmd: list[str]) -> tuple[str, int]:
+    if not cmd or cmd[0] not in SAFE_COMMANDS:
+        raise ValueError(f"unsupported command: {cmd[0] if cmd else '<empty>'}")
+    proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+    return (proc.stdout or ""), int(proc.returncode)
 
 
 def pr_view(repo: str, pr: str) -> dict[str, Any]:
@@ -44,6 +50,44 @@ def is_forbidden(path: str) -> bool:
 def changed_files(base: str, head: str) -> list[str]:
     out = run(["git", "diff", "--name-only", f"{base}...{head}"], check=False)
     return [x.strip() for x in out.splitlines() if x.strip()]
+
+
+def write_decision(outp: Path, decision: dict[str, Any]) -> None:
+    payload = json.dumps(decision, indent=2, sort_keys=True)
+    outp.write_text(payload, encoding="utf-8")
+    print(payload)
+
+
+def fail_and_exit(outp: Path, decision: dict[str, Any], status: str) -> int:
+    decision["final_status"] = status
+    write_decision(outp, decision)
+    return 0
+
+
+def run_py_compile_checks(decision: dict[str, Any], files: list[str]) -> bool:
+    for p in files:
+        cmd = ["python3", "-m", "py_compile", p]
+        decision["tests_run"].append(" ".join(cmd))
+        out, code = run_with_code(cmd)
+        ok = code == 0
+        decision["test_results"].append({"cmd": " ".join(cmd), "ok": ok, "output": out[-500:]})
+        if not ok:
+            return False
+    return True
+
+
+def run_required_tests(decision: dict[str, Any]) -> bool:
+    cmd = [
+        "pytest", "-q",
+        "tests/unit/test_order_manager_contracts.py",
+        "tests/reconciliation/test_reconciliation_hardening.py",
+        "-x",
+    ]
+    decision["tests_run"].append(" ".join(cmd))
+    out, code = run_with_code(cmd)
+    ok = code == 0
+    decision["test_results"].append({"cmd": " ".join(cmd), "ok": ok, "output": out[-2000:]})
+    return ok
 
 
 def main() -> int:
@@ -93,10 +137,7 @@ def main() -> int:
             backup_pushed = bool(verify.strip())
         decision["backup_branch_pushed"] = backup_pushed
         if not backup_pushed:
-            decision["final_status"] = "backup_push_failed"
-            outp.write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
-            print(json.dumps(decision, indent=2, sort_keys=True))
-            return 0
+            return fail_and_exit(outp, decision, "backup_push_failed")
 
         work_branch = f"clean-scope-rebuild-pr-{args.pr}-{ts}"
         run(["git", "checkout", "-B", work_branch, "origin/main"])
@@ -106,57 +147,25 @@ def main() -> int:
 
         diff_check = run(["git", "diff", "--check"], check=False)
         if diff_check.strip():
-            decision["final_status"] = "diff_check_failed"
             decision["diff_check"] = diff_check[-2000:]
-            outp.write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
-            print(json.dumps(decision, indent=2, sort_keys=True))
-            return 0
+            return fail_and_exit(outp, decision, "diff_check_failed")
 
         py_changed = [f for f in changed_files("origin/main", "HEAD") if f.endswith(".py")]
-        for p in py_changed:
-            cmd = ["python3", "-m", "py_compile", p]
-            decision["tests_run"].append(" ".join(cmd))
-            out = run(cmd, check=False)
-            ok = out.strip() == ""
-            decision["test_results"].append({"cmd": " ".join(cmd), "ok": ok, "output": out[-500:]})
-            if not ok:
-                decision["final_status"] = "py_compile_failed"
-                outp.write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
-                print(json.dumps(decision, indent=2, sort_keys=True))
-                return 0
+        if not run_py_compile_checks(decision, py_changed):
+            return fail_and_exit(outp, decision, "py_compile_failed")
 
-        require_heavy = "order_manager.py" in diff_files or "core/reconciliation_engine.py" in diff_files
-        if require_heavy:
-            cmd = [
-                "pytest", "-q",
-                "tests/unit/test_order_manager_contracts.py",
-                "tests/reconciliation/test_reconciliation_hardening.py",
-                "-x",
-            ]
-            decision["tests_run"].append(" ".join(cmd))
-            out = run(cmd, check=False)
-            ok = "failed" not in out.lower()
-            decision["test_results"].append({"cmd": " ".join(cmd), "ok": ok, "output": out[-2000:]})
-            if not ok:
-                decision["final_status"] = "required_tests_failed"
-                outp.write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
-                print(json.dumps(decision, indent=2, sort_keys=True))
-                return 0
+        require_heavy = any(p in diff_files for p in FORBIDDEN_EXACT)
+        if require_heavy and not run_required_tests(decision):
+            return fail_and_exit(outp, decision, "required_tests_failed")
 
         final_diff = changed_files("origin/main", "HEAD")
         still_forbidden = [f for f in final_diff if is_forbidden(f)]
         decision["forbidden_after_rebuild"] = still_forbidden
         if still_forbidden:
-            decision["final_status"] = "forbidden_files_remain"
-            outp.write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
-            print(json.dumps(decision, indent=2, sort_keys=True))
-            return 0
+            return fail_and_exit(outp, decision, "forbidden_files_remain")
 
         if not restored:
-            decision["final_status"] = "allowlist_empty_refuse_force_push"
-            outp.write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
-            print(json.dumps(decision, indent=2, sort_keys=True))
-            return 0
+            return fail_and_exit(outp, decision, "allowlist_empty_refuse_force_push")
 
         run(["git", "add", "-A"])
         commit_msg = f"Clean rebuild PR {args.pr} scope"
@@ -175,8 +184,7 @@ def main() -> int:
         decision["final_status"] = "exception"
         decision["error"] = str(exc)
 
-    outp.write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
-    print(json.dumps(decision, indent=2, sort_keys=True))
+    write_decision(outp, decision)
     return 0
 
 

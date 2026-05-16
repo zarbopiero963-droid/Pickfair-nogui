@@ -162,13 +162,13 @@ def active_controller_rebuild_runs(repo: str, pr: str) -> list[dict[str, Any]]:
     )
     if not isinstance(runs, list):
         return []
-    needle = f"pr {pr}"
+    pr_pattern = re.compile(rf"\bpr {re.escape(pr)}\b")
     out: list[dict[str, Any]] = []
     for r in runs:
         if str(r.get("status") or "") == "completed":
             continue
         low = str(r.get("displayTitle") or "").lower()
-        if needle in low and "clean" in low:
+        if pr_pattern.search(low) and "clean" in low:
             out.append(r)
     return out
 
@@ -228,7 +228,7 @@ def should_launch_autofix(checks: list[dict[str, Any]]) -> tuple[bool, list[dict
 
 
 def list_changed_files(head_ref: str) -> list[str]:
-    run(["git", "fetch", "origin", "main", head_ref], check=False)
+    run(["git", "fetch", "origin", "main", head_ref], check=True)
     out = run(["git", "diff", "--name-only", f"origin/main...origin/{head_ref}"], check=False)
     return [line.strip() for line in out.splitlines() if line.strip()]
 
@@ -245,6 +245,66 @@ def is_forbidden(path: str) -> bool:
     return False
 
 
+def analyze_recent_history(conclusions: list[str]) -> tuple[bool, bool]:
+    exhausted = len(conclusions) >= 3 and all(c in FAIL_STATES | CANCELLED_STATES for c in conclusions[:3])
+    oscillating = (
+        len(conclusions) >= 4
+        and len(set(conclusions[:4])) > 1
+        and all(c in FAIL_STATES | CANCELLED_STATES for c in conclusions[:4])
+    )
+    return exhausted, oscillating
+
+
+def wait_for_pending_checks(
+    *,
+    pr: dict[str, Any],
+    repo: str,
+    pr_number: str,
+    decision: dict[str, Any],
+    started: float,
+    pending_wait_seconds: int,
+    poll_interval_seconds: int,
+) -> tuple[dict[str, Any], bool]:
+    while True:
+        checks = pr.get("statusCheckRollup") or []
+        pending = [compact_check(c) for c in checks if is_pending(c) and not is_self_check(c)]
+        decision["pending_count"] = len(pending)
+        decision["pending"] = pending[:40]
+        if not pending:
+            return pr, False
+        elapsed = time.time() - started
+        if elapsed >= pending_wait_seconds:
+            decision["next_action"] = "pending_wait_budget_exhausted"
+            decision["warnings"].append("pending checks still present after wait budget")
+            return pr, True
+        time.sleep(max(1, poll_interval_seconds))
+        pr = pr_view(repo, pr_number)
+
+
+def should_rebuild_scope(
+    clean_scope_rebuild: str,
+    forbidden: list[str],
+    history: dict[str, Any],
+) -> tuple[bool, list[str]]:
+    should_rebuild = False
+    rebuild_reasons: list[str] = []
+    csr = str(clean_scope_rebuild or "auto").lower()
+    if csr in {"true", "1", "yes", "on", "force"}:
+        should_rebuild = True
+        rebuild_reasons.append("manual_clean_scope_rebuild")
+    elif csr in {"auto", ""}:
+        if forbidden:
+            should_rebuild = True
+            rebuild_reasons.append("forbidden_or_out_of_scope_files_in_diff")
+        if history.get("exhausted"):
+            should_rebuild = True
+            rebuild_reasons.append("safe_autofix_exhausted")
+        if history.get("oscillating"):
+            should_rebuild = True
+            rebuild_reasons.append("safe_autofix_oscillating")
+    return should_rebuild, rebuild_reasons
+
+
 def safe_autofix_history(repo: str, head_branch: str) -> dict[str, Any]:
     runs = run(
         [
@@ -259,8 +319,7 @@ def safe_autofix_history(repo: str, head_branch: str) -> dict[str, Any]:
     same_branch = [r for r in runs if str(r.get("headBranch") or "") == head_branch and str(r.get("status") or "") == "completed"]
     recent = same_branch[:6]
     conclusions = [norm_state(r.get("conclusion")) for r in recent]
-    exhausted = len(recent) >= 3 and all(c in FAIL_STATES | CANCELLED_STATES for c in conclusions[:3])
-    oscillating = len(conclusions) >= 4 and len(set(conclusions[:4])) > 1 and all(c in FAIL_STATES | CANCELLED_STATES for c in conclusions[:4])
+    exhausted, oscillating = analyze_recent_history(conclusions)
     return {"recent": recent, "conclusions": conclusions, "exhausted": exhausted, "oscillating": oscillating}
 
 
@@ -310,20 +369,15 @@ def main() -> int:
         print(json.dumps(decision, indent=2, sort_keys=True))
         return 0
 
-    while True:
-        checks = pr.get("statusCheckRollup") or []
-        pending = [compact_check(c) for c in checks if is_pending(c) and not is_self_check(c)]
-        decision["pending_count"] = len(pending)
-        decision["pending"] = pending[:40]
-        if not pending:
-            break
-        elapsed = time.time() - started
-        if elapsed >= args.pending_wait_seconds:
-            decision["next_action"] = "pending_wait_budget_exhausted"
-            decision["warnings"].append("pending checks still present after wait budget")
-            break
-        time.sleep(max(1, args.poll_interval_seconds))
-        pr = pr_view(args.repo, args.pr)
+    pr, _pending_exhausted = wait_for_pending_checks(
+        pr=pr,
+        repo=args.repo,
+        pr_number=args.pr,
+        decision=decision,
+        started=started,
+        pending_wait_seconds=args.pending_wait_seconds,
+        poll_interval_seconds=args.poll_interval_seconds,
+    )
 
     checks = pr.get("statusCheckRollup") or []
 
@@ -348,24 +402,12 @@ def main() -> int:
     history = safe_autofix_history(args.repo, str(pr.get("headRefName") or ""))
     decision["safe_autofix_history"] = history
 
-    should_rebuild = False
-    rebuild_reasons: list[str] = []
-
-    csr = str(args.clean_scope_rebuild or "auto").lower()
+    should_rebuild, rebuild_reasons = should_rebuild_scope(
+        clean_scope_rebuild=args.clean_scope_rebuild,
+        forbidden=forbidden,
+        history=history,
+    )
     mode = str(args.clean_scope_rebuild_mode or "auto").lower()
-    if csr in {"true", "1", "yes", "on", "force"}:
-        should_rebuild = True
-        rebuild_reasons.append("manual_clean_scope_rebuild")
-    elif csr in {"auto", ""}:
-        if forbidden:
-            should_rebuild = True
-            rebuild_reasons.append("forbidden_or_out_of_scope_files_in_diff")
-        if history.get("exhausted"):
-            should_rebuild = True
-            rebuild_reasons.append("safe_autofix_exhausted")
-        if history.get("oscillating"):
-            should_rebuild = True
-            rebuild_reasons.append("safe_autofix_oscillating")
 
     should_launch, launchable = should_launch_autofix(checks)
     decision["launchable_for_safe_autofix"] = launchable
