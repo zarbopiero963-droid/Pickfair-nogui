@@ -1,5 +1,8 @@
 {
   "module": "core.reconciliation_engine",
+  "module_paths": [
+    "core/reconciliation_engine.py"
+  ],
   "required_functions": [
     "reconcile_orders",
     "detect_ghost_orders",
