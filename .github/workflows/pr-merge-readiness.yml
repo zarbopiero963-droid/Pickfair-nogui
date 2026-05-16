@@ -1,0 +1,96 @@
+name: PR Merge Readiness
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  check_run:
+    types: [completed, rerequested]
+  workflow_run:
+    workflows:
+      - pr-check
+      - dutching
+      - pnl-engine
+      - stateful-integrity
+      - merge-simulation-hard
+      - PR Autofix Safe Supervisor
+      - CloudCLI PR Fix
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number"
+        required: true
+
+concurrency:
+  group: pr-merge-readiness-${{ github.event.inputs.pr_number || github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+  statuses: read
+  actions: read
+
+jobs:
+  readiness:
+    name: Merge readiness
+    if: >-
+      ${{
+        github.event_name != 'check_run' ||
+        github.event.check_run.pull_requests[0].number
+      }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.inputs.pr_number || github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate merge readiness
+        run: |
+          set -euo pipefail
+
+          if [ -z "${PR:-}" ] || [ "$PR" = "null" ]; then
+            echo "::notice::No PR number for this event. Skipping."
+            exit 0
+          fi
+
+          mkdir -p .merge-readiness
+          python3 scripts/pr_merge_readiness.py \
+            --repo "$REPO" \
+            --pr "$PR" \
+            --ignore-safe-autofix \
+            --output .merge-readiness/decision.json
+
+          CAN_MERGE="$(jq -r '.can_merge' .merge-readiness/decision.json)"
+          {
+            echo "## PR Merge Readiness"
+            echo ""
+            echo "- PR: #$PR"
+            echo "- can_merge: \`$CAN_MERGE\`"
+            echo "- mergeable: \`$(jq -r '.mergeable' .merge-readiness/decision.json)\`"
+            echo "- mergeStateStatus: \`$(jq -r '.mergeStateStatus' .merge-readiness/decision.json)\`"
+            echo "- blockers: \`$(jq '.blockers | length' .merge-readiness/decision.json)\`"
+            echo "- pending: \`$(jq '.pending | length' .merge-readiness/decision.json)\`"
+            echo "- ignored self-checks: \`$(jq '.ignored | length' .merge-readiness/decision.json)\`"
+            echo ""
+            echo "### Reasons"
+            jq -r '.reasons[]? | "- " + .' .merge-readiness/decision.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$CAN_MERGE" != "true" ]; then
+            echo "::warning::PR is not merge-ready yet."
+            jq '.reasons' .merge-readiness/decision.json
+            exit 1
+          fi
+
+      - name: Upload readiness decision
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-merge-readiness-${{ env.PR }}
+          path: .merge-readiness/
+          if-no-files-found: ignore
