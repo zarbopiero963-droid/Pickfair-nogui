@@ -67,16 +67,16 @@ jobs:
       - name: Run PR automation controller
         run: |
           set -euo pipefail
-          mkdir -p .pr-controller
+          mkdir -p pr-controller
 
           if [ -z "${PR_NUMBER:-}" ] || [ "$PR_NUMBER" = "null" ]; then
-            cat > .pr-controller/decision.json <<'JSON'
+            cat > pr-controller/decision.json <<'JSON'
           {
             "next_action": "skip_no_pr_number",
             "reason": "event did not include a pull request number"
           }
           JSON
-            cat .pr-controller/decision.json
+            cat pr-controller/decision.json
             exit 0
           fi
 
@@ -89,13 +89,29 @@ jobs:
             --repo "$REPO" \
             --pr "$PR_NUMBER" \
             --pending-wait-seconds "$PENDING_WAIT_SECONDS" \
-            --output .pr-controller/decision.json \
+            --output pr-controller/decision.json \
             $args
+
+      - name: Ensure controller decision exists
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p pr-controller
+          if [ ! -f pr-controller/decision.json ]; then
+            cat > pr-controller/decision.json <<'JSON'
+{
+  "next_action": "controller_no_decision_file",
+  "reason": "controller completed without writing decision.json"
+}
+JSON
+          fi
+          echo "=== pr-controller ==="
+          find pr-controller -maxdepth 2 -type f -print -exec sed -n '1,220p' {} \;
 
       - name: Upload controller decision
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pr-automation-controller-${{ env.PR_NUMBER || github.run_id }}
-          path: .pr-controller/
-          if-no-files-found: ignore
+          path: pr-controller/
+          if-no-files-found: error
