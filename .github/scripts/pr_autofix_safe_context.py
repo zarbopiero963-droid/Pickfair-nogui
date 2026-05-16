@@ -109,6 +109,7 @@ def is_self_autofix_check(check: dict[str, str]) -> bool:
     name = (check.get("name") or check.get("context") or "").strip().lower()
     return name in {
         "safe pr autofix",
+            "autofix pr until checks are green",
         "pr autofix safe supervisor",
         "safe-autofix",
     }
