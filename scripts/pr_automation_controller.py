@@ -399,124 +399,75 @@ def run_clean_scope_rebuild(
     }
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--repo", required=True)
-    ap.add_argument("--pr", required=True)
-    ap.add_argument("--output", default=".pr-controller/decision.json")
-    ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--pending-wait-seconds", type=int, default=300)
-    ap.add_argument("--poll-interval-seconds", type=int, default=20)
-    ap.add_argument("--max-reruns", type=int, default=6)
-    ap.add_argument("--safe-max-rounds", default="1")
-    ap.add_argument("--safe-pending-wait-seconds", default="600")
-    ap.add_argument("--clean-scope-rebuild", action="store_true")
-    ap.add_argument("--clean-scope-rebuild-mode", default="disabled", choices=["disabled", "detect", "execute"])
-    ap.add_argument("--clean-scope-commit-limit", type=int, default=3)
-    ap.add_argument("--clean-scope-allowlist", default="")
-    ap.add_argument("--clean-scope-forbidden", default="")
-    args = ap.parse_args()
+def write_decision(output_path: str, decision: dict[str, Any]) -> int:
+    Path(output_path).write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
+    print(json.dumps(decision, indent=2, sort_keys=True))
+    return 0
 
-    started = time.time()
-    decision: dict[str, Any] = {
-        "repo": args.repo,
-        "pr": args.pr,
-        "dry_run": args.dry_run,
-        "actions": [],
-        "warnings": [],
-        "errors": [],
-    }
 
-    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-
-    try:
-        pr = pr_view(args.repo, args.pr)
-    except Exception as exc:
-        decision["next_action"] = "error"
-        decision["errors"].append(f"failed_to_load_pr: {exc}")
-        Path(args.output).write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
-        print(json.dumps(decision, indent=2, sort_keys=True))
-        return 0
-
-    checks = pr.get("statusCheckRollup") or []
-    files = pr_files(args.repo, args.pr)
-    commits = pr_commits(args.repo, args.pr)
-
-    decision.update(
-        {
-            "state": pr.get("state"),
-            "isDraft": pr.get("isDraft"),
-            "mergeable": pr.get("mergeable"),
-            "mergeStateStatus": pr.get("mergeStateStatus"),
-            "headRefName": pr.get("headRefName"),
-            "headRefOid": pr.get("headRefOid"),
-            "url": pr.get("url"),
-            "clean_scope_rebuild": bool(args.clean_scope_rebuild),
-            "clean_scope_rebuild_mode": args.clean_scope_rebuild_mode,
-        }
-    )
-
-    if pr.get("state") != "OPEN":
-        decision["next_action"] = "skip_not_open"
-        Path(args.output).write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
-        print(json.dumps(decision, indent=2, sort_keys=True))
-        return 0
-
-    if pr.get("isDraft"):
-        decision["next_action"] = "skip_draft"
-        Path(args.output).write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
-        print(json.dumps(decision, indent=2, sort_keys=True))
-        return 0
-
-    # Wait for pending checks before taking action.
+def wait_for_pending_checks(
+    *,
+    pr: dict[str, Any],
+    repo: str,
+    pr_number: str,
+    started: float,
+    pending_wait_seconds: int,
+    poll_interval_seconds: int,
+    decision: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
     pending_wait_exhausted = False
     while True:
         checks = pr.get("statusCheckRollup") or []
         pending = [compact_check(c) for c in checks if is_pending(c) and not is_self_check(c)]
         decision["pending_count"] = len(pending)
         decision["pending"] = pending[:40]
-
         if not pending:
             break
 
         elapsed = time.time() - started
-        if elapsed >= args.pending_wait_seconds:
+        if elapsed >= pending_wait_seconds:
             decision["next_action"] = "pending_wait_budget_exhausted"
             decision["warnings"].append("pending checks still present after wait budget")
             pending_wait_exhausted = True
             break
+        time.sleep(max(1, poll_interval_seconds))
+        pr = pr_view(repo, pr_number)
+    return pr, pending_wait_exhausted
 
-        time.sleep(max(1, args.poll_interval_seconds))
-        pr = pr_view(args.repo, args.pr)
 
-    checks = pr.get("statusCheckRollup") or []
-
-    if pending_wait_exhausted:
-        Path(args.output).write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
-        print(json.dumps(decision, indent=2, sort_keys=True))
-        return 0
-
+def handle_cancelled_checks(
+    *,
+    decision: dict[str, Any],
+    checks: list[dict[str, Any]],
+    repo: str,
+    dry_run: bool,
+    max_reruns: int,
+) -> bool:
     cancelled = [compact_check(c) for c in checks if is_cancelled(c) and not is_self_check(c)]
     decision["cancelled"] = cancelled
+    if not cancelled:
+        return False
+    rerun = rerun_cancelled_checks(
+        repo=repo,
+        checks=checks,
+        dry_run=dry_run,
+        max_reruns=max_reruns,
+    )
+    decision["actions"].append({"type": "rerun_cancelled", "items": rerun})
+    decision["next_action"] = "rerun_cancelled_checks" if rerun else "cancelled_checks_no_rerun_target"
+    return True
 
-    if cancelled:
-        rerun = rerun_cancelled_checks(
-            repo=args.repo,
-            checks=checks,
-            dry_run=args.dry_run,
-            max_reruns=args.max_reruns,
-        )
-        decision["actions"].append({"type": "rerun_cancelled", "items": rerun})
-        decision["next_action"] = "rerun_cancelled_checks" if rerun else "cancelled_checks_no_rerun_target"
-        Path(args.output).write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
-        print(json.dumps(decision, indent=2, sort_keys=True))
-        return 0
 
-    blockers = [compact_check(c) for c in checks if is_failure(c) and not is_self_check(c)]
-    ignored_self = [compact_check(c) for c in checks if (is_failure(c) or is_cancelled(c) or is_pending(c)) and is_self_check(c)]
-    decision["blockers"] = blockers
-    decision["ignored_self_checks"] = ignored_self
-
+def decide_next_action(
+    *,
+    args: argparse.Namespace,
+    pr: dict[str, Any],
+    checks: list[dict[str, Any]],
+    files: list[str],
+    commits: list[dict[str, Any]],
+    blockers: list[dict[str, Any]],
+    decision: dict[str, Any],
+) -> None:
     should_launch, launchable = should_launch_autofix(checks)
     decision["launchable_for_safe_autofix"] = launchable
 
@@ -563,7 +514,8 @@ def main() -> int:
         )
         decision["actions"].append(action)
         decision["next_action"] = action.get("action")
-    elif rebuild_triggered and args.clean_scope_rebuild_mode == "execute":
+        return
+    if rebuild_triggered and args.clean_scope_rebuild_mode == "execute":
         action = run_clean_scope_rebuild(
             repo=args.repo,
             pr=args.pr,
@@ -574,9 +526,11 @@ def main() -> int:
         )
         decision["actions"].append(action)
         decision["next_action"] = action.get("action")
-    elif rebuild_triggered and args.clean_scope_rebuild_mode == "detect":
+        return
+    if rebuild_triggered and args.clean_scope_rebuild_mode == "detect":
         decision["next_action"] = "clean_scope_rebuild_required_detect_mode"
-    elif should_launch:
+        return
+    if should_launch:
         action = launch_safe_autofix(
             repo=args.repo,
             pr=args.pr,
@@ -586,16 +540,117 @@ def main() -> int:
         )
         decision["actions"].append(action)
         decision["next_action"] = action.get("action")
-    elif blockers:
+        return
+    if blockers:
         decision["next_action"] = "manual_or_infrastructure_blockers"
     elif decision.get("pending_count", 0):
         decision["next_action"] = "wait_pending"
     else:
         decision["next_action"] = "checks_green_or_no_action"
 
-    Path(args.output).write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
-    print(json.dumps(decision, indent=2, sort_keys=True))
-    return 0
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--repo", required=True)
+    ap.add_argument("--pr", required=True)
+    ap.add_argument("--output", default=".pr-controller/decision.json")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--pending-wait-seconds", type=int, default=300)
+    ap.add_argument("--poll-interval-seconds", type=int, default=20)
+    ap.add_argument("--max-reruns", type=int, default=6)
+    ap.add_argument("--safe-max-rounds", default="1")
+    ap.add_argument("--safe-pending-wait-seconds", default="600")
+    ap.add_argument("--clean-scope-rebuild", action="store_true")
+    ap.add_argument("--clean-scope-rebuild-mode", default="disabled", choices=["disabled", "detect", "execute"])
+    ap.add_argument("--clean-scope-commit-limit", type=int, default=3)
+    ap.add_argument("--clean-scope-allowlist", default="")
+    ap.add_argument("--clean-scope-forbidden", default="")
+    args = ap.parse_args()
+
+    started = time.time()
+    decision: dict[str, Any] = {
+        "repo": args.repo,
+        "pr": args.pr,
+        "dry_run": args.dry_run,
+        "actions": [],
+        "warnings": [],
+        "errors": [],
+    }
+
+    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        pr = pr_view(args.repo, args.pr)
+    except Exception as exc:
+        decision["next_action"] = "error"
+        decision["errors"].append(f"failed_to_load_pr: {exc}")
+        return write_decision(args.output, decision)
+
+    checks = pr.get("statusCheckRollup") or []
+    files = pr_files(args.repo, args.pr)
+    commits = pr_commits(args.repo, args.pr)
+
+    decision.update(
+        {
+            "state": pr.get("state"),
+            "isDraft": pr.get("isDraft"),
+            "mergeable": pr.get("mergeable"),
+            "mergeStateStatus": pr.get("mergeStateStatus"),
+            "headRefName": pr.get("headRefName"),
+            "headRefOid": pr.get("headRefOid"),
+            "url": pr.get("url"),
+            "clean_scope_rebuild": bool(args.clean_scope_rebuild),
+            "clean_scope_rebuild_mode": args.clean_scope_rebuild_mode,
+        }
+    )
+
+    if pr.get("state") != "OPEN":
+        decision["next_action"] = "skip_not_open"
+        return write_decision(args.output, decision)
+
+    if pr.get("isDraft"):
+        decision["next_action"] = "skip_draft"
+        return write_decision(args.output, decision)
+
+    pr, pending_wait_exhausted = wait_for_pending_checks(
+        pr=pr,
+        repo=args.repo,
+        pr_number=args.pr,
+        started=started,
+        pending_wait_seconds=args.pending_wait_seconds,
+        poll_interval_seconds=args.poll_interval_seconds,
+        decision=decision,
+    )
+
+    checks = pr.get("statusCheckRollup") or []
+
+    if pending_wait_exhausted:
+        return write_decision(args.output, decision)
+
+    if handle_cancelled_checks(
+        decision=decision,
+        checks=checks,
+        repo=args.repo,
+        dry_run=args.dry_run,
+        max_reruns=args.max_reruns,
+    ):
+        return write_decision(args.output, decision)
+
+    blockers = [compact_check(c) for c in checks if is_failure(c) and not is_self_check(c)]
+    ignored_self = [compact_check(c) for c in checks if (is_failure(c) or is_cancelled(c) or is_pending(c)) and is_self_check(c)]
+    decision["blockers"] = blockers
+    decision["ignored_self_checks"] = ignored_self
+
+    decide_next_action(
+        args=args,
+        pr=pr,
+        checks=checks,
+        files=files,
+        commits=commits,
+        blockers=blockers,
+        decision=decision,
+    )
+    return write_decision(args.output, decision)
 
 
 if __name__ == "__main__":
