@@ -715,10 +715,10 @@ class OrderManager:
             saga_status = OrderStatus.FAILED
             reason_code = ReasonCode.BROKER_REJECTED
 
-        remaining = max(0.0, stake - size_matched)
-        remaining_size = (
-            remaining if saga_status == OrderStatus.PARTIALLY_MATCHED else None
-        )
+        if saga_status == OrderStatus.PARTIALLY_MATCHED:
+            remaining_size = max(0.0, stake - size_matched)
+        else:
+            remaining_size = None
 
         self._transition_saga(
             customer_ref=customer_ref,

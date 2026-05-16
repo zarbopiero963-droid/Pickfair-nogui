@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from typing import Any, cast
 
 import pytest
 
@@ -259,7 +260,7 @@ def test_placed_beyond_explicit_timeout_resolves_to_failed(engine, batch):
 def test_fetch_startup_active_orders_fails_closed_when_service_missing() -> None:
     eng = ReconciliationEngine(
         db=FakeDB(),
-        batch_manager=FakeBatchManager(),
+        batch_manager=cast(Any, FakeBatchManager()),
         betfair_service=None,
     )
 
@@ -270,7 +271,7 @@ def test_fetch_startup_active_orders_fails_closed_when_service_missing() -> None
 def test_fetch_startup_active_orders_fails_closed_when_interfaces_missing() -> None:
     eng = ReconciliationEngine(
         db=FakeDB(),
-        batch_manager=FakeBatchManager(),
+        batch_manager=cast(Any, FakeBatchManager()),
         betfair_service=_MissingCurrentOrdersService(),
     )
 

@@ -144,7 +144,8 @@ class TestContractShape:
         assert result["reason_code"] == ReasonCode.AMBIGUOUS_OUTCOME.value
 
     @staticmethod
-    def test_success_without_bet_id_fails_closed() -> None:
+    def test_no_bet_id_fails_closed() -> None:
+        """A success response without betId is treated as failed."""
         client = MagicMock()
         client.place_bet = MagicMock(
             return_value={
