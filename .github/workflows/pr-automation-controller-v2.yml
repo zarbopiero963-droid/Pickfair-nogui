@@ -84,7 +84,7 @@ jobs:
       - name: Checkout controller source
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || 'main' }}
           token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
 
       - name: Resolve controller inputs
@@ -122,11 +122,11 @@ jobs:
 
           CLEAN_SCOPE_REBUILD="${INPUT_CLEAN_SCOPE_REBUILD:-}"
           if [ -z "$CLEAN_SCOPE_REBUILD" ]; then
-            CLEAN_SCOPE_REBUILD="${PAYLOAD_CLEAN_SCOPE_REBUILD:-true}"
+            CLEAN_SCOPE_REBUILD="${PAYLOAD_CLEAN_SCOPE_REBUILD:-false}"
           fi
           CLEAN_SCOPE_REBUILD_MODE="${INPUT_CLEAN_SCOPE_REBUILD_MODE:-}"
           if [ -z "$CLEAN_SCOPE_REBUILD_MODE" ]; then
-            CLEAN_SCOPE_REBUILD_MODE="${PAYLOAD_CLEAN_SCOPE_REBUILD_MODE:-execute}"
+            CLEAN_SCOPE_REBUILD_MODE="${PAYLOAD_CLEAN_SCOPE_REBUILD_MODE:-auto}"
           fi
           CLEAN_SCOPE_COMMIT_LIMIT="${INPUT_CLEAN_SCOPE_COMMIT_LIMIT:-}"
           if [ -z "$CLEAN_SCOPE_COMMIT_LIMIT" ]; then
