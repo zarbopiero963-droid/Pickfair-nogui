@@ -1,8 +1,5 @@
 {
   "module": "core.reconciliation_engine",
-  "module_paths": [
-    "core/reconciliation_engine.py"
-  ],
   "description": "Hardcore mutations for ghost detection, convergence, idempotency, and decision logging.",
   "mutations": [
     {

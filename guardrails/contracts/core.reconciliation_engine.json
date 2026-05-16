@@ -1,8 +1,4 @@
 {
-  "module": "core.reconciliation_engine",
-  "module_paths": [
-    "core/reconciliation_engine.py"
-  ],
   "return_keys": [
     "reconciled",
     "decisions",

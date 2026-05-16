@@ -1,8 +1,4 @@
 {
-  "module": "core.reconciliation_engine",
-  "module_paths": [
-    "core/reconciliation_engine.py"
-  ],
   "rules": [
     "remote_exists_local_missing -> GHOST",
     "local_failed_remote_exists -> INCONSISTENT",

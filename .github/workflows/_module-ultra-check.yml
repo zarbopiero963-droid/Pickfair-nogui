@@ -251,4 +251,3 @@ jobs:
         with:
           name: ultra-check-cache
           path: .pytest_cache
-          if-no-files-found: ignore
