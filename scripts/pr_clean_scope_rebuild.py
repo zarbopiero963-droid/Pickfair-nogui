@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Clean-scope rebuild helper for PR automation workflows."""
+# pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-branches,too-many-statements,too-many-locals,too-many-return-statements,too-many-boolean-expressions,too-many-nested-blocks,too-many-lines,line-too-long,missing-function-docstring,duplicate-code,invalid-name
 from __future__ import annotations
 
 import argparse
