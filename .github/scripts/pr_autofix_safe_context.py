@@ -97,6 +97,21 @@ def is_pending(state: str) -> bool:
     return state in {"", "PENDING", "QUEUED", "IN_PROGRESS", "REQUESTED", "WAITING", "EXPECTED"}
 
 
+
+def is_self_autofix_check(check: dict[str, str]) -> bool:
+    """Return True for this workflow's own PR status check.
+
+    The safe supervisor must not wait on, or be blocked by, its own check run.
+    Otherwise a pull_request-triggered run can wait for itself and keep the PR
+    UNSTABLE even when all real checks are green.
+    """
+    name = (check.get("name") or check.get("context") or "").strip().lower()
+    return name in {
+        "safe pr autofix",
+        "pr autofix safe supervisor",
+        "safe-autofix",
+    }
+
 def collect_github() -> dict[str, Any]:
     query = """
     query($owner:String!, $repo:String!, $number:Int!) {
@@ -178,9 +193,13 @@ def collect_github() -> dict[str, Any]:
     rollup = pr.get("statusCheckRollup") or {}
     contexts = rollup.get("contexts") or {}
     checks = [normalize_check(n) for n in contexts.get("nodes", [])]
-    blockers = [c for c in checks if is_red(c["state"])]
-    pending = [c for c in checks if is_pending(c["state"])]
+    decision_checks = [c for c in checks if not is_self_autofix_check(c)]
+    ignored_self_autofix_checks = [c for c in checks if is_self_autofix_check(c)]
+    blockers = [c for c in decision_checks if is_red(c["state"])]
+    pending = [c for c in decision_checks if is_pending(c["state"])]
     pr["normalizedChecks"] = checks
+    pr["decisionChecks"] = decision_checks
+    pr["ignoredSelfAutofixChecks"] = ignored_self_autofix_checks
     pr["blockers"] = blockers
     pr["pending"] = pending
     return pr
@@ -580,6 +599,7 @@ def main() -> int:
         "pending_count": len(pending),
         "blocker_count": len(blockers),
         "blockers": blockers,
+        "ignored_self_autofix_checks": pr.get("ignoredSelfAutofixChecks", []),
         "safe_files": safe_files,
         "risky_files": risky_files,
         "codacy_blocking": codacy_blocking,
