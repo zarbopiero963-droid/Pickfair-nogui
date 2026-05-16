@@ -94,13 +94,13 @@ def extract_run_id(url: str) -> str:
     return m.group(1) if m else ""
 
 
-def pr_view(repo: str, pr: str) -> dict[str, Any]:
+def pr_view(repo: str, pr_number: str) -> dict[str, Any]:
     return run(
         [
             "gh",
             "pr",
             "view",
-            pr,
+            pr_number,
             "--repo",
             repo,
             "--json",
@@ -139,38 +139,30 @@ def active_safe_autofix_runs(repo: str) -> list[dict[str, Any]]:
     )
     if not isinstance(runs, list):
         return []
-    return [r for r in runs if str(r.get("status") or "") != "completed"]
+    return [entry for entry in runs if str(entry.get("status") or "") != "completed"]
 
 
-def active_controller_rebuild_runs(repo: str, pr: str) -> list[dict[str, Any]]:
+def active_controller_rebuild_runs(repo: str, pr_number: str) -> list[dict[str, Any]]:
     runs = run(
         [
-            "gh",
-            "run",
-            "list",
-            "--repo",
-            repo,
-            "--workflow",
-            CONTROLLER_WORKFLOW,
-            "--limit",
-            "40",
-            "--json",
-            "databaseId,status,conclusion,event,displayTitle,url",
+            "gh", "run", "list", "--repo", repo, "--workflow", CONTROLLER_WORKFLOW,
+            "--limit", "40", "--json", "databaseId,status,conclusion,event,displayTitle,url",
         ],
         json_out=True,
         check=False,
     )
     if not isinstance(runs, list):
         return []
-    pr_pattern = re.compile(rf"\bpr {re.escape(pr)}\b")
-    out: list[dict[str, Any]] = []
-    for r in runs:
-        if str(r.get("status") or "") == "completed":
+
+    pr_pattern = re.compile(rf"\bpr {re.escape(pr_number)}\b")
+    active: list[dict[str, Any]] = []
+    for run_item in runs:
+        if str(run_item.get("status") or "") == "completed":
             continue
-        low = str(r.get("displayTitle") or "").lower()
-        if pr_pattern.search(low) and "clean" in low:
-            out.append(r)
-    return out
+        title = str(run_item.get("displayTitle") or "").lower()
+        if pr_pattern.search(title) and "clean" in title:
+            active.append(run_item)
+    return active
 
 
 def rerun_cancelled_checks(*, repo: str, checks: list[dict[str, Any]], dry_run: bool, max_reruns: int) -> list[dict[str, Any]]:
@@ -188,23 +180,27 @@ def rerun_cancelled_checks(*, repo: str, checks: list[dict[str, Any]], dry_run: 
             continue
         seen.add(run_id)
 
-        item = {"run_id": run_id, "check": name_of(check), "url": url_of(check), "action": "would_rerun" if dry_run else "rerun"}
+        item: dict[str, Any] = {
+            "run_id": run_id,
+            "check": name_of(check),
+            "url": url_of(check),
+            "action": "would_rerun" if dry_run else "rerun",
+        }
         if not dry_run:
             out = run(["gh", "run", "rerun", run_id, "--repo", repo], check=False)
             item["output"] = out.strip()[-500:]
         rerun.append(item)
-
     return rerun
 
 
-def launch_safe_autofix(*, repo: str, pr: str, dry_run: bool, max_rounds: str, pending_wait_seconds: str) -> dict[str, Any]:
+def launch_safe_autofix(*, repo: str, pr_number: str, dry_run: bool, max_rounds: str, pending_wait_seconds: str) -> dict[str, Any]:
     active = active_safe_autofix_runs(repo)
     if active:
         return {"action": "skip_launch_safe_autofix", "reason": "safe_autofix_already_active", "active": active}
 
     cmd = [
         "gh", "workflow", "run", SAFE_AUTOFIX_WORKFLOW, "--repo", repo, "--ref", "main",
-        "-f", f"pr_number={pr}",
+        "-f", f"pr_number={pr_number}",
         "-f", f"max_rounds={max_rounds}",
         "-f", f"pending_wait_seconds={pending_wait_seconds}",
         "-f", "dry_run=false",
@@ -246,18 +242,20 @@ def is_forbidden(path: str) -> bool:
 
 
 def analyze_recent_history(conclusions: list[str]) -> tuple[bool, bool]:
-    exhausted = len(conclusions) >= 3 and all(c in FAIL_STATES | CANCELLED_STATES for c in conclusions[:3])
+    latest_three = conclusions[:3]
+    latest_four = conclusions[:4]
+    exhausted = len(latest_three) == 3 and all(state in FAIL_STATES | CANCELLED_STATES for state in latest_three)
     oscillating = (
-        len(conclusions) >= 4
-        and len(set(conclusions[:4])) > 1
-        and all(c in FAIL_STATES | CANCELLED_STATES for c in conclusions[:4])
+        len(latest_four) == 4
+        and len(set(latest_four)) > 1
+        and all(state in FAIL_STATES | CANCELLED_STATES for state in latest_four)
     )
     return exhausted, oscillating
 
 
 def wait_for_pending_checks(
     *,
-    pr: dict[str, Any],
+    pr_data: dict[str, Any],
     repo: str,
     pr_number: str,
     decision: dict[str, Any],
@@ -266,64 +264,70 @@ def wait_for_pending_checks(
     poll_interval_seconds: int,
 ) -> tuple[dict[str, Any], bool]:
     while True:
-        checks = pr.get("statusCheckRollup") or []
-        pending = [compact_check(c) for c in checks if is_pending(c) and not is_self_check(c)]
+        checks = pr_data.get("statusCheckRollup") or []
+        pending = [compact_check(check) for check in checks if is_pending(check) and not is_self_check(check)]
         decision["pending_count"] = len(pending)
         decision["pending"] = pending[:40]
         if not pending:
-            return pr, False
-        elapsed = time.time() - started
-        if elapsed >= pending_wait_seconds:
+            return pr_data, False
+        if (time.time() - started) >= pending_wait_seconds:
             decision["next_action"] = "pending_wait_budget_exhausted"
             decision["warnings"].append("pending checks still present after wait budget")
-            return pr, True
+            return pr_data, True
         time.sleep(max(1, poll_interval_seconds))
-        pr = pr_view(repo, pr_number)
+        pr_data = pr_view(repo, pr_number)
 
 
-def should_rebuild_scope(
-    clean_scope_rebuild: str,
-    forbidden: list[str],
-    history: dict[str, Any],
-) -> tuple[bool, list[str]]:
+def should_rebuild_scope(clean_scope_rebuild: str, forbidden: list[str], history: dict[str, Any]) -> tuple[bool, list[str]]:
     should_rebuild = False
-    rebuild_reasons: list[str] = []
-    csr = str(clean_scope_rebuild or "auto").lower()
-    if csr in {"true", "1", "yes", "on", "force"}:
+    reasons: list[str] = []
+    mode = str(clean_scope_rebuild or "auto").lower()
+
+    if mode in {"true", "1", "yes", "on", "force"}:
+        return True, ["manual_clean_scope_rebuild"]
+    if mode not in {"auto", ""}:
+        return False, reasons
+
+    if forbidden:
         should_rebuild = True
-        rebuild_reasons.append("manual_clean_scope_rebuild")
-    elif csr in {"auto", ""}:
-        if forbidden:
-            should_rebuild = True
-            rebuild_reasons.append("forbidden_or_out_of_scope_files_in_diff")
-        if history.get("exhausted"):
-            should_rebuild = True
-            rebuild_reasons.append("safe_autofix_exhausted")
-        if history.get("oscillating"):
-            should_rebuild = True
-            rebuild_reasons.append("safe_autofix_oscillating")
-    return should_rebuild, rebuild_reasons
+        reasons.append("forbidden_or_out_of_scope_files_in_diff")
+    if history.get("exhausted"):
+        should_rebuild = True
+        reasons.append("safe_autofix_exhausted")
+    if history.get("oscillating"):
+        should_rebuild = True
+        reasons.append("safe_autofix_oscillating")
+    return should_rebuild, reasons
 
 
 def safe_autofix_history(repo: str, head_branch: str) -> dict[str, Any]:
     runs = run(
         [
             "gh", "run", "list", "--repo", repo, "--workflow", SAFE_AUTOFIX_WORKFLOW, "--limit", "25",
-            "--json", "databaseId,status,conclusion,headBranch,createdAt,url"
+            "--json", "databaseId,status,conclusion,headBranch,createdAt,url",
         ],
         json_out=True,
         check=False,
     )
     if not isinstance(runs, list):
         runs = []
-    same_branch = [r for r in runs if str(r.get("headBranch") or "") == head_branch and str(r.get("status") or "") == "completed"]
-    recent = same_branch[:6]
-    conclusions = [norm_state(r.get("conclusion")) for r in recent]
+
+    completed_for_branch = [
+        item for item in runs
+        if str(item.get("headBranch") or "") == head_branch and str(item.get("status") or "") == "completed"
+    ]
+    recent = completed_for_branch[:6]
+    conclusions = [norm_state(item.get("conclusion")) for item in recent]
     exhausted, oscillating = analyze_recent_history(conclusions)
-    return {"recent": recent, "conclusions": conclusions, "exhausted": exhausted, "oscillating": oscillating}
+    return {
+        "recent": recent,
+        "conclusions": conclusions,
+        "exhausted": exhausted,
+        "oscillating": oscillating,
+    }
 
 
-def main() -> int:
+def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", required=True)
     ap.add_argument("--pr", required=True)
@@ -336,77 +340,62 @@ def main() -> int:
     ap.add_argument("--safe-pending-wait-seconds", default="600")
     ap.add_argument("--clean-scope-rebuild", default="auto")
     ap.add_argument("--clean-scope-rebuild-mode", default="auto")
-    args = ap.parse_args()
+    return ap.parse_args()
 
-    started = time.time()
-    decision: dict[str, Any] = {"repo": args.repo, "pr": args.pr, "dry_run": args.dry_run, "actions": [], "warnings": [], "errors": []}
-    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
 
-    try:
-        pr = pr_view(args.repo, args.pr)
-    except Exception as exc:
-        decision["next_action"] = "error"
-        decision["errors"].append(f"failed_to_load_pr: {exc}")
-        Path(args.output).write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
-        print(json.dumps(decision, indent=2, sort_keys=True))
-        return 0
+def initialize_decision(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "repo": args.repo,
+        "pr": args.pr,
+        "dry_run": args.dry_run,
+        "actions": [],
+        "warnings": [],
+        "errors": [],
+    }
 
-    decision.update({
-        "state": pr.get("state"), "isDraft": pr.get("isDraft"), "mergeable": pr.get("mergeable"),
-        "mergeStateStatus": pr.get("mergeStateStatus"), "headRefName": pr.get("headRefName"),
-        "headRefOid": pr.get("headRefOid"), "url": pr.get("url"),
-        "clean_scope_rebuild": args.clean_scope_rebuild, "clean_scope_rebuild_mode": args.clean_scope_rebuild_mode,
-    })
 
-    if pr.get("state") != "OPEN":
+def write_decision(path: str, decision: dict[str, Any]) -> int:
+    Path(path).write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
+    print(json.dumps(decision, indent=2, sort_keys=True))
+    return 0
+
+
+def handle_non_open_pr(pr_data: dict[str, Any], decision: dict[str, Any], output_path: str) -> int | None:
+    if pr_data.get("state") != "OPEN":
         decision["next_action"] = "skip_not_open"
-        Path(args.output).write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
-        print(json.dumps(decision, indent=2, sort_keys=True))
-        return 0
-    if pr.get("isDraft"):
+        return write_decision(output_path, decision)
+    if pr_data.get("isDraft"):
         decision["next_action"] = "skip_draft"
-        Path(args.output).write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
-        print(json.dumps(decision, indent=2, sort_keys=True))
-        return 0
+        return write_decision(output_path, decision)
+    return None
 
-    pr, _pending_exhausted = wait_for_pending_checks(
-        pr=pr,
-        repo=args.repo,
-        pr_number=args.pr,
-        decision=decision,
-        started=started,
-        pending_wait_seconds=args.pending_wait_seconds,
-        poll_interval_seconds=args.poll_interval_seconds,
-    )
 
-    checks = pr.get("statusCheckRollup") or []
-
-    cancelled = [compact_check(c) for c in checks if is_cancelled(c) and not is_self_check(c)]
+def run_cancelled_flow(args: argparse.Namespace, checks: list[dict[str, Any]], decision: dict[str, Any], output_path: str) -> int | None:
+    cancelled = [compact_check(check) for check in checks if is_cancelled(check) and not is_self_check(check)]
     decision["cancelled"] = cancelled
-    if cancelled:
-        rerun = rerun_cancelled_checks(repo=args.repo, checks=checks, dry_run=args.dry_run, max_reruns=args.max_reruns)
-        decision["actions"].append({"type": "rerun_cancelled", "items": rerun})
-        decision["next_action"] = "rerun_cancelled_checks" if rerun else "cancelled_checks_no_rerun_target"
-        Path(args.output).write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
-        print(json.dumps(decision, indent=2, sort_keys=True))
-        return 0
+    if not cancelled:
+        return None
 
-    blockers = [compact_check(c) for c in checks if is_failure(c) and not is_self_check(c)]
+    rerun = rerun_cancelled_checks(repo=args.repo, checks=checks, dry_run=args.dry_run, max_reruns=args.max_reruns)
+    decision["actions"].append({"type": "rerun_cancelled", "items": rerun})
+    decision["next_action"] = "rerun_cancelled_checks" if rerun else "cancelled_checks_no_rerun_target"
+    return write_decision(output_path, decision)
+
+
+def decide_next_action(args: argparse.Namespace, checks: list[dict[str, Any]], decision: dict[str, Any], pr_data: dict[str, Any]) -> None:
+    blockers = [compact_check(check) for check in checks if is_failure(check) and not is_self_check(check)]
     decision["blockers"] = blockers
 
-    changed_files = list_changed_files(str(pr.get("headRefName") or ""))
-    forbidden = [p for p in changed_files if is_forbidden(p)]
+    head_ref = str(pr_data.get("headRefName") or "")
+    changed_files = list_changed_files(head_ref)
+    forbidden = [path for path in changed_files if is_forbidden(path)]
     decision["diff_files"] = changed_files
     decision["forbidden_in_diff"] = forbidden
 
-    history = safe_autofix_history(args.repo, str(pr.get("headRefName") or ""))
+    history = safe_autofix_history(args.repo, head_ref)
     decision["safe_autofix_history"] = history
 
-    should_rebuild, rebuild_reasons = should_rebuild_scope(
-        clean_scope_rebuild=args.clean_scope_rebuild,
-        forbidden=forbidden,
-        history=history,
-    )
+    should_rebuild, rebuild_reasons = should_rebuild_scope(args.clean_scope_rebuild, forbidden, history)
     mode = str(args.clean_scope_rebuild_mode or "auto").lower()
 
     should_launch, launchable = should_launch_autofix(checks)
@@ -415,31 +404,89 @@ def main() -> int:
     if should_rebuild:
         active_rebuild = active_controller_rebuild_runs(args.repo, args.pr)
         if active_rebuild:
-            decision["actions"].append({"type": "clean_scope_rebuild", "action": "skip", "reason": "rebuild_already_active", "active": active_rebuild})
+            decision["actions"].append(
+                {
+                    "type": "clean_scope_rebuild",
+                    "action": "skip",
+                    "reason": "rebuild_already_active",
+                    "active": active_rebuild,
+                }
+            )
             decision["next_action"] = "skip_launch_clean_scope_rebuild"
-        else:
-            decision["actions"].append({"type": "clean_scope_rebuild", "action": "launch", "mode": mode, "reasons": rebuild_reasons})
-            decision["next_action"] = "launch_clean_scope_rebuild"
-    elif should_launch:
+            return
+        decision["actions"].append(
+            {"type": "clean_scope_rebuild", "action": "launch", "mode": mode, "reasons": rebuild_reasons}
+        )
+        decision["next_action"] = "launch_clean_scope_rebuild"
+        return
+
+    if should_launch:
         action = launch_safe_autofix(
             repo=args.repo,
-            pr=args.pr,
+            pr_number=args.pr,
             dry_run=args.dry_run,
             max_rounds=args.safe_max_rounds,
             pending_wait_seconds=args.safe_pending_wait_seconds,
         )
         decision["actions"].append(action)
         decision["next_action"] = action.get("action")
-    elif blockers:
+        return
+
+    if blockers:
         decision["next_action"] = "manual_or_infrastructure_blockers"
     elif decision.get("pending_count", 0):
         decision["next_action"] = "wait_pending"
     else:
         decision["next_action"] = "checks_green_or_no_action"
 
-    Path(args.output).write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
-    print(json.dumps(decision, indent=2, sort_keys=True))
-    return 0
+
+def main() -> int:
+    args = parse_args()
+    started = time.time()
+    decision = initialize_decision(args)
+    output_path = args.output
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        pr_data = pr_view(args.repo, args.pr)
+    except Exception as exc:
+        decision["next_action"] = "error"
+        decision["errors"].append(f"failed_to_load_pr: {exc}")
+        return write_decision(output_path, decision)
+
+    decision.update({
+        "state": pr_data.get("state"),
+        "isDraft": pr_data.get("isDraft"),
+        "mergeable": pr_data.get("mergeable"),
+        "mergeStateStatus": pr_data.get("mergeStateStatus"),
+        "headRefName": pr_data.get("headRefName"),
+        "headRefOid": pr_data.get("headRefOid"),
+        "url": pr_data.get("url"),
+        "clean_scope_rebuild": args.clean_scope_rebuild,
+        "clean_scope_rebuild_mode": args.clean_scope_rebuild_mode,
+    })
+
+    early = handle_non_open_pr(pr_data, decision, output_path)
+    if early is not None:
+        return early
+
+    pr_data, _pending_exhausted = wait_for_pending_checks(
+        pr_data=pr_data,
+        repo=args.repo,
+        pr_number=args.pr,
+        decision=decision,
+        started=started,
+        pending_wait_seconds=args.pending_wait_seconds,
+        poll_interval_seconds=args.poll_interval_seconds,
+    )
+
+    checks = pr_data.get("statusCheckRollup") or []
+    cancelled_result = run_cancelled_flow(args, checks, decision, output_path)
+    if cancelled_result is not None:
+        return cancelled_result
+
+    decide_next_action(args, checks, decision, pr_data)
+    return write_decision(output_path, decision)
 
 
 if __name__ == "__main__":
