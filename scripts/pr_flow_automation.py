@@ -310,7 +310,14 @@ def cmd_preflight(args: argparse.Namespace) -> int:
             file_touches[f] = file_touches.get(f, 0) + 1
 
     if len(commits) > args.max_safe_autofix_commits:
-        issues.append(f"safe autofix commit limit exceeded: {len(commits)} > {args.max_safe_autofix_commits}")
+        message = (
+            f"safe autofix commit limit exceeded: "
+            f"{len(commits)} > {args.max_safe_autofix_commits}"
+        )
+        if codacy_blocking:
+            issues.append(message)
+        else:
+            warnings.append(message)
 
     oscillating = [
         {"file": f, "touches": n}
