@@ -16,6 +16,14 @@ on:
         description: "Seconds to wait for pending checks"
         required: false
         default: "300"
+      clean_scope_rebuild:
+        description: "Enable clean scope rebuild escalation (auto/true/false)"
+        required: false
+        default: "auto"
+      clean_scope_rebuild_mode:
+        description: "Clean scope rebuild mode"
+        required: false
+        default: "auto"
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   check_run:
@@ -59,9 +67,17 @@ jobs:
       INPUT_PR_NUMBER: ${{ inputs.pr_number || '' }}
       INPUT_DRY_RUN: ${{ inputs.dry_run || '' }}
       INPUT_PENDING_WAIT_SECONDS: ${{ inputs.pending_wait_seconds || '' }}
+      INPUT_CLEAN_SCOPE_REBUILD: ${{ inputs.clean_scope_rebuild || '' }}
+      INPUT_CLEAN_SCOPE_REBUILD_MODE: ${{ inputs.clean_scope_rebuild_mode || '' }}
       PAYLOAD_PR_NUMBER: ${{ github.event.client_payload.pr_number || '' }}
       PAYLOAD_DRY_RUN: ${{ github.event.client_payload.dry_run || '' }}
       PAYLOAD_PENDING_WAIT_SECONDS: ${{ github.event.client_payload.pending_wait_seconds || '' }}
+      PAYLOAD_CLEAN_SCOPE_REBUILD: ${{ github.event.client_payload.clean_scope_rebuild || '' }}
+      PAYLOAD_CLEAN_SCOPE_REBUILD_MODE: ${{ github.event.client_payload.clean_scope_rebuild_mode || '' }}
+    outputs:
+      next_action: ${{ steps.decision.outputs.next_action }}
+      pr_number: ${{ steps.decision.outputs.pr_number }}
+      clean_scope_rebuild_mode: ${{ steps.decision.outputs.clean_scope_rebuild_mode }}
     steps:
       - name: Checkout controller source
         uses: actions/checkout@v4
@@ -98,14 +114,28 @@ jobs:
             PENDING_WAIT_SECONDS="${PAYLOAD_PENDING_WAIT_SECONDS:-300}"
           fi
 
+          CLEAN_SCOPE_REBUILD="${INPUT_CLEAN_SCOPE_REBUILD:-}"
+          if [ -z "$CLEAN_SCOPE_REBUILD" ]; then
+            CLEAN_SCOPE_REBUILD="${PAYLOAD_CLEAN_SCOPE_REBUILD:-auto}"
+          fi
+
+          CLEAN_SCOPE_REBUILD_MODE="${INPUT_CLEAN_SCOPE_REBUILD_MODE:-}"
+          if [ -z "$CLEAN_SCOPE_REBUILD_MODE" ]; then
+            CLEAN_SCOPE_REBUILD_MODE="${PAYLOAD_CLEAN_SCOPE_REBUILD_MODE:-auto}"
+          fi
+
           echo "PR_NUMBER=$PR_NUMBER" >> "$GITHUB_ENV"
           echo "DRY_RUN=$DRY_RUN" >> "$GITHUB_ENV"
           echo "PENDING_WAIT_SECONDS=$PENDING_WAIT_SECONDS" >> "$GITHUB_ENV"
+          echo "CLEAN_SCOPE_REBUILD=$CLEAN_SCOPE_REBUILD" >> "$GITHUB_ENV"
+          echo "CLEAN_SCOPE_REBUILD_MODE=$CLEAN_SCOPE_REBUILD_MODE" >> "$GITHUB_ENV"
 
           echo "event=${GITHUB_EVENT_NAME}"
           echo "PR_NUMBER=${PR_NUMBER:-}"
           echo "DRY_RUN=${DRY_RUN:-}"
           echo "PENDING_WAIT_SECONDS=${PENDING_WAIT_SECONDS:-}"
+          echo "CLEAN_SCOPE_REBUILD=${CLEAN_SCOPE_REBUILD:-}"
+          echo "CLEAN_SCOPE_REBUILD_MODE=${CLEAN_SCOPE_REBUILD_MODE:-}"
 
       - name: Run PR automation controller
         run: |
@@ -131,8 +161,22 @@ jobs:
             --repo "$REPO" \
             --pr "$PR_NUMBER" \
             --pending-wait-seconds "$PENDING_WAIT_SECONDS" \
+            --clean-scope-rebuild "$CLEAN_SCOPE_REBUILD" \
+            --clean-scope-rebuild-mode "$CLEAN_SCOPE_REBUILD_MODE" \
             --output pr-controller/decision.json \
             $args
+
+      - name: Export controller decision outputs
+        id: decision
+        if: always()
+        run: |
+          set -euo pipefail
+          next_action="$(jq -r '.next_action // ""' pr-controller/decision.json)"
+          pr_number="$(jq -r '.pr // ""' pr-controller/decision.json)"
+          csr_mode="$(jq -r '.clean_scope_rebuild_mode // env.CLEAN_SCOPE_REBUILD_MODE // "auto"' pr-controller/decision.json)"
+          echo "next_action=$next_action" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
+          echo "clean_scope_rebuild_mode=$csr_mode" >> "$GITHUB_OUTPUT"
 
       - name: Ensure controller decision exists
         if: always()
@@ -155,4 +199,57 @@ jobs:
         with:
           name: pr-automation-controller-v2-${{ github.run_id }}
           path: pr-controller/
+          if-no-files-found: error
+
+  clean-scope-rebuild:
+    name: Clean Scope Rebuild
+    needs: [controller]
+    if: ${{ needs.controller.outputs.next_action == 'launch_clean_scope_rebuild' && needs.controller.outputs.pr_number != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+      REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ needs.controller.outputs.pr_number }}
+      CLEAN_SCOPE_REBUILD_MODE: ${{ needs.controller.outputs.clean_scope_rebuild_mode }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+
+      - name: Run clean scope rebuild
+        run: |
+          set -euo pipefail
+          mkdir -p pr-clean-scope-rebuild
+          python3 scripts/pr_clean_scope_rebuild.py \
+            --repo "$REPO" \
+            --pr "$PR_NUMBER" \
+            --mode "$CLEAN_SCOPE_REBUILD_MODE" \
+            --output "pr-clean-scope-rebuild/decision.json"
+
+      - name: Ensure clean rebuild decision exists
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p pr-clean-scope-rebuild
+          if [ ! -f pr-clean-scope-rebuild/decision.json ]; then
+            printf '%s\n' \
+              '{' \
+              '  "action": "clean_scope_rebuild",' \
+              '  "pr": "'"${PR_NUMBER}"'",' \
+              '  "final_status": "missing_decision_file"' \
+              '}' > pr-clean-scope-rebuild/decision.json
+          fi
+          cat pr-clean-scope-rebuild/decision.json
+
+      - name: Upload clean rebuild decision
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-clean-scope-rebuild-${{ needs.controller.outputs.pr_number }}
+          path: pr-clean-scope-rebuild/decision.json
           if-no-files-found: error
