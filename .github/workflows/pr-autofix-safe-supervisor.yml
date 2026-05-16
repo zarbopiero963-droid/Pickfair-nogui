@@ -39,7 +39,7 @@ on:
 
 concurrency:
   group: pr-autofix-safe-${{ github.event.inputs.pr_number || github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number || github.run_id }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -51,12 +51,16 @@ permissions:
 jobs:
   safe-autofix:
     name: Safe PR autofix
+    timeout-minutes: 45
     if: >-
       ${{
         github.event_name != 'check_run' ||
         (
           github.event.check_run.pull_requests[0].number &&
-          contains(github.event.check_run.name, 'Codacy') &&
+          (
+            contains(github.event.check_run.name, 'Codacy') ||
+            contains(github.event.check_run.name, 'ultra-check')
+          ) &&
           (
             github.event.check_run.conclusion == 'action_required' ||
             github.event.check_run.conclusion == 'failure' ||
@@ -107,6 +111,27 @@ jobs:
             --pr "$PR_NUMBER" \
             --comment
 
+      - name: Cleanup stale safe-autofix runs
+        run: |
+          set -euo pipefail
+          keep="${GITHUB_RUN_ID}"
+          echo "Current run: $keep"
+          gh run list \
+            --repo "$REPO" \
+            --workflow=277606083 \
+            --limit 80 \
+            --json databaseId,status,event,createdAt,url \
+          | jq -r --arg KEEP "$keep" '
+              .[]
+              | select(.status!="completed")
+              | select((.databaseId|tostring) != $KEEP)
+              | .databaseId
+            ' \
+          | while read -r old; do
+              [ -z "$old" ] && continue
+              echo "Cancel stale safe-autofix run $old"
+              gh run cancel "$old" --repo "$REPO" || true
+            done
       - name: Safe autofix loop
         run: |
           set -euo pipefail

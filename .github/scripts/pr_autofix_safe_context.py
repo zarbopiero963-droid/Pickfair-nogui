@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -507,6 +508,116 @@ def collect_deepsource(blockers: list[dict[str, str]]) -> tuple[list[dict[str, A
     }], None
 
 
+
+def _extract_github_run_id(url: str) -> str:
+    match = re.search(r"/actions/runs/(\d+)", str(url or ""))
+    return match.group(1) if match else ""
+
+
+def _ultra_compact_text(value: Any, limit: int = 1800) -> str:
+    text = "\n".join(line.rstrip() for line in str(value or "").splitlines())
+    text = text.strip()
+    return text[-limit:] if len(text) > limit else text
+
+
+def _ultra_candidate_file(log_text: str) -> tuple[str, int | None]:
+    pattern = re.compile(
+        r"\b((?:tests|core|services|controllers|observability|recovery|ui_panels|ai|ops|sql)/"
+        r"[A-Za-z0-9_./-]+\.(?:py|sql|md|yml|yaml|json|toml|ini|txt|sh)|"
+        r"[A-Za-z0-9_./-]+\.py)(?::(\d+))?"
+    )
+    for match in pattern.finditer(log_text or ""):
+        path = match.group(1)
+        if path.startswith((".github/", "scripts/", ".guardrails/", "guardrails/")):
+            continue
+        line_raw = match.group(2)
+        try:
+            line = int(line_raw) if line_raw else None
+        except Exception:
+            line = None
+        return path, line
+    return "", None
+
+
+def _ultra_is_risky_file(path: str) -> bool:
+    return (
+        not path
+        or path.startswith((".github/", "scripts/", ".guardrails/", "guardrails/"))
+        or "/.github/" in path
+        or "/scripts/" in path
+    )
+
+
+def collect_ultra_check_issues(blockers: list[dict[str, str]]) -> list[dict[str, Any]]:
+    targets = [
+        b for b in blockers
+        if "ultra-check" in ((b.get("name") or "") + " " + (b.get("url") or "")).lower()
+    ]
+    if not targets:
+        return []
+
+    repo_full = os.environ.get("REPO") or f"{OWNER}/{REPO_NAME}"
+    issues: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for blocker in targets:
+        run_id = _extract_github_run_id(blocker.get("url", ""))
+        if not run_id or run_id in seen:
+            continue
+        seen.add(run_id)
+
+        try:
+            log = subprocess.check_output(
+                ["gh", "run", "view", run_id, "--repo", repo_full, "--log"],
+                text=True,
+                stderr=subprocess.STDOUT,
+                timeout=120,
+            )
+        except Exception as exc:
+            log = f"Could not fetch ultra-check log for run {run_id}: {exc}"
+
+        interesting_re = re.compile(
+            r"FAILED|FAILURES|ERROR|AssertionError|Traceback|pytest|ruff|mypy|flake|lint|guard|ultra|exit code",
+            re.IGNORECASE,
+        )
+        interesting = [line for line in log.splitlines() if interesting_re.search(line)]
+        excerpt = "\n".join(interesting[-90:]) if interesting else "\n".join(log.splitlines()[-120:])
+        excerpt = _ultra_compact_text(excerpt, 2200)
+
+        file_path, line = _ultra_candidate_file(excerpt or log)
+        risky = _ultra_is_risky_file(file_path)
+
+        issue = {
+            "source": "github_action_ultra_check",
+            "file": file_path or "__ultra_check_log__",
+            "line": line,
+            "rule": "ultra_check_failure",
+            "tool": "GitHub Actions ultra-check",
+            "level": "failure",
+            "message": _ultra_compact_text(excerpt, 1200),
+            "safe_autofix": not risky,
+            "requires_manual_or_config": risky,
+        }
+
+        if risky:
+            issue["codex_fix_instruction"] = (
+                "The GitHub Actions run / ultra-check failed, but the failing file could not be mapped "
+                "to a safe source/test file. Do not guess. Inspect the ultra-check log and stop if the "
+                "fix would require workflows, scripts, guardrail JSON, or unrelated files."
+            )
+        else:
+            issue["codex_fix_instruction"] = (
+                f"GitHub Actions run / ultra-check failed and points to {file_path}:{line}. "
+                "Inspect the reported file and failure log, verify the failure is still valid, then make "
+                "the smallest safe source/test change. Do not edit workflows, scripts, guardrail JSON, "
+                "or unrelated files. Relevant ultra-check excerpt: "
+                f"{excerpt!r}"
+            )
+
+        issues.append(issue)
+
+    return issues
+
 def main() -> int:
     errors: list[str] = []
     pr = collect_github()
@@ -541,7 +652,8 @@ def main() -> int:
         })
 
     codacy_review_hints = collect_codacy_review_hints(blockers)
-    all_issues = codacy_issues + ds_issues + review_threads + codacy_review_hints
+    ultra_issues = collect_ultra_check_issues(blockers)
+    all_issues = codacy_issues + ds_issues + review_threads + codacy_review_hints + ultra_issues
     all_issues = add_codacy_markdownlint_conflict_hints(all_issues)
 
     risky_files = sorted({
