@@ -734,6 +734,10 @@ class OrderManager:
             saga_status.value,
             LIFECYCLE_CONTRACT["ACCEPTED"]["event"],
         )
+        # Keep payload and saga transition aligned after any fail-closed override.
+        payload_remaining_size = (
+            remaining_size if saga_status == OrderStatus.PARTIALLY_MATCHED else None
+        )
         out = {
             **payload,
             "customer_ref": customer_ref,
@@ -741,11 +745,7 @@ class OrderManager:
             "response": response,
             "order_status": saga_status.value,
             "matched_size": size_matched,
-            "remaining_size": (
-                remaining_size
-                if saga_status == OrderStatus.PARTIALLY_MATCHED
-                else None
-            ),
+            "remaining_size": payload_remaining_size,
             "reason_code": reason_code.value,
             "simulation_mode": bool(payload.get("simulation_mode", False)),
         }
@@ -757,11 +757,7 @@ class OrderManager:
             "customer_ref": customer_ref,
             "bet_id": bet_id,
             "matched_size": size_matched,
-            "remaining_size": (
-                remaining_size
-                if saga_status == OrderStatus.PARTIALLY_MATCHED
-                else None
-            ),
+            "remaining_size": payload_remaining_size,
             "reason_code": reason_code.value,
             "response": response,
         }
