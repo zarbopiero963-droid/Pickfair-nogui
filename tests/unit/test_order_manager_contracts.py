@@ -155,27 +155,26 @@ class TestContractShape:
     @staticmethod
     def test_no_bet_id_fails_closed() -> None:
         """A success response without betId is treated as failed."""
-        response = {
+        client = MagicMock(place_bet=MagicMock(return_value={
             "status": "SUCCESS",
             "instructionReports": [{"status": "SUCCESS", "betId": "", "sizeMatched": 0.0}],
-        }
-        client = MagicMock(place_bet=MagicMock(return_value=response))
+        }))
         om = _make_om(client=client)
 
         result = om.place_order(_payload(customer_ref="CONTRACT-NO-BETID"))
 
         assert result["ok"] is False
         assert result["status"] == OrderStatus.FAILED.value
-        if result["remaining_size"] is not None:
-            pytest.fail("remaining_size must be None for fail-closed outcome")
-        if result["reason_code"] != ReasonCode.BROKER_REJECTED.value:
-            pytest.fail("reason_code must be BROKER_REJECTED for fail-closed outcome")
-        if om.bus is None:
-            pytest.fail("event bus must be available")
+        assert result["remaining_size"] is None, "remaining_size must be None for fail-closed outcome"
+        assert result["reason_code"] == ReasonCode.BROKER_REJECTED.value, (
+            "reason_code must be BROKER_REJECTED for fail-closed outcome"
+        )
+        assert om.bus is not None, "event bus must be available"
         bus = cast(FakeBus, om.bus)
         last_event = bus.events[-1][1]
-        if last_event["remaining_size"] is not None:
-            pytest.fail("event remaining_size must be None for fail-closed outcome")
+        assert last_event["remaining_size"] is None, (
+            "event remaining_size must be None for fail-closed outcome"
+        )
 
 
 class TestValidation:
