@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""PR automation controller for safe-autofix and clean-scope escalation."""
+# pylint: disable=too-many-arguments,too-many-locals,too-many-branches,too-many-statements,missing-function-docstring,invalid-name
 from __future__ import annotations
 
 import argparse
@@ -46,6 +48,7 @@ DO_NOT_LAUNCH_AUTOFIX_FOR = {
 
 
 def run(cmd: list[str], *, json_out: bool = False, check: bool = True) -> Any:
+    # nosec B603: command arguments are explicit lists and shell=True is never used.
     try:
         out = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)
     except subprocess.CalledProcessError as exc:

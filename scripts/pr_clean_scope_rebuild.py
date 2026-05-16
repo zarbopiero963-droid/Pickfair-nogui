@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Clean-scope rebuild helper for PR automation control."""
+# pylint: disable=too-many-branches,too-many-statements,too-many-locals
 from __future__ import annotations
 
 import argparse
@@ -7,9 +9,16 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+import re
+
+
+SAFE_BRANCH_RE = re.compile(r"^[A-Za-z0-9._/\-]+$")
+SAFE_REPO_RE = re.compile(r"^[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+$")
 
 
 def run(cmd: list[str], check: bool = True) -> tuple[int, str]:
+    """Run a subprocess command and return returncode/output."""
+    # nosec B603: commands are executed without shell and are validated by command construction below.
     proc = subprocess.run(cmd, text=True, capture_output=True, check=False)
     out = (proc.stdout or "") + (proc.stderr or "")
     if check and proc.returncode != 0:
@@ -18,16 +27,19 @@ def run(cmd: list[str], check: bool = True) -> tuple[int, str]:
 
 
 def parse_csv(value: str) -> list[str]:
+    """Parse comma-separated values into a normalized list."""
     return [v.strip() for v in value.split(",") if v.strip()]
 
 
 def path_matches(path: str, pattern: str) -> bool:
+    """Match exact paths or directory prefixes ending with '/'."""
     if pattern.endswith("/"):
         return path.startswith(pattern)
     return path == pattern
 
 
 def filter_allowlisted(files: list[str], allowlist: list[str]) -> list[str]:
+    """Return changed files that match allowlisted patterns."""
     out: list[str] = []
     for f in files:
         if any(path_matches(f, p) for p in allowlist):
@@ -36,6 +48,7 @@ def filter_allowlisted(files: list[str], allowlist: list[str]) -> list[str]:
 
 
 def filter_forbidden(files: list[str], forbidden: list[str]) -> list[str]:
+    """Return changed files that match forbidden patterns."""
     out: list[str] = []
     for f in files:
         if any(path_matches(f, p) for p in forbidden):
@@ -44,6 +57,7 @@ def filter_forbidden(files: list[str], forbidden: list[str]) -> list[str]:
 
 
 def pr_files(repo: str, pr: str) -> list[str]:
+    """Fetch changed file paths for the PR from GitHub."""
     _, out = run(["gh", "api", f"repos/{repo}/pulls/{pr}/files", "--paginate"])
     payload = json.loads(out or "[]")
     names: list[str] = []
@@ -58,10 +72,12 @@ def pr_files(repo: str, pr: str) -> list[str]:
 
 
 def changed_python_files(files: list[str]) -> list[str]:
+    """Return python files from a path list."""
     return [f for f in files if f.endswith(".py")]
 
 
 def main() -> int:
+    """Execute clean-scope rebuild flow and write decision JSON."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", required=True)
     ap.add_argument("--pr", required=True)
@@ -74,6 +90,12 @@ def main() -> int:
 
     allowlist = parse_csv(args.allowlist)
     forbidden = parse_csv(args.forbidden)
+    if not SAFE_REPO_RE.match(args.repo):
+        raise SystemExit("invalid --repo format")
+    if not args.pr.isdigit():
+        raise SystemExit("invalid --pr format")
+    if not SAFE_BRANCH_RE.match(args.branch):
+        raise SystemExit("invalid --branch format")
 
     decision: dict[str, object] = {
         "action": "clean_scope_rebuild",
