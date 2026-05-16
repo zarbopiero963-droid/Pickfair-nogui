@@ -165,16 +165,16 @@ class TestContractShape:
 
         assert result["ok"] is False
         assert result["status"] == OrderStatus.FAILED.value
-        assert result["remaining_size"] is None, "remaining_size must be None for fail-closed outcome"
-        assert result["reason_code"] == ReasonCode.BROKER_REJECTED.value, (
-            "reason_code must be BROKER_REJECTED for fail-closed outcome"
-        )
-        assert om.bus is not None, "event bus must be available"
+        if result["remaining_size"] is not None:
+            raise AssertionError("remaining_size must be None for fail-closed outcome")
+        if result["reason_code"] != ReasonCode.BROKER_REJECTED.value:
+            raise AssertionError("reason_code must be BROKER_REJECTED for fail-closed outcome")
+        if om.bus is None:
+            raise AssertionError("event bus must be available")
         bus = cast(FakeBus, om.bus)
         last_event = bus.events[-1][1]
-        assert last_event["remaining_size"] is None, (
-            "event remaining_size must be None for fail-closed outcome"
-        )
+        if last_event["remaining_size"] is not None:
+            raise AssertionError("event remaining_size must be None for fail-closed outcome")
 
 
 class TestValidation:
