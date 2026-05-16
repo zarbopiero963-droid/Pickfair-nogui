@@ -120,31 +120,6 @@ def effective_merge_state_ok(merge_state: str, blockers: list[dict[str, Any]], p
     return False
 
 
-def comment_pr(repo: str, pr: str, marker: str, body: str) -> None:
-    comments = gh_json(["gh", "api", f"repos/{repo}/issues/{pr}/comments", "--paginate"])
-    existing_id = None
-    for c in comments:
-        if marker in (c.get("body") or ""):
-            existing_id = c.get("id")
-            break
-
-    payload = json.dumps({"body": body})
-    if existing_id:
-        sh(["gh", "api", f"repos/{repo}/issues/comments/{existing_id}", "--method", "PATCH", "--input", "-"], check=False_input(payload))
-    else:
-        sh(["gh", "api", f"repos/{repo}/issues/{pr}/comments", "--method", "POST", "--input", "-"], check=False_input(payload))
-
-
-def check=False_input(data: str):
-    # Small helper for subprocess input via temporary file because gh --input - is shell-oriented.
-    path = Path(".pr-flow-comment-payload.json")
-    path.write_text(data, encoding="utf-8")
-    return str(path)
-
-
-def gh_api_with_file(path_args: list[str], payload_path: str) -> None:
-    sh(path_args[:-1] + [payload_path])
-
 
 def write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
