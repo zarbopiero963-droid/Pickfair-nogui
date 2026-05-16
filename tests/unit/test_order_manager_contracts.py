@@ -170,6 +170,9 @@ class TestContractShape:
             pytest.fail("remaining_size must be None for fail-closed outcome")
         if result["reason_code"] != ReasonCode.BROKER_REJECTED.value:
             pytest.fail("reason_code must be BROKER_REJECTED for fail-closed outcome")
+        last_event = om.bus.events[-1][1]
+        if last_event["remaining_size"] is not None:
+            pytest.fail("event remaining_size must be None for fail-closed outcome")
 
 
 class TestValidation:
@@ -196,6 +199,7 @@ class TestValidation:
 
 
 class TestErrorClassification:
+    @staticmethod
     @pytest.mark.parametrize(
         ("code", "expected"),
         [
@@ -207,7 +211,6 @@ class TestErrorClassification:
             ("PROCESSED_WITH_ERRORS", ErrorClass.AMBIGUOUS),
         ],
     )
-    @staticmethod
     def test_reason_code_mapping(code: str, expected: ErrorClass) -> None:
         """Maps broker/transport error codes to stable error classes."""
         assert classify_error(code) == expected
