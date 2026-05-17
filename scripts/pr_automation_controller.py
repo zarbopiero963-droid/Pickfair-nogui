@@ -701,7 +701,9 @@ def parse_controller_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     add_controller_core_args(parser)
     add_controller_clean_scope_args(parser)
-    return parser.parse_args()
+    args = parser.parse_args()
+    normalize_controller_args(args)
+    return args
 
 
 def add_controller_core_args(parser: argparse.ArgumentParser) -> None:
@@ -879,7 +881,6 @@ def run_controller(args: argparse.Namespace, decision: dict[str, Any]) -> int:
 
 def main() -> int:
     args = parse_controller_args()
-    normalize_controller_args(args)
     return run_controller(args, initial_decision(args))
 
 
