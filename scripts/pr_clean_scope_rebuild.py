@@ -21,7 +21,6 @@ ALLOWED_COMMAND_FAMILIES = {"gh", "git", "python", "python3", "pytest"}
 
 @dataclass(frozen=True)
 class RebuildArgs:
-
     """Parsed clean-scope rebuild command arguments."""
 
     repo: str
@@ -35,7 +34,6 @@ class RebuildArgs:
 
 @dataclass(frozen=True)
 class CleanBranches:
-
     """Branch names and head SHA used during clean rebuild."""
 
     old_head: str
@@ -53,6 +51,9 @@ def validate_command_family(cmd: list[str]) -> None:
 
 def run(cmd: list[str], check: bool = True) -> tuple[int, str]:
     validate_command_family(cmd)
+    for arg in cmd:
+        if not isinstance(arg, str) or "\x00" in arg:
+            raise ValueError("invalid command argument")
     # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
     # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
     proc = subprocess.run(  # nosec B603
@@ -228,7 +229,11 @@ def create_backup_and_clean_branch(args: RebuildArgs, branches: CleanBranches) -
 
 def restore_files(args: RebuildArgs, restored_files: list[str]) -> None:
     for file_path in restored_files:
-        run(["git", "checkout", f"origin/{args.branch}", "--", file_path])
+        try:
+            run(["git", "checkout", f"origin/{args.branch}", "--", file_path])
+        except RuntimeError as exc:
+            if "did not match any file(s) known to git" not in str(exc):
+                raise
 
 
 def append_test_result(decision: dict[str, Any], name: str, result: str) -> None:
@@ -279,8 +284,8 @@ def run_focused_tests(decision: dict[str, Any], restored_files: list[str]) -> No
         "pytest", "-q", "tests/unit/test_order_manager_contracts.py",
         "tests/reconciliation/test_reconciliation_hardening.py", "-x",
     ]
-    run(cmd)
-    append_test_result(decision, "focused order/reconciliation tests", "pass")
+    return_code, _ = run(cmd, check=False)
+    append_test_result(decision, "focused order/reconciliation tests", "pass" if return_code == 0 else "fail")
 
 
 def commit_and_push(args: RebuildArgs, decision: dict[str, Any], restored_files: list[str]) -> None:
@@ -321,7 +326,8 @@ def main() -> int:
         return execute_rebuild(args, decision, out_path)
     except Exception as exc:
         decision["error"] = str(exc)
-        decision["final_status"] = "error" if decision.get("final_status") == "blocked" else decision["final_status"]
+        if decision.get("final_status") != "blocked":
+            decision["final_status"] = "error"
         return write_decision(out_path, decision)
 
 

@@ -66,21 +66,23 @@ def validate_command_family(cmd: list[str]) -> None:
 
 def run(cmd: list[str], *, json_out: bool = False, check: bool = True) -> Any:
     validate_command_family(cmd)
-    try:
-        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
+    # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
+    # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
+    proc = subprocess.run(  # nosec B603
         # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
-        out = subprocess.check_output(  # nosec B603
-            # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
-            cmd,
-            text=True,
-            stderr=subprocess.STDOUT,
-        )
-    except subprocess.CalledProcessError as exc:
-        if check:
-            raise
-        out = exc.output or ""
+        cmd,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    out = (proc.stdout or "") + (proc.stderr or "")
+    if check and proc.returncode:
+        raise subprocess.CalledProcessError(proc.returncode, cmd, output=out)
     if json_out:
-        return json.loads(out)
+        try:
+            return json.loads(out)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid JSON output for command {cmd!r}: {out}") from exc
     return out
 
 
@@ -226,7 +228,6 @@ class RerunConfig:
 
 @dataclass(frozen=True)
 class SafeAutofixConfig:
-
     """Data container used by the automation flow."""
 
     repo: str
@@ -238,11 +239,10 @@ class SafeAutofixConfig:
 
 @dataclass(frozen=True)
 class CleanScopeRules:
-
     """Data container used by the automation flow."""
 
-    allowlist: list[str]
-    forbidden: list[str]
+    allowlist: tuple[str, ...]
+    forbidden: tuple[str, ...]
     commit_limit: int
 
 
@@ -561,8 +561,8 @@ def handle_cancelled_checks(
 
 def build_clean_scope_rules(args: argparse.Namespace) -> CleanScopeRules:
     return CleanScopeRules(
-        allowlist=parse_csvish(args.clean_scope_allowlist) or CLEAN_SCOPE_ALLOWED_DEFAULT,
-        forbidden=parse_csvish(args.clean_scope_forbidden) or CLEAN_SCOPE_FORBIDDEN_DEFAULT,
+        allowlist=tuple(parse_csvish(args.clean_scope_allowlist) or CLEAN_SCOPE_ALLOWED_DEFAULT),
+        forbidden=tuple(parse_csvish(args.clean_scope_forbidden) or CLEAN_SCOPE_FORBIDDEN_DEFAULT),
         commit_limit=args.clean_scope_commit_limit,
     )
 
@@ -689,7 +689,9 @@ def decide_next_action(ctx: NextActionContext) -> None:
         return
     if maybe_launch_clean_rebuild(ctx, rules, signals):
         return
-    if should_launch:
+    valid_modes = {"disabled", "detect", "execute"}
+    mode = str(ctx.args.clean_scope_rebuild_mode or "")
+    if should_launch and mode in valid_modes and not clean_scope_blocks_safe_autofix(signals):
         record_action(ctx.decision, launch_safe_autofix(safe_autofix_config_from_args(ctx.args)))
         return
     set_no_launch_next_action(ctx.decision, ctx.blockers)
