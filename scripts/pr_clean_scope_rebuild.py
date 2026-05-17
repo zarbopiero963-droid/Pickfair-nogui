@@ -21,7 +21,6 @@ ALLOWED_COMMAND_FAMILIES = {"gh", "git", "python", "python3", "pytest"}
 
 @dataclass(frozen=True)
 class RebuildArgs:
-
     """Parsed clean-scope rebuild command arguments."""
 
     repo: str
@@ -35,7 +34,6 @@ class RebuildArgs:
 
 @dataclass(frozen=True)
 class CleanBranches:
-
     """Branch names and head SHA used during clean rebuild."""
 
     old_head: str
@@ -43,7 +41,7 @@ class CleanBranches:
     clean_branch: str
 
 
-def validate_command_family(cmd: list[str]) -> None:
+def validate_command_family(cmd: Sequence[str]) -> None:
     if not cmd:
         raise ValueError("empty command")
     command_name = Path(str(cmd[0])).name
@@ -56,7 +54,7 @@ def validate_command_arg(arg: str) -> None:
         raise ValueError("invalid command argument")
 
 
-def validate_command_args(cmd: list[str]) -> None:
+def validate_command_args(cmd: Sequence[str]) -> None:
     for arg in cmd:
         validate_command_arg(arg)
 
@@ -65,27 +63,32 @@ def combined_process_output(proc: subprocess.CompletedProcess[str]) -> str:
     return (proc.stdout or "") + (proc.stderr or "")
 
 
+def command_display(cmd: Sequence[str]) -> str:
+    return " ".join(cmd)
+
+
 def raise_if_command_failed(
     proc: subprocess.CompletedProcess[str],
-    cmd: list[str],
+    cmd: Sequence[str],
     output: str,
     check: bool,
 ) -> None:
     if check and proc.returncode:
-        raise RuntimeError(f"command failed ({proc.returncode}): {' '.join(cmd)}\n{output}")
+        raise RuntimeError(f"command failed ({proc.returncode}): {command_display(cmd)}\n{output}")
 
 
-def run(cmd: list[str], check: bool = True) -> tuple[int, str]:
+def run(cmd: Sequence[str], check: bool = True) -> tuple[int, str]:
     validate_command_family(cmd)
     validate_command_args(cmd)
+    safe_cmd = list(cmd)
     proc = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
-        cmd,  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+        safe_cmd,  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
         text=True,
         capture_output=True,
         check=False,
     )
     output = combined_process_output(proc)
-    raise_if_command_failed(proc, cmd, output, check)
+    raise_if_command_failed(proc, safe_cmd, output, check)
     return proc.returncode, output
 
 

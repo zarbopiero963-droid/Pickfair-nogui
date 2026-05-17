@@ -56,7 +56,7 @@ def command_family(command: str) -> str:
     return Path(str(command)).name
 
 
-def validate_command_family(cmd: list[str]) -> None:
+def validate_command_family(cmd: Sequence[str]) -> None:
     if not cmd:
         raise ValueError("empty command")
     family = command_family(cmd[0])
@@ -69,7 +69,7 @@ def validate_command_arg(arg: str) -> None:
         raise ValueError("invalid command argument")
 
 
-def validate_command_args(cmd: list[str]) -> None:
+def validate_command_args(cmd: Sequence[str]) -> None:
     for arg in cmd:
         validate_command_arg(arg)
 
@@ -78,7 +78,7 @@ def combined_process_output(proc: subprocess.CompletedProcess[str]) -> str:
     return (proc.stdout or "") + (proc.stderr or "")
 
 
-def parse_json_output(raw: str, cmd: list[str]) -> Any:
+def parse_json_output(raw: str, cmd: Sequence[str]) -> Any:
     try:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -87,7 +87,7 @@ def parse_json_output(raw: str, cmd: list[str]) -> Any:
 
 def raise_if_command_failed(
     proc: subprocess.CompletedProcess[str],
-    cmd: list[str],
+    cmd: Sequence[str],
     output: str,
     check: bool,
 ) -> None:
@@ -95,18 +95,19 @@ def raise_if_command_failed(
         raise subprocess.CalledProcessError(proc.returncode, cmd, output=output)
 
 
-def run(cmd: list[str], *, json_out: bool = False, check: bool = True) -> Any:
+def run(cmd: Sequence[str], *, json_out: bool = False, check: bool = True) -> Any:
     validate_command_family(cmd)
     validate_command_args(cmd)
+    safe_cmd = list(cmd)
     proc = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
-        cmd,  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+        safe_cmd,  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
         text=True,
         capture_output=True,
         check=False,
     )
     out = combined_process_output(proc)
-    raise_if_command_failed(proc, cmd, out, check)
-    return parse_json_output(out, cmd) if json_out else out
+    raise_if_command_failed(proc, safe_cmd, out, check)
+    return parse_json_output(out, safe_cmd) if json_out else out
 
 
 def parse_csvish(value: str | None) -> list[str]:
@@ -241,7 +242,6 @@ def safe_autofix_runs_command(repo: str) -> list[str]:
 
 @dataclass(frozen=True)
 class RerunConfig:
-
     """Data container used by the automation flow."""
 
     repo: str
