@@ -59,6 +59,7 @@ jobs:
       CODEX_MAX_ATTEMPTS: "3"
       CODEX_FIX_MODEL: gpt-5.3-codex
       CODEX_REVIEW_MODEL: gpt-5.5
+      CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
@@ -269,17 +270,32 @@ jobs:
               echo "Current PR checks:"
               jq -r '.[] | "- \(.name): \(.bucket) / \(.state) / \(.description // "")"' .autofix/pr-checks-current.json
 
-              total_count="$(
-                jq '[.[] | select(.name != "Autofix PR until checks are green") | select((.workflow // "") != "PR Autofix Self-hosted") | select((.bucket // "") != "skipping") | select((.state // "") != "SKIPPED")] | length' .autofix/pr-checks-current.json
-              )"
+              python3 scripts/pr_flow_automation.py readiness \
+                --repo "${REPO}" \
+                --pr "${PR_NUMBER}" \
+                --ignore-safe-autofix \
+                --output .autofix/pr-flow-decision.json \
+                --no-fail \
+                > .autofix/pr-flow-readiness.log || true
+              cat .autofix/pr-flow-readiness.log || true
 
-              red_count="$(
-                jq '[.[] | select(.name != "Autofix PR until checks are green") | select((.workflow // "") != "PR Autofix Self-hosted") | select((.bucket // "") != "skipping") | select((.state // "") != "SKIPPED") | select((.bucket == "fail") or (.bucket == "cancel") or (.state == "FAILURE") or (.state == "ACTION_REQUIRED") or (.state == "ERROR") or (.state == "CANCELLED") or (.state == "TIMED_OUT"))] | length' .autofix/pr-checks-current.json
-              )"
+              if [ -f .autofix/pr-flow-decision.json ]; then
+                red_count="$(jq '.blockers | length' .autofix/pr-flow-decision.json)"
+                pending_count="$(jq '.pending | length' .autofix/pr-flow-decision.json)"
+                total_count="$((red_count + pending_count))"
+              else
+                total_count="$(
+                  jq '[.[] | select(.name != "Autofix PR until checks are green") | select((.workflow // "") != "PR Autofix Self-hosted") | select((.bucket // "") != "skipping") | select((.state // "") != "SKIPPED")] | length' .autofix/pr-checks-current.json
+                )"
 
-              pending_count="$(
-                jq '[.[] | select(.name != "Autofix PR until checks are green") | select((.workflow // "") != "PR Autofix Self-hosted") | select((.bucket // "") != "skipping") | select((.state // "") != "SKIPPED") | select((.bucket == "pending") or (.state == "QUEUED") or (.state == "IN_PROGRESS") or (.state == "PENDING") or (.state == "WAITING") or (.state == "REQUESTED"))] | length' .autofix/pr-checks-current.json
-              )"
+                red_count="$(
+                  jq '[.[] | select(.name != "Autofix PR until checks are green") | select((.workflow // "") != "PR Autofix Self-hosted") | select((.bucket // "") != "skipping") | select((.state // "") != "SKIPPED") | select((.bucket == "fail") or (.bucket == "cancel") or (.state == "FAILURE") or (.state == "ACTION_REQUIRED") or (.state == "ERROR") or (.state == "CANCELLED") or (.state == "TIMED_OUT"))] | length' .autofix/pr-checks-current.json
+                )"
+
+                pending_count="$(
+                  jq '[.[] | select(.name != "Autofix PR until checks are green") | select((.workflow // "") != "PR Autofix Self-hosted") | select((.bucket // "") != "skipping") | select((.state // "") != "SKIPPED") | select((.bucket == "pending") or (.state == "QUEUED") or (.state == "IN_PROGRESS") or (.state == "PENDING") or (.state == "WAITING") or (.state == "REQUESTED"))] | length' .autofix/pr-checks-current.json
+                )"
+              fi
 
               echo "Check classification: total=${total_count}, red=${red_count}, pending=${pending_count}, elapsed=${elapsed}s"
 

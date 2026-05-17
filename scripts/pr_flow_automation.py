@@ -6,18 +6,20 @@ import datetime as dt
 import json
 import os
 import re
+import shutil
 import subprocess
-import sys
 import time
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
-
 SELF_CHECK_NAMES = {
+    "autofix pr until checks are green",
     "safe pr autofix",
     "pr autofix safe supervisor",
     "merge readiness",
     "pr merge readiness",
+    "pr flow guardrails",
 }
 
 OK_STATES = {"SUCCESS", "SKIPPED", "NEUTRAL"}
@@ -60,11 +62,123 @@ def is_self_check(check: dict[str, Any]) -> bool:
     url = check_url(check).lower()
     return (
         name in SELF_CHECK_NAMES
+        or "pr-autofix-selfhosted" in url
         or "pr-autofix-safe-supervisor" in url
         or "pr-merge-readiness" in url
         or "pr-self-check-refresh" in url
         or "pr-flow-guardrails" in url
     )
+
+
+def is_codacy_check(check: dict[str, Any]) -> bool:
+    return "codacy" in (check["name"] + " " + check["url"]).lower()
+
+
+def codacy_issue_items(body: Any) -> list[dict[str, Any]]:
+    if isinstance(body, list):
+        return [x for x in body if isinstance(x, dict)]
+    if not isinstance(body, dict):
+        return []
+    for key in ("data", "issues", "results", "items"):
+        value = body.get(key)
+        if isinstance(value, list):
+            return [x for x in value if isinstance(x, dict)]
+    return []
+
+
+def fetch_codacy_issues(url: str, token: str) -> tuple[int, Any]:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https" or parsed.netloc != "api.codacy.com":
+        raise ValueError("unexpected Codacy API URL")
+
+    curl_path = shutil.which("curl")
+    if not curl_path:
+        raise RuntimeError("curl is unavailable")
+
+    curl_config = f'header = "api-token: {token}"\n'
+    try:
+        completed = subprocess.run(
+            [
+                curl_path,
+                "--fail",
+                "--silent",
+                "--show-error",
+                "--location",
+                "--max-time",
+                "20",
+                "--config",
+                "-",
+                "--write-out",
+                "\n%{http_code}",
+                url,
+            ],
+            input=curl_config,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(exc.stderr.strip() or "Codacy API request failed") from exc
+
+    raw_body, _, raw_status = completed.stdout.rpartition("\n")
+    return int(raw_status), json.loads(raw_body or "{}")
+
+
+def codacy_blocking_evidence(repo: str, pr_number: str, blockers: list[dict[str, Any]]) -> dict[str, Any]:
+    codacy_checks = [b for b in blockers if is_codacy_check(b)]
+    result: dict[str, Any] = {
+        "checks": codacy_checks,
+        "check_blocking": bool(codacy_checks),
+        "api_available": False,
+        "api_ok": False,
+        "issues_returned": None,
+        "blocking": bool(codacy_checks),
+        "ignored": False,
+        "reason": "no Codacy check blocker",
+    }
+    if not codacy_checks:
+        result["blocking"] = False
+        return result
+
+    token = os.environ.get("CODACY_API_TOKEN", "")
+    if not token:
+        result["reason"] = "CODACY_API_TOKEN unavailable; preserving Codacy check blocker"
+        return result
+
+    try:
+        owner, repo_name = repo.split("/", 1)
+    except ValueError:
+        result["reason"] = f"invalid repo {repo!r}; preserving Codacy check blocker"
+        return result
+
+    provider = os.environ.get("CODACY_PROVIDER", "gh")
+    params = urllib.parse.urlencode({"status": "new", "onlyPotential": "false", "limit": "100"})
+    url = (
+        "https://api.codacy.com/api/v3/analysis/"
+        f"organizations/{provider}/{urllib.parse.quote(owner, safe='')}/"
+        f"repositories/{urllib.parse.quote(repo_name, safe='')}/"
+        f"pull-requests/{urllib.parse.quote(str(pr_number), safe='')}/issues?{params}"
+    )
+    result["api_available"] = True
+    try:
+        status, body = fetch_codacy_issues(url, token)
+        result["api_status"] = status
+    except Exception as exc:
+        result["reason"] = f"Codacy API unavailable ({type(exc).__name__}); preserving Codacy check blocker"
+        return result
+
+    items = codacy_issue_items(body)
+    result["api_ok"] = True
+    result["issues_returned"] = len(items)
+    result["blocking"] = bool(items)
+    result["ignored"] = not items
+    result["reason"] = (
+        f"Codacy API returned {len(items)} current issue(s)"
+        if items
+        else "Codacy API returned no current issues; ignoring stale ACTION_REQUIRED check"
+    )
+    return result
 
 
 def pr_view(repo: str, pr: str) -> dict[str, Any]:
@@ -76,10 +190,17 @@ def pr_view(repo: str, pr: str) -> dict[str, Any]:
     ])
 
 
-def split_checks(pr: dict[str, Any], *, ignore_self: bool = True) -> dict[str, list[dict[str, Any]]]:
+def split_checks(
+    pr: dict[str, Any],
+    *,
+    ignore_self: bool = True,
+    ignore_codacy: bool = False,
+) -> dict[str, list[dict[str, Any]]]:
     blockers: list[dict[str, Any]] = []
     pending: list[dict[str, Any]] = []
     ignored: list[dict[str, Any]] = []
+    ignored_self: list[dict[str, Any]] = []
+    ignored_codacy: list[dict[str, Any]] = []
     self_stale: list[dict[str, Any]] = []
 
     for raw in pr.get("statusCheckRollup") or []:
@@ -93,8 +214,16 @@ def split_checks(pr: dict[str, Any], *, ignore_self: bool = True) -> dict[str, l
         if ignore_self and item["is_self_check"]:
             item["ignored"] = True
             ignored.append(item)
+            ignored_self.append(item)
             if item["state"] in BAD_STATES:
                 self_stale.append(item)
+            continue
+
+        if ignore_codacy and is_codacy_check(item):
+            item["ignored"] = True
+            item["ignored_reason"] = "codacy_api_no_current_issues"
+            ignored.append(item)
+            ignored_codacy.append(item)
             continue
 
         item["ignored"] = False
@@ -107,18 +236,48 @@ def split_checks(pr: dict[str, Any], *, ignore_self: bool = True) -> dict[str, l
         "blockers": blockers,
         "pending": pending,
         "ignored": ignored,
+        "ignored_self": ignored_self,
+        "ignored_codacy": ignored_codacy,
         "self_stale": self_stale,
     }
 
 
-def effective_merge_state_ok(merge_state: str, blockers: list[dict[str, Any]], pending: list[dict[str, Any]]) -> bool:
+def effective_merge_state_ok(
+    merge_state: str,
+    blockers: list[dict[str, Any]],
+    pending: list[dict[str, Any]],
+    ignored_codacy: list[dict[str, Any]] | None = None,
+) -> bool:
     state = norm_state(merge_state)
     if state == "CLEAN":
         return True
     if state == "UNSTABLE" and not blockers and not pending:
         return True
+    if state == "BLOCKED" and ignored_codacy and not blockers and not pending:
+        return True
     return False
 
+
+def merge_blocking_reasons(pr: dict[str, Any], checks: dict[str, list[dict[str, Any]]]) -> list[str]:
+    reasons: list[str] = []
+    if pr.get("state") != "OPEN":
+        reasons.append(f"PR state is {pr.get('state')}, expected OPEN")
+    if pr.get("isDraft"):
+        reasons.append("PR is draft")
+    if pr.get("mergeable") != "MERGEABLE":
+        reasons.append(f"mergeable is {pr.get('mergeable')}, expected MERGEABLE")
+    if not effective_merge_state_ok(
+        str(pr.get("mergeStateStatus") or ""),
+        checks["blockers"],
+        checks["pending"],
+        checks.get("ignored_codacy"),
+    ):
+        reasons.append(f"mergeStateStatus is {pr.get('mergeStateStatus')}, expected CLEAN")
+    if checks["blockers"]:
+        reasons.append(f"{len(checks['blockers'])} real blocking check(s)")
+    if checks["pending"]:
+        reasons.append(f"{len(checks['pending'])} real pending check(s)")
+    return reasons
 
 
 def write_json(path: Path, data: Any) -> None:
@@ -145,6 +304,9 @@ def post_or_update_comment(repo: str, pr: str, marker: str, body: str) -> None:
 def build_decision(repo: str, pr_number: str, *, ignore_self: bool = True) -> dict[str, Any]:
     pr = pr_view(repo, pr_number)
     checks = split_checks(pr, ignore_self=ignore_self)
+    codacy = codacy_blocking_evidence(repo, pr_number, checks["blockers"])
+    if codacy["ignored"]:
+        checks = split_checks(pr, ignore_self=ignore_self, ignore_codacy=True)
 
     already_merged = bool(pr.get("mergedAt"))
     reasons: list[str] = []
@@ -152,18 +314,7 @@ def build_decision(repo: str, pr_number: str, *, ignore_self: bool = True) -> di
     if already_merged:
         can_merge = True
     else:
-        if pr.get("state") != "OPEN":
-            reasons.append(f"PR state is {pr.get('state')}, expected OPEN")
-        if pr.get("isDraft"):
-            reasons.append("PR is draft")
-        if pr.get("mergeable") != "MERGEABLE":
-            reasons.append(f"mergeable is {pr.get('mergeable')}, expected MERGEABLE")
-        if not effective_merge_state_ok(str(pr.get("mergeStateStatus") or ""), checks["blockers"], checks["pending"]):
-            reasons.append(f"mergeStateStatus is {pr.get('mergeStateStatus')}, expected CLEAN")
-        if checks["blockers"]:
-            reasons.append(f"{len(checks['blockers'])} real blocking check(s)")
-        if checks["pending"]:
-            reasons.append(f"{len(checks['pending'])} real pending check(s)")
+        reasons = merge_blocking_reasons(pr, checks)
         can_merge = not reasons
 
     return {
@@ -185,8 +336,11 @@ def build_decision(repo: str, pr_number: str, *, ignore_self: bool = True) -> di
         "reasons": reasons,
         "blockers": checks["blockers"],
         "pending": checks["pending"],
-        "ignored_self_checks": checks["ignored"],
+        "ignored": checks["ignored"],
+        "ignored_self_checks": checks["ignored_self"],
+        "ignored_codacy_checks": checks["ignored_codacy"],
         "self_stale": checks["self_stale"],
+        "codacy": codacy,
         "next_action": "merge_allowed" if can_merge and not already_merged else ("already_merged" if already_merged else "blocked"),
     }
 
@@ -286,39 +440,67 @@ def changed_files_for_commit(commit: str) -> list[str]:
     return [x for x in out.splitlines() if x.strip()]
 
 
+def collect_safe_autofix_history(branch: str, pr: str) -> tuple[list[str], dict[str, int]]:
+    if not branch:
+        return [], {}
+
+    branch_ref = f"origin/{branch}"
+    sh(["git", "fetch", "origin", branch], check=False)
+    commits = safe_autofix_commits(branch_ref, pr)
+    file_touches: dict[str, int] = {}
+    for commit in commits:
+        for filename in changed_files_for_commit(commit):
+            file_touches[filename] = file_touches.get(filename, 0) + 1
+    return commits, file_touches
+
+
+def oscillating_files(file_touches: dict[str, int], touch_limit: int) -> list[dict[str, Any]]:
+    return [
+        {"file": filename, "touches": touches}
+        for filename, touches in sorted(file_touches.items())
+        if touches >= touch_limit
+    ]
+
+
+def preflight_issues(
+    args: argparse.Namespace,
+    *,
+    codacy_blocking: bool,
+    codacy_api_available: bool,
+    commits: list[str],
+    oscillating: list[dict[str, Any]],
+) -> list[str]:
+    issues: list[str] = []
+    has_codacy_token = os.environ.get("HAS_CODACY_API_TOKEN", "").lower() in {"true", "1", "yes"}
+    if codacy_blocking and not codacy_api_available and not has_codacy_token:
+        issues.append("CODACY_API_TOKEN missing while Codacy is blocking")
+    if codacy_blocking and len(commits) > args.max_safe_autofix_commits:
+        issues.append(f"safe autofix commit limit exceeded: {len(commits)} > {args.max_safe_autofix_commits}")
+    if oscillating and codacy_blocking:
+        issues.append("possible autofix oscillation detected while Codacy is still blocking")
+    return issues
+
+
 def cmd_preflight(args: argparse.Namespace) -> int:
     pr = pr_view(args.repo, args.pr)
     checks = split_checks(pr, ignore_self=True)
-    issues: list[str] = []
     warnings: list[str] = []
 
-    codacy_blocking = any("codacy" in (b["name"] + " " + b["url"]).lower() for b in checks["blockers"])
-    if codacy_blocking and os.environ.get("HAS_CODACY_API_TOKEN", "").lower() not in {"true", "1", "yes"}:
-        issues.append("CODACY_API_TOKEN missing while Codacy is blocking")
-
+    codacy = codacy_blocking_evidence(args.repo, str(args.pr), checks["blockers"])
+    codacy_blocking = bool(codacy["blocking"])
     if os.environ.get("HAS_PICKFAIR_ACTIONS_TOKEN", "").lower() not in {"true", "1", "yes"}:
         warnings.append("PICKFAIR_ACTIONS_TOKEN appears missing/empty")
 
     branch = pr.get("headRefName") or ""
-    branch_ref = f"origin/{branch}"
-    sh(["git", "fetch", "origin", branch], check=False)
-
-    commits = safe_autofix_commits(branch_ref, str(args.pr)) if branch else []
-    file_touches: dict[str, int] = {}
-    for c in commits:
-        for f in changed_files_for_commit(c):
-            file_touches[f] = file_touches.get(f, 0) + 1
-
-    if len(commits) > args.max_safe_autofix_commits:
-        issues.append(f"safe autofix commit limit exceeded: {len(commits)} > {args.max_safe_autofix_commits}")
-
-    oscillating = [
-        {"file": f, "touches": n}
-        for f, n in sorted(file_touches.items())
-        if n >= args.oscillation_touch_limit
-    ]
-    if oscillating and codacy_blocking:
-        issues.append("possible autofix oscillation detected while Codacy is still blocking")
+    commits, file_touches = collect_safe_autofix_history(branch, str(args.pr))
+    oscillating = oscillating_files(file_touches, args.oscillation_touch_limit)
+    issues = preflight_issues(
+        args,
+        codacy_blocking=codacy_blocking,
+        codacy_api_available=bool(codacy["api_available"]),
+        commits=commits,
+        oscillating=oscillating,
+    )
 
     result = {
         "repo": args.repo,
@@ -327,6 +509,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         "head": pr.get("headRefOid"),
         "branch": branch,
         "codacy_blocking": codacy_blocking,
+        "codacy": codacy,
         "safe_autofix_commits": commits,
         "file_touches": file_touches,
         "oscillating_files": oscillating,

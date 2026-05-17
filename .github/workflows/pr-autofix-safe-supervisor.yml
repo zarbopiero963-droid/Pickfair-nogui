@@ -92,6 +92,12 @@ jobs:
           token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
           fetch-depth: 0
 
+      - name: Checkout PR merge ref
+        if: env.PR_NUMBER != '' && env.PR_NUMBER != 'null'
+        run: |
+          git fetch origin "pull/${PR_NUMBER}/merge:pr-${PR_NUMBER}-merge"
+          git checkout "pr-${PR_NUMBER}-merge"
+
       - name: Copy safe collector
         run: |
           set -euo pipefail
