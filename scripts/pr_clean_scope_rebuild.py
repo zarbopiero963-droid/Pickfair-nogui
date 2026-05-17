@@ -21,7 +21,6 @@ ALLOWED_COMMAND_FAMILIES = {"gh", "git", "python", "python3", "pytest"}
 
 @dataclass(frozen=True)
 class RebuildArgs:
-
     """Parsed clean-scope rebuild command arguments."""
 
     repo: str
@@ -35,7 +34,6 @@ class RebuildArgs:
 
 @dataclass(frozen=True)
 class CleanBranches:
-
     """Branch names and head SHA used during clean rebuild."""
 
     old_head: str
@@ -308,11 +306,8 @@ def stop_if_forbidden_remains(
 
 def focused_tests_needed(restored_files: list[str]) -> bool:
     focused_suffixes = ("/order_manager.py", "/core/reconciliation_engine.py")
-    return any(
-        file_path == suffix.lstrip("/") or file_path.endswith(suffix)
-        for file_path in restored_files
-        for suffix in focused_suffixes
-    )
+    focused_exact = {suffix.lstrip("/") for suffix in focused_suffixes}
+    return any(file_path in focused_exact or file_path.endswith(focused_suffixes) for file_path in restored_files)
 
 
 def run_focused_tests(decision: dict[str, Any], restored_files: list[str]) -> None:
