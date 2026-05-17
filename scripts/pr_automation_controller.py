@@ -9,6 +9,7 @@ import re
 import subprocess  # nosec B404
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -46,15 +47,35 @@ DO_NOT_LAUNCH_AUTOFIX_FOR = {
 }
 
 
+ALLOWED_COMMAND_FAMILIES = {"gh", "git", "python", "python3", "pytest"}
+
+
+def command_family(command: str) -> str:
+    return Path(str(command)).name
+
+
+def validate_command_family(cmd: list[str]) -> None:
+    if not cmd:
+        raise ValueError("empty command")
+    family = command_family(cmd[0])
+    if family not in ALLOWED_COMMAND_FAMILIES:
+        raise ValueError(f"command family not allowed: {family}")
+
+
 def run(cmd: list[str], *, json_out: bool = False, check: bool = True) -> Any:
+    validate_command_family(cmd)
     try:
-        out = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)  # nosec B603
+        out = subprocess.check_output(  # nosec B603 # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
+            cmd,
+            text=True,
+            stderr=subprocess.STDOUT,
+        )
     except subprocess.CalledProcessError as exc:
         if check:
             raise
         out = exc.output or ""
     if json_out:
-        return json.loads(out or "null")
+        return json.loads(out)
     return out
 
 
@@ -186,214 +207,279 @@ def active_safe_autofix_runs(repo: str) -> list[dict[str, Any]]:
     return [r for r in runs if str(r.get("status") or "") != "completed"]
 
 
+
+@dataclass(frozen=True)
+class RerunConfig:
+    """Data container used by the automation flow."""
+    repo: str
+    dry_run: bool
+    max_reruns: int
+
+
+@dataclass(frozen=True)
+class SafeAutofixConfig:
+    """Data container used by the automation flow."""
+    repo: str
+    pr_number: str
+    dry_run: bool
+    max_rounds: str
+    pending_wait_seconds: str
+
+
+@dataclass(frozen=True)
+class CleanScopeRules:
+    """Data container used by the automation flow."""
+    allowlist: list[str]
+    forbidden: list[str]
+    commit_limit: int
+
+
+@dataclass(frozen=True)
+class CleanRebuildConfig:
+    """Data container used by the automation flow."""
+    repo: str
+    pr_number: str
+    head_branch: str
+    dry_run: bool
+    rules: CleanScopeRules
+
+
+@dataclass(frozen=True)
+class PendingWaitConfig:
+    """Data container used by the automation flow."""
+    repo: str
+    pr_number: str
+    started: float
+    wait_seconds: int
+    poll_interval_seconds: int
+
+
+@dataclass(frozen=True)
+class CleanScopeReport:
+    """Data container used by the automation flow."""
+    enabled: bool
+    mode: str
+    rules: CleanScopeRules
+    signals: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class NextActionContext:
+    """Data container used by the automation flow."""
+    args: argparse.Namespace
+    pr: dict[str, Any]
+    checks: list[dict[str, Any]]
+    files: list[str]
+    commits: list[dict[str, Any]]
+    blockers: list[dict[str, Any]]
+    decision: dict[str, Any]
+
+
+def cancelled_non_self_checks(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [check for check in checks if is_cancelled(check) and not is_self_check(check)]
+
+
+def already_seen_run(run_id: str, seen: set[str]) -> bool:
+    return not run_id or run_id in seen
+
+
+def rerun_item(check: dict[str, Any], run_id: str, dry_run: bool) -> dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "check": name_of(check),
+        "url": url_of(check),
+        "action": "would_rerun" if dry_run else "rerun",
+    }
+
+
+def attach_rerun_output(item: dict[str, Any], repo: str, dry_run: bool) -> None:
+    if dry_run:
+        return
+    out = run(["gh", "run", "rerun", str(item["run_id"]), "--repo", repo], check=False)
+    item["output"] = out.strip()[-500:]
+
+
 def rerun_cancelled_checks(
-    *,
-    repo: str,
     checks: list[dict[str, Any]],
-    dry_run: bool,
-    max_reruns: int,
+    config: RerunConfig,
 ) -> list[dict[str, Any]]:
     rerun: list[dict[str, Any]] = []
     seen: set[str] = set()
-
-    for check in checks:
-        if len(rerun) >= max_reruns:
+    for check in cancelled_non_self_checks(checks):
+        if len(rerun) >= config.max_reruns:
             break
-        if not is_cancelled(check):
-            continue
-        if is_self_check(check):
-            continue
-
         run_id = extract_run_id(url_of(check))
-        if not run_id or run_id in seen:
+        if already_seen_run(run_id, seen):
             continue
         seen.add(run_id)
-
-        item = {
-            "run_id": run_id,
-            "check": name_of(check),
-            "url": url_of(check),
-            "action": "would_rerun" if dry_run else "rerun",
-        }
-
-        if not dry_run:
-            out = run(["gh", "run", "rerun", run_id, "--repo", repo], check=False)
-            item["output"] = out.strip()[-500:]
-
+        item = rerun_item(check, run_id, config.dry_run)
+        attach_rerun_output(item, config.repo, config.dry_run)
         rerun.append(item)
-
     return rerun
 
 
-def launch_safe_autofix(
-    *,
-    repo: str,
-    pr: str,
-    dry_run: bool,
-    max_rounds: str,
-    pending_wait_seconds: str,
-) -> dict[str, Any]:
-    active = active_safe_autofix_runs(repo)
+def safe_autofix_command(config: SafeAutofixConfig) -> list[str]:
+    return [
+        "gh",
+        "workflow",
+        "run",
+        SAFE_AUTOFIX_WORKFLOW,
+        "--repo",
+        config.repo,
+        "--ref",
+        "main",
+        "-f",
+        f"pr_number={config.pr_number}",
+        "-f",
+        f"max_rounds={config.max_rounds}",
+        "-f",
+        f"pending_wait_seconds={config.pending_wait_seconds}",
+        "-f",
+        "dry_run=false",
+    ]
+
+
+def launch_safe_autofix(config: SafeAutofixConfig) -> dict[str, Any]:
+    active = active_safe_autofix_runs(config.repo)
     if active:
         return {
             "action": "skip_launch_safe_autofix",
             "reason": "safe_autofix_already_active",
             "active": active,
         }
-
-    cmd = [
-        "gh",
-        "workflow",
-        "run",
-        SAFE_AUTOFIX_WORKFLOW,
-        "--repo",
-        repo,
-        "--ref",
-        "main",
-        "-f",
-        f"pr_number={pr}",
-        "-f",
-        f"max_rounds={max_rounds}",
-        "-f",
-        f"pending_wait_seconds={pending_wait_seconds}",
-        "-f",
-        "dry_run=false",
-    ]
-
-    if dry_run:
+    cmd = safe_autofix_command(config)
+    if config.dry_run:
         return {"action": "would_launch_safe_autofix", "cmd": cmd}
-
     out = run(cmd, check=False)
-    return {
-        "action": "launch_safe_autofix",
-        "output": out.strip()[-1000:],
-    }
+    return {"action": "launch_safe_autofix", "output": out.strip()[-1000:]}
 
 
 def should_launch_autofix(checks: list[dict[str, Any]]) -> tuple[bool, list[dict[str, Any]]]:
     launchable: list[dict[str, Any]] = []
-
     for check in checks:
-        if not is_failure(check):
+        if not is_failure(check) or is_self_check(check):
             continue
-        if is_self_check(check):
-            continue
-
         name = name_of(check).lower()
-        if name in DO_NOT_LAUNCH_AUTOFIX_FOR:
-            continue
-
-        launchable.append(compact_check(check))
-
+        if name not in DO_NOT_LAUNCH_AUTOFIX_FOR:
+            launchable.append(compact_check(check))
     return bool(launchable), launchable
 
 
 def path_matches(path: str, pattern: str) -> bool:
-    p = pattern.strip()
-    if not p:
+    pattern_text = pattern.strip()
+    if not pattern_text:
         return False
-    if p.endswith("/"):
-        return path.startswith(p)
-    return path == p
+    if pattern_text.endswith("/"):
+        return path.startswith(pattern_text)
+    return path == pattern_text
 
 
 def find_forbidden_files(files: list[str], forbidden_patterns: list[str]) -> list[str]:
-    hit: list[str] = []
-    for f in files:
-        if any(path_matches(f, p) for p in forbidden_patterns):
-            hit.append(f)
+    hit = [
+        file_path
+        for file_path in files
+        if any(path_matches(file_path, pattern) for pattern in forbidden_patterns)
+    ]
     return sorted(set(hit))
 
 
 def has_allowlisted_file(files: list[str], allowlist_patterns: list[str]) -> bool:
-    return any(any(path_matches(file_path, pattern) for pattern in allowlist_patterns) for file_path in files)
+    return any(
+        path_matches(file_path, pattern)
+        for file_path in files
+        for pattern in allowlist_patterns
+    )
 
 
-def collect_clean_scope_signals(
-    *,
-    files: list[str],
-    commits: list[dict[str, Any]],
-    allowlist: list[str],
-    forbidden: list[str],
-    commit_limit: int,
-) -> dict[str, Any]:
-    forbidden_files = find_forbidden_files(files, forbidden)
-    has_allowed = has_allowlisted_file(files, allowlist)
-    limit_exceeded, autofix_commit_count = detect_autofix_limit_exceeded(commits, commit_limit)
-    possible_oscillation = detect_possible_oscillation(commits)
-    return {
-        "forbidden_files": forbidden_files,
-        "has_allowlisted_file": has_allowed,
-        "autofix_commit_count": autofix_commit_count,
-        "autofix_commit_limit_exceeded": limit_exceeded,
-        "possible_autofix_oscillation": possible_oscillation,
-    }
+def commit_author_login(commit: dict[str, Any]) -> str:
+    raw_author = commit.get("author")
+    author: dict[str, Any] = raw_author if isinstance(raw_author, dict) else {}
+    return str(author.get("login") or "").strip().lower()
+
+
+def commit_first_line(commit: dict[str, Any]) -> str:
+    raw_payload = commit.get("commit")
+    payload: dict[str, Any] = raw_payload if isinstance(raw_payload, dict) else {}
+    message = str(payload.get("message") or "")
+    return message.splitlines()[0].lower() if message else ""
+
+
+def is_autofix_commit(commit: dict[str, Any]) -> bool:
+    login = commit_author_login(commit)
+    first_line = commit_first_line(commit)
+    return login in AUTOFIX_COMMIT_ACTOR_ALLOWLIST or "autofix" in first_line
 
 
 def detect_autofix_limit_exceeded(
     commits: list[dict[str, Any]],
     commit_limit: int,
 ) -> tuple[bool, int]:
-    count = 0
-    for c in commits:
-        if not isinstance(c, dict):
-            continue
-        author = (c.get("author") or {}) if isinstance(c.get("author"), dict) else {}
-        login = str(author.get("login") or "").strip().lower()
-        msg = str(((c.get("commit") or {}).get("message") if isinstance(c.get("commit"), dict) else "") or "")
-        first = msg.splitlines()[0].lower() if msg else ""
-        if login in AUTOFIX_COMMIT_ACTOR_ALLOWLIST or "autofix" in first:
-            count += 1
+    count = sum(
+        1
+        for commit in commits
+        if isinstance(commit, dict) and is_autofix_commit(commit)
+    )
     return count > max(0, commit_limit), count
 
 
 def detect_possible_oscillation(commits: list[dict[str, Any]]) -> bool:
-    normalized: list[str] = []
-    for c in commits[:8]:
-        if not isinstance(c, dict):
-            continue
-        msg = str(((c.get("commit") or {}).get("message") if isinstance(c.get("commit"), dict) else "") or "")
-        first = msg.splitlines()[0].strip().lower()
-        if first:
-            normalized.append(first)
+    normalized = [
+        commit_first_line(commit).strip().lower()
+        for commit in commits[:8]
+        if isinstance(commit, dict) and commit_first_line(commit).strip()
+    ]
     if len(normalized) < 4:
         return False
     repeats = len(normalized) - len(set(normalized))
     return repeats >= 2
 
 
-def run_clean_scope_rebuild(
-    *,
-    repo: str,
-    pr: str,
-    head_branch: str,
-    dry_run: bool,
-    allowlist: list[str],
-    forbidden: list[str],
+def collect_clean_scope_signals(
+    files: list[str],
+    commits: list[dict[str, Any]],
+    rules: CleanScopeRules,
 ) -> dict[str, Any]:
-    decision_path = f"pr-clean-scope-rebuild-{pr}/decision.json"
-    cmd = [
+    limit_exceeded, commit_count = detect_autofix_limit_exceeded(
+        commits,
+        rules.commit_limit,
+    )
+    return {
+        "forbidden_files": find_forbidden_files(files, rules.forbidden),
+        "has_allowlisted_file": has_allowlisted_file(files, rules.allowlist),
+        "autofix_commit_count": commit_count,
+        "autofix_commit_limit_exceeded": limit_exceeded,
+        "possible_autofix_oscillation": detect_possible_oscillation(commits),
+    }
+
+
+def clean_rebuild_command(config: CleanRebuildConfig, decision_path: str) -> list[str]:
+    return [
         sys.executable,
         "scripts/pr_clean_scope_rebuild.py",
         "--repo",
-        repo,
+        config.repo,
         "--pr",
-        pr,
+        config.pr_number,
         "--branch",
-        head_branch,
+        config.head_branch,
+        "--allowlist",
+        ",".join(config.rules.allowlist),
+        "--forbidden",
+        ",".join(config.rules.forbidden),
         "--decision-out",
         decision_path,
     ]
-    if allowlist:
-        cmd.extend(["--allowlist", ",".join(allowlist)])
-    if forbidden:
-        cmd.extend(["--forbidden", ",".join(forbidden)])
-    if dry_run:
-        cmd.append("--dry-run")
 
+
+def run_clean_scope_rebuild(config: CleanRebuildConfig) -> dict[str, Any]:
+    decision_path = f"pr-clean-scope-rebuild-{config.pr_number}/decision.json"
+    cmd = clean_rebuild_command(config, decision_path)
+    if config.dry_run:
+        cmd.append("--dry-run")
     out = run(cmd, check=False)
+    action = "would_launch_clean_scope_rebuild" if config.dry_run else "launch_clean_scope_rebuild"
     return {
-        "action": "would_launch_clean_scope_rebuild" if dry_run else "launch_clean_scope_rebuild",
+        "action": action,
         "cmd": cmd,
         "output_tail": str(out).strip()[-2000:],
         "decision_path": decision_path,
@@ -406,174 +492,220 @@ def write_decision(output_path: str, decision: dict[str, Any]) -> int:
     return 0
 
 
+def pending_checks_from_pr(pr: dict[str, Any]) -> list[dict[str, Any]]:
+    checks = pr.get("statusCheckRollup") or []
+    return [compact_check(check) for check in checks if is_pending(check) and not is_self_check(check)]
+
+
+def store_pending_report(decision: dict[str, Any], pending: list[dict[str, Any]]) -> None:
+    decision["pending_count"] = len(pending)
+    decision["pending"] = pending[:40]
+
+
+def pending_wait_elapsed(config: PendingWaitConfig) -> bool:
+    return time.time() - config.started >= config.wait_seconds
+
+
 def wait_for_pending_checks(
-    *,
     pr: dict[str, Any],
-    repo: str,
-    pr_number: str,
-    started: float,
-    pending_wait_seconds: int,
-    poll_interval_seconds: int,
+    config: PendingWaitConfig,
     decision: dict[str, Any],
 ) -> tuple[dict[str, Any], bool]:
-    pending_wait_exhausted = False
     while True:
-        checks = pr.get("statusCheckRollup") or []
-        pending = [compact_check(c) for c in checks if is_pending(c) and not is_self_check(c)]
-        decision["pending_count"] = len(pending)
-        decision["pending"] = pending[:40]
+        pending = pending_checks_from_pr(pr)
+        store_pending_report(decision, pending)
         if not pending:
-            break
-
-        elapsed = time.time() - started
-        if elapsed >= pending_wait_seconds:
+            return pr, False
+        if pending_wait_elapsed(config):
             decision["next_action"] = "pending_wait_budget_exhausted"
             decision["warnings"].append("pending checks still present after wait budget")
-            pending_wait_exhausted = True
-            break
-        time.sleep(max(1, poll_interval_seconds))
-        pr = pr_view(repo, pr_number)
-    return pr, pending_wait_exhausted
+            return pr, True
+        time.sleep(max(1, config.poll_interval_seconds))
+        pr = pr_view(config.repo, config.pr_number)
 
 
 def handle_cancelled_checks(
-    *,
-    decision: dict[str, Any],
     checks: list[dict[str, Any]],
-    repo: str,
-    dry_run: bool,
-    max_reruns: int,
+    config: RerunConfig,
+    decision: dict[str, Any],
 ) -> bool:
-    cancelled = [compact_check(c) for c in checks if is_cancelled(c) and not is_self_check(c)]
+    cancelled = [compact_check(check) for check in cancelled_non_self_checks(checks)]
     decision["cancelled"] = cancelled
     if not cancelled:
         return False
-    rerun = rerun_cancelled_checks(
-        repo=repo,
-        checks=checks,
-        dry_run=dry_run,
-        max_reruns=max_reruns,
-    )
+    rerun = rerun_cancelled_checks(checks, config)
     decision["actions"].append({"type": "rerun_cancelled", "items": rerun})
     decision["next_action"] = "rerun_cancelled_checks" if rerun else "cancelled_checks_no_rerun_target"
     return True
 
 
-def decide_next_action(
-    *,
-    args: argparse.Namespace,
-    pr: dict[str, Any],
-    checks: list[dict[str, Any]],
-    files: list[str],
-    commits: list[dict[str, Any]],
-    blockers: list[dict[str, Any]],
-    decision: dict[str, Any],
-) -> None:
-    should_launch, launchable = should_launch_autofix(checks)
-    decision["launchable_for_safe_autofix"] = launchable
-
-    allowlist = parse_csvish(args.clean_scope_allowlist) or CLEAN_SCOPE_ALLOWED_DEFAULT
-    forbidden = parse_csvish(args.clean_scope_forbidden) or CLEAN_SCOPE_FORBIDDEN_DEFAULT
-    clean_scope_signals = collect_clean_scope_signals(
-        files=files,
-        commits=commits,
-        allowlist=allowlist,
-        forbidden=forbidden,
+def build_clean_scope_rules(args: argparse.Namespace) -> CleanScopeRules:
+    return CleanScopeRules(
+        allowlist=parse_csvish(args.clean_scope_allowlist) or CLEAN_SCOPE_ALLOWED_DEFAULT,
+        forbidden=parse_csvish(args.clean_scope_forbidden) or CLEAN_SCOPE_FORBIDDEN_DEFAULT,
         commit_limit=args.clean_scope_commit_limit,
     )
-    forbidden_files = clean_scope_signals["forbidden_files"]
-    has_allowed = bool(clean_scope_signals["has_allowlisted_file"])
-    limit_exceeded = bool(clean_scope_signals["autofix_commit_limit_exceeded"])
-    autofix_commit_count = int(clean_scope_signals["autofix_commit_count"])
-    possible_oscillation = bool(clean_scope_signals["possible_autofix_oscillation"])
-    clean_scope_enabled = args.clean_scope_rebuild or args.clean_scope_rebuild_mode != "disabled"
 
+
+def build_clean_scope_context(
+    args: argparse.Namespace,
+    files: list[str],
+    commits: list[dict[str, Any]],
+) -> tuple[CleanScopeRules, dict[str, Any]]:
+    rules = build_clean_scope_rules(args)
+    return rules, collect_clean_scope_signals(files, commits, rules)
+
+
+def clean_scope_is_enabled(args: argparse.Namespace) -> bool:
+    return bool(args.clean_scope_rebuild or args.clean_scope_rebuild_mode != "disabled")
+
+
+def clean_scope_blocks_safe_autofix(signals: dict[str, Any]) -> bool:
+    return bool(
+        signals["forbidden_files"]
+        or signals["autofix_commit_limit_exceeded"]
+        or signals["possible_autofix_oscillation"]
+    )
+
+
+def clean_scope_should_rebuild(args: argparse.Namespace, signals: dict[str, Any]) -> bool:
+    return clean_scope_is_enabled(args) and clean_scope_blocks_safe_autofix(signals)
+
+
+def store_clean_scope_report(decision: dict[str, Any], report: CleanScopeReport) -> None:
     decision["clean_scope"] = {
-        "enabled": clean_scope_enabled,
-        "mode": args.clean_scope_rebuild_mode,
-        "allowlist": allowlist,
-        "forbidden": forbidden,
-        "forbidden_files": forbidden_files,
-        "has_allowlisted_file": has_allowed,
-        "autofix_commit_limit": args.clean_scope_commit_limit,
-        "autofix_commit_count": autofix_commit_count,
-        "autofix_commit_limit_exceeded": limit_exceeded,
-        "possible_autofix_oscillation": possible_oscillation,
+        "enabled": report.enabled,
+        "mode": report.mode,
+        "allowlist": report.rules.allowlist,
+        "forbidden": report.rules.forbidden,
+        "forbidden_files": report.signals["forbidden_files"],
+        "has_allowlisted_file": bool(report.signals["has_allowlisted_file"]),
+        "autofix_commit_limit": report.rules.commit_limit,
+        "autofix_commit_count": int(report.signals["autofix_commit_count"]),
+        "autofix_commit_limit_exceeded": bool(report.signals["autofix_commit_limit_exceeded"]),
+        "possible_autofix_oscillation": bool(report.signals["possible_autofix_oscillation"]),
     }
 
-    scope_contaminated = bool(forbidden_files)
-    rebuild_triggered = clean_scope_enabled and (scope_contaminated or limit_exceeded or possible_oscillation)
-    safe_first_ok = should_launch and not scope_contaminated and not limit_exceeded and not possible_oscillation
 
-    if safe_first_ok:
-        action = launch_safe_autofix(
-            repo=args.repo,
-            pr=args.pr,
-            dry_run=args.dry_run,
-            max_rounds=args.safe_max_rounds,
-            pending_wait_seconds=args.safe_pending_wait_seconds,
-        )
-        decision["actions"].append(action)
-        decision["next_action"] = action.get("action")
-        return
-    if rebuild_triggered and args.clean_scope_rebuild_mode == "execute":
-        action = run_clean_scope_rebuild(
-            repo=args.repo,
-            pr=args.pr,
-            head_branch=str(pr.get("headRefName") or ""),
-            dry_run=args.dry_run,
-            allowlist=allowlist,
-            forbidden=forbidden,
-        )
-        decision["actions"].append(action)
-        decision["next_action"] = action.get("action")
-        return
-    if rebuild_triggered and args.clean_scope_rebuild_mode == "detect":
-        decision["next_action"] = "clean_scope_rebuild_required_detect_mode"
-        return
-    if should_launch:
-        action = launch_safe_autofix(
-            repo=args.repo,
-            pr=args.pr,
-            dry_run=args.dry_run,
-            max_rounds=args.safe_max_rounds,
-            pending_wait_seconds=args.safe_pending_wait_seconds,
-        )
-        decision["actions"].append(action)
-        decision["next_action"] = action.get("action")
-        return
+def safe_autofix_config_from_args(args: argparse.Namespace) -> SafeAutofixConfig:
+    return SafeAutofixConfig(
+        repo=args.repo,
+        pr_number=args.pr,
+        dry_run=args.dry_run,
+        max_rounds=args.safe_max_rounds,
+        pending_wait_seconds=args.safe_pending_wait_seconds,
+    )
+
+
+def clean_rebuild_config_from_context(
+    ctx: NextActionContext,
+    rules: CleanScopeRules,
+) -> CleanRebuildConfig:
+    return CleanRebuildConfig(
+        repo=ctx.args.repo,
+        pr_number=ctx.args.pr,
+        head_branch=str(ctx.pr.get("headRefName") or ""),
+        dry_run=ctx.args.dry_run,
+        rules=rules,
+    )
+
+
+def record_action(decision: dict[str, Any], action: dict[str, Any]) -> None:
+    decision["actions"].append(action)
+    decision["next_action"] = action.get("action")
+
+
+def set_no_launch_next_action(decision: dict[str, Any], blockers: list[dict[str, Any]]) -> None:
     if blockers:
         decision["next_action"] = "manual_or_infrastructure_blockers"
-    elif decision.get("pending_count", 0):
+        return
+    if decision.get("pending_count", 0):
         decision["next_action"] = "wait_pending"
-    else:
-        decision["next_action"] = "checks_green_or_no_action"
+        return
+    decision["next_action"] = "checks_green_or_no_action"
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--repo", required=True)
-    ap.add_argument("--pr", required=True)
-    ap.add_argument("--output", default=".pr-controller/decision.json")
-    ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--pending-wait-seconds", type=int, default=300)
-    ap.add_argument("--poll-interval-seconds", type=int, default=20)
-    ap.add_argument("--max-reruns", type=int, default=6)
-    ap.add_argument("--safe-max-rounds", default="1")
-    ap.add_argument("--safe-pending-wait-seconds", default="600")
-    ap.add_argument("--clean-scope-rebuild", action="store_true")
-    ap.add_argument("--clean-scope-rebuild-mode", default="disabled", choices=["disabled", "detect", "execute", "auto"])
-    ap.add_argument("--clean-scope-commit-limit", type=int, default=3)
-    ap.add_argument("--clean-scope-allowlist", default="")
-    ap.add_argument("--clean-scope-forbidden", default="")
-    args = ap.parse_args()
+def maybe_launch_safe_first(
+    ctx: NextActionContext,
+    should_launch: bool,
+    signals: dict[str, Any],
+) -> bool:
+    if not should_launch or clean_scope_blocks_safe_autofix(signals):
+        return False
+    action = launch_safe_autofix(safe_autofix_config_from_args(ctx.args))
+    record_action(ctx.decision, action)
+    return True
 
-    # Normalize clean scope rebuild auto mode.
-    if getattr(args, "clean_scope_rebuild_mode", None) == "auto":
-        args.clean_scope_rebuild_mode = "execute" if getattr(args, "clean_scope_rebuild", False) else "disabled"
 
-    started = time.time()
-    decision: dict[str, Any] = {
+def maybe_launch_clean_rebuild(
+    ctx: NextActionContext,
+    rules: CleanScopeRules,
+    signals: dict[str, Any],
+) -> bool:
+    if not clean_scope_should_rebuild(ctx.args, signals):
+        return False
+    if ctx.args.clean_scope_rebuild_mode == "detect":
+        ctx.decision["next_action"] = "clean_scope_rebuild_required_detect_mode"
+        return True
+    if ctx.args.clean_scope_rebuild_mode != "execute":
+        return False
+    action = run_clean_scope_rebuild(clean_rebuild_config_from_context(ctx, rules))
+    record_action(ctx.decision, action)
+    return True
+
+
+def decide_next_action(ctx: NextActionContext) -> None:
+    should_launch, launchable = should_launch_autofix(ctx.checks)
+    ctx.decision["launchable_for_safe_autofix"] = launchable
+    rules, signals = build_clean_scope_context(ctx.args, ctx.files, ctx.commits)
+    report = CleanScopeReport(
+        enabled=clean_scope_is_enabled(ctx.args),
+        mode=ctx.args.clean_scope_rebuild_mode,
+        rules=rules,
+        signals=signals,
+    )
+    store_clean_scope_report(ctx.decision, report)
+    if maybe_launch_safe_first(ctx, should_launch, signals):
+        return
+    if maybe_launch_clean_rebuild(ctx, rules, signals):
+        return
+    if should_launch:
+        record_action(ctx.decision, launch_safe_autofix(safe_autofix_config_from_args(ctx.args)))
+        return
+    set_no_launch_next_action(ctx.decision, ctx.blockers)
+
+
+def parse_controller_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--repo", required=True)
+    parser.add_argument("--pr", required=True)
+    parser.add_argument("--output", default=".pr-controller/decision.json")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--pending-wait-seconds", type=int, default=300)
+    parser.add_argument("--poll-interval-seconds", type=int, default=20)
+    parser.add_argument("--max-reruns", type=int, default=6)
+    parser.add_argument("--safe-max-rounds", default="1")
+    parser.add_argument("--safe-pending-wait-seconds", default="600")
+    parser.add_argument("--clean-scope-rebuild", action="store_true")
+    parser.add_argument(
+        "--clean-scope-rebuild-mode",
+        default="disabled",
+        choices=["disabled", "detect", "execute", "auto"],
+    )
+    parser.add_argument("--clean-scope-commit-limit", type=int, default=3)
+    parser.add_argument("--clean-scope-allowlist", default="")
+    parser.add_argument("--clean-scope-forbidden", default="")
+    return parser.parse_args()
+
+
+def normalize_controller_args(args: argparse.Namespace) -> None:
+    if getattr(args, "clean_scope_rebuild_mode", None) != "auto":
+        return
+    args.clean_scope_rebuild_mode = "execute" if args.clean_scope_rebuild else "disabled"
+
+
+def initial_decision(args: argparse.Namespace) -> dict[str, Any]:
+    return {
         "repo": args.repo,
         "pr": args.pr,
         "dry_run": args.dry_run,
@@ -582,19 +714,24 @@ def main() -> int:
         "errors": [],
     }
 
-    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
 
+def load_pr_or_record_error(
+    args: argparse.Namespace,
+    decision: dict[str, Any],
+) -> dict[str, Any] | None:
     try:
-        pr = pr_view(args.repo, args.pr)
+        return pr_view(args.repo, args.pr)
     except Exception as exc:
         decision["next_action"] = "error"
         decision["errors"].append(f"failed_to_load_pr: {exc}")
-        return write_decision(args.output, decision)
+        return None
 
-    checks = pr.get("statusCheckRollup") or []
-    files = pr_files(args.repo, args.pr)
-    commits = pr_commits(args.repo, args.pr)
 
+def update_decision_pr_metadata(
+    decision: dict[str, Any],
+    args: argparse.Namespace,
+    pr: dict[str, Any],
+) -> None:
     decision.update(
         {
             "state": pr.get("state"),
@@ -609,44 +746,79 @@ def main() -> int:
         }
     )
 
+
+def skip_action_for_pr(pr: dict[str, Any]) -> str | None:
     if pr.get("state") != "OPEN":
-        decision["next_action"] = "skip_not_open"
-        return write_decision(args.output, decision)
-
+        return "skip_not_open"
     if pr.get("isDraft"):
-        decision["next_action"] = "skip_draft"
-        return write_decision(args.output, decision)
+        return "skip_draft"
+    return None
 
-    pr, pending_wait_exhausted = wait_for_pending_checks(
-        pr=pr,
+
+def is_real_blocker(check: dict[str, Any]) -> bool:
+    return is_failure(check) and not is_self_check(check)
+
+
+def is_reportable_self_check(check: dict[str, Any]) -> bool:
+    return is_self_check(check) and (
+        is_failure(check) or is_cancelled(check) or is_pending(check)
+    )
+
+
+def set_check_buckets(
+    decision: dict[str, Any],
+    checks: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    blockers = [compact_check(check) for check in checks if is_real_blocker(check)]
+    ignored_self = [compact_check(check) for check in checks if is_reportable_self_check(check)]
+    decision["blockers"] = blockers
+    decision["ignored_self_checks"] = ignored_self
+    return blockers
+
+
+def pending_wait_config(args: argparse.Namespace, started: float) -> PendingWaitConfig:
+    return PendingWaitConfig(
         repo=args.repo,
         pr_number=args.pr,
         started=started,
-        pending_wait_seconds=args.pending_wait_seconds,
+        wait_seconds=args.pending_wait_seconds,
         poll_interval_seconds=args.poll_interval_seconds,
-        decision=decision,
     )
 
-    checks = pr.get("statusCheckRollup") or []
 
-    if pending_wait_exhausted:
-        return write_decision(args.output, decision)
-
-    if handle_cancelled_checks(
-        decision=decision,
-        checks=checks,
+def rerun_config(args: argparse.Namespace) -> RerunConfig:
+    return RerunConfig(
         repo=args.repo,
         dry_run=args.dry_run,
         max_reruns=args.max_reruns,
-    ):
+    )
+
+
+def run_controller(args: argparse.Namespace, decision: dict[str, Any]) -> int:
+    started = time.time()
+    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+    pr = load_pr_or_record_error(args, decision)
+    if pr is None:
         return write_decision(args.output, decision)
-
-    blockers = [compact_check(c) for c in checks if is_failure(c) and not is_self_check(c)]
-    ignored_self = [compact_check(c) for c in checks if (is_failure(c) or is_cancelled(c) or is_pending(c)) and is_self_check(c)]
-    decision["blockers"] = blockers
-    decision["ignored_self_checks"] = ignored_self
-
-    decide_next_action(
+    files = pr_files(args.repo, args.pr)
+    commits = pr_commits(args.repo, args.pr)
+    update_decision_pr_metadata(decision, args, pr)
+    skip_action = skip_action_for_pr(pr)
+    if skip_action:
+        decision["next_action"] = skip_action
+        return write_decision(args.output, decision)
+    pr, pending_wait_exhausted = wait_for_pending_checks(
+        pr,
+        pending_wait_config(args, started),
+        decision,
+    )
+    if pending_wait_exhausted:
+        return write_decision(args.output, decision)
+    checks = pr.get("statusCheckRollup") or []
+    if handle_cancelled_checks(checks, rerun_config(args), decision):
+        return write_decision(args.output, decision)
+    blockers = set_check_buckets(decision, checks)
+    ctx = NextActionContext(
         args=args,
         pr=pr,
         checks=checks,
@@ -655,7 +827,14 @@ def main() -> int:
         blockers=blockers,
         decision=decision,
     )
+    decide_next_action(ctx)
     return write_decision(args.output, decision)
+
+
+def main() -> int:
+    args = parse_controller_args()
+    normalize_controller_args(args)
+    return run_controller(args, initial_decision(args))
 
 
 if __name__ == "__main__":
