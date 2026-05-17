@@ -21,6 +21,7 @@ ALLOWED_COMMAND_FAMILIES = {"gh", "git", "python", "python3", "pytest"}
 
 @dataclass(frozen=True)
 class RebuildArgs:
+
     """Parsed clean-scope rebuild command arguments."""
 
     repo: str
@@ -34,6 +35,7 @@ class RebuildArgs:
 
 @dataclass(frozen=True)
 class CleanBranches:
+
     """Branch names and head SHA used during clean rebuild."""
 
     old_head: str
@@ -76,9 +78,12 @@ def raise_if_command_failed(
 def run(cmd: list[str], check: bool = True) -> tuple[int, str]:
     validate_command_family(cmd)
     validate_command_args(cmd)
-    # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
-    # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
-    proc = subprocess.run(cmd, text=True, capture_output=True, check=False)  # nosec B603
+    proc = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+        cmd,  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+        text=True,
+        capture_output=True,
+        check=False,
+    )
     output = combined_process_output(proc)
     raise_if_command_failed(proc, cmd, output, check)
     return proc.returncode, output
@@ -265,7 +270,16 @@ def run_compile_guard(decision: dict[str, Any], restored_files: list[str]) -> No
     python_files = changed_python_files(restored_files)
     if not python_files:
         return
-    run([sys.executable, "-m", "py_compile", *python_files])
+    executable = str(sys.executable)
+    executable_name = Path(executable).name
+    if executable_name.startswith("python3"):
+        family = "python3"
+    elif executable_name.startswith("python"):
+        family = "python"
+    else:
+        family = executable_name
+    validate_command_family([family])
+    run([executable, "-m", "py_compile", *python_files])
     append_test_result(decision, "python3 -m py_compile <changed python files>", "pass")
 
 
@@ -339,7 +353,7 @@ def main() -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         return execute_rebuild(args, decision, out_path)
-    except Exception as exc:
+    except (RuntimeError, ValueError, OSError, subprocess.CalledProcessError) as exc:
         decision["error"] = str(exc)
         if decision.get("final_status") != "blocked":
             decision["final_status"] = "error"

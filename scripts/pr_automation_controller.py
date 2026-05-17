@@ -64,6 +64,16 @@ def validate_command_family(cmd: list[str]) -> None:
         raise ValueError(f"command family not allowed: {family}")
 
 
+def validate_command_arg(arg: str) -> None:
+    if not isinstance(arg, str) or "\x00" in arg:
+        raise ValueError("invalid command argument")
+
+
+def validate_command_args(cmd: list[str]) -> None:
+    for arg in cmd:
+        validate_command_arg(arg)
+
+
 def combined_process_output(proc: subprocess.CompletedProcess[str]) -> str:
     return (proc.stdout or "") + (proc.stderr or "")
 
@@ -87,15 +97,13 @@ def raise_if_command_failed(
 
 def run(cmd: list[str], *, json_out: bool = False, check: bool = True) -> Any:
     validate_command_family(cmd)
-    # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
-    # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
+    validate_command_args(cmd)
     proc = subprocess.run(  # nosec B603
-        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
-        cmd,
+        cmd,  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
         text=True,
         capture_output=True,
         check=False,
-    )
+    )  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
     out = combined_process_output(proc)
     raise_if_command_failed(proc, cmd, out, check)
     return parse_json_output(out, cmd) if json_out else out
@@ -233,6 +241,7 @@ def safe_autofix_runs_command(repo: str) -> list[str]:
 
 @dataclass(frozen=True)
 class RerunConfig:
+
     """Data container used by the automation flow."""
 
     repo: str
