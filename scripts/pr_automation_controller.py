@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """PR automation controller for safe-autofix and clean-scope escalation."""
-# pylint: disable=too-many-arguments,too-many-locals,too-many-branches,too-many-statements,missing-function-docstring,invalid-name,line-too-long,broad-exception-caught
+# pylint: disable=too-many-arguments,too-many-locals,too-many-branches
+# pylint: disable=too-many-statements,missing-function-docstring,invalid-name
+# pylint: disable=line-too-long,broad-exception-caught
 from __future__ import annotations
 
 import argparse
@@ -65,7 +67,10 @@ def validate_command_family(cmd: list[str]) -> None:
 def run(cmd: list[str], *, json_out: bool = False, check: bool = True) -> Any:
     validate_command_family(cmd)
     try:
-        out = subprocess.check_output(  # nosec B603 # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
+        out = subprocess.check_output(  # nosec B603
+            # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
             cmd,
             text=True,
             stderr=subprocess.STDOUT,
@@ -105,14 +110,14 @@ def check_state(check: dict[str, Any]) -> str:
 def is_self_check(check: dict[str, Any]) -> bool:
     name = name_of(check).lower()
     url = url_of(check).lower()
-    return (
-        name in SELF_CHECK_NAMES
-        or "pr-autofix-safe-supervisor" in url
-        or "pr-automation-controller" in url
-        or "auto-pr-codex-fix" in url
-        or "pr-autofix-selfhosted" in url
-        or "auto-pr-e2e-autofix" in url
+    url_markers = (
+        "pr-autofix-safe-supervisor",
+        "pr-automation-controller",
+        "auto-pr-codex-fix",
+        "pr-autofix-selfhosted",
+        "auto-pr-e2e-autofix",
     )
+    return name in SELF_CHECK_NAMES or any(marker in url for marker in url_markers)
 
 
 def is_cancelled(check: dict[str, Any]) -> bool:
@@ -154,16 +159,17 @@ def pr_files(repo: str, pr: str) -> list[str]:
         json_out=True,
         check=False,
     )
-    if not isinstance(out, list):
-        return []
-    files: list[str] = []
-    for row in out:
-        if not isinstance(row, dict):
-            continue
-        name = str(row.get("filename") or "").strip()
-        if name:
-            files.append(name)
-    return files
+    return filenames_from_payload(out) if isinstance(out, list) else []
+
+
+def filename_from_payload_row(row: Any) -> str:
+    if not isinstance(row, dict):
+        return ""
+    return str(row.get("filename") or "").strip()
+
+
+def filenames_from_payload(payload: list[Any]) -> list[str]:
+    return [name for row in payload if (name := filename_from_payload_row(row))]
 
 
 def pr_commits(repo: str, pr: str) -> list[dict[str, Any]]:
@@ -185,32 +191,34 @@ def compact_check(check: dict[str, Any]) -> dict[str, Any]:
 
 
 def active_safe_autofix_runs(repo: str) -> list[dict[str, Any]]:
-    runs = run(
-        [
-            "gh",
-            "run",
-            "list",
-            "--repo",
-            repo,
-            "--workflow",
-            SAFE_AUTOFIX_WORKFLOW,
-            "--limit",
-            "30",
-            "--json",
-            "databaseId,status,conclusion,event,createdAt,url",
-        ],
-        json_out=True,
-        check=False,
-    )
+    runs = run(safe_autofix_runs_command(repo), json_out=True, check=False)
     if not isinstance(runs, list):
         return []
     return [r for r in runs if str(r.get("status") or "") != "completed"]
 
 
+def safe_autofix_runs_command(repo: str) -> list[str]:
+    return [
+        "gh",
+        "run",
+        "list",
+        "--repo",
+        repo,
+        "--workflow",
+        SAFE_AUTOFIX_WORKFLOW,
+        "--limit",
+        "30",
+        "--json",
+        "databaseId,status,conclusion,event,createdAt,url",
+    ]
+
+
 
 @dataclass(frozen=True)
 class RerunConfig:
+
     """Data container used by the automation flow."""
+
     repo: str
     dry_run: bool
     max_reruns: int
@@ -218,7 +226,9 @@ class RerunConfig:
 
 @dataclass(frozen=True)
 class SafeAutofixConfig:
+
     """Data container used by the automation flow."""
+
     repo: str
     pr_number: str
     dry_run: bool
@@ -228,7 +238,9 @@ class SafeAutofixConfig:
 
 @dataclass(frozen=True)
 class CleanScopeRules:
+
     """Data container used by the automation flow."""
+
     allowlist: list[str]
     forbidden: list[str]
     commit_limit: int
@@ -236,7 +248,9 @@ class CleanScopeRules:
 
 @dataclass(frozen=True)
 class CleanRebuildConfig:
+
     """Data container used by the automation flow."""
+
     repo: str
     pr_number: str
     head_branch: str
@@ -246,7 +260,9 @@ class CleanRebuildConfig:
 
 @dataclass(frozen=True)
 class PendingWaitConfig:
+
     """Data container used by the automation flow."""
+
     repo: str
     pr_number: str
     started: float
@@ -256,7 +272,9 @@ class PendingWaitConfig:
 
 @dataclass(frozen=True)
 class CleanScopeReport:
+
     """Data container used by the automation flow."""
+
     enabled: bool
     mode: str
     rules: CleanScopeRules
@@ -265,7 +283,9 @@ class CleanScopeReport:
 
 @dataclass(frozen=True)
 class NextActionContext:
+
     """Data container used by the automation flow."""
+
     args: argparse.Namespace
     pr: dict[str, Any]
     checks: list[dict[str, Any]]
@@ -677,8 +697,14 @@ def decide_next_action(ctx: NextActionContext) -> None:
 
 def parse_controller_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--repo", required=True)
-    parser.add_argument("--pr", required=True)
+    add_controller_core_args(parser)
+    add_controller_clean_scope_args(parser)
+    return parser.parse_args()
+
+
+def add_controller_core_args(parser: argparse.ArgumentParser) -> None:
+    for name in ("repo", "pr"):
+        parser.add_argument(f"--{name}", required=True)
     parser.add_argument("--output", default=".pr-controller/decision.json")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--pending-wait-seconds", type=int, default=300)
@@ -686,6 +712,9 @@ def parse_controller_args() -> argparse.Namespace:
     parser.add_argument("--max-reruns", type=int, default=6)
     parser.add_argument("--safe-max-rounds", default="1")
     parser.add_argument("--safe-pending-wait-seconds", default="600")
+
+
+def add_controller_clean_scope_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--clean-scope-rebuild", action="store_true")
     parser.add_argument(
         "--clean-scope-rebuild-mode",
@@ -695,7 +724,6 @@ def parse_controller_args() -> argparse.Namespace:
     parser.add_argument("--clean-scope-commit-limit", type=int, default=3)
     parser.add_argument("--clean-scope-allowlist", default="")
     parser.add_argument("--clean-scope-forbidden", default="")
-    return parser.parse_args()
 
 
 def normalize_controller_args(args: argparse.Namespace) -> None:
@@ -794,39 +822,55 @@ def rerun_config(args: argparse.Namespace) -> RerunConfig:
     )
 
 
-def run_controller(args: argparse.Namespace, decision: dict[str, Any]) -> int:
-    started = time.time()
-    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+def collect_pr_context(
+    args: argparse.Namespace,
+    decision: dict[str, Any],
+    started: float,
+) -> tuple[dict[str, Any] | None, list[str], list[dict[str, Any]], bool]:
     pr = load_pr_or_record_error(args, decision)
     if pr is None:
-        return write_decision(args.output, decision)
+        return None, [], [], True
     files = pr_files(args.repo, args.pr)
     commits = pr_commits(args.repo, args.pr)
     update_decision_pr_metadata(decision, args, pr)
     skip_action = skip_action_for_pr(pr)
     if skip_action:
         decision["next_action"] = skip_action
-        return write_decision(args.output, decision)
-    pr, pending_wait_exhausted = wait_for_pending_checks(
-        pr,
-        pending_wait_config(args, started),
-        decision,
-    )
-    if pending_wait_exhausted:
+        return pr, files, commits, True
+    pr, wait_exhausted = wait_for_pending_checks(pr, pending_wait_config(args, started), decision)
+    return pr, files, commits, wait_exhausted
+
+
+def finish_after_cancelled_checks(
+    args: argparse.Namespace,
+    decision: dict[str, Any],
+    checks: list[dict[str, Any]],
+) -> bool:
+    return handle_cancelled_checks(checks, rerun_config(args), decision)
+
+
+def build_next_action_context(
+    args: argparse.Namespace,
+    decision: dict[str, Any],
+    pr: dict[str, Any],
+    changed: tuple[list[str], list[dict[str, Any]]],
+) -> NextActionContext:
+    checks = pr.get("statusCheckRollup") or []
+    blockers = set_check_buckets(decision, checks)
+    files, commits = changed
+    return NextActionContext(args, pr, checks, files, commits, blockers, decision)
+
+
+def run_controller(args: argparse.Namespace, decision: dict[str, Any]) -> int:
+    started = time.time()
+    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+    pr, files, commits, finished = collect_pr_context(args, decision, started)
+    if finished or pr is None:
         return write_decision(args.output, decision)
     checks = pr.get("statusCheckRollup") or []
-    if handle_cancelled_checks(checks, rerun_config(args), decision):
+    if finish_after_cancelled_checks(args, decision, checks):
         return write_decision(args.output, decision)
-    blockers = set_check_buckets(decision, checks)
-    ctx = NextActionContext(
-        args=args,
-        pr=pr,
-        checks=checks,
-        files=files,
-        commits=commits,
-        blockers=blockers,
-        decision=decision,
-    )
+    ctx = build_next_action_context(args, decision, pr, (files, commits))
     decide_next_action(ctx)
     return write_decision(args.output, decision)
 
