@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PR automation controller for safe-autofix and clean-scope escalation."""
 # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
-# pylint: disable=too-many-statements,missing-function-docstring,invalid-name
+# pylint: disable=too-many-statements,missing-function-docstring,invalid-name,duplicate-code
 # pylint: disable=line-too-long,broad-exception-caught
 from __future__ import annotations
 
@@ -241,6 +241,7 @@ def safe_autofix_runs_command(repo: str) -> list[str]:
 
 @dataclass(frozen=True)
 class RerunConfig:
+
     """Data container used by the automation flow."""
 
     repo: str
@@ -250,7 +251,6 @@ class RerunConfig:
 
 @dataclass(frozen=True)
 class SafeAutofixConfig:
-
     """Data container used by the automation flow."""
 
     repo: str
@@ -790,7 +790,7 @@ def load_pr_or_record_error(
 ) -> dict[str, Any] | None:
     try:
         return pr_view(args.repo, args.pr)
-    except Exception as exc:
+    except (subprocess.CalledProcessError, ValueError, OSError, RuntimeError) as exc:
         decision["next_action"] = "error"
         decision["errors"].append(f"failed_to_load_pr: {exc}")
         return None

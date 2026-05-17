@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Clean-scope rebuild helper for PR automation control."""
-# pylint: disable=too-many-branches,too-many-statements,too-many-locals,line-too-long,broad-exception-caught,missing-function-docstring
+# pylint: disable=too-many-branches,too-many-statements,too-many-locals,line-too-long,broad-exception-caught,missing-function-docstring,duplicate-code
 from __future__ import annotations
 
 import argparse
@@ -21,6 +21,7 @@ ALLOWED_COMMAND_FAMILIES = {"gh", "git", "python", "python3", "pytest"}
 
 @dataclass(frozen=True)
 class RebuildArgs:
+
     """Parsed clean-scope rebuild command arguments."""
 
     repo: str
@@ -34,6 +35,7 @@ class RebuildArgs:
 
 @dataclass(frozen=True)
 class CleanBranches:
+
     """Branch names and head SHA used during clean rebuild."""
 
     old_head: str
