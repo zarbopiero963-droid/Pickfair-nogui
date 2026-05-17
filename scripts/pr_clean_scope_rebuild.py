@@ -11,7 +11,7 @@ import subprocess  # nosec B404
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 SAFE_BRANCH_RE = re.compile(r"^[A-Za-z0-9._/\-]+$")
 SAFE_REPO_RE = re.compile(r"^[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+$")
@@ -49,23 +49,38 @@ def validate_command_family(cmd: list[str]) -> None:
         raise ValueError(f"command family not allowed: {command_name}")
 
 
-def run(cmd: list[str], check: bool = True) -> tuple[int, str]:
-    validate_command_family(cmd)
+def validate_command_arg(arg: str) -> None:
+    if not isinstance(arg, str) or "\x00" in arg:
+        raise ValueError("invalid command argument")
+
+
+def validate_command_args(cmd: list[str]) -> None:
     for arg in cmd:
-        if not isinstance(arg, str) or "\x00" in arg:
-            raise ValueError("invalid command argument")
-    # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
-    # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
-    proc = subprocess.run(  # nosec B603
-        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
-        cmd,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    output = (proc.stdout or "") + (proc.stderr or "")
+        validate_command_arg(arg)
+
+
+def combined_process_output(proc: subprocess.CompletedProcess[str]) -> str:
+    return (proc.stdout or "") + (proc.stderr or "")
+
+
+def raise_if_command_failed(
+    proc: subprocess.CompletedProcess[str],
+    cmd: list[str],
+    output: str,
+    check: bool,
+) -> None:
     if check and proc.returncode:
         raise RuntimeError(f"command failed ({proc.returncode}): {' '.join(cmd)}\n{output}")
+
+
+def run(cmd: list[str], check: bool = True) -> tuple[int, str]:
+    validate_command_family(cmd)
+    validate_command_args(cmd)
+    # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
+    # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
+    proc = subprocess.run(cmd, text=True, capture_output=True, check=False)  # nosec B603
+    output = combined_process_output(proc)
+    raise_if_command_failed(proc, cmd, output, check)
     return proc.returncode, output
 
 
@@ -79,20 +94,20 @@ def path_matches(path: str, pattern: str) -> bool:
     return path == pattern
 
 
-def filter_allowlisted(files: list[str], allowlist: list[str]) -> list[str]:
+def filter_matching(files: list[str], patterns: Sequence[str]) -> list[str]:
     return sorted({
         file_path
         for file_path in files
-        if any(path_matches(file_path, pattern) for pattern in allowlist)
+        if any(path_matches(file_path, pattern) for pattern in patterns)
     })
 
 
-def filter_forbidden(files: list[str], forbidden: list[str]) -> list[str]:
-    return sorted({
-        file_path
-        for file_path in files
-        if any(path_matches(file_path, pattern) for pattern in forbidden)
-    })
+def filter_allowlisted(files: list[str], allowlist: Sequence[str]) -> list[str]:
+    return filter_matching(files, allowlist)
+
+
+def filter_forbidden(files: list[str], forbidden: Sequence[str]) -> list[str]:
+    return filter_matching(files, forbidden)
 
 
 def parse_json_list(raw: str) -> list[Any]:
@@ -285,7 +300,7 @@ def run_focused_tests(decision: dict[str, Any], restored_files: list[str]) -> No
         "tests/reconciliation/test_reconciliation_hardening.py", "-x",
     ]
     return_code, _ = run(cmd, check=False)
-    append_test_result(decision, "focused order/reconciliation tests", "pass" if return_code == 0 else "fail")
+    append_test_result(decision, "focused order/reconciliation tests", "pass" if not return_code else "fail")
 
 
 def commit_and_push(args: RebuildArgs, decision: dict[str, Any], restored_files: list[str]) -> None:

@@ -13,7 +13,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 FAIL_STATES = {"FAILURE", "ERROR", "ACTION_REQUIRED", "TIMED_OUT"}
 PENDING_STATES = {"", "PENDING", "QUEUED", "IN_PROGRESS", "REQUESTED", "WAITING"}
@@ -64,6 +64,27 @@ def validate_command_family(cmd: list[str]) -> None:
         raise ValueError(f"command family not allowed: {family}")
 
 
+def combined_process_output(proc: subprocess.CompletedProcess[str]) -> str:
+    return (proc.stdout or "") + (proc.stderr or "")
+
+
+def parse_json_output(raw: str, cmd: list[str]) -> Any:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid JSON output for command {cmd!r}: {raw}") from exc
+
+
+def raise_if_command_failed(
+    proc: subprocess.CompletedProcess[str],
+    cmd: list[str],
+    output: str,
+    check: bool,
+) -> None:
+    if check and proc.returncode:
+        raise subprocess.CalledProcessError(proc.returncode, cmd, output=output)
+
+
 def run(cmd: list[str], *, json_out: bool = False, check: bool = True) -> Any:
     validate_command_family(cmd)
     # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
@@ -75,15 +96,9 @@ def run(cmd: list[str], *, json_out: bool = False, check: bool = True) -> Any:
         capture_output=True,
         check=False,
     )
-    out = (proc.stdout or "") + (proc.stderr or "")
-    if check and proc.returncode:
-        raise subprocess.CalledProcessError(proc.returncode, cmd, output=out)
-    if json_out:
-        try:
-            return json.loads(out)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"invalid JSON output for command {cmd!r}: {out}") from exc
-    return out
+    out = combined_process_output(proc)
+    raise_if_command_failed(proc, cmd, out, check)
+    return parse_json_output(out, cmd) if json_out else out
 
 
 def parse_csvish(value: str | None) -> list[str]:
@@ -218,7 +233,6 @@ def safe_autofix_runs_command(repo: str) -> list[str]:
 
 @dataclass(frozen=True)
 class RerunConfig:
-
     """Data container used by the automation flow."""
 
     repo: str
@@ -248,7 +262,6 @@ class CleanScopeRules:
 
 @dataclass(frozen=True)
 class CleanRebuildConfig:
-
     """Data container used by the automation flow."""
 
     repo: str
@@ -260,7 +273,6 @@ class CleanRebuildConfig:
 
 @dataclass(frozen=True)
 class PendingWaitConfig:
-
     """Data container used by the automation flow."""
 
     repo: str
@@ -272,7 +284,6 @@ class PendingWaitConfig:
 
 @dataclass(frozen=True)
 class CleanScopeReport:
-
     """Data container used by the automation flow."""
 
     enabled: bool
@@ -283,7 +294,6 @@ class CleanScopeReport:
 
 @dataclass(frozen=True)
 class NextActionContext:
-
     """Data container used by the automation flow."""
 
     args: argparse.Namespace
@@ -394,16 +404,19 @@ def path_matches(path: str, pattern: str) -> bool:
     return path == pattern_text
 
 
-def find_forbidden_files(files: list[str], forbidden_patterns: list[str]) -> list[str]:
-    hit = [
+def matching_files(files: list[str], patterns: Sequence[str]) -> list[str]:
+    return sorted({
         file_path
         for file_path in files
-        if any(path_matches(file_path, pattern) for pattern in forbidden_patterns)
-    ]
-    return sorted(set(hit))
+        if any(path_matches(file_path, pattern) for pattern in patterns)
+    })
 
 
-def has_allowlisted_file(files: list[str], allowlist_patterns: list[str]) -> bool:
+def find_forbidden_files(files: list[str], forbidden_patterns: Sequence[str]) -> list[str]:
+    return matching_files(files, forbidden_patterns)
+
+
+def has_allowlisted_file(files: list[str], allowlist_patterns: Sequence[str]) -> bool:
     return any(
         path_matches(file_path, pattern)
         for file_path in files
@@ -674,24 +687,39 @@ def maybe_launch_clean_rebuild(
     return True
 
 
-def decide_next_action(ctx: NextActionContext) -> None:
-    should_launch, launchable = should_launch_autofix(ctx.checks)
-    ctx.decision["launchable_for_safe_autofix"] = launchable
-    rules, signals = build_clean_scope_context(ctx.args, ctx.files, ctx.commits)
-    report = CleanScopeReport(
+def clean_scope_report_from_context(
+    ctx: NextActionContext,
+    rules: CleanScopeRules,
+    signals: dict[str, Any],
+) -> CleanScopeReport:
+    return CleanScopeReport(
         enabled=clean_scope_is_enabled(ctx.args),
         mode=ctx.args.clean_scope_rebuild_mode,
         rules=rules,
         signals=signals,
     )
-    store_clean_scope_report(ctx.decision, report)
+
+
+def safe_autofix_still_allowed(
+    ctx: NextActionContext,
+    should_launch: bool,
+    signals: dict[str, Any],
+) -> bool:
+    valid_modes = {"disabled", "detect", "execute"}
+    mode = str(ctx.args.clean_scope_rebuild_mode or "")
+    return should_launch and mode in valid_modes and not clean_scope_blocks_safe_autofix(signals)
+
+
+def decide_next_action(ctx: NextActionContext) -> None:
+    should_launch, launchable = should_launch_autofix(ctx.checks)
+    ctx.decision["launchable_for_safe_autofix"] = launchable
+    rules, signals = build_clean_scope_context(ctx.args, ctx.files, ctx.commits)
+    store_clean_scope_report(ctx.decision, clean_scope_report_from_context(ctx, rules, signals))
     if maybe_launch_safe_first(ctx, should_launch, signals):
         return
     if maybe_launch_clean_rebuild(ctx, rules, signals):
         return
-    valid_modes = {"disabled", "detect", "execute"}
-    mode = str(ctx.args.clean_scope_rebuild_mode or "")
-    if should_launch and mode in valid_modes and not clean_scope_blocks_safe_autofix(signals):
+    if safe_autofix_still_allowed(ctx, should_launch, signals):
         record_action(ctx.decision, launch_safe_autofix(safe_autofix_config_from_args(ctx.args)))
         return
     set_no_launch_next_action(ctx.decision, ctx.blockers)
