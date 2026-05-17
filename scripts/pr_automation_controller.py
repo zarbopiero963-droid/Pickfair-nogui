@@ -98,12 +98,12 @@ def raise_if_command_failed(
 def run(cmd: list[str], *, json_out: bool = False, check: bool = True) -> Any:
     validate_command_family(cmd)
     validate_command_args(cmd)
-    proc = subprocess.run(  # nosec B603
+    proc = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
         cmd,  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
         text=True,
         capture_output=True,
         check=False,
-    )  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+    )
     out = combined_process_output(proc)
     raise_if_command_failed(proc, cmd, out, check)
     return parse_json_output(out, cmd) if json_out else out
@@ -241,7 +241,6 @@ def safe_autofix_runs_command(repo: str) -> list[str]:
 
 @dataclass(frozen=True)
 class RerunConfig:
-
     """Data container used by the automation flow."""
 
     repo: str
@@ -251,6 +250,7 @@ class RerunConfig:
 
 @dataclass(frozen=True)
 class SafeAutofixConfig:
+
     """Data container used by the automation flow."""
 
     repo: str
