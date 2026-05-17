@@ -118,7 +118,7 @@ def changed_python_files(files: list[str]) -> list[str]:
 
 def timestamp_utc() -> str:
     now = dt.datetime.now(dt.timezone.utc)
-    return now.strftime("%Y%m%dT%H%M%SZ")
+    return f"{now.year:04d}{now.month:02d}{now.day:02d}T{now.hour:02d}{now.minute:02d}{now.second:02d}Z"
 
 
 def parse_args() -> RebuildArgs:
