@@ -122,7 +122,7 @@ jobs:
 
           CLEAN_SCOPE_REBUILD="${INPUT_CLEAN_SCOPE_REBUILD:-}"
           if [ -z "$CLEAN_SCOPE_REBUILD" ]; then
-            CLEAN_SCOPE_REBUILD="${PAYLOAD_CLEAN_SCOPE_REBUILD:-false}"
+            CLEAN_SCOPE_REBUILD="${PAYLOAD_CLEAN_SCOPE_REBUILD:-true}"
           fi
           CLEAN_SCOPE_REBUILD_MODE="${INPUT_CLEAN_SCOPE_REBUILD_MODE:-}"
           if [ -z "$CLEAN_SCOPE_REBUILD_MODE" ]; then
