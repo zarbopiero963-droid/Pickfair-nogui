@@ -117,7 +117,6 @@ jobs:
           python3 scripts/pr_flow_automation.py preflight \
             --repo "$REPO" \
             --pr "$PR_NUMBER" \
-            --clean-scope-rebuild-mode execute \
             --comment
 
       - name: Cleanup stale safe-autofix runs
