@@ -12,9 +12,9 @@ import re
 import subprocess  # nosec B404
 import sys
 import time
+import http.client
 import urllib.error
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -256,6 +256,7 @@ def safe_autofix_runs_command(repo: str) -> list[str]:
 
 @dataclass(frozen=True)
 class RerunConfig:
+
     """Data container used by the automation flow."""
 
     repo: str
@@ -265,7 +266,6 @@ class RerunConfig:
 
 @dataclass(frozen=True)
 class SafeAutofixConfig:
-
     """Data container used by the automation flow."""
 
     repo: str
@@ -827,16 +827,23 @@ def validate_codacy_url(url: str) -> None:
 
 def fetch_json(url: str, token: str) -> Any:
     parsed = urllib.parse.urlparse(url)
-    request = urllib.request.Request(
-        url=parsed.geturl(),
-        headers={"api-token": token},
-        method="GET",
-    )
+    if parsed.scheme != "https" or parsed.netloc != "api.codacy.com":
+        raise RuntimeError("invalid Codacy API URL")
+    target = parsed.path
+    if parsed.query:
+        target = f"{target}?{parsed.query}"
+    connection = http.client.HTTPSConnection(parsed.netloc, timeout=30)
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
-            payload = response.read().decode("utf-8")
-    except urllib.error.HTTPError as exc:
-        raise RuntimeError(f"Codacy API request failed with status {exc.code}") from exc
+        connection.request("GET", target, headers={"api-token": token})
+        response = connection.getresponse()
+        status = int(response.status)
+        payload = response.read().decode("utf-8")
+    except OSError as exc:
+        raise RuntimeError("Codacy API request failed") from exc
+    finally:
+        connection.close()
+    if status >= 400:
+        raise RuntimeError(f"Codacy API request failed with status {status}")
     return json.loads(payload or "{}")
 
 
