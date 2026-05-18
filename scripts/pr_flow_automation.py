@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import http.client
 import json
 import os
 import re
@@ -11,6 +10,7 @@ import subprocess
 import sys
 import time
 import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -172,15 +172,16 @@ def codacy_http_response(url: str, token: str) -> tuple[int, str]:
     if parsed.scheme != "https" or parsed.netloc != "api.codacy.com":
         raise RuntimeError("invalid Codacy API URL")
     target = codacy_request_target(parsed)
-    connection = http.client.HTTPSConnection("api.codacy.com", timeout=30)
+    request = urllib.request.Request(
+        f"https://api.codacy.com{target}",
+        headers={"api-token": token},
+        method="GET",
+    )
     try:
-        connection.request("GET", target, headers={"api-token": token})
-        response = connection.getresponse()
-        return int(response.status), response.read().decode("utf-8")
-    except (OSError, http.client.HTTPException) as exc:
+        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
+            return int(response.status), response.read().decode("utf-8")
+    except OSError as exc:
         raise RuntimeError("Codacy API request failed") from exc
-    finally:
-        connection.close()
 
 
 def fetch_codacy_json(url: str, token: str) -> Any:
@@ -235,6 +236,7 @@ def first_nonempty(*values: Any) -> Any:
 
 
 def codacy_issue_record(item: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a Codacy issue item into a flat task record."""
     issue = issue_dict_from_item(item)
     pattern_info = nested_dict(issue, "patternInfo")
     tool_info = nested_dict(issue, "toolInfo") or nested_dict(issue, "tool")

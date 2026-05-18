@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import argparse
-import http.client
 import json
 import os
 import re
@@ -14,6 +13,7 @@ import subprocess  # nosec B404
 import sys
 import time
 import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -255,6 +255,8 @@ def safe_autofix_runs_command(repo: str) -> list[str]:
 
 @dataclass(frozen=True)
 class RerunConfig:
+    """Configuration for rerunning cancelled checks."""
+
     repo: str
     dry_run: bool
     max_reruns: int
@@ -262,6 +264,8 @@ class RerunConfig:
 
 @dataclass(frozen=True)
 class SafeAutofixConfig:
+    """Configuration for invoking the safe autofix workflow."""
+
     repo: str
     pr_number: str
     dry_run: bool
@@ -271,6 +275,8 @@ class SafeAutofixConfig:
 
 @dataclass(frozen=True)
 class CleanScopeRules:
+    """Allowlist and forbidden scope constraints for clean rebuild mode."""
+
     allowlist: tuple[str, ...]
     forbidden: tuple[str, ...]
     commit_limit: int
@@ -278,6 +284,8 @@ class CleanScopeRules:
 
 @dataclass(frozen=True)
 class CleanRebuildConfig:
+    """Configuration for launching a clean-scope rebuild workflow."""
+
     repo: str
     pr_number: str
     head_branch: str
@@ -287,6 +295,7 @@ class CleanRebuildConfig:
 
 @dataclass(frozen=True)
 class PendingWaitConfig:
+
     """Data container used by the automation flow."""
 
     repo: str
@@ -820,16 +829,17 @@ def codacy_request_target(url: str) -> str:
 
 def fetch_json(url: str, token: str) -> Any:
     target = codacy_request_target(url)
-    connection = http.client.HTTPSConnection("api.codacy.com", timeout=30)
+    request = urllib.request.Request(
+        f"https://api.codacy.com{target}",
+        headers={"api-token": token},
+        method="GET",
+    )
     try:
-        connection.request("GET", target, headers={"api-token": token})
-        response = connection.getresponse()
-        status = int(response.status)
-        payload = response.read().decode("utf-8")
-    except (OSError, http.client.HTTPException) as exc:
+        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
+            status = int(response.status)
+            payload = response.read().decode("utf-8")
+    except OSError as exc:
         raise RuntimeError("Codacy API request failed") from exc
-    finally:
-        connection.close()
     if status >= 400:
         raise RuntimeError(f"Codacy API request failed with status {status}")
     return json.loads(payload or "{}")
