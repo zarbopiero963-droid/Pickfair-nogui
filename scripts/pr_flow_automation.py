@@ -9,8 +9,8 @@ import re
 import subprocess
 import sys
 import time
-import http.client
 import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -168,15 +168,16 @@ def codacy_request_target(parsed: urllib.parse.ParseResult) -> str:
 
 def codacy_https_request(target: str, token: str) -> tuple[int, str]:
     """Execute a Codacy HTTPS GET request and return status and payload text."""
-    connection = http.client.HTTPSConnection("api.codacy.com", timeout=30)
+    request = urllib.request.Request(
+        f"https://api.codacy.com{target}",
+        headers={"api-token": token},
+        method="GET",
+    )
     try:
-        connection.request("GET", target, headers={"api-token": token})
-        response = connection.getresponse()
-        return int(response.status), response.read().decode("utf-8")
-    except (OSError, http.client.HTTPException) as exc:
+        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
+            return int(response.status), response.read().decode("utf-8")
+    except OSError as exc:
         raise RuntimeError("Codacy API request failed") from exc
-    finally:
-        connection.close()
 
 
 def codacy_http_response(url: str, token: str) -> tuple[int, str]:
