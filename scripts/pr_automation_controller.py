@@ -255,6 +255,8 @@ def safe_autofix_runs_command(repo: str) -> list[str]:
 
 @dataclass(frozen=True)
 class RerunConfig:
+    """Configuration for rerunning a workflow."""
+
     repo: str
     dry_run: bool
     max_reruns: int
@@ -262,6 +264,8 @@ class RerunConfig:
 
 @dataclass(frozen=True)
 class SafeAutofixConfig:
+    """Configuration for safe-autofix workflow dispatch."""
+
     repo: str
     pr_number: str
     dry_run: bool
@@ -271,6 +275,7 @@ class SafeAutofixConfig:
 
 @dataclass(frozen=True)
 class CleanScopeRules:
+
     """Data container used by the automation flow."""
 
     allowlist: tuple[str, ...]
@@ -818,7 +823,10 @@ def validate_codacy_url(url: str) -> None:
 def fetch_json(url: str, token: str) -> Any:
     parsed = parsed_codacy_url(url)
     target = request_target(parsed)
-    connection = http.client.HTTPSConnection(parsed.netloc, timeout=30)  # nosemgrep: python.lang.security.audit.httpsconnection-detected.httpsconnection-detected
+    connection = http.client.HTTPSConnection(
+        parsed.netloc,
+        timeout=30,
+    )  # nosemgrep: python.lang.security.audit.httpsconnection-detected.httpsconnection-detected
     try:
         connection.request("GET", target, headers={"api-token": token})
         response = connection.getresponse()

@@ -168,7 +168,10 @@ def fetch_codacy_json(url: str, token: str) -> Any:
     validate_codacy_url(url)
     parsed = urllib.parse.urlparse(url)
     target = codacy_request_target(parsed)
-    connection = http.client.HTTPSConnection(parsed.netloc, timeout=30)  # nosemgrep: python.lang.security.audit.httpsconnection-detected.httpsconnection-detected
+    connection = http.client.HTTPSConnection(
+        parsed.netloc,
+        timeout=30,
+    )  # nosemgrep: python.lang.security.audit.httpsconnection-detected.httpsconnection-detected
     try:
         connection.request("GET", target, headers={"api-token": token})
         response = connection.getresponse()
@@ -191,6 +194,8 @@ def dict_items_from_list(value: Any) -> list[dict[str, Any]]:
 
 
 def codacy_issue_items(body: Any) -> list[dict[str, Any]]:
+    """Extract issue dictionaries from known Codacy response shapes."""
+
     if isinstance(body, list):
         return dict_items_from_list(body)
     if not isinstance(body, dict):
