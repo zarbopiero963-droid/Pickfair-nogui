@@ -153,3 +153,34 @@ def test_build_decision_reports_real_blockers_and_merge_state(monkeypatch):
     ASSERTIONS.assertFalse(decision["can_merge"])
     ASSERTIONS.assertEqual(decision["blockers"][0]["name"], "Codacy Static Code Analysis")
     ASSERTIONS.assertEqual(decision["ignored_self_checks"][0]["name"], "PR Merge Readiness")
+
+
+def test_preflight_commit_limit_only_blocks_when_codacy_is_blocking(monkeypatch):
+    """Preflight does not fail only because of autofix history when Codacy is clear."""
+    monkeypatch.setattr(
+        flow,
+        "pr_view",
+        lambda _repo, _pr: {
+            "state": "OPEN",
+            "headRefName": "feature/branch",
+            "headRefOid": "abc123",
+            "statusCheckRollup": [_check("Unit tests", "SUCCESS")],
+        },
+    )
+    monkeypatch.setattr(flow, "sh", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(flow, "safe_autofix_commits", lambda *_args, **_kwargs: ["a", "b", "c", "d"])
+    monkeypatch.setattr(flow, "changed_files_for_commit", lambda *_args, **_kwargs: ["scripts/pr_clean_scope_rebuild.py"])
+
+    rc = flow.cmd_preflight(
+        argparse.Namespace(
+            repo="owner/repo",
+            pr="225",
+            output="",
+            max_safe_autofix_commits=3,
+            oscillation_touch_limit=2,
+            comment=False,
+            no_fail=False,
+        )
+    )
+
+    ASSERTIONS.assertEqual(rc, 0)
