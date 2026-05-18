@@ -114,7 +114,7 @@ def test_codacy_task_writes_raw_response_and_normalized_issue(tmp_path):
 
 
 def test_clean_scope_defaults_allow_pr_flow_automation_script():
-    """This automation PR can update pr_flow_automation without clean-scope refusal."""
+    """Automation PR can update pr_flow_automation without clean-scope refusal."""
     rules = controller.build_clean_scope_rules(_args())
     signals = controller.collect_clean_scope_signals(
         ["scripts/pr_flow_automation.py"],

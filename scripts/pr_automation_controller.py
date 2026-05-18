@@ -255,9 +255,6 @@ def safe_autofix_runs_command(repo: str) -> list[str]:
 
 @dataclass(frozen=True)
 class RerunConfig:
-
-    """Data container used by the automation flow."""
-
     repo: str
     dry_run: bool
     max_reruns: int
@@ -265,8 +262,6 @@ class RerunConfig:
 
 @dataclass(frozen=True)
 class SafeAutofixConfig:
-    """Data container used by the automation flow."""
-
     repo: str
     pr_number: str
     dry_run: bool
@@ -285,7 +280,6 @@ class CleanScopeRules:
 
 @dataclass(frozen=True)
 class CleanRebuildConfig:
-
     """Data container used by the automation flow."""
 
     repo: str
@@ -297,7 +291,6 @@ class CleanRebuildConfig:
 
 @dataclass(frozen=True)
 class PendingWaitConfig:
-
     """Data container used by the automation flow."""
 
     repo: str
@@ -309,7 +302,6 @@ class PendingWaitConfig:
 
 @dataclass(frozen=True)
 class CleanScopeReport:
-
     """Data container used by the automation flow."""
 
     enabled: bool
@@ -320,7 +312,6 @@ class CleanScopeReport:
 
 @dataclass(frozen=True)
 class NextActionContext:
-
     """Data container used by the automation flow."""
 
     args: argparse.Namespace
@@ -825,13 +816,9 @@ def validate_codacy_url(url: str) -> None:
 
 
 def fetch_json(url: str, token: str) -> Any:
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme != "https" or parsed.netloc != "api.codacy.com":
-        raise RuntimeError("invalid Codacy API URL")
-    target = parsed.path
-    if parsed.query:
-        target = f"{target}?{parsed.query}"
-    connection = http.client.HTTPSConnection(parsed.netloc, timeout=30)
+    parsed = parsed_codacy_url(url)
+    target = request_target(parsed)
+    connection = http.client.HTTPSConnection(parsed.netloc, timeout=30)  # nosemgrep: python.lang.security.audit.httpsconnection-detected.httpsconnection-detected
     try:
         connection.request("GET", target, headers={"api-token": token})
         response = connection.getresponse()
@@ -844,6 +831,17 @@ def fetch_json(url: str, token: str) -> Any:
     if status >= 400:
         raise RuntimeError(f"Codacy API request failed with status {status}")
     return json.loads(payload or "{}")
+
+
+def parsed_codacy_url(url: str) -> urllib.parse.ParseResult:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https" or parsed.netloc != "api.codacy.com":
+        raise RuntimeError("invalid Codacy API URL")
+    return parsed
+
+
+def request_target(parsed: urllib.parse.ParseResult) -> str:
+    return f"{parsed.path}?{parsed.query}" if parsed.query else parsed.path
 
 
 def fetch_codacy_pr_issues(repo: str, pr_number: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:

@@ -158,13 +158,17 @@ def validate_codacy_url(url: str) -> None:
         raise RuntimeError("invalid Codacy API URL")
 
 
+def codacy_request_target(parsed: urllib.parse.ParseResult) -> str:
+    """Build Codacy API request target from a parsed URL."""
+    return f"{parsed.path}?{parsed.query}" if parsed.query else parsed.path
+
+
 def fetch_codacy_json(url: str, token: str) -> Any:
+    """Fetch JSON payload from the validated Codacy API endpoint."""
     validate_codacy_url(url)
     parsed = urllib.parse.urlparse(url)
-    target = parsed.path
-    if parsed.query:
-        target = f"{target}?{parsed.query}"
-    connection = http.client.HTTPSConnection(parsed.netloc, timeout=30)
+    target = codacy_request_target(parsed)
+    connection = http.client.HTTPSConnection(parsed.netloc, timeout=30)  # nosemgrep: python.lang.security.audit.httpsconnection-detected.httpsconnection-detected
     try:
         connection.request("GET", target, headers={"api-token": token})
         response = connection.getresponse()
@@ -180,6 +184,7 @@ def fetch_codacy_json(url: str, token: str) -> Any:
 
 
 def dict_items_from_list(value: Any) -> list[dict[str, Any]]:
+    """Return only dictionary entries when the payload is a list."""
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
@@ -538,16 +543,8 @@ def cmd_codacy_task(args: argparse.Namespace) -> int:
     blocking = codacy_is_blocking(args.repo, args.pr)
     try:
         raw, issues = fetch_codacy_pr_issues(args.repo, args.pr)
-    except Exception as exc:
-        result = {
-            "repo": args.repo,
-            "pr": str(args.pr),
-            "ok": False,
-            "codacy_blocking": blocking,
-            "error": f"{type(exc).__name__}: {exc}",
-        }
-        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
-        return 1 if blocking else 0
+    except (RuntimeError, ValueError, json.JSONDecodeError, OSError) as exc:
+        return codacy_task_error_result(args, blocking, exc)
 
     write_codacy_task(outdir, raw, issues)
     result = {
@@ -561,6 +558,22 @@ def cmd_codacy_task(args: argparse.Namespace) -> int:
     }
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
+
+
+def codacy_task_error_result(
+    args: argparse.Namespace,
+    blocking: bool,
+    exc: Exception,
+) -> int:
+    result = {
+        "repo": args.repo,
+        "pr": str(args.pr),
+        "ok": False,
+        "codacy_blocking": blocking,
+        "error": f"{type(exc).__name__}: {exc}",
+    }
+    print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
+    return 1 if blocking else 0
 
 
 def cmd_canary(args: argparse.Namespace) -> int:
