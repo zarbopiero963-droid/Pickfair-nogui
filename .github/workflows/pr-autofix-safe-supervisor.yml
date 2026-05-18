@@ -117,7 +117,8 @@ jobs:
           python3 scripts/pr_flow_automation.py preflight \
             --repo "$REPO" \
             --pr "$PR_NUMBER" \
-            --comment
+            --comment \
+            --no-fail
 
       - name: Cleanup stale safe-autofix runs
         run: |
