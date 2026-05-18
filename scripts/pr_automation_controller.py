@@ -6,13 +6,13 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import re
 import subprocess  # nosec B404
 import sys
 import time
-import http.client
 import urllib.error
 import urllib.parse
 from dataclasses import dataclass

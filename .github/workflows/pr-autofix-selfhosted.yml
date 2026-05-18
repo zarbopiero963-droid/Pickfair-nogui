@@ -983,6 +983,12 @@ jobs:
             set -e
 
             if [ "${push_result}" = "10" ]; then
+              codacy_issue_count="$(jq 'length' .autofix/context/codacy-issues.json 2>/dev/null || echo 1)"
+              pending_snapshot_count="$(jq '[.[]? | select((.bucket == "pending") or (.state == "QUEUED") or (.state == "IN_PROGRESS") or (.state == "PENDING") or (.state == "WAITING") or (.state == "REQUESTED"))] | length' .autofix/context/pr-checks.json 2>/dev/null || echo 0)"
+              if [ "${codacy_issue_count}" = "0" ] && [ "${pending_snapshot_count}" != "0" ]; then
+                echo "Codex produced no changes because Codacy API has no current issues and other checks were still pending. Exiting cleanly for the next check cycle."
+                exit 0
+              fi
               notify_failed "Codex produced no changes while PR checks/comments are still not clean."
               exit 1
             fi
