@@ -321,7 +321,14 @@ def run_focused_tests(decision: dict[str, Any], restored_files: list[str]) -> No
     append_test_result(decision, "focused order/reconciliation tests", "pass" if not return_code else "fail")
 
 
+def ensure_git_identity() -> None:
+    """Configure git identity for automated clean-scope commits."""
+    run(["git", "config", "user.name", "pickfair-safe-autofix-bot"])
+    run(["git", "config", "user.email", "pickfair-autofix-bot@users.noreply.github.com"])
+
+
 def commit_and_push(args: RebuildArgs, decision: dict[str, Any], restored_files: list[str]) -> None:
+    ensure_git_identity()
     run(["git", "add", "--", *restored_files])
     run(["git", "commit", "-m", f"Clean rebuild PR {args.pr_number} scope"])
     run(["git", "push", "--force-with-lease", "origin", f"HEAD:{args.branch}"])
