@@ -3,14 +3,15 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import http.client
 import json
 import os
 import re
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -168,15 +169,13 @@ def codacy_request_target(parsed: urllib.parse.ParseResult) -> str:
 
 def codacy_https_request(target: str, token: str) -> tuple[int, str]:
     """Execute a Codacy HTTPS GET request and return status and payload text."""
-    conn = http.client.HTTPSConnection("api.codacy.com", timeout=30)
+    url = f"https://api.codacy.com{target}"
+    request = urllib.request.Request(url, headers={"api-token": token}, method="GET")
     try:
-        conn.request("GET", target, headers={"api-token": token})
-        response = conn.getresponse()
-        return int(response.status), response.read().decode("utf-8")
-    except (OSError, http.client.HTTPException) as exc:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return int(response.status), response.read().decode("utf-8")
+    except (urllib.error.URLError, OSError) as exc:
         raise RuntimeError("Codacy API request failed") from exc
-    finally:
-        conn.close()
 
 
 def codacy_http_response(url: str, token: str) -> tuple[int, str]:
@@ -562,7 +561,7 @@ def cmd_codacy_task(args: argparse.Namespace) -> int:
     blocking = codacy_is_blocking(args.repo, args.pr)
     try:
         raw, issues = fetch_codacy_pr_issues(args.repo, args.pr)
-    except (RuntimeError, ValueError, json.JSONDecodeError, OSError) as exc:
+    except (RuntimeError, ValueError, OSError) as exc:
         return codacy_task_error_result(args, blocking, exc)
 
     write_codacy_task(outdir, raw, issues)
