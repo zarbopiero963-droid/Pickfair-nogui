@@ -857,7 +857,20 @@ def codacy_evidence_for_checks(
         for check in checks
         if is_real_blocker(check) and is_codacy_check(check)
     ]
-    return flow.codacy_blocking_evidence(repo, pr, codacy_blockers)
+    if hasattr(flow, "codacy_blocking_evidence"):
+        return flow.codacy_blocking_evidence(repo, pr, codacy_blockers)
+
+    return {
+        "api_available": False,
+        "api_ok": False,
+        "api_status": None,
+        "blocking": bool(codacy_blockers),
+        "check_blocking": bool(codacy_blockers),
+        "checks": codacy_blockers,
+        "ignored": False,
+        "issues_returned": 0,
+        "reason": "Codacy Static Code Analysis is ACTION_REQUIRED; pr_flow_automation has no codacy_blocking_evidence",
+    }
 
 
 def filter_ignored_codacy_checks(
