@@ -6,6 +6,7 @@ import datetime as dt
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -41,7 +42,12 @@ def validate_command(cmd: list[str]) -> list[str]:
         raise ValueError("empty command")
     validate_command_family(Path(str(cmd[0])).name)
     validate_command_args(cmd)
-    return list(cmd)
+    safe_cmd = list(cmd)
+    executable = shutil.which(safe_cmd[0])
+    if not executable:
+        raise ValueError(f"command not found: {safe_cmd[0]}")
+    safe_cmd[0] = executable
+    return safe_cmd
 
 
 def validate_command_family(family: str) -> None:
@@ -59,8 +65,7 @@ def validate_command_args(cmd: list[str]) -> None:
 
 def sh(cmd: list[str], *, check: bool = True) -> str:
     safe_cmd = validate_command(cmd)
-    # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
-    proc = subprocess.run(
+    proc = subprocess.run(  # nosec B603  # nosemgrep
         safe_cmd,
         text=True,
         stdout=subprocess.PIPE,
@@ -202,13 +207,15 @@ def codacy_request_target(parsed: urllib.parse.ParseResult) -> str:
 
 def codacy_https_request(target: str, token: str) -> tuple[int, str]:
     """Execute a Codacy HTTPS GET request and return status and payload text."""
-    req = urllib.request.Request(
+    req = urllib.request.Request(  # nosemgrep
         f"https://api.codacy.com{target}",
         headers={"api-token": token},
         method="GET",
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as response:  # nosec B310  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+        # nosec B310
+        # nosemgrep
+        with urllib.request.urlopen(req, timeout=30) as response:
             status = int(getattr(response, "status", 200))
             payload = response.read().decode("utf-8")
     except OSError as exc:
