@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import http.client
 import json
 import os
 import re
@@ -11,6 +10,7 @@ import subprocess
 import sys
 import time
 import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -32,12 +32,33 @@ FLOW_WORKFLOWS = {
     "PR Flow Guardrails",
 }
 
+ALLOWED_COMMAND_FAMILIES = {"gh", "git", "python", "python3", "pytest"}
+
+
+def validate_command(cmd: list[str]) -> list[str]:
+    if not cmd:
+        raise ValueError("empty command")
+    family = Path(str(cmd[0])).name
+    if family not in ALLOWED_COMMAND_FAMILIES:
+        raise ValueError(f"command family not allowed: {family}")
+    for arg in cmd:
+        if not isinstance(arg, str) or "\x00" in arg:
+            raise ValueError("invalid command argument")
+    return list(cmd)
+
 
 def sh(cmd: list[str], *, check: bool = True) -> str:
-    p = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-    if check and p.returncode != 0:
-        raise RuntimeError(f"command failed: {' '.join(cmd)}\nSTDOUT:\n{p.stdout}\nSTDERR:\n{p.stderr}")
-    return p.stdout.strip()
+    safe_cmd = validate_command(cmd)
+    proc = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+        safe_cmd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if check and proc.returncode != 0:
+        raise RuntimeError(f"command failed: {' '.join(safe_cmd)}\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}")
+    return proc.stdout.strip()
 
 
 def gh_json(cmd: list[str]) -> Any:
@@ -168,15 +189,13 @@ def codacy_request_target(parsed: urllib.parse.ParseResult) -> str:
 
 def codacy_https_request(target: str, token: str) -> tuple[int, str]:
     """Execute a Codacy HTTPS GET request and return status and payload text."""
-    conn = http.client.HTTPSConnection("api.codacy.com", timeout=30)
+    url = f"https://api.codacy.com{target}"
+    request = urllib.request.Request(url, headers={"api-token": token}, method="GET")
     try:
-        conn.request("GET", target, headers={"api-token": token})
-        response = conn.getresponse()
-        return int(response.status), response.read().decode("utf-8")
+        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
+            return int(response.status), response.read().decode("utf-8")
     except OSError as exc:
         raise RuntimeError("Codacy API request failed") from exc
-    finally:
-        conn.close()
 
 
 def codacy_http_response(url: str, token: str) -> tuple[int, str]:

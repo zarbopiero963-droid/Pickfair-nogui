@@ -12,8 +12,8 @@ import re
 import subprocess  # nosec B404
 import sys
 import time
-import http.client
 import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -255,7 +255,6 @@ def safe_autofix_runs_command(repo: str) -> list[str]:
 
 @dataclass(frozen=True)
 class RerunConfig:
-
     """Configuration for rerunning cancelled checks."""
 
     repo: str
@@ -265,7 +264,6 @@ class RerunConfig:
 
 @dataclass(frozen=True)
 class SafeAutofixConfig:
-
     """Configuration for invoking the safe autofix workflow."""
 
     repo: str
@@ -277,7 +275,6 @@ class SafeAutofixConfig:
 
 @dataclass(frozen=True)
 class CleanScopeRules:
-
     """Allowlist and forbidden scope constraints for clean rebuild mode."""
 
     allowlist: tuple[str, ...]
@@ -287,7 +284,6 @@ class CleanScopeRules:
 
 @dataclass(frozen=True)
 class CleanRebuildConfig:
-
     """Configuration for launching a clean-scope rebuild workflow."""
 
     repo: str
@@ -299,6 +295,7 @@ class CleanRebuildConfig:
 
 @dataclass(frozen=True)
 class PendingWaitConfig:
+
     """Data container used by the automation flow."""
 
     repo: str
@@ -310,7 +307,6 @@ class PendingWaitConfig:
 
 @dataclass(frozen=True)
 class CleanScopeReport:
-
     """Data container used by the automation flow."""
 
     enabled: bool
@@ -832,16 +828,14 @@ def codacy_request_target(url: str) -> str:
 
 
 def codacy_https_json(target: str, token: str) -> Any:
-    conn = http.client.HTTPSConnection("api.codacy.com", timeout=30)
+    url = f"https://api.codacy.com{target}"
+    request = urllib.request.Request(url, headers={"api-token": token}, method="GET")
     try:
-        conn.request("GET", target, headers={"api-token": token})
-        response = conn.getresponse()
-        status = int(response.status)
-        payload = response.read().decode("utf-8")
-    except (OSError, http.client.HTTPException) as exc:
+        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
+            status = int(response.status)
+            payload = response.read().decode("utf-8")
+    except OSError as exc:
         raise RuntimeError("Codacy API request failed") from exc
-    finally:
-        conn.close()
     if status >= 400:
         raise RuntimeError(f"Codacy API request failed with status {status}")
     return json.loads(payload or "{}")
@@ -1205,7 +1199,7 @@ def run_controller(args: argparse.Namespace, decision: dict[str, Any]) -> int:
     return write_decision(args.output, decision)
 
 
-def main() -> int:
+def controller_main() -> int:
     args = parse_controller_args()
     if getattr(args, "command", "") == "codacy-task":
         return cmd_codacy_task(args)
@@ -1215,13 +1209,14 @@ def main() -> int:
 
 def _cli_arg_value(names: tuple[str, ...], default: str = "") -> str:
     """Return a CLI argument value without depending on argparse internals."""
-    for index, arg in enumerate(sys.argv):
+    for arg in sys.argv:
         for name in names:
-            if arg == name and index + 1 < len(sys.argv):
-                return str(sys.argv[index + 1])
             prefix = f"{name}="
             if arg.startswith(prefix):
                 return arg[len(prefix):]
+    for index, arg in enumerate(sys.argv):
+        if arg in names and index + 1 < len(sys.argv):
+            return str(sys.argv[index + 1])
     return default
 
 
@@ -1234,6 +1229,31 @@ def _safe_json_run(cmd: list[str]) -> Any:
     return out if isinstance(out, dict) else {"data": out}
 
 
+def _deepsource_checks(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    checks = payload.get("statusCheckRollup")
+    if not isinstance(checks, list):
+        return []
+    return [
+        check for check in checks
+        if "deepsource" in str(check.get("name") or check.get("context") or "").lower()
+    ]
+
+
+def _deepsource_lines(checks: list[dict[str, Any]]) -> list[str]:
+    lines = ["# DeepSource repair input", ""]
+    if not checks:
+        return lines + ["No DeepSource blockers found in current PR status rollup."]
+    for check in checks:
+        lines.extend([
+            f"- name: {str(check.get('name') or check.get('context') or '')}",
+            f"  state: {str(check.get('conclusion') or check.get('state') or check.get('status') or '')}",
+            f"  url: {str(check.get('detailsUrl') or check.get('targetUrl') or '')}",
+            f"  description: {str(check.get('description') or '')}",
+            "",
+        ])
+    return lines
+
+
 def _write_deepsource_task(outdir: Path, repo: str, pr_number: str) -> None:
     """Write DeepSource status/check context for Codex repair."""
     payload = _safe_json_run([
@@ -1241,34 +1261,12 @@ def _write_deepsource_task(outdir: Path, repo: str, pr_number: str) -> None:
         "--repo", repo,
         "--json", "statusCheckRollup",
     ])
-    checks = payload.get("statusCheckRollup") if isinstance(payload, dict) else []
-    checks = checks if isinstance(checks, list) else []
-    deep = [
-        check for check in checks
-        if "deepsource" in str(check.get("name") or check.get("context") or "").lower()
-    ]
-
-    lines = ["# DeepSource repair input", ""]
-    if not deep:
-        lines.append("No DeepSource blockers found in current PR status rollup.")
-    for check in deep:
-        name = str(check.get("name") or check.get("context") or "")
-        state = str(check.get("conclusion") or check.get("state") or check.get("status") or "")
-        url = str(check.get("detailsUrl") or check.get("targetUrl") or "")
-        desc = str(check.get("description") or "")
-        lines.extend([
-            f"- name: {name}",
-            f"  state: {state}",
-            f"  url: {url}",
-            f"  description: {desc}",
-            "",
-        ])
+    safe_payload = payload if isinstance(payload, dict) else {}
+    lines = _deepsource_lines(_deepsource_checks(safe_payload))
     (outdir / "deepsource-task.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _review_threads_query() -> str:
-    """Return the GraphQL query used to collect review threads."""
-    return """
+REVIEW_THREADS_QUERY = """
 query($owner:String!, $name:String!, $number:Int!) {
   repository(owner:$owner, name:$name) {
     pullRequest(number:$number) {
@@ -1297,6 +1295,36 @@ query($owner:String!, $name:String!, $number:Int!) {
 """
 
 
+def _review_thread_nodes(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    if not isinstance(raw, dict):
+        return []
+    nodes = (
+        raw.get("data", {})
+        .get("repository", {})
+        .get("pullRequest", {})
+        .get("reviewThreads", {})
+        .get("nodes", [])
+    )
+    return nodes if isinstance(nodes, list) else []
+
+
+def _thread_lines(node: dict[str, Any]) -> list[str]:
+    path = str(node.get("path") or "")
+    line = str(node.get("line") or node.get("startLine") or "")
+    thread_id = str(node.get("id") or "")
+    lines = [f"## Thread {thread_id}", f"- path: {path}", f"- line: {line}"]
+    comments = ((node.get("comments") or {}).get("nodes") or []) if isinstance(node, dict) else []
+    for comment in comments:
+        lines.extend([
+            f"- author: {str(((comment.get('author') or {}).get('login')) or '')}",
+            f"- url: {str(comment.get('url') or '')}",
+            "",
+            str(comment.get("body") or "").strip(),
+            "",
+        ])
+    return lines
+
+
 def _write_review_task(outdir: Path, repo: str, pr_number: str) -> None:
     """Write unresolved review comments context for Codex repair."""
     owner, name = repo.split("/", 1)
@@ -1305,22 +1333,13 @@ def _write_review_task(outdir: Path, repo: str, pr_number: str) -> None:
         "-f", f"owner={owner}",
         "-f", f"name={name}",
         "-F", f"number={pr_number}",
-        "-f", f"query={_review_threads_query()}",
+        "-f", f"query={REVIEW_THREADS_QUERY}",
     ])
     (outdir / "review-threads-raw.json").write_text(
         json.dumps(raw, indent=2, sort_keys=True),
         encoding="utf-8",
     )
-
-    nodes = (
-        raw.get("data", {})
-        .get("repository", {})
-        .get("pullRequest", {})
-        .get("reviewThreads", {})
-        .get("nodes", [])
-        if isinstance(raw, dict) else []
-    )
-    nodes = nodes if isinstance(nodes, list) else []
+    nodes = _review_thread_nodes(raw)
 
     lines = ["# Unresolved review comments repair input", ""]
     unresolved = [node for node in nodes if not bool(node.get("isResolved"))]
@@ -1328,16 +1347,7 @@ def _write_review_task(outdir: Path, repo: str, pr_number: str) -> None:
         lines.append("No unresolved review threads found, or review thread API was unavailable.")
 
     for node in unresolved:
-        path = str(node.get("path") or "")
-        line = str(node.get("line") or node.get("startLine") or "")
-        thread_id = str(node.get("id") or "")
-        lines.extend([f"## Thread {thread_id}", f"- path: {path}", f"- line: {line}"])
-        comments = ((node.get("comments") or {}).get("nodes") or []) if isinstance(node, dict) else []
-        for comment in comments:
-            author = str(((comment.get("author") or {}).get("login")) or "")
-            body = str(comment.get("body") or "").strip()
-            url = str(comment.get("url") or "")
-            lines.extend([f"- author: {author}", f"- url: {url}", "", body, ""])
+        lines.extend(_thread_lines(node))
     (outdir / "review-comments-task.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -1372,7 +1382,7 @@ def _write_extra_repair_context_after_codacy_task() -> None:
         _append_extra_context_to_codacy_task(outdir)
 
 
-_ORIGINAL_MAIN = main
+_ORIGINAL_MAIN = controller_main
 
 
 def main() -> int:
