@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import http.client
 import json
 import os
 import re
@@ -10,7 +11,6 @@ import subprocess
 import sys
 import time
 import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -138,6 +138,7 @@ def codacy_api_token() -> str:
 
 
 def codacy_url(repo: str, pr_number: str) -> str:
+    """Build the Codacy pull-request issues endpoint URL."""
     owner, repo_name = repo.split("/", 1)
     provider = os.environ.get("CODACY_PROVIDER", "gh")
     params = urllib.parse.urlencode({
@@ -166,12 +167,19 @@ def codacy_request_target(parsed: urllib.parse.ParseResult) -> str:
 
 def codacy_http_response(url: str, token: str) -> tuple[int, str]:
     """Request Codacy API data and return status code and decoded payload."""
-    request = urllib.request.Request(url, headers={"api-token": token}, method="GET")
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https" or parsed.netloc != "api.codacy.com":
+        raise RuntimeError("invalid Codacy API URL")
+    target = codacy_request_target(parsed)
+    connection = http.client.HTTPSConnection("api.codacy.com", timeout=30)
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
-            return int(response.status), response.read().decode("utf-8")
+        connection.request("GET", target, headers={"api-token": token})
+        response = connection.getresponse()
+        return int(response.status), response.read().decode("utf-8")
     except OSError as exc:
         raise RuntimeError("Codacy API request failed") from exc
+    finally:
+        connection.close()
 
 
 def fetch_codacy_json(url: str, token: str) -> Any:
