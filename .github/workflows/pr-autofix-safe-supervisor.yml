@@ -203,15 +203,19 @@ jobs:
               . .autofix/context/decision.env
               set +a
 
-              python3 scripts/pr_flow_automation.py codacy-task \
+              if ! python3 scripts/pr_flow_automation.py codacy-task \
                 --repo "$REPO" \
                 --pr "$PR_NUMBER" \
-                --outdir .autofix/context
+                --outdir .autofix/context; then
+                echo "::error::Codacy API context collection failed closed while Codacy is ACTION_REQUIRED."
+                cat .autofix/context/codacy-task.md 2>/dev/null || true
+                exit 1
+              fi
 
               {
                 printf '%s\n' ''
                 printf '%s\n' '## Codacy API task source of truth'
-                printf '%s\n' 'If current Codacy API issues are listed below, fix only these current Codacy blockers and do not use local shell CODACY_API_TOKEN.'
+                printf '%s\n' 'If current Codacy API issues are listed below, fix only these current Codacy blockers. Do not read or rely on local shell CODACY_API_TOKEN.'
                 cat .autofix/context/codacy-task.md
               } >> .autofix/context/codex-task.md
 
