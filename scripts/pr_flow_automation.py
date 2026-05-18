@@ -72,7 +72,7 @@ def pr_view(repo: str, pr: str) -> dict[str, Any]:
         "gh", "pr", "view", str(pr),
         "--repo", repo,
         "--json",
-        "state,isDraft,mergeable,mergeStateStatus,reviewDecision,headRefOid,baseRefName,headRefName,statusCheckRollup,url,mergedAt,mergedBy,mergeCommit",
+        "title,state,isDraft,mergeable,mergeStateStatus,reviewDecision,headRefOid,baseRefName,headRefName,statusCheckRollup,url,mergedAt,mergedBy,mergeCommit",
     ])
 
 
@@ -291,6 +291,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     checks = split_checks(pr, ignore_self=True)
     issues: list[str] = []
     warnings: list[str] = []
+    title = str(pr.get("title") or "")
 
     codacy_blocking = any("codacy" in (b["name"] + " " + b["url"]).lower() for b in checks["blockers"])
     if codacy_blocking and os.environ.get("HAS_CODACY_API_TOKEN", "").lower() not in {"true", "1", "yes"}:
@@ -309,8 +310,15 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         for f in changed_files_for_commit(c):
             file_touches[f] = file_touches.get(f, 0) + 1
 
+    # Canary PRs intentionally iterate safe-autofix rounds and can exceed the normal cap.
+    is_safe_autofix_canary = "safe autofix canary" in title.lower()
     if len(commits) > args.max_safe_autofix_commits:
-        issues.append(f"safe autofix commit limit exceeded: {len(commits)} > {args.max_safe_autofix_commits}")
+        if is_safe_autofix_canary:
+            warnings.append(
+                f"safe autofix commit limit exceeded for canary PR: {len(commits)} > {args.max_safe_autofix_commits}"
+            )
+        else:
+            issues.append(f"safe autofix commit limit exceeded: {len(commits)} > {args.max_safe_autofix_commits}")
 
     oscillating = [
         {"file": f, "touches": n}
@@ -324,6 +332,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         "repo": args.repo,
         "pr": str(args.pr),
         "state": pr.get("state"),
+        "title": title,
         "head": pr.get("headRefOid"),
         "branch": branch,
         "codacy_blocking": codacy_blocking,
