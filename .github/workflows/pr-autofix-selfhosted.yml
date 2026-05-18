@@ -57,7 +57,7 @@ jobs:
       FINAL_REVIEW_WAIT_SECONDS: "90"
       CODEX_QUOTA_SLEEP_SECONDS: "18600"
       CODEX_MAX_ATTEMPTS: "3"
-      CODEX_PRIMARY_MODEL: ${{ vars.CODEX_PRIMARY_MODEL || 'gpt-5.5-codex' }}
+      CODEX_PRIMARY_MODEL: ${{ vars.CODEX_PRIMARY_MODEL || 'gpt-5.5' }}
       CODEX_FALLBACK_MODEL: ${{ vars.CODEX_FALLBACK_MODEL || 'gpt-5.3-codex' }}
       CODEX_FIX_MODEL: gpt-5.3-codex
       CODEX_REVIEW_MODEL: gpt-5.5

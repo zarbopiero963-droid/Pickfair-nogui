@@ -80,7 +80,7 @@ jobs:
       MAX_ROUNDS: ${{ github.event.inputs.max_rounds || '3' }}
       PENDING_WAIT_SECONDS: ${{ github.event.inputs.pending_wait_seconds || '2700' }}
       DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
-      CODEX_PRIMARY_MODEL: ${{ vars.CODEX_PRIMARY_MODEL || 'gpt-5.5-codex' }}
+      CODEX_PRIMARY_MODEL: ${{ vars.CODEX_PRIMARY_MODEL || 'gpt-5.5' }}
       CODEX_FALLBACK_MODEL: ${{ vars.CODEX_FALLBACK_MODEL || 'gpt-5.3-codex' }}
       CODEX_MODEL: gpt-5.3-codex
       HAS_CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN != '' }}
