@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import re
@@ -255,6 +256,7 @@ def safe_autofix_runs_command(repo: str) -> list[str]:
 
 @dataclass(frozen=True)
 class RerunConfig:
+
     """Configuration for rerunning cancelled checks."""
 
     repo: str
@@ -264,6 +266,7 @@ class RerunConfig:
 
 @dataclass(frozen=True)
 class SafeAutofixConfig:
+
     """Configuration for invoking the safe autofix workflow."""
 
     repo: str
@@ -275,6 +278,7 @@ class SafeAutofixConfig:
 
 @dataclass(frozen=True)
 class CleanScopeRules:
+
     """Allowlist and forbidden scope constraints for clean rebuild mode."""
 
     allowlist: tuple[str, ...]
@@ -284,6 +288,7 @@ class CleanScopeRules:
 
 @dataclass(frozen=True)
 class CleanRebuildConfig:
+
     """Configuration for launching a clean-scope rebuild workflow."""
 
     repo: str
@@ -295,7 +300,6 @@ class CleanRebuildConfig:
 
 @dataclass(frozen=True)
 class PendingWaitConfig:
-
     """Data container used by the automation flow."""
 
     repo: str
@@ -307,6 +311,7 @@ class PendingWaitConfig:
 
 @dataclass(frozen=True)
 class CleanScopeReport:
+
     """Data container used by the automation flow."""
 
     enabled: bool
@@ -828,14 +833,16 @@ def codacy_request_target(url: str) -> str:
 
 
 def codacy_https_json(target: str, token: str) -> Any:
-    url = f"https://api.codacy.com{target}"
-    request = urllib.request.Request(url, headers={"api-token": token}, method="GET")
+    conn = http.client.HTTPSConnection("api.codacy.com", timeout=30)
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
-            status = int(response.status)
-            payload = response.read().decode("utf-8")
+        conn.request("GET", target, headers={"api-token": token})
+        response = conn.getresponse()
+        status = int(response.status)
+        payload = response.read().decode("utf-8")
     except OSError as exc:
         raise RuntimeError("Codacy API request failed") from exc
+    finally:
+        conn.close()
     if status >= 400:
         raise RuntimeError(f"Codacy API request failed with status {status}")
     return json.loads(payload or "{}")
@@ -1209,11 +1216,20 @@ def controller_main() -> int:
 
 def _cli_arg_value(names: tuple[str, ...], default: str = "") -> str:
     """Return a CLI argument value without depending on argparse internals."""
+    inline = _inline_cli_arg_value(names)
+    return inline if inline else _positional_cli_arg_value(names, default)
+
+
+def _inline_cli_arg_value(names: tuple[str, ...]) -> str:
     for arg in sys.argv:
         for name in names:
             prefix = f"{name}="
             if arg.startswith(prefix):
                 return arg[len(prefix):]
+    return ""
+
+
+def _positional_cli_arg_value(names: tuple[str, ...], default: str) -> str:
     for index, arg in enumerate(sys.argv):
         if arg in names and index + 1 < len(sys.argv):
             return str(sys.argv[index + 1])
@@ -1231,12 +1247,14 @@ def _safe_json_run(cmd: list[str]) -> Any:
 
 def _deepsource_checks(payload: dict[str, Any]) -> list[dict[str, Any]]:
     checks = payload.get("statusCheckRollup")
-    if not isinstance(checks, list):
-        return []
-    return [
+    return [] if not isinstance(checks, list) else [
         check for check in checks
-        if "deepsource" in str(check.get("name") or check.get("context") or "").lower()
+        if _is_deepsource_check(check)
     ]
+
+
+def _is_deepsource_check(check: dict[str, Any]) -> bool:
+    return "deepsource" in str(check.get("name") or check.get("context") or "").lower()
 
 
 def _deepsource_lines(checks: list[dict[str, Any]]) -> list[str]:
@@ -1313,16 +1331,25 @@ def _thread_lines(node: dict[str, Any]) -> list[str]:
     line = str(node.get("line") or node.get("startLine") or "")
     thread_id = str(node.get("id") or "")
     lines = [f"## Thread {thread_id}", f"- path: {path}", f"- line: {line}"]
-    comments = ((node.get("comments") or {}).get("nodes") or []) if isinstance(node, dict) else []
+    comments = _thread_comments(node)
     for comment in comments:
-        lines.extend([
-            f"- author: {str(((comment.get('author') or {}).get('login')) or '')}",
-            f"- url: {str(comment.get('url') or '')}",
-            "",
-            str(comment.get("body") or "").strip(),
-            "",
-        ])
+        lines.extend(_comment_lines(comment))
     return lines
+
+
+def _thread_comments(node: dict[str, Any]) -> list[dict[str, Any]]:
+    comments = ((node.get("comments") or {}).get("nodes") or []) if isinstance(node, dict) else []
+    return [comment for comment in comments if isinstance(comment, dict)]
+
+
+def _comment_lines(comment: dict[str, Any]) -> list[str]:
+    return [
+        f"- author: {str(((comment.get('author') or {}).get('login')) or '')}",
+        f"- url: {str(comment.get('url') or '')}",
+        "",
+        str(comment.get("body") or "").strip(),
+        "",
+    ]
 
 
 def _write_review_task(outdir: Path, repo: str, pr_number: str) -> None:
@@ -1335,20 +1362,25 @@ def _write_review_task(outdir: Path, repo: str, pr_number: str) -> None:
         "-F", f"number={pr_number}",
         "-f", f"query={REVIEW_THREADS_QUERY}",
     ])
-    (outdir / "review-threads-raw.json").write_text(
-        json.dumps(raw, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
+    _write_json_file(outdir / "review-threads-raw.json", raw)
     nodes = _review_thread_nodes(raw)
+    lines = _review_task_lines(nodes)
+    (outdir / "review-comments-task.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
+
+def _write_json_file(path: Path, payload: Any) -> None:
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _review_task_lines(nodes: list[dict[str, Any]]) -> list[str]:
     lines = ["# Unresolved review comments repair input", ""]
     unresolved = [node for node in nodes if not bool(node.get("isResolved"))]
     if not unresolved:
         lines.append("No unresolved review threads found, or review thread API was unavailable.")
-
+        return lines
     for node in unresolved:
         lines.extend(_thread_lines(node))
-    (outdir / "review-comments-task.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return lines
 
 
 def _append_extra_context_to_codacy_task(outdir: Path) -> None:
