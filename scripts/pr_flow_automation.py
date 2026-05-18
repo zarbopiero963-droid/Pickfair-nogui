@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import http.client
 import json
 import os
 import re
@@ -11,6 +10,7 @@ import subprocess
 import sys
 import time
 import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -172,17 +172,18 @@ def codacy_http_response(url: str, token: str) -> tuple[int, str]:
     if parsed.scheme != "https" or parsed.netloc != "api.codacy.com":
         raise RuntimeError("invalid Codacy API URL")
     target = codacy_request_target(parsed)
-    connection = http.client.HTTPSConnection("api.codacy.com", timeout=30)
+    request = urllib.request.Request(
+        f"https://api.codacy.com{target}",
+        headers={"api-token": token},
+        method="GET",
+    )
     try:
-        connection.request("GET", target, headers={"api-token": token})
-        response = connection.getresponse()
-        status = int(response.status)
-        payload = response.read().decode("utf-8")
-        return status, payload
+        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
+            status = int(getattr(response, "status", response.getcode()))
+            payload = response.read().decode("utf-8")
+            return status, payload
     except OSError as exc:
         raise RuntimeError("Codacy API request failed") from exc
-    finally:
-        connection.close()
 
 
 def fetch_codacy_json(url: str, token: str) -> Any:
@@ -223,6 +224,7 @@ def issue_dict_from_item(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def nested_dict(source: dict[str, Any], key: str) -> dict[str, Any]:
+    """Return a nested dictionary value or an empty dictionary."""
     value = source.get(key)
     return value if isinstance(value, dict) else {}
 
