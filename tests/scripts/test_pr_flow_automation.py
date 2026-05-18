@@ -155,32 +155,42 @@ def test_build_decision_reports_real_blockers_and_merge_state(monkeypatch):
     ASSERTIONS.assertEqual(decision["ignored_self_checks"][0]["name"], "PR Merge Readiness")
 
 
+def _preflight_args() -> argparse.Namespace:
+    return argparse.Namespace(
+        repo="owner/repo",
+        pr="225",
+        output="",
+        max_safe_autofix_commits=3,
+        oscillation_touch_limit=2,
+        comment=False,
+        no_fail=False,
+    )
+
+
+def _preflight_pr_view(_repo: str, _pr: str) -> dict[str, object]:
+    return {
+        "state": "OPEN",
+        "headRefName": "feature/branch",
+        "headRefOid": "abc123",
+        "statusCheckRollup": [_check("Unit tests", "SUCCESS")],
+    }
+
+
 def test_preflight_commit_limit_only_blocks_when_codacy_is_blocking(monkeypatch):
     """Preflight does not fail only because of autofix history when Codacy is clear."""
+    monkeypatch.setattr(flow, "pr_view", _preflight_pr_view)
+    monkeypatch.setattr(flow, "sh", lambda *_args, **_kwargs: "")
     monkeypatch.setattr(
         flow,
-        "pr_view",
-        lambda _repo, _pr: {
-            "state": "OPEN",
-            "headRefName": "feature/branch",
-            "headRefOid": "abc123",
-            "statusCheckRollup": [_check("Unit tests", "SUCCESS")],
-        },
+        "safe_autofix_commits",
+        lambda *_args, **_kwargs: ["a", "b", "c", "d"],
     )
-    monkeypatch.setattr(flow, "sh", lambda *_args, **_kwargs: "")
-    monkeypatch.setattr(flow, "safe_autofix_commits", lambda *_args, **_kwargs: ["a", "b", "c", "d"])
-    monkeypatch.setattr(flow, "changed_files_for_commit", lambda *_args, **_kwargs: ["scripts/pr_clean_scope_rebuild.py"])
+    monkeypatch.setattr(
+        flow,
+        "changed_files_for_commit",
+        lambda *_args, **_kwargs: ["scripts/pr_clean_scope_rebuild.py"],
+    )
 
-    rc = flow.cmd_preflight(
-        argparse.Namespace(
-            repo="owner/repo",
-            pr="225",
-            output="",
-            max_safe_autofix_commits=3,
-            oscillation_touch_limit=2,
-            comment=False,
-            no_fail=False,
-        )
-    )
+    rc = flow.cmd_preflight(_preflight_args())
 
     ASSERTIONS.assertEqual(rc, 0)
