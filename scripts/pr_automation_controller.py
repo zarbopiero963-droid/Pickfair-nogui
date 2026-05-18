@@ -7,21 +7,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess  # nosec B404
 import sys
 import time
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Sequence
-
-if TYPE_CHECKING:
-    flow: Any
-else:
-    try:
-        from scripts import pr_flow_automation as flow
-    except ModuleNotFoundError:  # pragma: no cover - used when executed as scripts/*.py
-        import pr_flow_automation as flow
+from typing import Any, Sequence
 
 FAIL_STATES = {"FAILURE", "ERROR", "ACTION_REQUIRED", "TIMED_OUT"}
 PENDING_STATES = {"", "PENDING", "QUEUED", "IN_PROGRESS", "REQUESTED", "WAITING"}
@@ -30,9 +25,15 @@ CANCELLED_STATES = {"CANCELLED", "CANCELED"}
 SAFE_AUTOFIX_WORKFLOW = "277606083"
 AUTOFIX_COMMIT_ACTOR_ALLOWLIST = {"github-actions[bot]", "codex[bot]"}
 CLEAN_SCOPE_ALLOWED_DEFAULT = [
-    "scripts/pr_automation_controller.py",
+    ".github/workflows/pr-autofix-selfhosted.yml",
+    ".github/workflows/pr-autofix-safe-supervisor.yml",
     ".github/workflows/pr-automation-controller-v2.yml",
+    ".github/workflows/pr-flow-guardrails.yml",
+    ".github/workflows/pr-merge-readiness.yml",
+    "scripts/pr_automation_controller.py",
     "scripts/pr_clean_scope_rebuild.py",
+    "tests/scripts/test_pr_automation_controller.py",
+    "tests/scripts/test_pr_flow_automation.py",
 ]
 CLEAN_SCOPE_FORBIDDEN_DEFAULT = [
     "order_manager.py",
@@ -736,6 +737,146 @@ def safe_autofix_still_allowed(
     return should_launch and mode in valid_modes and not clean_scope_blocks_safe_autofix(signals)
 
 
+def codacy_issue_items(body: Any) -> list[dict[str, Any]]:
+    if isinstance(body, list):
+        return [item for item in body if isinstance(item, dict)]
+    if not isinstance(body, dict):
+        return []
+    for key in ("data", "issues", "results", "items"):
+        value = body.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def codacy_issue_record(item: dict[str, Any]) -> dict[str, Any]:
+    issue = item.get("commitIssue") if isinstance(item.get("commitIssue"), dict) else item
+    pattern = issue.get("patternInfo") if isinstance(issue.get("patternInfo"), dict) else {}
+    tool = issue.get("toolInfo") if isinstance(issue.get("toolInfo"), dict) else {}
+    return {
+        "filePath": issue.get("filePath") or issue.get("filename") or "",
+        "lineNumber": issue.get("lineNumber"),
+        "message": issue.get("message") or "",
+        "patternId": pattern.get("id") or issue.get("patternId") or "",
+        "category": pattern.get("category") or "",
+        "severity": pattern.get("severityLevel") or pattern.get("level") or "",
+        "tool": tool.get("name") or "",
+    }
+
+
+def codacy_api_token() -> str:
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        raise RuntimeError("Codacy API token is only trusted inside GitHub Actions")
+    if os.environ.get("HAS_CODACY_API_TOKEN", "").lower() not in {"true", "1", "yes"}:
+        raise RuntimeError("GitHub Actions CODACY_API_TOKEN secret is unavailable")
+    token = os.environ.get("CODACY_API_TOKEN", "")
+    if not token:
+        raise RuntimeError("GitHub Actions CODACY_API_TOKEN secret is empty")
+    return token
+
+
+def fetch_codacy_pr_issues(repo: str, pr_number: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    token = codacy_api_token()
+    owner, repo_name = repo.split("/", 1)
+    provider = os.environ.get("CODACY_PROVIDER", "gh")
+    params = urllib.parse.urlencode({
+        "status": "new",
+        "onlyPotential": "false",
+        "limit": "100",
+    })
+    url = (
+        "https://api.codacy.com/api/v3/analysis/"
+        f"organizations/{provider}/{urllib.parse.quote(owner, safe='')}/"
+        f"repositories/{urllib.parse.quote(repo_name, safe='')}/"
+        f"pull-requests/{urllib.parse.quote(str(pr_number), safe='')}/issues?{params}"
+    )
+    request = urllib.request.Request(url, headers={"api-token": token})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        body = json.loads(response.read().decode("utf-8") or "{}")
+    raw = body if isinstance(body, dict) else {"data": body}
+    return raw, codacy_issue_items(body)
+
+
+def write_codacy_task(outdir: Path, raw: dict[str, Any], issues: list[dict[str, Any]]) -> None:
+    outdir.mkdir(parents=True, exist_ok=True)
+    records = [codacy_issue_record(item) for item in issues]
+    (outdir / "codacy-raw.json").write_text(
+        json.dumps(raw, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (outdir / "codacy-issues.json").write_text(
+        json.dumps(records, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    lines = [
+        "# Current Codacy API issues",
+        "",
+        f"Total: {len(records)}",
+        "",
+        "Fix only these current Codacy blockers. Preserve PR scope.",
+        "Codex must not call Codacy or DeepSource APIs directly.",
+        "",
+    ]
+    for index, record in enumerate(records, 1):
+        lines.append(
+            f"{index}. {record['filePath']}:{record['lineNumber']} "
+            f"{record['patternId']} {record['severity']} {record['tool']} - {record['message']}"
+        )
+    (outdir / "codacy-task.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def cmd_codacy_task(args: argparse.Namespace) -> int:
+    outdir = Path(args.outdir)
+    raw, issues = fetch_codacy_pr_issues(args.repo, args.pr)
+    write_codacy_task(outdir, raw, issues)
+    result = {
+        "repo": args.repo,
+        "pr": str(args.pr),
+        "issues_returned": len(issues),
+        "codacy_raw": str(outdir / "codacy-raw.json"),
+        "codacy_issues": str(outdir / "codacy-issues.json"),
+        "codacy_task": str(outdir / "codacy-task.md"),
+    }
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def controller_codacy_blocking_evidence(
+    repo: str,
+    pr_number: str,
+    codacy_checks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not codacy_checks:
+        return {
+            "checks": [],
+            "check_blocking": False,
+            "api_available": False,
+            "api_ok": False,
+            "issues_returned": 0,
+            "blocking": False,
+            "ignored": False,
+            "reason": "no Codacy check blocker",
+        }
+    try:
+        _, issues = fetch_codacy_pr_issues(repo, pr_number)
+        api_ok = True
+        reason = f"Codacy API returned {len(issues)} current issue(s)"
+    except Exception as exc:
+        issues = []
+        api_ok = False
+        reason = f"Codacy API unavailable ({type(exc).__name__}): {exc}"
+    return {
+        "checks": codacy_checks,
+        "check_blocking": bool(codacy_checks),
+        "api_available": api_ok,
+        "api_ok": api_ok,
+        "issues_returned": len(issues),
+        "blocking": bool(codacy_checks) if not api_ok else bool(issues),
+        "ignored": api_ok and not issues,
+        "reason": reason,
+    }
+
+
 def decide_next_action(ctx: NextActionContext) -> None:
     should_launch, launchable = should_launch_autofix(ctx.checks)
     ctx.decision["launchable_for_safe_autofix"] = launchable
@@ -752,6 +893,13 @@ def decide_next_action(ctx: NextActionContext) -> None:
 
 
 def parse_controller_args() -> argparse.Namespace:
+    if len(sys.argv) > 1 and sys.argv[1] == "codacy-task":
+        parser = argparse.ArgumentParser()
+        parser.add_argument("command")
+        parser.add_argument("--repo", required=True)
+        parser.add_argument("--pr", required=True)
+        parser.add_argument("--outdir", default=".autofix/context")
+        return parser.parse_args()
     parser = argparse.ArgumentParser()
     add_controller_core_args(parser)
     add_controller_clean_scope_args(parser)
@@ -855,9 +1003,7 @@ def codacy_evidence_for_checks(
         for check in checks
         if is_real_blocker(check) and is_codacy_check(check)
     ]
-    if hasattr(flow, "codacy_blocking_evidence"):
-        return flow.codacy_blocking_evidence(repo, pr, codacy_blockers)
-    return fallback_codacy_evidence(codacy_blockers)
+    return controller_codacy_blocking_evidence(repo, pr, codacy_blockers)
 
 
 def fallback_codacy_evidence(codacy_blockers: list[dict[str, Any]]) -> dict[str, Any]:
@@ -990,6 +1136,8 @@ def run_controller(args: argparse.Namespace, decision: dict[str, Any]) -> int:
 
 def main() -> int:
     args = parse_controller_args()
+    if getattr(args, "command", "") == "codacy-task":
+        return cmd_codacy_task(args)
     return run_controller(args, initial_decision(args))
 
 

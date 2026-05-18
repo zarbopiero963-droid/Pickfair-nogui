@@ -3,6 +3,7 @@
 
 from unittest import TestCase
 
+import scripts.pr_automation_controller as controller
 import scripts.pr_flow_automation as flow
 
 ASSERTIONS = TestCase()
@@ -50,11 +51,12 @@ def test_split_checks_ignores_self_checks_when_requested():
 
 def test_codacy_task_normalizes_common_issue_fields(tmp_path):
     """Codacy API output is persisted raw and rendered into a concise task file."""
-    flow.write_codacy_task(tmp_path, [{"data": "ignored"}, _codacy_issue()])
+    controller.write_codacy_task(tmp_path, {"data": [_codacy_issue()]}, [_codacy_issue()])
 
     task = (tmp_path / "codacy-task.md").read_text(encoding="utf-8")
 
     ASSERTIONS.assertTrue((tmp_path / "codacy-raw.json").exists())
+    ASSERTIONS.assertTrue((tmp_path / "codacy-issues.json").exists())
     ASSERTIONS.assertIn("scripts/pr_flow_automation.py", task)
     ASSERTIONS.assertIn("PY001", task)
     ASSERTIONS.assertIn("Example issue", task)
@@ -62,10 +64,9 @@ def test_codacy_task_normalizes_common_issue_fields(tmp_path):
 
 def test_codacy_blocking_evidence_ignores_stale_check_when_api_is_clear(monkeypatch):
     """A stale Codacy ACTION_REQUIRED check is ignored once the Codacy API is clear."""
-    monkeypatch.setenv("CODACY_API_TOKEN", "token")
-    monkeypatch.setattr(flow, "fetch_codacy_pr_issues", lambda _repo, _pr: [])
+    monkeypatch.setattr(controller, "fetch_codacy_pr_issues", lambda _repo, _pr: ({}, []))
 
-    evidence = flow.codacy_blocking_evidence("owner/repo", "225", [_codacy_check()])
+    evidence = controller.controller_codacy_blocking_evidence("owner/repo", "225", [_codacy_check()])
 
     ASSERTIONS.assertFalse(evidence["blocking"])
     ASSERTIONS.assertTrue(evidence["ignored"])
@@ -74,10 +75,13 @@ def test_codacy_blocking_evidence_ignores_stale_check_when_api_is_clear(monkeypa
 
 def test_codacy_blocking_evidence_preserves_current_blocker(monkeypatch):
     """Current Codacy issues keep ACTION_REQUIRED checks blocking."""
-    monkeypatch.setenv("CODACY_API_TOKEN", "token")
-    monkeypatch.setattr(flow, "fetch_codacy_pr_issues", lambda _repo, _pr: [_codacy_issue()])
+    monkeypatch.setattr(
+        controller,
+        "fetch_codacy_pr_issues",
+        lambda _repo, _pr: ({"data": [_codacy_issue()]}, [_codacy_issue()]),
+    )
 
-    evidence = flow.codacy_blocking_evidence("owner/repo", "225", [_codacy_check()])
+    evidence = controller.controller_codacy_blocking_evidence("owner/repo", "225", [_codacy_check()])
 
     ASSERTIONS.assertTrue(evidence["blocking"])
     ASSERTIONS.assertFalse(evidence["ignored"])

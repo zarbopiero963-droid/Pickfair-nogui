@@ -30,8 +30,8 @@ def _args() -> argparse.Namespace:
 
 def _stub_codacy_evidence(monkeypatch, *, blocking: bool, ignored: bool, issues: int) -> None:
     monkeypatch.setattr(
-        controller.flow,
-        "codacy_blocking_evidence",
+        controller,
+        "controller_codacy_blocking_evidence",
         lambda _repo, _pr, _blockers: {
             "blocking": blocking,
             "ignored": ignored,
@@ -88,3 +88,26 @@ def test_controller_preserves_safe_autofix_launch_for_current_codacy_blocker(mon
     )
     ASSERTIONS.assertEqual(decision["blockers"][0]["name"], "Codacy Static Code Analysis")
     ASSERTIONS.assertTrue(decision["actions"])
+
+
+def test_codacy_api_token_is_not_trusted_outside_github_actions(monkeypatch):
+    """Local shell CODACY_API_TOKEN is not accepted as Codacy API authority."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setenv("HAS_CODACY_API_TOKEN", "true")
+    monkeypatch.setenv("CODACY_API_TOKEN", "local-token")
+
+    with ASSERTIONS.assertRaisesRegex(RuntimeError, "only trusted inside GitHub Actions"):
+        controller.codacy_api_token()
+
+
+def test_codacy_task_writes_raw_response_and_normalized_issue(tmp_path):
+    """Controller Codacy task writer persists raw API response and normalized task context."""
+    raw = {"data": [{"filePath": "scripts/pr_automation_controller.py", "lineNumber": 12, "message": "Fix me"}]}
+
+    controller.write_codacy_task(tmp_path, raw, raw["data"])
+
+    ASSERTIONS.assertTrue((tmp_path / "codacy-raw.json").exists())
+    ASSERTIONS.assertTrue((tmp_path / "codacy-issues.json").exists())
+    task = (tmp_path / "codacy-task.md").read_text(encoding="utf-8")
+    ASSERTIONS.assertIn("scripts/pr_automation_controller.py:12", task)
+    ASSERTIONS.assertIn("Fix me", task)
