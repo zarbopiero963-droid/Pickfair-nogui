@@ -178,6 +178,8 @@ def codacy_http_response(url: str, token: str) -> tuple[int, str]:
         method="GET",
     )
     try:
+        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+        # nosemgrep: python_urlopen_rule-urllib-urlopen
         with urllib.request.urlopen(  # nosec B310
             request, timeout=30
         ) as response:
