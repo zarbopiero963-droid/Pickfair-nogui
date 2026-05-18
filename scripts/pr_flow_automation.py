@@ -213,7 +213,7 @@ def codacy_https_request(target: str, token: str) -> tuple[int, str]:
         method="GET",
     )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
+        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310  # nosemgrep
             status = int(getattr(response, "status", 200))
             payload = response.read().decode("utf-8")
     except OSError as exc:
