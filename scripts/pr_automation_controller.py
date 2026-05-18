@@ -6,14 +6,15 @@
 from __future__ import annotations
 
 import argparse
-import http.client
 import json
 import os
 import re
 import subprocess  # nosec B404
 import sys
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -255,7 +256,6 @@ def safe_autofix_runs_command(repo: str) -> list[str]:
 
 @dataclass(frozen=True)
 class RerunConfig:
-
     """Data container used by the automation flow."""
 
     repo: str
@@ -265,6 +265,7 @@ class RerunConfig:
 
 @dataclass(frozen=True)
 class SafeAutofixConfig:
+
     """Data container used by the automation flow."""
 
     repo: str
@@ -826,16 +827,16 @@ def validate_codacy_url(url: str) -> None:
 
 def fetch_json(url: str, token: str) -> Any:
     parsed = urllib.parse.urlparse(url)
-    path_and_query = parsed.path if not parsed.query else f"{parsed.path}?{parsed.query}"
-    connection = http.client.HTTPSConnection(parsed.netloc, timeout=30)
+    request = urllib.request.Request(
+        url=parsed.geturl(),
+        headers={"api-token": token},
+        method="GET",
+    )
     try:
-        connection.request("GET", path_and_query, headers={"api-token": token})
-        response = connection.getresponse()
-        payload = response.read().decode("utf-8")
-    finally:
-        connection.close()
-    if response.status >= 400:
-        raise RuntimeError(f"Codacy API request failed with status {response.status}")
+        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
+            payload = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"Codacy API request failed with status {exc.code}") from exc
     return json.loads(payload or "{}")
 
 
