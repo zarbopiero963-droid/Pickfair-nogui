@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import argparse
-import http.client
 import json
 import os
 import re
@@ -14,6 +13,7 @@ import subprocess  # nosec B404
 import sys
 import time
 import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -255,7 +255,6 @@ def safe_autofix_runs_command(repo: str) -> list[str]:
 
 @dataclass(frozen=True)
 class RerunConfig:
-
     """Data container used by the automation flow."""
 
     repo: str
@@ -265,6 +264,7 @@ class RerunConfig:
 
 @dataclass(frozen=True)
 class SafeAutofixConfig:
+
     """Data container used by the automation flow."""
 
     repo: str
@@ -737,15 +737,26 @@ def safe_autofix_still_allowed(
     return should_launch and mode in valid_modes and not clean_scope_blocks_safe_autofix(signals)
 
 
+def dict_items_from_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def first_issue_list(body: dict[str, Any]) -> list[dict[str, Any]]:
+    for key in ("data", "issues", "results", "items"):
+        items = dict_items_from_list(body.get(key))
+        if items:
+            return items
+    return []
+
+
 def codacy_issue_items(body: Any) -> list[dict[str, Any]]:
     if isinstance(body, list):
-        return [item for item in body if isinstance(item, dict)]
+        return dict_items_from_list(body)
     if not isinstance(body, dict):
         return []
-    for value in (body.get(key) for key in ("data", "issues", "results", "items")):
-        if isinstance(value, list):
-            return [item for item in value if isinstance(item, dict)]
-    return []
+    return first_issue_list(body)
 
 
 def issue_dict_from_item(item: dict[str, Any]) -> dict[str, Any]:
@@ -758,18 +769,25 @@ def nested_dict(source: dict[str, Any], key: str) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def first_nonempty(*values: Any) -> Any:
+    for value in values:
+        if value:
+            return value
+    return ""
+
+
 def codacy_issue_record(item: dict[str, Any]) -> dict[str, Any]:
     issue = issue_dict_from_item(item)
     pattern = nested_dict(issue, "patternInfo")
     tool = nested_dict(issue, "toolInfo")
     return {
-        "filePath": issue.get("filePath") or issue.get("filename") or "",
+        "filePath": first_nonempty(issue.get("filePath"), issue.get("filename")),
         "lineNumber": issue.get("lineNumber"),
-        "message": issue.get("message") or "",
-        "patternId": pattern.get("id") or issue.get("patternId") or "",
-        "category": pattern.get("category") or "",
-        "severity": pattern.get("severityLevel") or pattern.get("level") or "",
-        "tool": tool.get("name") or "",
+        "message": first_nonempty(issue.get("message")),
+        "patternId": first_nonempty(pattern.get("id"), issue.get("patternId")),
+        "category": first_nonempty(pattern.get("category")),
+        "severity": first_nonempty(pattern.get("severityLevel"), pattern.get("level")),
+        "tool": first_nonempty(tool.get("name")),
     }
 
 
@@ -809,13 +827,13 @@ def validate_codacy_url(url: str) -> None:
 def fetch_json(url: str, token: str) -> Any:
     parsed = urllib.parse.urlparse(url)
     path_and_query = parsed.path if not parsed.query else f"{parsed.path}?{parsed.query}"
-    conn = http.client.HTTPSConnection(parsed.netloc, timeout=30)
-    try:
-        conn.request("GET", path_and_query, headers={"api-token": token})
-        response = conn.getresponse()
+    request = urllib.request.Request(
+        url=f"{parsed.scheme}://{parsed.netloc}{path_and_query}",
+        headers={"api-token": token},
+        method="GET",
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
         payload = response.read().decode("utf-8")
-    finally:
-        conn.close()
     return json.loads(payload or "{}")
 
 
