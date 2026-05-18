@@ -3,15 +3,14 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import http.client
 import json
 import os
 import re
 import subprocess
 import sys
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +34,7 @@ FLOW_WORKFLOWS = {
 
 
 def sh(cmd: list[str], *, check: bool = True) -> str:
-    p = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    p = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     if check and p.returncode != 0:
         raise RuntimeError(f"command failed: {' '.join(cmd)}\nSTDOUT:\n{p.stdout}\nSTDERR:\n{p.stderr}")
     return p.stdout.strip()
@@ -169,13 +168,15 @@ def codacy_request_target(parsed: urllib.parse.ParseResult) -> str:
 
 def codacy_https_request(target: str, token: str) -> tuple[int, str]:
     """Execute a Codacy HTTPS GET request and return status and payload text."""
-    url = f"https://api.codacy.com{target}"
-    request = urllib.request.Request(url, headers={"api-token": token}, method="GET")
+    conn = http.client.HTTPSConnection("api.codacy.com", timeout=30)
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            return int(response.status), response.read().decode("utf-8")
-    except (urllib.error.URLError, OSError) as exc:
+        conn.request("GET", target, headers={"api-token": token})
+        response = conn.getresponse()
+        return int(response.status), response.read().decode("utf-8")
+    except OSError as exc:
         raise RuntimeError("Codacy API request failed") from exc
+    finally:
+        conn.close()
 
 
 def codacy_http_response(url: str, token: str) -> tuple[int, str]:
