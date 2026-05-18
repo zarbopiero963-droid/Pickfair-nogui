@@ -1,6 +1,7 @@
 """Tests for PR flow automation decisions."""
 # pylint: disable=invalid-name,duplicate-code
 
+import argparse
 from unittest import TestCase
 
 import scripts.pr_automation_controller as controller
@@ -60,6 +61,51 @@ def test_codacy_task_normalizes_common_issue_fields(tmp_path):
     ASSERTIONS.assertIn("scripts/pr_flow_automation.py", task)
     ASSERTIONS.assertIn("PY001", task)
     ASSERTIONS.assertIn("Example issue", task)
+
+
+def test_flow_codacy_task_writes_raw_response_and_task_file(tmp_path, monkeypatch):
+    """The flow codacy-task command writes Codacy context for safe autofix."""
+    raw = {"data": [_codacy_issue()]}
+    monkeypatch.setattr(flow, "codacy_is_blocking", lambda _repo, _pr: True)
+    monkeypatch.setattr(flow, "fetch_codacy_pr_issues", lambda _repo, _pr: (raw, raw["data"]))
+
+    result = flow.cmd_codacy_task(
+        argparse.Namespace(repo="owner/repo", pr="225", outdir=str(tmp_path))
+    )
+
+    ASSERTIONS.assertEqual(result, 0)
+    ASSERTIONS.assertTrue((tmp_path / "codacy-raw.json").exists())
+    task = (tmp_path / "codacy-task.md").read_text(encoding="utf-8")
+    ASSERTIONS.assertIn("scripts/pr_flow_automation.py:42", task)
+    ASSERTIONS.assertIn("ruff/PY001", task)
+    ASSERTIONS.assertIn("Medium", task)
+    ASSERTIONS.assertIn("Example issue", task)
+
+
+def test_flow_codacy_task_fails_closed_when_blocking_api_fails(tmp_path, monkeypatch, capsys):
+    """Codacy API failures remain blocking when the Codacy check is blocking."""
+    monkeypatch.setattr(flow, "codacy_is_blocking", lambda _repo, _pr: True)
+    monkeypatch.setattr(
+        flow,
+        "fetch_codacy_pr_issues",
+        lambda _repo, _pr: (_ for _ in ()).throw(RuntimeError("Codacy API request failed")),
+    )
+
+    result = flow.cmd_codacy_task(
+        argparse.Namespace(repo="owner/repo", pr="225", outdir=str(tmp_path))
+    )
+
+    ASSERTIONS.assertEqual(result, 1)
+    ASSERTIONS.assertIn("Codacy API request failed", capsys.readouterr().err)
+
+
+def test_flow_codacy_api_token_is_only_trusted_in_github_actions(monkeypatch):
+    """Local CODACY_API_TOKEN values are ignored outside GitHub Actions."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setenv("CODACY_API_TOKEN", "local-token")
+
+    with ASSERTIONS.assertRaisesRegex(RuntimeError, "only trusted inside GitHub Actions"):
+        flow.codacy_api_token()
 
 
 def test_codacy_blocking_evidence_ignores_stale_check_when_api_is_clear(monkeypatch):

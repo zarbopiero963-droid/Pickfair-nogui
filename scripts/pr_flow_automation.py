@@ -3,15 +3,16 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import http.client
 import json
 import os
 import re
 import subprocess
 import sys
 import time
+import urllib.parse
 from pathlib import Path
 from typing import Any
-
 
 SELF_CHECK_NAMES = {
     "safe pr autofix",
@@ -124,6 +125,156 @@ def effective_merge_state_ok(merge_state: str, blockers: list[dict[str, Any]], p
 def write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def codacy_api_token() -> str:
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        raise RuntimeError("CODACY_API_TOKEN is only trusted inside GitHub Actions")
+    token = os.environ.get("CODACY_API_TOKEN", "")
+    if not token:
+        raise RuntimeError("GitHub Actions CODACY_API_TOKEN secret is unavailable")
+    return token
+
+
+def codacy_url(repo: str, pr_number: str) -> str:
+    owner, repo_name = repo.split("/", 1)
+    provider = os.environ.get("CODACY_PROVIDER", "gh")
+    params = urllib.parse.urlencode({
+        "status": "new",
+        "onlyPotential": "false",
+        "limit": "100",
+    })
+    return (
+        "https://api.codacy.com/api/v3/analysis/"
+        f"organizations/{provider}/{urllib.parse.quote(owner, safe='')}/"
+        f"repositories/{urllib.parse.quote(repo_name, safe='')}/"
+        f"pull-requests/{urllib.parse.quote(str(pr_number), safe='')}/issues?{params}"
+    )
+
+
+def validate_codacy_url(url: str) -> None:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https" or parsed.netloc != "api.codacy.com":
+        raise RuntimeError("invalid Codacy API URL")
+
+
+def fetch_codacy_json(url: str, token: str) -> Any:
+    validate_codacy_url(url)
+    parsed = urllib.parse.urlparse(url)
+    target = parsed.path
+    if parsed.query:
+        target = f"{target}?{parsed.query}"
+    connection = http.client.HTTPSConnection(parsed.netloc, timeout=30)
+    try:
+        connection.request("GET", target, headers={"api-token": token})
+        response = connection.getresponse()
+        status = int(response.status)
+        payload = response.read().decode("utf-8")
+    except OSError as exc:
+        raise RuntimeError("Codacy API request failed") from exc
+    finally:
+        connection.close()
+    if status >= 400:
+        raise RuntimeError(f"Codacy API request failed with status {status}")
+    return json.loads(payload or "{}")
+
+
+def dict_items_from_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def codacy_issue_items(body: Any) -> list[dict[str, Any]]:
+    if isinstance(body, list):
+        return dict_items_from_list(body)
+    if not isinstance(body, dict):
+        return []
+    for key in ("data", "issues", "results", "items"):
+        items = dict_items_from_list(body.get(key))
+        if items:
+            return items
+    return []
+
+
+def issue_dict_from_item(item: dict[str, Any]) -> dict[str, Any]:
+    candidate = item.get("commitIssue")
+    return candidate if isinstance(candidate, dict) else item
+
+
+def nested_dict(source: dict[str, Any], key: str) -> dict[str, Any]:
+    value = source.get(key)
+    return value if isinstance(value, dict) else {}
+
+
+def first_nonempty(*values: Any) -> Any:
+    for value in values:
+        if value:
+            return value
+    return ""
+
+
+def codacy_issue_record(item: dict[str, Any]) -> dict[str, Any]:
+    issue = issue_dict_from_item(item)
+    pattern_info = nested_dict(issue, "patternInfo")
+    tool_info = nested_dict(issue, "toolInfo") or nested_dict(issue, "tool")
+    return {
+        "filePath": first_nonempty(issue.get("filePath"), issue.get("filename")),
+        "lineNumber": issue.get("lineNumber"),
+        "tool": first_nonempty(tool_info.get("name"), issue.get("toolName")),
+        "patternId": first_nonempty(
+            pattern_info.get("id"),
+            issue.get("patternId"),
+            issue.get("patternID"),
+        ),
+        "severity": first_nonempty(
+            pattern_info.get("severityLevel"),
+            pattern_info.get("level"),
+            issue.get("severity"),
+        ),
+        "message": first_nonempty(issue.get("message")),
+    }
+
+
+def codacy_task_lines(records: list[dict[str, Any]]) -> list[str]:
+    lines = [
+        "# Current Codacy API issues",
+        "",
+        f"Total: {len(records)}",
+        "",
+        "Fix only these current Codacy blockers. Preserve PR scope.",
+        "",
+    ]
+    for index, record in enumerate(records, 1):
+        tool_pattern = "/".join(
+            str(value) for value in (record["tool"], record["patternId"]) if value
+        ) or "unknown-tool-pattern"
+        location = f"{record['filePath']}:{record['lineNumber']}"
+        lines.append(
+            f"{index}. {location} {tool_pattern} {record['severity']} - {record['message']}"
+        )
+    return lines
+
+
+def fetch_codacy_pr_issues(repo: str, pr_number: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    body = fetch_codacy_json(codacy_url(repo, pr_number), codacy_api_token())
+    raw = body if isinstance(body, dict) else {"data": body}
+    return raw, codacy_issue_items(body)
+
+
+def write_codacy_task(outdir: Path, raw: dict[str, Any], issues: list[dict[str, Any]]) -> None:
+    records = [codacy_issue_record(item) for item in issues]
+    write_json(outdir / "codacy-raw.json", raw)
+    (outdir / "codacy-task.md").write_text(
+        "\n".join(codacy_task_lines(records)) + "\n",
+        encoding="utf-8",
+    )
+
+
+def codacy_is_blocking(repo: str, pr_number: str) -> bool:
+    pr = pr_view(repo, pr_number)
+    checks = split_checks(pr, ignore_self=True)
+    return any("codacy" in f"{item['name']} {item['url']}".lower() for item in checks["blockers"])
 
 
 def post_or_update_comment(repo: str, pr: str, marker: str, body: str) -> None:
@@ -382,6 +533,36 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0 if decision["can_merge"] or decision["already_merged"] or args.no_fail else 1
 
 
+def cmd_codacy_task(args: argparse.Namespace) -> int:
+    outdir = Path(args.outdir)
+    blocking = codacy_is_blocking(args.repo, args.pr)
+    try:
+        raw, issues = fetch_codacy_pr_issues(args.repo, args.pr)
+    except Exception as exc:
+        result = {
+            "repo": args.repo,
+            "pr": str(args.pr),
+            "ok": False,
+            "codacy_blocking": blocking,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
+        return 1 if blocking else 0
+
+    write_codacy_task(outdir, raw, issues)
+    result = {
+        "repo": args.repo,
+        "pr": str(args.pr),
+        "ok": True,
+        "codacy_blocking": blocking,
+        "issues_returned": len(issues),
+        "codacy_raw": str(outdir / "codacy-raw.json"),
+        "codacy_task": str(outdir / "codacy-task.md"),
+    }
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
 def cmd_canary(args: argparse.Namespace) -> int:
     ts = dt.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
     branch = f"test/safe-autofix-canary-{ts}"
@@ -473,6 +654,12 @@ def main() -> int:
     p.add_argument("--comment", action="store_true")
     p.add_argument("--no-fail", action="store_true")
     p.set_defaults(func=cmd_report)
+
+    p = sub.add_parser("codacy-task")
+    p.add_argument("--repo", required=True)
+    p.add_argument("--pr", required=True)
+    p.add_argument("--outdir", default=".autofix/context")
+    p.set_defaults(func=cmd_codacy_task)
 
     p = sub.add_parser("canary")
     p.add_argument("--repo", required=True)

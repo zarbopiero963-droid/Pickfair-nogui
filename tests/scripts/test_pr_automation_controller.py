@@ -111,3 +111,16 @@ def test_codacy_task_writes_raw_response_and_normalized_issue(tmp_path):
     task = (tmp_path / "codacy-task.md").read_text(encoding="utf-8")
     ASSERTIONS.assertIn("scripts/pr_automation_controller.py:12", task)
     ASSERTIONS.assertIn("Fix me", task)
+
+
+def test_clean_scope_defaults_allow_pr_flow_automation_script():
+    """This automation PR can update pr_flow_automation without clean-scope refusal."""
+    rules = controller.build_clean_scope_rules(_args())
+    signals = controller.collect_clean_scope_signals(
+        ["scripts/pr_flow_automation.py"],
+        [],
+        rules,
+    )
+
+    ASSERTIONS.assertTrue(signals["has_allowlisted_file"])
+    ASSERTIONS.assertEqual(signals["forbidden_files"], [])

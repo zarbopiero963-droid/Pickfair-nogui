@@ -32,6 +32,7 @@ CLEAN_SCOPE_ALLOWED_DEFAULT = [
     ".github/workflows/pr-merge-readiness.yml",
     "scripts/pr_automation_controller.py",
     "scripts/pr_clean_scope_rebuild.py",
+    "scripts/pr_flow_automation.py",
     "tests/scripts/test_pr_automation_controller.py",
     "tests/scripts/test_pr_flow_automation.py",
 ]
@@ -39,7 +40,6 @@ CLEAN_SCOPE_FORBIDDEN_DEFAULT = [
     "order_manager.py",
     "core/reconciliation_engine.py",
     "guardrails/",
-    "scripts/pr_flow_automation.py",
     ".github/scripts/",
 ]
 
