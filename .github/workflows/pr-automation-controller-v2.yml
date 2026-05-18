@@ -16,6 +16,18 @@ on:
         description: "Seconds to wait for pending checks"
         required: false
         default: "300"
+      clean_scope_rebuild:
+        description: "Enable clean scope rebuild escalation"
+        required: false
+        default: "true"
+      clean_scope_rebuild_mode:
+        description: "disabled|detect|execute"
+        required: false
+        default: "execute"
+      clean_scope_commit_limit:
+        description: "Safe Autofix commit limit before rebuild escalation"
+        required: false
+        default: "3"
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   check_run:
@@ -37,7 +49,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 concurrency:
-  group: pr-automation-controller-v2-${{ github.run_id }}
+  group: pr-automation-controller-v2-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number || github.event.client_payload.pr_number || github.run_id }}
   cancel-in-progress: false
 
 permissions:
@@ -55,6 +67,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
+      CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
       REPO: ${{ github.repository }}
       INPUT_PR_NUMBER: ${{ inputs.pr_number || '' }}
       INPUT_DRY_RUN: ${{ inputs.dry_run || '' }}
@@ -62,11 +75,17 @@ jobs:
       PAYLOAD_PR_NUMBER: ${{ github.event.client_payload.pr_number || '' }}
       PAYLOAD_DRY_RUN: ${{ github.event.client_payload.dry_run || '' }}
       PAYLOAD_PENDING_WAIT_SECONDS: ${{ github.event.client_payload.pending_wait_seconds || '' }}
+      INPUT_CLEAN_SCOPE_REBUILD: ${{ inputs.clean_scope_rebuild || '' }}
+      INPUT_CLEAN_SCOPE_REBUILD_MODE: ${{ inputs.clean_scope_rebuild_mode || '' }}
+      INPUT_CLEAN_SCOPE_COMMIT_LIMIT: ${{ inputs.clean_scope_commit_limit || '' }}
+      PAYLOAD_CLEAN_SCOPE_REBUILD: ${{ github.event.client_payload.clean_scope_rebuild || '' }}
+      PAYLOAD_CLEAN_SCOPE_REBUILD_MODE: ${{ github.event.client_payload.clean_scope_rebuild_mode || '' }}
+      PAYLOAD_CLEAN_SCOPE_COMMIT_LIMIT: ${{ github.event.client_payload.clean_scope_commit_limit || '' }}
     steps:
       - name: Checkout controller source
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.event.pull_request.head.sha || github.ref_name }}
           token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
 
       - name: Resolve controller inputs
@@ -102,10 +121,29 @@ jobs:
           echo "DRY_RUN=$DRY_RUN" >> "$GITHUB_ENV"
           echo "PENDING_WAIT_SECONDS=$PENDING_WAIT_SECONDS" >> "$GITHUB_ENV"
 
+          CLEAN_SCOPE_REBUILD="${INPUT_CLEAN_SCOPE_REBUILD:-}"
+          if [ -z "$CLEAN_SCOPE_REBUILD" ]; then
+            CLEAN_SCOPE_REBUILD="${PAYLOAD_CLEAN_SCOPE_REBUILD:-true}"
+          fi
+          CLEAN_SCOPE_REBUILD_MODE="${INPUT_CLEAN_SCOPE_REBUILD_MODE:-}"
+          if [ -z "$CLEAN_SCOPE_REBUILD_MODE" ]; then
+            CLEAN_SCOPE_REBUILD_MODE="${PAYLOAD_CLEAN_SCOPE_REBUILD_MODE:-execute}"
+          fi
+          CLEAN_SCOPE_COMMIT_LIMIT="${INPUT_CLEAN_SCOPE_COMMIT_LIMIT:-}"
+          if [ -z "$CLEAN_SCOPE_COMMIT_LIMIT" ]; then
+            CLEAN_SCOPE_COMMIT_LIMIT="${PAYLOAD_CLEAN_SCOPE_COMMIT_LIMIT:-3}"
+          fi
+          echo "CLEAN_SCOPE_REBUILD=$CLEAN_SCOPE_REBUILD" >> "$GITHUB_ENV"
+          echo "CLEAN_SCOPE_REBUILD_MODE=$CLEAN_SCOPE_REBUILD_MODE" >> "$GITHUB_ENV"
+          echo "CLEAN_SCOPE_COMMIT_LIMIT=$CLEAN_SCOPE_COMMIT_LIMIT" >> "$GITHUB_ENV"
+
           echo "event=${GITHUB_EVENT_NAME}"
           echo "PR_NUMBER=${PR_NUMBER:-}"
           echo "DRY_RUN=${DRY_RUN:-}"
           echo "PENDING_WAIT_SECONDS=${PENDING_WAIT_SECONDS:-}"
+          echo "CLEAN_SCOPE_REBUILD=${CLEAN_SCOPE_REBUILD:-}"
+          echo "CLEAN_SCOPE_REBUILD_MODE=${CLEAN_SCOPE_REBUILD_MODE:-}"
+          echo "CLEAN_SCOPE_COMMIT_LIMIT=${CLEAN_SCOPE_COMMIT_LIMIT:-}"
 
       - name: Run PR automation controller
         run: |
@@ -126,11 +164,16 @@ jobs:
           if [ "$DRY_RUN" = "true" ]; then
             args="--dry-run"
           fi
+          if [ "${CLEAN_SCOPE_REBUILD}" = "true" ]; then
+            args="$args --clean-scope-rebuild"
+          fi
 
           python3 scripts/pr_automation_controller.py \
             --repo "$REPO" \
             --pr "$PR_NUMBER" \
             --pending-wait-seconds "$PENDING_WAIT_SECONDS" \
+            --clean-scope-rebuild-mode "$CLEAN_SCOPE_REBUILD_MODE" \
+            --clean-scope-commit-limit "$CLEAN_SCOPE_COMMIT_LIMIT" \
             --output pr-controller/decision.json \
             $args
 
@@ -156,3 +199,11 @@ jobs:
           name: pr-automation-controller-v2-${{ github.run_id }}
           path: pr-controller/
           if-no-files-found: error
+
+      - name: Upload clean scope rebuild decision
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-clean-scope-rebuild-${{ env.PR_NUMBER || 'unknown' }}-${{ github.run_id }}
+          path: pr-clean-scope-rebuild-*/
+          if-no-files-found: ignore

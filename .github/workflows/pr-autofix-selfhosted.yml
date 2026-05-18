@@ -57,8 +57,12 @@ jobs:
       FINAL_REVIEW_WAIT_SECONDS: "90"
       CODEX_QUOTA_SLEEP_SECONDS: "18600"
       CODEX_MAX_ATTEMPTS: "3"
+      CODEX_PRIMARY_MODEL: ${{ vars.CODEX_PRIMARY_MODEL || 'gpt-5.3-codex' }}
+      CODEX_FALLBACK_MODEL: ${{ vars.CODEX_FALLBACK_MODEL || 'gpt-5.5' }}
       CODEX_FIX_MODEL: gpt-5.3-codex
       CODEX_REVIEW_MODEL: gpt-5.5
+      CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
+      HAS_CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN != '' }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
@@ -269,17 +273,52 @@ jobs:
               echo "Current PR checks:"
               jq -r '.[] | "- \(.name): \(.bucket) / \(.state) / \(.description // "")"' .autofix/pr-checks-current.json
 
-              total_count="$(
-                jq '[.[] | select(.name != "Autofix PR until checks are green") | select((.workflow // "") != "PR Autofix Self-hosted") | select((.bucket // "") != "skipping") | select((.state // "") != "SKIPPED")] | length' .autofix/pr-checks-current.json
-              )"
+              python3 scripts/pr_flow_automation.py readiness \
+                --repo "${REPO}" \
+                --pr "${PR_NUMBER}" \
+                --ignore-safe-autofix \
+                --output .autofix/pr-flow-decision.json \
+                --no-fail \
+                > .autofix/pr-flow-readiness.log || true
+              cat .autofix/pr-flow-readiness.log || true
 
-              red_count="$(
-                jq '[.[] | select(.name != "Autofix PR until checks are green") | select((.workflow // "") != "PR Autofix Self-hosted") | select((.bucket // "") != "skipping") | select((.state // "") != "SKIPPED") | select((.bucket == "fail") or (.bucket == "cancel") or (.state == "FAILURE") or (.state == "ACTION_REQUIRED") or (.state == "ERROR") or (.state == "CANCELLED") or (.state == "TIMED_OUT"))] | length' .autofix/pr-checks-current.json
-              )"
+              if [ -f .autofix/pr-flow-decision.json ]; then
+                red_count="$(jq '.blockers | length' .autofix/pr-flow-decision.json)"
+                pending_count="$(jq '.pending | length' .autofix/pr-flow-decision.json)"
+                total_count="$((red_count + pending_count))"
+                codacy_blocker_count="$(jq '[.blockers[]? | select(((.name // "") + " " + (.url // "") | ascii_downcase | contains("codacy")))] | length' .autofix/pr-flow-decision.json)"
+                non_codacy_blocker_count="$(jq '[.blockers[]? | select((((.name // "") + " " + (.url // "") | ascii_downcase | contains("codacy")) | not))] | length' .autofix/pr-flow-decision.json)"
 
-              pending_count="$(
-                jq '[.[] | select(.name != "Autofix PR until checks are green") | select((.workflow // "") != "PR Autofix Self-hosted") | select((.bucket // "") != "skipping") | select((.state // "") != "SKIPPED") | select((.bucket == "pending") or (.state == "QUEUED") or (.state == "IN_PROGRESS") or (.state == "PENDING") or (.state == "WAITING") or (.state == "REQUESTED"))] | length' .autofix/pr-checks-current.json
-              )"
+                if [ "${red_count}" != "0" ] && [ "${codacy_blocker_count}" != "0" ] && [ "${non_codacy_blocker_count}" = "0" ]; then
+                  if python3 scripts/pr_automation_controller.py codacy-task \
+                    --repo "${REPO}" \
+                    --pr "${PR_NUMBER}" \
+                    --outdir .autofix/context; then
+                    codacy_issue_count="$(jq 'length' .autofix/context/codacy-issues.json 2>/dev/null || echo 1)"
+                    if [ "${codacy_issue_count}" = "0" ]; then
+                      echo "Ignoring stale Codacy ACTION_REQUIRED because Codacy API returned no current issues."
+                      red_count=0
+                      total_count="${pending_count}"
+                    fi
+                  else
+                    echo "::error::Codacy API context collection failed closed while Codacy is ACTION_REQUIRED."
+                    cat .autofix/context/codacy-task.md 2>/dev/null || true
+                    return 1
+                  fi
+                fi
+              else
+                total_count="$(
+                  jq '[.[] | select(.name != "Autofix PR until checks are green") | select((.workflow // "") != "PR Autofix Self-hosted") | select((.bucket // "") != "skipping") | select((.state // "") != "SKIPPED")] | length' .autofix/pr-checks-current.json
+                )"
+
+                red_count="$(
+                  jq '[.[] | select(.name != "Autofix PR until checks are green") | select((.workflow // "") != "PR Autofix Self-hosted") | select((.bucket // "") != "skipping") | select((.state // "") != "SKIPPED") | select((.bucket == "fail") or (.bucket == "cancel") or (.state == "FAILURE") or (.state == "ACTION_REQUIRED") or (.state == "ERROR") or (.state == "CANCELLED") or (.state == "TIMED_OUT"))] | length' .autofix/pr-checks-current.json
+                )"
+
+                pending_count="$(
+                  jq '[.[] | select(.name != "Autofix PR until checks are green") | select((.workflow // "") != "PR Autofix Self-hosted") | select((.bucket // "") != "skipping") | select((.state // "") != "SKIPPED") | select((.bucket == "pending") or (.state == "QUEUED") or (.state == "IN_PROGRESS") or (.state == "PENDING") or (.state == "WAITING") or (.state == "REQUESTED"))] | length' .autofix/pr-checks-current.json
+                )"
+              fi
 
               echo "Check classification: total=${total_count}, red=${red_count}, pending=${pending_count}, elapsed=${elapsed}s"
 
@@ -335,21 +374,28 @@ jobs:
           }
 
           preflight_codex() {
-            echo "Running Codex preflight with ${CODEX_FIX_MODEL}..."
+            echo "Running Codex preflight with configured model order..."
 
-            set +e
-            timeout 180s codex exec \
-              --model "${CODEX_FIX_MODEL}" \
-              --dangerously-bypass-approvals-and-sandbox \
-              "Rispondi solo: OK_CODEX_PREFLIGHT" \
-              > .autofix/codex-preflight.log 2>&1
+            local model
+            for model in $(preferred_codex_models "${CODEX_FIX_MODEL}"); do
+              echo "Preflight model: ${model}"
+              set +e
+              timeout 180s codex exec \
+                --model "${model}" \
+                --sandbox workspace-write \
+                "Rispondi solo: OK_CODEX_PREFLIGHT" \
+                > .autofix/codex-preflight.log 2>&1
 
-            local result="$?"
-            set -e
+              local result="$?"
+              set -e
 
-            cat .autofix/codex-preflight.log || true
+              cat .autofix/codex-preflight.log || true
 
-            if [ "${result}" != "0" ]; then
+              if [ "${result}" = "0" ]; then
+                echo "CODEX_ACTIVE_MODEL=${model}" >> "$GITHUB_ENV"
+                return 0
+              fi
+
               if grep -Eiq "login|auth|unauthorized|not logged|session|expired" .autofix/codex-preflight.log; then
                 notify "❌ Pickfair Autofix: login Codex scaduto/non valido. Repo: ${REPO}. PR: #${PR_NUMBER}. Serve: su - pickfair && codex login"
                 exit 1
@@ -361,51 +407,89 @@ jobs:
                 return 0
               fi
 
-              notify "❌ Pickfair Autofix: Codex non disponibile in preflight. PR #${PR_NUMBER}."
-              exit 1
-            fi
+              if grep -Eiq "model|not available|unavailable|not found|access" .autofix/codex-preflight.log; then
+                echo "::warning::Codex model ${model} unavailable; trying fallback."
+                continue
+              fi
+            done
+
+            notify "❌ Pickfair Autofix: Codex non disponibile in preflight. PR #${PR_NUMBER}."
+            exit 1
+          }
+
+          preferred_codex_models() {
+            local requested="${1:-}"
+            printf '%s\n' \
+              "${requested}" \
+              "${CODEX_PRIMARY_MODEL:-}" \
+              "${CODEX_FALLBACK_MODEL:-}" \
+              "${CODEX_FIX_MODEL:-}" \
+              "gpt-5.3-codex" \
+            | awk 'NF && !seen[$0]++'
           }
 
           run_codex_with_quota_retry() {
-            local model="$1"
+            local requested_model="$1"
             local prompt_file="$2"
             local timeout_seconds="$3"
-            local attempt=1
-            local result=1
+            local model
 
-            while [ "${attempt}" -le "${CODEX_MAX_ATTEMPTS}" ]; do
-              echo "Codex attempt ${attempt}/${CODEX_MAX_ATTEMPTS} with model ${model}"
+            for model in $(preferred_codex_models "${requested_model}"); do
+              local attempt=1
+              local current_prompt="${prompt_file}"
 
-              set +e
-              timeout "${timeout_seconds}s" codex exec \
-                --model "${model}" \
-                --dangerously-bypass-approvals-and-sandbox \
-                "$(cat "${prompt_file}")" \
-                2>&1 | tee .autofix/codex-last.log
+              while [ "${attempt}" -le "${CODEX_MAX_ATTEMPTS}" ]; do
+                echo "Codex attempt ${attempt}/${CODEX_MAX_ATTEMPTS} with model ${model}"
 
-              result="${PIPESTATUS[0]}"
-              set -e
+                set +e
+                timeout "${timeout_seconds}s" codex exec \
+                  --model "${model}" \
+                  --sandbox workspace-write \
+                  "$(cat "${current_prompt}")" \
+                  2>&1 | tee .autofix/codex-last.log
 
-              if [ "${result}" = "0" ]; then
-                return 0
-              fi
+                local result="${PIPESTATUS[0]}"
+                set -e
 
-              if grep -Eiq "quota|rate limit|usage limit|try again|reset|too many requests" .autofix/codex-last.log; then
-                notify "⏳ Pickfair Autofix: quota Codex esaurita. PR #${PR_NUMBER}. Model: ${model}. Attempt: ${attempt}/${CODEX_MAX_ATTEMPTS}. Riprovo tra $((CODEX_QUOTA_SLEEP_SECONDS / 60)) minuti."
-                sleep "${CODEX_QUOTA_SLEEP_SECONDS}"
-                attempt=$((attempt + 1))
-                continue
-              fi
+                if [ "${result}" = "0" ]; then
+                  echo "CODEX_ACTIVE_MODEL=${model}" >> "$GITHUB_ENV"
+                  return 0
+                fi
 
-              if grep -Eiq "login|auth|unauthorized|not logged|session|expired" .autofix/codex-last.log; then
-                notify "❌ Pickfair Autofix: login Codex scaduto durante il run. PR #${PR_NUMBER}. Model: ${model}. Serve: su - pickfair && codex login"
+                if grep -Eiq "patch failed|patch does not apply|does not apply" .autofix/codex-last.log; then
+                  current_prompt=".autofix/direct-edit-prompt.md"
+                  {
+                    cat "${prompt_file}"
+                    printf '%s\n' ''
+                    printf '%s\n' 'Previous stale patch application failed. Discard any stale patch coordinates.'
+                    printf '%s\n' 'Inspect the current checked-out files directly and edit the working tree directly.'
+                  } > "${current_prompt}"
+                  attempt=$((attempt + 1))
+                  continue
+                fi
+
+                if grep -Eiq "quota|rate limit|usage limit|try again|reset|too many requests" .autofix/codex-last.log; then
+                  notify "⏳ Pickfair Autofix: quota Codex esaurita. PR #${PR_NUMBER}. Model: ${model}. Attempt: ${attempt}/${CODEX_MAX_ATTEMPTS}. Riprovo tra $((CODEX_QUOTA_SLEEP_SECONDS / 60)) minuti."
+                  sleep "${CODEX_QUOTA_SLEEP_SECONDS}"
+                  attempt=$((attempt + 1))
+                  continue
+                fi
+
+                if grep -Eiq "login|auth|unauthorized|not logged|session|expired" .autofix/codex-last.log; then
+                  notify "❌ Pickfair Autofix: login Codex scaduto durante il run. PR #${PR_NUMBER}. Model: ${model}. Serve: su - pickfair && codex login"
+                  return "${result}"
+                fi
+
+                if grep -Eiq "model|not available|unavailable|not found|access" .autofix/codex-last.log; then
+                  echo "::warning::Codex model ${model} unavailable; trying fallback."
+                  break
+                fi
+
                 return "${result}"
-              fi
-
-              return "${result}"
+              done
             done
 
-            notify "❌ Pickfair Autofix: quota Codex troppo lunga oltre retry. PR #${PR_NUMBER}. Model: ${model}."
+            notify "❌ Pickfair Autofix: Codex failed across configured model fallbacks. PR #${PR_NUMBER}."
             return 1
           }
 
@@ -413,8 +497,32 @@ jobs:
             {
               printf '%s\n' 'You are running inside a GitHub self-hosted runner on the existing PR branch.'
               printf '%s\n' 'Objective: make this PR merge-ready by fixing all still-valid red checks and actionable review/comment issues visible from GitHub.'
-              printf '%s\n' 'Hard rules: work only on current branch; do not create PRs; do not merge; do not post comments; do not use external Codacy or DeepSource APIs; prefer small targeted fixes.'
+              printf '%s\n' 'Hard rules: work only on current branch; do not create PRs; do not merge; do not post comments; do not use local shell CODACY_API_TOKEN; do not call external Codacy or DeepSource APIs; prefer small targeted fixes.'
               printf '%s\n' 'Read .autofix/context files first, then inspect repository files directly and apply the smallest safe fix.'
+              printf '%s\n' 'If .autofix/context/codacy-task.md lists current Codacy API issues, treat that file as the source of truth and fix only those current Codacy blockers.'
+              printf '%s\n' 'Use current files only. Do not rely on stale patch line numbers or previously saved patch locations.'
+              printf '%s\n' ''
+              printf '%s\n' 'Allowed files:'
+              cat .autofix/context/allowed-files.txt 2>/dev/null || true
+              printf '%s\n' ''
+              printf '%s\n' 'Forbidden files:'
+              printf '%s\n' 'order_manager.py'
+              printf '%s\n' 'core/reconciliation_engine.py'
+              printf '%s\n' 'guardrails/*'
+              printf '%s\n' 'application/business logic'
+              printf '%s\n' 'merge-related scripts that auto-merge PRs'
+              printf '%s\n' 'scripts/pr_flow_automation.py unless explicitly allowlisted with tests'
+              printf '%s\n' ''
+              printf '%s\n' 'Current PR checks:'
+              cat .autofix/context/pr-checks.json 2>/dev/null || true
+              printf '%s\n' ''
+              printf '%s\n' 'Changed files:'
+              jq -r '.files[]?.path // .files[]?.filename // empty' .autofix/context/pr-view.json 2>/dev/null || true
+              if [ -f .autofix/context/codacy-task.md ]; then
+                printf '%s\n' ''
+                printf '%s\n' 'Current Codacy API task file content:'
+                cat .autofix/context/codacy-task.md
+              fi
             } > .autofix/prompt.md
           }
 
@@ -443,6 +551,9 @@ jobs:
               printf '%s\n' '- review-comments-pages.json'
               printf '%s\n' '- reviews-pages.json'
               printf '%s\n' '- review-threads.json'
+              printf '%s\n' '- codacy-raw.json'
+              printf '%s\n' '- codacy-issues.json'
+              printf '%s\n' '- codacy-task.md'
             } > .autofix/context/README.md
           }
 
@@ -522,6 +633,14 @@ jobs:
                     echo >> .autofix/context/annotations.jsonl
                   fi
                 done
+
+            if ! python3 scripts/pr_automation_controller.py codacy-task \
+              --repo "${REPO}" \
+              --pr "${PR_NUMBER}" \
+              --outdir .autofix/context; then
+              notify_failed "Codacy API context collection failed closed while Codacy is ACTION_REQUIRED."
+              exit 1
+            fi
 
             write_context_readme
           }
@@ -770,8 +889,23 @@ jobs:
               return 0
             fi
 
-            notify "⚠️ Pickfair Autofix: rescue patch trovata ma non applicabile automaticamente. PR: #${PR_NUMBER}. Branch: ${PR_HEAD_REF}. Path VPS: ${dir}. Serve controllo manuale con git apply o git am."
-            return 1
+            notify "⚠️ Pickfair Autofix: rescue patch stale e non applicabile. PR: #${PR_NUMBER}. Branch: ${PR_HEAD_REF}. Path VPS: ${dir}. La scarto e chiedo a Codex di ispezionare i file correnti."
+            rm -f "${latest}" || true
+            return 0
+          }
+
+          current_codacy_issues_present() {
+            mkdir -p .autofix/context
+
+            if ! python3 scripts/pr_automation_controller.py codacy-task \
+              --repo "${REPO}" \
+              --pr "${PR_NUMBER}" \
+              --outdir .autofix/context; then
+              notify_failed "Codacy API context collection failed closed while Codacy is ACTION_REQUIRED."
+              exit 1
+            fi
+
+            [ "$(jq 'length' .autofix/context/codacy-issues.json 2>/dev/null || echo 0)" != "0" ]
           }
 
           trap 'save_rescue_patch "$?"' EXIT
@@ -797,7 +931,9 @@ jobs:
             git fetch origin "${PR_HEAD_REF}"
             git checkout -B "${PR_HEAD_REF}" "origin/${PR_HEAD_REF}"
 
-            if ! restore_rescue_patch_if_available; then
+            if current_codacy_issues_present; then
+              echo "Current Codacy API issues are present; skipping stale rescue patch restore and using Codacy task context."
+            elif ! restore_rescue_patch_if_available; then
               notify_failed "Rescue patch exists but cannot be applied automatically."
               exit 1
             fi
@@ -847,6 +983,12 @@ jobs:
             set -e
 
             if [ "${push_result}" = "10" ]; then
+              codacy_issue_count="$(jq 'length' .autofix/context/codacy-issues.json 2>/dev/null || echo 1)"
+              pending_snapshot_count="$(jq '[.[]? | select((.bucket == "pending") or (.state == "QUEUED") or (.state == "IN_PROGRESS") or (.state == "PENDING") or (.state == "WAITING") or (.state == "REQUESTED"))] | length' .autofix/context/pr-checks.json 2>/dev/null || echo 0)"
+              if [ "${codacy_issue_count}" = "0" ] && [ "${pending_snapshot_count}" != "0" ]; then
+                echo "Codex produced no changes because Codacy API has no current issues and other checks were still pending. Exiting cleanly for the next check cycle."
+                exit 0
+              fi
               notify_failed "Codex produced no changes while PR checks/comments are still not clean."
               exit 1
             fi
@@ -886,3 +1028,11 @@ jobs:
           notify_failed "Reached max rounds (${MAX_ROUNDS}) and PR is still red or has unresolved actionable comments."
 
           exit 1
+
+      - name: Upload autofix context
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-autofix-selfhosted-context-${{ steps.pr.outputs.pr_number || github.run_id }}
+          path: .autofix/context/**
+          if-no-files-found: ignore
