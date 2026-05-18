@@ -300,10 +300,10 @@ jobs:
 
             codex_help="$(codex exec --help 2>&1 || true)"
 
-            if printf '%s\n' "$codex_help" | grep -q -- '--dangerously-bypass-approvals-and-sandbox'; then
-              codex_sandbox_arg=(--dangerously-bypass-approvals-and-sandbox)
+            if printf '%s\n' "$codex_help" | grep -q -- '--sandbox workspace-write'; then
+              codex_sandbox_arg=(--sandbox workspace-write)
             elif printf '%s\n' "$codex_help" | grep -q -- '--sandbox'; then
-              codex_sandbox_arg=(--sandbox danger-full-access)
+              codex_sandbox_arg=(--sandbox workspace-write)
             else
               codex_sandbox_arg=()
             fi

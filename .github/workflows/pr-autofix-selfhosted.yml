@@ -382,7 +382,7 @@ jobs:
               set +e
               timeout 180s codex exec \
                 --model "${model}" \
-                --dangerously-bypass-approvals-and-sandbox \
+                --sandbox workspace-write \
                 "Rispondi solo: OK_CODEX_PREFLIGHT" \
                 > .autofix/codex-preflight.log 2>&1
 
@@ -444,7 +444,7 @@ jobs:
                 set +e
                 timeout "${timeout_seconds}s" codex exec \
                   --model "${model}" \
-                  --dangerously-bypass-approvals-and-sandbox \
+                  --sandbox workspace-write \
                   "$(cat "${current_prompt}")" \
                   2>&1 | tee .autofix/codex-last.log
 
