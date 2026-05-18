@@ -80,6 +80,8 @@ jobs:
       MAX_ROUNDS: ${{ github.event.inputs.max_rounds || '3' }}
       PENDING_WAIT_SECONDS: ${{ github.event.inputs.pending_wait_seconds || '2700' }}
       DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+      CODEX_PRIMARY_MODEL: ${{ vars.CODEX_PRIMARY_MODEL || 'gpt-5.5-codex' }}
+      CODEX_FALLBACK_MODEL: ${{ vars.CODEX_FALLBACK_MODEL || 'gpt-5.3-codex' }}
       CODEX_MODEL: gpt-5.3-codex
       HAS_CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN != '' }}
       HAS_PICKFAIR_ACTIONS_TOKEN: ${{ secrets.PICKFAIR_ACTIONS_TOKEN != '' }}
@@ -91,6 +93,12 @@ jobs:
           ref: main
           token: ${{ secrets.PICKFAIR_ACTIONS_TOKEN }}
           fetch-depth: 0
+
+      - name: Checkout PR merge ref
+        if: env.PR_NUMBER != '' && env.PR_NUMBER != 'null'
+        run: |
+          git fetch origin "pull/${PR_NUMBER}/merge:pr-${PR_NUMBER}-merge"
+          git checkout "pr-${PR_NUMBER}-merge"
 
       - name: Copy safe collector
         run: |
@@ -109,7 +117,8 @@ jobs:
           python3 scripts/pr_flow_automation.py preflight \
             --repo "$REPO" \
             --pr "$PR_NUMBER" \
-            --comment
+            --comment \
+            --no-fail
 
       - name: Cleanup stale safe-autofix runs
         run: |
@@ -197,6 +206,22 @@ jobs:
               . .autofix/context/decision.env
               set +a
 
+              if ! python3 scripts/pr_automation_controller.py codacy-task \
+                --repo "$REPO" \
+                --pr "$PR_NUMBER" \
+                --outdir .autofix/context; then
+                echo "::error::Codacy API context collection failed closed while Codacy is ACTION_REQUIRED."
+                cat .autofix/context/codacy-task.md 2>/dev/null || true
+                exit 1
+              fi
+
+              {
+                printf '%s\n' ''
+                printf '%s\n' '## Codacy API task source of truth'
+                printf '%s\n' 'If current Codacy API issues are listed below, fix only these current Codacy blockers. Do not read or rely on local shell CODACY_API_TOKEN.'
+                cat .autofix/context/codacy-task.md
+              } >> .autofix/context/codex-task.md
+
               echo "head=$HEAD_SHA pending=$PENDING_COUNT blockers=$BLOCKER_COUNT safe_files=$SAFE_FILE_COUNT should_fix=$SHOULD_FIX manual=$REQUIRES_MANUAL fatal=$FATAL_CONTEXT_ERROR"
 
               if [ "$PENDING_COUNT" = "0" ]; then
@@ -274,19 +299,59 @@ jobs:
             } >> .autofix/context/codex-task.md
 
             codex_help="$(codex exec --help 2>&1 || true)"
-            codex_args=(exec --model "$CODEX_MODEL")
 
             if printf '%s\n' "$codex_help" | grep -q -- '--dangerously-bypass-approvals-and-sandbox'; then
-              codex_args+=(--dangerously-bypass-approvals-and-sandbox)
+              codex_sandbox_arg=(--dangerously-bypass-approvals-and-sandbox)
             elif printf '%s\n' "$codex_help" | grep -q -- '--sandbox'; then
-              codex_args+=(--sandbox danger-full-access)
+              codex_sandbox_arg=(--sandbox danger-full-access)
+            else
+              codex_sandbox_arg=()
             fi
 
-            printf 'Codex command: codex'
-            printf ' %q' "${codex_args[@]}"
-            printf '\n'
+            codex_ok=0
+            for model in $(printf '%s\n' "${CODEX_PRIMARY_MODEL:-}" "${CODEX_FALLBACK_MODEL:-}" "${CODEX_MODEL:-}" | awk 'NF && !seen[$0]++'); do
+              codex_args=(exec --model "$model" "${codex_sandbox_arg[@]}")
 
-            if PATH="$PWD/.autofix/codex-bin:$PATH" codex "${codex_args[@]}" - < .autofix/context/codex-task.md | tee "codex-output/safe-codex-round-${round}.log"; then
+              printf 'Codex command: codex'
+              printf ' %q' "${codex_args[@]}"
+              printf '\n'
+
+              set +e
+              PATH="$PWD/.autofix/codex-bin:$PATH" codex "${codex_args[@]}" - < .autofix/context/codex-task.md | tee "codex-output/safe-codex-round-${round}.log"
+              codex_status="${PIPESTATUS[0]}"
+              set -e
+
+              if [ "$codex_status" = "0" ]; then
+                codex_ok=1
+                break
+              fi
+
+              if grep -Eiq "model|not available|unavailable|not found|access" "codex-output/safe-codex-round-${round}.log"; then
+                echo "::warning::Codex model ${model} unavailable; trying fallback."
+                continue
+              fi
+
+              if grep -Eiq "patch failed|patch does not apply|does not apply" "codex-output/safe-codex-round-${round}.log"; then
+                {
+                  cat .autofix/context/codex-task.md
+                  printf '%s\n' ''
+                  printf '%s\n' 'Previous stale patch application failed. Discard stale patch coordinates.'
+                  printf '%s\n' 'Inspect the current checked-out files directly and edit the working tree directly.'
+                } > .autofix/context/codex-task-direct-edit.md
+                set +e
+                PATH="$PWD/.autofix/codex-bin:$PATH" codex "${codex_args[@]}" - < .autofix/context/codex-task-direct-edit.md | tee -a "codex-output/safe-codex-round-${round}.log"
+                codex_status="${PIPESTATUS[0]}"
+                set -e
+                if [ "$codex_status" = "0" ]; then
+                  codex_ok=1
+                  break
+                fi
+              fi
+
+              break
+            done
+
+            if [ "$codex_ok" = "1" ]; then
               echo "Codex completed."
             else
               echo "::error::Codex failed."
