@@ -244,6 +244,19 @@ jobs:
             fi
 
             if [ "$FATAL_CONTEXT_ERROR" = "true" ]; then
+              if grep -q 'DeepSource API failed status=403' .autofix/context/decision.json 2>/dev/null; then
+                if [ -s .autofix/context/deepsource-task.md ] || [ -s .autofix/context/review-comments-task.md ]; then
+                  echo "::warning::DeepSource API returned 403, but GitHub DeepSource status/review context was collected. Continuing repair instead of blocking Codex."
+                  FATAL_CONTEXT_ERROR=false
+                  export FATAL_CONTEXT_ERROR
+                  if [ -f .autofix/context/decision.env ]; then
+                    sed -i 's/^FATAL_CONTEXT_ERROR=.*/FATAL_CONTEXT_ERROR=false/' .autofix/context/decision.env
+                  fi
+                fi
+              fi
+            fi
+
+            if [ "$FATAL_CONTEXT_ERROR" = "true" ]; then
               echo "::error::Required analyzer context could not be collected. Refusing to run Codex blindly."
               cat .autofix/context/decision.json
               exit 1
