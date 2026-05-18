@@ -9,6 +9,8 @@ import re
 import subprocess
 import sys
 import time
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -349,6 +351,131 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     return 0 if not issues or args.no_fail else 1
 
 
+def codacy_issue_items(body: Any) -> list[dict[str, Any]]:
+    if isinstance(body, list):
+        return [item for item in body if isinstance(item, dict)]
+    if not isinstance(body, dict):
+        return []
+    for key in ("data", "issues", "results", "items"):
+        value = body.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def codacy_issue_record(item: dict[str, Any]) -> dict[str, Any]:
+    issue = item.get("commitIssue") if isinstance(item.get("commitIssue"), dict) else item
+    pattern = issue.get("patternInfo") if isinstance(issue.get("patternInfo"), dict) else {}
+    tool = issue.get("toolInfo") if isinstance(issue.get("toolInfo"), dict) else {}
+    return {
+        "filePath": issue.get("filePath") or issue.get("filename") or "",
+        "lineNumber": issue.get("lineNumber"),
+        "message": issue.get("message") or "",
+        "patternId": pattern.get("id") or issue.get("patternId") or "",
+        "category": pattern.get("category") or "",
+        "severity": pattern.get("severityLevel") or pattern.get("level") or "",
+        "tool": tool.get("name") or "",
+    }
+
+
+def fetch_codacy_pr_issues(repo: str, pr_number: str) -> list[dict[str, Any]]:
+    token = os.environ.get("CODACY_API_TOKEN", "")
+    if not token:
+        raise RuntimeError("CODACY_API_TOKEN unavailable")
+
+    owner, repo_name = repo.split("/", 1)
+    provider = os.environ.get("CODACY_PROVIDER", "gh")
+    params = urllib.parse.urlencode({
+        "status": "new",
+        "onlyPotential": "false",
+        "limit": "100",
+    })
+    url = (
+        "https://api.codacy.com/api/v3/analysis/"
+        f"organizations/{provider}/{urllib.parse.quote(owner, safe='')}/"
+        f"repositories/{urllib.parse.quote(repo_name, safe='')}/"
+        f"pull-requests/{urllib.parse.quote(str(pr_number), safe='')}/issues?{params}"
+    )
+    req = urllib.request.Request(url, headers={"api-token": token})
+    with urllib.request.urlopen(req, timeout=30) as response:
+        body = json.loads(response.read().decode("utf-8") or "{}")
+    return codacy_issue_items(body)
+
+
+def write_codacy_task(outdir: Path, issues: list[dict[str, Any]]) -> None:
+    outdir.mkdir(parents=True, exist_ok=True)
+    records = [codacy_issue_record(item) for item in issues]
+    write_json(outdir / "codacy-raw.json", issues)
+
+    lines = [
+        "# Current Codacy API issues",
+        "",
+        f"Total: {len(records)}",
+        "",
+        "Fix only these current Codacy blockers. Preserve PR scope.",
+        "",
+    ]
+    for index, record in enumerate(records, 1):
+        lines.append(
+            f"{index}. {record['filePath']}:{record['lineNumber']} "
+            f"{record['patternId']} {record['severity']} {record['tool']} - {record['message']}"
+        )
+    (outdir / "codacy-task.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def codacy_blocking_evidence(repo: str, pr_number: str, blockers: list[dict[str, Any]]) -> dict[str, Any]:
+    codacy_checks = [
+        check for check in blockers
+        if "codacy" in ((check.get("name") or "") + " " + (check.get("url") or "")).lower()
+    ]
+    if not codacy_checks:
+        return {
+            "checks": [],
+            "check_blocking": False,
+            "api_available": bool(os.environ.get("CODACY_API_TOKEN")),
+            "api_ok": False,
+            "issues_returned": 0,
+            "blocking": False,
+            "ignored": False,
+            "reason": "no Codacy check blocker",
+        }
+
+    try:
+        issues = fetch_codacy_pr_issues(repo, pr_number)
+        api_ok = True
+        reason = f"Codacy API returned {len(issues)} current issue(s)"
+    except Exception as exc:
+        issues = []
+        api_ok = False
+        reason = f"Codacy API unavailable ({type(exc).__name__}): {exc}"
+
+    return {
+        "checks": codacy_checks,
+        "check_blocking": bool(codacy_checks),
+        "api_available": bool(os.environ.get("CODACY_API_TOKEN")),
+        "api_ok": api_ok,
+        "issues_returned": len(issues),
+        "blocking": bool(codacy_checks) if not api_ok else bool(issues),
+        "ignored": api_ok and not issues,
+        "reason": reason,
+    }
+
+
+def cmd_codacy_task(args: argparse.Namespace) -> int:
+    issues = fetch_codacy_pr_issues(args.repo, args.pr)
+    write_codacy_task(Path(args.outdir), issues)
+    result = {
+        "repo": args.repo,
+        "pr": str(args.pr),
+        "issues_returned": len(issues),
+        "codacy_raw": str(Path(args.outdir) / "codacy-raw.json"),
+        "codacy_task": str(Path(args.outdir) / "codacy-task.md"),
+    }
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     decision = build_decision(args.repo, args.pr, ignore_self=True)
     outdir = Path(args.outdir)
@@ -465,6 +592,12 @@ def main() -> int:
     p.add_argument("--comment", action="store_true")
     p.add_argument("--no-fail", action="store_true")
     p.set_defaults(func=cmd_preflight)
+
+    p = sub.add_parser("codacy-task")
+    p.add_argument("--repo", required=True)
+    p.add_argument("--pr", required=True)
+    p.add_argument("--outdir", default=".autofix/context")
+    p.set_defaults(func=cmd_codacy_task)
 
     p = sub.add_parser("report")
     p.add_argument("--repo", required=True)
