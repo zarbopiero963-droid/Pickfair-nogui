@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import re
@@ -256,6 +257,7 @@ def safe_autofix_runs_command(repo: str) -> list[str]:
 
 @dataclass(frozen=True)
 class RerunConfig:
+
     """Configuration for rerunning cancelled checks."""
 
     repo: str
@@ -265,6 +267,7 @@ class RerunConfig:
 
 @dataclass(frozen=True)
 class SafeAutofixConfig:
+
     """Configuration for invoking the safe autofix workflow."""
 
     repo: str
@@ -276,6 +279,7 @@ class SafeAutofixConfig:
 
 @dataclass(frozen=True)
 class CleanScopeRules:
+
     """Allowlist and forbidden scope constraints for clean rebuild mode."""
 
     allowlist: tuple[str, ...]
@@ -285,6 +289,7 @@ class CleanScopeRules:
 
 @dataclass(frozen=True)
 class CleanRebuildConfig:
+
     """Configuration for launching a clean-scope rebuild workflow."""
 
     repo: str
@@ -296,7 +301,6 @@ class CleanRebuildConfig:
 
 @dataclass(frozen=True)
 class PendingWaitConfig:
-
     """Data container used by the automation flow."""
 
     repo: str
@@ -308,6 +312,7 @@ class PendingWaitConfig:
 
 @dataclass(frozen=True)
 class CleanScopeReport:
+
     """Data container used by the automation flow."""
 
     enabled: bool
@@ -830,17 +835,16 @@ def codacy_request_target(url: str) -> str:
 
 def fetch_json(url: str, token: str) -> Any:
     target = codacy_request_target(url)
-    request = urllib.request.Request(
-        f"https://api.codacy.com{target}",
-        headers={"api-token": token},
-        method="GET",
-    )
+    conn = http.client.HTTPSConnection("api.codacy.com", timeout=30)
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
-            status = int(response.status)
-            payload = response.read().decode("utf-8")
-    except urllib.error.URLError as exc:
+        conn.request("GET", target, headers={"api-token": token})
+        response = conn.getresponse()
+        status = int(response.status)
+        payload = response.read().decode("utf-8")
+    except OSError as exc:
         raise RuntimeError("Codacy API request failed") from exc
+    finally:
+        conn.close()
     if status >= 400:
         raise RuntimeError(f"Codacy API request failed with status {status}")
     return json.loads(payload or "{}")

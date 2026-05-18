@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import http.client
 import json
 import os
 import re
@@ -173,18 +174,17 @@ def codacy_http_response(url: str, token: str) -> tuple[int, str]:
     if parsed.scheme != "https" or parsed.netloc != "api.codacy.com":
         raise RuntimeError("invalid Codacy API URL")
     target = codacy_request_target(parsed)
-    request = urllib.request.Request(
-        f"https://api.codacy.com{target}",
-        headers={"api-token": token},
-        method="GET",
-    )
+    conn = http.client.HTTPSConnection("api.codacy.com", timeout=30)
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
-            status = int(response.status)
-            payload = response.read().decode("utf-8")
+        conn.request("GET", target, headers={"api-token": token})
+        response = conn.getresponse()
+        status = int(response.status)
+        payload = response.read().decode("utf-8")
         return status, payload
-    except urllib.error.URLError as exc:
+    except OSError as exc:
         raise RuntimeError("Codacy API request failed") from exc
+    finally:
+        conn.close()
 
 
 def fetch_codacy_json(url: str, token: str) -> Any:
@@ -557,6 +557,7 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 
 def cmd_codacy_task(args: argparse.Namespace) -> int:
+    """Write current Codacy issues to task artifacts for the autofix loop."""
     outdir = Path(args.outdir)
     blocking = codacy_is_blocking(args.repo, args.pr)
     try:
