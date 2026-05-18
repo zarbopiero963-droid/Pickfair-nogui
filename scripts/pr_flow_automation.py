@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import http.client
 import json
 import os
 import re
@@ -46,6 +45,7 @@ def validate_command(cmd: list[str]) -> list[str]:
 
 
 def validate_command_family(family: str) -> None:
+    """Reject command families outside the local allowlist."""
     if family not in ALLOWED_COMMAND_FAMILIES:
         raise ValueError(f"command family not allowed: {family}")
 
@@ -58,7 +58,8 @@ def validate_command_args(cmd: list[str]) -> None:
 
 def sh(cmd: list[str], *, check: bool = True) -> str:
     safe_cmd = validate_command(cmd)
-    proc = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+    # nosec B603
+    proc = subprocess.run(
         safe_cmd,
         text=True,
         stdout=subprocess.PIPE,
@@ -200,15 +201,18 @@ def codacy_request_target(parsed: urllib.parse.ParseResult) -> str:
 
 def codacy_https_request(target: str, token: str) -> tuple[int, str]:
     """Execute a Codacy HTTPS GET request and return status and payload text."""
-    conn = http.client.HTTPSConnection("api.codacy.com", timeout=30)
+    req = urllib.request.Request(
+        f"https://api.codacy.com{target}",
+        headers={"api-token": token},
+        method="GET",
+    )
     try:
-        conn.request("GET", target, headers={"api-token": token})
-        response = conn.getresponse()
-        return int(response.status), response.read().decode("utf-8")
+        with urllib.request.urlopen(req, timeout=30) as response:  # nosec B310
+            status = int(getattr(response, "status", 200))
+            payload = response.read().decode("utf-8")
     except OSError as exc:
         raise RuntimeError("Codacy API request failed") from exc
-    finally:
-        conn.close()
+    return status, payload
 
 
 def codacy_http_response(url: str, token: str) -> tuple[int, str]:

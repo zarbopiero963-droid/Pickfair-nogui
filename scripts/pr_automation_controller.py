@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import argparse
-import http.client
 import json
 import os
 import re
@@ -256,7 +255,6 @@ def safe_autofix_runs_command(repo: str) -> list[str]:
 
 @dataclass(frozen=True)
 class RerunConfig:
-
     """Configuration for rerunning cancelled checks."""
 
     repo: str
@@ -266,7 +264,6 @@ class RerunConfig:
 
 @dataclass(frozen=True)
 class SafeAutofixConfig:
-
     """Configuration for invoking the safe autofix workflow."""
 
     repo: str
@@ -278,7 +275,6 @@ class SafeAutofixConfig:
 
 @dataclass(frozen=True)
 class CleanScopeRules:
-
     """Allowlist and forbidden scope constraints for clean rebuild mode."""
 
     allowlist: tuple[str, ...]
@@ -288,7 +284,6 @@ class CleanScopeRules:
 
 @dataclass(frozen=True)
 class CleanRebuildConfig:
-
     """Configuration for launching a clean-scope rebuild workflow."""
 
     repo: str
@@ -300,6 +295,7 @@ class CleanRebuildConfig:
 
 @dataclass(frozen=True)
 class PendingWaitConfig:
+
     """Data container used by the automation flow."""
 
     repo: str
@@ -311,7 +307,6 @@ class PendingWaitConfig:
 
 @dataclass(frozen=True)
 class CleanScopeReport:
-
     """Data container used by the automation flow."""
 
     enabled: bool
@@ -833,16 +828,17 @@ def codacy_request_target(url: str) -> str:
 
 
 def codacy_https_json(target: str, token: str) -> Any:
-    conn = http.client.HTTPSConnection("api.codacy.com", timeout=30)
+    req = urllib.request.Request(
+        f"https://api.codacy.com{target}",
+        headers={"api-token": token},
+        method="GET",
+    )
     try:
-        conn.request("GET", target, headers={"api-token": token})
-        response = conn.getresponse()
-        status = int(response.status)
-        payload = response.read().decode("utf-8")
+        with urllib.request.urlopen(req, timeout=30) as response:  # nosec B310
+            status = int(getattr(response, "status", 200))
+            payload = response.read().decode("utf-8")
     except OSError as exc:
         raise RuntimeError("Codacy API request failed") from exc
-    finally:
-        conn.close()
     if status >= 400:
         raise RuntimeError(f"Codacy API request failed with status {status}")
     return json.loads(payload or "{}")
@@ -1330,16 +1326,24 @@ def _thread_lines(node: dict[str, Any]) -> list[str]:
     path = str(node.get("path") or "")
     line = str(node.get("line") or node.get("startLine") or "")
     thread_id = str(node.get("id") or "")
-    lines = [f"## Thread {thread_id}", f"- path: {path}", f"- line: {line}"]
-    comments = _thread_comments(node)
-    for comment in comments:
-        lines.extend(_comment_lines(comment))
-    return lines
+    comment_lines = [
+        line_item
+        for comment in _thread_comments(node)
+        for line_item in _comment_lines(comment)
+    ]
+    return [f"## Thread {thread_id}", f"- path: {path}", f"- line: {line}"] + comment_lines
 
 
 def _thread_comments(node: dict[str, Any]) -> list[dict[str, Any]]:
-    comments = ((node.get("comments") or {}).get("nodes") or []) if isinstance(node, dict) else []
-    return [comment for comment in comments if isinstance(comment, dict)]
+    if not isinstance(node, dict):
+        return []
+    comments_block = node.get("comments")
+    if not isinstance(comments_block, dict):
+        return []
+    nodes = comments_block.get("nodes")
+    if not isinstance(nodes, list):
+        return []
+    return [comment for comment in nodes if isinstance(comment, dict)]
 
 
 def _comment_lines(comment: dict[str, Any]) -> list[str]:
