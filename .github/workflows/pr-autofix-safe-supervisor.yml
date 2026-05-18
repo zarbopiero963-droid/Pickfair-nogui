@@ -203,6 +203,18 @@ jobs:
               . .autofix/context/decision.env
               set +a
 
+              python3 scripts/pr_flow_automation.py codacy-task \
+                --repo "$REPO" \
+                --pr "$PR_NUMBER" \
+                --outdir .autofix/context
+
+              {
+                printf '%s\n' ''
+                printf '%s\n' '## Codacy API task source of truth'
+                printf '%s\n' 'If current Codacy API issues are listed below, fix only these current Codacy blockers and do not use local shell CODACY_API_TOKEN.'
+                cat .autofix/context/codacy-task.md
+              } >> .autofix/context/codex-task.md
+
               echo "head=$HEAD_SHA pending=$PENDING_COUNT blockers=$BLOCKER_COUNT safe_files=$SAFE_FILE_COUNT should_fix=$SHOULD_FIX manual=$REQUIRES_MANUAL fatal=$FATAL_CONTEXT_ERROR"
 
               if [ "$PENDING_COUNT" = "0" ]; then

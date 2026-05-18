@@ -429,8 +429,14 @@ jobs:
             {
               printf '%s\n' 'You are running inside a GitHub self-hosted runner on the existing PR branch.'
               printf '%s\n' 'Objective: make this PR merge-ready by fixing all still-valid red checks and actionable review/comment issues visible from GitHub.'
-              printf '%s\n' 'Hard rules: work only on current branch; do not create PRs; do not merge; do not post comments; do not use external Codacy or DeepSource APIs; prefer small targeted fixes.'
+              printf '%s\n' 'Hard rules: work only on current branch; do not create PRs; do not merge; do not post comments; do not use local shell CODACY_API_TOKEN; do not call external Codacy or DeepSource APIs; prefer small targeted fixes.'
               printf '%s\n' 'Read .autofix/context files first, then inspect repository files directly and apply the smallest safe fix.'
+              printf '%s\n' 'If .autofix/context/codacy-task.md lists current Codacy API issues, treat that file as the source of truth and fix only those current Codacy blockers.'
+              if [ -f .autofix/context/codacy-task.md ]; then
+                printf '%s\n' ''
+                printf '%s\n' 'Current Codacy API task file content:'
+                cat .autofix/context/codacy-task.md
+              fi
             } > .autofix/prompt.md
           }
 
@@ -459,6 +465,9 @@ jobs:
               printf '%s\n' '- review-comments-pages.json'
               printf '%s\n' '- reviews-pages.json'
               printf '%s\n' '- review-threads.json'
+              printf '%s\n' '- codacy-raw.json'
+              printf '%s\n' '- codacy-issues.json'
+              printf '%s\n' '- codacy-task.md'
             } > .autofix/context/README.md
           }
 
@@ -538,6 +547,11 @@ jobs:
                     echo >> .autofix/context/annotations.jsonl
                   fi
                 done
+
+            python3 scripts/pr_flow_automation.py codacy-task \
+              --repo "${REPO}" \
+              --pr "${PR_NUMBER}" \
+              --outdir .autofix/context
 
             write_context_readme
           }
@@ -902,3 +916,11 @@ jobs:
           notify_failed "Reached max rounds (${MAX_ROUNDS}) and PR is still red or has unresolved actionable comments."
 
           exit 1
+
+      - name: Upload autofix context
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-autofix-selfhosted-context-${{ steps.pr.outputs.pr_number || github.run_id }}
+          path: .autofix/context/**
+          if-no-files-found: ignore

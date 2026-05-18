@@ -68,6 +68,11 @@ jobs:
           fi
 
           mkdir -p .merge-readiness
+          python3 scripts/pr_flow_automation.py codacy-task \
+            --repo "$REPO" \
+            --pr "$PR" \
+            --outdir .merge-readiness/codacy-context
+
           python3 scripts/pr_merge_readiness.py \
             --repo "$REPO" \
             --pr "$PR" \

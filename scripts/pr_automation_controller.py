@@ -13,12 +13,15 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
-try:
-    import pr_flow_automation as flow
-except ModuleNotFoundError:  # pragma: no cover - used when imported as scripts.*
-    from scripts import pr_flow_automation as flow
+if TYPE_CHECKING:
+    flow: Any
+else:
+    try:
+        from scripts import pr_flow_automation as flow
+    except ModuleNotFoundError:  # pragma: no cover - used when executed as scripts/*.py
+        import pr_flow_automation as flow
 
 FAIL_STATES = {"FAILURE", "ERROR", "ACTION_REQUIRED", "TIMED_OUT"}
 PENDING_STATES = {"", "PENDING", "QUEUED", "IN_PROGRESS", "REQUESTED", "WAITING"}
