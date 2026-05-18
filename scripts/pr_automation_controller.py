@@ -1212,5 +1212,179 @@ def main() -> int:
     return run_controller(args, initial_decision(args))
 
 
+
+def _cli_arg_value(names: tuple[str, ...], default: str = "") -> str:
+    """Return a CLI argument value without depending on argparse internals."""
+    for index, arg in enumerate(sys.argv):
+        for name in names:
+            if arg == name and index + 1 < len(sys.argv):
+                return str(sys.argv[index + 1])
+            prefix = f"{name}="
+            if arg.startswith(prefix):
+                return arg[len(prefix):]
+    return default
+
+
+def _safe_json_run(cmd: list[str]) -> Any:
+    """Run a JSON command and return an empty dict on failure."""
+    try:
+        out = run(cmd, json_out=True, check=False)
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        return {"error": str(exc)}
+    return out if isinstance(out, dict) else {"data": out}
+
+
+def _write_deepsource_task(outdir: Path, repo: str, pr_number: str) -> None:
+    """Write DeepSource status/check context for Codex repair."""
+    payload = _safe_json_run([
+        "gh", "pr", "view", pr_number,
+        "--repo", repo,
+        "--json", "statusCheckRollup",
+    ])
+    checks = payload.get("statusCheckRollup") if isinstance(payload, dict) else []
+    checks = checks if isinstance(checks, list) else []
+    deep = [
+        check for check in checks
+        if "deepsource" in str(check.get("name") or check.get("context") or "").lower()
+    ]
+
+    lines = ["# DeepSource repair input", ""]
+    if not deep:
+        lines.append("No DeepSource blockers found in current PR status rollup.")
+    for check in deep:
+        name = str(check.get("name") or check.get("context") or "")
+        state = str(check.get("conclusion") or check.get("state") or check.get("status") or "")
+        url = str(check.get("detailsUrl") or check.get("targetUrl") or "")
+        desc = str(check.get("description") or "")
+        lines.extend([
+            f"- name: {name}",
+            f"  state: {state}",
+            f"  url: {url}",
+            f"  description: {desc}",
+            "",
+        ])
+    (outdir / "deepsource-task.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _review_threads_query() -> str:
+    """Return the GraphQL query used to collect review threads."""
+    return """
+query($owner:String!, $name:String!, $number:Int!) {
+  repository(owner:$owner, name:$name) {
+    pullRequest(number:$number) {
+      reviewThreads(first: 100) {
+        nodes {
+          id
+          isResolved
+          isOutdated
+          path
+          line
+          startLine
+          comments(first: 20) {
+            nodes {
+              id
+              body
+              url
+              createdAt
+              author { login }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+def _write_review_task(outdir: Path, repo: str, pr_number: str) -> None:
+    """Write unresolved review comments context for Codex repair."""
+    owner, name = repo.split("/", 1)
+    raw = _safe_json_run([
+        "gh", "api", "graphql",
+        "-f", f"owner={owner}",
+        "-f", f"name={name}",
+        "-F", f"number={pr_number}",
+        "-f", f"query={_review_threads_query()}",
+    ])
+    (outdir / "review-threads-raw.json").write_text(
+        json.dumps(raw, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    nodes = (
+        raw.get("data", {})
+        .get("repository", {})
+        .get("pullRequest", {})
+        .get("reviewThreads", {})
+        .get("nodes", [])
+        if isinstance(raw, dict) else []
+    )
+    nodes = nodes if isinstance(nodes, list) else []
+
+    lines = ["# Unresolved review comments repair input", ""]
+    unresolved = [node for node in nodes if not bool(node.get("isResolved"))]
+    if not unresolved:
+        lines.append("No unresolved review threads found, or review thread API was unavailable.")
+
+    for node in unresolved:
+        path = str(node.get("path") or "")
+        line = str(node.get("line") or node.get("startLine") or "")
+        thread_id = str(node.get("id") or "")
+        lines.extend([f"## Thread {thread_id}", f"- path: {path}", f"- line: {line}"])
+        comments = ((node.get("comments") or {}).get("nodes") or []) if isinstance(node, dict) else []
+        for comment in comments:
+            author = str(((comment.get("author") or {}).get("login")) or "")
+            body = str(comment.get("body") or "").strip()
+            url = str(comment.get("url") or "")
+            lines.extend([f"- author: {author}", f"- url: {url}", "", body, ""])
+    (outdir / "review-comments-task.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _append_extra_context_to_codacy_task(outdir: Path) -> None:
+    """Append extra repair context to codacy-task.md so existing prompts include it."""
+    codacy_task = outdir / "codacy-task.md"
+    if not codacy_task.exists():
+        return
+    extra_parts = []
+    for name in ("deepsource-task.md", "review-comments-task.md"):
+        path = outdir / name
+        if path.exists():
+            extra_parts.extend(["", f"# Included {name}", "", path.read_text(encoding="utf-8")])
+    if extra_parts:
+        codacy_task.write_text(
+            codacy_task.read_text(encoding="utf-8") + "\n".join(extra_parts) + "\n",
+            encoding="utf-8",
+        )
+
+
+def _write_extra_repair_context_after_codacy_task() -> None:
+    """Generate DeepSource and review-comment context after codacy-task."""
+    if len(sys.argv) < 2 or sys.argv[1] != "codacy-task":
+        return
+    repo = _cli_arg_value(("--repo",), "")
+    pr_number = _cli_arg_value(("--pr", "--pr-number"), "")
+    outdir = Path(_cli_arg_value(("--outdir", "--output-dir", "--context-dir"), ".autofix/context"))
+    outdir.mkdir(parents=True, exist_ok=True)
+    if repo and pr_number:
+        _write_deepsource_task(outdir, repo, pr_number)
+        _write_review_task(outdir, repo, pr_number)
+        _append_extra_context_to_codacy_task(outdir)
+
+
+_ORIGINAL_MAIN = main
+
+
+def main() -> int:
+    """Run controller and enrich codacy-task context when requested."""
+    result = _ORIGINAL_MAIN()
+    try:
+        _write_extra_repair_context_after_codacy_task()
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        Path(".autofix").mkdir(exist_ok=True)
+        Path(".autofix/context-extra-error.txt").write_text(str(exc), encoding="utf-8")
+    return result
+
+
 if __name__ == "__main__":
     raise SystemExit(main())
