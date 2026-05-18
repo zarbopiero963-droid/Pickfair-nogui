@@ -55,7 +55,7 @@ def test_preflight_allows_clean_scope_execute_when_safe_autofix_limit_exceeded(m
         codacy_blocking=True,
         codacy_api_available=True,
         commits=["a", "b", "c", "d"],
-        oscillating=[],
+        oscillating=[{"file": "scripts/pr_clean_scope_rebuild.py", "touches": 9}],
     )
 
     assert not issues
@@ -75,7 +75,7 @@ def test_preflight_allows_controller_dispatch_when_safe_autofix_limit_exceeded(m
         codacy_blocking=True,
         codacy_api_available=True,
         commits=["a", "b", "c", "d"],
-        oscillating=[],
+        oscillating=[{"file": "scripts/pr_clean_scope_rebuild.py", "touches": 9}],
     )
 
     assert not issues

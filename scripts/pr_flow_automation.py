@@ -575,7 +575,7 @@ def preflight_issues(
         issues.append("CODACY_API_TOKEN missing while Codacy is blocking")
     if codacy_blocking and len(commits) > args.max_safe_autofix_commits and not allow_clean_scope_escalation:
         issues.append(f"safe autofix commit limit exceeded: {len(commits)} > {args.max_safe_autofix_commits}")
-    if oscillating and codacy_blocking:
+    if oscillating and codacy_blocking and not allow_clean_scope_escalation:
         issues.append("possible autofix oscillation detected while Codacy is still blocking")
     return issues
 

@@ -808,6 +808,20 @@ jobs:
             return 1
           }
 
+          current_codacy_issues_present() {
+            mkdir -p .autofix/context
+
+            if ! python3 scripts/pr_flow_automation.py codacy-task \
+              --repo "${REPO}" \
+              --pr "${PR_NUMBER}" \
+              --outdir .autofix/context; then
+              notify_failed "Codacy API context collection failed closed while Codacy is ACTION_REQUIRED."
+              exit 1
+            fi
+
+            [ "$(jq 'length' .autofix/context/codacy-issues.json 2>/dev/null || echo 0)" != "0" ]
+          }
+
           trap 'save_rescue_patch "$?"' EXIT
 
           preflight_codex
@@ -831,7 +845,9 @@ jobs:
             git fetch origin "${PR_HEAD_REF}"
             git checkout -B "${PR_HEAD_REF}" "origin/${PR_HEAD_REF}"
 
-            if ! restore_rescue_patch_if_available; then
+            if current_codacy_issues_present; then
+              echo "Current Codacy API issues are present; skipping stale rescue patch restore and using Codacy task context."
+            elif ! restore_rescue_patch_if_available; then
               notify_failed "Rescue patch exists but cannot be applied automatically."
               exit 1
             fi
