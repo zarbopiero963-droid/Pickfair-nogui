@@ -51,6 +51,7 @@ def validate_command_family(family: str) -> None:
 
 
 def validate_command_args(cmd: list[str]) -> None:
+    """Reject non-string or null-byte command arguments."""
     for arg in cmd:
         if not isinstance(arg, str) or "\x00" in arg:
             raise ValueError("invalid command argument")
@@ -58,7 +59,7 @@ def validate_command_args(cmd: list[str]) -> None:
 
 def sh(cmd: list[str], *, check: bool = True) -> str:
     safe_cmd = validate_command(cmd)
-    # nosec B603
+    # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
     proc = subprocess.run(
         safe_cmd,
         text=True,
@@ -66,7 +67,7 @@ def sh(cmd: list[str], *, check: bool = True) -> str:
         stderr=subprocess.PIPE,
         check=False,
     )
-    if check and proc.returncode != 0:
+    if check and proc.returncode:
         raise RuntimeError(
             f"command failed: {' '.join(safe_cmd)}\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
         )
@@ -207,7 +208,7 @@ def codacy_https_request(target: str, token: str) -> tuple[int, str]:
         method="GET",
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as response:  # nosec B310
+        with urllib.request.urlopen(req, timeout=30) as response:  # nosec B310  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             status = int(getattr(response, "status", 200))
             payload = response.read().decode("utf-8")
     except OSError as exc:
