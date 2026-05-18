@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import http.client
 import json
 import os
 import re
@@ -10,7 +11,6 @@ import subprocess
 import sys
 import time
 import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -172,16 +172,15 @@ def codacy_http_response(url: str, token: str) -> tuple[int, str]:
     if parsed.scheme != "https" or parsed.netloc != "api.codacy.com":
         raise RuntimeError("invalid Codacy API URL")
     target = codacy_request_target(parsed)
-    request = urllib.request.Request(
-        f"https://api.codacy.com{target}",
-        headers={"api-token": token},
-        method="GET",
-    )
+    connection = http.client.HTTPSConnection("api.codacy.com", timeout=30)
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
-            return int(response.status), response.read().decode("utf-8")
+        connection.request("GET", target, headers={"api-token": token})
+        response = connection.getresponse()
+        return int(response.status), response.read().decode("utf-8")
     except OSError as exc:
         raise RuntimeError("Codacy API request failed") from exc
+    finally:
+        connection.close()
 
 
 def fetch_codacy_json(url: str, token: str) -> Any:
@@ -240,25 +239,20 @@ def codacy_issue_record(item: dict[str, Any]) -> dict[str, Any]:
     issue = issue_dict_from_item(item)
     pattern_info = nested_dict(issue, "patternInfo")
     tool_info = nested_dict(issue, "toolInfo") or nested_dict(issue, "tool")
+    pattern_id = first_nonempty(pattern_info.get("id"), issue.get("patternId"), issue.get("patternID"))
+    severity = first_nonempty(pattern_info.get("severityLevel"), pattern_info.get("level"), issue.get("severity"))
     return {
         "filePath": first_nonempty(issue.get("filePath"), issue.get("filename")),
         "lineNumber": issue.get("lineNumber"),
         "tool": first_nonempty(tool_info.get("name"), issue.get("toolName")),
-        "patternId": first_nonempty(
-            pattern_info.get("id"),
-            issue.get("patternId"),
-            issue.get("patternID"),
-        ),
-        "severity": first_nonempty(
-            pattern_info.get("severityLevel"),
-            pattern_info.get("level"),
-            issue.get("severity"),
-        ),
+        "patternId": pattern_id,
+        "severity": severity,
         "message": first_nonempty(issue.get("message")),
     }
 
 
 def codacy_task_lines(records: list[dict[str, Any]]) -> list[str]:
+    """Render normalized Codacy issue records as markdown lines."""
     lines = [
         "# Current Codacy API issues",
         "",
