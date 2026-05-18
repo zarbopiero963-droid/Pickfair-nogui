@@ -1,8 +1,12 @@
 """Tests for PR automation controller decisions."""
+# pylint: disable=invalid-name,duplicate-code
 
 import argparse
+from unittest import TestCase
 
 import scripts.pr_automation_controller as controller
+
+ASSERTIONS = TestCase()
 
 
 def _check(name: str, state: str, url: str = "") -> dict[str, str]:
@@ -24,23 +28,23 @@ def _args() -> argparse.Namespace:
     )
 
 
-def test_controller_does_not_launch_safe_autofix_for_stale_codacy_action_required(monkeypatch):
-    """A stale Codacy ACTION_REQUIRED check is ignored once the Codacy API is clear."""
+def _stub_codacy_evidence(monkeypatch, *, blocking: bool, ignored: bool, issues: int) -> None:
     monkeypatch.setattr(
         controller.flow,
         "codacy_blocking_evidence",
         lambda _repo, _pr, _blockers: {
-            "blocking": False,
-            "ignored": True,
+            "blocking": blocking,
+            "ignored": ignored,
             "api_available": True,
             "api_ok": True,
-            "issues_returned": 0,
+            "issues_returned": issues,
             "checks": _blockers,
         },
     )
-    monkeypatch.setattr(controller, "active_safe_autofix_runs", lambda _repo: [])
-    decision: dict = {"actions": [], "warnings": [], "errors": []}
-    pr = {
+
+
+def _codacy_pr() -> dict[str, list[dict[str, str]]]:
+    return {
         "statusCheckRollup": [
             _check(
                 "Codacy Static Code Analysis",
@@ -50,45 +54,37 @@ def test_controller_does_not_launch_safe_autofix_for_stale_codacy_action_require
         ]
     }
 
-    ctx = controller.build_next_action_context(_args(), decision, pr, ([], []))
-    controller.decide_next_action(ctx)
 
-    assert decision["next_action"] == "checks_green_or_no_action"
-    assert decision["launchable_for_safe_autofix"] == []
-    assert decision["blockers"] == []
-    assert decision["ignored_codacy_checks"][0]["name"] == "Codacy Static Code Analysis"
+def _controller_decision(monkeypatch, *, blocking: bool, ignored: bool) -> dict:
+    _stub_codacy_evidence(monkeypatch, blocking=blocking, ignored=ignored, issues=int(blocking))
+    monkeypatch.setattr(controller, "active_safe_autofix_runs", lambda _repo: [])
+    decision: dict = {"actions": [], "warnings": [], "errors": []}
+    ctx = controller.build_next_action_context(_args(), decision, _codacy_pr(), ([], []))
+    controller.decide_next_action(ctx)
+    return decision
+
+
+def test_controller_does_not_launch_safe_autofix_for_stale_codacy_action_required(monkeypatch):
+    """A stale Codacy ACTION_REQUIRED check is ignored once the Codacy API is clear."""
+    decision = _controller_decision(monkeypatch, blocking=False, ignored=True)
+
+    ASSERTIONS.assertEqual(decision["next_action"], "checks_green_or_no_action")
+    ASSERTIONS.assertEqual(decision["launchable_for_safe_autofix"], [])
+    ASSERTIONS.assertEqual(decision["blockers"], [])
+    ASSERTIONS.assertEqual(
+        decision["ignored_codacy_checks"][0]["name"],
+        "Codacy Static Code Analysis",
+    )
 
 
 def test_controller_preserves_safe_autofix_launch_for_current_codacy_blocker(monkeypatch):
     """Current Codacy blockers remain launchable for safe autofix."""
-    monkeypatch.setattr(
-        controller.flow,
-        "codacy_blocking_evidence",
-        lambda _repo, _pr, _blockers: {
-            "blocking": True,
-            "ignored": False,
-            "api_available": True,
-            "api_ok": True,
-            "issues_returned": 1,
-            "checks": _blockers,
-        },
+    decision = _controller_decision(monkeypatch, blocking=True, ignored=False)
+
+    ASSERTIONS.assertEqual(decision["next_action"], "would_launch_safe_autofix")
+    ASSERTIONS.assertEqual(
+        decision["launchable_for_safe_autofix"][0]["name"],
+        "Codacy Static Code Analysis",
     )
-    monkeypatch.setattr(controller, "active_safe_autofix_runs", lambda _repo: [])
-    decision: dict = {"actions": [], "warnings": [], "errors": []}
-    pr = {
-        "statusCheckRollup": [
-            _check(
-                "Codacy Static Code Analysis",
-                "ACTION_REQUIRED",
-                "https://app.codacy.com/gh/owner/repo/pull-requests/225",
-            )
-        ]
-    }
-
-    ctx = controller.build_next_action_context(_args(), decision, pr, ([], []))
-    controller.decide_next_action(ctx)
-
-    assert decision["next_action"] == "would_launch_safe_autofix"
-    assert decision["launchable_for_safe_autofix"][0]["name"] == "Codacy Static Code Analysis"
-    assert decision["blockers"][0]["name"] == "Codacy Static Code Analysis"
-    assert decision["actions"]
+    ASSERTIONS.assertEqual(decision["blockers"][0]["name"], "Codacy Static Code Analysis")
+    ASSERTIONS.assertTrue(decision["actions"])

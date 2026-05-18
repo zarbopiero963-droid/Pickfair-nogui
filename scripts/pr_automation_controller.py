@@ -254,7 +254,6 @@ def safe_autofix_runs_command(repo: str) -> list[str]:
 
 @dataclass(frozen=True)
 class RerunConfig:
-
     """Data container used by the automation flow."""
 
     repo: str
@@ -264,7 +263,6 @@ class RerunConfig:
 
 @dataclass(frozen=True)
 class SafeAutofixConfig:
-
     """Data container used by the automation flow."""
 
     repo: str
@@ -859,7 +857,10 @@ def codacy_evidence_for_checks(
     ]
     if hasattr(flow, "codacy_blocking_evidence"):
         return flow.codacy_blocking_evidence(repo, pr, codacy_blockers)
+    return fallback_codacy_evidence(codacy_blockers)
 
+
+def fallback_codacy_evidence(codacy_blockers: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "api_available": False,
         "api_ok": False,
@@ -871,6 +872,19 @@ def codacy_evidence_for_checks(
         "issues_returned": 0,
         "reason": "Codacy Static Code Analysis is ACTION_REQUIRED; pr_flow_automation has no codacy_blocking_evidence",
     }
+
+
+def ignored_codacy_checks(
+    checks: list[dict[str, Any]],
+    codacy: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if not codacy.get("ignored"):
+        return []
+    return [
+        compact_check(check)
+        for check in checks
+        if is_real_blocker(check) and is_codacy_check(check)
+    ]
 
 
 def filter_ignored_codacy_checks(
@@ -955,11 +969,7 @@ def build_next_action_context(
     effective_checks = filter_ignored_codacy_checks(checks, codacy)
     blockers = set_check_buckets(decision, effective_checks)
     decision["codacy"] = codacy
-    decision["ignored_codacy_checks"] = [
-        compact_check(check)
-        for check in checks
-        if codacy.get("ignored") and is_real_blocker(check) and is_codacy_check(check)
-    ]
+    decision["ignored_codacy_checks"] = ignored_codacy_checks(checks, codacy)
     files, commits = changed
     return NextActionContext(args, pr, effective_checks, files, commits, blockers, decision)
 
