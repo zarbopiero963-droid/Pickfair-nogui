@@ -13,7 +13,6 @@ import re
 import subprocess  # nosec B404
 import sys
 import time
-import urllib.error
 import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
