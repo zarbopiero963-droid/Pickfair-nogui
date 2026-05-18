@@ -9,8 +9,8 @@ import re
 import subprocess
 import sys
 import time
+import http.client
 import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -166,28 +166,25 @@ def codacy_request_target(parsed: urllib.parse.ParseResult) -> str:
     return f"{parsed.path}?{parsed.query}" if parsed.query else parsed.path
 
 
+def codacy_https_request(target: str, token: str) -> tuple[int, str]:
+    """Execute a Codacy HTTPS GET request and return status and payload text."""
+    connection = http.client.HTTPSConnection("api.codacy.com", timeout=30)
+    try:
+        connection.request("GET", target, headers={"api-token": token})
+        response = connection.getresponse()
+        return int(response.status), response.read().decode("utf-8")
+    except (OSError, http.client.HTTPException) as exc:
+        raise RuntimeError("Codacy API request failed") from exc
+    finally:
+        connection.close()
+
+
 def codacy_http_response(url: str, token: str) -> tuple[int, str]:
     """Request Codacy API data and return status code and decoded payload."""
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme != "https" or parsed.netloc != "api.codacy.com":
         raise RuntimeError("invalid Codacy API URL")
-    target = codacy_request_target(parsed)
-    request = urllib.request.Request(
-        "https://api.codacy.com" + target,
-        headers={"api-token": token},
-        method="GET",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            status = int(getattr(response, "status", response.getcode()))
-            payload = response.read().decode("utf-8")
-        return status, payload
-    except urllib.error.HTTPError as exc:
-        return int(exc.code), exc.read().decode("utf-8")
-    except urllib.error.URLError as exc:
-        raise RuntimeError("Codacy API request failed") from exc
-    except OSError as exc:
-        raise RuntimeError("Codacy API request failed") from exc
+    return codacy_https_request(codacy_request_target(parsed), token)
 
 
 def fetch_codacy_json(url: str, token: str) -> Any:
