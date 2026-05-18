@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import http.client
 import json
 import os
 import re
@@ -11,6 +10,7 @@ import subprocess
 import sys
 import time
 import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -128,6 +128,7 @@ def write_json(path: Path, data: Any) -> None:
 
 
 def codacy_api_token() -> str:
+    """Return CODACY_API_TOKEN only when running inside GitHub Actions."""
     if os.environ.get("GITHUB_ACTIONS") != "true":
         raise RuntimeError("CODACY_API_TOKEN is only trusted inside GitHub Actions")
     token = os.environ.get("CODACY_API_TOKEN", "")
@@ -163,24 +164,22 @@ def codacy_request_target(parsed: urllib.parse.ParseResult) -> str:
     return f"{parsed.path}?{parsed.query}" if parsed.query else parsed.path
 
 
+def codacy_http_response(url: str, token: str) -> tuple[int, str]:
+    """Request Codacy API data and return status code and decoded payload."""
+    request = urllib.request.Request(url, headers={"api-token": token}, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310
+            return int(response.status), response.read().decode("utf-8")
+    except OSError as exc:
+        raise RuntimeError("Codacy API request failed") from exc
+
+
 def fetch_codacy_json(url: str, token: str) -> Any:
     """Fetch JSON payload from the validated Codacy API endpoint."""
     validate_codacy_url(url)
     parsed = urllib.parse.urlparse(url)
-    target = codacy_request_target(parsed)
-    connection = http.client.HTTPSConnection(
-        parsed.netloc,
-        timeout=30,
-    )  # nosemgrep: python.lang.security.audit.httpsconnection-detected.httpsconnection-detected
-    try:
-        connection.request("GET", target, headers={"api-token": token})
-        response = connection.getresponse()
-        status = int(response.status)
-        payload = response.read().decode("utf-8")
-    except OSError as exc:
-        raise RuntimeError("Codacy API request failed") from exc
-    finally:
-        connection.close()
+    _ = codacy_request_target(parsed)
+    status, payload = codacy_http_response(url, token)
     if status >= 400:
         raise RuntimeError(f"Codacy API request failed with status {status}")
     return json.loads(payload or "{}")
@@ -195,7 +194,6 @@ def dict_items_from_list(value: Any) -> list[dict[str, Any]]:
 
 def codacy_issue_items(body: Any) -> list[dict[str, Any]]:
     """Extract issue dictionaries from known Codacy response shapes."""
-
     if isinstance(body, list):
         return dict_items_from_list(body)
     if not isinstance(body, dict):
