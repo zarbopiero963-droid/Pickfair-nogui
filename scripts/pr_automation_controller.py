@@ -417,6 +417,65 @@ def should_launch_autofix(checks: list[dict[str, Any]]) -> tuple[bool, list[dict
     return bool(launchable), launchable
 
 
+def stable_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip()).lower()
+
+
+def stable_blocker_record(check: dict[str, Any]) -> dict[str, str]:
+    raw = f"{check.get('name') or check.get('context') or ''}".strip()
+    source = "check"
+    if "codacy" in raw.lower():
+        source = "codacy"
+    path = str(check.get("path") or check.get("filePath") or check.get("filename") or "").strip()
+    rule = str(
+        check.get("rule")
+        or check.get("ruleId")
+        or check.get("patternId")
+        or check.get("code")
+        or ""
+    ).strip()
+    message = str(check.get("message") or check.get("title") or "").strip()
+    return {
+        "name": stable_text(raw),
+        "state": stable_text(check.get("state") or check.get("conclusion") or check.get("status")),
+        "source": source,
+        "path": stable_text(path),
+        "rule": stable_text(rule),
+        "message": stable_text(message),
+    }
+
+
+def blocker_signature(blockers: list[dict[str, Any]]) -> str:
+    if not blockers:
+        return ""
+    records = [stable_blocker_record(check) for check in blockers]
+    records.sort(key=lambda item: (item["source"], item["name"], item["state"], item["path"], item["rule"], item["message"]))
+    return json.dumps(records, sort_keys=True, separators=(",", ":"))
+
+
+def detect_no_progress_blocker_signature(
+    blockers: list[dict[str, Any]],
+    previous_blocker_signature: str = "",
+    repeated_blocker_count: int = 0,
+    threshold: int = 2,
+) -> dict[str, Any]:
+    signature = blocker_signature(blockers)
+    if not signature:
+        return {
+            "blocker_signature": "",
+            "previous_blocker_signature": "",
+            "repeated_blocker_count": 0,
+            "no_progress": False,
+        }
+    repeated = repeated_blocker_count + 1 if signature == str(previous_blocker_signature or "") else 1
+    return {
+        "blocker_signature": signature,
+        "previous_blocker_signature": signature,
+        "repeated_blocker_count": repeated,
+        "no_progress": repeated >= max(1, threshold),
+    }
+
+
 def path_matches(path: str, pattern: str) -> bool:
     pattern_text = pattern.strip()
     if not pattern_text:
@@ -951,6 +1010,18 @@ def controller_codacy_blocking_evidence(
 def decide_next_action(ctx: NextActionContext) -> None:
     should_launch, launchable = should_launch_autofix(ctx.checks)
     ctx.decision["launchable_for_safe_autofix"] = launchable
+    no_progress = detect_no_progress_blocker_signature(
+        launchable,
+        str(ctx.decision.get("previous_blocker_signature") or ""),
+        int(ctx.decision.get("repeated_blocker_count") or 0),
+    )
+    ctx.decision["blocker_signature"] = no_progress["blocker_signature"]
+    ctx.decision["previous_blocker_signature"] = no_progress["previous_blocker_signature"]
+    ctx.decision["repeated_blocker_count"] = no_progress["repeated_blocker_count"]
+    if should_launch and no_progress["no_progress"]:
+        ctx.decision["next_action"] = "needs_manual_no_progress"
+        ctx.decision["warnings"].append("repeated blocker signature detected without improvement")
+        return
     rules, signals = build_clean_scope_context(ctx.args, ctx.files, ctx.commits)
     store_clean_scope_report(ctx.decision, clean_scope_report_from_context(ctx, rules, signals))
     if maybe_launch_safe_first(ctx, should_launch, signals):

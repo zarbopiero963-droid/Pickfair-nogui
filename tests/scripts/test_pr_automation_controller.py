@@ -4,8 +4,6 @@
 import argparse
 from unittest import TestCase
 
-import pytest
-
 import scripts.pr_automation_controller as controller
 
 ASSERTIONS = TestCase()
@@ -198,8 +196,39 @@ def test_automation_scope_safe_autofix_is_bounded_to_one_round():
 
 def test_no_progress_repeated_blocker_signature_stops_with_needs_manual():
     """Repeated blocker signatures without improvement should stop with no_progress."""
-    helper_name = "detect_no_progress_blocker_signature"
-    if not hasattr(controller, helper_name):
-        pytest.xfail(f"expected helper not implemented yet: controller.{helper_name}")
-    helper = getattr(controller, helper_name)
-    ASSERTIONS.assertTrue(callable(helper))
+    decision: dict = {
+        "actions": [],
+        "warnings": [],
+        "errors": [],
+        "previous_blocker_signature": controller.blocker_signature([_check("Unit tests", "FAILURE")]),
+        "repeated_blocker_count": 1,
+    }
+    pr = {"statusCheckRollup": [_check("Unit tests", "FAILURE")]}
+    ctx = controller.build_next_action_context(_args(), decision, pr, ([], []))
+    controller.decide_next_action(ctx)
+
+    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_no_progress")
+    ASSERTIONS.assertEqual(decision["repeated_blocker_count"], 2)
+    ASSERTIONS.assertEqual(decision["actions"], [])
+
+
+def test_no_progress_non_repeated_blocker_signature_keeps_safe_autofix_launch(monkeypatch):
+    """New blocker signature should preserve safe-autofix behavior."""
+    _stub_codacy_evidence(monkeypatch, blocking=False, ignored=False, issues=0)
+    monkeypatch.setattr(controller, "active_safe_autofix_runs", lambda _repo: [])
+
+    decision: dict = {
+        "actions": [],
+        "warnings": [],
+        "errors": [],
+        "previous_blocker_signature": controller.blocker_signature([_check("Unit tests", "FAILURE")]),
+        "repeated_blocker_count": 1,
+    }
+    pr = {"statusCheckRollup": [_check("Integration tests", "FAILURE")]}
+
+    ctx = controller.build_next_action_context(_args(), decision, pr, ([], []))
+    controller.decide_next_action(ctx)
+
+    ASSERTIONS.assertEqual(decision["next_action"], "would_launch_safe_autofix")
+    ASSERTIONS.assertEqual(decision["repeated_blocker_count"], 1)
+    ASSERTIONS.assertTrue(decision["actions"])
