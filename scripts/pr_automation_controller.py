@@ -485,7 +485,7 @@ def stable_blocker_record(check: dict[str, Any]) -> dict[str, str]:
     raw_name = blocker_raw_name(check)
     return {
         "name": stable_text(raw_name),
-        "state": stable_text(check.get("state") or check.get("conclusion") or check.get("status")),
+        "state": stable_text(check.get("conclusion") or check.get("state") or check.get("status")),
         "source": blocker_source(raw_name),
         "path": stable_text(blocker_path(check)),
         "rule": stable_text(blocker_rule(check)),
