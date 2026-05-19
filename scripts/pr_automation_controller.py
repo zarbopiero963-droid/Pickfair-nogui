@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import argparse
-import http.client
 import json
 import os
 import re
@@ -15,6 +14,7 @@ import subprocess  # nosec B404
 import sys
 import time
 import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -256,7 +256,6 @@ def safe_autofix_runs_command(repo: str) -> list[str]:
 
 @dataclass(frozen=True)
 class RerunConfig:
-
     """Configuration for rerunning cancelled checks."""
 
     repo: str
@@ -266,7 +265,6 @@ class RerunConfig:
 
 @dataclass(frozen=True)
 class SafeAutofixConfig:
-
     """Configuration for invoking the safe autofix workflow."""
 
     repo: str
@@ -278,7 +276,6 @@ class SafeAutofixConfig:
 
 @dataclass(frozen=True)
 class CleanScopeRules:
-
     """Allowlist and forbidden scope constraints for clean rebuild mode."""
 
     allowlist: tuple[str, ...]
@@ -288,7 +285,6 @@ class CleanScopeRules:
 
 @dataclass(frozen=True)
 class CleanRebuildConfig:
-
     """Configuration for launching a clean-scope rebuild workflow."""
 
     repo: str
@@ -300,6 +296,7 @@ class CleanRebuildConfig:
 
 @dataclass(frozen=True)
 class PendingWaitConfig:
+
     """Data container used by the automation flow."""
 
     repo: str
@@ -311,7 +308,6 @@ class PendingWaitConfig:
 
 @dataclass(frozen=True)
 class CleanScopeReport:
-
     """Data container used by the automation flow."""
 
     enabled: bool
@@ -833,27 +829,27 @@ def codacy_request_target(url: str) -> str:
     return f"{parsed.path}?{parsed.query}" if parsed.query else parsed.path
 
 
-def codacy_https_json(target: str, token: str) -> Any:
-    connection = http.client.HTTPSConnection(
-        "api.codacy.com",
-        timeout=30,
-        context=ssl.create_default_context(),
+def codacy_https_json(url: str, token: str) -> Any:
+    validate_codacy_url(url)
+    request = urllib.request.Request(
+        url,
+        headers={"api-token": token},
+        method="GET",
     )
     try:
-        connection.request("GET", target, headers={"api-token": token})
-        response = connection.getresponse()
-        payload = response.read().decode("utf-8")
-        if response.status >= 400:
-            raise RuntimeError(f"Codacy API request failed with status {response.status}")
+        with urllib.request.urlopen(  # nosec B310  # nosemgrep: python.lang.security.audit.urllib-urlopen-detected.urllib-urlopen-detected
+            request,
+            timeout=30,
+            context=ssl.create_default_context(),
+        ) as response:
+            payload = response.read().decode("utf-8")
     except OSError as exc:
         raise RuntimeError("Codacy API request failed") from exc
-    finally:
-        connection.close()
     return json.loads(payload or "{}")
 
 
 def fetch_json(url: str, token: str) -> Any:
-    return codacy_https_json(codacy_request_target(url), token)
+    return codacy_https_json(url, token)
 
 
 def fetch_codacy_pr_issues(repo: str, pr_number: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
