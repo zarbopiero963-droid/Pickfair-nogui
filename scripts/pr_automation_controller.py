@@ -21,6 +21,7 @@ from typing import Any, Sequence
 FAIL_STATES = {"FAILURE", "ERROR", "ACTION_REQUIRED", "TIMED_OUT"}
 PENDING_STATES = {"", "PENDING", "QUEUED", "IN_PROGRESS", "REQUESTED", "WAITING"}
 CANCELLED_STATES = {"CANCELLED", "CANCELED"}
+STALE_STATES = {"STALE"}
 
 SAFE_AUTOFIX_WORKFLOW = "277606083"
 AUTOFIX_COMMIT_ACTOR_ALLOWLIST = {"github-actions[bot]", "codex[bot]"}
@@ -157,6 +158,10 @@ def is_self_check(check: dict[str, Any]) -> bool:
 
 def is_cancelled(check: dict[str, Any]) -> bool:
     return check_state(check) in CANCELLED_STATES
+
+
+def is_stale(check: dict[str, Any]) -> bool:
+    return check_state(check) in STALE_STATES
 
 
 def is_pending(check: dict[str, Any]) -> bool:
@@ -327,8 +332,37 @@ class NextActionContext:
     decision: dict[str, Any]
 
 
-def cancelled_non_self_checks(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [check for check in checks if is_cancelled(check) and not is_self_check(check)]
+def is_stale_or_cancelled(check: dict[str, Any]) -> bool:
+    return is_cancelled(check) or is_stale(check)
+
+
+def is_real_pending(check: dict[str, Any]) -> bool:
+    return is_pending(check) and not is_self_check(check)
+
+
+def is_real_non_stale_cancelled_blocker(check: dict[str, Any]) -> bool:
+    return is_failure(check) and not is_self_check(check) and not is_stale_or_cancelled(check)
+
+
+def is_safe_autofix_check(check: dict[str, Any]) -> bool:
+    return "safe pr autofix" in name_of(check).lower()
+
+
+def should_rerun_stale_or_cancelled_check(check: dict[str, Any], config: RerunConfig) -> bool:
+    if not is_stale_or_cancelled(check):
+        return False
+    if not extract_run_id(url_of(check)):
+        return False
+    if is_safe_autofix_check(check) and not config.dry_run:
+        return False
+    return True
+
+
+def stale_or_cancelled_checks_for_rerun(
+    checks: list[dict[str, Any]],
+    config: RerunConfig,
+) -> list[dict[str, Any]]:
+    return [check for check in checks if should_rerun_stale_or_cancelled_check(check, config)]
 
 
 def already_seen_run(run_id: str, seen: set[str]) -> bool:
@@ -357,7 +391,7 @@ def rerun_cancelled_checks(
 ) -> list[dict[str, Any]]:
     rerun: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for check in cancelled_non_self_checks(checks):
+    for check in stale_or_cancelled_checks_for_rerun(checks, config):
         if len(rerun) >= config.max_reruns:
             break
         run_id = extract_run_id(url_of(check))
@@ -415,6 +449,125 @@ def should_launch_autofix(checks: list[dict[str, Any]]) -> tuple[bool, list[dict
         if name not in DO_NOT_LAUNCH_AUTOFIX_FOR:
             launchable.append(compact_check(check))
     return bool(launchable), launchable
+
+
+def stable_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip()).lower()
+
+
+def blocker_raw_name(check: dict[str, Any]) -> str:
+    return f"{check.get('name') or check.get('context') or ''}".strip()
+
+
+def blocker_source(raw_name: str) -> str:
+    return "codacy" if "codacy" in raw_name.lower() else "check"
+
+
+def blocker_path(check: dict[str, Any]) -> str:
+    return str(check.get("path") or check.get("filePath") or check.get("filename") or "").strip()
+
+
+def blocker_rule(check: dict[str, Any]) -> str:
+    return str(
+        check.get("rule")
+        or check.get("ruleId")
+        or check.get("patternId")
+        or check.get("code")
+        or ""
+    ).strip()
+
+
+def blocker_message(check: dict[str, Any]) -> str:
+    return str(check.get("message") or check.get("title") or "").strip()
+
+
+def stable_blocker_record(check: dict[str, Any]) -> dict[str, str]:
+    raw_name = blocker_raw_name(check)
+    return {
+        "name": stable_text(raw_name),
+        "state": stable_text(check.get("conclusion") or check.get("state") or check.get("status")),
+        "source": blocker_source(raw_name),
+        "path": stable_text(blocker_path(check)),
+        "rule": stable_text(blocker_rule(check)),
+        "message": stable_text(blocker_message(check)),
+    }
+
+
+def blocker_signature(blockers: list[dict[str, Any]]) -> str:
+    if not blockers:
+        return ""
+    records = [stable_blocker_record(check) for check in blockers]
+    records.sort(key=lambda item: (item["source"], item["name"], item["state"], item["path"], item["rule"], item["message"]))
+    return json.dumps(records, sort_keys=True, separators=(",", ":"))
+
+
+def detect_no_progress_blocker_signature(
+    blockers: list[dict[str, Any]],
+    previous_blocker_signature: str = "",
+    repeated_blocker_count: int = 0,
+    threshold: int = 2,
+) -> dict[str, Any]:
+    signature = blocker_signature(blockers)
+    repeated = _next_repeated_blocker_count(
+        signature,
+        previous_blocker_signature,
+        repeated_blocker_count,
+    )
+    has_signature = bool(signature)
+    return {
+        "blocker_signature": signature if has_signature else "",
+        "previous_blocker_signature": signature if has_signature else "",
+        "repeated_blocker_count": repeated if has_signature else 0,
+        "no_progress": has_signature and repeated >= max(1, threshold),
+    }
+
+
+def _next_repeated_blocker_count(
+    signature: str,
+    previous_blocker_signature: str,
+    repeated_blocker_count: int,
+) -> int:
+    return repeated_blocker_count + 1 if signature == str(previous_blocker_signature or "") else 1
+
+
+def safe_nonnegative_int(value: Any, default: int = 0) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= 0 else default
+
+
+def _read_json_object(path: str) -> dict[str, Any]:
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+        payload = json.loads(raw)
+    except (OSError, ValueError, TypeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _coerce_non_negative_int(value: Any) -> int:
+    return safe_nonnegative_int(value, 0)
+
+
+def _stored_no_progress_matches(payload: dict[str, Any], repo: str, pr: str) -> bool:
+    return str(payload.get("repo") or "") == str(repo) and str(payload.get("pr") or "") == str(pr)
+
+
+def _load_no_progress_state(output_path: str, repo: str, pr: str) -> tuple[str, int]:
+    payload = _read_json_object(output_path)
+    if not payload:
+        return "", 0
+    if not _stored_no_progress_matches(payload, repo, pr):
+        return "", 0
+    signature = str(
+        payload.get("blocker_signature")
+        or payload.get("previous_blocker_signature")
+        or ""
+    )
+    count = _coerce_non_negative_int(payload.get("repeated_blocker_count"))
+    return signature, count
 
 
 def path_matches(path: str, pattern: str) -> bool:
@@ -584,13 +737,21 @@ def handle_cancelled_checks(
     config: RerunConfig,
     decision: dict[str, Any],
 ) -> bool:
-    cancelled = [compact_check(check) for check in cancelled_non_self_checks(checks)]
-    decision["cancelled"] = cancelled
-    if not cancelled:
+    stale_or_cancelled = [
+        compact_check(check)
+        for check in checks
+        if is_stale_or_cancelled(check)
+    ]
+    decision["cancelled"] = stale_or_cancelled
+    if not stale_or_cancelled:
+        return False
+    if any(is_real_pending(check) for check in checks):
+        return False
+    if any(is_real_non_stale_cancelled_blocker(check) for check in checks):
         return False
     rerun = rerun_cancelled_checks(checks, config)
     decision["actions"].append({"type": "rerun_cancelled", "items": rerun})
-    decision["next_action"] = "rerun_cancelled_checks" if rerun else "cancelled_checks_no_rerun_target"
+    decision["next_action"] = "rerun_stale_or_cancelled_checks" if rerun else "cancelled_checks_no_rerun_target"
     return True
 
 
@@ -951,6 +1112,18 @@ def controller_codacy_blocking_evidence(
 def decide_next_action(ctx: NextActionContext) -> None:
     should_launch, launchable = should_launch_autofix(ctx.checks)
     ctx.decision["launchable_for_safe_autofix"] = launchable
+    no_progress = detect_no_progress_blocker_signature(
+        launchable,
+        str(ctx.decision.get("previous_blocker_signature") or ""),
+        int(ctx.decision.get("repeated_blocker_count") or 0),
+    )
+    ctx.decision["blocker_signature"] = no_progress["blocker_signature"]
+    ctx.decision["previous_blocker_signature"] = no_progress["previous_blocker_signature"]
+    ctx.decision["repeated_blocker_count"] = no_progress["repeated_blocker_count"]
+    if should_launch and no_progress["no_progress"]:
+        ctx.decision["next_action"] = "needs_manual_no_progress"
+        ctx.decision["warnings"].append("repeated blocker signature detected without improvement")
+        return
     rules, signals = build_clean_scope_context(ctx.args, ctx.files, ctx.commits)
     store_clean_scope_report(ctx.decision, clean_scope_report_from_context(ctx, rules, signals))
     if maybe_launch_safe_first(ctx, should_launch, signals):
@@ -1010,6 +1183,11 @@ def normalize_controller_args(args: argparse.Namespace) -> None:
 
 
 def initial_decision(args: argparse.Namespace) -> dict[str, Any]:
+    previous_blocker_signature, repeated_blocker_count = _load_no_progress_state(
+        args.output,
+        args.repo,
+        args.pr,
+    )
     return {
         "repo": args.repo,
         "pr": args.pr,
@@ -1017,6 +1195,8 @@ def initial_decision(args: argparse.Namespace) -> dict[str, Any]:
         "actions": [],
         "warnings": [],
         "errors": [],
+        "previous_blocker_signature": previous_blocker_signature,
+        "repeated_blocker_count": repeated_blocker_count,
     }
 
 
@@ -1378,7 +1558,11 @@ def _write_json_file(path: Path, payload: Any) -> None:
 
 def _review_task_lines(nodes: list[dict[str, Any]]) -> list[str]:
     lines = ["# Unresolved review comments repair input", ""]
-    unresolved = [node for node in nodes if not bool(node.get("isResolved"))]
+    unresolved = [
+        node
+        for node in nodes
+        if not bool(node.get("isResolved")) and not bool(node.get("isOutdated"))
+    ]
     if not unresolved:
         lines.append("No unresolved review threads found, or review thread API was unavailable.")
         return lines

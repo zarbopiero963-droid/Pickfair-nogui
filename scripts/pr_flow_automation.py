@@ -12,6 +12,7 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -621,6 +622,139 @@ def cmd_codacy_task(args: argparse.Namespace) -> int:
     return 0
 
 
+def is_non_fast_forward_push_error(exc: Exception) -> bool:
+    """Return True when a push failure looks like a non-fast-forward conflict."""
+    message = str(exc).lower()
+    return "non-fast-forward" in message or "failed to push some refs" in message
+
+
+@dataclass
+class PushResultContext:
+    repo: str
+    branch: str
+    retried: bool
+    needs_manual: bool
+    error: str | None = None
+    initial_error: str | None = None
+
+
+@dataclass
+class PushRetryResult:
+    ok: bool
+    status: str
+    ctx: PushResultContext
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "ok": self.ok,
+            "status": self.status,
+            "repo": self.ctx.repo,
+            "branch": self.ctx.branch,
+            "retried": self.ctx.retried,
+            "needs_manual": self.ctx.needs_manual,
+        }
+        if self.ctx.error is not None:
+            result["error"] = self.ctx.error
+        if self.ctx.initial_error is not None:
+            result["initial_error"] = self.ctx.initial_error
+        return result
+
+
+@dataclass
+class NonFastForwardRetryContext:
+    repo: str
+    branch: str
+    initial_exc: RuntimeError
+
+
+def _push_initial(run_func: Any, remote: str, branch: str) -> None:
+    run_func(["git", "push", remote, branch], check=True)
+
+
+def _fetch_branch(run_func: Any, remote: str, branch: str) -> None:
+    run_func(["git", "fetch", remote, branch], check=True)
+
+
+def _push_force_with_lease(run_func: Any, remote: str, branch: str) -> None:
+    run_func(["git", "push", remote, branch, "--force-with-lease"], check=True)
+
+
+def push_retry_with_force_lease(run_func: Any, remote: str, branch: str) -> None:
+    """Fetch latest remote branch, then retry push with force-with-lease once."""
+    _fetch_branch(run_func, remote, branch)
+    _push_force_with_lease(run_func, remote, branch)
+
+
+def _build_push_result(
+    ok: bool,
+    status: str,
+    ctx: PushResultContext,
+) -> dict[str, Any]:
+    return PushRetryResult(ok=ok, status=status, ctx=ctx).to_dict()
+
+
+def _failed_push_result(repo: str, branch: str, exc: RuntimeError) -> dict[str, Any]:
+    return _build_push_result(
+        False,
+        "failed",
+        PushResultContext(repo=repo, branch=branch, retried=False, needs_manual=False, error=str(exc)),
+    )
+
+
+def _needs_manual_push_result(
+    repo: str,
+    branch: str,
+    initial_exc: RuntimeError,
+    retry_exc: RuntimeError,
+) -> dict[str, Any]:
+    return _build_push_result(
+        False,
+        "needs_manual",
+        PushResultContext(
+            repo=repo,
+            branch=branch,
+            retried=True,
+            needs_manual=True,
+            error=str(retry_exc),
+            initial_error=str(initial_exc),
+        ),
+    )
+
+
+def _retry_non_fast_forward_push(
+    run_func: Any,
+    ctx: NonFastForwardRetryContext,
+    remote: str,
+) -> dict[str, Any]:
+    try:
+        push_retry_with_force_lease(run_func, remote, ctx.branch)
+        return _build_push_result(
+            True, "success", PushResultContext(repo=ctx.repo, branch=ctx.branch, retried=True, needs_manual=False)
+        )
+    except RuntimeError as retry_exc:
+        return _needs_manual_push_result(ctx.repo, ctx.branch, ctx.initial_exc, retry_exc)
+
+
+def push_with_retry_once(
+    run_func: Any,
+    repo: str,
+    branch: str,
+    *,
+    remote: str = "origin",
+) -> dict[str, Any]:
+    """Push once, recover once on non-fast-forward, then stop with explicit status."""
+    try:
+        _push_initial(run_func, remote, branch)
+        return _build_push_result(
+            True, "success", PushResultContext(repo=repo, branch=branch, retried=False, needs_manual=False)
+        )
+    except RuntimeError as exc:
+        if not is_non_fast_forward_push_error(exc):
+            return _failed_push_result(repo, branch, exc)
+        retry_ctx = NonFastForwardRetryContext(repo=repo, branch=branch, initial_exc=exc)
+        return _retry_non_fast_forward_push(run_func, retry_ctx, remote)
+
+
 def codacy_task_error_result(
     args: argparse.Namespace,
     blocking: bool,
@@ -668,7 +802,9 @@ def cmd_canary(args: argparse.Namespace) -> int:
     )
     sh(["git", "add", filename])
     sh(["git", "commit", "-m", "test: safe autofix canary"])
-    sh(["git", "push", "-u", "origin", branch])
+    push_status = push_with_retry_once(sh, args.repo, branch)
+    if not push_status["ok"]:
+        raise RuntimeError(f"cannot push canary branch: {push_status.get('error', 'unknown error')}")
 
     title = f"test: safe autofix canary {ts}"
     body = (

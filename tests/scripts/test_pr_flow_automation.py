@@ -194,3 +194,106 @@ def test_preflight_commit_limit_only_blocks_when_codacy_is_blocking(monkeypatch)
     rc = flow.cmd_preflight(_preflight_args())
 
     ASSERTIONS.assertEqual(rc, 0)
+
+
+def test_push_with_retry_once_succeeds_on_first_push():
+    """First push success returns success without retry."""
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], *, check: bool = True) -> str:
+        ASSERTIONS.assertTrue(check)
+        calls.append(list(cmd))
+        return ""
+
+    result = flow.push_with_retry_once(fake_run, "owner/repo", "feature/branch")
+
+    ASSERTIONS.assertTrue(result["ok"])
+    ASSERTIONS.assertEqual(result["status"], "success")
+    ASSERTIONS.assertFalse(result["retried"])
+    ASSERTIONS.assertFalse(result["needs_manual"])
+    ASSERTIONS.assertEqual(calls, [["git", "push", "origin", "feature/branch"]])
+
+
+def test_push_with_retry_once_non_fast_forward_then_retry_success():
+    """Non-fast-forward push does one fetch and one retry push."""
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], *, check: bool = True) -> str:
+        ASSERTIONS.assertTrue(check)
+        calls.append(list(cmd))
+        if len(calls) == 1:
+            raise RuntimeError("failed to push some refs to origin (non-fast-forward)")
+        return ""
+
+    result = flow.push_with_retry_once(fake_run, "owner/repo", "feature/branch")
+
+    ASSERTIONS.assertTrue(result["ok"])
+    ASSERTIONS.assertEqual(result["status"], "success")
+    ASSERTIONS.assertTrue(result["retried"])
+    ASSERTIONS.assertFalse(result["needs_manual"])
+    ASSERTIONS.assertEqual(
+        calls,
+        [
+            ["git", "push", "origin", "feature/branch"],
+            ["git", "fetch", "origin", "feature/branch"],
+            ["git", "push", "origin", "feature/branch", "--force-with-lease"],
+        ],
+    )
+
+
+def test_push_with_retry_once_non_fast_forward_then_retry_fails_needs_manual():
+    """A failed retry after non-fast-forward returns needs_manual with no loop."""
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], *, check: bool = True) -> str:
+        ASSERTIONS.assertTrue(check)
+        calls.append(list(cmd))
+        if len(calls) == 1:
+            raise RuntimeError("non-fast-forward update rejected")
+        if len(calls) == 3:
+            raise RuntimeError("failed to push some refs")
+        return ""
+
+    result = flow.push_with_retry_once(fake_run, "owner/repo", "feature/branch")
+
+    ASSERTIONS.assertFalse(result["ok"])
+    ASSERTIONS.assertEqual(result["status"], "needs_manual")
+    ASSERTIONS.assertTrue(result["retried"])
+    ASSERTIONS.assertTrue(result["needs_manual"])
+    ASSERTIONS.assertIn("failed to push some refs", result["error"])
+    ASSERTIONS.assertEqual(
+        calls,
+        [
+            ["git", "push", "origin", "feature/branch"],
+            ["git", "fetch", "origin", "feature/branch"],
+            ["git", "push", "origin", "feature/branch", "--force-with-lease"],
+        ],
+    )
+
+
+def _automation_controller_args() -> argparse.Namespace:
+    return argparse.Namespace(
+        clean_scope_allowlist="",
+        clean_scope_forbidden="",
+        clean_scope_commit_limit=3,
+        clean_scope_rebuild=False,
+        clean_scope_rebuild_mode="disabled",
+        repo="owner/repo",
+        pr="225",
+        dry_run=True,
+        safe_max_rounds="1",
+        safe_pending_wait_seconds="600",
+    )
+
+
+def test_automation_change_prs_should_enable_bounded_repair_mode():
+    """Automation/workflow/controller changes should be bounded to one repair round."""
+    files = [
+        "scripts/pr_automation_controller.py",
+        ".github/workflows/pr-automation-controller-v2.yml",
+    ]
+    rules = controller.build_clean_scope_rules(_automation_controller_args())
+    signals = controller.collect_clean_scope_signals(files, [], rules)
+
+    ASSERTIONS.assertTrue(signals["has_allowlisted_file"])
+    ASSERTIONS.assertFalse(signals["autofix_commit_limit_exceeded"])
