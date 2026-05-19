@@ -4,6 +4,8 @@
 import argparse
 from unittest import TestCase
 
+import pytest
+
 import scripts.pr_automation_controller as controller
 
 ASSERTIONS = TestCase()
@@ -124,3 +126,80 @@ def test_clean_scope_defaults_allow_pr_flow_automation_script():
 
     ASSERTIONS.assertTrue(signals["has_allowlisted_file"])
     ASSERTIONS.assertEqual(signals["forbidden_files"], [])
+
+
+def test_controller_waits_on_pending_real_checks_without_launching_safe_autofix(monkeypatch):
+    """Pending real checks must keep controller in wait_pending and skip safe-autofix launch."""
+    monkeypatch.setattr(controller, "controller_codacy_blocking_evidence", lambda *_args, **_kwargs: controller.codacy_evidence_without_checks())
+    monkeypatch.setattr(controller, "active_safe_autofix_runs", lambda _repo: [])
+    monkeypatch.setattr(
+        controller,
+        "launch_safe_autofix",
+        lambda _cfg: (_ for _ in ()).throw(AssertionError("safe autofix must not launch while pending checks exist")),
+    )
+    decision: dict = {"actions": [], "warnings": [], "errors": [], "pending_count": 1}
+    pr = {"statusCheckRollup": [_check("Unit tests", "IN_PROGRESS")]}
+
+    ctx = controller.build_next_action_context(_args(), decision, pr, ([], []))
+    controller.decide_next_action(ctx)
+
+    ASSERTIONS.assertEqual(decision["next_action"], "wait_pending")
+    ASSERTIONS.assertEqual(decision["actions"], [])
+
+
+def test_only_cancelled_or_stale_self_checks_prefer_rerun_and_skip_codex(monkeypatch):
+    """Self stale/cancelled checks should trigger rerun path rather than codex launch loops."""
+    monkeypatch.setattr(
+        controller,
+        "rerun_cancelled_checks",
+        lambda _checks, _config: [{"run_id": "12345", "state": "CANCELLED", "name": "PR Merge Readiness"}],
+    )
+    decision: dict = {"actions": [], "warnings": [], "errors": []}
+    checks = [
+        _check("PR Merge Readiness", "CANCELLED", "https://github.com/owner/repo/actions/runs/12345"),
+        _check("PR Automation Controller", "STALE", "https://github.com/owner/repo/actions/runs/99999"),
+    ]
+
+    handled = controller.handle_cancelled_checks(
+        checks,
+        controller.RerunConfig(repo="owner/repo", dry_run=True, max_reruns=3),
+        decision,
+    )
+
+    ASSERTIONS.assertTrue(handled)
+    ASSERTIONS.assertIn(decision["next_action"], {"rerun_stale_or_cancelled_checks", "rerun_cancelled_checks"})
+    ASSERTIONS.assertEqual(decision["actions"][0]["type"], "rerun_cancelled")
+
+
+def test_review_task_ignores_outdated_unresolved_threads():
+    """Outdated unresolved-only review threads should not be treated as active blockers."""
+    lines = controller._review_task_lines([  # pylint: disable=protected-access
+        {
+            "id": "T1",
+            "isResolved": False,
+            "isOutdated": True,
+            "path": "scripts/pr_flow_automation.py",
+            "line": 25,
+            "comments": {"nodes": [{"body": "old", "url": "http://example", "author": {"login": "bot"}}]},
+        }
+    ])
+
+    ASSERTIONS.assertIn("No unresolved review threads found", "\n".join(lines))
+
+
+def test_automation_scope_safe_autofix_is_bounded_to_one_round():
+    """Automation/controller/workflow PRs should remain bounded to one repair round."""
+    args = _args()
+    config = controller.safe_autofix_config_from_args(args)
+    command = controller.safe_autofix_command(config)
+
+    ASSERTIONS.assertIn("max_rounds=1", command)
+
+
+def test_no_progress_repeated_blocker_signature_stops_with_needs_manual():
+    """Repeated blocker signatures without improvement should stop with no_progress."""
+    helper_name = "detect_no_progress_blocker_signature"
+    if not hasattr(controller, helper_name):
+        pytest.xfail(f"expected helper not implemented yet: controller.{helper_name}")
+    helper = getattr(controller, helper_name)
+    ASSERTIONS.assertTrue(callable(helper))

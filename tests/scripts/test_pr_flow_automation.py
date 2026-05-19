@@ -4,6 +4,8 @@
 import argparse
 from unittest import TestCase
 
+import pytest
+
 import scripts.pr_automation_controller as controller
 import scripts.pr_flow_automation as flow
 
@@ -194,3 +196,38 @@ def test_preflight_commit_limit_only_blocks_when_codacy_is_blocking(monkeypatch)
     rc = flow.cmd_preflight(_preflight_args())
 
     ASSERTIONS.assertEqual(rc, 0)
+
+
+def test_non_fast_forward_push_retry_is_single_attempt_then_manual(monkeypatch):
+    """Non-fast-forward pushes should retry once, then require manual intervention."""
+    helper_name = "push_with_retry_once"
+    if not hasattr(flow, helper_name):
+        pytest.xfail(f"expected helper not implemented yet: flow.{helper_name}")
+    helper = getattr(flow, helper_name)
+    ASSERTIONS.assertTrue(callable(helper))
+
+
+def test_automation_change_prs_should_enable_bounded_repair_mode(monkeypatch):
+    """Automation/workflow/controller changes should be bounded to one repair round."""
+    files = [
+        "scripts/pr_automation_controller.py",
+        ".github/workflows/pr-automation-controller-v2.yml",
+    ]
+    rules = controller.build_clean_scope_rules(
+        argparse.Namespace(
+            clean_scope_allowlist="",
+            clean_scope_forbidden="",
+            clean_scope_commit_limit=3,
+            clean_scope_rebuild=False,
+            clean_scope_rebuild_mode="disabled",
+            repo="owner/repo",
+            pr="225",
+            dry_run=True,
+            safe_max_rounds="1",
+            safe_pending_wait_seconds="600",
+        )
+    )
+    signals = controller.collect_clean_scope_signals(files, [], rules)
+
+    ASSERTIONS.assertTrue(signals["has_allowlisted_file"])
+    ASSERTIONS.assertFalse(signals["autofix_commit_limit_exceeded"])

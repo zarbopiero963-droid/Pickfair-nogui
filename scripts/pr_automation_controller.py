@@ -1378,7 +1378,11 @@ def _write_json_file(path: Path, payload: Any) -> None:
 
 def _review_task_lines(nodes: list[dict[str, Any]]) -> list[str]:
     lines = ["# Unresolved review comments repair input", ""]
-    unresolved = [node for node in nodes if not bool(node.get("isResolved"))]
+    unresolved = [
+        node
+        for node in nodes
+        if not bool(node.get("isResolved")) and not bool(node.get("isOutdated"))
+    ]
     if not unresolved:
         lines.append("No unresolved review threads found, or review thread API was unavailable.")
         return lines
