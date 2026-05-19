@@ -660,6 +660,13 @@ class PushRetryResult:
         return result
 
 
+@dataclass
+class NonFastForwardRetryContext:
+    repo: str
+    branch: str
+    initial_exc: RuntimeError
+
+
 def _push_initial(run_func: Any, remote: str, branch: str) -> None:
     run_func(["git", "push", remote, branch], check=True)
 
@@ -716,18 +723,16 @@ def _needs_manual_push_result(
 
 def _retry_non_fast_forward_push(
     run_func: Any,
-    repo: str,
-    branch: str,
+    ctx: NonFastForwardRetryContext,
     remote: str,
-    initial_exc: RuntimeError,
 ) -> dict[str, Any]:
     try:
-        push_retry_with_force_lease(run_func, remote, branch)
+        push_retry_with_force_lease(run_func, remote, ctx.branch)
         return _build_push_result(
-            True, "success", PushResultContext(repo=repo, branch=branch, retried=True, needs_manual=False)
+            True, "success", PushResultContext(repo=ctx.repo, branch=ctx.branch, retried=True, needs_manual=False)
         )
     except RuntimeError as retry_exc:
-        return _needs_manual_push_result(repo, branch, initial_exc, retry_exc)
+        return _needs_manual_push_result(ctx.repo, ctx.branch, ctx.initial_exc, retry_exc)
 
 
 def push_with_retry_once(
@@ -746,7 +751,8 @@ def push_with_retry_once(
     except RuntimeError as exc:
         if not is_non_fast_forward_push_error(exc):
             return _failed_push_result(repo, branch, exc)
-        return _retry_non_fast_forward_push(run_func, repo, branch, remote, exc)
+        retry_ctx = NonFastForwardRetryContext(repo=repo, branch=branch, initial_exc=exc)
+        return _retry_non_fast_forward_push(run_func, retry_ctx, remote)
 
 
 def codacy_task_error_result(
