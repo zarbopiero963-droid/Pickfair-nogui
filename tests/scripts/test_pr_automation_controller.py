@@ -262,7 +262,6 @@ def test_pending_check_plus_cancelled_check_waits_pending_no_rerun():
     ASSERTIONS.assertFalse(handled)
 
 
-@pytest.mark.xfail(reason="helper not implemented yet")
 def test_codacy_head_match_contract_exposes_pr_head_and_evidence_head():
     """Codacy evidence contract should expose headRefOid vs Codacy evidence head and match flag."""
     if hasattr(controller, "codacy_head_matches"):
@@ -289,7 +288,6 @@ def test_codacy_head_match_contract_exposes_pr_head_and_evidence_head():
     raise NotImplementedError("codacy_head_matches/classify_codacy_evidence not implemented")
 
 
-@pytest.mark.xfail(reason="helper not implemented yet")
 def test_classify_codacy_states_contract():
     """Codacy classifications should map check/API/annotation evidence deterministically."""
     if not hasattr(controller, "classify_codacy_evidence"):
@@ -345,7 +343,6 @@ def test_classify_codacy_states_contract():
     )
 
 
-@pytest.mark.xfail(reason="helper not implemented yet")
 def test_codacy_annotations_fallback_become_real_blockers():
     """GitHub Codacy annotations must be treated as blockers when API returns zero issues."""
     if not hasattr(controller, "classify_codacy_evidence"):

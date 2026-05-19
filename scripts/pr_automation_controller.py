@@ -1069,6 +1069,75 @@ def codacy_evidence_without_checks() -> dict[str, Any]:
     }
 
 
+def codacy_head_matches(pr_head: str, evidence: dict[str, Any]) -> dict[str, Any]:
+    codacy_head = first_nonempty(
+        evidence.get("head"),
+        evidence.get("codacy_head"),
+        evidence.get("headRefOid"),
+    )
+    return {
+        "pr_head": pr_head,
+        "codacy_head": codacy_head,
+        "match": bool(pr_head and codacy_head and str(pr_head) == str(codacy_head)),
+    }
+
+
+def _has_d203_d211_conflict(issues: list[dict[str, Any]]) -> bool:
+    seen: dict[tuple[str, str], set[str]] = {}
+    for item in issues:
+        if not isinstance(item, dict):
+            continue
+        rule = str(item.get("patternId") or "").strip().upper()
+        if rule not in {"D203", "D211"}:
+            continue
+        file_path = str(item.get("filePath") or item.get("filename") or "").strip()
+        symbol = str(item.get("symbol") or item.get("entity") or "").strip()
+        key = (file_path, symbol)
+        seen.setdefault(key, set()).add(rule)
+        if {"D203", "D211"}.issubset(seen[key]):
+            return True
+    return False
+
+
+def classify_codacy_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
+    state = norm_state(evidence.get("github_codacy_state"))
+    api_issues = int(evidence.get("codacy_api_issues") or 0)
+    annotations = int(evidence.get("github_annotations") or 0)
+    issues = evidence.get("issues")
+    issue_list = issues if isinstance(issues, list) else []
+
+    classification = "unknown"
+    treat_annotations_as_blockers = False
+    ignored = False
+
+    if _has_d203_d211_conflict(issue_list):
+        classification = "rule_conflict"
+    elif state == "ACTION_REQUIRED" and api_issues > 0:
+        classification = "real_current_issues"
+    elif state == "ACTION_REQUIRED" and api_issues == 0 and annotations > 0:
+        classification = "api_github_mismatch"
+        treat_annotations_as_blockers = True
+    elif state == "ACTION_REQUIRED" and api_issues == 0 and annotations == 0:
+        classification = "stale_github_check"
+        ignored = True
+
+    result: dict[str, Any] = {
+        "classification": classification,
+        "treat_annotations_as_blockers": treat_annotations_as_blockers,
+        "ignored": ignored,
+    }
+
+    pr_head = first_nonempty(evidence.get("pr_head"), evidence.get("headRefOid"))
+    codacy_head = first_nonempty(
+        evidence.get("head"),
+        evidence.get("codacy_head"),
+        evidence.get("headRefOid"),
+    )
+    if pr_head and codacy_head:
+        result["head_match"] = codacy_head_matches(str(pr_head), evidence)["match"]
+    return result
+
+
 def codacy_api_status(
     repo: str,
     pr_number: str,
