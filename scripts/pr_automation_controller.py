@@ -255,7 +255,9 @@ def safe_autofix_runs_command(repo: str) -> list[str]:
 
 @dataclass(frozen=True)
 class RerunConfig:
+
     """Configuration for rerunning cancelled checks."""
+
     repo: str
     dry_run: bool
     max_reruns: int
@@ -263,7 +265,9 @@ class RerunConfig:
 
 @dataclass(frozen=True)
 class SafeAutofixConfig:
+
     """Configuration for invoking the safe autofix workflow."""
+
     repo: str
     pr_number: str
     dry_run: bool
@@ -273,7 +277,9 @@ class SafeAutofixConfig:
 
 @dataclass(frozen=True)
 class CleanScopeRules:
+
     """Allowlist and forbidden scope constraints for clean rebuild mode."""
+
     allowlist: tuple[str, ...]
     forbidden: tuple[str, ...]
     commit_limit: int
@@ -281,7 +287,9 @@ class CleanScopeRules:
 
 @dataclass(frozen=True)
 class CleanRebuildConfig:
+
     """Configuration for launching a clean-scope rebuild workflow."""
+
     repo: str
     pr_number: str
     head_branch: str
@@ -291,8 +299,8 @@ class CleanRebuildConfig:
 
 @dataclass(frozen=True)
 class PendingWaitConfig:
-
     """Data container used by the automation flow."""
+
     repo: str
     pr_number: str
     started: float
@@ -302,7 +310,9 @@ class PendingWaitConfig:
 
 @dataclass(frozen=True)
 class CleanScopeReport:
+
     """Data container used by the automation flow."""
+
     enabled: bool
     mode: str
     rules: CleanScopeRules
