@@ -638,25 +638,26 @@ class PushResultContext:
     initial_error: str | None = None
 
 
-def push_result(
-    ok: bool,
-    status: str,
-    ctx: PushResultContext,
-) -> dict[str, Any]:
-    """Build a consistent push result payload."""
-    result: dict[str, Any] = {
-        "ok": ok,
-        "status": status,
-        "repo": ctx.repo,
-        "branch": ctx.branch,
-        "retried": ctx.retried,
-        "needs_manual": ctx.needs_manual,
-    }
-    if ctx.error is not None:
-        result["error"] = ctx.error
-    if ctx.initial_error is not None:
-        result["initial_error"] = ctx.initial_error
-    return result
+@dataclass
+class PushRetryResult:
+    ok: bool
+    status: str
+    ctx: PushResultContext
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "ok": self.ok,
+            "status": self.status,
+            "repo": self.ctx.repo,
+            "branch": self.ctx.branch,
+            "retried": self.ctx.retried,
+            "needs_manual": self.ctx.needs_manual,
+        }
+        if self.ctx.error is not None:
+            result["error"] = self.ctx.error
+        if self.ctx.initial_error is not None:
+            result["initial_error"] = self.ctx.initial_error
+        return result
 
 
 def _push_initial(run_func: Any, remote: str, branch: str) -> None:
@@ -678,39 +679,18 @@ def push_retry_with_force_lease(run_func: Any, remote: str, branch: str) -> None
 
 
 def _build_push_result(
-    *,
     ok: bool,
     status: str,
-    repo: str,
-    branch: str,
-    retried: bool,
-    needs_manual: bool,
-    error: str | None = None,
-    initial_error: str | None = None,
+    ctx: PushResultContext,
 ) -> dict[str, Any]:
-    return push_result(
-        ok,
-        status,
-        PushResultContext(
-            repo=repo,
-            branch=branch,
-            retried=retried,
-            needs_manual=needs_manual,
-            error=error,
-            initial_error=initial_error,
-        ),
-    )
+    return PushRetryResult(ok=ok, status=status, ctx=ctx).to_dict()
 
 
 def _failed_push_result(repo: str, branch: str, exc: RuntimeError) -> dict[str, Any]:
     return _build_push_result(
-        ok=False,
-        status="failed",
-        repo=repo,
-        branch=branch,
-        retried=False,
-        needs_manual=False,
-        error=str(exc),
+        False,
+        "failed",
+        PushResultContext(repo=repo, branch=branch, retried=False, needs_manual=False, error=str(exc)),
     )
 
 
@@ -721,14 +701,16 @@ def _needs_manual_push_result(
     retry_exc: RuntimeError,
 ) -> dict[str, Any]:
     return _build_push_result(
-        ok=False,
-        status="needs_manual",
-        repo=repo,
-        branch=branch,
-        retried=True,
-        needs_manual=True,
-        error=str(retry_exc),
-        initial_error=str(initial_exc),
+        False,
+        "needs_manual",
+        PushResultContext(
+            repo=repo,
+            branch=branch,
+            retried=True,
+            needs_manual=True,
+            error=str(retry_exc),
+            initial_error=str(initial_exc),
+        ),
     )
 
 
@@ -743,16 +725,15 @@ def push_with_retry_once(
     try:
         _push_initial(run_func, remote, branch)
         return _build_push_result(
-            ok=True, status="success", repo=repo, branch=branch, retried=False, needs_manual=False
+            True, "success", PushResultContext(repo=repo, branch=branch, retried=False, needs_manual=False)
         )
     except RuntimeError as exc:
         if not is_non_fast_forward_push_error(exc):
             return _failed_push_result(repo, branch, exc)
-
         try:
             push_retry_with_force_lease(run_func, remote, branch)
             return _build_push_result(
-                ok=True, status="success", repo=repo, branch=branch, retried=True, needs_manual=False
+                True, "success", PushResultContext(repo=repo, branch=branch, retried=True, needs_manual=False)
             )
         except RuntimeError as retry_exc:
             return _needs_manual_push_result(repo, branch, exc, retry_exc)
@@ -805,7 +786,9 @@ def cmd_canary(args: argparse.Namespace) -> int:
     )
     sh(["git", "add", filename])
     sh(["git", "commit", "-m", "test: safe autofix canary"])
-    sh(["git", "push", "-u", "origin", branch])
+    push_status = push_with_retry_once(sh, args.repo, branch)
+    if not push_status["ok"]:
+        raise RuntimeError(f"cannot push canary branch: {push_status.get('error', 'unknown error')}")
 
     title = f"test: safe autofix canary {ts}"
     body = (
