@@ -327,6 +327,7 @@ def test_no_progress_non_repeated_blocker_signature_keeps_safe_autofix_launch(mo
 
 
 def test_load_no_progress_state_reads_matching_file(tmp_path):
+    """Load persisted no-progress state when repo and PR match."""
     path = tmp_path / "decision.json"
     payload = {
         "repo": "owner/repo",
@@ -347,6 +348,7 @@ def test_load_no_progress_state_reads_matching_file(tmp_path):
 
 
 def test_load_no_progress_state_ignores_repo_pr_mismatch(tmp_path):
+    """Ignore persisted state when repo/PR do not match current context."""
     path = tmp_path / "decision.json"
     payload = {
         "repo": "owner/repo",
@@ -367,6 +369,7 @@ def test_load_no_progress_state_ignores_repo_pr_mismatch(tmp_path):
 
 
 def test_initial_decision_seeds_no_progress_state(tmp_path):
+    """Seed initial decision from persisted no-progress blocker state."""
     path = tmp_path / "decision.json"
     payload = {
         "repo": "owner/repo",

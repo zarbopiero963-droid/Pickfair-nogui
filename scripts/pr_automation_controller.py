@@ -508,7 +508,11 @@ def detect_no_progress_blocker_signature(
     threshold: int = 2,
 ) -> dict[str, Any]:
     signature = blocker_signature(blockers)
-    repeated = repeated_blocker_count + 1 if signature == str(previous_blocker_signature or "") else 1
+    repeated = _next_repeated_blocker_count(
+        signature,
+        previous_blocker_signature,
+        repeated_blocker_count,
+    )
     has_signature = bool(signature)
     return {
         "blocker_signature": signature if has_signature else "",
@@ -516,6 +520,14 @@ def detect_no_progress_blocker_signature(
         "repeated_blocker_count": repeated if has_signature else 0,
         "no_progress": has_signature and repeated >= max(1, threshold),
     }
+
+
+def _next_repeated_blocker_count(
+    signature: str,
+    previous_blocker_signature: str,
+    repeated_blocker_count: int,
+) -> int:
+    return repeated_blocker_count + 1 if signature == str(previous_blocker_signature or "") else 1
 
 
 def safe_nonnegative_int(value: Any, default: int = 0) -> int:
@@ -526,22 +538,35 @@ def safe_nonnegative_int(value: Any, default: int = 0) -> int:
     return parsed if parsed >= 0 else default
 
 
-def _load_no_progress_state(output_path: str, repo: str, pr: str) -> tuple[str, int]:
+def _read_json_object(path: str) -> dict[str, Any]:
     try:
-        raw = Path(output_path).read_text(encoding="utf-8")
+        raw = Path(path).read_text(encoding="utf-8")
         payload = json.loads(raw)
     except (OSError, ValueError, TypeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _coerce_non_negative_int(value: Any) -> int:
+    return safe_nonnegative_int(value, 0)
+
+
+def _stored_no_progress_matches(payload: dict[str, Any], repo: str, pr: str) -> bool:
+    return str(payload.get("repo") or "") == str(repo) and str(payload.get("pr") or "") == str(pr)
+
+
+def _load_no_progress_state(output_path: str, repo: str, pr: str) -> tuple[str, int]:
+    payload = _read_json_object(output_path)
+    if not payload:
         return "", 0
-    if not isinstance(payload, dict):
-        return "", 0
-    if str(payload.get("repo") or "") != str(repo) or str(payload.get("pr") or "") != str(pr):
+    if not _stored_no_progress_matches(payload, repo, pr):
         return "", 0
     signature = str(
         payload.get("blocker_signature")
         or payload.get("previous_blocker_signature")
         or ""
     )
-    count = safe_nonnegative_int(payload.get("repeated_blocker_count"), 0)
+    count = _coerce_non_negative_int(payload.get("repeated_blocker_count"))
     return signature, count
 
 
