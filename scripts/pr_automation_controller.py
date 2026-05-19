@@ -21,6 +21,7 @@ from typing import Any, Sequence
 FAIL_STATES = {"FAILURE", "ERROR", "ACTION_REQUIRED", "TIMED_OUT"}
 PENDING_STATES = {"", "PENDING", "QUEUED", "IN_PROGRESS", "REQUESTED", "WAITING"}
 CANCELLED_STATES = {"CANCELLED", "CANCELED"}
+STALE_STATES = {"STALE"}
 
 SAFE_AUTOFIX_WORKFLOW = "277606083"
 AUTOFIX_COMMIT_ACTOR_ALLOWLIST = {"github-actions[bot]", "codex[bot]"}
@@ -157,6 +158,10 @@ def is_self_check(check: dict[str, Any]) -> bool:
 
 def is_cancelled(check: dict[str, Any]) -> bool:
     return check_state(check) in CANCELLED_STATES
+
+
+def is_stale(check: dict[str, Any]) -> bool:
+    return check_state(check) in STALE_STATES
 
 
 def is_pending(check: dict[str, Any]) -> bool:
@@ -327,8 +332,37 @@ class NextActionContext:
     decision: dict[str, Any]
 
 
-def cancelled_non_self_checks(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [check for check in checks if is_cancelled(check) and not is_self_check(check)]
+def is_stale_or_cancelled(check: dict[str, Any]) -> bool:
+    return is_cancelled(check) or is_stale(check)
+
+
+def is_real_pending(check: dict[str, Any]) -> bool:
+    return is_pending(check) and not is_self_check(check)
+
+
+def is_real_non_stale_cancelled_blocker(check: dict[str, Any]) -> bool:
+    return is_failure(check) and not is_self_check(check) and not is_stale_or_cancelled(check)
+
+
+def is_safe_autofix_check(check: dict[str, Any]) -> bool:
+    return "safe pr autofix" in name_of(check).lower()
+
+
+def should_rerun_stale_or_cancelled_check(check: dict[str, Any], config: RerunConfig) -> bool:
+    if not is_stale_or_cancelled(check):
+        return False
+    if not extract_run_id(url_of(check)):
+        return False
+    if is_safe_autofix_check(check) and not config.dry_run:
+        return False
+    return True
+
+
+def stale_or_cancelled_checks_for_rerun(
+    checks: list[dict[str, Any]],
+    config: RerunConfig,
+) -> list[dict[str, Any]]:
+    return [check for check in checks if should_rerun_stale_or_cancelled_check(check, config)]
 
 
 def already_seen_run(run_id: str, seen: set[str]) -> bool:
@@ -357,7 +391,7 @@ def rerun_cancelled_checks(
 ) -> list[dict[str, Any]]:
     rerun: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for check in cancelled_non_self_checks(checks):
+    for check in stale_or_cancelled_checks_for_rerun(checks, config):
         if len(rerun) >= config.max_reruns:
             break
         run_id = extract_run_id(url_of(check))
@@ -643,13 +677,21 @@ def handle_cancelled_checks(
     config: RerunConfig,
     decision: dict[str, Any],
 ) -> bool:
-    cancelled = [compact_check(check) for check in cancelled_non_self_checks(checks)]
-    decision["cancelled"] = cancelled
-    if not cancelled:
+    stale_or_cancelled = [
+        compact_check(check)
+        for check in checks
+        if is_stale_or_cancelled(check)
+    ]
+    decision["cancelled"] = stale_or_cancelled
+    if not stale_or_cancelled:
+        return False
+    if any(is_real_pending(check) for check in checks):
+        return False
+    if any(is_real_non_stale_cancelled_blocker(check) for check in checks):
         return False
     rerun = rerun_cancelled_checks(checks, config)
     decision["actions"].append({"type": "rerun_cancelled", "items": rerun})
-    decision["next_action"] = "rerun_cancelled_checks" if rerun else "cancelled_checks_no_rerun_target"
+    decision["next_action"] = "rerun_stale_or_cancelled_checks" if rerun else "cancelled_checks_no_rerun_target"
     return True
 
 

@@ -165,8 +165,82 @@ def test_only_cancelled_or_stale_self_checks_prefer_rerun_and_skip_codex(monkeyp
     )
 
     ASSERTIONS.assertTrue(handled)
-    ASSERTIONS.assertIn(decision["next_action"], {"rerun_stale_or_cancelled_checks", "rerun_cancelled_checks"})
+    ASSERTIONS.assertEqual(decision["next_action"], "rerun_stale_or_cancelled_checks")
     ASSERTIONS.assertEqual(decision["actions"][0]["type"], "rerun_cancelled")
+
+
+def test_pr_flow_guardrails_cancelled_only_reruns_no_safe_launch(monkeypatch):
+    """Cancelled PR flow guardrails alone should trigger rerun-only handling."""
+    monkeypatch.setattr(controller, "launch_safe_autofix", lambda _cfg: (_ for _ in ()).throw(AssertionError("safe autofix must not launch for rerun-only")))
+    decision: dict = {"actions": [], "warnings": [], "errors": []}
+    checks = [
+        _check("PR flow guardrails", "CANCELLED", "https://github.com/owner/repo/actions/runs/101"),
+    ]
+
+    handled = controller.handle_cancelled_checks(
+        checks,
+        controller.RerunConfig(repo="owner/repo", dry_run=True, max_reruns=3),
+        decision,
+    )
+
+    ASSERTIONS.assertTrue(handled)
+    ASSERTIONS.assertEqual(decision["next_action"], "rerun_stale_or_cancelled_checks")
+    ASSERTIONS.assertEqual(decision["actions"][0]["type"], "rerun_cancelled")
+
+
+def test_merge_readiness_cancelled_only_reruns_no_safe_launch(monkeypatch):
+    """Cancelled merge readiness alone should trigger rerun-only handling."""
+    monkeypatch.setattr(controller, "launch_safe_autofix", lambda _cfg: (_ for _ in ()).throw(AssertionError("safe autofix must not launch for rerun-only")))
+    decision: dict = {"actions": [], "warnings": [], "errors": []}
+    checks = [
+        _check("PR Merge Readiness", "CANCELLED", "https://github.com/owner/repo/actions/runs/102"),
+    ]
+
+    handled = controller.handle_cancelled_checks(
+        checks,
+        controller.RerunConfig(repo="owner/repo", dry_run=True, max_reruns=3),
+        decision,
+    )
+
+    ASSERTIONS.assertTrue(handled)
+    ASSERTIONS.assertEqual(decision["next_action"], "rerun_stale_or_cancelled_checks")
+    ASSERTIONS.assertEqual(decision["actions"][0]["type"], "rerun_cancelled")
+
+
+def test_real_blocker_plus_cancelled_check_does_not_use_rerun_only_flow():
+    """A real blocker must prevent stale/cancelled-only rerun handling."""
+    decision: dict = {"actions": [], "warnings": [], "errors": []}
+    checks = [
+        _check("Unit tests", "FAILURE", "https://github.com/owner/repo/actions/runs/201"),
+        _check("PR flow guardrails", "CANCELLED", "https://github.com/owner/repo/actions/runs/202"),
+    ]
+
+    handled = controller.handle_cancelled_checks(
+        checks,
+        controller.RerunConfig(repo="owner/repo", dry_run=True, max_reruns=3),
+        decision,
+    )
+
+    ASSERTIONS.assertFalse(handled)
+    ASSERTIONS.assertEqual(decision["actions"], [])
+
+
+def test_pending_check_plus_cancelled_check_waits_pending_no_rerun():
+    """A real pending check must prevent stale/cancelled-only rerun handling."""
+    decision: dict = {"actions": [], "warnings": [], "errors": []}
+    checks = [
+        _check("Integration tests", "IN_PROGRESS", "https://github.com/owner/repo/actions/runs/301"),
+        _check("PR Merge Readiness", "CANCELLED", "https://github.com/owner/repo/actions/runs/302"),
+    ]
+
+    handled = controller.handle_cancelled_checks(
+        checks,
+        controller.RerunConfig(repo="owner/repo", dry_run=True, max_reruns=3),
+        decision,
+    )
+
+    ASSERTIONS.assertFalse(handled)
+    ASSERTIONS.assertEqual(decision["actions"], [])
 
 
 def test_review_task_ignores_outdated_unresolved_threads():
