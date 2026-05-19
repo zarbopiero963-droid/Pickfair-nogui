@@ -714,6 +714,22 @@ def _needs_manual_push_result(
     )
 
 
+def _retry_non_fast_forward_push(
+    run_func: Any,
+    repo: str,
+    branch: str,
+    remote: str,
+    initial_exc: RuntimeError,
+) -> dict[str, Any]:
+    try:
+        push_retry_with_force_lease(run_func, remote, branch)
+        return _build_push_result(
+            True, "success", PushResultContext(repo=repo, branch=branch, retried=True, needs_manual=False)
+        )
+    except RuntimeError as retry_exc:
+        return _needs_manual_push_result(repo, branch, initial_exc, retry_exc)
+
+
 def push_with_retry_once(
     run_func: Any,
     repo: str,
@@ -730,13 +746,7 @@ def push_with_retry_once(
     except RuntimeError as exc:
         if not is_non_fast_forward_push_error(exc):
             return _failed_push_result(repo, branch, exc)
-        try:
-            push_retry_with_force_lease(run_func, remote, branch)
-            return _build_push_result(
-                True, "success", PushResultContext(repo=repo, branch=branch, retried=True, needs_manual=False)
-            )
-        except RuntimeError as retry_exc:
-            return _needs_manual_push_result(repo, branch, exc, retry_exc)
+        return _retry_non_fast_forward_push(run_func, repo, branch, remote, exc)
 
 
 def codacy_task_error_result(
