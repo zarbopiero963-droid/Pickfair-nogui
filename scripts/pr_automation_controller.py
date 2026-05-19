@@ -1196,11 +1196,17 @@ def run_controller(args: argparse.Namespace, decision: dict[str, Any]) -> int:
     return write_decision(args.output, decision)
 
 
-def controller_main() -> int:
+def main() -> int:
     args = parse_controller_args()
-    if getattr(args, "command", "") == "codacy-task":
-        return cmd_codacy_task(args)
-    return run_controller(args, initial_decision(args))
+    if getattr(args, "command", "") != "codacy-task":
+        return run_controller(args, initial_decision(args))
+    result = cmd_codacy_task(args)
+    try:
+        _write_extra_repair_context_after_codacy_task()
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        Path(".autofix").mkdir(exist_ok=True)
+        Path(".autofix/context-extra-error.txt").write_text(str(exc), encoding="utf-8")
+    return result
 
 
 
@@ -1343,20 +1349,32 @@ def _comment_lines(comment: dict[str, Any]) -> list[str]:
     ]
 
 
-def _write_review_task(outdir: Path, repo: str, pr_number: str) -> None:
-    """Write unresolved review comments context for Codex repair."""
-    owner, name = repo.split("/", 1)
-    raw = _safe_json_run([
+def _review_query_args(owner: str, name: str, pr_number: str) -> list[str]:
+    return [
         "gh", "api", "graphql",
         "-f", f"owner={owner}",
         "-f", f"name={name}",
         "-F", f"number={pr_number}",
         "-f", f"query={REVIEW_THREADS_QUERY}",
-    ])
+    ]
+
+
+def _review_threads_raw(repo: str, pr_number: str) -> dict[str, Any]:
+    owner, name = repo.split("/", 1)
+    raw = _safe_json_run(_review_query_args(owner, name, pr_number))
+    return raw if isinstance(raw, dict) else {"data": raw}
+
+
+def _write_review_task_file(outdir: Path, raw: dict[str, Any]) -> None:
     _write_json_file(outdir / "review-threads-raw.json", raw)
     nodes = _review_thread_nodes(raw)
     lines = _review_task_lines(nodes)
     (outdir / "review-comments-task.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _write_review_task(outdir: Path, repo: str, pr_number: str) -> None:
+    """Write unresolved review comments context for Codex repair."""
+    _write_review_task_file(outdir, _review_threads_raw(repo, pr_number))
 
 
 def _write_json_file(path: Path, payload: Any) -> None:
@@ -1403,20 +1421,6 @@ def _write_extra_repair_context_after_codacy_task() -> None:
         _write_deepsource_task(outdir, repo, pr_number)
         _write_review_task(outdir, repo, pr_number)
         _append_extra_context_to_codacy_task(outdir)
-
-
-_ORIGINAL_MAIN = controller_main
-
-
-def main() -> int:
-    """Run controller and enrich codacy-task context when requested."""
-    result = _ORIGINAL_MAIN()
-    try:
-        _write_extra_repair_context_after_codacy_task()
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        Path(".autofix").mkdir(exist_ok=True)
-        Path(".autofix/context-extra-error.txt").write_text(str(exc), encoding="utf-8")
-    return result
 
 
 if __name__ == "__main__":
