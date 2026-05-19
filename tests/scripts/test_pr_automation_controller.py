@@ -2,6 +2,7 @@
 # pylint: disable=invalid-name,duplicate-code
 
 import argparse
+import json
 from unittest import TestCase
 
 import scripts.pr_automation_controller as controller
@@ -17,6 +18,7 @@ def _args() -> argparse.Namespace:
     return argparse.Namespace(
         repo="owner/repo",
         pr="225",
+        output=".pr-controller/decision.json",
         dry_run=True,
         clean_scope_rebuild=False,
         clean_scope_rebuild_mode="disabled",
@@ -128,7 +130,11 @@ def test_clean_scope_defaults_allow_pr_flow_automation_script():
 
 def test_controller_waits_on_pending_real_checks_without_launching_safe_autofix(monkeypatch):
     """Pending real checks must keep controller in wait_pending and skip safe-autofix launch."""
-    monkeypatch.setattr(controller, "controller_codacy_blocking_evidence", lambda *_args, **_kwargs: controller.codacy_evidence_without_checks())
+    monkeypatch.setattr(
+        controller,
+        "controller_codacy_blocking_evidence",
+        lambda *_args, **_kwargs: controller.codacy_evidence_without_checks(),
+    )
     monkeypatch.setattr(controller, "active_safe_autofix_runs", lambda _repo: [])
     monkeypatch.setattr(
         controller,
@@ -171,7 +177,13 @@ def test_only_cancelled_or_stale_self_checks_prefer_rerun_and_skip_codex(monkeyp
 
 def test_pr_flow_guardrails_cancelled_only_reruns_no_safe_launch(monkeypatch):
     """Cancelled PR flow guardrails alone should trigger rerun-only handling."""
-    monkeypatch.setattr(controller, "launch_safe_autofix", lambda _cfg: (_ for _ in ()).throw(AssertionError("safe autofix must not launch for rerun-only")))
+    monkeypatch.setattr(
+        controller,
+        "launch_safe_autofix",
+        lambda _cfg: (_ for _ in ()).throw(
+            AssertionError("safe autofix must not launch for rerun-only")
+        ),
+    )
     decision: dict = {"actions": [], "warnings": [], "errors": []}
     checks = [
         _check("PR flow guardrails", "CANCELLED", "https://github.com/owner/repo/actions/runs/101"),
@@ -190,7 +202,13 @@ def test_pr_flow_guardrails_cancelled_only_reruns_no_safe_launch(monkeypatch):
 
 def test_merge_readiness_cancelled_only_reruns_no_safe_launch(monkeypatch):
     """Cancelled merge readiness alone should trigger rerun-only handling."""
-    monkeypatch.setattr(controller, "launch_safe_autofix", lambda _cfg: (_ for _ in ()).throw(AssertionError("safe autofix must not launch for rerun-only")))
+    monkeypatch.setattr(
+        controller,
+        "launch_safe_autofix",
+        lambda _cfg: (_ for _ in ()).throw(
+            AssertionError("safe autofix must not launch for rerun-only")
+        ),
+    )
     decision: dict = {"actions": [], "warnings": [], "errors": []}
     checks = [
         _check("PR Merge Readiness", "CANCELLED", "https://github.com/owner/repo/actions/runs/102"),
@@ -306,3 +324,61 @@ def test_no_progress_non_repeated_blocker_signature_keeps_safe_autofix_launch(mo
     ASSERTIONS.assertEqual(decision["next_action"], "would_launch_safe_autofix")
     ASSERTIONS.assertEqual(decision["repeated_blocker_count"], 1)
     ASSERTIONS.assertTrue(decision["actions"])
+
+
+def test_load_no_progress_state_reads_matching_file(tmp_path):
+    path = tmp_path / "decision.json"
+    payload = {
+        "repo": "owner/repo",
+        "pr": "225",
+        "previous_blocker_signature": "sig-prev",
+        "repeated_blocker_count": 2,
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    signature, count = controller._load_no_progress_state(  # pylint: disable=protected-access
+        str(path),
+        "owner/repo",
+        "225",
+    )
+
+    ASSERTIONS.assertEqual(signature, "sig-prev")
+    ASSERTIONS.assertEqual(count, 2)
+
+
+def test_load_no_progress_state_ignores_repo_pr_mismatch(tmp_path):
+    path = tmp_path / "decision.json"
+    payload = {
+        "repo": "owner/repo",
+        "pr": "999",
+        "blocker_signature": "sig",
+        "repeated_blocker_count": 7,
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    signature, count = controller._load_no_progress_state(  # pylint: disable=protected-access
+        str(path),
+        "owner/repo",
+        "225",
+    )
+
+    ASSERTIONS.assertEqual(signature, "")
+    ASSERTIONS.assertEqual(count, 0)
+
+
+def test_initial_decision_seeds_no_progress_state(tmp_path):
+    path = tmp_path / "decision.json"
+    payload = {
+        "repo": "owner/repo",
+        "pr": "225",
+        "blocker_signature": "sig-current",
+        "repeated_blocker_count": 3,
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    args = _args()
+    args.output = str(path)
+
+    decision = controller.initial_decision(args)
+
+    ASSERTIONS.assertEqual(decision["previous_blocker_signature"], "sig-current")
+    ASSERTIONS.assertEqual(decision["repeated_blocker_count"], 3)

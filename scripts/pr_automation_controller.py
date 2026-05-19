@@ -455,27 +455,41 @@ def stable_text(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip()).lower()
 
 
-def stable_blocker_record(check: dict[str, Any]) -> dict[str, str]:
-    raw = f"{check.get('name') or check.get('context') or ''}".strip()
-    source = "check"
-    if "codacy" in raw.lower():
-        source = "codacy"
-    path = str(check.get("path") or check.get("filePath") or check.get("filename") or "").strip()
-    rule = str(
+def blocker_raw_name(check: dict[str, Any]) -> str:
+    return f"{check.get('name') or check.get('context') or ''}".strip()
+
+
+def blocker_source(raw_name: str) -> str:
+    return "codacy" if "codacy" in raw_name.lower() else "check"
+
+
+def blocker_path(check: dict[str, Any]) -> str:
+    return str(check.get("path") or check.get("filePath") or check.get("filename") or "").strip()
+
+
+def blocker_rule(check: dict[str, Any]) -> str:
+    return str(
         check.get("rule")
         or check.get("ruleId")
         or check.get("patternId")
         or check.get("code")
         or ""
     ).strip()
-    message = str(check.get("message") or check.get("title") or "").strip()
+
+
+def blocker_message(check: dict[str, Any]) -> str:
+    return str(check.get("message") or check.get("title") or "").strip()
+
+
+def stable_blocker_record(check: dict[str, Any]) -> dict[str, str]:
+    raw_name = blocker_raw_name(check)
     return {
-        "name": stable_text(raw),
+        "name": stable_text(raw_name),
         "state": stable_text(check.get("state") or check.get("conclusion") or check.get("status")),
-        "source": source,
-        "path": stable_text(path),
-        "rule": stable_text(rule),
-        "message": stable_text(message),
+        "source": blocker_source(raw_name),
+        "path": stable_text(blocker_path(check)),
+        "rule": stable_text(blocker_rule(check)),
+        "message": stable_text(blocker_message(check)),
     }
 
 
@@ -494,20 +508,41 @@ def detect_no_progress_blocker_signature(
     threshold: int = 2,
 ) -> dict[str, Any]:
     signature = blocker_signature(blockers)
-    if not signature:
-        return {
-            "blocker_signature": "",
-            "previous_blocker_signature": "",
-            "repeated_blocker_count": 0,
-            "no_progress": False,
-        }
     repeated = repeated_blocker_count + 1 if signature == str(previous_blocker_signature or "") else 1
+    has_signature = bool(signature)
     return {
-        "blocker_signature": signature,
-        "previous_blocker_signature": signature,
-        "repeated_blocker_count": repeated,
-        "no_progress": repeated >= max(1, threshold),
+        "blocker_signature": signature if has_signature else "",
+        "previous_blocker_signature": signature if has_signature else "",
+        "repeated_blocker_count": repeated if has_signature else 0,
+        "no_progress": has_signature and repeated >= max(1, threshold),
     }
+
+
+def safe_nonnegative_int(value: Any, default: int = 0) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= 0 else default
+
+
+def _load_no_progress_state(output_path: str, repo: str, pr: str) -> tuple[str, int]:
+    try:
+        raw = Path(output_path).read_text(encoding="utf-8")
+        payload = json.loads(raw)
+    except (OSError, ValueError, TypeError):
+        return "", 0
+    if not isinstance(payload, dict):
+        return "", 0
+    if str(payload.get("repo") or "") != str(repo) or str(payload.get("pr") or "") != str(pr):
+        return "", 0
+    signature = str(
+        payload.get("blocker_signature")
+        or payload.get("previous_blocker_signature")
+        or ""
+    )
+    count = safe_nonnegative_int(payload.get("repeated_blocker_count"), 0)
+    return signature, count
 
 
 def path_matches(path: str, pattern: str) -> bool:
@@ -1123,6 +1158,11 @@ def normalize_controller_args(args: argparse.Namespace) -> None:
 
 
 def initial_decision(args: argparse.Namespace) -> dict[str, Any]:
+    previous_blocker_signature, repeated_blocker_count = _load_no_progress_state(
+        args.output,
+        args.repo,
+        args.pr,
+    )
     return {
         "repo": args.repo,
         "pr": args.pr,
@@ -1130,6 +1170,8 @@ def initial_decision(args: argparse.Namespace) -> dict[str, Any]:
         "actions": [],
         "warnings": [],
         "errors": [],
+        "previous_blocker_signature": previous_blocker_signature,
+        "repeated_blocker_count": repeated_blocker_count,
     }
 
 
