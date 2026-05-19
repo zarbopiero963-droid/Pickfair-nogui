@@ -22,7 +22,7 @@ ALLOWED_COMMAND_FAMILIES = {"gh", "git", "python", "python3", "pytest"}
 @dataclass(frozen=True)
 class RebuildArgs:
 
-    """Arguments required to run a clean-scope rebuild."""
+    # Arguments required to run a clean-scope rebuild.
 
     repo: str
     pr_number: str
@@ -36,7 +36,7 @@ class RebuildArgs:
 @dataclass(frozen=True)
 class CleanBranches:
 
-    """Resolved branch names and original head SHA for rebuild operations."""
+    # Resolved branch names and original head SHA for rebuild operations.
 
     old_head: str
     backup_branch: str
