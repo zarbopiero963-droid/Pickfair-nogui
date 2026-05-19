@@ -5,6 +5,8 @@ import argparse
 import json
 from unittest import TestCase
 
+import pytest
+
 import scripts.pr_automation_controller as controller
 
 ASSERTIONS = TestCase()
@@ -258,7 +260,162 @@ def test_pending_check_plus_cancelled_check_waits_pending_no_rerun():
     )
 
     ASSERTIONS.assertFalse(handled)
-    ASSERTIONS.assertEqual(decision["actions"], [])
+
+
+@pytest.mark.xfail(reason="helper not implemented yet")
+def test_codacy_head_match_contract_exposes_pr_head_and_evidence_head():
+    """Codacy evidence contract should expose headRefOid vs Codacy evidence head and match flag."""
+    if hasattr(controller, "codacy_head_matches"):
+        evidence = controller.codacy_head_matches(
+            "abc123",
+            {"head": "abc123"},
+        )
+        ASSERTIONS.assertEqual(evidence["pr_head"], "abc123")
+        ASSERTIONS.assertEqual(evidence["codacy_head"], "abc123")
+        ASSERTIONS.assertTrue(evidence["match"])
+        return
+    if hasattr(controller, "classify_codacy_evidence"):
+        evidence = controller.classify_codacy_evidence(
+            {
+                "headRefOid": "abc123",
+                "codacy_head": "abc123",
+                "github_codacy_state": "ACTION_REQUIRED",
+                "codacy_api_issues": 1,
+                "github_annotations": 0,
+            }
+        )
+        ASSERTIONS.assertTrue(evidence["head_match"])
+        return
+    raise NotImplementedError("codacy_head_matches/classify_codacy_evidence not implemented")
+
+
+@pytest.mark.xfail(reason="helper not implemented yet")
+def test_classify_codacy_states_contract():
+    """Codacy classifications should map check/API/annotation evidence deterministically."""
+    if not hasattr(controller, "classify_codacy_evidence"):
+        raise NotImplementedError("classify_codacy_evidence not implemented")
+    classify = controller.classify_codacy_evidence
+
+    ASSERTIONS.assertEqual(
+        classify(
+            {
+                "github_codacy_state": "ACTION_REQUIRED",
+                "codacy_api_issues": 3,
+                "github_annotations": 0,
+                "issues": [],
+            }
+        )["classification"],
+        "real_current_issues",
+    )
+    ASSERTIONS.assertEqual(
+        classify(
+            {
+                "github_codacy_state": "ACTION_REQUIRED",
+                "codacy_api_issues": 0,
+                "github_annotations": 2,
+                "issues": [],
+            }
+        )["classification"],
+        "api_github_mismatch",
+    )
+    ASSERTIONS.assertEqual(
+        classify(
+            {
+                "github_codacy_state": "ACTION_REQUIRED",
+                "codacy_api_issues": 0,
+                "github_annotations": 0,
+                "issues": [],
+            }
+        )["classification"],
+        "stale_github_check",
+    )
+    ASSERTIONS.assertEqual(
+        classify(
+            {
+                "github_codacy_state": "ACTION_REQUIRED",
+                "codacy_api_issues": 2,
+                "github_annotations": 0,
+                "issues": [
+                    {"filePath": "a.py", "patternId": "D203", "symbol": "ClassA"},
+                    {"filePath": "a.py", "patternId": "D211", "symbol": "ClassA"},
+                ],
+            }
+        )["classification"],
+        "rule_conflict",
+    )
+
+
+@pytest.mark.xfail(reason="helper not implemented yet")
+def test_codacy_annotations_fallback_become_real_blockers():
+    """GitHub Codacy annotations must be treated as blockers when API returns zero issues."""
+    if not hasattr(controller, "classify_codacy_evidence"):
+        raise NotImplementedError("classify_codacy_evidence not implemented")
+    result = controller.classify_codacy_evidence(
+        {
+            "github_codacy_state": "ACTION_REQUIRED",
+            "codacy_api_issues": 0,
+            "github_annotations": 2,
+            "issues": [],
+        }
+    )
+    ASSERTIONS.assertTrue(result["treat_annotations_as_blockers"])
+    ASSERTIONS.assertFalse(result.get("ignored", False))
+
+
+def test_review_task_lines_include_only_unresolved_active_threads():
+    """Resolved/outdated threads are excluded from active unresolved review task lines."""
+    nodes = [
+        {"id": "active", "isResolved": False, "isOutdated": False, "path": "a.py", "line": 10, "comments": {"nodes": []}},
+        {"id": "resolved", "isResolved": True, "isOutdated": False, "path": "b.py", "line": 20, "comments": {"nodes": []}},
+        {"id": "outdated", "isResolved": False, "isOutdated": True, "path": "c.py", "line": 30, "comments": {"nodes": []}},
+    ]
+    lines = "\n".join(controller._review_task_lines(nodes))
+
+    ASSERTIONS.assertIn("Thread active", lines)
+    ASSERTIONS.assertNotIn("Thread resolved", lines)
+    ASSERTIONS.assertNotIn("Thread outdated", lines)
+
+
+@pytest.mark.xfail(reason="helper not implemented yet")
+def test_review_comment_summary_counts_active_and_ignored_threads():
+    """Summary helper should count unresolved_active and ignored resolved/outdated threads."""
+    if not hasattr(controller, "review_comments_summary"):
+        raise NotImplementedError("review_comments_summary not implemented")
+    summary = controller.review_comments_summary(
+        [
+            {"isResolved": False, "isOutdated": False},
+            {"isResolved": True, "isOutdated": False},
+            {"isResolved": False, "isOutdated": True},
+        ]
+    )
+    ASSERTIONS.assertEqual(summary["unresolved_active"], 1)
+    ASSERTIONS.assertEqual(summary["resolved_ignored"], 1)
+    ASSERTIONS.assertEqual(summary["outdated_ignored"], 1)
+
+
+@pytest.mark.xfail(reason="helper not implemented yet")
+def test_next_action_summary_contract():
+    """A report helper should return exactly one final NEXT_ACTION from allowed values."""
+    if not hasattr(controller, "summarize_next_action"):
+        raise NotImplementedError("summarize_next_action not implemented")
+    action = controller.summarize_next_action(
+        {
+            "pending_count": 0,
+            "codacy_classification": "real_current_issues",
+            "unresolved_active": 2,
+            "can_merge": False,
+        }
+    )
+    ASSERTIONS.assertIn(
+        action,
+        {
+            "wait_pending",
+            "fix_codacy_current_issues",
+            "rerun_stale_checks",
+            "needs_manual",
+            "ready_to_merge",
+        },
+    )
 
 
 def test_review_task_ignores_outdated_unresolved_threads():

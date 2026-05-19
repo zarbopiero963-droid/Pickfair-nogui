@@ -4,6 +4,8 @@
 import argparse
 from unittest import TestCase
 
+import pytest
+
 import scripts.pr_automation_controller as controller
 import scripts.pr_flow_automation as flow
 
@@ -297,3 +299,85 @@ def test_automation_change_prs_should_enable_bounded_repair_mode():
 
     ASSERTIONS.assertTrue(signals["has_allowlisted_file"])
     ASSERTIONS.assertFalse(signals["autofix_commit_limit_exceeded"])
+
+
+def test_build_decision_ready_to_merge_condition_true(monkeypatch):
+    """Ready-to-merge condition maps to merge_allowed when blockers/pending are empty and merge state is clean."""
+    monkeypatch.setattr(
+        flow,
+        "pr_view",
+        lambda _repo, _pr: {
+            "state": "OPEN",
+            "isDraft": False,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "reviewDecision": "APPROVED",
+            "headRefOid": "abc123",
+            "statusCheckRollup": [_check("Unit tests", "SUCCESS")],
+        },
+    )
+    decision = flow.build_decision("owner/repo", "225", ignore_self=True)
+
+    ASSERTIONS.assertEqual(decision["blockers"], [])
+    ASSERTIONS.assertEqual(decision["pending"], [])
+    ASSERTIONS.assertEqual(decision["mergeable"], "MERGEABLE")
+    ASSERTIONS.assertEqual(decision["mergeStateStatus"], "CLEAN")
+    ASSERTIONS.assertTrue(decision["can_merge"])
+    ASSERTIONS.assertEqual(decision["next_action"], "merge_allowed")
+
+
+@pytest.mark.xfail(reason="helper not implemented yet")
+def test_telegram_ready_summary_contract():
+    """Telegram-ready summary should include all required report keys."""
+    if not hasattr(flow, "build_telegram_summary"):
+        raise NotImplementedError("build_telegram_summary not implemented")
+    summary = flow.build_telegram_summary(
+        {
+            "pr": "225",
+            "headRefOid": "abc123",
+            "codacy": {"classification": "real_current_issues", "issues_returned": 2},
+            "github_codacy_check_state": "ACTION_REQUIRED",
+            "review": {"unresolved_active": 1},
+            "next_action": "fix_codacy_current_issues",
+        }
+    )
+    for key in (
+        "pr_number",
+        "head_sha",
+        "codacy_classification",
+        "github_codacy_check_state",
+        "codacy_api_issue_count",
+        "active_unresolved_review_count",
+        "next_action",
+    ):
+        ASSERTIONS.assertIn(key, summary)
+
+
+@pytest.mark.xfail(reason="helper not implemented yet")
+def test_auto_resolve_review_comments_contract_active_only():
+    """Only active unresolved review comments should be eligible for auto-resolve."""
+    if not hasattr(flow, "eligible_review_comments_for_auto_resolve"):
+        raise NotImplementedError("eligible_review_comments_for_auto_resolve not implemented")
+    eligible = flow.eligible_review_comments_for_auto_resolve(
+        [
+            {"id": "a", "isResolved": False, "isOutdated": False},
+            {"id": "b", "isResolved": True, "isOutdated": False},
+            {"id": "c", "isResolved": False, "isOutdated": True},
+        ]
+    )
+    ASSERTIONS.assertEqual([item["id"] for item in eligible], ["a"])
+
+
+@pytest.mark.xfail(reason="helper not implemented yet")
+def test_d203_d211_rule_conflict_detection_contract():
+    """D203 and D211 on same file/symbol should classify as codacy rule conflict needing manual action."""
+    if not hasattr(flow, "classify_codacy_rule_conflict"):
+        raise NotImplementedError("classify_codacy_rule_conflict not implemented")
+    result = flow.classify_codacy_rule_conflict(
+        [
+            {"filePath": "scripts/pr_flow_automation.py", "patternId": "D203", "symbol": "ClassX"},
+            {"filePath": "scripts/pr_flow_automation.py", "patternId": "D211", "symbol": "ClassX"},
+        ]
+    )
+    ASSERTIONS.assertEqual(result["classification"], "codacy_rule_conflict")
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_codacy_rule_conflict")
