@@ -8,9 +8,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sys
 import re
 import subprocess  # nosec B404
+import sys
 import time
 import urllib.parse
 import urllib.request
