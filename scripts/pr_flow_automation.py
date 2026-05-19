@@ -517,7 +517,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
 
     branch = pr.get("headRefName") or ""
     branch_ref = f"origin/{branch}"
-    sh(["git", "fetch", "origin", branch], check=False)
+    sh(["git", "fetch", "origin", branch], check=True)
 
     commits = safe_autofix_commits(branch_ref, str(args.pr)) if branch else []
     file_touches: dict[str, int] = {}
