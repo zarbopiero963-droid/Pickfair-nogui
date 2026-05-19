@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
 import os
 import re
@@ -256,6 +255,7 @@ def safe_autofix_runs_command(repo: str) -> list[str]:
 
 @dataclass(frozen=True)
 class RerunConfig:
+
     """Configuration for rerunning cancelled checks."""
 
     repo: str
@@ -265,6 +265,7 @@ class RerunConfig:
 
 @dataclass(frozen=True)
 class SafeAutofixConfig:
+
     """Configuration for invoking the safe autofix workflow."""
 
     repo: str
@@ -276,6 +277,7 @@ class SafeAutofixConfig:
 
 @dataclass(frozen=True)
 class CleanScopeRules:
+
     """Allowlist and forbidden scope constraints for clean rebuild mode."""
 
     allowlist: tuple[str, ...]
@@ -285,6 +287,7 @@ class CleanScopeRules:
 
 @dataclass(frozen=True)
 class CleanRebuildConfig:
+
     """Configuration for launching a clean-scope rebuild workflow."""
 
     repo: str
@@ -296,7 +299,6 @@ class CleanRebuildConfig:
 
 @dataclass(frozen=True)
 class PendingWaitConfig:
-
     """Data container used by the automation flow."""
 
     repo: str
@@ -308,6 +310,7 @@ class PendingWaitConfig:
 
 @dataclass(frozen=True)
 class CleanScopeReport:
+
     """Data container used by the automation flow."""
 
     enabled: bool
@@ -826,7 +829,7 @@ def codacy_https_json(url: str, token: str) -> Any:
     validate_codacy_url(url)
     request = urllib.request.Request(url, headers={"api-token": token}, method="GET")
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310  # nosemgrep
             payload = response.read().decode("utf-8")
             status = getattr(response, "status", 200)
             if status >= 400:
