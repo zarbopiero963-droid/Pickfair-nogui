@@ -255,8 +255,7 @@ def safe_autofix_runs_command(repo: str) -> list[str]:
 
 @dataclass(frozen=True)
 class RerunConfig:
-
-    """Configuration for rerunning cancelled checks."""
+    """Configuration for rerunning cancelled checks."""  # noqa: D203
 
     repo: str
     dry_run: bool
@@ -265,8 +264,7 @@ class RerunConfig:
 
 @dataclass(frozen=True)
 class SafeAutofixConfig:
-
-    """Configuration for invoking the safe autofix workflow."""
+    """Configuration for invoking the safe autofix workflow."""  # noqa: D203
 
     repo: str
     pr_number: str
@@ -277,8 +275,7 @@ class SafeAutofixConfig:
 
 @dataclass(frozen=True)
 class CleanScopeRules:
-
-    """Allowlist and forbidden scope constraints for clean rebuild mode."""
+    """Allowlist and forbidden scope constraints for clean rebuild mode."""  # noqa: D203
 
     allowlist: tuple[str, ...]
     forbidden: tuple[str, ...]
@@ -287,8 +284,7 @@ class CleanScopeRules:
 
 @dataclass(frozen=True)
 class CleanRebuildConfig:
-
-    """Configuration for launching a clean-scope rebuild workflow."""
+    """Configuration for launching a clean-scope rebuild workflow."""  # noqa: D203
 
     repo: str
     pr_number: str
@@ -299,8 +295,7 @@ class CleanRebuildConfig:
 
 @dataclass(frozen=True)
 class PendingWaitConfig:
-
-    """Data container used by the automation flow."""
+    """Data container used by the automation flow."""  # noqa: D203
 
     repo: str
     pr_number: str
@@ -311,7 +306,7 @@ class PendingWaitConfig:
 
 @dataclass(frozen=True)
 class CleanScopeReport:
-    """Data container used by the automation flow."""
+    """Data container used by the automation flow."""  # noqa: D203
 
     enabled: bool
     mode: str
@@ -321,7 +316,7 @@ class CleanScopeReport:
 
 @dataclass(frozen=True)
 class NextActionContext:
-    """Data container used by the automation flow."""
+    """Data container used by the automation flow."""  # noqa: D203
 
     args: argparse.Namespace
     pr: dict[str, Any]
