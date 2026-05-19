@@ -621,6 +621,72 @@ def cmd_codacy_task(args: argparse.Namespace) -> int:
     return 0
 
 
+def is_non_fast_forward_push_error(exc: Exception) -> bool:
+    """Return True when a push failure looks like a non-fast-forward conflict."""
+    message = str(exc).lower()
+    return "non-fast-forward" in message or "failed to push some refs" in message
+
+
+def push_with_retry_once(
+    run_func: Any,
+    repo: str,
+    branch: str,
+    *,
+    remote: str = "origin",
+    use_force_with_lease: bool = False,
+) -> dict[str, Any]:
+    """Push once, recover once on non-fast-forward, then stop with explicit status."""
+    push_cmd = ["git", "push", remote, branch]
+    retry_cmd = list(push_cmd)
+    if use_force_with_lease:
+        retry_cmd.append("--force-with-lease")
+
+    try:
+        run_func(push_cmd, check=True)
+        return {
+            "ok": True,
+            "status": "success",
+            "repo": repo,
+            "branch": branch,
+            "retried": False,
+            "needs_manual": False,
+        }
+    except RuntimeError as exc:
+        if not is_non_fast_forward_push_error(exc):
+            return {
+                "ok": False,
+                "status": "failed",
+                "repo": repo,
+                "branch": branch,
+                "retried": False,
+                "needs_manual": False,
+                "error": str(exc),
+            }
+
+        try:
+            run_func(["git", "fetch", remote, branch], check=True)
+            run_func(retry_cmd, check=True)
+            return {
+                "ok": True,
+                "status": "success",
+                "repo": repo,
+                "branch": branch,
+                "retried": True,
+                "needs_manual": False,
+            }
+        except RuntimeError as retry_exc:
+            return {
+                "ok": False,
+                "status": "needs_manual",
+                "repo": repo,
+                "branch": branch,
+                "retried": True,
+                "needs_manual": True,
+                "error": str(retry_exc),
+                "initial_error": str(exc),
+            }
+
+
 def codacy_task_error_result(
     args: argparse.Namespace,
     blocking: bool,

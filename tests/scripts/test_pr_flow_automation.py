@@ -4,8 +4,6 @@
 import argparse
 from unittest import TestCase
 
-import pytest
-
 import scripts.pr_automation_controller as controller
 import scripts.pr_flow_automation as flow
 
@@ -198,13 +196,79 @@ def test_preflight_commit_limit_only_blocks_when_codacy_is_blocking(monkeypatch)
     ASSERTIONS.assertEqual(rc, 0)
 
 
-def test_non_fast_forward_push_retry_is_single_attempt_then_manual(monkeypatch):
-    """Non-fast-forward pushes should retry once, then require manual intervention."""
-    helper_name = "push_with_retry_once"
-    if not hasattr(flow, helper_name):
-        pytest.xfail(f"expected helper not implemented yet: flow.{helper_name}")
-    helper = getattr(flow, helper_name)
-    ASSERTIONS.assertTrue(callable(helper))
+def test_push_with_retry_once_succeeds_on_first_push():
+    """First push success returns success without retry."""
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], *, check: bool = True) -> str:
+        ASSERTIONS.assertTrue(check)
+        calls.append(list(cmd))
+        return ""
+
+    result = flow.push_with_retry_once(fake_run, "owner/repo", "feature/branch")
+
+    ASSERTIONS.assertTrue(result["ok"])
+    ASSERTIONS.assertEqual(result["status"], "success")
+    ASSERTIONS.assertFalse(result["retried"])
+    ASSERTIONS.assertFalse(result["needs_manual"])
+    ASSERTIONS.assertEqual(calls, [["git", "push", "origin", "feature/branch"]])
+
+
+def test_push_with_retry_once_non_fast_forward_then_retry_success():
+    """Non-fast-forward push does one fetch and one retry push."""
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], *, check: bool = True) -> str:
+        ASSERTIONS.assertTrue(check)
+        calls.append(list(cmd))
+        if len(calls) == 1:
+            raise RuntimeError("failed to push some refs to origin (non-fast-forward)")
+        return ""
+
+    result = flow.push_with_retry_once(fake_run, "owner/repo", "feature/branch")
+
+    ASSERTIONS.assertTrue(result["ok"])
+    ASSERTIONS.assertEqual(result["status"], "success")
+    ASSERTIONS.assertTrue(result["retried"])
+    ASSERTIONS.assertFalse(result["needs_manual"])
+    ASSERTIONS.assertEqual(
+        calls,
+        [
+            ["git", "push", "origin", "feature/branch"],
+            ["git", "fetch", "origin", "feature/branch"],
+            ["git", "push", "origin", "feature/branch"],
+        ],
+    )
+
+
+def test_push_with_retry_once_non_fast_forward_then_retry_fails_needs_manual():
+    """A failed retry after non-fast-forward returns needs_manual with no loop."""
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], *, check: bool = True) -> str:
+        ASSERTIONS.assertTrue(check)
+        calls.append(list(cmd))
+        if len(calls) == 1:
+            raise RuntimeError("non-fast-forward update rejected")
+        if len(calls) == 3:
+            raise RuntimeError("failed to push some refs")
+        return ""
+
+    result = flow.push_with_retry_once(fake_run, "owner/repo", "feature/branch")
+
+    ASSERTIONS.assertFalse(result["ok"])
+    ASSERTIONS.assertEqual(result["status"], "needs_manual")
+    ASSERTIONS.assertTrue(result["retried"])
+    ASSERTIONS.assertTrue(result["needs_manual"])
+    ASSERTIONS.assertIn("failed to push some refs", result["error"])
+    ASSERTIONS.assertEqual(
+        calls,
+        [
+            ["git", "push", "origin", "feature/branch"],
+            ["git", "fetch", "origin", "feature/branch"],
+            ["git", "push", "origin", "feature/branch"],
+        ],
+    )
 
 
 def test_automation_change_prs_should_enable_bounded_repair_mode(monkeypatch):
