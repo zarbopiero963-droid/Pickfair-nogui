@@ -627,64 +627,76 @@ def is_non_fast_forward_push_error(exc: Exception) -> bool:
     return "non-fast-forward" in message or "failed to push some refs" in message
 
 
+def push_result(
+    ok: bool,
+    status: str,
+    repo: str,
+    branch: str,
+    retried: bool,
+    *,
+    needs_manual: bool,
+    error: str | None = None,
+    initial_error: str | None = None,
+) -> dict[str, Any]:
+    """Build a consistent push result payload."""
+    result: dict[str, Any] = {
+        "ok": ok,
+        "status": status,
+        "repo": repo,
+        "branch": branch,
+        "retried": retried,
+        "needs_manual": needs_manual,
+    }
+    if error is not None:
+        result["error"] = error
+    if initial_error is not None:
+        result["initial_error"] = initial_error
+    return result
+
+
+def push_retry_with_force_lease(run_func: Any, remote: str, branch: str) -> None:
+    """Fetch latest remote branch, then retry push with force-with-lease once."""
+    run_func(["git", "fetch", remote, branch], check=True)
+    run_func(["git", "push", remote, branch, "--force-with-lease"], check=True)
+
+
 def push_with_retry_once(
     run_func: Any,
     repo: str,
     branch: str,
     *,
     remote: str = "origin",
-    use_force_with_lease: bool = False,
 ) -> dict[str, Any]:
     """Push once, recover once on non-fast-forward, then stop with explicit status."""
-    push_cmd = ["git", "push", remote, branch]
-    retry_cmd = list(push_cmd)
-    if use_force_with_lease:
-        retry_cmd.append("--force-with-lease")
-
     try:
-        run_func(push_cmd, check=True)
-        return {
-            "ok": True,
-            "status": "success",
-            "repo": repo,
-            "branch": branch,
-            "retried": False,
-            "needs_manual": False,
-        }
+        run_func(["git", "push", remote, branch], check=True)
+        return push_result(True, "success", repo, branch, False, needs_manual=False)
     except RuntimeError as exc:
         if not is_non_fast_forward_push_error(exc):
-            return {
-                "ok": False,
-                "status": "failed",
-                "repo": repo,
-                "branch": branch,
-                "retried": False,
-                "needs_manual": False,
-                "error": str(exc),
-            }
+            return push_result(
+                False,
+                "failed",
+                repo,
+                branch,
+                False,
+                needs_manual=False,
+                error=str(exc),
+            )
 
         try:
-            run_func(["git", "fetch", remote, branch], check=True)
-            run_func(retry_cmd, check=True)
-            return {
-                "ok": True,
-                "status": "success",
-                "repo": repo,
-                "branch": branch,
-                "retried": True,
-                "needs_manual": False,
-            }
+            push_retry_with_force_lease(run_func, remote, branch)
+            return push_result(True, "success", repo, branch, True, needs_manual=False)
         except RuntimeError as retry_exc:
-            return {
-                "ok": False,
-                "status": "needs_manual",
-                "repo": repo,
-                "branch": branch,
-                "retried": True,
-                "needs_manual": True,
-                "error": str(retry_exc),
-                "initial_error": str(exc),
-            }
+            return push_result(
+                False,
+                "needs_manual",
+                repo,
+                branch,
+                True,
+                needs_manual=True,
+                error=str(retry_exc),
+                initial_error=str(exc),
+            )
 
 
 def codacy_task_error_result(

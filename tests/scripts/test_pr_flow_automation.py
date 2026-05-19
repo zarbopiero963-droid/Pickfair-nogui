@@ -236,7 +236,7 @@ def test_push_with_retry_once_non_fast_forward_then_retry_success():
         [
             ["git", "push", "origin", "feature/branch"],
             ["git", "fetch", "origin", "feature/branch"],
-            ["git", "push", "origin", "feature/branch"],
+            ["git", "push", "origin", "feature/branch", "--force-with-lease"],
         ],
     )
 
@@ -266,31 +266,33 @@ def test_push_with_retry_once_non_fast_forward_then_retry_fails_needs_manual():
         [
             ["git", "push", "origin", "feature/branch"],
             ["git", "fetch", "origin", "feature/branch"],
-            ["git", "push", "origin", "feature/branch"],
+            ["git", "push", "origin", "feature/branch", "--force-with-lease"],
         ],
     )
 
 
-def test_automation_change_prs_should_enable_bounded_repair_mode(monkeypatch):
+def _automation_controller_args() -> argparse.Namespace:
+    return argparse.Namespace(
+        clean_scope_allowlist="",
+        clean_scope_forbidden="",
+        clean_scope_commit_limit=3,
+        clean_scope_rebuild=False,
+        clean_scope_rebuild_mode="disabled",
+        repo="owner/repo",
+        pr="225",
+        dry_run=True,
+        safe_max_rounds="1",
+        safe_pending_wait_seconds="600",
+    )
+
+
+def test_automation_change_prs_should_enable_bounded_repair_mode():
     """Automation/workflow/controller changes should be bounded to one repair round."""
     files = [
         "scripts/pr_automation_controller.py",
         ".github/workflows/pr-automation-controller-v2.yml",
     ]
-    rules = controller.build_clean_scope_rules(
-        argparse.Namespace(
-            clean_scope_allowlist="",
-            clean_scope_forbidden="",
-            clean_scope_commit_limit=3,
-            clean_scope_rebuild=False,
-            clean_scope_rebuild_mode="disabled",
-            repo="owner/repo",
-            pr="225",
-            dry_run=True,
-            safe_max_rounds="1",
-            safe_pending_wait_seconds="600",
-        )
-    )
+    rules = controller.build_clean_scope_rules(_automation_controller_args())
     signals = controller.collect_clean_scope_signals(files, [], rules)
 
     ASSERTIONS.assertTrue(signals["has_allowlisted_file"])
