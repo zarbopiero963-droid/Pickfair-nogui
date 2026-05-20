@@ -451,6 +451,27 @@ def eligible_review_comments_for_auto_resolve(nodes: list[dict[str, Any]]) -> li
     ]
 
 
+def classify_codacy_rule_conflict(issues: list[dict[str, Any]]) -> dict[str, Any]:
+    """Detect contradictory Codacy D203/D211 rule findings on the same entity."""
+    grouped_patterns: dict[tuple[str, str], set[str]] = {}
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        pattern_id = str(issue.get("patternId") or issue.get("patternID") or "").strip().upper()
+        if pattern_id not in {"D203", "D211"}:
+            continue
+        file_name = str(issue.get("filePath") or issue.get("filename") or "").strip()
+        symbol = str(issue.get("symbol") or issue.get("entity") or "").strip()
+        key = (file_name, symbol)
+        grouped_patterns.setdefault(key, set()).add(pattern_id)
+        if {"D203", "D211"}.issubset(grouped_patterns[key]):
+            return {
+                "classification": "codacy_rule_conflict",
+                "next_action": "needs_manual_codacy_rule_conflict",
+            }
+    return {"classification": "none", "next_action": ""}
+
+
 def cmd_readiness(args: argparse.Namespace) -> int:
     deadline = time.time() + args.wait_unknown_seconds
     decision = build_decision(args.repo, args.pr, ignore_self=args.ignore_safe_autofix)

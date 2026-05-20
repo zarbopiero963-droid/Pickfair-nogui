@@ -4,8 +4,6 @@
 import argparse
 from unittest import TestCase
 
-import pytest
-
 import scripts.pr_automation_controller as controller
 import scripts.pr_flow_automation as flow
 
@@ -380,7 +378,6 @@ def test_auto_resolve_review_comments_contract_active_only():
     ASSERTIONS.assertEqual([item["id"] for item in eligible], ["a"])
 
 
-@pytest.mark.xfail(reason="helper not implemented yet")
 def test_d203_d211_rule_conflict_detection_contract():
     """D203 and D211 on same file/symbol should classify as codacy rule conflict needing manual action."""
     if not hasattr(flow, "classify_codacy_rule_conflict"):
