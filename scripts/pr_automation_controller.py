@@ -1640,6 +1640,62 @@ def _review_task_lines(nodes: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
+def review_comments_summary(nodes: list[dict[str, Any]]) -> dict[str, int]:
+    summary = {
+        "unresolved_active": 0,
+        "resolved_ignored": 0,
+        "outdated_ignored": 0,
+        "total": 0,
+    }
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        summary["total"] += 1
+        is_resolved = bool(node.get("isResolved"))
+        is_outdated = bool(node.get("isOutdated"))
+        if is_resolved:
+            summary["resolved_ignored"] += 1
+        elif is_outdated:
+            summary["outdated_ignored"] += 1
+        else:
+            summary["unresolved_active"] += 1
+    return summary
+
+
+def summarize_next_action(context: dict[str, Any]) -> str:
+    pending_count = safe_nonnegative_int(context.get("pending_count"), 0)
+    if pending_count > 0:
+        return "wait_pending"
+
+    codacy_classification = str(context.get("codacy_classification") or "").strip()
+    if codacy_classification in {"real_current_issues", "api_github_mismatch"}:
+        return "fix_codacy_current_issues"
+    if codacy_classification == "rule_conflict":
+        return "needs_manual"
+
+    unresolved_active = safe_nonnegative_int(context.get("unresolved_active"), 0)
+    if unresolved_active > 0:
+        return "needs_manual"
+
+    rerun_state_present = bool(context.get("has_stale_or_cancelled_rerun_state"))
+    if not rerun_state_present:
+        rerun_items = context.get("stale_or_cancelled")
+        rerun_state_present = bool(rerun_items) if isinstance(rerun_items, list) else False
+    if rerun_state_present:
+        return "rerun_stale_checks"
+
+    can_merge = bool(context.get("can_merge"))
+    mergeable = norm_state(context.get("mergeable"))
+    merge_state_status = norm_state(context.get("mergeStateStatus"))
+    has_blockers = safe_nonnegative_int(context.get("blockers_count"), 0) > 0
+    if not has_blockers and isinstance(context.get("blockers"), list):
+        has_blockers = bool(context["blockers"])
+    if can_merge or (mergeable == "MERGEABLE" and merge_state_status == "CLEAN" and not has_blockers):
+        return "ready_to_merge"
+
+    return "needs_manual"
+
+
 def _append_extra_context_to_codacy_task(outdir: Path) -> None:
     """Append extra repair context to codacy-task.md so existing prompts include it."""
     codacy_task = outdir / "codacy-task.md"

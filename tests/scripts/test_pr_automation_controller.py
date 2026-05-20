@@ -5,8 +5,6 @@ import argparse
 import json
 from unittest import TestCase
 
-import pytest
-
 import scripts.pr_automation_controller as controller
 
 ASSERTIONS = TestCase()
@@ -373,7 +371,6 @@ def test_review_task_lines_include_only_unresolved_active_threads():
     ASSERTIONS.assertNotIn("Thread outdated", lines)
 
 
-@pytest.mark.xfail(reason="helper not implemented yet")
 def test_review_comment_summary_counts_active_and_ignored_threads():
     """Summary helper should count unresolved_active and ignored resolved/outdated threads."""
     if not hasattr(controller, "review_comments_summary"):
@@ -390,7 +387,6 @@ def test_review_comment_summary_counts_active_and_ignored_threads():
     ASSERTIONS.assertEqual(summary["outdated_ignored"], 1)
 
 
-@pytest.mark.xfail(reason="helper not implemented yet")
 def test_next_action_summary_contract():
     """A report helper should return exactly one final NEXT_ACTION from allowed values."""
     if not hasattr(controller, "summarize_next_action"):
