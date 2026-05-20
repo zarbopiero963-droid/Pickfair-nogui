@@ -371,6 +371,58 @@ def test_codacy_annotations_fallback_become_real_blockers():
     ASSERTIONS.assertFalse(result.get("ignored", False))
 
 
+def test_codacy_evidence_from_api_preserves_annotation_field_for_mismatch_path():
+    """API evidence should retain github_annotations so mismatch classification stays reachable."""
+    evidence = controller.codacy_evidence_from_api(
+        [_check("Codacy Static Code Analysis", "ACTION_REQUIRED")],
+        True,
+        [],
+        "ok",
+        github_annotations=3,
+    )
+    classified = controller.classify_codacy_evidence(evidence)
+
+    ASSERTIONS.assertEqual(evidence["github_annotations"], 3)
+    ASSERTIONS.assertEqual(classified["classification"], "api_github_mismatch")
+
+
+def test_build_next_action_context_stores_pr_head_without_overwriting_codacy_head(monkeypatch):
+    """Context should keep PR head in pr_head and preserve Codacy evidence head separately."""
+    monkeypatch.setattr(
+        controller,
+        "codacy_evidence_for_checks",
+        lambda *_args, **_kwargs: {
+            "checks": [_check("Codacy Static Code Analysis", "ACTION_REQUIRED")],
+            "check_blocking": True,
+            "github_codacy_state": "ACTION_REQUIRED",
+            "github_annotations": 0,
+            "codacy_api_issues": 1,
+            "issues": [{"filePath": "a.py", "patternId": "X"}],
+            "api_available": True,
+            "api_ok": True,
+            "issues_returned": 1,
+            "blocking": True,
+            "ignored": False,
+            "reason": "test",
+            "headRefOid": "codacy-head-sha",
+        },
+    )
+    monkeypatch.setattr(controller, "_review_threads_raw", lambda *_args: {})
+    pr = {
+        "statusCheckRollup": [_check("Codacy Static Code Analysis", "ACTION_REQUIRED")],
+        "headRefOid": "pr-head-sha",
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+    }
+    decision: dict[str, object] = {"actions": [], "warnings": [], "errors": []}
+
+    ctx = controller.build_next_action_context(_args(), decision, pr, ([], []))
+    codacy = ctx.decision["codacy"]
+
+    ASSERTIONS.assertEqual(codacy["pr_head"], "pr-head-sha")
+    ASSERTIONS.assertEqual(codacy["headRefOid"], "codacy-head-sha")
+
+
 def test_review_task_lines_include_only_unresolved_active_threads():
     """Resolved/outdated threads are excluded from active unresolved review task lines."""
     nodes = [

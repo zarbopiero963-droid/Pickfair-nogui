@@ -478,6 +478,68 @@ def test_cmd_report_wires_real_context_into_helpers(tmp_path, monkeypatch):
     _assert_cmd_report_context_output(tmp_path)
 
 
+def test_cmd_report_no_codacy_check_and_zero_issues_is_not_stale(tmp_path, monkeypatch):
+    """No Codacy check with empty API issues should remain classification none."""
+    monkeypatch.setattr(
+        flow,
+        "build_decision",
+        lambda *_args, **_kwargs: {
+            "repo": "owner/repo",
+            "pr": "225",
+            "headRefOid": "abc123",
+            "state": "OPEN",
+            "already_merged": False,
+            "can_merge": False,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "next_action": "blocked",
+            "reasons": [],
+            "blockers": [],
+            "pending": [],
+            "ignored_self_checks": [],
+        },
+    )
+    monkeypatch.setattr(flow, "fetch_codacy_pr_issues", lambda *_args: ({}, []))
+    monkeypatch.setattr(
+        flow,
+        "gh_json",
+        lambda *_args, **_kwargs: {
+            "data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}
+        },
+    )
+
+    rc = flow.cmd_report(
+        argparse.Namespace(repo="owner/repo", pr="225", outdir=str(tmp_path), comment=False, no_fail=True)
+    )
+    decision = json.loads((tmp_path / "pr-flow-decision.json").read_text(encoding="utf-8"))
+
+    ASSERTIONS.assertEqual(rc, 0)
+    ASSERTIONS.assertEqual(decision["codacy"]["classification"], "none")
+    ASSERTIONS.assertFalse(decision["codacy"]["treat_annotations_as_blockers"])
+
+
+def test_cmd_report_codacy_check_zero_issues_is_stale(tmp_path, monkeypatch):
+    """Codacy check with empty API issues should classify as stale_github_check."""
+    _stub_pr_view_for_report(monkeypatch)
+    monkeypatch.setattr(flow, "fetch_codacy_pr_issues", lambda *_args: ({}, []))
+    monkeypatch.setattr(
+        flow,
+        "gh_json",
+        lambda *_args, **_kwargs: {
+            "data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}
+        },
+    )
+
+    rc = flow.cmd_report(
+        argparse.Namespace(repo="owner/repo", pr="225", outdir=str(tmp_path), comment=False, no_fail=True)
+    )
+    decision = json.loads((tmp_path / "pr-flow-decision.json").read_text(encoding="utf-8"))
+
+    ASSERTIONS.assertEqual(rc, 0)
+    ASSERTIONS.assertEqual(decision["codacy"]["classification"], "stale_github_check")
+    ASSERTIONS.assertFalse(decision["codacy"]["treat_annotations_as_blockers"])
+
+
 def _ready_to_merge_pr_view(_repo: str, _pr: str) -> dict[str, object]:
     return {
         "state": "OPEN",

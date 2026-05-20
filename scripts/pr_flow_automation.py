@@ -703,8 +703,13 @@ def cmd_report(args: argparse.Namespace) -> int:
         codacy["issues_returned"] = len(codacy_issues)
         codacy.update(classify_codacy_rule_conflict(codacy_issues))
         if codacy["classification"] == "none":
-            codacy["classification"] = "real_current_issues" if codacy_issues else "stale_github_check"
-        codacy["treat_annotations_as_blockers"] = bool(codacy_checks and not codacy_issues)
+            if codacy_issues:
+                codacy["classification"] = "real_current_issues"
+            elif codacy_checks:
+                codacy["classification"] = "stale_github_check"
+            else:
+                codacy["classification"] = "none"
+        codacy["treat_annotations_as_blockers"] = bool(codacy_checks and codacy_issues)
     except (RuntimeError, ValueError, OSError):
         codacy["classification"] = "unknown"
 

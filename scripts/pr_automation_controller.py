@@ -1241,8 +1241,11 @@ def _codacy_head_match_value(evidence: dict[str, Any]) -> bool | None:
     pr_head = first_nonempty(evidence.get("pr_head"), evidence.get("headRefOid"))
     if not pr_head:
         return None
+    codacy_head = first_nonempty(evidence.get("head"), evidence.get("codacy_head"), evidence.get("headRefOid"))
+    if not codacy_head:
+        return None
     head_match = codacy_head_matches(str(pr_head), evidence)
-    return bool(head_match["match"]) if head_match["codacy_head"] else None
+    return bool(head_match["match"])
 
 
 def codacy_api_status(
@@ -1261,15 +1264,21 @@ def codacy_evidence_from_api(
     api_ok: bool,
     issues: list[dict[str, Any]],
     reason: str,
+    github_annotations: int | None = None,
 ) -> dict[str, Any]:
     codacy_check_state = ""
     if codacy_checks:
-        codacy_check_state = norm_state(codacy_checks[0].get("state"))
+        codacy_check_state = norm_state(
+            codacy_checks[0].get("state")
+            or codacy_checks[0].get("conclusion")
+            or codacy_checks[0].get("status")
+        )
+    annotations = safe_nonnegative_int(github_annotations, 0)
     return {
         "checks": codacy_checks,
         "check_blocking": bool(codacy_checks),
         "github_codacy_state": codacy_check_state,
-        "github_annotations": 0,
+        "github_annotations": annotations,
         "codacy_api_issues": len(issues),
         "issues": issues,
         "api_available": api_ok,
@@ -1543,7 +1552,7 @@ def build_next_action_context(
             len(codacy.get("issues") or []),
         )
     codacy.setdefault("github_annotations", 0)
-    codacy["headRefOid"] = first_nonempty(pr.get("headRefOid"), codacy.get("headRefOid"))
+    codacy["pr_head"] = first_nonempty(pr.get("headRefOid"), codacy.get("pr_head"))
     codacy.update(classify_codacy_evidence(codacy))
     effective_checks = filter_ignored_codacy_checks(checks, codacy)
     blockers = set_check_buckets(decision, effective_checks)
