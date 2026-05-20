@@ -480,14 +480,30 @@ def _codacy_rule_id(issue: dict[str, Any]) -> str:
 
 
 def _codacy_rule_location_key(issue: dict[str, Any]) -> tuple[str, str, str, str]:
-    file_name = str(issue.get("filePath") or issue.get("filename") or "").strip()
-    line = str(issue.get("lineNumber") or issue.get("line") or "").strip()
-    symbol = str(issue.get("symbol") or issue.get("entity") or "").strip()
+    file_name = _normalized_issue_file(issue)
+    line = _normalized_issue_line(issue)
+    symbol = _normalized_issue_symbol(issue)
     return file_name, line, symbol, _issue_message_key(issue)
 
 
 def _issue_message_key(issue: dict[str, Any]) -> str:
     return str(issue.get("message") or "").strip()
+
+
+def _normalized_issue_file(issue: dict[str, Any]) -> str:
+    return _normalized_issue_field(issue, "filePath", "filename")
+
+
+def _normalized_issue_line(issue: dict[str, Any]) -> str:
+    return _normalized_issue_field(issue, "lineNumber", "line")
+
+
+def _normalized_issue_symbol(issue: dict[str, Any]) -> str:
+    return _normalized_issue_field(issue, "symbol", "entity")
+
+
+def _normalized_issue_field(issue: dict[str, Any], primary: str, fallback: str) -> str:
+    return str(issue.get(primary) or issue.get(fallback) or "").strip()
 
 
 def _codacy_rule_conflict_result() -> dict[str, str]:
@@ -657,6 +673,21 @@ def cmd_preflight(args: argparse.Namespace) -> int:
 
 def cmd_report(args: argparse.Namespace) -> int:
     decision = build_decision(args.repo, args.pr, ignore_self=True)
+    decision["ready_to_merge_notification"] = should_notify_ready_to_merge({
+        "bad": decision.get("blockers"),
+        "unresolved_active": 0,
+        "mergeable": decision.get("mergeable"),
+        "mergeStateStatus": decision.get("mergeStateStatus"),
+    })
+    decision["review_auto_resolve_candidates"] = len(eligible_review_comments_for_auto_resolve([]))
+    decision["telegram_summary"] = build_telegram_summary({
+        "pr": decision.get("pr"),
+        "headRefOid": decision.get("headRefOid"),
+        "codacy": {},
+        "github_codacy_check_state": "",
+        "review": {"unresolved_active": 0},
+        "next_action": decision.get("next_action"),
+    })
     outdir = Path(args.outdir)
     write_json(outdir / "pr-flow-decision.json", decision)
 
@@ -698,12 +729,14 @@ def cmd_codacy_task(args: argparse.Namespace) -> int:
         return codacy_task_error_result(args, blocking, exc)
 
     write_codacy_task(outdir, raw, issues)
+    codacy_rule_conflict = classify_codacy_rule_conflict(issues)
     result = {
         "repo": args.repo,
         "pr": str(args.pr),
         "ok": True,
         "codacy_blocking": blocking,
         "issues_returned": len(issues),
+        "codacy_rule_conflict": codacy_rule_conflict,
         "codacy_raw": str(outdir / "codacy-raw.json"),
         "codacy_task": str(outdir / "codacy-task.md"),
     }

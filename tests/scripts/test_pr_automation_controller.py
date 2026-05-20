@@ -3,6 +3,7 @@
 
 import argparse
 import json
+from typing import Any
 from unittest import TestCase
 
 import scripts.pr_automation_controller as controller
@@ -313,24 +314,31 @@ def test_classify_codacy_states_contract():
     """Codacy classifications should map check/API/annotation evidence deterministically."""
     if not hasattr(controller, "classify_codacy_evidence"):
         raise NotImplementedError("classify_codacy_evidence not implemented")
-    classify = controller.classify_codacy_evidence
-    cases = [
+    _assert_codacy_classifications(controller.classify_codacy_evidence)
+
+
+def _assert_codacy_classifications(classify: Any) -> None:
+    for payload, expected in _codacy_classification_cases():
+        ASSERTIONS.assertEqual(classify(payload)["classification"], expected)
+
+
+def _codacy_classification_cases() -> list[tuple[dict[str, Any], str]]:
+    return [
         (_codacy_state_payload(api_issues=3), "real_current_issues"),
         (_codacy_state_payload(annotations=2), "api_github_mismatch"),
         (_codacy_state_payload(), "stale_github_check"),
-        (
-            _codacy_state_payload(
-                api_issues=2,
-                issues=[
-                    {"filePath": "a.py", "patternId": "D203", "symbol": "ClassA"},
-                    {"filePath": "a.py", "patternId": "D211", "symbol": "ClassA"},
-                ],
-            ),
-            "rule_conflict",
-        ),
+        (_codacy_rule_conflict_payload(), "rule_conflict"),
     ]
-    for payload, expected in cases:
-        ASSERTIONS.assertEqual(classify(payload)["classification"], expected)
+
+
+def _codacy_rule_conflict_payload() -> dict[str, Any]:
+    return _codacy_state_payload(
+        api_issues=2,
+        issues=[
+            {"filePath": "a.py", "patternId": "D203", "symbol": "ClassA"},
+            {"filePath": "a.py", "patternId": "D211", "symbol": "ClassA"},
+        ],
+    )
 
 
 def test_codacy_annotations_fallback_become_real_blockers():

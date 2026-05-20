@@ -1134,15 +1134,42 @@ def _codacy_classification_details(evidence: dict[str, Any]) -> dict[str, Any]:
     annotations = int(evidence.get("github_annotations") or 0)
     issues = evidence.get("issues")
     issue_list = issues if isinstance(issues, list) else []
-    if _has_d203_d211_conflict(issue_list):
-        return _codacy_classification_result("rule_conflict")
-    if _codacy_has_current_api_issues(state, api_issues):
-        return _codacy_classification_result("real_current_issues")
-    if _codacy_has_annotation_mismatch(state, api_issues, annotations):
-        return _codacy_classification_result("api_github_mismatch", treat_annotations_as_blockers=True)
-    if _codacy_is_stale_check(state, api_issues, annotations):
-        return _codacy_classification_result("stale_github_check", ignored=True)
+    for rule in _codacy_classification_rules(state, api_issues, annotations, issue_list):
+        if rule["predicate"]():
+            return _codacy_classification_result(
+                str(rule["classification"]),
+                treat_annotations_as_blockers=bool(rule.get("treat_annotations_as_blockers", False)),
+                ignored=bool(rule.get("ignored", False)),
+            )
     return _codacy_classification_result("unknown")
+
+
+def _codacy_classification_rules(
+    state: str,
+    api_issues: int,
+    annotations: int,
+    issue_list: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "classification": "rule_conflict",
+            "predicate": lambda: _has_d203_d211_conflict(issue_list),
+        },
+        {
+            "classification": "real_current_issues",
+            "predicate": lambda: _codacy_has_current_api_issues(state, api_issues),
+        },
+        {
+            "classification": "api_github_mismatch",
+            "predicate": lambda: _codacy_has_annotation_mismatch(state, api_issues, annotations),
+            "treat_annotations_as_blockers": True,
+        },
+        {
+            "classification": "stale_github_check",
+            "predicate": lambda: _codacy_is_stale_check(state, api_issues, annotations),
+            "ignored": True,
+        },
+    ]
 
 
 def _codacy_has_current_api_issues(state: str, api_issues: int) -> bool:
@@ -1703,18 +1730,21 @@ def review_comments_summary(nodes: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def summarize_next_action(context: dict[str, Any]) -> str:
-    if _has_pending_checks(context):
-        return "wait_pending"
-    codacy_action = _codacy_next_action(context)
-    if codacy_action:
-        return codacy_action
-    if _has_unresolved_review_threads(context):
-        return "needs_manual"
-    if _has_rerun_state(context):
-        return "rerun_stale_checks"
-    if _is_ready_to_merge_context(context):
-        return "ready_to_merge"
+    for predicate, action in _next_action_rules(context):
+        if predicate():
+            return action
     return "needs_manual"
+
+
+def _next_action_rules(context: dict[str, Any]) -> list[tuple[Any, str]]:
+    codacy_action = _codacy_next_action(context)
+    return [
+        (lambda: _has_pending_checks(context), "wait_pending"),
+        (lambda: bool(codacy_action), codacy_action),
+        (lambda: _has_unresolved_review_threads(context), "needs_manual"),
+        (lambda: _has_rerun_state(context), "rerun_stale_checks"),
+        (lambda: _is_ready_to_merge_context(context), "ready_to_merge"),
+    ]
 
 
 def _has_pending_checks(context: dict[str, Any]) -> bool:
