@@ -300,53 +300,19 @@ def test_automation_change_prs_should_enable_bounded_repair_mode():
 
 
 def test_build_decision_ready_to_merge_condition_true(monkeypatch):
-    """Ready-to-merge condition maps to merge_allowed when blockers/pending are empty and merge state is clean."""
-    monkeypatch.setattr(
-        flow,
-        "pr_view",
-        lambda _repo, _pr: {
-            "state": "OPEN",
-            "isDraft": False,
-            "mergeable": "MERGEABLE",
-            "mergeStateStatus": "CLEAN",
-            "reviewDecision": "APPROVED",
-            "headRefOid": "abc123",
-            "statusCheckRollup": [_check("Unit tests", "SUCCESS")],
-        },
-    )
+    """Ready-to-merge condition maps to merge_allowed for a clean merge context."""
+    monkeypatch.setattr(flow, "pr_view", _ready_to_merge_pr_view)
     decision = flow.build_decision("owner/repo", "225", ignore_self=True)
 
-    ASSERTIONS.assertEqual(decision["blockers"], [])
-    ASSERTIONS.assertEqual(decision["pending"], [])
-    ASSERTIONS.assertEqual(decision["mergeable"], "MERGEABLE")
-    ASSERTIONS.assertEqual(decision["mergeStateStatus"], "CLEAN")
-    ASSERTIONS.assertTrue(decision["can_merge"])
-    ASSERTIONS.assertEqual(decision["next_action"], "merge_allowed")
+    _assert_ready_to_merge_decision(decision)
 
 
 def test_telegram_ready_summary_contract():
     """Telegram-ready summary should include all required report keys."""
     if not hasattr(flow, "build_telegram_summary"):
         raise NotImplementedError("build_telegram_summary not implemented")
-    summary = flow.build_telegram_summary(
-        {
-            "pr": "225",
-            "headRefOid": "abc123",
-            "codacy": {"classification": "real_current_issues", "issues_returned": 2},
-            "github_codacy_check_state": "ACTION_REQUIRED",
-            "review": {"unresolved_active": 1},
-            "next_action": "fix_codacy_current_issues",
-        }
-    )
-    for key in (
-        "pr_number",
-        "head_sha",
-        "codacy_classification",
-        "github_codacy_check_state",
-        "codacy_api_issue_count",
-        "active_unresolved_review_count",
-        "next_action",
-    ):
+    summary = flow.build_telegram_summary(_telegram_summary_context())
+    for key in _required_telegram_summary_keys():
         ASSERTIONS.assertIn(key, summary)
 
 
@@ -390,3 +356,47 @@ def test_d203_d211_rule_conflict_detection_contract():
     )
     ASSERTIONS.assertEqual(result["classification"], "codacy_rule_conflict")
     ASSERTIONS.assertEqual(result["next_action"], "needs_manual_codacy_rule_conflict")
+
+
+def _ready_to_merge_pr_view(_repo: str, _pr: str) -> dict[str, object]:
+    return {
+        "state": "OPEN",
+        "isDraft": False,
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+        "reviewDecision": "APPROVED",
+        "headRefOid": "abc123",
+        "statusCheckRollup": [_check("Unit tests", "SUCCESS")],
+    }
+
+
+def _assert_ready_to_merge_decision(decision: dict[str, object]) -> None:
+    ASSERTIONS.assertEqual(decision["blockers"], [])
+    ASSERTIONS.assertEqual(decision["pending"], [])
+    ASSERTIONS.assertEqual(decision["mergeable"], "MERGEABLE")
+    ASSERTIONS.assertEqual(decision["mergeStateStatus"], "CLEAN")
+    ASSERTIONS.assertTrue(decision["can_merge"])
+    ASSERTIONS.assertEqual(decision["next_action"], "merge_allowed")
+
+
+def _telegram_summary_context() -> dict[str, object]:
+    return {
+        "pr": "225",
+        "headRefOid": "abc123",
+        "codacy": {"classification": "real_current_issues", "issues_returned": 2},
+        "github_codacy_check_state": "ACTION_REQUIRED",
+        "review": {"unresolved_active": 1},
+        "next_action": "fix_codacy_current_issues",
+    }
+
+
+def _required_telegram_summary_keys() -> tuple[str, ...]:
+    return (
+        "pr_number",
+        "head_sha",
+        "codacy_classification",
+        "github_codacy_check_state",
+        "codacy_api_issue_count",
+        "active_unresolved_review_count",
+        "next_action",
+    )

@@ -342,7 +342,7 @@ def test_classify_codacy_states_contract():
 
 
 def test_codacy_annotations_fallback_become_real_blockers():
-    """GitHub Codacy annotations must be treated as blockers when API returns zero issues."""
+    """Github Codacy annotations must be treated as blockers when API returns zero issues."""
     if not hasattr(controller, "classify_codacy_evidence"):
         raise NotImplementedError("classify_codacy_evidence not implemented")
     result = controller.classify_codacy_evidence(
@@ -360,11 +360,11 @@ def test_codacy_annotations_fallback_become_real_blockers():
 def test_review_task_lines_include_only_unresolved_active_threads():
     """Resolved/outdated threads are excluded from active unresolved review task lines."""
     nodes = [
-        {"id": "active", "isResolved": False, "isOutdated": False, "path": "a.py", "line": 10, "comments": {"nodes": []}},
-        {"id": "resolved", "isResolved": True, "isOutdated": False, "path": "b.py", "line": 20, "comments": {"nodes": []}},
-        {"id": "outdated", "isResolved": False, "isOutdated": True, "path": "c.py", "line": 30, "comments": {"nodes": []}},
+        _review_thread_node("active", resolved=False, outdated=False, path="a.py", line=10),
+        _review_thread_node("resolved", resolved=True, outdated=False, path="b.py", line=20),
+        _review_thread_node("outdated", resolved=False, outdated=True, path="c.py", line=30),
     ]
-    lines = "\n".join(controller._review_task_lines(nodes))
+    lines = "\n".join(controller._review_task_lines(nodes))  # pylint: disable=protected-access
 
     ASSERTIONS.assertIn("Thread active", lines)
     ASSERTIONS.assertNotIn("Thread resolved", lines)
@@ -425,6 +425,24 @@ def test_review_task_ignores_outdated_unresolved_threads():
     ])
 
     ASSERTIONS.assertIn("No unresolved review threads found", "\n".join(lines))
+
+
+def _review_thread_node(
+    node_id: str,
+    *,
+    resolved: bool,
+    outdated: bool,
+    path: str,
+    line: int,
+) -> dict[str, object]:
+    return {
+        "id": node_id,
+        "isResolved": resolved,
+        "isOutdated": outdated,
+        "path": path,
+        "line": line,
+        "comments": {"nodes": []},
+    }
 
 
 def test_automation_scope_safe_autofix_is_bounded_to_one_round():

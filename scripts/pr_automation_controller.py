@@ -1083,7 +1083,18 @@ def codacy_head_matches(pr_head: str, evidence: dict[str, Any]) -> dict[str, Any
 
 
 def _has_d203_d211_conflict(issues: list[dict[str, Any]]) -> bool:
-    seen: dict[tuple[str, str], set[str]] = {}
+    grouped_patterns: dict[tuple[str, str], set[str]] = {}
+    for key, rule in _iter_d203_d211_issue_keys(issues):
+        grouped_patterns.setdefault(key, set()).add(rule)
+        if len(grouped_patterns[key]) == 2:
+            return True
+    return False
+
+
+def _iter_d203_d211_issue_keys(
+    issues: list[dict[str, Any]],
+) -> list[tuple[tuple[str, str], str]]:
+    records: list[tuple[tuple[str, str], str]] = []
     for item in issues:
         if not isinstance(item, dict):
             continue
@@ -1092,14 +1103,24 @@ def _has_d203_d211_conflict(issues: list[dict[str, Any]]) -> bool:
             continue
         file_path = str(item.get("filePath") or item.get("filename") or "").strip()
         symbol = str(item.get("symbol") or item.get("entity") or "").strip()
-        key = (file_path, symbol)
-        seen.setdefault(key, set()).add(rule)
-        if {"D203", "D211"}.issubset(seen[key]):
-            return True
-    return False
+        records.append(((file_path, symbol), rule))
+    return records
 
 
 def classify_codacy_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
+    details = _codacy_classification_details(evidence)
+    result: dict[str, Any] = {
+        "classification": details["classification"],
+        "treat_annotations_as_blockers": details["treat_annotations_as_blockers"],
+        "ignored": details["ignored"],
+    }
+    maybe_head_match = _codacy_head_match_value(evidence)
+    if maybe_head_match is not None:
+        result["head_match"] = maybe_head_match
+    return result
+
+
+def _codacy_classification_details(evidence: dict[str, Any]) -> dict[str, Any]:
     state = norm_state(evidence.get("github_codacy_state"))
     api_issues = int(evidence.get("codacy_api_issues") or 0)
     annotations = int(evidence.get("github_annotations") or 0)
@@ -1114,28 +1135,25 @@ def classify_codacy_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
         classification = "rule_conflict"
     elif state == "ACTION_REQUIRED" and api_issues > 0:
         classification = "real_current_issues"
-    elif state == "ACTION_REQUIRED" and api_issues == 0 and annotations > 0:
+    elif state == "ACTION_REQUIRED" and not api_issues and annotations > 0:
         classification = "api_github_mismatch"
         treat_annotations_as_blockers = True
-    elif state == "ACTION_REQUIRED" and api_issues == 0 and annotations == 0:
+    elif state == "ACTION_REQUIRED" and not api_issues and not annotations:
         classification = "stale_github_check"
         ignored = True
-
-    result: dict[str, Any] = {
+    return {
         "classification": classification,
         "treat_annotations_as_blockers": treat_annotations_as_blockers,
         "ignored": ignored,
     }
 
+
+def _codacy_head_match_value(evidence: dict[str, Any]) -> bool | None:
     pr_head = first_nonempty(evidence.get("pr_head"), evidence.get("headRefOid"))
-    codacy_head = first_nonempty(
-        evidence.get("head"),
-        evidence.get("codacy_head"),
-        evidence.get("headRefOid"),
-    )
-    if pr_head and codacy_head:
-        result["head_match"] = codacy_head_matches(str(pr_head), evidence)["match"]
-    return result
+    if not pr_head:
+        return None
+    head_match = codacy_head_matches(str(pr_head), evidence)
+    return bool(head_match["match"]) if head_match["codacy_head"] else None
 
 
 def codacy_api_status(
@@ -1663,37 +1681,52 @@ def review_comments_summary(nodes: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def summarize_next_action(context: dict[str, Any]) -> str:
-    pending_count = safe_nonnegative_int(context.get("pending_count"), 0)
-    if pending_count > 0:
+    if safe_nonnegative_int(context.get("pending_count"), 0) > 0:
         return "wait_pending"
 
-    codacy_classification = str(context.get("codacy_classification") or "").strip()
-    if codacy_classification in {"real_current_issues", "api_github_mismatch"}:
-        return "fix_codacy_current_issues"
-    if codacy_classification == "rule_conflict":
+    codacy_action = _codacy_next_action(context)
+    if codacy_action:
+        return codacy_action
+
+    if safe_nonnegative_int(context.get("unresolved_active"), 0) > 0:
         return "needs_manual"
 
-    unresolved_active = safe_nonnegative_int(context.get("unresolved_active"), 0)
-    if unresolved_active > 0:
-        return "needs_manual"
-
-    rerun_state_present = bool(context.get("has_stale_or_cancelled_rerun_state"))
-    if not rerun_state_present:
-        rerun_items = context.get("stale_or_cancelled")
-        rerun_state_present = bool(rerun_items) if isinstance(rerun_items, list) else False
-    if rerun_state_present:
+    if _has_rerun_state(context):
         return "rerun_stale_checks"
 
-    can_merge = bool(context.get("can_merge"))
-    mergeable = norm_state(context.get("mergeable"))
-    merge_state_status = norm_state(context.get("mergeStateStatus"))
-    has_blockers = safe_nonnegative_int(context.get("blockers_count"), 0) > 0
-    if not has_blockers and isinstance(context.get("blockers"), list):
-        has_blockers = bool(context["blockers"])
-    if can_merge or (mergeable == "MERGEABLE" and merge_state_status == "CLEAN" and not has_blockers):
+    if _is_ready_to_merge_context(context):
         return "ready_to_merge"
 
     return "needs_manual"
+
+
+def _codacy_next_action(context: dict[str, Any]) -> str:
+    codacy_classification = str(context.get("codacy_classification") or "").strip()
+    if codacy_classification in {"real_current_issues", "api_github_mismatch"}:
+        return "fix_codacy_current_issues"
+    return "needs_manual" if codacy_classification == "rule_conflict" else ""
+
+
+def _has_rerun_state(context: dict[str, Any]) -> bool:
+    if bool(context.get("has_stale_or_cancelled_rerun_state")):
+        return True
+    rerun_items = context.get("stale_or_cancelled")
+    return bool(rerun_items) if isinstance(rerun_items, list) else False
+
+
+def _is_ready_to_merge_context(context: dict[str, Any]) -> bool:
+    if bool(context.get("can_merge")):
+        return True
+    mergeable = norm_state(context.get("mergeable"))
+    merge_state_status = norm_state(context.get("mergeStateStatus"))
+    return mergeable == "MERGEABLE" and merge_state_status == "CLEAN" and not _has_blockers(context)
+
+
+def _has_blockers(context: dict[str, Any]) -> bool:
+    if safe_nonnegative_int(context.get("blockers_count"), 0) > 0:
+        return True
+    blockers = context.get("blockers")
+    return bool(blockers) if isinstance(blockers, list) else False
 
 
 def _append_extra_context_to_codacy_task(outdir: Path) -> None:
