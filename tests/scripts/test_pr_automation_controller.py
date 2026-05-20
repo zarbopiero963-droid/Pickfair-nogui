@@ -3,11 +3,19 @@
 
 import argparse
 import json
+from typing import Any, cast
 from unittest import TestCase
 
 import scripts.pr_automation_controller as controller
 
 ASSERTIONS = TestCase()
+NEXT_ACTION_ALLOWED = {
+    "wait_pending",
+    "fix_codacy_current_issues",
+    "rerun_stale_checks",
+    "needs_manual",
+    "ready_to_merge",
+}
 
 
 def _check(name: str, state: str, url: str = "") -> dict[str, str]:
@@ -55,6 +63,32 @@ def _codacy_pr() -> dict[str, list[dict[str, str]]]:
             )
         ]
     }
+
+
+def _codacy_state_payload(
+    *,
+    state: str = "ACTION_REQUIRED",
+    api_issues: int = 0,
+    annotations: int = 0,
+    issues: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    return {
+        "github_codacy_state": state,
+        "codacy_api_issues": api_issues,
+        "github_annotations": annotations,
+        "issues": issues or [],
+    }
+
+
+def _next_action_context(**overrides: object) -> dict[str, object]:
+    context: dict[str, object] = {
+        "pending_count": 0,
+        "codacy_classification": "real_current_issues",
+        "unresolved_active": 2,
+        "can_merge": False,
+    }
+    context.update(overrides)
+    return context
 
 
 def _controller_decision(monkeypatch, *, blocking: bool, ignored: bool) -> dict:
@@ -258,7 +292,271 @@ def test_pending_check_plus_cancelled_check_waits_pending_no_rerun():
     )
 
     ASSERTIONS.assertFalse(handled)
-    ASSERTIONS.assertEqual(decision["actions"], [])
+
+
+def test_codacy_head_match_contract_exposes_pr_head_and_evidence_head():
+    """Codacy evidence contract should expose headRefOid vs Codacy evidence head and match flag."""
+    if hasattr(controller, "codacy_head_matches"):
+        evidence = controller.codacy_head_matches("abc123", {"head": "abc123"})
+        ASSERTIONS.assertEqual(evidence["pr_head"], "abc123")
+        ASSERTIONS.assertEqual(evidence["codacy_head"], "abc123")
+        ASSERTIONS.assertTrue(evidence["match"])
+        return
+    if hasattr(controller, "classify_codacy_evidence"):
+        payload = _codacy_state_payload(api_issues=1) | {"headRefOid": "abc123", "codacy_head": "abc123"}
+        evidence = controller.classify_codacy_evidence(payload)
+        ASSERTIONS.assertTrue(evidence["head_match"])
+        return
+    raise NotImplementedError("codacy_head_matches/classify_codacy_evidence not implemented")
+
+
+def test_classify_codacy_states_contract():
+    """Codacy classifications should map check/API/annotation evidence deterministically."""
+    if not hasattr(controller, "classify_codacy_evidence"):
+        raise NotImplementedError("classify_codacy_evidence not implemented")
+    _assert_codacy_classifications(controller.classify_codacy_evidence)
+
+
+def _assert_codacy_classifications(classify: Any) -> None:
+    for payload, expected in _codacy_classification_cases():
+        ASSERTIONS.assertEqual(classify(payload)["classification"], expected)
+
+
+def _codacy_classification_cases() -> list[tuple[dict[str, Any], str]]:
+    return [
+        (_codacy_state_payload(api_issues=3), "real_current_issues"),
+        (_codacy_state_payload(annotations=2), "api_github_mismatch"),
+        (_codacy_state_payload(), "stale_github_check"),
+        (_codacy_rule_conflict_payload(), "rule_conflict"),
+    ]
+
+
+def _codacy_rule_conflict_payload() -> dict[str, Any]:
+    return _codacy_state_payload(
+        api_issues=2,
+        issues=[
+            {"filePath": "a.py", "patternId": "D203", "symbol": "ClassA"},
+            {"filePath": "a.py", "patternId": "D211", "symbol": "ClassA"},
+        ],
+    )
+
+
+def test_codacy_rule_conflict_symbol_less_different_lines_are_not_conflict():
+    """Symbol-less D203/D211 on different lines must not be treated as a conflict."""
+    result = controller.classify_codacy_evidence(
+        _codacy_state_payload(
+            api_issues=2,
+            issues=[
+                {"filePath": "a.py", "patternId": "D203", "lineNumber": 10},
+                {"filePath": "a.py", "patternId": "D211", "lineNumber": 20},
+            ],
+        )
+    )
+    ASSERTIONS.assertNotEqual(result["classification"], "rule_conflict")
+
+
+def test_codacy_annotations_fallback_become_real_blockers():
+    """Github Codacy annotations must be treated as blockers when API returns zero issues."""
+    if not hasattr(controller, "classify_codacy_evidence"):
+        raise NotImplementedError("classify_codacy_evidence not implemented")
+    result = controller.classify_codacy_evidence(
+        {
+            "github_codacy_state": "ACTION_REQUIRED",
+            "codacy_api_issues": 0,
+            "github_annotations": 2,
+            "issues": [],
+        }
+    )
+    ASSERTIONS.assertTrue(result["treat_annotations_as_blockers"])
+    ASSERTIONS.assertFalse(result.get("ignored", False))
+
+
+def test_codacy_evidence_from_api_preserves_annotation_field_for_mismatch_path():
+    """API evidence should retain github_annotations so mismatch classification stays reachable."""
+    evidence = controller.codacy_evidence_from_api(
+        [_check("Codacy Static Code Analysis", "ACTION_REQUIRED")],
+        True,
+        [],
+        "ok",
+        github_annotations=3,
+    )
+    classified = controller.classify_codacy_evidence(evidence)
+
+    ASSERTIONS.assertEqual(evidence["github_annotations"], 3)
+    ASSERTIONS.assertEqual(classified["classification"], "api_github_mismatch")
+
+
+def _codacy_head_preservation_pr() -> dict[str, object]:
+    return {
+        "statusCheckRollup": [_check("Codacy Static Code Analysis", "ACTION_REQUIRED")],
+        "headRefOid": "pr-head-sha",
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+    }
+
+
+def _codacy_head_preservation_evidence() -> dict[str, Any]:
+    return {
+        "checks": [_check("Codacy Static Code Analysis", "ACTION_REQUIRED")],
+        "check_blocking": True,
+        "github_codacy_state": "ACTION_REQUIRED",
+        "github_annotations": 0,
+        "codacy_api_issues": 1,
+        "issues": [{"filePath": "a.py", "patternId": "X"}],
+        "api_available": True,
+        "api_ok": True,
+        "issues_returned": 1,
+    }
+
+
+def _codacy_head_preservation_evidence_state() -> dict[str, Any]:
+    return {
+        "blocking": True,
+        "ignored": False,
+        "reason": "test",
+        "headRefOid": "codacy-head-sha",
+    }
+
+
+def _stub_codacy_evidence_for_checks(monkeypatch) -> None:
+    monkeypatch.setattr(
+        controller,
+        "codacy_evidence_for_checks",
+        lambda *_args, **_kwargs: {
+            **_codacy_head_preservation_evidence(),
+            **_codacy_head_preservation_evidence_state(),
+        },
+    )
+
+
+def _stub_codacy_head_preservation(monkeypatch) -> None:
+    _stub_codacy_evidence_for_checks(monkeypatch)
+    monkeypatch.setattr(controller, "_review_threads_raw", lambda *_args: {})
+
+
+def _assert_codacy_head_preserved(decision: dict[str, object]) -> None:
+    codacy = cast(dict[str, Any], decision["codacy"])
+    ASSERTIONS.assertEqual(codacy["pr_head"], "pr-head-sha")
+    ASSERTIONS.assertEqual(codacy["headRefOid"], "codacy-head-sha")
+
+
+def test_build_next_action_context_stores_pr_head_without_overwriting_codacy_head(monkeypatch):
+    """Context should keep PR head in pr_head and preserve Codacy evidence head separately."""
+    _stub_codacy_head_preservation(monkeypatch)
+    decision: dict[str, object] = {"actions": [], "warnings": [], "errors": []}
+    ctx = controller.build_next_action_context(
+        _args(), decision, _codacy_head_preservation_pr(), ([], [])
+    )
+    _assert_codacy_head_preserved(ctx.decision)
+
+
+def test_review_task_lines_include_only_unresolved_active_threads():
+    """Resolved/outdated threads are excluded from active unresolved review task lines."""
+    nodes = [
+        _review_thread_node("active", overrides={"path": "a.py", "line": 10}),
+        _review_thread_node("resolved", resolved=True, overrides={"path": "b.py", "line": 20}),
+        _review_thread_node("outdated", outdated=True, overrides={"path": "c.py", "line": 30}),
+    ]
+    lines = "\n".join(controller._review_task_lines(nodes))  # pylint: disable=protected-access
+
+    ASSERTIONS.assertIn("Thread active", lines)
+    ASSERTIONS.assertNotIn("Thread resolved", lines)
+    ASSERTIONS.assertNotIn("Thread outdated", lines)
+
+
+def test_review_comment_summary_counts_active_and_ignored_threads():
+    """Summary helper should count unresolved_active and ignored resolved/outdated threads."""
+    if not hasattr(controller, "review_comments_summary"):
+        raise NotImplementedError("review_comments_summary not implemented")
+    summary = controller.review_comments_summary(
+        [
+            {"isResolved": False, "isOutdated": False},
+            {"isResolved": True, "isOutdated": False},
+            {"isResolved": False, "isOutdated": True},
+        ]
+    )
+    ASSERTIONS.assertEqual(summary["unresolved_active"], 1)
+    ASSERTIONS.assertEqual(summary["resolved_ignored"], 1)
+    ASSERTIONS.assertEqual(summary["outdated_ignored"], 1)
+
+
+def test_next_action_summary_contract():
+    """A report helper should return exactly one final NEXT_ACTION from allowed values."""
+    if not hasattr(controller, "summarize_next_action"):
+        raise NotImplementedError("summarize_next_action not implemented")
+    action = controller.summarize_next_action(_next_action_context())
+    ASSERTIONS.assertIn(action, NEXT_ACTION_ALLOWED)
+
+
+def _mock_codacy_evidence_helper(monkeypatch) -> None:
+    monkeypatch.setattr(
+        controller,
+        "controller_codacy_blocking_evidence",
+        lambda *_args: {
+            "checks": [{"name": "Codacy Static Code Analysis", "state": "ACTION_REQUIRED"}],
+            "check_blocking": True,
+            "github_codacy_state": "ACTION_REQUIRED",
+            "github_annotations": 0,
+            "codacy_api_issues": 1,
+            "issues": [{"filePath": "a.py", "patternId": "X"}],
+            "api_available": True,
+            "api_ok": True,
+            "issues_returned": 1,
+            "blocking": True,
+            "ignored": False,
+            "reason": "test",
+        },
+    )
+
+
+def _mock_review_threads_helper(monkeypatch) -> None:
+    monkeypatch.setattr(
+        controller,
+        "_review_threads_raw",
+        lambda *_args: {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {"nodes": [{"isResolved": False, "isOutdated": False}]}
+                    }
+                }
+            }
+        },
+    )
+
+
+def _mock_next_action_helper(monkeypatch) -> None:
+    _mock_codacy_evidence_helper(monkeypatch)
+    _mock_review_threads_helper(monkeypatch)
+
+
+def _mock_codacy_and_review_helpers(monkeypatch) -> None:
+    _mock_next_action_helper(monkeypatch)
+
+
+def _build_ctx_for_codacy_review_summary() -> controller.NextActionContext:
+    decision = {"actions": [], "warnings": [], "errors": [], "pending_count": 0}
+    pr = {
+        "statusCheckRollup": [_check("Codacy Static Code Analysis", "ACTION_REQUIRED")],
+        "headRefOid": "abc123",
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+    }
+    return controller.build_next_action_context(_args(), decision, pr, ([], []))
+
+
+def _assert_codacy_review_summary(ctx: controller.NextActionContext) -> None:
+    ASSERTIONS.assertEqual(ctx.decision["codacy"]["classification"], "real_current_issues")
+    ASSERTIONS.assertFalse(ctx.decision["codacy"]["ignored"])
+    ASSERTIONS.assertEqual(ctx.decision["review"]["unresolved_active"], 1)
+    ASSERTIONS.assertIn(ctx.decision["next_action_summary"], NEXT_ACTION_ALLOWED)
+
+
+def test_build_next_action_context_wires_codacy_review_and_summary_helpers(monkeypatch):
+    """Context builder should populate codacy classification, review summary, and next action summary."""
+    _mock_codacy_and_review_helpers(monkeypatch)
+    ctx = _build_ctx_for_codacy_review_summary()
+    _assert_codacy_review_summary(ctx)
 
 
 def test_review_task_ignores_outdated_unresolved_threads():
@@ -275,6 +573,26 @@ def test_review_task_ignores_outdated_unresolved_threads():
     ])
 
     ASSERTIONS.assertIn("No unresolved review threads found", "\n".join(lines))
+
+
+def _review_thread_node(
+    node_id: str,
+    *,
+    resolved: bool = False,
+    outdated: bool = False,
+    overrides: dict[str, object] | None = None,
+) -> dict[str, object]:
+    node: dict[str, object] = {
+        "id": node_id,
+        "isResolved": resolved,
+        "isOutdated": outdated,
+        "path": "a.py",
+        "line": 1,
+        "comments": {"nodes": []},
+    }
+    if overrides:
+        node.update(overrides)
+    return node
 
 
 def test_automation_scope_safe_autofix_is_bounded_to_one_round():

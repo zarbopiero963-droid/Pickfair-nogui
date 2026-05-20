@@ -408,6 +408,117 @@ def build_decision(repo: str, pr_number: str, *, ignore_self: bool = True) -> di
     }
 
 
+def build_telegram_summary(context: dict[str, Any]) -> dict[str, Any]:
+    """Build a Telegram-ready summary payload from workflow context."""
+    codacy = context.get("codacy")
+    codacy_dict = codacy if isinstance(codacy, dict) else {}
+    review = context.get("review")
+    review_dict = review if isinstance(review, dict) else {}
+    return {
+        "pr_number": context.get("pr"),
+        "head_sha": context.get("headRefOid"),
+        "codacy_classification": codacy_dict.get("classification"),
+        "github_codacy_check_state": context.get("github_codacy_check_state"),
+        "codacy_api_issue_count": codacy_dict.get("issues_returned"),
+        "active_unresolved_review_count": review_dict.get("unresolved_active"),
+        "next_action": context.get("next_action"),
+    }
+
+
+def should_notify_ready_to_merge(context: dict[str, Any]) -> bool:
+    """Return True when current context indicates PR is ready to merge."""
+    bad = context.get("bad")
+    unresolved_active = context.get("unresolved_active")
+    mergeable = context.get("mergeable")
+    merge_state_status = context.get("mergeStateStatus")
+    return (
+        isinstance(bad, list)
+        and not bad
+        and unresolved_active == 0
+        and mergeable == "MERGEABLE"
+        and merge_state_status == "CLEAN"
+    )
+
+
+def eligible_review_comments_for_auto_resolve(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return only active unresolved review comments eligible for auto-resolve."""
+    return [
+        node
+        for node in nodes
+        if isinstance(node, dict)
+        and node.get("isResolved") is False
+        and node.get("isOutdated") is False
+    ]
+
+
+def classify_codacy_rule_conflict(issues: list[dict[str, Any]]) -> dict[str, Any]:
+    """Detect contradictory Codacy D203/D211 rule findings on the same entity."""
+    grouped_patterns: dict[tuple[str, str, str, str], set[str]] = {}
+    for key, pattern_id in _iter_d203_d211_rule_records(issues):
+        grouped_patterns.setdefault(key, set()).add(pattern_id)
+        if len(grouped_patterns[key]) == 2:
+            return _codacy_rule_conflict_result()
+    return {"classification": "none", "next_action": ""}
+
+
+def _iter_d203_d211_rule_records(
+    issues: list[dict[str, Any]],
+) -> list[tuple[tuple[str, str, str, str], str]]:
+    records: list[tuple[tuple[str, str, str, str], str]] = []
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        pattern_id = _codacy_rule_id(issue)
+        if pattern_id not in {"D203", "D211"}:
+            continue
+        records.append((_codacy_rule_location_key(issue), pattern_id))
+    return records
+
+
+def _codacy_rule_id(issue: dict[str, Any]) -> str:
+    return str(issue.get("patternId") or issue.get("patternID") or "").strip().upper()
+
+
+def _codacy_rule_location_key(issue: dict[str, Any]) -> tuple[str, str, str, str]:
+    return (
+        _normalized_issue_file(issue),
+        _normalized_issue_line(issue),
+        _normalized_issue_column(issue),
+        _normalized_issue_symbol(issue),
+    )
+
+
+def _normalized_issue_file(issue: dict[str, Any]) -> str:
+    return _normalized_issue_field(issue, "filePath", "filename")
+
+
+def _normalized_issue_line(issue: dict[str, Any]) -> str:
+    return _normalized_issue_field(issue, "lineNumber", "line", "startLine")
+
+
+def _normalized_issue_column(issue: dict[str, Any]) -> str:
+    return _normalized_issue_field(issue, "column", "startColumn")
+
+
+def _normalized_issue_symbol(issue: dict[str, Any]) -> str:
+    return _normalized_issue_field(issue, "symbol", "entity")
+
+
+def _normalized_issue_field(issue: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = issue.get(key)
+        if value not in (None, ""):
+            return str(value).strip()
+    return ""
+
+
+def _codacy_rule_conflict_result() -> dict[str, str]:
+    return {
+        "classification": "codacy_rule_conflict",
+        "next_action": "needs_manual_codacy_rule_conflict",
+    }
+
+
 def cmd_readiness(args: argparse.Namespace) -> int:
     deadline = time.time() + args.wait_unknown_seconds
     decision = build_decision(args.repo, args.pr, ignore_self=args.ignore_safe_autofix)
@@ -568,6 +679,85 @@ def cmd_preflight(args: argparse.Namespace) -> int:
 
 def cmd_report(args: argparse.Namespace) -> int:
     decision = build_decision(args.repo, args.pr, ignore_self=True)
+    blockers = decision.get("blockers")
+    blocker_items = blockers if isinstance(blockers, list) else []
+    codacy_checks = [
+        item
+        for item in blocker_items
+        if isinstance(item, dict)
+        and "codacy" in f"{check_name(item)} {check_url(item)}".lower()
+    ]
+    codacy_state = norm_state(
+        codacy_checks[0].get("state")
+        or codacy_checks[0].get("conclusion")
+        or codacy_checks[0].get("status")
+    ) if codacy_checks else ""
+    codacy: dict[str, Any] = {
+        "classification": "none",
+        "issues_returned": 0,
+        "treat_annotations_as_blockers": False,
+        "next_action": "",
+    }
+    try:
+        _, codacy_issues = fetch_codacy_pr_issues(args.repo, args.pr)
+        codacy["issues_returned"] = len(codacy_issues)
+        codacy.update(classify_codacy_rule_conflict(codacy_issues))
+        if codacy["classification"] == "none":
+            if codacy_issues:
+                codacy["classification"] = "real_current_issues"
+            elif codacy_checks:
+                codacy["classification"] = "stale_github_check"
+            else:
+                codacy["classification"] = "none"
+        codacy["treat_annotations_as_blockers"] = bool(codacy_checks and codacy_issues)
+    except (RuntimeError, ValueError, OSError):
+        codacy["classification"] = "unknown"
+
+    review_nodes: list[dict[str, Any]] = []
+    try:
+        owner, name = str(args.repo).split("/", 1)
+        review_threads_query = (
+            "query($owner:String!, $name:String!, $number:Int!) "
+            "{ repository(owner:$owner, name:$name) { pullRequest(number:$number) "
+            "{ reviewThreads(first:100) { nodes { id isResolved isOutdated } } } } }"
+        )
+        review_raw = gh_json([
+            "gh", "api", "graphql",
+            "-f", f"owner={owner}",
+            "-f", f"name={name}",
+            "-F", f"number={args.pr}",
+            "-f", f"query={review_threads_query}",
+        ])
+        nodes = (
+            review_raw.get("data", {})
+            .get("repository", {})
+            .get("pullRequest", {})
+            .get("reviewThreads", {})
+            .get("nodes", [])
+        )
+        review_nodes = [node for node in nodes if isinstance(node, dict)] if isinstance(nodes, list) else []
+    except (RuntimeError, ValueError, OSError, AttributeError):
+        review_nodes = []
+    unresolved_active = len(eligible_review_comments_for_auto_resolve(review_nodes))
+    review = {"unresolved_active": unresolved_active, "total_threads": len(review_nodes)}
+    decision["codacy"] = codacy
+    decision["review"] = review
+
+    decision["ready_to_merge_notification"] = should_notify_ready_to_merge({
+        "bad": decision.get("blockers"),
+        "unresolved_active": unresolved_active,
+        "mergeable": decision.get("mergeable"),
+        "mergeStateStatus": decision.get("mergeStateStatus"),
+    })
+    decision["review_auto_resolve_candidates"] = unresolved_active
+    decision["telegram_summary"] = build_telegram_summary({
+        "pr": decision.get("pr"),
+        "headRefOid": decision.get("headRefOid"),
+        "codacy": codacy,
+        "github_codacy_check_state": codacy_state,
+        "review": review,
+        "next_action": decision.get("next_action"),
+    })
     outdir = Path(args.outdir)
     write_json(outdir / "pr-flow-decision.json", decision)
 
@@ -609,12 +799,14 @@ def cmd_codacy_task(args: argparse.Namespace) -> int:
         return codacy_task_error_result(args, blocking, exc)
 
     write_codacy_task(outdir, raw, issues)
+    codacy_rule_conflict = classify_codacy_rule_conflict(issues)
     result = {
         "repo": args.repo,
         "pr": str(args.pr),
         "ok": True,
         "codacy_blocking": blocking,
         "issues_returned": len(issues),
+        "codacy_rule_conflict": codacy_rule_conflict,
         "codacy_raw": str(outdir / "codacy-raw.json"),
         "codacy_task": str(outdir / "codacy-task.md"),
     }

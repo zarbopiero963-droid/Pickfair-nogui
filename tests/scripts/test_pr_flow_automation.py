@@ -2,6 +2,8 @@
 # pylint: disable=invalid-name,duplicate-code
 
 import argparse
+import json
+from typing import Any, cast
 from unittest import TestCase
 
 import scripts.pr_automation_controller as controller
@@ -297,3 +299,308 @@ def test_automation_change_prs_should_enable_bounded_repair_mode():
 
     ASSERTIONS.assertTrue(signals["has_allowlisted_file"])
     ASSERTIONS.assertFalse(signals["autofix_commit_limit_exceeded"])
+
+
+def test_build_decision_ready_to_merge_condition_true(monkeypatch):
+    """Ready-to-merge condition maps to merge_allowed for a clean merge context."""
+    monkeypatch.setattr(flow, "pr_view", _ready_to_merge_pr_view)
+    decision = flow.build_decision("owner/repo", "225", ignore_self=True)
+
+    _assert_ready_to_merge_decision(decision)
+
+
+def test_telegram_ready_summary_contract():
+    """Telegram-ready summary should include all required report keys."""
+    if not hasattr(flow, "build_telegram_summary"):
+        raise NotImplementedError("build_telegram_summary not implemented")
+    summary = flow.build_telegram_summary(_telegram_summary_context())
+    for key in _required_telegram_summary_keys():
+        ASSERTIONS.assertIn(key, summary)
+
+
+def test_should_notify_ready_to_merge_true_when_all_conditions_match():
+    """Ready-to-merge notification only triggers for a fully clean context."""
+    should_notify = flow.should_notify_ready_to_merge(
+        {
+            "bad": [],
+            "unresolved_active": 0,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+        }
+    )
+
+    ASSERTIONS.assertTrue(should_notify)
+
+
+def test_auto_resolve_review_comments_contract_active_only():
+    """Only active unresolved review comments should be eligible for auto-resolve."""
+    if not hasattr(flow, "eligible_review_comments_for_auto_resolve"):
+        raise NotImplementedError("eligible_review_comments_for_auto_resolve not implemented")
+    eligible = flow.eligible_review_comments_for_auto_resolve(
+        [
+            {"id": "a", "isResolved": False, "isOutdated": False},
+            {"id": "b", "isResolved": True, "isOutdated": False},
+            {"id": "c", "isResolved": False, "isOutdated": True},
+        ]
+    )
+    ASSERTIONS.assertEqual([item["id"] for item in eligible], ["a"])
+
+
+def test_d203_d211_rule_conflict_detection_contract():
+    """D203 and D211 on same file/symbol should classify as codacy rule conflict needing manual action."""
+    if not hasattr(flow, "classify_codacy_rule_conflict"):
+        raise NotImplementedError("classify_codacy_rule_conflict not implemented")
+    result = flow.classify_codacy_rule_conflict(
+        [
+            {"filePath": "scripts/pr_flow_automation.py", "patternId": "D203", "symbol": "ClassX"},
+            {"filePath": "scripts/pr_flow_automation.py", "patternId": "D211", "symbol": "ClassX"},
+        ]
+    )
+    ASSERTIONS.assertEqual(result["classification"], "codacy_rule_conflict")
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_codacy_rule_conflict")
+
+
+def test_d203_d211_same_file_same_line_conflict_even_if_messages_differ():
+    """D203/D211 conflicts should be detected by location even when messages differ."""
+    result = flow.classify_codacy_rule_conflict(
+        [
+            {
+                "filePath": "scripts/pr_flow_automation.py",
+                "patternId": "D203",
+                "lineNumber": 42,
+                "message": "blank line required",
+            },
+            {
+                "filePath": "scripts/pr_flow_automation.py",
+                "patternId": "D211",
+                "lineNumber": 42,
+                "message": "blank line not allowed",
+            },
+        ]
+    )
+    ASSERTIONS.assertEqual(result["classification"], "codacy_rule_conflict")
+
+
+def _stub_pr_view_for_report(monkeypatch) -> None:
+    monkeypatch.setattr(
+        flow,
+        "build_decision",
+        lambda *_args, **_kwargs: {
+            "repo": "owner/repo",
+            "pr": "225",
+            "headRefOid": "abc123",
+            "state": "OPEN",
+            "already_merged": False,
+            "can_merge": False,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "next_action": "blocked",
+            "reasons": [],
+            "blockers": [_codacy_check()],
+            "pending": [],
+            "ignored_self_checks": [],
+        },
+    )
+
+
+def _stub_codacy_for_report(monkeypatch) -> None:
+    monkeypatch.setattr(
+        flow,
+        "fetch_codacy_pr_issues",
+        lambda *_args: (
+            {},
+            [
+                {"filePath": "a.py", "patternId": "D203", "lineNumber": 1},
+                {"filePath": "a.py", "patternId": "D211", "lineNumber": 1},
+            ],
+        ),
+    )
+
+
+def _stub_review_threads_for_report(monkeypatch) -> None:
+    monkeypatch.setattr(
+        flow,
+        "gh_json",
+        lambda *_args, **_kwargs: {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "nodes": [
+                                {"id": "a", "isResolved": False, "isOutdated": False},
+                                {"id": "b", "isResolved": True, "isOutdated": False},
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+    )
+
+
+def _stub_report_output_paths(monkeypatch) -> None:
+    _stub_pr_view_for_report(monkeypatch)
+    _stub_review_threads_for_report(monkeypatch)
+    _stub_codacy_for_report(monkeypatch)
+
+
+def _stub_cmd_report_inputs(monkeypatch) -> None:
+    _stub_report_output_paths(monkeypatch)
+
+
+def _run_cmd_report_no_fail(tmp_path) -> int:
+    return flow.cmd_report(
+        argparse.Namespace(
+            repo="owner/repo",
+            pr="225",
+            outdir=str(tmp_path),
+            comment=False,
+            no_fail=True,
+        )
+    )
+
+
+def _assert_cmd_report_context_output(tmp_path) -> None:
+    decision = json.loads((tmp_path / "pr-flow-decision.json").read_text(encoding="utf-8"))
+    ASSERTIONS.assertEqual(decision["review_auto_resolve_candidates"], 1)
+    ASSERTIONS.assertEqual(decision["telegram_summary"]["pr_number"], "225")
+    ASSERTIONS.assertEqual(decision["telegram_summary"]["head_sha"], "abc123")
+    ASSERTIONS.assertEqual(decision["telegram_summary"]["codacy_classification"], "codacy_rule_conflict")
+    ASSERTIONS.assertEqual(decision["telegram_summary"]["github_codacy_check_state"], "ACTION_REQUIRED")
+    ASSERTIONS.assertEqual(decision["telegram_summary"]["active_unresolved_review_count"], 1)
+    ASSERTIONS.assertFalse(decision["ready_to_merge_notification"])
+
+
+def test_cmd_report_wires_real_context_into_helpers(tmp_path, monkeypatch):
+    """Report should use actual decision/codacy/review context instead of placeholders."""
+    _stub_cmd_report_inputs(monkeypatch)
+    rc = _run_cmd_report_no_fail(tmp_path)
+    ASSERTIONS.assertEqual(rc, 0)
+    _assert_cmd_report_context_output(tmp_path)
+
+
+def _report_without_codacy_check_decision() -> dict[str, Any]:
+    return {
+        "repo": "owner/repo",
+        "pr": "225",
+        "headRefOid": "abc123",
+        "state": "OPEN",
+        "already_merged": False,
+        "can_merge": False,
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+        "next_action": "blocked",
+        "reasons": [],
+        "blockers": [],
+        "pending": [],
+        "ignored_self_checks": [],
+    }
+
+
+def _stub_report_without_codacy_check_build_decision(monkeypatch) -> None:
+    monkeypatch.setattr(
+        flow,
+        "build_decision",
+        lambda *_args, **_kwargs: _report_without_codacy_check_decision(),
+    )
+
+
+def _stub_report_without_codacy_check_api(monkeypatch) -> None:
+    monkeypatch.setattr(flow, "fetch_codacy_pr_issues", lambda *_args: ({}, []))
+    monkeypatch.setattr(
+        flow,
+        "gh_json",
+        lambda *_args, **_kwargs: {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}},
+    )
+
+
+def _stub_report_without_codacy_check(monkeypatch, tmp_path) -> argparse.Namespace:
+    _stub_report_without_codacy_check_build_decision(monkeypatch)
+    _stub_report_without_codacy_check_api(monkeypatch)
+    return argparse.Namespace(repo="owner/repo", pr="225", outdir=str(tmp_path), comment=False, no_fail=True)
+
+
+def _read_report_decision(path) -> dict[str, object]:
+    return json.loads((path / "pr-flow-decision.json").read_text(encoding="utf-8"))
+
+
+def _assert_no_codacy_check_not_stale(decision: dict[str, object]) -> None:
+    codacy = cast(dict[str, Any], decision["codacy"])
+    ASSERTIONS.assertEqual(codacy["classification"], "none")
+    ASSERTIONS.assertFalse(codacy["treat_annotations_as_blockers"])
+
+
+def test_cmd_report_no_codacy_check_and_zero_issues_is_not_stale(tmp_path, monkeypatch):
+    """No Codacy check with empty API issues should remain classification none."""
+    args = _stub_report_without_codacy_check(monkeypatch, tmp_path)
+    rc = flow.cmd_report(args)
+    decision = _read_report_decision(tmp_path)
+
+    ASSERTIONS.assertEqual(rc, 0)
+    _assert_no_codacy_check_not_stale(decision)
+
+
+def test_cmd_report_codacy_check_zero_issues_is_stale(tmp_path, monkeypatch):
+    """Codacy check with empty API issues should classify as stale_github_check."""
+    _stub_pr_view_for_report(monkeypatch)
+    monkeypatch.setattr(flow, "fetch_codacy_pr_issues", lambda *_args: ({}, []))
+    monkeypatch.setattr(
+        flow,
+        "gh_json",
+        lambda *_args, **_kwargs: {
+            "data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}
+        },
+    )
+
+    rc = flow.cmd_report(
+        argparse.Namespace(repo="owner/repo", pr="225", outdir=str(tmp_path), comment=False, no_fail=True)
+    )
+    decision = json.loads((tmp_path / "pr-flow-decision.json").read_text(encoding="utf-8"))
+
+    ASSERTIONS.assertEqual(rc, 0)
+    ASSERTIONS.assertEqual(decision["codacy"]["classification"], "stale_github_check")
+    ASSERTIONS.assertFalse(decision["codacy"]["treat_annotations_as_blockers"])
+
+
+def _ready_to_merge_pr_view(_repo: str, _pr: str) -> dict[str, object]:
+    return {
+        "state": "OPEN",
+        "isDraft": False,
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+        "reviewDecision": "APPROVED",
+        "headRefOid": "abc123",
+        "statusCheckRollup": [_check("Unit tests", "SUCCESS")],
+    }
+
+
+def _assert_ready_to_merge_decision(decision: dict[str, object]) -> None:
+    ASSERTIONS.assertEqual(decision["blockers"], [])
+    ASSERTIONS.assertEqual(decision["pending"], [])
+    ASSERTIONS.assertEqual(decision["mergeable"], "MERGEABLE")
+    ASSERTIONS.assertEqual(decision["mergeStateStatus"], "CLEAN")
+    ASSERTIONS.assertTrue(decision["can_merge"])
+    ASSERTIONS.assertEqual(decision["next_action"], "merge_allowed")
+
+
+def _telegram_summary_context() -> dict[str, object]:
+    return {
+        "pr": "225",
+        "headRefOid": "abc123",
+        "codacy": {"classification": "real_current_issues", "issues_returned": 2},
+        "github_codacy_check_state": "ACTION_REQUIRED",
+        "review": {"unresolved_active": 1},
+        "next_action": "fix_codacy_current_issues",
+    }
+
+
+def _required_telegram_summary_keys() -> tuple[str, ...]:
+    return (
+        "pr_number",
+        "head_sha",
+        "codacy_classification",
+        "github_codacy_check_state",
+        "codacy_api_issue_count",
+        "active_unresolved_review_count",
+        "next_action",
+    )
