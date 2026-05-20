@@ -326,7 +326,6 @@ def test_build_decision_ready_to_merge_condition_true(monkeypatch):
     ASSERTIONS.assertEqual(decision["next_action"], "merge_allowed")
 
 
-@pytest.mark.xfail(reason="helper not implemented yet")
 def test_telegram_ready_summary_contract():
     """Telegram-ready summary should include all required report keys."""
     if not hasattr(flow, "build_telegram_summary"):
@@ -351,6 +350,20 @@ def test_telegram_ready_summary_contract():
         "next_action",
     ):
         ASSERTIONS.assertIn(key, summary)
+
+
+def test_should_notify_ready_to_merge_true_when_all_conditions_match():
+    """Ready-to-merge notification only triggers for a fully clean context."""
+    should_notify = flow.should_notify_ready_to_merge(
+        {
+            "bad": [],
+            "unresolved_active": 0,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+        }
+    )
+
+    ASSERTIONS.assertTrue(should_notify)
 
 
 @pytest.mark.xfail(reason="helper not implemented yet")

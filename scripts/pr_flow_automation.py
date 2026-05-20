@@ -408,6 +408,38 @@ def build_decision(repo: str, pr_number: str, *, ignore_self: bool = True) -> di
     }
 
 
+def build_telegram_summary(context: dict[str, Any]) -> dict[str, Any]:
+    """Build a Telegram-ready summary payload from workflow context."""
+    codacy = context.get("codacy")
+    codacy_dict = codacy if isinstance(codacy, dict) else {}
+    review = context.get("review")
+    review_dict = review if isinstance(review, dict) else {}
+    return {
+        "pr_number": context.get("pr"),
+        "head_sha": context.get("headRefOid"),
+        "codacy_classification": codacy_dict.get("classification"),
+        "github_codacy_check_state": context.get("github_codacy_check_state"),
+        "codacy_api_issue_count": codacy_dict.get("issues_returned"),
+        "active_unresolved_review_count": review_dict.get("unresolved_active"),
+        "next_action": context.get("next_action"),
+    }
+
+
+def should_notify_ready_to_merge(context: dict[str, Any]) -> bool:
+    """Return True when current context indicates PR is ready to merge."""
+    bad = context.get("bad")
+    unresolved_active = context.get("unresolved_active")
+    mergeable = context.get("mergeable")
+    merge_state_status = context.get("mergeStateStatus")
+    return (
+        isinstance(bad, list)
+        and not bad
+        and unresolved_active == 0
+        and mergeable == "MERGEABLE"
+        and merge_state_status == "CLEAN"
+    )
+
+
 def cmd_readiness(args: argparse.Namespace) -> int:
     deadline = time.time() + args.wait_unknown_seconds
     decision = build_decision(args.repo, args.pr, ignore_self=args.ignore_safe_autofix)
