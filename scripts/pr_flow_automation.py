@@ -679,19 +679,73 @@ def cmd_preflight(args: argparse.Namespace) -> int:
 
 def cmd_report(args: argparse.Namespace) -> int:
     decision = build_decision(args.repo, args.pr, ignore_self=True)
+    blockers = decision.get("blockers")
+    blocker_items = blockers if isinstance(blockers, list) else []
+    codacy_checks = [
+        item
+        for item in blocker_items
+        if isinstance(item, dict)
+        and "codacy" in f"{check_name(item)} {check_url(item)}".lower()
+    ]
+    codacy_state = norm_state(
+        codacy_checks[0].get("state")
+        or codacy_checks[0].get("conclusion")
+        or codacy_checks[0].get("status")
+    ) if codacy_checks else ""
+    codacy: dict[str, Any] = {
+        "classification": "none",
+        "issues_returned": 0,
+        "treat_annotations_as_blockers": False,
+        "next_action": "",
+    }
+    try:
+        _, codacy_issues = fetch_codacy_pr_issues(args.repo, args.pr)
+        codacy["issues_returned"] = len(codacy_issues)
+        codacy.update(classify_codacy_rule_conflict(codacy_issues))
+        if codacy["classification"] == "none":
+            codacy["classification"] = "real_current_issues" if codacy_issues else "stale_github_check"
+        codacy["treat_annotations_as_blockers"] = bool(codacy_checks and not codacy_issues)
+    except (RuntimeError, ValueError, OSError):
+        codacy["classification"] = "unknown"
+
+    review_nodes: list[dict[str, Any]] = []
+    try:
+        owner, name = str(args.repo).split("/", 1)
+        review_raw = gh_json([
+            "gh", "api", "graphql",
+            "-f", f"owner={owner}",
+            "-f", f"name={name}",
+            "-F", f"number={args.pr}",
+            "-f", "query=query($owner:String!, $name:String!, $number:Int!) { repository(owner:$owner, name:$name) { pullRequest(number:$number) { reviewThreads(first:100) { nodes { id isResolved isOutdated } } } } }",
+        ])
+        nodes = (
+            review_raw.get("data", {})
+            .get("repository", {})
+            .get("pullRequest", {})
+            .get("reviewThreads", {})
+            .get("nodes", [])
+        )
+        review_nodes = [node for node in nodes if isinstance(node, dict)] if isinstance(nodes, list) else []
+    except (RuntimeError, ValueError, OSError, AttributeError):
+        review_nodes = []
+    unresolved_active = len(eligible_review_comments_for_auto_resolve(review_nodes))
+    review = {"unresolved_active": unresolved_active, "total_threads": len(review_nodes)}
+    decision["codacy"] = codacy
+    decision["review"] = review
+
     decision["ready_to_merge_notification"] = should_notify_ready_to_merge({
         "bad": decision.get("blockers"),
-        "unresolved_active": 0,
+        "unresolved_active": unresolved_active,
         "mergeable": decision.get("mergeable"),
         "mergeStateStatus": decision.get("mergeStateStatus"),
     })
-    decision["review_auto_resolve_candidates"] = len(eligible_review_comments_for_auto_resolve([]))
+    decision["review_auto_resolve_candidates"] = unresolved_active
     decision["telegram_summary"] = build_telegram_summary({
         "pr": decision.get("pr"),
         "headRefOid": decision.get("headRefOid"),
-        "codacy": {},
-        "github_codacy_check_state": "",
-        "review": {"unresolved_active": 0},
+        "codacy": codacy,
+        "github_codacy_check_state": codacy_state,
+        "review": review,
         "next_action": decision.get("next_action"),
     })
     outdir = Path(args.outdir)

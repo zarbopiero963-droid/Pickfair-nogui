@@ -1060,6 +1060,10 @@ def codacy_evidence_without_checks() -> dict[str, Any]:
     return {
         "checks": [],
         "check_blocking": False,
+        "github_codacy_state": "",
+        "github_annotations": 0,
+        "codacy_api_issues": 0,
+        "issues": [],
         "api_available": False,
         "api_ok": False,
         "issues_returned": 0,
@@ -1258,9 +1262,16 @@ def codacy_evidence_from_api(
     issues: list[dict[str, Any]],
     reason: str,
 ) -> dict[str, Any]:
+    check_state = ""
+    if codacy_checks:
+        check_state = norm_state(codacy_checks[0].get("state"))
     return {
         "checks": codacy_checks,
         "check_blocking": bool(codacy_checks),
+        "github_codacy_state": check_state,
+        "github_annotations": 0,
+        "codacy_api_issues": len(issues),
+        "issues": issues,
         "api_available": api_ok,
         "api_ok": api_ok,
         "issues_returned": len(issues),
@@ -1521,10 +1532,38 @@ def build_next_action_context(
 ) -> NextActionContext:
     checks = pr.get("statusCheckRollup") or []
     codacy = codacy_evidence_for_checks(args.repo, args.pr, checks)
+    codacy_checks = codacy.get("checks") if isinstance(codacy.get("checks"), list) else []
+    codacy_state = norm_state(codacy.get("github_codacy_state"))
+    if not codacy_state and codacy_checks:
+        codacy_state = norm_state(codacy_checks[0].get("state"))
+    codacy["github_codacy_state"] = codacy_state
+    if "codacy_api_issues" not in codacy:
+        codacy["codacy_api_issues"] = safe_nonnegative_int(
+            codacy.get("issues_returned"),
+            len(codacy.get("issues") or []),
+        )
+    codacy.setdefault("github_annotations", 0)
+    codacy["headRefOid"] = first_nonempty(pr.get("headRefOid"), codacy.get("headRefOid"))
+    codacy.update(classify_codacy_evidence(codacy))
     effective_checks = filter_ignored_codacy_checks(checks, codacy)
     blockers = set_check_buckets(decision, effective_checks)
+    review_summary = review_comments_summary(_review_thread_nodes(_review_threads_raw(args.repo, args.pr)))
+    decision["review"] = review_summary
     decision["codacy"] = codacy
     decision["ignored_codacy_checks"] = ignored_codacy_checks(checks, codacy)
+    decision["next_action_summary"] = summarize_next_action(
+        {
+            "pending_count": decision.get("pending_count", 0),
+            "codacy_classification": codacy.get("classification"),
+            "unresolved_active": review_summary.get("unresolved_active", 0),
+            "has_stale_or_cancelled_rerun_state": False,
+            "mergeable": pr.get("mergeable"),
+            "mergeStateStatus": pr.get("mergeStateStatus"),
+            "can_merge": False,
+            "blockers_count": len(blockers),
+            "blockers": blockers,
+        }
+    )
     files, commits = changed
     return NextActionContext(args, pr, effective_checks, files, commits, blockers, decision)
 

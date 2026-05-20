@@ -409,6 +409,57 @@ def test_next_action_summary_contract():
     ASSERTIONS.assertIn(action, NEXT_ACTION_ALLOWED)
 
 
+def test_build_next_action_context_wires_codacy_review_and_summary_helpers(monkeypatch):
+    """Context builder should populate codacy classification, review summary, and next action summary."""
+    monkeypatch.setattr(
+        controller,
+        "controller_codacy_blocking_evidence",
+        lambda *_args: {
+            "checks": [{"name": "Codacy Static Code Analysis", "state": "ACTION_REQUIRED"}],
+            "check_blocking": True,
+            "github_codacy_state": "ACTION_REQUIRED",
+            "github_annotations": 0,
+            "codacy_api_issues": 1,
+            "issues": [{"filePath": "a.py", "patternId": "X"}],
+            "api_available": True,
+            "api_ok": True,
+            "issues_returned": 1,
+            "blocking": True,
+            "ignored": False,
+            "reason": "test",
+        },
+    )
+    monkeypatch.setattr(
+        controller,
+        "_review_threads_raw",
+        lambda *_args: {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "nodes": [{"isResolved": False, "isOutdated": False}]
+                        }
+                    }
+                }
+            }
+        },
+    )
+
+    decision = {"actions": [], "warnings": [], "errors": [], "pending_count": 0}
+    pr = {
+        "statusCheckRollup": [_check("Codacy Static Code Analysis", "ACTION_REQUIRED")],
+        "headRefOid": "abc123",
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+    }
+    ctx = controller.build_next_action_context(_args(), decision, pr, ([], []))
+
+    ASSERTIONS.assertEqual(ctx.decision["codacy"]["classification"], "real_current_issues")
+    ASSERTIONS.assertFalse(ctx.decision["codacy"]["ignored"])
+    ASSERTIONS.assertEqual(ctx.decision["review"]["unresolved_active"], 1)
+    ASSERTIONS.assertIn(ctx.decision["next_action_summary"], NEXT_ACTION_ALLOWED)
+
+
 def test_review_task_ignores_outdated_unresolved_threads():
     """Outdated unresolved-only review threads should not be treated as active blockers."""
     lines = controller._review_task_lines([  # pylint: disable=protected-access

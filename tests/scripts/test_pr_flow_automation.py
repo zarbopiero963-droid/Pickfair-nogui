@@ -2,6 +2,7 @@
 # pylint: disable=invalid-name,duplicate-code
 
 import argparse
+import json
 from unittest import TestCase
 
 import scripts.pr_automation_controller as controller
@@ -377,6 +378,78 @@ def test_d203_d211_same_file_same_line_conflict_even_if_messages_differ():
         ]
     )
     ASSERTIONS.assertEqual(result["classification"], "codacy_rule_conflict")
+
+
+def test_cmd_report_wires_real_context_into_helpers(tmp_path, monkeypatch):
+    """Report should use actual decision/codacy/review context instead of placeholders."""
+    monkeypatch.setattr(
+        flow,
+        "build_decision",
+        lambda *_args, **_kwargs: {
+            "repo": "owner/repo",
+            "pr": "225",
+            "headRefOid": "abc123",
+            "state": "OPEN",
+            "already_merged": False,
+            "can_merge": False,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "next_action": "blocked",
+            "reasons": [],
+            "blockers": [_codacy_check()],
+            "pending": [],
+            "ignored_self_checks": [],
+        },
+    )
+    monkeypatch.setattr(
+        flow,
+        "fetch_codacy_pr_issues",
+        lambda *_args: (
+            {},
+            [
+                {"filePath": "a.py", "patternId": "D203", "lineNumber": 1},
+                {"filePath": "a.py", "patternId": "D211", "lineNumber": 1},
+            ],
+        ),
+    )
+    monkeypatch.setattr(
+        flow,
+        "gh_json",
+        lambda *_args, **_kwargs: {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "nodes": [
+                                {"id": "a", "isResolved": False, "isOutdated": False},
+                                {"id": "b", "isResolved": True, "isOutdated": False},
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+    )
+
+    rc = flow.cmd_report(
+        argparse.Namespace(
+            repo="owner/repo",
+            pr="225",
+            outdir=str(tmp_path),
+            comment=False,
+            no_fail=True,
+        )
+    )
+
+    ASSERTIONS.assertEqual(rc, 0)
+    decision = json.loads((tmp_path / "pr-flow-decision.json").read_text(encoding="utf-8"))
+    ASSERTIONS.assertEqual(decision["review_auto_resolve_candidates"], 1)
+    ASSERTIONS.assertEqual(decision["telegram_summary"]["pr_number"], "225")
+    ASSERTIONS.assertEqual(decision["telegram_summary"]["head_sha"], "abc123")
+    ASSERTIONS.assertEqual(decision["telegram_summary"]["codacy_classification"], "codacy_rule_conflict")
+    ASSERTIONS.assertEqual(decision["telegram_summary"]["github_codacy_check_state"], "ACTION_REQUIRED")
+    ASSERTIONS.assertEqual(decision["telegram_summary"]["active_unresolved_review_count"], 1)
+    ASSERTIONS.assertFalse(decision["ready_to_merge_notification"])
 
 
 def _ready_to_merge_pr_view(_repo: str, _pr: str) -> dict[str, object]:
