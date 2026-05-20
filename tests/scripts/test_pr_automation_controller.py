@@ -386,8 +386,16 @@ def test_codacy_evidence_from_api_preserves_annotation_field_for_mismatch_path()
     ASSERTIONS.assertEqual(classified["classification"], "api_github_mismatch")
 
 
-def test_build_next_action_context_stores_pr_head_without_overwriting_codacy_head(monkeypatch):
-    """Context should keep PR head in pr_head and preserve Codacy evidence head separately."""
+def _codacy_head_preservation_pr() -> dict[str, object]:
+    return {
+        "statusCheckRollup": [_check("Codacy Static Code Analysis", "ACTION_REQUIRED")],
+        "headRefOid": "pr-head-sha",
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+    }
+
+
+def _stub_codacy_head_preservation(monkeypatch) -> None:
     monkeypatch.setattr(
         controller,
         "codacy_evidence_for_checks",
@@ -408,19 +416,22 @@ def test_build_next_action_context_stores_pr_head_without_overwriting_codacy_hea
         },
     )
     monkeypatch.setattr(controller, "_review_threads_raw", lambda *_args: {})
-    pr = {
-        "statusCheckRollup": [_check("Codacy Static Code Analysis", "ACTION_REQUIRED")],
-        "headRefOid": "pr-head-sha",
-        "mergeable": "MERGEABLE",
-        "mergeStateStatus": "CLEAN",
-    }
-    decision: dict[str, object] = {"actions": [], "warnings": [], "errors": []}
 
-    ctx = controller.build_next_action_context(_args(), decision, pr, ([], []))
-    codacy = ctx.decision["codacy"]
 
+def _assert_codacy_head_preserved(decision: dict[str, object]) -> None:
+    codacy = decision["codacy"]
     ASSERTIONS.assertEqual(codacy["pr_head"], "pr-head-sha")
     ASSERTIONS.assertEqual(codacy["headRefOid"], "codacy-head-sha")
+
+
+def test_build_next_action_context_stores_pr_head_without_overwriting_codacy_head(monkeypatch):
+    """Context should keep PR head in pr_head and preserve Codacy evidence head separately."""
+    _stub_codacy_head_preservation(monkeypatch)
+    decision: dict[str, object] = {"actions": [], "warnings": [], "errors": []}
+    ctx = controller.build_next_action_context(
+        _args(), decision, _codacy_head_preservation_pr(), ([], [])
+    )
+    _assert_codacy_head_preserved(ctx.decision)
 
 
 def test_review_task_lines_include_only_unresolved_active_threads():

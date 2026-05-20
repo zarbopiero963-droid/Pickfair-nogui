@@ -478,8 +478,7 @@ def test_cmd_report_wires_real_context_into_helpers(tmp_path, monkeypatch):
     _assert_cmd_report_context_output(tmp_path)
 
 
-def test_cmd_report_no_codacy_check_and_zero_issues_is_not_stale(tmp_path, monkeypatch):
-    """No Codacy check with empty API issues should remain classification none."""
+def _stub_report_without_codacy_check(monkeypatch, tmp_path) -> argparse.Namespace:
     monkeypatch.setattr(
         flow,
         "build_decision",
@@ -503,19 +502,28 @@ def test_cmd_report_no_codacy_check_and_zero_issues_is_not_stale(tmp_path, monke
     monkeypatch.setattr(
         flow,
         "gh_json",
-        lambda *_args, **_kwargs: {
-            "data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}
-        },
+        lambda *_args, **_kwargs: {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}},
     )
+    return argparse.Namespace(repo="owner/repo", pr="225", outdir=str(tmp_path), comment=False, no_fail=True)
 
-    rc = flow.cmd_report(
-        argparse.Namespace(repo="owner/repo", pr="225", outdir=str(tmp_path), comment=False, no_fail=True)
-    )
-    decision = json.loads((tmp_path / "pr-flow-decision.json").read_text(encoding="utf-8"))
 
-    ASSERTIONS.assertEqual(rc, 0)
+def _read_report_decision(path) -> dict[str, object]:
+    return json.loads((path / "pr-flow-decision.json").read_text(encoding="utf-8"))
+
+
+def _assert_no_codacy_check_not_stale(decision: dict[str, object]) -> None:
     ASSERTIONS.assertEqual(decision["codacy"]["classification"], "none")
     ASSERTIONS.assertFalse(decision["codacy"]["treat_annotations_as_blockers"])
+
+
+def test_cmd_report_no_codacy_check_and_zero_issues_is_not_stale(tmp_path, monkeypatch):
+    """No Codacy check with empty API issues should remain classification none."""
+    args = _stub_report_without_codacy_check(monkeypatch, tmp_path)
+    rc = flow.cmd_report(args)
+    decision = _read_report_decision(tmp_path)
+
+    ASSERTIONS.assertEqual(rc, 0)
+    _assert_no_codacy_check_not_stale(decision)
 
 
 def test_cmd_report_codacy_check_zero_issues_is_stale(tmp_path, monkeypatch):
