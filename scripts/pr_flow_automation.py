@@ -711,12 +711,17 @@ def cmd_report(args: argparse.Namespace) -> int:
     review_nodes: list[dict[str, Any]] = []
     try:
         owner, name = str(args.repo).split("/", 1)
+        review_threads_query = (
+            "query($owner:String!, $name:String!, $number:Int!) "
+            "{ repository(owner:$owner, name:$name) { pullRequest(number:$number) "
+            "{ reviewThreads(first:100) { nodes { id isResolved isOutdated } } } } }"
+        )
         review_raw = gh_json([
             "gh", "api", "graphql",
             "-f", f"owner={owner}",
             "-f", f"name={name}",
             "-F", f"number={args.pr}",
-            "-f", "query=query($owner:String!, $name:String!, $number:Int!) { repository(owner:$owner, name:$name) { pullRequest(number:$number) { reviewThreads(first:100) { nodes { id isResolved isOutdated } } } } }",
+            "-f", f"query={review_threads_query}",
         ])
         nodes = (
             review_raw.get("data", {})

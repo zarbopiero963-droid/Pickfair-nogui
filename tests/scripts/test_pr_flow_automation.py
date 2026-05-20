@@ -380,8 +380,7 @@ def test_d203_d211_same_file_same_line_conflict_even_if_messages_differ():
     ASSERTIONS.assertEqual(result["classification"], "codacy_rule_conflict")
 
 
-def test_cmd_report_wires_real_context_into_helpers(tmp_path, monkeypatch):
-    """Report should use actual decision/codacy/review context instead of placeholders."""
+def _stub_cmd_report_inputs(monkeypatch) -> None:
     monkeypatch.setattr(
         flow,
         "build_decision",
@@ -431,7 +430,9 @@ def test_cmd_report_wires_real_context_into_helpers(tmp_path, monkeypatch):
         },
     )
 
-    rc = flow.cmd_report(
+
+def _run_cmd_report_no_fail(tmp_path) -> int:
+    return flow.cmd_report(
         argparse.Namespace(
             repo="owner/repo",
             pr="225",
@@ -441,7 +442,8 @@ def test_cmd_report_wires_real_context_into_helpers(tmp_path, monkeypatch):
         )
     )
 
-    ASSERTIONS.assertEqual(rc, 0)
+
+def _assert_cmd_report_context_output(tmp_path) -> None:
     decision = json.loads((tmp_path / "pr-flow-decision.json").read_text(encoding="utf-8"))
     ASSERTIONS.assertEqual(decision["review_auto_resolve_candidates"], 1)
     ASSERTIONS.assertEqual(decision["telegram_summary"]["pr_number"], "225")
@@ -450,6 +452,14 @@ def test_cmd_report_wires_real_context_into_helpers(tmp_path, monkeypatch):
     ASSERTIONS.assertEqual(decision["telegram_summary"]["github_codacy_check_state"], "ACTION_REQUIRED")
     ASSERTIONS.assertEqual(decision["telegram_summary"]["active_unresolved_review_count"], 1)
     ASSERTIONS.assertFalse(decision["ready_to_merge_notification"])
+
+
+def test_cmd_report_wires_real_context_into_helpers(tmp_path, monkeypatch):
+    """Report should use actual decision/codacy/review context instead of placeholders."""
+    _stub_cmd_report_inputs(monkeypatch)
+    rc = _run_cmd_report_no_fail(tmp_path)
+    ASSERTIONS.assertEqual(rc, 0)
+    _assert_cmd_report_context_output(tmp_path)
 
 
 def _ready_to_merge_pr_view(_repo: str, _pr: str) -> dict[str, object]:

@@ -1262,13 +1262,13 @@ def codacy_evidence_from_api(
     issues: list[dict[str, Any]],
     reason: str,
 ) -> dict[str, Any]:
-    check_state = ""
+    codacy_check_state = ""
     if codacy_checks:
-        check_state = norm_state(codacy_checks[0].get("state"))
+        codacy_check_state = norm_state(codacy_checks[0].get("state"))
     return {
         "checks": codacy_checks,
         "check_blocking": bool(codacy_checks),
-        "github_codacy_state": check_state,
+        "github_codacy_state": codacy_check_state,
         "github_annotations": 0,
         "codacy_api_issues": len(issues),
         "issues": issues,

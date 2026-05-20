@@ -409,8 +409,7 @@ def test_next_action_summary_contract():
     ASSERTIONS.assertIn(action, NEXT_ACTION_ALLOWED)
 
 
-def test_build_next_action_context_wires_codacy_review_and_summary_helpers(monkeypatch):
-    """Context builder should populate codacy classification, review summary, and next action summary."""
+def _mock_codacy_and_review_helpers(monkeypatch) -> None:
     monkeypatch.setattr(
         controller,
         "controller_codacy_blocking_evidence",
@@ -436,15 +435,15 @@ def test_build_next_action_context_wires_codacy_review_and_summary_helpers(monke
             "data": {
                 "repository": {
                     "pullRequest": {
-                        "reviewThreads": {
-                            "nodes": [{"isResolved": False, "isOutdated": False}]
-                        }
+                        "reviewThreads": {"nodes": [{"isResolved": False, "isOutdated": False}]}
                     }
                 }
             }
         },
     )
 
+
+def _build_ctx_for_codacy_review_summary() -> controller.NextActionContext:
     decision = {"actions": [], "warnings": [], "errors": [], "pending_count": 0}
     pr = {
         "statusCheckRollup": [_check("Codacy Static Code Analysis", "ACTION_REQUIRED")],
@@ -452,12 +451,21 @@ def test_build_next_action_context_wires_codacy_review_and_summary_helpers(monke
         "mergeable": "MERGEABLE",
         "mergeStateStatus": "CLEAN",
     }
-    ctx = controller.build_next_action_context(_args(), decision, pr, ([], []))
+    return controller.build_next_action_context(_args(), decision, pr, ([], []))
 
+
+def _assert_codacy_review_summary(ctx: controller.NextActionContext) -> None:
     ASSERTIONS.assertEqual(ctx.decision["codacy"]["classification"], "real_current_issues")
     ASSERTIONS.assertFalse(ctx.decision["codacy"]["ignored"])
     ASSERTIONS.assertEqual(ctx.decision["review"]["unresolved_active"], 1)
     ASSERTIONS.assertIn(ctx.decision["next_action_summary"], NEXT_ACTION_ALLOWED)
+
+
+def test_build_next_action_context_wires_codacy_review_and_summary_helpers(monkeypatch):
+    """Context builder should populate codacy classification, review summary, and next action summary."""
+    _mock_codacy_and_review_helpers(monkeypatch)
+    ctx = _build_ctx_for_codacy_review_summary()
+    _assert_codacy_review_summary(ctx)
 
 
 def test_review_task_ignores_outdated_unresolved_threads():
