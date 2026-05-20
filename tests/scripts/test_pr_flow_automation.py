@@ -358,6 +358,27 @@ def test_d203_d211_rule_conflict_detection_contract():
     ASSERTIONS.assertEqual(result["next_action"], "needs_manual_codacy_rule_conflict")
 
 
+def test_d203_d211_same_file_same_line_conflict_even_if_messages_differ():
+    """D203/D211 conflicts should be detected by location even when messages differ."""
+    result = flow.classify_codacy_rule_conflict(
+        [
+            {
+                "filePath": "scripts/pr_flow_automation.py",
+                "patternId": "D203",
+                "lineNumber": 42,
+                "message": "blank line required",
+            },
+            {
+                "filePath": "scripts/pr_flow_automation.py",
+                "patternId": "D211",
+                "lineNumber": 42,
+                "message": "blank line not allowed",
+            },
+        ]
+    )
+    ASSERTIONS.assertEqual(result["classification"], "codacy_rule_conflict")
+
+
 def _ready_to_merge_pr_view(_repo: str, _pr: str) -> dict[str, object]:
     return {
         "state": "OPEN",

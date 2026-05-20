@@ -341,6 +341,20 @@ def _codacy_rule_conflict_payload() -> dict[str, Any]:
     )
 
 
+def test_codacy_rule_conflict_symbol_less_different_lines_are_not_conflict():
+    """Symbol-less D203/D211 on different lines must not be treated as a conflict."""
+    result = controller.classify_codacy_evidence(
+        _codacy_state_payload(
+            api_issues=2,
+            issues=[
+                {"filePath": "a.py", "patternId": "D203", "lineNumber": 10},
+                {"filePath": "a.py", "patternId": "D211", "lineNumber": 20},
+            ],
+        )
+    )
+    ASSERTIONS.assertNotEqual(result["classification"], "rule_conflict")
+
+
 def test_codacy_annotations_fallback_become_real_blockers():
     """Github Codacy annotations must be treated as blockers when API returns zero issues."""
     if not hasattr(controller, "classify_codacy_evidence"):

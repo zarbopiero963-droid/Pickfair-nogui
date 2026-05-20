@@ -480,14 +480,12 @@ def _codacy_rule_id(issue: dict[str, Any]) -> str:
 
 
 def _codacy_rule_location_key(issue: dict[str, Any]) -> tuple[str, str, str, str]:
-    file_name = _normalized_issue_file(issue)
-    line = _normalized_issue_line(issue)
-    symbol = _normalized_issue_symbol(issue)
-    return file_name, line, symbol, _issue_message_key(issue)
-
-
-def _issue_message_key(issue: dict[str, Any]) -> str:
-    return str(issue.get("message") or "").strip()
+    return (
+        _normalized_issue_file(issue),
+        _normalized_issue_line(issue),
+        _normalized_issue_column(issue),
+        _normalized_issue_symbol(issue),
+    )
 
 
 def _normalized_issue_file(issue: dict[str, Any]) -> str:
@@ -495,15 +493,23 @@ def _normalized_issue_file(issue: dict[str, Any]) -> str:
 
 
 def _normalized_issue_line(issue: dict[str, Any]) -> str:
-    return _normalized_issue_field(issue, "lineNumber", "line")
+    return _normalized_issue_field(issue, "lineNumber", "line", "startLine")
+
+
+def _normalized_issue_column(issue: dict[str, Any]) -> str:
+    return _normalized_issue_field(issue, "column", "startColumn")
 
 
 def _normalized_issue_symbol(issue: dict[str, Any]) -> str:
     return _normalized_issue_field(issue, "symbol", "entity")
 
 
-def _normalized_issue_field(issue: dict[str, Any], primary: str, fallback: str) -> str:
-    return str(issue.get(primary) or issue.get(fallback) or "").strip()
+def _normalized_issue_field(issue: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = issue.get(key)
+        if value not in (None, ""):
+            return str(value).strip()
+    return ""
 
 
 def _codacy_rule_conflict_result() -> dict[str, str]:

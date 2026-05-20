@@ -1093,8 +1093,8 @@ def _has_d203_d211_conflict(issues: list[dict[str, Any]]) -> bool:
 
 def _iter_d203_d211_issue_keys(
     issues: list[dict[str, Any]],
-) -> list[tuple[tuple[str, str], str]]:
-    records: list[tuple[tuple[str, str], str]] = []
+) -> list[tuple[tuple[str, str, str, str], str]]:
+    records: list[tuple[tuple[str, str, str, str], str]] = []
     for item in issues:
         if not isinstance(item, dict):
             continue
@@ -1109,10 +1109,21 @@ def _codacy_issue_rule(issue: dict[str, Any]) -> str:
     return str(issue.get("patternId") or "").strip().upper()
 
 
-def _codacy_issue_location_key(issue: dict[str, Any]) -> tuple[str, str]:
-    file_path = str(issue.get("filePath") or issue.get("filename") or "").strip()
-    symbol = str(issue.get("symbol") or issue.get("entity") or "").strip()
-    return file_path, symbol
+def _codacy_issue_location_key(issue: dict[str, Any]) -> tuple[str, str, str, str]:
+    return (
+        _codacy_issue_field(issue, "filePath", "filename"),
+        _codacy_issue_field(issue, "lineNumber", "line", "startLine"),
+        _codacy_issue_field(issue, "column", "startColumn"),
+        _codacy_issue_field(issue, "symbol", "entity"),
+    )
+
+
+def _codacy_issue_field(issue: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = issue.get(key)
+        if value not in (None, ""):
+            return str(value).strip()
+    return ""
 
 
 def classify_codacy_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
@@ -1134,14 +1145,17 @@ def _codacy_classification_details(evidence: dict[str, Any]) -> dict[str, Any]:
     annotations = int(evidence.get("github_annotations") or 0)
     issues = evidence.get("issues")
     issue_list = issues if isinstance(issues, list) else []
-    for rule in _codacy_classification_rules(state, api_issues, annotations, issue_list):
-        if rule["predicate"]():
-            return _codacy_classification_result(
-                str(rule["classification"]),
-                treat_annotations_as_blockers=bool(rule.get("treat_annotations_as_blockers", False)),
-                ignored=bool(rule.get("ignored", False)),
-            )
-    return _codacy_classification_result("unknown")
+    matched = next(
+        (rule for rule in _codacy_classification_rules(state, api_issues, annotations, issue_list) if rule["predicate"]()),
+        None,
+    )
+    if matched is None:
+        return _codacy_classification_result("unknown")
+    return _codacy_classification_result(
+        str(matched["classification"]),
+        treat_annotations_as_blockers=bool(matched.get("treat_annotations_as_blockers", False)),
+        ignored=bool(matched.get("ignored", False)),
+    )
 
 
 def _codacy_classification_rules(
@@ -1151,25 +1165,30 @@ def _codacy_classification_rules(
     issue_list: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     return [
-        {
-            "classification": "rule_conflict",
-            "predicate": lambda: _has_d203_d211_conflict(issue_list),
-        },
-        {
-            "classification": "real_current_issues",
-            "predicate": lambda: _codacy_has_current_api_issues(state, api_issues),
-        },
-        {
-            "classification": "api_github_mismatch",
-            "predicate": lambda: _codacy_has_annotation_mismatch(state, api_issues, annotations),
-            "treat_annotations_as_blockers": True,
-        },
-        {
-            "classification": "stale_github_check",
-            "predicate": lambda: _codacy_is_stale_check(state, api_issues, annotations),
-            "ignored": True,
-        },
+        _codacy_rule_entry("rule_conflict", lambda: _has_d203_d211_conflict(issue_list)),
+        _codacy_rule_entry("real_current_issues", lambda: _codacy_has_current_api_issues(state, api_issues)),
+        _codacy_rule_entry(
+            "api_github_mismatch",
+            lambda: _codacy_has_annotation_mismatch(state, api_issues, annotations),
+            treat_annotations_as_blockers=True,
+        ),
+        _codacy_rule_entry("stale_github_check", lambda: _codacy_is_stale_check(state, api_issues, annotations), ignored=True),
     ]
+
+
+def _codacy_rule_entry(
+    classification: str,
+    predicate: Any,
+    *,
+    treat_annotations_as_blockers: bool = False,
+    ignored: bool = False,
+) -> dict[str, Any]:
+    return {
+        "classification": classification,
+        "predicate": predicate,
+        "treat_annotations_as_blockers": treat_annotations_as_blockers,
+        "ignored": ignored,
+    }
 
 
 def _codacy_has_current_api_issues(state: str, api_issues: int) -> bool:
