@@ -380,7 +380,7 @@ def test_d203_d211_same_file_same_line_conflict_even_if_messages_differ():
     ASSERTIONS.assertEqual(result["classification"], "codacy_rule_conflict")
 
 
-def _stub_cmd_report_inputs(monkeypatch) -> None:
+def _stub_pr_view_for_report(monkeypatch) -> None:
     monkeypatch.setattr(
         flow,
         "build_decision",
@@ -400,6 +400,9 @@ def _stub_cmd_report_inputs(monkeypatch) -> None:
             "ignored_self_checks": [],
         },
     )
+
+
+def _stub_codacy_for_report(monkeypatch) -> None:
     monkeypatch.setattr(
         flow,
         "fetch_codacy_pr_issues",
@@ -411,6 +414,9 @@ def _stub_cmd_report_inputs(monkeypatch) -> None:
             ],
         ),
     )
+
+
+def _stub_review_threads_for_report(monkeypatch) -> None:
     monkeypatch.setattr(
         flow,
         "gh_json",
@@ -429,6 +435,16 @@ def _stub_cmd_report_inputs(monkeypatch) -> None:
             }
         },
     )
+
+
+def _stub_report_output_paths(monkeypatch) -> None:
+    _stub_pr_view_for_report(monkeypatch)
+    _stub_review_threads_for_report(monkeypatch)
+    _stub_codacy_for_report(monkeypatch)
+
+
+def _stub_cmd_report_inputs(monkeypatch) -> None:
+    _stub_report_output_paths(monkeypatch)
 
 
 def _run_cmd_report_no_fail(tmp_path) -> int:

@@ -409,7 +409,7 @@ def test_next_action_summary_contract():
     ASSERTIONS.assertIn(action, NEXT_ACTION_ALLOWED)
 
 
-def _mock_codacy_and_review_helpers(monkeypatch) -> None:
+def _mock_codacy_evidence_helper(monkeypatch) -> None:
     monkeypatch.setattr(
         controller,
         "controller_codacy_blocking_evidence",
@@ -428,6 +428,9 @@ def _mock_codacy_and_review_helpers(monkeypatch) -> None:
             "reason": "test",
         },
     )
+
+
+def _mock_review_threads_helper(monkeypatch) -> None:
     monkeypatch.setattr(
         controller,
         "_review_threads_raw",
@@ -441,6 +444,15 @@ def _mock_codacy_and_review_helpers(monkeypatch) -> None:
             }
         },
     )
+
+
+def _mock_next_action_helper(monkeypatch) -> None:
+    _mock_codacy_evidence_helper(monkeypatch)
+    _mock_review_threads_helper(monkeypatch)
+
+
+def _mock_codacy_and_review_helpers(monkeypatch) -> None:
+    _mock_next_action_helper(monkeypatch)
 
 
 def _build_ctx_for_codacy_review_summary() -> controller.NextActionContext:
