@@ -366,7 +366,6 @@ def test_should_notify_ready_to_merge_true_when_all_conditions_match():
     ASSERTIONS.assertTrue(should_notify)
 
 
-@pytest.mark.xfail(reason="helper not implemented yet")
 def test_auto_resolve_review_comments_contract_active_only():
     """Only active unresolved review comments should be eligible for auto-resolve."""
     if not hasattr(flow, "eligible_review_comments_for_auto_resolve"):

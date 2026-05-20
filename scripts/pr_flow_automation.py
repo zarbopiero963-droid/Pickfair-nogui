@@ -440,6 +440,17 @@ def should_notify_ready_to_merge(context: dict[str, Any]) -> bool:
     )
 
 
+def eligible_review_comments_for_auto_resolve(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return only active unresolved review comments eligible for auto-resolve."""
+    return [
+        node
+        for node in nodes
+        if isinstance(node, dict)
+        and node.get("isResolved") is False
+        and node.get("isOutdated") is False
+    ]
+
+
 def cmd_readiness(args: argparse.Namespace) -> int:
     deadline = time.time() + args.wait_unknown_seconds
     decision = build_decision(args.repo, args.pr, ignore_self=args.ignore_safe_autofix)
