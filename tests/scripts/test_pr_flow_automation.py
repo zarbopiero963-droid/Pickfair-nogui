@@ -3,6 +3,7 @@
 
 import argparse
 import json
+from typing import Any, cast
 from unittest import TestCase
 
 import scripts.pr_automation_controller as controller
@@ -478,32 +479,44 @@ def test_cmd_report_wires_real_context_into_helpers(tmp_path, monkeypatch):
     _assert_cmd_report_context_output(tmp_path)
 
 
-def _stub_report_without_codacy_check(monkeypatch, tmp_path) -> argparse.Namespace:
+def _report_without_codacy_check_decision() -> dict[str, Any]:
+    return {
+        "repo": "owner/repo",
+        "pr": "225",
+        "headRefOid": "abc123",
+        "state": "OPEN",
+        "already_merged": False,
+        "can_merge": False,
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+        "next_action": "blocked",
+        "reasons": [],
+        "blockers": [],
+        "pending": [],
+        "ignored_self_checks": [],
+    }
+
+
+def _stub_report_without_codacy_check_build_decision(monkeypatch) -> None:
     monkeypatch.setattr(
         flow,
         "build_decision",
-        lambda *_args, **_kwargs: {
-            "repo": "owner/repo",
-            "pr": "225",
-            "headRefOid": "abc123",
-            "state": "OPEN",
-            "already_merged": False,
-            "can_merge": False,
-            "mergeable": "MERGEABLE",
-            "mergeStateStatus": "CLEAN",
-            "next_action": "blocked",
-            "reasons": [],
-            "blockers": [],
-            "pending": [],
-            "ignored_self_checks": [],
-        },
+        lambda *_args, **_kwargs: _report_without_codacy_check_decision(),
     )
+
+
+def _stub_report_without_codacy_check_api(monkeypatch) -> None:
     monkeypatch.setattr(flow, "fetch_codacy_pr_issues", lambda *_args: ({}, []))
     monkeypatch.setattr(
         flow,
         "gh_json",
         lambda *_args, **_kwargs: {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}},
     )
+
+
+def _stub_report_without_codacy_check(monkeypatch, tmp_path) -> argparse.Namespace:
+    _stub_report_without_codacy_check_build_decision(monkeypatch)
+    _stub_report_without_codacy_check_api(monkeypatch)
     return argparse.Namespace(repo="owner/repo", pr="225", outdir=str(tmp_path), comment=False, no_fail=True)
 
 
@@ -512,8 +525,9 @@ def _read_report_decision(path) -> dict[str, object]:
 
 
 def _assert_no_codacy_check_not_stale(decision: dict[str, object]) -> None:
-    ASSERTIONS.assertEqual(decision["codacy"]["classification"], "none")
-    ASSERTIONS.assertFalse(decision["codacy"]["treat_annotations_as_blockers"])
+    codacy = cast(dict[str, Any], decision["codacy"])
+    ASSERTIONS.assertEqual(codacy["classification"], "none")
+    ASSERTIONS.assertFalse(codacy["treat_annotations_as_blockers"])
 
 
 def test_cmd_report_no_codacy_check_and_zero_issues_is_not_stale(tmp_path, monkeypatch):

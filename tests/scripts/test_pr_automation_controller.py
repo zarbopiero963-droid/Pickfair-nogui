@@ -3,7 +3,7 @@
 
 import argparse
 import json
-from typing import Any
+from typing import Any, cast
 from unittest import TestCase
 
 import scripts.pr_automation_controller as controller
@@ -395,31 +395,47 @@ def _codacy_head_preservation_pr() -> dict[str, object]:
     }
 
 
-def _stub_codacy_head_preservation(monkeypatch) -> None:
+def _codacy_head_preservation_evidence() -> dict[str, Any]:
+    return {
+        "checks": [_check("Codacy Static Code Analysis", "ACTION_REQUIRED")],
+        "check_blocking": True,
+        "github_codacy_state": "ACTION_REQUIRED",
+        "github_annotations": 0,
+        "codacy_api_issues": 1,
+        "issues": [{"filePath": "a.py", "patternId": "X"}],
+        "api_available": True,
+        "api_ok": True,
+        "issues_returned": 1,
+    }
+
+
+def _codacy_head_preservation_evidence_state() -> dict[str, Any]:
+    return {
+        "blocking": True,
+        "ignored": False,
+        "reason": "test",
+        "headRefOid": "codacy-head-sha",
+    }
+
+
+def _stub_codacy_evidence_for_checks(monkeypatch) -> None:
     monkeypatch.setattr(
         controller,
         "codacy_evidence_for_checks",
         lambda *_args, **_kwargs: {
-            "checks": [_check("Codacy Static Code Analysis", "ACTION_REQUIRED")],
-            "check_blocking": True,
-            "github_codacy_state": "ACTION_REQUIRED",
-            "github_annotations": 0,
-            "codacy_api_issues": 1,
-            "issues": [{"filePath": "a.py", "patternId": "X"}],
-            "api_available": True,
-            "api_ok": True,
-            "issues_returned": 1,
-            "blocking": True,
-            "ignored": False,
-            "reason": "test",
-            "headRefOid": "codacy-head-sha",
+            **_codacy_head_preservation_evidence(),
+            **_codacy_head_preservation_evidence_state(),
         },
     )
+
+
+def _stub_codacy_head_preservation(monkeypatch) -> None:
+    _stub_codacy_evidence_for_checks(monkeypatch)
     monkeypatch.setattr(controller, "_review_threads_raw", lambda *_args: {})
 
 
 def _assert_codacy_head_preserved(decision: dict[str, object]) -> None:
-    codacy = decision["codacy"]
+    codacy = cast(dict[str, Any], decision["codacy"])
     ASSERTIONS.assertEqual(codacy["pr_head"], "pr-head-sha")
     ASSERTIONS.assertEqual(codacy["headRefOid"], "codacy-head-sha")
 
