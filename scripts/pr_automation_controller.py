@@ -1082,8 +1082,11 @@ def codacy_head_matches(pr_head: str, evidence: dict[str, Any]) -> dict[str, Any
     }
 
 
+CodacyIssueLocationKey = tuple[str, str, str, str]
+
+
 def _has_d203_d211_conflict(issues: list[dict[str, Any]]) -> bool:
-    grouped_patterns: dict[tuple[str, str], set[str]] = {}
+    grouped_patterns: dict[CodacyIssueLocationKey, set[str]] = {}
     for key, rule in _iter_d203_d211_issue_keys(issues):
         grouped_patterns.setdefault(key, set()).add(rule)
         if len(grouped_patterns[key]) == 2:
@@ -1093,8 +1096,8 @@ def _has_d203_d211_conflict(issues: list[dict[str, Any]]) -> bool:
 
 def _iter_d203_d211_issue_keys(
     issues: list[dict[str, Any]],
-) -> list[tuple[tuple[str, str, str, str], str]]:
-    records: list[tuple[tuple[str, str, str, str], str]] = []
+) -> list[tuple[CodacyIssueLocationKey, str]]:
+    records: list[tuple[CodacyIssueLocationKey, str]] = []
     for item in issues:
         if not isinstance(item, dict):
             continue
@@ -1109,7 +1112,7 @@ def _codacy_issue_rule(issue: dict[str, Any]) -> str:
     return str(issue.get("patternId") or "").strip().upper()
 
 
-def _codacy_issue_location_key(issue: dict[str, Any]) -> tuple[str, str, str, str]:
+def _codacy_issue_location_key(issue: dict[str, Any]) -> CodacyIssueLocationKey:
     return (
         _codacy_issue_field(issue, "filePath", "filename"),
         _codacy_issue_field(issue, "lineNumber", "line", "startLine"),
@@ -1140,21 +1143,35 @@ def classify_codacy_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
 
 
 def _codacy_classification_details(evidence: dict[str, Any]) -> dict[str, Any]:
-    state = norm_state(evidence.get("github_codacy_state"))
-    api_issues = int(evidence.get("codacy_api_issues") or 0)
-    annotations = int(evidence.get("github_annotations") or 0)
-    issues = evidence.get("issues")
-    issue_list = issues if isinstance(issues, list) else []
-    matched = next(
-        (rule for rule in _codacy_classification_rules(state, api_issues, annotations, issue_list) if rule["predicate"]()),
-        None,
-    )
+    state, api_issues, annotations, issue_list = _codacy_classification_inputs(evidence)
+    matched = _first_matching_codacy_rule(state, api_issues, annotations, issue_list)
     if matched is None:
         return _codacy_classification_result("unknown")
     return _codacy_classification_result(
         str(matched["classification"]),
         treat_annotations_as_blockers=bool(matched.get("treat_annotations_as_blockers", False)),
         ignored=bool(matched.get("ignored", False)),
+    )
+
+
+def _codacy_classification_inputs(evidence: dict[str, Any]) -> tuple[str, int, int, list[dict[str, Any]]]:
+    state = norm_state(evidence.get("github_codacy_state"))
+    api_issues = int(evidence.get("codacy_api_issues") or 0)
+    annotations = int(evidence.get("github_annotations") or 0)
+    issues = evidence.get("issues")
+    issue_list = issues if isinstance(issues, list) else []
+    return state, api_issues, annotations, issue_list
+
+
+def _first_matching_codacy_rule(
+    state: str,
+    api_issues: int,
+    annotations: int,
+    issue_list: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    return next(
+        (rule for rule in _codacy_classification_rules(state, api_issues, annotations, issue_list) if rule["predicate"]()),
+        None,
     )
 
 
