@@ -886,9 +886,13 @@ def test_archived_active_task_state_is_written_once(tmp_path):
     ASSERTIONS.assertEqual(archived["task_id"], controller.compute_task_id("task-a", "audit-a", "b1", "225"))
 
 
-def test_budget_and_progress_helpers_feed_decision_summary(monkeypatch):
+def test_budget_and_progress_helpers_feed_decision_summary(monkeypatch, tmp_path):
     """Controller flow should include progress and budget status in decision output."""
-    monkeypatch.setattr(controller, "_state_path_from_output", lambda _output: "/tmp/pr-state-test.json")
+    monkeypatch.setattr(
+        controller,
+        "_state_path_from_output",
+        lambda _output: str(tmp_path / "pr-state-test.json"),
+    )
     monkeypatch.setattr(
         controller,
         "load_pr_automation_state",

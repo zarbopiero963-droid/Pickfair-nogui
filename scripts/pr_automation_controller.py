@@ -648,7 +648,7 @@ def _read_text_if_exists(path: Path) -> str:
         return ""
 
 
-def _archive_active_context(context: Path, task_state: dict[str, Any], stamp: str) -> None:
+def _archive_active_context(context: Path, stamp: str) -> None:
     history = context / "history"
     history.mkdir(parents=True, exist_ok=True)
     mapping = (
@@ -671,7 +671,7 @@ def replace_active_task_context(context_dir: str, active: ActiveTaskContextInput
     next_task_id = compute_task_id(active.task_text, active.audit_text, active.branch, active.pr)
     current_task_id = str(current.get("task_id") or "")
     if current_task_id and current_task_id != next_task_id:
-        _archive_active_context(context, current, time.strftime("%Y%m%d%H%M%S", time.gmtime()))
+        _archive_active_context(context, time.strftime("%Y%m%d%H%M%S", time.gmtime()))
     if current_task_id == next_task_id:
         return current
     (context / ACTIVE_TASK_COMMAND_FILE).write_text(active.task_text, encoding="utf-8")
@@ -2078,31 +2078,41 @@ def _has_stale_only(context: dict[str, Any]) -> bool:
     return bool(context.get("has_stale_or_cancelled_rerun_state")) and not _has_blockers(context)
 
 
-def should_run_final_micro_audit(decision: dict[str, Any], state: dict[str, Any]) -> bool:
+def _decision_has_no_pending_or_bad(decision: dict[str, Any]) -> bool:
     pending = decision.get("pending") if isinstance(decision.get("pending"), list) else []
     bad_checks = decision.get("bad") if isinstance(decision.get("bad"), list) else []
     unresolved = safe_nonnegative_int(decision.get("unresolved_active"), 0)
-    codacy_clean = str(decision.get("codacy_classification") or "") in {"none", "stale_github_check"}
+    return not pending and not bad_checks and not unresolved
+
+
+def _decision_is_merge_clean(decision: dict[str, Any]) -> bool:
     mergeable = norm_state(decision.get("mergeable")) == "MERGEABLE"
     merge_state = norm_state(decision.get("mergeStateStatus")) == "CLEAN"
-    audit_path_exists = _active_micro_audit_exists(state)
+    return mergeable and merge_state
+
+
+def _decision_has_clean_codacy(decision: dict[str, Any]) -> bool:
+    return str(decision.get("codacy_classification") or "") in {"none", "stale_github_check"}
+
+
+def should_run_final_micro_audit(decision: dict[str, Any], state: dict[str, Any]) -> bool:
     return (
-        not pending
-        and not bad_checks
-        and not unresolved
-        and codacy_clean
-        and mergeable
-        and merge_state
-        and audit_path_exists
+        _decision_has_no_pending_or_bad(decision)
+        and _decision_is_merge_clean(decision)
+        and _decision_has_clean_codacy(decision)
+        and _active_micro_audit_exists(state)
     )
 
 
 def _active_micro_audit_exists(state: dict[str, Any]) -> bool:
-    value = state.get("active_final_micro_audit_path")
-    if not isinstance(value, str):
+    raw_value: Any = state.get("active_final_micro_audit_path")
+    if raw_value is None:
         return False
-    path_text = value.strip()
-    return Path(path_text).exists() if path_text else False
+    value: dict[str, Any] | str = raw_value if isinstance(raw_value, (dict, str)) else {}
+    path_text = value.get("path", "").strip() if isinstance(value, dict) else value.strip()
+    if not path_text:
+        return False
+    return Path(path_text).exists()
 
 
 def _append_extra_context_to_codacy_task(outdir: Path) -> None:
