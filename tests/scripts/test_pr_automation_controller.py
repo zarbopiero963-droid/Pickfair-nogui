@@ -12,7 +12,15 @@ ASSERTIONS = TestCase()
 NEXT_ACTION_ALLOWED = {
     "wait_pending",
     "fix_codacy_current_issues",
+    "fix_github_codacy_annotations",
     "rerun_stale_checks",
+    "run_final_micro_audit",
+    "refresh_merge_readiness",
+    "send_ready_to_merge_telegram",
+    "needs_manual_no_progress",
+    "needs_manual_regression",
+    "needs_manual_budget_exhausted",
+    "needs_manual_micro_audit_failed",
     "needs_manual",
     "ready_to_merge",
 }
@@ -703,3 +711,115 @@ def test_initial_decision_seeds_no_progress_state(tmp_path):
 
     ASSERTIONS.assertEqual(decision["previous_blocker_signature"], "sig-current")
     ASSERTIONS.assertEqual(decision["repeated_blocker_count"], 3)
+
+
+def test_loading_missing_state_returns_safe_defaults(tmp_path):
+    state = controller.load_pr_automation_state(str(tmp_path / "missing.json"), "owner/repo", "225")
+    ASSERTIONS.assertEqual(state["repo"], "owner/repo")
+    ASSERTIONS.assertEqual(state["pr"], "225")
+    ASSERTIONS.assertEqual(state["controller_run_count"], 0)
+
+
+def test_saving_loading_state_round_trips(tmp_path):
+    path = tmp_path / "state.json"
+    payload = controller.normalize_pr_automation_state({"head": "abc", "controller_run_count": 2}, "owner/repo", "225")
+    controller.save_pr_automation_state(str(path), payload)
+    loaded = controller.load_pr_automation_state(str(path), "owner/repo", "225")
+    ASSERTIONS.assertEqual(loaded["head"], "abc")
+    ASSERTIONS.assertEqual(loaded["controller_run_count"], 2)
+
+
+def test_pending_to_wait_pending():
+    action = controller.summarize_next_action({"pending_count": 1})
+    ASSERTIONS.assertEqual(action, "wait_pending")
+
+
+def test_stale_checks_only_to_rerun_stale_checks():
+    action = controller.summarize_next_action({"has_stale_or_cancelled_rerun_state": True, "blockers_count": 0})
+    ASSERTIONS.assertEqual(action, "rerun_stale_checks")
+
+
+def test_codacy_real_issues_to_fix_codacy_current_issues():
+    action = controller.summarize_next_action({"codacy_classification": "real_current_issues"})
+    ASSERTIONS.assertEqual(action, "fix_codacy_current_issues")
+
+
+def test_api_zero_with_annotations_to_fix_github_codacy_annotations():
+    action = controller.summarize_next_action({"codacy_classification": "api_github_mismatch"})
+    ASSERTIONS.assertEqual(action, "fix_github_codacy_annotations")
+
+
+def test_same_blocker_repeated_to_needs_manual_no_progress():
+    action = controller.summarize_next_action({"same_blocker_repeated": True})
+    ASSERTIONS.assertEqual(action, "needs_manual_no_progress")
+
+
+def test_no_progress_to_needs_manual_no_progress():
+    action = controller.summarize_next_action({"progress": "unchanged", "blockers_count": 1})
+    ASSERTIONS.assertEqual(action, "needs_manual_no_progress")
+
+
+def test_regression_to_needs_manual_regression():
+    action = controller.summarize_next_action({"progress": "regressed"})
+    ASSERTIONS.assertEqual(action, "needs_manual_regression")
+
+
+def test_budget_exhausted_to_needs_manual_budget_exhausted():
+    action = controller.summarize_next_action({"budget_status": {"exhausted": True}})
+    ASSERTIONS.assertEqual(action, "needs_manual_budget_exhausted")
+
+
+def test_all_clean_plus_audit_present_to_run_final_micro_audit(tmp_path):
+    audit_path = tmp_path / "active-final-micro-audit.md"
+    audit_path.write_text("audit", encoding="utf-8")
+    decision = {
+        "pending": [],
+        "bad": [],
+        "unresolved_active": 0,
+        "codacy_classification": "none",
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+    }
+    state = {"active_final_micro_audit_path": str(audit_path)}
+    ASSERTIONS.assertTrue(controller.should_run_final_micro_audit(decision, state))
+    action = controller.summarize_next_action({"run_final_micro_audit": True})
+    ASSERTIONS.assertEqual(action, "run_final_micro_audit")
+
+
+def test_audit_pass_state_to_ready_to_merge():
+    action = controller.summarize_next_action({"audit_passed": True})
+    ASSERTIONS.assertEqual(action, "ready_to_merge")
+
+
+def test_new_task_id_archives_previous_active_context(tmp_path):
+    ctx = tmp_path / "context"
+    controller.replace_active_task_context(str(ctx), "task-a", "audit-a", "b1", "225")
+    controller.replace_active_task_context(str(ctx), "task-b", "audit-b", "b1", "225")
+    history = list((ctx / "history").glob("*-task-command.md"))
+    ASSERTIONS.assertTrue(history)
+    ASSERTIONS.assertEqual((ctx / "active-task-command.md").read_text(encoding="utf-8"), "task-b")
+
+
+def test_same_task_id_preserves_current_state(tmp_path):
+    ctx = tmp_path / "context"
+    controller.replace_active_task_context(str(ctx), "task-a", "audit-a", "b1", "225")
+    first_state = json.loads((ctx / "active-task-state.json").read_text(encoding="utf-8"))
+    second_state = controller.replace_active_task_context(str(ctx), "task-a", "audit-a", "b1", "225")
+    ASSERTIONS.assertEqual(first_state["task_id"], second_state["task_id"])
+    ASSERTIONS.assertFalse((ctx / "history").exists())
+
+
+def test_active_micro_audit_always_matches_active_task(tmp_path):
+    ctx = tmp_path / "context"
+    controller.replace_active_task_context(str(ctx), "task-c", "audit-c", "b2", "225")
+    ASSERTIONS.assertEqual((ctx / "active-task-command.md").read_text(encoding="utf-8"), "task-c")
+    ASSERTIONS.assertEqual((ctx / "active-final-micro-audit.md").read_text(encoding="utf-8"), "audit-c")
+
+
+def test_controller_does_not_read_history_for_active_decisions(tmp_path):
+    ctx = tmp_path / "context"
+    controller.replace_active_task_context(str(ctx), "task-a", "audit-a", "b1", "225")
+    (ctx / "history").mkdir(parents=True, exist_ok=True)
+    (ctx / "history" / "junk-task-state.json").write_text('{"task_id":"x"}', encoding="utf-8")
+    state = controller.replace_active_task_context(str(ctx), "task-a", "audit-a", "b1", "225")
+    ASSERTIONS.assertEqual(state["task_id"], json.loads((ctx / "active-task-state.json").read_text(encoding="utf-8"))["task_id"])
