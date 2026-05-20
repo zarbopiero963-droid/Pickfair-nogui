@@ -1098,13 +1098,21 @@ def _iter_d203_d211_issue_keys(
     for item in issues:
         if not isinstance(item, dict):
             continue
-        rule = str(item.get("patternId") or "").strip().upper()
+        rule = _codacy_issue_rule(item)
         if rule not in {"D203", "D211"}:
             continue
-        file_path = str(item.get("filePath") or item.get("filename") or "").strip()
-        symbol = str(item.get("symbol") or item.get("entity") or "").strip()
-        records.append(((file_path, symbol), rule))
+        records.append((_codacy_issue_location_key(item), rule))
     return records
+
+
+def _codacy_issue_rule(issue: dict[str, Any]) -> str:
+    return str(issue.get("patternId") or "").strip().upper()
+
+
+def _codacy_issue_location_key(issue: dict[str, Any]) -> tuple[str, str]:
+    file_path = str(issue.get("filePath") or issue.get("filename") or "").strip()
+    symbol = str(issue.get("symbol") or issue.get("entity") or "").strip()
+    return file_path, symbol
 
 
 def classify_codacy_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
@@ -1126,21 +1134,35 @@ def _codacy_classification_details(evidence: dict[str, Any]) -> dict[str, Any]:
     annotations = int(evidence.get("github_annotations") or 0)
     issues = evidence.get("issues")
     issue_list = issues if isinstance(issues, list) else []
-
-    classification = "unknown"
-    treat_annotations_as_blockers = False
-    ignored = False
-
     if _has_d203_d211_conflict(issue_list):
-        classification = "rule_conflict"
-    elif state == "ACTION_REQUIRED" and api_issues > 0:
-        classification = "real_current_issues"
-    elif state == "ACTION_REQUIRED" and not api_issues and annotations > 0:
-        classification = "api_github_mismatch"
-        treat_annotations_as_blockers = True
-    elif state == "ACTION_REQUIRED" and not api_issues and not annotations:
-        classification = "stale_github_check"
-        ignored = True
+        return _codacy_classification_result("rule_conflict")
+    if _codacy_has_current_api_issues(state, api_issues):
+        return _codacy_classification_result("real_current_issues")
+    if _codacy_has_annotation_mismatch(state, api_issues, annotations):
+        return _codacy_classification_result("api_github_mismatch", treat_annotations_as_blockers=True)
+    if _codacy_is_stale_check(state, api_issues, annotations):
+        return _codacy_classification_result("stale_github_check", ignored=True)
+    return _codacy_classification_result("unknown")
+
+
+def _codacy_has_current_api_issues(state: str, api_issues: int) -> bool:
+    return state == "ACTION_REQUIRED" and api_issues > 0
+
+
+def _codacy_has_annotation_mismatch(state: str, api_issues: int, annotations: int) -> bool:
+    return state == "ACTION_REQUIRED" and not api_issues and annotations > 0
+
+
+def _codacy_is_stale_check(state: str, api_issues: int, annotations: int) -> bool:
+    return state == "ACTION_REQUIRED" and not api_issues and not annotations
+
+
+def _codacy_classification_result(
+    classification: str,
+    *,
+    treat_annotations_as_blockers: bool = False,
+    ignored: bool = False,
+) -> dict[str, Any]:
     return {
         "classification": classification,
         "treat_annotations_as_blockers": treat_annotations_as_blockers,
@@ -1681,23 +1703,26 @@ def review_comments_summary(nodes: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def summarize_next_action(context: dict[str, Any]) -> str:
-    if safe_nonnegative_int(context.get("pending_count"), 0) > 0:
+    if _has_pending_checks(context):
         return "wait_pending"
-
     codacy_action = _codacy_next_action(context)
     if codacy_action:
         return codacy_action
-
-    if safe_nonnegative_int(context.get("unresolved_active"), 0) > 0:
+    if _has_unresolved_review_threads(context):
         return "needs_manual"
-
     if _has_rerun_state(context):
         return "rerun_stale_checks"
-
     if _is_ready_to_merge_context(context):
         return "ready_to_merge"
-
     return "needs_manual"
+
+
+def _has_pending_checks(context: dict[str, Any]) -> bool:
+    return safe_nonnegative_int(context.get("pending_count"), 0) > 0
+
+
+def _has_unresolved_review_threads(context: dict[str, Any]) -> bool:
+    return safe_nonnegative_int(context.get("unresolved_active"), 0) > 0
 
 
 def _codacy_next_action(context: dict[str, Any]) -> str:

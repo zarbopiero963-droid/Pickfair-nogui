@@ -468,14 +468,22 @@ def _iter_d203_d211_rule_records(
     for issue in issues:
         if not isinstance(issue, dict):
             continue
-        pattern_id = str(issue.get("patternId") or issue.get("patternID") or "").strip().upper()
+        pattern_id = _codacy_rule_id(issue)
         if pattern_id not in {"D203", "D211"}:
             continue
-        file_name = str(issue.get("filePath") or issue.get("filename") or "").strip()
-        line = str(issue.get("lineNumber") or issue.get("line") or "").strip()
-        symbol = str(issue.get("symbol") or issue.get("entity") or "").strip()
-        records.append(((file_name, line, symbol, _issue_message_key(issue)), pattern_id))
+        records.append((_codacy_rule_location_key(issue), pattern_id))
     return records
+
+
+def _codacy_rule_id(issue: dict[str, Any]) -> str:
+    return str(issue.get("patternId") or issue.get("patternID") or "").strip().upper()
+
+
+def _codacy_rule_location_key(issue: dict[str, Any]) -> tuple[str, str, str, str]:
+    file_name = str(issue.get("filePath") or issue.get("filename") or "").strip()
+    line = str(issue.get("lineNumber") or issue.get("line") or "").strip()
+    symbol = str(issue.get("symbol") or issue.get("entity") or "").strip()
+    return file_name, line, symbol, _issue_message_key(issue)
 
 
 def _issue_message_key(issue: dict[str, Any]) -> str:
