@@ -353,6 +353,16 @@ class NextActionContext:
     decision: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class ActiveTaskContextInput:
+    """Inputs required to replace active task context."""  # noqa: D203
+
+    task_text: str
+    audit_text: str
+    branch: str
+    pr: str
+
+
 def is_stale_or_cancelled(check: dict[str, Any]) -> bool:
     return is_cancelled(check) or is_stale(check)
 
@@ -559,22 +569,29 @@ def safe_nonnegative_int(value: Any, default: int = 0) -> int:
     return parsed if parsed >= 0 else default
 
 
+def _normalized_state_text(source: dict[str, Any], key: str, default: str = "") -> str:
+    return str(source.get(key) or default)
+
+
+def _normalized_state_int(source: dict[str, Any], key: str, default: int = 0) -> int:
+    return safe_nonnegative_int(source.get(key), default)
+
+
 def normalize_pr_automation_state(payload: Any, repo: str, pr: str) -> dict[str, Any]:
     source = payload if isinstance(payload, dict) else {}
     state: dict[str, Any] = {
-        "repo": str(source.get("repo") or repo),
-        "pr": str(source.get("pr") or pr),
-        "head": str(source.get("head") or ""),
-        "active_task_id": str(source.get("active_task_id") or ""),
-        "last_blocker_signature": str(source.get("last_blocker_signature") or ""),
-        "same_blocker_rounds": safe_nonnegative_int(source.get("same_blocker_rounds"), 0),
-        "last_action": str(source.get("last_action") or ""),
-        "last_result": str(source.get("last_result") or ""),
+        "repo": _normalized_state_text(source, "repo", repo),
+        "pr": _normalized_state_text(source, "pr", pr),
+        "head": _normalized_state_text(source, "head"),
+        "active_task_id": _normalized_state_text(source, "active_task_id"),
+        "last_blocker_signature": _normalized_state_text(source, "last_blocker_signature"),
+        "same_blocker_rounds": _normalized_state_int(source, "same_blocker_rounds"),
+        "last_action": _normalized_state_text(source, "last_action"),
+        "last_result": _normalized_state_text(source, "last_result"),
     }
-    for field in PR_AUTOMATION_STATE_FIELDS:
-        if field in state:
-            continue
-        state[field] = safe_nonnegative_int(source.get(field), 0)
+    int_fields = [field for field in PR_AUTOMATION_STATE_FIELDS if field not in state]
+    for field in int_fields:
+        state[field] = _normalized_state_int(source, field)
     return state
 
 
@@ -641,34 +658,25 @@ def _archive_active_context(context: Path, task_state: dict[str, Any], stamp: st
     )
     for active_name, archive_name in mapping:
         source = context / active_name
-        if source.exists():
-            (history / archive_name).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-    (history / f"{stamp}-task-state.json").write_text(
-        json.dumps(task_state, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+        content = _read_text_if_exists(source)
+        if content:
+            (history / archive_name).write_text(content, encoding="utf-8")
 
 
-def replace_active_task_context(
-    context_dir: str,
-    task_text: str,
-    audit_text: str,
-    branch: str,
-    pr: str,
-) -> dict[str, Any]:
+def replace_active_task_context(context_dir: str, active: ActiveTaskContextInput) -> dict[str, Any]:
     context = Path(context_dir)
     context.mkdir(parents=True, exist_ok=True)
     state_path = context / ACTIVE_TASK_STATE_FILE
     current = _read_json_object(str(state_path))
-    next_task_id = compute_task_id(task_text, audit_text, branch, pr)
+    next_task_id = compute_task_id(active.task_text, active.audit_text, active.branch, active.pr)
     current_task_id = str(current.get("task_id") or "")
     if current_task_id and current_task_id != next_task_id:
         _archive_active_context(context, current, time.strftime("%Y%m%d%H%M%S", time.gmtime()))
     if current_task_id == next_task_id:
         return current
-    (context / ACTIVE_TASK_COMMAND_FILE).write_text(task_text, encoding="utf-8")
-    (context / ACTIVE_FINAL_MICRO_AUDIT_FILE).write_text(audit_text, encoding="utf-8")
-    state = {"task_id": next_task_id, "branch": str(branch), "pr": str(pr)}
+    (context / ACTIVE_TASK_COMMAND_FILE).write_text(active.task_text, encoding="utf-8")
+    (context / ACTIVE_FINAL_MICRO_AUDIT_FILE).write_text(active.audit_text, encoding="utf-8")
+    state = {"task_id": next_task_id, "branch": str(active.branch), "pr": str(active.pr)}
     state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return state
 
@@ -1700,6 +1708,8 @@ def build_next_action_context(
             "pending_count": decision.get("pending_count", 0),
             "codacy_classification": codacy.get("classification"),
             "unresolved_active": review_summary.get("unresolved_active", 0),
+            "budget_status": decision.get("budget_status"),
+            "progress": decision.get("progress"),
             "has_stale_or_cancelled_rerun_state": False,
             "mergeable": pr.get("mergeable"),
             "mergeStateStatus": pr.get("mergeStateStatus"),
@@ -1722,8 +1732,53 @@ def run_controller(args: argparse.Namespace, decision: dict[str, Any]) -> int:
     if finish_after_cancelled_checks(args, decision, checks):
         return write_decision(args.output, decision)
     ctx = build_next_action_context(args, decision, pr, (files, commits))
+    update_decision_state_tracking(args, pr, ctx)
     decide_next_action(ctx)
     return write_decision(args.output, decision)
+
+
+def _state_path_from_output(output_path: str) -> str:
+    output = Path(output_path)
+    return str(output.parent / "pr-automation-state.json")
+
+
+def _budget_limits() -> dict[str, int]:
+    return {
+        "max_autofix_commits_per_pr": 0,
+        "max_same_blocker_attempts": 0,
+        "max_total_controller_runs": 0,
+        "max_codacy_oscillation_rounds": 0,
+        "max_stale_check_reruns": 0,
+    }
+
+
+def _decision_counters(ctx: NextActionContext) -> dict[str, int]:
+    codacy = ctx.decision.get("codacy") if isinstance(ctx.decision.get("codacy"), dict) else {}
+    review = ctx.decision.get("review") if isinstance(ctx.decision.get("review"), dict) else {}
+    return {
+        "codacy_issue_count": safe_nonnegative_int(codacy.get("codacy_api_issues"), 0),
+        "review_active_count": safe_nonnegative_int(review.get("unresolved_active"), 0),
+        "bad_check_count": len(ctx.blockers),
+        "same_blocker_rounds": safe_nonnegative_int(ctx.decision.get("repeated_blocker_count"), 0),
+        "controller_run_count": 1,
+    }
+
+
+def update_decision_state_tracking(args: argparse.Namespace, pr: dict[str, Any], ctx: NextActionContext) -> None:
+    state_path = _state_path_from_output(args.output)
+    previous_state = load_pr_automation_state(state_path, args.repo, args.pr)
+    current_state = normalize_pr_automation_state(previous_state, args.repo, args.pr)
+    current_state["head"] = str(pr.get("headRefOid") or "")
+    counters = _decision_counters(ctx)
+    current_state["controller_run_count"] = safe_nonnegative_int(previous_state.get("controller_run_count"), 0) + 1
+    for key in ("codacy_issue_count", "review_active_count", "bad_check_count", "same_blocker_rounds"):
+        current_state[key] = safe_nonnegative_int(counters.get(key), 0)
+    progress = detect_pr_progress(previous_state, current_state)
+    budget_status = pr_budget_status(current_state, _budget_limits())
+    ctx.decision["progress"] = progress
+    ctx.decision["budget_status"] = budget_status
+    ctx.decision["pr_automation_state"] = current_state
+    save_pr_automation_state(state_path, current_state)
 
 
 def main() -> int:
@@ -1957,7 +2012,8 @@ def summarize_next_action(context: dict[str, Any]) -> str:
 
 def _next_action_rules(context: dict[str, Any]) -> list[tuple[Any, str]]:
     codacy_action = _codacy_next_action(context)
-    budget = context.get("budget_status") if isinstance(context.get("budget_status"), dict) else {}
+    raw_budget = context.get("budget_status")
+    budget = raw_budget if isinstance(raw_budget, dict) else {}
     budget_exhausted = bool(budget.get("exhausted"))
     progress = str(context.get("progress") or "")
     return [
@@ -2029,16 +2085,24 @@ def should_run_final_micro_audit(decision: dict[str, Any], state: dict[str, Any]
     codacy_clean = str(decision.get("codacy_classification") or "") in {"none", "stale_github_check"}
     mergeable = norm_state(decision.get("mergeable")) == "MERGEABLE"
     merge_state = norm_state(decision.get("mergeStateStatus")) == "CLEAN"
-    audit_path = Path(str(state.get("active_final_micro_audit_path") or ""))
+    audit_path_exists = _active_micro_audit_exists(state)
     return (
         not pending
         and not bad_checks
-        and unresolved == 0
+        and not unresolved
         and codacy_clean
         and mergeable
         and merge_state
-        and audit_path.exists()
+        and audit_path_exists
     )
+
+
+def _active_micro_audit_exists(state: dict[str, Any]) -> bool:
+    value = state.get("active_final_micro_audit_path")
+    if not isinstance(value, str):
+        return False
+    path_text = value.strip()
+    return Path(path_text).exists() if path_text else False
 
 
 def _append_extra_context_to_codacy_task(outdir: Path) -> None:
