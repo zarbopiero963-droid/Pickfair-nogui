@@ -17,7 +17,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Sequence, cast
 
 FAIL_STATES = {"FAILURE", "ERROR", "ACTION_REQUIRED", "TIMED_OUT"}
 PENDING_STATES = {"", "PENDING", "QUEUED", "IN_PROGRESS", "REQUESTED", "WAITING"}
@@ -1753,8 +1753,12 @@ def _budget_limits() -> dict[str, int]:
 
 
 def _decision_counters(ctx: NextActionContext) -> dict[str, int]:
-    codacy = ctx.decision.get("codacy") if isinstance(ctx.decision.get("codacy"), dict) else {}
-    review = ctx.decision.get("review") if isinstance(ctx.decision.get("review"), dict) else {}
+    codacy: dict[str, Any] = (
+        cast(dict[str, Any], ctx.decision.get("codacy")) if isinstance(ctx.decision.get("codacy"), dict) else {}
+    )
+    review: dict[str, Any] = (
+        cast(dict[str, Any], ctx.decision.get("review")) if isinstance(ctx.decision.get("review"), dict) else {}
+    )
     return {
         "codacy_issue_count": safe_nonnegative_int(codacy.get("codacy_api_issues"), 0),
         "review_active_count": safe_nonnegative_int(review.get("unresolved_active"), 0),

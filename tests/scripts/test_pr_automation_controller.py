@@ -108,6 +108,29 @@ def _controller_decision(monkeypatch, *, blocking: bool, ignored: bool) -> dict:
     return decision
 
 
+def _prepare_decision_tracking_test(monkeypatch, tmp_path) -> tuple[dict[str, Any], dict[str, Any], Any]:
+    monkeypatch.setattr(controller, "_state_path_from_output", lambda _output: str(tmp_path / "pr-state-test.json"))
+    monkeypatch.setattr(
+        controller,
+        "load_pr_automation_state",
+        lambda _path, _repo, _pr: controller.normalize_pr_automation_state(
+            {"codacy_issue_count": 3, "review_active_count": 2, "bad_check_count": 1},
+            "owner/repo",
+            "225",
+        ),
+    )
+    monkeypatch.setattr(controller, "save_pr_automation_state", lambda _path, _state: None)
+    decision: dict[str, Any] = {"actions": [], "warnings": [], "errors": [], "pending_count": 0}
+    pr: dict[str, Any] = {
+        "statusCheckRollup": [],
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+        "headRefOid": "abc",
+    }
+    ctx = controller.build_next_action_context(_args(), decision, pr, ([], []))
+    return decision, pr, ctx
+
+
 def test_controller_does_not_launch_safe_autofix_for_stale_codacy_action_required(monkeypatch):
     """A stale Codacy ACTION_REQUIRED check is ignored once the Codacy API is clear."""
     decision = _controller_decision(monkeypatch, blocking=False, ignored=True)
@@ -888,27 +911,8 @@ def test_archived_active_task_state_is_written_once(tmp_path):
 
 def test_budget_and_progress_helpers_feed_decision_summary(monkeypatch, tmp_path):
     """Controller flow should include progress and budget status in decision output."""
-    monkeypatch.setattr(
-        controller,
-        "_state_path_from_output",
-        lambda _output: str(tmp_path / "pr-state-test.json"),
-    )
-    monkeypatch.setattr(
-        controller,
-        "load_pr_automation_state",
-        lambda _path, _repo, _pr: controller.normalize_pr_automation_state(
-            {"codacy_issue_count": 3, "review_active_count": 2, "bad_check_count": 1},
-            "owner/repo",
-            "225",
-        ),
-    )
-    monkeypatch.setattr(controller, "save_pr_automation_state", lambda _path, _state: None)
-    decision: dict[str, Any] = {"actions": [], "warnings": [], "errors": [], "pending_count": 0}
-    pr = {"statusCheckRollup": [], "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN", "headRefOid": "abc"}
-    ctx = controller.build_next_action_context(_args(), decision, pr, ([], []))
-
+    decision, pr, ctx = _prepare_decision_tracking_test(monkeypatch, tmp_path)
     controller.update_decision_state_tracking(_args(), pr, ctx)
-
     ASSERTIONS.assertIn("budget_status", decision)
     ASSERTIONS.assertIn("progress", decision)
     ASSERTIONS.assertIn("pr_automation_state", decision)
