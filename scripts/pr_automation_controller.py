@@ -665,30 +665,54 @@ def _archive_active_context(context: Path, stamp: str) -> None:
             (history / archive_name).write_text(content, encoding="utf-8")
 
 
-def replace_active_task_context(context_dir: str, active: ActiveTaskContextInput) -> dict[str, Any]:
-    context = Path(context_dir)
-    context.mkdir(parents=True, exist_ok=True)
-    state_path = context / ACTIVE_TASK_STATE_FILE
-    current = _read_json_object(str(state_path))
-    next_task_id = compute_task_id(active.task_text, active.audit_text, active.branch, active.pr)
-    current_task_id = str(current.get("task_id") or "")
+def _active_task_paths(context: Path) -> dict[str, Path]:
+    return {
+        "task_command": context / ACTIVE_TASK_COMMAND_FILE,
+        "final_micro_audit": context / ACTIVE_FINAL_MICRO_AUDIT_FILE,
+        "task_state": context / ACTIVE_TASK_STATE_FILE,
+    }
+
+
+def _archive_if_task_changed(context: Path, current_task_id: str, next_task_id: str) -> None:
     if current_task_id and current_task_id != next_task_id:
         _archive_active_context(context, time.strftime("%Y%m%d%H%M%S", time.gmtime()))
-    active_audit_path = str(context / ACTIVE_FINAL_MICRO_AUDIT_FILE)
-    if current_task_id == next_task_id:
-        if not str(current.get("active_final_micro_audit_path") or "").strip():
-            current["active_final_micro_audit_path"] = active_audit_path
-            state_path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        return current
-    (context / ACTIVE_TASK_COMMAND_FILE).write_text(active.task_text, encoding="utf-8")
-    (context / ACTIVE_FINAL_MICRO_AUDIT_FILE).write_text(active.audit_text, encoding="utf-8")
-    state = {
+
+
+def _new_active_task_state(active: ActiveTaskContextInput, next_task_id: str, active_audit_path: str) -> dict[str, Any]:
+    return {
         "task_id": next_task_id,
         "branch": str(active.branch),
         "pr": str(active.pr),
         "active_final_micro_audit_path": active_audit_path,
     }
-    state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _write_active_task_files(
+    paths: dict[str, Path],
+    active: ActiveTaskContextInput,
+    state: dict[str, Any],
+) -> None:
+    paths["task_command"].write_text(active.task_text, encoding="utf-8")
+    paths["final_micro_audit"].write_text(active.audit_text, encoding="utf-8")
+    paths["task_state"].write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def replace_active_task_context(context_dir: str, active: ActiveTaskContextInput) -> dict[str, Any]:
+    context = Path(context_dir)
+    context.mkdir(parents=True, exist_ok=True)
+    paths = _active_task_paths(context)
+    current = _read_json_object(str(paths["task_state"]))
+    next_task_id = compute_task_id(active.task_text, active.audit_text, active.branch, active.pr)
+    current_task_id = str(current.get("task_id") or "")
+    _archive_if_task_changed(context, current_task_id, next_task_id)
+    active_audit_path = str(paths["final_micro_audit"])
+    if current_task_id == next_task_id:
+        if not str(current.get("active_final_micro_audit_path") or "").strip():
+            current["active_final_micro_audit_path"] = active_audit_path
+            paths["task_state"].write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return current
+    state = _new_active_task_state(active, next_task_id, active_audit_path)
+    _write_active_task_files(paths, active, state)
     return state
 
 
