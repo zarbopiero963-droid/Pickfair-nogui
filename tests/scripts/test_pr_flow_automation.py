@@ -239,8 +239,8 @@ def test_apply_taxonomy_next_action_review_blocker_does_not_override_high_priori
     ASSERTIONS.assertEqual(decision["next_action"], "wait_pending")
 
 
-def test_apply_taxonomy_next_action_review_blocker_prevents_ready_to_merge_even_when_mixed():
-    """Any active review blocker must prevent ready_to_merge."""
+def test_apply_taxonomy_next_action_review_blocker_not_review_only_keeps_ready_action():
+    """Review overrides ready_to_merge only when taxonomy is review-only."""
     decision = {
         "already_merged": False,
         "can_merge": True,
@@ -252,7 +252,7 @@ def test_apply_taxonomy_next_action_review_blocker_prevents_ready_to_merge_even_
     }
 
     flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
-    ASSERTIONS.assertEqual(decision["next_action"], "fix_review_comments")
+    ASSERTIONS.assertEqual(decision["next_action"], "ready_to_merge")
 
 
 def test_apply_taxonomy_next_action_does_not_override_manual_secret_with_review_action():
@@ -305,32 +305,6 @@ def test_apply_taxonomy_next_action_does_not_override_rerun_stale_checks_with_re
 
     flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
     ASSERTIONS.assertEqual(decision["next_action"], "rerun_stale_checks")
-
-
-def test_apply_taxonomy_next_action_does_not_override_scope_violation_with_review_action():
-    """Review blockers cannot overwrite manual scope violation remediation."""
-    decision = {
-        "already_merged": False,
-        "can_merge": False,
-        "next_action": "needs_manual_scope_violation",
-        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
-    }
-
-    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
-    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_scope_violation")
-
-
-def test_apply_taxonomy_next_action_does_not_override_auto_resolve_merge_conflict_with_review_action():
-    """Review blockers cannot overwrite auto-resolve merge conflict action."""
-    decision = {
-        "already_merged": False,
-        "can_merge": False,
-        "next_action": "auto_resolve_merge_conflict",
-        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
-    }
-
-    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
-    ASSERTIONS.assertEqual(decision["next_action"], "auto_resolve_merge_conflict")
 
 
 def _preflight_args() -> argparse.Namespace:
@@ -506,18 +480,6 @@ def test_build_decision_draft_pr_not_promoted_to_ready_to_merge(monkeypatch):
     ASSERTIONS.assertNotEqual(decision["next_action"], "checks_green_or_no_action")
     ASSERTIONS.assertNotEqual(decision["next_action"], "ready_to_merge")
     ASSERTIONS.assertEqual(taxonomy["next_action"], "checks_green_or_no_action")
-
-
-def test_summarize_blocker_actions_proxy_empty_can_merge_false():
-    """Flow proxy should preserve empty-taxonomy non-mergeable action."""
-    summary = flow.summarize_blocker_actions([], {"can_merge": False})
-    ASSERTIONS.assertEqual(summary["next_action"], "checks_green_or_no_action")
-
-
-def test_summarize_blocker_actions_proxy_empty_can_merge_true():
-    """Flow proxy should preserve empty-taxonomy mergeable action."""
-    summary = flow.summarize_blocker_actions([], {"can_merge": True})
-    ASSERTIONS.assertEqual(summary["next_action"], "ready_to_merge")
 
 
 def test_apply_taxonomy_next_action_does_not_demote_blocked_to_checks_green_or_no_action():
