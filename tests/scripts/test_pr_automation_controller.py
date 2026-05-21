@@ -208,6 +208,40 @@ def test_codacy_task_writes_raw_response_and_normalized_issue(tmp_path):
     task = (tmp_path / "codacy-task.md").read_text(encoding="utf-8")
     ASSERTIONS.assertIn("scripts/pr_automation_controller.py:12", task)
     ASSERTIONS.assertIn("Fix me", task)
+    ASSERTIONS.assertIn("POST-FIX MICRO-AUDIT BEFORE COMMIT", task)
+    ASSERTIONS.assertIn("Do not commit a patch that fails this audit.", task)
+
+
+def test_ensure_post_fix_micro_audit_section_adds_no_commit_rule_once():
+    """Post-fix audit section should be appended once and include no-commit-on-fail rule."""
+    prompt = controller.ensure_post_fix_micro_audit_section("Fix these findings only.")
+    twice = controller.ensure_post_fix_micro_audit_section(prompt)
+    ASSERTIONS.assertIn("POST-FIX MICRO-AUDIT BEFORE COMMIT", prompt)
+    ASSERTIONS.assertIn("Do not commit a patch that fails this audit.", prompt)
+    ASSERTIONS.assertEqual(twice.count("POST-FIX MICRO-AUDIT BEFORE COMMIT"), 1)
+
+
+def test_parse_post_fix_micro_audit_result_pass_defaults_to_validation_then_commit():
+    """PASS status should route to validation_then_commit."""
+    report = controller.parse_post_fix_micro_audit_result("status: PASS")
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "validation_then_commit")
+    ASSERTIONS.assertFalse(controller.post_fix_micro_audit_failed(report))
+
+
+def test_parse_post_fix_micro_audit_result_fail_defaults_to_needs_manual():
+    """FAIL status should fail closed when next_action is omitted."""
+    report = controller.parse_post_fix_micro_audit_result("status: FAIL\nreasons:\n- threshold exceeded")
+    ASSERTIONS.assertEqual(report["status"], "FAIL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_post_fix_audit_failed")
+    ASSERTIONS.assertTrue(controller.post_fix_micro_audit_failed(report))
+
+
+def test_missing_post_fix_micro_audit_result_fails_closed():
+    """Missing audit result should fail closed in enforcement helper."""
+    report = controller.parse_post_fix_micro_audit_result("")
+    ASSERTIONS.assertEqual(controller.post_fix_micro_audit_status(report), "FAIL")
+    ASSERTIONS.assertTrue(controller.post_fix_micro_audit_failed(report))
 
 
 def test_clean_scope_defaults_allow_pr_flow_automation_script():

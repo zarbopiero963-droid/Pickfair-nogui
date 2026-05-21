@@ -82,6 +82,27 @@ PR_AUTOMATION_STATE_FIELDS = (
 ACTIVE_TASK_COMMAND_FILE = "active-task-command.md"
 ACTIVE_FINAL_MICRO_AUDIT_FILE = "active-final-micro-audit.md"
 ACTIVE_TASK_STATE_FILE = "active-task-state.json"
+POST_FIX_MICRO_AUDIT_SECTION = """POST-FIX MICRO-AUDIT BEFORE COMMIT
+
+Before committing, perform a read-only audit of your own patch.
+
+Check:
+1. Did you fix every requested Codacy/review finding?
+2. Did you avoid creating new unused helpers?
+3. Did you avoid creating functions/tests above local Codacy/Lizard thresholds?
+4. Did you preserve scope and avoid unrelated files?
+5. Did you avoid touching forbidden files?
+6. Did you preserve behavior?
+7. Did you add/adjust focused tests where needed?
+8. Did direct script execution still work where required?
+9. Did validation pass?
+10. Did the patch avoid new false-green routing?
+
+If audit fails:
+- fix the issue before commit
+- or stop and report PARTIAL/needs_manual
+Do not commit a patch that fails this audit.
+"""
 
 
 def command_family(command: str) -> str:
@@ -1210,7 +1231,74 @@ def codacy_task_lines(records: list[dict[str, Any]]) -> list[str]:
             f"{index}. {record['filePath']}:{record['lineNumber']} "
             f"{record['patternId']} {record['severity']} {record['tool']} - {record['message']}"
         )
-    return lines
+    return ensure_post_fix_micro_audit_section("\n".join(lines)).splitlines()
+
+
+def build_post_fix_micro_audit_prompt(task_text: str, context: dict[str, Any] | None = None) -> str:
+    prompt = ensure_post_fix_micro_audit_section(task_text)
+    ctx = context if isinstance(context, dict) else {}
+    files = ctx.get("changed_files")
+    if isinstance(files, list) and files:
+        file_lines = "\n".join(f"- {str(path)}" for path in files if str(path).strip())
+        if file_lines:
+            prompt += f"\n\nAudit context (changed files):\n{file_lines}\n"
+    return prompt
+
+
+def ensure_post_fix_micro_audit_section(prompt: str) -> str:
+    text = str(prompt or "").rstrip()
+    if "POST-FIX MICRO-AUDIT BEFORE COMMIT" in text:
+        return text + "\n"
+    return f"{text}\n\n{POST_FIX_MICRO_AUDIT_SECTION}"
+
+
+def parse_post_fix_micro_audit_result(text: str) -> dict[str, Any]:
+    raw = str(text or "").strip()
+    data: dict[str, Any] = {}
+    try:
+        loaded = json.loads(raw)
+        if isinstance(loaded, dict):
+            data = loaded
+    except json.JSONDecodeError:
+        pass
+    status = str(data.get("status") or _line_value(raw, "status") or "").upper()
+    report = {
+        "status": status if status in {"PASS", "FAIL", "PARTIAL"} else "FAIL",
+        "reasons": _list_value(data, raw, "reasons"),
+        "checked_items": _list_value(data, raw, "checked_items"),
+        "changed_files": _list_value(data, raw, "changed_files"),
+        "validation_commands": _list_value(data, raw, "validation_commands"),
+        "next_action": str(data.get("next_action") or _line_value(raw, "next_action") or "").strip(),
+    }
+    if not report["next_action"]:
+        report["next_action"] = "validation_then_commit" if report["status"] == "PASS" else "needs_manual_post_fix_audit_failed"
+    return report
+
+
+def post_fix_micro_audit_status(report: dict[str, Any] | None) -> str:
+    value = str((report or {}).get("status") or "").upper()
+    return value if value in {"PASS", "FAIL", "PARTIAL"} else "FAIL"
+
+
+def post_fix_micro_audit_failed(report: dict[str, Any] | None) -> bool:
+    status = post_fix_micro_audit_status(report)
+    next_action = str((report or {}).get("next_action") or "").strip()
+    return status != "PASS" or next_action != "validation_then_commit"
+
+
+def _line_value(text: str, key: str) -> str:
+    match = re.search(rf"(?im)^\s*{re.escape(key)}\s*:\s*(.+)$", text or "")
+    return match.group(1).strip() if match else ""
+
+
+def _list_value(data: dict[str, Any], raw: str, key: str) -> list[str]:
+    value = data.get(key)
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    match = re.search(rf"(?ims)^\s*{re.escape(key)}\s*:\s*((?:\n\s*-\s*.+)+)", raw or "")
+    if not match:
+        return []
+    return [line.strip()[2:].strip() for line in match.group(1).splitlines() if line.strip().startswith("-")]
 
 
 def write_codacy_task(outdir: Path, raw: dict[str, Any], issues: list[dict[str, Any]]) -> None:
@@ -2000,7 +2088,9 @@ def _is_deepsource_check(check: dict[str, Any]) -> bool:
 def _deepsource_lines(checks: list[dict[str, Any]]) -> list[str]:
     lines = ["# DeepSource repair input", ""]
     if not checks:
-        return lines + ["No DeepSource blockers found in current PR status rollup."]
+        return ensure_post_fix_micro_audit_section(
+            "\n".join(lines + ["No DeepSource blockers found in current PR status rollup."])
+        ).splitlines()
     for check in checks:
         lines.extend([
             f"- name: {str(check.get('name') or check.get('context') or '')}",
@@ -2009,7 +2099,7 @@ def _deepsource_lines(checks: list[dict[str, Any]]) -> list[str]:
             f"  description: {str(check.get('description') or '')}",
             "",
         ])
-    return lines
+    return ensure_post_fix_micro_audit_section("\n".join(lines)).splitlines()
 
 
 def _write_deepsource_task(outdir: Path, repo: str, pr_number: str) -> None:
@@ -2134,10 +2224,10 @@ def _review_task_lines(nodes: list[dict[str, Any]]) -> list[str]:
     ]
     if not unresolved:
         lines.append("No unresolved review threads found, or review thread API was unavailable.")
-        return lines
+        return ensure_post_fix_micro_audit_section("\n".join(lines)).splitlines()
     for node in unresolved:
         lines.extend(_thread_lines(node))
-    return lines
+    return ensure_post_fix_micro_audit_section("\n".join(lines)).splitlines()
 
 
 def review_comments_summary(nodes: list[dict[str, Any]]) -> dict[str, int]:
