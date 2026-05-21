@@ -16,6 +16,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+try:
+    import scripts.pr_automation_controller as controller
+except ModuleNotFoundError:
+    import pr_automation_controller as controller
+
 SELF_CHECK_NAMES = {
     "safe pr autofix",
     "pr autofix safe supervisor",
@@ -359,53 +364,371 @@ def post_or_update_comment(repo: str, pr: str, marker: str, body: str) -> None:
     payload_path.unlink(missing_ok=True)
 
 
-def build_decision(repo: str, pr_number: str, *, ignore_self: bool = True) -> dict[str, Any]:
+def _active_review_taxonomy_items(review_threads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": "Active unresolved review thread",
+            "state": "ACTION_REQUIRED",
+            "source": "review",
+            "reason": "active unresolved review thread",
+            "active": True,
+            "id": thread.get("id"),
+            "path": thread.get("path"),
+            "line": thread.get("line"),
+            "author": thread.get("author"),
+            "url": thread.get("url"),
+        }
+        for thread in eligible_review_comments_for_auto_resolve(review_threads)
+    ]
+
+
+def build_decision(
+    repo: str,
+    pr_number: str,
+    *,
+    ignore_self: bool = True,
+    review_threads: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build merge readiness decision and apply blocker taxonomy routing."""
     pr = pr_view(repo, pr_number)
     checks = split_checks(pr, ignore_self=ignore_self)
+    active_review_threads = eligible_review_comments_for_auto_resolve(review_threads or [])
+    merge_state = _merge_readiness_state(pr, checks, active_review_threads)
+    decision = _base_decision({"repo": repo, "pr_number": pr_number}, pr, checks, merge_state)
+    taxonomy_context = _taxonomy_context(pr, checks, merge_state["can_merge"])
+    taxonomy_items = _decision_taxonomy_items(checks, review_threads or [])
+    taxonomy_items.extend(_merge_conflict_taxonomy_items(pr))
+    decision["blocker_taxonomy"] = controller.summarize_blocker_actions(taxonomy_items, taxonomy_context)
+    _apply_taxonomy_next_action(decision)
+    return decision
 
-    already_merged = bool(pr.get("mergedAt"))
-    reasons: list[str] = []
 
+def _merge_readiness_state(
+    pr_data: dict[str, Any],
+    checks: dict[str, Any],
+    active_review_threads: list[dict[str, Any]],
+) -> dict[str, Any]:
+    already_merged = bool(pr_data.get("mergedAt"))
+    reasons = _merge_state_reasons(
+        already_merged,
+        pr_data,
+        checks,
+        active_review_threads,
+    )
+    can_merge = _can_merge_from_reasons(already_merged, reasons, active_review_threads)
+    return {"already_merged": already_merged, "can_merge": can_merge, "reasons": reasons}
+
+
+def _merge_state_reasons(
+    already_merged: bool,
+    pr_data: dict[str, Any],
+    checks: dict[str, Any],
+    active_review_threads: list[dict[str, Any]],
+) -> list[str]:
     if already_merged:
-        can_merge = True
-    else:
-        if pr.get("state") != "OPEN":
-            reasons.append(f"PR state is {pr.get('state')}, expected OPEN")
-        if pr.get("isDraft"):
-            reasons.append("PR is draft")
-        if pr.get("mergeable") != "MERGEABLE":
-            reasons.append(f"mergeable is {pr.get('mergeable')}, expected MERGEABLE")
-        if not effective_merge_state_ok(str(pr.get("mergeStateStatus") or ""), checks["blockers"], checks["pending"]):
-            reasons.append(f"mergeStateStatus is {pr.get('mergeStateStatus')}, expected CLEAN")
-        if checks["blockers"]:
-            reasons.append(f"{len(checks['blockers'])} real blocking check(s)")
-        if checks["pending"]:
-            reasons.append(f"{len(checks['pending'])} real pending check(s)")
-        can_merge = not reasons
+        return []
+    reasons = _merge_readiness_reasons(pr_data, checks, active_review_threads)
+    review_reason = _reason_review_threads(active_review_threads)
+    if review_reason and review_reason not in reasons:
+        reasons.append(review_reason)
+    return reasons
 
+
+def _can_merge_from_reasons(
+    already_merged: bool,
+    reasons: list[str],
+    active_review_threads: list[dict[str, Any]],
+) -> bool:
+    return already_merged or (not reasons and not active_review_threads)
+
+
+def _merge_readiness_reasons(
+    pr_data: dict[str, Any],
+    checks: dict[str, Any],
+    active_review_threads: list[dict[str, Any]],
+) -> list[str]:
+    return [
+        reason
+        for reason in (
+            _reason_pr_state(pr_data),
+            _reason_pr_draft(pr_data),
+            _reason_pr_mergeable(pr_data),
+            _reason_pr_merge_state_status(pr_data, checks),
+            _reason_blocking_checks(checks),
+            _reason_pending_checks(checks),
+            _reason_review_threads(active_review_threads),
+        )
+        if reason
+    ]
+
+
+def _reason_pr_state(pr_data: dict[str, Any]) -> str:
+    return "" if pr_data.get("state") == "OPEN" else f"PR state is {pr_data.get('state')}, expected OPEN"
+
+
+def _reason_pr_draft(pr_data: dict[str, Any]) -> str:
+    return "PR is draft" if pr_data.get("isDraft") else ""
+
+
+def _reason_pr_mergeable(pr_data: dict[str, Any]) -> str:
+    return (
+        ""
+        if pr_data.get("mergeable") == "MERGEABLE"
+        else f"mergeable is {pr_data.get('mergeable')}, expected MERGEABLE"
+    )
+
+
+def _reason_pr_merge_state_status(pr_data: dict[str, Any], checks: dict[str, Any]) -> str:
+    if effective_merge_state_ok(str(pr_data.get("mergeStateStatus") or ""), checks["blockers"], checks["pending"]):
+        return ""
+    return f"mergeStateStatus is {pr_data.get('mergeStateStatus')}, expected CLEAN"
+
+
+def _reason_blocking_checks(checks: dict[str, Any]) -> str:
+    return f"{len(checks['blockers'])} real blocking check(s)" if checks["blockers"] else ""
+
+
+def _reason_pending_checks(checks: dict[str, Any]) -> str:
+    return f"{len(checks['pending'])} real pending check(s)" if checks["pending"] else ""
+
+
+def _reason_review_threads(active_review_threads: list[dict[str, Any]]) -> str:
+    count = len(active_review_threads)
+    return f"{count} active unresolved review thread(s)" if count else ""
+
+
+def _base_decision(
+    identity: dict[str, str],
+    pr_data: dict[str, Any],
+    checks: dict[str, Any],
+    merge_state: dict[str, Any],
+) -> dict[str, Any]:
+    """Build normalized PR decision payload before taxonomy next-action overrides."""
+    already_merged = bool(merge_state["already_merged"])
+    can_merge = bool(merge_state["can_merge"])
+    payload = _base_decision_metadata(identity, pr_data)
+    payload.update(_base_decision_checks(checks))
+    payload.update(_base_decision_status(pr_data, merge_state, can_merge, already_merged))
+    payload.update(_base_decision_result(can_merge, already_merged))
+    return payload
+
+
+def _base_decision_metadata(identity: dict[str, str], pr_data: dict[str, Any]) -> dict[str, Any]:
     return {
-        "repo": repo,
-        "pr": str(pr_number),
-        "url": pr.get("url"),
-        "state": pr.get("state"),
-        "already_merged": already_merged,
-        "mergedAt": pr.get("mergedAt"),
-        "mergedBy": (pr.get("mergedBy") or {}).get("login") if isinstance(pr.get("mergedBy"), dict) else pr.get("mergedBy"),
-        "mergeCommit": (pr.get("mergeCommit") or {}).get("oid") if isinstance(pr.get("mergeCommit"), dict) else pr.get("mergeCommit"),
-        "headRefName": pr.get("headRefName"),
-        "headRefOid": pr.get("headRefOid"),
-        "baseRefName": pr.get("baseRefName"),
-        "mergeable": pr.get("mergeable"),
-        "mergeStateStatus": pr.get("mergeStateStatus"),
-        "reviewDecision": pr.get("reviewDecision"),
-        "can_merge": can_merge,
-        "reasons": reasons,
+        "repo": identity["repo"],
+        "pr": str(identity["pr_number"]),
+        "url": pr_data.get("url"),
+        "state": pr_data.get("state"),
+        "mergedAt": pr_data.get("mergedAt"),
+        "mergedBy": _pr_actor_login(pr_data.get("mergedBy")),
+        "mergeCommit": _pr_oid(pr_data.get("mergeCommit")),
+        "headRefName": pr_data.get("headRefName"),
+        "headRefOid": pr_data.get("headRefOid"),
+        "baseRefName": pr_data.get("baseRefName"),
+    }
+
+
+def _base_decision_checks(checks: dict[str, Any]) -> dict[str, Any]:
+    return {
         "blockers": checks["blockers"],
         "pending": checks["pending"],
         "ignored_self_checks": checks["ignored"],
         "self_stale": checks["self_stale"],
-        "next_action": "merge_allowed" if can_merge and not already_merged else ("already_merged" if already_merged else "blocked"),
     }
+
+
+def _base_decision_status(
+    pr_data: dict[str, Any],
+    merge_state: dict[str, Any],
+    can_merge: bool,
+    already_merged: bool,
+) -> dict[str, Any]:
+    return {
+        "already_merged": already_merged,
+        "mergeable": pr_data.get("mergeable"),
+        "mergeStateStatus": pr_data.get("mergeStateStatus"),
+        "reviewDecision": pr_data.get("reviewDecision"),
+        "is_draft": bool(pr_data.get("isDraft")),
+        "is_open": pr_data.get("state") == "OPEN",
+        "can_merge": can_merge,
+        "reasons": merge_state["reasons"],
+    }
+
+
+def _base_decision_result(can_merge: bool, already_merged: bool) -> dict[str, Any]:
+    next_action = "already_merged" if already_merged else ("ready_to_merge" if can_merge else "blocked")
+    return {"next_action": next_action}
+
+
+def _pr_actor_login(value: Any) -> Any:
+    return value.get("login") if isinstance(value, dict) else value
+
+
+def _pr_oid(value: Any) -> Any:
+    return value.get("oid") if isinstance(value, dict) else value
+
+
+def _taxonomy_context(pr_data: dict[str, Any], checks: dict[str, Any], can_merge: bool) -> dict[str, Any]:
+    return {
+        "logs_clear": False,
+        "can_merge": can_merge,
+        "is_draft": bool(pr_data.get("isDraft")),
+        "is_open": pr_data.get("state") == "OPEN",
+        "mergeable": pr_data.get("mergeable"),
+        "mergeStateStatus": pr_data.get("mergeStateStatus"),
+        "pending": checks["pending"],
+        "bad": checks["blockers"],
+        "blockers": checks["blockers"],
+        "blockers_count": len(checks["blockers"]),
+    }
+
+
+def _decision_taxonomy_items(checks: dict[str, Any], review_threads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items = list(checks["blockers"])
+    items.extend(checks["pending"])
+    items.extend(_review_thread_taxonomy_items(review_threads))
+    return items
+
+
+def _merge_conflict_taxonomy_items(pr_data: dict[str, Any]) -> list[dict[str, Any]]:
+    classified = controller.classify_merge_conflict(pr_data, _conflicted_files_from_pr(pr_data), {})
+    if str(classified.get("category") or "") != "merge_conflict":
+        return []
+    return [dict(classified, name="PR merge conflict", state="FAILURE", source="merge")]
+
+
+def _conflicted_files_from_pr(pr_data: dict[str, Any]) -> list[str]:
+    fields = ("conflicted_files", "conflictedFiles", "files")
+    for field in fields:
+        files = pr_data.get(field)
+        if isinstance(files, list):
+            return [str(path).strip() for path in files if str(path).strip()]
+    return []
+
+
+def _review_thread_taxonomy_items(review_threads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return _active_review_taxonomy_items(review_threads)
+
+
+def _apply_taxonomy_next_action(decision: dict[str, Any]) -> None:
+    if decision.get("already_merged"):
+        return
+    next_action = _resolved_taxonomy_next_action(decision)
+    if next_action:
+        decision["next_action"] = next_action
+
+
+def _resolved_taxonomy_next_action(decision: dict[str, Any]) -> str:
+    taxonomy_dict = _taxonomy_dict(decision)
+    taxonomy_next_action = _taxonomy_next_action(taxonomy_dict)
+    current_action = _current_next_action(decision)
+    if _should_set_taxonomy_action(current_action, taxonomy_next_action):
+        return taxonomy_next_action
+    if _should_force_review_fix(current_action, taxonomy_dict):
+        return "fix_review_comments"
+    if _can_apply_ready_route(decision):
+        return "ready_to_merge"
+    return ""
+
+
+def _should_force_review_fix(current_action: str, taxonomy_dict: dict[str, Any]) -> bool:
+    return _should_set_review_fix_action(current_action, taxonomy_dict) or (
+        _has_review_blocker(taxonomy_dict) and current_action == "ready_to_merge"
+    )
+
+
+def _taxonomy_dict(decision: dict[str, Any]) -> dict[str, Any]:
+    taxonomy = decision.get("blocker_taxonomy")
+    return taxonomy if isinstance(taxonomy, dict) else {}
+
+
+def _taxonomy_next_action(decision: dict[str, Any]) -> str:
+    return str(decision.get("next_action") or "").strip()
+
+
+def _current_next_action(decision: dict[str, Any]) -> str:
+    return str(decision.get("next_action") or "").strip()
+
+
+def _can_apply_ready_route(decision: dict[str, Any]) -> bool:
+    taxonomy_dict = _taxonomy_dict(decision)
+    return (
+        _taxonomy_next_action(taxonomy_dict) == "ready_to_merge"
+        and bool(decision.get("can_merge"))
+        and not _has_review_blocker(taxonomy_dict)
+        and not _is_high_priority_action(_current_next_action(decision))
+    )
+
+
+def _should_set_taxonomy_action(current_action: str, taxonomy_action: str) -> bool:
+    if current_action == "blocked" and taxonomy_action == "checks_green_or_no_action":
+        return False
+    return (
+        bool(taxonomy_action)
+        and taxonomy_action not in {"ready_to_merge", "fix_review_comments"}
+        and not _is_high_priority_action(current_action)
+    )
+
+
+def _has_review_blocker(taxonomy_dict: dict[str, Any]) -> bool:
+    categories = taxonomy_dict.get("categories")
+    return isinstance(categories, list) and "review_comment_active" in categories
+
+
+def _is_high_priority_action(action: str) -> bool:
+    return action in {
+        "wait_pending",
+        "needs_manual_merge_conflict",
+        "needs_manual_secret",
+        "needs_manual_scope_violation",
+        "needs_manual_codacy_rule_conflict",
+        "rerun_stale_checks",
+        "auto_resolve_merge_conflict",
+    }
+
+
+def _should_set_review_fix_action(current_action: str, taxonomy_dict: dict[str, Any]) -> bool:
+    if not _has_review_blocker(taxonomy_dict):
+        return False
+    return _review_override_allowed(current_action, taxonomy_dict)
+
+
+def _review_override_allowed(current_action: str, taxonomy_dict: dict[str, Any]) -> bool:
+    if not _review_only_blocker(taxonomy_dict):
+        return False
+    return current_action in {"", "blocked", "checks_green_or_no_action", "ready_to_merge"}
+
+
+def _review_only_blocker(taxonomy_dict: dict[str, Any]) -> bool:
+    categories = taxonomy_dict.get("categories")
+    if not isinstance(categories, list):
+        return False
+    normalized = {str(category).strip() for category in categories if str(category).strip()}
+    return normalized == {"review_comment_active"}
+
+
+def classify_blocker(item: dict[str, Any]) -> dict[str, Any]:
+    """Proxy blocker taxonomy classification to controller helper."""
+    return controller.classify_blocker(item)
+
+
+def route_blocker_action(category: str, context: dict[str, Any]) -> str:
+    """Proxy blocker taxonomy routing to controller helper."""
+    return controller.route_blocker_action(category, context)
+
+
+def classify_merge_conflict(
+    pr_data: dict[str, Any],
+    conflicted_files: list[str],
+    task_scope: dict[str, Any],
+) -> dict[str, Any]:
+    """Proxy merge-conflict taxonomy classification to controller helper."""
+    return controller.classify_merge_conflict(pr_data, conflicted_files, task_scope)
+
+
+def summarize_blocker_actions(blockers: list[dict[str, Any]], context: dict[str, Any]) -> dict[str, Any]:
+    """Proxy taxonomy summarization to controller helper."""
+    return controller.summarize_blocker_actions(blockers, context)
 
 
 def build_telegram_summary(context: dict[str, Any]) -> dict[str, Any]:
@@ -434,7 +757,7 @@ def should_notify_ready_to_merge(context: dict[str, Any]) -> bool:
     return (
         isinstance(bad, list)
         and not bad
-        and unresolved_active == 0
+        and not unresolved_active
         and mergeable == "MERGEABLE"
         and merge_state_status == "CLEAN"
     )
@@ -521,21 +844,40 @@ def _codacy_rule_conflict_result() -> dict[str, str]:
 
 def cmd_readiness(args: argparse.Namespace) -> int:
     deadline = time.time() + args.wait_unknown_seconds
-    decision = build_decision(args.repo, args.pr, ignore_self=args.ignore_safe_autofix)
+    decision = _readiness_decision(args.repo, args.pr, args.ignore_safe_autofix)
 
     while (
         args.wait_unknown_seconds > 0
         and time.time() < deadline
         and not decision["already_merged"]
+        and "review_threads_api_unavailable" not in decision.get("reasons", [])
         and (decision["mergeable"] == "UNKNOWN" or decision["mergeStateStatus"] == "UNKNOWN")
     ):
         time.sleep(args.poll_seconds)
-        decision = build_decision(args.repo, args.pr, ignore_self=args.ignore_safe_autofix)
+        decision = _readiness_decision(args.repo, args.pr, args.ignore_safe_autofix)
 
     print(json.dumps(decision, indent=2, sort_keys=True))
     if args.output:
         write_json(Path(args.output), decision)
     return 0 if decision["can_merge"] or args.no_fail else 1
+
+
+def _readiness_decision(repo: str, pr_number: str, ignore_self: bool) -> dict[str, Any]:
+    try:
+        review_threads = fetch_all_review_threads(repo, pr_number)
+    except (RuntimeError, ValueError, OSError, AttributeError):
+        return _readiness_review_api_blocked(repo, pr_number, ignore_self)
+    return build_decision(repo, pr_number, ignore_self=ignore_self, review_threads=review_threads)
+
+
+def _readiness_review_api_blocked(repo: str, pr_number: str, ignore_self: bool) -> dict[str, Any]:
+    decision = build_decision(repo, pr_number, ignore_self=ignore_self, review_threads=None)
+    reasons = decision.get("reasons")
+    if isinstance(reasons, list) and "review_threads_api_unavailable" not in reasons:
+        reasons.append("review_threads_api_unavailable")
+    decision["can_merge"] = False
+    decision["next_action"] = "needs_manual_review_api"
+    return decision
 
 
 def current_run_id(url: str) -> str:
@@ -678,7 +1020,12 @@ def cmd_preflight(args: argparse.Namespace) -> int:
 
 
 def cmd_report(args: argparse.Namespace) -> int:
-    decision = build_decision(args.repo, args.pr, ignore_self=True)
+    review_nodes: list[dict[str, Any]] = []
+    try:
+        review_nodes = fetch_all_review_threads(args.repo, args.pr)
+    except (RuntimeError, ValueError, OSError, AttributeError):
+        review_nodes = []
+    decision = build_decision(args.repo, args.pr, ignore_self=True, review_threads=review_nodes)
     blockers = decision.get("blockers")
     blocker_items = blockers if isinstance(blockers, list) else []
     codacy_checks = [
@@ -712,32 +1059,6 @@ def cmd_report(args: argparse.Namespace) -> int:
         codacy["treat_annotations_as_blockers"] = bool(codacy_checks and codacy_issues)
     except (RuntimeError, ValueError, OSError):
         codacy["classification"] = "unknown"
-
-    review_nodes: list[dict[str, Any]] = []
-    try:
-        owner, name = str(args.repo).split("/", 1)
-        review_threads_query = (
-            "query($owner:String!, $name:String!, $number:Int!) "
-            "{ repository(owner:$owner, name:$name) { pullRequest(number:$number) "
-            "{ reviewThreads(first:100) { nodes { id isResolved isOutdated } } } } }"
-        )
-        review_raw = gh_json([
-            "gh", "api", "graphql",
-            "-f", f"owner={owner}",
-            "-f", f"name={name}",
-            "-F", f"number={args.pr}",
-            "-f", f"query={review_threads_query}",
-        ])
-        nodes = (
-            review_raw.get("data", {})
-            .get("repository", {})
-            .get("pullRequest", {})
-            .get("reviewThreads", {})
-            .get("nodes", [])
-        )
-        review_nodes = [node for node in nodes if isinstance(node, dict)] if isinstance(nodes, list) else []
-    except (RuntimeError, ValueError, OSError, AttributeError):
-        review_nodes = []
     unresolved_active = len(eligible_review_comments_for_auto_resolve(review_nodes))
     review = {"unresolved_active": unresolved_active, "total_threads": len(review_nodes)}
     decision["codacy"] = codacy
@@ -787,6 +1108,75 @@ def cmd_report(args: argparse.Namespace) -> int:
 
     print(json.dumps(decision, indent=2, sort_keys=True))
     return 0 if decision["can_merge"] or decision["already_merged"] or args.no_fail else 1
+
+
+def fetch_all_review_threads(repo: str, pr_number: str | int) -> list[dict[str, Any]]:
+    """Fetch every review-thread node for a PR using GraphQL pagination."""
+    after_cursor: str | None = None
+    collected: list[dict[str, Any]] = []
+    while True:
+        page = _review_threads_page(repo, pr_number, after_cursor)
+        collected.extend(_review_threads_nodes(page))
+        next_cursor = _review_threads_next_cursor(page)
+        if not next_cursor:
+            break
+        after_cursor = next_cursor
+    return collected
+
+
+def _review_threads_page_query() -> str:
+    return (
+        "query($owner:String!, $name:String!, $number:Int!, $after:String) "
+        "{ repository(owner:$owner, name:$name) { pullRequest(number:$number) "
+        "{ reviewThreads(first:100, after:$after) { "
+        "nodes { id isResolved isOutdated } pageInfo { hasNextPage endCursor }"
+        " } } } }"
+    )
+
+
+def _review_threads_page(repo: str, pr_number: str | int, after_cursor: str | None = None) -> dict[str, Any]:
+    owner, name = str(repo).split("/", 1)
+    cmd = [
+        "gh", "api", "graphql",
+        "-f", f"owner={owner}",
+        "-f", f"name={name}",
+        "-F", f"number={pr_number}",
+        "-f", f"query={_review_threads_page_query()}",
+    ]
+    if after_cursor:
+        cmd.extend(["-f", f"after={after_cursor}"])
+    return gh_json(cmd)
+
+
+def _review_threads_nodes(review_raw: dict[str, Any]) -> list[dict[str, Any]]:
+    review_threads = (
+        review_raw.get("data", {})
+        .get("repository", {})
+        .get("pullRequest", {})
+        .get("reviewThreads", {})
+    )
+    if not isinstance(review_threads, dict):
+        return []
+    nodes = review_threads.get("nodes", [])
+    if not isinstance(nodes, list):
+        return []
+    return [node for node in nodes if isinstance(node, dict)]
+
+
+def _review_threads_next_cursor(review_raw: dict[str, Any]) -> str:
+    review_threads = (
+        review_raw.get("data", {})
+        .get("repository", {})
+        .get("pullRequest", {})
+        .get("reviewThreads", {})
+    )
+    if not isinstance(review_threads, dict):
+        return ""
+    page_info = review_threads.get("pageInfo", {})
+    if not isinstance(page_info, dict) or not page_info.get("hasNextPage"):
+        return ""
+    next_cursor = page_info.get("endCursor")
+    return str(next_cursor) if next_cursor else ""
 
 
 def cmd_codacy_task(args: argparse.Namespace) -> int:

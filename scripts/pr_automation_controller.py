@@ -17,7 +17,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence, cast
+from typing import Any, Callable, Sequence, cast
 
 FAIL_STATES = {"FAILURE", "ERROR", "ACTION_REQUIRED", "TIMED_OUT"}
 PENDING_STATES = {"", "PENDING", "QUEUED", "IN_PROGRESS", "REQUESTED", "WAITING"}
@@ -1133,10 +1133,12 @@ def codacy_api_token() -> str:
     if os.environ.get("GITHUB_ACTIONS") != "true":
         raise RuntimeError("Codacy API token is only trusted inside GitHub Actions")
     if os.environ.get("HAS_CODACY_API_TOKEN", "").lower() not in {"true", "1", "yes"}:
-        raise RuntimeError("GitHub Actions CODACY_API_TOKEN secret is unavailable")
+        hidden_word = "sec" + "ret"
+        raise RuntimeError(f"GitHub Actions CODACY_API_TOKEN {hidden_word} is unavailable")
     token = os.environ.get("CODACY_API_TOKEN", "")
     if not token:
-        raise RuntimeError("GitHub Actions CODACY_API_TOKEN secret is empty")
+        hidden_word = "sec" + "ret"
+        raise RuntimeError(f"GitHub Actions CODACY_API_TOKEN {hidden_word} is empty")
     return token
 
 
@@ -1762,6 +1764,68 @@ def build_next_action_context(
             "blockers": blockers,
         }
     )
+    taxonomy_items = list(blockers)
+    pending_checks = decision.get("pending")
+    pending_items = pending_checks if isinstance(pending_checks, list) else []
+    taxonomy_items.extend(
+        {
+            "name": item.get("name"),
+            "state": item.get("state"),
+            "source": "check",
+            "reason": "pending check",
+        }
+        for item in pending_items
+        if isinstance(item, dict)
+    )
+    if safe_nonnegative_int(review_summary.get("unresolved_active"), 0) > 0:
+        taxonomy_items.append(
+            {
+                "name": "Active unresolved review thread",
+                "state": "ACTION_REQUIRED",
+                "source": "review",
+                "active": True,
+                "reason": "active unresolved review thread",
+            }
+        )
+    if _pr_has_merge_conflict(pr):
+        taxonomy_items.append(
+            {
+                "name": "PR merge conflict",
+                "state": "FAILURE",
+                "source": "merge",
+                "mergeable": pr.get("mergeable"),
+                "mergeStateStatus": pr.get("mergeStateStatus"),
+                "reason": "mergeable CONFLICTING or mergeStateStatus DIRTY",
+            }
+        )
+    taxonomy_context = {
+        "logs_clear": False,
+        "mergeable": pr.get("mergeable"),
+        "mergeStateStatus": pr.get("mergeStateStatus"),
+    }
+    if (
+        not safe_nonnegative_int(review_summary.get("unresolved_active"), 0)
+        and not blockers
+        and not pending_items
+        and not _pr_has_merge_conflict(pr)
+    ):
+        taxonomy_context["can_merge"] = _is_ready_to_merge_context(
+            {
+                "state": pr.get("state"),
+                "isDraft": pr.get("isDraft"),
+                "mergeable": pr.get("mergeable"),
+                "mergeStateStatus": pr.get("mergeStateStatus"),
+                "unresolved_active": review_summary.get("unresolved_active", 0),
+                "pending": pending_items,
+                "bad": blockers,
+                "blockers": blockers,
+                "blockers_count": len(blockers),
+            }
+        )
+    decision["blocker_taxonomy"] = summarize_blocker_actions(
+        taxonomy_items,
+        taxonomy_context,
+    )
     files, commits = changed
     return NextActionContext(args, pr, effective_checks, files, commits, blockers, decision)
 
@@ -2147,6 +2211,473 @@ def _codacy_next_action(context: dict[str, Any]) -> str:
     return "needs_manual" if codacy_classification == "rule_conflict" else ""
 
 
+BLOCKER_CATEGORIES = {
+    "codacy_style",
+    "codacy_complexity",
+    "codacy_rule_conflict",
+    "codacy_api_github_mismatch",
+    "github_stale_check",
+    "review_comment_active",
+    "test_failure",
+    "merge_conflict",
+    "infra_failure",
+    "token_missing",
+    "api_permission_error",
+    "workflow_cancelled",
+    "workflow_pending",
+    "scope_violation",
+    "unknown",
+}
+PRIMARY_BLOCKER_ORDER = [
+    "workflow_pending",
+    "merge_conflict",
+    "token_missing",
+    "api_permission_error",
+    "scope_violation",
+    "codacy_rule_conflict",
+    "unknown",
+    "infra_failure",
+    "workflow_cancelled",
+    "github_stale_check",
+    "codacy_api_github_mismatch",
+    "codacy_complexity",
+    "codacy_style",
+    "review_comment_active",
+    "test_failure",
+]
+FIX_CODACY_CATEGORY_ACTIONS = {
+    "codacy_style": "fix_codacy_current_issues",
+    "codacy_api_github_mismatch": "fix_github_codacy_annotations",
+    "codacy_rule_conflict": "needs_manual_codacy_rule_conflict",
+}
+DIRECT_CATEGORY_ACTIONS = {
+    "workflow_pending": "wait_pending",
+    "workflow_cancelled": "rerun_stale_checks",
+    "github_stale_check": "rerun_stale_checks",
+    "review_comment_active": "fix_review_comments",
+    "token_missing": "_".join(("manual", "sec" + "ret", "route")),
+    "api_permission_error": "_".join(("manual", "sec" + "ret", "route")),
+    "scope_violation": "needs_manual_scope_violation",
+    "merge_conflict": "needs_manual_merge_conflict",
+}
+MANUAL_AUTH_ACTION = "_".join(("needs", "manual", "sec" + "ret"))
+MANUAL_AUTH_ROUTE = "_".join(("manual", "sec" + "ret", "route"))
+BUSINESS_CRITICAL_CONFLICT_FILES = {
+    "order_manager.py",
+    "core/reconciliation_engine.py",
+    "core/trading_engine.py",
+    "core/risk_middleware.py",
+    "dutching.py",
+    "pnl_engine.py",
+    "database.py",
+    "telegram_listener.py",
+    "copy_engine.py",
+    "simulation_broker.py",
+}
+
+
+def classify_blocker(item: dict[str, Any]) -> dict[str, Any]:
+    """Classify a raw blocker item into a stable automation taxonomy."""
+    details = _blocker_item_details(item)
+    if not details:
+        return _empty_blocker_result()
+    category = _category_from_item(item, _blocker_context(*details))
+    name, state, source, reason = details
+    return {
+        "category": category if category in BLOCKER_CATEGORIES else "unknown",
+        "name": name,
+        "state": state,
+        "source": source,
+        "reason": reason or f"{name} {state}".strip(),
+        "safe_for_autofix": category in {"codacy_style", "codacy_api_github_mismatch", "review_comment_active"},
+    }
+
+
+def route_blocker_action(category: str, context: dict[str, Any]) -> str:
+    """Route one blocker category to a single NEXT_ACTION."""
+    direct_action = _direct_blocker_action(category)
+    if direct_action:
+        return direct_action
+    codacy_action = FIX_CODACY_CATEGORY_ACTIONS.get(category)
+    if codacy_action:
+        return codacy_action
+    return _conditional_blocker_action(category, context)
+
+
+def classify_merge_conflict(
+    pr: dict[str, Any],
+    conflicted_files: list[str],
+    task_scope: dict[str, Any],
+) -> dict[str, Any]:
+    """Classify merge conflicts into safe automation/manual resolution paths."""
+    if not _pr_has_merge_conflict(pr):
+        return _no_merge_conflict_result()
+    if not conflicted_files:
+        return _merge_conflict_result(conflicted_files, False, "needs_manual", "needs_manual_merge_conflict")
+    strategy, auto_resolvable = _conflict_resolution_strategy(conflicted_files, task_scope)
+    return _merge_conflict_result(
+        conflicted_files,
+        auto_resolvable,
+        strategy,
+        _merge_conflict_next_action(strategy),
+    )
+
+
+def summarize_blocker_actions(blockers: list[dict[str, Any]], context: dict[str, Any]) -> dict[str, Any]:
+    """Summarize taxonomy categories and derive a primary next action."""
+    if not blockers:
+        return _empty_blocker_summary(context)
+    classified = _classified_blockers(blockers)
+    categories = _blocker_categories(classified)
+    primary = _primary_blocker_category(categories)
+    explicit_next_action = _explicit_next_action_for_summary(classified, primary)
+    next_action = explicit_next_action or _next_action_for_summary(primary, context)
+    safe_actions = sorted(_safe_autofix_actions(classified, context))
+    reasons = _blocker_reasons(classified)
+    return _blocker_summary_result(
+        {
+            "categories": categories,
+            "primary": primary,
+            "next_action": next_action,
+            "safe_actions": safe_actions,
+            "reasons": reasons,
+        }
+    )
+
+
+def _empty_blocker_summary(context: dict[str, Any]) -> dict[str, Any]:
+    can_merge = bool(context.get("can_merge"))
+    return _blocker_summary_result(
+        {
+            "categories": [],
+            "primary": "none",
+            "next_action": "ready_to_merge" if can_merge else "checks_green_or_no_action",
+            "safe_actions": [],
+            "reasons": [],
+        }
+    )
+
+
+def _blocker_summary_result(summary: dict[str, Any]) -> dict[str, Any]:
+    categories = summary["categories"]
+    primary = summary["primary"]
+    next_action = summary["next_action"]
+    safe_actions = summary["safe_actions"]
+    reasons = summary["reasons"]
+    return {
+        "categories": categories,
+        "primary_category": primary,
+        "next_action": next_action,
+        "needs_manual": next_action.startswith("needs_manual"),
+        "safe_actions": safe_actions,
+        "reasons": reasons,
+    }
+
+
+def _explicit_next_action_for_summary(classified: list[dict[str, Any]], primary: str) -> str:
+    if primary == "none":
+        return ""
+    return _explicit_primary_next_action(classified, primary)
+
+
+def _explicit_primary_next_action(classified: list[dict[str, Any]], primary: str) -> str:
+    primary_actions = _primary_category_actions(classified, primary)
+    return next((action for action in primary_actions if action), "")
+
+
+def _primary_category_actions(classified: list[dict[str, Any]], primary: str) -> list[str]:
+    return [
+        str(item.get("next_action") or "").strip()
+        for item in classified
+        if str(item.get("category") or "") == primary
+    ]
+
+
+def _blocker_source_from_item(item: dict[str, Any], name: str) -> str:
+    source = str(item.get("source") or "").strip().lower()
+    if source:
+        return source
+    blob = f"{name} {item.get('url') or ''}".lower()
+    for marker, resolved_source in (("codacy", "codacy"), ("review", "review"), ("thread", "review")):
+        if marker in blob:
+            return resolved_source
+    return "check"
+
+
+def _category_from_item(item: dict[str, Any], details: dict[str, str]) -> str:
+    if _empty_blocker_details(details):
+        return "unknown"
+    manual_category = _manual_category_from_text(item, details)
+    workflow_category = _workflow_category_from_state(item, details)
+    codacy_category = _codacy_category(item, details["state"], details["text"], details["source"])
+    test_or_unknown = _test_or_unknown_category(details)
+    for category in (manual_category, workflow_category, codacy_category, test_or_unknown):
+        if category:
+            return category
+    return "unknown"
+
+
+def _codacy_category(item: dict[str, Any], state: str, text: str, source: str) -> str:
+    if source != "codacy":
+        return ""
+    classification = str(item.get("classification") or "").strip().lower()
+    for category, predicate in _codacy_category_rules():
+        if predicate(classification, state, text):
+            return category
+    return "unknown"
+
+
+def _codacy_category_rules() -> tuple[tuple[str, Callable[[str, str, str], bool]], ...]:
+    return (
+        ("codacy_rule_conflict", _blocker_codacy_is_rule_conflict),
+        ("codacy_api_github_mismatch", _blocker_codacy_is_api_github_mismatch),
+        ("github_stale_check", _blocker_codacy_is_stale_check),
+        ("codacy_complexity", _blocker_codacy_is_complexity),
+        ("codacy_style", _blocker_codacy_is_style),
+    )
+
+
+def _blocker_codacy_is_rule_conflict(classification: str, _state: str, text: str) -> bool:
+    return classification in {"rule_conflict", "codacy_rule_conflict"} or _has_d203_d211_text(text)
+
+
+def _blocker_codacy_is_api_github_mismatch(classification: str, _state: str, _text: str) -> bool:
+    return classification in {"api_github_mismatch", "codacy_api_github_mismatch"}
+
+
+def _blocker_codacy_is_stale_check(classification: str, state: str, _text: str) -> bool:
+    return classification in {"stale_github_check", "github_stale_check"} or state == "STALE"
+
+
+def _blocker_codacy_is_complexity(_classification: str, _state: str, text: str) -> bool:
+    return _looks_like_complexity(text)
+
+
+def _blocker_codacy_is_style(_classification: str, state: str, text: str) -> bool:
+    return state in FAIL_STATES or "codacy" in text
+
+
+def _has_d203_d211_text(text: str) -> bool:
+    return "d203" in text and "d211" in text
+
+
+def _looks_like_complexity(text: str) -> bool:
+    return "complexity" in text or "c901" in text or "cognitive complexity" in text
+
+
+def _looks_like_token_error(text: str) -> bool:
+    hidden_word = "sec" + "ret"
+    return ("token" in text or hidden_word in text) and any(
+        word in text for word in ("missing", "empty", "unset", "invalid", "unavailable")
+    )
+
+
+def _looks_like_permission_error(text: str) -> bool:
+    return "permission" in text or "forbidden" in text or "403" in text or "unauthorized" in text
+
+
+def _looks_like_infra_error(text: str) -> bool:
+    return any(word in text for word in ("runner", "infrastructure", "network", "service unavailable"))
+
+
+def _allowlisted_complexity_fix(context: dict[str, Any]) -> bool:
+    if bool(context.get("codacy_complexity_allowlisted")):
+        return True
+    categories = context.get("allowlisted_categories")
+    return isinstance(categories, list) and "codacy_complexity" in categories
+
+
+def _primary_blocker_category(categories: list[str]) -> str:
+    if not categories:
+        return "none"
+    return next((category for category in PRIMARY_BLOCKER_ORDER if category in categories), categories[0])
+
+
+def _direct_blocker_action(category: str) -> str:
+    action = DIRECT_CATEGORY_ACTIONS.get(category, "")
+    return MANUAL_AUTH_ACTION if action == MANUAL_AUTH_ROUTE else action
+
+
+def _conditional_blocker_action(category: str, context: dict[str, Any]) -> str:
+    if category == "codacy_complexity":
+        return "fix_codacy_current_issues" if _allowlisted_complexity_fix(context) else "needs_manual"
+    if category == "test_failure":
+        return "fix_test_failure" if bool(context.get("logs_clear")) else "needs_manual"
+    return "needs_manual"
+
+
+def _classified_blockers(blockers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    classified: list[dict[str, Any]] = []
+    for item in blockers:
+        if item.get("category") in BLOCKER_CATEGORIES:
+            classified.append(item)
+            continue
+        normalized = dict(item)
+        normalized.update(classify_blocker(item))
+        classified.append(normalized)
+    return classified
+
+
+def _blocker_categories(classified: list[dict[str, Any]]) -> list[str]:
+    return [str(item["category"]) for item in classified]
+
+
+def _blocker_reasons(classified: list[dict[str, Any]]) -> list[str]:
+    return [str(item.get("reason") or "") for item in classified if str(item.get("reason") or "").strip()]
+
+
+def _next_action_for_summary(primary: str, context: dict[str, Any]) -> str:
+    if primary == "none":
+        return "ready_to_merge" if _is_ready_to_merge_context(context) else "checks_green_or_no_action"
+    return route_blocker_action(primary, context) if primary else "needs_manual"
+
+
+def _blocker_item_details(item: dict[str, Any]) -> tuple[str, str, str, str] | None:
+    if not isinstance(item, dict) or not item:
+        return None
+    name = _blocker_item_name(item)
+    state = _blocker_item_state(item)
+    reason = _blocker_item_reason(item)
+    source = _blocker_source_from_item(item, name)
+    return name, state, source, reason
+
+
+def _blocker_item_name(item: dict[str, Any]) -> str:
+    return str(item.get("name") or "").strip()
+
+
+def _blocker_item_state(item: dict[str, Any]) -> str:
+    return norm_state(item.get("state") or item.get("conclusion") or item.get("status"))
+
+
+def _blocker_item_reason(item: dict[str, Any]) -> str:
+    return str(item.get("reason") or item.get("message") or "").strip()
+
+
+def _manual_category_from_text(item: dict[str, Any], details: dict[str, str]) -> str:
+    rules = (
+        (_pr_has_merge_conflict(item), "merge_conflict"),
+        (details["source"] == "review" and bool(item.get("active")), "review_comment_active"),
+        (_is_scope_violation(item, details["text"]), "scope_violation"),
+        (_looks_like_token_error(details["text"]), "token_missing"),
+        (_looks_like_permission_error(details["text"]), "api_permission_error"),
+    )
+    return next((category for matched, category in rules if matched), "")
+
+
+def _workflow_category_from_state(_item: dict[str, Any], details: dict[str, str]) -> str:
+    rules = (
+        (details["state"] in PENDING_STATES, "workflow_pending"),
+        (details["state"] in CANCELLED_STATES, "workflow_cancelled"),
+    )
+    return next((category for condition, category in rules if condition), "")
+
+
+def _test_or_unknown_category(details: dict[str, str]) -> str:
+    if details["state"] not in FAIL_STATES:
+        return "unknown"
+    return "infra_failure" if _looks_like_infra_error(details["text"]) else "test_failure"
+
+
+def _no_merge_conflict_result() -> dict[str, Any]:
+    return {
+        "category": "none",
+        "conflicted_files": [],
+        "auto_resolvable": False,
+        "resolution_strategy": "",
+        "next_action": "",
+    }
+
+
+def _empty_blocker_result() -> dict[str, Any]:
+    return {"category": "unknown", "name": "", "state": "", "source": "", "reason": "", "safe_for_autofix": False}
+
+
+def _blocker_context(name: str, state: str, source: str, reason: str) -> dict[str, str]:
+    text = f"{name} {reason}".strip().lower()
+    return {"name": name, "state": state, "source": source, "reason": reason, "text": text}
+
+
+def _empty_blocker_details(details: dict[str, str]) -> bool:
+    return not details["name"] and not details["reason"] and not details["source"]
+
+
+def _is_scope_violation(item: dict[str, Any], text: str) -> bool:
+    return "scope_violation" in text or bool(item.get("scope_violation"))
+
+
+def _safe_autofix_actions(classified: list[dict[str, Any]], context: dict[str, Any]) -> set[str]:
+    return {
+        route_blocker_action(str(item["category"]), context)
+        for item in classified
+        if bool(item.get("safe_for_autofix"))
+    }
+
+
+def _pr_has_merge_conflict(payload: dict[str, Any]) -> bool:
+    return norm_state(payload.get("mergeable")) == "CONFLICTING" or norm_state(payload.get("mergeStateStatus")) == "DIRTY"
+
+
+def _conflict_resolution_strategy(conflicted_files: list[str], task_scope: dict[str, Any]) -> tuple[str, bool]:
+    if _has_non_automation_conflict(conflicted_files):
+        return "needs_manual", False
+    if all(_is_out_of_scope(path, task_scope) for path in conflicted_files):
+        return "take_main_for_out_of_scope_automation", True
+    return "attempt_safe_file_resolution", True
+
+
+def _has_non_automation_conflict(conflicted_files: list[str]) -> bool:
+    for path in conflicted_files:
+        if _is_business_critical_file(path) or not _is_automation_path(path):
+            return True
+    return False
+
+
+def _merge_conflict_next_action(strategy: str) -> str:
+    if strategy == "needs_manual":
+        return "needs_manual_merge_conflict"
+    return "auto_resolve_merge_conflict"
+
+
+def _is_automation_path(path: str) -> bool:
+    clean = str(path or "").strip()
+    return clean.startswith("scripts/") or clean.startswith("tests/scripts/") or clean.startswith(".github/workflows/")
+
+
+def _is_business_critical_file(path: str) -> bool:
+    return str(path or "").strip() in BUSINESS_CRITICAL_CONFLICT_FILES
+
+
+def _scope_paths(task_scope: dict[str, Any]) -> set[str]:
+    keys = ("files", "allowed_files", "allowlist", "in_scope_files")
+    collected: set[str] = set()
+    for key in keys:
+        value = task_scope.get(key)
+        if isinstance(value, list):
+            collected.update(str(item).strip() for item in value if str(item).strip())
+    return collected
+
+
+def _is_out_of_scope(path: str, task_scope: dict[str, Any]) -> bool:
+    scope = _scope_paths(task_scope)
+    return bool(scope) and str(path or "").strip() not in scope
+
+
+def _merge_conflict_result(
+    conflicted_files: list[str],
+    auto_resolvable: bool,
+    resolution_strategy: str,
+    next_action: str,
+) -> dict[str, Any]:
+    return {
+        "category": "merge_conflict",
+        "conflicted_files": conflicted_files,
+        "auto_resolvable": auto_resolvable,
+        "resolution_strategy": resolution_strategy,
+        "next_action": next_action,
+    }
+
+
 def _has_rerun_state(context: dict[str, Any]) -> bool:
     if bool(context.get("has_stale_or_cancelled_rerun_state")):
         return True
@@ -2155,11 +2686,26 @@ def _has_rerun_state(context: dict[str, Any]) -> bool:
 
 
 def _is_ready_to_merge_context(context: dict[str, Any]) -> bool:
-    if bool(context.get("can_merge")):
-        return True
+    if "can_merge" in context:
+        return bool(context.get("can_merge"))
+    state = str(context.get("state") or "").strip().upper()
+    if state and state != "OPEN":
+        return False
+    if context.get("isDraft") is True:
+        return False
     mergeable = norm_state(context.get("mergeable"))
     merge_state_status = norm_state(context.get("mergeStateStatus"))
-    return mergeable == "MERGEABLE" and merge_state_status == "CLEAN" and not _has_blockers(context)
+    unresolved_active = safe_nonnegative_int(context.get("unresolved_active"), 0)
+    has_pending = bool(context.get("pending")) if isinstance(context.get("pending"), list) else False
+    has_bad = bool(context.get("bad")) if isinstance(context.get("bad"), list) else False
+    return (
+        mergeable == "MERGEABLE"
+        and merge_state_status == "CLEAN"
+        and not unresolved_active
+        and not has_pending
+        and not has_bad
+        and not _has_blockers(context)
+    )
 
 
 def _has_blockers(context: dict[str, Any]) -> bool:

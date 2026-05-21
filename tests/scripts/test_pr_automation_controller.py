@@ -511,6 +511,195 @@ def test_build_next_action_context_stores_pr_head_without_overwriting_codacy_hea
     _assert_codacy_head_preserved(ctx.decision)
 
 
+def _assert_blocker_categories(cases: list[tuple[dict[str, object], str]]) -> None:
+    for payload, expected in cases:
+        ASSERTIONS.assertEqual(controller.classify_blocker(payload)["category"], expected)
+
+
+def _codacy_blocker_cases() -> list[tuple[dict[str, object], str]]:
+    return [
+        ({"name": "Codacy Static Code Analysis", "state": "FAILURE", "source": "codacy"}, "codacy_style"),
+        (
+            {"name": "Codacy complexity", "state": "FAILURE", "source": "codacy", "reason": "C901 complexity"},
+            "codacy_complexity",
+        ),
+        (
+            {"name": "Codacy", "state": "ACTION_REQUIRED", "source": "codacy", "reason": "D203 and D211 conflict"},
+            "codacy_rule_conflict",
+        ),
+        (
+            {"name": "Codacy", "state": "ACTION_REQUIRED", "source": "codacy", "classification": "api_github_mismatch"},
+            "codacy_api_github_mismatch",
+        ),
+        ({"name": "Codacy", "state": "STALE", "source": "codacy"}, "github_stale_check"),
+    ]
+
+
+def _manual_and_workflow_cases() -> list[tuple[dict[str, object], str]]:
+    return _manual_signal_cases() + _workflow_state_cases()
+
+
+def _manual_signal_cases() -> list[tuple[dict[str, object], str]]:
+    return [
+        (
+            {"name": "Review thread", "state": "ACTION_REQUIRED", "source": "review", "active": True},
+            "review_comment_active",
+        ),
+        ({"name": "Unit tests", "state": "FAILURE", "source": "check"}, "test_failure"),
+        (
+            {"name": "Infra", "state": "FAILURE", "source": "check", "reason": "runner service unavailable"},
+            "infra_failure",
+        ),
+        ({"name": "Auth", "state": "FAILURE", "reason": "token missing"}, "token_missing"),
+        ({"name": "Auth", "state": "FAILURE", "reason": "403 permission denied"}, "api_permission_error"),
+    ]
+
+
+def _workflow_state_cases() -> list[tuple[dict[str, object], str]]:
+    return [
+        ({"name": "Flow", "state": "CANCELLED"}, "workflow_cancelled"),
+        ({"name": "Flow", "state": "IN_PROGRESS"}, "workflow_pending"),
+        ({"name": "Scope", "state": "FAILURE", "reason": "scope_violation detected"}, "scope_violation"),
+        ({"name": "Merge", "mergeStateStatus": "DIRTY"}, "merge_conflict"),
+        ({}, "unknown"),
+    ]
+
+
+def test_blocker_taxonomy_classifies_codacy_categories():
+    """Blocker taxonomy maps Codacy inputs to expected categories."""
+    _assert_blocker_categories(_codacy_blocker_cases())
+
+
+def test_blocker_taxonomy_classifies_manual_categories():
+    """Blocker taxonomy maps manual/test inputs to expected categories."""
+    _assert_blocker_categories(_manual_and_workflow_cases()[:5])
+
+
+def test_blocker_taxonomy_classifies_workflow_and_unknown_categories():
+    """Blocker taxonomy maps workflow/merge/unknown inputs to expected categories."""
+    _assert_blocker_categories(_manual_and_workflow_cases()[5:])
+
+
+def test_route_blocker_action_maps_required_next_actions():
+    """Every required taxonomy route maps to the expected NEXT_ACTION."""
+    ASSERTIONS.assertEqual(controller.route_blocker_action("workflow_pending", {}), "wait_pending")
+    ASSERTIONS.assertEqual(controller.route_blocker_action("workflow_cancelled", {}), "rerun_stale_checks")
+    ASSERTIONS.assertEqual(controller.route_blocker_action("github_stale_check", {}), "rerun_stale_checks")
+    ASSERTIONS.assertEqual(
+        controller.route_blocker_action("codacy_api_github_mismatch", {}),
+        "fix_github_codacy_annotations",
+    )
+    ASSERTIONS.assertEqual(
+        controller.route_blocker_action("codacy_rule_conflict", {}),
+        "needs_manual_codacy_rule_conflict",
+    )
+    ASSERTIONS.assertEqual(controller.route_blocker_action("token_missing", {}), "needs_manual_secret")
+    ASSERTIONS.assertEqual(controller.route_blocker_action("api_permission_error", {}), "needs_manual_secret")
+    ASSERTIONS.assertEqual(controller.route_blocker_action("scope_violation", {}), "needs_manual_scope_violation")
+    ASSERTIONS.assertEqual(controller.route_blocker_action("unknown", {}), "needs_manual")
+
+
+def test_summarize_blocker_actions_empty_is_non_blocking():
+    """Empty blocker list is non-blocking and should not route to manual unknown action."""
+    clean = controller.summarize_blocker_actions([], {"can_merge": False})
+    mergeable = controller.summarize_blocker_actions([], {"can_merge": True})
+
+    ASSERTIONS.assertEqual(clean["primary_category"], "none")
+    ASSERTIONS.assertEqual(clean["next_action"], "checks_green_or_no_action")
+    ASSERTIONS.assertNotEqual(clean["primary_category"], "unknown")
+    ASSERTIONS.assertFalse(clean["needs_manual"])
+    ASSERTIONS.assertEqual(clean["safe_actions"], [])
+    ASSERTIONS.assertEqual(clean["reasons"], [])
+    ASSERTIONS.assertEqual(mergeable["primary_category"], "none")
+    ASSERTIONS.assertEqual(mergeable["next_action"], "ready_to_merge")
+    ASSERTIONS.assertNotEqual(mergeable["primary_category"], "unknown")
+    ASSERTIONS.assertFalse(mergeable["needs_manual"])
+    ASSERTIONS.assertEqual(mergeable["safe_actions"], [])
+    ASSERTIONS.assertEqual(mergeable["reasons"], [])
+
+
+def test_blocker_taxonomy_classifies_token_unavailable_as_manual_secret():
+    """Token unavailable wording should be classified as token_missing/manual secret path."""
+    payload = {"name": "Auth", "state": "FAILURE", "reason": "codacy api token is unavailable"}
+    category = controller.classify_blocker(payload)["category"]
+    ASSERTIONS.assertEqual(category, "token_missing")
+    ASSERTIONS.assertEqual(controller.route_blocker_action(category, {}), "needs_manual_secret")
+
+
+def test_summarize_blocker_actions_empty_ready_context_from_can_merge():
+    """Empty blocker list uses explicit can_merge as ready_to_merge signal."""
+    summary = controller.summarize_blocker_actions(
+        [],
+        {"can_merge": True, "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN", "bad": [], "pending": []},
+    )
+
+    ASSERTIONS.assertEqual(summary["primary_category"], "none")
+    ASSERTIONS.assertEqual(summary["next_action"], "ready_to_merge")
+    ASSERTIONS.assertFalse(summary["needs_manual"])
+
+
+def test_summarize_blocker_actions_preserves_explicit_merge_conflict_next_action():
+    """Explicit blocker next_action should override category default routing."""
+    summary = controller.summarize_blocker_actions(
+        [
+            {
+                "name": "PR merge conflict",
+                "state": "FAILURE",
+                "source": "merge",
+                "mergeStateStatus": "DIRTY",
+                "next_action": "auto_resolve_merge_conflict",
+                "reason": "merge conflict can be auto-resolved",
+            }
+        ],
+        {},
+    )
+
+    ASSERTIONS.assertEqual(summary["primary_category"], "merge_conflict")
+    ASSERTIONS.assertEqual(summary["next_action"], "auto_resolve_merge_conflict")
+
+
+def test_scope_paths_skips_empty_list_and_continues():
+    """Scope parsing should continue scanning keys after an empty list value."""
+    scope_paths = controller._scope_paths(  # pylint: disable=protected-access
+        {"files": [], "allowlist": ["scripts/x.py"]}
+    )
+
+    ASSERTIONS.assertEqual(scope_paths, {"scripts/x.py"})
+
+
+def test_classify_merge_conflict_contract_paths():
+    """Merge conflict classification differentiates safe out-of-scope automation from manual critical files."""
+    dirty = controller.classify_merge_conflict(
+        {"mergeable": "MERGEABLE", "mergeStateStatus": "DIRTY"},
+        ["scripts/pr_flow_automation.py"],
+        {"files": ["scripts/pr_automation_controller.py"]},
+    )
+    ASSERTIONS.assertEqual(dirty["category"], "merge_conflict")
+    ASSERTIONS.assertTrue(dirty["auto_resolvable"])
+    ASSERTIONS.assertEqual(dirty["resolution_strategy"], "take_main_for_out_of_scope_automation")
+    ASSERTIONS.assertEqual(dirty["next_action"], "auto_resolve_merge_conflict")
+    conflicting = controller.classify_merge_conflict(
+        {"mergeable": "CONFLICTING", "mergeStateStatus": "CLEAN"},
+        ["order_manager.py"],
+        {"files": ["scripts/pr_flow_automation.py"]},
+    )
+    ASSERTIONS.assertFalse(conflicting["auto_resolvable"])
+    ASSERTIONS.assertEqual(conflicting["next_action"], "needs_manual_merge_conflict")
+
+
+def test_classify_merge_conflict_clean_pr_is_not_conflict():
+    """Clean PR metadata must not be labeled as merge_conflict."""
+    clean = controller.classify_merge_conflict(
+        {"mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN"},
+        ["scripts/pr_flow_automation.py"],
+        {"files": ["scripts/pr_automation_controller.py"]},
+    )
+    ASSERTIONS.assertEqual(clean["category"], "none")
+    ASSERTIONS.assertFalse(clean["auto_resolvable"])
+    ASSERTIONS.assertEqual(clean["resolution_strategy"], "")
+    ASSERTIONS.assertEqual(clean["next_action"], "")
+
+
 def test_review_task_lines_include_only_unresolved_active_threads():
     """Resolved/outdated threads are excluded from active unresolved review task lines."""
     nodes = [
@@ -618,6 +807,39 @@ def test_build_next_action_context_wires_codacy_review_and_summary_helpers(monke
     _mock_codacy_and_review_helpers(monkeypatch)
     ctx = _build_ctx_for_codacy_review_summary()
     _assert_codacy_review_summary(ctx)
+
+
+def test_build_next_action_context_passes_merge_readiness_fields_to_taxonomy(monkeypatch):
+    """Taxonomy context should include merge readiness fields for empty-blocker routing."""
+    _stub_codacy_head_preservation(monkeypatch)
+    captured: dict[str, Any] = {}
+
+    def _capture_summary(blockers: list[dict[str, Any]], context: dict[str, Any]) -> dict[str, Any]:
+        captured["blockers"] = blockers
+        captured["context"] = dict(context)
+        return {
+            "categories": [],
+            "primary_category": "none",
+            "next_action": "checks_green_or_no_action",
+            "needs_manual": False,
+            "safe_actions": [],
+            "reasons": [],
+        }
+
+    monkeypatch.setattr(controller, "summarize_blocker_actions", _capture_summary)
+    decision: dict[str, object] = {"actions": [], "warnings": [], "errors": []}
+    pr = {
+        "statusCheckRollup": [],
+        "headRefOid": "pr-head-sha",
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+    }
+    controller.build_next_action_context(_args(), decision, pr, ([], []))
+
+    context = cast(dict[str, Any], captured["context"])
+    ASSERTIONS.assertEqual(context["mergeable"], "MERGEABLE")
+    ASSERTIONS.assertEqual(context["mergeStateStatus"], "CLEAN")
+    ASSERTIONS.assertIn("can_merge", context)
 
 
 def test_review_task_ignores_outdated_unresolved_threads():

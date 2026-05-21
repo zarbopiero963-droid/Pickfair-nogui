@@ -155,6 +155,228 @@ def test_build_decision_reports_real_blockers_and_merge_state(monkeypatch):
     ASSERTIONS.assertFalse(decision["can_merge"])
     ASSERTIONS.assertEqual(decision["blockers"][0]["name"], "Codacy Static Code Analysis")
     ASSERTIONS.assertEqual(decision["ignored_self_checks"][0]["name"], "PR Merge Readiness")
+    ASSERTIONS.assertIn("blocker_taxonomy", decision)
+    ASSERTIONS.assertEqual(decision["blocker_taxonomy"]["next_action"], "fix_codacy_current_issues")
+    ASSERTIONS.assertEqual(decision["next_action"], "fix_codacy_current_issues")
+
+
+def test_build_decision_includes_active_review_threads_in_taxonomy(monkeypatch):
+    """Active unresolved review threads should route taxonomy to fix_review_comments."""
+    _stub_review_thread_pr_view(monkeypatch)
+    decision = _build_decision_with_review_threads()
+    _assert_review_thread_routing(decision)
+    ASSERTIONS.assertFalse(decision["can_merge"])
+
+
+def _stub_review_thread_pr_view(monkeypatch) -> None:
+    monkeypatch.setattr(
+        flow,
+        "pr_view",
+        lambda _repo, _pr: {
+            "state": "OPEN",
+            "isDraft": True,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "statusCheckRollup": [],
+        },
+    )
+
+
+def _build_decision_with_review_threads() -> dict[str, object]:
+    return flow.build_decision(
+        "owner/repo",
+        "225",
+        ignore_self=True,
+        review_threads=[
+            {"id": "thread-1", "isResolved": False, "isOutdated": False, "path": "a.py", "line": 9},
+            {"id": "thread-2", "isResolved": True, "isOutdated": False, "path": "b.py", "line": 3},
+        ],
+    )
+
+
+def _assert_review_thread_routing(decision: dict[str, object]) -> None:
+    taxonomy = cast(dict[str, Any], decision["blocker_taxonomy"])
+    ASSERTIONS.assertIn("review_comment_active", taxonomy["categories"])
+    ASSERTIONS.assertEqual(taxonomy["primary_category"], "review_comment_active")
+    ASSERTIONS.assertIn("active unresolved review thread", " ".join(cast(list[str], taxonomy["reasons"])))
+    ASSERTIONS.assertEqual(taxonomy["next_action"], "fix_review_comments")
+    ASSERTIONS.assertEqual(decision["next_action"], "fix_review_comments")
+
+
+def _decision_clean_checks_with_active_review_thread(monkeypatch) -> dict[str, object]:
+    monkeypatch.setattr(
+        flow,
+        "pr_view",
+        lambda _repo, _pr: {
+            "state": "OPEN",
+            "isDraft": False,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "statusCheckRollup": [_check("Unit tests", "SUCCESS")],
+        },
+    )
+    return flow.build_decision(
+        "owner/repo",
+        "225",
+        ignore_self=True,
+        review_threads=[{"id": "thread-1", "isResolved": False, "isOutdated": False, "path": "a.py", "line": 9}],
+    )
+
+
+def test_build_decision_clean_checks_with_active_review_thread_blocks_merge(monkeypatch):
+    """Active unresolved review thread must block merge even when checks are clean."""
+    decision = _decision_clean_checks_with_active_review_thread(monkeypatch)
+    taxonomy = cast(dict[str, Any], decision["blocker_taxonomy"])
+    ASSERTIONS.assertFalse(decision["can_merge"])
+    ASSERTIONS.assertEqual(decision["next_action"], "fix_review_comments")
+    ASSERTIONS.assertEqual(taxonomy["primary_category"], "review_comment_active")
+    ASSERTIONS.assertIn("active unresolved review thread", " ".join(cast(list[str], taxonomy["reasons"])))
+
+
+def test_apply_taxonomy_next_action_does_not_promote_when_can_merge_false():
+    """Taxonomy ready_to_merge cannot override blocked decision when can_merge is false."""
+    decision = {
+        "already_merged": False,
+        "can_merge": False,
+        "next_action": "blocked",
+        "blocker_taxonomy": {"categories": ["none"], "next_action": "ready_to_merge"},
+    }
+
+    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
+    ASSERTIONS.assertEqual(decision["next_action"], "blocked")
+
+
+def test_apply_taxonomy_next_action_review_blocker_overrides_ready_to_merge():
+    """Active review blockers must force fix_review_comments even if taxonomy says ready_to_merge."""
+    decision = {
+        "already_merged": False,
+        "can_merge": True,
+        "next_action": "ready_to_merge",
+        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "ready_to_merge"},
+    }
+
+    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
+    ASSERTIONS.assertEqual(decision["next_action"], "fix_review_comments")
+
+
+def test_apply_taxonomy_next_action_review_blocker_does_not_override_high_priority_action():
+    """Review blockers cannot overwrite higher-priority remediation actions."""
+    decision = {
+        "already_merged": False,
+        "can_merge": False,
+        "next_action": "wait_pending",
+        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
+    }
+
+    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
+    ASSERTIONS.assertEqual(decision["next_action"], "wait_pending")
+
+
+def test_apply_taxonomy_next_action_review_blocker_not_review_only_keeps_ready_action():
+    """Active review blocker must prevent ready_to_merge even when not review-only."""
+    decision = {
+        "already_merged": False,
+        "can_merge": True,
+        "next_action": "ready_to_merge",
+        "blocker_taxonomy": {
+            "categories": ["review_comment_active", "workflow_pending"],
+            "next_action": "fix_review_comments",
+        },
+    }
+
+    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
+    ASSERTIONS.assertEqual(decision["next_action"], "fix_review_comments")
+
+
+def test_apply_taxonomy_next_action_does_not_override_manual_secret_with_review_action():
+    """Review blockers cannot overwrite manual-secret remediation."""
+    decision = {
+        "already_merged": False,
+        "can_merge": False,
+        "next_action": "needs_manual_secret",
+        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
+    }
+
+    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
+    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_secret")
+
+
+def test_apply_taxonomy_next_action_review_only_blocker_routes_to_fix_review_comments():
+    """Review-only blocker routes to fix_review_comments."""
+    decision = {
+        "already_merged": False,
+        "can_merge": False,
+        "next_action": "checks_green_or_no_action",
+        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
+    }
+
+    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
+    ASSERTIONS.assertEqual(decision["next_action"], "fix_review_comments")
+
+
+def test_apply_taxonomy_next_action_does_not_override_merge_conflict_with_review_action():
+    """Review blockers cannot overwrite merge-conflict manual remediation."""
+    decision = {
+        "already_merged": False,
+        "can_merge": False,
+        "next_action": "needs_manual_merge_conflict",
+        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
+    }
+
+    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
+    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_merge_conflict")
+
+
+def test_apply_taxonomy_next_action_does_not_override_rerun_stale_checks_with_review_action():
+    """Review blockers cannot overwrite stale-check rerun action."""
+    decision = {
+        "already_merged": False,
+        "can_merge": False,
+        "next_action": "rerun_stale_checks",
+        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
+    }
+
+    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
+    ASSERTIONS.assertEqual(decision["next_action"], "rerun_stale_checks")
+
+
+def test_apply_taxonomy_next_action_does_not_override_scope_violation_with_review_action():
+    """Review blockers cannot overwrite manual scope-violation remediation."""
+    decision = {
+        "already_merged": False,
+        "can_merge": False,
+        "next_action": "needs_manual_scope_violation",
+        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
+    }
+
+    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
+    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_scope_violation")
+
+
+def test_apply_taxonomy_next_action_does_not_override_codacy_rule_conflict_with_review_action():
+    """Review blockers cannot overwrite manual Codacy-rule-conflict remediation."""
+    decision = {
+        "already_merged": False,
+        "can_merge": False,
+        "next_action": "needs_manual_codacy_rule_conflict",
+        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
+    }
+
+    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
+    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_codacy_rule_conflict")
+
+
+def test_apply_taxonomy_next_action_does_not_override_auto_resolve_merge_conflict_with_review_action():
+    """Review blockers cannot overwrite merge-conflict auto-resolution action."""
+    decision = {
+        "already_merged": False,
+        "can_merge": False,
+        "next_action": "auto_resolve_merge_conflict",
+        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
+    }
+
+    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
+    ASSERTIONS.assertEqual(decision["next_action"], "auto_resolve_merge_conflict")
 
 
 def _preflight_args() -> argparse.Namespace:
@@ -302,11 +524,70 @@ def test_automation_change_prs_should_enable_bounded_repair_mode():
 
 
 def test_build_decision_ready_to_merge_condition_true(monkeypatch):
-    """Ready-to-merge condition maps to merge_allowed for a clean merge context."""
+    """Ready-to-merge condition maps to ready_to_merge for a clean merge context."""
     monkeypatch.setattr(flow, "pr_view", _ready_to_merge_pr_view)
     decision = flow.build_decision("owner/repo", "225", ignore_self=True)
 
     _assert_ready_to_merge_decision(decision)
+
+
+def test_build_decision_draft_pr_not_promoted_to_ready_to_merge(monkeypatch):
+    """Draft PR remains blocked even with clean checks because can_merge is false."""
+    monkeypatch.setattr(
+        flow,
+        "pr_view",
+        lambda _repo, _pr: {
+            "state": "OPEN",
+            "isDraft": True,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "statusCheckRollup": [_check("Unit tests", "SUCCESS")],
+        },
+    )
+    decision = flow.build_decision("owner/repo", "225", ignore_self=True)
+    taxonomy = cast(dict[str, Any], decision["blocker_taxonomy"])
+
+    ASSERTIONS.assertFalse(decision["can_merge"])
+    ASSERTIONS.assertEqual(decision["next_action"], "blocked")
+    ASSERTIONS.assertNotEqual(decision["next_action"], "checks_green_or_no_action")
+    ASSERTIONS.assertNotEqual(decision["next_action"], "ready_to_merge")
+    ASSERTIONS.assertEqual(taxonomy["next_action"], "checks_green_or_no_action")
+
+
+def test_apply_taxonomy_next_action_does_not_demote_blocked_to_checks_green_or_no_action():
+    """Non-mergeable blocked decision must not be demoted by empty taxonomy action."""
+    decision = {
+        "already_merged": False,
+        "can_merge": False,
+        "next_action": "blocked",
+        "blocker_taxonomy": {"categories": [], "next_action": "checks_green_or_no_action"},
+    }
+
+    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
+    ASSERTIONS.assertEqual(decision["next_action"], "blocked")
+
+
+def test_merge_conflict_taxonomy_items_uses_classifier_output():
+    """Merge-conflict taxonomy item should come from classify_merge_conflict output."""
+    items = flow._merge_conflict_taxonomy_items(  # pylint: disable=protected-access
+        {
+            "mergeable": "CONFLICTING",
+            "mergeStateStatus": "DIRTY",
+            "conflicted_files": ["scripts/pr_flow_automation.py"],
+        }
+    )
+
+    ASSERTIONS.assertEqual(len(items), 1)
+    ASSERTIONS.assertEqual(items[0]["category"], "merge_conflict")
+    ASSERTIONS.assertEqual(items[0]["next_action"], "auto_resolve_merge_conflict")
+
+
+def test_merge_conflict_taxonomy_items_clean_pr_is_empty():
+    """Clean PR must not produce merge_conflict taxonomy items."""
+    items = flow._merge_conflict_taxonomy_items(  # pylint: disable=protected-access
+        {"mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN"}
+    )
+    ASSERTIONS.assertEqual(items, [])
 
 
 def test_telegram_ready_summary_contract():
@@ -438,6 +719,220 @@ def _stub_review_threads_for_report(monkeypatch) -> None:
     )
 
 
+def _review_threads_page(ids: list[tuple[str, bool]], has_next: bool, end_cursor: str) -> dict[str, Any]:
+    return {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "nodes": [
+                            {"id": thread_id, "isResolved": is_resolved, "isOutdated": False}
+                            for thread_id, is_resolved in ids
+                        ],
+                        "pageInfo": {"hasNextPage": has_next, "endCursor": end_cursor},
+                    }
+                }
+            }
+        }
+    }
+
+
+def _stub_two_page_review_threads(monkeypatch) -> None:
+    responses = iter(
+        [
+            _review_threads_page([("a", True)], has_next=True, end_cursor="cursor-1"),
+            _review_threads_page([("b", False)], has_next=False, end_cursor="cursor-2"),
+        ]
+    )
+    monkeypatch.setattr(flow, "gh_json", lambda *_args, **_kwargs: next(responses))
+
+
+def test_fetch_all_review_threads_paginates(monkeypatch):
+    """Review thread collection should continue through all GraphQL pages."""
+    _stub_two_page_review_threads(monkeypatch)
+    threads = flow.fetch_all_review_threads("owner/repo", "225")
+    ASSERTIONS.assertEqual([thread["id"] for thread in threads], ["a", "b"])
+
+
+def test_fetch_all_review_threads_first_page_omits_empty_cursor(monkeypatch):
+    """First GraphQL request should not pass an empty after cursor."""
+    captured: list[list[str]] = []
+    responses = iter([_review_threads_page([], has_next=False, end_cursor="")])
+
+    def _fake_gh_json(cmd: list[str], **_kwargs):
+        captured.append(cmd)
+        return next(responses)
+
+    monkeypatch.setattr(flow, "gh_json", _fake_gh_json)
+    flow.fetch_all_review_threads("owner/repo", "225")
+    ASSERTIONS.assertFalse(any(part == "after=" for part in captured[0]))
+
+
+def test_fetch_all_review_threads_second_page_sends_cursor(monkeypatch):
+    """Second GraphQL request should pass after=<cursor>."""
+    captured: list[list[str]] = []
+    responses = iter(
+        [
+            _review_threads_page([], has_next=True, end_cursor="cursor-1"),
+            _review_threads_page([], has_next=False, end_cursor="cursor-2"),
+        ]
+    )
+
+    def _fake_gh_json(cmd: list[str], **_kwargs):
+        captured.append(cmd)
+        return next(responses)
+
+    monkeypatch.setattr(flow, "gh_json", _fake_gh_json)
+    flow.fetch_all_review_threads("owner/repo", "225")
+    ASSERTIONS.assertTrue(any(part == "after=cursor-1" for part in captured[1]))
+
+
+def _run_cmd_report_second_page_thread(tmp_path, monkeypatch) -> dict[str, object]:
+    monkeypatch.setattr(flow, "pr_view", _ready_to_merge_pr_view)
+    monkeypatch.setattr(flow, "fetch_codacy_pr_issues", lambda *_args: ({}, []))
+    _stub_two_page_review_threads(monkeypatch)
+    rc = flow.cmd_report(
+        argparse.Namespace(repo="owner/repo", pr="225", outdir=str(tmp_path), comment=False, no_fail=True)
+    )
+    ASSERTIONS.assertEqual(rc, 0)
+    return json.loads((tmp_path / "pr-flow-decision.json").read_text(encoding="utf-8"))
+
+
+def _assert_report_blocked_by_second_page_review_thread(decision: dict[str, object]) -> None:
+    review = cast(dict[str, Any], decision["review"])
+    ASSERTIONS.assertFalse(decision["can_merge"])
+    ASSERTIONS.assertEqual(decision["next_action"], "fix_review_comments")
+    ASSERTIONS.assertEqual(review["unresolved_active"], 1)
+    ASSERTIONS.assertEqual(review["total_threads"], 2)
+
+
+def test_cmd_report_second_page_unresolved_review_thread_blocks_merge(tmp_path, monkeypatch):
+    """An unresolved thread from a later page should route to fix_review_comments."""
+    decision = _run_cmd_report_second_page_thread(tmp_path, monkeypatch)
+    _assert_report_blocked_by_second_page_review_thread(decision)
+
+
+def test_cmd_readiness_passes_review_threads_to_build_decision(monkeypatch):
+    """Readiness should fetch review threads and pass them to build_decision."""
+    expected_threads = [{"id": "thread-1", "isResolved": False, "isOutdated": False}]
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(flow, "fetch_all_review_threads", lambda *_args: expected_threads)
+
+    def _fake_build_decision(_repo: str, _pr: str, *, ignore_self: bool, review_threads=None):
+        captured["ignore_self"] = ignore_self
+        captured["review_threads"] = review_threads
+        return {
+            "already_merged": False,
+            "can_merge": False,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "reasons": [],
+            "next_action": "blocked",
+        }
+
+    monkeypatch.setattr(flow, "build_decision", _fake_build_decision)
+    rc = flow.cmd_readiness(
+        argparse.Namespace(
+            repo="owner/repo",
+            pr="225",
+            ignore_safe_autofix=True,
+            wait_unknown_seconds=0,
+            poll_seconds=0,
+            output="",
+            no_fail=True,
+        )
+    )
+
+    ASSERTIONS.assertEqual(rc, 0)
+    ASSERTIONS.assertEqual(captured["review_threads"], expected_threads)
+
+
+def test_cmd_readiness_active_review_thread_blocks_merge(monkeypatch):
+    """Readiness should remain blocked when review threads include an active unresolved thread."""
+    monkeypatch.setattr(
+        flow,
+        "fetch_all_review_threads",
+        lambda *_args: [{"id": "thread-1", "isResolved": False, "isOutdated": False}],
+    )
+
+    def _fake_build_decision(_repo: str, _pr: str, *, ignore_self: bool, review_threads=None):
+        ASSERTIONS.assertEqual(ignore_self, True)
+        ASSERTIONS.assertEqual(review_threads, [{"id": "thread-1", "isResolved": False, "isOutdated": False}])
+        return {
+            "already_merged": False,
+            "can_merge": False,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "reasons": ["active unresolved review thread"],
+            "next_action": "fix_review_comments",
+        }
+
+    monkeypatch.setattr(flow, "build_decision", _fake_build_decision)
+    rc = flow.cmd_readiness(
+        argparse.Namespace(
+            repo="owner/repo",
+            pr="225",
+            ignore_safe_autofix=True,
+            wait_unknown_seconds=0,
+            poll_seconds=0,
+            output="",
+            no_fail=False,
+        )
+    )
+
+    ASSERTIONS.assertEqual(rc, 1)
+
+
+def _stub_readiness_fetch_failure(monkeypatch) -> None:
+    monkeypatch.setattr(
+        flow,
+        "fetch_all_review_threads",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("api down")),
+    )
+
+
+def _run_readiness_cmd_failure_case() -> int:
+    return flow.cmd_readiness(
+        argparse.Namespace(
+            repo="owner/repo",
+            pr="225",
+            ignore_safe_autofix=True,
+            wait_unknown_seconds=0,
+            poll_seconds=0,
+            output="",
+            no_fail=False,
+        )
+    )
+
+
+def test_cmd_readiness_review_thread_fetch_failure_fails_closed(monkeypatch):
+    """Readiness must fail closed when review thread fetch fails."""
+    captured: dict[str, object] = {}
+    _stub_readiness_fetch_failure(monkeypatch)
+
+    def _fake_build_decision(_repo: str, _pr: str, *, ignore_self: bool, review_threads=None):
+        ASSERTIONS.assertTrue(ignore_self)
+        captured["review_threads"] = review_threads
+        return {
+            "already_merged": False,
+            "can_merge": True,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "reasons": [],
+            "next_action": "ready_to_merge",
+        }
+
+    monkeypatch.setattr(flow, "build_decision", _fake_build_decision)
+    rc = _run_readiness_cmd_failure_case()
+    decision = flow._readiness_decision("owner/repo", "225", True)  # pylint: disable=protected-access
+    ASSERTIONS.assertEqual(rc, 1)
+    ASSERTIONS.assertIsNone(captured["review_threads"])
+    ASSERTIONS.assertFalse(decision["can_merge"])
+    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_review_api")
+    ASSERTIONS.assertIn("review_threads_api_unavailable", decision["reasons"])
+
+
 def _stub_report_output_paths(monkeypatch) -> None:
     _stub_pr_view_for_report(monkeypatch)
     _stub_review_threads_for_report(monkeypatch)
@@ -477,6 +972,27 @@ def test_cmd_report_wires_real_context_into_helpers(tmp_path, monkeypatch):
     rc = _run_cmd_report_no_fail(tmp_path)
     ASSERTIONS.assertEqual(rc, 0)
     _assert_cmd_report_context_output(tmp_path)
+
+
+def test_taxonomy_summary_prioritizes_pending_and_manual_blockers():
+    """Pending blockers take priority, then manual blockers over autofix routes."""
+    pending = flow.summarize_blocker_actions(
+        [{"name": "CI", "state": "IN_PROGRESS"}, {"name": "Codacy", "state": "FAILURE", "source": "codacy"}],
+        {},
+    )
+    ASSERTIONS.assertEqual(pending["primary_category"], "workflow_pending")
+    ASSERTIONS.assertEqual(pending["next_action"], "wait_pending")
+    manual = flow.summarize_blocker_actions(
+        [{"name": "Scope", "state": "FAILURE", "reason": "scope_violation"}],
+        {},
+    )
+    ASSERTIONS.assertEqual(manual["next_action"], "needs_manual_scope_violation")
+
+
+def test_route_blocker_action_test_failure_requires_clear_logs():
+    """test_failure routes to autofix only with explicit clear logs context."""
+    ASSERTIONS.assertEqual(flow.route_blocker_action("test_failure", {}), "needs_manual")
+    ASSERTIONS.assertEqual(flow.route_blocker_action("test_failure", {"logs_clear": True}), "fix_test_failure")
 
 
 def _report_without_codacy_check_decision() -> dict[str, Any]:
@@ -575,12 +1091,14 @@ def _ready_to_merge_pr_view(_repo: str, _pr: str) -> dict[str, object]:
 
 
 def _assert_ready_to_merge_decision(decision: dict[str, object]) -> None:
+    taxonomy = cast(dict[str, Any], decision["blocker_taxonomy"])
     ASSERTIONS.assertEqual(decision["blockers"], [])
     ASSERTIONS.assertEqual(decision["pending"], [])
     ASSERTIONS.assertEqual(decision["mergeable"], "MERGEABLE")
     ASSERTIONS.assertEqual(decision["mergeStateStatus"], "CLEAN")
     ASSERTIONS.assertTrue(decision["can_merge"])
-    ASSERTIONS.assertEqual(decision["next_action"], "merge_allowed")
+    ASSERTIONS.assertEqual(decision["next_action"], "ready_to_merge")
+    ASSERTIONS.assertEqual(taxonomy["next_action"], "ready_to_merge")
 
 
 def _telegram_summary_context() -> dict[str, object]:
