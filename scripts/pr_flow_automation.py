@@ -871,7 +871,7 @@ def _readiness_decision(repo: str, pr_number: str, ignore_self: bool) -> dict[st
 
 
 def _readiness_review_api_blocked(repo: str, pr_number: str, ignore_self: bool) -> dict[str, Any]:
-    decision = build_decision(repo, pr_number, ignore_self=ignore_self, review_threads=[])
+    decision = build_decision(repo, pr_number, ignore_self=ignore_self, review_threads=None)
     reasons = decision.get("reasons")
     if isinstance(reasons, list) and "review_threads_api_unavailable" not in reasons:
         reasons.append("review_threads_api_unavailable")
@@ -1111,6 +1111,7 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 
 def fetch_all_review_threads(repo: str, pr_number: str | int) -> list[dict[str, Any]]:
+    """Fetch every review-thread node for a PR using GraphQL pagination."""
     after_cursor: str | None = None
     collected: list[dict[str, Any]] = []
     while True:

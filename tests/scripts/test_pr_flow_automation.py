@@ -848,6 +848,42 @@ def test_cmd_readiness_passes_review_threads_to_build_decision(monkeypatch):
     ASSERTIONS.assertEqual(captured["review_threads"], expected_threads)
 
 
+def test_cmd_readiness_active_review_thread_blocks_merge(monkeypatch):
+    """Readiness should remain blocked when review threads include an active unresolved thread."""
+    monkeypatch.setattr(
+        flow,
+        "fetch_all_review_threads",
+        lambda *_args: [{"id": "thread-1", "isResolved": False, "isOutdated": False}],
+    )
+
+    def _fake_build_decision(_repo: str, _pr: str, *, ignore_self: bool, review_threads=None):
+        ASSERTIONS.assertEqual(ignore_self, True)
+        ASSERTIONS.assertEqual(review_threads, [{"id": "thread-1", "isResolved": False, "isOutdated": False}])
+        return {
+            "already_merged": False,
+            "can_merge": False,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "reasons": ["active unresolved review thread"],
+            "next_action": "fix_review_comments",
+        }
+
+    monkeypatch.setattr(flow, "build_decision", _fake_build_decision)
+    rc = flow.cmd_readiness(
+        argparse.Namespace(
+            repo="owner/repo",
+            pr="225",
+            ignore_safe_autofix=True,
+            wait_unknown_seconds=0,
+            poll_seconds=0,
+            output="",
+            no_fail=False,
+        )
+    )
+
+    ASSERTIONS.assertEqual(rc, 1)
+
+
 def _stub_readiness_fetch_failure(monkeypatch) -> None:
     monkeypatch.setattr(
         flow,
@@ -887,11 +923,25 @@ def _run_readiness_cmd_failure_case() -> int:
 
 def test_cmd_readiness_review_thread_fetch_failure_fails_closed(monkeypatch):
     """Readiness must fail closed when review thread fetch fails."""
+    captured: dict[str, object] = {}
     _stub_readiness_fetch_failure(monkeypatch)
-    _stub_ready_build_decision(monkeypatch)
+
+    def _fake_build_decision(_repo: str, _pr: str, *, ignore_self: bool, review_threads=None):
+        captured["review_threads"] = review_threads
+        return {
+            "already_merged": False,
+            "can_merge": True,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "reasons": [],
+            "next_action": "ready_to_merge",
+        }
+
+    monkeypatch.setattr(flow, "build_decision", _fake_build_decision)
     rc = _run_readiness_cmd_failure_case()
     decision = flow._readiness_decision("owner/repo", "225", True)  # pylint: disable=protected-access
     ASSERTIONS.assertEqual(rc, 1)
+    ASSERTIONS.assertIsNone(captured["review_threads"])
     ASSERTIONS.assertFalse(decision["can_merge"])
     ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_review_api")
     ASSERTIONS.assertIn("review_threads_api_unavailable", decision["reasons"])
