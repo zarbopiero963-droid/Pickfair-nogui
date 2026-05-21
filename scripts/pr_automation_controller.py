@@ -2326,15 +2326,7 @@ def classify_merge_conflict(
 def summarize_blocker_actions(blockers: list[dict[str, Any]], context: dict[str, Any]) -> dict[str, Any]:
     """Summarize taxonomy categories and derive a primary next action."""
     if not blockers:
-        can_merge = bool(context.get("can_merge"))
-        return {
-            "categories": [],
-            "primary_category": "none",
-            "next_action": "ready_to_merge" if can_merge else "checks_green_or_no_action",
-            "needs_manual": False,
-            "safe_actions": [],
-            "reasons": [],
-        }
+        return _empty_blocker_summary(context)
     classified = _classified_blockers(blockers)
     categories = _blocker_categories(classified)
     primary = _primary_blocker_category(categories)
@@ -2342,6 +2334,33 @@ def summarize_blocker_actions(blockers: list[dict[str, Any]], context: dict[str,
     next_action = explicit_next_action or _next_action_for_summary(primary, context)
     safe_actions = sorted(_safe_autofix_actions(classified, context))
     reasons = _blocker_reasons(classified)
+    return _blocker_summary_result(
+        categories,
+        primary,
+        next_action,
+        safe_actions,
+        reasons,
+    )
+
+
+def _empty_blocker_summary(context: dict[str, Any]) -> dict[str, Any]:
+    can_merge = bool(context.get("can_merge"))
+    return _blocker_summary_result(
+        [],
+        "none",
+        "ready_to_merge" if can_merge else "checks_green_or_no_action",
+        [],
+        [],
+    )
+
+
+def _blocker_summary_result(
+    categories: list[str],
+    primary: str,
+    next_action: str,
+    safe_actions: list[str],
+    reasons: list[str],
+) -> dict[str, Any]:
     return {
         "categories": categories,
         "primary_category": primary,
@@ -2679,7 +2698,7 @@ def _is_ready_to_merge_context(context: dict[str, Any]) -> bool:
     return (
         mergeable == "MERGEABLE"
         and merge_state_status == "CLEAN"
-        and unresolved_active == 0
+        and not unresolved_active
         and not has_pending
         and not has_bad
         and not _has_blockers(context)

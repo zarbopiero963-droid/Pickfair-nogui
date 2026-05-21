@@ -571,17 +571,28 @@ def _review_thread_taxonomy_items(review_threads: list[dict[str, Any]]) -> list[
 def _apply_taxonomy_next_action(decision: dict[str, Any]) -> None:
     if decision.get("already_merged"):
         return
+    next_action = _resolved_taxonomy_next_action(decision)
+    if next_action:
+        decision["next_action"] = next_action
+
+
+def _resolved_taxonomy_next_action(decision: dict[str, Any]) -> str:
     taxonomy_dict = _taxonomy_dict(decision)
     taxonomy_next_action = _taxonomy_next_action(taxonomy_dict)
     current_action = _current_next_action(decision)
     if _should_set_taxonomy_action(current_action, taxonomy_next_action):
-        decision["next_action"] = taxonomy_next_action
-    elif _should_set_review_fix_action(current_action, taxonomy_dict):
-        decision["next_action"] = "fix_review_comments"
-    elif _has_review_blocker(taxonomy_dict) and current_action == "ready_to_merge":
-        decision["next_action"] = "fix_review_comments"
-    elif _can_apply_ready_route(decision):
-        decision["next_action"] = "ready_to_merge"
+        return taxonomy_next_action
+    if _should_force_review_fix(current_action, taxonomy_dict):
+        return "fix_review_comments"
+    if _can_apply_ready_route(decision):
+        return "ready_to_merge"
+    return ""
+
+
+def _should_force_review_fix(current_action: str, taxonomy_dict: dict[str, Any]) -> bool:
+    return _should_set_review_fix_action(current_action, taxonomy_dict) or (
+        _has_review_blocker(taxonomy_dict) and current_action == "ready_to_merge"
+    )
 
 
 def _taxonomy_dict(decision: dict[str, Any]) -> dict[str, Any]:
@@ -704,7 +715,7 @@ def should_notify_ready_to_merge(context: dict[str, Any]) -> bool:
     return (
         isinstance(bad, list)
         and not bad
-        and unresolved_active == 0
+        and not unresolved_active
         and mergeable == "MERGEABLE"
         and merge_state_status == "CLEAN"
     )
