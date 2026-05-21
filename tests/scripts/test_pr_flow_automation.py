@@ -200,6 +200,32 @@ def _assert_review_thread_routing(decision: dict[str, object]) -> None:
     ASSERTIONS.assertEqual(decision["next_action"], "fix_review_comments")
 
 
+def test_apply_taxonomy_next_action_does_not_promote_when_can_merge_false():
+    """Taxonomy ready_to_merge cannot override blocked decision when can_merge is false."""
+    decision = {
+        "already_merged": False,
+        "can_merge": False,
+        "next_action": "blocked",
+        "blocker_taxonomy": {"categories": ["none"], "next_action": "ready_to_merge"},
+    }
+
+    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
+    ASSERTIONS.assertEqual(decision["next_action"], "blocked")
+
+
+def test_apply_taxonomy_next_action_review_blocker_overrides_ready_to_merge():
+    """Active review blockers must force fix_review_comments even if taxonomy says ready_to_merge."""
+    decision = {
+        "already_merged": False,
+        "can_merge": True,
+        "next_action": "ready_to_merge",
+        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "ready_to_merge"},
+    }
+
+    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
+    ASSERTIONS.assertEqual(decision["next_action"], "fix_review_comments")
+
+
 def _preflight_args() -> argparse.Namespace:
     return argparse.Namespace(
         repo="owner/repo",
@@ -350,6 +376,50 @@ def test_build_decision_ready_to_merge_condition_true(monkeypatch):
     decision = flow.build_decision("owner/repo", "225", ignore_self=True)
 
     _assert_ready_to_merge_decision(decision)
+
+
+def test_build_decision_draft_pr_not_promoted_to_ready_to_merge(monkeypatch):
+    """Draft PR remains blocked even with clean checks because can_merge is false."""
+    monkeypatch.setattr(
+        flow,
+        "pr_view",
+        lambda _repo, _pr: {
+            "state": "OPEN",
+            "isDraft": True,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "statusCheckRollup": [_check("Unit tests", "SUCCESS")],
+        },
+    )
+    decision = flow.build_decision("owner/repo", "225", ignore_self=True)
+    taxonomy = cast(dict[str, Any], decision["blocker_taxonomy"])
+
+    ASSERTIONS.assertFalse(decision["can_merge"])
+    ASSERTIONS.assertNotEqual(decision["next_action"], "ready_to_merge")
+    ASSERTIONS.assertEqual(taxonomy["next_action"], "checks_green_or_no_action")
+
+
+def test_merge_conflict_taxonomy_items_uses_classifier_output():
+    """Merge-conflict taxonomy item should come from classify_merge_conflict output."""
+    items = flow._merge_conflict_taxonomy_items(  # pylint: disable=protected-access
+        {
+            "mergeable": "CONFLICTING",
+            "mergeStateStatus": "DIRTY",
+            "conflicted_files": ["scripts/pr_flow_automation.py"],
+        }
+    )
+
+    ASSERTIONS.assertEqual(len(items), 1)
+    ASSERTIONS.assertEqual(items[0]["category"], "merge_conflict")
+    ASSERTIONS.assertEqual(items[0]["next_action"], "auto_resolve_merge_conflict")
+
+
+def test_merge_conflict_taxonomy_items_clean_pr_is_empty():
+    """Clean PR must not produce merge_conflict taxonomy items."""
+    items = flow._merge_conflict_taxonomy_items(  # pylint: disable=protected-access
+        {"mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN"}
+    )
+    ASSERTIONS.assertEqual(items, [])
 
 
 def test_telegram_ready_summary_contract():

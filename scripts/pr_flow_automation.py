@@ -393,7 +393,7 @@ def build_decision(
     pr = pr_view(repo, pr_number)
     checks = split_checks(pr, ignore_self=ignore_self)
     merge_state = _merge_readiness_state(pr, checks)
-    decision = _base_decision(repo, pr_number, pr, checks, merge_state)
+    decision = _base_decision({"repo": repo, "pr_number": pr_number}, pr, checks, merge_state)
     taxonomy_context = _taxonomy_context(pr, checks, merge_state["can_merge"])
     taxonomy_items = _decision_taxonomy_items(checks, review_threads or [])
     taxonomy_items.extend(_merge_conflict_taxonomy_items(pr))
@@ -411,60 +411,123 @@ def _merge_readiness_state(pr: dict[str, Any], checks: dict[str, Any]) -> dict[s
 
 
 def _merge_readiness_reasons(pr: dict[str, Any], checks: dict[str, Any]) -> list[str]:
-    reasons: list[str] = []
-    if pr.get("state") != "OPEN":
-        reasons.append(f"PR state is {pr.get('state')}, expected OPEN")
-    if pr.get("isDraft"):
-        reasons.append("PR is draft")
-    if pr.get("mergeable") != "MERGEABLE":
-        reasons.append(f"mergeable is {pr.get('mergeable')}, expected MERGEABLE")
-    if not effective_merge_state_ok(str(pr.get("mergeStateStatus") or ""), checks["blockers"], checks["pending"]):
-        reasons.append(f"mergeStateStatus is {pr.get('mergeStateStatus')}, expected CLEAN")
-    if checks["blockers"]:
-        reasons.append(f"{len(checks['blockers'])} real blocking check(s)")
-    if checks["pending"]:
-        reasons.append(f"{len(checks['pending'])} real pending check(s)")
-    return reasons
+    return [
+        reason
+        for reason in (
+            _reason_pr_state(pr),
+            _reason_pr_draft(pr),
+            _reason_pr_mergeable(pr),
+            _reason_pr_merge_state_status(pr, checks),
+            _reason_blocking_checks(checks),
+            _reason_pending_checks(checks),
+        )
+        if reason
+    ]
+
+
+def _reason_pr_state(pr: dict[str, Any]) -> str:
+    return "" if pr.get("state") == "OPEN" else f"PR state is {pr.get('state')}, expected OPEN"
+
+
+def _reason_pr_draft(pr: dict[str, Any]) -> str:
+    return "PR is draft" if pr.get("isDraft") else ""
+
+
+def _reason_pr_mergeable(pr: dict[str, Any]) -> str:
+    return "" if pr.get("mergeable") == "MERGEABLE" else f"mergeable is {pr.get('mergeable')}, expected MERGEABLE"
+
+
+def _reason_pr_merge_state_status(pr: dict[str, Any], checks: dict[str, Any]) -> str:
+    if effective_merge_state_ok(str(pr.get("mergeStateStatus") or ""), checks["blockers"], checks["pending"]):
+        return ""
+    return f"mergeStateStatus is {pr.get('mergeStateStatus')}, expected CLEAN"
+
+
+def _reason_blocking_checks(checks: dict[str, Any]) -> str:
+    return f"{len(checks['blockers'])} real blocking check(s)" if checks["blockers"] else ""
+
+
+def _reason_pending_checks(checks: dict[str, Any]) -> str:
+    return f"{len(checks['pending'])} real pending check(s)" if checks["pending"] else ""
 
 
 def _base_decision(
-    repo: str,
-    pr_number: str,
-    pr: dict[str, Any],
+    identity: dict[str, str],
+    pr_data: dict[str, Any],
     checks: dict[str, Any],
     merge_state: dict[str, Any],
 ) -> dict[str, Any]:
+    """Build normalized PR decision payload before taxonomy next-action overrides."""
     already_merged = bool(merge_state["already_merged"])
     can_merge = bool(merge_state["can_merge"])
+    payload = _base_decision_metadata(identity, pr_data)
+    payload.update(_base_decision_checks(checks))
+    payload.update(_base_decision_status(pr_data, merge_state, can_merge, already_merged))
+    payload.update(_base_decision_result(can_merge, already_merged))
+    return payload
+
+
+def _base_decision_metadata(identity: dict[str, str], pr_data: dict[str, Any]) -> dict[str, Any]:
     return {
-        "repo": repo,
-        "pr": str(pr_number),
-        "url": pr.get("url"),
-        "state": pr.get("state"),
-        "already_merged": already_merged,
-        "mergedAt": pr.get("mergedAt"),
-        "mergedBy": (pr.get("mergedBy") or {}).get("login") if isinstance(pr.get("mergedBy"), dict) else pr.get("mergedBy"),
-        "mergeCommit": (pr.get("mergeCommit") or {}).get("oid") if isinstance(pr.get("mergeCommit"), dict) else pr.get("mergeCommit"),
-        "headRefName": pr.get("headRefName"),
-        "headRefOid": pr.get("headRefOid"),
-        "baseRefName": pr.get("baseRefName"),
-        "mergeable": pr.get("mergeable"),
-        "mergeStateStatus": pr.get("mergeStateStatus"),
-        "reviewDecision": pr.get("reviewDecision"),
-        "can_merge": can_merge,
-        "reasons": merge_state["reasons"],
+        "repo": identity["repo"],
+        "pr": str(identity["pr_number"]),
+        "url": pr_data.get("url"),
+        "state": pr_data.get("state"),
+        "mergedAt": pr_data.get("mergedAt"),
+        "mergedBy": _pr_actor_login(pr_data.get("mergedBy")),
+        "mergeCommit": _pr_oid(pr_data.get("mergeCommit")),
+        "headRefName": pr_data.get("headRefName"),
+        "headRefOid": pr_data.get("headRefOid"),
+        "baseRefName": pr_data.get("baseRefName"),
+    }
+
+
+def _base_decision_checks(checks: dict[str, Any]) -> dict[str, Any]:
+    return {
         "blockers": checks["blockers"],
         "pending": checks["pending"],
         "ignored_self_checks": checks["ignored"],
         "self_stale": checks["self_stale"],
-        "next_action": "already_merged" if already_merged else ("ready_to_merge" if can_merge else "blocked"),
     }
+
+
+def _base_decision_status(
+    pr_data: dict[str, Any],
+    merge_state: dict[str, Any],
+    can_merge: bool,
+    already_merged: bool,
+) -> dict[str, Any]:
+    return {
+        "already_merged": already_merged,
+        "mergeable": pr_data.get("mergeable"),
+        "mergeStateStatus": pr_data.get("mergeStateStatus"),
+        "reviewDecision": pr_data.get("reviewDecision"),
+        "is_draft": bool(pr_data.get("isDraft")),
+        "is_open": pr_data.get("state") == "OPEN",
+        "can_merge": can_merge,
+        "reasons": merge_state["reasons"],
+    }
+
+
+def _base_decision_result(can_merge: bool, already_merged: bool) -> dict[str, Any]:
+    next_action = "already_merged" if already_merged else ("ready_to_merge" if can_merge else "blocked")
+    return {"next_action": next_action}
+
+
+def _pr_actor_login(value: Any) -> Any:
+    return value.get("login") if isinstance(value, dict) else value
+
+
+def _pr_oid(value: Any) -> Any:
+    return value.get("oid") if isinstance(value, dict) else value
 
 
 def _taxonomy_context(pr: dict[str, Any], checks: dict[str, Any], can_merge: bool) -> dict[str, Any]:
     return {
         "logs_clear": False,
         "can_merge": can_merge,
+        "is_draft": bool(pr.get("isDraft")),
+        "is_open": pr.get("state") == "OPEN",
         "mergeable": pr.get("mergeable"),
         "mergeStateStatus": pr.get("mergeStateStatus"),
         "pending": checks["pending"],
@@ -482,18 +545,19 @@ def _decision_taxonomy_items(checks: dict[str, Any], review_threads: list[dict[s
 
 
 def _merge_conflict_taxonomy_items(pr: dict[str, Any]) -> list[dict[str, Any]]:
-    if not controller._pr_has_merge_conflict(pr):  # pylint: disable=protected-access
+    classified = controller.classify_merge_conflict(pr, _conflicted_files_from_pr(pr), {})
+    if str(classified.get("category") or "") != "merge_conflict":
         return []
-    return [
-        {
-            "name": "PR merge conflict",
-            "state": "FAILURE",
-            "source": "merge",
-            "mergeable": pr.get("mergeable"),
-            "mergeStateStatus": pr.get("mergeStateStatus"),
-            "reason": "mergeable CONFLICTING or mergeStateStatus DIRTY",
-        }
-    ]
+    return [dict(classified, name="PR merge conflict", state="FAILURE", source="merge")]
+
+
+def _conflicted_files_from_pr(pr: dict[str, Any]) -> list[str]:
+    fields = ("conflicted_files", "conflictedFiles", "files")
+    for field in fields:
+        files = pr.get(field)
+        if isinstance(files, list):
+            return [str(path).strip() for path in files if str(path).strip()]
+    return []
 
 
 def _review_thread_taxonomy_items(review_threads: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -504,8 +568,26 @@ def _apply_taxonomy_next_action(decision: dict[str, Any]) -> None:
     taxonomy = decision.get("blocker_taxonomy")
     taxonomy_dict = taxonomy if isinstance(taxonomy, dict) else {}
     taxonomy_next_action = str(taxonomy_dict.get("next_action") or "").strip()
-    if not decision.get("already_merged") and taxonomy_next_action:
+    if decision.get("already_merged"):
+        return
+    if _decision_has_active_review_blocker(taxonomy_dict):
+        decision["next_action"] = "fix_review_comments"
+        return
+    if _safe_taxonomy_override(decision, taxonomy_next_action):
         decision["next_action"] = taxonomy_next_action
+
+
+def _decision_has_active_review_blocker(taxonomy_dict: dict[str, Any]) -> bool:
+    categories = taxonomy_dict.get("categories")
+    return isinstance(categories, list) and "review_comment_active" in categories
+
+
+def _safe_taxonomy_override(decision: dict[str, Any], taxonomy_next_action: str) -> bool:
+    if not taxonomy_next_action:
+        return False
+    if taxonomy_next_action == "ready_to_merge":
+        return bool(decision.get("can_merge"))
+    return True
 
 
 def classify_blocker(item: dict[str, Any]) -> dict[str, Any]:
