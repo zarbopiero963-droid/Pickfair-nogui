@@ -1276,25 +1276,34 @@ def _list_value(data: dict[str, Any], raw: str, key: str) -> list[str]:
     value = data.get(key)
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
+    return _clean_audit_bullets(_audit_section_lines(raw, key))
+
+
+def _audit_section_lines(raw: str, key: str) -> list[str]:
     lines = (raw or "").splitlines()
     header = re.compile(rf"^\s*{re.escape(key)}\s*:\s*$", re.IGNORECASE)
-    start = -1
-    for index, line in enumerate(lines):
-        if header.match(line):
-            start = index + 1
-            break
+    start = next((index + 1 for index, line in enumerate(lines) if header.match(line)), -1)
     if start < 0:
         return []
-    items: list[str] = []
+    section: list[str] = []
     for line in lines[start:]:
         stripped = line.strip()
         if not stripped:
+            if section:
+                break
             continue
         if re.match(r"^[A-Za-z0-9_]+\s*:\s*", stripped):
             break
         if not stripped.startswith("-"):
             break
-        item = re.sub(r"^-\s*", "", stripped).strip()
+        section.append(stripped)
+    return section
+
+
+def _clean_audit_bullets(lines: list[str]) -> list[str]:
+    items: list[str] = []
+    for line in lines:
+        item = re.sub(r"^-\s*", "", line.strip()).strip()
         if item:
             items.append(item)
     return items
@@ -1336,26 +1345,43 @@ def _parse_post_fix_audit_text(raw: str) -> dict[str, Any]:
 
 
 def _normalize_post_fix_audit_report(report: dict[str, Any]) -> dict[str, Any]:
-    status = str(report.get("status") or "").upper()
-    normalized_status = status if status in {"PASS", "FAIL", "PARTIAL"} else "FAIL"
-    normalized: dict[str, Any] = {
-        "status": normalized_status,
+    status = _post_fix_status(report)
+    next_action = _post_fix_next_action(status, report)
+    normalized = {
+        "status": status,
+        "next_action": next_action,
+        **_post_fix_report_lists(report),
+    }
+    if status == "PASS" and next_action == "validation_then_commit":
+        return normalized
+    normalized["status"] = "FAIL"
+    normalized["next_action"] = "needs_manual_post_fix_audit_failed"
+    return normalized
+
+
+def _post_fix_status(report: dict[str, Any]) -> str:
+    value = str(report.get("status") or "").upper()
+    return value if value in {"PASS", "FAIL", "PARTIAL"} else "FAIL"
+
+
+def _post_fix_next_action(status: str, report: dict[str, Any]) -> str:
+    explicit = str(report.get("next_action") or "").strip()
+    if explicit:
+        return explicit
+    if status == "PASS":
+        return "validation_then_commit"
+    if status == "PARTIAL":
+        return "retry_fix_within_budget"
+    return "needs_manual_post_fix_audit_failed"
+
+
+def _post_fix_report_lists(report: dict[str, Any]) -> dict[str, list[str]]:
+    return {
         "reasons": _list_value(report, "", "reasons"),
         "checked_items": _list_value(report, "", "checked_items"),
         "changed_files": _list_value(report, "", "changed_files"),
         "validation_commands": _list_value(report, "", "validation_commands"),
-        "next_action": str(report.get("next_action") or "").strip(),
     }
-    if not normalized["next_action"]:
-        normalized["next_action"] = (
-            "validation_then_commit"
-            if normalized_status == "PASS"
-            else "needs_manual_post_fix_audit_failed"
-        )
-    if normalized_status != "PASS" or normalized["next_action"] != "validation_then_commit":
-        normalized["status"] = "FAIL"
-        normalized["next_action"] = "needs_manual_post_fix_audit_failed"
-    return normalized
 
 
 def write_codacy_task(outdir: Path, raw: dict[str, Any], issues: list[dict[str, Any]]) -> None:
