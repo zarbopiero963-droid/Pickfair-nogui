@@ -608,6 +608,15 @@ def test_summarize_blocker_actions_empty_is_non_blocking():
     ASSERTIONS.assertEqual(clean["next_action"], "checks_green_or_no_action")
     ASSERTIONS.assertFalse(clean["needs_manual"])
     ASSERTIONS.assertEqual(mergeable["next_action"], "ready_to_merge")
+    ASSERTIONS.assertFalse(mergeable["needs_manual"])
+
+
+def test_blocker_taxonomy_classifies_token_unavailable_as_manual_secret():
+    """Token unavailable wording should be classified as token_missing/manual secret path."""
+    payload = {"name": "Auth", "state": "FAILURE", "reason": "codacy api token is unavailable"}
+    category = controller.classify_blocker(payload)["category"]
+    ASSERTIONS.assertEqual(category, "token_missing")
+    ASSERTIONS.assertEqual(controller.route_blocker_action(category, {}), "needs_manual_secret")
 
 
 def test_summarize_blocker_actions_empty_ready_context_from_merge_metadata():

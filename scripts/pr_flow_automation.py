@@ -402,22 +402,22 @@ def build_decision(
     return decision
 
 
-def _merge_readiness_state(pr: dict[str, Any], checks: dict[str, Any]) -> dict[str, Any]:
-    already_merged = bool(pr.get("mergedAt"))
+def _merge_readiness_state(pr_data: dict[str, Any], checks: dict[str, Any]) -> dict[str, Any]:
+    already_merged = bool(pr_data.get("mergedAt"))
     reasons: list[str] = []
     if not already_merged:
-        reasons.extend(_merge_readiness_reasons(pr, checks))
+        reasons.extend(_merge_readiness_reasons(pr_data, checks))
     return {"already_merged": already_merged, "can_merge": already_merged or not reasons, "reasons": reasons}
 
 
-def _merge_readiness_reasons(pr: dict[str, Any], checks: dict[str, Any]) -> list[str]:
+def _merge_readiness_reasons(pr_data: dict[str, Any], checks: dict[str, Any]) -> list[str]:
     return [
         reason
         for reason in (
-            _reason_pr_state(pr),
-            _reason_pr_draft(pr),
-            _reason_pr_mergeable(pr),
-            _reason_pr_merge_state_status(pr, checks),
+            _reason_pr_state(pr_data),
+            _reason_pr_draft(pr_data),
+            _reason_pr_mergeable(pr_data),
+            _reason_pr_merge_state_status(pr_data, checks),
             _reason_blocking_checks(checks),
             _reason_pending_checks(checks),
         )
@@ -425,22 +425,26 @@ def _merge_readiness_reasons(pr: dict[str, Any], checks: dict[str, Any]) -> list
     ]
 
 
-def _reason_pr_state(pr: dict[str, Any]) -> str:
-    return "" if pr.get("state") == "OPEN" else f"PR state is {pr.get('state')}, expected OPEN"
+def _reason_pr_state(pr_data: dict[str, Any]) -> str:
+    return "" if pr_data.get("state") == "OPEN" else f"PR state is {pr_data.get('state')}, expected OPEN"
 
 
-def _reason_pr_draft(pr: dict[str, Any]) -> str:
-    return "PR is draft" if pr.get("isDraft") else ""
+def _reason_pr_draft(pr_data: dict[str, Any]) -> str:
+    return "PR is draft" if pr_data.get("isDraft") else ""
 
 
-def _reason_pr_mergeable(pr: dict[str, Any]) -> str:
-    return "" if pr.get("mergeable") == "MERGEABLE" else f"mergeable is {pr.get('mergeable')}, expected MERGEABLE"
+def _reason_pr_mergeable(pr_data: dict[str, Any]) -> str:
+    return (
+        ""
+        if pr_data.get("mergeable") == "MERGEABLE"
+        else f"mergeable is {pr_data.get('mergeable')}, expected MERGEABLE"
+    )
 
 
-def _reason_pr_merge_state_status(pr: dict[str, Any], checks: dict[str, Any]) -> str:
-    if effective_merge_state_ok(str(pr.get("mergeStateStatus") or ""), checks["blockers"], checks["pending"]):
+def _reason_pr_merge_state_status(pr_data: dict[str, Any], checks: dict[str, Any]) -> str:
+    if effective_merge_state_ok(str(pr_data.get("mergeStateStatus") or ""), checks["blockers"], checks["pending"]):
         return ""
-    return f"mergeStateStatus is {pr.get('mergeStateStatus')}, expected CLEAN"
+    return f"mergeStateStatus is {pr_data.get('mergeStateStatus')}, expected CLEAN"
 
 
 def _reason_blocking_checks(checks: dict[str, Any]) -> str:
@@ -568,12 +572,13 @@ def _apply_taxonomy_next_action(decision: dict[str, Any]) -> None:
     taxonomy = decision.get("blocker_taxonomy")
     taxonomy_dict = taxonomy if isinstance(taxonomy, dict) else {}
     taxonomy_next_action = str(taxonomy_dict.get("next_action") or "").strip()
+    current_action = str(decision.get("next_action") or "").strip()
     if decision.get("already_merged"):
         return
-    if _decision_has_active_review_blocker(taxonomy_dict):
+    if _review_blocker_should_override(decision, taxonomy_dict):
         decision["next_action"] = "fix_review_comments"
         return
-    if _safe_taxonomy_override(decision, taxonomy_next_action):
+    if _safe_taxonomy_override(decision, taxonomy_next_action, current_action):
         decision["next_action"] = taxonomy_next_action
 
 
@@ -582,12 +587,56 @@ def _decision_has_active_review_blocker(taxonomy_dict: dict[str, Any]) -> bool:
     return isinstance(categories, list) and "review_comment_active" in categories
 
 
-def _safe_taxonomy_override(decision: dict[str, Any], taxonomy_next_action: str) -> bool:
+def _safe_taxonomy_override(decision: dict[str, Any], taxonomy_next_action: str, current_action: str) -> bool:
     if not taxonomy_next_action:
+        return False
+    if not _taxonomy_action_can_override(current_action, taxonomy_next_action):
         return False
     if taxonomy_next_action == "ready_to_merge":
         return bool(decision.get("can_merge"))
     return True
+
+
+def _taxonomy_action_can_override(current_action: str, taxonomy_next_action: str) -> bool:
+    if not taxonomy_next_action:
+        return False
+    if taxonomy_next_action == "fix_review_comments":
+        return False
+    if not current_action:
+        return True
+    return not _is_high_priority_action(current_action)
+
+
+def _is_high_priority_action(action: str) -> bool:
+    return action in {
+        "wait_pending",
+        "needs_manual_merge_conflict",
+        "needs_manual_secret",
+        "needs_manual_scope_violation",
+        "needs_manual_codacy_rule_conflict",
+        "rerun_stale_checks",
+    }
+
+
+def _review_blocker_should_override(decision: dict[str, Any], taxonomy_dict: dict[str, Any]) -> bool:
+    if not _decision_has_active_review_blocker(taxonomy_dict):
+        return False
+    current_action = str(decision.get("next_action") or "").strip()
+    return _review_override_allowed(current_action, taxonomy_dict)
+
+
+def _review_override_allowed(current_action: str, taxonomy_dict: dict[str, Any]) -> bool:
+    if current_action in {"", "blocked", "checks_green_or_no_action"}:
+        return True
+    return current_action == "ready_to_merge" and _review_only_blocker(taxonomy_dict)
+
+
+def _review_only_blocker(taxonomy_dict: dict[str, Any]) -> bool:
+    categories = taxonomy_dict.get("categories")
+    if not isinstance(categories, list):
+        return False
+    normalized = {str(category).strip() for category in categories if str(category).strip()}
+    return normalized == {"review_comment_active"}
 
 
 def classify_blocker(item: dict[str, Any]) -> dict[str, Any]:

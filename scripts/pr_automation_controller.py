@@ -2412,7 +2412,7 @@ def _looks_like_complexity(text: str) -> bool:
 def _looks_like_token_error(text: str) -> bool:
     hidden_word = "sec" + "ret"
     return ("token" in text or hidden_word in text) and any(
-        word in text for word in ("missing", "empty", "unset", "invalid")
+        word in text for word in ("missing", "empty", "unset", "invalid", "unavailable")
     )
 
 
