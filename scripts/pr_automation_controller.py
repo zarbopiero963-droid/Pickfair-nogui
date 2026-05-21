@@ -2301,7 +2301,8 @@ def summarize_blocker_actions(blockers: list[dict[str, Any]], context: dict[str,
     classified = _classified_blockers(blockers)
     categories = _blocker_categories(classified)
     primary = _primary_blocker_category(categories)
-    next_action = _next_action_for_summary(primary, context)
+    explicit_next_action = _explicit_next_action_for_summary(classified, primary)
+    next_action = explicit_next_action or _next_action_for_summary(primary, context)
     safe_actions = sorted(_safe_autofix_actions(classified, context))
     reasons = _blocker_reasons(classified)
     return {
@@ -2312,6 +2313,18 @@ def summarize_blocker_actions(blockers: list[dict[str, Any]], context: dict[str,
         "safe_actions": safe_actions,
         "reasons": reasons,
     }
+
+
+def _explicit_next_action_for_summary(classified: list[dict[str, Any]], primary: str) -> str:
+    if primary == "none":
+        return ""
+    for item in classified:
+        if str(item.get("category") or "") != primary:
+            continue
+        action = str(item.get("next_action") or "").strip()
+        if action:
+            return action
+    return ""
 
 
 def _blocker_source_from_item(item: dict[str, Any], name: str) -> str:
@@ -2425,7 +2438,15 @@ def _conditional_blocker_action(category: str, context: dict[str, Any]) -> str:
 
 
 def _classified_blockers(blockers: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [item if item.get("category") in BLOCKER_CATEGORIES else classify_blocker(item) for item in blockers]
+    classified: list[dict[str, Any]] = []
+    for item in blockers:
+        if item.get("category") in BLOCKER_CATEGORIES:
+            classified.append(item)
+            continue
+        normalized = dict(item)
+        normalized.update(classify_blocker(item))
+        classified.append(normalized)
+    return classified
 
 
 def _blocker_categories(classified: list[dict[str, Any]]) -> list[str]:

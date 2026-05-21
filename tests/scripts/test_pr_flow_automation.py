@@ -157,6 +157,36 @@ def test_build_decision_reports_real_blockers_and_merge_state(monkeypatch):
     ASSERTIONS.assertEqual(decision["ignored_self_checks"][0]["name"], "PR Merge Readiness")
     ASSERTIONS.assertIn("blocker_taxonomy", decision)
     ASSERTIONS.assertEqual(decision["blocker_taxonomy"]["next_action"], "fix_codacy_current_issues")
+    ASSERTIONS.assertEqual(decision["next_action"], "fix_codacy_current_issues")
+
+
+def test_build_decision_includes_active_review_threads_in_taxonomy(monkeypatch):
+    """Active unresolved review threads should route taxonomy to fix_review_comments."""
+    monkeypatch.setattr(
+        flow,
+        "pr_view",
+        lambda _repo, _pr: {
+            "state": "OPEN",
+            "isDraft": True,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "statusCheckRollup": [],
+        },
+    )
+
+    decision = flow.build_decision(
+        "owner/repo",
+        "225",
+        ignore_self=True,
+        review_threads=[
+            {"id": "thread-1", "isResolved": False, "isOutdated": False, "path": "a.py", "line": 9},
+            {"id": "thread-2", "isResolved": True, "isOutdated": False, "path": "b.py", "line": 3},
+        ],
+    )
+
+    ASSERTIONS.assertIn("review_comment_active", decision["blocker_taxonomy"]["categories"])
+    ASSERTIONS.assertEqual(decision["blocker_taxonomy"]["next_action"], "fix_review_comments")
+    ASSERTIONS.assertEqual(decision["next_action"], "fix_review_comments")
 
 
 def _preflight_args() -> argparse.Namespace:

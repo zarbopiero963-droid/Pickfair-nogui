@@ -623,6 +623,26 @@ def test_summarize_blocker_actions_empty_ready_context_from_merge_metadata():
     ASSERTIONS.assertFalse(summary["needs_manual"])
 
 
+def test_summarize_blocker_actions_preserves_explicit_merge_conflict_next_action():
+    """Explicit blocker next_action should override category default routing."""
+    summary = controller.summarize_blocker_actions(
+        [
+            {
+                "name": "PR merge conflict",
+                "state": "FAILURE",
+                "source": "merge",
+                "mergeStateStatus": "DIRTY",
+                "next_action": "auto_resolve_merge_conflict",
+                "reason": "merge conflict can be auto-resolved",
+            }
+        ],
+        {},
+    )
+
+    ASSERTIONS.assertEqual(summary["primary_category"], "merge_conflict")
+    ASSERTIONS.assertEqual(summary["next_action"], "auto_resolve_merge_conflict")
+
+
 def test_scope_paths_skips_empty_list_and_continues():
     """Scope parsing should continue scanning keys after an empty list value."""
     scope_paths = controller._scope_paths(  # pylint: disable=protected-access

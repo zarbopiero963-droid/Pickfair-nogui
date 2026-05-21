@@ -364,7 +364,31 @@ def post_or_update_comment(repo: str, pr: str, marker: str, body: str) -> None:
     payload_path.unlink(missing_ok=True)
 
 
-def build_decision(repo: str, pr_number: str, *, ignore_self: bool = True) -> dict[str, Any]:
+def _active_review_taxonomy_items(review_threads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": "Active unresolved review thread",
+            "state": "ACTION_REQUIRED",
+            "source": "review",
+            "reason": "active unresolved review thread",
+            "active": True,
+            "id": thread.get("id"),
+            "path": thread.get("path"),
+            "line": thread.get("line"),
+            "author": thread.get("author"),
+            "url": thread.get("url"),
+        }
+        for thread in eligible_review_comments_for_auto_resolve(review_threads)
+    ]
+
+
+def build_decision(
+    repo: str,
+    pr_number: str,
+    *,
+    ignore_self: bool = True,
+    review_threads: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     pr = pr_view(repo, pr_number)
     checks = split_checks(pr, ignore_self=ignore_self)
 
@@ -423,6 +447,7 @@ def build_decision(repo: str, pr_number: str, *, ignore_self: bool = True) -> di
     }
     taxonomy_items = list(checks["blockers"])
     taxonomy_items.extend(checks["pending"])
+    taxonomy_items.extend(_active_review_taxonomy_items(review_threads or []))
     if controller._pr_has_merge_conflict(pr):  # pylint: disable=protected-access
         taxonomy_items.append(
             {
@@ -438,6 +463,8 @@ def build_decision(repo: str, pr_number: str, *, ignore_self: bool = True) -> di
     taxonomy_next_action = decision["blocker_taxonomy"].get("next_action")
     if not already_merged and can_merge and taxonomy_next_action == "ready_to_merge":
         decision["next_action"] = "ready_to_merge"
+    elif not already_merged and not can_merge and taxonomy_next_action:
+        decision["next_action"] = taxonomy_next_action
     return decision
 
 
@@ -735,7 +762,32 @@ def cmd_preflight(args: argparse.Namespace) -> int:
 
 
 def cmd_report(args: argparse.Namespace) -> int:
-    decision = build_decision(args.repo, args.pr, ignore_self=True)
+    review_nodes: list[dict[str, Any]] = []
+    try:
+        owner, name = str(args.repo).split("/", 1)
+        review_threads_query = (
+            "query($owner:String!, $name:String!, $number:Int!) "
+            "{ repository(owner:$owner, name:$name) { pullRequest(number:$number) "
+            "{ reviewThreads(first:100) { nodes { id isResolved isOutdated } } } } }"
+        )
+        review_raw = gh_json([
+            "gh", "api", "graphql",
+            "-f", f"owner={owner}",
+            "-f", f"name={name}",
+            "-F", f"number={args.pr}",
+            "-f", f"query={review_threads_query}",
+        ])
+        nodes = (
+            review_raw.get("data", {})
+            .get("repository", {})
+            .get("pullRequest", {})
+            .get("reviewThreads", {})
+            .get("nodes", [])
+        )
+        review_nodes = [node for node in nodes if isinstance(node, dict)] if isinstance(nodes, list) else []
+    except (RuntimeError, ValueError, OSError, AttributeError):
+        review_nodes = []
+    decision = build_decision(args.repo, args.pr, ignore_self=True, review_threads=review_nodes)
     blockers = decision.get("blockers")
     blocker_items = blockers if isinstance(blockers, list) else []
     codacy_checks = [
@@ -769,32 +821,6 @@ def cmd_report(args: argparse.Namespace) -> int:
         codacy["treat_annotations_as_blockers"] = bool(codacy_checks and codacy_issues)
     except (RuntimeError, ValueError, OSError):
         codacy["classification"] = "unknown"
-
-    review_nodes: list[dict[str, Any]] = []
-    try:
-        owner, name = str(args.repo).split("/", 1)
-        review_threads_query = (
-            "query($owner:String!, $name:String!, $number:Int!) "
-            "{ repository(owner:$owner, name:$name) { pullRequest(number:$number) "
-            "{ reviewThreads(first:100) { nodes { id isResolved isOutdated } } } } }"
-        )
-        review_raw = gh_json([
-            "gh", "api", "graphql",
-            "-f", f"owner={owner}",
-            "-f", f"name={name}",
-            "-F", f"number={args.pr}",
-            "-f", f"query={review_threads_query}",
-        ])
-        nodes = (
-            review_raw.get("data", {})
-            .get("repository", {})
-            .get("pullRequest", {})
-            .get("reviewThreads", {})
-            .get("nodes", [])
-        )
-        review_nodes = [node for node in nodes if isinstance(node, dict)] if isinstance(nodes, list) else []
-    except (RuntimeError, ValueError, OSError, AttributeError):
-        review_nodes = []
     unresolved_active = len(eligible_review_comments_for_auto_resolve(review_nodes))
     review = {"unresolved_active": unresolved_active, "total_threads": len(review_nodes)}
     decision["codacy"] = codacy
