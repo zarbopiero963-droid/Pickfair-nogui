@@ -515,13 +515,28 @@ def test_blocker_taxonomy_classifies_required_categories():
     """Blocker taxonomy maps representative inputs to expected categories."""
     cases = [
         ({"name": "Codacy Static Code Analysis", "state": "FAILURE", "source": "codacy"}, "codacy_style"),
-        ({"name": "Codacy complexity", "state": "FAILURE", "source": "codacy", "reason": "C901 complexity"}, "codacy_complexity"),
-        ({"name": "Codacy", "state": "ACTION_REQUIRED", "source": "codacy", "reason": "D203 and D211 conflict"}, "codacy_rule_conflict"),
-        ({"name": "Codacy", "state": "ACTION_REQUIRED", "source": "codacy", "classification": "api_github_mismatch"}, "codacy_api_github_mismatch"),
+        (
+            {"name": "Codacy complexity", "state": "FAILURE", "source": "codacy", "reason": "C901 complexity"},
+            "codacy_complexity",
+        ),
+        (
+            {"name": "Codacy", "state": "ACTION_REQUIRED", "source": "codacy", "reason": "D203 and D211 conflict"},
+            "codacy_rule_conflict",
+        ),
+        (
+            {"name": "Codacy", "state": "ACTION_REQUIRED", "source": "codacy", "classification": "api_github_mismatch"},
+            "codacy_api_github_mismatch",
+        ),
         ({"name": "Codacy", "state": "STALE", "source": "codacy"}, "github_stale_check"),
-        ({"name": "Review thread", "state": "ACTION_REQUIRED", "source": "review", "active": True}, "review_comment_active"),
+        (
+            {"name": "Review thread", "state": "ACTION_REQUIRED", "source": "review", "active": True},
+            "review_comment_active",
+        ),
         ({"name": "Unit tests", "state": "FAILURE", "source": "check"}, "test_failure"),
-        ({"name": "Infra", "state": "FAILURE", "source": "check", "reason": "runner service unavailable"}, "infra_failure"),
+        (
+            {"name": "Infra", "state": "FAILURE", "source": "check", "reason": "runner service unavailable"},
+            "infra_failure",
+        ),
         ({"name": "Auth", "state": "FAILURE", "reason": "token missing"}, "token_missing"),
         ({"name": "Auth", "state": "FAILURE", "reason": "403 permission denied"}, "api_permission_error"),
         ({"name": "Flow", "state": "CANCELLED"}, "workflow_cancelled"),
@@ -539,8 +554,14 @@ def test_route_blocker_action_maps_required_next_actions():
     ASSERTIONS.assertEqual(controller.route_blocker_action("workflow_pending", {}), "wait_pending")
     ASSERTIONS.assertEqual(controller.route_blocker_action("workflow_cancelled", {}), "rerun_stale_checks")
     ASSERTIONS.assertEqual(controller.route_blocker_action("github_stale_check", {}), "rerun_stale_checks")
-    ASSERTIONS.assertEqual(controller.route_blocker_action("codacy_api_github_mismatch", {}), "fix_github_codacy_annotations")
-    ASSERTIONS.assertEqual(controller.route_blocker_action("codacy_rule_conflict", {}), "needs_manual_codacy_rule_conflict")
+    ASSERTIONS.assertEqual(
+        controller.route_blocker_action("codacy_api_github_mismatch", {}),
+        "fix_github_codacy_annotations",
+    )
+    ASSERTIONS.assertEqual(
+        controller.route_blocker_action("codacy_rule_conflict", {}),
+        "needs_manual_codacy_rule_conflict",
+    )
     ASSERTIONS.assertEqual(controller.route_blocker_action("token_missing", {}), "needs_manual_secret")
     ASSERTIONS.assertEqual(controller.route_blocker_action("scope_violation", {}), "needs_manual_scope_violation")
     ASSERTIONS.assertEqual(controller.route_blocker_action("unknown", {}), "needs_manual")

@@ -16,7 +16,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import scripts.pr_automation_controller as controller
+try:
+    import scripts.pr_automation_controller as controller
+except ModuleNotFoundError:
+    import pr_automation_controller as controller
 
 SELF_CHECK_NAMES = {
     "safe pr autofix",
@@ -436,12 +439,12 @@ def route_blocker_action(category: str, context: dict[str, Any]) -> str:
 
 
 def classify_merge_conflict(
-    pr: dict[str, Any],
+    pr_data: dict[str, Any],
     conflicted_files: list[str],
     task_scope: dict[str, Any],
 ) -> dict[str, Any]:
     """Proxy merge-conflict taxonomy classification to controller helper."""
-    return controller.classify_merge_conflict(pr, conflicted_files, task_scope)
+    return controller.classify_merge_conflict(pr_data, conflicted_files, task_scope)
 
 
 def summarize_blocker_actions(blockers: list[dict[str, Any]], context: dict[str, Any]) -> dict[str, Any]:
