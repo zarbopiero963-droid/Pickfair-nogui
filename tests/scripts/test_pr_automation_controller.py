@@ -131,6 +131,35 @@ def _mock_loaded_tracking_state(_path, _repo, _pr) -> dict[str, Any]:
     )
 
 
+def _active_context_test_inputs(tmp_path):
+    task_file = tmp_path / "task.md"
+    audit_file = tmp_path / "audit.md"
+    context_dir = tmp_path / "ctx"
+    task_file.write_text("task-body", encoding="utf-8")
+    audit_file.write_text("audit-body", encoding="utf-8")
+    args = argparse.Namespace(
+        pr="229",
+        task_command_file=str(task_file),
+        final_micro_audit_file=str(audit_file),
+        task_context_dir=str(context_dir),
+    )
+    decision: dict[str, Any] = {"pr_automation_state": {"controller_run_count": 3}}
+    return args, decision, context_dir
+
+
+def _assert_active_context_merge(decision: dict[str, Any], context_dir) -> None:
+    ASSERTIONS.assertEqual((context_dir / "active-task-command.md").read_text(encoding="utf-8"), "task-body")
+    ASSERTIONS.assertEqual((context_dir / "active-final-micro-audit.md").read_text(encoding="utf-8"), "audit-body")
+    persisted = json.loads((context_dir / "active-task-state.json").read_text(encoding="utf-8"))
+    ASSERTIONS.assertEqual(
+        persisted["active_final_micro_audit_path"], str(context_dir / "active-final-micro-audit.md")
+    )
+    ASSERTIONS.assertEqual(decision["pr_automation_state"]["controller_run_count"], 3)
+    ASSERTIONS.assertEqual(
+        decision["active_final_micro_audit_path"], str(context_dir / "active-final-micro-audit.md")
+    )
+
+
 def test_controller_does_not_launch_safe_autofix_for_stale_codacy_action_required(monkeypatch):
     """A stale Codacy ACTION_REQUIRED check is ignored once the Codacy API is clear."""
     decision = _controller_decision(monkeypatch, blocking=False, ignored=True)
@@ -968,31 +997,11 @@ def test_add_controller_core_args_supports_task_context_options():
 
 def test_merge_active_task_context_if_present_replaces_and_merges_state(tmp_path):
     """Providing both files should replace active context and merge returned state into decision."""
-    task_file = tmp_path / "task.md"
-    audit_file = tmp_path / "audit.md"
-    context_dir = tmp_path / "ctx"
-    task_file.write_text("task-body", encoding="utf-8")
-    audit_file.write_text("audit-body", encoding="utf-8")
-    args = argparse.Namespace(
-        pr="229",
-        task_command_file=str(task_file),
-        final_micro_audit_file=str(audit_file),
-        task_context_dir=str(context_dir),
-    )
-    decision: dict[str, Any] = {"pr_automation_state": {"controller_run_count": 3}}
+    args, decision, context_dir = _active_context_test_inputs(tmp_path)
 
     controller.merge_active_task_context_if_present(args, decision, {"headRefName": "feature/pr229"})
 
-    ASSERTIONS.assertEqual((context_dir / "active-task-command.md").read_text(encoding="utf-8"), "task-body")
-    ASSERTIONS.assertEqual((context_dir / "active-final-micro-audit.md").read_text(encoding="utf-8"), "audit-body")
-    persisted = json.loads((context_dir / "active-task-state.json").read_text(encoding="utf-8"))
-    ASSERTIONS.assertEqual(
-        persisted["active_final_micro_audit_path"], str(context_dir / "active-final-micro-audit.md")
-    )
-    ASSERTIONS.assertEqual(decision["pr_automation_state"]["controller_run_count"], 3)
-    ASSERTIONS.assertEqual(
-        decision["active_final_micro_audit_path"], str(context_dir / "active-final-micro-audit.md")
-    )
+    _assert_active_context_merge(decision, context_dir)
 
 
 def test_merge_active_task_context_if_present_without_inputs_is_noop(tmp_path):

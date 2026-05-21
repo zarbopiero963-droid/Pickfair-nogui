@@ -1788,27 +1788,41 @@ def _read_optional_file(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
 
-def merge_active_task_context_if_present(
-    args: argparse.Namespace,
-    decision: dict[str, Any],
-    pr: dict[str, Any],
-) -> None:
+def _task_context_inputs_present(args: argparse.Namespace) -> bool:
     task_file = str(getattr(args, "task_command_file", "") or "").strip()
     audit_file = str(getattr(args, "final_micro_audit_file", "") or "").strip()
-    if not task_file or not audit_file:
-        return
-    task_text = _read_optional_file(task_file)
-    audit_text = _read_optional_file(audit_file)
-    branch = str(pr.get("headRefName") or "")
-    state = replace_active_task_context(
-        str(getattr(args, "task_context_dir", ".autofix/context")),
-        ActiveTaskContextInput(task_text=task_text, audit_text=audit_text, branch=branch, pr=str(args.pr)),
+    return bool(task_file and audit_file)
+
+
+def _read_task_context_inputs(args: argparse.Namespace, pr: dict[str, Any]) -> ActiveTaskContextInput:
+    return ActiveTaskContextInput(
+        task_text=_read_optional_file(str(getattr(args, "task_command_file", "") or "").strip()),
+        audit_text=_read_optional_file(str(getattr(args, "final_micro_audit_file", "") or "").strip()),
+        branch=str(pr.get("headRefName") or ""),
+        pr=str(args.pr),
     )
+
+
+def _merge_active_task_state_into_decision(decision: dict[str, Any], state: dict[str, Any]) -> None:
     existing = decision.get("pr_automation_state")
     merged = existing.copy() if isinstance(existing, dict) else {}
     merged.update(state)
     decision["pr_automation_state"] = merged
     decision["active_final_micro_audit_path"] = merged.get("active_final_micro_audit_path", "")
+
+
+def merge_active_task_context_if_present(
+    args: argparse.Namespace,
+    decision: dict[str, Any],
+    pr: dict[str, Any],
+) -> None:
+    if not _task_context_inputs_present(args):
+        return
+    state = replace_active_task_context(
+        str(getattr(args, "task_context_dir", ".autofix/context")),
+        _read_task_context_inputs(args, pr),
+    )
+    _merge_active_task_state_into_decision(decision, state)
 
 
 def _state_path_from_output(output_path: str) -> str:
