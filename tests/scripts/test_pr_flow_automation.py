@@ -754,6 +754,39 @@ def test_fetch_all_review_threads_paginates(monkeypatch):
     ASSERTIONS.assertEqual([thread["id"] for thread in threads], ["a", "b"])
 
 
+def test_fetch_all_review_threads_first_page_omits_empty_cursor(monkeypatch):
+    """First GraphQL request should not pass an empty after cursor."""
+    captured: list[list[str]] = []
+    responses = iter([_review_threads_page([], has_next=False, end_cursor="")])
+
+    def _fake_gh_json(cmd: list[str], **_kwargs):
+        captured.append(cmd)
+        return next(responses)
+
+    monkeypatch.setattr(flow, "gh_json", _fake_gh_json)
+    flow.fetch_all_review_threads("owner/repo", "225")
+    ASSERTIONS.assertFalse(any(part == "after=" for part in captured[0]))
+
+
+def test_fetch_all_review_threads_second_page_sends_cursor(monkeypatch):
+    """Second GraphQL request should pass after=<cursor>."""
+    captured: list[list[str]] = []
+    responses = iter(
+        [
+            _review_threads_page([], has_next=True, end_cursor="cursor-1"),
+            _review_threads_page([], has_next=False, end_cursor="cursor-2"),
+        ]
+    )
+
+    def _fake_gh_json(cmd: list[str], **_kwargs):
+        captured.append(cmd)
+        return next(responses)
+
+    monkeypatch.setattr(flow, "gh_json", _fake_gh_json)
+    flow.fetch_all_review_threads("owner/repo", "225")
+    ASSERTIONS.assertTrue(any(part == "after=cursor-1" for part in captured[1]))
+
+
 def _run_cmd_report_second_page_thread(tmp_path, monkeypatch) -> dict[str, object]:
     monkeypatch.setattr(flow, "pr_view", _ready_to_merge_pr_view)
     monkeypatch.setattr(flow, "fetch_codacy_pr_issues", lambda *_args: ({}, []))
@@ -766,10 +799,11 @@ def _run_cmd_report_second_page_thread(tmp_path, monkeypatch) -> dict[str, objec
 
 
 def _assert_report_blocked_by_second_page_review_thread(decision: dict[str, object]) -> None:
+    review = cast(dict[str, Any], decision["review"])
     ASSERTIONS.assertFalse(decision["can_merge"])
     ASSERTIONS.assertEqual(decision["next_action"], "fix_review_comments")
-    ASSERTIONS.assertEqual(decision["review"]["unresolved_active"], 1)
-    ASSERTIONS.assertEqual(decision["review"]["total_threads"], 2)
+    ASSERTIONS.assertEqual(review["unresolved_active"], 1)
+    ASSERTIONS.assertEqual(review["total_threads"], 2)
 
 
 def test_cmd_report_second_page_unresolved_review_thread_blocks_merge(tmp_path, monkeypatch):
@@ -786,6 +820,7 @@ def test_cmd_readiness_passes_review_threads_to_build_decision(monkeypatch):
     monkeypatch.setattr(flow, "fetch_all_review_threads", lambda *_args: expected_threads)
 
     def _fake_build_decision(_repo: str, _pr: str, *, ignore_self: bool, review_threads=None):
+        captured["ignore_self"] = ignore_self
         captured["review_threads"] = review_threads
         return {
             "already_merged": False,
@@ -813,26 +848,31 @@ def test_cmd_readiness_passes_review_threads_to_build_decision(monkeypatch):
     ASSERTIONS.assertEqual(captured["review_threads"], expected_threads)
 
 
-def test_cmd_readiness_review_thread_fetch_failure_fails_closed(monkeypatch):
-    """Readiness must fail closed when review thread fetch fails."""
+def _stub_readiness_fetch_failure(monkeypatch) -> None:
     monkeypatch.setattr(
         flow,
         "fetch_all_review_threads",
         lambda *_args: (_ for _ in ()).throw(RuntimeError("api down")),
     )
 
-    def _fake_build_decision(_repo: str, _pr: str, *, ignore_self: bool, review_threads=None):
-        return {
+
+def _stub_ready_build_decision(monkeypatch) -> None:
+    monkeypatch.setattr(
+        flow,
+        "build_decision",
+        lambda *_args, **_kwargs: {
             "already_merged": False,
             "can_merge": True,
             "mergeable": "MERGEABLE",
             "mergeStateStatus": "CLEAN",
             "reasons": [],
             "next_action": "ready_to_merge",
-        }
+        },
+    )
 
-    monkeypatch.setattr(flow, "build_decision", _fake_build_decision)
-    rc = flow.cmd_readiness(
+
+def _run_readiness_cmd_failure_case() -> int:
+    return flow.cmd_readiness(
         argparse.Namespace(
             repo="owner/repo",
             pr="225",
@@ -844,6 +884,12 @@ def test_cmd_readiness_review_thread_fetch_failure_fails_closed(monkeypatch):
         )
     )
 
+
+def test_cmd_readiness_review_thread_fetch_failure_fails_closed(monkeypatch):
+    """Readiness must fail closed when review thread fetch fails."""
+    _stub_readiness_fetch_failure(monkeypatch)
+    _stub_ready_build_decision(monkeypatch)
+    rc = _run_readiness_cmd_failure_case()
     decision = flow._readiness_decision("owner/repo", "225", True)  # pylint: disable=protected-access
     ASSERTIONS.assertEqual(rc, 1)
     ASSERTIONS.assertFalse(decision["can_merge"])

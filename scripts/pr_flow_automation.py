@@ -862,16 +862,16 @@ def cmd_readiness(args: argparse.Namespace) -> int:
     return 0 if decision["can_merge"] or args.no_fail else 1
 
 
-def _readiness_decision(repo: str, pr: str, ignore_self: bool) -> dict[str, Any]:
+def _readiness_decision(repo: str, pr_number: str, ignore_self: bool) -> dict[str, Any]:
     try:
-        review_threads = fetch_all_review_threads(repo, pr)
+        review_threads = fetch_all_review_threads(repo, pr_number)
     except (RuntimeError, ValueError, OSError, AttributeError):
-        return _readiness_review_api_blocked(repo, pr, ignore_self)
-    return build_decision(repo, pr, ignore_self=ignore_self, review_threads=review_threads)
+        return _readiness_review_api_blocked(repo, pr_number, ignore_self)
+    return build_decision(repo, pr_number, ignore_self=ignore_self, review_threads=review_threads)
 
 
-def _readiness_review_api_blocked(repo: str, pr: str, ignore_self: bool) -> dict[str, Any]:
-    decision = build_decision(repo, pr, ignore_self=ignore_self, review_threads=[])
+def _readiness_review_api_blocked(repo: str, pr_number: str, ignore_self: bool) -> dict[str, Any]:
+    decision = build_decision(repo, pr_number, ignore_self=ignore_self, review_threads=[])
     reasons = decision.get("reasons")
     if isinstance(reasons, list) and "review_threads_api_unavailable" not in reasons:
         reasons.append("review_threads_api_unavailable")
@@ -1111,7 +1111,7 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 
 def fetch_all_review_threads(repo: str, pr_number: str | int) -> list[dict[str, Any]]:
-    after_cursor = ""
+    after_cursor: str | None = None
     collected: list[dict[str, Any]] = []
     while True:
         page = _review_threads_page(repo, pr_number, after_cursor)
@@ -1133,16 +1133,18 @@ def _review_threads_page_query() -> str:
     )
 
 
-def _review_threads_page(repo: str, pr_number: str | int, after_cursor: str) -> dict[str, Any]:
+def _review_threads_page(repo: str, pr_number: str | int, after_cursor: str | None = None) -> dict[str, Any]:
     owner, name = str(repo).split("/", 1)
-    return gh_json([
+    cmd = [
         "gh", "api", "graphql",
         "-f", f"owner={owner}",
         "-f", f"name={name}",
         "-F", f"number={pr_number}",
-        "-f", f"after={after_cursor}",
         "-f", f"query={_review_threads_page_query()}",
-    ])
+    ]
+    if after_cursor:
+        cmd.extend(["-f", f"after={after_cursor}"])
+    return gh_json(cmd)
 
 
 def _review_threads_nodes(review_raw: dict[str, Any]) -> list[dict[str, Any]]:
