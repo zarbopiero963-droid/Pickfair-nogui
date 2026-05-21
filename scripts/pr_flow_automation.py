@@ -639,7 +639,7 @@ def _should_set_review_fix_action(current_action: str, taxonomy_dict: dict[str, 
 def _review_override_allowed(current_action: str, taxonomy_dict: dict[str, Any]) -> bool:
     if current_action in {"", "blocked", "checks_green_or_no_action"}:
         return True
-    return current_action == "ready_to_merge" and _review_only_blocker(taxonomy_dict)
+    return current_action == "ready_to_merge"
 
 
 def _review_only_blocker(taxonomy_dict: dict[str, Any]) -> bool:

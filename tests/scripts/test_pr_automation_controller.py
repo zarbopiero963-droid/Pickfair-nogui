@@ -603,15 +603,21 @@ def test_summarize_blocker_actions_empty_is_non_blocking():
     """Empty blocker list is non-blocking and should not route to manual unknown action."""
     clean = controller.summarize_blocker_actions([], {"can_merge": False})
     mergeable = controller.summarize_blocker_actions([], {"can_merge": True})
+    missing_can_merge = controller.summarize_blocker_actions([], {})
 
     ASSERTIONS.assertEqual(clean["primary_category"], "none")
     ASSERTIONS.assertEqual(clean["next_action"], "checks_green_or_no_action")
     ASSERTIONS.assertNotEqual(clean["primary_category"], "unknown")
     ASSERTIONS.assertFalse(clean["needs_manual"])
+    ASSERTIONS.assertEqual(clean["safe_actions"], [])
+    ASSERTIONS.assertEqual(clean["reasons"], [])
     ASSERTIONS.assertEqual(mergeable["primary_category"], "none")
     ASSERTIONS.assertEqual(mergeable["next_action"], "ready_to_merge")
     ASSERTIONS.assertNotEqual(mergeable["primary_category"], "unknown")
     ASSERTIONS.assertFalse(mergeable["needs_manual"])
+    ASSERTIONS.assertEqual(mergeable["safe_actions"], [])
+    ASSERTIONS.assertEqual(mergeable["reasons"], [])
+    ASSERTIONS.assertEqual(missing_can_merge["next_action"], "checks_green_or_no_action")
 
 
 def test_blocker_taxonomy_classifies_token_unavailable_as_manual_secret():
