@@ -476,8 +476,23 @@ def test_build_decision_draft_pr_not_promoted_to_ready_to_merge(monkeypatch):
     taxonomy = cast(dict[str, Any], decision["blocker_taxonomy"])
 
     ASSERTIONS.assertFalse(decision["can_merge"])
+    ASSERTIONS.assertEqual(decision["next_action"], "blocked")
+    ASSERTIONS.assertNotEqual(decision["next_action"], "checks_green_or_no_action")
     ASSERTIONS.assertNotEqual(decision["next_action"], "ready_to_merge")
     ASSERTIONS.assertEqual(taxonomy["next_action"], "checks_green_or_no_action")
+
+
+def test_apply_taxonomy_next_action_does_not_demote_blocked_to_checks_green_or_no_action():
+    """Non-mergeable blocked decision must not be demoted by empty taxonomy action."""
+    decision = {
+        "already_merged": False,
+        "can_merge": False,
+        "next_action": "blocked",
+        "blocker_taxonomy": {"categories": [], "next_action": "checks_green_or_no_action"},
+    }
+
+    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
+    ASSERTIONS.assertEqual(decision["next_action"], "blocked")
 
 
 def test_merge_conflict_taxonomy_items_uses_classifier_output():

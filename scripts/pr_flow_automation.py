@@ -604,6 +604,8 @@ def _can_apply_ready_route(decision: dict[str, Any]) -> bool:
 
 
 def _should_set_taxonomy_action(current_action: str, taxonomy_action: str) -> bool:
+    if current_action == "blocked" and taxonomy_action == "checks_green_or_no_action":
+        return False
     return (
         bool(taxonomy_action)
         and taxonomy_action not in {"ready_to_merge", "fix_review_comments"}
@@ -624,6 +626,7 @@ def _is_high_priority_action(action: str) -> bool:
         "needs_manual_scope_violation",
         "needs_manual_codacy_rule_conflict",
         "rerun_stale_checks",
+        "auto_resolve_merge_conflict",
     }
 
 
