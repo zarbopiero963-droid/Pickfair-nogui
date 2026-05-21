@@ -608,10 +608,14 @@ def test_summarize_blocker_actions_empty_is_non_blocking():
     ASSERTIONS.assertEqual(clean["next_action"], "checks_green_or_no_action")
     ASSERTIONS.assertNotEqual(clean["primary_category"], "unknown")
     ASSERTIONS.assertFalse(clean["needs_manual"])
+    ASSERTIONS.assertEqual(clean["safe_actions"], [])
+    ASSERTIONS.assertEqual(clean["reasons"], [])
     ASSERTIONS.assertEqual(mergeable["primary_category"], "none")
     ASSERTIONS.assertEqual(mergeable["next_action"], "ready_to_merge")
     ASSERTIONS.assertNotEqual(mergeable["primary_category"], "unknown")
     ASSERTIONS.assertFalse(mergeable["needs_manual"])
+    ASSERTIONS.assertEqual(mergeable["safe_actions"], [])
+    ASSERTIONS.assertEqual(mergeable["reasons"], [])
 
 
 def test_blocker_taxonomy_classifies_token_unavailable_as_manual_secret():
@@ -622,11 +626,11 @@ def test_blocker_taxonomy_classifies_token_unavailable_as_manual_secret():
     ASSERTIONS.assertEqual(controller.route_blocker_action(category, {}), "needs_manual_secret")
 
 
-def test_summarize_blocker_actions_empty_ready_context_from_merge_metadata():
-    """Empty blocker list uses merge metadata as ready_to_merge signal."""
+def test_summarize_blocker_actions_empty_ready_context_from_can_merge():
+    """Empty blocker list uses explicit can_merge as ready_to_merge signal."""
     summary = controller.summarize_blocker_actions(
         [],
-        {"mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN", "bad": [], "pending": []},
+        {"can_merge": True, "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN", "bad": [], "pending": []},
     )
 
     ASSERTIONS.assertEqual(summary["primary_category"], "none")

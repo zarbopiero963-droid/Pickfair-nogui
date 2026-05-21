@@ -1804,15 +1804,20 @@ def build_next_action_context(
         "mergeStateStatus": pr.get("mergeStateStatus"),
     }
     if (
-        safe_nonnegative_int(review_summary.get("unresolved_active"), 0) == 0
+        not safe_nonnegative_int(review_summary.get("unresolved_active"), 0)
         and not blockers
         and not pending_items
         and not _pr_has_merge_conflict(pr)
     ):
         taxonomy_context["can_merge"] = _is_ready_to_merge_context(
             {
+                "state": pr.get("state"),
+                "isDraft": pr.get("isDraft"),
                 "mergeable": pr.get("mergeable"),
                 "mergeStateStatus": pr.get("mergeStateStatus"),
+                "unresolved_active": review_summary.get("unresolved_active", 0),
+                "pending": pending_items,
+                "bad": blockers,
                 "blockers": blockers,
                 "blockers_count": len(blockers),
             }
@@ -2320,6 +2325,16 @@ def classify_merge_conflict(
 
 def summarize_blocker_actions(blockers: list[dict[str, Any]], context: dict[str, Any]) -> dict[str, Any]:
     """Summarize taxonomy categories and derive a primary next action."""
+    if not blockers:
+        can_merge = bool(context.get("can_merge"))
+        return {
+            "categories": [],
+            "primary_category": "none",
+            "next_action": "ready_to_merge" if can_merge else "checks_green_or_no_action",
+            "needs_manual": False,
+            "safe_actions": [],
+            "reasons": [],
+        }
     classified = _classified_blockers(blockers)
     categories = _blocker_categories(classified)
     primary = _primary_blocker_category(categories)
@@ -2651,9 +2666,24 @@ def _has_rerun_state(context: dict[str, Any]) -> bool:
 def _is_ready_to_merge_context(context: dict[str, Any]) -> bool:
     if "can_merge" in context:
         return bool(context.get("can_merge"))
+    state = str(context.get("state") or "").strip().upper()
+    if state and state != "OPEN":
+        return False
+    if context.get("isDraft") is True:
+        return False
     mergeable = norm_state(context.get("mergeable"))
     merge_state_status = norm_state(context.get("mergeStateStatus"))
-    return mergeable == "MERGEABLE" and merge_state_status == "CLEAN" and not _has_blockers(context)
+    unresolved_active = safe_nonnegative_int(context.get("unresolved_active"), 0)
+    has_pending = bool(context.get("pending")) if isinstance(context.get("pending"), list) else False
+    has_bad = bool(context.get("bad")) if isinstance(context.get("bad"), list) else False
+    return (
+        mergeable == "MERGEABLE"
+        and merge_state_status == "CLEAN"
+        and unresolved_active == 0
+        and not has_pending
+        and not has_bad
+        and not _has_blockers(context)
+    )
 
 
 def _has_blockers(context: dict[str, Any]) -> bool:

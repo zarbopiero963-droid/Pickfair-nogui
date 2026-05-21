@@ -240,7 +240,7 @@ def test_apply_taxonomy_next_action_review_blocker_does_not_override_high_priori
 
 
 def test_apply_taxonomy_next_action_review_blocker_not_review_only_keeps_ready_action():
-    """Review overrides ready_to_merge only when taxonomy is review-only."""
+    """Active review blocker must prevent ready_to_merge even when not review-only."""
     decision = {
         "already_merged": False,
         "can_merge": True,
@@ -252,7 +252,7 @@ def test_apply_taxonomy_next_action_review_blocker_not_review_only_keeps_ready_a
     }
 
     flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
-    ASSERTIONS.assertEqual(decision["next_action"], "ready_to_merge")
+    ASSERTIONS.assertEqual(decision["next_action"], "fix_review_comments")
 
 
 def test_apply_taxonomy_next_action_does_not_override_manual_secret_with_review_action():

@@ -578,6 +578,8 @@ def _apply_taxonomy_next_action(decision: dict[str, Any]) -> None:
         decision["next_action"] = taxonomy_next_action
     elif _should_set_review_fix_action(current_action, taxonomy_dict):
         decision["next_action"] = "fix_review_comments"
+    elif _has_review_blocker(taxonomy_dict) and current_action == "ready_to_merge":
+        decision["next_action"] = "fix_review_comments"
     elif _can_apply_ready_route(decision):
         decision["next_action"] = "ready_to_merge"
 
@@ -639,9 +641,9 @@ def _should_set_review_fix_action(current_action: str, taxonomy_dict: dict[str, 
 
 
 def _review_override_allowed(current_action: str, taxonomy_dict: dict[str, Any]) -> bool:
-    if current_action in {"", "blocked", "checks_green_or_no_action"}:
-        return True
-    return current_action == "ready_to_merge" and _review_only_blocker(taxonomy_dict)
+    if not _review_only_blocker(taxonomy_dict):
+        return False
+    return current_action in {"", "blocked", "checks_green_or_no_action", "ready_to_merge"}
 
 
 def _review_only_blocker(taxonomy_dict: dict[str, Any]) -> bool:
