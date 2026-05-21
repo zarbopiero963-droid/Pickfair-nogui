@@ -268,6 +268,45 @@ def test_apply_taxonomy_next_action_does_not_override_manual_secret_with_review_
     ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_secret")
 
 
+def test_apply_taxonomy_next_action_review_only_blocker_routes_to_fix_review_comments():
+    """Review-only blocker routes to fix_review_comments."""
+    decision = {
+        "already_merged": False,
+        "can_merge": False,
+        "next_action": "checks_green_or_no_action",
+        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
+    }
+
+    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
+    ASSERTIONS.assertEqual(decision["next_action"], "fix_review_comments")
+
+
+def test_apply_taxonomy_next_action_does_not_override_merge_conflict_with_review_action():
+    """Review blockers cannot overwrite merge-conflict manual remediation."""
+    decision = {
+        "already_merged": False,
+        "can_merge": False,
+        "next_action": "needs_manual_merge_conflict",
+        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
+    }
+
+    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
+    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_merge_conflict")
+
+
+def test_apply_taxonomy_next_action_does_not_override_rerun_stale_checks_with_review_action():
+    """Review blockers cannot overwrite stale-check rerun action."""
+    decision = {
+        "already_merged": False,
+        "can_merge": False,
+        "next_action": "rerun_stale_checks",
+        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
+    }
+
+    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
+    ASSERTIONS.assertEqual(decision["next_action"], "rerun_stale_checks")
+
+
 def _preflight_args() -> argparse.Namespace:
     return argparse.Namespace(
         repo="owner/repo",

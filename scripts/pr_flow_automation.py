@@ -571,63 +571,49 @@ def _review_thread_taxonomy_items(review_threads: list[dict[str, Any]]) -> list[
 def _apply_taxonomy_next_action(decision: dict[str, Any]) -> None:
     if decision.get("already_merged"):
         return
-    taxonomy = decision.get("blocker_taxonomy")
-    taxonomy_dict = taxonomy if isinstance(taxonomy, dict) else {}
+    taxonomy_dict = _taxonomy_dict(decision)
     taxonomy_next_action = _taxonomy_next_action(taxonomy_dict)
-    if _should_apply_taxonomy_action(decision, taxonomy_next_action):
+    current_action = _current_next_action(decision)
+    if _should_set_taxonomy_action(current_action, taxonomy_next_action):
         decision["next_action"] = taxonomy_next_action
-        return
-    if _review_blocker_should_override(decision, taxonomy_dict):
+    elif _should_set_review_fix_action(current_action, taxonomy_dict):
         decision["next_action"] = "fix_review_comments"
-        return
-    if _can_apply_ready_to_merge_taxonomy(decision):
+    elif _can_apply_ready_route(decision):
         decision["next_action"] = "ready_to_merge"
+
+
+def _taxonomy_dict(decision: dict[str, Any]) -> dict[str, Any]:
+    taxonomy = decision.get("blocker_taxonomy")
+    return taxonomy if isinstance(taxonomy, dict) else {}
 
 
 def _taxonomy_next_action(decision: dict[str, Any]) -> str:
     return str(decision.get("next_action") or "").strip()
 
 
-def _can_apply_ready_to_merge_taxonomy(decision: dict[str, Any]) -> bool:
+def _current_next_action(decision: dict[str, Any]) -> str:
+    return str(decision.get("next_action") or "").strip()
+
+
+def _can_apply_ready_route(decision: dict[str, Any]) -> bool:
     return (
         _taxonomy_next_action(decision.get("blocker_taxonomy") or {}) == "ready_to_merge"
         and bool(decision.get("can_merge"))
-        and not _is_high_priority_action(str(decision.get("next_action") or "").strip())
+        and not _is_high_priority_action(_current_next_action(decision))
     )
 
 
-def _should_apply_taxonomy_action(decision: dict[str, Any], action: str) -> bool:
+def _should_set_taxonomy_action(current_action: str, taxonomy_action: str) -> bool:
     return (
-        bool(action)
-        and action != "ready_to_merge"
-        and action != "fix_review_comments"
-        and not _is_high_priority_action(str(decision.get("next_action") or "").strip())
+        bool(taxonomy_action)
+        and taxonomy_action not in {"ready_to_merge", "fix_review_comments"}
+        and not _is_high_priority_action(current_action)
     )
 
 
-def _decision_has_active_review_blocker(taxonomy_dict: dict[str, Any]) -> bool:
+def _has_review_blocker(taxonomy_dict: dict[str, Any]) -> bool:
     categories = taxonomy_dict.get("categories")
     return isinstance(categories, list) and "review_comment_active" in categories
-
-
-def _safe_taxonomy_override(decision: dict[str, Any], taxonomy_next_action: str, current_action: str) -> bool:
-    if not taxonomy_next_action:
-        return False
-    if not _taxonomy_action_can_override(current_action, taxonomy_next_action):
-        return False
-    if taxonomy_next_action == "ready_to_merge":
-        return bool(decision.get("can_merge"))
-    return True
-
-
-def _taxonomy_action_can_override(current_action: str, taxonomy_next_action: str) -> bool:
-    if not taxonomy_next_action:
-        return False
-    if taxonomy_next_action == "fix_review_comments":
-        return False
-    if not current_action:
-        return True
-    return not _is_high_priority_action(current_action)
 
 
 def _is_high_priority_action(action: str) -> bool:
@@ -641,10 +627,9 @@ def _is_high_priority_action(action: str) -> bool:
     }
 
 
-def _review_blocker_should_override(decision: dict[str, Any], taxonomy_dict: dict[str, Any]) -> bool:
-    if not _decision_has_active_review_blocker(taxonomy_dict):
+def _should_set_review_fix_action(current_action: str, taxonomy_dict: dict[str, Any]) -> bool:
+    if not _has_review_blocker(taxonomy_dict):
         return False
-    current_action = str(decision.get("next_action") or "").strip()
     return _review_override_allowed(current_action, taxonomy_dict)
 
 
