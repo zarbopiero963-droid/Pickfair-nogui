@@ -162,6 +162,12 @@ def test_build_decision_reports_real_blockers_and_merge_state(monkeypatch):
 
 def test_build_decision_includes_active_review_threads_in_taxonomy(monkeypatch):
     """Active unresolved review threads should route taxonomy to fix_review_comments."""
+    _stub_review_thread_pr_view(monkeypatch)
+    decision = _build_decision_with_review_threads()
+    _assert_review_thread_routing(decision)
+
+
+def _stub_review_thread_pr_view(monkeypatch) -> None:
     monkeypatch.setattr(
         flow,
         "pr_view",
@@ -174,7 +180,9 @@ def test_build_decision_includes_active_review_threads_in_taxonomy(monkeypatch):
         },
     )
 
-    decision = flow.build_decision(
+
+def _build_decision_with_review_threads() -> dict[str, object]:
+    return flow.build_decision(
         "owner/repo",
         "225",
         ignore_self=True,
@@ -184,8 +192,11 @@ def test_build_decision_includes_active_review_threads_in_taxonomy(monkeypatch):
         ],
     )
 
-    ASSERTIONS.assertIn("review_comment_active", decision["blocker_taxonomy"]["categories"])
-    ASSERTIONS.assertEqual(decision["blocker_taxonomy"]["next_action"], "fix_review_comments")
+
+def _assert_review_thread_routing(decision: dict[str, object]) -> None:
+    taxonomy = cast(dict[str, Any], decision["blocker_taxonomy"])
+    ASSERTIONS.assertIn("review_comment_active", taxonomy["categories"])
+    ASSERTIONS.assertEqual(taxonomy["next_action"], "fix_review_comments")
     ASSERTIONS.assertEqual(decision["next_action"], "fix_review_comments")
 
 
@@ -628,13 +639,14 @@ def _ready_to_merge_pr_view(_repo: str, _pr: str) -> dict[str, object]:
 
 
 def _assert_ready_to_merge_decision(decision: dict[str, object]) -> None:
+    taxonomy = cast(dict[str, Any], decision["blocker_taxonomy"])
     ASSERTIONS.assertEqual(decision["blockers"], [])
     ASSERTIONS.assertEqual(decision["pending"], [])
     ASSERTIONS.assertEqual(decision["mergeable"], "MERGEABLE")
     ASSERTIONS.assertEqual(decision["mergeStateStatus"], "CLEAN")
     ASSERTIONS.assertTrue(decision["can_merge"])
     ASSERTIONS.assertEqual(decision["next_action"], "ready_to_merge")
-    ASSERTIONS.assertEqual(decision["blocker_taxonomy"]["next_action"], "ready_to_merge")
+    ASSERTIONS.assertEqual(taxonomy["next_action"], "ready_to_merge")
 
 
 def _telegram_summary_context() -> dict[str, object]:

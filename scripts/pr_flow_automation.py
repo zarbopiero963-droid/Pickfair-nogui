@@ -389,40 +389,54 @@ def build_decision(
     ignore_self: bool = True,
     review_threads: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """Build merge readiness decision and apply blocker taxonomy routing."""
     pr = pr_view(repo, pr_number)
     checks = split_checks(pr, ignore_self=ignore_self)
+    merge_state = _merge_readiness_state(pr, checks)
+    decision = _base_decision(repo, pr_number, pr, checks, merge_state)
+    taxonomy_context = _taxonomy_context(pr, checks, merge_state["can_merge"])
+    taxonomy_items = _decision_taxonomy_items(checks, review_threads or [])
+    taxonomy_items.extend(_merge_conflict_taxonomy_items(pr))
+    decision["blocker_taxonomy"] = controller.summarize_blocker_actions(taxonomy_items, taxonomy_context)
+    _apply_taxonomy_next_action(decision)
+    return decision
 
+
+def _merge_readiness_state(pr: dict[str, Any], checks: dict[str, Any]) -> dict[str, Any]:
     already_merged = bool(pr.get("mergedAt"))
     reasons: list[str] = []
+    if not already_merged:
+        reasons.extend(_merge_readiness_reasons(pr, checks))
+    return {"already_merged": already_merged, "can_merge": already_merged or not reasons, "reasons": reasons}
 
-    if already_merged:
-        can_merge = True
-    else:
-        if pr.get("state") != "OPEN":
-            reasons.append(f"PR state is {pr.get('state')}, expected OPEN")
-        if pr.get("isDraft"):
-            reasons.append("PR is draft")
-        if pr.get("mergeable") != "MERGEABLE":
-            reasons.append(f"mergeable is {pr.get('mergeable')}, expected MERGEABLE")
-        if not effective_merge_state_ok(str(pr.get("mergeStateStatus") or ""), checks["blockers"], checks["pending"]):
-            reasons.append(f"mergeStateStatus is {pr.get('mergeStateStatus')}, expected CLEAN")
-        if checks["blockers"]:
-            reasons.append(f"{len(checks['blockers'])} real blocking check(s)")
-        if checks["pending"]:
-            reasons.append(f"{len(checks['pending'])} real pending check(s)")
-        can_merge = not reasons
 
-    taxonomy_context = {
-        "logs_clear": False,
-        "can_merge": can_merge,
-        "mergeable": pr.get("mergeable"),
-        "mergeStateStatus": pr.get("mergeStateStatus"),
-        "pending": checks["pending"],
-        "bad": checks["blockers"],
-        "blockers": checks["blockers"],
-        "blockers_count": len(checks["blockers"]),
-    }
-    decision = {
+def _merge_readiness_reasons(pr: dict[str, Any], checks: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    if pr.get("state") != "OPEN":
+        reasons.append(f"PR state is {pr.get('state')}, expected OPEN")
+    if pr.get("isDraft"):
+        reasons.append("PR is draft")
+    if pr.get("mergeable") != "MERGEABLE":
+        reasons.append(f"mergeable is {pr.get('mergeable')}, expected MERGEABLE")
+    if not effective_merge_state_ok(str(pr.get("mergeStateStatus") or ""), checks["blockers"], checks["pending"]):
+        reasons.append(f"mergeStateStatus is {pr.get('mergeStateStatus')}, expected CLEAN")
+    if checks["blockers"]:
+        reasons.append(f"{len(checks['blockers'])} real blocking check(s)")
+    if checks["pending"]:
+        reasons.append(f"{len(checks['pending'])} real pending check(s)")
+    return reasons
+
+
+def _base_decision(
+    repo: str,
+    pr_number: str,
+    pr: dict[str, Any],
+    checks: dict[str, Any],
+    merge_state: dict[str, Any],
+) -> dict[str, Any]:
+    already_merged = bool(merge_state["already_merged"])
+    can_merge = bool(merge_state["can_merge"])
+    return {
         "repo": repo,
         "pr": str(pr_number),
         "url": pr.get("url"),
@@ -438,34 +452,60 @@ def build_decision(
         "mergeStateStatus": pr.get("mergeStateStatus"),
         "reviewDecision": pr.get("reviewDecision"),
         "can_merge": can_merge,
-        "reasons": reasons,
+        "reasons": merge_state["reasons"],
         "blockers": checks["blockers"],
         "pending": checks["pending"],
         "ignored_self_checks": checks["ignored"],
         "self_stale": checks["self_stale"],
         "next_action": "already_merged" if already_merged else ("ready_to_merge" if can_merge else "blocked"),
     }
-    taxonomy_items = list(checks["blockers"])
-    taxonomy_items.extend(checks["pending"])
-    taxonomy_items.extend(_active_review_taxonomy_items(review_threads or []))
-    if controller._pr_has_merge_conflict(pr):  # pylint: disable=protected-access
-        taxonomy_items.append(
-            {
-                "name": "PR merge conflict",
-                "state": "FAILURE",
-                "source": "merge",
-                "mergeable": pr.get("mergeable"),
-                "mergeStateStatus": pr.get("mergeStateStatus"),
-                "reason": "mergeable CONFLICTING or mergeStateStatus DIRTY",
-            }
-        )
-    decision["blocker_taxonomy"] = controller.summarize_blocker_actions(taxonomy_items, taxonomy_context)
-    taxonomy_next_action = decision["blocker_taxonomy"].get("next_action")
-    if not already_merged and can_merge and taxonomy_next_action == "ready_to_merge":
-        decision["next_action"] = "ready_to_merge"
-    elif not already_merged and not can_merge and taxonomy_next_action:
+
+
+def _taxonomy_context(pr: dict[str, Any], checks: dict[str, Any], can_merge: bool) -> dict[str, Any]:
+    return {
+        "logs_clear": False,
+        "can_merge": can_merge,
+        "mergeable": pr.get("mergeable"),
+        "mergeStateStatus": pr.get("mergeStateStatus"),
+        "pending": checks["pending"],
+        "bad": checks["blockers"],
+        "blockers": checks["blockers"],
+        "blockers_count": len(checks["blockers"]),
+    }
+
+
+def _decision_taxonomy_items(checks: dict[str, Any], review_threads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items = list(checks["blockers"])
+    items.extend(checks["pending"])
+    items.extend(_review_thread_taxonomy_items(review_threads))
+    return items
+
+
+def _merge_conflict_taxonomy_items(pr: dict[str, Any]) -> list[dict[str, Any]]:
+    if not controller._pr_has_merge_conflict(pr):  # pylint: disable=protected-access
+        return []
+    return [
+        {
+            "name": "PR merge conflict",
+            "state": "FAILURE",
+            "source": "merge",
+            "mergeable": pr.get("mergeable"),
+            "mergeStateStatus": pr.get("mergeStateStatus"),
+            "reason": "mergeable CONFLICTING or mergeStateStatus DIRTY",
+        }
+    ]
+
+
+def _review_thread_taxonomy_items(review_threads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return _active_review_taxonomy_items(review_threads)
+
+
+def _apply_taxonomy_next_action(decision: dict[str, Any]) -> None:
+    taxonomy = decision.get("blocker_taxonomy")
+    taxonomy_dict = taxonomy if isinstance(taxonomy, dict) else {}
+    taxonomy_next_action = str(taxonomy_dict.get("next_action") or "").strip()
+    if not decision.get("already_merged") and taxonomy_next_action:
         decision["next_action"] = taxonomy_next_action
-    return decision
 
 
 def classify_blocker(item: dict[str, Any]) -> dict[str, Any]:

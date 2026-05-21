@@ -536,28 +536,21 @@ def _codacy_blocker_cases() -> list[tuple[dict[str, object], str]]:
 
 
 def _manual_and_workflow_cases() -> list[tuple[dict[str, object], str]]:
+    return _manual_signal_cases() + _workflow_state_cases()
+
+
+def _manual_signal_cases() -> list[tuple[dict[str, object], str]]:
     return [
-        (
-            {
-                "name": "Review thread",
-                "state": "ACTION_REQUIRED",
-                "source": "review",
-                "active": True,
-            },
-            "review_comment_active",
-        ),
+        ({"name": "Review thread", "state": "ACTION_REQUIRED", "source": "review", "active": True}, "review_comment_active"),
         ({"name": "Unit tests", "state": "FAILURE", "source": "check"}, "test_failure"),
-        (
-            {
-                "name": "Infra",
-                "state": "FAILURE",
-                "source": "check",
-                "reason": "runner service unavailable",
-            },
-            "infra_failure",
-        ),
+        ({"name": "Infra", "state": "FAILURE", "source": "check", "reason": "runner service unavailable"}, "infra_failure"),
         ({"name": "Auth", "state": "FAILURE", "reason": "token missing"}, "token_missing"),
         ({"name": "Auth", "state": "FAILURE", "reason": "403 permission denied"}, "api_permission_error"),
+    ]
+
+
+def _workflow_state_cases() -> list[tuple[dict[str, object], str]]:
+    return [
         ({"name": "Flow", "state": "CANCELLED"}, "workflow_cancelled"),
         ({"name": "Flow", "state": "IN_PROGRESS"}, "workflow_pending"),
         ({"name": "Scope", "state": "FAILURE", "reason": "scope_violation detected"}, "scope_violation"),

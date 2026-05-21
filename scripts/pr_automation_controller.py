@@ -2229,12 +2229,13 @@ DIRECT_CATEGORY_ACTIONS = {
     "workflow_cancelled": "rerun_stale_checks",
     "github_stale_check": "rerun_stale_checks",
     "review_comment_active": "fix_review_comments",
-    "token_missing": "_manual_auth_",
-    "api_permission_error": "_manual_auth_",
+    "token_missing": "manual_secret_route",
+    "api_permission_error": "manual_secret_route",
     "scope_violation": "needs_manual_scope_violation",
     "merge_conflict": "needs_manual_merge_conflict",
 }
 MANUAL_AUTH_ACTION = "_".join(("needs", "manual", "secret"))
+MANUAL_SECRET_ROUTE = "manual_secret_route"
 BUSINESS_CRITICAL_CONFLICT_FILES = {
     "order_manager.py",
     "core/reconciliation_engine.py",
@@ -2318,13 +2319,16 @@ def summarize_blocker_actions(blockers: list[dict[str, Any]], context: dict[str,
 def _explicit_next_action_for_summary(classified: list[dict[str, Any]], primary: str) -> str:
     if primary == "none":
         return ""
-    for item in classified:
-        if str(item.get("category") or "") != primary:
-            continue
-        action = str(item.get("next_action") or "").strip()
-        if action:
-            return action
-    return ""
+    return _explicit_primary_next_action(classified, primary)
+
+
+def _explicit_primary_next_action(classified: list[dict[str, Any]], primary: str) -> str:
+    primary_actions = [
+        str(item.get("next_action") or "").strip()
+        for item in classified
+        if str(item.get("category") or "") == primary
+    ]
+    return next((action for action in primary_actions if action), "")
 
 
 def _blocker_source_from_item(item: dict[str, Any], name: str) -> str:
@@ -2426,7 +2430,7 @@ def _primary_blocker_category(categories: list[str]) -> str:
 
 def _direct_blocker_action(category: str) -> str:
     action = DIRECT_CATEGORY_ACTIONS.get(category, "")
-    return MANUAL_AUTH_ACTION if action == "_manual_auth_" else action
+    return MANUAL_AUTH_ACTION if action == MANUAL_SECRET_ROUTE else action
 
 
 def _conditional_blocker_action(category: str, context: dict[str, Any]) -> str:
