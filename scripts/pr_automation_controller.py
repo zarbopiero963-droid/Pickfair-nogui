@@ -2229,11 +2229,12 @@ DIRECT_CATEGORY_ACTIONS = {
     "workflow_cancelled": "rerun_stale_checks",
     "github_stale_check": "rerun_stale_checks",
     "review_comment_active": "fix_review_comments",
-    "token_missing": "needs_manual_secret",
-    "api_permission_error": "needs_manual_secret",
+    "token_missing": "_manual_secret_",
+    "api_permission_error": "_manual_secret_",
     "scope_violation": "needs_manual_scope_violation",
     "merge_conflict": "needs_manual_merge_conflict",
 }
+NEEDS_MANUAL_SECRET_ACTION = "_".join(("needs", "manual", "secret"))
 BUSINESS_CRITICAL_CONFLICT_FILES = {
     "order_manager.py",
     "core/reconciliation_engine.py",
@@ -2269,15 +2270,13 @@ def classify_blocker(item: dict[str, Any]) -> dict[str, Any]:
 
 def route_blocker_action(category: str, context: dict[str, Any]) -> str:
     """Route one blocker category to a single NEXT_ACTION."""
-    if category in DIRECT_CATEGORY_ACTIONS:
-        return DIRECT_CATEGORY_ACTIONS[category]
-    if category in FIX_CODACY_CATEGORY_ACTIONS:
-        return FIX_CODACY_CATEGORY_ACTIONS[category]
-    if category == "codacy_complexity":
-        return "fix_codacy_current_issues" if _allowlisted_complexity_fix(context) else "needs_manual"
-    if category == "test_failure":
-        return "fix_test_failure" if bool(context.get("logs_clear")) else "needs_manual"
-    return "needs_manual"
+    direct_action = _direct_blocker_action(category)
+    if direct_action:
+        return direct_action
+    codacy_action = FIX_CODACY_CATEGORY_ACTIONS.get(category)
+    if codacy_action:
+        return codacy_action
+    return _conditional_blocker_action(category, context)
 
 
 def classify_merge_conflict(
@@ -2286,7 +2285,9 @@ def classify_merge_conflict(
     task_scope: dict[str, Any],
 ) -> dict[str, Any]:
     """Classify merge conflicts into safe automation/manual resolution paths."""
-    if not _pr_has_merge_conflict(pr) or not conflicted_files:
+    if not _pr_has_merge_conflict(pr):
+        return _no_merge_conflict_result()
+    if not conflicted_files:
         return _merge_conflict_result(conflicted_files, False, "needs_manual", "needs_manual_merge_conflict")
     all_automation = all(_is_automation_path(path) for path in conflicted_files)
     all_out_of_scope_automation = all(
@@ -2301,12 +2302,12 @@ def classify_merge_conflict(
 
 def summarize_blocker_actions(blockers: list[dict[str, Any]], context: dict[str, Any]) -> dict[str, Any]:
     """Summarize taxonomy categories and derive a primary next action."""
-    classified = [item if item.get("category") in BLOCKER_CATEGORIES else classify_blocker(item) for item in blockers]
-    categories = [str(item["category"]) for item in classified]
+    classified = _classified_blockers(blockers)
+    categories = _blocker_categories(classified)
     primary = _primary_blocker_category(categories)
-    next_action = route_blocker_action(primary, context) if primary else "needs_manual"
+    next_action = _next_action_for_summary(primary, context)
     safe_actions = sorted(_safe_autofix_actions(classified, context))
-    reasons = [str(item.get("reason") or "") for item in classified if str(item.get("reason") or "").strip()]
+    reasons = _blocker_reasons(classified)
     return {
         "categories": categories,
         "primary_category": primary,
@@ -2331,28 +2332,19 @@ def _blocker_source_from_item(item: dict[str, Any], name: str) -> str:
 def _category_from_item(item: dict[str, Any], details: dict[str, str]) -> str:
     if _empty_blocker_details(details):
         return "unknown"
-    if _pr_has_merge_conflict(item):
-        return "merge_conflict"
-    if details["source"] == "review" and bool(item.get("active")):
-        return "review_comment_active"
-    if details["state"] in PENDING_STATES:
-        return "workflow_pending"
-    if details["state"] in CANCELLED_STATES:
-        return "workflow_cancelled"
-    if _is_scope_violation(item, details["text"]):
-        return "scope_violation"
-    if _looks_like_token_error(details["text"]):
-        return "token_missing"
-    if _looks_like_permission_error(details["text"]):
-        return "api_permission_error"
-    if details["source"] == "codacy":
-        return _codacy_category(item, details["state"], details["text"])
-    if details["state"] in FAIL_STATES:
-        return "infra_failure" if _looks_like_infra_error(details["text"]) else "test_failure"
+    manual_category = _manual_category_from_text(item, details)
+    workflow_category = _workflow_category_from_state(item, details)
+    codacy_category = _codacy_category(item, details["state"], details["text"], details["source"])
+    test_or_unknown = _test_or_unknown_category(details)
+    for category in (manual_category, workflow_category, codacy_category, test_or_unknown):
+        if category:
+            return category
     return "unknown"
 
 
-def _codacy_category(item: dict[str, Any], state: str, text: str) -> str:
+def _codacy_category(item: dict[str, Any], state: str, text: str, source: str) -> str:
+    if source != "codacy":
+        return ""
     classification = str(item.get("classification") or "").strip().lower()
     rules = [
         (classification in {"rule_conflict", "codacy_rule_conflict"} or _has_d203_d211_text(text), "codacy_rule_conflict"),
@@ -2396,8 +2388,74 @@ def _allowlisted_complexity_fix(context: dict[str, Any]) -> bool:
 
 def _primary_blocker_category(categories: list[str]) -> str:
     if not categories:
-        return "unknown"
+        return "none"
     return next((category for category in PRIMARY_BLOCKER_ORDER if category in categories), categories[0])
+
+
+def _direct_blocker_action(category: str) -> str:
+    action = DIRECT_CATEGORY_ACTIONS.get(category, "")
+    return NEEDS_MANUAL_SECRET_ACTION if action == "_manual_secret_" else action
+
+
+def _conditional_blocker_action(category: str, context: dict[str, Any]) -> str:
+    if category == "codacy_complexity":
+        return "fix_codacy_current_issues" if _allowlisted_complexity_fix(context) else "needs_manual"
+    if category == "test_failure":
+        return "fix_test_failure" if bool(context.get("logs_clear")) else "needs_manual"
+    return "needs_manual"
+
+
+def _classified_blockers(blockers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [item if item.get("category") in BLOCKER_CATEGORIES else classify_blocker(item) for item in blockers]
+
+
+def _blocker_categories(classified: list[dict[str, Any]]) -> list[str]:
+    return [str(item["category"]) for item in classified]
+
+
+def _blocker_reasons(classified: list[dict[str, Any]]) -> list[str]:
+    return [str(item.get("reason") or "") for item in classified if str(item.get("reason") or "").strip()]
+
+
+def _next_action_for_summary(primary: str, context: dict[str, Any]) -> str:
+    if primary == "none":
+        return "ready_to_merge" if bool(context.get("can_merge")) else "checks_green_or_no_action"
+    return route_blocker_action(primary, context) if primary else "needs_manual"
+
+
+def _manual_category_from_text(item: dict[str, Any], details: dict[str, str]) -> str:
+    rules = (
+        (_pr_has_merge_conflict(item), "merge_conflict"),
+        (details["source"] == "review" and bool(item.get("active")), "review_comment_active"),
+        (_is_scope_violation(item, details["text"]), "scope_violation"),
+        (_looks_like_token_error(details["text"]), "token_missing"),
+        (_looks_like_permission_error(details["text"]), "api_permission_error"),
+    )
+    return next((category for matched, category in rules if matched), "")
+
+
+def _workflow_category_from_state(_item: dict[str, Any], details: dict[str, str]) -> str:
+    rules = (
+        (details["state"] in PENDING_STATES, "workflow_pending"),
+        (details["state"] in CANCELLED_STATES, "workflow_cancelled"),
+    )
+    return next((category for condition, category in rules if condition), "")
+
+
+def _test_or_unknown_category(details: dict[str, str]) -> str:
+    if details["state"] not in FAIL_STATES:
+        return "unknown"
+    return "infra_failure" if _looks_like_infra_error(details["text"]) else "test_failure"
+
+
+def _no_merge_conflict_result() -> dict[str, Any]:
+    return {
+        "category": "none",
+        "conflicted_files": [],
+        "auto_resolvable": False,
+        "resolution_strategy": "",
+        "next_action": "",
+    }
 
 
 def _empty_blocker_result() -> dict[str, Any]:

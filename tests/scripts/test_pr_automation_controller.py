@@ -511,42 +511,55 @@ def test_build_next_action_context_stores_pr_head_without_overwriting_codacy_hea
     _assert_codacy_head_preserved(ctx.decision)
 
 
-def test_blocker_taxonomy_classifies_required_categories():
-    """Blocker taxonomy maps representative inputs to expected categories."""
-    cases = [
-        ({"name": "Codacy Static Code Analysis", "state": "FAILURE", "source": "codacy"}, "codacy_style"),
-        (
-            {"name": "Codacy complexity", "state": "FAILURE", "source": "codacy", "reason": "C901 complexity"},
-            "codacy_complexity",
-        ),
-        (
-            {"name": "Codacy", "state": "ACTION_REQUIRED", "source": "codacy", "reason": "D203 and D211 conflict"},
-            "codacy_rule_conflict",
-        ),
-        (
-            {"name": "Codacy", "state": "ACTION_REQUIRED", "source": "codacy", "classification": "api_github_mismatch"},
-            "codacy_api_github_mismatch",
-        ),
-        ({"name": "Codacy", "state": "STALE", "source": "codacy"}, "github_stale_check"),
-        (
-            {"name": "Review thread", "state": "ACTION_REQUIRED", "source": "review", "active": True},
-            "review_comment_active",
-        ),
-        ({"name": "Unit tests", "state": "FAILURE", "source": "check"}, "test_failure"),
-        (
-            {"name": "Infra", "state": "FAILURE", "source": "check", "reason": "runner service unavailable"},
-            "infra_failure",
-        ),
-        ({"name": "Auth", "state": "FAILURE", "reason": "token missing"}, "token_missing"),
-        ({"name": "Auth", "state": "FAILURE", "reason": "403 permission denied"}, "api_permission_error"),
-        ({"name": "Flow", "state": "CANCELLED"}, "workflow_cancelled"),
-        ({"name": "Flow", "state": "IN_PROGRESS"}, "workflow_pending"),
-        ({"name": "Scope", "state": "FAILURE", "reason": "scope_violation detected"}, "scope_violation"),
-        ({"name": "Merge", "mergeStateStatus": "DIRTY"}, "merge_conflict"),
-        ({}, "unknown"),
-    ]
+def _assert_blocker_categories(cases: list[tuple[dict[str, object], str]]) -> None:
     for payload, expected in cases:
         ASSERTIONS.assertEqual(controller.classify_blocker(payload)["category"], expected)
+
+
+def test_blocker_taxonomy_classifies_codacy_categories():
+    """Blocker taxonomy maps Codacy inputs to expected categories."""
+    _assert_blocker_categories(
+        [
+            ({"name": "Codacy Static Code Analysis", "state": "FAILURE", "source": "codacy"}, "codacy_style"),
+            (
+                {"name": "Codacy complexity", "state": "FAILURE", "source": "codacy", "reason": "C901 complexity"},
+                "codacy_complexity",
+            ),
+            (
+                {"name": "Codacy", "state": "ACTION_REQUIRED", "source": "codacy", "reason": "D203 and D211 conflict"},
+                "codacy_rule_conflict",
+            ),
+            (
+                {"name": "Codacy", "state": "ACTION_REQUIRED", "source": "codacy", "classification": "api_github_mismatch"},
+                "codacy_api_github_mismatch",
+            ),
+            ({"name": "Codacy", "state": "STALE", "source": "codacy"}, "github_stale_check"),
+        ]
+    )
+
+
+def test_blocker_taxonomy_classifies_manual_and_workflow_categories():
+    """Blocker taxonomy maps manual/workflow/test inputs to expected categories."""
+    _assert_blocker_categories(
+        [
+            (
+                {"name": "Review thread", "state": "ACTION_REQUIRED", "source": "review", "active": True},
+                "review_comment_active",
+            ),
+            ({"name": "Unit tests", "state": "FAILURE", "source": "check"}, "test_failure"),
+            (
+                {"name": "Infra", "state": "FAILURE", "source": "check", "reason": "runner service unavailable"},
+                "infra_failure",
+            ),
+            ({"name": "Auth", "state": "FAILURE", "reason": "token missing"}, "token_missing"),
+            ({"name": "Auth", "state": "FAILURE", "reason": "403 permission denied"}, "api_permission_error"),
+            ({"name": "Flow", "state": "CANCELLED"}, "workflow_cancelled"),
+            ({"name": "Flow", "state": "IN_PROGRESS"}, "workflow_pending"),
+            ({"name": "Scope", "state": "FAILURE", "reason": "scope_violation detected"}, "scope_violation"),
+            ({"name": "Merge", "mergeStateStatus": "DIRTY"}, "merge_conflict"),
+            ({}, "unknown"),
+        ]
+    )
 
 
 def test_route_blocker_action_maps_required_next_actions():
@@ -567,6 +580,17 @@ def test_route_blocker_action_maps_required_next_actions():
     ASSERTIONS.assertEqual(controller.route_blocker_action("unknown", {}), "needs_manual")
 
 
+def test_summarize_blocker_actions_empty_is_non_blocking():
+    """Empty blocker list is non-blocking and should not route to manual unknown action."""
+    clean = controller.summarize_blocker_actions([], {"can_merge": False})
+    mergeable = controller.summarize_blocker_actions([], {"can_merge": True})
+
+    ASSERTIONS.assertEqual(clean["primary_category"], "none")
+    ASSERTIONS.assertEqual(clean["next_action"], "checks_green_or_no_action")
+    ASSERTIONS.assertFalse(clean["needs_manual"])
+    ASSERTIONS.assertEqual(mergeable["next_action"], "ready_to_merge")
+
+
 def test_classify_merge_conflict_contract_paths():
     """Merge conflict classification differentiates safe out-of-scope automation from manual critical files."""
     dirty = controller.classify_merge_conflict(
@@ -585,6 +609,19 @@ def test_classify_merge_conflict_contract_paths():
     )
     ASSERTIONS.assertFalse(conflicting["auto_resolvable"])
     ASSERTIONS.assertEqual(conflicting["next_action"], "needs_manual_merge_conflict")
+
+
+def test_classify_merge_conflict_clean_pr_is_not_conflict():
+    """Clean PR metadata must not be labeled as merge_conflict."""
+    clean = controller.classify_merge_conflict(
+        {"mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN"},
+        ["scripts/pr_flow_automation.py"],
+        {"files": ["scripts/pr_automation_controller.py"]},
+    )
+    ASSERTIONS.assertEqual(clean["category"], "none")
+    ASSERTIONS.assertFalse(clean["auto_resolvable"])
+    ASSERTIONS.assertEqual(clean["resolution_strategy"], "")
+    ASSERTIONS.assertEqual(clean["next_action"], "")
 
 
 def test_review_task_lines_include_only_unresolved_active_threads():
