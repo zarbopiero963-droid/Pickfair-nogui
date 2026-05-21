@@ -719,87 +719,136 @@ def _stub_review_threads_for_report(monkeypatch) -> None:
     )
 
 
-def test_fetch_all_review_threads_paginates(monkeypatch):
-    """Review thread collection should continue through all GraphQL pages."""
+def _review_threads_page(ids: list[tuple[str, bool]], has_next: bool, end_cursor: str) -> dict[str, Any]:
+    return {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "nodes": [
+                            {"id": thread_id, "isResolved": is_resolved, "isOutdated": False}
+                            for thread_id, is_resolved in ids
+                        ],
+                        "pageInfo": {"hasNextPage": has_next, "endCursor": end_cursor},
+                    }
+                }
+            }
+        }
+    }
+
+
+def _stub_two_page_review_threads(monkeypatch) -> None:
     responses = iter(
         [
-            {
-                "data": {
-                    "repository": {
-                        "pullRequest": {
-                            "reviewThreads": {
-                                "nodes": [{"id": "a", "isResolved": True, "isOutdated": False}],
-                                "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"},
-                            }
-                        }
-                    }
-                }
-            },
-            {
-                "data": {
-                    "repository": {
-                        "pullRequest": {
-                            "reviewThreads": {
-                                "nodes": [{"id": "b", "isResolved": False, "isOutdated": False}],
-                                "pageInfo": {"hasNextPage": False, "endCursor": "cursor-2"},
-                            }
-                        }
-                    }
-                }
-            },
+            _review_threads_page([("a", True)], has_next=True, end_cursor="cursor-1"),
+            _review_threads_page([("b", False)], has_next=False, end_cursor="cursor-2"),
         ]
     )
     monkeypatch.setattr(flow, "gh_json", lambda *_args, **_kwargs: next(responses))
 
-    threads = flow.fetch_all_review_threads("owner/repo", "225")
 
+def test_fetch_all_review_threads_paginates(monkeypatch):
+    """Review thread collection should continue through all GraphQL pages."""
+    _stub_two_page_review_threads(monkeypatch)
+    threads = flow.fetch_all_review_threads("owner/repo", "225")
     ASSERTIONS.assertEqual([thread["id"] for thread in threads], ["a", "b"])
 
 
-def test_cmd_report_second_page_unresolved_review_thread_blocks_merge(tmp_path, monkeypatch):
-    """An unresolved thread from a later page should route to fix_review_comments."""
+def _run_cmd_report_second_page_thread(tmp_path, monkeypatch) -> dict[str, object]:
     monkeypatch.setattr(flow, "pr_view", _ready_to_merge_pr_view)
     monkeypatch.setattr(flow, "fetch_codacy_pr_issues", lambda *_args: ({}, []))
-    responses = iter(
-        [
-            {
-                "data": {
-                    "repository": {
-                        "pullRequest": {
-                            "reviewThreads": {
-                                "nodes": [{"id": "a", "isResolved": True, "isOutdated": False}],
-                                "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"},
-                            }
-                        }
-                    }
-                }
-            },
-            {
-                "data": {
-                    "repository": {
-                        "pullRequest": {
-                            "reviewThreads": {
-                                "nodes": [{"id": "b", "isResolved": False, "isOutdated": False}],
-                                "pageInfo": {"hasNextPage": False, "endCursor": "cursor-2"},
-                            }
-                        }
-                    }
-                }
-            },
-        ]
-    )
-    monkeypatch.setattr(flow, "gh_json", lambda *_args, **_kwargs: next(responses))
-
+    _stub_two_page_review_threads(monkeypatch)
     rc = flow.cmd_report(
         argparse.Namespace(repo="owner/repo", pr="225", outdir=str(tmp_path), comment=False, no_fail=True)
     )
-    decision = json.loads((tmp_path / "pr-flow-decision.json").read_text(encoding="utf-8"))
-
     ASSERTIONS.assertEqual(rc, 0)
+    return json.loads((tmp_path / "pr-flow-decision.json").read_text(encoding="utf-8"))
+
+
+def _assert_report_blocked_by_second_page_review_thread(decision: dict[str, object]) -> None:
     ASSERTIONS.assertFalse(decision["can_merge"])
     ASSERTIONS.assertEqual(decision["next_action"], "fix_review_comments")
     ASSERTIONS.assertEqual(decision["review"]["unresolved_active"], 1)
     ASSERTIONS.assertEqual(decision["review"]["total_threads"], 2)
+
+
+def test_cmd_report_second_page_unresolved_review_thread_blocks_merge(tmp_path, monkeypatch):
+    """An unresolved thread from a later page should route to fix_review_comments."""
+    decision = _run_cmd_report_second_page_thread(tmp_path, monkeypatch)
+    _assert_report_blocked_by_second_page_review_thread(decision)
+
+
+def test_cmd_readiness_passes_review_threads_to_build_decision(monkeypatch):
+    """Readiness should fetch review threads and pass them to build_decision."""
+    expected_threads = [{"id": "thread-1", "isResolved": False, "isOutdated": False}]
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(flow, "fetch_all_review_threads", lambda *_args: expected_threads)
+
+    def _fake_build_decision(_repo: str, _pr: str, *, ignore_self: bool, review_threads=None):
+        captured["review_threads"] = review_threads
+        return {
+            "already_merged": False,
+            "can_merge": False,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "reasons": [],
+            "next_action": "blocked",
+        }
+
+    monkeypatch.setattr(flow, "build_decision", _fake_build_decision)
+    rc = flow.cmd_readiness(
+        argparse.Namespace(
+            repo="owner/repo",
+            pr="225",
+            ignore_safe_autofix=True,
+            wait_unknown_seconds=0,
+            poll_seconds=0,
+            output="",
+            no_fail=True,
+        )
+    )
+
+    ASSERTIONS.assertEqual(rc, 0)
+    ASSERTIONS.assertEqual(captured["review_threads"], expected_threads)
+
+
+def test_cmd_readiness_review_thread_fetch_failure_fails_closed(monkeypatch):
+    """Readiness must fail closed when review thread fetch fails."""
+    monkeypatch.setattr(
+        flow,
+        "fetch_all_review_threads",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("api down")),
+    )
+
+    def _fake_build_decision(_repo: str, _pr: str, *, ignore_self: bool, review_threads=None):
+        return {
+            "already_merged": False,
+            "can_merge": True,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "reasons": [],
+            "next_action": "ready_to_merge",
+        }
+
+    monkeypatch.setattr(flow, "build_decision", _fake_build_decision)
+    rc = flow.cmd_readiness(
+        argparse.Namespace(
+            repo="owner/repo",
+            pr="225",
+            ignore_safe_autofix=True,
+            wait_unknown_seconds=0,
+            poll_seconds=0,
+            output="",
+            no_fail=False,
+        )
+    )
+
+    decision = flow._readiness_decision("owner/repo", "225", True)  # pylint: disable=protected-access
+    ASSERTIONS.assertEqual(rc, 1)
+    ASSERTIONS.assertFalse(decision["can_merge"])
+    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_review_api")
+    ASSERTIONS.assertIn("review_threads_api_unavailable", decision["reasons"])
 
 
 def _stub_report_output_paths(monkeypatch) -> None:

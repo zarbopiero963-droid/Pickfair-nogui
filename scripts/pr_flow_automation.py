@@ -409,7 +409,7 @@ def _merge_readiness_state(
     active_review_threads: list[dict[str, Any]],
 ) -> dict[str, Any]:
     already_merged = bool(pr_data.get("mergedAt"))
-    reasons = _merge_readiness_reasons_for_pr_state(
+    reasons = _merge_state_reasons(
         already_merged,
         pr_data,
         checks,
@@ -419,7 +419,7 @@ def _merge_readiness_state(
     return {"already_merged": already_merged, "can_merge": can_merge, "reasons": reasons}
 
 
-def _merge_readiness_reasons_for_pr_state(
+def _merge_state_reasons(
     already_merged: bool,
     pr_data: dict[str, Any],
     checks: dict[str, Any],
@@ -844,21 +844,40 @@ def _codacy_rule_conflict_result() -> dict[str, str]:
 
 def cmd_readiness(args: argparse.Namespace) -> int:
     deadline = time.time() + args.wait_unknown_seconds
-    decision = build_decision(args.repo, args.pr, ignore_self=args.ignore_safe_autofix)
+    decision = _readiness_decision(args.repo, args.pr, args.ignore_safe_autofix)
 
     while (
         args.wait_unknown_seconds > 0
         and time.time() < deadline
         and not decision["already_merged"]
+        and "review_threads_api_unavailable" not in decision.get("reasons", [])
         and (decision["mergeable"] == "UNKNOWN" or decision["mergeStateStatus"] == "UNKNOWN")
     ):
         time.sleep(args.poll_seconds)
-        decision = build_decision(args.repo, args.pr, ignore_self=args.ignore_safe_autofix)
+        decision = _readiness_decision(args.repo, args.pr, args.ignore_safe_autofix)
 
     print(json.dumps(decision, indent=2, sort_keys=True))
     if args.output:
         write_json(Path(args.output), decision)
     return 0 if decision["can_merge"] or args.no_fail else 1
+
+
+def _readiness_decision(repo: str, pr: str, ignore_self: bool) -> dict[str, Any]:
+    try:
+        review_threads = fetch_all_review_threads(repo, pr)
+    except (RuntimeError, ValueError, OSError, AttributeError):
+        return _readiness_review_api_blocked(repo, pr, ignore_self)
+    return build_decision(repo, pr, ignore_self=ignore_self, review_threads=review_threads)
+
+
+def _readiness_review_api_blocked(repo: str, pr: str, ignore_self: bool) -> dict[str, Any]:
+    decision = build_decision(repo, pr, ignore_self=ignore_self, review_threads=[])
+    reasons = decision.get("reasons")
+    if isinstance(reasons, list) and "review_threads_api_unavailable" not in reasons:
+        reasons.append("review_threads_api_unavailable")
+    decision["can_merge"] = False
+    decision["next_action"] = "needs_manual_review_api"
+    return decision
 
 
 def current_run_id(url: str) -> str:
@@ -1092,49 +1111,69 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 
 def fetch_all_review_threads(repo: str, pr_number: str | int) -> list[dict[str, Any]]:
-    owner, name = str(repo).split("/", 1)
     after_cursor = ""
     collected: list[dict[str, Any]] = []
     while True:
-        review_raw = gh_json(_review_threads_query_cmd(owner, name, pr_number, after_cursor))
-        review_threads = (
-            review_raw.get("data", {})
-            .get("repository", {})
-            .get("pullRequest", {})
-            .get("reviewThreads", {})
-        )
-        if not isinstance(review_threads, dict):
-            break
-        nodes = review_threads.get("nodes", [])
-        if isinstance(nodes, list):
-            collected.extend(node for node in nodes if isinstance(node, dict))
-        page_info = review_threads.get("pageInfo", {})
-        has_next = bool(page_info.get("hasNextPage")) if isinstance(page_info, dict) else False
-        if not has_next:
-            break
-        next_cursor = page_info.get("endCursor") if isinstance(page_info, dict) else ""
+        page = _review_threads_page(repo, pr_number, after_cursor)
+        collected.extend(_review_threads_nodes(page))
+        next_cursor = _review_threads_next_cursor(page)
         if not next_cursor:
             break
-        after_cursor = str(next_cursor)
+        after_cursor = next_cursor
     return collected
 
 
-def _review_threads_query_cmd(owner: str, name: str, pr_number: str | int, after_cursor: str) -> list[str]:
-    review_threads_query = (
+def _review_threads_page_query() -> str:
+    return (
         "query($owner:String!, $name:String!, $number:Int!, $after:String) "
         "{ repository(owner:$owner, name:$name) { pullRequest(number:$number) "
         "{ reviewThreads(first:100, after:$after) { "
         "nodes { id isResolved isOutdated } pageInfo { hasNextPage endCursor }"
         " } } } }"
     )
-    return [
+
+
+def _review_threads_page(repo: str, pr_number: str | int, after_cursor: str) -> dict[str, Any]:
+    owner, name = str(repo).split("/", 1)
+    return gh_json([
         "gh", "api", "graphql",
         "-f", f"owner={owner}",
         "-f", f"name={name}",
         "-F", f"number={pr_number}",
         "-f", f"after={after_cursor}",
-        "-f", f"query={review_threads_query}",
-    ]
+        "-f", f"query={_review_threads_page_query()}",
+    ])
+
+
+def _review_threads_nodes(review_raw: dict[str, Any]) -> list[dict[str, Any]]:
+    review_threads = (
+        review_raw.get("data", {})
+        .get("repository", {})
+        .get("pullRequest", {})
+        .get("reviewThreads", {})
+    )
+    if not isinstance(review_threads, dict):
+        return []
+    nodes = review_threads.get("nodes", [])
+    if not isinstance(nodes, list):
+        return []
+    return [node for node in nodes if isinstance(node, dict)]
+
+
+def _review_threads_next_cursor(review_raw: dict[str, Any]) -> str:
+    review_threads = (
+        review_raw.get("data", {})
+        .get("repository", {})
+        .get("pullRequest", {})
+        .get("reviewThreads", {})
+    )
+    if not isinstance(review_threads, dict):
+        return ""
+    page_info = review_threads.get("pageInfo", {})
+    if not isinstance(page_info, dict) or not page_info.get("hasNextPage"):
+        return ""
+    next_cursor = page_info.get("endCursor")
+    return str(next_cursor) if next_cursor else ""
 
 
 def cmd_codacy_task(args: argparse.Namespace) -> int:
