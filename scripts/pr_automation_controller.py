@@ -1236,13 +1236,9 @@ def codacy_task_lines(records: list[dict[str, Any]]) -> list[str]:
 
 def build_post_fix_micro_audit_prompt(task_text: str, context: dict[str, Any] | None = None) -> str:
     prompt = ensure_post_fix_micro_audit_section(task_text)
-    ctx = context if isinstance(context, dict) else {}
-    files = ctx.get("changed_files")
-    if isinstance(files, list) and files:
-        file_lines = "\n".join(f"- {str(path)}" for path in files if str(path).strip())
-        if file_lines:
-            prompt += f"\n\nAudit context (changed files):\n{file_lines}\n"
-    return prompt
+    files = _post_fix_changed_files(context)
+    section = _post_fix_changed_files_section(files)
+    return f"{prompt}{section}" if section else prompt
 
 
 def ensure_post_fix_micro_audit_section(prompt: str) -> str:
@@ -1254,25 +1250,10 @@ def ensure_post_fix_micro_audit_section(prompt: str) -> str:
 
 def parse_post_fix_micro_audit_result(text: str) -> dict[str, Any]:
     raw = str(text or "").strip()
-    data: dict[str, Any] = {}
-    try:
-        loaded = json.loads(raw)
-        if isinstance(loaded, dict):
-            data = loaded
-    except json.JSONDecodeError:
-        pass
-    status = str(data.get("status") or _line_value(raw, "status") or "").upper()
-    report = {
-        "status": status if status in {"PASS", "FAIL", "PARTIAL"} else "FAIL",
-        "reasons": _list_value(data, raw, "reasons"),
-        "checked_items": _list_value(data, raw, "checked_items"),
-        "changed_files": _list_value(data, raw, "changed_files"),
-        "validation_commands": _list_value(data, raw, "validation_commands"),
-        "next_action": str(data.get("next_action") or _line_value(raw, "next_action") or "").strip(),
-    }
-    if not report["next_action"]:
-        report["next_action"] = "validation_then_commit" if report["status"] == "PASS" else "needs_manual_post_fix_audit_failed"
-    return report
+    report = _parse_post_fix_audit_json(raw)
+    if not report:
+        report = _parse_post_fix_audit_text(raw)
+    return _normalize_post_fix_audit_report(report)
 
 
 def post_fix_micro_audit_status(report: dict[str, Any] | None) -> str:
@@ -1295,10 +1276,86 @@ def _list_value(data: dict[str, Any], raw: str, key: str) -> list[str]:
     value = data.get(key)
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
-    match = re.search(rf"(?ims)^\s*{re.escape(key)}\s*:\s*((?:\n\s*-\s*.+)+)", raw or "")
-    if not match:
+    lines = (raw or "").splitlines()
+    header = re.compile(rf"^\s*{re.escape(key)}\s*:\s*$", re.IGNORECASE)
+    start = -1
+    for index, line in enumerate(lines):
+        if header.match(line):
+            start = index + 1
+            break
+    if start < 0:
         return []
-    return [line.strip()[2:].strip() for line in match.group(1).splitlines() if line.strip().startswith("-")]
+    items: list[str] = []
+    for line in lines[start:]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if re.match(r"^[A-Za-z0-9_]+\s*:\s*", stripped):
+            break
+        if not stripped.startswith("-"):
+            break
+        item = re.sub(r"^-\s*", "", stripped).strip()
+        if item:
+            items.append(item)
+    return items
+
+
+def _post_fix_changed_files(context: dict[str, Any] | None) -> list[str]:
+    if not isinstance(context, dict):
+        return []
+    files = context.get("changed_files")
+    if not isinstance(files, list):
+        return []
+    return [str(path).strip() for path in files if str(path).strip()]
+
+
+def _post_fix_changed_files_section(files: list[str]) -> str:
+    if not files:
+        return ""
+    lines = "\n".join(f"- {path}" for path in files)
+    return f"\n\nAudit context (changed files):\n{lines}\n"
+
+
+def _parse_post_fix_audit_json(raw: str) -> dict[str, Any]:
+    try:
+        loaded = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _parse_post_fix_audit_text(raw: str) -> dict[str, Any]:
+    return {
+        "status": _line_value(raw, "status"),
+        "reasons": _list_value({}, raw, "reasons"),
+        "checked_items": _list_value({}, raw, "checked_items"),
+        "changed_files": _list_value({}, raw, "changed_files"),
+        "validation_commands": _list_value({}, raw, "validation_commands"),
+        "next_action": _line_value(raw, "next_action"),
+    }
+
+
+def _normalize_post_fix_audit_report(report: dict[str, Any]) -> dict[str, Any]:
+    status = str(report.get("status") or "").upper()
+    normalized_status = status if status in {"PASS", "FAIL", "PARTIAL"} else "FAIL"
+    normalized: dict[str, Any] = {
+        "status": normalized_status,
+        "reasons": _list_value(report, "", "reasons"),
+        "checked_items": _list_value(report, "", "checked_items"),
+        "changed_files": _list_value(report, "", "changed_files"),
+        "validation_commands": _list_value(report, "", "validation_commands"),
+        "next_action": str(report.get("next_action") or "").strip(),
+    }
+    if not normalized["next_action"]:
+        normalized["next_action"] = (
+            "validation_then_commit"
+            if normalized_status == "PASS"
+            else "needs_manual_post_fix_audit_failed"
+        )
+    if normalized_status != "PASS" or normalized["next_action"] != "validation_then_commit":
+        normalized["status"] = "FAIL"
+        normalized["next_action"] = "needs_manual_post_fix_audit_failed"
+    return normalized
 
 
 def write_codacy_task(outdir: Path, raw: dict[str, Any], issues: list[dict[str, Any]]) -> None:

@@ -221,6 +221,50 @@ def test_ensure_post_fix_micro_audit_section_adds_no_commit_rule_once():
     ASSERTIONS.assertEqual(twice.count("POST-FIX MICRO-AUDIT BEFORE COMMIT"), 1)
 
 
+def test_build_post_fix_micro_audit_prompt_adds_changed_files_context_section():
+    """Changed files list should append the audit-context section with one bullet per file."""
+    prompt = controller.build_post_fix_micro_audit_prompt(
+        "Fix these findings.",
+        {"changed_files": ["scripts/pr_automation_controller.py", "tests/scripts/test_pr_automation_controller.py"]},
+    )
+    ASSERTIONS.assertIn("Audit context (changed files):", prompt)
+    ASSERTIONS.assertIn("- scripts/pr_automation_controller.py", prompt)
+    ASSERTIONS.assertIn("- tests/scripts/test_pr_automation_controller.py", prompt)
+
+
+def test_build_post_fix_micro_audit_prompt_omits_changed_files_context_for_invalid_inputs():
+    """Invalid/blank changed_files values should not append the audit-context section."""
+    for context in (None, {"changed_files": "scripts/x.py"}, {"changed_files": []}, {"changed_files": ["", "  "]}):
+        prompt = controller.build_post_fix_micro_audit_prompt("Fix these findings.", context)
+        ASSERTIONS.assertNotIn("Audit context (changed files):", prompt)
+
+
+def test_parse_post_fix_micro_audit_result_supports_json_payload():
+    """JSON payload should parse fields and preserve PASS validation routing."""
+    raw = json.dumps({
+        "status": "PASS",
+        "reasons": ["ok"],
+        "changed_files": ["scripts/pr_automation_controller.py"],
+        "validation_commands": ["python3 -m pytest -q"],
+    })
+    report = controller.parse_post_fix_micro_audit_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["reasons"], ["ok"])
+    ASSERTIONS.assertEqual(report["changed_files"], ["scripts/pr_automation_controller.py"])
+    ASSERTIONS.assertEqual(report["validation_commands"], ["python3 -m pytest -q"])
+    ASSERTIONS.assertEqual(report["next_action"], "validation_then_commit")
+
+
+def test_parse_post_fix_micro_audit_result_supports_yaml_style_lists_and_stops_at_next_field():
+    """Text-mode list parsing must stop at the next key and support compact dash bullets."""
+    report = controller.parse_post_fix_micro_audit_result(
+        "status: FAIL\nreasons:\n-issue one\n- issue two\nchanged_files:\n- scripts/a.py\nvalidation_commands:\n- python3 -m py_compile"
+    )
+    ASSERTIONS.assertEqual(report["reasons"], ["issue one", "issue two"])
+    ASSERTIONS.assertEqual(report["changed_files"], ["scripts/a.py"])
+    ASSERTIONS.assertEqual(report["validation_commands"], ["python3 -m py_compile"])
+
+
 def test_parse_post_fix_micro_audit_result_pass_defaults_to_validation_then_commit():
     """PASS status should route to validation_then_commit."""
     report = controller.parse_post_fix_micro_audit_result("status: PASS")
@@ -242,6 +286,44 @@ def test_missing_post_fix_micro_audit_result_fails_closed():
     report = controller.parse_post_fix_micro_audit_result("")
     ASSERTIONS.assertEqual(controller.post_fix_micro_audit_status(report), "FAIL")
     ASSERTIONS.assertTrue(controller.post_fix_micro_audit_failed(report))
+
+
+def test_parse_post_fix_micro_audit_result_unknown_status_fails_closed():
+    """Unknown text status should fail closed."""
+    report = controller.parse_post_fix_micro_audit_result("status: UNKNOWN")
+    ASSERTIONS.assertEqual(report["status"], "FAIL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_post_fix_audit_failed")
+    ASSERTIONS.assertTrue(controller.post_fix_micro_audit_failed(report))
+
+
+def test_parse_post_fix_micro_audit_result_json_unknown_status_fails_closed():
+    """Unknown JSON status should fail closed."""
+    report = controller.parse_post_fix_micro_audit_result(json.dumps({"status": "UNKNOWN"}))
+    ASSERTIONS.assertEqual(report["status"], "FAIL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_post_fix_audit_failed")
+    ASSERTIONS.assertTrue(controller.post_fix_micro_audit_failed(report))
+
+
+def test_parse_post_fix_micro_audit_result_pass_with_invalid_next_action_fails_closed():
+    """PASS with an override action other than validation_then_commit must fail closed."""
+    report = controller.parse_post_fix_micro_audit_result("status: PASS\nnext_action: retry_fix_within_budget")
+    ASSERTIONS.assertEqual(report["status"], "FAIL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_post_fix_audit_failed")
+    ASSERTIONS.assertTrue(controller.post_fix_micro_audit_failed(report))
+
+
+def test_post_fix_micro_audit_helpers_fail_closed_for_none_and_malformed_inputs():
+    """Status and failure helpers should fail closed on missing/malformed reports."""
+    ASSERTIONS.assertEqual(controller.post_fix_micro_audit_status(None), "FAIL")
+    ASSERTIONS.assertTrue(controller.post_fix_micro_audit_failed(None))
+    ASSERTIONS.assertEqual(controller.post_fix_micro_audit_status({}), "FAIL")
+    ASSERTIONS.assertTrue(controller.post_fix_micro_audit_failed({}))
+
+
+def test_post_fix_micro_audit_helpers_fail_closed_for_pass_without_required_next_action():
+    """PASS without validation_then_commit must fail closed."""
+    ASSERTIONS.assertTrue(controller.post_fix_micro_audit_failed({"status": "PASS"}))
+    ASSERTIONS.assertTrue(controller.post_fix_micro_audit_failed({"status": "PASS", "next_action": "retry_fix_within_budget"}))
 
 
 def test_clean_scope_defaults_allow_pr_flow_automation_script():
