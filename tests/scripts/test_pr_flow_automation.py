@@ -719,6 +719,89 @@ def _stub_review_threads_for_report(monkeypatch) -> None:
     )
 
 
+def test_fetch_all_review_threads_paginates(monkeypatch):
+    """Review thread collection should continue through all GraphQL pages."""
+    responses = iter(
+        [
+            {
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "reviewThreads": {
+                                "nodes": [{"id": "a", "isResolved": True, "isOutdated": False}],
+                                "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"},
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "reviewThreads": {
+                                "nodes": [{"id": "b", "isResolved": False, "isOutdated": False}],
+                                "pageInfo": {"hasNextPage": False, "endCursor": "cursor-2"},
+                            }
+                        }
+                    }
+                }
+            },
+        ]
+    )
+    monkeypatch.setattr(flow, "gh_json", lambda *_args, **_kwargs: next(responses))
+
+    threads = flow.fetch_all_review_threads("owner/repo", "225")
+
+    ASSERTIONS.assertEqual([thread["id"] for thread in threads], ["a", "b"])
+
+
+def test_cmd_report_second_page_unresolved_review_thread_blocks_merge(tmp_path, monkeypatch):
+    """An unresolved thread from a later page should route to fix_review_comments."""
+    monkeypatch.setattr(flow, "pr_view", _ready_to_merge_pr_view)
+    monkeypatch.setattr(flow, "fetch_codacy_pr_issues", lambda *_args: ({}, []))
+    responses = iter(
+        [
+            {
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "reviewThreads": {
+                                "nodes": [{"id": "a", "isResolved": True, "isOutdated": False}],
+                                "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"},
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "reviewThreads": {
+                                "nodes": [{"id": "b", "isResolved": False, "isOutdated": False}],
+                                "pageInfo": {"hasNextPage": False, "endCursor": "cursor-2"},
+                            }
+                        }
+                    }
+                }
+            },
+        ]
+    )
+    monkeypatch.setattr(flow, "gh_json", lambda *_args, **_kwargs: next(responses))
+
+    rc = flow.cmd_report(
+        argparse.Namespace(repo="owner/repo", pr="225", outdir=str(tmp_path), comment=False, no_fail=True)
+    )
+    decision = json.loads((tmp_path / "pr-flow-decision.json").read_text(encoding="utf-8"))
+
+    ASSERTIONS.assertEqual(rc, 0)
+    ASSERTIONS.assertFalse(decision["can_merge"])
+    ASSERTIONS.assertEqual(decision["next_action"], "fix_review_comments")
+    ASSERTIONS.assertEqual(decision["review"]["unresolved_active"], 1)
+    ASSERTIONS.assertEqual(decision["review"]["total_threads"], 2)
+
+
 def _stub_report_output_paths(monkeypatch) -> None:
     _stub_pr_view_for_report(monkeypatch)
     _stub_review_threads_for_report(monkeypatch)
