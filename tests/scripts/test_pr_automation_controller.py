@@ -952,3 +952,99 @@ def test_budget_and_progress_helpers_feed_decision_summary(monkeypatch, tmp_path
     ASSERTIONS.assertIn("budget_status", decision)
     ASSERTIONS.assertIn("progress", decision)
     ASSERTIONS.assertIn("pr_automation_state", decision)
+
+
+def test_add_controller_core_args_supports_task_context_options():
+    """Core parser should expose task/audit context options with expected defaults."""
+    parser = argparse.ArgumentParser()
+    controller.add_controller_core_args(parser)
+
+    parsed = parser.parse_args(["--repo", "owner/repo", "--pr", "229"])
+
+    ASSERTIONS.assertEqual(parsed.task_command_file, "")
+    ASSERTIONS.assertEqual(parsed.final_micro_audit_file, "")
+    ASSERTIONS.assertEqual(parsed.task_context_dir, ".autofix/context")
+
+
+def test_merge_active_task_context_if_present_replaces_and_merges_state(tmp_path):
+    """Providing both files should replace active context and merge returned state into decision."""
+    task_file = tmp_path / "task.md"
+    audit_file = tmp_path / "audit.md"
+    context_dir = tmp_path / "ctx"
+    task_file.write_text("task-body", encoding="utf-8")
+    audit_file.write_text("audit-body", encoding="utf-8")
+    args = argparse.Namespace(
+        pr="229",
+        task_command_file=str(task_file),
+        final_micro_audit_file=str(audit_file),
+        task_context_dir=str(context_dir),
+    )
+    decision: dict[str, Any] = {"pr_automation_state": {"controller_run_count": 3}}
+
+    controller.merge_active_task_context_if_present(args, decision, {"headRefName": "feature/pr229"})
+
+    ASSERTIONS.assertEqual((context_dir / "active-task-command.md").read_text(encoding="utf-8"), "task-body")
+    ASSERTIONS.assertEqual((context_dir / "active-final-micro-audit.md").read_text(encoding="utf-8"), "audit-body")
+    persisted = json.loads((context_dir / "active-task-state.json").read_text(encoding="utf-8"))
+    ASSERTIONS.assertEqual(
+        persisted["active_final_micro_audit_path"], str(context_dir / "active-final-micro-audit.md")
+    )
+    ASSERTIONS.assertEqual(decision["pr_automation_state"]["controller_run_count"], 3)
+    ASSERTIONS.assertEqual(
+        decision["active_final_micro_audit_path"], str(context_dir / "active-final-micro-audit.md")
+    )
+
+
+def test_merge_active_task_context_if_present_without_inputs_is_noop(tmp_path):
+    """Missing task/audit args should keep existing decision and avoid writes."""
+    args = argparse.Namespace(
+        pr="229",
+        task_command_file="",
+        final_micro_audit_file="",
+        task_context_dir=str(tmp_path / "ctx"),
+    )
+    decision: dict[str, Any] = {"pr_automation_state": {"controller_run_count": 4}}
+    original = dict(decision)
+
+    controller.merge_active_task_context_if_present(args, decision, {"headRefName": "feature/pr229"})
+
+    ASSERTIONS.assertEqual(decision, original)
+    ASSERTIONS.assertFalse((tmp_path / "ctx").exists())
+
+
+def test_set_no_launch_next_action_prefers_final_micro_audit_when_clean(tmp_path):
+    """Clean non-blocked decision should schedule final micro-audit when active audit exists."""
+    audit_path = tmp_path / "active-final-micro-audit.md"
+    audit_path.write_text("audit", encoding="utf-8")
+    decision: dict[str, Any] = {
+        "pending": [],
+        "bad": [],
+        "pending_count": 0,
+        "unresolved_active": 0,
+        "codacy_classification": "none",
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+        "pr_automation_state": {"active_final_micro_audit_path": str(audit_path)},
+    }
+
+    controller.set_no_launch_next_action(decision, [])
+
+    ASSERTIONS.assertEqual(decision["next_action"], "run_final_micro_audit")
+
+
+def test_set_no_launch_next_action_missing_audit_path_keeps_green_fallback():
+    """Missing/empty active audit path should not trigger final micro-audit action."""
+    decision: dict[str, Any] = {
+        "pending": [],
+        "bad": [],
+        "pending_count": 0,
+        "unresolved_active": 0,
+        "codacy_classification": "none",
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+        "pr_automation_state": {"active_final_micro_audit_path": "   "},
+    }
+
+    controller.set_no_launch_next_action(decision, [])
+
+    ASSERTIONS.assertEqual(decision["next_action"], "checks_green_or_no_action")

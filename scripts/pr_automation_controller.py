@@ -1016,6 +1016,10 @@ def set_no_launch_next_action(decision: dict[str, Any], blockers: list[dict[str,
     if decision.get("pending_count", 0):
         decision["next_action"] = "wait_pending"
         return
+    state = decision.get("pr_automation_state") if isinstance(decision.get("pr_automation_state"), dict) else {}
+    if should_run_final_micro_audit(decision, cast(dict[str, Any], state)):
+        decision["next_action"] = "run_final_micro_audit"
+        return
     decision["next_action"] = "checks_green_or_no_action"
 
 
@@ -1532,6 +1536,9 @@ def add_controller_core_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-reruns", type=int, default=6)
     parser.add_argument("--safe-max-rounds", default="1")
     parser.add_argument("--safe-pending-wait-seconds", default="600")
+    parser.add_argument("--task-command-file", default="")
+    parser.add_argument("--final-micro-audit-file", default="")
+    parser.add_argument("--task-context-dir", default=".autofix/context")
 
 
 def add_controller_clean_scope_args(parser: argparse.ArgumentParser) -> None:
@@ -1737,6 +1744,8 @@ def build_next_action_context(
     review_summary = review_comments_summary(_review_thread_nodes(_review_threads_raw(args.repo, args.pr)))
     decision["review"] = review_summary
     decision["codacy"] = codacy
+    decision["codacy_classification"] = codacy.get("classification")
+    decision["unresolved_active"] = safe_nonnegative_int(review_summary.get("unresolved_active"), 0)
     decision["ignored_codacy_checks"] = ignored_codacy_checks(checks, codacy)
     decision["next_action_summary"] = summarize_next_action(
         {
@@ -1768,8 +1777,38 @@ def run_controller(args: argparse.Namespace, decision: dict[str, Any]) -> int:
         return write_decision(args.output, decision)
     ctx = build_next_action_context(args, decision, pr, (files, commits))
     update_decision_state_tracking(args, pr, ctx)
+    merge_active_task_context_if_present(args, decision, pr)
     decide_next_action(ctx)
     return write_decision(args.output, decision)
+
+
+def _read_optional_file(path: str) -> str:
+    if not str(path).strip():
+        return ""
+    return Path(path).read_text(encoding="utf-8")
+
+
+def merge_active_task_context_if_present(
+    args: argparse.Namespace,
+    decision: dict[str, Any],
+    pr: dict[str, Any],
+) -> None:
+    task_file = str(getattr(args, "task_command_file", "") or "").strip()
+    audit_file = str(getattr(args, "final_micro_audit_file", "") or "").strip()
+    if not task_file or not audit_file:
+        return
+    task_text = _read_optional_file(task_file)
+    audit_text = _read_optional_file(audit_file)
+    branch = str(pr.get("headRefName") or "")
+    state = replace_active_task_context(
+        str(getattr(args, "task_context_dir", ".autofix/context")),
+        ActiveTaskContextInput(task_text=task_text, audit_text=audit_text, branch=branch, pr=str(args.pr)),
+    )
+    existing = decision.get("pr_automation_state")
+    merged = existing.copy() if isinstance(existing, dict) else {}
+    merged.update(state)
+    decision["pr_automation_state"] = merged
+    decision["active_final_micro_audit_path"] = merged.get("active_final_micro_audit_path", "")
 
 
 def _state_path_from_output(output_path: str) -> str:
