@@ -392,7 +392,8 @@ def build_decision(
     """Build merge readiness decision and apply blocker taxonomy routing."""
     pr = pr_view(repo, pr_number)
     checks = split_checks(pr, ignore_self=ignore_self)
-    merge_state = _merge_readiness_state(pr, checks)
+    active_review_threads = eligible_review_comments_for_auto_resolve(review_threads or [])
+    merge_state = _merge_readiness_state(pr, checks, active_review_threads)
     decision = _base_decision({"repo": repo, "pr_number": pr_number}, pr, checks, merge_state)
     taxonomy_context = _taxonomy_context(pr, checks, merge_state["can_merge"])
     taxonomy_items = _decision_taxonomy_items(checks, review_threads or [])
@@ -402,15 +403,23 @@ def build_decision(
     return decision
 
 
-def _merge_readiness_state(pr_data: dict[str, Any], checks: dict[str, Any]) -> dict[str, Any]:
+def _merge_readiness_state(
+    pr_data: dict[str, Any],
+    checks: dict[str, Any],
+    active_review_threads: list[dict[str, Any]],
+) -> dict[str, Any]:
     already_merged = bool(pr_data.get("mergedAt"))
     reasons: list[str] = []
     if not already_merged:
-        reasons.extend(_merge_readiness_reasons(pr_data, checks))
+        reasons.extend(_merge_readiness_reasons(pr_data, checks, active_review_threads))
     return {"already_merged": already_merged, "can_merge": already_merged or not reasons, "reasons": reasons}
 
 
-def _merge_readiness_reasons(pr_data: dict[str, Any], checks: dict[str, Any]) -> list[str]:
+def _merge_readiness_reasons(
+    pr_data: dict[str, Any],
+    checks: dict[str, Any],
+    active_review_threads: list[dict[str, Any]],
+) -> list[str]:
     return [
         reason
         for reason in (
@@ -420,6 +429,7 @@ def _merge_readiness_reasons(pr_data: dict[str, Any], checks: dict[str, Any]) ->
             _reason_pr_merge_state_status(pr_data, checks),
             _reason_blocking_checks(checks),
             _reason_pending_checks(checks),
+            _reason_review_threads(active_review_threads),
         )
         if reason
     ]
@@ -453,6 +463,11 @@ def _reason_blocking_checks(checks: dict[str, Any]) -> str:
 
 def _reason_pending_checks(checks: dict[str, Any]) -> str:
     return f"{len(checks['pending'])} real pending check(s)" if checks["pending"] else ""
+
+
+def _reason_review_threads(active_review_threads: list[dict[str, Any]]) -> str:
+    count = len(active_review_threads)
+    return f"{count} active unresolved review thread(s)" if count else ""
 
 
 def _base_decision(

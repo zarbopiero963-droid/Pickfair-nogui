@@ -165,6 +165,7 @@ def test_build_decision_includes_active_review_threads_in_taxonomy(monkeypatch):
     _stub_review_thread_pr_view(monkeypatch)
     decision = _build_decision_with_review_threads()
     _assert_review_thread_routing(decision)
+    ASSERTIONS.assertFalse(decision["can_merge"])
 
 
 def _stub_review_thread_pr_view(monkeypatch) -> None:
@@ -196,8 +197,37 @@ def _build_decision_with_review_threads() -> dict[str, object]:
 def _assert_review_thread_routing(decision: dict[str, object]) -> None:
     taxonomy = cast(dict[str, Any], decision["blocker_taxonomy"])
     ASSERTIONS.assertIn("review_comment_active", taxonomy["categories"])
+    ASSERTIONS.assertEqual(taxonomy["primary_category"], "review_comment_active")
+    ASSERTIONS.assertIn("active unresolved review thread", " ".join(cast(list[str], taxonomy["reasons"])))
     ASSERTIONS.assertEqual(taxonomy["next_action"], "fix_review_comments")
     ASSERTIONS.assertEqual(decision["next_action"], "fix_review_comments")
+
+
+def test_build_decision_clean_checks_with_active_review_thread_blocks_merge(monkeypatch):
+    """Active unresolved review thread must block merge even when checks are clean."""
+    monkeypatch.setattr(
+        flow,
+        "pr_view",
+        lambda _repo, _pr: {
+            "state": "OPEN",
+            "isDraft": False,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "statusCheckRollup": [_check("Unit tests", "SUCCESS")],
+        },
+    )
+    decision = flow.build_decision(
+        "owner/repo",
+        "225",
+        ignore_self=True,
+        review_threads=[{"id": "thread-1", "isResolved": False, "isOutdated": False, "path": "a.py", "line": 9}],
+    )
+    taxonomy = cast(dict[str, Any], decision["blocker_taxonomy"])
+
+    ASSERTIONS.assertFalse(decision["can_merge"])
+    ASSERTIONS.assertEqual(decision["next_action"], "fix_review_comments")
+    ASSERTIONS.assertEqual(taxonomy["primary_category"], "review_comment_active")
+    ASSERTIONS.assertIn("active unresolved review thread", " ".join(cast(list[str], taxonomy["reasons"])))
 
 
 def test_apply_taxonomy_next_action_does_not_promote_when_can_merge_false():

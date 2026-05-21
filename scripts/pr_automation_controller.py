@@ -2335,32 +2335,35 @@ def summarize_blocker_actions(blockers: list[dict[str, Any]], context: dict[str,
     safe_actions = sorted(_safe_autofix_actions(classified, context))
     reasons = _blocker_reasons(classified)
     return _blocker_summary_result(
-        categories,
-        primary,
-        next_action,
-        safe_actions,
-        reasons,
+        {
+            "categories": categories,
+            "primary": primary,
+            "next_action": next_action,
+            "safe_actions": safe_actions,
+            "reasons": reasons,
+        }
     )
 
 
 def _empty_blocker_summary(context: dict[str, Any]) -> dict[str, Any]:
     can_merge = bool(context.get("can_merge"))
     return _blocker_summary_result(
-        [],
-        "none",
-        "ready_to_merge" if can_merge else "checks_green_or_no_action",
-        [],
-        [],
+        {
+            "categories": [],
+            "primary": "none",
+            "next_action": "ready_to_merge" if can_merge else "checks_green_or_no_action",
+            "safe_actions": [],
+            "reasons": [],
+        }
     )
 
 
-def _blocker_summary_result(
-    categories: list[str],
-    primary: str,
-    next_action: str,
-    safe_actions: list[str],
-    reasons: list[str],
-) -> dict[str, Any]:
+def _blocker_summary_result(summary: dict[str, Any]) -> dict[str, Any]:
+    categories = summary["categories"]
+    primary = summary["primary"]
+    next_action = summary["next_action"]
+    safe_actions = summary["safe_actions"]
+    reasons = summary["reasons"]
     return {
         "categories": categories,
         "primary_category": primary,
