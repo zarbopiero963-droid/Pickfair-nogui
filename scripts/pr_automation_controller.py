@@ -1236,14 +1236,13 @@ def codacy_task_lines(records: list[dict[str, Any]]) -> list[str]:
 
 def build_post_fix_micro_audit_prompt(task_text: str, context: dict[str, Any] | None = None) -> str:
     prompt = ensure_post_fix_micro_audit_section(task_text)
-    files = _post_fix_changed_files(context)
-    section = _post_fix_changed_files_section(files)
+    section = _post_fix_changed_files_section(_post_fix_changed_files(context))
     return f"{prompt}{section}" if section else prompt
 
 
 def ensure_post_fix_micro_audit_section(prompt: str) -> str:
     text = str(prompt or "").rstrip()
-    if "POST-FIX MICRO-AUDIT BEFORE COMMIT" in text:
+    if _has_full_post_fix_micro_audit_section(text):
         return text + "\n"
     return f"{text}\n\n{POST_FIX_MICRO_AUDIT_SECTION}"
 
@@ -1276,37 +1275,49 @@ def _list_value(data: dict[str, Any], raw: str, key: str) -> list[str]:
     value = data.get(key)
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
-    return _clean_audit_bullets(_audit_section_lines(raw, key))
+    return [_clean_audit_bullet(line) for line in _audit_section_lines(raw, key) if _clean_audit_bullet(line)]
 
 
 def _audit_section_lines(raw: str, key: str) -> list[str]:
+    return [line.strip() for line in _lines_after_audit_key(raw, key) if _is_audit_bullet_line(line)]
+
+
+def _lines_after_audit_key(raw: str, key: str) -> list[str]:
     lines = (raw or "").splitlines()
     header = re.compile(rf"^\s*{re.escape(key)}\s*:\s*$", re.IGNORECASE)
     start = next((index + 1 for index, line in enumerate(lines) if header.match(line)), -1)
     if start < 0:
         return []
+    return _contiguous_audit_bullet_lines(lines[start:])
+
+
+def _contiguous_audit_bullet_lines(lines: list[str]) -> list[str]:
     section: list[str] = []
-    for line in lines[start:]:
+    for line in lines:
         stripped = line.strip()
         if not stripped:
             if section:
                 break
             continue
-        if re.match(r"^[A-Za-z0-9_]+\s*:\s*", stripped):
+        if _looks_like_audit_field(stripped):
             break
-        if not stripped.startswith("-"):
+        if not _is_audit_bullet_line(stripped):
             break
         section.append(stripped)
     return section
 
 
-def _clean_audit_bullets(lines: list[str]) -> list[str]:
-    items: list[str] = []
-    for line in lines:
-        item = re.sub(r"^-\s*", "", line.strip()).strip()
-        if item:
-            items.append(item)
-    return items
+def _looks_like_audit_field(line: str) -> bool:
+    return bool(re.match(r"^[A-Za-z0-9_]+\s*:\s*", line))
+
+
+def _is_audit_bullet_line(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.startswith("-") and bool(_clean_audit_bullet(stripped))
+
+
+def _clean_audit_bullet(line: str) -> str:
+    return re.sub(r"^-\s*", "", line.strip()).strip()
 
 
 def _post_fix_changed_files(context: dict[str, Any] | None) -> list[str]:
@@ -1323,6 +1334,17 @@ def _post_fix_changed_files_section(files: list[str]) -> str:
         return ""
     lines = "\n".join(f"- {path}" for path in files)
     return f"\n\nAudit context (changed files):\n{lines}\n"
+
+
+def _has_full_post_fix_micro_audit_section(text: str) -> bool:
+    required_markers = [
+        "POST-FIX MICRO-AUDIT BEFORE COMMIT",
+        "Do not commit a patch that fails this audit.",
+        "Check:",
+        "If audit fails:",
+    ]
+    lowered = text.lower()
+    return all(marker.lower() in lowered for marker in required_markers)
 
 
 def _parse_post_fix_audit_json(raw: str) -> dict[str, Any]:

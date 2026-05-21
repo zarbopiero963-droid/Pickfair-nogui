@@ -221,6 +221,23 @@ def test_ensure_post_fix_micro_audit_section_adds_no_commit_rule_once():
     ASSERTIONS.assertEqual(twice.count("POST-FIX MICRO-AUDIT BEFORE COMMIT"), 1)
 
 
+def test_ensure_post_fix_micro_audit_section_is_idempotent_when_full_section_exists():
+    """A complete audit section should not be appended again."""
+    prompt = f"Fix these findings.\n\n{controller.POST_FIX_MICRO_AUDIT_SECTION}"
+    updated = controller.ensure_post_fix_micro_audit_section(prompt)
+    ASSERTIONS.assertEqual(updated.count("POST-FIX MICRO-AUDIT BEFORE COMMIT"), 1)
+    ASSERTIONS.assertEqual(updated.count("Do not commit a patch that fails this audit."), 1)
+
+
+def test_ensure_post_fix_micro_audit_section_appends_when_only_title_phrase_exists():
+    """A bare title mention must still append the full checklist section."""
+    prompt = "Reviewer note: remember POST-FIX MICRO-AUDIT BEFORE COMMIT before final push."
+    updated = controller.ensure_post_fix_micro_audit_section(prompt)
+    ASSERTIONS.assertEqual(updated.count("POST-FIX MICRO-AUDIT BEFORE COMMIT"), 2)
+    ASSERTIONS.assertIn("Do not commit a patch that fails this audit.", updated)
+    ASSERTIONS.assertIn("Check:", updated)
+
+
 def test_build_post_fix_micro_audit_prompt_adds_changed_files_context_section():
     """Changed files list should append the audit-context section with one bullet per file."""
     prompt = controller.build_post_fix_micro_audit_prompt(
@@ -389,6 +406,11 @@ def test_post_fix_micro_audit_helpers_fail_closed_for_pass_without_required_next
 def test_post_fix_micro_audit_status_malformed_dict_fails_closed():
     """Malformed status values should fail closed."""
     ASSERTIONS.assertEqual(controller.post_fix_micro_audit_status({"status": {"bad": "value"}}), "FAIL")
+
+
+def test_post_fix_micro_audit_failed_malformed_dict_fails_closed():
+    """Malformed report payload should be treated as failed."""
+    ASSERTIONS.assertTrue(controller.post_fix_micro_audit_failed({"status": {"bad": "value"}}))
 
 
 def test_clean_scope_defaults_allow_pr_flow_automation_script():
