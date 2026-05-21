@@ -1294,9 +1294,12 @@ def _lines_after_audit_key(raw: str, key: str) -> list[str]:
 def _contiguous_audit_bullet_lines(lines: list[str]) -> list[str]:
     section: list[str] = []
     for line in lines:
-        if _should_stop_audit_bullet_scan(line, bool(section)):
+        has_started = bool(section)
+        if _should_stop_audit_bullet_scan(line, has_started):
             break
         stripped = line.strip()
+        if not stripped and not has_started:
+            continue
         if not _is_audit_bullet_line(stripped):
             break
         section.append(stripped)
@@ -1375,8 +1378,19 @@ def _parse_post_fix_audit_json(raw: str) -> dict[str, Any]:
     try:
         loaded = json.loads(raw)
     except json.JSONDecodeError:
-        return {}
+        fenced = _extract_fenced_json_payload(raw)
+        if not fenced:
+            return {}
+        try:
+            loaded = json.loads(fenced)
+        except json.JSONDecodeError:
+            return {}
     return loaded if isinstance(loaded, dict) else {}
+
+
+def _extract_fenced_json_payload(raw: str) -> str:
+    match = re.match(r"^\s*```(?:json)?\s*\n(?P<body>[\s\S]*?)\n```\s*$", str(raw or ""), re.IGNORECASE)
+    return str(match.group("body") or "").strip() if match else ""
 
 
 def _parse_post_fix_audit_text(raw: str) -> dict[str, Any]:

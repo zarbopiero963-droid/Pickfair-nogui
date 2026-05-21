@@ -283,6 +283,37 @@ def test_parse_post_fix_micro_audit_result_supports_json_payload():
     ASSERTIONS.assertEqual(report["next_action"], "validation_then_commit")
 
 
+def test_parse_post_fix_micro_audit_result_supports_fenced_json_payload_with_language():
+    """```json fenced payload should parse as JSON and preserve PASS routing."""
+    raw = "\n".join(
+        [
+            "```json",
+            '{"status":"PASS","next_action":"validation_then_commit","reasons":["ok"]}',
+            "```",
+        ]
+    )
+    report = controller.parse_post_fix_micro_audit_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "validation_then_commit")
+    ASSERTIONS.assertEqual(report["reasons"], ["ok"])
+    ASSERTIONS.assertFalse(controller.post_fix_micro_audit_failed(report))
+
+
+def test_parse_post_fix_micro_audit_result_supports_fenced_json_payload_without_language():
+    """``` fenced payload should parse as JSON and preserve PASS routing."""
+    raw = "\n".join(
+        [
+            "```",
+            '{"status":"PASS","next_action":"validation_then_commit"}',
+            "```",
+        ]
+    )
+    report = controller.parse_post_fix_micro_audit_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "validation_then_commit")
+    ASSERTIONS.assertFalse(controller.post_fix_micro_audit_failed(report))
+
+
 def test_parse_post_fix_micro_audit_result_partial_text_preserves_status_and_reasons():
     """Text PARTIAL status should remain PARTIAL and default to retry_fix_within_budget."""
     report = controller.parse_post_fix_micro_audit_result(
@@ -320,6 +351,25 @@ def test_parse_post_fix_micro_audit_result_supports_yaml_style_lists_and_stops_a
     ASSERTIONS.assertEqual(report["reasons"], ["issue one", "issue two"])
     ASSERTIONS.assertEqual(report["changed_files"], ["scripts/a.py"])
     ASSERTIONS.assertEqual(report["validation_commands"], ["python3 -m py_compile"])
+
+
+def test_parse_post_fix_micro_audit_result_lists_skip_blank_separator_after_header():
+    """Blank separators after list headers should be ignored before first bullet."""
+    report = controller.parse_post_fix_micro_audit_result(
+        "\n".join(
+            [
+                "status: FAIL",
+                "reasons:",
+                "",
+                "- item one",
+                "- item two",
+                "changed_files:",
+                "- scripts/a.py",
+            ]
+        )
+    )
+    ASSERTIONS.assertEqual(report["reasons"], ["item one", "item two"])
+    ASSERTIONS.assertEqual(report["changed_files"], ["scripts/a.py"])
 
 
 def test_parse_post_fix_micro_audit_result_does_not_overcapture_later_section_bullets():
