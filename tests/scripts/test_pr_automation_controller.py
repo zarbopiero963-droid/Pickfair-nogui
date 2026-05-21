@@ -607,6 +607,7 @@ def test_summarize_blocker_actions_empty_is_non_blocking():
     ASSERTIONS.assertEqual(clean["primary_category"], "none")
     ASSERTIONS.assertEqual(clean["next_action"], "checks_green_or_no_action")
     ASSERTIONS.assertFalse(clean["needs_manual"])
+    ASSERTIONS.assertEqual(mergeable["primary_category"], "none")
     ASSERTIONS.assertEqual(mergeable["next_action"], "ready_to_merge")
     ASSERTIONS.assertFalse(mergeable["needs_manual"])
 

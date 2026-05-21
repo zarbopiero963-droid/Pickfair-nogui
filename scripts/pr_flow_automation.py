@@ -526,14 +526,14 @@ def _pr_oid(value: Any) -> Any:
     return value.get("oid") if isinstance(value, dict) else value
 
 
-def _taxonomy_context(pr: dict[str, Any], checks: dict[str, Any], can_merge: bool) -> dict[str, Any]:
+def _taxonomy_context(pr_data: dict[str, Any], checks: dict[str, Any], can_merge: bool) -> dict[str, Any]:
     return {
         "logs_clear": False,
         "can_merge": can_merge,
-        "is_draft": bool(pr.get("isDraft")),
-        "is_open": pr.get("state") == "OPEN",
-        "mergeable": pr.get("mergeable"),
-        "mergeStateStatus": pr.get("mergeStateStatus"),
+        "is_draft": bool(pr_data.get("isDraft")),
+        "is_open": pr_data.get("state") == "OPEN",
+        "mergeable": pr_data.get("mergeable"),
+        "mergeStateStatus": pr_data.get("mergeStateStatus"),
         "pending": checks["pending"],
         "bad": checks["blockers"],
         "blockers": checks["blockers"],
@@ -548,17 +548,17 @@ def _decision_taxonomy_items(checks: dict[str, Any], review_threads: list[dict[s
     return items
 
 
-def _merge_conflict_taxonomy_items(pr: dict[str, Any]) -> list[dict[str, Any]]:
-    classified = controller.classify_merge_conflict(pr, _conflicted_files_from_pr(pr), {})
+def _merge_conflict_taxonomy_items(pr_data: dict[str, Any]) -> list[dict[str, Any]]:
+    classified = controller.classify_merge_conflict(pr_data, _conflicted_files_from_pr(pr_data), {})
     if str(classified.get("category") or "") != "merge_conflict":
         return []
     return [dict(classified, name="PR merge conflict", state="FAILURE", source="merge")]
 
 
-def _conflicted_files_from_pr(pr: dict[str, Any]) -> list[str]:
+def _conflicted_files_from_pr(pr_data: dict[str, Any]) -> list[str]:
     fields = ("conflicted_files", "conflictedFiles", "files")
     for field in fields:
-        files = pr.get(field)
+        files = pr_data.get(field)
         if isinstance(files, list):
             return [str(path).strip() for path in files if str(path).strip()]
     return []
@@ -569,17 +569,40 @@ def _review_thread_taxonomy_items(review_threads: list[dict[str, Any]]) -> list[
 
 
 def _apply_taxonomy_next_action(decision: dict[str, Any]) -> None:
+    if decision.get("already_merged"):
+        return
     taxonomy = decision.get("blocker_taxonomy")
     taxonomy_dict = taxonomy if isinstance(taxonomy, dict) else {}
-    taxonomy_next_action = str(taxonomy_dict.get("next_action") or "").strip()
-    current_action = str(decision.get("next_action") or "").strip()
-    if decision.get("already_merged"):
+    taxonomy_next_action = _taxonomy_next_action(taxonomy_dict)
+    if _should_apply_taxonomy_action(decision, taxonomy_next_action):
+        decision["next_action"] = taxonomy_next_action
         return
     if _review_blocker_should_override(decision, taxonomy_dict):
         decision["next_action"] = "fix_review_comments"
         return
-    if _safe_taxonomy_override(decision, taxonomy_next_action, current_action):
-        decision["next_action"] = taxonomy_next_action
+    if _can_apply_ready_to_merge_taxonomy(decision):
+        decision["next_action"] = "ready_to_merge"
+
+
+def _taxonomy_next_action(decision: dict[str, Any]) -> str:
+    return str(decision.get("next_action") or "").strip()
+
+
+def _can_apply_ready_to_merge_taxonomy(decision: dict[str, Any]) -> bool:
+    return (
+        _taxonomy_next_action(decision.get("blocker_taxonomy") or {}) == "ready_to_merge"
+        and bool(decision.get("can_merge"))
+        and not _is_high_priority_action(str(decision.get("next_action") or "").strip())
+    )
+
+
+def _should_apply_taxonomy_action(decision: dict[str, Any], action: str) -> bool:
+    return (
+        bool(action)
+        and action != "ready_to_merge"
+        and action != "fix_review_comments"
+        and not _is_high_priority_action(str(decision.get("next_action") or "").strip())
+    )
 
 
 def _decision_has_active_review_blocker(taxonomy_dict: dict[str, Any]) -> bool:
