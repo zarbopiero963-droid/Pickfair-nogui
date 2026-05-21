@@ -516,50 +516,53 @@ def _assert_blocker_categories(cases: list[tuple[dict[str, object], str]]) -> No
         ASSERTIONS.assertEqual(controller.classify_blocker(payload)["category"], expected)
 
 
+def _codacy_blocker_cases() -> list[tuple[dict[str, object], str]]:
+    return [
+        ({"name": "Codacy Static Code Analysis", "state": "FAILURE", "source": "codacy"}, "codacy_style"),
+        (
+            {"name": "Codacy complexity", "state": "FAILURE", "source": "codacy", "reason": "C901 complexity"},
+            "codacy_complexity",
+        ),
+        (
+            {"name": "Codacy", "state": "ACTION_REQUIRED", "source": "codacy", "reason": "D203 and D211 conflict"},
+            "codacy_rule_conflict",
+        ),
+        (
+            {"name": "Codacy", "state": "ACTION_REQUIRED", "source": "codacy", "classification": "api_github_mismatch"},
+            "codacy_api_github_mismatch",
+        ),
+        ({"name": "Codacy", "state": "STALE", "source": "codacy"}, "github_stale_check"),
+    ]
+
+
+def _manual_and_workflow_cases() -> list[tuple[dict[str, object], str]]:
+    return [
+        ({"name": "Review thread", "state": "ACTION_REQUIRED", "source": "review", "active": True}, "review_comment_active"),
+        ({"name": "Unit tests", "state": "FAILURE", "source": "check"}, "test_failure"),
+        ({"name": "Infra", "state": "FAILURE", "source": "check", "reason": "runner service unavailable"}, "infra_failure"),
+        ({"name": "Auth", "state": "FAILURE", "reason": "token missing"}, "token_missing"),
+        ({"name": "Auth", "state": "FAILURE", "reason": "403 permission denied"}, "api_permission_error"),
+        ({"name": "Flow", "state": "CANCELLED"}, "workflow_cancelled"),
+        ({"name": "Flow", "state": "IN_PROGRESS"}, "workflow_pending"),
+        ({"name": "Scope", "state": "FAILURE", "reason": "scope_violation detected"}, "scope_violation"),
+        ({"name": "Merge", "mergeStateStatus": "DIRTY"}, "merge_conflict"),
+        ({}, "unknown"),
+    ]
+
+
 def test_blocker_taxonomy_classifies_codacy_categories():
     """Blocker taxonomy maps Codacy inputs to expected categories."""
-    _assert_blocker_categories(
-        [
-            ({"name": "Codacy Static Code Analysis", "state": "FAILURE", "source": "codacy"}, "codacy_style"),
-            (
-                {"name": "Codacy complexity", "state": "FAILURE", "source": "codacy", "reason": "C901 complexity"},
-                "codacy_complexity",
-            ),
-            (
-                {"name": "Codacy", "state": "ACTION_REQUIRED", "source": "codacy", "reason": "D203 and D211 conflict"},
-                "codacy_rule_conflict",
-            ),
-            (
-                {"name": "Codacy", "state": "ACTION_REQUIRED", "source": "codacy", "classification": "api_github_mismatch"},
-                "codacy_api_github_mismatch",
-            ),
-            ({"name": "Codacy", "state": "STALE", "source": "codacy"}, "github_stale_check"),
-        ]
-    )
+    _assert_blocker_categories(_codacy_blocker_cases())
 
 
-def test_blocker_taxonomy_classifies_manual_and_workflow_categories():
-    """Blocker taxonomy maps manual/workflow/test inputs to expected categories."""
-    _assert_blocker_categories(
-        [
-            (
-                {"name": "Review thread", "state": "ACTION_REQUIRED", "source": "review", "active": True},
-                "review_comment_active",
-            ),
-            ({"name": "Unit tests", "state": "FAILURE", "source": "check"}, "test_failure"),
-            (
-                {"name": "Infra", "state": "FAILURE", "source": "check", "reason": "runner service unavailable"},
-                "infra_failure",
-            ),
-            ({"name": "Auth", "state": "FAILURE", "reason": "token missing"}, "token_missing"),
-            ({"name": "Auth", "state": "FAILURE", "reason": "403 permission denied"}, "api_permission_error"),
-            ({"name": "Flow", "state": "CANCELLED"}, "workflow_cancelled"),
-            ({"name": "Flow", "state": "IN_PROGRESS"}, "workflow_pending"),
-            ({"name": "Scope", "state": "FAILURE", "reason": "scope_violation detected"}, "scope_violation"),
-            ({"name": "Merge", "mergeStateStatus": "DIRTY"}, "merge_conflict"),
-            ({}, "unknown"),
-        ]
-    )
+def test_blocker_taxonomy_classifies_manual_categories():
+    """Blocker taxonomy maps manual/test inputs to expected categories."""
+    _assert_blocker_categories(_manual_and_workflow_cases()[:5])
+
+
+def test_blocker_taxonomy_classifies_workflow_and_unknown_categories():
+    """Blocker taxonomy maps workflow/merge/unknown inputs to expected categories."""
+    _assert_blocker_categories(_manual_and_workflow_cases()[5:])
 
 
 def test_route_blocker_action_maps_required_next_actions():

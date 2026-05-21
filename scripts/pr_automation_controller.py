@@ -17,7 +17,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence, cast
+from typing import Any, Callable, Sequence, cast
 
 FAIL_STATES = {"FAILURE", "ERROR", "ACTION_REQUIRED", "TIMED_OUT"}
 PENDING_STATES = {"", "PENDING", "QUEUED", "IN_PROGRESS", "REQUESTED", "WAITING"}
@@ -2251,13 +2251,11 @@ BUSINESS_CRITICAL_CONFLICT_FILES = {
 
 def classify_blocker(item: dict[str, Any]) -> dict[str, Any]:
     """Classify a raw blocker item into a stable automation taxonomy."""
-    if not isinstance(item, dict) or not item:
+    details = _blocker_item_details(item)
+    if not details:
         return _empty_blocker_result()
-    name = str(item.get("name") or "").strip()
-    state = norm_state(item.get("state") or item.get("conclusion") or item.get("status"))
-    source = _blocker_source_from_item(item, name)
-    reason = str(item.get("reason") or item.get("message") or "").strip()
-    category = _category_from_item(item, _blocker_context(name, state, source, reason))
+    category = _category_from_item(item, _blocker_context(*details))
+    name, state, source, reason = details
     return {
         "category": category if category in BLOCKER_CATEGORIES else "unknown",
         "name": name,
@@ -2289,15 +2287,13 @@ def classify_merge_conflict(
         return _no_merge_conflict_result()
     if not conflicted_files:
         return _merge_conflict_result(conflicted_files, False, "needs_manual", "needs_manual_merge_conflict")
-    all_automation = all(_is_automation_path(path) for path in conflicted_files)
-    all_out_of_scope_automation = all(
-        _is_automation_path(path) and _is_out_of_scope(path, task_scope) for path in conflicted_files
+    strategy, auto_resolvable = _conflict_resolution_strategy(conflicted_files, task_scope)
+    return _merge_conflict_result(
+        conflicted_files,
+        auto_resolvable,
+        strategy,
+        _merge_conflict_next_action(strategy),
     )
-    if any(_is_business_critical_file(path) for path in conflicted_files) or not all_automation:
-        return _merge_conflict_result(conflicted_files, False, "needs_manual", "needs_manual_merge_conflict")
-    if all_out_of_scope_automation:
-        return _merge_conflict_result(conflicted_files, True, "take_main_for_out_of_scope_automation", "auto_resolve_merge_conflict")
-    return _merge_conflict_result(conflicted_files, True, "attempt_safe_file_resolution", "auto_resolve_merge_conflict")
 
 
 def summarize_blocker_actions(blockers: list[dict[str, Any]], context: dict[str, Any]) -> dict[str, Any]:
@@ -2346,17 +2342,40 @@ def _codacy_category(item: dict[str, Any], state: str, text: str, source: str) -
     if source != "codacy":
         return ""
     classification = str(item.get("classification") or "").strip().lower()
-    rules = [
-        (classification in {"rule_conflict", "codacy_rule_conflict"} or _has_d203_d211_text(text), "codacy_rule_conflict"),
-        (classification in {"api_github_mismatch", "codacy_api_github_mismatch"}, "codacy_api_github_mismatch"),
-        (classification in {"stale_github_check", "github_stale_check"} or state == "STALE", "github_stale_check"),
-        (_looks_like_complexity(text), "codacy_complexity"),
-        (state in FAIL_STATES or "codacy" in text, "codacy_style"),
-    ]
-    for matched, category in rules:
-        if matched:
+    for category, predicate in _codacy_category_rules():
+        if predicate(classification, state, text):
             return category
     return "unknown"
+
+
+def _codacy_category_rules() -> tuple[tuple[str, Callable[[str, str, str], bool]], ...]:
+    return (
+        ("codacy_rule_conflict", _blocker_codacy_is_rule_conflict),
+        ("codacy_api_github_mismatch", _blocker_codacy_is_api_github_mismatch),
+        ("github_stale_check", _blocker_codacy_is_stale_check),
+        ("codacy_complexity", _blocker_codacy_is_complexity),
+        ("codacy_style", _blocker_codacy_is_style),
+    )
+
+
+def _blocker_codacy_is_rule_conflict(classification: str, _state: str, text: str) -> bool:
+    return classification in {"rule_conflict", "codacy_rule_conflict"} or _has_d203_d211_text(text)
+
+
+def _blocker_codacy_is_api_github_mismatch(classification: str, _state: str, _text: str) -> bool:
+    return classification in {"api_github_mismatch", "codacy_api_github_mismatch"}
+
+
+def _blocker_codacy_is_stale_check(classification: str, state: str, _text: str) -> bool:
+    return classification in {"stale_github_check", "github_stale_check"} or state == "STALE"
+
+
+def _blocker_codacy_is_complexity(_classification: str, _state: str, text: str) -> bool:
+    return _looks_like_complexity(text)
+
+
+def _blocker_codacy_is_style(_classification: str, state: str, text: str) -> bool:
+    return state in FAIL_STATES or "codacy" in text
 
 
 def _has_d203_d211_text(text: str) -> bool:
@@ -2419,8 +2438,18 @@ def _blocker_reasons(classified: list[dict[str, Any]]) -> list[str]:
 
 def _next_action_for_summary(primary: str, context: dict[str, Any]) -> str:
     if primary == "none":
-        return "ready_to_merge" if bool(context.get("can_merge")) else "checks_green_or_no_action"
+        return "ready_to_merge" if _is_ready_to_merge_context(context) else "checks_green_or_no_action"
     return route_blocker_action(primary, context) if primary else "needs_manual"
+
+
+def _blocker_item_details(item: dict[str, Any]) -> tuple[str, str, str, str] | None:
+    if not isinstance(item, dict) or not item:
+        return None
+    name = str(item.get("name") or "").strip()
+    state = norm_state(item.get("state") or item.get("conclusion") or item.get("status"))
+    reason = str(item.get("reason") or item.get("message") or "").strip()
+    source = _blocker_source_from_item(item, name)
+    return name, state, source, reason
 
 
 def _manual_category_from_text(item: dict[str, Any], details: dict[str, str]) -> str:
@@ -2485,6 +2514,27 @@ def _safe_autofix_actions(classified: list[dict[str, Any]], context: dict[str, A
 
 def _pr_has_merge_conflict(payload: dict[str, Any]) -> bool:
     return norm_state(payload.get("mergeable")) == "CONFLICTING" or norm_state(payload.get("mergeStateStatus")) == "DIRTY"
+
+
+def _conflict_resolution_strategy(conflicted_files: list[str], task_scope: dict[str, Any]) -> tuple[str, bool]:
+    if _has_non_automation_conflict(conflicted_files):
+        return "needs_manual", False
+    if all(_is_out_of_scope(path, task_scope) for path in conflicted_files):
+        return "take_main_for_out_of_scope_automation", True
+    return "attempt_safe_file_resolution", True
+
+
+def _has_non_automation_conflict(conflicted_files: list[str]) -> bool:
+    for path in conflicted_files:
+        if _is_business_critical_file(path) or not _is_automation_path(path):
+            return True
+    return False
+
+
+def _merge_conflict_next_action(strategy: str) -> str:
+    if strategy == "needs_manual":
+        return "needs_manual_merge_conflict"
+    return "auto_resolve_merge_conflict"
 
 
 def _is_automation_path(path: str) -> bool:
