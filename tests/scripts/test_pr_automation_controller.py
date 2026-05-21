@@ -283,6 +283,24 @@ def test_parse_post_fix_micro_audit_result_supports_json_payload():
     ASSERTIONS.assertEqual(report["next_action"], "validation_then_commit")
 
 
+def test_parse_post_fix_micro_audit_result_partial_text_preserves_status_and_reasons():
+    """Text PARTIAL status should remain PARTIAL and default to retry_fix_within_budget."""
+    report = controller.parse_post_fix_micro_audit_result(
+        "\n".join(
+            [
+                "status: PARTIAL",
+                "reasons:",
+                "- needs one more pass",
+                "- waiting for targeted retry",
+            ]
+        )
+    )
+    ASSERTIONS.assertEqual(report["status"], "PARTIAL")
+    ASSERTIONS.assertEqual(report["next_action"], "retry_fix_within_budget")
+    ASSERTIONS.assertEqual(report["reasons"], ["needs one more pass", "waiting for targeted retry"])
+    ASSERTIONS.assertTrue(controller.post_fix_micro_audit_failed(report))
+
+
 def test_parse_post_fix_micro_audit_result_supports_yaml_style_lists_and_stops_at_next_field():
     """Text-mode list parsing must stop at the next key and support compact dash bullets."""
     report = controller.parse_post_fix_micro_audit_result(
@@ -321,6 +339,23 @@ def test_parse_post_fix_micro_audit_result_does_not_overcapture_later_section_bu
     )
     ASSERTIONS.assertEqual(report["reasons"], ["first reason"])
     ASSERTIONS.assertEqual(report["changed_files"], ["scripts/a.py"])
+
+
+def test_parse_post_fix_micro_audit_result_malformed_list_sections_return_empty_lists():
+    """Malformed non-bullet list sections should parse as empty lists."""
+    report = controller.parse_post_fix_micro_audit_result(
+        "\n".join(
+            [
+                "status: FAIL",
+                "reasons:",
+                "not-a-bullet",
+                "changed_files:",
+                "scripts/a.py",
+            ]
+        )
+    )
+    ASSERTIONS.assertEqual(report["reasons"], [])
+    ASSERTIONS.assertEqual(report["changed_files"], [])
 
 
 def test_parse_post_fix_micro_audit_result_pass_defaults_to_validation_then_commit():

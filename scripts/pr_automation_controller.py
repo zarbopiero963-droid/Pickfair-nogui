@@ -1272,10 +1272,10 @@ def _line_value(text: str, key: str) -> str:
 
 
 def _list_value(data: dict[str, Any], raw: str, key: str) -> list[str]:
-    value = data.get(key)
-    if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
-    return [_clean_audit_bullet(line) for line in _audit_section_lines(raw, key) if _clean_audit_bullet(line)]
+    list_items = _list_from_payload(data.get(key))
+    if list_items:
+        return list_items
+    return _list_from_raw_audit_section(raw, key)
 
 
 def _audit_section_lines(raw: str, key: str) -> list[str]:
@@ -1294,13 +1294,9 @@ def _lines_after_audit_key(raw: str, key: str) -> list[str]:
 def _contiguous_audit_bullet_lines(lines: list[str]) -> list[str]:
     section: list[str] = []
     for line in lines:
-        stripped = line.strip()
-        if not stripped:
-            if section:
-                break
-            continue
-        if _looks_like_audit_field(stripped):
+        if _should_stop_audit_bullet_scan(line, bool(section)):
             break
+        stripped = line.strip()
         if not _is_audit_bullet_line(stripped):
             break
         section.append(stripped)
@@ -1320,6 +1316,30 @@ def _clean_audit_bullet(line: str) -> str:
     return re.sub(r"^-\s*", "", line.strip()).strip()
 
 
+def _list_from_payload(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _list_from_raw_audit_section(raw: str, key: str) -> list[str]:
+    result: list[str] = []
+    for line in _audit_section_lines(raw, key):
+        cleaned = _clean_audit_bullet(line)
+        if cleaned:
+            result.append(cleaned)
+    return result
+
+
+def _should_stop_audit_bullet_scan(line: str, has_started: bool) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return has_started
+    if _looks_like_audit_field(stripped):
+        return True
+    return False
+
+
 def _post_fix_changed_files(context: dict[str, Any] | None) -> list[str]:
     if not isinstance(context, dict):
         return []
@@ -1337,14 +1357,18 @@ def _post_fix_changed_files_section(files: list[str]) -> str:
 
 
 def _has_full_post_fix_micro_audit_section(text: str) -> bool:
-    required_markers = [
-        "POST-FIX MICRO-AUDIT BEFORE COMMIT",
-        "Do not commit a patch that fails this audit.",
-        "Check:",
-        "If audit fails:",
+    normalized_text = _normalize_audit_text_for_match(text)
+    normalized_section = _normalize_audit_text_for_match(POST_FIX_MICRO_AUDIT_SECTION)
+    return normalized_section in normalized_text
+
+
+def _normalize_audit_text_for_match(text: str) -> str:
+    normalized_lines = [
+        re.sub(r"\s+", " ", line).strip().lower()
+        for line in (text or "").splitlines()
+        if line.strip()
     ]
-    lowered = text.lower()
-    return all(marker.lower() in lowered for marker in required_markers)
+    return "\n".join(normalized_lines)
 
 
 def _parse_post_fix_audit_json(raw: str) -> dict[str, Any]:
@@ -1374,10 +1398,11 @@ def _normalize_post_fix_audit_report(report: dict[str, Any]) -> dict[str, Any]:
         "next_action": next_action,
         **_post_fix_report_lists(report),
     }
-    if status == "PASS" and next_action == "validation_then_commit":
-        return normalized
-    normalized["status"] = "FAIL"
-    normalized["next_action"] = "needs_manual_post_fix_audit_failed"
+    if status == "PASS":
+        if next_action == "validation_then_commit":
+            return normalized
+        normalized["status"] = "FAIL"
+        normalized["next_action"] = "needs_manual_post_fix_audit_failed"
     return normalized
 
 
