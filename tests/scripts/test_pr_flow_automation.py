@@ -203,8 +203,7 @@ def _assert_review_thread_routing(decision: dict[str, object]) -> None:
     ASSERTIONS.assertEqual(decision["next_action"], "fix_review_comments")
 
 
-def test_build_decision_clean_checks_with_active_review_thread_blocks_merge(monkeypatch):
-    """Active unresolved review thread must block merge even when checks are clean."""
+def _decision_clean_checks_with_active_review_thread(monkeypatch) -> dict[str, object]:
     monkeypatch.setattr(
         flow,
         "pr_view",
@@ -216,14 +215,18 @@ def test_build_decision_clean_checks_with_active_review_thread_blocks_merge(monk
             "statusCheckRollup": [_check("Unit tests", "SUCCESS")],
         },
     )
-    decision = flow.build_decision(
+    return flow.build_decision(
         "owner/repo",
         "225",
         ignore_self=True,
         review_threads=[{"id": "thread-1", "isResolved": False, "isOutdated": False, "path": "a.py", "line": 9}],
     )
-    taxonomy = cast(dict[str, Any], decision["blocker_taxonomy"])
 
+
+def test_build_decision_clean_checks_with_active_review_thread_blocks_merge(monkeypatch):
+    """Active unresolved review thread must block merge even when checks are clean."""
+    decision = _decision_clean_checks_with_active_review_thread(monkeypatch)
+    taxonomy = cast(dict[str, Any], decision["blocker_taxonomy"])
     ASSERTIONS.assertFalse(decision["can_merge"])
     ASSERTIONS.assertEqual(decision["next_action"], "fix_review_comments")
     ASSERTIONS.assertEqual(taxonomy["primary_category"], "review_comment_active")

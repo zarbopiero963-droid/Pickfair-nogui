@@ -412,7 +412,10 @@ def _merge_readiness_state(
     reasons: list[str] = []
     if not already_merged:
         reasons.extend(_merge_readiness_reasons(pr_data, checks, active_review_threads))
-    return {"already_merged": already_merged, "can_merge": already_merged or not reasons, "reasons": reasons}
+        if active_review_threads and _reason_review_threads(active_review_threads) not in reasons:
+            reasons.append(_reason_review_threads(active_review_threads))
+    can_merge = already_merged or (not reasons and not active_review_threads)
+    return {"already_merged": already_merged, "can_merge": can_merge, "reasons": reasons}
 
 
 def _merge_readiness_reasons(
