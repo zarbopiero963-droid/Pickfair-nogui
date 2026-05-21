@@ -892,21 +892,6 @@ def _stub_readiness_fetch_failure(monkeypatch) -> None:
     )
 
 
-def _stub_ready_build_decision(monkeypatch) -> None:
-    monkeypatch.setattr(
-        flow,
-        "build_decision",
-        lambda *_args, **_kwargs: {
-            "already_merged": False,
-            "can_merge": True,
-            "mergeable": "MERGEABLE",
-            "mergeStateStatus": "CLEAN",
-            "reasons": [],
-            "next_action": "ready_to_merge",
-        },
-    )
-
-
 def _run_readiness_cmd_failure_case() -> int:
     return flow.cmd_readiness(
         argparse.Namespace(
@@ -927,6 +912,7 @@ def test_cmd_readiness_review_thread_fetch_failure_fails_closed(monkeypatch):
     _stub_readiness_fetch_failure(monkeypatch)
 
     def _fake_build_decision(_repo: str, _pr: str, *, ignore_self: bool, review_threads=None):
+        ASSERTIONS.assertTrue(ignore_self)
         captured["review_threads"] = review_threads
         return {
             "already_merged": False,
