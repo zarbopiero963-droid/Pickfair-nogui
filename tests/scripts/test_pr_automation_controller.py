@@ -100,6 +100,17 @@ def _next_action_context(**overrides: object) -> dict[str, object]:
     return context
 
 
+def test_blocker_taxonomy_helpers_and_merge_conflict_routing():
+    ASSERTIONS.assertEqual(controller.classify_blocker({"name": "workflow pending"}), "workflow_pending")
+    ASSERTIONS.assertEqual(controller.classify_blocker({"name": "review active"}), "review_comment_active")
+    ASSERTIONS.assertEqual(controller.route_blocker_action("token_missing", {}), "needs_manual_secret")
+    ASSERTIONS.assertEqual(
+        controller.route_blocker_action("merge_conflict", {"merge_conflict_action": "auto_resolve_merge_conflict"}),
+        "auto_resolve_merge_conflict",
+    )
+    ASSERTIONS.assertEqual(controller.route_blocker_action("merge_conflict", {}), "needs_manual_merge_conflict")
+
+
 def _controller_decision(monkeypatch, *, blocking: bool, ignored: bool) -> dict:
     _stub_codacy_evidence(monkeypatch, blocking=blocking, ignored=ignored, issues=int(blocking))
     monkeypatch.setattr(controller, "active_safe_autofix_runs", lambda _repo: [])
@@ -107,6 +118,15 @@ def _controller_decision(monkeypatch, *, blocking: bool, ignored: bool) -> dict:
     ctx = controller.build_next_action_context(_args(), decision, _codacy_pr(), ([], []))
     controller.decide_next_action(ctx)
     return decision
+
+
+def test_build_next_action_context_stores_blocker_taxonomy(monkeypatch):
+    monkeypatch.setattr(controller, "_review_threads_raw", lambda *_args: {})
+    decision: dict[str, Any] = {"actions": [], "warnings": [], "errors": []}
+    pr = {"statusCheckRollup": [_check("workflow pending", "PENDING")], "headRefOid": "abc123"}
+    ctx = controller.build_next_action_context(_args(), decision, pr, ([], []))
+    ASSERTIONS.assertTrue("blocker_taxonomy" in ctx.decision)
+    ASSERTIONS.assertEqual(ctx.decision["blocker_taxonomy"]["primary_category"], "none")
 
 
 def _prepare_decision_tracking_test(monkeypatch, tmp_path) -> tuple[dict[str, Any], dict[str, Any], Any]:

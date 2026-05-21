@@ -383,6 +383,7 @@ def build_decision(repo: str, pr_number: str, *, ignore_self: bool = True) -> di
             reasons.append(f"{len(checks['pending'])} real pending check(s)")
         can_merge = not reasons
 
+    blocker_taxonomy = summarize_blocker_actions(checks["blockers"], {"can_merge": can_merge and not already_merged})
     return {
         "repo": repo,
         "pr": str(pr_number),
@@ -404,6 +405,7 @@ def build_decision(repo: str, pr_number: str, *, ignore_self: bool = True) -> di
         "pending": checks["pending"],
         "ignored_self_checks": checks["ignored"],
         "self_stale": checks["self_stale"],
+        "blocker_taxonomy": blocker_taxonomy,
         "next_action": "merge_allowed" if can_merge and not already_merged else ("already_merged" if already_merged else "blocked"),
     }
 
@@ -516,6 +518,96 @@ def _codacy_rule_conflict_result() -> dict[str, str]:
     return {
         "classification": "codacy_rule_conflict",
         "next_action": "needs_manual_codacy_rule_conflict",
+    }
+
+
+def classify_blocker(item: Any) -> str:
+    text = json.dumps(item, sort_keys=True).lower() if isinstance(item, dict) else str(item).lower()
+    if "workflow" in text and ("pending" in text or "queued" in text or "in_progress" in text):
+        return "workflow_pending"
+    if "cancel" in text:
+        return "workflow_cancelled"
+    if "stale" in text:
+        return "github_stale_check"
+    if "codacy_rule_conflict" in text:
+        return "codacy_rule_conflict"
+    if "api_github_mismatch" in text:
+        return "codacy_api_github_mismatch"
+    if "codacy" in text and "complex" in text:
+        return "codacy_complexity"
+    if "codacy" in text:
+        return "codacy_style"
+    if "review" in text:
+        return "review_comment_active"
+    if "token" in text and "missing" in text:
+        return "token_missing"
+    if "permission" in text and "api" in text:
+        return "api_permission_error"
+    if "scope" in text and "violation" in text:
+        return "scope_violation"
+    if "conflict" in text:
+        return "merge_conflict"
+    return "unknown"
+
+
+def route_blocker_action(category: str, context: dict[str, Any]) -> str:
+    mapping = {
+        "workflow_pending": "wait_pending",
+        "workflow_cancelled": "rerun_stale_checks",
+        "github_stale_check": "rerun_stale_checks",
+        "codacy_style": "fix_codacy_current_issues",
+        "codacy_complexity": "fix_codacy_current_issues",
+        "codacy_api_github_mismatch": "fix_github_codacy_annotations",
+        "codacy_rule_conflict": "needs_manual_codacy_rule_conflict",
+        "review_comment_active": "fix_review_comments",
+        "token_missing": "needs_manual_secret",
+        "api_permission_error": "needs_manual_secret",
+        "scope_violation": "needs_manual_scope_violation",
+        "unknown": "needs_manual",
+    }
+    if category == "merge_conflict":
+        return "auto_resolve_merge_conflict" if context.get("merge_conflict_action") == "auto_resolve_merge_conflict" else "needs_manual_merge_conflict"
+    return mapping.get(category, "needs_manual")
+
+
+def classify_merge_conflict(
+    pr: dict[str, Any],
+    conflicted_files: list[str],
+    task_scope: list[str],
+) -> dict[str, Any]:
+    merge_state = norm_state(pr.get("mergeStateStatus"))
+    if merge_state == "CLEAN" and not conflicted_files:
+        return {"category": "none", "auto_resolvable": False, "next_action": "", "reasons": []}
+    if merge_state not in {"CONFLICTING", "DIRTY"}:
+        return {"category": "none", "auto_resolvable": False, "next_action": "", "reasons": []}
+    if any(path.endswith("order_manager.py") for path in conflicted_files):
+        return {"category": "merge_conflict", "auto_resolvable": False, "next_action": "needs_manual_merge_conflict", "reasons": ["business/core conflict"]}
+    outside_scope = [path for path in conflicted_files if path not in set(task_scope)]
+    auto_paths = {"scripts/pr_flow_automation.py", "scripts/pr_automation_controller.py"}
+    if outside_scope and any(path in auto_paths for path in conflicted_files):
+        return {"category": "merge_conflict", "auto_resolvable": True, "next_action": "auto_resolve_merge_conflict", "reasons": ["automation conflict outside task scope"]}
+    return {"category": "merge_conflict", "auto_resolvable": False, "next_action": "needs_manual_merge_conflict", "reasons": ["merge conflict requires manual handling"]}
+
+
+def summarize_blocker_actions(blockers: list[Any], context: dict[str, Any]) -> dict[str, Any]:
+    if not blockers:
+        return {
+            "primary_category": "none",
+            "needs_manual": False,
+            "safe_actions": [],
+            "reasons": [],
+            "next_action": "ready_to_merge" if bool(context.get("can_merge")) else "checks_green_or_no_action",
+        }
+    categories = [classify_blocker(item) for item in blockers]
+    primary = categories[0]
+    action = route_blocker_action(primary, {"merge_conflict_action": str(context.get("merge_conflict_action") or "")})
+    needs_manual = action.startswith("needs_manual")
+    return {
+        "primary_category": primary,
+        "needs_manual": needs_manual,
+        "safe_actions": [] if needs_manual else [action],
+        "reasons": categories,
+        "next_action": action,
     }
 
 

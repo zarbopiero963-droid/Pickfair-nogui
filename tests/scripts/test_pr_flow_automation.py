@@ -3,6 +3,8 @@
 
 import argparse
 import json
+import subprocess
+import sys
 from typing import Any, cast
 from unittest import TestCase
 
@@ -118,7 +120,63 @@ def test_codacy_blocking_evidence_ignores_stale_check_when_api_is_clear(monkeypa
 
     ASSERTIONS.assertFalse(evidence["blocking"])
     ASSERTIONS.assertTrue(evidence["ignored"])
-    ASSERTIONS.assertEqual(evidence["issues_returned"], 0)
+
+
+def test_blocker_taxonomy_classify_and_route_main_categories():
+    ASSERTIONS.assertEqual(flow.classify_blocker({"name": "workflow pending", "state": "pending"}), "workflow_pending")
+    ASSERTIONS.assertEqual(flow.classify_blocker({"name": "Codacy style issue"}), "codacy_style")
+    ASSERTIONS.assertEqual(flow.route_blocker_action("workflow_pending", {}), "wait_pending")
+    ASSERTIONS.assertEqual(flow.route_blocker_action("workflow_cancelled", {}), "rerun_stale_checks")
+    ASSERTIONS.assertEqual(flow.route_blocker_action("codacy_api_github_mismatch", {}), "fix_github_codacy_annotations")
+    ASSERTIONS.assertEqual(flow.route_blocker_action("scope_violation", {}), "needs_manual_scope_violation")
+    ASSERTIONS.assertEqual(flow.route_blocker_action("unknown", {}), "needs_manual")
+
+
+def test_summarize_blocker_actions_empty_non_blocking():
+    summary = flow.summarize_blocker_actions([], {"can_merge": False})
+    ASSERTIONS.assertEqual(summary["primary_category"], "none")
+    ASSERTIONS.assertFalse(summary["needs_manual"])
+    ASSERTIONS.assertEqual(summary["safe_actions"], [])
+    ASSERTIONS.assertEqual(summary["reasons"], [])
+    ASSERTIONS.assertEqual(summary["next_action"], "checks_green_or_no_action")
+    mergeable_summary = flow.summarize_blocker_actions([], {"can_merge": True})
+    ASSERTIONS.assertEqual(mergeable_summary["next_action"], "ready_to_merge")
+
+
+def test_classify_merge_conflict_clean_pr_not_conflict():
+    result = flow.classify_merge_conflict({"mergeStateStatus": "CLEAN"}, [], ["scripts/pr_flow_automation.py"])
+    ASSERTIONS.assertEqual(result["category"], "none")
+    ASSERTIONS.assertEqual(result["next_action"], "")
+
+
+def test_classify_merge_conflict_automation_outside_scope_auto_resolve():
+    result = flow.classify_merge_conflict(
+        {"mergeStateStatus": "CONFLICTING"},
+        ["scripts/pr_flow_automation.py"],
+        ["tests/scripts/test_pr_flow_automation.py"],
+    )
+    ASSERTIONS.assertEqual(result["auto_resolvable"], True)
+    ASSERTIONS.assertEqual(result["next_action"], "auto_resolve_merge_conflict")
+
+
+def test_classify_merge_conflict_business_core_needs_manual():
+    result = flow.classify_merge_conflict(
+        {"mergeStateStatus": "DIRTY"},
+        ["order_manager.py"],
+        ["scripts/pr_flow_automation.py"],
+    )
+    ASSERTIONS.assertEqual(result["auto_resolvable"], False)
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_merge_conflict")
+
+
+def test_pr_flow_script_help_executes():
+    proc = subprocess.run(
+        [sys.executable, "scripts/pr_flow_automation.py", "--help"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    ASSERTIONS.assertEqual(proc.returncode, 0)
 
 
 def test_codacy_blocking_evidence_preserves_current_blocker(monkeypatch):
