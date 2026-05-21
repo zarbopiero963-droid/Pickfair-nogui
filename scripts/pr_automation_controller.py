@@ -1267,7 +1267,7 @@ def post_fix_micro_audit_failed(report: dict[str, Any] | None) -> bool:
 
 
 def _line_value(text: str, key: str) -> str:
-    match = re.search(rf"(?im)^\s*{re.escape(key)}\s*:\s*(.+)$", text or "")
+    match = re.search(rf"(?im)^\s*{re.escape(key)}\s*[:=]\s*(.+)$", text or "")
     return match.group(1).strip() if match else ""
 
 
@@ -1380,14 +1380,23 @@ def _parse_post_fix_audit_json(raw: str) -> dict[str, Any]:
 
 
 def _parse_post_fix_audit_text(raw: str) -> dict[str, Any]:
+    status = _line_value(raw, "status") or _line_value(raw, "post_fix_audit") or _standalone_status_line(raw)
     return {
-        "status": _line_value(raw, "status"),
+        "status": status,
         "reasons": _list_value({}, raw, "reasons"),
         "checked_items": _list_value({}, raw, "checked_items"),
         "changed_files": _list_value({}, raw, "changed_files"),
         "validation_commands": _list_value({}, raw, "validation_commands"),
         "next_action": _line_value(raw, "next_action"),
     }
+
+
+def _standalone_status_line(raw: str) -> str:
+    for line in (raw or "").splitlines():
+        value = line.strip().upper()
+        if value in {"PASS", "FAIL", "PARTIAL"}:
+            return value
+    return ""
 
 
 def _normalize_post_fix_audit_report(report: dict[str, Any]) -> dict[str, Any]:

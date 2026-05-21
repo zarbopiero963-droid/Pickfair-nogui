@@ -366,6 +366,23 @@ def test_parse_post_fix_micro_audit_result_pass_defaults_to_validation_then_comm
     ASSERTIONS.assertFalse(controller.post_fix_micro_audit_failed(report))
 
 
+def test_parse_post_fix_micro_audit_result_supports_common_pass_text_formats():
+    """Common human-readable PASS formats should parse as PASS."""
+    pass_reports = [
+        "status: PASS",
+        "Status: PASS",
+        "STATUS: PASS",
+        "status = PASS",
+        "POST_FIX_AUDIT=PASS",
+        "Post-fix micro-audit report\nPASS\nall checks completed",
+    ]
+    for raw in pass_reports:
+        report = controller.parse_post_fix_micro_audit_result(raw)
+        ASSERTIONS.assertEqual(report["status"], "PASS")
+        ASSERTIONS.assertEqual(report["next_action"], "validation_then_commit")
+        ASSERTIONS.assertFalse(controller.post_fix_micro_audit_failed(report))
+
+
 def test_parse_post_fix_micro_audit_result_fail_defaults_to_needs_manual():
     """FAIL status should fail closed when next_action is omitted."""
     report = controller.parse_post_fix_micro_audit_result("status: FAIL\nreasons:\n- threshold exceeded")
