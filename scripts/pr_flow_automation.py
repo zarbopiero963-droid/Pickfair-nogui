@@ -596,9 +596,11 @@ def _current_next_action(decision: dict[str, Any]) -> str:
 
 
 def _can_apply_ready_route(decision: dict[str, Any]) -> bool:
+    taxonomy_dict = _taxonomy_dict(decision)
     return (
-        _taxonomy_next_action(decision.get("blocker_taxonomy") or {}) == "ready_to_merge"
+        _taxonomy_next_action(taxonomy_dict) == "ready_to_merge"
         and bool(decision.get("can_merge"))
+        and not _has_review_blocker(taxonomy_dict)
         and not _is_high_priority_action(_current_next_action(decision))
     )
 

@@ -1798,9 +1798,28 @@ def build_next_action_context(
                 "reason": "mergeable CONFLICTING or mergeStateStatus DIRTY",
             }
         )
+    taxonomy_context = {
+        "logs_clear": False,
+        "mergeable": pr.get("mergeable"),
+        "mergeStateStatus": pr.get("mergeStateStatus"),
+    }
+    if (
+        safe_nonnegative_int(review_summary.get("unresolved_active"), 0) == 0
+        and not blockers
+        and not pending_items
+        and not _pr_has_merge_conflict(pr)
+    ):
+        taxonomy_context["can_merge"] = _is_ready_to_merge_context(
+            {
+                "mergeable": pr.get("mergeable"),
+                "mergeStateStatus": pr.get("mergeStateStatus"),
+                "blockers": blockers,
+                "blockers_count": len(blockers),
+            }
+        )
     decision["blocker_taxonomy"] = summarize_blocker_actions(
         taxonomy_items,
-        {"logs_clear": False},
+        taxonomy_context,
     )
     files, commits = changed
     return NextActionContext(args, pr, effective_checks, files, commits, blockers, decision)

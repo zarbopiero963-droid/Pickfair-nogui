@@ -307,6 +307,45 @@ def test_apply_taxonomy_next_action_does_not_override_rerun_stale_checks_with_re
     ASSERTIONS.assertEqual(decision["next_action"], "rerun_stale_checks")
 
 
+def test_apply_taxonomy_next_action_does_not_override_scope_violation_with_review_action():
+    """Review blockers cannot overwrite manual scope-violation remediation."""
+    decision = {
+        "already_merged": False,
+        "can_merge": False,
+        "next_action": "needs_manual_scope_violation",
+        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
+    }
+
+    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
+    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_scope_violation")
+
+
+def test_apply_taxonomy_next_action_does_not_override_codacy_rule_conflict_with_review_action():
+    """Review blockers cannot overwrite manual Codacy-rule-conflict remediation."""
+    decision = {
+        "already_merged": False,
+        "can_merge": False,
+        "next_action": "needs_manual_codacy_rule_conflict",
+        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
+    }
+
+    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
+    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_codacy_rule_conflict")
+
+
+def test_apply_taxonomy_next_action_does_not_override_auto_resolve_merge_conflict_with_review_action():
+    """Review blockers cannot overwrite merge-conflict auto-resolution action."""
+    decision = {
+        "already_merged": False,
+        "can_merge": False,
+        "next_action": "auto_resolve_merge_conflict",
+        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
+    }
+
+    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
+    ASSERTIONS.assertEqual(decision["next_action"], "auto_resolve_merge_conflict")
+
+
 def _preflight_args() -> argparse.Namespace:
     return argparse.Namespace(
         repo="owner/repo",

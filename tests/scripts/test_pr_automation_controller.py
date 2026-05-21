@@ -805,6 +805,39 @@ def test_build_next_action_context_wires_codacy_review_and_summary_helpers(monke
     _assert_codacy_review_summary(ctx)
 
 
+def test_build_next_action_context_passes_merge_readiness_fields_to_taxonomy(monkeypatch):
+    """Taxonomy context should include merge readiness fields for empty-blocker routing."""
+    _stub_codacy_head_preservation(monkeypatch)
+    captured: dict[str, Any] = {}
+
+    def _capture_summary(blockers: list[dict[str, Any]], context: dict[str, Any]) -> dict[str, Any]:
+        captured["blockers"] = blockers
+        captured["context"] = dict(context)
+        return {
+            "categories": [],
+            "primary_category": "none",
+            "next_action": "checks_green_or_no_action",
+            "needs_manual": False,
+            "safe_actions": [],
+            "reasons": [],
+        }
+
+    monkeypatch.setattr(controller, "summarize_blocker_actions", _capture_summary)
+    decision: dict[str, object] = {"actions": [], "warnings": [], "errors": []}
+    pr = {
+        "statusCheckRollup": [],
+        "headRefOid": "pr-head-sha",
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+    }
+    controller.build_next_action_context(_args(), decision, pr, ([], []))
+
+    context = cast(dict[str, Any], captured["context"])
+    ASSERTIONS.assertEqual(context["mergeable"], "MERGEABLE")
+    ASSERTIONS.assertEqual(context["mergeStateStatus"], "CLEAN")
+    ASSERTIONS.assertIn("can_merge", context)
+
+
 def test_review_task_ignores_outdated_unresolved_threads():
     """Outdated unresolved-only review threads should not be treated as active blockers."""
     lines = controller._review_task_lines([  # pylint: disable=protected-access
