@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import scripts.pr_automation_controller as controller
+
 SELF_CHECK_NAMES = {
     "safe pr autofix",
     "pr autofix safe supervisor",
@@ -383,7 +385,7 @@ def build_decision(repo: str, pr_number: str, *, ignore_self: bool = True) -> di
             reasons.append(f"{len(checks['pending'])} real pending check(s)")
         can_merge = not reasons
 
-    return {
+    decision = {
         "repo": repo,
         "pr": str(pr_number),
         "url": pr.get("url"),
@@ -406,6 +408,45 @@ def build_decision(repo: str, pr_number: str, *, ignore_self: bool = True) -> di
         "self_stale": checks["self_stale"],
         "next_action": "merge_allowed" if can_merge and not already_merged else ("already_merged" if already_merged else "blocked"),
     }
+    taxonomy_items = list(checks["blockers"])
+    taxonomy_items.extend(checks["pending"])
+    if controller._pr_has_merge_conflict(pr):  # pylint: disable=protected-access
+        taxonomy_items.append(
+            {
+                "name": "PR merge conflict",
+                "state": "FAILURE",
+                "source": "merge",
+                "mergeable": pr.get("mergeable"),
+                "mergeStateStatus": pr.get("mergeStateStatus"),
+                "reason": "mergeable CONFLICTING or mergeStateStatus DIRTY",
+            }
+        )
+    decision["blocker_taxonomy"] = controller.summarize_blocker_actions(taxonomy_items, {"logs_clear": False})
+    return decision
+
+
+def classify_blocker(item: dict[str, Any]) -> dict[str, Any]:
+    """Proxy blocker taxonomy classification to controller helper."""
+    return controller.classify_blocker(item)
+
+
+def route_blocker_action(category: str, context: dict[str, Any]) -> str:
+    """Proxy blocker taxonomy routing to controller helper."""
+    return controller.route_blocker_action(category, context)
+
+
+def classify_merge_conflict(
+    pr: dict[str, Any],
+    conflicted_files: list[str],
+    task_scope: dict[str, Any],
+) -> dict[str, Any]:
+    """Proxy merge-conflict taxonomy classification to controller helper."""
+    return controller.classify_merge_conflict(pr, conflicted_files, task_scope)
+
+
+def summarize_blocker_actions(blockers: list[dict[str, Any]], context: dict[str, Any]) -> dict[str, Any]:
+    """Proxy taxonomy summarization to controller helper."""
+    return controller.summarize_blocker_actions(blockers, context)
 
 
 def build_telegram_summary(context: dict[str, Any]) -> dict[str, Any]:

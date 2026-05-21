@@ -155,6 +155,7 @@ def test_build_decision_reports_real_blockers_and_merge_state(monkeypatch):
     ASSERTIONS.assertFalse(decision["can_merge"])
     ASSERTIONS.assertEqual(decision["blockers"][0]["name"], "Codacy Static Code Analysis")
     ASSERTIONS.assertEqual(decision["ignored_self_checks"][0]["name"], "PR Merge Readiness")
+    ASSERTIONS.assertIn("blocker_taxonomy", decision)
 
 
 def _preflight_args() -> argparse.Namespace:
@@ -477,6 +478,27 @@ def test_cmd_report_wires_real_context_into_helpers(tmp_path, monkeypatch):
     rc = _run_cmd_report_no_fail(tmp_path)
     ASSERTIONS.assertEqual(rc, 0)
     _assert_cmd_report_context_output(tmp_path)
+
+
+def test_taxonomy_summary_prioritizes_pending_and_manual_blockers():
+    """Pending blockers take priority, then manual blockers over autofix routes."""
+    pending = flow.summarize_blocker_actions(
+        [{"name": "CI", "state": "IN_PROGRESS"}, {"name": "Codacy", "state": "FAILURE", "source": "codacy"}],
+        {},
+    )
+    ASSERTIONS.assertEqual(pending["primary_category"], "workflow_pending")
+    ASSERTIONS.assertEqual(pending["next_action"], "wait_pending")
+    manual = flow.summarize_blocker_actions(
+        [{"name": "Scope", "state": "FAILURE", "reason": "scope_violation"}],
+        {},
+    )
+    ASSERTIONS.assertEqual(manual["next_action"], "needs_manual_scope_violation")
+
+
+def test_route_blocker_action_test_failure_requires_clear_logs():
+    """test_failure routes to autofix only with explicit clear logs context."""
+    ASSERTIONS.assertEqual(flow.route_blocker_action("test_failure", {}), "needs_manual")
+    ASSERTIONS.assertEqual(flow.route_blocker_action("test_failure", {"logs_clear": True}), "fix_test_failure")
 
 
 def _report_without_codacy_check_decision() -> dict[str, Any]:

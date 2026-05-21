@@ -511,6 +511,61 @@ def test_build_next_action_context_stores_pr_head_without_overwriting_codacy_hea
     _assert_codacy_head_preserved(ctx.decision)
 
 
+def test_blocker_taxonomy_classifies_required_categories():
+    """Blocker taxonomy maps representative inputs to expected categories."""
+    cases = [
+        ({"name": "Codacy Static Code Analysis", "state": "FAILURE", "source": "codacy"}, "codacy_style"),
+        ({"name": "Codacy complexity", "state": "FAILURE", "source": "codacy", "reason": "C901 complexity"}, "codacy_complexity"),
+        ({"name": "Codacy", "state": "ACTION_REQUIRED", "source": "codacy", "reason": "D203 and D211 conflict"}, "codacy_rule_conflict"),
+        ({"name": "Codacy", "state": "ACTION_REQUIRED", "source": "codacy", "classification": "api_github_mismatch"}, "codacy_api_github_mismatch"),
+        ({"name": "Codacy", "state": "STALE", "source": "codacy"}, "github_stale_check"),
+        ({"name": "Review thread", "state": "ACTION_REQUIRED", "source": "review", "active": True}, "review_comment_active"),
+        ({"name": "Unit tests", "state": "FAILURE", "source": "check"}, "test_failure"),
+        ({"name": "Infra", "state": "FAILURE", "source": "check", "reason": "runner service unavailable"}, "infra_failure"),
+        ({"name": "Auth", "state": "FAILURE", "reason": "token missing"}, "token_missing"),
+        ({"name": "Auth", "state": "FAILURE", "reason": "403 permission denied"}, "api_permission_error"),
+        ({"name": "Flow", "state": "CANCELLED"}, "workflow_cancelled"),
+        ({"name": "Flow", "state": "IN_PROGRESS"}, "workflow_pending"),
+        ({"name": "Scope", "state": "FAILURE", "reason": "scope_violation detected"}, "scope_violation"),
+        ({"name": "Merge", "mergeStateStatus": "DIRTY"}, "merge_conflict"),
+        ({}, "unknown"),
+    ]
+    for payload, expected in cases:
+        ASSERTIONS.assertEqual(controller.classify_blocker(payload)["category"], expected)
+
+
+def test_route_blocker_action_maps_required_next_actions():
+    """Every required taxonomy route maps to the expected NEXT_ACTION."""
+    ASSERTIONS.assertEqual(controller.route_blocker_action("workflow_pending", {}), "wait_pending")
+    ASSERTIONS.assertEqual(controller.route_blocker_action("workflow_cancelled", {}), "rerun_stale_checks")
+    ASSERTIONS.assertEqual(controller.route_blocker_action("github_stale_check", {}), "rerun_stale_checks")
+    ASSERTIONS.assertEqual(controller.route_blocker_action("codacy_api_github_mismatch", {}), "fix_github_codacy_annotations")
+    ASSERTIONS.assertEqual(controller.route_blocker_action("codacy_rule_conflict", {}), "needs_manual_codacy_rule_conflict")
+    ASSERTIONS.assertEqual(controller.route_blocker_action("token_missing", {}), "needs_manual_secret")
+    ASSERTIONS.assertEqual(controller.route_blocker_action("scope_violation", {}), "needs_manual_scope_violation")
+    ASSERTIONS.assertEqual(controller.route_blocker_action("unknown", {}), "needs_manual")
+
+
+def test_classify_merge_conflict_contract_paths():
+    """Merge conflict classification differentiates safe out-of-scope automation from manual critical files."""
+    dirty = controller.classify_merge_conflict(
+        {"mergeable": "MERGEABLE", "mergeStateStatus": "DIRTY"},
+        ["scripts/pr_flow_automation.py"],
+        {"files": ["scripts/pr_automation_controller.py"]},
+    )
+    ASSERTIONS.assertEqual(dirty["category"], "merge_conflict")
+    ASSERTIONS.assertTrue(dirty["auto_resolvable"])
+    ASSERTIONS.assertEqual(dirty["resolution_strategy"], "take_main_for_out_of_scope_automation")
+    ASSERTIONS.assertEqual(dirty["next_action"], "auto_resolve_merge_conflict")
+    conflicting = controller.classify_merge_conflict(
+        {"mergeable": "CONFLICTING", "mergeStateStatus": "CLEAN"},
+        ["order_manager.py"],
+        {"files": ["scripts/pr_flow_automation.py"]},
+    )
+    ASSERTIONS.assertFalse(conflicting["auto_resolvable"])
+    ASSERTIONS.assertEqual(conflicting["next_action"], "needs_manual_merge_conflict")
+
+
 def test_review_task_lines_include_only_unresolved_active_threads():
     """Resolved/outdated threads are excluded from active unresolved review task lines."""
     nodes = [
