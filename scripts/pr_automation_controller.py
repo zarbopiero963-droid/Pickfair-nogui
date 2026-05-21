@@ -77,6 +77,7 @@ PR_AUTOMATION_STATE_FIELDS = (
     "controller_run_count",
     "stale_check_rerun_count",
     "codacy_oscillation_rounds",
+    "active_final_micro_audit_path",
 )
 ACTIVE_TASK_COMMAND_FILE = "active-task-command.md"
 ACTIVE_FINAL_MICRO_AUDIT_FILE = "active-final-micro-audit.md"
@@ -588,6 +589,7 @@ def normalize_pr_automation_state(payload: Any, repo: str, pr: str) -> dict[str,
         "same_blocker_rounds": _normalized_state_int(source, "same_blocker_rounds"),
         "last_action": _normalized_state_text(source, "last_action"),
         "last_result": _normalized_state_text(source, "last_result"),
+        "active_final_micro_audit_path": _normalized_state_text(source, "active_final_micro_audit_path"),
     }
     int_fields = [field for field in PR_AUTOMATION_STATE_FIELDS if field not in state]
     for field in int_fields:
@@ -672,11 +674,20 @@ def replace_active_task_context(context_dir: str, active: ActiveTaskContextInput
     current_task_id = str(current.get("task_id") or "")
     if current_task_id and current_task_id != next_task_id:
         _archive_active_context(context, time.strftime("%Y%m%d%H%M%S", time.gmtime()))
+    active_audit_path = str(context / ACTIVE_FINAL_MICRO_AUDIT_FILE)
     if current_task_id == next_task_id:
+        if not str(current.get("active_final_micro_audit_path") or "").strip():
+            current["active_final_micro_audit_path"] = active_audit_path
+            state_path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         return current
     (context / ACTIVE_TASK_COMMAND_FILE).write_text(active.task_text, encoding="utf-8")
     (context / ACTIVE_FINAL_MICRO_AUDIT_FILE).write_text(active.audit_text, encoding="utf-8")
-    state = {"task_id": next_task_id, "branch": str(active.branch), "pr": str(active.pr)}
+    state = {
+        "task_id": next_task_id,
+        "branch": str(active.branch),
+        "pr": str(active.pr),
+        "active_final_micro_audit_path": active_audit_path,
+    }
     state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return state
 
@@ -1744,11 +1755,11 @@ def _state_path_from_output(output_path: str) -> str:
 
 def _budget_limits() -> dict[str, int]:
     return {
-        "max_autofix_commits_per_pr": 0,
-        "max_same_blocker_attempts": 0,
-        "max_total_controller_runs": 0,
-        "max_codacy_oscillation_rounds": 0,
-        "max_stale_check_reruns": 0,
+        "max_autofix_commits_per_pr": 3,
+        "max_same_blocker_attempts": 2,
+        "max_total_controller_runs": 8,
+        "max_codacy_oscillation_rounds": 1,
+        "max_stale_check_reruns": 3,
     }
 
 

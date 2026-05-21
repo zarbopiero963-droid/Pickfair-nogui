@@ -110,15 +110,7 @@ def _controller_decision(monkeypatch, *, blocking: bool, ignored: bool) -> dict:
 
 def _prepare_decision_tracking_test(monkeypatch, tmp_path) -> tuple[dict[str, Any], dict[str, Any], Any]:
     monkeypatch.setattr(controller, "_state_path_from_output", lambda _output: str(tmp_path / "pr-state-test.json"))
-    monkeypatch.setattr(
-        controller,
-        "load_pr_automation_state",
-        lambda _path, _repo, _pr: controller.normalize_pr_automation_state(
-            {"codacy_issue_count": 3, "review_active_count": 2, "bad_check_count": 1},
-            "owner/repo",
-            "225",
-        ),
-    )
+    monkeypatch.setattr(controller, "load_pr_automation_state", _mock_loaded_tracking_state)
     monkeypatch.setattr(controller, "save_pr_automation_state", lambda _path, _state: None)
     decision: dict[str, Any] = {"actions": [], "warnings": [], "errors": [], "pending_count": 0}
     pr: dict[str, Any] = {
@@ -129,6 +121,14 @@ def _prepare_decision_tracking_test(monkeypatch, tmp_path) -> tuple[dict[str, An
     }
     ctx = controller.build_next_action_context(_args(), decision, pr, ([], []))
     return decision, pr, ctx
+
+
+def _mock_loaded_tracking_state(_path, _repo, _pr) -> dict[str, Any]:
+    return controller.normalize_pr_automation_state(
+        {"codacy_issue_count": 3, "review_active_count": 2, "bad_check_count": 1},
+        "owner/repo",
+        "225",
+    )
 
 
 def test_controller_does_not_launch_safe_autofix_for_stale_codacy_action_required(monkeypatch):
@@ -752,6 +752,16 @@ def test_saving_loading_state_round_trips(tmp_path):
     loaded = controller.load_pr_automation_state(str(path), "owner/repo", "225")
     ASSERTIONS.assertEqual(loaded["head"], "abc")
     ASSERTIONS.assertEqual(loaded["controller_run_count"], 2)
+    ASSERTIONS.assertEqual(loaded["active_final_micro_audit_path"], "")
+
+
+def test_pr_budget_status_exhausts_with_default_limits():
+    """Default budget limits must trigger exhausted state once thresholds are reached."""
+    limits = controller._budget_limits()  # pylint: disable=protected-access
+    status = controller.pr_budget_status({"autofix_commit_count": limits["max_autofix_commits_per_pr"]}, limits)
+
+    ASSERTIONS.assertTrue(status["exhausted"])
+    ASSERTIONS.assertEqual(status["next_action"], "needs_manual_budget_exhausted")
 
 
 def test_pending_to_wait_pending():
@@ -885,6 +895,32 @@ def test_active_micro_audit_always_matches_active_task(tmp_path):
     controller.replace_active_task_context(str(ctx), _active_input("task-c", "audit-c", branch="b2"))
     ASSERTIONS.assertEqual((ctx / "active-task-command.md").read_text(encoding="utf-8"), "task-c")
     ASSERTIONS.assertEqual((ctx / "active-final-micro-audit.md").read_text(encoding="utf-8"), "audit-c")
+
+
+def test_replace_active_task_context_persists_active_final_micro_audit_path(tmp_path):
+    """Active task state should persist the active final micro-audit path."""
+    ctx = tmp_path / "context"
+    state = controller.replace_active_task_context(str(ctx), _active_input("task-c", "audit-c", branch="b2"))
+
+    ASSERTIONS.assertEqual(state["active_final_micro_audit_path"], str(ctx / "active-final-micro-audit.md"))
+    persisted = json.loads((ctx / "active-task-state.json").read_text(encoding="utf-8"))
+    ASSERTIONS.assertEqual(persisted["active_final_micro_audit_path"], str(ctx / "active-final-micro-audit.md"))
+
+
+def test_should_run_final_micro_audit_with_state_from_replace_active_task_context(tmp_path):
+    """Final micro-audit should activate from state produced by active task replacement."""
+    ctx = tmp_path / "context"
+    state = controller.replace_active_task_context(str(ctx), _active_input("task-c", "audit-c", branch="b2"))
+    decision = {
+        "pending": [],
+        "bad": [],
+        "unresolved_active": 0,
+        "codacy_classification": "none",
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+    }
+
+    ASSERTIONS.assertTrue(controller.should_run_final_micro_audit(decision, state))
 
 
 def test_controller_does_not_read_history_for_active_decisions(tmp_path):
