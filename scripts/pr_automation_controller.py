@@ -1785,7 +1785,10 @@ def run_controller(args: argparse.Namespace, decision: dict[str, Any]) -> int:
 def _read_optional_file(path: str) -> str:
     if not str(path).strip():
         return ""
-    return Path(path).read_text(encoding="utf-8")
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return ""
 
 
 def _task_context_inputs_present(args: argparse.Namespace) -> bool:

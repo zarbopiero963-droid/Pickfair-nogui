@@ -2,6 +2,7 @@
 # pylint: disable=invalid-name,duplicate-code
 
 import argparse
+import copy
 import json
 from typing import Any, cast
 from unittest import TestCase
@@ -1013,7 +1014,7 @@ def test_merge_active_task_context_if_present_without_inputs_is_noop(tmp_path):
         task_context_dir=str(tmp_path / "ctx"),
     )
     decision: dict[str, Any] = {"pr_automation_state": {"controller_run_count": 4}}
-    original = dict(decision)
+    original = copy.deepcopy(decision)
 
     controller.merge_active_task_context_if_present(args, decision, {"headRefName": "feature/pr229"})
 
