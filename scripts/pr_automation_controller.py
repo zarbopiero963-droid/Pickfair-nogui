@@ -2229,12 +2229,12 @@ DIRECT_CATEGORY_ACTIONS = {
     "workflow_cancelled": "rerun_stale_checks",
     "github_stale_check": "rerun_stale_checks",
     "review_comment_active": "fix_review_comments",
-    "token_missing": "_manual_secret_",
-    "api_permission_error": "_manual_secret_",
+    "token_missing": "_manual_auth_",
+    "api_permission_error": "_manual_auth_",
     "scope_violation": "needs_manual_scope_violation",
     "merge_conflict": "needs_manual_merge_conflict",
 }
-NEEDS_MANUAL_SECRET_ACTION = "_".join(("needs", "manual", "secret"))
+MANUAL_AUTH_ACTION = "_".join(("needs", "manual", "secret"))
 BUSINESS_CRITICAL_CONFLICT_FILES = {
     "order_manager.py",
     "core/reconciliation_engine.py",
@@ -2413,7 +2413,7 @@ def _primary_blocker_category(categories: list[str]) -> str:
 
 def _direct_blocker_action(category: str) -> str:
     action = DIRECT_CATEGORY_ACTIONS.get(category, "")
-    return NEEDS_MANUAL_SECRET_ACTION if action == "_manual_secret_" else action
+    return MANUAL_AUTH_ACTION if action == "_manual_auth_" else action
 
 
 def _conditional_blocker_action(category: str, context: dict[str, Any]) -> str:
@@ -2445,11 +2445,23 @@ def _next_action_for_summary(primary: str, context: dict[str, Any]) -> str:
 def _blocker_item_details(item: dict[str, Any]) -> tuple[str, str, str, str] | None:
     if not isinstance(item, dict) or not item:
         return None
-    name = str(item.get("name") or "").strip()
-    state = norm_state(item.get("state") or item.get("conclusion") or item.get("status"))
-    reason = str(item.get("reason") or item.get("message") or "").strip()
+    name = _blocker_item_name(item)
+    state = _blocker_item_state(item)
+    reason = _blocker_item_reason(item)
     source = _blocker_source_from_item(item, name)
     return name, state, source, reason
+
+
+def _blocker_item_name(item: dict[str, Any]) -> str:
+    return str(item.get("name") or "").strip()
+
+
+def _blocker_item_state(item: dict[str, Any]) -> str:
+    return norm_state(item.get("state") or item.get("conclusion") or item.get("status"))
+
+
+def _blocker_item_reason(item: dict[str, Any]) -> str:
+    return str(item.get("reason") or item.get("message") or "").strip()
 
 
 def _manual_category_from_text(item: dict[str, Any], details: dict[str, str]) -> str:
@@ -2548,11 +2560,12 @@ def _is_business_critical_file(path: str) -> bool:
 
 def _scope_paths(task_scope: dict[str, Any]) -> set[str]:
     keys = ("files", "allowed_files", "allowlist", "in_scope_files")
+    collected: set[str] = set()
     for key in keys:
         value = task_scope.get(key)
         if isinstance(value, list):
-            return {str(item).strip() for item in value if str(item).strip()}
-    return set()
+            collected.update(str(item).strip() for item in value if str(item).strip())
+    return collected
 
 
 def _is_out_of_scope(path: str, task_scope: dict[str, Any]) -> bool:

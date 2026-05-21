@@ -156,6 +156,7 @@ def test_build_decision_reports_real_blockers_and_merge_state(monkeypatch):
     ASSERTIONS.assertEqual(decision["blockers"][0]["name"], "Codacy Static Code Analysis")
     ASSERTIONS.assertEqual(decision["ignored_self_checks"][0]["name"], "PR Merge Readiness")
     ASSERTIONS.assertIn("blocker_taxonomy", decision)
+    ASSERTIONS.assertEqual(decision["blocker_taxonomy"]["next_action"], "fix_codacy_current_issues")
 
 
 def _preflight_args() -> argparse.Namespace:
@@ -303,7 +304,7 @@ def test_automation_change_prs_should_enable_bounded_repair_mode():
 
 
 def test_build_decision_ready_to_merge_condition_true(monkeypatch):
-    """Ready-to-merge condition maps to merge_allowed for a clean merge context."""
+    """Ready-to-merge condition maps to ready_to_merge for a clean merge context."""
     monkeypatch.setattr(flow, "pr_view", _ready_to_merge_pr_view)
     decision = flow.build_decision("owner/repo", "225", ignore_self=True)
 
@@ -602,7 +603,8 @@ def _assert_ready_to_merge_decision(decision: dict[str, object]) -> None:
     ASSERTIONS.assertEqual(decision["mergeable"], "MERGEABLE")
     ASSERTIONS.assertEqual(decision["mergeStateStatus"], "CLEAN")
     ASSERTIONS.assertTrue(decision["can_merge"])
-    ASSERTIONS.assertEqual(decision["next_action"], "merge_allowed")
+    ASSERTIONS.assertEqual(decision["next_action"], "ready_to_merge")
+    ASSERTIONS.assertEqual(decision["blocker_taxonomy"]["next_action"], "ready_to_merge")
 
 
 def _telegram_summary_context() -> dict[str, object]:

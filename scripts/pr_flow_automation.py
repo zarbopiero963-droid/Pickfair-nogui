@@ -388,6 +388,16 @@ def build_decision(repo: str, pr_number: str, *, ignore_self: bool = True) -> di
             reasons.append(f"{len(checks['pending'])} real pending check(s)")
         can_merge = not reasons
 
+    taxonomy_context = {
+        "logs_clear": False,
+        "can_merge": can_merge,
+        "mergeable": pr.get("mergeable"),
+        "mergeStateStatus": pr.get("mergeStateStatus"),
+        "pending": checks["pending"],
+        "bad": checks["blockers"],
+        "blockers": checks["blockers"],
+        "blockers_count": len(checks["blockers"]),
+    }
     decision = {
         "repo": repo,
         "pr": str(pr_number),
@@ -409,7 +419,7 @@ def build_decision(repo: str, pr_number: str, *, ignore_self: bool = True) -> di
         "pending": checks["pending"],
         "ignored_self_checks": checks["ignored"],
         "self_stale": checks["self_stale"],
-        "next_action": "merge_allowed" if can_merge and not already_merged else ("already_merged" if already_merged else "blocked"),
+        "next_action": "already_merged" if already_merged else ("ready_to_merge" if can_merge else "blocked"),
     }
     taxonomy_items = list(checks["blockers"])
     taxonomy_items.extend(checks["pending"])
@@ -424,7 +434,10 @@ def build_decision(repo: str, pr_number: str, *, ignore_self: bool = True) -> di
                 "reason": "mergeable CONFLICTING or mergeStateStatus DIRTY",
             }
         )
-    decision["blocker_taxonomy"] = controller.summarize_blocker_actions(taxonomy_items, {"logs_clear": False})
+    decision["blocker_taxonomy"] = controller.summarize_blocker_actions(taxonomy_items, taxonomy_context)
+    taxonomy_next_action = decision["blocker_taxonomy"].get("next_action")
+    if not already_merged and can_merge and taxonomy_next_action == "ready_to_merge":
+        decision["next_action"] = "ready_to_merge"
     return decision
 
 

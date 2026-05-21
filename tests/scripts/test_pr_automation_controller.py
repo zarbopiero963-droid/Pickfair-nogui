@@ -537,9 +537,25 @@ def _codacy_blocker_cases() -> list[tuple[dict[str, object], str]]:
 
 def _manual_and_workflow_cases() -> list[tuple[dict[str, object], str]]:
     return [
-        ({"name": "Review thread", "state": "ACTION_REQUIRED", "source": "review", "active": True}, "review_comment_active"),
+        (
+            {
+                "name": "Review thread",
+                "state": "ACTION_REQUIRED",
+                "source": "review",
+                "active": True,
+            },
+            "review_comment_active",
+        ),
         ({"name": "Unit tests", "state": "FAILURE", "source": "check"}, "test_failure"),
-        ({"name": "Infra", "state": "FAILURE", "source": "check", "reason": "runner service unavailable"}, "infra_failure"),
+        (
+            {
+                "name": "Infra",
+                "state": "FAILURE",
+                "source": "check",
+                "reason": "runner service unavailable",
+            },
+            "infra_failure",
+        ),
         ({"name": "Auth", "state": "FAILURE", "reason": "token missing"}, "token_missing"),
         ({"name": "Auth", "state": "FAILURE", "reason": "403 permission denied"}, "api_permission_error"),
         ({"name": "Flow", "state": "CANCELLED"}, "workflow_cancelled"),
@@ -579,6 +595,7 @@ def test_route_blocker_action_maps_required_next_actions():
         "needs_manual_codacy_rule_conflict",
     )
     ASSERTIONS.assertEqual(controller.route_blocker_action("token_missing", {}), "needs_manual_secret")
+    ASSERTIONS.assertEqual(controller.route_blocker_action("api_permission_error", {}), "needs_manual_secret")
     ASSERTIONS.assertEqual(controller.route_blocker_action("scope_violation", {}), "needs_manual_scope_violation")
     ASSERTIONS.assertEqual(controller.route_blocker_action("unknown", {}), "needs_manual")
 
@@ -592,6 +609,27 @@ def test_summarize_blocker_actions_empty_is_non_blocking():
     ASSERTIONS.assertEqual(clean["next_action"], "checks_green_or_no_action")
     ASSERTIONS.assertFalse(clean["needs_manual"])
     ASSERTIONS.assertEqual(mergeable["next_action"], "ready_to_merge")
+
+
+def test_summarize_blocker_actions_empty_ready_context_from_merge_metadata():
+    """Empty blocker list uses merge metadata as ready_to_merge signal."""
+    summary = controller.summarize_blocker_actions(
+        [],
+        {"mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN", "bad": [], "pending": []},
+    )
+
+    ASSERTIONS.assertEqual(summary["primary_category"], "none")
+    ASSERTIONS.assertEqual(summary["next_action"], "ready_to_merge")
+    ASSERTIONS.assertFalse(summary["needs_manual"])
+
+
+def test_scope_paths_skips_empty_list_and_continues():
+    """Scope parsing should continue scanning keys after an empty list value."""
+    scope_paths = controller._scope_paths(  # pylint: disable=protected-access
+        {"files": [], "allowlist": ["scripts/x.py"]}
+    )
+
+    ASSERTIONS.assertEqual(scope_paths, {"scripts/x.py"})
 
 
 def test_classify_merge_conflict_contract_paths():
