@@ -133,6 +133,38 @@ PHASE0_RESULT_LIST_FIELDS = [
     "tests_to_run",
     "stop_conditions",
 ]
+PHASE0_REQUIRED_EVIDENCE_FIELDS = (
+    "files_inspected",
+    "static_analysis_rules",
+    "workflows_affected",
+    "implementation_plan",
+    "tests_to_run",
+    "stop_conditions",
+)
+SECTION_HEADER_PATTERN = re.compile(r"^\s*[A-Z0-9][A-Z0-9 _-]*\s*(?::\s*)?$")
+PLACEHOLDER_VALUES = frozenset({"", "tbd", "todo", "none", "null", "n/a"})
+ALLOW_COMMIT_PUSH_PATTERN = re.compile(r"(?m)^\s*ALLOW_COMMIT_PUSH\s*:\s*yes\s*$")
+COMMIT_PUSH_NEGATION_PATTERNS = (
+    re.compile(r"\bdo\s+not\s+commit\b"),
+    re.compile(r"\bdo\s+not\s+push\b"),
+    re.compile(r"\bdon't\s+commit\b"),
+    re.compile(r"\bdon't\s+push\b"),
+    re.compile(r"\bno\s+commit(?:\b|/push\b)"),
+    re.compile(r"\bno\s+push(?:\b|/commit\b)"),
+    re.compile(r"\bno\s+commit/push\b"),
+    re.compile(r"\bno\s+push/commit\b"),
+)
+UNSAFE_COMMIT_PUSH_PATTERNS = (
+    re.compile(r"\bgit\s+commit(?:\b|$)", re.IGNORECASE),
+    re.compile(r"\bgit\s+push(?:\b|$)", re.IGNORECASE),
+    re.compile(r"\bcommit\s+changes(?:\b|$)", re.IGNORECASE),
+    re.compile(r"\bpush\s+origin\s+branch(?:\b|$)", re.IGNORECASE),
+)
+EXPLICIT_COMMIT_PUSH_COMMAND_PATTERNS = (
+    re.compile(r"\bgit\s+commit(?:\b|$)", re.IGNORECASE),
+    re.compile(r"\bgit\s+push(?:\b|$)", re.IGNORECASE),
+    re.compile(r"\bpush\s+origin\s+branch(?:\b|$)", re.IGNORECASE),
+)
 
 
 def build_codex_task_prompt(context: dict[str, Any] | None = None) -> str:
@@ -1632,11 +1664,15 @@ def _normalize_phase0_report(report: dict[str, Any]) -> dict[str, Any]:
     }
     for key in PHASE0_RESULT_LIST_FIELDS:
         normalized[key] = _list_value(report, "", key)
-    if status == "PASS" and next_action == "generate_patch_prompt":
+    if status == "PASS" and next_action == "generate_patch_prompt" and _phase0_has_required_evidence(normalized):
         return normalized
     normalized["status"] = "NEEDS_MANUAL"
     normalized["next_action"] = "needs_manual_phase0_failed"
     return normalized
+
+
+def _phase0_has_required_evidence(report: dict[str, Any]) -> bool:
+    return all(_has_meaningful_list_values(report.get(field)) for field in PHASE0_REQUIRED_EVIDENCE_FIELDS)
 
 
 def _phase0_status(report: dict[str, Any]) -> str:
@@ -1697,34 +1733,40 @@ def _phase0_result_contract_line() -> str:
 
 
 def _codex_scalar_context_map(context: dict[str, Any]) -> dict[str, str]:
-    method_default = "\n".join(
-        [
-            "- inspect relevant files first",
-            "- verify each finding is still valid",
-            "- keep patch minimal",
-            "- add/update focused tests",
-            "- run validation",
-            "- do not commit/push unless explicitly allowed",
-        ]
-    )
-    output_format_default = "\n".join(
-        [
-            "- files changed",
-            "- summary of fix",
-            "- tests run",
-            "- post-fix audit result",
-            "- final status DONE/PARTIAL/NEEDS_MANUAL",
-        ]
-    )
+    defaults = _codex_scalar_defaults()
     return {
         "TASK": str(context.get("task") or "TBD"),
         "OBJECTIVE": str(context.get("objective") or "TBD"),
         "CONTEXT": str(context.get("context") or "TBD"),
         "CURRENT BEHAVIOR": str(context.get("current_behavior") or "TBD"),
         "EXPECTED BEHAVIOR": str(context.get("expected_behavior") or "TBD"),
-        "METHOD": str(context.get("method") or method_default),
+        "METHOD": str(context.get("method") or defaults["method"]),
         "POST-FIX MICRO-AUDIT BEFORE COMMIT": "Use required post-fix micro-audit checklist before commit.",
-        "OUTPUT FORMAT": str(context.get("output_format") or output_format_default),
+        "OUTPUT FORMAT": str(context.get("output_format") or defaults["output_format"]),
+    }
+
+
+def _codex_scalar_defaults() -> dict[str, str]:
+    return {
+        "method": "\n".join(
+            [
+                "- inspect relevant files first",
+                "- verify each finding is still valid",
+                "- keep patch minimal",
+                "- add/update focused tests",
+                "- run validation",
+                "- do not commit/push unless explicitly allowed",
+            ]
+        ),
+        "output_format": "\n".join(
+            [
+                "- files changed",
+                "- summary of fix",
+                "- tests run",
+                "- post-fix audit result",
+                "- final status DONE/PARTIAL/NEEDS_MANUAL",
+            ]
+        ),
     }
 
 
@@ -1742,34 +1784,39 @@ def _codex_list_section_key(section: str) -> str:
 
 
 def _codex_context_list_value(context: dict[str, Any], key: str) -> str:
+    values = _context_list(context, key) or _codex_list_defaults(key)
+    return "\n".join(f"- {item}" for item in values)
+
+
+def _codex_list_defaults(key: str) -> list[str]:
     if key == "stop_conditions":
-        defaults = [
+        return [
             "stop on scope violation",
             "stop on failing post-fix audit",
             "stop on validation failure",
             "stop on ambiguous/high-risk changes needing human decision",
         ]
-        return "\n".join(f"- {item}" for item in (_context_list(context, key) or defaults))
-    return "\n".join(f"- {item}" for item in (_context_list(context, key) or ["TBD"]))
+    return ["TBD"]
 
 
 def _section_body_lines(text: str, section: str) -> list[str]:
-    header_pattern = re.compile(r"^\s*[A-Z0-9][A-Z0-9 _-]*\s*(?::\s*)?$")
     body: list[str] = []
-    capturing = False
-    target = str(section or "")
-    for raw_line in str(text or "").splitlines():
-        if not capturing:
-            if not _section_header_match(raw_line, target):
-                continue
-            capturing = True
-            continue
-        if header_pattern.match(raw_line):
+    for raw_line in _section_following_lines(text, section):
+        if SECTION_HEADER_PATTERN.match(raw_line):
             break
         stripped = raw_line.strip()
         if stripped:
             body.append(stripped)
     return body
+
+
+def _section_following_lines(text: str, section: str) -> list[str]:
+    lines = str(text or "").splitlines()
+    target = str(section or "")
+    for index, raw_line in enumerate(lines):
+        if _section_header_match(raw_line, target):
+            return lines[index + 1 :]
+    return []
 
 
 def _section_header_match(line: str, section: str) -> bool:
@@ -1778,49 +1825,47 @@ def _section_header_match(line: str, section: str) -> bool:
 
 
 def _is_placeholder_value(line: str) -> bool:
-    normalized = line.strip().lower()
+    return _normalize_placeholder_text(line) in PLACEHOLDER_VALUES
+
+
+def _normalize_placeholder_text(line: str) -> str:
+    normalized = str(line or "").strip().lower()
     if normalized in {"-", "*"}:
-        return True
+        return ""
     if normalized.startswith(("- ", "* ")):
         normalized = normalized[2:].strip()
     if normalized.startswith('"') and normalized.endswith('"') and len(normalized) >= 2:
         normalized = normalized[1:-1].strip()
-    placeholders = {"", "tbd", "todo", "none", "null", "n/a"}
-    return normalized in placeholders
+    return normalized
+
+
+def _has_meaningful_list_values(value: Any) -> bool:
+    return any(not _is_placeholder_value(item) for item in _list_from_payload(value))
 
 
 def _has_commit_push_allowance(text: str) -> bool:
-    return bool(re.search(r"(?m)^\s*ALLOW_COMMIT_PUSH\s*:\s*yes\s*$", str(text or "")))
+    return bool(ALLOW_COMMIT_PUSH_PATTERN.search(str(text or "")))
 
 
 def _is_unsafe_commit_push_line(line: str) -> bool:
     normalized = line.strip().lower()
-    if not normalized or _is_commit_push_negation(normalized):
+    if not normalized:
         return False
-    return any(pattern.search(normalized) for pattern in _unsafe_commit_push_patterns())
+    if not any(pattern.search(normalized) for pattern in _unsafe_commit_push_patterns()):
+        return False
+    return not (_is_commit_push_negation(normalized) and not _has_explicit_commit_push_command(normalized))
 
 
 def _is_commit_push_negation(line: str) -> bool:
-    patterns = [
-        r"\bdo\s+not\s+commit\b",
-        r"\bdo\s+not\s+push\b",
-        r"\bdon't\s+commit\b",
-        r"\bdon't\s+push\b",
-        r"\bno\s+commit(?:\b|/push\b)",
-        r"\bno\s+push(?:\b|/commit\b)",
-        r"\bno\s+commit/push\b",
-        r"\bno\s+push/commit\b",
-    ]
-    return any(re.search(pattern, line) for pattern in patterns)
+    return any(pattern.search(line) for pattern in COMMIT_PUSH_NEGATION_PATTERNS)
+
+
+def _has_explicit_commit_push_command(line: str) -> bool:
+    return any(pattern.search(line) for pattern in EXPLICIT_COMMIT_PUSH_COMMAND_PATTERNS)
 
 
 def _unsafe_commit_push_patterns() -> tuple[re.Pattern[str], ...]:
-    return (
-        re.compile(r"\bgit\s+commit(?:\b|$)", re.IGNORECASE),
-        re.compile(r"\bgit\s+push(?:\b|$)", re.IGNORECASE),
-        re.compile(r"\bcommit\s+changes(?:\b|$)", re.IGNORECASE),
-        re.compile(r"\bpush\s+origin\s+branch(?:\b|$)", re.IGNORECASE),
-    )
+    return UNSAFE_COMMIT_PUSH_PATTERNS
 
 
 def write_codacy_task(outdir: Path, raw: dict[str, Any], issues: list[dict[str, Any]]) -> None:

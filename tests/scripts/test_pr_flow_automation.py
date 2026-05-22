@@ -108,7 +108,7 @@ def test_flow_phase0_parser_supports_fenced_json_with_prose():
         [
             "preflight result follows",
             "```json",
-            '{"status":"PASS","risk_level":"medium","next_action":"generate_patch_prompt"}',
+            '{"status":"PASS","risk_level":"medium","next_action":"generate_patch_prompt","files_inspected":["scripts/pr_flow_automation.py"],"static_analysis_rules":["CCN<=10"],"workflows_affected":["pr-flow-guardrails"],"implementation_plan":["fix parser"],"tests_to_run":["python3 -m pytest tests/scripts/test_pr_flow_automation.py -q"],"stop_conditions":["stop on scope violation"]}',
             "```",
         ]
     )
