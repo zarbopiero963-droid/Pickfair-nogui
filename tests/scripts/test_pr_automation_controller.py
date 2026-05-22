@@ -161,6 +161,27 @@ def _assert_active_context_merge(decision: dict[str, Any], context_dir) -> None:
     )
 
 
+def _full_codex_contract_prompt() -> str:
+    return controller.build_codex_task_prompt(
+        {
+            "task": "Fix lint",
+            "objective": "Address blockers",
+            "context": "Current PR repair",
+            "current_behavior": "Some checks fail",
+            "expected_behavior": "Checks pass after focused fix",
+            "method": "Apply scoped code and test changes",
+            "output_format": "Required response template",
+            "files_to_inspect": ["scripts/pr_automation_controller.py"],
+            "files_allowed": ["scripts/pr_automation_controller.py", "tests/scripts/test_pr_automation_controller.py"],
+            "do_not_modify": ["scripts/pr_flow_automation.py"],
+            "current_blockers": ["Prompt contract placeholder handling"],
+            "required_fixes": ["Reject placeholder-only required section values"],
+            "validation": ["python3 -m pytest tests/scripts/test_pr_automation_controller.py -q"],
+            "stop_conditions": ["Do not edit unrelated files"],
+        }
+    )
+
+
 def test_controller_does_not_launch_safe_autofix_for_stale_codacy_action_required(monkeypatch):
     """A stale Codacy ACTION_REQUIRED check is ignored once the Codacy API is clear."""
     decision = _controller_decision(monkeypatch, blocking=False, ignored=True)
@@ -269,11 +290,88 @@ def test_build_post_fix_micro_audit_prompt_filters_blank_changed_files_entries()
 
 def test_build_codex_task_prompt_includes_required_sections():
     """Generated codex prompt contains required sections and validates successfully."""
-    prompt = controller.build_codex_task_prompt({"task": "workflow hygiene", "objective": "contracted prompts"})
+    prompt = controller.build_codex_task_prompt(
+        {
+            "task": "workflow hygiene",
+            "objective": "contracted prompts",
+            "context": "Current PR repair request",
+            "current_behavior": "Placeholder-only values can pass validation",
+            "expected_behavior": "Placeholder-only values must fail validation",
+            "method": "Update prompt-contract value checks and tests",
+            "output_format": "Required response format",
+            "files_to_inspect": ["scripts/pr_automation_controller.py"],
+            "files_allowed": [
+                "scripts/pr_automation_controller.py",
+                "tests/scripts/test_pr_automation_controller.py",
+            ],
+            "do_not_modify": ["scripts/pr_flow_automation.py", "tests/scripts/test_pr_flow_automation.py"],
+            "current_blockers": ["validate_codex_prompt_contract accepts placeholder-only required sections"],
+            "required_fixes": ["Invalidate placeholder-only section values for required sections"],
+            "validation": ["python3 -m pytest tests/scripts/test_pr_automation_controller.py -q"],
+            "stop_conditions": ["Do not modify unrelated files"],
+        }
+    )
     for section in controller.CODEX_PROMPT_REQUIRED_SECTIONS:
         ASSERTIONS.assertIn(f"{section}:", prompt)
     ASSERTIONS.assertIn("PHASE 0 PRE-FLIGHT (READ-ONLY)", prompt)
     ASSERTIONS.assertTrue(controller.validate_codex_prompt_contract(prompt)["valid"])
+
+
+def test_build_codex_task_prompt_minimal_context_populates_required_contract_defaults():
+    """Minimal context keeps required contract sections initialized and valid."""
+    prompt = controller.build_codex_task_prompt(
+        {
+            "task": "Fix prompt defaults",
+            "objective": "Keep required contract sections initialized",
+            "context": "Current PR repair request",
+            "current_behavior": "Required sections can be uninitialized",
+            "expected_behavior": "Required sections are always initialized",
+            "files_to_inspect": ["scripts/pr_automation_controller.py"],
+            "files_allowed": ["scripts/pr_automation_controller.py", "tests/scripts/test_pr_automation_controller.py"],
+            "do_not_modify": ["scripts/pr_flow_automation.py"],
+            "current_blockers": ["METHOD/OUTPUT FORMAT/STOP CONDITIONS default to placeholders"],
+            "required_fixes": ["Provide safe non-placeholder defaults"],
+            "validation": ["python3 -m pytest tests/scripts/test_pr_automation_controller.py -q"],
+        }
+    )
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertTrue(result["valid"])
+    ASSERTIONS.assertEqual(result["missing_sections"], [])
+    ASSERTIONS.assertEqual(result["uninitialized_sections"], [])
+
+
+def test_build_codex_task_prompt_defaults_include_method_output_stop_contract_text():
+    """Default METHOD/OUTPUT FORMAT/STOP CONDITIONS sections include concrete contract bullets."""
+    prompt = controller.build_codex_task_prompt(
+        {
+            "task": "Fix prompt defaults",
+            "objective": "Keep required contract sections initialized",
+            "context": "Current PR repair request",
+            "current_behavior": "Required sections can be uninitialized",
+            "expected_behavior": "Required sections are always initialized",
+            "files_to_inspect": ["scripts/pr_automation_controller.py"],
+            "files_allowed": ["scripts/pr_automation_controller.py", "tests/scripts/test_pr_automation_controller.py"],
+            "do_not_modify": ["scripts/pr_flow_automation.py"],
+            "current_blockers": ["METHOD/OUTPUT FORMAT/STOP CONDITIONS default to placeholders"],
+            "required_fixes": ["Provide safe non-placeholder defaults"],
+            "validation": ["python3 -m pytest tests/scripts/test_pr_automation_controller.py -q"],
+        }
+    )
+    ASSERTIONS.assertIn("- inspect relevant files first", prompt)
+    ASSERTIONS.assertIn("- verify each finding is still valid", prompt)
+    ASSERTIONS.assertIn("- keep patch minimal", prompt)
+    ASSERTIONS.assertIn("- add/update focused tests", prompt)
+    ASSERTIONS.assertIn("- run validation", prompt)
+    ASSERTIONS.assertIn("- do not commit/push unless explicitly allowed", prompt)
+    ASSERTIONS.assertIn("- files changed", prompt)
+    ASSERTIONS.assertIn("- summary of fix", prompt)
+    ASSERTIONS.assertIn("- tests run", prompt)
+    ASSERTIONS.assertIn("- post-fix audit result", prompt)
+    ASSERTIONS.assertIn("- final status DONE/PARTIAL/NEEDS_MANUAL", prompt)
+    ASSERTIONS.assertIn("- stop on scope violation", prompt)
+    ASSERTIONS.assertIn("- stop on failing post-fix audit", prompt)
+    ASSERTIONS.assertIn("- stop on validation failure", prompt)
+    ASSERTIONS.assertIn("- stop on ambiguous/high-risk changes needing human decision", prompt)
 
 
 def test_ensure_codex_prompt_contract_appends_missing_sections():
@@ -289,6 +387,38 @@ def test_validate_codex_prompt_contract_reports_missing_sections_for_incomplete_
     result = controller.validate_codex_prompt_contract("TASK:\nfix this")
     ASSERTIONS.assertIn("OBJECTIVE", result["missing_sections"])
     ASSERTIONS.assertIn("CONTEXT", result["missing_sections"])
+    ASSERTIONS.assertFalse(result["valid"])
+
+
+def test_validate_codex_prompt_contract_requires_exact_task_header_not_prefix_text():
+    """Prefix prose like Task allowed files must not satisfy required TASK header."""
+    prompt = "\n".join(
+        [
+            "PHASE 0 PRE-FLIGHT (READ-ONLY)",
+            "Task allowed files: scripts/pr_automation_controller.py",
+            "OBJECTIVE:\nAddress blockers",
+            "CONTEXT:\nScope is limited",
+            "VALIDATION:\n- python3 -m pytest -q",
+        ]
+    )
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertIn("TASK", result["missing_sections"])
+    ASSERTIONS.assertFalse(result["valid"])
+
+
+def test_validate_codex_prompt_contract_requires_exact_objective_header_not_prefix_text():
+    """Prefix prose like Objective details must not satisfy required OBJECTIVE header."""
+    prompt = "\n".join(
+        [
+            "PHASE 0 PRE-FLIGHT (READ-ONLY)",
+            "TASK:\nAddress blockers",
+            "Objective details:\nScope is limited",
+            "CONTEXT:\nScope is limited",
+            "VALIDATION:\n- python3 -m pytest -q",
+        ]
+    )
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertIn("OBJECTIVE", result["missing_sections"])
     ASSERTIONS.assertFalse(result["valid"])
 
 
@@ -419,7 +549,7 @@ def test_validate_codex_prompt_contract_allows_commit_push_with_allowance_line()
     """ALLOW_COMMIT_PUSH yes on its own line permits commit/push imperative instructions."""
     prompt = "\n".join(
         [
-            controller.build_codex_task_prompt({"task": "Fix lint", "objective": "Address blockers"}),
+            _full_codex_contract_prompt(),
             "ALLOW_COMMIT_PUSH: yes",
             "METHOD:\nRun git commit and git push origin branch",
         ]
@@ -432,8 +562,20 @@ def test_validate_codex_prompt_contract_does_not_reject_descriptive_committing_w
     """Descriptive words like committing do not trigger unsafe commit/push detection."""
     prompt = "\n".join(
         [
-            controller.build_codex_task_prompt({"task": "Fix lint", "objective": "Address blockers"}),
+            _full_codex_contract_prompt(),
             "METHOD:\nDocument expected steps before committing anything.",
+        ]
+    )
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertTrue(result["valid"])
+
+
+def test_validate_codex_prompt_contract_does_not_reject_post_fix_header_with_commit_word():
+    """Required header text with commit wording must remain valid."""
+    prompt = "\n".join(
+        [
+            _full_codex_contract_prompt(),
+            "POST-FIX MICRO-AUDIT BEFORE COMMIT",
         ]
     )
     result = controller.validate_codex_prompt_contract(prompt)
@@ -442,7 +584,7 @@ def test_validate_codex_prompt_contract_does_not_reject_descriptive_committing_w
 
 def test_validate_codex_prompt_contract_does_not_reject_post_fix_micro_audit_header():
     """POST-FIX MICRO-AUDIT BEFORE COMMIT header is mandatory and must remain valid."""
-    prompt = controller.ensure_codex_prompt_contract("TASK:\nFix lint")
+    prompt = _full_codex_contract_prompt()
     result = controller.validate_codex_prompt_contract(prompt)
     ASSERTIONS.assertTrue(result["valid"])
 
@@ -451,7 +593,7 @@ def test_validate_codex_prompt_contract_does_not_reject_do_not_commit_or_push():
     """Negative guardrails about commit/push must not be treated as unsafe instructions."""
     prompt = "\n".join(
         [
-            controller.build_codex_task_prompt({"task": "Fix lint", "objective": "Address blockers"}),
+            _full_codex_contract_prompt(),
             "METHOD:\nDo not commit. Do not push. no commit/push.",
         ]
     )
@@ -459,17 +601,116 @@ def test_validate_codex_prompt_contract_does_not_reject_do_not_commit_or_push():
     ASSERTIONS.assertTrue(result["valid"])
 
 
-def test_section_has_value_rejects_tbd_list_placeholder():
-    """Section content with only list placeholder values like - TBD remains invalid."""
+def test_validate_codex_prompt_contract_rejects_placeholder_objective_tbd_bullet():
+    """Placeholder values like - TBD keep objective/context/validation checks invalid."""
     prompt = "\n".join(
         [
-            "TASK:\nFix lint",
+            "TASK:\nFix this",
             "OBJECTIVE:\n- TBD",
             "CONTEXT:\nReady",
             "VALIDATION:\n- python3 -m pytest -q",
         ]
     )
-    ASSERTIONS.assertFalse(controller._section_has_value(prompt, "OBJECTIVE"))
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertIn("generic_fix_without_objective_context_validation", result["reasons"])
+    ASSERTIONS.assertFalse(result["valid"])
+
+
+def test_validate_codex_prompt_contract_rejects_placeholder_validation_list_only_tbd():
+    """List-style validation with only placeholders must be treated as missing/uninitialized."""
+    prompt = "\n".join(
+        [
+            "TASK:\nFix this",
+            "OBJECTIVE:\nAddress blockers",
+            "CONTEXT:\nReady",
+            "VALIDATION:\n- TBD",
+        ]
+    )
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertIn("generic_fix_without_objective_context_validation", result["reasons"])
+    ASSERTIONS.assertFalse(result["valid"])
+
+
+def test_validate_codex_prompt_contract_rejects_placeholder_objective_variants():
+    """TBD/TODO/none/null/n-a placeholders should be treated as uninitialized."""
+    for value in ("TBD", "- TBD", "TODO", "- TODO", "none", "null", "n/a", "\"\"", "   "):
+        prompt = "\n".join(
+            [
+                "TASK:\nFix this",
+                f"OBJECTIVE:\n{value}",
+                "CONTEXT:\nReady",
+                "VALIDATION:\n- python3 -m pytest -q",
+            ]
+        )
+        result = controller.validate_codex_prompt_contract(prompt)
+        ASSERTIONS.assertIn("generic_fix_without_objective_context_validation", result["reasons"])
+        ASSERTIONS.assertFalse(result["valid"])
+
+
+def test_validate_codex_prompt_contract_rejects_list_style_section_with_only_placeholder_bullets():
+    """List-style required sections with only placeholder bullets are invalid."""
+    prompt = "\n".join(
+        [
+            "TASK:\nFix this",
+            "OBJECTIVE:\nAddress blockers",
+            "CONTEXT:\nReady",
+            "FILES TO INSPECT:\n- TBD\n-   ",
+            "FILES ALLOWED:\n- scripts/pr_automation_controller.py",
+            "DO NOT MODIFY:\n- scripts/pr_flow_automation.py",
+            "CURRENT BEHAVIOR:\ncodex contract passes placeholder",
+            "EXPECTED BEHAVIOR:\nplaceholder-only lists must fail",
+            "CURRENT BLOCKERS:\n- placeholder-only list accepted",
+            "REQUIRED FIXES:\n- invalidate placeholder-only list",
+            "METHOD:\npatch validator",
+            "VALIDATION:\n- python3 -m pytest -q",
+            "POST-FIX MICRO-AUDIT BEFORE COMMIT:\nUse required post-fix micro-audit checklist before commit.",
+            "OUTPUT FORMAT:\nstructured status",
+            "STOP CONDITIONS:\n- no unrelated edits",
+        ]
+    )
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertIn("FILES TO INSPECT", result["uninitialized_sections"])
+    ASSERTIONS.assertFalse(result["valid"])
+
+
+def test_validate_codex_prompt_contract_rejects_unsafe_commit_push_imperatives_without_allowance():
+    """Imperative unsafe commit/push wording is blocked without explicit allowance."""
+    lines = (
+        "METHOD:\nRun git commit after checks.",
+        "METHOD:\nRun git push after checks.",
+        "METHOD:\nCommit changes when done.",
+        "METHOD:\nPush origin branch after tests.",
+    )
+    for method_line in lines:
+        prompt = "\n".join(
+            [
+                _full_codex_contract_prompt(),
+                method_line,
+            ]
+        )
+        result = controller.validate_codex_prompt_contract(prompt)
+        ASSERTIONS.assertIn("commit_or_push_instruction_without_explicit_allowance", result["reasons"])
+        ASSERTIONS.assertFalse(result["valid"])
+
+
+def test_validate_codex_prompt_contract_accepts_safe_commit_push_descriptions():
+    """Descriptive and negative commit/push wording should not be flagged as unsafe."""
+    lines = (
+        "METHOD:\nDocument steps before committing changes.",
+        "METHOD:\nPOST-FIX MICRO-AUDIT BEFORE COMMIT",
+        "METHOD:\nDo not commit until explicitly approved.",
+        "METHOD:\nDo not push until explicitly approved.",
+        "METHOD:\nno commit/push without owner approval.",
+    )
+    for method_line in lines:
+        prompt = "\n".join(
+            [
+                _full_codex_contract_prompt(),
+                method_line,
+            ]
+        )
+        result = controller.validate_codex_prompt_contract(prompt)
+        ASSERTIONS.assertTrue(result["valid"])
 
 
 def test_ensure_phase0_preflight_section_is_idempotent_when_already_present():

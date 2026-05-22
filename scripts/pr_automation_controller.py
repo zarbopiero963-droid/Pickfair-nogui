@@ -156,8 +156,14 @@ def ensure_codex_prompt_contract(prompt: str) -> str:
 def validate_codex_prompt_contract(prompt: str) -> dict[str, Any]:
     text = str(prompt or "")
     missing = codex_prompt_contract_missing_sections(text)
+    uninitialized = codex_prompt_contract_uninitialized_sections(text)
     reasons = _codex_contract_reasons(text)
-    return {"valid": not missing and not reasons, "missing_sections": missing, "reasons": reasons}
+    return {
+        "valid": not missing and not uninitialized and not reasons,
+        "missing_sections": missing,
+        "uninitialized_sections": uninitialized,
+        "reasons": reasons,
+    }
 
 
 def codex_prompt_contract_missing_sections(prompt: str) -> list[str]:
@@ -165,34 +171,14 @@ def codex_prompt_contract_missing_sections(prompt: str) -> list[str]:
     return [name for name in CODEX_PROMPT_REQUIRED_SECTIONS if not _has_section(text, name)]
 
 
+def codex_prompt_contract_uninitialized_sections(prompt: str) -> list[str]:
+    text = str(prompt or "")
+    return [name for name in CODEX_PROMPT_REQUIRED_SECTIONS if _has_section(text, name) and not _section_has_value(text, name)]
+
+
 def build_phase0_preflight_prompt(context: dict[str, Any] | None = None) -> str:
     ctx = context if isinstance(context, dict) else {}
-    target = _context_list(ctx, "files_allowed") or ["(from task scope)"]
-    lines = [
-        PHASE0_SECTION_TITLE,
-        "",
-        "READ-ONLY. Do not edit files. Do not commit. Do not push.",
-        "Inspect static-analysis config, workflow CI, similar files/tests, authoritative modules, dangerous gates, and forbidden files.",
-        "Read .github/workflows/*.yml and map affected workflows/checks; do not edit workflows unless explicitly allowed.",
-        (
-            "Static-analysis files to inspect when present: .codacy.yml, .deepsource.toml, "
-            "pyproject.toml, setup.cfg, tox.ini, .pylintrc, .flake8, ruff config, flake8 config, "
-            "bandit config, pylint config, radon/lizard/static-analysis config."
-        ),
-        (
-            "Likely blocking rules: NLOC, CCN, line length, docstring requirements, function name "
-            "length <= 30, parameter count, protected access, hardcoded secret-like literals, bare "
-            "assert / B101, subprocess / B603 / B404, unused helpers, direct script execution expectations."
-        ),
-        f"Task allowed files: {', '.join(target)}",
-        "Produce implementation plan and tests/validation plan. Stop with NEEDS_MANUAL when ambiguity/risk is high.",
-        (
-            "Result contract: status, risk_level, files_inspected, static_analysis_rules, workflows_affected, "
-            "authoritative_modules, dangerous_gates, files_allowed, files_forbidden, implementation_plan, "
-            "tests_to_run, stop_conditions, next_action."
-        ),
-    ]
-    return "\n".join(lines).strip() + "\n"
+    return "\n".join(_phase0_preflight_lines(ctx)).strip() + "\n"
 
 
 def ensure_phase0_preflight_section(prompt: str) -> str:
@@ -1581,28 +1567,18 @@ def _context_list(context: dict[str, Any], key: str) -> list[str]:
 
 
 def _codex_context_value(context: dict[str, Any], section: str) -> str:
-    mapped = {
-        "TASK": str(context.get("task") or "TBD"),
-        "OBJECTIVE": str(context.get("objective") or "TBD"),
-        "CONTEXT": str(context.get("context") or "TBD"),
-        "FILES TO INSPECT": "\n".join(f"- {x}" for x in (_context_list(context, "files_to_inspect") or ["TBD"])),
-        "FILES ALLOWED": "\n".join(f"- {x}" for x in (_context_list(context, "files_allowed") or ["TBD"])),
-        "DO NOT MODIFY": "\n".join(f"- {x}" for x in (_context_list(context, "do_not_modify") or ["TBD"])),
-        "CURRENT BEHAVIOR": str(context.get("current_behavior") or "TBD"),
-        "EXPECTED BEHAVIOR": str(context.get("expected_behavior") or "TBD"),
-        "CURRENT BLOCKERS": "\n".join(f"- {x}" for x in (_context_list(context, "current_blockers") or ["TBD"])),
-        "REQUIRED FIXES": "\n".join(f"- {x}" for x in (_context_list(context, "required_fixes") or ["TBD"])),
-        "METHOD": str(context.get("method") or "TBD"),
-        "VALIDATION": "\n".join(f"- {x}" for x in (_context_list(context, "validation") or ["TBD"])),
-        "POST-FIX MICRO-AUDIT BEFORE COMMIT": "Use required post-fix micro-audit checklist before commit.",
-        "OUTPUT FORMAT": str(context.get("output_format") or "TBD"),
-        "STOP CONDITIONS": "\n".join(f"- {x}" for x in (_context_list(context, "stop_conditions") or ["TBD"])),
-    }
-    return mapped.get(section, "TBD")
+    scalar = _codex_scalar_context_map(context)
+    if section in scalar:
+        return scalar[section]
+    list_key = _codex_list_section_key(section)
+    if list_key:
+        return _codex_context_list_value(context, list_key)
+    return "TBD"
 
 
 def _has_section(text: str, section: str) -> bool:
-    return bool(re.search(rf"(?im)^\s*{re.escape(section)}\s*:?", str(text or "")))
+    target = str(section or "")
+    return any(_section_header_match(line, target) for line in str(text or "").splitlines())
 
 
 def _codex_contract_reasons(text: str) -> list[str]:
@@ -1620,47 +1596,17 @@ def _looks_generic_fix_prompt(text: str) -> bool:
 
 
 def _section_has_value(text: str, section: str) -> bool:
-    match = re.search(rf"(?ims)^\s*{re.escape(section)}\s*:\s*(.+?)(?:\n[A-Z0-9][A-Z0-9 _-]*\s*:|\Z)", text)
-    if not match:
-        return False
-    value = str(match.group(1)).strip()
-    if not value:
-        return False
-    if value.upper() == "TBD":
-        return False
-    lines = [line.strip() for line in value.splitlines() if line.strip()]
+    lines = _section_body_lines(text, section)
     if not lines:
         return False
-    placeholders = {"TBD", "- TBD", "* TBD"}
-    if all(line.upper() in placeholders for line in lines):
-        return False
-    return True
+    return not all(_is_placeholder_value(line) for line in lines)
 
 
 def _has_unsafe_commit_push_instruction(text: str) -> bool:
-    allow = bool(re.search(r"(?m)^\s*ALLOW_COMMIT_PUSH\s*:\s*yes\s*$", str(text or "")))
-    if allow:
+    if _has_commit_push_allowance(text):
         return False
-
-    unsafe_patterns = [
-        re.compile(r"(?i)\bgit\s+commit(?:\b|$)"),
-        re.compile(r"(?i)\bgit\s+push(?:\b|$)"),
-        re.compile(r"(?i)\bcommit\s+changes(?:\b|$)"),
-        re.compile(r"(?i)\bpush\s+origin\s+branch(?:\b|$)"),
-    ]
-    safe_negative = re.compile(
-        r"(?i)\b(do\s+not|don't|no)\s+(?:commit|push)(?:\s*/\s*(?:commit|push)|\s+or\s+(?:commit|push)|\b)"
-    )
-
     for line in str(text or "").splitlines():
-        lowered = line.strip().lower()
-        if not lowered:
-            continue
-        if safe_negative.search(lowered):
-            continue
-        if "before committing" in lowered:
-            continue
-        if any(pattern.search(lowered) for pattern in unsafe_patterns):
+        if _is_unsafe_commit_push_line(line):
             return True
     return False
 
@@ -1708,6 +1654,173 @@ def _phase0_next_action(status: str, report: dict[str, Any]) -> str:
     if explicit:
         return explicit
     return "generate_patch_prompt" if status == "PASS" else "needs_manual_phase0_failed"
+
+
+def _phase0_preflight_lines(context: dict[str, Any]) -> list[str]:
+    target = _context_list(context, "files_allowed") or ["(from task scope)"]
+    return [
+        PHASE0_SECTION_TITLE,
+        "",
+        "READ-ONLY. Do not edit files. Do not commit. Do not push.",
+        "Inspect static-analysis config, workflow CI, similar files/tests, authoritative modules, dangerous gates, and forbidden files.",
+        "Read .github/workflows/*.yml and map affected workflows/checks; do not edit workflows unless explicitly allowed.",
+        _phase0_static_analysis_line(),
+        _phase0_blocking_rules_line(),
+        f"Task allowed files: {', '.join(target)}",
+        "Produce implementation plan and tests/validation plan. Stop with NEEDS_MANUAL when ambiguity/risk is high.",
+        _phase0_result_contract_line(),
+    ]
+
+
+def _phase0_static_analysis_line() -> str:
+    return (
+        "Static-analysis files to inspect when present: .codacy.yml, .deepsource.toml, pyproject.toml, setup.cfg, "
+        "tox.ini, .pylintrc, .flake8, ruff config, flake8 config, bandit config, pylint config, "
+        "radon/lizard/static-analysis config."
+    )
+
+
+def _phase0_blocking_rules_line() -> str:
+    return (
+        "Likely blocking rules: NLOC, CCN, line length, docstring requirements, function name length <= 30, "
+        "parameter count, protected access, hardcoded secret-like literals, bare assert / B101, subprocess / "
+        "B603 / B404, unused helpers, direct script execution expectations."
+    )
+
+
+def _phase0_result_contract_line() -> str:
+    return (
+        "Result contract: status, risk_level, files_inspected, static_analysis_rules, workflows_affected, "
+        "authoritative_modules, dangerous_gates, files_allowed, files_forbidden, implementation_plan, "
+        "tests_to_run, stop_conditions, next_action."
+    )
+
+
+def _codex_scalar_context_map(context: dict[str, Any]) -> dict[str, str]:
+    method_default = "\n".join(
+        [
+            "- inspect relevant files first",
+            "- verify each finding is still valid",
+            "- keep patch minimal",
+            "- add/update focused tests",
+            "- run validation",
+            "- do not commit/push unless explicitly allowed",
+        ]
+    )
+    output_format_default = "\n".join(
+        [
+            "- files changed",
+            "- summary of fix",
+            "- tests run",
+            "- post-fix audit result",
+            "- final status DONE/PARTIAL/NEEDS_MANUAL",
+        ]
+    )
+    return {
+        "TASK": str(context.get("task") or "TBD"),
+        "OBJECTIVE": str(context.get("objective") or "TBD"),
+        "CONTEXT": str(context.get("context") or "TBD"),
+        "CURRENT BEHAVIOR": str(context.get("current_behavior") or "TBD"),
+        "EXPECTED BEHAVIOR": str(context.get("expected_behavior") or "TBD"),
+        "METHOD": str(context.get("method") or method_default),
+        "POST-FIX MICRO-AUDIT BEFORE COMMIT": "Use required post-fix micro-audit checklist before commit.",
+        "OUTPUT FORMAT": str(context.get("output_format") or output_format_default),
+    }
+
+
+def _codex_list_section_key(section: str) -> str:
+    mapping = {
+        "FILES TO INSPECT": "files_to_inspect",
+        "FILES ALLOWED": "files_allowed",
+        "DO NOT MODIFY": "do_not_modify",
+        "CURRENT BLOCKERS": "current_blockers",
+        "REQUIRED FIXES": "required_fixes",
+        "VALIDATION": "validation",
+        "STOP CONDITIONS": "stop_conditions",
+    }
+    return mapping.get(section, "")
+
+
+def _codex_context_list_value(context: dict[str, Any], key: str) -> str:
+    if key == "stop_conditions":
+        defaults = [
+            "stop on scope violation",
+            "stop on failing post-fix audit",
+            "stop on validation failure",
+            "stop on ambiguous/high-risk changes needing human decision",
+        ]
+        return "\n".join(f"- {item}" for item in (_context_list(context, key) or defaults))
+    return "\n".join(f"- {item}" for item in (_context_list(context, key) or ["TBD"]))
+
+
+def _section_body_lines(text: str, section: str) -> list[str]:
+    header_pattern = re.compile(r"^\s*[A-Z0-9][A-Z0-9 _-]*\s*(?::\s*)?$")
+    body: list[str] = []
+    capturing = False
+    target = str(section or "")
+    for raw_line in str(text or "").splitlines():
+        if not capturing:
+            if not _section_header_match(raw_line, target):
+                continue
+            capturing = True
+            continue
+        if header_pattern.match(raw_line):
+            break
+        stripped = raw_line.strip()
+        if stripped:
+            body.append(stripped)
+    return body
+
+
+def _section_header_match(line: str, section: str) -> bool:
+    stripped = str(line or "").strip()
+    return stripped in {section, f"{section}:"}
+
+
+def _is_placeholder_value(line: str) -> bool:
+    normalized = line.strip().lower()
+    if normalized in {"-", "*"}:
+        return True
+    if normalized.startswith(("- ", "* ")):
+        normalized = normalized[2:].strip()
+    if normalized.startswith('"') and normalized.endswith('"') and len(normalized) >= 2:
+        normalized = normalized[1:-1].strip()
+    placeholders = {"", "tbd", "todo", "none", "null", "n/a"}
+    return normalized in placeholders
+
+
+def _has_commit_push_allowance(text: str) -> bool:
+    return bool(re.search(r"(?m)^\s*ALLOW_COMMIT_PUSH\s*:\s*yes\s*$", str(text or "")))
+
+
+def _is_unsafe_commit_push_line(line: str) -> bool:
+    normalized = line.strip().lower()
+    if not normalized or _is_commit_push_negation(normalized):
+        return False
+    return any(pattern.search(normalized) for pattern in _unsafe_commit_push_patterns())
+
+
+def _is_commit_push_negation(line: str) -> bool:
+    patterns = [
+        r"\bdo\s+not\s+commit\b",
+        r"\bdo\s+not\s+push\b",
+        r"\bdon't\s+commit\b",
+        r"\bdon't\s+push\b",
+        r"\bno\s+commit(?:\b|/push\b)",
+        r"\bno\s+push(?:\b|/commit\b)",
+        r"\bno\s+commit/push\b",
+        r"\bno\s+push/commit\b",
+    ]
+    return any(re.search(pattern, line) for pattern in patterns)
+
+
+def _unsafe_commit_push_patterns() -> tuple[re.Pattern[str], ...]:
+    return (
+        re.compile(r"\bgit\s+commit(?:\b|$)", re.IGNORECASE),
+        re.compile(r"\bgit\s+push(?:\b|$)", re.IGNORECASE),
+        re.compile(r"\bcommit\s+changes(?:\b|$)", re.IGNORECASE),
+        re.compile(r"\bpush\s+origin\s+branch(?:\b|$)", re.IGNORECASE),
+    )
 
 
 def write_codacy_task(outdir: Path, raw: dict[str, Any], issues: list[dict[str, Any]]) -> None:
