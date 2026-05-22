@@ -1279,7 +1279,7 @@ def _list_value(data: dict[str, Any], raw: str, key: str) -> list[str]:
 
 
 def _audit_section_lines(raw: str, key: str) -> list[str]:
-    return [line.strip() for line in _lines_after_audit_key(raw, key) if _is_audit_bullet_line(line)]
+    return [line.strip() for line in _lines_after_audit_key(raw, key) if line.strip()]
 
 
 def _lines_after_audit_key(raw: str, key: str) -> list[str]:
@@ -1295,20 +1295,20 @@ def _contiguous_audit_bullet_lines(lines: list[str]) -> list[str]:
     section: list[str] = []
     for line in lines:
         stripped = line.strip()
-        if _looks_like_audit_field(stripped):
+        if _should_stop_audit_bullets(stripped):
             break
-        if not stripped:
-            if section:
-                break
+        if _is_blank_line(stripped):
             continue
-        if not _is_audit_bullet_line(stripped):
-            break
-        section.append(stripped)
+        section.append(_clean_audit_bullet(stripped))
     return section
 
 
 def _looks_like_audit_field(line: str) -> bool:
     return bool(re.match(r"^[A-Za-z0-9_]+\s*:\s*", line))
+
+
+def _is_blank_line(line: str) -> bool:
+    return not str(line).strip()
 
 
 def _is_audit_bullet_line(line: str) -> bool:
@@ -1318,6 +1318,16 @@ def _is_audit_bullet_line(line: str) -> bool:
 
 def _clean_audit_bullet(line: str) -> str:
     return re.sub(r"^-\s*", "", line.strip()).strip()
+
+
+def _should_stop_audit_bullets(line: str) -> bool:
+    if _looks_like_audit_field(line):
+        return True
+    if _is_blank_line(line):
+        return False
+    if not _is_audit_bullet_line(line):
+        return True
+    return False
 
 
 def _list_from_payload(value: Any) -> list[str]:
@@ -1367,29 +1377,32 @@ def _normalize_audit_text_for_match(text: str) -> str:
 
 
 def _parse_post_fix_audit_json(raw: str) -> dict[str, Any]:
-    try:
-        loaded = json.loads(raw)
-    except json.JSONDecodeError:
-        fenced = _extract_fenced_json_payload(raw)
-        if not fenced:
-            return {}
-        try:
-            loaded = json.loads(fenced)
-        except json.JSONDecodeError:
-            return {}
-    return loaded if isinstance(loaded, dict) else {}
+    loaded = _json_dict_or_empty(raw)
+    if loaded:
+        return loaded
+    for payload in _extract_fenced_json_payloads(raw):
+        loaded = _json_dict_or_empty(payload)
+        if loaded:
+            return loaded
+    return {}
 
 
-def _extract_fenced_json_payload(raw: str) -> str:
-    pattern = re.compile(
-        r"```(?:\s*json)?[ \t]*\r?\n(?P<body>[\s\S]*?)\r?\n```",
-        re.IGNORECASE,
-    )
+def _extract_fenced_json_payloads(raw: str) -> list[str]:
+    pattern = re.compile(r"```[^\n\r]*\r?\n(?P<body>[\s\S]*?)\r?\n```")
+    payloads: list[str] = []
     for match in pattern.finditer(str(raw or "")):
         body = str(match.group("body") or "").strip()
         if body:
-            return body
-    return ""
+            payloads.append(body)
+    return payloads
+
+
+def _json_dict_or_empty(raw: str) -> dict[str, Any]:
+    try:
+        loaded = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
 
 
 def _parse_post_fix_audit_text(raw: str) -> dict[str, Any]:

@@ -332,6 +332,28 @@ def test_parse_post_fix_micro_audit_result_supports_fenced_json_payload_with_sur
     ASSERTIONS.assertFalse(controller.post_fix_micro_audit_failed(report))
 
 
+def test_parse_post_fix_micro_audit_result_uses_later_fenced_json_when_first_fence_is_not_json():
+    """Parser should try every fenced payload before falling back to text parsing."""
+    raw = "\n".join(
+        [
+            "prose before",
+            "```bash",
+            "echo 'not json'",
+            "```",
+            "middle prose",
+            "```json",
+            '{"status":"PASS","next_action":"validation_then_commit","reasons":["ok"]}',
+            "```",
+            "prose after",
+        ]
+    )
+    report = controller.parse_post_fix_micro_audit_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "validation_then_commit")
+    ASSERTIONS.assertEqual(report["reasons"], ["ok"])
+    ASSERTIONS.assertFalse(controller.post_fix_micro_audit_failed(report))
+
+
 def test_parse_post_fix_micro_audit_result_partial_text_preserves_status_and_reasons():
     """Text PARTIAL status should remain PARTIAL and default to retry_fix_within_budget."""
     report = controller.parse_post_fix_micro_audit_result(
@@ -424,6 +446,23 @@ def test_parse_post_fix_micro_audit_result_malformed_list_sections_return_empty_
     )
     ASSERTIONS.assertEqual(report["reasons"], [])
     ASSERTIONS.assertEqual(report["changed_files"], [])
+
+
+def test_parse_post_fix_micro_audit_result_malformed_or_missing_fails_closed():
+    """Malformed and missing audit reports should route to fail-closed manual handling."""
+    malformed = controller.parse_post_fix_micro_audit_result("{")
+    malformed_fenced_only = controller.parse_post_fix_micro_audit_result("```bash\nnot json\n```")
+    missing = controller.parse_post_fix_micro_audit_result("")
+
+    ASSERTIONS.assertEqual(malformed["status"], "FAIL")
+    ASSERTIONS.assertEqual(malformed["next_action"], "needs_manual_post_fix_audit_failed")
+    ASSERTIONS.assertTrue(controller.post_fix_micro_audit_failed(malformed))
+    ASSERTIONS.assertEqual(malformed_fenced_only["status"], "FAIL")
+    ASSERTIONS.assertEqual(malformed_fenced_only["next_action"], "needs_manual_post_fix_audit_failed")
+    ASSERTIONS.assertTrue(controller.post_fix_micro_audit_failed(malformed_fenced_only))
+    ASSERTIONS.assertEqual(missing["status"], "FAIL")
+    ASSERTIONS.assertEqual(missing["next_action"], "needs_manual_post_fix_audit_failed")
+    ASSERTIONS.assertTrue(controller.post_fix_micro_audit_failed(missing))
 
 
 def test_parse_post_fix_micro_audit_result_pass_defaults_to_validation_then_commit():
