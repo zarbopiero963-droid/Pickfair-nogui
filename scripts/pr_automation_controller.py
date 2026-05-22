@@ -1684,7 +1684,7 @@ def _parse_phase0_text(raw: str) -> dict[str, Any]:
 def _normalize_phase0_report(report: dict[str, Any]) -> dict[str, Any]:
     status = _phase0_status(report)
     next_action = _phase0_next_action(status, report)
-    normalized = {
+    normalized: dict[str, Any] = {
         "status": status,
         "risk_level": _phase0_risk(report),
         "next_action": next_action,
