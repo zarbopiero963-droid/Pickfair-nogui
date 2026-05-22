@@ -82,6 +82,27 @@ PR_AUTOMATION_STATE_FIELDS = (
 ACTIVE_TASK_COMMAND_FILE = "active-task-command.md"
 ACTIVE_FINAL_MICRO_AUDIT_FILE = "active-final-micro-audit.md"
 ACTIVE_TASK_STATE_FILE = "active-task-state.json"
+POST_FIX_MICRO_AUDIT_SECTION = """POST-FIX MICRO-AUDIT BEFORE COMMIT
+
+Before committing, perform a read-only audit of your own patch.
+
+Check:
+1. Did you fix every requested Codacy/review finding?
+2. Did you avoid creating new unused helpers?
+3. Did you avoid creating functions/tests above local Codacy/Lizard thresholds?
+4. Did you preserve scope and avoid unrelated files?
+5. Did you avoid touching forbidden files?
+6. Did you preserve behavior?
+7. Did you add/adjust focused tests where needed?
+8. Did direct script execution still work where required?
+9. Did validation pass?
+10. Did the patch avoid new false-green routing?
+
+If audit fails:
+- fix the issue before commit
+- or stop and report PARTIAL/needs_manual
+Do not commit a patch that fails this audit.
+"""
 
 
 def command_family(command: str) -> str:
@@ -1210,7 +1231,239 @@ def codacy_task_lines(records: list[dict[str, Any]]) -> list[str]:
             f"{index}. {record['filePath']}:{record['lineNumber']} "
             f"{record['patternId']} {record['severity']} {record['tool']} - {record['message']}"
         )
-    return lines
+    return ensure_post_fix_micro_audit_section("\n".join(lines)).splitlines()
+
+
+def build_post_fix_micro_audit_prompt(task_text: str, context: dict[str, Any] | None = None) -> str:
+    prompt = ensure_post_fix_micro_audit_section(task_text)
+    section = _post_fix_changed_files_section(_post_fix_changed_files(context))
+    return f"{prompt}{section}" if section else prompt
+
+
+def ensure_post_fix_micro_audit_section(prompt: str) -> str:
+    text = str(prompt or "").rstrip()
+    if _has_full_post_fix_micro_audit_section(text):
+        return text + "\n"
+    return f"{text}\n\n{POST_FIX_MICRO_AUDIT_SECTION}"
+
+
+def parse_post_fix_micro_audit_result(text: str) -> dict[str, Any]:
+    raw = str(text or "").strip()
+    report = _parse_post_fix_audit_json(raw)
+    if not report:
+        report = _parse_post_fix_audit_text(raw)
+    return _normalize_post_fix_audit_report(report)
+
+
+def post_fix_micro_audit_status(report: dict[str, Any] | None) -> str:
+    value = str((report or {}).get("status") or "").upper()
+    return value if value in {"PASS", "FAIL", "PARTIAL"} else "FAIL"
+
+
+def post_fix_micro_audit_failed(report: dict[str, Any] | None) -> bool:
+    status = post_fix_micro_audit_status(report)
+    next_action = str((report or {}).get("next_action") or "").strip()
+    return status != "PASS" or next_action != "validation_then_commit"
+
+
+def _line_value(text: str, key: str) -> str:
+    match = re.search(rf"(?im)^\s*{re.escape(key)}\s*[:=]\s*(.+)$", text or "")
+    return match.group(1).strip() if match else ""
+
+
+def _list_value(data: dict[str, Any], raw: str, key: str) -> list[str]:
+    list_items = _list_from_payload(data.get(key))
+    if list_items:
+        return list_items
+    return _list_from_raw_audit_section(raw, key)
+
+
+def _audit_section_lines(raw: str, key: str) -> list[str]:
+    return [line.strip() for line in _lines_after_audit_key(raw, key) if line.strip()]
+
+
+def _lines_after_audit_key(raw: str, key: str) -> list[str]:
+    lines = (raw or "").splitlines()
+    header = re.compile(rf"^\s*{re.escape(key)}\s*:\s*$", re.IGNORECASE)
+    start = next((index + 1 for index, line in enumerate(lines) if header.match(line)), -1)
+    if start < 0:
+        return []
+    return _contiguous_audit_bullet_lines(lines[start:])
+
+
+def _contiguous_audit_bullet_lines(lines: list[str]) -> list[str]:
+    section: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if _should_stop_audit_bullets(stripped):
+            break
+        if _is_blank_line(stripped):
+            continue
+        section.append(_clean_audit_bullet(stripped))
+    return section
+
+
+def _looks_like_audit_field(line: str) -> bool:
+    return bool(re.match(r"^[A-Za-z0-9_]+\s*:\s*", line))
+
+
+def _is_blank_line(line: str) -> bool:
+    return not str(line).strip()
+
+
+def _is_audit_bullet_line(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.startswith("-") and bool(_clean_audit_bullet(stripped))
+
+
+def _clean_audit_bullet(line: str) -> str:
+    return re.sub(r"^-\s*", "", line.strip()).strip()
+
+
+def _should_stop_audit_bullets(line: str) -> bool:
+    if _looks_like_audit_field(line):
+        return True
+    if _is_blank_line(line):
+        return False
+    if not _is_audit_bullet_line(line):
+        return True
+    return False
+
+
+def _list_from_payload(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _list_from_raw_audit_section(raw: str, key: str) -> list[str]:
+    result: list[str] = []
+    for line in _audit_section_lines(raw, key):
+        cleaned = _clean_audit_bullet(line)
+        if cleaned:
+            result.append(cleaned)
+    return result
+
+
+def _post_fix_changed_files(context: dict[str, Any] | None) -> list[str]:
+    if not isinstance(context, dict):
+        return []
+    files = context.get("changed_files")
+    if not isinstance(files, list):
+        return []
+    return [str(path).strip() for path in files if str(path).strip()]
+
+
+def _post_fix_changed_files_section(files: list[str]) -> str:
+    if not files:
+        return ""
+    lines = "\n".join(f"- {path}" for path in files)
+    return f"\n\nAudit context (changed files):\n{lines}\n"
+
+
+def _has_full_post_fix_micro_audit_section(text: str) -> bool:
+    normalized_text = _normalize_audit_text_for_match(text)
+    normalized_section = _normalize_audit_text_for_match(POST_FIX_MICRO_AUDIT_SECTION)
+    return normalized_section in normalized_text
+
+
+def _normalize_audit_text_for_match(text: str) -> str:
+    normalized_lines = [
+        re.sub(r"\s+", " ", line).strip().lower()
+        for line in (text or "").splitlines()
+        if line.strip()
+    ]
+    return "\n".join(normalized_lines)
+
+
+def _parse_post_fix_audit_json(raw: str) -> dict[str, Any]:
+    loaded = _json_dict_or_empty(raw)
+    if loaded:
+        return loaded
+    for payload in _extract_fenced_json_payloads(raw):
+        loaded = _json_dict_or_empty(payload)
+        if loaded:
+            return loaded
+    return {}
+
+
+def _extract_fenced_json_payloads(raw: str) -> list[str]:
+    pattern = re.compile(r"```[^\n\r]*\r?\n(?P<body>[\s\S]*?)\r?\n```")
+    payloads: list[str] = []
+    for match in pattern.finditer(str(raw or "")):
+        body = str(match.group("body") or "").strip()
+        if body:
+            payloads.append(body)
+    return payloads
+
+
+def _json_dict_or_empty(raw: str) -> dict[str, Any]:
+    try:
+        loaded = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _parse_post_fix_audit_text(raw: str) -> dict[str, Any]:
+    status = _line_value(raw, "status") or _line_value(raw, "post_fix_audit") or _standalone_status_line(raw)
+    return {
+        "status": status,
+        "reasons": _list_value({}, raw, "reasons"),
+        "checked_items": _list_value({}, raw, "checked_items"),
+        "changed_files": _list_value({}, raw, "changed_files"),
+        "validation_commands": _list_value({}, raw, "validation_commands"),
+        "next_action": _line_value(raw, "next_action"),
+    }
+
+
+def _standalone_status_line(raw: str) -> str:
+    for line in (raw or "").splitlines():
+        value = line.strip().upper()
+        if value in {"PASS", "FAIL", "PARTIAL"}:
+            return value
+    return ""
+
+
+def _normalize_post_fix_audit_report(report: dict[str, Any]) -> dict[str, Any]:
+    status = _post_fix_status(report)
+    next_action = _post_fix_next_action(status, report)
+    normalized = {
+        "status": status,
+        "next_action": next_action,
+        **_post_fix_report_lists(report),
+    }
+    if status == "PASS":
+        if next_action == "validation_then_commit":
+            return normalized
+        normalized["status"] = "FAIL"
+        normalized["next_action"] = "needs_manual_post_fix_audit_failed"
+    return normalized
+
+
+def _post_fix_status(report: dict[str, Any]) -> str:
+    value = str(report.get("status") or "").upper()
+    return value if value in {"PASS", "FAIL", "PARTIAL"} else "FAIL"
+
+
+def _post_fix_next_action(status: str, report: dict[str, Any]) -> str:
+    explicit = str(report.get("next_action") or "").strip()
+    if explicit:
+        return explicit
+    if status == "PASS":
+        return "validation_then_commit"
+    if status == "PARTIAL":
+        return "retry_fix_within_budget"
+    return "needs_manual_post_fix_audit_failed"
+
+
+def _post_fix_report_lists(report: dict[str, Any]) -> dict[str, list[str]]:
+    return {
+        "reasons": _list_value(report, "", "reasons"),
+        "checked_items": _list_value(report, "", "checked_items"),
+        "changed_files": _list_value(report, "", "changed_files"),
+        "validation_commands": _list_value(report, "", "validation_commands"),
+    }
 
 
 def write_codacy_task(outdir: Path, raw: dict[str, Any], issues: list[dict[str, Any]]) -> None:
@@ -2000,7 +2253,9 @@ def _is_deepsource_check(check: dict[str, Any]) -> bool:
 def _deepsource_lines(checks: list[dict[str, Any]]) -> list[str]:
     lines = ["# DeepSource repair input", ""]
     if not checks:
-        return lines + ["No DeepSource blockers found in current PR status rollup."]
+        return ensure_post_fix_micro_audit_section(
+            "\n".join(lines + ["No DeepSource blockers found in current PR status rollup."])
+        ).splitlines()
     for check in checks:
         lines.extend([
             f"- name: {str(check.get('name') or check.get('context') or '')}",
@@ -2009,7 +2264,7 @@ def _deepsource_lines(checks: list[dict[str, Any]]) -> list[str]:
             f"  description: {str(check.get('description') or '')}",
             "",
         ])
-    return lines
+    return ensure_post_fix_micro_audit_section("\n".join(lines)).splitlines()
 
 
 def _write_deepsource_task(outdir: Path, repo: str, pr_number: str) -> None:
@@ -2134,10 +2389,10 @@ def _review_task_lines(nodes: list[dict[str, Any]]) -> list[str]:
     ]
     if not unresolved:
         lines.append("No unresolved review threads found, or review thread API was unavailable.")
-        return lines
+        return ensure_post_fix_micro_audit_section("\n".join(lines)).splitlines()
     for node in unresolved:
         lines.extend(_thread_lines(node))
-    return lines
+    return ensure_post_fix_micro_audit_section("\n".join(lines)).splitlines()
 
 
 def review_comments_summary(nodes: list[dict[str, Any]]) -> dict[str, int]:

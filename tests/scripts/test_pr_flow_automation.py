@@ -63,6 +63,7 @@ def test_codacy_task_normalizes_common_issue_fields(tmp_path):
     ASSERTIONS.assertIn("scripts/pr_flow_automation.py", task)
     ASSERTIONS.assertIn("PY001", task)
     ASSERTIONS.assertIn("Example issue", task)
+    ASSERTIONS.assertIn("POST-FIX MICRO-AUDIT BEFORE COMMIT", task)
 
 
 def test_flow_codacy_task_writes_raw_response_and_task_file(tmp_path, monkeypatch):
@@ -82,6 +83,15 @@ def test_flow_codacy_task_writes_raw_response_and_task_file(tmp_path, monkeypatc
     ASSERTIONS.assertIn("ruff/PY001", task)
     ASSERTIONS.assertIn("Medium", task)
     ASSERTIONS.assertIn("Example issue", task)
+    ASSERTIONS.assertIn("Do not commit a patch that fails this audit.", task)
+
+
+def test_post_fix_micro_audit_helpers_do_not_trigger_final_merge_audit():
+    """Post-fix helper should not alter final merge-audit routing."""
+    report = flow.parse_post_fix_micro_audit_result("status: PASS")
+    ASSERTIONS.assertFalse(flow.post_fix_micro_audit_failed(report))
+    ASSERTIONS.assertEqual(flow.post_fix_micro_audit_status(report), "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "validation_then_commit")
 
 
 def test_flow_codacy_task_fails_closed_when_blocking_api_fails(tmp_path, monkeypatch, capsys):

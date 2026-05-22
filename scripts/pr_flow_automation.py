@@ -321,7 +321,27 @@ def codacy_task_lines(records: list[dict[str, Any]]) -> list[str]:
         lines.append(
             f"{index}. {location} {tool_pattern} {record['severity']} - {record['message']}"
         )
-    return lines
+    return ensure_post_fix_micro_audit_section("\n".join(lines)).splitlines()
+
+
+def build_post_fix_micro_audit_prompt(task_text: str, context: dict[str, Any] | None = None) -> str:
+    return controller.build_post_fix_micro_audit_prompt(task_text, context)
+
+
+def ensure_post_fix_micro_audit_section(prompt: str) -> str:
+    return controller.ensure_post_fix_micro_audit_section(prompt)
+
+
+def parse_post_fix_micro_audit_result(text: str) -> dict[str, Any]:
+    return controller.parse_post_fix_micro_audit_result(text)
+
+
+def post_fix_micro_audit_status(report: dict[str, Any] | None) -> str:
+    return controller.post_fix_micro_audit_status(report)
+
+
+def post_fix_micro_audit_failed(report: dict[str, Any] | None) -> bool:
+    return controller.post_fix_micro_audit_failed(report)
 
 
 def fetch_codacy_pr_issues(repo: str, pr_number: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
