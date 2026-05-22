@@ -314,6 +314,24 @@ def test_parse_post_fix_micro_audit_result_supports_fenced_json_payload_without_
     ASSERTIONS.assertFalse(controller.post_fix_micro_audit_failed(report))
 
 
+def test_parse_post_fix_micro_audit_result_supports_fenced_json_payload_with_surrounding_prose():
+    """Prose around fenced JSON should still parse PASS report payload."""
+    raw = "\n".join(
+        [
+            "Here is the audit:",
+            "```json",
+            '{"status":"PASS","next_action":"validation_then_commit","reasons":["ok"]}',
+            "```",
+            "No further issues.",
+        ]
+    )
+    report = controller.parse_post_fix_micro_audit_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "validation_then_commit")
+    ASSERTIONS.assertEqual(report["reasons"], ["ok"])
+    ASSERTIONS.assertFalse(controller.post_fix_micro_audit_failed(report))
+
+
 def test_parse_post_fix_micro_audit_result_partial_text_preserves_status_and_reasons():
     """Text PARTIAL status should remain PARTIAL and default to retry_fix_within_budget."""
     report = controller.parse_post_fix_micro_audit_result(

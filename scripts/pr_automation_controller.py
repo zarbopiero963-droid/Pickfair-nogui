@@ -1294,11 +1294,12 @@ def _lines_after_audit_key(raw: str, key: str) -> list[str]:
 def _contiguous_audit_bullet_lines(lines: list[str]) -> list[str]:
     section: list[str] = []
     for line in lines:
-        has_started = bool(section)
-        if _should_stop_audit_bullet_scan(line, has_started):
-            break
         stripped = line.strip()
-        if not stripped and not has_started:
+        if _looks_like_audit_field(stripped):
+            break
+        if not stripped:
+            if section:
+                break
             continue
         if not _is_audit_bullet_line(stripped):
             break
@@ -1332,15 +1333,6 @@ def _list_from_raw_audit_section(raw: str, key: str) -> list[str]:
         if cleaned:
             result.append(cleaned)
     return result
-
-
-def _should_stop_audit_bullet_scan(line: str, has_started: bool) -> bool:
-    stripped = line.strip()
-    if not stripped:
-        return has_started
-    if _looks_like_audit_field(stripped):
-        return True
-    return False
 
 
 def _post_fix_changed_files(context: dict[str, Any] | None) -> list[str]:
@@ -1389,8 +1381,15 @@ def _parse_post_fix_audit_json(raw: str) -> dict[str, Any]:
 
 
 def _extract_fenced_json_payload(raw: str) -> str:
-    match = re.match(r"^\s*```(?:json)?\s*\n(?P<body>[\s\S]*?)\n```\s*$", str(raw or ""), re.IGNORECASE)
-    return str(match.group("body") or "").strip() if match else ""
+    pattern = re.compile(
+        r"```(?:\s*json)?[ \t]*\r?\n(?P<body>[\s\S]*?)\r?\n```",
+        re.IGNORECASE,
+    )
+    for match in pattern.finditer(str(raw or "")):
+        body = str(match.group("body") or "").strip()
+        if body:
+            return body
+    return ""
 
 
 def _parse_post_fix_audit_text(raw: str) -> dict[str, Any]:
