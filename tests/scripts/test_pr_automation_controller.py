@@ -227,6 +227,19 @@ def _set_section_value(prompt: str, section: str, value: str) -> str:
     return pattern.sub(rf"\g<header>{value}\n", prompt, count=1)
 
 
+def _assert_contract_rejects_without_allowance(method_line: str) -> None:
+    prompt = "\n".join([_full_codex_contract_prompt(), method_line])
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertIn("commit_or_push_instruction_without_explicit_allowance", result["reasons"])
+    ASSERTIONS.assertFalse(result["valid"])
+
+
+def _assert_contract_accepts_safe_commit_push_wording(method_line: str) -> None:
+    prompt = "\n".join([_full_codex_contract_prompt(), method_line])
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertTrue(result["valid"])
+
+
 def test_controller_does_not_launch_safe_autofix_for_stale_codacy_action_required(monkeypatch):
     """A stale Codacy ACTION_REQUIRED check is ignored once the Codacy API is clear."""
     decision = _controller_decision(monkeypatch, blocking=False, ignored=True)
@@ -688,36 +701,23 @@ def test_validate_codex_prompt_contract_rejects_list_style_section_with_only_pla
 
 def test_validate_codex_prompt_contract_rejects_unsafe_commit_push_imperatives_without_allowance():
     """Imperative unsafe commit/push wording is blocked without explicit allowance."""
-    lines = (
+    for method_line in (
         "METHOD:\nRun git commit after checks.",
         "METHOD:\nRun git push after checks.",
         "METHOD:\nCommit changes when done.",
         "METHOD:\nPush origin branch after tests.",
-    )
-    for method_line in lines:
-        prompt = "\n".join(
-            [
-                _full_codex_contract_prompt(),
-                method_line,
-            ]
-        )
-        result = controller.validate_codex_prompt_contract(prompt)
-        ASSERTIONS.assertIn("commit_or_push_instruction_without_explicit_allowance", result["reasons"])
-        ASSERTIONS.assertFalse(result["valid"])
+    ):
+        _assert_contract_rejects_without_allowance(method_line)
 
 
 def test_validate_codex_prompt_contract_rejects_commit_the_patch_without_allowance():
-    prompt = "\n".join([_full_codex_contract_prompt(), "METHOD:\nCommit the patch after checks."])
-    result = controller.validate_codex_prompt_contract(prompt)
-    ASSERTIONS.assertIn("commit_or_push_instruction_without_explicit_allowance", result["reasons"])
-    ASSERTIONS.assertFalse(result["valid"])
+    """Imperative commit-the-patch wording is blocked without explicit allowance."""
+    _assert_contract_rejects_without_allowance("METHOD:\nCommit the patch after checks.")
 
 
 def test_validate_codex_prompt_contract_rejects_push_the_branch_without_allowance():
-    prompt = "\n".join([_full_codex_contract_prompt(), "METHOD:\nPush the branch when done."])
-    result = controller.validate_codex_prompt_contract(prompt)
-    ASSERTIONS.assertIn("commit_or_push_instruction_without_explicit_allowance", result["reasons"])
-    ASSERTIONS.assertFalse(result["valid"])
+    """Imperative push-the-branch wording is blocked without explicit allowance."""
+    _assert_contract_rejects_without_allowance("METHOD:\nPush the branch when done.")
 
 
 def test_validate_codex_prompt_contract_rejects_mixed_negation_with_real_push_instruction():
@@ -734,6 +734,7 @@ def test_validate_codex_prompt_contract_rejects_mixed_negation_with_real_push_in
 
 
 def test_validate_codex_prompt_contract_rejects_mixed_negation_with_real_commit_instruction():
+    """Mixed negation plus real commit imperative remains invalid."""
     prompt = "\n".join(
         [
             _full_codex_contract_prompt(),
@@ -747,7 +748,7 @@ def test_validate_codex_prompt_contract_rejects_mixed_negation_with_real_commit_
 
 def test_validate_codex_prompt_contract_accepts_safe_commit_push_descriptions():
     """Descriptive and negative commit/push wording should not be flagged as unsafe."""
-    lines = (
+    for method_line in (
         "METHOD:\nDocument steps before committing changes.",
         "METHOD:\nPOST-FIX MICRO-AUDIT BEFORE COMMIT",
         "METHOD:\nDo not commit until explicitly approved.",
@@ -757,16 +758,14 @@ def test_validate_codex_prompt_contract_accepts_safe_commit_push_descriptions():
         "METHOD:\nDon't git commit.",
         "METHOD:\nDon't git push.",
         "METHOD:\nno commit/push without owner approval.",
-    )
-    for method_line in lines:
-        prompt = "\n".join(
-            [
-                _full_codex_contract_prompt(),
-                method_line,
-            ]
-        )
-        result = controller.validate_codex_prompt_contract(prompt)
-        ASSERTIONS.assertTrue(result["valid"])
+    ):
+        _assert_contract_accepts_safe_commit_push_wording(method_line)
+
+
+def test_validate_codex_prompt_contract_accepts_safe_no_commit_or_no_push_variants():
+    """Safe no-commit/no-push phrasing remains valid without ALLOW_COMMIT_PUSH."""
+    _assert_contract_accepts_safe_commit_push_wording("METHOD:\nNo commit until owner approval.")
+    _assert_contract_accepts_safe_commit_push_wording("METHOD:\nNo push until owner approval.")
 
 
 def test_validate_codex_prompt_contract_accepts_appended_pure_negated_git_push_line():
@@ -803,6 +802,13 @@ def test_ensure_phase0_preflight_section_prepends_exactly_once_for_empty_and_mis
     ensured = controller.ensure_phase0_preflight_section(original)
     ASSERTIONS.assertEqual(ensured.count(controller.PHASE0_SECTION_TITLE), 1)
     ASSERTIONS.assertTrue(ensured.endswith("\nTASK:\nFix lint\n"))
+
+
+def test_ensure_phase0_preflight_section_preserves_original_content_after_insert():
+    """Inserted preflight block must keep original prompt content unchanged afterwards."""
+    original = "TASK:\nFix lint\nOBJECTIVE:\nAddress blockers"
+    ensured = controller.ensure_phase0_preflight_section(original)
+    ASSERTIONS.assertIn("\nTASK:\nFix lint\nOBJECTIVE:\nAddress blockers\n", ensured)
 
 
 def test_parse_post_fix_micro_audit_result_supports_json_payload():

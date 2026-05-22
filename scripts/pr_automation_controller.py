@@ -160,12 +160,6 @@ COMMIT_PUSH_NEGATION_PATTERNS = (
     re.compile(r"\bno\s+commit/push\b"),
     re.compile(r"\bno\s+push/commit\b"),
 )
-UNSAFE_COMMIT_PUSH_PATTERNS = (
-    re.compile(r"\bgit\s+commit(?:\b|$)", re.IGNORECASE),
-    re.compile(r"\bgit\s+push(?:\b|$)", re.IGNORECASE),
-    re.compile(r"\bcommit\s+changes(?:\b|$)", re.IGNORECASE),
-    re.compile(r"\bpush\s+origin\s+branch(?:\b|$)", re.IGNORECASE),
-)
 COMMIT_PUSH_IMPERATIVE_PATTERNS = (
     re.compile(r"\bgit\s+commit(?:\b|$)", re.IGNORECASE),
     re.compile(r"\bgit\s+push(?:\b|$)", re.IGNORECASE),
@@ -1875,10 +1869,6 @@ def _is_unsafe_commit_push_line(line: str) -> bool:
 
 def _is_commit_push_negation(line: str) -> bool:
     return any(pattern.search(line) for pattern in COMMIT_PUSH_NEGATION_PATTERNS)
-
-
-def _is_pure_commit_push_negation(line: str) -> bool:
-    return _is_commit_push_negation(line) and not _has_commit_push_imperative(line)
 
 
 def _has_commit_push_imperative(line: str) -> bool:
