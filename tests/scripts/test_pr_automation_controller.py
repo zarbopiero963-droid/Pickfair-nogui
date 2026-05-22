@@ -267,6 +267,79 @@ def test_build_post_fix_micro_audit_prompt_filters_blank_changed_files_entries()
     ASSERTIONS.assertEqual(prompt.count("\n- tests/a_test.py\n"), 1)
 
 
+def test_build_codex_task_prompt_includes_required_sections():
+    prompt = controller.build_codex_task_prompt({"task": "workflow hygiene", "objective": "contracted prompts"})
+    for section in controller.CODEX_PROMPT_REQUIRED_SECTIONS:
+        ASSERTIONS.assertIn(f"{section}:", prompt)
+    ASSERTIONS.assertIn("PHASE 0 PRE-FLIGHT (READ-ONLY)", prompt)
+
+
+def test_ensure_codex_prompt_contract_appends_missing_sections():
+    prompt = controller.ensure_codex_prompt_contract("TASK:\nFix this")
+    ASSERTIONS.assertEqual(controller.codex_prompt_contract_missing_sections(prompt), [])
+    ASSERTIONS.assertIn("POST-FIX MICRO-AUDIT BEFORE COMMIT", prompt)
+    ASSERTIONS.assertIn("PHASE 0 PRE-FLIGHT (READ-ONLY)", prompt)
+
+
+def test_validate_codex_prompt_contract_reports_missing_sections_for_incomplete_prompt():
+    result = controller.validate_codex_prompt_contract("TASK:\nfix this")
+    ASSERTIONS.assertIn("OBJECTIVE", result["missing_sections"])
+    ASSERTIONS.assertIn("CONTEXT", result["missing_sections"])
+    ASSERTIONS.assertFalse(result["valid"])
+
+
+def test_build_phase0_preflight_prompt_includes_static_analysis_checklist():
+    prompt = controller.build_phase0_preflight_prompt({})
+    ASSERTIONS.assertIn(".codacy.yml", prompt)
+    ASSERTIONS.assertIn(".deepsource.toml", prompt)
+    ASSERTIONS.assertIn("ruff config", prompt)
+    ASSERTIONS.assertIn("radon/lizard/static-analysis config", prompt)
+
+
+def test_build_phase0_preflight_prompt_includes_workflow_ci_awareness():
+    prompt = controller.build_phase0_preflight_prompt({})
+    ASSERTIONS.assertIn(".github/workflows/*.yml", prompt)
+    ASSERTIONS.assertIn("affected workflows/checks", prompt)
+    ASSERTIONS.assertIn("do not edit workflows unless explicitly allowed", prompt)
+
+
+def test_build_phase0_preflight_prompt_includes_read_only_rules():
+    prompt = controller.build_phase0_preflight_prompt({})
+    ASSERTIONS.assertIn("READ-ONLY", prompt)
+    ASSERTIONS.assertIn("Do not edit files", prompt)
+    ASSERTIONS.assertIn("Do not commit", prompt)
+    ASSERTIONS.assertIn("Do not push", prompt)
+
+
+def test_parse_phase0_preflight_result_pass_json():
+    report = controller.parse_phase0_preflight_result(
+        json.dumps({"status": "PASS", "risk_level": "low", "next_action": "generate_patch_prompt"})
+    )
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["risk_level"], "low")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+    ASSERTIONS.assertFalse(controller.phase0_preflight_failed(report))
+
+
+def test_parse_phase0_preflight_result_needs_manual_text():
+    report = controller.parse_phase0_preflight_result("status: NEEDS_MANUAL\nrisk_level: high")
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+    ASSERTIONS.assertTrue(controller.phase0_preflight_failed(report))
+
+
+def test_parse_phase0_preflight_result_malformed_fails_closed():
+    report = controller.parse_phase0_preflight_result("```bash\nnot json\n```")
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["risk_level"], "high")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+
+
+def test_codacy_task_lines_keep_post_fix_micro_audit_section_included():
+    task = "\n".join(controller.codacy_task_lines([]))
+    ASSERTIONS.assertIn("POST-FIX MICRO-AUDIT BEFORE COMMIT", task)
+
+
 def test_parse_post_fix_micro_audit_result_supports_json_payload():
     """JSON payload should parse fields and preserve PASS validation routing."""
     raw = json.dumps({

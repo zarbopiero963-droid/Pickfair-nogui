@@ -103,6 +103,104 @@ If audit fails:
 - or stop and report PARTIAL/needs_manual
 Do not commit a patch that fails this audit.
 """
+CODEX_PROMPT_REQUIRED_SECTIONS = [
+    "TASK",
+    "OBJECTIVE",
+    "CONTEXT",
+    "FILES TO INSPECT",
+    "FILES ALLOWED",
+    "DO NOT MODIFY",
+    "CURRENT BEHAVIOR",
+    "EXPECTED BEHAVIOR",
+    "CURRENT BLOCKERS",
+    "REQUIRED FIXES",
+    "METHOD",
+    "VALIDATION",
+    "POST-FIX MICRO-AUDIT BEFORE COMMIT",
+    "OUTPUT FORMAT",
+    "STOP CONDITIONS",
+]
+PHASE0_SECTION_TITLE = "PHASE 0 PRE-FLIGHT (READ-ONLY)"
+PHASE0_RESULT_LIST_FIELDS = [
+    "files_inspected",
+    "static_analysis_rules",
+    "workflows_affected",
+    "authoritative_modules",
+    "dangerous_gates",
+    "files_allowed",
+    "files_forbidden",
+    "implementation_plan",
+    "tests_to_run",
+    "stop_conditions",
+]
+
+
+def build_codex_task_prompt(context: dict[str, Any] | None = None) -> str:
+    ctx = context if isinstance(context, dict) else {}
+    lines = [f"{name}:\n{_codex_context_value(ctx, name)}" for name in CODEX_PROMPT_REQUIRED_SECTIONS]
+    prompt = "\n\n".join(lines)
+    return ensure_post_fix_micro_audit_section(ensure_phase0_preflight_section(prompt))
+
+
+def ensure_codex_prompt_contract(prompt: str) -> str:
+    text = str(prompt or "").strip()
+    if not text:
+        text = build_codex_task_prompt({})
+    text = ensure_phase0_preflight_section(text)
+    missing = codex_prompt_contract_missing_sections(text)
+    if missing:
+        text = "\n\n".join([text] + [f"{name}:\nTBD" for name in missing]).strip()
+    return ensure_post_fix_micro_audit_section(text)
+
+
+def validate_codex_prompt_contract(prompt: str) -> dict[str, Any]:
+    text = str(prompt or "")
+    missing = codex_prompt_contract_missing_sections(text)
+    reasons = _codex_contract_reasons(text)
+    return {"valid": not missing and not reasons, "missing_sections": missing, "reasons": reasons}
+
+
+def codex_prompt_contract_missing_sections(prompt: str) -> list[str]:
+    text = str(prompt or "")
+    return [name for name in CODEX_PROMPT_REQUIRED_SECTIONS if not _has_section(text, name)]
+
+
+def build_phase0_preflight_prompt(context: dict[str, Any] | None = None) -> str:
+    ctx = context if isinstance(context, dict) else {}
+    target = _context_list(ctx, "files_allowed") or ["(from task scope)"]
+    lines = [
+        PHASE0_SECTION_TITLE,
+        "",
+        "READ-ONLY. Do not edit files. Do not commit. Do not push.",
+        "Inspect static-analysis config, workflow CI, similar files/tests, authoritative modules, dangerous gates, and forbidden files.",
+        "Read .github/workflows/*.yml and map affected workflows/checks; do not edit workflows unless explicitly allowed.",
+        "Static-analysis files to inspect when present: .codacy.yml, .deepsource.toml, pyproject.toml, setup.cfg, tox.ini, .pylintrc, .flake8, ruff config, flake8 config, bandit config, pylint config, radon/lizard/static-analysis config.",
+        "Likely blocking rules: NLOC, CCN, line length, docstring requirements, function name length <= 30, parameter count, protected access, hardcoded secret-like literals, bare assert / B101, subprocess / B603 / B404, unused helpers, direct script execution expectations.",
+        f"Task allowed files: {', '.join(target)}",
+        "Produce implementation plan and tests/validation plan. Stop with NEEDS_MANUAL when ambiguity/risk is high.",
+        "Result contract: status, risk_level, files_inspected, static_analysis_rules, workflows_affected, authoritative_modules, dangerous_gates, files_allowed, files_forbidden, implementation_plan, tests_to_run, stop_conditions, next_action.",
+    ]
+    return "\n".join(lines).strip() + "\n"
+
+
+def ensure_phase0_preflight_section(prompt: str) -> str:
+    text = str(prompt or "").rstrip()
+    return text + "\n" if _has_section(text, PHASE0_SECTION_TITLE) else f"{build_phase0_preflight_prompt({})}\n{text}\n"
+
+
+def parse_phase0_preflight_result(text: str) -> dict[str, Any]:
+    raw = str(text or "").strip()
+    report = _parse_post_fix_audit_json(raw) or _parse_phase0_text(raw)
+    return _normalize_phase0_report(report)
+
+
+def phase0_preflight_status(report: dict[str, Any] | None) -> str:
+    value = str((report or {}).get("status") or "").upper()
+    return value if value in {"PASS", "NEEDS_MANUAL"} else "NEEDS_MANUAL"
+
+
+def phase0_preflight_failed(report: dict[str, Any] | None) -> bool:
+    return phase0_preflight_status(report) != "PASS" or str((report or {}).get("next_action") or "").strip() != "generate_patch_prompt"
 
 
 def command_family(command: str) -> str:
@@ -1231,7 +1329,7 @@ def codacy_task_lines(records: list[dict[str, Any]]) -> list[str]:
             f"{index}. {record['filePath']}:{record['lineNumber']} "
             f"{record['patternId']} {record['severity']} {record['tool']} - {record['message']}"
         )
-    return ensure_post_fix_micro_audit_section("\n".join(lines)).splitlines()
+    return ensure_codex_prompt_contract("\n".join(lines)).splitlines()
 
 
 def build_post_fix_micro_audit_prompt(task_text: str, context: dict[str, Any] | None = None) -> str:
@@ -1464,6 +1562,110 @@ def _post_fix_report_lists(report: dict[str, Any]) -> dict[str, list[str]]:
         "changed_files": _list_value(report, "", "changed_files"),
         "validation_commands": _list_value(report, "", "validation_commands"),
     }
+
+
+def _context_list(context: dict[str, Any], key: str) -> list[str]:
+    return _list_from_payload(context.get(key))
+
+
+def _codex_context_value(context: dict[str, Any], section: str) -> str:
+    mapped = {
+        "TASK": str(context.get("task") or "TBD"),
+        "OBJECTIVE": str(context.get("objective") or "TBD"),
+        "CONTEXT": str(context.get("context") or "TBD"),
+        "FILES TO INSPECT": "\n".join(f"- {x}" for x in (_context_list(context, "files_to_inspect") or ["TBD"])),
+        "FILES ALLOWED": "\n".join(f"- {x}" for x in (_context_list(context, "files_allowed") or ["TBD"])),
+        "DO NOT MODIFY": "\n".join(f"- {x}" for x in (_context_list(context, "do_not_modify") or ["TBD"])),
+        "CURRENT BEHAVIOR": str(context.get("current_behavior") or "TBD"),
+        "EXPECTED BEHAVIOR": str(context.get("expected_behavior") or "TBD"),
+        "CURRENT BLOCKERS": "\n".join(f"- {x}" for x in (_context_list(context, "current_blockers") or ["TBD"])),
+        "REQUIRED FIXES": "\n".join(f"- {x}" for x in (_context_list(context, "required_fixes") or ["TBD"])),
+        "METHOD": str(context.get("method") or "TBD"),
+        "VALIDATION": "\n".join(f"- {x}" for x in (_context_list(context, "validation") or ["TBD"])),
+        "POST-FIX MICRO-AUDIT BEFORE COMMIT": "Use required post-fix micro-audit checklist before commit.",
+        "OUTPUT FORMAT": str(context.get("output_format") or "TBD"),
+        "STOP CONDITIONS": "\n".join(f"- {x}" for x in (_context_list(context, "stop_conditions") or ["TBD"])),
+    }
+    return mapped.get(section, "TBD")
+
+
+def _has_section(text: str, section: str) -> bool:
+    return bool(re.search(rf"(?im)^\s*{re.escape(section)}\s*:?", str(text or "")))
+
+
+def _codex_contract_reasons(text: str) -> list[str]:
+    reasons: list[str] = []
+    if _looks_generic_fix_prompt(text):
+        reasons.append("generic_fix_without_objective_context_validation")
+    if _has_unsafe_commit_push_instruction(text):
+        reasons.append("commit_or_push_instruction_without_explicit_allowance")
+    return reasons
+
+
+def _looks_generic_fix_prompt(text: str) -> bool:
+    generic = "fix this" in str(text or "").lower()
+    return generic and any(not _section_has_value(text, key) for key in ("OBJECTIVE", "CONTEXT", "VALIDATION"))
+
+
+def _section_has_value(text: str, section: str) -> bool:
+    match = re.search(rf"(?ims)^\s*{re.escape(section)}\s*:\s*(.+?)(?:\n[A-Z0-9][A-Z0-9 _-]*\s*:|\Z)", text)
+    return bool(match and str(match.group(1)).strip() and str(match.group(1)).strip().upper() != "TBD")
+
+
+def _has_unsafe_commit_push_instruction(text: str) -> bool:
+    allow = "ALLOW_COMMIT_PUSH: yes" in str(text or "")
+    if allow:
+        return False
+    for line in str(text or "").splitlines():
+        lowered = line.strip().lower()
+        if ("commit" in lowered or "push" in lowered) and "do not" not in lowered and "don't" not in lowered:
+            return True
+    return False
+
+
+def _parse_phase0_text(raw: str) -> dict[str, Any]:
+    payload = {
+        "status": _line_value(raw, "status") or _line_value(raw, "phase0_status"),
+        "risk_level": _line_value(raw, "risk_level"),
+        "next_action": _line_value(raw, "next_action"),
+    }
+    for key in PHASE0_RESULT_LIST_FIELDS:
+        payload[key] = _list_value({}, raw, key)
+    return payload
+
+
+def _normalize_phase0_report(report: dict[str, Any]) -> dict[str, Any]:
+    status = _phase0_status(report)
+    next_action = _phase0_next_action(status, report)
+    normalized = {
+        "status": status,
+        "risk_level": _phase0_risk(report),
+        "next_action": next_action,
+    }
+    for key in PHASE0_RESULT_LIST_FIELDS:
+        normalized[key] = _list_value(report, "", key)
+    if status == "PASS" and next_action == "generate_patch_prompt":
+        return normalized
+    normalized["status"] = "NEEDS_MANUAL"
+    normalized["next_action"] = "needs_manual_phase0_failed"
+    return normalized
+
+
+def _phase0_status(report: dict[str, Any]) -> str:
+    value = str(report.get("status") or "").upper()
+    return value if value in {"PASS", "NEEDS_MANUAL"} else "NEEDS_MANUAL"
+
+
+def _phase0_risk(report: dict[str, Any]) -> str:
+    value = str(report.get("risk_level") or "").lower()
+    return value if value in {"low", "medium", "high"} else "high"
+
+
+def _phase0_next_action(status: str, report: dict[str, Any]) -> str:
+    explicit = str(report.get("next_action") or "").strip()
+    if explicit:
+        return explicit
+    return "generate_patch_prompt" if status == "PASS" else "needs_manual_phase0_failed"
 
 
 def write_codacy_task(outdir: Path, raw: dict[str, Any], issues: list[dict[str, Any]]) -> None:
@@ -2253,7 +2455,7 @@ def _is_deepsource_check(check: dict[str, Any]) -> bool:
 def _deepsource_lines(checks: list[dict[str, Any]]) -> list[str]:
     lines = ["# DeepSource repair input", ""]
     if not checks:
-        return ensure_post_fix_micro_audit_section(
+        return ensure_codex_prompt_contract(
             "\n".join(lines + ["No DeepSource blockers found in current PR status rollup."])
         ).splitlines()
     for check in checks:
@@ -2264,7 +2466,7 @@ def _deepsource_lines(checks: list[dict[str, Any]]) -> list[str]:
             f"  description: {str(check.get('description') or '')}",
             "",
         ])
-    return ensure_post_fix_micro_audit_section("\n".join(lines)).splitlines()
+    return ensure_codex_prompt_contract("\n".join(lines)).splitlines()
 
 
 def _write_deepsource_task(outdir: Path, repo: str, pr_number: str) -> None:
@@ -2389,10 +2591,10 @@ def _review_task_lines(nodes: list[dict[str, Any]]) -> list[str]:
     ]
     if not unresolved:
         lines.append("No unresolved review threads found, or review thread API was unavailable.")
-        return ensure_post_fix_micro_audit_section("\n".join(lines)).splitlines()
+        return ensure_codex_prompt_contract("\n".join(lines)).splitlines()
     for node in unresolved:
         lines.extend(_thread_lines(node))
-    return ensure_post_fix_micro_audit_section("\n".join(lines)).splitlines()
+    return ensure_codex_prompt_contract("\n".join(lines)).splitlines()
 
 
 def review_comments_summary(nodes: list[dict[str, Any]]) -> dict[str, int]:

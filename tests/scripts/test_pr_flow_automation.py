@@ -94,6 +94,28 @@ def test_post_fix_micro_audit_helpers_do_not_trigger_final_merge_audit():
     ASSERTIONS.assertEqual(report["next_action"], "validation_then_commit")
 
 
+def test_flow_codex_prompt_contract_helpers_available():
+    prompt = flow.build_codex_task_prompt({"task": "x", "objective": "y"})
+    ASSERTIONS.assertIn("TASK:", prompt)
+    ASSERTIONS.assertIn("PHASE 0 PRE-FLIGHT (READ-ONLY)", prompt)
+    ASSERTIONS.assertEqual(flow.codex_prompt_contract_missing_sections(prompt), [])
+
+
+def test_flow_phase0_parser_supports_fenced_json_with_prose():
+    raw = "\n".join(
+        [
+            "preflight result follows",
+            "```json",
+            '{"status":"PASS","risk_level":"medium","next_action":"generate_patch_prompt"}',
+            "```",
+        ]
+    )
+    report = flow.parse_phase0_preflight_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(flow.phase0_preflight_status(report), "PASS")
+    ASSERTIONS.assertFalse(flow.phase0_preflight_failed(report))
+
+
 def test_flow_codacy_task_fails_closed_when_blocking_api_fails(tmp_path, monkeypatch, capsys):
     """Codacy API failures remain blocking when the Codacy check is blocking."""
     monkeypatch.setattr(flow, "codacy_is_blocking", lambda _repo, _pr: True)
