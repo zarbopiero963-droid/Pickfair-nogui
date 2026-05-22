@@ -207,10 +207,17 @@ def _phase0_pass_payload() -> dict[str, Any]:
         "files_inspected": ["scripts/pr_automation_controller.py"],
         "static_analysis_rules": ["CCN<=10"],
         "workflows_affected": ["pr-flow-guardrails"],
+        "authoritative_modules": ["scripts/pr_automation_controller.py"],
+        "dangerous_gates": ["validate_codex_prompt_contract"],
         "implementation_plan": ["patch validator"],
         "tests_to_run": ["python3 -m pytest tests/scripts/test_pr_automation_controller.py -q"],
         "stop_conditions": ["stop on scope violation"],
     }
+
+
+def _assert_prompt_contains_lines(prompt: str, lines: tuple[str, ...]) -> None:
+    for line in lines:
+        ASSERTIONS.assertIn(line, prompt)
 
 
 def _set_section_value(prompt: str, section: str, value: str) -> str:
@@ -344,8 +351,7 @@ def test_build_codex_task_prompt_includes_required_sections():
         }
     )
     prompt = controller.build_codex_task_prompt(context)
-    for section in controller.CODEX_PROMPT_REQUIRED_SECTIONS:
-        ASSERTIONS.assertIn(f"{section}:", prompt)
+    _assert_prompt_contains_lines(prompt, tuple(f"{section}:" for section in controller.CODEX_PROMPT_REQUIRED_SECTIONS))
     ASSERTIONS.assertIn("PHASE 0 PRE-FLIGHT (READ-ONLY)", prompt)
     ASSERTIONS.assertTrue(controller.validate_codex_prompt_contract(prompt)["valid"])
 
@@ -379,8 +385,7 @@ def test_build_codex_task_prompt_defaults_include_method_output_stop_contract_te
         "- stop on validation failure",
         "- stop on ambiguous/high-risk changes needing human decision",
     )
-    for line in required_lines:
-        ASSERTIONS.assertIn(line, prompt)
+    _assert_prompt_contains_lines(prompt, required_lines)
 
 
 def test_ensure_codex_prompt_contract_appends_missing_sections():
@@ -701,12 +706,38 @@ def test_validate_codex_prompt_contract_rejects_unsafe_commit_push_imperatives_w
         ASSERTIONS.assertFalse(result["valid"])
 
 
+def test_validate_codex_prompt_contract_rejects_commit_the_patch_without_allowance():
+    prompt = "\n".join([_full_codex_contract_prompt(), "METHOD:\nCommit the patch after checks."])
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertIn("commit_or_push_instruction_without_explicit_allowance", result["reasons"])
+    ASSERTIONS.assertFalse(result["valid"])
+
+
+def test_validate_codex_prompt_contract_rejects_push_the_branch_without_allowance():
+    prompt = "\n".join([_full_codex_contract_prompt(), "METHOD:\nPush the branch when done."])
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertIn("commit_or_push_instruction_without_explicit_allowance", result["reasons"])
+    ASSERTIONS.assertFalse(result["valid"])
+
+
 def test_validate_codex_prompt_contract_rejects_mixed_negation_with_real_push_instruction():
     """Mixed lines with negation and an actual push imperative must still be rejected."""
     prompt = "\n".join(
         [
             _full_codex_contract_prompt(),
             "METHOD:\nDo not push to main; git push origin branch",
+        ]
+    )
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertIn("commit_or_push_instruction_without_explicit_allowance", result["reasons"])
+    ASSERTIONS.assertFalse(result["valid"])
+
+
+def test_validate_codex_prompt_contract_rejects_mixed_negation_with_real_commit_instruction():
+    prompt = "\n".join(
+        [
+            _full_codex_contract_prompt(),
+            "METHOD:\nDo not push to main; commit changes after checks",
         ]
     )
     result = controller.validate_codex_prompt_contract(prompt)
@@ -721,6 +752,10 @@ def test_validate_codex_prompt_contract_accepts_safe_commit_push_descriptions():
         "METHOD:\nPOST-FIX MICRO-AUDIT BEFORE COMMIT",
         "METHOD:\nDo not commit until explicitly approved.",
         "METHOD:\nDo not push until explicitly approved.",
+        "METHOD:\nDo not git commit.",
+        "METHOD:\nDo not git push.",
+        "METHOD:\nDon't git commit.",
+        "METHOD:\nDon't git push.",
         "METHOD:\nno commit/push without owner approval.",
     )
     for method_line in lines:
@@ -732,6 +767,13 @@ def test_validate_codex_prompt_contract_accepts_safe_commit_push_descriptions():
         )
         result = controller.validate_codex_prompt_contract(prompt)
         ASSERTIONS.assertTrue(result["valid"])
+
+
+def test_validate_codex_prompt_contract_accepts_appended_pure_negated_git_push_line():
+    """Pure prohibition appended to a valid prompt remains valid."""
+    prompt = _full_codex_contract_prompt() + "\ndo not git push\n"
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertTrue(result["valid"])
 
 
 def test_ensure_phase0_preflight_section_is_idempotent_when_already_present():
