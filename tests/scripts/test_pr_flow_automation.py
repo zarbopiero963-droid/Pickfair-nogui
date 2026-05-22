@@ -95,6 +95,7 @@ def test_post_fix_micro_audit_helpers_do_not_trigger_final_merge_audit():
 
 
 def test_flow_codex_prompt_contract_helpers_available():
+    """Flow module re-exports codex prompt helpers with phase-0 section in generated prompt."""
     prompt = flow.build_codex_task_prompt({"task": "x", "objective": "y"})
     ASSERTIONS.assertIn("TASK:", prompt)
     ASSERTIONS.assertIn("PHASE 0 PRE-FLIGHT (READ-ONLY)", prompt)
@@ -102,6 +103,7 @@ def test_flow_codex_prompt_contract_helpers_available():
 
 
 def test_flow_phase0_parser_supports_fenced_json_with_prose():
+    """Phase-0 parser accepts prose-wrapped fenced JSON and keeps PASS routing."""
     raw = "\n".join(
         [
             "preflight result follows",

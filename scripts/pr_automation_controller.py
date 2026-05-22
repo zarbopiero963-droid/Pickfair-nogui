@@ -174,11 +174,23 @@ def build_phase0_preflight_prompt(context: dict[str, Any] | None = None) -> str:
         "READ-ONLY. Do not edit files. Do not commit. Do not push.",
         "Inspect static-analysis config, workflow CI, similar files/tests, authoritative modules, dangerous gates, and forbidden files.",
         "Read .github/workflows/*.yml and map affected workflows/checks; do not edit workflows unless explicitly allowed.",
-        "Static-analysis files to inspect when present: .codacy.yml, .deepsource.toml, pyproject.toml, setup.cfg, tox.ini, .pylintrc, .flake8, ruff config, flake8 config, bandit config, pylint config, radon/lizard/static-analysis config.",
-        "Likely blocking rules: NLOC, CCN, line length, docstring requirements, function name length <= 30, parameter count, protected access, hardcoded secret-like literals, bare assert / B101, subprocess / B603 / B404, unused helpers, direct script execution expectations.",
+        (
+            "Static-analysis files to inspect when present: .codacy.yml, .deepsource.toml, "
+            "pyproject.toml, setup.cfg, tox.ini, .pylintrc, .flake8, ruff config, flake8 config, "
+            "bandit config, pylint config, radon/lizard/static-analysis config."
+        ),
+        (
+            "Likely blocking rules: NLOC, CCN, line length, docstring requirements, function name "
+            "length <= 30, parameter count, protected access, hardcoded secret-like literals, bare "
+            "assert / B101, subprocess / B603 / B404, unused helpers, direct script execution expectations."
+        ),
         f"Task allowed files: {', '.join(target)}",
         "Produce implementation plan and tests/validation plan. Stop with NEEDS_MANUAL when ambiguity/risk is high.",
-        "Result contract: status, risk_level, files_inspected, static_analysis_rules, workflows_affected, authoritative_modules, dangerous_gates, files_allowed, files_forbidden, implementation_plan, tests_to_run, stop_conditions, next_action.",
+        (
+            "Result contract: status, risk_level, files_inspected, static_analysis_rules, workflows_affected, "
+            "authoritative_modules, dangerous_gates, files_allowed, files_forbidden, implementation_plan, "
+            "tests_to_run, stop_conditions, next_action."
+        ),
     ]
     return "\n".join(lines).strip() + "\n"
 
@@ -1609,22 +1621,52 @@ def _looks_generic_fix_prompt(text: str) -> bool:
 
 def _section_has_value(text: str, section: str) -> bool:
     match = re.search(rf"(?ims)^\s*{re.escape(section)}\s*:\s*(.+?)(?:\n[A-Z0-9][A-Z0-9 _-]*\s*:|\Z)", text)
-    return bool(match and str(match.group(1)).strip() and str(match.group(1)).strip().upper() != "TBD")
+    if not match:
+        return False
+    value = str(match.group(1)).strip()
+    if not value:
+        return False
+    if value.upper() == "TBD":
+        return False
+    lines = [line.strip() for line in value.splitlines() if line.strip()]
+    if not lines:
+        return False
+    placeholders = {"TBD", "- TBD", "* TBD"}
+    if all(line.upper() in placeholders for line in lines):
+        return False
+    return True
 
 
 def _has_unsafe_commit_push_instruction(text: str) -> bool:
-    allow = "ALLOW_COMMIT_PUSH: yes" in str(text or "")
+    allow = bool(re.search(r"(?m)^\s*ALLOW_COMMIT_PUSH\s*:\s*yes\s*$", str(text or "")))
     if allow:
         return False
+
+    unsafe_patterns = [
+        re.compile(r"(?i)\bgit\s+commit(?:\b|$)"),
+        re.compile(r"(?i)\bgit\s+push(?:\b|$)"),
+        re.compile(r"(?i)\bcommit\s+changes(?:\b|$)"),
+        re.compile(r"(?i)\bpush\s+origin\s+branch(?:\b|$)"),
+    ]
+    safe_negative = re.compile(
+        r"(?i)\b(do\s+not|don't|no)\s+(?:commit|push)(?:\s*/\s*(?:commit|push)|\s+or\s+(?:commit|push)|\b)"
+    )
+
     for line in str(text or "").splitlines():
         lowered = line.strip().lower()
-        if ("commit" in lowered or "push" in lowered) and "do not" not in lowered and "don't" not in lowered:
+        if not lowered:
+            continue
+        if safe_negative.search(lowered):
+            continue
+        if "before committing" in lowered:
+            continue
+        if any(pattern.search(lowered) for pattern in unsafe_patterns):
             return True
     return False
 
 
 def _parse_phase0_text(raw: str) -> dict[str, Any]:
-    payload = {
+    payload: dict[str, Any] = {
         "status": _line_value(raw, "status") or _line_value(raw, "phase0_status"),
         "risk_level": _line_value(raw, "risk_level"),
         "next_action": _line_value(raw, "next_action"),

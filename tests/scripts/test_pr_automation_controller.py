@@ -268,13 +268,16 @@ def test_build_post_fix_micro_audit_prompt_filters_blank_changed_files_entries()
 
 
 def test_build_codex_task_prompt_includes_required_sections():
+    """Generated codex prompt contains required sections and validates successfully."""
     prompt = controller.build_codex_task_prompt({"task": "workflow hygiene", "objective": "contracted prompts"})
     for section in controller.CODEX_PROMPT_REQUIRED_SECTIONS:
         ASSERTIONS.assertIn(f"{section}:", prompt)
     ASSERTIONS.assertIn("PHASE 0 PRE-FLIGHT (READ-ONLY)", prompt)
+    ASSERTIONS.assertTrue(controller.validate_codex_prompt_contract(prompt)["valid"])
 
 
 def test_ensure_codex_prompt_contract_appends_missing_sections():
+    """Contract-enforcer appends missing sections and keeps required audit/preflight headers."""
     prompt = controller.ensure_codex_prompt_contract("TASK:\nFix this")
     ASSERTIONS.assertEqual(controller.codex_prompt_contract_missing_sections(prompt), [])
     ASSERTIONS.assertIn("POST-FIX MICRO-AUDIT BEFORE COMMIT", prompt)
@@ -282,6 +285,7 @@ def test_ensure_codex_prompt_contract_appends_missing_sections():
 
 
 def test_validate_codex_prompt_contract_reports_missing_sections_for_incomplete_prompt():
+    """Incomplete prompt fails contract validation and reports required missing sections."""
     result = controller.validate_codex_prompt_contract("TASK:\nfix this")
     ASSERTIONS.assertIn("OBJECTIVE", result["missing_sections"])
     ASSERTIONS.assertIn("CONTEXT", result["missing_sections"])
@@ -289,6 +293,7 @@ def test_validate_codex_prompt_contract_reports_missing_sections_for_incomplete_
 
 
 def test_build_phase0_preflight_prompt_includes_static_analysis_checklist():
+    """Phase-0 prompt includes static-analysis config files likely needed for triage."""
     prompt = controller.build_phase0_preflight_prompt({})
     ASSERTIONS.assertIn(".codacy.yml", prompt)
     ASSERTIONS.assertIn(".deepsource.toml", prompt)
@@ -297,6 +302,7 @@ def test_build_phase0_preflight_prompt_includes_static_analysis_checklist():
 
 
 def test_build_phase0_preflight_prompt_includes_workflow_ci_awareness():
+    """Phase-0 prompt includes workflow-read instructions while preserving read-only behavior."""
     prompt = controller.build_phase0_preflight_prompt({})
     ASSERTIONS.assertIn(".github/workflows/*.yml", prompt)
     ASSERTIONS.assertIn("affected workflows/checks", prompt)
@@ -304,6 +310,7 @@ def test_build_phase0_preflight_prompt_includes_workflow_ci_awareness():
 
 
 def test_build_phase0_preflight_prompt_includes_read_only_rules():
+    """Phase-0 prompt explicitly preserves no-edit/no-commit/no-push guardrails."""
     prompt = controller.build_phase0_preflight_prompt({})
     ASSERTIONS.assertIn("READ-ONLY", prompt)
     ASSERTIONS.assertIn("Do not edit files", prompt)
@@ -312,6 +319,7 @@ def test_build_phase0_preflight_prompt_includes_read_only_rules():
 
 
 def test_parse_phase0_preflight_result_pass_json():
+    """PASS JSON payload normalizes to PASS with generate_patch_prompt next action."""
     report = controller.parse_phase0_preflight_result(
         json.dumps({"status": "PASS", "risk_level": "low", "next_action": "generate_patch_prompt"})
     )
@@ -322,6 +330,7 @@ def test_parse_phase0_preflight_result_pass_json():
 
 
 def test_parse_phase0_preflight_result_needs_manual_text():
+    """NEEDS_MANUAL text payload normalizes to fail-closed manual routing."""
     report = controller.parse_phase0_preflight_result("status: NEEDS_MANUAL\nrisk_level: high")
     ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
     ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
@@ -329,6 +338,7 @@ def test_parse_phase0_preflight_result_needs_manual_text():
 
 
 def test_parse_phase0_preflight_result_malformed_fails_closed():
+    """Malformed payload fails closed to NEEDS_MANUAL with high risk."""
     report = controller.parse_phase0_preflight_result("```bash\nnot json\n```")
     ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
     ASSERTIONS.assertEqual(report["risk_level"], "high")
@@ -336,8 +346,159 @@ def test_parse_phase0_preflight_result_malformed_fails_closed():
 
 
 def test_codacy_task_lines_keep_post_fix_micro_audit_section_included():
+    """Codacy task includes the required post-fix micro-audit section."""
     task = "\n".join(controller.codacy_task_lines([]))
     ASSERTIONS.assertIn("POST-FIX MICRO-AUDIT BEFORE COMMIT", task)
+
+
+def test_validate_codex_prompt_contract_rejects_git_commit_without_allowance():
+    """Unsafe imperative git commit instruction fails prompt contract without allowance."""
+    prompt = "\n".join(
+        [
+            "TASK:\nFix lint",
+            "OBJECTIVE:\nAddress blockers",
+            "CONTEXT:\nScope is limited",
+            "VALIDATION:\n- python3 -m pytest -q",
+            "METHOD:\nRun git commit after fixes",
+        ]
+    )
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertFalse(result["valid"])
+    ASSERTIONS.assertIn("commit_or_push_instruction_without_explicit_allowance", result["reasons"])
+
+
+def test_validate_codex_prompt_contract_rejects_git_push_without_allowance():
+    """Unsafe imperative git push instruction fails prompt contract without allowance."""
+    prompt = "\n".join(
+        [
+            "TASK:\nFix lint",
+            "OBJECTIVE:\nAddress blockers",
+            "CONTEXT:\nScope is limited",
+            "VALIDATION:\n- python3 -m pytest -q",
+            "METHOD:\nPlease git push origin branch",
+        ]
+    )
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertFalse(result["valid"])
+    ASSERTIONS.assertIn("commit_or_push_instruction_without_explicit_allowance", result["reasons"])
+
+
+def test_validate_codex_prompt_contract_rejects_commit_changes_without_allowance():
+    """Imperative commit changes instruction fails prompt contract without allowance."""
+    prompt = "\n".join(
+        [
+            "TASK:\nFix lint",
+            "OBJECTIVE:\nAddress blockers",
+            "CONTEXT:\nScope is limited",
+            "VALIDATION:\n- python3 -m pytest -q",
+            "METHOD:\nCommit changes after validation.",
+        ]
+    )
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertFalse(result["valid"])
+    ASSERTIONS.assertIn("commit_or_push_instruction_without_explicit_allowance", result["reasons"])
+
+
+def test_validate_codex_prompt_contract_rejects_push_origin_branch_without_allowance():
+    """Imperative push origin branch instruction fails prompt contract without allowance."""
+    prompt = "\n".join(
+        [
+            "TASK:\nFix lint",
+            "OBJECTIVE:\nAddress blockers",
+            "CONTEXT:\nScope is limited",
+            "VALIDATION:\n- python3 -m pytest -q",
+            "METHOD:\nPush origin branch when checks are green.",
+        ]
+    )
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertFalse(result["valid"])
+    ASSERTIONS.assertIn("commit_or_push_instruction_without_explicit_allowance", result["reasons"])
+
+
+def test_validate_codex_prompt_contract_allows_commit_push_with_allowance_line():
+    """ALLOW_COMMIT_PUSH yes on its own line permits commit/push imperative instructions."""
+    prompt = "\n".join(
+        [
+            controller.build_codex_task_prompt({"task": "Fix lint", "objective": "Address blockers"}),
+            "ALLOW_COMMIT_PUSH: yes",
+            "METHOD:\nRun git commit and git push origin branch",
+        ]
+    )
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertTrue(result["valid"])
+
+
+def test_validate_codex_prompt_contract_does_not_reject_descriptive_committing_word():
+    """Descriptive words like committing do not trigger unsafe commit/push detection."""
+    prompt = "\n".join(
+        [
+            controller.build_codex_task_prompt({"task": "Fix lint", "objective": "Address blockers"}),
+            "METHOD:\nDocument expected steps before committing anything.",
+        ]
+    )
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertTrue(result["valid"])
+
+
+def test_validate_codex_prompt_contract_does_not_reject_post_fix_micro_audit_header():
+    """POST-FIX MICRO-AUDIT BEFORE COMMIT header is mandatory and must remain valid."""
+    prompt = controller.ensure_codex_prompt_contract("TASK:\nFix lint")
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertTrue(result["valid"])
+
+
+def test_validate_codex_prompt_contract_does_not_reject_do_not_commit_or_push():
+    """Negative guardrails about commit/push must not be treated as unsafe instructions."""
+    prompt = "\n".join(
+        [
+            controller.build_codex_task_prompt({"task": "Fix lint", "objective": "Address blockers"}),
+            "METHOD:\nDo not commit. Do not push. no commit/push.",
+        ]
+    )
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertTrue(result["valid"])
+
+
+def test_section_has_value_rejects_tbd_list_placeholder():
+    """Section content with only list placeholder values like - TBD remains invalid."""
+    prompt = "\n".join(
+        [
+            "TASK:\nFix lint",
+            "OBJECTIVE:\n- TBD",
+            "CONTEXT:\nReady",
+            "VALIDATION:\n- python3 -m pytest -q",
+        ]
+    )
+    ASSERTIONS.assertFalse(controller._section_has_value(prompt, "OBJECTIVE"))
+
+
+def test_ensure_phase0_preflight_section_is_idempotent_when_already_present():
+    """Existing PHASE 0 section is preserved without duplication or reordering."""
+    original = "\n".join(
+        [
+            controller.PHASE0_SECTION_TITLE,
+            "",
+            "READ-ONLY. Do not edit files. Do not commit. Do not push.",
+            "",
+            "TASK:",
+            "Fix lint",
+        ]
+    )
+    ensured = controller.ensure_phase0_preflight_section(original)
+    ASSERTIONS.assertEqual(ensured, original + "\n")
+    ASSERTIONS.assertEqual(ensured.count(controller.PHASE0_SECTION_TITLE), 1)
+
+
+def test_ensure_phase0_preflight_section_prepends_exactly_once_for_empty_and_missing():
+    """Missing/empty input gets exactly one preflight block followed by original content."""
+    ensured_empty = controller.ensure_phase0_preflight_section("")
+    ASSERTIONS.assertEqual(ensured_empty.count(controller.PHASE0_SECTION_TITLE), 1)
+    ASSERTIONS.assertTrue(ensured_empty.startswith(controller.PHASE0_SECTION_TITLE))
+
+    original = "TASK:\nFix lint"
+    ensured = controller.ensure_phase0_preflight_section(original)
+    ASSERTIONS.assertEqual(ensured.count(controller.PHASE0_SECTION_TITLE), 1)
+    ASSERTIONS.assertTrue(ensured.endswith("\nTASK:\nFix lint\n"))
 
 
 def test_parse_post_fix_micro_audit_result_supports_json_payload():
