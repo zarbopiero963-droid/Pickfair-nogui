@@ -406,7 +406,28 @@ def test_ensure_codex_prompt_contract_appends_missing_sections():
     prompt = controller.ensure_codex_prompt_contract("TASK:\nFix this")
     ASSERTIONS.assertEqual(controller.codex_prompt_contract_missing_sections(prompt), [])
     ASSERTIONS.assertIn("POST-FIX MICRO-AUDIT BEFORE COMMIT", prompt)
+    ASSERTIONS.assertEqual(prompt.count("POST-FIX MICRO-AUDIT BEFORE COMMIT"), 1)
+    ASSERTIONS.assertIn("Did you fix every requested Codacy/review finding?", prompt)
+    ASSERTIONS.assertIn("Do not commit a patch that fails this audit.", prompt)
     ASSERTIONS.assertIn("PHASE 0 PRE-FLIGHT (READ-ONLY)", prompt)
+    result = controller.validate_codex_prompt_contract(_full_codex_contract_prompt())
+    ASSERTIONS.assertTrue(result["valid"])
+
+
+def test_ensure_codex_prompt_contract_replaces_placeholder_post_fix_with_canonical_section():
+    """Placeholder post-fix section is removed and replaced by one canonical checklist section."""
+    without_post_fix = re.sub(
+        r"(?ms)^POST-FIX MICRO-AUDIT BEFORE COMMIT:\n.*?(?=^[A-Z0-9][A-Z0-9 _-]*\s*(?::\s*)?$|\Z)",
+        "",
+        _full_codex_contract_prompt(),
+    ).strip()
+    prompt = controller.ensure_codex_prompt_contract(f"{without_post_fix}\n\nPOST-FIX MICRO-AUDIT BEFORE COMMIT:\nTBD\n")
+    ASSERTIONS.assertEqual(prompt.count("POST-FIX MICRO-AUDIT BEFORE COMMIT"), 1)
+    ASSERTIONS.assertIn("Did you fix every requested Codacy/review finding?", prompt)
+    ASSERTIONS.assertIn("Do not commit a patch that fails this audit.", prompt)
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertNotIn("POST-FIX MICRO-AUDIT BEFORE COMMIT", result["uninitialized_sections"])
+    ASSERTIONS.assertTrue(result["valid"])
 
 
 def test_validate_codex_prompt_contract_reports_missing_sections_for_incomplete_prompt():
@@ -868,6 +889,16 @@ def test_validate_codex_prompt_contract_rejects_commit_the_patch_without_allowan
 def test_validate_codex_prompt_contract_rejects_push_the_branch_without_allowance():
     """Imperative push-the-branch wording is blocked without explicit allowance."""
     _assert_contract_rejects_without_allowance("METHOD:\nPush the branch when done.")
+
+
+def test_validate_codex_prompt_contract_rejects_commit_after_checks_without_allowance():
+    """Bare imperative commit-after-checks wording is blocked without explicit allowance."""
+    _assert_contract_rejects_without_allowance("METHOD:\nCommit after checks.")
+
+
+def test_validate_codex_prompt_contract_rejects_push_this_branch_without_allowance():
+    """Bare imperative push-this-branch wording is blocked without explicit allowance."""
+    _assert_contract_rejects_without_allowance("METHOD:\nPush this branch.")
 
 
 def test_validate_codex_prompt_contract_rejects_mixed_negation_with_real_push_instruction():

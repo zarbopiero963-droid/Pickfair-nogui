@@ -162,6 +162,8 @@ COMMIT_PUSH_NEGATION_PATTERNS = (
 COMMIT_PUSH_IMPERATIVE_PATTERNS = (
     re.compile(r"\bgit\s+commit(?:\b|$)", re.IGNORECASE),
     re.compile(r"\bgit\s+push(?:\b|$)", re.IGNORECASE),
+    re.compile(r"\bcommit\s+after\s+checks(?:\b|$)", re.IGNORECASE),
+    re.compile(r"\bpush\s+this\s+branch(?:\b|$)", re.IGNORECASE),
     re.compile(r"\bcommit\s+changes(?:\b|$)", re.IGNORECASE),
     re.compile(r"\bcommit\s+the\s+patch(?:\b|$)", re.IGNORECASE),
     re.compile(r"\bpush\s+origin\s+branch(?:\b|$)", re.IGNORECASE),
@@ -206,9 +208,16 @@ def ensure_codex_prompt_contract(prompt: str) -> str:
     if not text:
         text = build_codex_task_prompt({})
     text = ensure_phase0_preflight_section(text)
+    text = _strip_post_fix_micro_audit_placeholder_section(text)
     missing = codex_prompt_contract_missing_sections(text)
     if missing:
-        text = "\n\n".join([text] + [f"{name}:\nTBD" for name in missing]).strip()
+        non_post_fix_missing = [
+            name for name in missing if name != "POST-FIX MICRO-AUDIT BEFORE COMMIT"
+        ]
+        if non_post_fix_missing:
+            text = "\n\n".join(
+                [text] + [f"{name}:\nTBD" for name in non_post_fix_missing]
+            ).strip()
     return ensure_post_fix_micro_audit_section(text)
 
 
@@ -1525,6 +1534,32 @@ def _has_full_post_fix_micro_audit_section(text: str) -> bool:
     normalized_text = _normalize_audit_text_for_match(text)
     normalized_section = _normalize_audit_text_for_match(POST_FIX_MICRO_AUDIT_SECTION)
     return normalized_section in normalized_text
+
+
+def _strip_post_fix_micro_audit_placeholder_section(text: str) -> str:
+    lines = str(text or "").splitlines()
+    if not lines:
+        return ""
+    cleaned: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if _section_header_match(line, "POST-FIX MICRO-AUDIT BEFORE COMMIT"):
+            body_lines: list[str] = []
+            index += 1
+            while index < len(lines):
+                candidate = lines[index]
+                if _is_required_section_header(candidate):
+                    break
+                body_lines.append(candidate)
+                index += 1
+            if all(_is_placeholder_value(raw.strip()) for raw in body_lines if raw.strip()):
+                continue
+            cleaned.extend([line] + body_lines)
+            continue
+        cleaned.append(line)
+        index += 1
+    return "\n".join(cleaned).strip()
 
 
 def _normalize_audit_text_for_match(text: str) -> str:
