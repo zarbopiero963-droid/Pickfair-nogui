@@ -1480,6 +1480,7 @@ def test_automation_ledger_path_handles_invalid_pr_number_safely(tmp_path):
     ASSERTIONS.assertIn("/pr-0/", controller.automation_ledger_path(str(tmp_path), ""))
     ASSERTIONS.assertIn("/pr-0/", controller.automation_ledger_path(str(tmp_path), None))
     ASSERTIONS.assertIn("/pr-0/", controller.automation_ledger_path(str(tmp_path), "abc"))
+    ASSERTIONS.assertIn("/pr-0/", controller.automation_ledger_path(str(tmp_path), -5))
 
 
 def test_automation_ledger_path_handles_empty_base_dir_safely():
