@@ -144,7 +144,7 @@ PHASE0_REQUIRED_EVIDENCE_FIELDS = (
     "stop_conditions",
 )
 PLACEHOLDER_VALUES = frozenset({"", "tbd", "todo", "none", "null", "n/a"})
-ALLOW_COMMIT_PUSH_PATTERN = re.compile(r"(?m)^\s*ALLOW_COMMIT_PUSH\s*:\s*yes\s*$")
+ALLOW_COMMIT_PUSH_PATTERN = re.compile(r"(?im)^\s*allow_commit_push\s*:\s*yes\s*$")
 COMMIT_PUSH_NEGATION_PATTERNS = (
     re.compile(r"\bdo\s+not\s+git\s+commit\b"),
     re.compile(r"\bdo\s+not\s+git\s+push\b"),
@@ -211,6 +211,10 @@ def ensure_codex_prompt_contract(prompt: str, context: dict[str, Any] | None = N
     ctx = context if isinstance(context, dict) else {}
     text = _seed_codex_contract_prompt(prompt, ctx)
     text = _add_missing_codex_contract_sections(text)
+    return _finalize_codex_contract_prompt(text)
+
+
+def _finalize_codex_contract_prompt(text: str) -> str:
     return ensure_post_fix_micro_audit_section(text)
 
 
@@ -1557,45 +1561,50 @@ def _strip_post_fix_micro_audit_placeholder_section(text: str) -> str:
     lines = str(text or "").splitlines()
     if not lines:
         return ""
-    cleaned: list[str] = []
-    for segment in _iter_post_fix_segments(lines):
-        if not segment["is_post_fix"]:
-            cleaned.extend(segment["segment_lines"])
-            continue
-        body_lines = cast(list[str], segment["body_lines"])
-        if _is_placeholder_only_post_fix_body(body_lines):
-            continue
-        cleaned.extend(cast(list[str], segment["segment_lines"]))
-    return "\n".join(cleaned).strip()
+    kept_segments = _kept_post_fix_segments_for_placeholder_cleanup(lines)
+    return _join_post_fix_segments(kept_segments)
 
 
 def _strip_post_fix_micro_audit_sections(text: str) -> str:
     lines = str(text or "").splitlines()
     if not lines:
         return ""
-    kept = [line for segment in _iter_post_fix_segments(lines) if not segment["is_post_fix"] for line in cast(list[str], segment["segment_lines"])]
-    return "\n".join(kept).strip()
+    return _join_post_fix_segments(_non_post_fix_segments(lines))
 
 
 def _iter_post_fix_segments(lines: list[str]) -> list[dict[str, Any]]:
     segments: list[dict[str, Any]] = []
     index = 0
     while index < len(lines):
-        start = index
-        is_post_fix = _section_header_match(lines[index], "POST-FIX MICRO-AUDIT BEFORE COMMIT")
-        if is_post_fix:
-            index += 1
-            while index < len(lines) and not _is_required_section_header(lines[index]):
-                index += 1
-            segment_lines = lines[start:index]
-            body = segment_lines[1:] if len(segment_lines) > 1 else []
-            segments.append({"is_post_fix": True, "segment_lines": segment_lines, "body_lines": body})
-            continue
-        index += 1
-        while index < len(lines) and not _section_header_match(lines[index], "POST-FIX MICRO-AUDIT BEFORE COMMIT"):
-            index += 1
-        segments.append({"is_post_fix": False, "segment_lines": lines[start:index], "body_lines": []})
+        segment, index = _next_post_fix_segment(lines, index)
+        segments.append(segment)
     return segments
+
+
+def _next_post_fix_segment(lines: list[str], start: int) -> tuple[dict[str, Any], int]:
+    if _is_post_fix_header_line(lines[start]):
+        return _consume_post_fix_segment(lines, start)
+    return _consume_non_post_fix_segment(lines, start)
+
+
+def _consume_post_fix_segment(lines: list[str], start: int) -> tuple[dict[str, Any], int]:
+    index = start + 1
+    while index < len(lines) and not _is_required_section_header(lines[index]):
+        index += 1
+    segment_lines = lines[start:index]
+    body = segment_lines[1:] if len(segment_lines) > 1 else []
+    return {"is_post_fix": True, "segment_lines": segment_lines, "body_lines": body}, index
+
+
+def _consume_non_post_fix_segment(lines: list[str], start: int) -> tuple[dict[str, Any], int]:
+    index = start + 1
+    while index < len(lines) and not _is_post_fix_header_line(lines[index]):
+        index += 1
+    return {"is_post_fix": False, "segment_lines": lines[start:index], "body_lines": []}, index
+
+
+def _is_post_fix_header_line(line: str) -> bool:
+    return _section_header_match(line, "POST-FIX MICRO-AUDIT BEFORE COMMIT")
 
 
 def _is_placeholder_only_post_fix_body(body_lines: list[str]) -> bool:
@@ -1614,7 +1623,20 @@ def _extract_post_fix_micro_audit_trailing_notes(text: str) -> list[str]:
 
 def _post_fix_noncanonical_lines(lines: list[str]) -> list[str]:
     canonical_lines = {line.strip() for line in POST_FIX_MICRO_AUDIT_SECTION.splitlines() if line.strip()}
-    return [line for line in lines if line.strip() and line.strip() not in canonical_lines and not _is_placeholder_value(line)]
+    return [
+        line
+        for line in lines
+        if _is_noncanonical_post_fix_line(line, canonical_lines)
+    ]
+
+
+def _is_noncanonical_post_fix_line(line: str, canonical_lines: set[str]) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if stripped in canonical_lines:
+        return False
+    return not _is_placeholder_value(line)
 
 
 def _dedupe_nonempty_lines(lines: list[str]) -> list[str]:
@@ -1819,22 +1841,57 @@ def _populate_phase0_lists(normalized: dict[str, Any], report: dict[str, Any]) -
 
 
 def _phase0_list_value(value: Any, key: str) -> list[str]:
-    from_payload = _list_from_payload(value)
-    if from_payload:
-        return from_payload
+    parsed = _phase0_list_value_from_payload_or_raw(value)
+    if parsed:
+        return parsed
     if isinstance(value, str):
-        parsed = _list_from_raw_text(value)
-        if parsed:
-            return parsed
         return _list_value({}, value, key)
     return []
 
 
 def _list_from_raw_text(raw: str) -> list[str]:
-    lines = [line.strip() for line in str(raw or "").splitlines() if line.strip()]
-    if not lines or not all(line.startswith("-") for line in lines):
+    lines = _raw_bullet_lines(raw)
+    if not _all_bulleted(lines):
         return []
-    return [_clean_audit_bullet(line) for line in lines if _clean_audit_bullet(line)]
+    return _cleaned_audit_bullets(lines)
+
+
+def _phase0_list_value_from_payload_or_raw(value: Any) -> list[str]:
+    from_payload = _list_from_payload(value)
+    if from_payload:
+        return from_payload
+    return _list_from_raw_text(value) if isinstance(value, str) else []
+
+
+def _raw_bullet_lines(raw: str) -> list[str]:
+    return [line.strip() for line in str(raw or "").splitlines() if line.strip()]
+
+
+def _all_bulleted(lines: list[str]) -> bool:
+    return bool(lines) and all(line.startswith("-") for line in lines)
+
+
+def _cleaned_audit_bullets(lines: list[str]) -> list[str]:
+    return [cleaned for line in lines if (cleaned := _clean_audit_bullet(line))]
+
+
+def _kept_post_fix_segments_for_placeholder_cleanup(lines: list[str]) -> list[dict[str, Any]]:
+    segments: list[dict[str, Any]] = []
+    for segment in _iter_post_fix_segments(lines):
+        if not segment["is_post_fix"] or not _is_placeholder_only_post_fix_body(
+            cast(list[str], segment["body_lines"])
+        ):
+            segments.append(segment)
+    return segments
+
+
+def _non_post_fix_segments(lines: list[str]) -> list[dict[str, Any]]:
+    return [segment for segment in _iter_post_fix_segments(lines) if not segment["is_post_fix"]]
+
+
+def _join_post_fix_segments(segments: list[dict[str, Any]]) -> str:
+    kept = [line for segment in segments for line in cast(list[str], segment["segment_lines"])]
+    return "\n".join(kept).strip()
 
 
 def _phase0_has_required_evidence(report: dict[str, Any]) -> bool:

@@ -443,7 +443,8 @@ def test_ensure_codex_prompt_contract_replaces_placeholder_post_fix_with_canonic
         "",
         _full_codex_contract_prompt(),
     ).strip()
-    prompt = controller.ensure_codex_prompt_contract(f"{without_post_fix}\n\nPOST-FIX MICRO-AUDIT BEFORE COMMIT:\nTBD\n")
+    placeholder = "POST-FIX MICRO-AUDIT BEFORE COMMIT:\nTBD\n"
+    prompt = controller.ensure_codex_prompt_contract(f"{without_post_fix}\n\n{placeholder}")
     ASSERTIONS.assertEqual(prompt.count("POST-FIX MICRO-AUDIT BEFORE COMMIT"), 1)
     ASSERTIONS.assertIn("Did you fix every requested Codacy/review finding?", prompt)
     ASSERTIONS.assertIn("Do not commit a patch that fails this audit.", prompt)
@@ -592,7 +593,8 @@ def test_validate_codex_prompt_contract_required_headers_still_bound_section_bod
             "- do not edit unrelated files",
         ]
     )
-    result = controller.validate_codex_prompt_contract(controller.ensure_phase0_preflight_section(prompt))
+    ensured = controller.ensure_phase0_preflight_section(prompt)
+    result = controller.validate_codex_prompt_contract(ensured)
     ASSERTIONS.assertEqual(result["missing_sections"], [])
     ASSERTIONS.assertEqual(result["uninitialized_sections"], [])
     ASSERTIONS.assertTrue(result["valid"])
@@ -720,7 +722,10 @@ def test_phase0_preflight_helpers_direct_raw_pass_report_normalizes():
 def test_phase0_preflight_helpers_preserve_direct_dict_list_evidence():
     """Direct dict list evidence stays intact and allows PASS routing."""
     payload = _phase0_pass_payload()
-    payload["files_inspected"] = ["scripts/pr_automation_controller.py", "tests/scripts/test_pr_automation_controller.py"]
+    payload["files_inspected"] = [
+        "scripts/pr_automation_controller.py",
+        "tests/scripts/test_pr_automation_controller.py",
+    ]
     payload["static_analysis_rules"] = ["codacy:py/rule", "ruff:F401"]
     payload["workflows_affected"] = ["ci.yml::lint", "ci.yml::tests"]
     ASSERTIONS.assertEqual(controller.phase0_preflight_status(payload), "PASS")
@@ -745,8 +750,13 @@ def test_phase0_preflight_helpers_direct_non_dict_or_none_fail_closed():
     """Direct helpers fail closed for non-dict or None reports."""
     ASSERTIONS.assertEqual(controller.phase0_preflight_status(None), "NEEDS_MANUAL")
     ASSERTIONS.assertTrue(controller.phase0_preflight_failed(None))
-    ASSERTIONS.assertEqual(controller.phase0_preflight_status("status: PASS"), "NEEDS_MANUAL")
-    ASSERTIONS.assertTrue(controller.phase0_preflight_failed("status: PASS"))
+
+
+def test_phase0_preflight_parser_non_dict_input_fails_closed():
+    """String payloads are fail-closed after parser normalization."""
+    report = controller.parse_phase0_preflight_result("status: PASS")
+    ASSERTIONS.assertEqual(controller.phase0_preflight_status(report), "NEEDS_MANUAL")
+    ASSERTIONS.assertTrue(controller.phase0_preflight_failed(report))
 
 
 def test_parse_phase0_preflight_result_needs_manual_text():
@@ -846,6 +856,24 @@ def test_validate_codex_prompt_contract_allows_commit_push_with_allowance_line()
     )
     result = controller.validate_codex_prompt_contract(prompt)
     ASSERTIONS.assertTrue(result["valid"])
+
+
+def test_validate_codex_prompt_contract_allows_commit_push_with_case_insensitive_allowance():
+    """ALLOW_COMMIT_PUSH key/value variants should permit commit/push imperatives."""
+    for allowance in (
+        "ALLOW_COMMIT_PUSH: yes",
+        "ALLOW_COMMIT_PUSH: YES",
+        "Allow_Commit_Push: Yes",
+    ):
+        prompt = "\n".join(
+            [
+                _full_codex_contract_prompt(),
+                allowance,
+                "METHOD:\nRun git commit and git push origin branch",
+            ]
+        )
+        result = controller.validate_codex_prompt_contract(prompt)
+        ASSERTIONS.assertTrue(result["valid"])
 
 
 def test_validate_codex_prompt_contract_does_not_reject_descriptive_committing_word():
@@ -1052,6 +1080,7 @@ def test_validate_codex_prompt_contract_commit_push_contract_examples():
         "METHOD:\nPOST-FIX MICRO-AUDIT BEFORE COMMIT",
     ):
         _assert_contract_accepts_safe_commit_push_wording(method_line)
+
 
 def test_validate_codex_prompt_contract_accepts_appended_pure_negated_git_push_line():
     """Pure prohibition appended to a valid prompt remains valid."""
