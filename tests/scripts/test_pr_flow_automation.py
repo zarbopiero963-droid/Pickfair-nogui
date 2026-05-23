@@ -35,6 +35,29 @@ def _codacy_issue(path: str = "scripts/pr_flow_automation.py") -> dict[str, obje
     }
 
 
+def _phase0_pass_payload() -> dict[str, Any]:
+    return {
+        "status": "PASS",
+        "risk_level": "medium",
+        "next_action": "generate_patch_prompt",
+        "files_inspected": ["scripts/pr_flow_automation.py"],
+        "static_analysis_rules": ["CCN<=10"],
+        "workflows_affected": ["pr-flow-guardrails"],
+        "authoritative_modules": ["scripts/pr_flow_automation.py"],
+        "dangerous_gates": ["cmd_codacy_task"],
+        "implementation_plan": ["fix parser"],
+        "tests_to_run": ["python3 -m pytest tests/scripts/test_pr_flow_automation.py -q"],
+        "stop_conditions": ["stop on scope violation"],
+    }
+
+
+def _assert_phase0_pass(raw: str) -> None:
+    report = flow.parse_phase0_preflight_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(flow.phase0_preflight_status(report), "PASS")
+    ASSERTIONS.assertFalse(flow.phase0_preflight_failed(report))
+
+
 def test_split_checks_ignores_self_checks_when_requested():
     """Self-check failures are reported separately from real blockers."""
     checks = {
@@ -92,6 +115,58 @@ def test_post_fix_micro_audit_helpers_do_not_trigger_final_merge_audit():
     ASSERTIONS.assertFalse(flow.post_fix_micro_audit_failed(report))
     ASSERTIONS.assertEqual(flow.post_fix_micro_audit_status(report), "PASS")
     ASSERTIONS.assertEqual(report["next_action"], "validation_then_commit")
+
+
+def test_flow_codex_prompt_contract_helpers_available():
+    """Flow module re-exports codex prompt helpers with phase-0 section in generated prompt."""
+    prompt = flow.build_codex_task_prompt({"task": "x", "objective": "y"})
+    ASSERTIONS.assertIn("TASK:", prompt)
+    ASSERTIONS.assertIn("PHASE 0 PRE-FLIGHT (READ-ONLY)", prompt)
+    ASSERTIONS.assertEqual(flow.codex_prompt_contract_missing_sections(prompt), [])
+
+
+def test_flow_ensure_phase0_preflight_section_accepts_one_arg():
+    """Flow wrapper should keep one-argument compatibility."""
+    ensured = flow.ensure_phase0_preflight_section("TASK:\nFix lint")
+    ASSERTIONS.assertIn("PHASE 0 PRE-FLIGHT (READ-ONLY)", ensured)
+
+
+def test_flow_ensure_phase0_preflight_section_accepts_prompt_and_context():
+    """Flow wrapper should accept optional context without raising type errors."""
+    ensured = flow.ensure_phase0_preflight_section(
+        "TASK:\nFix lint",
+        {"files_allowed": ["scripts/pr_automation_controller.py"]},
+    )
+    ASSERTIONS.assertIn("PHASE 0 PRE-FLIGHT (READ-ONLY)", ensured)
+
+
+def test_flow_ensure_phase0_preflight_section_preserves_files_allowed_from_context():
+    """Flow wrapper should preserve explicit files_allowed in inserted Phase 0."""
+    ensured = flow.ensure_phase0_preflight_section(
+        "TASK:\nFix lint",
+        {"files_allowed": ["scripts/pr_automation_controller.py"]},
+    )
+    ASSERTIONS.assertIn("Task allowed files: scripts/pr_automation_controller.py", ensured)
+    ASSERTIONS.assertNotIn("Task allowed files: (from task scope)", ensured)
+
+
+def test_flow_phase0_parser_supports_fenced_json_with_prose():
+    """Phase-0 parser accepts prose-wrapped fenced JSON and keeps PASS routing."""
+    payload: dict[str, Any] = _phase0_pass_payload()
+    raw = "\n".join(["preflight result follows", "```json", json.dumps(payload), "```"])
+    _assert_phase0_pass(raw)
+
+
+def test_flow_phase0_parser_supports_json_string_list_evidence_fields():
+    """Flow wrapper should parse string-encoded bullet lists in required evidence fields."""
+    payload = _phase0_pass_payload()
+    payload["files_inspected"] = "- scripts/a.py"
+    payload["tests_to_run"] = "- pytest"
+    report = flow.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["files_inspected"], ["scripts/a.py"])
+    ASSERTIONS.assertEqual(report["tests_to_run"], ["pytest"])
+    ASSERTIONS.assertFalse(flow.phase0_preflight_failed(report))
 
 
 def test_flow_codacy_task_fails_closed_when_blocking_api_fails(tmp_path, monkeypatch, capsys):

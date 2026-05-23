@@ -328,6 +328,42 @@ def build_post_fix_micro_audit_prompt(task_text: str, context: dict[str, Any] | 
     return controller.build_post_fix_micro_audit_prompt(task_text, context)
 
 
+def build_codex_task_prompt(context: dict[str, Any] | None = None) -> str:
+    return controller.build_codex_task_prompt(context)
+
+
+def ensure_codex_prompt_contract(prompt: str, context: dict[str, Any] | None = None) -> str:
+    return controller.ensure_codex_prompt_contract(prompt, context)
+
+
+def validate_codex_prompt_contract(prompt: str) -> dict[str, Any]:
+    return controller.validate_codex_prompt_contract(prompt)
+
+
+def codex_prompt_contract_missing_sections(prompt: str) -> list[str]:
+    return controller.codex_prompt_contract_missing_sections(prompt)
+
+
+def build_phase0_preflight_prompt(context: dict[str, Any] | None = None) -> str:
+    return controller.build_phase0_preflight_prompt(context)
+
+
+def ensure_phase0_preflight_section(prompt: str, context: dict[str, Any] | None = None) -> str:
+    return controller.ensure_phase0_preflight_section(prompt, context)
+
+
+def parse_phase0_preflight_result(text: str) -> dict[str, Any]:
+    return controller.parse_phase0_preflight_result(text)
+
+
+def phase0_preflight_status(report: dict[str, Any] | None) -> str:
+    return controller.phase0_preflight_status(report)
+
+
+def phase0_preflight_failed(report: dict[str, Any] | None) -> bool:
+    return controller.phase0_preflight_failed(report)
+
+
 def ensure_post_fix_micro_audit_section(prompt: str) -> str:
     return controller.ensure_post_fix_micro_audit_section(prompt)
 

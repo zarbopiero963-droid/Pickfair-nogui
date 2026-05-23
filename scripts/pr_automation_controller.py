@@ -103,6 +103,193 @@ If audit fails:
 - or stop and report PARTIAL/needs_manual
 Do not commit a patch that fails this audit.
 """
+CODEX_PROMPT_REQUIRED_SECTIONS = [
+    "TASK",
+    "OBJECTIVE",
+    "CONTEXT",
+    "FILES TO INSPECT",
+    "FILES ALLOWED",
+    "DO NOT MODIFY",
+    "CURRENT BEHAVIOR",
+    "EXPECTED BEHAVIOR",
+    "CURRENT BLOCKERS",
+    "REQUIRED FIXES",
+    "METHOD",
+    "VALIDATION",
+    "POST-FIX MICRO-AUDIT BEFORE COMMIT",
+    "OUTPUT FORMAT",
+    "STOP CONDITIONS",
+]
+PHASE0_SECTION_TITLE = "PHASE 0 PRE-FLIGHT (READ-ONLY)"
+PHASE0_RESULT_LIST_FIELDS = [
+    "files_inspected",
+    "static_analysis_rules",
+    "workflows_affected",
+    "authoritative_modules",
+    "dangerous_gates",
+    "files_allowed",
+    "files_forbidden",
+    "implementation_plan",
+    "tests_to_run",
+    "stop_conditions",
+]
+PHASE0_REQUIRED_EVIDENCE_FIELDS = (
+    "files_inspected",
+    "static_analysis_rules",
+    "workflows_affected",
+    "authoritative_modules",
+    "dangerous_gates",
+    "implementation_plan",
+    "tests_to_run",
+    "stop_conditions",
+)
+PLACEHOLDER_VALUES = frozenset({"", "tbd", "todo", "none", "null", "n/a"})
+ALLOW_COMMIT_PUSH_PATTERN = re.compile(r"(?im)^\s*allow_commit_push\s*:\s*yes\s*$")
+COMMIT_PUSH_NEGATION_PATTERNS = (
+    re.compile(r"\bdo\s+not\s+git\s+commit\b"),
+    re.compile(r"\bdo\s+not\s+git\s+push\b"),
+    re.compile(r"\bdon't\s+git\s+commit\b"),
+    re.compile(r"\bdon't\s+git\s+push\b"),
+    re.compile(r"\bdo\s+not\s+commit\b"),
+    re.compile(r"\bdo\s+not\s+push\b"),
+    re.compile(r"\bdon't\s+commit\b"),
+    re.compile(r"\bdon't\s+push\b"),
+    re.compile(r"\bno\s+commit(?:\b|/push\b)"),
+    re.compile(r"\bno\s+push(?:\b|/commit\b)"),
+    re.compile(r"\bno\s+commit/push\b"),
+    re.compile(r"\bno\s+push/commit\b"),
+)
+COMMIT_PUSH_IMPERATIVE_PATTERNS = (
+    re.compile(r"\bgit\s+commit(?:\b|$)", re.IGNORECASE),
+    re.compile(r"\bgit\s+push(?:\s+origin\s+\S+)?(?:\b|$)", re.IGNORECASE),
+    re.compile(r"\bcommit\s+after\s+checks(?:\b|$)", re.IGNORECASE),
+    re.compile(r"\bpush\s+this\s+branch(?:\b|$)", re.IGNORECASE),
+    re.compile(r"\bcommit(?:\s+the)?\s+changes(?:\s+after\s+\w+)?(?:\b|$)", re.IGNORECASE),
+    re.compile(r"\bcommit\s+the\s+patch(?:\b|$)", re.IGNORECASE),
+    re.compile(r"\bpush\s+origin\s+\S+(?:\s+after\s+\w+)?(?:\b|$)", re.IGNORECASE),
+    re.compile(r"\bpush\s+the\s+branch(?:\b|$)", re.IGNORECASE),
+)
+CODEX_SCALAR_KEYS = (
+    ("TASK", "task"),
+    ("OBJECTIVE", "objective"),
+    ("CONTEXT", "context"),
+    ("CURRENT BEHAVIOR", "current_behavior"),
+    ("EXPECTED BEHAVIOR", "expected_behavior"),
+)
+CODEX_SCALAR_DEFAULTS = {
+    "method": (
+        "- inspect relevant files first\n"
+        "- verify each finding is still valid\n"
+        "- keep patch minimal\n"
+        "- add/update focused tests\n"
+        "- run validation\n"
+        "- do not commit/push unless explicitly allowed"
+    ),
+    "output_format": (
+        "- files changed\n"
+        "- summary of fix\n"
+        "- tests run\n"
+        "- post-fix audit result\n"
+        "- final status DONE/PARTIAL/NEEDS_MANUAL"
+    ),
+}
+CODEX_REQUIRED_SECTION_HEADERS = frozenset(CODEX_PROMPT_REQUIRED_SECTIONS)
+
+
+def build_codex_task_prompt(context: dict[str, Any] | None = None) -> str:
+    ctx = context if isinstance(context, dict) else {}
+    lines: list[str] = []
+    for name in CODEX_PROMPT_REQUIRED_SECTIONS:
+        if name == "POST-FIX MICRO-AUDIT BEFORE COMMIT":
+            continue
+        lines.append(f"{name}:\n{_codex_context_value(ctx, name)}")
+    prompt = "\n\n".join(lines)
+    return ensure_post_fix_micro_audit_section(ensure_phase0_preflight_section(prompt, ctx))
+
+
+def ensure_codex_prompt_contract(prompt: str, context: dict[str, Any] | None = None) -> str:
+    ctx = context if isinstance(context, dict) else {}
+    text = _seed_codex_contract_prompt(prompt, ctx)
+    text = _add_missing_codex_contract_sections(text)
+    return _finalize_codex_contract_prompt(text)
+
+
+def _finalize_codex_contract_prompt(text: str) -> str:
+    return ensure_post_fix_micro_audit_section(text)
+
+
+def _seed_codex_contract_prompt(prompt: str, context: dict[str, Any]) -> str:
+    text = str(prompt or "").strip()
+    if not text:
+        return build_codex_task_prompt(context)
+    text = ensure_phase0_preflight_section(text, context)
+    return _strip_post_fix_micro_audit_placeholder_section(text)
+
+
+def _add_missing_codex_contract_sections(text: str) -> str:
+    missing = codex_prompt_contract_missing_sections(text)
+    non_post_fix_missing = [name for name in missing if name != "POST-FIX MICRO-AUDIT BEFORE COMMIT"]
+    if not non_post_fix_missing:
+        return text
+    return "\n\n".join([text] + [f"{name}:\nTBD" for name in non_post_fix_missing]).strip()
+
+
+def validate_codex_prompt_contract(prompt: str) -> dict[str, Any]:
+    text = str(prompt or "")
+    missing = codex_prompt_contract_missing_sections(text)
+    uninitialized = codex_prompt_contract_uninitialized_sections(text)
+    reasons = _codex_contract_reasons(text)
+    return {
+        "valid": not missing and not uninitialized and not reasons,
+        "missing_sections": missing,
+        "uninitialized_sections": uninitialized,
+        "reasons": reasons,
+    }
+
+
+def codex_prompt_contract_missing_sections(prompt: str) -> list[str]:
+    text = str(prompt or "")
+    return [name for name in CODEX_PROMPT_REQUIRED_SECTIONS if not _has_section(text, name)]
+
+
+def codex_prompt_contract_uninitialized_sections(prompt: str) -> list[str]:
+    text = str(prompt or "")
+    return [name for name in CODEX_PROMPT_REQUIRED_SECTIONS if _has_section(text, name) and not _section_has_value(text, name)]
+
+
+def build_phase0_preflight_prompt(context: dict[str, Any] | None = None) -> str:
+    ctx = context if isinstance(context, dict) else {}
+    return "\n".join(_phase0_preflight_lines(ctx)).strip() + "\n"
+
+
+def ensure_phase0_preflight_section(prompt: str, context: dict[str, Any] | None = None) -> str:
+    text = str(prompt or "").rstrip()
+    ctx = context if isinstance(context, dict) else {}
+    return (
+        text + "\n"
+        if _has_section(text, PHASE0_SECTION_TITLE)
+        else f"{build_phase0_preflight_prompt(ctx)}\n{text}\n"
+    )
+
+
+def parse_phase0_preflight_result(text: str) -> dict[str, Any]:
+    raw = str(text or "").strip()
+    report = _parse_post_fix_audit_json(raw) or _parse_phase0_text(raw)
+    return _normalize_phase0_report(report)
+
+
+def phase0_preflight_status(report: dict[str, Any] | None) -> str:
+    if not isinstance(report, dict):
+        return "NEEDS_MANUAL"
+    normalized = _normalize_phase0_report(report)
+    return str(normalized.get("status") or "NEEDS_MANUAL")
+
+
+def phase0_preflight_failed(report: dict[str, Any] | None) -> bool:
+    if not isinstance(report, dict):
+        return True
+    normalized = _normalize_phase0_report(report)
+    return normalized.get("status") != "PASS" or normalized.get("next_action") != "generate_patch_prompt"
 
 
 def command_family(command: str) -> str:
@@ -1231,7 +1418,7 @@ def codacy_task_lines(records: list[dict[str, Any]]) -> list[str]:
             f"{index}. {record['filePath']}:{record['lineNumber']} "
             f"{record['patternId']} {record['severity']} {record['tool']} - {record['message']}"
         )
-    return ensure_post_fix_micro_audit_section("\n".join(lines)).splitlines()
+    return ensure_codex_prompt_contract("\n".join(lines)).splitlines()
 
 
 def build_post_fix_micro_audit_prompt(task_text: str, context: dict[str, Any] | None = None) -> str:
@@ -1242,9 +1429,12 @@ def build_post_fix_micro_audit_prompt(task_text: str, context: dict[str, Any] | 
 
 def ensure_post_fix_micro_audit_section(prompt: str) -> str:
     text = str(prompt or "").rstrip()
-    if _has_full_post_fix_micro_audit_section(text):
-        return text + "\n"
-    return f"{text}\n\n{POST_FIX_MICRO_AUDIT_SECTION}"
+    notes = _extract_post_fix_micro_audit_trailing_notes(text)
+    normalized = _strip_post_fix_micro_audit_sections(text)
+    if not normalized:
+        return _append_post_fix_trailing_notes(POST_FIX_MICRO_AUDIT_SECTION.rstrip(), notes).strip()
+    merged = f"{normalized}\n\n{POST_FIX_MICRO_AUDIT_SECTION}".rstrip()
+    return _append_post_fix_trailing_notes(merged, notes).strip()
 
 
 def parse_post_fix_micro_audit_result(text: str) -> dict[str, Any]:
@@ -1367,6 +1557,107 @@ def _has_full_post_fix_micro_audit_section(text: str) -> bool:
     return normalized_section in normalized_text
 
 
+def _strip_post_fix_micro_audit_placeholder_section(text: str) -> str:
+    lines = str(text or "").splitlines()
+    if not lines:
+        return ""
+    kept_segments = _kept_post_fix_segments_for_placeholder_cleanup(lines)
+    return _join_post_fix_segments(kept_segments)
+
+
+def _strip_post_fix_micro_audit_sections(text: str) -> str:
+    lines = str(text or "").splitlines()
+    if not lines:
+        return ""
+    return _join_post_fix_segments(_non_post_fix_segments(lines))
+
+
+def _iter_post_fix_segments(lines: list[str]) -> list[dict[str, Any]]:
+    segments: list[dict[str, Any]] = []
+    index = 0
+    while index < len(lines):
+        segment, index = _next_post_fix_segment(lines, index)
+        segments.append(segment)
+    return segments
+
+
+def _next_post_fix_segment(lines: list[str], start: int) -> tuple[dict[str, Any], int]:
+    if _is_post_fix_header_line(lines[start]):
+        return _consume_post_fix_segment(lines, start)
+    return _consume_non_post_fix_segment(lines, start)
+
+
+def _consume_post_fix_segment(lines: list[str], start: int) -> tuple[dict[str, Any], int]:
+    index = start + 1
+    while index < len(lines) and not _is_required_section_header(lines[index]):
+        index += 1
+    segment_lines = lines[start:index]
+    body = segment_lines[1:] if len(segment_lines) > 1 else []
+    return {"is_post_fix": True, "segment_lines": segment_lines, "body_lines": body}, index
+
+
+def _consume_non_post_fix_segment(lines: list[str], start: int) -> tuple[dict[str, Any], int]:
+    index = start + 1
+    while index < len(lines) and not _is_post_fix_header_line(lines[index]):
+        index += 1
+    return {"is_post_fix": False, "segment_lines": lines[start:index], "body_lines": []}, index
+
+
+def _is_post_fix_header_line(line: str) -> bool:
+    return _section_header_match(line, "POST-FIX MICRO-AUDIT BEFORE COMMIT")
+
+
+def _is_placeholder_only_post_fix_body(body_lines: list[str]) -> bool:
+    nonempty = [raw.strip() for raw in body_lines if raw.strip()]
+    return bool(nonempty) and all(_is_placeholder_value(line) for line in nonempty)
+
+
+def _extract_post_fix_micro_audit_trailing_notes(text: str) -> list[str]:
+    notes: list[str] = []
+    for segment in _iter_post_fix_segments(str(text or "").splitlines()):
+        if not segment["is_post_fix"]:
+            continue
+        notes.extend(_post_fix_noncanonical_lines(cast(list[str], segment["body_lines"])))
+    return _dedupe_nonempty_lines(notes)
+
+
+def _post_fix_noncanonical_lines(lines: list[str]) -> list[str]:
+    canonical_lines = {line.strip() for line in POST_FIX_MICRO_AUDIT_SECTION.splitlines() if line.strip()}
+    return [
+        line
+        for line in lines
+        if _is_noncanonical_post_fix_line(line, canonical_lines)
+    ]
+
+
+def _is_noncanonical_post_fix_line(line: str, canonical_lines: set[str]) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if stripped in canonical_lines:
+        return False
+    return not _is_placeholder_value(line)
+
+
+def _dedupe_nonempty_lines(lines: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in lines:
+        line = raw.rstrip()
+        key = line.strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(line)
+    return out
+
+
+def _append_post_fix_trailing_notes(base: str, notes: list[str]) -> str:
+    if not notes:
+        return base
+    return f"{base}\n" + "\n".join(notes)
+
+
 def _normalize_audit_text_for_match(text: str) -> str:
     normalized_lines = [
         re.sub(r"\s+", " ", line).strip().lower()
@@ -1464,6 +1755,353 @@ def _post_fix_report_lists(report: dict[str, Any]) -> dict[str, list[str]]:
         "changed_files": _list_value(report, "", "changed_files"),
         "validation_commands": _list_value(report, "", "validation_commands"),
     }
+
+
+def _context_list(context: dict[str, Any], key: str) -> list[str]:
+    return _list_from_payload(context.get(key))
+
+
+def _codex_context_value(context: dict[str, Any], section: str) -> str:
+    scalar = _codex_scalar_context_map(context)
+    if section in scalar:
+        return scalar[section]
+    list_key = _codex_list_section_key(section)
+    if list_key:
+        return _codex_context_list_value(context, list_key)
+    return "TBD"
+
+
+def _has_section(text: str, section: str) -> bool:
+    target = str(section or "")
+    return any(_section_header_match(line, target) for line in str(text or "").splitlines())
+
+
+def _codex_contract_reasons(text: str) -> list[str]:
+    reasons: list[str] = []
+    if not _has_section(text, PHASE0_SECTION_TITLE):
+        reasons.append("missing_phase0_preflight")
+    if _looks_generic_fix_prompt(text):
+        reasons.append("generic_fix_without_objective_context_validation")
+    if _has_unsafe_commit_push_instruction(text):
+        reasons.append("commit_or_push_instruction_without_explicit_allowance")
+    return reasons
+
+
+def _looks_generic_fix_prompt(text: str) -> bool:
+    generic = "fix this" in str(text or "").lower()
+    return generic and any(not _section_has_value(text, key) for key in ("OBJECTIVE", "CONTEXT", "VALIDATION"))
+
+
+def _section_has_value(text: str, section: str) -> bool:
+    lines = _section_body_lines(text, section)
+    if not lines:
+        return False
+    return not all(_is_placeholder_value(line) for line in lines)
+
+
+def _has_unsafe_commit_push_instruction(text: str) -> bool:
+    if _has_commit_push_allowance(text):
+        return False
+    for line in str(text or "").splitlines():
+        if _is_unsafe_commit_push_line(line):
+            return True
+    return False
+
+
+def _parse_phase0_text(raw: str) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "status": _line_value(raw, "status") or _line_value(raw, "phase0_status"),
+        "risk_level": _line_value(raw, "risk_level"),
+        "next_action": _line_value(raw, "next_action"),
+    }
+    for key in PHASE0_RESULT_LIST_FIELDS:
+        payload[key] = _list_value({}, raw, key)
+    return payload
+
+
+def _normalize_phase0_report(report: dict[str, Any]) -> dict[str, Any]:
+    status = _phase0_status(report)
+    next_action = _phase0_next_action(report)
+    normalized: dict[str, Any] = {
+        "status": status,
+        "risk_level": _phase0_risk(report),
+        "next_action": next_action,
+    }
+    _populate_phase0_lists(normalized, report)
+    if status == "PASS" and next_action == "generate_patch_prompt" and _phase0_has_required_evidence(normalized):
+        return normalized
+    normalized["status"] = "NEEDS_MANUAL"
+    normalized["next_action"] = "needs_manual_phase0_failed"
+    return normalized
+
+
+def _populate_phase0_lists(normalized: dict[str, Any], report: dict[str, Any]) -> None:
+    for key in PHASE0_RESULT_LIST_FIELDS:
+        normalized[key] = _phase0_list_value(report.get(key), key)
+
+
+def _phase0_list_value(value: Any, key: str) -> list[str]:
+    parsed = _phase0_list_value_from_payload_or_raw(value)
+    if parsed:
+        return parsed
+    if isinstance(value, str):
+        return _list_value({}, value, key)
+    return []
+
+
+def _list_from_raw_text(raw: str) -> list[str]:
+    lines = _raw_bullet_lines(raw)
+    if not _all_bulleted(lines):
+        return []
+    return _cleaned_audit_bullets(lines)
+
+
+def _phase0_list_value_from_payload_or_raw(value: Any) -> list[str]:
+    from_payload = _list_from_payload(value)
+    if from_payload:
+        return from_payload
+    return _list_from_raw_text(value) if isinstance(value, str) else []
+
+
+def _raw_bullet_lines(raw: str) -> list[str]:
+    return [line.strip() for line in str(raw or "").splitlines() if line.strip()]
+
+
+def _all_bulleted(lines: list[str]) -> bool:
+    return bool(lines) and all(line.startswith("-") for line in lines)
+
+
+def _cleaned_audit_bullets(lines: list[str]) -> list[str]:
+    return [cleaned for line in lines if (cleaned := _clean_audit_bullet(line))]
+
+
+def _kept_post_fix_segments_for_placeholder_cleanup(lines: list[str]) -> list[dict[str, Any]]:
+    segments: list[dict[str, Any]] = []
+    for segment in _iter_post_fix_segments(lines):
+        if not segment["is_post_fix"] or not _is_placeholder_only_post_fix_body(
+            cast(list[str], segment["body_lines"])
+        ):
+            segments.append(segment)
+    return segments
+
+
+def _non_post_fix_segments(lines: list[str]) -> list[dict[str, Any]]:
+    return [segment for segment in _iter_post_fix_segments(lines) if not segment["is_post_fix"]]
+
+
+def _join_post_fix_segments(segments: list[dict[str, Any]]) -> str:
+    kept = [line for segment in segments for line in cast(list[str], segment["segment_lines"])]
+    return "\n".join(kept).strip()
+
+
+def _phase0_has_required_evidence(report: dict[str, Any]) -> bool:
+    return all(_has_meaningful_list_values(report.get(field)) for field in PHASE0_REQUIRED_EVIDENCE_FIELDS)
+
+
+def _phase0_status(report: dict[str, Any]) -> str:
+    value = str(report.get("status") or "").upper()
+    return value if value in {"PASS", "NEEDS_MANUAL"} else "NEEDS_MANUAL"
+
+
+def _phase0_risk(report: dict[str, Any]) -> str:
+    value = str(report.get("risk_level") or "").lower()
+    return value if value in {"low", "medium", "high"} else "high"
+
+
+def _phase0_next_action(report: dict[str, Any]) -> str:
+    explicit = str(report.get("next_action") or "").strip()
+    if not explicit:
+        return ""
+    normalized = re.sub(r"[\s-]+", "_", explicit.lower())
+    return "generate_patch_prompt" if normalized == "generate_patch_prompt" else normalized
+
+
+def _phase0_preflight_lines(context: dict[str, Any]) -> list[str]:
+    target = _context_list(context, "files_allowed") or ["(from task scope)"]
+    return [
+        PHASE0_SECTION_TITLE,
+        "",
+        "READ-ONLY. Do not edit files. Do not commit. Do not push.",
+        "Inspect static-analysis config, workflow CI, similar files/tests, authoritative modules, dangerous gates, and forbidden files.",
+        "Read .github/workflows/*.yml and map affected workflows/checks; do not edit workflows unless explicitly allowed.",
+        _phase0_static_analysis_line(),
+        _phase0_blocking_rules_line(),
+        f"Task allowed files: {', '.join(target)}",
+        "Produce implementation plan and tests/validation plan. Stop with NEEDS_MANUAL when ambiguity/risk is high.",
+        _phase0_result_contract_line(),
+    ]
+
+
+def _phase0_static_analysis_line() -> str:
+    return (
+        "Static-analysis files to inspect when present: .codacy.yml, .deepsource.toml, pyproject.toml, setup.cfg, "
+        "tox.ini, .pylintrc, .flake8, ruff config, flake8 config, bandit config, pylint config, "
+        "radon/lizard/static-analysis config."
+    )
+
+
+def _phase0_blocking_rules_line() -> str:
+    return (
+        "Likely blocking rules: NLOC, CCN, line length, docstring requirements, function name length <= 30, "
+        "parameter count, protected access, hardcoded secret-like literals, bare assert / B101, subprocess / "
+        "B603 / B404, unused helpers, direct script execution expectations."
+    )
+
+
+def _phase0_result_contract_line() -> str:
+    return (
+        "Result contract: status, risk_level, files_inspected, static_analysis_rules, workflows_affected, "
+        "authoritative_modules, dangerous_gates, files_allowed, files_forbidden, implementation_plan, "
+        "tests_to_run, stop_conditions, next_action."
+    )
+
+
+def _codex_scalar_context_map(context: dict[str, Any]) -> dict[str, str]:
+    scalar = {name: _context_scalar(context, key) for name, key in CODEX_SCALAR_KEYS}
+    scalar["METHOD"] = _context_scalar(context, "method", _codex_scalar_defaults()["method"])
+    scalar["OUTPUT FORMAT"] = _context_scalar(context, "output_format", _codex_scalar_defaults()["output_format"])
+    scalar["POST-FIX MICRO-AUDIT BEFORE COMMIT"] = "Use required post-fix micro-audit checklist before commit."
+    return scalar
+
+
+def _codex_scalar_defaults() -> dict[str, str]:
+    return dict(CODEX_SCALAR_DEFAULTS)
+
+
+def _context_scalar(context: dict[str, Any], key: str, fallback: str = "TBD") -> str:
+    return str(context.get(key) or fallback)
+
+
+def _codex_list_section_key(section: str) -> str:
+    mapping = {
+        "FILES TO INSPECT": "files_to_inspect",
+        "FILES ALLOWED": "files_allowed",
+        "DO NOT MODIFY": "do_not_modify",
+        "CURRENT BLOCKERS": "current_blockers",
+        "REQUIRED FIXES": "required_fixes",
+        "VALIDATION": "validation",
+        "STOP CONDITIONS": "stop_conditions",
+    }
+    return mapping.get(section, "")
+
+
+def _codex_context_list_value(context: dict[str, Any], key: str) -> str:
+    values = _context_list(context, key) or _codex_list_defaults(key)
+    return "\n".join(f"- {item}" for item in values)
+
+
+def _codex_list_defaults(key: str) -> list[str]:
+    if key == "stop_conditions":
+        return [
+            "stop on scope violation",
+            "stop on failing post-fix audit",
+            "stop on validation failure",
+            "stop on ambiguous/high-risk changes needing human decision",
+        ]
+    return ["TBD"]
+
+
+def _section_body_lines(text: str, section: str) -> list[str]:
+    body: list[str] = []
+    for raw_line in _section_following_lines(text, section):
+        if _is_required_section_header(raw_line):
+            break
+        stripped = raw_line.strip()
+        if stripped:
+            body.append(stripped)
+    return body
+
+
+def _section_following_lines(text: str, section: str) -> list[str]:
+    lines = str(text or "").splitlines()
+    target = str(section or "")
+    for index, raw_line in enumerate(lines):
+        if _section_header_match(raw_line, target):
+            return lines[index + 1 :]
+    return []
+
+
+def _section_header_match(line: str, section: str) -> bool:
+    stripped = str(line or "").strip()
+    return stripped in {section, f"{section}:"}
+
+
+def _is_required_section_header(line: str) -> bool:
+    stripped = str(line or "").strip()
+    if stripped.endswith(":"):
+        stripped = stripped[:-1].strip()
+    return stripped in CODEX_REQUIRED_SECTION_HEADERS
+
+
+def _is_placeholder_value(line: str) -> bool:
+    return _normalize_placeholder_text(line) in PLACEHOLDER_VALUES
+
+
+def _normalize_placeholder_text(line: str) -> str:
+    normalized = str(line or "").strip().lower()
+    if normalized in {"-", "*"}:
+        return ""
+    for prefix in ("- ", "* "):
+        if normalized.startswith(prefix):
+            normalized = normalized[len(prefix) :].strip()
+            break
+    return _strip_matching_quotes(normalized)
+
+
+def _strip_matching_quotes(value: str) -> str:
+    if value.startswith('"') and value.endswith('"') and len(value) >= 2:
+        return value[1:-1].strip()
+    return value
+
+
+def _has_meaningful_list_values(value: Any) -> bool:
+    return any(not _is_placeholder_value(item) for item in _list_from_payload(value))
+
+
+def _has_commit_push_allowance(text: str) -> bool:
+    return bool(ALLOW_COMMIT_PUSH_PATTERN.search(str(text or "")))
+
+
+def _is_unsafe_commit_push_line(line: str) -> bool:
+    normalized = line.strip().lower()
+    if not normalized:
+        return False
+    if _is_commit_push_negation(normalized):
+        return _has_commit_push_imperative(_strip_negated_commit_push_phrases(normalized))
+    return _has_commit_push_imperative(normalized)
+
+
+def _is_commit_push_negation(line: str) -> bool:
+    return any(pattern.search(line) for pattern in COMMIT_PUSH_NEGATION_PATTERNS)
+
+
+def _has_commit_push_imperative(line: str) -> bool:
+    return any(pattern.search(line) for pattern in _unsafe_commit_push_patterns())
+
+
+def _strip_negated_commit_push_phrases(line: str) -> str:
+    stripped = str(line or "")
+    negated_phrases = (
+        r"\bdo\s+not\s+git\s+commit\b",
+        r"\bdo\s+not\s+git\s+push\b",
+        r"\bdon't\s+git\s+commit\b",
+        r"\bdon't\s+git\s+push\b",
+        r"\bdo\s+not\s+commit\b",
+        r"\bdo\s+not\s+push\b",
+        r"\bdon't\s+commit\b",
+        r"\bdon't\s+push\b",
+        r"\bno\s+commit/push\b",
+        r"\bno\s+push/commit\b",
+        r"\bno\s+commit\b",
+        r"\bno\s+push\b",
+    )
+    for phrase in negated_phrases:
+        stripped = re.sub(phrase, " ", stripped, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", stripped).strip()
+
+
+def _unsafe_commit_push_patterns() -> tuple[re.Pattern[str], ...]:
+    return COMMIT_PUSH_IMPERATIVE_PATTERNS
 
 
 def write_codacy_task(outdir: Path, raw: dict[str, Any], issues: list[dict[str, Any]]) -> None:
@@ -2253,7 +2891,7 @@ def _is_deepsource_check(check: dict[str, Any]) -> bool:
 def _deepsource_lines(checks: list[dict[str, Any]]) -> list[str]:
     lines = ["# DeepSource repair input", ""]
     if not checks:
-        return ensure_post_fix_micro_audit_section(
+        return ensure_codex_prompt_contract(
             "\n".join(lines + ["No DeepSource blockers found in current PR status rollup."])
         ).splitlines()
     for check in checks:
@@ -2264,7 +2902,7 @@ def _deepsource_lines(checks: list[dict[str, Any]]) -> list[str]:
             f"  description: {str(check.get('description') or '')}",
             "",
         ])
-    return ensure_post_fix_micro_audit_section("\n".join(lines)).splitlines()
+    return ensure_codex_prompt_contract("\n".join(lines)).splitlines()
 
 
 def _write_deepsource_task(outdir: Path, repo: str, pr_number: str) -> None:
@@ -2389,10 +3027,10 @@ def _review_task_lines(nodes: list[dict[str, Any]]) -> list[str]:
     ]
     if not unresolved:
         lines.append("No unresolved review threads found, or review thread API was unavailable.")
-        return ensure_post_fix_micro_audit_section("\n".join(lines)).splitlines()
+        return ensure_codex_prompt_contract("\n".join(lines)).splitlines()
     for node in unresolved:
         lines.extend(_thread_lines(node))
-    return ensure_post_fix_micro_audit_section("\n".join(lines)).splitlines()
+    return ensure_codex_prompt_contract("\n".join(lines)).splitlines()
 
 
 def review_comments_summary(nodes: list[dict[str, Any]]) -> dict[str, int]:
