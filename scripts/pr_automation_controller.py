@@ -143,7 +143,6 @@ PHASE0_REQUIRED_EVIDENCE_FIELDS = (
     "tests_to_run",
     "stop_conditions",
 )
-SECTION_HEADER_PATTERN = re.compile(r"^\s*[A-Z0-9][A-Z0-9 _-]*\s*(?::\s*)?$")
 PLACEHOLDER_VALUES = frozenset({"", "tbd", "todo", "none", "null", "n/a"})
 ALLOW_COMMIT_PUSH_PATTERN = re.compile(r"(?m)^\s*ALLOW_COMMIT_PUSH\s*:\s*yes\s*$")
 COMMIT_PUSH_NEGATION_PATTERNS = (
@@ -192,6 +191,7 @@ CODEX_SCALAR_DEFAULTS = {
         "- final status DONE/PARTIAL/NEEDS_MANUAL"
     ),
 }
+CODEX_REQUIRED_SECTION_HEADERS = frozenset(CODEX_PROMPT_REQUIRED_SECTIONS)
 
 
 def build_codex_task_prompt(context: dict[str, Any] | None = None) -> str:
@@ -252,12 +252,17 @@ def parse_phase0_preflight_result(text: str) -> dict[str, Any]:
 
 
 def phase0_preflight_status(report: dict[str, Any] | None) -> str:
-    value = str((report or {}).get("status") or "").upper()
-    return value if value in {"PASS", "NEEDS_MANUAL"} else "NEEDS_MANUAL"
+    if not isinstance(report, dict):
+        return "NEEDS_MANUAL"
+    normalized = _normalize_phase0_report(report)
+    return str(normalized.get("status") or "NEEDS_MANUAL")
 
 
 def phase0_preflight_failed(report: dict[str, Any] | None) -> bool:
-    return phase0_preflight_status(report) != "PASS" or str((report or {}).get("next_action") or "").strip() != "generate_patch_prompt"
+    if not isinstance(report, dict):
+        return True
+    normalized = _normalize_phase0_report(report)
+    return normalized.get("status") != "PASS" or normalized.get("next_action") != "generate_patch_prompt"
 
 
 def command_family(command: str) -> str:
@@ -1683,14 +1688,15 @@ def _parse_phase0_text(raw: str) -> dict[str, Any]:
 
 def _normalize_phase0_report(report: dict[str, Any]) -> dict[str, Any]:
     status = _phase0_status(report)
-    next_action = _phase0_next_action(status, report)
+    next_action = _phase0_next_action(report)
     normalized: dict[str, Any] = {
         "status": status,
         "risk_level": _phase0_risk(report),
         "next_action": next_action,
     }
     for key in PHASE0_RESULT_LIST_FIELDS:
-        normalized[key] = _list_value(report, "", key)
+        list_items = _list_from_payload(report.get(key))
+        normalized[key] = list_items if list_items else _list_value({}, str(report.get(key) or ""), key)
     if status == "PASS" and next_action == "generate_patch_prompt" and _phase0_has_required_evidence(normalized):
         return normalized
     normalized["status"] = "NEEDS_MANUAL"
@@ -1712,11 +1718,12 @@ def _phase0_risk(report: dict[str, Any]) -> str:
     return value if value in {"low", "medium", "high"} else "high"
 
 
-def _phase0_next_action(status: str, report: dict[str, Any]) -> str:
+def _phase0_next_action(report: dict[str, Any]) -> str:
     explicit = str(report.get("next_action") or "").strip()
-    if explicit:
-        return explicit
-    return "generate_patch_prompt" if status == "PASS" else "needs_manual_phase0_failed"
+    if not explicit:
+        return ""
+    normalized = re.sub(r"[\s-]+", "_", explicit.lower())
+    return "generate_patch_prompt" if normalized == "generate_patch_prompt" else normalized
 
 
 def _phase0_preflight_lines(context: dict[str, Any]) -> list[str]:
@@ -1807,7 +1814,7 @@ def _codex_list_defaults(key: str) -> list[str]:
 def _section_body_lines(text: str, section: str) -> list[str]:
     body: list[str] = []
     for raw_line in _section_following_lines(text, section):
-        if SECTION_HEADER_PATTERN.match(raw_line):
+        if _is_required_section_header(raw_line):
             break
         stripped = raw_line.strip()
         if stripped:
@@ -1827,6 +1834,13 @@ def _section_following_lines(text: str, section: str) -> list[str]:
 def _section_header_match(line: str, section: str) -> bool:
     stripped = str(line or "").strip()
     return stripped in {section, f"{section}:"}
+
+
+def _is_required_section_header(line: str) -> bool:
+    stripped = str(line or "").strip()
+    if stripped.endswith(":"):
+        stripped = stripped[:-1].strip()
+    return stripped in CODEX_REQUIRED_SECTION_HEADERS
 
 
 def _is_placeholder_value(line: str) -> bool:

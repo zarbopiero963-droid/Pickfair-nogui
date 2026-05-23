@@ -449,6 +449,65 @@ def test_validate_codex_prompt_contract_requires_exact_objective_header_not_pref
     ASSERTIONS.assertFalse(result["valid"])
 
 
+def test_validate_codex_prompt_contract_treats_all_caps_context_value_as_body_value():
+    """All-caps values like CI must remain section body values, not headers."""
+    prompt = _set_section_value(_full_codex_contract_prompt(), "CONTEXT", "CI")
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertNotIn("CONTEXT", result["uninitialized_sections"])
+    ASSERTIONS.assertTrue(result["valid"])
+
+
+def test_validate_codex_prompt_contract_treats_all_caps_objective_value_as_body_value():
+    """All-caps values like PASS must remain section body values, not headers."""
+    prompt = _set_section_value(_full_codex_contract_prompt(), "OBJECTIVE", "PASS")
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertNotIn("OBJECTIVE", result["uninitialized_sections"])
+    ASSERTIONS.assertTrue(result["valid"])
+
+
+def test_validate_codex_prompt_contract_required_headers_still_bound_section_bodies():
+    """Recognized required headers still terminate a prior section body."""
+    prompt = "\n".join(
+        [
+            "TASK:",
+            "Fix parser behavior",
+            "OBJECTIVE:",
+            "PASS",
+            "CONTEXT:",
+            "CI",
+            "FILES TO INSPECT:",
+            "- scripts/pr_automation_controller.py",
+            "FILES ALLOWED:",
+            "- scripts/pr_automation_controller.py",
+            "- tests/scripts/test_pr_automation_controller.py",
+            "DO NOT MODIFY:",
+            "- scripts/pr_flow_automation.py",
+            "CURRENT BEHAVIOR:",
+            "Uppercase values can be parsed as headers",
+            "EXPECTED BEHAVIOR:",
+            "Only required section headers stop section parsing",
+            "CURRENT BLOCKERS:",
+            "- CONTEXT value CI appears uninitialized",
+            "REQUIRED FIXES:",
+            "- limit section boundary recognition to required headers",
+            "METHOD:",
+            "- keep patch scoped",
+            "VALIDATION:",
+            "- python3 -m pytest tests/scripts/test_pr_automation_controller.py -q",
+            "POST-FIX MICRO-AUDIT BEFORE COMMIT:",
+            "Use required post-fix micro-audit checklist before commit.",
+            "OUTPUT FORMAT:",
+            "- final status DONE/PARTIAL/NEEDS_MANUAL",
+            "STOP CONDITIONS:",
+            "- do not edit unrelated files",
+        ]
+    )
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertEqual(result["missing_sections"], [])
+    ASSERTIONS.assertEqual(result["uninitialized_sections"], [])
+    ASSERTIONS.assertTrue(result["valid"])
+
+
 def test_build_phase0_preflight_prompt_includes_static_analysis_checklist():
     """Phase-0 prompt includes static-analysis config files likely needed for triage."""
     prompt = controller.build_phase0_preflight_prompt({})
@@ -484,6 +543,46 @@ def test_parse_phase0_preflight_result_pass_json():
     ASSERTIONS.assertFalse(controller.phase0_preflight_failed(report))
 
 
+def test_parse_phase0_preflight_result_pass_json_uppercase_next_action_normalizes():
+    """Complete PASS report with uppercase next_action should normalize and pass."""
+    payload = _phase0_pass_payload()
+    payload["next_action"] = "GENERATE_PATCH_PROMPT"
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+    ASSERTIONS.assertFalse(controller.phase0_preflight_failed(report))
+
+
+def test_parse_phase0_preflight_result_pass_json_mixed_case_next_action_normalizes():
+    """Complete PASS report with mixed-case next_action should normalize and pass."""
+    payload = _phase0_pass_payload()
+    payload["next_action"] = "Generate_Patch_Prompt"
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+    ASSERTIONS.assertFalse(controller.phase0_preflight_failed(report))
+
+
+def test_parse_phase0_preflight_result_pass_json_spaced_next_action_normalizes():
+    """Complete PASS report with spaced next_action should normalize and pass."""
+    payload = _phase0_pass_payload()
+    payload["next_action"] = "  Generate Patch Prompt  "
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+    ASSERTIONS.assertFalse(controller.phase0_preflight_failed(report))
+
+
+def test_parse_phase0_preflight_result_pass_json_hyphenated_next_action_normalizes():
+    """Complete PASS report with hyphenated next_action should normalize and pass."""
+    payload = _phase0_pass_payload()
+    payload["next_action"] = "generate-patch-prompt"
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+    ASSERTIONS.assertFalse(controller.phase0_preflight_failed(report))
+
+
 def test_parse_phase0_preflight_result_incomplete_pass_fails_closed():
     """PASS payload missing required evidence fields must fail closed to NEEDS_MANUAL."""
     report = controller.parse_phase0_preflight_result(json.dumps({"status": "PASS"}))
@@ -492,9 +591,60 @@ def test_parse_phase0_preflight_result_incomplete_pass_fails_closed():
     ASSERTIONS.assertTrue(controller.phase0_preflight_failed(report))
 
 
+def test_parse_phase0_preflight_result_complete_pass_missing_next_action_fails_closed():
+    """Complete PASS payload without next_action must fail closed to NEEDS_MANUAL."""
+    payload = _phase0_pass_payload()
+    payload.pop("next_action")
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+    ASSERTIONS.assertTrue(controller.phase0_preflight_failed(report))
+
+
 def test_phase0_preflight_failed_fails_closed_for_incomplete_pass_report():
     """phase0_preflight_failed should reject PASS reports without required evidence."""
     ASSERTIONS.assertTrue(controller.phase0_preflight_failed({"status": "PASS"}))
+
+
+def test_phase0_preflight_helpers_direct_raw_pass_report_normalizes():
+    """Direct helpers normalize complete PASS dict reports and accept generate_patch_prompt variants."""
+    for action in ("generate_patch_prompt", "GENERATE_PATCH_PROMPT", "Generate_Patch_Prompt"):
+        payload = _phase0_pass_payload()
+        payload["next_action"] = action
+        ASSERTIONS.assertEqual(controller.phase0_preflight_status(payload), "PASS")
+        ASSERTIONS.assertFalse(controller.phase0_preflight_failed(payload))
+
+
+def test_phase0_preflight_helpers_preserve_direct_dict_list_evidence():
+    """Direct dict list evidence stays intact and allows PASS routing."""
+    payload = _phase0_pass_payload()
+    payload["files_inspected"] = ["scripts/pr_automation_controller.py", "tests/scripts/test_pr_automation_controller.py"]
+    payload["static_analysis_rules"] = ["codacy:py/rule", "ruff:F401"]
+    payload["workflows_affected"] = ["ci.yml::lint", "ci.yml::tests"]
+    ASSERTIONS.assertEqual(controller.phase0_preflight_status(payload), "PASS")
+    ASSERTIONS.assertFalse(controller.phase0_preflight_failed(payload))
+
+
+def test_phase0_preflight_helpers_direct_raw_incomplete_pass_fail_closed():
+    """Direct helpers fail closed for incomplete PASS dict reports."""
+    ASSERTIONS.assertEqual(controller.phase0_preflight_status({"status": "PASS"}), "NEEDS_MANUAL")
+    ASSERTIONS.assertTrue(controller.phase0_preflight_failed({"status": "PASS"}))
+
+
+def test_phase0_preflight_helpers_direct_raw_invalid_next_action_fails_closed():
+    """Direct helpers fail closed when PASS next_action is invalid."""
+    payload = _phase0_pass_payload()
+    payload["next_action"] = "needs_manual"
+    ASSERTIONS.assertEqual(controller.phase0_preflight_status(payload), "NEEDS_MANUAL")
+    ASSERTIONS.assertTrue(controller.phase0_preflight_failed(payload))
+
+
+def test_phase0_preflight_helpers_direct_non_dict_or_none_fail_closed():
+    """Direct helpers fail closed for non-dict or None reports."""
+    ASSERTIONS.assertEqual(controller.phase0_preflight_status(None), "NEEDS_MANUAL")
+    ASSERTIONS.assertTrue(controller.phase0_preflight_failed(None))
+    ASSERTIONS.assertEqual(controller.phase0_preflight_status("status: PASS"), "NEEDS_MANUAL")
+    ASSERTIONS.assertTrue(controller.phase0_preflight_failed("status: PASS"))
 
 
 def test_parse_phase0_preflight_result_needs_manual_text():
