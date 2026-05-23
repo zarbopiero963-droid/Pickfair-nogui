@@ -240,6 +240,117 @@ def _assert_contract_accepts_safe_commit_push_wording(method_line: str) -> None:
     ASSERTIONS.assertTrue(result["valid"])
 
 
+def _extended_prompt_context() -> dict[str, Any]:
+    context = _default_prompt_context()
+    context.update(
+        {
+            "task": "workflow hygiene",
+            "objective": "contracted prompts",
+            "current_behavior": "Placeholder-only values can pass validation",
+            "expected_behavior": "Placeholder-only values must fail validation",
+            "method": "Update prompt-contract value checks and tests",
+            "output_format": "Required response format",
+            "do_not_modify": ["scripts/pr_flow_automation.py", "tests/scripts/test_pr_flow_automation.py"],
+            "current_blockers": ["validate_codex_prompt_contract accepts placeholder-only required sections"],
+            "required_fixes": ["Invalidate placeholder-only section values for required sections"],
+            "stop_conditions": ["Do not modify unrelated files"],
+        }
+    )
+    return context
+
+
+def _required_contract_prompt_with_caps_values() -> str:
+    return "\n".join(
+        [
+            "TASK:",
+            "Fix parser behavior",
+            "OBJECTIVE:",
+            "PASS",
+            "CONTEXT:",
+            "CI",
+            "FILES TO INSPECT:",
+            "- scripts/pr_automation_controller.py",
+            "FILES ALLOWED:",
+            "- scripts/pr_automation_controller.py",
+            "- tests/scripts/test_pr_automation_controller.py",
+            "DO NOT MODIFY:",
+            "- scripts/pr_flow_automation.py",
+            "CURRENT BEHAVIOR:",
+            "Uppercase values can be parsed as headers",
+            "EXPECTED BEHAVIOR:",
+            "Only required section headers stop section parsing",
+            "CURRENT BLOCKERS:",
+            "- CONTEXT value CI appears uninitialized",
+            "REQUIRED FIXES:",
+            "- limit section boundary recognition to required headers",
+            "METHOD:",
+            "- keep patch scoped",
+            "VALIDATION:",
+            "- python3 -m pytest tests/scripts/test_pr_automation_controller.py -q",
+            "POST-FIX MICRO-AUDIT BEFORE COMMIT:",
+            "Use required post-fix micro-audit checklist before commit.",
+            "OUTPUT FORMAT:",
+            "- final status DONE/PARTIAL/NEEDS_MANUAL",
+            "STOP CONDITIONS:",
+            "- do not edit unrelated files",
+        ]
+    )
+
+
+def _assert_contract_examples_rejected(method_lines: tuple[str, ...]) -> None:
+    for method_line in method_lines:
+        _assert_contract_rejects_without_allowance(method_line)
+
+
+def _assert_contract_examples_accepted(method_lines: tuple[str, ...]) -> None:
+    for method_line in method_lines:
+        _assert_contract_accepts_safe_commit_push_wording(method_line)
+
+
+def _contract_examples_rejected() -> tuple[str, ...]:
+    return (
+        "METHOD:\ngit commit",
+        "METHOD:\ngit push",
+        "METHOD:\ncommit changes",
+        "METHOD:\ncommit the patch",
+        "METHOD:\nCommit after checks.",
+        "METHOD:\npush origin branch",
+        "METHOD:\npush the branch",
+        "METHOD:\nPush this branch.",
+    )
+
+
+def _contract_examples_accepted() -> tuple[str, ...]:
+    return (
+        "METHOD:\ndo not commit",
+        "METHOD:\ndo not push",
+        "METHOD:\ndo not git push",
+        "METHOD:\nno commit/push",
+        "METHOD:\nBefore committing, perform audit.",
+        "METHOD:\nPOST-FIX MICRO-AUDIT BEFORE COMMIT",
+    )
+
+
+def _default_method_output_stop_contract_lines() -> tuple[str, ...]:
+    return (
+        "- inspect relevant files first",
+        "- verify each finding is still valid",
+        "- keep patch minimal",
+        "- add/update focused tests",
+        "- run validation",
+        "- do not commit/push unless explicitly allowed",
+        "- files changed",
+        "- summary of fix",
+        "- tests run",
+        "- post-fix audit result",
+        "- final status DONE/PARTIAL/NEEDS_MANUAL",
+        "- stop on scope violation",
+        "- stop on failing post-fix audit",
+        "- stop on validation failure",
+        "- stop on ambiguous/high-risk changes needing human decision",
+    )
+
+
 def test_controller_does_not_launch_safe_autofix_for_stale_codacy_action_required(monkeypatch):
     """A stale Codacy ACTION_REQUIRED check is ignored once the Codacy API is clear."""
     decision = _controller_decision(monkeypatch, blocking=False, ignored=True)
@@ -348,22 +459,7 @@ def test_build_post_fix_micro_audit_prompt_filters_blank_changed_files_entries()
 
 def test_build_codex_task_prompt_includes_required_sections():
     """Generated codex prompt contains required sections and validates successfully."""
-    context = _default_prompt_context()
-    context.update(
-        {
-            "task": "workflow hygiene",
-            "objective": "contracted prompts",
-            "current_behavior": "Placeholder-only values can pass validation",
-            "expected_behavior": "Placeholder-only values must fail validation",
-            "method": "Update prompt-contract value checks and tests",
-            "output_format": "Required response format",
-            "do_not_modify": ["scripts/pr_flow_automation.py", "tests/scripts/test_pr_flow_automation.py"],
-            "current_blockers": ["validate_codex_prompt_contract accepts placeholder-only required sections"],
-            "required_fixes": ["Invalidate placeholder-only section values for required sections"],
-            "stop_conditions": ["Do not modify unrelated files"],
-        }
-    )
-    prompt = controller.build_codex_task_prompt(context)
+    prompt = controller.build_codex_task_prompt(_extended_prompt_context())
     expected_headers = tuple(
         f"{section}:"
         for section in controller.CODEX_PROMPT_REQUIRED_SECTIONS
@@ -403,24 +499,7 @@ def test_build_codex_task_prompt_minimal_context_populates_required_contract_def
 def test_build_codex_task_prompt_defaults_include_method_output_stop_contract_text():
     """Default METHOD/OUTPUT FORMAT/STOP CONDITIONS sections include concrete contract bullets."""
     prompt = controller.build_codex_task_prompt(_default_prompt_context())
-    required_lines = (
-        "- inspect relevant files first",
-        "- verify each finding is still valid",
-        "- keep patch minimal",
-        "- add/update focused tests",
-        "- run validation",
-        "- do not commit/push unless explicitly allowed",
-        "- files changed",
-        "- summary of fix",
-        "- tests run",
-        "- post-fix audit result",
-        "- final status DONE/PARTIAL/NEEDS_MANUAL",
-        "- stop on scope violation",
-        "- stop on failing post-fix audit",
-        "- stop on validation failure",
-        "- stop on ambiguous/high-risk changes needing human decision",
-    )
-    _assert_prompt_contains_lines(prompt, required_lines)
+    _assert_prompt_contains_lines(prompt, _default_method_output_stop_contract_lines())
 
 
 def test_ensure_codex_prompt_contract_appends_missing_sections():
@@ -558,42 +637,7 @@ def test_validate_codex_prompt_contract_treats_all_caps_objective_value_as_body_
 
 def test_validate_codex_prompt_contract_required_headers_still_bound_section_bodies():
     """Recognized required headers still terminate a prior section body."""
-    prompt = "\n".join(
-        [
-            "TASK:",
-            "Fix parser behavior",
-            "OBJECTIVE:",
-            "PASS",
-            "CONTEXT:",
-            "CI",
-            "FILES TO INSPECT:",
-            "- scripts/pr_automation_controller.py",
-            "FILES ALLOWED:",
-            "- scripts/pr_automation_controller.py",
-            "- tests/scripts/test_pr_automation_controller.py",
-            "DO NOT MODIFY:",
-            "- scripts/pr_flow_automation.py",
-            "CURRENT BEHAVIOR:",
-            "Uppercase values can be parsed as headers",
-            "EXPECTED BEHAVIOR:",
-            "Only required section headers stop section parsing",
-            "CURRENT BLOCKERS:",
-            "- CONTEXT value CI appears uninitialized",
-            "REQUIRED FIXES:",
-            "- limit section boundary recognition to required headers",
-            "METHOD:",
-            "- keep patch scoped",
-            "VALIDATION:",
-            "- python3 -m pytest tests/scripts/test_pr_automation_controller.py -q",
-            "POST-FIX MICRO-AUDIT BEFORE COMMIT:",
-            "Use required post-fix micro-audit checklist before commit.",
-            "OUTPUT FORMAT:",
-            "- final status DONE/PARTIAL/NEEDS_MANUAL",
-            "STOP CONDITIONS:",
-            "- do not edit unrelated files",
-        ]
-    )
-    ensured = controller.ensure_phase0_preflight_section(prompt)
+    ensured = controller.ensure_phase0_preflight_section(_required_contract_prompt_with_caps_values())
     result = controller.validate_codex_prompt_contract(ensured)
     ASSERTIONS.assertEqual(result["missing_sections"], [])
     ASSERTIONS.assertEqual(result["uninitialized_sections"], [])
@@ -1060,26 +1104,8 @@ def test_validate_codex_prompt_contract_accepts_safe_no_commit_or_no_push_varian
 
 def test_validate_codex_prompt_contract_commit_push_contract_examples():
     """Contract examples must keep invalid imperatives blocked and safe negations allowed."""
-    for method_line in (
-        "METHOD:\ngit commit",
-        "METHOD:\ngit push",
-        "METHOD:\ncommit changes",
-        "METHOD:\ncommit the patch",
-        "METHOD:\nCommit after checks.",
-        "METHOD:\npush origin branch",
-        "METHOD:\npush the branch",
-        "METHOD:\nPush this branch.",
-    ):
-        _assert_contract_rejects_without_allowance(method_line)
-    for method_line in (
-        "METHOD:\ndo not commit",
-        "METHOD:\ndo not push",
-        "METHOD:\ndo not git push",
-        "METHOD:\nno commit/push",
-        "METHOD:\nBefore committing, perform audit.",
-        "METHOD:\nPOST-FIX MICRO-AUDIT BEFORE COMMIT",
-    ):
-        _assert_contract_accepts_safe_commit_push_wording(method_line)
+    _assert_contract_examples_rejected(_contract_examples_rejected())
+    _assert_contract_examples_accepted(_contract_examples_accepted())
 
 
 def test_validate_codex_prompt_contract_accepts_appended_pure_negated_git_push_line():
