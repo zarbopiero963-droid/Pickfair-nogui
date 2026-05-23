@@ -157,6 +157,18 @@ def test_flow_phase0_parser_supports_fenced_json_with_prose():
     _assert_phase0_pass(raw)
 
 
+def test_flow_phase0_parser_supports_json_string_list_evidence_fields():
+    """Flow wrapper should parse string-encoded bullet lists in required evidence fields."""
+    payload = _phase0_pass_payload()
+    payload["files_inspected"] = "- scripts/a.py"
+    payload["tests_to_run"] = "- pytest"
+    report = flow.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["files_inspected"], ["scripts/a.py"])
+    ASSERTIONS.assertEqual(report["tests_to_run"], ["pytest"])
+    ASSERTIONS.assertFalse(flow.phase0_preflight_failed(report))
+
+
 def test_flow_codacy_task_fails_closed_when_blocking_api_fails(tmp_path, monkeypatch, capsys):
     """Codacy API failures remain blocking when the Codacy check is blocking."""
     monkeypatch.setattr(flow, "codacy_is_blocking", lambda _repo, _pr: True)

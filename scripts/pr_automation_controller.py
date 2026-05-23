@@ -208,22 +208,26 @@ def build_codex_task_prompt(context: dict[str, Any] | None = None) -> str:
 
 
 def ensure_codex_prompt_contract(prompt: str, context: dict[str, Any] | None = None) -> str:
-    text = str(prompt or "").strip()
     ctx = context if isinstance(context, dict) else {}
-    if not text:
-        text = build_codex_task_prompt(ctx)
-    text = ensure_phase0_preflight_section(text, ctx)
-    text = _strip_post_fix_micro_audit_placeholder_section(text)
-    missing = codex_prompt_contract_missing_sections(text)
-    if missing:
-        non_post_fix_missing = [
-            name for name in missing if name != "POST-FIX MICRO-AUDIT BEFORE COMMIT"
-        ]
-        if non_post_fix_missing:
-            text = "\n\n".join(
-                [text] + [f"{name}:\nTBD" for name in non_post_fix_missing]
-            ).strip()
+    text = _seed_codex_contract_prompt(prompt, ctx)
+    text = _add_missing_codex_contract_sections(text)
     return ensure_post_fix_micro_audit_section(text)
+
+
+def _seed_codex_contract_prompt(prompt: str, context: dict[str, Any]) -> str:
+    text = str(prompt or "").strip()
+    if not text:
+        return build_codex_task_prompt(context)
+    text = ensure_phase0_preflight_section(text, context)
+    return _strip_post_fix_micro_audit_placeholder_section(text)
+
+
+def _add_missing_codex_contract_sections(text: str) -> str:
+    missing = codex_prompt_contract_missing_sections(text)
+    non_post_fix_missing = [name for name in missing if name != "POST-FIX MICRO-AUDIT BEFORE COMMIT"]
+    if not non_post_fix_missing:
+        return text
+    return "\n\n".join([text] + [f"{name}:\nTBD" for name in non_post_fix_missing]).strip()
 
 
 def validate_codex_prompt_contract(prompt: str) -> dict[str, Any]:
@@ -1421,10 +1425,12 @@ def build_post_fix_micro_audit_prompt(task_text: str, context: dict[str, Any] | 
 
 def ensure_post_fix_micro_audit_section(prompt: str) -> str:
     text = str(prompt or "").rstrip()
+    notes = _extract_post_fix_micro_audit_trailing_notes(text)
     normalized = _strip_post_fix_micro_audit_sections(text)
     if not normalized:
-        return POST_FIX_MICRO_AUDIT_SECTION
-    return f"{normalized}\n\n{POST_FIX_MICRO_AUDIT_SECTION}"
+        return _append_post_fix_trailing_notes(POST_FIX_MICRO_AUDIT_SECTION.rstrip(), notes).strip()
+    merged = f"{normalized}\n\n{POST_FIX_MICRO_AUDIT_SECTION}".rstrip()
+    return _append_post_fix_trailing_notes(merged, notes).strip()
 
 
 def parse_post_fix_micro_audit_result(text: str) -> dict[str, Any]:
@@ -1552,24 +1558,14 @@ def _strip_post_fix_micro_audit_placeholder_section(text: str) -> str:
     if not lines:
         return ""
     cleaned: list[str] = []
-    index = 0
-    while index < len(lines):
-        line = lines[index]
-        if _section_header_match(line, "POST-FIX MICRO-AUDIT BEFORE COMMIT"):
-            body_lines: list[str] = []
-            index += 1
-            while index < len(lines):
-                candidate = lines[index]
-                if _is_required_section_header(candidate):
-                    break
-                body_lines.append(candidate)
-                index += 1
-            if all(_is_placeholder_value(raw.strip()) for raw in body_lines if raw.strip()):
-                continue
-            cleaned.extend([line] + body_lines)
+    for segment in _iter_post_fix_segments(lines):
+        if not segment["is_post_fix"]:
+            cleaned.extend(segment["segment_lines"])
             continue
-        cleaned.append(line)
-        index += 1
+        body_lines = cast(list[str], segment["body_lines"])
+        if _is_placeholder_only_post_fix_body(body_lines):
+            continue
+        cleaned.extend(cast(list[str], segment["segment_lines"]))
     return "\n".join(cleaned).strip()
 
 
@@ -1577,18 +1573,67 @@ def _strip_post_fix_micro_audit_sections(text: str) -> str:
     lines = str(text or "").splitlines()
     if not lines:
         return ""
-    cleaned: list[str] = []
+    kept = [line for segment in _iter_post_fix_segments(lines) if not segment["is_post_fix"] for line in cast(list[str], segment["segment_lines"])]
+    return "\n".join(kept).strip()
+
+
+def _iter_post_fix_segments(lines: list[str]) -> list[dict[str, Any]]:
+    segments: list[dict[str, Any]] = []
     index = 0
     while index < len(lines):
-        line = lines[index]
-        if _section_header_match(line, "POST-FIX MICRO-AUDIT BEFORE COMMIT"):
+        start = index
+        is_post_fix = _section_header_match(lines[index], "POST-FIX MICRO-AUDIT BEFORE COMMIT")
+        if is_post_fix:
             index += 1
             while index < len(lines) and not _is_required_section_header(lines[index]):
                 index += 1
+            segment_lines = lines[start:index]
+            body = segment_lines[1:] if len(segment_lines) > 1 else []
+            segments.append({"is_post_fix": True, "segment_lines": segment_lines, "body_lines": body})
             continue
-        cleaned.append(line)
         index += 1
-    return "\n".join(cleaned).strip()
+        while index < len(lines) and not _section_header_match(lines[index], "POST-FIX MICRO-AUDIT BEFORE COMMIT"):
+            index += 1
+        segments.append({"is_post_fix": False, "segment_lines": lines[start:index], "body_lines": []})
+    return segments
+
+
+def _is_placeholder_only_post_fix_body(body_lines: list[str]) -> bool:
+    nonempty = [raw.strip() for raw in body_lines if raw.strip()]
+    return bool(nonempty) and all(_is_placeholder_value(line) for line in nonempty)
+
+
+def _extract_post_fix_micro_audit_trailing_notes(text: str) -> list[str]:
+    notes: list[str] = []
+    for segment in _iter_post_fix_segments(str(text or "").splitlines()):
+        if not segment["is_post_fix"]:
+            continue
+        notes.extend(_post_fix_noncanonical_lines(cast(list[str], segment["body_lines"])))
+    return _dedupe_nonempty_lines(notes)
+
+
+def _post_fix_noncanonical_lines(lines: list[str]) -> list[str]:
+    canonical_lines = {line.strip() for line in POST_FIX_MICRO_AUDIT_SECTION.splitlines() if line.strip()}
+    return [line for line in lines if line.strip() and line.strip() not in canonical_lines and not _is_placeholder_value(line)]
+
+
+def _dedupe_nonempty_lines(lines: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in lines:
+        line = raw.rstrip()
+        key = line.strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(line)
+    return out
+
+
+def _append_post_fix_trailing_notes(base: str, notes: list[str]) -> str:
+    if not notes:
+        return base
+    return f"{base}\n" + "\n".join(notes)
 
 
 def _normalize_audit_text_for_match(text: str) -> str:
@@ -1760,14 +1805,36 @@ def _normalize_phase0_report(report: dict[str, Any]) -> dict[str, Any]:
         "risk_level": _phase0_risk(report),
         "next_action": next_action,
     }
-    for key in PHASE0_RESULT_LIST_FIELDS:
-        list_items = _list_from_payload(report.get(key))
-        normalized[key] = list_items if list_items else _list_value({}, str(report.get(key) or ""), key)
+    _populate_phase0_lists(normalized, report)
     if status == "PASS" and next_action == "generate_patch_prompt" and _phase0_has_required_evidence(normalized):
         return normalized
     normalized["status"] = "NEEDS_MANUAL"
     normalized["next_action"] = "needs_manual_phase0_failed"
     return normalized
+
+
+def _populate_phase0_lists(normalized: dict[str, Any], report: dict[str, Any]) -> None:
+    for key in PHASE0_RESULT_LIST_FIELDS:
+        normalized[key] = _phase0_list_value(report.get(key), key)
+
+
+def _phase0_list_value(value: Any, key: str) -> list[str]:
+    from_payload = _list_from_payload(value)
+    if from_payload:
+        return from_payload
+    if isinstance(value, str):
+        parsed = _list_from_raw_text(value)
+        if parsed:
+            return parsed
+        return _list_value({}, value, key)
+    return []
+
+
+def _list_from_raw_text(raw: str) -> list[str]:
+    lines = [line.strip() for line in str(raw or "").splitlines() if line.strip()]
+    if not lines or not all(line.startswith("-") for line in lines):
+        return []
+    return [_clean_audit_bullet(line) for line in lines if _clean_audit_bullet(line)]
 
 
 def _phase0_has_required_evidence(report: dict[str, Any]) -> bool:
