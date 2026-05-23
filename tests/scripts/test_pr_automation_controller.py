@@ -261,40 +261,62 @@ def _extended_prompt_context() -> dict[str, Any]:
 
 def _required_contract_prompt_with_caps_values() -> str:
     return "\n".join(
-        [
-            "TASK:",
-            "Fix parser behavior",
-            "OBJECTIVE:",
-            "PASS",
-            "CONTEXT:",
-            "CI",
-            "FILES TO INSPECT:",
-            "- scripts/pr_automation_controller.py",
-            "FILES ALLOWED:",
-            "- scripts/pr_automation_controller.py",
-            "- tests/scripts/test_pr_automation_controller.py",
-            "DO NOT MODIFY:",
-            "- scripts/pr_flow_automation.py",
-            "CURRENT BEHAVIOR:",
-            "Uppercase values can be parsed as headers",
-            "EXPECTED BEHAVIOR:",
-            "Only required section headers stop section parsing",
-            "CURRENT BLOCKERS:",
-            "- CONTEXT value CI appears uninitialized",
-            "REQUIRED FIXES:",
-            "- limit section boundary recognition to required headers",
-            "METHOD:",
-            "- keep patch scoped",
-            "VALIDATION:",
-            "- python3 -m pytest tests/scripts/test_pr_automation_controller.py -q",
-            "POST-FIX MICRO-AUDIT BEFORE COMMIT:",
-            "Use required post-fix micro-audit checklist before commit.",
-            "OUTPUT FORMAT:",
-            "- final status DONE/PARTIAL/NEEDS_MANUAL",
-            "STOP CONDITIONS:",
-            "- do not edit unrelated files",
-        ]
+        _required_contract_prompt_caps_intro()
+        + _required_contract_prompt_caps_scope()
+        + _required_contract_prompt_caps_contract()
+        + _required_contract_prompt_caps_output()
     )
+
+
+def _required_contract_prompt_caps_intro() -> list[str]:
+    return [
+        "TASK:",
+        "Fix parser behavior",
+        "OBJECTIVE:",
+        "PASS",
+        "CONTEXT:",
+        "CI",
+    ]
+
+
+def _required_contract_prompt_caps_scope() -> list[str]:
+    return [
+        "FILES TO INSPECT:",
+        "- scripts/pr_automation_controller.py",
+        "FILES ALLOWED:",
+        "- scripts/pr_automation_controller.py",
+        "- tests/scripts/test_pr_automation_controller.py",
+        "DO NOT MODIFY:",
+        "- scripts/pr_flow_automation.py",
+    ]
+
+
+def _required_contract_prompt_caps_contract() -> list[str]:
+    return [
+        "CURRENT BEHAVIOR:",
+        "Uppercase values can be parsed as headers",
+        "EXPECTED BEHAVIOR:",
+        "Only required section headers stop section parsing",
+        "CURRENT BLOCKERS:",
+        "- CONTEXT value CI appears uninitialized",
+        "REQUIRED FIXES:",
+        "- limit section boundary recognition to required headers",
+    ]
+
+
+def _required_contract_prompt_caps_output() -> list[str]:
+    return [
+        "METHOD:",
+        "- keep patch scoped",
+        "VALIDATION:",
+        "- python3 -m pytest tests/scripts/test_pr_automation_controller.py -q",
+        "POST-FIX MICRO-AUDIT BEFORE COMMIT:",
+        "Use required post-fix micro-audit checklist before commit.",
+        "OUTPUT FORMAT:",
+        "- final status DONE/PARTIAL/NEEDS_MANUAL",
+        "STOP CONDITIONS:",
+        "- do not edit unrelated files",
+    ]
 
 
 def _assert_contract_examples_rejected(method_lines: tuple[str, ...]) -> None:
