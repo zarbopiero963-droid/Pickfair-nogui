@@ -125,6 +125,31 @@ def test_flow_codex_prompt_contract_helpers_available():
     ASSERTIONS.assertEqual(flow.codex_prompt_contract_missing_sections(prompt), [])
 
 
+def test_flow_ensure_phase0_preflight_section_accepts_one_arg():
+    """Flow wrapper should keep one-argument compatibility."""
+    ensured = flow.ensure_phase0_preflight_section("TASK:\nFix lint")
+    ASSERTIONS.assertIn("PHASE 0 PRE-FLIGHT (READ-ONLY)", ensured)
+
+
+def test_flow_ensure_phase0_preflight_section_accepts_prompt_and_context():
+    """Flow wrapper should accept optional context without raising type errors."""
+    ensured = flow.ensure_phase0_preflight_section(
+        "TASK:\nFix lint",
+        {"files_allowed": ["scripts/pr_automation_controller.py"]},
+    )
+    ASSERTIONS.assertIn("PHASE 0 PRE-FLIGHT (READ-ONLY)", ensured)
+
+
+def test_flow_ensure_phase0_preflight_section_preserves_files_allowed_from_context():
+    """Flow wrapper should preserve explicit files_allowed in inserted Phase 0."""
+    ensured = flow.ensure_phase0_preflight_section(
+        "TASK:\nFix lint",
+        {"files_allowed": ["scripts/pr_automation_controller.py"]},
+    )
+    ASSERTIONS.assertIn("Task allowed files: scripts/pr_automation_controller.py", ensured)
+    ASSERTIONS.assertNotIn("Task allowed files: (from task scope)", ensured)
+
+
 def test_flow_phase0_parser_supports_fenced_json_with_prose():
     """Phase-0 parser accepts prose-wrapped fenced JSON and keeps PASS routing."""
     payload: dict[str, Any] = _phase0_pass_payload()

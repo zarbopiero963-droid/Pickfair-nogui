@@ -478,6 +478,14 @@ def test_validate_codex_prompt_contract_reports_missing_sections_for_incomplete_
     ASSERTIONS.assertFalse(result["valid"])
 
 
+def test_validate_codex_prompt_contract_rejects_prompt_missing_phase0_preflight():
+    """Prompt missing PHASE 0 preflight must be invalid with explicit reason."""
+    prompt = _full_codex_contract_prompt().replace("PHASE 0 PRE-FLIGHT (READ-ONLY)\n\n", "", 1)
+    result = controller.validate_codex_prompt_contract(prompt)
+    ASSERTIONS.assertFalse(result["valid"])
+    ASSERTIONS.assertIn("missing_phase0_preflight", result["reasons"])
+
+
 def test_validate_codex_prompt_contract_requires_exact_task_header_not_prefix_text():
     """Prefix prose like Task allowed files must not satisfy required TASK header."""
     prompt = "\n".join(
@@ -563,7 +571,7 @@ def test_validate_codex_prompt_contract_required_headers_still_bound_section_bod
             "- do not edit unrelated files",
         ]
     )
-    result = controller.validate_codex_prompt_contract(prompt)
+    result = controller.validate_codex_prompt_contract(controller.ensure_phase0_preflight_section(prompt))
     ASSERTIONS.assertEqual(result["missing_sections"], [])
     ASSERTIONS.assertEqual(result["uninitialized_sections"], [])
     ASSERTIONS.assertTrue(result["valid"])
@@ -1030,6 +1038,18 @@ def test_ensure_phase0_preflight_section_preserves_original_content_after_insert
     original = "TASK:\nFix lint\nOBJECTIVE:\nAddress blockers"
     ensured = controller.ensure_phase0_preflight_section(original)
     ASSERTIONS.assertIn("\nTASK:\nFix lint\nOBJECTIVE:\nAddress blockers\n", ensured)
+
+
+def test_ensure_codex_prompt_contract_preserves_files_allowed_from_context():
+    """Contract enforcer should preserve explicit files_allowed when inserting Phase 0."""
+    base_prompt = _full_codex_contract_prompt().replace("PHASE 0 PRE-FLIGHT (READ-ONLY)\n\n", "", 1)
+    prompt = controller.ensure_codex_prompt_contract(
+        base_prompt,
+        {"files_allowed": ["scripts/pr_automation_controller.py"]},
+    )
+    ASSERTIONS.assertIn("Task allowed files: scripts/pr_automation_controller.py", prompt)
+    ASSERTIONS.assertNotIn("Task allowed files: (from task scope)", prompt)
+    ASSERTIONS.assertTrue(controller.validate_codex_prompt_contract(prompt)["valid"])
 
 
 def test_parse_post_fix_micro_audit_result_supports_json_payload():

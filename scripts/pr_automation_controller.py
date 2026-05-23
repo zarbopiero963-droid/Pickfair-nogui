@@ -207,11 +207,12 @@ def build_codex_task_prompt(context: dict[str, Any] | None = None) -> str:
     return ensure_post_fix_micro_audit_section(ensure_phase0_preflight_section(prompt, ctx))
 
 
-def ensure_codex_prompt_contract(prompt: str) -> str:
+def ensure_codex_prompt_contract(prompt: str, context: dict[str, Any] | None = None) -> str:
     text = str(prompt or "").strip()
+    ctx = context if isinstance(context, dict) else {}
     if not text:
-        text = build_codex_task_prompt({})
-    text = ensure_phase0_preflight_section(text)
+        text = build_codex_task_prompt(ctx)
+    text = ensure_phase0_preflight_section(text, ctx)
     text = _strip_post_fix_micro_audit_placeholder_section(text)
     missing = codex_prompt_contract_missing_sections(text)
     if missing:
@@ -1710,6 +1711,8 @@ def _has_section(text: str, section: str) -> bool:
 
 def _codex_contract_reasons(text: str) -> list[str]:
     reasons: list[str] = []
+    if not _has_section(text, PHASE0_SECTION_TITLE):
+        reasons.append("missing_phase0_preflight")
     if _looks_generic_fix_prompt(text):
         reasons.append("generic_fix_without_objective_context_validation")
     if _has_unsafe_commit_push_instruction(text):
