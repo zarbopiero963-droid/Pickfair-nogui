@@ -1464,7 +1464,7 @@ def _normalized_ledger_pr_number(pr_number: Any) -> int:
     return safe_nonnegative_int(pr_number, 0)
 
 
-def automation_ledger_path(base_dir: str, pr_number: str | int) -> str:
+def automation_ledger_path(base_dir: str | Path | None, pr_number: str | int | None) -> str:
     root = _normalized_ledger_base_dir(base_dir)
     pr_value = _normalized_ledger_pr_number(pr_number)
     return str(root / f"pr-{pr_value}" / "automation-ledger.jsonl")
@@ -1482,16 +1482,27 @@ def _normalized_ledger_event_numbers(metadata: dict[str, Any]) -> tuple[int, int
     return safe_nonnegative_int(metadata.get("pr"), 0), safe_nonnegative_int(metadata.get("attempt"), 0)
 
 
+def _normalized_ledger_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    legacy = metadata.get("metadata")
+    if not isinstance(legacy, dict):
+        return metadata
+    merged = dict(legacy)
+    for key, value in metadata.items():
+        if key != "metadata":
+            merged[key] = value
+    return merged
+
+
+def _normalized_ledger_created_at(created_at: object) -> str:
+    return _normalized_ledger_text(created_at or _utc_timestamp())
+
+
 def build_automation_ledger_event(
-    *,
-    event_type: str = "",
-    metadata: dict[str, Any] | None = None,
-    created_at: str = "",
-    details: dict[str, Any] | None = None,
-    **kwargs: Any,
-) -> dict[str, Any]:
-    payload = metadata if isinstance(metadata, dict) else {}
-    payload = {**payload, **kwargs}
+    event_type: object = "",
+    details: object = None,
+    created_at: object = "", **metadata: object,
+) -> dict[str, object]:
+    payload = _normalized_ledger_metadata(cast(dict[str, Any], metadata))
     pr_value, attempt_value = _normalized_ledger_event_numbers(payload)
     return {
         "event_type": _normalized_ledger_text(event_type),
@@ -1503,7 +1514,7 @@ def build_automation_ledger_event(
         "attempt": attempt_value,
         "next_action": _normalized_ledger_text(payload.get("next_action")),
         "reason": _normalized_ledger_text(payload.get("reason")),
-        "created_at": _normalized_ledger_text(created_at or _utc_timestamp()),
+        "created_at": _normalized_ledger_created_at(created_at),
         "details": _normalized_ledger_details(details),
     }
 
@@ -1520,15 +1531,19 @@ def read_automation_ledger_events(path: str) -> list[dict[str, Any]]:
     target = Path(str(path or "")).expanduser()
     if not target.is_file():
         return []
-    events: list[dict[str, Any]] = []
     try:
         with target.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                parsed = _json_dict_or_empty(line)
-                if parsed:
-                    events.append(parsed)
+            return _read_automation_ledger_event_lines(handle)
     except OSError:
         return []
+
+
+def _read_automation_ledger_event_lines(handle: Any) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for line in handle:
+        parsed = _json_dict_or_empty(line)
+        if parsed:
+            events.append(parsed)
     return events
 
 
