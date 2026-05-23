@@ -333,10 +333,13 @@ def _contract_examples_rejected() -> tuple[str, ...]:
     return (
         "METHOD:\ngit commit",
         "METHOD:\ngit push",
+        "METHOD:\ngit push origin branch",
         "METHOD:\ncommit changes",
+        "METHOD:\nCommit the changes after checks.",
         "METHOD:\ncommit the patch",
         "METHOD:\nCommit after checks.",
         "METHOD:\npush origin branch",
+        "METHOD:\nPush origin main after checks.",
         "METHOD:\npush the branch",
         "METHOD:\nPush this branch.",
     )
@@ -1074,6 +1077,16 @@ def test_validate_codex_prompt_contract_rejects_commit_after_checks_without_allo
 def test_validate_codex_prompt_contract_rejects_push_this_branch_without_allowance():
     """Bare imperative push-this-branch wording is blocked without explicit allowance."""
     _assert_contract_rejects_without_allowance("METHOD:\nPush this branch.")
+
+
+def test_validate_codex_prompt_contract_rejects_push_origin_main_after_checks_without_allowance():
+    """Push-origin-main imperative wording is blocked without explicit allowance."""
+    _assert_contract_rejects_without_allowance("METHOD:\nPush origin main after checks.")
+
+
+def test_validate_codex_prompt_contract_rejects_commit_the_changes_after_checks_without_allowance():
+    """Commit-the-changes imperative wording is blocked without explicit allowance."""
+    _assert_contract_rejects_without_allowance("METHOD:\nCommit the changes after checks.")
 
 
 def test_validate_codex_prompt_contract_rejects_mixed_negation_with_real_push_instruction():

@@ -161,12 +161,12 @@ COMMIT_PUSH_NEGATION_PATTERNS = (
 )
 COMMIT_PUSH_IMPERATIVE_PATTERNS = (
     re.compile(r"\bgit\s+commit(?:\b|$)", re.IGNORECASE),
-    re.compile(r"\bgit\s+push(?:\b|$)", re.IGNORECASE),
+    re.compile(r"\bgit\s+push(?:\s+origin\s+\S+)?(?:\b|$)", re.IGNORECASE),
     re.compile(r"\bcommit\s+after\s+checks(?:\b|$)", re.IGNORECASE),
     re.compile(r"\bpush\s+this\s+branch(?:\b|$)", re.IGNORECASE),
-    re.compile(r"\bcommit\s+changes(?:\b|$)", re.IGNORECASE),
+    re.compile(r"\bcommit(?:\s+the)?\s+changes(?:\s+after\s+\w+)?(?:\b|$)", re.IGNORECASE),
     re.compile(r"\bcommit\s+the\s+patch(?:\b|$)", re.IGNORECASE),
-    re.compile(r"\bpush\s+origin\s+branch(?:\b|$)", re.IGNORECASE),
+    re.compile(r"\bpush\s+origin\s+\S+(?:\s+after\s+\w+)?(?:\b|$)", re.IGNORECASE),
     re.compile(r"\bpush\s+the\s+branch(?:\b|$)", re.IGNORECASE),
 )
 CODEX_SCALAR_KEYS = (
