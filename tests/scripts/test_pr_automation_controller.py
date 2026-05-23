@@ -364,9 +364,31 @@ def test_build_codex_task_prompt_includes_required_sections():
         }
     )
     prompt = controller.build_codex_task_prompt(context)
-    _assert_prompt_contains_lines(prompt, tuple(f"{section}:" for section in controller.CODEX_PROMPT_REQUIRED_SECTIONS))
+    expected_headers = tuple(
+        f"{section}:"
+        for section in controller.CODEX_PROMPT_REQUIRED_SECTIONS
+        if section != "POST-FIX MICRO-AUDIT BEFORE COMMIT"
+    )
+    _assert_prompt_contains_lines(prompt, expected_headers)
+    ASSERTIONS.assertIn("POST-FIX MICRO-AUDIT BEFORE COMMIT", prompt)
     ASSERTIONS.assertIn("PHASE 0 PRE-FLIGHT (READ-ONLY)", prompt)
     ASSERTIONS.assertTrue(controller.validate_codex_prompt_contract(prompt)["valid"])
+
+
+def test_build_codex_task_prompt_contains_single_canonical_post_fix_section():
+    """Generated task prompt must include exactly one canonical post-fix checklist section."""
+    prompt = controller.build_codex_task_prompt(_default_prompt_context())
+    ASSERTIONS.assertEqual(prompt.count("POST-FIX MICRO-AUDIT BEFORE COMMIT"), 1)
+    ASSERTIONS.assertIn("Did you fix every requested Codacy/review finding?", prompt)
+    ASSERTIONS.assertIn("Do not commit a patch that fails this audit.", prompt)
+    ASSERTIONS.assertTrue(controller.validate_codex_prompt_contract(prompt)["valid"])
+
+
+def test_build_codex_task_prompt_phase0_preserves_explicit_files_allowed():
+    """Phase 0 insertion should keep caller files_allowed values, not fallback placeholder text."""
+    prompt = controller.build_codex_task_prompt({"files_allowed": ["scripts/pr_automation_controller.py"]})
+    ASSERTIONS.assertIn("Task allowed files: scripts/pr_automation_controller.py", prompt)
+    ASSERTIONS.assertNotIn("Task allowed files: (from task scope)", prompt)
 
 
 def test_build_codex_task_prompt_minimal_context_populates_required_contract_defaults():
@@ -428,6 +450,24 @@ def test_ensure_codex_prompt_contract_replaces_placeholder_post_fix_with_canonic
     result = controller.validate_codex_prompt_contract(prompt)
     ASSERTIONS.assertNotIn("POST-FIX MICRO-AUDIT BEFORE COMMIT", result["uninitialized_sections"])
     ASSERTIONS.assertTrue(result["valid"])
+
+
+def test_ensure_codex_prompt_contract_replaces_noncanonical_post_fix_section_with_canonical():
+    """Non-canonical post-fix content must be replaced by one canonical checklist section."""
+    prompt = controller.ensure_codex_prompt_contract(
+        "\n".join(
+            [
+                "TASK:\nFix this",
+                "OBJECTIVE:\nAddress blockers",
+                "CONTEXT:\nCurrent PR repair",
+                "VALIDATION:\n- python3 -m pytest -q",
+                "POST-FIX MICRO-AUDIT BEFORE COMMIT:\n- custom note only",
+            ]
+        )
+    )
+    ASSERTIONS.assertEqual(prompt.count("POST-FIX MICRO-AUDIT BEFORE COMMIT"), 1)
+    ASSERTIONS.assertNotIn("custom note only", prompt)
+    ASSERTIONS.assertIn("Did you fix every requested Codacy/review finding?", prompt)
 
 
 def test_validate_codex_prompt_contract_reports_missing_sections_for_incomplete_prompt():

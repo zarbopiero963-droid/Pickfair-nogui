@@ -198,9 +198,13 @@ CODEX_REQUIRED_SECTION_HEADERS = frozenset(CODEX_PROMPT_REQUIRED_SECTIONS)
 
 def build_codex_task_prompt(context: dict[str, Any] | None = None) -> str:
     ctx = context if isinstance(context, dict) else {}
-    lines = [f"{name}:\n{_codex_context_value(ctx, name)}" for name in CODEX_PROMPT_REQUIRED_SECTIONS]
+    lines: list[str] = []
+    for name in CODEX_PROMPT_REQUIRED_SECTIONS:
+        if name == "POST-FIX MICRO-AUDIT BEFORE COMMIT":
+            continue
+        lines.append(f"{name}:\n{_codex_context_value(ctx, name)}")
     prompt = "\n\n".join(lines)
-    return ensure_post_fix_micro_audit_section(ensure_phase0_preflight_section(prompt))
+    return ensure_post_fix_micro_audit_section(ensure_phase0_preflight_section(prompt, ctx))
 
 
 def ensure_codex_prompt_contract(prompt: str) -> str:
@@ -249,9 +253,14 @@ def build_phase0_preflight_prompt(context: dict[str, Any] | None = None) -> str:
     return "\n".join(_phase0_preflight_lines(ctx)).strip() + "\n"
 
 
-def ensure_phase0_preflight_section(prompt: str) -> str:
+def ensure_phase0_preflight_section(prompt: str, context: dict[str, Any] | None = None) -> str:
     text = str(prompt or "").rstrip()
-    return text + "\n" if _has_section(text, PHASE0_SECTION_TITLE) else f"{build_phase0_preflight_prompt({})}\n{text}\n"
+    ctx = context if isinstance(context, dict) else {}
+    return (
+        text + "\n"
+        if _has_section(text, PHASE0_SECTION_TITLE)
+        else f"{build_phase0_preflight_prompt(ctx)}\n{text}\n"
+    )
 
 
 def parse_phase0_preflight_result(text: str) -> dict[str, Any]:
@@ -1411,9 +1420,10 @@ def build_post_fix_micro_audit_prompt(task_text: str, context: dict[str, Any] | 
 
 def ensure_post_fix_micro_audit_section(prompt: str) -> str:
     text = str(prompt or "").rstrip()
-    if _has_full_post_fix_micro_audit_section(text):
-        return text + "\n"
-    return f"{text}\n\n{POST_FIX_MICRO_AUDIT_SECTION}"
+    normalized = _strip_post_fix_micro_audit_sections(text)
+    if not normalized:
+        return POST_FIX_MICRO_AUDIT_SECTION
+    return f"{normalized}\n\n{POST_FIX_MICRO_AUDIT_SECTION}"
 
 
 def parse_post_fix_micro_audit_result(text: str) -> dict[str, Any]:
@@ -1556,6 +1566,24 @@ def _strip_post_fix_micro_audit_placeholder_section(text: str) -> str:
             if all(_is_placeholder_value(raw.strip()) for raw in body_lines if raw.strip()):
                 continue
             cleaned.extend([line] + body_lines)
+            continue
+        cleaned.append(line)
+        index += 1
+    return "\n".join(cleaned).strip()
+
+
+def _strip_post_fix_micro_audit_sections(text: str) -> str:
+    lines = str(text or "").splitlines()
+    if not lines:
+        return ""
+    cleaned: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if _section_header_match(line, "POST-FIX MICRO-AUDIT BEFORE COMMIT"):
+            index += 1
+            while index < len(lines) and not _is_required_section_header(lines[index]):
+                index += 1
             continue
         cleaned.append(line)
         index += 1
