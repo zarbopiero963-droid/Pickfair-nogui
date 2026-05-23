@@ -1456,37 +1456,55 @@ def post_fix_micro_audit_failed(report: dict[str, Any] | None) -> bool:
     return status != "PASS" or next_action != "validation_then_commit"
 
 
+def _normalized_ledger_base_dir(base_dir: Any) -> Path:
+    return Path(str(base_dir or ".")).expanduser()
+
+
+def _normalized_ledger_pr_number(pr_number: Any) -> int:
+    return safe_nonnegative_int(pr_number, 0)
+
+
 def automation_ledger_path(base_dir: str, pr_number: str | int) -> str:
-    root = Path(str(base_dir or ".")).expanduser()
-    return str(root / f"pr-{int(pr_number)}" / "automation-ledger.jsonl")
+    root = _normalized_ledger_base_dir(base_dir)
+    pr_value = _normalized_ledger_pr_number(pr_number)
+    return str(root / f"pr-{pr_value}" / "automation-ledger.jsonl")
+
+
+def _normalized_ledger_details(details: Any) -> dict[str, Any]:
+    return details if isinstance(details, dict) else {}
+
+
+def _normalized_ledger_text(value: Any) -> str:
+    return str(value or "")
+
+
+def _normalized_ledger_event_numbers(metadata: dict[str, Any]) -> tuple[int, int]:
+    return safe_nonnegative_int(metadata.get("pr"), 0), safe_nonnegative_int(metadata.get("attempt"), 0)
 
 
 def build_automation_ledger_event(
     *,
     event_type: str = "",
-    repo: str = "",
-    pr: str | int = 0,
-    branch: str = "",
-    head_sha: str = "",
-    task_id: str = "",
-    attempt: int = 0,
-    next_action: str = "",
-    reason: str = "",
+    metadata: dict[str, Any] | None = None,
     created_at: str = "",
     details: dict[str, Any] | None = None,
+    **kwargs: Any,
 ) -> dict[str, Any]:
+    payload = metadata if isinstance(metadata, dict) else {}
+    payload = {**payload, **kwargs}
+    pr_value, attempt_value = _normalized_ledger_event_numbers(payload)
     return {
-        "event_type": str(event_type or ""),
-        "repo": str(repo or ""),
-        "pr": int(pr or 0),
-        "branch": str(branch or ""),
-        "head_sha": str(head_sha or ""),
-        "task_id": str(task_id or ""),
-        "attempt": int(attempt or 0),
-        "next_action": str(next_action or ""),
-        "reason": str(reason or ""),
-        "created_at": str(created_at or _utc_timestamp()),
-        "details": details if isinstance(details, dict) else {},
+        "event_type": _normalized_ledger_text(event_type),
+        "repo": _normalized_ledger_text(payload.get("repo")),
+        "pr": pr_value,
+        "branch": _normalized_ledger_text(payload.get("branch")),
+        "head_sha": _normalized_ledger_text(payload.get("head_sha")),
+        "task_id": _normalized_ledger_text(payload.get("task_id")),
+        "attempt": attempt_value,
+        "next_action": _normalized_ledger_text(payload.get("next_action")),
+        "reason": _normalized_ledger_text(payload.get("reason")),
+        "created_at": _normalized_ledger_text(created_at or _utc_timestamp()),
+        "details": _normalized_ledger_details(details),
     }
 
 
@@ -1500,13 +1518,17 @@ def append_automation_ledger_event(path: str, event: dict[str, Any]) -> None:
 
 def read_automation_ledger_events(path: str) -> list[dict[str, Any]]:
     target = Path(str(path or "")).expanduser()
-    if not target.exists():
+    if not target.is_file():
         return []
     events: list[dict[str, Any]] = []
-    for line in target.read_text(encoding="utf-8").splitlines():
-        parsed = _json_dict_or_empty(line)
-        if parsed:
-            events.append(parsed)
+    try:
+        with target.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                parsed = _json_dict_or_empty(line)
+                if parsed:
+                    events.append(parsed)
+    except OSError:
+        return []
     return events
 
 
