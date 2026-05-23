@@ -1436,6 +1436,37 @@ def test_missing_post_fix_micro_audit_result_fails_closed():
     ASSERTIONS.assertTrue(controller.post_fix_micro_audit_failed(report))
 
 
+def test_automation_ledger_append_creates_jsonl_and_reads_in_order(tmp_path):
+    """Ledger appends events as JSONL and preserves insertion order."""
+    path = controller.automation_ledger_path(str(tmp_path), 225)
+    first = controller.build_automation_ledger_event(event_type="post_fix_audit_failure", reason="alpha")
+    second = controller.build_automation_ledger_event(event_type="post_fix_audit_failure", reason="beta", attempt=2)
+    controller.append_automation_ledger_event(path, first)
+    controller.append_automation_ledger_event(path, second)
+    ASSERTIONS.assertTrue((tmp_path / "pr-225" / "automation-ledger.jsonl").exists())
+    events = controller.read_automation_ledger_events(path)
+    ASSERTIONS.assertEqual([item["reason"] for item in events], ["alpha", "beta"])
+    ASSERTIONS.assertEqual(len((tmp_path / "pr-225" / "automation-ledger.jsonl").read_text().splitlines()), 2)
+
+
+def test_build_automation_ledger_event_defaults_safe_optionals():
+    """Optional fields are normalized to safe defaults."""
+    event = controller.build_automation_ledger_event()
+    ASSERTIONS.assertEqual(event["event_type"], "")
+    ASSERTIONS.assertEqual(event["attempt"], 0)
+    ASSERTIONS.assertEqual(event["details"], {})
+    ASSERTIONS.assertTrue(bool(event["created_at"]))
+
+
+def test_read_automation_ledger_events_missing_or_malformed_safe(tmp_path):
+    path = controller.automation_ledger_path(str(tmp_path), 225)
+    ASSERTIONS.assertEqual(controller.read_automation_ledger_events(path), [])
+    (tmp_path / "pr-225").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "pr-225" / "automation-ledger.jsonl").write_text('{"event_type":"ok"}\nnot-json\n', encoding="utf-8")
+    events = controller.read_automation_ledger_events(path)
+    ASSERTIONS.assertEqual(events, [{"event_type": "ok"}])
+
+
 def test_parse_post_fix_micro_audit_result_unknown_status_fails_closed():
     """Unknown text status should fail closed."""
     report = controller.parse_post_fix_micro_audit_result("status: UNKNOWN")

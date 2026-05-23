@@ -1456,6 +1456,64 @@ def post_fix_micro_audit_failed(report: dict[str, Any] | None) -> bool:
     return status != "PASS" or next_action != "validation_then_commit"
 
 
+def automation_ledger_path(base_dir: str, pr_number: str | int) -> str:
+    root = Path(str(base_dir or ".")).expanduser()
+    return str(root / f"pr-{int(pr_number)}" / "automation-ledger.jsonl")
+
+
+def build_automation_ledger_event(
+    *,
+    event_type: str = "",
+    repo: str = "",
+    pr: str | int = 0,
+    branch: str = "",
+    head_sha: str = "",
+    task_id: str = "",
+    attempt: int = 0,
+    next_action: str = "",
+    reason: str = "",
+    created_at: str = "",
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "event_type": str(event_type or ""),
+        "repo": str(repo or ""),
+        "pr": int(pr or 0),
+        "branch": str(branch or ""),
+        "head_sha": str(head_sha or ""),
+        "task_id": str(task_id or ""),
+        "attempt": int(attempt or 0),
+        "next_action": str(next_action or ""),
+        "reason": str(reason or ""),
+        "created_at": str(created_at or _utc_timestamp()),
+        "details": details if isinstance(details, dict) else {},
+    }
+
+
+def append_automation_ledger_event(path: str, event: dict[str, Any]) -> None:
+    target = Path(str(path or "")).expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    row = json.dumps(event if isinstance(event, dict) else {}, sort_keys=True)
+    with target.open("a", encoding="utf-8") as handle:
+        handle.write(f"{row}\n")
+
+
+def read_automation_ledger_events(path: str) -> list[dict[str, Any]]:
+    target = Path(str(path or "")).expanduser()
+    if not target.exists():
+        return []
+    events: list[dict[str, Any]] = []
+    for line in target.read_text(encoding="utf-8").splitlines():
+        parsed = _json_dict_or_empty(line)
+        if parsed:
+            events.append(parsed)
+    return events
+
+
+def _utc_timestamp() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
 def _line_value(text: str, key: str) -> str:
     match = re.search(rf"(?im)^\s*{re.escape(key)}\s*[:=]\s*(.+)$", text or "")
     return match.group(1).strip() if match else ""
