@@ -240,6 +240,12 @@ def _assert_contract_accepts_safe_commit_push_wording(method_line: str) -> None:
     ASSERTIONS.assertTrue(result["valid"])
 
 
+def _assert_retry_task_blocks_commit_push(retry_task: str) -> None:
+    ASSERTIONS.assertIn("Do not run git add/commit/push.", retry_task)
+    ASSERTIONS.assertIn("Do not run git commit.", retry_task)
+    ASSERTIONS.assertIn("Do not run git push.", retry_task)
+
+
 def _extended_prompt_context() -> dict[str, Any]:
     context = _default_prompt_context()
     context.update(
@@ -1587,6 +1593,232 @@ def test_post_fix_micro_audit_status_malformed_dict_fails_closed():
 def test_post_fix_micro_audit_failed_malformed_dict_fails_closed():
     """Malformed report payload should be treated as failed."""
     ASSERTIONS.assertTrue(controller.post_fix_micro_audit_failed({"status": {"bad": "value"}}))
+
+
+def test_decide_post_fix_audit_retry_pass_does_not_request_retry():
+    """PASS should continue normal validation/commit flow without retry."""
+    decision = controller.decide_post_fix_audit_retry(
+        {"status": "PASS", "next_action": "validation_then_commit"},
+        original_task_scope="Fix only PR5B",
+        files_allowed=["scripts/pr_automation_controller.py"],
+        retry_count=0,
+        retry_limit=2,
+    )
+    ASSERTIONS.assertFalse(decision["should_retry"])
+    ASSERTIONS.assertEqual(decision["next_action"], "validation_then_commit")
+    ASSERTIONS.assertEqual(decision["retry_task"], "")
+
+
+def test_decide_post_fix_audit_retry_fail_builds_narrow_retry_task_and_blocks_commit_push():
+    """FAIL with budget should build retry task with exact reason and no commit/push instructions."""
+    failure_reason = "Missing assertion at tests/scripts/test_pr_automation_controller.py:1570"
+    decision = controller.decide_post_fix_audit_retry(
+        {"status": "FAIL", "reasons": [failure_reason]},
+        original_task_scope="Fix only PR5B",
+        files_allowed=["scripts/pr_automation_controller.py", "tests/scripts/test_pr_automation_controller.py"],
+        files_forbidden=["scripts/pr_flow_automation.py"],
+        retry_count=0,
+        retry_limit=2,
+    )
+    ASSERTIONS.assertTrue(decision["should_retry"])
+    ASSERTIONS.assertEqual(decision["next_action"], "retry_fix_within_budget")
+    ASSERTIONS.assertEqual(decision["failure_reason"], failure_reason)
+    ASSERTIONS.assertIn("Failure reason (exact):", decision["retry_task"])
+    ASSERTIONS.assertIn("  " + failure_reason, decision["retry_task"])
+    ASSERTIONS.assertIn("- scripts/pr_automation_controller.py", decision["retry_task"])
+    ASSERTIONS.assertIn("- tests/scripts/test_pr_automation_controller.py", decision["retry_task"])
+    ASSERTIONS.assertIn("- scripts/pr_flow_automation.py", decision["retry_task"])
+    _assert_retry_task_blocks_commit_push(decision["retry_task"])
+
+
+def test_decide_post_fix_audit_retry_partial_builds_retry_task_and_blocks_commit_push():
+    """PARTIAL with budget should retry and keep no-commit/no-push instructions."""
+    decision = controller.decide_post_fix_audit_retry(
+        {"status": "PARTIAL", "reasons": ["Need one more focused fix"]},
+        original_task_scope="Fix only PR5B",
+        files_allowed=["scripts/pr_automation_controller.py"],
+        retry_count=0,
+        retry_limit=2,
+    )
+    ASSERTIONS.assertTrue(decision["should_retry"])
+    ASSERTIONS.assertEqual(decision["next_action"], "retry_fix_within_budget")
+    ASSERTIONS.assertIn("Do not run git add/commit/push.", decision["retry_task"])
+
+
+def test_decide_post_fix_audit_retry_same_failure_repeated_needs_manual():
+    """Repeated normalized failure reason should stop retrying and route to manual."""
+    decision = controller.decide_post_fix_audit_retry(
+        {"status": "FAIL", "reasons": ["  Missing   unit test coverage  "]},
+        original_task_scope="Fix only PR5B",
+        retry_count=0,
+        retry_limit=2,
+        previous_failure_reasons=["missing unit test coverage"],
+    )
+    ASSERTIONS.assertFalse(decision["should_retry"])
+    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_post_fix_audit_failed")
+    ASSERTIONS.assertTrue(decision["repeated_failure"])
+
+
+def test_decide_post_fix_audit_retry_budget_exhausted_needs_manual():
+    """Exhausted retry budget must fail closed to manual path."""
+    decision = controller.decide_post_fix_audit_retry(
+        {"status": "FAIL", "reasons": ["remaining lint finding"]},
+        original_task_scope="Fix only PR5B",
+        retry_count=2,
+        retry_limit=2,
+    )
+    ASSERTIONS.assertFalse(decision["should_retry"])
+    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_post_fix_audit_failed")
+    ASSERTIONS.assertTrue(decision["retry_budget_exhausted"])
+
+
+def test_decide_post_fix_audit_retry_unknown_or_malformed_fails_closed():
+    """Unknown/malformed status should fail closed and avoid retry."""
+    unknown = controller.decide_post_fix_audit_retry(
+        {"status": "UNKNOWN", "reasons": ["mystery state"]},
+        original_task_scope="Fix only PR5B",
+    )
+    malformed = controller.decide_post_fix_audit_retry(
+        None,
+        original_task_scope="Fix only PR5B",
+    )
+    ASSERTIONS.assertFalse(unknown["should_retry"])
+    ASSERTIONS.assertEqual(unknown["next_action"], "needs_manual_post_fix_audit_failed")
+    ASSERTIONS.assertTrue(unknown["malformed_status"])
+    ASSERTIONS.assertFalse(malformed["should_retry"])
+    ASSERTIONS.assertEqual(malformed["next_action"], "needs_manual_post_fix_audit_failed")
+    ASSERTIONS.assertTrue(malformed["malformed_status"])
+
+
+def test_decide_post_fix_audit_retry_preserves_allowlist_in_retry_task():
+    """Retry task should preserve the provided allowlist entries."""
+    decision = controller.decide_post_fix_audit_retry(
+        {"status": "FAIL", "reasons": ["scope-preserving retry needed"]},
+        original_task_scope="Fix only PR5B",
+        files_allowed=["scripts/pr_automation_controller.py", "tests/scripts/test_pr_automation_controller.py"],
+        retry_count=0,
+        retry_limit=1,
+    )
+    ASSERTIONS.assertIn("Files allowed:", decision["retry_task"])
+    ASSERTIONS.assertIn("- scripts/pr_automation_controller.py", decision["retry_task"])
+    ASSERTIONS.assertIn("- tests/scripts/test_pr_automation_controller.py", decision["retry_task"])
+
+
+def test_decide_post_fix_audit_retry_ledger_event_append_no_pr5c_summary_generation(tmp_path):
+    """Retry ledger writes remain append-only and do not generate PR5C summary artifacts."""
+    ledger = controller.automation_ledger_path(str(tmp_path), 225)
+    decision = controller.decide_post_fix_audit_retry(
+        {"status": "FAIL", "reasons": ["exact failing reason"]},
+        original_task_scope="Fix only PR5B",
+        files_allowed=["scripts/pr_automation_controller.py"],
+        retry_count=0,
+        retry_limit=2,
+        ledger_path=ledger,
+        ledger_metadata={"pr": 225, "attempt": 1},
+    )
+    ASSERTIONS.assertTrue(decision["should_retry"])
+    events = controller.read_automation_ledger_events(ledger)
+    ASSERTIONS.assertEqual(len(events), 1)
+    ASSERTIONS.assertEqual(events[0]["event_type"], "post_fix_audit_retry_scheduled")
+    ASSERTIONS.assertFalse(events[0]["details"]["malformed_status"])
+    ASSERTIONS.assertFalse((tmp_path / "summary.md").exists())
+    ASSERTIONS.assertFalse((tmp_path / "pr-225" / "summary.md").exists())
+
+
+def test_decide_post_fix_audit_retry_multiline_reason_sanitized_in_retry_task():
+    """Multiline failure reasons should be rendered as an indented exact block."""
+    decision = controller.decide_post_fix_audit_retry(
+        {"status": "FAIL", "reasons": ["line 1\nline 2"]},
+        original_task_scope="Fix only PR5B",
+        files_allowed=["scripts/pr_automation_controller.py"],
+        retry_count=0,
+        retry_limit=1,
+    )
+    ASSERTIONS.assertIn("Failure reason (exact):", decision["retry_task"])
+    ASSERTIONS.assertIn("  line 1", decision["retry_task"])
+    ASSERTIONS.assertIn("  line 2", decision["retry_task"])
+
+
+def test_decide_post_fix_audit_retry_omits_files_allowed_when_empty():
+    """Retry prompt should include allowlist section only when entries are present."""
+    decision = controller.decide_post_fix_audit_retry(
+        {"status": "FAIL", "reasons": ["narrow retry"]},
+        original_task_scope="Fix only PR5B",
+        files_allowed=[],
+        retry_count=0,
+        retry_limit=1,
+    )
+    ASSERTIONS.assertNotIn("Files allowed:", decision["retry_task"])
+
+
+def test_decide_post_fix_audit_retry_blocked_ledger_event_includes_flags(tmp_path):
+    """Blocked retry should append blocked ledger event with required failure flags/details."""
+    ledger = controller.automation_ledger_path(str(tmp_path), 225)
+    decision = controller.decide_post_fix_audit_retry(
+        {"status": "FAIL", "reasons": ["same failure"]},
+        original_task_scope="Fix only PR5B",
+        retry_count=1,
+        retry_limit=1,
+        previous_failure_reasons=["same failure"],
+        ledger_path=ledger,
+        ledger_metadata={"pr": 225, "attempt": 2},
+    )
+    ASSERTIONS.assertFalse(decision["should_retry"])
+    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_post_fix_audit_failed")
+    events = controller.read_automation_ledger_events(ledger)
+    ASSERTIONS.assertEqual(events[-1]["event_type"], "post_fix_audit_retry_blocked")
+    details = events[-1]["details"]
+    ASSERTIONS.assertEqual(details["failure_reason"], "same failure")
+    ASSERTIONS.assertTrue(details["retry_budget_exhausted"])
+    ASSERTIONS.assertTrue(details["repeated_failure"])
+    ASSERTIONS.assertFalse(details["malformed_status"])
+
+
+def test_decide_post_fix_audit_retry_normalizes_malformed_retry_options_safely():
+    """Non-list retry options should fail closed to empty lists without raising."""
+    decision = controller.decide_post_fix_audit_retry(
+        {"status": "FAIL", "reasons": ["single failure"]},
+        original_task_scope="Fix only PR5B",
+        files_allowed="bad",
+        files_forbidden="bad",
+        previous_failure_reasons=1,
+        retry_count=0,
+        retry_limit=2,
+    )
+    ASSERTIONS.assertTrue(decision["should_retry"])
+    ASSERTIONS.assertNotIn("Files allowed:", decision["retry_task"])
+    ASSERTIONS.assertNotIn("Files forbidden:", decision["retry_task"])
+
+
+def test_post_fix_retry_public_api_exports_decide_post_fix_audit_retry():
+    """Retry decision entrypoint should be exported as part of module public API."""
+    ASSERTIONS.assertIn("decide_post_fix_audit_retry", controller.__all__)
+
+
+def test_decide_post_fix_audit_retry_raw_pass_downgraded_does_not_retry():
+    """Raw PASS/PASSED downgraded by normalization must fail closed without retry."""
+    for raw_status in ("PASS", "PASSED"):
+        decision = controller.decide_post_fix_audit_retry(
+            {"status": raw_status, "next_action": "retry_fix_within_budget", "reasons": ["malformed payload"]},
+            original_task_scope="Fix only PR5B",
+            retry_count=0,
+            retry_limit=2,
+        )
+        ASSERTIONS.assertFalse(decision["should_retry"])
+        ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_post_fix_audit_failed")
+
+
+def test_decide_post_fix_audit_retry_raw_failed_is_retryable():
+    """Raw FAILED should behave as retryable FAIL when reason and budget permit."""
+    decision = controller.decide_post_fix_audit_retry(
+        {"status": "FAILED", "reasons": ["single targeted fix needed"]},
+        original_task_scope="Fix only PR5B",
+        files_allowed=["scripts/pr_automation_controller.py"],
+        retry_count=0,
+        retry_limit=2,
+    )
+    ASSERTIONS.assertTrue(decision["should_retry"])
+    ASSERTIONS.assertEqual(decision["next_action"], "retry_fix_within_budget")
 
 
 def test_clean_scope_defaults_allow_pr_flow_automation_script():
