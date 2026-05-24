@@ -59,6 +59,8 @@ DO_NOT_LAUNCH_AUTOFIX_FOR = {
     "refresh stale self checks",
 }
 
+LEDGER_FAILING_STATUSES = frozenset({"FAIL", "FAILED", "PARTIAL"})
+
 
 ALLOWED_COMMAND_FAMILIES = {"gh", "git", "python", "python3", "pytest"}
 PR_AUTOMATION_STATE_FIELDS = (
@@ -1820,6 +1822,10 @@ def _ledger_last_nonempty(events: list[dict[str, Any]], key: str) -> str:
     return ""
 
 
+def _ledger_detail_flag(details: dict[str, Any], key: str) -> bool:
+    return bool(details.get(key))
+
+
 def automation_ledger_failure_repeated(events: list[dict[str, Any]]) -> bool:
     normalized: list[str] = []
     for event in events:
@@ -1832,28 +1838,38 @@ def automation_ledger_failure_repeated(events: list[dict[str, Any]]) -> bool:
 
 
 def _ledger_is_failure_like_event(event: dict[str, Any]) -> bool:
-    failing_statuses = {"FAIL", "FAILED", "PARTIAL"}
     event_type = _ledger_event_text(event, "event_type").lower()
     details = _ledger_event_detail_dict(event)
     status = str(details.get("status") or "").strip().upper()
     validation = str(details.get("validation") or "").strip().upper()
-    failure_reason = str(details.get("failure_reason") or "").strip()
+    next_action = _ledger_event_text(event, "next_action").lower()
+    if not next_action:
+        next_action = str(details.get("next_action") or "").strip().lower()
+    if status in {"PASS", "PASSED"} or next_action == "validation_then_commit":
+        return False
     if "fail" in event_type:
         return True
-    if status in failing_statuses or validation in failing_statuses:
+    if status in LEDGER_FAILING_STATUSES or validation in LEDGER_FAILING_STATUSES:
         return True
-    return bool(failure_reason and "blocked" in event_type)
+    if "blocked" not in event_type:
+        return False
+    if _ledger_detail_flag(details, "malformed_status"):
+        return True
+    if _ledger_detail_flag(details, "retry_budget_exhausted"):
+        return True
+    if _ledger_detail_flag(details, "repeated_failure"):
+        return True
+    return False
 
 
 def automation_ledger_churn_detected(events: list[dict[str, Any]]) -> bool:
-    failing_statuses = {"FAIL", "FAILED", "PARTIAL"}
     failures = 0
     for event in events:
         event_type = _ledger_event_text(event, "event_type").lower()
         details = _ledger_event_detail_dict(event)
         status = str(details.get("status") or "").strip().upper()
         validation = str(details.get("validation") or "").strip().upper()
-        if "fail" in event_type or status in failing_statuses or validation in failing_statuses:
+        if "fail" in event_type or status in LEDGER_FAILING_STATUSES or validation in LEDGER_FAILING_STATUSES:
             failures += 1
     retries = sum(1 for event in events if _ledger_event_text(event, "event_type") == "post_fix_audit_retry_scheduled")
     return failures >= 2 and retries >= 2
@@ -1913,11 +1929,11 @@ def _ledger_latest_event_next_action(events: list[dict[str, Any]]) -> str:
 
 
 def _blocked_retry_is_forward_ready(latest: dict[str, Any]) -> bool:
-    status = str(latest.get("latest_event_status") or "").strip().upper()
-    if status in {"PASS", "PASSED"}:
-        return True
     action = str(latest.get("latest_event_next_action") or "").strip().lower()
-    return action == "validation_then_commit"
+    if action == "validation_then_commit":
+        return True
+    status = str(latest.get("latest_event_status") or "").strip().upper()
+    return status in {"PASS", "PASSED"}
 
 
 def _ledger_latest_has_decision_data(latest: dict[str, Any]) -> bool:
@@ -1941,16 +1957,16 @@ def decide_automation_ledger_next_action(
     retry_count = safe_nonnegative_int(latest.get("retry_count"), 0)
     if not _ledger_latest_has_decision_data(latest):
         return "needs_manual", "insufficient ledger data"
-    if bool(latest.get("repeated_failure")):
-        return "needs_manual", "repeated same failure detected"
-    if bool(latest.get("churn_detected")):
-        return "needs_manual", "ledger churn detected"
     if latest.get("latest_event_type") == "post_fix_audit_retry_blocked":
         if _blocked_retry_is_forward_ready(latest):
             return "ready", "post-fix audit passed; validation/commit may proceed"
         return "needs_manual", "latest event blocked automated retry"
     if latest.get("has_ready_event"):
         return "ready", "ledger indicates clean/ready state"
+    if bool(latest.get("repeated_failure")):
+        return "needs_manual", "repeated same failure detected"
+    if bool(latest.get("churn_detected")):
+        return "needs_manual", "ledger churn detected"
     if retry_count >= retry_limit_safe:
         return "needs_manual", "retry budget exhausted"
     if safe_nonnegative_int(latest.get("new_blockers"), 0) > safe_nonnegative_int(latest.get("fixed_blockers"), 0):

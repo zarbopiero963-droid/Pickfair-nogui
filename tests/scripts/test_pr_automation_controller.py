@@ -1967,12 +1967,21 @@ def test_ledger_repeated_failure_ignores_pass_events_with_pass_reason():
     """PASS/PASSED events with reason PASS must not count as repeated failures."""
     latest = controller.build_automation_ledger_latest(
         [
-            _ledger_event("post_fix_audit_retry_blocked", reason="PASS", details={"status": "PASS"}),
-            _ledger_event("post_fix_audit_retry_blocked", reason="PASS", details={"status": "PASSED"}),
+            _ledger_event(
+                "post_fix_audit_retry_blocked",
+                reason="PASS",
+                details={"status": "PASS", "failure_reason": "ok"},
+            ),
+            _ledger_event(
+                "post_fix_audit_retry_blocked",
+                reason="PASS",
+                details={"status": "PASSED", "failure_reason": "ok"},
+            ),
         ],
         retry_limit=2,
     )
     ASSERTIONS.assertFalse(latest["repeated_failure"])
+    ASSERTIONS.assertNotEqual(latest["next_action"], "needs_manual")
 
 
 def test_ledger_repeated_failure_true_for_two_actual_failures_same_reason():
@@ -1980,11 +1989,12 @@ def test_ledger_repeated_failure_true_for_two_actual_failures_same_reason():
     latest = controller.build_automation_ledger_latest(
         [
             _ledger_event("post_fix_audit_retry_blocked", reason="schema drift", details={"status": "FAIL"}),
-            _ledger_event("post_fix_audit_failure", reason="schema drift", details={"status": "FAILED"}),
+            _ledger_event("post_fix_audit_failure", reason="schema drift", details={"status": "PARTIAL"}),
         ],
         retry_limit=3,
     )
     ASSERTIONS.assertTrue(latest["repeated_failure"])
+    ASSERTIONS.assertEqual(latest["next_action"], "needs_manual")
 
 
 def test_ledger_decision_retry_budget_exhausted_needs_manual():
@@ -2058,6 +2068,34 @@ def test_ledger_decision_clean_ready_after_exhausted_budget_is_ready():
     ASSERTIONS.assertEqual(latest["next_action"], "ready")
 
 
+def test_ledger_decision_clean_ready_wins_after_failure_history():
+    """Latest clean ready should win over historical repeated failures."""
+    latest = controller.build_automation_ledger_latest(
+        [
+            _ledger_event("post_fix_audit_failure", reason="same reason", details={"status": "FAIL"}),
+            _ledger_event("post_fix_audit_failure", reason="same reason", details={"status": "FAILED"}),
+            _ledger_event("clean_ready", details={"status": "PASS", "validation": "PASS"}),
+        ],
+        retry_limit=4,
+    )
+    ASSERTIONS.assertEqual(latest["next_action"], "ready")
+
+
+def test_ledger_decision_clean_ready_wins_after_churn_history():
+    """Latest clean ready should win over historical churn flags."""
+    latest = controller.build_automation_ledger_latest(
+        [
+            _ledger_event("post_fix_audit_failure", details={"status": "FAIL"}),
+            _ledger_event("post_fix_audit_retry_scheduled"),
+            _ledger_event("post_fix_audit_retry_blocked", details={"status": "PARTIAL"}),
+            _ledger_event("post_fix_audit_retry_scheduled"),
+            _ledger_event("clean_ready", details={"status": "PASS", "validation": "PASS"}),
+        ],
+        retry_limit=4,
+    )
+    ASSERTIONS.assertEqual(latest["next_action"], "ready")
+
+
 def test_ledger_decision_older_ready_then_new_failure_is_not_ready():
     """Older ready should be invalidated by later failure."""
     latest = controller.build_automation_ledger_latest(
@@ -2105,6 +2143,18 @@ def test_ledger_decision_latest_blocked_retry_missing_action_does_not_backfill()
     ASSERTIONS.assertIn("blocked automated retry", latest["reason"])
 
 
+def test_ledger_decision_old_validation_then_commit_then_latest_fail_is_needs_manual():
+    """Latest blocked FAIL without next_action must not inherit older forward action."""
+    latest = controller.build_automation_ledger_latest(
+        [
+            _ledger_event("post_fix_audit_retry_blocked", next_action="validation_then_commit"),
+            _ledger_event("post_fix_audit_retry_blocked", details={"status": "FAIL", "retry_count": 0}),
+        ],
+        retry_limit=2,
+    )
+    ASSERTIONS.assertEqual(latest["next_action"], "needs_manual")
+
+
 def test_ledger_decision_latest_blocked_retry_partial_stays_needs_manual():
     """Blocked retry with partial/failing semantics must stay needs_manual."""
     latest = controller.build_automation_ledger_latest(
@@ -2114,8 +2164,8 @@ def test_ledger_decision_latest_blocked_retry_partial_stays_needs_manual():
     ASSERTIONS.assertEqual(latest["next_action"], "needs_manual")
 
 
-def test_ledger_decision_latest_blocked_retry_repeated_failure_stays_needs_manual():
-    """Blocked retry under repeated failure must stay needs_manual."""
+def test_ledger_decision_latest_blocked_retry_pass_can_override_repeated_failure():
+    """Latest blocked PASS should be forward-ready despite older repeated failures."""
     latest = controller.build_automation_ledger_latest(
         [
             _ledger_event("post_fix_audit_failure", reason="same failure"),
@@ -2124,7 +2174,7 @@ def test_ledger_decision_latest_blocked_retry_repeated_failure_stays_needs_manua
         ],
         retry_limit=2,
     )
-    ASSERTIONS.assertEqual(latest["next_action"], "needs_manual")
+    ASSERTIONS.assertEqual(latest["next_action"], "ready")
 
 
 def test_ledger_decision_pass_then_validation_fail_with_budget_is_retry():
