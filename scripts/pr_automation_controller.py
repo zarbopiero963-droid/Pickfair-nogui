@@ -1879,6 +1879,14 @@ def _ledger_latest_event_type(events: list[dict[str, Any]]) -> str:
     return _ledger_event_text(events[-1], "event_type") if events else ""
 
 
+def _blocked_retry_is_forward_ready(latest: dict[str, Any]) -> bool:
+    status = str(latest.get("last_post_fix_audit") or "").strip().upper()
+    if status in {"PASS", "PASSED"}:
+        return True
+    action = str(latest.get("latest_next_action") or "").strip().lower()
+    return action == "validation_then_commit"
+
+
 def _ledger_latest_has_decision_data(latest: dict[str, Any]) -> bool:
     if safe_nonnegative_int(latest.get("event_count"), 0) > 0:
         return True
@@ -1905,6 +1913,8 @@ def decide_automation_ledger_next_action(
     if bool(latest.get("churn_detected")):
         return "needs_manual", "ledger churn detected"
     if latest.get("latest_event_type") == "post_fix_audit_retry_blocked":
+        if _blocked_retry_is_forward_ready(latest):
+            return "ready", "post-fix audit passed; validation/commit may proceed"
         return "needs_manual", "latest event blocked automated retry"
     if latest.get("has_ready_event"):
         return "ready", "ledger indicates clean/ready state"
@@ -1944,6 +1954,7 @@ def build_automation_ledger_latest(
         "pushed": bool(_ledger_last_bool(valid_events, "pushed")),
         "event_count": len(valid_events),
         "latest_event_type": _ledger_latest_event_type(valid_events),
+        "latest_next_action": _ledger_last_text(valid_events, "next_action"),
         "has_ready_event": _ledger_has_ready_event(valid_events),
     }
     next_action, reason = decide_automation_ledger_next_action(latest, retry_limit=retry_limit)
