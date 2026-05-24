@@ -1456,6 +1456,119 @@ def post_fix_micro_audit_failed(report: dict[str, Any] | None) -> bool:
     return status != "PASS" or next_action != "validation_then_commit"
 
 
+def normalize_post_fix_audit_failure_reason(reason: object) -> str:
+    return re.sub(r"\s+", " ", str(reason or "").strip().lower())
+
+
+def post_fix_audit_failure_repeated(reason: object, previous_reasons: list[object] | None = None) -> bool:
+    normalized = normalize_post_fix_audit_failure_reason(reason)
+    if not normalized:
+        return False
+    for previous in previous_reasons or []:
+        if normalize_post_fix_audit_failure_reason(previous) == normalized:
+            return True
+    return False
+
+
+def build_post_fix_audit_retry_task(
+    *,
+    original_task_scope: str,
+    failure_reason: str,
+    files_allowed: list[str] | None = None,
+    files_forbidden: list[str] | None = None,
+) -> str:
+    allowed = [str(path).strip() for path in (files_allowed or []) if str(path).strip()]
+    forbidden = [str(path).strip() for path in (files_forbidden or []) if str(path).strip()]
+    lines = [
+        "POST-FIX AUDIT RETRY TASK (NARROW)",
+        "",
+        "Preserve original task scope exactly. Do not broaden scope.",
+        "Fix only the post-fix audit failure reason below.",
+        f"Failure reason (exact): {failure_reason}",
+        "",
+        "Original task scope:",
+        str(original_task_scope or "").strip() or "N/A",
+        "",
+        "Files allowed:",
+        *(f"- {path}" for path in allowed),
+    ]
+    if forbidden:
+        lines.extend(["", "Files forbidden:", *(f"- {path}" for path in forbidden)])
+    lines.extend(
+        [
+            "",
+            "Do not run git add/commit/push.",
+            "Do not run git add.",
+            "Do not run git commit.",
+            "Do not run git push.",
+        ]
+    )
+    return "\n".join(lines).strip() + "\n"
+
+
+def decide_post_fix_audit_retry(
+    report: dict[str, Any] | None,
+    *,
+    original_task_scope: str,
+    files_allowed: list[str] | None = None,
+    files_forbidden: list[str] | None = None,
+    retry_count: int = 0,
+    retry_limit: int = 1,
+    previous_failure_reasons: list[object] | None = None,
+    ledger_path: str = "",
+    ledger_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    raw_report = report if isinstance(report, dict) else {}
+    raw_status = str(raw_report.get("status") or "").strip().upper()
+    malformed_status = raw_status not in {"PASS", "FAIL", "PARTIAL"}
+    normalized_report = _normalize_post_fix_audit_report(raw_report)
+    status = post_fix_micro_audit_status(normalized_report)
+    reasons = _list_from_payload(normalized_report.get("reasons"))
+    exact_reason = reasons[0] if reasons else ""
+    normalized_reason = normalize_post_fix_audit_failure_reason(exact_reason)
+    repeated = post_fix_audit_failure_repeated(exact_reason, previous_failure_reasons)
+    budget_exhausted = safe_nonnegative_int(retry_count, 0) >= safe_nonnegative_int(retry_limit, 0)
+    retryable = (not malformed_status) and status in {"FAIL", "PARTIAL"} and bool(normalized_reason)
+    should_retry = retryable and not repeated and not budget_exhausted
+    next_action = "validation_then_commit" if status == "PASS" else "needs_manual_post_fix_audit_failed"
+    retry_task = ""
+    if should_retry:
+        next_action = "retry_fix_within_budget"
+        retry_task = build_post_fix_audit_retry_task(
+            original_task_scope=original_task_scope,
+            failure_reason=exact_reason,
+            files_allowed=files_allowed,
+            files_forbidden=files_forbidden,
+        )
+    event_type = "post_fix_audit_retry_scheduled" if should_retry else "post_fix_audit_retry_blocked"
+    if ledger_path:
+        event = build_automation_ledger_event(
+            event_type=event_type,
+            next_action=next_action,
+            reason=exact_reason or normalized_report.get("next_action") or status,
+            details={
+                "status": status,
+                "failure_reason_normalized": normalized_reason,
+                "repeated_failure": repeated,
+                "retry_count": safe_nonnegative_int(retry_count, 0),
+                "retry_limit": safe_nonnegative_int(retry_limit, 0),
+                "retry_budget_exhausted": budget_exhausted,
+            },
+            **(ledger_metadata or {}),
+        )
+        append_automation_ledger_event(ledger_path, event)
+    return {
+        "status": status,
+        "should_retry": should_retry,
+        "next_action": next_action,
+        "retry_task": retry_task,
+        "failure_reason": exact_reason,
+        "failure_reason_normalized": normalized_reason,
+        "repeated_failure": repeated,
+        "retry_budget_exhausted": budget_exhausted,
+    }
+
+
 def _normalized_ledger_base_dir(base_dir: Any) -> Path:
     return Path(str(base_dir or ".")).expanduser()
 
