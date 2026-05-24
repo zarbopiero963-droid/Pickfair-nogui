@@ -1822,19 +1822,15 @@ def test_decide_post_fix_audit_retry_raw_failed_is_retryable():
 
 
 def _ledger_event(
-    event_type: str,
+    event_type: str = "",
     *,
-    reason: str = "",
     next_action: str = "",
-    attempt: int = 0,
     details: dict[str, Any] | None = None,
     **metadata: Any,
 ) -> dict[str, Any]:
     return controller.build_automation_ledger_event(
         event_type=event_type,
-        reason=reason,
         next_action=next_action,
-        attempt=attempt,
         details=details or {},
         **metadata,
     )
@@ -1848,6 +1844,45 @@ def test_build_automation_ledger_latest_empty_safe_defaults_to_needs_manual():
     ASSERTIONS.assertEqual(latest["event_count"], 0)
 
 
+def test_decide_ledger_next_action_empty_latest_is_insufficient():
+    """Truly empty latest projection should be insufficient."""
+    action, reason = controller.decide_automation_ledger_next_action({}, retry_limit=2)
+    ASSERTIONS.assertEqual(action, "needs_manual")
+    ASSERTIONS.assertIn("insufficient ledger data", reason)
+
+
+def test_decide_ledger_next_action_with_decision_fields_is_sufficient_retry():
+    """Decision fields without event_count should still be policy-evaluable."""
+    latest = {
+        "last_post_fix_audit": "PASS",
+        "last_validation": "FAIL",
+        "retry_count": 0,
+        "retry_limit": 2,
+        "attempt_count": 1,
+        "repeated_failure": False,
+        "churn_detected": False,
+        "has_ready_event": False,
+    }
+    action, reason = controller.decide_automation_ledger_next_action(latest, retry_limit=2)
+    ASSERTIONS.assertEqual(action, "retry")
+    ASSERTIONS.assertIn("validation failed after audit pass", reason)
+
+
+def test_decide_ledger_next_action_with_decision_fields_no_budget_needs_manual():
+    """Decision fields plus exhausted budget should stop safely."""
+    latest = {
+        "last_post_fix_audit": "PASS",
+        "last_validation": "FAIL",
+        "retry_count": 2,
+        "attempt_count": 1,
+        "repeated_failure": False,
+        "churn_detected": False,
+        "has_ready_event": False,
+    }
+    action, _reason = controller.decide_automation_ledger_next_action(latest, retry_limit=2)
+    ASSERTIONS.assertEqual(action, "needs_manual")
+
+
 def test_build_automation_ledger_latest_ignores_malformed_events_safely():
     """Non-dict ledger rows should be ignored without raising."""
     latest = controller.build_automation_ledger_latest([cast(Any, "bad"), cast(Any, 2), {"event_type": "x"}])
@@ -1855,9 +1890,8 @@ def test_build_automation_ledger_latest_ignores_malformed_events_safely():
     ASSERTIONS.assertEqual(latest["latest_event_type"], "x")
 
 
-def test_build_automation_ledger_latest_includes_required_keys():
-    """latest.json projection should include the required operational keys."""
-    latest = controller.build_automation_ledger_latest(
+def _ledger_latest_fixture() -> dict[str, Any]:
+    return controller.build_automation_ledger_latest(
         [
             _ledger_event(
                 "post_fix_audit_retry_scheduled",
@@ -1880,25 +1914,26 @@ def test_build_automation_ledger_latest_includes_required_keys():
         ],
         retry_limit=3,
     )
-    required = {
-        "repo",
-        "pr",
-        "branch",
-        "head_sha",
-        "task_id",
-        "attempt_count",
-        "retry_count",
-        "repeated_failure",
-        "churn_detected",
-        "fixed_blockers",
-        "new_blockers",
-        "last_post_fix_audit",
-        "last_validation",
-        "last_commit_sha",
-        "pushed",
-        "next_action",
-        "reason",
-    }
+
+
+def test_build_automation_ledger_latest_includes_identity_keys():
+    """Latest projection should include repository identity keys."""
+    latest = _ledger_latest_fixture()
+    required = {"repo", "pr", "branch", "head_sha", "task_id"}
+    ASSERTIONS.assertTrue(required.issubset(set(latest)))
+
+
+def test_build_automation_ledger_latest_includes_policy_keys():
+    """Latest projection should include policy and decision keys."""
+    latest = _ledger_latest_fixture()
+    required = {"attempt_count", "retry_count", "repeated_failure", "churn_detected", "next_action", "reason"}
+    ASSERTIONS.assertTrue(required.issubset(set(latest)))
+
+
+def test_build_automation_ledger_latest_includes_status_keys():
+    """Latest projection should include blocker and status keys."""
+    latest = _ledger_latest_fixture()
+    required = {"fixed_blockers", "new_blockers", "last_post_fix_audit", "last_validation", "last_commit_sha", "pushed"}
     ASSERTIONS.assertTrue(required.issubset(set(latest)))
 
 
@@ -1946,7 +1981,12 @@ def test_ledger_decision_retry_budget_exhausted_needs_manual():
 def test_ledger_decision_new_blockers_exceed_fixed_needs_manual():
     """More new blockers than fixed blockers should fail closed to needs_manual."""
     latest = controller.build_automation_ledger_latest(
-        [_ledger_event("post_fix_audit_retry_blocked", details={"fixed_blockers": 1, "new_blockers": 3, "retry_count": 1})],
+        [
+            _ledger_event(
+                "post_fix_audit_retry_blocked",
+                details={"fixed_blockers": 1, "new_blockers": 3, "retry_count": 1},
+            )
+        ],
         retry_limit=1,
     )
     ASSERTIONS.assertEqual(latest["next_action"], "needs_manual")
@@ -1967,13 +2007,99 @@ def test_ledger_decision_retry_scheduled_with_budget_remaining_is_retry():
     ASSERTIONS.assertEqual(latest["next_action"], "retry")
 
 
-def test_ledger_decision_ready_event_is_ready():
-    """Ready events should map to ready next_action."""
+def test_ledger_decision_latest_event_type_ready_is_ready():
+    """Latest ready event_type should map to ready next_action."""
     latest = controller.build_automation_ledger_latest(
-        [_ledger_event("clean_ready", next_action="ready", details={"status": "PASS", "validation": "PASS"})],
+        [_ledger_event("clean_ready", details={"status": "PASS", "validation": "PASS"})],
         retry_limit=1,
     )
     ASSERTIONS.assertEqual(latest["next_action"], "ready")
+
+
+def test_ledger_decision_latest_next_action_ready_is_ready():
+    """Latest next_action ready should map to ready."""
+    latest = controller.build_automation_ledger_latest([_ledger_event("x", next_action="ready")], retry_limit=1)
+    ASSERTIONS.assertEqual(latest["next_action"], "ready")
+
+
+def test_ledger_decision_older_ready_then_new_failure_is_not_ready():
+    """Older ready should be invalidated by later failure."""
+    latest = controller.build_automation_ledger_latest(
+        [_ledger_event("clean_ready"), _ledger_event("post_fix_audit_failure", details={"status": "FAIL"})],
+        retry_limit=2,
+    )
+    ASSERTIONS.assertNotEqual(latest["next_action"], "ready")
+
+
+def test_ledger_decision_latest_blocked_retry_needs_manual():
+    """Latest blocked retry must route to needs_manual."""
+    latest = controller.build_automation_ledger_latest(
+        [_ledger_event("post_fix_audit_retry_blocked", details={"retry_count": 0})],
+        retry_limit=2,
+    )
+    ASSERTIONS.assertEqual(latest["next_action"], "needs_manual")
+
+
+def test_ledger_decision_pass_then_validation_fail_with_budget_is_retry():
+    """Latest PASS audit and FAIL validation should retry with budget."""
+    latest = controller.build_automation_ledger_latest(
+        [_ledger_event("x", details={"status": "PASS", "validation": "FAIL", "retry_count": 0})],
+        retry_limit=2,
+    )
+    ASSERTIONS.assertEqual(latest["next_action"], "retry")
+
+
+def test_ledger_decision_pass_then_validation_fail_no_budget_needs_manual():
+    """Latest PASS audit and FAIL validation should stop without budget."""
+    latest = controller.build_automation_ledger_latest(
+        [_ledger_event("x", details={"status": "PASS", "validation": "FAIL", "retry_count": 1})],
+        retry_limit=1,
+    )
+    ASSERTIONS.assertEqual(latest["next_action"], "needs_manual")
+
+
+def test_ledger_decision_default_budget_remains_is_retry():
+    """Default path with budget remaining should retry."""
+    latest = controller.build_automation_ledger_latest([_ledger_event("x")], retry_limit=2)
+    ASSERTIONS.assertEqual(latest["next_action"], "retry")
+
+
+def test_retry_limit_zero_or_negative_normalizes_to_one():
+    """Retry limit zero and negative should normalize to one."""
+    latest_zero = controller.build_automation_ledger_latest([_ledger_event("x")], retry_limit=0)
+    latest_negative = controller.build_automation_ledger_latest([_ledger_event("x")], retry_limit=-2)
+    ASSERTIONS.assertEqual(latest_zero["next_action"], "retry")
+    ASSERTIONS.assertEqual(latest_negative["next_action"], "retry")
+
+
+def test_automation_ledger_churn_detected_true():
+    """Churn is true for repeated failures plus scheduled retries."""
+    events = [
+        _ledger_event("post_fix_audit_failure", details={"status": "FAIL"}),
+        _ledger_event("post_fix_audit_retry_scheduled"),
+        _ledger_event("post_fix_audit_retry_blocked", details={"status": "PARTIAL"}),
+        _ledger_event("post_fix_audit_retry_scheduled"),
+    ]
+    ASSERTIONS.assertTrue(controller.automation_ledger_churn_detected(events))
+
+
+def test_automation_ledger_churn_detected_false_below_threshold():
+    """Churn is false below failure/retry thresholds."""
+    events = [_ledger_event("post_fix_audit_failure"), _ledger_event("post_fix_audit_retry_scheduled")]
+    ASSERTIONS.assertFalse(controller.automation_ledger_churn_detected(events))
+
+
+def test_build_automation_ledger_latest_sets_churn_detected_and_needs_manual():
+    """Latest projection should flag churn and force needs_manual."""
+    events = [
+        _ledger_event("post_fix_audit_failure", details={"status": "FAIL"}),
+        _ledger_event("post_fix_audit_retry_scheduled"),
+        _ledger_event("post_fix_audit_failure", details={"validation": "FAILED"}),
+        _ledger_event("post_fix_audit_retry_scheduled", details={"retry_count": 0}),
+    ]
+    latest = controller.build_automation_ledger_latest(events, retry_limit=4)
+    ASSERTIONS.assertTrue(latest["churn_detected"])
+    ASSERTIONS.assertEqual(latest["next_action"], "needs_manual")
 
 
 def test_write_automation_ledger_summary_files_writes_latest_and_summary(tmp_path):

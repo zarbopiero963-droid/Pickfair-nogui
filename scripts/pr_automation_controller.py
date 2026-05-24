@@ -1830,7 +1830,15 @@ def automation_ledger_failure_repeated(events: list[dict[str, Any]]) -> bool:
 
 
 def automation_ledger_churn_detected(events: list[dict[str, Any]]) -> bool:
-    failures = sum(1 for event in events if "fail" in _ledger_event_text(event, "event_type").lower())
+    failing_statuses = {"FAIL", "FAILED", "PARTIAL"}
+    failures = 0
+    for event in events:
+        event_type = _ledger_event_text(event, "event_type").lower()
+        details = _ledger_event_detail_dict(event)
+        status = str(details.get("status") or "").strip().upper()
+        validation = str(details.get("validation") or "").strip().upper()
+        if "fail" in event_type or status in failing_statuses or validation in failing_statuses:
+            failures += 1
     retries = sum(1 for event in events if _ledger_event_text(event, "event_type") == "post_fix_audit_retry_scheduled")
     return failures >= 2 and retries >= 2
 
@@ -1858,17 +1866,31 @@ def _ledger_attempt_count(events: list[dict[str, Any]]) -> int:
 
 
 def _ledger_has_ready_event(events: list[dict[str, Any]]) -> bool:
-    for event in reversed(events):
-        event_type = _ledger_event_text(event, "event_type").lower()
-        if "ready" in event_type:
-            return True
-        if _ledger_event_text(event, "next_action") == "ready":
-            return True
-    return False
+    if not events:
+        return False
+    latest = events[-1]
+    event_type = _ledger_event_text(latest, "event_type").lower()
+    if "ready" in event_type:
+        return True
+    return _ledger_event_text(latest, "next_action") == "ready"
 
 
 def _ledger_latest_event_type(events: list[dict[str, Any]]) -> str:
     return _ledger_event_text(events[-1], "event_type") if events else ""
+
+
+def _ledger_latest_has_decision_data(latest: dict[str, Any]) -> bool:
+    if safe_nonnegative_int(latest.get("event_count"), 0) > 0:
+        return True
+    if safe_nonnegative_int(latest.get("attempt_count"), 0) > 0:
+        return True
+    if str(latest.get("last_post_fix_audit") or "").strip():
+        return True
+    if str(latest.get("last_validation") or "").strip():
+        return True
+    if str(latest.get("latest_event_type") or "").strip():
+        return True
+    return False
 
 
 def decide_automation_ledger_next_action(
@@ -1877,16 +1899,20 @@ def decide_automation_ledger_next_action(
     retry_limit_safe = max(1, safe_nonnegative_int(retry_limit, 1))
     retry_count = safe_nonnegative_int(latest.get("retry_count"), 0)
     budget_remains = retry_count < retry_limit_safe
-    if latest.get("has_ready_event"):
-        return "ready", "ledger indicates clean/ready state"
-    if not safe_nonnegative_int(latest.get("event_count"), 0):
+    if not _ledger_latest_has_decision_data(latest):
         return "needs_manual", "insufficient ledger data"
     if bool(latest.get("repeated_failure")):
         return "needs_manual", "repeated same failure detected"
     if retry_count >= retry_limit_safe:
         return "needs_manual", "retry budget exhausted"
+    if bool(latest.get("churn_detected")):
+        return "needs_manual", "ledger churn detected"
+    if latest.get("latest_event_type") == "post_fix_audit_retry_blocked":
+        return "needs_manual", "latest event blocked automated retry"
+    if latest.get("has_ready_event"):
+        return "ready", "ledger indicates clean/ready state"
     if safe_nonnegative_int(latest.get("new_blockers"), 0) > safe_nonnegative_int(latest.get("fixed_blockers"), 0):
-        if budget_remains and not bool(latest.get("repeated_failure")):
+        if budget_remains:
             return "retry", "new blockers exceed fixed blockers but retry budget remains"
         return "needs_manual", "new blockers exceed fixed blockers"
     if latest.get("last_post_fix_audit") == "PASS" and latest.get("last_validation") == "FAIL":
