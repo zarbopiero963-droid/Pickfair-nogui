@@ -1970,18 +1970,20 @@ def test_ledger_repeated_failure_ignores_pass_events_with_pass_reason():
             _ledger_event(
                 "post_fix_audit_retry_blocked",
                 reason="PASS",
+                next_action="validation_then_commit",
                 details={"status": "PASS", "failure_reason": "ok"},
             ),
             _ledger_event(
                 "post_fix_audit_retry_blocked",
                 reason="PASS",
+                next_action="validation_then_commit",
                 details={"status": "PASSED", "failure_reason": "ok"},
             ),
         ],
         retry_limit=2,
     )
     ASSERTIONS.assertFalse(latest["repeated_failure"])
-    ASSERTIONS.assertNotEqual(latest["next_action"], "needs_manual")
+    ASSERTIONS.assertEqual(latest["next_action"], "ready")
 
 
 def test_ledger_repeated_failure_true_for_two_actual_failures_same_reason():
@@ -1997,8 +1999,8 @@ def test_ledger_repeated_failure_true_for_two_actual_failures_same_reason():
     ASSERTIONS.assertEqual(latest["next_action"], "needs_manual")
 
 
-def test_ledger_decision_retry_budget_exhausted_needs_manual():
-    """retry_count >= retry_limit must stop automation."""
+def test_ledger_decision_latest_scheduled_retry_beats_retry_budget():
+    """Latest scheduled retry should run even when retry_count reaches retry_limit."""
     latest = controller.build_automation_ledger_latest(
         [
             _ledger_event(
@@ -2008,8 +2010,33 @@ def test_ledger_decision_retry_budget_exhausted_needs_manual():
         ],
         retry_limit=2,
     )
+    ASSERTIONS.assertEqual(latest["next_action"], "retry")
+    ASSERTIONS.assertIn("scheduled retry", latest["reason"])
+
+
+def test_ledger_decision_older_scheduled_then_latest_blocked_failure_is_needs_manual():
+    """Older scheduled retry must not override latest blocked failure."""
+    latest = controller.build_automation_ledger_latest(
+        [
+            _ledger_event("post_fix_audit_retry_scheduled", details={"retry_count": 1}),
+            _ledger_event("post_fix_audit_retry_blocked", details={"status": "FAIL", "retry_count": 2}),
+        ],
+        retry_limit=2,
+    )
     ASSERTIONS.assertEqual(latest["next_action"], "needs_manual")
-    ASSERTIONS.assertIn("budget", latest["reason"])
+    ASSERTIONS.assertIn("blocked automated retry", latest["reason"])
+
+
+def test_ledger_decision_older_scheduled_then_latest_clean_ready_is_ready():
+    """Older scheduled retry must not override latest clean ready."""
+    latest = controller.build_automation_ledger_latest(
+        [
+            _ledger_event("post_fix_audit_retry_scheduled", details={"retry_count": 2}),
+            _ledger_event("clean_ready", details={"status": "PASS", "validation": "PASS"}),
+        ],
+        retry_limit=2,
+    )
+    ASSERTIONS.assertEqual(latest["next_action"], "ready")
 
 
 def test_ledger_decision_new_blockers_exceed_fixed_needs_manual():

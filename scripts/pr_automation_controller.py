@@ -1967,14 +1967,14 @@ def decide_automation_ledger_next_action(
         return "needs_manual", "repeated same failure detected"
     if bool(latest.get("churn_detected")):
         return "needs_manual", "ledger churn detected"
+    if latest.get("latest_event_type") == "post_fix_audit_retry_scheduled":
+        return "retry", "latest event scheduled retry"
     if retry_count >= retry_limit_safe:
         return "needs_manual", "retry budget exhausted"
     if safe_nonnegative_int(latest.get("new_blockers"), 0) > safe_nonnegative_int(latest.get("fixed_blockers"), 0):
         return "retry", "new blockers exceed fixed blockers but retry budget remains"
     if latest.get("last_post_fix_audit") == "PASS" and latest.get("last_validation") == "FAIL":
         return "retry", "validation failed after audit pass"
-    if latest.get("latest_event_type") == "post_fix_audit_retry_scheduled":
-        return "retry", "latest event scheduled retry and budget remains"
     return "retry", "further retry is within safe budget"
 
 
