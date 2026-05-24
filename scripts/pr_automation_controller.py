@@ -1547,11 +1547,11 @@ def _read_automation_ledger_event_lines(handle: Any) -> list[dict[str, Any]]:
     return events
 
 
-AUTOMATION_LEDGER_PUBLIC_API: tuple[Callable[..., Any], ...] = (
-    automation_ledger_path,
-    build_automation_ledger_event,
-    append_automation_ledger_event,
-    read_automation_ledger_events,
+__all__ = (
+    "automation_ledger_path",
+    "build_automation_ledger_event",
+    "append_automation_ledger_event",
+    "read_automation_ledger_events",
 )
 
 
