@@ -1821,6 +1821,187 @@ def test_decide_post_fix_audit_retry_raw_failed_is_retryable():
     ASSERTIONS.assertEqual(decision["next_action"], "retry_fix_within_budget")
 
 
+def _ledger_event(
+    event_type: str,
+    *,
+    reason: str = "",
+    next_action: str = "",
+    attempt: int = 0,
+    details: dict[str, Any] | None = None,
+    **metadata: Any,
+) -> dict[str, Any]:
+    return controller.build_automation_ledger_event(
+        event_type=event_type,
+        reason=reason,
+        next_action=next_action,
+        attempt=attempt,
+        details=details or {},
+        **metadata,
+    )
+
+
+def test_build_automation_ledger_latest_empty_safe_defaults_to_needs_manual():
+    """Empty ledger should be safe and route to needs_manual for insufficient data."""
+    latest = controller.build_automation_ledger_latest([], retry_limit=2)
+    ASSERTIONS.assertEqual(latest["next_action"], "needs_manual")
+    ASSERTIONS.assertIn("insufficient ledger data", latest["reason"])
+    ASSERTIONS.assertEqual(latest["event_count"], 0)
+
+
+def test_build_automation_ledger_latest_ignores_malformed_events_safely():
+    """Non-dict ledger rows should be ignored without raising."""
+    latest = controller.build_automation_ledger_latest([cast(Any, "bad"), cast(Any, 2), {"event_type": "x"}])
+    ASSERTIONS.assertEqual(latest["event_count"], 1)
+    ASSERTIONS.assertEqual(latest["latest_event_type"], "x")
+
+
+def test_build_automation_ledger_latest_includes_required_keys():
+    """latest.json projection should include the required operational keys."""
+    latest = controller.build_automation_ledger_latest(
+        [
+            _ledger_event(
+                "post_fix_audit_retry_scheduled",
+                attempt=3,
+                repo="owner/repo",
+                pr=225,
+                branch="chore/pr5c",
+                head_sha="abc123",
+                task_id="claude_bug_pr5c_ledger_summary_retry_policy",
+                details={
+                    "status": "PASS",
+                    "validation": "FAIL",
+                    "retry_count": 1,
+                    "fixed_blockers": 2,
+                    "new_blockers": 1,
+                    "commit_sha": "deadbeef",
+                    "pushed": True,
+                },
+            )
+        ],
+        retry_limit=3,
+    )
+    required = {
+        "repo",
+        "pr",
+        "branch",
+        "head_sha",
+        "task_id",
+        "attempt_count",
+        "retry_count",
+        "repeated_failure",
+        "churn_detected",
+        "fixed_blockers",
+        "new_blockers",
+        "last_post_fix_audit",
+        "last_validation",
+        "last_commit_sha",
+        "pushed",
+        "next_action",
+        "reason",
+    }
+    ASSERTIONS.assertTrue(required.issubset(set(latest)))
+
+
+def test_render_automation_ledger_summary_includes_required_fields():
+    """Summary markdown should include action/reason/audit/validation status lines."""
+    latest = controller.build_automation_ledger_latest(
+        [_ledger_event("x", pr=225, head_sha="abc", task_id="t", details={"status": "PASS", "validation": "FAIL"})],
+        retry_limit=2,
+    )
+    summary = controller.render_automation_ledger_summary(latest)
+    ASSERTIONS.assertIn("Next action:", summary)
+    ASSERTIONS.assertIn("Reason:", summary)
+    ASSERTIONS.assertIn("Last post-fix audit:", summary)
+    ASSERTIONS.assertIn("Validation:", summary)
+
+
+def test_ledger_decision_repeated_same_failure_needs_manual():
+    """Repeated normalized failure reasons should route to needs_manual."""
+    latest = controller.build_automation_ledger_latest(
+        [
+            _ledger_event("post_fix_audit_failure", reason="Missing   test"),
+            _ledger_event("post_fix_audit_failure", reason="missing test"),
+        ],
+        retry_limit=4,
+    )
+    ASSERTIONS.assertEqual(latest["next_action"], "needs_manual")
+    ASSERTIONS.assertTrue(latest["repeated_failure"])
+
+
+def test_ledger_decision_retry_budget_exhausted_needs_manual():
+    """retry_count >= retry_limit must stop automation."""
+    latest = controller.build_automation_ledger_latest(
+        [
+            _ledger_event(
+                "post_fix_audit_retry_scheduled",
+                details={"retry_count": 2, "status": "FAIL", "validation": "FAIL"},
+            )
+        ],
+        retry_limit=2,
+    )
+    ASSERTIONS.assertEqual(latest["next_action"], "needs_manual")
+    ASSERTIONS.assertIn("budget", latest["reason"])
+
+
+def test_ledger_decision_new_blockers_exceed_fixed_needs_manual():
+    """More new blockers than fixed blockers should fail closed to needs_manual."""
+    latest = controller.build_automation_ledger_latest(
+        [_ledger_event("post_fix_audit_retry_blocked", details={"fixed_blockers": 1, "new_blockers": 3, "retry_count": 1})],
+        retry_limit=1,
+    )
+    ASSERTIONS.assertEqual(latest["next_action"], "needs_manual")
+    ASSERTIONS.assertTrue(bool(latest["reason"]))
+
+
+def test_ledger_decision_retry_scheduled_with_budget_remaining_is_retry():
+    """A scheduled retry with remaining budget should return retry next_action."""
+    latest = controller.build_automation_ledger_latest(
+        [
+            _ledger_event(
+                "post_fix_audit_retry_scheduled",
+                details={"retry_count": 1, "status": "FAIL", "failure_reason": "targeted issue"},
+            )
+        ],
+        retry_limit=3,
+    )
+    ASSERTIONS.assertEqual(latest["next_action"], "retry")
+
+
+def test_ledger_decision_ready_event_is_ready():
+    """Ready events should map to ready next_action."""
+    latest = controller.build_automation_ledger_latest(
+        [_ledger_event("clean_ready", next_action="ready", details={"status": "PASS", "validation": "PASS"})],
+        retry_limit=1,
+    )
+    ASSERTIONS.assertEqual(latest["next_action"], "ready")
+
+
+def test_write_automation_ledger_summary_files_writes_latest_and_summary(tmp_path):
+    """Summary writer should create deterministic latest.json and summary.md files."""
+    latest = controller.build_automation_ledger_latest([_ledger_event("x", pr=225)], retry_limit=2)
+    paths = controller.write_automation_ledger_summary_files(tmp_path / ".autofix" / "ledger", latest)
+    latest_path = tmp_path / ".autofix" / "ledger" / "latest.json"
+    summary_path = tmp_path / ".autofix" / "ledger" / "summary.md"
+    ASSERTIONS.assertEqual(paths["latest_json"], str(latest_path))
+    ASSERTIONS.assertEqual(paths["summary_md"], str(summary_path))
+    ASSERTIONS.assertTrue(latest_path.exists())
+    ASSERTIONS.assertTrue(summary_path.exists())
+    persisted = json.loads(latest_path.read_text(encoding="utf-8"))
+    ASSERTIONS.assertEqual(persisted["next_action"], latest["next_action"])
+
+
+def test_build_automation_ledger_latest_does_not_expose_env_secrets(monkeypatch):
+    """latest projection must not include environment secret values."""
+    monkeypatch.setenv("SECRET_TOKEN", "ultra-secret-value")
+    latest = controller.build_automation_ledger_latest(
+        [_ledger_event("post_fix_audit_failure", reason="x", repo="owner/repo", pr=225)],
+        retry_limit=2,
+    )
+    blob = json.dumps(latest, sort_keys=True)
+    ASSERTIONS.assertNotIn("SECRET_TOKEN", blob)
+    ASSERTIONS.assertNotIn("ultra-secret-value", blob)
+
+
 def test_clean_scope_defaults_allow_pr_flow_automation_script():
     """Automation PR can update pr_flow_automation without clean-scope refusal."""
     rules = controller.build_clean_scope_rules(_args())

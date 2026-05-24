@@ -1772,11 +1772,212 @@ def _read_automation_ledger_event_lines(handle: Any) -> list[dict[str, Any]]:
     return events
 
 
+def _ledger_event_detail_dict(event: Any) -> dict[str, Any]:
+    details = event.get("details") if isinstance(event, dict) else {}
+    return details if isinstance(details, dict) else {}
+
+
+def _ledger_event_text(event: Any, key: str) -> str:
+    return str((event.get(key) if isinstance(event, dict) else "") or "").strip()
+
+
+def _ledger_event_int(event: Any, key: str, default: int = 0) -> int:
+    value = event.get(key) if isinstance(event, dict) else default
+    return safe_nonnegative_int(value, default)
+
+
+def _ledger_last_text(events: list[dict[str, Any]], key: str) -> str:
+    for event in reversed(events):
+        value = _ledger_event_text(event, key)
+        if value:
+            return value
+    return ""
+
+
+def _ledger_last_bool(events: list[dict[str, Any]], key: str) -> bool | None:
+    for event in reversed(events):
+        details = _ledger_event_detail_dict(event)
+        if key in details:
+            return bool(details.get(key))
+    return None
+
+
+def _ledger_last_status(events: list[dict[str, Any]], key: str) -> str:
+    for event in reversed(events):
+        details = _ledger_event_detail_dict(event)
+        value = str(details.get(key) or "").strip().upper()
+        if value:
+            return value
+    return ""
+
+
+def _ledger_last_nonempty(events: list[dict[str, Any]], key: str) -> str:
+    for event in reversed(events):
+        details = _ledger_event_detail_dict(event)
+        value = str(details.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def automation_ledger_failure_repeated(events: list[dict[str, Any]]) -> bool:
+    normalized: list[str] = []
+    for event in events:
+        reason = normalize_post_fix_audit_failure_reason(_ledger_event_text(event, "reason"))
+        if reason:
+            normalized.append(reason)
+    return bool(normalized and len(set(normalized)) < len(normalized))
+
+
+def automation_ledger_churn_detected(events: list[dict[str, Any]]) -> bool:
+    failures = sum(1 for event in events if "fail" in _ledger_event_text(event, "event_type").lower())
+    retries = sum(1 for event in events if _ledger_event_text(event, "event_type") == "post_fix_audit_retry_scheduled")
+    return failures >= 2 and retries >= 2
+
+
+def _ledger_fixed_new_blockers(events: list[dict[str, Any]]) -> tuple[int, int]:
+    fixed = 0
+    new = 0
+    for event in events:
+        details = _ledger_event_detail_dict(event)
+        fixed += safe_nonnegative_int(details.get("fixed_blockers"), 0)
+        new += safe_nonnegative_int(details.get("new_blockers"), 0)
+    return fixed, new
+
+
+def _ledger_retry_count(events: list[dict[str, Any]]) -> int:
+    scheduled = sum(1 for event in events if _ledger_event_text(event, "event_type") == "post_fix_audit_retry_scheduled")
+    explicit = 0
+    for event in events:
+        explicit = max(explicit, safe_nonnegative_int(_ledger_event_detail_dict(event).get("retry_count"), 0))
+    return max(scheduled, explicit)
+
+
+def _ledger_attempt_count(events: list[dict[str, Any]]) -> int:
+    return max((_ledger_event_int(event, "attempt", 0) for event in events), default=0)
+
+
+def _ledger_has_ready_event(events: list[dict[str, Any]]) -> bool:
+    for event in reversed(events):
+        event_type = _ledger_event_text(event, "event_type").lower()
+        if "ready" in event_type:
+            return True
+        if _ledger_event_text(event, "next_action") == "ready":
+            return True
+    return False
+
+
+def _ledger_latest_event_type(events: list[dict[str, Any]]) -> str:
+    return _ledger_event_text(events[-1], "event_type") if events else ""
+
+
+def decide_automation_ledger_next_action(
+    latest: dict[str, Any], *, retry_limit: int = 1
+) -> tuple[str, str]:
+    retry_limit_safe = max(1, safe_nonnegative_int(retry_limit, 1))
+    retry_count = safe_nonnegative_int(latest.get("retry_count"), 0)
+    budget_remains = retry_count < retry_limit_safe
+    if latest.get("has_ready_event"):
+        return "ready", "ledger indicates clean/ready state"
+    if not safe_nonnegative_int(latest.get("event_count"), 0):
+        return "needs_manual", "insufficient ledger data"
+    if bool(latest.get("repeated_failure")):
+        return "needs_manual", "repeated same failure detected"
+    if retry_count >= retry_limit_safe:
+        return "needs_manual", "retry budget exhausted"
+    if safe_nonnegative_int(latest.get("new_blockers"), 0) > safe_nonnegative_int(latest.get("fixed_blockers"), 0):
+        if budget_remains and not bool(latest.get("repeated_failure")):
+            return "retry", "new blockers exceed fixed blockers but retry budget remains"
+        return "needs_manual", "new blockers exceed fixed blockers"
+    if latest.get("last_post_fix_audit") == "PASS" and latest.get("last_validation") == "FAIL":
+        return ("retry", "validation failed after audit pass") if budget_remains else (
+            "needs_manual",
+            "validation failed after audit pass and no retry budget",
+        )
+    if latest.get("latest_event_type") == "post_fix_audit_retry_scheduled" and budget_remains:
+        return "retry", "latest event scheduled retry and budget remains"
+    return ("retry", "further retry is within safe budget") if budget_remains else (
+        "needs_manual",
+        "no safe automated route from ledger state",
+    )
+
+
+def build_automation_ledger_latest(
+    events: list[dict[str, Any]] | None,
+    *,
+    retry_limit: int = 1,
+) -> dict[str, Any]:
+    valid_events = [event for event in (events or []) if isinstance(event, dict)]
+    fixed_blockers, new_blockers = _ledger_fixed_new_blockers(valid_events)
+    latest: dict[str, Any] = {
+        "repo": _ledger_last_text(valid_events, "repo"),
+        "pr": max((_ledger_event_int(event, "pr", 0) for event in valid_events), default=0),
+        "branch": _ledger_last_text(valid_events, "branch"),
+        "head_sha": _ledger_last_text(valid_events, "head_sha"),
+        "task_id": _ledger_last_text(valid_events, "task_id"),
+        "attempt_count": _ledger_attempt_count(valid_events),
+        "retry_count": _ledger_retry_count(valid_events),
+        "repeated_failure": automation_ledger_failure_repeated(valid_events),
+        "churn_detected": automation_ledger_churn_detected(valid_events),
+        "fixed_blockers": fixed_blockers,
+        "new_blockers": new_blockers,
+        "last_post_fix_audit": _ledger_last_status(valid_events, "status"),
+        "last_validation": _ledger_last_status(valid_events, "validation"),
+        "last_commit_sha": _ledger_last_nonempty(valid_events, "commit_sha"),
+        "pushed": bool(_ledger_last_bool(valid_events, "pushed")),
+        "event_count": len(valid_events),
+        "latest_event_type": _ledger_latest_event_type(valid_events),
+        "has_ready_event": _ledger_has_ready_event(valid_events),
+    }
+    next_action, reason = decide_automation_ledger_next_action(latest, retry_limit=retry_limit)
+    latest["next_action"] = next_action
+    latest["reason"] = reason
+    return latest
+
+
+def render_automation_ledger_summary(latest: dict[str, Any]) -> str:
+    status = str(latest.get("next_action") or "needs_manual")
+    lines = [
+        f"# PR #{safe_nonnegative_int(latest.get('pr'), 0)} Ledger Status: {status}",
+        "",
+        f"- Head SHA: {str(latest.get('head_sha') or '')}",
+        f"- Task ID: {str(latest.get('task_id') or '')}",
+        f"- Attempts: {safe_nonnegative_int(latest.get('attempt_count'), 0)}",
+        f"- Retries: {safe_nonnegative_int(latest.get('retry_count'), 0)}",
+        f"- Last post-fix audit: {str(latest.get('last_post_fix_audit') or '')}",
+        f"- Validation: {str(latest.get('last_validation') or '')}",
+        f"- Blockers fixed/new: {safe_nonnegative_int(latest.get('fixed_blockers'), 0)}/{safe_nonnegative_int(latest.get('new_blockers'), 0)}",
+        f"- Repeated failure: {bool(latest.get('repeated_failure'))}",
+        f"- Churn detected: {bool(latest.get('churn_detected'))}",
+        f"- Next action: {status}",
+        f"- Reason: {str(latest.get('reason') or '')}",
+    ]
+    return "\n".join(lines).strip() + "\n"
+
+
+def write_automation_ledger_summary_files(
+    ledger_dir: str | Path, latest: dict[str, Any]
+) -> dict[str, str]:
+    target_dir = Path(str(ledger_dir or ".")).expanduser()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    latest_path = target_dir / "latest.json"
+    summary_path = target_dir / "summary.md"
+    latest_path.write_text(json.dumps(latest, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    summary_path.write_text(render_automation_ledger_summary(latest), encoding="utf-8")
+    return {"latest_json": str(latest_path), "summary_md": str(summary_path)}
+
+
 __all__ = (
     "automation_ledger_path",
     "build_automation_ledger_event",
     "append_automation_ledger_event",
     "read_automation_ledger_events",
+    "build_automation_ledger_latest",
+    "render_automation_ledger_summary",
+    "write_automation_ledger_summary_files",
+    "decide_automation_ledger_next_action",
+    "automation_ledger_failure_repeated",
+    "automation_ledger_churn_detected",
     "decide_post_fix_audit_retry",
     "build_post_fix_audit_retry_task",
     "normalize_post_fix_audit_failure_reason",
