@@ -1529,12 +1529,15 @@ def _post_fix_retryable_from_raw_status(raw_status: str) -> bool:
 
 def _post_fix_retry_options(options: dict[str, Any]) -> dict[str, Any]:
     metadata = options.get("ledger_metadata")
+    files_allowed = options.get("files_allowed")
+    files_forbidden = options.get("files_forbidden")
+    previous_failure_reasons = options.get("previous_failure_reasons")
     return {
-        "files_allowed": options.get("files_allowed"),
-        "files_forbidden": options.get("files_forbidden"),
+        "files_allowed": files_allowed if isinstance(files_allowed, list) else [],
+        "files_forbidden": files_forbidden if isinstance(files_forbidden, list) else [],
         "retry_count": safe_nonnegative_int(options.get("retry_count"), 0),
         "retry_limit": safe_nonnegative_int(options.get("retry_limit"), 1),
-        "previous_failure_reasons": options.get("previous_failure_reasons"),
+        "previous_failure_reasons": previous_failure_reasons if isinstance(previous_failure_reasons, list) else [],
         "ledger_path": str(options.get("ledger_path") or ""),
         "ledger_metadata": metadata if isinstance(metadata, dict) else None,
     }
@@ -1770,6 +1773,10 @@ __all__ = (
     "build_automation_ledger_event",
     "append_automation_ledger_event",
     "read_automation_ledger_events",
+    "decide_post_fix_audit_retry",
+    "build_post_fix_audit_retry_task",
+    "normalize_post_fix_audit_failure_reason",
+    "post_fix_audit_failure_repeated",
 )
 
 

@@ -1774,6 +1774,27 @@ def test_decide_post_fix_audit_retry_blocked_ledger_event_includes_flags(tmp_pat
     ASSERTIONS.assertFalse(details["malformed_status"])
 
 
+def test_decide_post_fix_audit_retry_normalizes_malformed_retry_options_safely():
+    """Non-list retry options should fail closed to empty lists without raising."""
+    decision = controller.decide_post_fix_audit_retry(
+        {"status": "FAIL", "reasons": ["single failure"]},
+        original_task_scope="Fix only PR5B",
+        files_allowed="bad",
+        files_forbidden="bad",
+        previous_failure_reasons=1,
+        retry_count=0,
+        retry_limit=2,
+    )
+    ASSERTIONS.assertTrue(decision["should_retry"])
+    ASSERTIONS.assertNotIn("Files allowed:", decision["retry_task"])
+    ASSERTIONS.assertNotIn("Files forbidden:", decision["retry_task"])
+
+
+def test_post_fix_retry_public_api_exports_decide_post_fix_audit_retry():
+    """Retry decision entrypoint should be exported as part of module public API."""
+    ASSERTIONS.assertIn("decide_post_fix_audit_retry", controller.__all__)
+
+
 def test_decide_post_fix_audit_retry_raw_pass_downgraded_does_not_retry():
     """Raw PASS/PASSED downgraded by normalization must fail closed without retry."""
     for raw_status in ("PASS", "PASSED"):
