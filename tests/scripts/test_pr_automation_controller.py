@@ -1963,6 +1963,30 @@ def test_ledger_decision_repeated_same_failure_needs_manual():
     ASSERTIONS.assertTrue(latest["repeated_failure"])
 
 
+def test_ledger_repeated_failure_ignores_pass_events_with_pass_reason():
+    """PASS/PASSED events with reason PASS must not count as repeated failures."""
+    latest = controller.build_automation_ledger_latest(
+        [
+            _ledger_event("post_fix_audit_retry_blocked", reason="PASS", details={"status": "PASS"}),
+            _ledger_event("post_fix_audit_retry_blocked", reason="PASS", details={"status": "PASSED"}),
+        ],
+        retry_limit=2,
+    )
+    ASSERTIONS.assertFalse(latest["repeated_failure"])
+
+
+def test_ledger_repeated_failure_true_for_two_actual_failures_same_reason():
+    """Two failure-like rows with same reason should set repeated_failure True."""
+    latest = controller.build_automation_ledger_latest(
+        [
+            _ledger_event("post_fix_audit_retry_blocked", reason="schema drift", details={"status": "FAIL"}),
+            _ledger_event("post_fix_audit_failure", reason="schema drift", details={"status": "FAILED"}),
+        ],
+        retry_limit=3,
+    )
+    ASSERTIONS.assertTrue(latest["repeated_failure"])
+
+
 def test_ledger_decision_retry_budget_exhausted_needs_manual():
     """retry_count >= retry_limit must stop automation."""
     latest = controller.build_automation_ledger_latest(
@@ -2066,6 +2090,19 @@ def test_ledger_decision_latest_blocked_retry_pass_validation_commit_is_ready():
     )
     ASSERTIONS.assertEqual(latest["next_action"], "ready")
     ASSERTIONS.assertIn("validation/commit may proceed", latest["reason"])
+
+
+def test_ledger_decision_latest_blocked_retry_missing_action_does_not_backfill():
+    """Latest blocked failure must fail closed when only older row has ready action."""
+    latest = controller.build_automation_ledger_latest(
+        [
+            _ledger_event("clean_ready", next_action="validation_then_commit", details={"status": "PASS"}),
+            _ledger_event("post_fix_audit_retry_blocked", details={"status": "FAIL", "retry_count": 0}),
+        ],
+        retry_limit=2,
+    )
+    ASSERTIONS.assertEqual(latest["next_action"], "needs_manual")
+    ASSERTIONS.assertIn("blocked automated retry", latest["reason"])
 
 
 def test_ledger_decision_latest_blocked_retry_partial_stays_needs_manual():

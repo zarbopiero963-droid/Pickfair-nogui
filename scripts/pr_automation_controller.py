@@ -1823,10 +1823,26 @@ def _ledger_last_nonempty(events: list[dict[str, Any]], key: str) -> str:
 def automation_ledger_failure_repeated(events: list[dict[str, Any]]) -> bool:
     normalized: list[str] = []
     for event in events:
+        if not _ledger_is_failure_like_event(event):
+            continue
         reason = normalize_post_fix_audit_failure_reason(_ledger_event_text(event, "reason"))
         if reason:
             normalized.append(reason)
     return bool(normalized and len(set(normalized)) < len(normalized))
+
+
+def _ledger_is_failure_like_event(event: dict[str, Any]) -> bool:
+    failing_statuses = {"FAIL", "FAILED", "PARTIAL"}
+    event_type = _ledger_event_text(event, "event_type").lower()
+    details = _ledger_event_detail_dict(event)
+    status = str(details.get("status") or "").strip().upper()
+    validation = str(details.get("validation") or "").strip().upper()
+    failure_reason = str(details.get("failure_reason") or "").strip()
+    if "fail" in event_type:
+        return True
+    if status in failing_statuses or validation in failing_statuses:
+        return True
+    return bool(failure_reason and "blocked" in event_type)
 
 
 def automation_ledger_churn_detected(events: list[dict[str, Any]]) -> bool:
@@ -1879,11 +1895,28 @@ def _ledger_latest_event_type(events: list[dict[str, Any]]) -> str:
     return _ledger_event_text(events[-1], "event_type") if events else ""
 
 
+def _ledger_latest_event_status(events: list[dict[str, Any]]) -> str:
+    if not events:
+        return ""
+    details = _ledger_event_detail_dict(events[-1])
+    return str(details.get("status") or "").strip().upper()
+
+
+def _ledger_latest_event_next_action(events: list[dict[str, Any]]) -> str:
+    if not events:
+        return ""
+    direct = _ledger_event_text(events[-1], "next_action")
+    if direct:
+        return direct
+    details = _ledger_event_detail_dict(events[-1])
+    return str(details.get("next_action") or "").strip()
+
+
 def _blocked_retry_is_forward_ready(latest: dict[str, Any]) -> bool:
-    status = str(latest.get("last_post_fix_audit") or "").strip().upper()
+    status = str(latest.get("latest_event_status") or "").strip().upper()
     if status in {"PASS", "PASSED"}:
         return True
-    action = str(latest.get("latest_next_action") or "").strip().lower()
+    action = str(latest.get("latest_event_next_action") or "").strip().lower()
     return action == "validation_then_commit"
 
 
@@ -1954,7 +1987,9 @@ def build_automation_ledger_latest(
         "pushed": bool(_ledger_last_bool(valid_events, "pushed")),
         "event_count": len(valid_events),
         "latest_event_type": _ledger_latest_event_type(valid_events),
-        "latest_next_action": _ledger_last_text(valid_events, "next_action"),
+        "latest_next_action": _ledger_event_text(valid_events[-1], "next_action") if valid_events else "",
+        "latest_event_status": _ledger_latest_event_status(valid_events),
+        "latest_event_next_action": _ledger_latest_event_next_action(valid_events),
         "has_ready_event": _ledger_has_ready_event(valid_events),
     }
     next_action, reason = decide_automation_ledger_next_action(latest, retry_limit=retry_limit)
