@@ -1477,33 +1477,152 @@ def build_post_fix_audit_retry_task(
     files_allowed: list[str] | None = None,
     files_forbidden: list[str] | None = None,
 ) -> str:
-    allowed = [str(path).strip() for path in (files_allowed or []) if str(path).strip()]
-    forbidden = [str(path).strip() for path in (files_forbidden or []) if str(path).strip()]
-    lines = [
-        "POST-FIX AUDIT RETRY TASK (NARROW)",
-        "",
-        "Preserve original task scope exactly. Do not broaden scope.",
-        "Fix only the post-fix audit failure reason below.",
-        f"Failure reason (exact): {failure_reason}",
-        "",
-        "Original task scope:",
-        str(original_task_scope or "").strip() or "N/A",
-        "",
-        "Files allowed:",
-        *(f"- {path}" for path in allowed),
-    ]
-    if forbidden:
-        lines.extend(["", "Files forbidden:", *(f"- {path}" for path in forbidden)])
-    lines.extend(
+    allowed = _normalized_retry_file_list(files_allowed)
+    forbidden = _normalized_retry_file_list(files_forbidden)
+    sections = ["POST-FIX AUDIT RETRY TASK (NARROW)", "Preserve original task scope exactly. Do not broaden scope."]
+    sections += ["Fix only the post-fix audit failure reason below.", _format_failure_reason_block(failure_reason)]
+    sections += ["Original task scope:\n" + (str(original_task_scope or "").strip() or "N/A")]
+    sections += [_render_retry_file_section("Files allowed", allowed), _render_retry_file_section("Files forbidden", forbidden)]
+    sections += [_retry_no_commit_push_instructions()]
+    return "\n\n".join(section for section in sections if section).strip() + "\n"
+
+
+def _normalized_retry_file_list(paths: list[str] | None) -> list[str]:
+    return [str(path).strip() for path in (paths or []) if str(path).strip()]
+
+
+def _sanitize_multiline_reason_lines(reason: str) -> list[str]:
+    return [line.rstrip() for line in str(reason or "").splitlines()] or [""]
+
+
+def _format_failure_reason_block(reason: str) -> str:
+    lines = _sanitize_multiline_reason_lines(reason)
+    return "Failure reason (exact):\n" + "\n".join(f"  {line}" for line in lines)
+
+
+def _render_retry_file_section(title: str, paths: list[str]) -> str:
+    return "" if not paths else title + ":\n" + "\n".join(f"- {path}" for path in paths)
+
+
+def _retry_no_commit_push_instructions() -> str:
+    return "\n".join(
         [
-            "",
             "Do not run git add/commit/push.",
             "Do not run git add.",
             "Do not run git commit.",
             "Do not run git push.",
         ]
     )
-    return "\n".join(lines).strip() + "\n"
+
+
+def _recognized_post_fix_raw_status(raw_status: str) -> bool:
+    return raw_status in {"PASS", "FAIL", "PARTIAL", "PASSED", "FAILED"}
+
+
+def _post_fix_retryable_from_raw_status(raw_status: str) -> bool:
+    return raw_status in {"FAIL", "FAILED", "PARTIAL"}
+
+
+def _post_fix_retryability(
+    *,
+    raw_status: str,
+    status: str,
+    normalized_reason: str,
+    repeated: bool,
+    budget_exhausted: bool,
+) -> tuple[bool, bool]:
+    malformed_status = not _recognized_post_fix_raw_status(raw_status)
+    normalized_downgrade_from_pass = raw_status in {"PASS", "PASSED"} and status != "PASS"
+    retryable_status = _post_fix_retryable_from_raw_status(raw_status)
+    should_retry = (
+        (not malformed_status)
+        and (not normalized_downgrade_from_pass)
+        and retryable_status
+        and status in {"FAIL", "PARTIAL"}
+        and bool(normalized_reason)
+        and (not repeated)
+        and (not budget_exhausted)
+    )
+    return malformed_status, should_retry
+
+
+def _append_post_fix_retry_ledger_event(
+    *,
+    ledger_path: str,
+    should_retry: bool,
+    next_action: str,
+    status: str,
+    failure_reason: str,
+    normalized_reason: str,
+    malformed_status: bool,
+    repeated_failure: bool,
+    retry_count: int,
+    retry_limit: int,
+    retry_budget_exhausted: bool,
+    ledger_metadata: dict[str, Any] | None,
+) -> None:
+    if not ledger_path:
+        return
+    event = build_automation_ledger_event(
+        event_type="post_fix_audit_retry_scheduled" if should_retry else "post_fix_audit_retry_blocked",
+        next_action=next_action,
+        reason=failure_reason or status,
+        details={
+            "status": status,
+            "malformed_status": malformed_status,
+            "failure_reason": failure_reason,
+            "failure_reason_normalized": normalized_reason,
+            "repeated_failure": repeated_failure,
+            "retry_count": retry_count,
+            "retry_limit": retry_limit,
+            "retry_budget_exhausted": retry_budget_exhausted,
+        },
+        **(ledger_metadata or {}),
+    )
+    append_automation_ledger_event(ledger_path, event)
+
+
+def _retry_decision_next_action(status: str, should_retry: bool) -> str:
+    if should_retry:
+        return "retry_fix_within_budget"
+    return "validation_then_commit" if status == "PASS" else "needs_manual_post_fix_audit_failed"
+
+
+def _build_post_fix_retry_decision(
+    *,
+    status: str,
+    malformed_status: bool,
+    should_retry: bool,
+    next_action: str,
+    retry_task: str,
+    failure_reason: str,
+    normalized_reason: str,
+    repeated_failure: bool,
+    retry_budget_exhausted: bool,
+) -> dict[str, Any]:
+    return {
+        "status": status,
+        "malformed_status": malformed_status,
+        "should_retry": should_retry,
+        "next_action": next_action,
+        "retry_task": retry_task,
+        "failure_reason": failure_reason,
+        "failure_reason_normalized": normalized_reason,
+        "repeated_failure": repeated_failure,
+        "retry_budget_exhausted": retry_budget_exhausted,
+    }
+
+
+def _post_fix_report_outcome(
+    report: dict[str, Any] | None, previous_failure_reasons: list[object] | None
+) -> tuple[str, str, str, bool]:
+    normalized_report = _normalize_post_fix_audit_report(report if isinstance(report, dict) else {})
+    status = post_fix_micro_audit_status(normalized_report)
+    reasons = _list_from_payload(normalized_report.get("reasons"))
+    exact_reason = reasons[0] if reasons else ""
+    normalized_reason = normalize_post_fix_audit_failure_reason(exact_reason)
+    repeated = post_fix_audit_failure_repeated(exact_reason, previous_failure_reasons)
+    return status, exact_reason, normalized_reason, repeated
 
 
 def decide_post_fix_audit_retry(
@@ -1515,58 +1634,29 @@ def decide_post_fix_audit_retry(
     retry_count: int = 0,
     retry_limit: int = 1,
     previous_failure_reasons: list[object] | None = None,
-    ledger_path: str = "",
-    ledger_metadata: dict[str, Any] | None = None,
+    **options: Any,
 ) -> dict[str, Any]:
-    raw_report = report if isinstance(report, dict) else {}
-    raw_status = str(raw_report.get("status") or "").strip().upper()
-    malformed_status = raw_status not in {"PASS", "FAIL", "PARTIAL"}
-    normalized_report = _normalize_post_fix_audit_report(raw_report)
-    status = post_fix_micro_audit_status(normalized_report)
-    reasons = _list_from_payload(normalized_report.get("reasons"))
-    exact_reason = reasons[0] if reasons else ""
-    normalized_reason = normalize_post_fix_audit_failure_reason(exact_reason)
-    repeated = post_fix_audit_failure_repeated(exact_reason, previous_failure_reasons)
-    budget_exhausted = safe_nonnegative_int(retry_count, 0) >= safe_nonnegative_int(retry_limit, 0)
-    retryable = (not malformed_status) and status in {"FAIL", "PARTIAL"} and bool(normalized_reason)
-    should_retry = retryable and not repeated and not budget_exhausted
-    next_action = "validation_then_commit" if status == "PASS" else "needs_manual_post_fix_audit_failed"
-    retry_task = ""
-    if should_retry:
-        next_action = "retry_fix_within_budget"
-        retry_task = build_post_fix_audit_retry_task(
-            original_task_scope=original_task_scope,
-            failure_reason=exact_reason,
-            files_allowed=files_allowed,
-            files_forbidden=files_forbidden,
-        )
-    event_type = "post_fix_audit_retry_scheduled" if should_retry else "post_fix_audit_retry_blocked"
-    if ledger_path:
-        event = build_automation_ledger_event(
-            event_type=event_type,
-            next_action=next_action,
-            reason=exact_reason or normalized_report.get("next_action") or status,
-            details={
-                "status": status,
-                "failure_reason_normalized": normalized_reason,
-                "repeated_failure": repeated,
-                "retry_count": safe_nonnegative_int(retry_count, 0),
-                "retry_limit": safe_nonnegative_int(retry_limit, 0),
-                "retry_budget_exhausted": budget_exhausted,
-            },
-            **(ledger_metadata or {}),
-        )
-        append_automation_ledger_event(ledger_path, event)
-    return {
-        "status": status,
-        "should_retry": should_retry,
-        "next_action": next_action,
-        "retry_task": retry_task,
-        "failure_reason": exact_reason,
-        "failure_reason_normalized": normalized_reason,
-        "repeated_failure": repeated,
-        "retry_budget_exhausted": budget_exhausted,
-    }
+    status, exact_reason, normalized_reason, repeated = _post_fix_report_outcome(report, previous_failure_reasons)
+    raw_status = str(((report or {}).get("status") or "")).strip().upper() if isinstance(report, dict) else ""
+    metadata = options.get("ledger_metadata")
+    normalized_retry_count, normalized_retry_limit = safe_nonnegative_int(retry_count, 0), safe_nonnegative_int(retry_limit, 0)
+    budget_exhausted = normalized_retry_count >= normalized_retry_limit
+    malformed_status, should_retry = _post_fix_retryability(
+        raw_status=raw_status, status=status, normalized_reason=normalized_reason, repeated=repeated, budget_exhausted=budget_exhausted
+    )
+    retry_task = build_post_fix_audit_retry_task(original_task_scope=original_task_scope, failure_reason=exact_reason, files_allowed=files_allowed, files_forbidden=files_forbidden) if should_retry else ""
+    next_action = _retry_decision_next_action(status, should_retry)
+    _append_post_fix_retry_ledger_event(
+        ledger_path=str(options.get("ledger_path") or ""), should_retry=should_retry, next_action=next_action, status=status,
+        failure_reason=exact_reason, normalized_reason=normalized_reason, malformed_status=malformed_status, repeated_failure=repeated,
+        retry_count=normalized_retry_count, retry_limit=normalized_retry_limit, retry_budget_exhausted=budget_exhausted,
+        ledger_metadata=metadata if isinstance(metadata, dict) else None,
+    )
+    return _build_post_fix_retry_decision(
+        status=status, malformed_status=malformed_status, should_retry=should_retry, next_action=next_action,
+        retry_task=retry_task, failure_reason=exact_reason, normalized_reason=normalized_reason,
+        repeated_failure=repeated, retry_budget_exhausted=budget_exhausted,
+    )
 
 
 def _normalized_ledger_base_dir(base_dir: Any) -> Path:
