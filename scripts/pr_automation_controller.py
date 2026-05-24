@@ -1456,6 +1456,109 @@ def post_fix_micro_audit_failed(report: dict[str, Any] | None) -> bool:
     return status != "PASS" or next_action != "validation_then_commit"
 
 
+def _normalized_ledger_base_dir(base_dir: Any) -> Path:
+    return Path(str(base_dir or ".")).expanduser()
+
+
+def _normalized_ledger_pr_number(pr_number: Any) -> int:
+    return safe_nonnegative_int(pr_number, 0)
+
+
+def automation_ledger_path(base_dir: str | Path | None, pr_number: str | int | None) -> str:
+    root = _normalized_ledger_base_dir(base_dir)
+    pr_value = _normalized_ledger_pr_number(pr_number)
+    return str(root / f"pr-{pr_value}" / "automation-ledger.jsonl")
+
+
+def _normalized_ledger_details(details: Any) -> dict[str, Any]:
+    return details if isinstance(details, dict) else {}
+
+
+def _normalized_ledger_text(value: Any) -> str:
+    return str(value or "")
+
+
+def _normalized_ledger_event_numbers(metadata: dict[str, Any]) -> tuple[int, int]:
+    return safe_nonnegative_int(metadata.get("pr"), 0), safe_nonnegative_int(metadata.get("attempt"), 0)
+
+
+def _normalized_ledger_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    legacy = metadata.get("metadata")
+    if not isinstance(legacy, dict):
+        return metadata
+    merged = dict(legacy)
+    for key, value in metadata.items():
+        if key != "metadata":
+            merged[key] = value
+    return merged
+
+
+def _normalized_ledger_created_at(created_at: object) -> str:
+    return _normalized_ledger_text(created_at or _utc_timestamp())
+
+
+def build_automation_ledger_event(
+    event_type: object = "",
+    details: object = None,
+    created_at: object = "", **metadata: object,
+) -> dict[str, object]:
+    payload = _normalized_ledger_metadata(cast(dict[str, Any], metadata))
+    pr_value, attempt_value = _normalized_ledger_event_numbers(payload)
+    return {
+        "event_type": _normalized_ledger_text(event_type),
+        "repo": _normalized_ledger_text(payload.get("repo")),
+        "pr": pr_value,
+        "branch": _normalized_ledger_text(payload.get("branch")),
+        "head_sha": _normalized_ledger_text(payload.get("head_sha")),
+        "task_id": _normalized_ledger_text(payload.get("task_id")),
+        "attempt": attempt_value,
+        "next_action": _normalized_ledger_text(payload.get("next_action")),
+        "reason": _normalized_ledger_text(payload.get("reason")),
+        "created_at": _normalized_ledger_created_at(created_at),
+        "details": _normalized_ledger_details(details),
+    }
+
+
+def append_automation_ledger_event(path: str, event: dict[str, Any]) -> None:
+    target = Path(str(path or "")).expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    row = json.dumps(event if isinstance(event, dict) else {}, sort_keys=True)
+    with target.open("a", encoding="utf-8") as handle:
+        handle.write(f"{row}\n")
+
+
+def read_automation_ledger_events(path: str) -> list[dict[str, Any]]:
+    target = Path(str(path or "")).expanduser()
+    if not target.is_file():
+        return []
+    try:
+        with target.open("r", encoding="utf-8") as handle:
+            return _read_automation_ledger_event_lines(handle)
+    except OSError:
+        return []
+
+
+def _read_automation_ledger_event_lines(handle: Any) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for line in handle:
+        parsed = _json_dict_or_empty(line)
+        if parsed:
+            events.append(parsed)
+    return events
+
+
+__all__ = (
+    "automation_ledger_path",
+    "build_automation_ledger_event",
+    "append_automation_ledger_event",
+    "read_automation_ledger_events",
+)
+
+
+def _utc_timestamp() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
 def _line_value(text: str, key: str) -> str:
     match = re.search(rf"(?im)^\s*{re.escape(key)}\s*[:=]\s*(.+)$", text or "")
     return match.group(1).strip() if match else ""

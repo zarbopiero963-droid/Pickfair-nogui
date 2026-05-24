@@ -1436,6 +1436,92 @@ def test_missing_post_fix_micro_audit_result_fails_closed():
     ASSERTIONS.assertTrue(controller.post_fix_micro_audit_failed(report))
 
 
+def test_automation_ledger_append_creates_jsonl_and_reads_in_order(tmp_path):
+    """Ledger appends events as JSONL and preserves insertion order."""
+    path = controller.automation_ledger_path(str(tmp_path), 225)
+    first = controller.build_automation_ledger_event(event_type="post_fix_audit_failure", reason="alpha")
+    second = controller.build_automation_ledger_event(event_type="post_fix_audit_failure", reason="beta", attempt=2)
+    controller.append_automation_ledger_event(path, first)
+    controller.append_automation_ledger_event(path, second)
+    ASSERTIONS.assertTrue((tmp_path / "pr-225" / "automation-ledger.jsonl").exists())
+    events = controller.read_automation_ledger_events(path)
+    ASSERTIONS.assertEqual([item["reason"] for item in events], ["alpha", "beta"])
+    ASSERTIONS.assertEqual(len((tmp_path / "pr-225" / "automation-ledger.jsonl").read_text().splitlines()), 2)
+
+
+def test_build_automation_ledger_event_defaults_safe_optionals():
+    """Optional fields are normalized to safe defaults."""
+    event = controller.build_automation_ledger_event()
+    ASSERTIONS.assertEqual(event["event_type"], "")
+    ASSERTIONS.assertEqual(event["pr"], 0)
+    ASSERTIONS.assertEqual(event["attempt"], 0)
+    ASSERTIONS.assertEqual(event["details"], {})
+    ASSERTIONS.assertTrue(bool(event["created_at"]))
+
+
+def test_read_automation_ledger_events_missing_or_malformed_safe(tmp_path):
+    """Missing ledger and malformed rows should be handled safely."""
+    path = controller.automation_ledger_path(str(tmp_path), 225)
+    ASSERTIONS.assertEqual(controller.read_automation_ledger_events(path), [])
+    (tmp_path / "pr-225").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "pr-225" / "automation-ledger.jsonl").write_text('{"event_type":"ok"}\nnot-json\n', encoding="utf-8")
+    events = controller.read_automation_ledger_events(path)
+    ASSERTIONS.assertEqual(events, [{"event_type": "ok"}])
+
+
+def test_automation_ledger_path_accepts_string_pr_number(tmp_path):
+    """String PR numbers should normalize to numeric directories."""
+    path = controller.automation_ledger_path(str(tmp_path), "225")
+    ASSERTIONS.assertEqual(path, str(tmp_path / "pr-225" / "automation-ledger.jsonl"))
+
+
+def test_automation_ledger_path_handles_invalid_pr_number_safely(tmp_path):
+    """None, empty, and invalid PR values should fail-safe to pr-0."""
+    ASSERTIONS.assertIn("/pr-0/", controller.automation_ledger_path(str(tmp_path), ""))
+    ASSERTIONS.assertIn("/pr-0/", controller.automation_ledger_path(str(tmp_path), None))
+    ASSERTIONS.assertIn("/pr-0/", controller.automation_ledger_path(str(tmp_path), "abc"))
+    ASSERTIONS.assertIn("/pr-0/", controller.automation_ledger_path(str(tmp_path), -5))
+
+
+def test_automation_ledger_path_handles_empty_base_dir_safely():
+    """Empty base_dir should not crash and should still return a ledger file path."""
+    path = controller.automation_ledger_path("", 225)
+    ASSERTIONS.assertTrue(path.endswith("pr-225/automation-ledger.jsonl"))
+
+
+def test_build_automation_ledger_event_normalizes_non_dict_details():
+    """Non-dict details should normalize to an empty dict."""
+    event = controller.build_automation_ledger_event(details=cast(Any, "bad"))
+    ASSERTIONS.assertEqual(event["details"], {})
+
+
+def test_build_automation_ledger_event_normalizes_numeric_strings():
+    """Numeric string pr/attempt values should normalize to ints."""
+    event = controller.build_automation_ledger_event(pr="225", attempt="2")
+    ASSERTIONS.assertEqual(event["pr"], 225)
+    ASSERTIONS.assertEqual(event["attempt"], 2)
+
+
+def test_build_automation_ledger_event_non_numeric_values_fail_safe():
+    """Non-numeric and negative pr/attempt should normalize to 0."""
+    event = controller.build_automation_ledger_event(pr="abc", attempt=-1)
+    ASSERTIONS.assertEqual(event["pr"], 0)
+    ASSERTIONS.assertEqual(event["attempt"], 0)
+
+
+def test_build_automation_ledger_event_preserves_explicit_created_at():
+    """Explicit created_at should be preserved."""
+    event = controller.build_automation_ledger_event(created_at="2026-01-02T03:04:05Z")
+    ASSERTIONS.assertEqual(event["created_at"], "2026-01-02T03:04:05Z")
+
+
+def test_read_automation_ledger_events_directory_path_returns_empty(tmp_path):
+    """Directory paths should return an empty event list."""
+    folder = tmp_path / "ledger-dir"
+    folder.mkdir()
+    ASSERTIONS.assertEqual(controller.read_automation_ledger_events(str(folder)), [])
+
+
 def test_parse_post_fix_micro_audit_result_unknown_status_fails_closed():
     """Unknown text status should fail closed."""
     report = controller.parse_post_fix_micro_audit_result("status: UNKNOWN")
