@@ -1561,17 +1561,25 @@ def _post_fix_retry_block_flags(state: dict[str, Any]) -> dict[str, bool]:
     return {"malformed_status": malformed, "normalized_downgrade_from_pass": downgraded_pass}
 
 
-def _post_fix_retryability(state: dict[str, Any], flags: dict[str, bool]) -> bool:
-    if flags["malformed_status"] or flags["normalized_downgrade_from_pass"]:
-        return False
-    if not _post_fix_retryable_from_raw_status(state["raw_status"]):
-        return False
+def _post_fix_retryability_blocked(flags: dict[str, bool], raw_status: str) -> bool:
+    return (
+        flags["malformed_status"]
+        or flags["normalized_downgrade_from_pass"]
+        or not _post_fix_retryable_from_raw_status(raw_status)
+    )
+
+
+def _post_fix_retryability_allowed(state: dict[str, Any]) -> bool:
     return (
         state["status"] in {"FAIL", "PARTIAL"}
         and bool(state["failure_reason_normalized"])
         and not state["repeated_failure"]
         and not state["retry_budget_exhausted"]
     )
+
+
+def _post_fix_retryability(state: dict[str, Any], flags: dict[str, bool]) -> bool:
+    return not _post_fix_retryability_blocked(flags, state["raw_status"]) and _post_fix_retryability_allowed(state)
 
 
 def _append_post_fix_retry_ledger_event(
