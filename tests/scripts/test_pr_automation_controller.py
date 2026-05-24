@@ -2671,6 +2671,98 @@ def test_codacy_annotation_fallback_rule_conflict_from_github_annotation_text():
     ASSERTIONS.assertFalse(result["safe_to_patch"])
 
 
+def test_codacy_rule_conflict_aggregates_markers_from_separate_api_issues():
+    result = controller.classify_codacy_github_annotation_fallback(
+        pr_head_sha="head1",
+        codacy_api_issues=[
+            {"patternId": "D203", "message": "blank line rule"},
+            {"patternId": "D211", "message": "no blank line rule"},
+        ],
+        codacy_check_run={"status": "completed", "conclusion": "action_required", "head_sha": "head1"},
+    )
+    ASSERTIONS.assertEqual(result["classification"], "codacy_rule_conflict")
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_codacy_rule_conflict")
+
+
+def test_codacy_rule_conflict_detected_with_extra_markers_present():
+    result = controller.classify_codacy_github_annotation_fallback(
+        pr_head_sha="head1",
+        codacy_api_issues=[{"message": "D203 D211 W291", "patternId": "W291"}],
+        codacy_check_run={"status": "completed", "conclusion": "action_required", "head_sha": "head1"},
+    )
+    ASSERTIONS.assertEqual(result["classification"], "codacy_rule_conflict")
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_codacy_rule_conflict")
+
+
+def test_codacy_rule_conflict_aggregates_api_and_annotation_markers():
+    result = controller.classify_codacy_github_annotation_fallback(
+        pr_head_sha="head1",
+        codacy_api_issues=[{"patternId": "D203", "message": "rule from API"}],
+        codacy_check_run={"status": "completed", "conclusion": "action_required", "head_sha": "head1"},
+        github_annotations=[{"check_name": "ruff", "title": "doc", "message": "requires D211"}],
+    )
+    ASSERTIONS.assertEqual(result["classification"], "codacy_rule_conflict")
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_codacy_rule_conflict")
+
+
+def test_codacy_dict_form_github_annotation_counts_as_one():
+    summary = controller.summarize_codacy_github_annotation_state(
+        pr_head_sha="head1",
+        codacy_api_issues=[],
+        codacy_check_run={"status": "completed", "conclusion": "action_required", "head_sha": "head1"},
+        github_annotations={"path": "x.py", "message": "issue"},
+    )
+    ASSERTIONS.assertEqual(summary["github_annotations_count"], 1)
+    ASSERTIONS.assertEqual(summary["category"], "codacy_api_github_mismatch")
+
+
+def test_codacy_check_run_annotations_count_fallback_without_annotation_payload():
+    summary = controller.summarize_codacy_github_annotation_state(
+        pr_head_sha="head1",
+        codacy_api_issues=[],
+        codacy_check_run={
+            "status": "completed",
+            "conclusion": "action_required",
+            "head_sha": "head1",
+            "annotations_count": 3,
+        },
+    )
+    ASSERTIONS.assertEqual(summary["github_annotations_count"], 3)
+    ASSERTIONS.assertEqual(summary["category"], "codacy_api_github_mismatch")
+
+
+def test_codacy_annotation_items_preferred_over_numeric_count_for_conflict_parsing():
+    result = controller.classify_codacy_github_annotation_fallback(
+        pr_head_sha="head1",
+        codacy_api_issues=[{"patternId": "D203", "message": "rule from API"}],
+        codacy_check_run={"status": "completed", "conclusion": "action_required", "head_sha": "head1"},
+        github_annotations=2,
+        annotations=[{"check_name": "flake8", "title": "doc style", "message": "requires D211"}],
+    )
+    ASSERTIONS.assertEqual(result["classification"], "codacy_rule_conflict")
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_codacy_rule_conflict")
+
+
+def test_codacy_api_zero_with_dict_form_annotation_is_mismatch():
+    summary = controller.summarize_codacy_github_annotation_state(
+        pr_head_sha="head1",
+        codacy_api_issues=[],
+        codacy_check_run={"status": "completed", "conclusion": "action_required", "head_sha": "head1"},
+        annotations={"path": "x.py", "message": "issue"},
+    )
+    ASSERTIONS.assertEqual(summary["category"], "codacy_api_github_mismatch")
+    ASSERTIONS.assertEqual(summary["next_action"], "fix_github_codacy_annotations")
+    ASSERTIONS.assertEqual(summary["github_annotations_count"], 1)
+
+
+def test_codacy_malformed_payload_stays_unknown_needs_manual():
+    summary = controller.summarize_codacy_github_annotation_state(
+        {"codacy_api_issues": "bad", "issues": "bad", "github_annotations": "not-a-number"}
+    )
+    ASSERTIONS.assertEqual(summary["category"], "unknown")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
+
+
 def _codacy_head_preservation_pr() -> dict[str, object]:
     return {
         "statusCheckRollup": [_check("Codacy Static Code Analysis", "ACTION_REQUIRED")],

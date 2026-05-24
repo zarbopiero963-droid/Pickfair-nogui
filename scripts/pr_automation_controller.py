@@ -2797,9 +2797,9 @@ def detect_codacy_rule_conflict(issues: list[dict[str, Any]]) -> bool:
     for issue in issues:
         markers = _codacy_issue_rule_markers(issue)
         all_markers.update(markers)
-        if markers == {"D203", "D211"}:
+        if {"D203", "D211"}.issubset(markers):
             return True
-    if all_markers == {"D203", "D211"}:
+    if {"D203", "D211"}.issubset(all_markers):
         return True
     return _has_d203_d211_conflict(issues)
 
@@ -2835,9 +2835,7 @@ def summarize_codacy_github_annotation_state(payload: dict[str, Any] | None = No
     github_annotations_count = safe_nonnegative_int(normalized.get("github_annotations"), 0)
     issues = normalized.get("issues") if isinstance(normalized.get("issues"), list) else []
     annotation_text = _annotation_text(normalized.get("github_annotation_items"))
-    rule_conflict = detect_codacy_rule_conflict(cast(list[dict[str, Any]], issues)) or _has_d203_d211_text(
-        annotation_text
-    )
+    rule_conflict = _has_d203_d211_conflict_signals(cast(list[dict[str, Any]], issues), annotation_text)
     stale = codacy_check_run_is_stale(current_head, {"head": codacy_head})
     return _codacy_annotation_summary_result(
         {
@@ -2882,7 +2880,7 @@ def _codacy_annotation_payload(payload: dict[str, Any] | None, kwargs: dict[str,
         "check_head_sha": codacy_head,
         "codacy_api_issues": api_issue_count,
         "github_annotations": annotations,
-        "github_annotation_items": _annotation_items(first_nonempty(merged.get("github_annotations"), merged.get("annotations"))),
+        "github_annotation_items": _annotation_items(_github_annotation_items_payload(merged)),
         "issues": issues,
     }
 
@@ -2908,12 +2906,54 @@ def _annotation_text(items: Any) -> str:
 
 
 def _github_annotation_count(payload: dict[str, Any], check_run: dict[str, Any]) -> int:
-    value = first_nonempty(payload.get("github_annotations"), payload.get("annotations"))
+    value = _github_annotation_count_payload(payload)
     if value is not None:
         if isinstance(value, list):
             return len(value)
+        if isinstance(value, dict):
+            return 1
         return safe_nonnegative_int(value, 0)
     return safe_nonnegative_int(first_nonempty(check_run.get("annotations_count"), check_run.get("annotationsCount")), 0)
+
+
+def _github_annotation_count_payload(payload: dict[str, Any]) -> Any:
+    for key in ("github_annotations", "annotations"):
+        if key in payload:
+            return payload.get(key)
+    return None
+
+
+def _github_annotation_items_payload(payload: dict[str, Any]) -> Any:
+    for key in ("github_annotations", "annotations"):
+        value = payload.get(key)
+        if isinstance(value, (list, dict)):
+            return value
+    return None
+
+
+def _has_d203_d211_conflict_signals(issues: list[dict[str, Any]], annotation_text: str) -> bool:
+    if detect_codacy_rule_conflict(issues):
+        return True
+    markers = _d203_d211_markers_from_issues(issues)
+    markers.update(_d203_d211_markers_from_text(annotation_text))
+    return {"D203", "D211"}.issubset(markers)
+
+
+def _d203_d211_markers_from_issues(issues: list[dict[str, Any]]) -> set[str]:
+    markers: set[str] = set()
+    for issue in issues:
+        markers.update(_codacy_issue_rule_markers(issue))
+    return markers
+
+
+def _d203_d211_markers_from_text(text: str) -> set[str]:
+    markers: set[str] = set()
+    upper = str(text or "").upper()
+    if "D203" in upper:
+        markers.add("D203")
+    if "D211" in upper:
+        markers.add("D211")
+    return markers
 
 
 def _normalize_codacy_issue_list(value: Any) -> list[dict[str, Any]]:
