@@ -1891,28 +1891,28 @@ def test_build_automation_ledger_latest_ignores_malformed_events_safely():
 
 
 def _ledger_latest_fixture() -> dict[str, Any]:
-    return controller.build_automation_ledger_latest(
-        [
-            _ledger_event(
-                "post_fix_audit_retry_scheduled",
-                attempt=3,
-                repo="owner/repo",
-                pr=225,
-                branch="chore/pr5c",
-                head_sha="abc123",
-                task_id="claude_bug_pr5c_ledger_summary_retry_policy",
-                details={
-                    "status": "PASS",
-                    "validation": "FAIL",
-                    "retry_count": 1,
-                    "fixed_blockers": 2,
-                    "new_blockers": 1,
-                    "commit_sha": "deadbeef",
-                    "pushed": True,
-                },
-            )
-        ],
-        retry_limit=3,
+    return controller.build_automation_ledger_latest([_ledger_latest_event()], retry_limit=3)
+
+
+def _ledger_latest_event() -> dict[str, Any]:
+    details = {
+        "status": "PASS",
+        "validation": "FAIL",
+        "retry_count": 1,
+        "fixed_blockers": 2,
+        "new_blockers": 1,
+        "commit_sha": "deadbeef",
+        "pushed": True,
+    }
+    return _ledger_event(
+        "post_fix_audit_retry_scheduled",
+        attempt=3,
+        repo="owner/repo",
+        pr=225,
+        branch="chore/pr5c",
+        head_sha="abc123",
+        task_id="claude_bug_pr5c_ledger_summary_retry_policy",
+        details=details,
     )
 
 
@@ -2022,6 +2022,18 @@ def test_ledger_decision_latest_next_action_ready_is_ready():
     ASSERTIONS.assertEqual(latest["next_action"], "ready")
 
 
+def test_ledger_decision_clean_ready_after_exhausted_budget_is_ready():
+    """Latest clean ready should stay ready after prior exhausted retry budget."""
+    latest = controller.build_automation_ledger_latest(
+        [
+            _ledger_event("post_fix_audit_retry_scheduled", details={"retry_count": 2, "status": "FAIL"}),
+            _ledger_event("clean_ready", details={"status": "PASS", "validation": "PASS"}),
+        ],
+        retry_limit=2,
+    )
+    ASSERTIONS.assertEqual(latest["next_action"], "ready")
+
+
 def test_ledger_decision_older_ready_then_new_failure_is_not_ready():
     """Older ready should be invalidated by later failure."""
     latest = controller.build_automation_ledger_latest(
@@ -2117,7 +2129,7 @@ def test_write_automation_ledger_summary_files_writes_latest_and_summary(tmp_pat
 
 
 def test_build_automation_ledger_latest_does_not_expose_env_secrets(monkeypatch):
-    """latest projection must not include environment secret values."""
+    """Latest projection must not include environment secret values."""
     monkeypatch.setenv("SECRET_TOKEN", "ultra-secret-value")
     latest = controller.build_automation_ledger_latest(
         [_ledger_event("post_fix_audit_failure", reason="x", repo="owner/repo", pr=225)],

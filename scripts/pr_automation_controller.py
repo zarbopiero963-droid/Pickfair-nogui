@@ -1898,34 +1898,25 @@ def decide_automation_ledger_next_action(
 ) -> tuple[str, str]:
     retry_limit_safe = max(1, safe_nonnegative_int(retry_limit, 1))
     retry_count = safe_nonnegative_int(latest.get("retry_count"), 0)
-    budget_remains = retry_count < retry_limit_safe
     if not _ledger_latest_has_decision_data(latest):
         return "needs_manual", "insufficient ledger data"
     if bool(latest.get("repeated_failure")):
         return "needs_manual", "repeated same failure detected"
-    if retry_count >= retry_limit_safe:
-        return "needs_manual", "retry budget exhausted"
     if bool(latest.get("churn_detected")):
         return "needs_manual", "ledger churn detected"
     if latest.get("latest_event_type") == "post_fix_audit_retry_blocked":
         return "needs_manual", "latest event blocked automated retry"
     if latest.get("has_ready_event"):
         return "ready", "ledger indicates clean/ready state"
+    if retry_count >= retry_limit_safe:
+        return "needs_manual", "retry budget exhausted"
     if safe_nonnegative_int(latest.get("new_blockers"), 0) > safe_nonnegative_int(latest.get("fixed_blockers"), 0):
-        if budget_remains:
-            return "retry", "new blockers exceed fixed blockers but retry budget remains"
-        return "needs_manual", "new blockers exceed fixed blockers"
+        return "retry", "new blockers exceed fixed blockers but retry budget remains"
     if latest.get("last_post_fix_audit") == "PASS" and latest.get("last_validation") == "FAIL":
-        return ("retry", "validation failed after audit pass") if budget_remains else (
-            "needs_manual",
-            "validation failed after audit pass and no retry budget",
-        )
-    if latest.get("latest_event_type") == "post_fix_audit_retry_scheduled" and budget_remains:
+        return "retry", "validation failed after audit pass"
+    if latest.get("latest_event_type") == "post_fix_audit_retry_scheduled":
         return "retry", "latest event scheduled retry and budget remains"
-    return ("retry", "further retry is within safe budget") if budget_remains else (
-        "needs_manual",
-        "no safe automated route from ledger state",
-    )
+    return "retry", "further retry is within safe budget"
 
 
 def build_automation_ledger_latest(
