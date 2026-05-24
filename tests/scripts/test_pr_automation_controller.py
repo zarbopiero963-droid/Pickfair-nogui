@@ -2484,8 +2484,8 @@ def _codacy_rule_conflict_payload() -> dict[str, Any]:
     )
 
 
-def test_codacy_rule_conflict_symbol_less_different_lines_are_not_conflict():
-    """Symbol-less D203/D211 on different lines must not be treated as a conflict."""
+def test_codacy_rule_conflict_symbol_less_different_lines_is_conflict():
+    """D203/D211 in API issues must be treated as a rule conflict."""
     result = controller.classify_codacy_evidence(
         _codacy_state_payload(
             api_issues=2,
@@ -2495,7 +2495,7 @@ def test_codacy_rule_conflict_symbol_less_different_lines_are_not_conflict():
             ],
         )
     )
-    ASSERTIONS.assertNotEqual(result["classification"], "rule_conflict")
+    ASSERTIONS.assertEqual(result["classification"], "rule_conflict")
 
 
 def test_codacy_annotations_fallback_become_real_blockers():
@@ -2527,6 +2527,148 @@ def test_codacy_evidence_from_api_preserves_annotation_field_for_mismatch_path()
 
     ASSERTIONS.assertEqual(evidence["github_annotations"], 3)
     ASSERTIONS.assertEqual(classified["classification"], "api_github_mismatch")
+
+
+def test_codacy_annotation_fallback_api_issues_classifies_real_codacy_issue():
+    summary = controller.summarize_codacy_github_annotation_state(
+        _codacy_state_payload(api_issues=2, issues=[{"patternId": "X100", "message": "style"}])
+    )
+    ASSERTIONS.assertEqual(summary["category"], "codacy_style")
+    ASSERTIONS.assertEqual(summary["next_action"], "fix_codacy_current_issues")
+    ASSERTIONS.assertEqual(summary["api_issue_count"], 2)
+    ASSERTIONS.assertTrue(summary["safe_to_patch"])
+
+
+def test_codacy_annotation_fallback_api_zero_with_annotations_is_mismatch():
+    summary = controller.summarize_codacy_github_annotation_state(
+        pr_head_sha="head1",
+        codacy_api_issues=[],
+        codacy_check_run={"status": "completed", "conclusion": "action_required", "head_sha": "head1"},
+        github_annotations=[{"path": "x.py", "message": "issue"}],
+    )
+    ASSERTIONS.assertEqual(summary["category"], "codacy_api_github_mismatch")
+    ASSERTIONS.assertEqual(summary["next_action"], "fix_github_codacy_annotations")
+    ASSERTIONS.assertEqual(summary["github_annotations_count"], 1)
+    ASSERTIONS.assertTrue(summary["safe_to_patch"])
+
+
+def test_codacy_annotation_fallback_action_required_without_signals_is_stale():
+    summary = controller.summarize_codacy_github_annotation_state(_codacy_state_payload())
+    ASSERTIONS.assertEqual(summary["category"], "github_stale_check")
+    ASSERTIONS.assertEqual(summary["next_action"], "rerun_stale_checks")
+    ASSERTIONS.assertTrue(summary["stale"])
+    ASSERTIONS.assertFalse(summary["safe_to_patch"])
+
+
+def test_codacy_annotation_fallback_head_mismatch_is_stale():
+    summary = controller.summarize_codacy_github_annotation_state(
+        _codacy_state_payload() | {"pr_head": "head-a", "codacy_head": "head-b"}
+    )
+    ASSERTIONS.assertEqual(summary["category"], "github_stale_check")
+    ASSERTIONS.assertEqual(summary["next_action"], "rerun_stale_checks")
+    ASSERTIONS.assertEqual(summary["current_head_sha"], "head-a")
+    ASSERTIONS.assertEqual(summary["codacy_head_sha"], "head-b")
+
+
+def test_codacy_annotation_fallback_rule_conflict_routes_manual_conflict():
+    summary = controller.summarize_codacy_github_annotation_state(_codacy_rule_conflict_payload())
+    ASSERTIONS.assertEqual(summary["category"], "codacy_rule_conflict")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual_codacy_rule_conflict")
+    ASSERTIONS.assertTrue(summary["rule_conflict"])
+    ASSERTIONS.assertFalse(summary["safe_to_patch"])
+
+
+def test_codacy_annotation_fallback_pending_check_waits():
+    summary = controller.summarize_codacy_github_annotation_state(
+        _codacy_state_payload(state="IN_PROGRESS", api_issues=0, annotations=0)
+    )
+    ASSERTIONS.assertEqual(summary["category"], "workflow_pending")
+    ASSERTIONS.assertEqual(summary["next_action"], "wait_pending")
+    ASSERTIONS.assertFalse(summary["safe_to_patch"])
+
+
+def test_codacy_annotation_fallback_malformed_payload_fails_closed():
+    summary = controller.summarize_codacy_github_annotation_state({"codacy_api_issues": "bad", "issues": "bad"})
+    ASSERTIONS.assertEqual(summary["category"], "unknown")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
+    ASSERTIONS.assertEqual(summary["api_issue_count"], 0)
+    ASSERTIONS.assertEqual(summary["github_annotations_count"], 0)
+
+
+def test_codacy_annotation_fallback_classify_wrapper_contains_contract_fields():
+    result = controller.classify_codacy_github_annotation_fallback(
+        current_head_sha="head1",
+        api_issues=[],
+        check_run={"status": "completed", "conclusion": "action_required", "head_sha": "head1"},
+        annotations=2,
+    )
+    ASSERTIONS.assertEqual(result["category"], "codacy_api_github_mismatch")
+    ASSERTIONS.assertEqual(result["classification"], "codacy_api_github_mismatch")
+    ASSERTIONS.assertEqual(result["next_action"], "fix_github_codacy_annotations")
+    ASSERTIONS.assertEqual(result["current_head_sha"], "head1")
+    ASSERTIONS.assertIn("reason", result)
+    ASSERTIONS.assertIn("safe_to_patch", result)
+    ASSERTIONS.assertIn("stale", result)
+    ASSERTIONS.assertIn("rule_conflict", result)
+    ASSERTIONS.assertEqual(result["api_issue_count"], 0)
+    ASSERTIONS.assertEqual(result["github_annotations_count"], 2)
+
+
+def test_codacy_annotation_fallback_head_mismatch_with_keyword_inputs_is_stale():
+    result = controller.classify_codacy_github_annotation_fallback(
+        pr_head_sha="pr-head",
+        codacy_api_issues=[],
+        codacy_check_run={"status": "completed", "conclusion": "action_required", "head_sha": "old-head"},
+        github_annotations=[],
+    )
+    ASSERTIONS.assertEqual(result["classification"], "github_stale_check")
+    ASSERTIONS.assertEqual(result["next_action"], "rerun_stale_checks")
+    ASSERTIONS.assertTrue(result["stale"])
+    ASSERTIONS.assertFalse(result["safe_to_patch"])
+
+
+def test_codacy_annotation_fallback_rule_conflict_detects_alias_fields():
+    result = controller.classify_codacy_github_annotation_fallback(
+        pr_head_sha="head1",
+        codacy_api_issues=[
+            {"title": "violation: D203 and D211 conflict", "message": "manual rule conflict"},
+        ],
+        codacy_check_run={"status": "completed", "conclusion": "action_required", "head_sha": "head1"},
+        github_annotations=[],
+    )
+    ASSERTIONS.assertEqual(result["classification"], "codacy_rule_conflict")
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_codacy_rule_conflict")
+    ASSERTIONS.assertTrue(result["rule_conflict"])
+    ASSERTIONS.assertFalse(result["safe_to_patch"])
+
+
+def test_codacy_annotation_fallback_rule_conflict_priority_over_api_with_pattern_id():
+    result = controller.classify_codacy_github_annotation_fallback(
+        pr_head_sha="head1",
+        codacy_api_issues=[
+            {"pattern_id": "D203", "message": "one"},
+            {"pattern_id": "D211", "message": "two"},
+        ],
+        codacy_check_run={"status": "completed", "conclusion": "action_required", "head_sha": "head1"},
+        github_annotations=0,
+    )
+    ASSERTIONS.assertEqual(result["classification"], "codacy_rule_conflict")
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_codacy_rule_conflict")
+    ASSERTIONS.assertTrue(result["rule_conflict"])
+    ASSERTIONS.assertFalse(result["safe_to_patch"])
+
+
+def test_codacy_annotation_fallback_rule_conflict_from_github_annotation_text():
+    result = controller.classify_codacy_github_annotation_fallback(
+        pr_head_sha="head1",
+        codacy_api_issues=[{"patternId": "W001", "message": "generic codacy issue"}],
+        codacy_check_run={"status": "completed", "conclusion": "action_required", "head_sha": "head1"},
+        github_annotations=[{"check_name": "flake8 D203", "title": "doc spacing", "message": "requires D211"}],
+    )
+    ASSERTIONS.assertEqual(result["classification"], "codacy_rule_conflict")
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_codacy_rule_conflict")
+    ASSERTIONS.assertTrue(result["rule_conflict"])
+    ASSERTIONS.assertFalse(result["safe_to_patch"])
 
 
 def _codacy_head_preservation_pr() -> dict[str, object]:
