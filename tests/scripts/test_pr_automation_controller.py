@@ -240,6 +240,12 @@ def _assert_contract_accepts_safe_commit_push_wording(method_line: str) -> None:
     ASSERTIONS.assertTrue(result["valid"])
 
 
+def _assert_retry_task_blocks_commit_push(retry_task: str) -> None:
+    ASSERTIONS.assertIn("Do not run git add/commit/push.", retry_task)
+    ASSERTIONS.assertIn("Do not run git commit.", retry_task)
+    ASSERTIONS.assertIn("Do not run git push.", retry_task)
+
+
 def _extended_prompt_context() -> dict[str, Any]:
     context = _default_prompt_context()
     context.update(
@@ -1622,9 +1628,7 @@ def test_decide_post_fix_audit_retry_fail_builds_narrow_retry_task_and_blocks_co
     ASSERTIONS.assertIn("- scripts/pr_automation_controller.py", decision["retry_task"])
     ASSERTIONS.assertIn("- tests/scripts/test_pr_automation_controller.py", decision["retry_task"])
     ASSERTIONS.assertIn("- scripts/pr_flow_automation.py", decision["retry_task"])
-    ASSERTIONS.assertIn("Do not run git add/commit/push.", decision["retry_task"])
-    ASSERTIONS.assertIn("Do not run git commit.", decision["retry_task"])
-    ASSERTIONS.assertIn("Do not run git push.", decision["retry_task"])
+    _assert_retry_task_blocks_commit_push(decision["retry_task"])
 
 
 def test_decide_post_fix_audit_retry_partial_builds_retry_task_and_blocks_commit_push():
