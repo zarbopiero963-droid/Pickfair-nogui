@@ -2731,6 +2731,33 @@ def test_codacy_check_run_annotations_count_fallback_without_annotation_payload(
     ASSERTIONS.assertEqual(summary["category"], "codacy_api_github_mismatch")
 
 
+def test_codacy_check_run_annotations_count_camel_case_fallback_without_annotation_payload():
+    summary = controller.summarize_codacy_github_annotation_state(
+        pr_head_sha="head1",
+        codacy_api_issues=[],
+        codacy_check_run={
+            "status": "completed",
+            "conclusion": "action_required",
+            "head_sha": "head1",
+            "annotationsCount": 2,
+        },
+    )
+    ASSERTIONS.assertEqual(summary["github_annotations_count"], 2)
+    ASSERTIONS.assertEqual(summary["category"], "codacy_api_github_mismatch")
+
+
+def test_codacy_api_zero_with_scalar_zero_and_annotations_list_routes_to_mismatch():
+    summary = controller.summarize_codacy_github_annotation_state(
+        pr_head_sha="head1",
+        codacy_api_issues=[],
+        codacy_check_run={"status": "completed", "conclusion": "action_required", "head_sha": "head1"},
+        github_annotations=0,
+        annotations=[{"path": "x.py", "message": "issue"}],
+    )
+    ASSERTIONS.assertEqual(summary["github_annotations_count"], 1)
+    ASSERTIONS.assertEqual(summary["category"], "codacy_api_github_mismatch")
+
+
 def test_codacy_annotation_items_preferred_over_numeric_count_for_conflict_parsing():
     result = controller.classify_codacy_github_annotation_fallback(
         pr_head_sha="head1",
@@ -2741,6 +2768,21 @@ def test_codacy_annotation_items_preferred_over_numeric_count_for_conflict_parsi
     )
     ASSERTIONS.assertEqual(result["classification"], "codacy_rule_conflict")
     ASSERTIONS.assertEqual(result["next_action"], "needs_manual_codacy_rule_conflict")
+
+
+def test_codacy_annotation_payload_preserves_detailed_annotation_items():
+    payload = controller._codacy_annotation_payload(
+        None,
+        {
+            "pr_head_sha": "head1",
+            "codacy_api_issues": [],
+            "codacy_check_run": {"status": "completed", "conclusion": "action_required", "head_sha": "head1"},
+            "github_annotations": 0,
+            "annotations": [{"path": "x.py", "message": "D203 and D211"}],
+        },
+    )
+    ASSERTIONS.assertEqual(payload["github_annotations"], 1)
+    ASSERTIONS.assertEqual(payload["github_annotation_items"], [{"path": "x.py", "message": "D203 and D211"}])
 
 
 def test_codacy_api_zero_with_dict_form_annotation_is_mismatch():

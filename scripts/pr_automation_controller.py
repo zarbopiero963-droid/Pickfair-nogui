@@ -2917,9 +2917,13 @@ def _github_annotation_count(payload: dict[str, Any], check_run: dict[str, Any])
 
 
 def _github_annotation_count_payload(payload: dict[str, Any]) -> Any:
-    for key in ("github_annotations", "annotations"):
-        if key in payload:
-            return payload.get(key)
+    github_value = payload.get("github_annotations") if "github_annotations" in payload else None
+    annotations_value = payload.get("annotations") if "annotations" in payload else None
+    if isinstance(annotations_value, (list, dict)) and safe_nonnegative_int(github_value, -1) == 0:
+        return annotations_value
+    for value in (github_value, annotations_value):
+        if value is not None:
+            return value
     return None
 
 
@@ -3167,6 +3171,7 @@ def classify_codacy_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
 
 
 def _codacy_classification_details(evidence: dict[str, Any], summary: dict[str, Any]) -> dict[str, Any]:
+    # Keep `evidence` for stable call signatures used by external callers/tests.
     _ = evidence
     category = str(summary.get("category") or "unknown")
     classification = _legacy_codacy_classification(category)
