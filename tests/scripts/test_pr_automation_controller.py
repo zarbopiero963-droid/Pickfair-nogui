@@ -2556,6 +2556,15 @@ def test_duplicate_run_ids_are_deduped():
     ASSERTIONS.assertEqual(plan["rerun_run_ids"], ["201"])
 
 
+def test_blacklisted_cancelled_current_head_check_is_not_rerun_planned():
+    plan = controller.build_workflow_rerun_plan(
+        "head-new",
+        [_gh_run("Refresh stale self checks", "CANCELLED", "head-new", run_id=202)],
+    )
+    ASSERTIONS.assertEqual(plan["rerun_run_ids"], [])
+    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+
+
 def test_missing_head_fails_closed_unknown_not_current():
     details = controller.classify_github_check_run_staleness("head-new", _gh_run("Unit tests", "FAILURE", "", run_id=9))
     ASSERTIONS.assertEqual(details["category"], "unknown_head")
@@ -2585,6 +2594,17 @@ def test_summarize_missing_head_check_returns_unknown_head_needs_manual():
         "head-new",
         [_gh_run("Unit tests", "SUCCESS", "", run_id=401)],
     )
+    ASSERTIONS.assertEqual(summary["category"], "unknown_head")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
+    ASSERTIONS.assertTrue(summary["needs_manual"])
+
+
+def test_summarize_missing_head_variants_return_unknown_head_needs_manual():
+    runs = [
+        {"name": "Unit tests", "status": "SUCCESS", "conclusion": "SUCCESS", "id": 421, "headSha": ""},
+        {"name": "Integration", "status": "SUCCESS", "conclusion": "SUCCESS", "id": 422, "headRefOid": ""},
+    ]
+    summary = controller.summarize_current_head_check_state("head-new", runs)
     ASSERTIONS.assertEqual(summary["category"], "unknown_head")
     ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
     ASSERTIONS.assertTrue(summary["needs_manual"])
@@ -2641,6 +2661,7 @@ def test_current_head_cancelled_merge_readiness_rerunnable_even_if_newer_stale_d
     summary = controller.summarize_current_head_check_state("head-new", runs)
     ASSERTIONS.assertEqual(summary["category"], "workflow_cancelled")
     ASSERTIONS.assertEqual(summary["next_action"], "rerun_stale_checks")
+    ASSERTIONS.assertEqual(summary["reason"], "rerunnable cancelled current head checks")
     ASSERTIONS.assertEqual(summary["rerun_run_ids"], ["409"])
 
 
@@ -2655,7 +2676,7 @@ def test_stale_only_without_unknown_remains_stale_only_no_action():
 
 def test_do_not_launch_autofix_for_is_blacklist_not_allowlist():
     checks = [
-        _gh_run("PR flow guardrails", "FAILURE", "head-new", run_id=412),
+        _gh_run("Refresh stale self checks", "FAILURE", "head-new", run_id=412),
         _gh_run("Unit tests", "FAILURE", "head-new", run_id=413),
     ]
     should_launch, launchable = controller.should_launch_autofix(checks)

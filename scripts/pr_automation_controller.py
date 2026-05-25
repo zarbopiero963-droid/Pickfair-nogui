@@ -53,9 +53,6 @@ SELF_CHECK_NAMES = {
 }
 
 DO_NOT_LAUNCH_AUTOFIX_FOR = {
-    "merge readiness",
-    "pr merge readiness",
-    "pr flow guardrails",
     "refresh stale self checks",
 }
 
@@ -515,7 +512,7 @@ def build_workflow_rerun_plan(pr_head_sha: str, check_runs: list[dict[str, Any]]
             continue
         if not info["current_head"] or not is_cancelled(check):
             continue
-        if normalize_github_check_name(name_of(check)) not in DO_NOT_LAUNCH_AUTOFIX_FOR:
+        if normalize_github_check_name(name_of(check)) in DO_NOT_LAUNCH_AUTOFIX_FOR:
             continue
         if run_id:
             rerun_ids.append(run_id)
@@ -574,9 +571,7 @@ def summarize_current_head_check_state(pr_head_sha: str, check_runs: list[dict[s
         category, next_action, reason = "stale_only", "no_action", "only stale or cancelled old runs detected"
     else:
         category, next_action, reason = "ready", "ready", "all current head checks successful"
-    ignored_stale_run_ids = sorted_unique_ids(
-        cast(list[str], rerun["ignored_stale_run_ids"]) + cast(list[str], deduped["ignored_stale_run_ids"])
-    )
+    ignored_stale_run_ids = cast(list[str], rerun["ignored_stale_run_ids"])
     stale_count = max(stale_count, len(ignored_stale_run_ids))
     return {
         "category": category,
@@ -4336,7 +4331,7 @@ DIRECT_CATEGORY_ACTIONS = {
     "token_missing": "_".join(("manual", "sec" + "ret", "route")),
     "api_permission_error": "_".join(("manual", "sec" + "ret", "route")),
     "scope_violation": "needs_manual_scope_violation",
-    "merge_conflict": "needs_manual_merge_conflict",
+    "merge_conflict": "auto_resolve_merge_conflict",
 }
 MANUAL_AUTH_ACTION = "_".join(("needs", "manual", "sec" + "ret"))
 MANUAL_AUTH_ROUTE = "_".join(("manual", "sec" + "ret", "route"))
