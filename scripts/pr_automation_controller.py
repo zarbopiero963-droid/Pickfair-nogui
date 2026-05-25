@@ -150,6 +150,7 @@ PHASE0_REQUIRED_EVIDENCE_FIELDS = (
 PHASE0_EDIT_TRIGGERS = frozenset(
     {"task", "review_comment", "codacy", "deepsource", "github_check", "failing_check"}
 )
+PHASE0_PASS_ACTIONS = frozenset({"generate_patch_prompt", "proceed_with_narrow_patch"})
 PLACEHOLDER_VALUES = frozenset({"", "tbd", "todo", "none", "null", "n/a"})
 ALLOW_COMMIT_PUSH_PATTERN = re.compile(r"(?im)^\s*allow_commit_push\s*:\s*yes\s*$")
 COMMIT_PUSH_NEGATION_PATTERNS = (
@@ -522,10 +523,7 @@ def decide_phase0_gate(parsed_result: dict[str, Any] | None) -> dict[str, Any]:
     status = normalize_phase0_status(report.get("status"))
     next_action = str(report.get("next_action") or "needs_manual_phase0_malformed")
     has_evidence = _phase0_has_required_evidence(report)
-    allowed_action = _phase0_action(next_action) in {
-        "generate_patch_prompt",
-        "proceed_with_narrow_patch",
-    }
+    allowed_action = _phase0_action(next_action) in PHASE0_PASS_ACTIONS
     can_patch = status == "PASS" and allowed_action and has_evidence
 
     if not can_patch and status == "PASS":
@@ -602,7 +600,7 @@ def phase0_preflight_failed(report: dict[str, Any] | None) -> bool:
     if not isinstance(report, dict):
         return True
     normalized = _normalize_phase0_report(report)
-    return normalized.get("status") != "PASS" or normalized.get("next_action") != "generate_patch_prompt"
+    return normalized.get("status") != "PASS" or normalized.get("next_action") not in PHASE0_PASS_ACTIONS
 
 
 def command_family(command: str) -> str:
@@ -3027,7 +3025,7 @@ def _normalize_phase0_report(report: dict[str, Any]) -> dict[str, Any]:
         "next_action": next_action,
     }
     _populate_phase0_lists(normalized, report)
-    if status == "PASS" and next_action == "generate_patch_prompt" and _phase0_has_required_evidence(normalized):
+    if status == "PASS" and next_action in PHASE0_PASS_ACTIONS and _phase0_has_required_evidence(normalized):
         return normalized
     normalized["status"] = "NEEDS_MANUAL"
     normalized["next_action"] = "needs_manual_phase0_failed"
