@@ -903,6 +903,7 @@ def test_parse_phase0_preflight_result_text_phase0_preflight_equals_pass():
                 "workflows_affected: - .github/workflows/pr-automation-controller-v2.yml",
                 "authoritative_modules: - scripts/pr_automation_controller.py",
                 "dangerous_gates: - decide_phase0_gate",
+                "implementation_plan: - keep patch scoped to Phase 0 parser",
                 "files_allowed: - scripts/pr_automation_controller.py",
                 "files_forbidden: - scripts/pr_flow_automation.py",
                 "tests_to_run: - python3 -m pytest tests/scripts/test_pr_automation_controller.py -q",
@@ -927,6 +928,7 @@ def test_parse_phase0_preflight_result_text_phase0_preflight_colon_pass():
                 "workflows_affected: - .github/workflows/pr-automation-controller-v2.yml",
                 "authoritative_modules: - scripts/pr_automation_controller.py",
                 "dangerous_gates: - decide_phase0_gate",
+                "implementation_plan: - keep patch scoped to Phase 0 parser",
                 "files_allowed: - scripts/pr_automation_controller.py",
                 "files_forbidden: - scripts/pr_flow_automation.py",
                 "tests_to_run: - python3 -m pytest tests/scripts/test_pr_automation_controller.py -q",
@@ -4628,3 +4630,47 @@ def test_set_no_launch_next_action_missing_audit_path_keeps_green_fallback():
     controller.set_no_launch_next_action(decision, [])
 
     ASSERTIONS.assertEqual(decision["next_action"], "checks_green_or_no_action")
+
+
+def test_parse_phase0_preflight_result_json_pass_missing_plan_fails_closed():
+    """JSON PASS without implementation_plan must fail closed."""
+    payload = _phase0_pass_payload()
+    payload.pop("implementation_plan")
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+
+
+def test_parse_phase0_preflight_result_text_pass_missing_plan_fails_closed():
+    """Text PASS without implementation_plan must fail closed."""
+    report = controller.parse_phase0_preflight_result(
+        "\n".join(
+            [
+                "PHASE_0_PREFLIGHT=PASS",
+                "risk_level: low",
+                "next_action: proceed_with_narrow_patch",
+                "files_inspected: scripts/pr_automation_controller.py",
+                "static_analysis_rules: ruff",
+                "workflows_affected: pr-automation-controller-v2",
+                "authoritative_modules: scripts/pr_automation_controller.py",
+                "dangerous_gates: phase0 gate",
+                "tests_to_run: pytest",
+                "stop_conditions: scope violation",
+            ]
+        )
+    )
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+
+
+def test_build_codex_patch_task_after_phase0_blocks_pass_without_plan():
+    """Patch task generation must stay blocked when PASS lacks implementation_plan."""
+    result = controller.build_codex_patch_task_after_phase0(
+        "implement narrow fix",
+        {"status": "PASS", "next_action": "generate_patch_prompt"},
+    )
+    ASSERTIONS.assertFalse(result["can_patch"])
+    ASSERTIONS.assertTrue(result["blocked"])
+    ASSERTIONS.assertEqual(result["task"], "")
+    ASSERTIONS.assertEqual(result["patch_task"], "")
+

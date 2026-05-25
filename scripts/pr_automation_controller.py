@@ -143,6 +143,7 @@ PHASE0_REQUIRED_EVIDENCE_FIELDS = (
     "workflows_affected",
     "authoritative_modules",
     "dangerous_gates",
+    "implementation_plan",
     "tests_to_run",
     "stop_conditions",
 )
