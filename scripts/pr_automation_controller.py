@@ -2859,16 +2859,7 @@ def _codacy_annotation_payload(payload: dict[str, Any] | None, kwargs: dict[str,
         merged.get("github_codacy_state"), merged.get("state"), check_run.get("conclusion"), check_run.get("status")
     )
     head = first_nonempty(merged.get("pr_head_sha"), merged.get("current_head_sha"), merged.get("pr_head"), merged.get("headRefOid"))
-    codacy_head = first_nonempty(
-        merged.get("codacy_head_sha"),
-        merged.get("codacy_head"),
-        merged.get("check_head_sha"),
-        merged.get("headRefOid"),
-        check_run.get("head_sha"),
-        check_run.get("headSha"),
-        check_run.get("headRefOid"),
-        check_run.get("head"),
-    )
+    codacy_head = _resolve_codacy_head_sha(merged, check_run)
     annotations = _github_annotation_count(merged, check_run)
     issues = _normalize_codacy_issue_list(first_nonempty(merged.get("issues"), merged.get("codacy_api_issues"), merged.get("api_issues")))
     api_issue_count = _codacy_api_issue_count(merged, issues)
@@ -2884,6 +2875,19 @@ def _codacy_annotation_payload(payload: dict[str, Any] | None, kwargs: dict[str,
         "github_annotation_items": _annotation_items(_github_annotation_items_payload(merged)),
         "issues": issues,
     }
+
+
+def _resolve_codacy_head_sha(payload: dict[str, Any], check_run: dict[str, Any]) -> Any:
+    return first_nonempty(
+        payload.get("codacy_head_sha"),
+        payload.get("codacy_head"),
+        payload.get("check_head_sha"),
+        check_run.get("head_sha"),
+        check_run.get("headSha"),
+        check_run.get("headRefOid"),
+        check_run.get("head"),
+        payload.get("headRefOid"),
+    )
 
 
 def _annotation_items(value: Any) -> list[Any]:
