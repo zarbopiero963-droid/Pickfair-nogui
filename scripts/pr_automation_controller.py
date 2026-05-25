@@ -428,6 +428,14 @@ def run_id_from_check(check: dict[str, Any]) -> str:
     return extract_run_id(url_of(check))
 
 
+def stale_evidence_id_from_check(check: dict[str, Any]) -> str:
+    run_id = run_id_from_check(check)
+    if run_id:
+        return run_id
+    value = first_nonempty(check.get("id"), check.get("databaseId"))
+    return str(value).strip() if value is not None else ""
+
+
 def sorted_unique_ids(ids: list[str]) -> list[str]:
     return sorted({str(run_id or "").strip() for run_id in ids if str(run_id or "").strip()})
 
@@ -455,20 +463,21 @@ def _check_source_identity_candidates(check: dict[str, Any]) -> list[object]:
     parsed = urllib.parse.urlparse(url) if url else None
     host = normalize_github_check_source(parsed.netloc if parsed else "")
     path = _stable_check_source_path(parsed.path if parsed else "")
+    url_identity = f"{host}{path}" if host and path else ""
     return [
         check.get("workflowName"),
         check.get("workflow_name"),
         check.get("workflow"),
         check.get("workflow_id"),
         suite.get("workflow_name"),
-        app.get("name"),
-        app.get("slug"),
-        check.get("app_name"),
-        check.get("app"),
         check.get("source"),
-        f"{host}{path}" if host and path else "",
+        url_identity,
         host,
         path,
+        check.get("app_name"),
+        app.get("name"),
+        app.get("slug"),
+        "",
     ]
 
 
@@ -520,7 +529,7 @@ def classify_github_check_run_staleness(pr_head_sha: str, check: dict[str, Any])
         "check_head_sha": check_head,
         "current_head": current_head,
         "stale": stale_head,
-        "safe_to_rerun": current_head and is_cancelled(check),
+        "safe_to_rerun": current_head and (is_cancelled(check) or is_stale(check)),
     }
 
 
@@ -536,7 +545,7 @@ def dedupe_github_check_runs(pr_head_sha: str, check_runs: list[dict[str, Any]])
         kept = ranked[0]
         selected.append(kept)
         for old in ranked[1:]:
-            run_id = run_id_from_check(old)
+            run_id = stale_evidence_id_from_check(old)
             info = classify_github_check_run_staleness(pr_head_sha, old)
             if info["stale"] or info["category"] == "unknown_head":
                 ignored_stale.append(run_id)
@@ -578,7 +587,7 @@ def build_workflow_rerun_plan(pr_head_sha: str, check_runs: list[dict[str, Any]]
             if run_id:
                 ignored_stale.append(run_id)
             continue
-        if not info["current_head"] or not is_cancelled(check):
+        if not info["current_head"] or not (is_cancelled(check) or is_stale(check)):
             continue
         if run_id:
             rerun_ids.append(run_id)
@@ -614,6 +623,7 @@ def summarize_current_head_check_state(pr_head_sha: str, check_runs: list[dict[s
     unknown_count = 0
     current_count = 0
     cancelled_without_rerun_count = 0
+    stale_without_rerun_count = 0
     for check in cast(list[dict[str, Any]], deduped["selected_runs"]):
         info = classify_github_check_run_staleness(pr_head_sha, check)
         if info["stale"]:
@@ -628,6 +638,8 @@ def summarize_current_head_check_state(pr_head_sha: str, check_runs: list[dict[s
             blocker_count += 1
         if info["current_head"] and is_cancelled(check) and not run_id_from_check(check):
             cancelled_without_rerun_count += 1
+        if info["current_head"] and is_stale(check) and not run_id_from_check(check):
+            stale_without_rerun_count += 1
     if unknown_count > 0:
         category, next_action, reason = "unknown_head", "needs_manual", "missing check head sha"
     elif not cast(list[dict[str, Any]], deduped["selected_runs"]):
@@ -641,6 +653,12 @@ def summarize_current_head_check_state(pr_head_sha: str, check_runs: list[dict[s
             "current_head_cancelled_unrerunnable",
             "needs_manual",
             "cancelled current head checks are not rerunnable",
+        )
+    elif stale_without_rerun_count > 0:
+        category, next_action, reason = (
+            "current_head_stale_unrerunnable",
+            "needs_manual",
+            "stale current head checks are not rerunnable",
         )
     elif blocker_count > 0:
         category, next_action, reason = "workflow_failure", "fix_current_head_checks", "current head failures present"

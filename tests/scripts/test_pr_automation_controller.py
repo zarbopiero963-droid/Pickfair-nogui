@@ -2483,6 +2483,50 @@ def test_stale_count_includes_ignored_stale_duplicate_runs():
     ASSERTIONS.assertGreaterEqual(summary["stale_count"], 1)
 
 
+def test_stale_head_stale_duplicate_with_current_success_preserves_ignored_evidence_id():
+    runs = [
+        _with_source(
+            _gh_run("Unit tests", "SUCCESS", "head-new", run_id=2, started="2026-05-25T00:01:00Z"),
+            workflowName="unit-tests-ci",
+        ),
+        {
+            "name": "Unit tests",
+            "status": "STALE",
+            "conclusion": "STALE",
+            "head_sha": "head-old",
+            "id": 1,
+            "started_at": "2026-05-25T00:00:00Z",
+            "workflowName": "unit-tests-ci",
+        },
+    ]
+    summary = controller.summarize_current_head_check_state("head-new", runs)
+    ASSERTIONS.assertEqual(summary["current_blocker_count"], 0)
+    ASSERTIONS.assertIn("1", summary["ignored_stale_run_ids"])
+    ASSERTIONS.assertGreaterEqual(summary["stale_count"], 1)
+
+
+def test_stale_head_failure_duplicate_with_current_success_preserves_ignored_evidence_id():
+    runs = [
+        _with_source(
+            _gh_run("Unit tests", "SUCCESS", "head-new", run_id=22, started="2026-05-25T00:01:00Z"),
+            workflowName="unit-tests-ci",
+        ),
+        {
+            "name": "Unit tests",
+            "status": "FAILURE",
+            "conclusion": "FAILURE",
+            "head_sha": "head-old",
+            "id": 21,
+            "started_at": "2026-05-25T00:00:00Z",
+            "workflowName": "unit-tests-ci",
+        },
+    ]
+    summary = controller.summarize_current_head_check_state("head-new", runs)
+    ASSERTIONS.assertEqual(summary["current_blocker_count"], 0)
+    ASSERTIONS.assertIn("21", summary["ignored_stale_run_ids"])
+    ASSERTIONS.assertGreaterEqual(summary["stale_count"], 1)
+
+
 def test_current_head_failed_check_is_blocker():
     summary = controller.summarize_current_head_check_state(
         "head-new",
@@ -2548,6 +2592,28 @@ def test_current_head_cancelled_merge_readiness_plans_rerun():
     ASSERTIONS.assertTrue(plan["safe_to_rerun"])
 
 
+def test_current_head_stale_with_actions_url_plans_rerun():
+    plan = controller.build_workflow_rerun_plan(
+        "head-new",
+        [_gh_run("PR Merge Readiness", "STALE", "head-new", run_id=1202)],
+    )
+    ASSERTIONS.assertEqual(plan["rerun_run_ids"], ["1202"])
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+
+
+def test_current_head_stale_without_actions_url_is_needs_manual():
+    run = _gh_run("PR Merge Readiness", "STALE", "head-new", run_id=0)
+    run["id"] = "1203"
+    plan = controller.build_workflow_rerun_plan("head-new", [run])
+    ASSERTIONS.assertEqual(plan["rerun_run_ids"], [])
+    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+    summary = controller.summarize_current_head_check_state("head-new", [run])
+    ASSERTIONS.assertEqual(summary["category"], "current_head_stale_unrerunnable")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
+    ASSERTIONS.assertTrue(summary["needs_manual"])
+    ASSERTIONS.assertFalse(summary["safe_to_rerun"])
+
+
 def test_stale_cancelled_run_is_ignored():
     plan = controller.build_workflow_rerun_plan(
         "head-new",
@@ -2555,6 +2621,27 @@ def test_stale_cancelled_run_is_ignored():
     )
     ASSERTIONS.assertEqual(plan["rerun_run_ids"], [])
     ASSERTIONS.assertIn("103", plan["ignored_stale_run_ids"])
+
+
+def test_build_workflow_rerun_plan_preserves_ignored_stale_ids_from_dedupe():
+    runs = [
+        _with_source(
+            _gh_run("PR flow guardrails", "SUCCESS", "head-new", run_id=105, started="2026-05-25T00:01:00Z"),
+            workflowName="pr-flow-guardrails",
+        ),
+        {
+            "name": "PR flow guardrails",
+            "status": "STALE",
+            "conclusion": "STALE",
+            "head_sha": "head-old",
+            "id": 104,
+            "started_at": "2026-05-25T00:00:00Z",
+            "workflowName": "pr-flow-guardrails",
+        },
+    ]
+    plan = controller.build_workflow_rerun_plan("head-new", runs)
+    ASSERTIONS.assertEqual(plan["rerun_run_ids"], [])
+    ASSERTIONS.assertIn("104", plan["ignored_stale_run_ids"])
 
 
 def test_duplicate_run_ids_are_deduped():
@@ -2700,6 +2787,24 @@ def test_same_name_distinct_source_failure_counts_as_current_blocker():
     ASSERTIONS.assertEqual(summary["current_blocker_count"], 1)
 
 
+def test_dedupe_keeps_same_name_same_app_with_different_source_separate():
+    runs = [
+        _with_source(
+            _gh_run("build", "SUCCESS", "head-new", run_id=443),
+            source="workflow-a",
+            app={"name": "GitHub Actions"},
+        ),
+        _with_source(
+            _gh_run("build", "FAILURE", "head-new", run_id=444),
+            source="workflow-b",
+            app={"name": "GitHub Actions"},
+        ),
+    ]
+    deduped = controller.dedupe_github_check_runs("head-new", runs)
+    selected_ids = {check.get("id") for check in deduped["selected_runs"]}
+    ASSERTIONS.assertEqual(selected_ids, {443, 444})
+
+
 def test_dedupe_coalesces_true_duplicate_same_name_and_source():
     runs = [
         _with_source(
@@ -2774,6 +2879,17 @@ def test_stale_only_without_unknown_remains_stale_only_no_action():
     )
     ASSERTIONS.assertEqual(summary["category"], "stale_only")
     ASSERTIONS.assertEqual(summary["next_action"], "no_action")
+
+
+def test_stale_head_stale_does_not_block_current_head_ready():
+    runs = [
+        _gh_run("Unit tests", "SUCCESS", "head-new", run_id=1311),
+        _gh_run("Unit tests", "STALE", "head-old", run_id=1312),
+    ]
+    summary = controller.summarize_current_head_check_state("head-new", runs)
+    ASSERTIONS.assertEqual(summary["category"], "ready")
+    ASSERTIONS.assertEqual(summary["next_action"], "ready")
+    ASSERTIONS.assertEqual(summary["current_blocker_count"], 0)
 
 
 def test_current_head_cancelled_without_rerunnable_run_id_needs_manual():
