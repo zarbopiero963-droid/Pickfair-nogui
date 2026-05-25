@@ -550,7 +550,7 @@ def _extract_phase0_json_candidates(text: str) -> list[str]:
     if stripped.startswith("{") and stripped.endswith("}"):
         candidates.append(stripped)
 
-    for match in re.finditer(r"```(?:json)?\\s*(.*?)\\s*```", stripped, flags=re.IGNORECASE | re.DOTALL):
+    for match in re.finditer(r"```(?:json)?\s*(.*?)\s*```", stripped, flags=re.IGNORECASE | re.DOTALL):
         candidate = match.group(1).strip()
         if candidate.startswith("{") and candidate.endswith("}"):
             candidates.append(candidate)

@@ -4759,3 +4759,24 @@ def test_parse_phase0_preflight_result_all_json_candidates_invalid_fails_closed(
     ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
     ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_malformed")
 
+
+def test_parse_phase0_preflight_result_fenced_json_with_braces_in_string():
+    """Fenced JSON should parse even when JSON string values contain braces."""
+    payload = _phase0_pass_payload()
+    payload["implementation_plan"] = ["handle string with braces {x} safely"]
+    raw = "\n".join(
+        [
+            "preflight result follows",
+            "```",
+            "{not-json}",
+            "```",
+            "```json",
+            json.dumps(payload),
+            "```",
+        ]
+    )
+    report = controller.parse_phase0_preflight_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+    ASSERTIONS.assertEqual(report["implementation_plan"], ["handle string with braces {x} safely"])
+
