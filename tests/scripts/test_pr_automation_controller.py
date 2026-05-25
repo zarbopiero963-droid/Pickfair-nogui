@@ -4715,3 +4715,47 @@ def test_parse_phase0_preflight_result_json_unknown_action_variant_fails_closed(
     ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
     ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
 
+
+def test_parse_phase0_preflight_result_tries_later_fenced_json_candidate():
+    """Invalid earlier fence should not block a later valid Phase 0 JSON fence."""
+    payload = _phase0_pass_payload()
+    raw = "\n".join(
+        [
+            "preflight result follows",
+            "```",
+            "{not-json}",
+            "```",
+            "```json",
+            json.dumps(payload),
+            "```",
+        ]
+    )
+    report = controller.parse_phase0_preflight_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+
+
+def test_parse_phase0_preflight_result_tries_later_inline_json_candidate():
+    """Invalid earlier brace block should not block a later valid inline JSON payload."""
+    payload = _phase0_pass_payload()
+    raw = "ignore this {not-json} and use this " + json.dumps(payload)
+    report = controller.parse_phase0_preflight_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+
+
+def test_parse_phase0_preflight_result_skips_non_dict_json_candidate():
+    """A valid non-dict JSON candidate should be skipped in favor of a later dict."""
+    payload = _phase0_pass_payload()
+    raw = "\n".join(["```json", "[1, 2, 3]", "```", "```json", json.dumps(payload), "```"])
+    report = controller.parse_phase0_preflight_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+
+
+def test_parse_phase0_preflight_result_all_json_candidates_invalid_fails_closed():
+    """All malformed JSON candidates should preserve fail-closed malformed behavior."""
+    report = controller.parse_phase0_preflight_result("```json\n{not-json}\n```\nplain text")
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_malformed")
+

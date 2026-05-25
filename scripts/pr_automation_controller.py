@@ -365,14 +365,18 @@ def _parse_phase0_json(text: str) -> dict[str, Any] | None:
     raw = str(text or "").strip()
     if not raw:
         return None
-    candidate = _extract_phase0_json_object(raw)
-    if not candidate:
-        return None
-    try:
-        data = json.loads(candidate)
-    except Exception:
-        return None
-    if not isinstance(data, dict):
+
+    data: dict[str, Any] | None = None
+    for candidate in _extract_phase0_json_candidates(raw):
+        try:
+            loaded = json.loads(candidate)
+        except Exception:
+            continue
+        if isinstance(loaded, dict):
+            data = loaded
+            break
+
+    if data is None:
         return None
 
     result = _phase0_empty_result()
@@ -539,15 +543,28 @@ def decide_phase0_gate(parsed_result: dict[str, Any] | None) -> dict[str, Any]:
         "needs_manual": not can_patch,
     }
 
-def _extract_phase0_json_object(text: str) -> str:
+def _extract_phase0_json_candidates(text: str) -> list[str]:
     stripped = str(text or "").strip()
+    candidates: list[str] = []
+
     if stripped.startswith("{") and stripped.endswith("}"):
-        return stripped
-    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", stripped, flags=re.IGNORECASE | re.DOTALL)
-    if fenced:
-        return fenced.group(1).strip()
-    inline = re.search(r"(\{.*\})", stripped, flags=re.DOTALL)
-    return inline.group(1).strip() if inline else ""
+        candidates.append(stripped)
+
+    for match in re.finditer(r"```(?:json)?\\s*(.*?)\\s*```", stripped, flags=re.IGNORECASE | re.DOTALL):
+        candidate = match.group(1).strip()
+        if candidate.startswith("{") and candidate.endswith("}"):
+            candidates.append(candidate)
+
+    for match in re.finditer(r"(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})", stripped, flags=re.DOTALL):
+        candidates.append(match.group(1).strip())
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate and candidate not in seen:
+            deduped.append(candidate)
+            seen.add(candidate)
+    return deduped
 
 
 def _text_has_phase0_marker(text: str) -> bool:
