@@ -2446,6 +2446,8 @@ def _gh_run(
     completed: str = "",
 ) -> dict[str, Any]:
     check: dict[str, Any] = {"name": name, "status": state, "conclusion": state, "id": run_id}
+    if run_id:
+        check["details_url"] = f"https://github.com/org/repo/actions/runs/{run_id}/job/1"
     if head:
         check["head_sha"] = head
     if started:
@@ -2520,11 +2522,14 @@ def test_current_head_cancelled_pr_flow_guardrails_plans_rerun():
     ASSERTIONS.assertTrue(plan["safe_to_rerun"])
 
 
-def test_current_head_cancelled_pr_flow_guardrails_string_run_id_plans_rerun():
+def test_current_head_cancelled_pr_flow_guardrails_string_check_id_no_url_not_rerunnable():
     run = _gh_run("PR flow guardrails", "CANCELLED", "head-new", run_id=0)
     run["id"] = "101"
     plan = controller.build_workflow_rerun_plan("head-new", [run, run])
-    ASSERTIONS.assertEqual(plan["rerun_run_ids"], ["101"])
+    ASSERTIONS.assertEqual(plan["rerun_run_ids"], [])
+    summary = controller.summarize_current_head_check_state("head-new", [run])
+    ASSERTIONS.assertEqual(summary["category"], "current_head_cancelled_unrerunnable")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
 
 
 def test_current_head_cancelled_merge_readiness_plans_rerun():
@@ -2715,6 +2720,27 @@ def test_current_head_cancelled_without_rerunnable_run_id_needs_manual():
     ASSERTIONS.assertTrue(summary["needs_manual"])
 
 
+def test_current_head_cancelled_with_only_check_ids_and_no_actions_url_needs_manual():
+    summary = controller.summarize_current_head_check_state(
+        "head-new",
+        [
+            {
+                "name": "PR flow guardrails",
+                "status": "CANCELLED",
+                "conclusion": "CANCELLED",
+                "head_sha": "head-new",
+                "id": 999,
+                "databaseId": 888,
+            }
+        ],
+    )
+    ASSERTIONS.assertEqual(summary["category"], "current_head_cancelled_unrerunnable")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
+    ASSERTIONS.assertEqual(summary["rerun_run_ids"], [])
+    ASSERTIONS.assertFalse(summary["safe_to_rerun"])
+    ASSERTIONS.assertTrue(summary["needs_manual"])
+
+
 def test_do_not_launch_autofix_for_is_blacklist_not_allowlist():
     checks = [
         _gh_run("Refresh stale self checks", "FAILURE", "head-new", run_id=412),
@@ -2782,7 +2808,7 @@ def test_rerun_plan_uses_actions_run_url_id_instead_of_check_id():
 
 def test_rerun_plan_prefers_actions_run_url_id_12345_over_check_id_999():
     run = _gh_run("PR flow guardrails", "CANCELLED", "head-new", run_id=999)
-    run["details_url"] = "https://github.com/org/repo/actions/runs/12345/jobs/9"
+    run["details_url"] = "https://github.com/org/repo/actions/runs/12345/job/7"
     plan = controller.build_workflow_rerun_plan("head-new", [run])
     ASSERTIONS.assertEqual(plan["rerun_run_ids"], ["12345"])
     ASSERTIONS.assertNotIn("999", plan["rerun_run_ids"])

@@ -425,7 +425,7 @@ def extract_run_id(url: str) -> str:
 
 
 def run_id_from_check(check: dict[str, Any]) -> str:
-    return str(first_nonempty(extract_run_id(url_of(check)), check.get("id"), check.get("databaseId")) or "").strip()
+    return extract_run_id(url_of(check))
 
 
 def sorted_unique_ids(ids: list[str]) -> list[str]:
