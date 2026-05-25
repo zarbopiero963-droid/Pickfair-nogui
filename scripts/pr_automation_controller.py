@@ -2773,6 +2773,358 @@ def codacy_head_matches(pr_head: str, evidence: dict[str, Any]) -> dict[str, Any
     }
 
 
+def codacy_check_run_is_stale(pr_head_sha: str, check_run: dict[str, Any]) -> bool:
+    current = str(pr_head_sha or "").strip()
+    check_head = str(
+        first_nonempty(
+            check_run.get("head_sha"),
+            check_run.get("headSha"),
+            check_run.get("headRefOid"),
+            check_run.get("head"),
+            check_run.get("codacy_head"),
+        )
+        or ""
+    ).strip()
+    return bool(current and check_head and current != check_head)
+
+
+def codacy_api_github_annotation_mismatch(api_issue_count: int, github_annotations_count: int) -> bool:
+    return api_issue_count == 0 and github_annotations_count > 0
+
+
+def detect_codacy_rule_conflict(issues: list[dict[str, Any]]) -> bool:
+    all_markers: set[str] = set()
+    for issue in issues:
+        markers = _codacy_issue_rule_markers(issue)
+        all_markers.update(markers)
+        if {"D203", "D211"}.issubset(markers):
+            return True
+    if {"D203", "D211"}.issubset(all_markers):
+        return True
+    return _has_d203_d211_conflict(issues)
+
+
+def classify_codacy_github_annotation_fallback(
+    payload: dict[str, Any] | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    summary = summarize_codacy_github_annotation_state(payload, **kwargs)
+    return {
+        "category": summary["category"],
+        "classification": summary["category"],
+        "next_action": summary["next_action"],
+        "reason": summary["reason"],
+        "current_head_sha": summary["current_head_sha"],
+        "codacy_head_sha": summary["codacy_head_sha"],
+        "api_issue_count": summary["api_issue_count"],
+        "github_annotations_count": summary["github_annotations_count"],
+        "stale": summary["stale"],
+        "rule_conflict": summary["rule_conflict"],
+        "safe_to_patch": summary["safe_to_patch"],
+    }
+
+
+def summarize_codacy_github_annotation_state(payload: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
+    normalized = _codacy_annotation_payload(payload, kwargs)
+    state = norm_state(normalized.get("github_codacy_state"))
+    current_head = str(first_nonempty(normalized.get("pr_head"), normalized.get("headRefOid")) or "").strip()
+    codacy_head = str(
+        first_nonempty(normalized.get("head"), normalized.get("codacy_head"), normalized.get("check_head_sha")) or ""
+    ).strip()
+    api_issue_count = safe_nonnegative_int(normalized.get("codacy_api_issues"), 0)
+    github_annotations_count = safe_nonnegative_int(normalized.get("github_annotations"), 0)
+    issues = normalized.get("issues") if isinstance(normalized.get("issues"), list) else []
+    annotation_text = _annotation_text(normalized.get("github_annotation_items"))
+    rule_conflict = _has_d203_d211_conflict_signals(cast(list[dict[str, Any]], issues), annotation_text)
+    stale = codacy_check_run_is_stale(current_head, {"head": codacy_head})
+    return _codacy_annotation_summary_result(
+        {
+            "state": state,
+            "current_head": current_head,
+            "codacy_head": codacy_head,
+            "api_issue_count": api_issue_count,
+            "github_annotations_count": github_annotations_count,
+            "rule_conflict": rule_conflict,
+            "stale": stale,
+            "issues": issues,
+        }
+    )
+
+
+def _codacy_annotation_payload(payload: dict[str, Any] | None, kwargs: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(payload) if isinstance(payload, dict) else {}
+    merged.update(kwargs)
+    check_run = _dict_like(first_nonempty(merged.get("codacy_check_run"), merged.get("check_run")))
+    state = first_nonempty(
+        merged.get("github_codacy_state"), merged.get("state"), check_run.get("conclusion"), check_run.get("status")
+    )
+    head = first_nonempty(merged.get("pr_head_sha"), merged.get("current_head_sha"), merged.get("pr_head"), merged.get("headRefOid"))
+    codacy_head = _resolve_codacy_head_sha(merged, check_run)
+    annotations = _github_annotation_count(merged, check_run)
+    issues = _normalize_codacy_issue_list(first_nonempty(merged.get("issues"), merged.get("codacy_api_issues"), merged.get("api_issues")))
+    api_issue_count = _codacy_api_issue_count(merged, issues)
+    return {
+        "github_codacy_state": state,
+        "pr_head": head,
+        "headRefOid": head,
+        "head": codacy_head,
+        "codacy_head": codacy_head,
+        "check_head_sha": codacy_head,
+        "codacy_api_issues": api_issue_count,
+        "github_annotations": annotations,
+        "github_annotation_items": _annotation_items(_github_annotation_items_payload(merged)),
+        "issues": issues,
+    }
+
+
+def _codacy_check_from_checks(payload: dict[str, Any]) -> dict[str, Any]:
+    checks = payload.get("checks")
+    if not isinstance(checks, list):
+        return {}
+    for entry in checks:
+        check = _dict_like(entry)
+        if _is_codacy_check_entry(check):
+            return check
+    return {}
+
+
+def _is_codacy_check_entry(check: dict[str, Any]) -> bool:
+    markers = " ".join(
+        str(value or "")
+        for value in (
+            check.get("name"),
+            check.get("n"),
+            check.get("check_name"),
+            check.get("app"),
+            check.get("app_name"),
+            check.get("details_url"),
+            check.get("url"),
+        )
+    ).lower()
+    return "codacy" in markers
+
+
+def _resolve_codacy_head_sha(payload: dict[str, Any], check_run: dict[str, Any]) -> Any:
+    checks_codacy = _codacy_check_from_checks(payload)
+    return first_nonempty(
+        payload.get("codacy_head_sha"),
+        payload.get("codacy_head"),
+        payload.get("check_head_sha"),
+        check_run.get("head_sha"),
+        check_run.get("headSha"),
+        check_run.get("headRefOid"),
+        check_run.get("head"),
+        checks_codacy.get("head_sha"),
+        checks_codacy.get("headSha"),
+        checks_codacy.get("headRefOid"),
+        payload.get("headRefOid"),
+    )
+
+
+def _annotation_items(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        return [value]
+    return []
+
+
+def _annotation_text(items: Any) -> str:
+    if not isinstance(items, list):
+        return ""
+    chunks: list[str] = []
+    for item in items:
+        if isinstance(item, dict):
+            chunks.extend(str(value) for value in item.values() if isinstance(value, str))
+        elif isinstance(item, str):
+            chunks.append(item)
+    return " ".join(chunks).lower()
+
+
+def _github_annotation_count(payload: dict[str, Any], check_run: dict[str, Any]) -> int:
+    value = _github_annotation_count_payload(payload)
+    if value is not None:
+        if isinstance(value, list):
+            return len(value)
+        if isinstance(value, dict):
+            return 1
+        return safe_nonnegative_int(value, 0)
+    return safe_nonnegative_int(first_nonempty(check_run.get("annotations_count"), check_run.get("annotationsCount")), 0)
+
+
+def _github_annotation_count_payload(payload: dict[str, Any]) -> Any:
+    github_value = payload.get("github_annotations") if "github_annotations" in payload else None
+    annotations_value = payload.get("annotations") if "annotations" in payload else None
+    if _malformed_annotation_count(github_value) and isinstance(annotations_value, list) and annotations_value:
+        return annotations_value
+    if isinstance(annotations_value, (list, dict)) and safe_nonnegative_int(github_value, -1) == 0:
+        return annotations_value
+    for value in (github_value, annotations_value):
+        if value is not None:
+            return value
+    return None
+
+
+def _malformed_annotation_count(value: Any) -> bool:
+    if isinstance(value, (int, list, dict)) or value is None:
+        return False
+    text = str(value).strip()
+    return text != "" and safe_nonnegative_int(value, -1) < 0
+
+
+def _github_annotation_items_payload(payload: dict[str, Any]) -> Any:
+    for key in ("github_annotations", "annotations"):
+        value = payload.get(key)
+        if isinstance(value, (list, dict)):
+            return value
+    return None
+
+
+def _has_d203_d211_conflict_signals(issues: list[dict[str, Any]], annotation_text: str) -> bool:
+    if detect_codacy_rule_conflict(issues):
+        return True
+    markers = _d203_d211_markers_from_issues(issues)
+    markers.update(_d203_d211_markers_from_text(annotation_text))
+    return {"D203", "D211"}.issubset(markers)
+
+
+def _d203_d211_markers_from_issues(issues: list[dict[str, Any]]) -> set[str]:
+    markers: set[str] = set()
+    for issue in issues:
+        markers.update(_codacy_issue_rule_markers(issue))
+    return markers
+
+
+def _d203_d211_markers_from_text(text: str) -> set[str]:
+    markers: set[str] = set()
+    upper = str(text or "").upper()
+    if "D203" in upper:
+        markers.add("D203")
+    if "D211" in upper:
+        markers.add("D211")
+    return markers
+
+
+def _normalize_codacy_issue_list(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        return [issue for issue in value if isinstance(issue, dict)]
+    return []
+
+
+def _codacy_api_issue_count(payload: dict[str, Any], issues: list[dict[str, Any]]) -> int:
+    explicit_raw = first_nonempty(payload.get("codacy_api_issues"), payload.get("api_issues"))
+    if isinstance(explicit_raw, list):
+        explicit = len([issue for issue in explicit_raw if isinstance(issue, dict)])
+    else:
+        explicit = safe_nonnegative_int(explicit_raw, -1)
+    return explicit if explicit >= 0 else len(issues)
+
+
+def _dict_like(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _codacy_annotation_summary_result(data: dict[str, Any]) -> dict[str, Any]:
+    state = str(data.get("state") or "")
+    api_issue_count = safe_nonnegative_int(data.get("api_issue_count"), 0)
+    github_annotations_count = safe_nonnegative_int(data.get("github_annotations_count"), 0)
+    rule_conflict = bool(data.get("rule_conflict"))
+    stale = bool(data.get("stale"))
+    issues = cast(list[dict[str, Any]], data.get("issues") or [])
+    if state in {"PENDING", "QUEUED", "IN_PROGRESS"}:
+        return _codacy_annotation_output(
+            {"category": "workflow_pending", "next_action": "wait_pending", "reason": "Codacy check still pending"},
+            data,
+            False,
+        )
+    if rule_conflict:
+        return _codacy_annotation_output(
+            {
+                "category": "codacy_rule_conflict",
+                "next_action": "needs_manual_codacy_rule_conflict",
+                "reason": "Detected Codacy rule conflict (D203/D211)",
+            },
+            data,
+            False,
+        )
+    if stale:
+        return _codacy_annotation_output(
+            {
+                "category": "github_stale_check",
+                "next_action": "rerun_stale_checks",
+                "reason": "Codacy check head SHA is stale versus PR head",
+            },
+            data,
+            False,
+        )
+    if api_issue_count > 0:
+        return _codacy_annotation_output(
+            {
+                "category": _codacy_issue_category(issues),
+                "next_action": "fix_codacy_current_issues",
+                "reason": "Codacy API returned current issues",
+            },
+            data,
+            True,
+        )
+    if codacy_api_github_annotation_mismatch(api_issue_count, github_annotations_count):
+        return _codacy_annotation_output(
+            {
+                "category": "codacy_api_github_mismatch",
+                "next_action": "fix_github_codacy_annotations",
+                "reason": "Codacy API has zero current issues but GitHub annotations remain",
+            },
+            data,
+            True,
+        )
+    if state == "ACTION_REQUIRED" and github_annotations_count == 0:
+        return _codacy_annotation_output(
+            {
+                "category": "github_stale_check",
+                "next_action": "rerun_stale_checks",
+                "reason": "Codacy check is action_required without API issues or annotations",
+                "stale": True,
+            },
+            data,
+            False,
+        )
+    return _codacy_annotation_output(
+        {
+            "category": "unknown",
+            "next_action": "needs_manual",
+            "reason": "Insufficient Codacy/GitHub evidence for safe routing",
+        },
+        data,
+        False,
+    )
+
+
+def _codacy_annotation_output(base: dict[str, Any], data: dict[str, Any], safe_to_patch: bool) -> dict[str, Any]:
+    stale = bool(base.get("stale")) if "stale" in base else bool(data.get("stale"))
+    rule_conflict = bool(base.get("rule_conflict")) if "rule_conflict" in base else bool(data.get("rule_conflict"))
+    return {
+        "category": str(base.get("category") or "unknown"),
+        "next_action": str(base.get("next_action") or "needs_manual"),
+        "reason": str(base.get("reason") or ""),
+        "current_head_sha": str(data.get("current_head") or ""),
+        "codacy_head_sha": str(data.get("codacy_head") or ""),
+        "api_issue_count": safe_nonnegative_int(data.get("api_issue_count"), 0),
+        "github_annotations_count": safe_nonnegative_int(data.get("github_annotations_count"), 0),
+        "stale": stale,
+        "rule_conflict": rule_conflict,
+        "safe_to_patch": safe_to_patch,
+    }
+
+
+def _codacy_issue_category(issues: list[dict[str, Any]]) -> str:
+    for issue in issues:
+        pattern = str(issue.get("patternId") or "").strip().upper()
+        text = str(issue.get("message") or issue.get("category") or "").lower()
+        if pattern == "C901" or "complexity" in text:
+            return "codacy_complexity"
+    return "codacy_style"
+
+
 CodacyIssueLocationKey = tuple[str, str, str, str]
 
 
@@ -2803,6 +3155,28 @@ def _codacy_issue_rule(issue: dict[str, Any]) -> str:
     return str(issue.get("patternId") or "").strip().upper()
 
 
+def _codacy_issue_rule_markers(issue: dict[str, Any]) -> set[str]:
+    markers: set[str] = set()
+    for key in ("patternId", "pattern_id", "rule_id", "ruleId", "code", "check_name", "message", "title"):
+        value = issue.get(key)
+        if value in (None, ""):
+            continue
+        text = str(value).upper()
+        if "D203" in text:
+            markers.add("D203")
+        if "D211" in text:
+            markers.add("D211")
+    for value in issue.values():
+        if not isinstance(value, str):
+            continue
+        text = value.upper()
+        if "D203" in text:
+            markers.add("D203")
+        if "D211" in text:
+            markers.add("D211")
+    return markers
+
+
 def _codacy_issue_location_key(issue: dict[str, Any]) -> CodacyIssueLocationKey:
     return (
         _codacy_issue_field(issue, "filePath", "filename"),
@@ -2821,11 +3195,19 @@ def _codacy_issue_field(issue: dict[str, Any], *keys: str) -> str:
 
 
 def classify_codacy_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
-    details = _codacy_classification_details(evidence)
+    summary = summarize_codacy_github_annotation_state(evidence)
+    details = _codacy_classification_details(evidence, summary)
     result: dict[str, Any] = {
         "classification": details["classification"],
         "treat_annotations_as_blockers": details["treat_annotations_as_blockers"],
         "ignored": details["ignored"],
+        "next_action": summary["next_action"],
+        "reason": summary["reason"],
+        "api_issue_count": summary["api_issue_count"],
+        "github_annotations_count": summary["github_annotations_count"],
+        "stale": summary["stale"],
+        "rule_conflict": summary["rule_conflict"],
+        "safe_to_patch": summary["safe_to_patch"],
     }
     maybe_head_match = _codacy_head_match_value(evidence)
     if maybe_head_match is not None:
@@ -2833,16 +3215,25 @@ def classify_codacy_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _codacy_classification_details(evidence: dict[str, Any]) -> dict[str, Any]:
-    state, api_issues, annotations, issue_list = _codacy_classification_inputs(evidence)
-    matched = _first_matching_codacy_rule(state, api_issues, annotations, issue_list)
-    if matched is None:
-        return _codacy_classification_result("unknown")
-    return _codacy_classification_result(
-        str(matched["classification"]),
-        treat_annotations_as_blockers=bool(matched.get("treat_annotations_as_blockers", False)),
-        ignored=bool(matched.get("ignored", False)),
-    )
+def _codacy_classification_details(evidence: dict[str, Any], summary: dict[str, Any]) -> dict[str, Any]:
+    # Keep `evidence` for stable call signatures used by external callers/tests.
+    _ = evidence
+    category = str(summary.get("category") or "unknown")
+    classification = _legacy_codacy_classification(category)
+    treat_annotations = category == "codacy_api_github_mismatch"
+    ignored = category == "github_stale_check"
+    return _codacy_classification_result(classification, treat_annotations_as_blockers=treat_annotations, ignored=ignored)
+
+
+def _legacy_codacy_classification(category: str) -> str:
+    mapping = {
+        "codacy_style": "real_current_issues",
+        "codacy_complexity": "real_current_issues",
+        "codacy_rule_conflict": "rule_conflict",
+        "codacy_api_github_mismatch": "api_github_mismatch",
+        "github_stale_check": "stale_github_check",
+    }
+    return mapping.get(category, category)
 
 
 def _codacy_classification_inputs(evidence: dict[str, Any]) -> tuple[str, int, int, list[dict[str, Any]]]:
@@ -3709,11 +4100,13 @@ def _has_unresolved_review_threads(context: dict[str, Any]) -> bool:
 
 def _codacy_next_action(context: dict[str, Any]) -> str:
     codacy_classification = str(context.get("codacy_classification") or "").strip()
-    if codacy_classification == "real_current_issues":
+    if codacy_classification in {"real_current_issues", "codacy_style", "codacy_complexity"}:
         return "fix_codacy_current_issues"
-    if codacy_classification == "api_github_mismatch":
+    if codacy_classification in {"api_github_mismatch", "codacy_api_github_mismatch"}:
         return "fix_github_codacy_annotations"
-    return "needs_manual" if codacy_classification == "rule_conflict" else ""
+    if codacy_classification in {"rule_conflict", "codacy_rule_conflict"}:
+        return "needs_manual_codacy_rule_conflict"
+    return "rerun_stale_checks" if codacy_classification in {"stale_github_check", "github_stale_check"} else ""
 
 
 BLOCKER_CATEGORIES = {
