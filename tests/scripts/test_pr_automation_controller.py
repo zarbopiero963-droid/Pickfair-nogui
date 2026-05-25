@@ -2565,6 +2565,14 @@ def test_blacklisted_cancelled_current_head_check_is_not_rerun_planned():
     ASSERTIONS.assertFalse(plan["safe_to_rerun"])
 
 
+def test_empty_current_head_check_set_is_not_ready():
+    summary = controller.summarize_current_head_check_state("head-new", [])
+    ASSERTIONS.assertEqual(summary["category"], "no_current_head_checks")
+    ASSERTIONS.assertEqual(summary["next_action"], "wait_pending")
+    ASSERTIONS.assertFalse(summary["needs_manual"])
+    ASSERTIONS.assertFalse(summary["safe_to_rerun"])
+
+
 def test_missing_head_fails_closed_unknown_not_current():
     details = controller.classify_github_check_run_staleness("head-new", _gh_run("Unit tests", "FAILURE", "", run_id=9))
     ASSERTIONS.assertEqual(details["category"], "unknown_head")
@@ -2593,6 +2601,16 @@ def test_summarize_missing_head_check_returns_unknown_head_needs_manual():
     summary = controller.summarize_current_head_check_state(
         "head-new",
         [_gh_run("Unit tests", "SUCCESS", "", run_id=401)],
+    )
+    ASSERTIONS.assertEqual(summary["category"], "unknown_head")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
+    ASSERTIONS.assertTrue(summary["needs_manual"])
+
+
+def test_summarize_missing_head_check_direct_contract():
+    summary = controller.summarize_current_head_check_state(
+        "head-new",
+        [{"name": "Unit tests", "status": "SUCCESS", "conclusion": "SUCCESS", "id": 499}],
     )
     ASSERTIONS.assertEqual(summary["category"], "unknown_head")
     ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
@@ -2682,6 +2700,22 @@ def test_do_not_launch_autofix_for_is_blacklist_not_allowlist():
     should_launch, launchable = controller.should_launch_autofix(checks)
     ASSERTIONS.assertTrue(should_launch)
     ASSERTIONS.assertEqual([item["name"] for item in launchable], ["Unit tests"])
+
+
+def test_run_id_from_check_prefers_actions_run_url_id_over_check_id():
+    check = {
+        "id": 999,
+        "databaseId": 998,
+        "detailsUrl": "https://github.com/org/repo/actions/runs/123456789/jobs/1",
+    }
+    ASSERTIONS.assertEqual(controller.run_id_from_check(check), "123456789")
+
+
+def test_rerun_plan_uses_actions_run_url_id_instead_of_check_id():
+    run = _gh_run("PR flow guardrails", "CANCELLED", "head-new", run_id=999)
+    run["detailsUrl"] = "https://github.com/org/repo/actions/runs/7777777/jobs/2"
+    plan = controller.build_workflow_rerun_plan("head-new", [run])
+    ASSERTIONS.assertEqual(plan["rerun_run_ids"], ["7777777"])
 
 
 def test_codacy_head_match_contract_exposes_pr_head_and_evidence_head():

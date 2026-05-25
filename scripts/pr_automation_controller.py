@@ -365,7 +365,16 @@ def name_of(check: dict[str, Any]) -> str:
 
 
 def url_of(check: dict[str, Any]) -> str:
-    return str(check.get("detailsUrl") or check.get("targetUrl") or check.get("url") or "").strip()
+    return str(
+        first_nonempty(
+            check.get("detailsUrl"),
+            check.get("details_url"),
+            check.get("html_url"),
+            check.get("targetUrl"),
+            check.get("url"),
+        )
+        or ""
+    ).strip()
 
 
 def check_state(check: dict[str, Any]) -> str:
@@ -411,7 +420,7 @@ def extract_run_id(url: str) -> str:
 
 
 def run_id_from_check(check: dict[str, Any]) -> str:
-    return str(first_nonempty(check.get("id"), check.get("databaseId"), extract_run_id(url_of(check))) or "").strip()
+    return str(first_nonempty(extract_run_id(url_of(check)), check.get("id"), check.get("databaseId")) or "").strip()
 
 
 def sorted_unique_ids(ids: list[str]) -> list[str]:
@@ -420,6 +429,11 @@ def sorted_unique_ids(ids: list[str]) -> list[str]:
 
 def normalize_github_check_name(name: object) -> str:
     return re.sub(r"\s+", " ", str(name or "").strip()).lower()
+
+
+def is_autofix_blacklisted_check(name: object) -> bool:
+    normalized = normalize_github_check_name(name)
+    return normalized in {normalize_github_check_name(value) for value in DO_NOT_LAUNCH_AUTOFIX_FOR}
 
 
 def github_check_run_head(check: dict[str, Any]) -> str:
@@ -512,7 +526,7 @@ def build_workflow_rerun_plan(pr_head_sha: str, check_runs: list[dict[str, Any]]
             continue
         if not info["current_head"] or not is_cancelled(check):
             continue
-        if normalize_github_check_name(name_of(check)) in DO_NOT_LAUNCH_AUTOFIX_FOR:
+        if is_autofix_blacklisted_check(name_of(check)):
             continue
         if run_id:
             rerun_ids.append(run_id)
@@ -561,6 +575,8 @@ def summarize_current_head_check_state(pr_head_sha: str, check_runs: list[dict[s
             blocker_count += 1
     if unknown_count > 0:
         category, next_action, reason = "unknown_head", "needs_manual", "missing check head sha"
+    elif not cast(list[dict[str, Any]], deduped["selected_runs"]):
+        category, next_action, reason = "no_current_head_checks", "wait_pending", "waiting for current head checks"
     elif pending_count > 0:
         category, next_action, reason = "workflow_pending", "wait_pending", "current head checks still pending"
     elif cast(list[str], rerun["rerun_run_ids"]):
@@ -862,8 +878,7 @@ def should_launch_autofix(checks: list[dict[str, Any]]) -> tuple[bool, list[dict
     for check in checks:
         if not is_failure(check) or is_self_check(check):
             continue
-        name = name_of(check).lower()
-        if name not in DO_NOT_LAUNCH_AUTOFIX_FOR:
+        if not is_autofix_blacklisted_check(name_of(check)):
             launchable.append(compact_check(check))
     return bool(launchable), launchable
 
