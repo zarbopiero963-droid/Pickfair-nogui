@@ -2437,6 +2437,613 @@ def test_pending_check_plus_cancelled_check_waits_pending_no_rerun():
     ASSERTIONS.assertFalse(handled)
 
 
+def _gh_run(
+    name: str,
+    state: str,
+    head: str = "",
+    run_id: int = 0,
+    started: str = "",
+    completed: str = "",
+) -> dict[str, Any]:
+    check: dict[str, Any] = {"name": name, "status": state, "conclusion": state, "id": run_id}
+    if run_id:
+        check["details_url"] = f"https://github.com/org/repo/actions/runs/{run_id}/job/1"
+    if head:
+        check["head_sha"] = head
+    if started:
+        check["started_at"] = started
+    if completed:
+        check["completed_at"] = completed
+    return check
+
+
+def _with_source(run: dict[str, Any], **fields: Any) -> dict[str, Any]:
+    enriched = dict(run)
+    for key, value in fields.items():
+        enriched[key] = value
+    return enriched
+
+
+def test_stale_head_failed_check_ignored():
+    summary = controller.summarize_current_head_check_state(
+        "head-new",
+        [_gh_run("Unit tests", "FAILURE", "head-old", run_id=11)],
+    )
+    ASSERTIONS.assertEqual(summary["current_blocker_count"], 0)
+    ASSERTIONS.assertEqual(summary["next_action"], "no_action")
+
+
+def test_stale_count_includes_ignored_stale_duplicate_runs():
+    runs = [
+        _gh_run("Unit tests", "SUCCESS", "head-new", run_id=2, started="2026-05-25T00:01:00Z"),
+        _gh_run("Unit tests", "FAILURE", "head-old", run_id=1, started="2026-05-25T00:00:00Z"),
+    ]
+    summary = controller.summarize_current_head_check_state("head-new", runs)
+    ASSERTIONS.assertIn("1", summary["ignored_stale_run_ids"])
+    ASSERTIONS.assertGreaterEqual(summary["stale_count"], 1)
+
+
+def test_stale_head_stale_duplicate_with_current_success_preserves_ignored_evidence_id():
+    runs = [
+        _with_source(
+            _gh_run("Unit tests", "SUCCESS", "head-new", run_id=2, started="2026-05-25T00:01:00Z"),
+            workflowName="unit-tests-ci",
+        ),
+        {
+            "name": "Unit tests",
+            "status": "STALE",
+            "conclusion": "STALE",
+            "head_sha": "head-old",
+            "id": 1,
+            "started_at": "2026-05-25T00:00:00Z",
+            "workflowName": "unit-tests-ci",
+        },
+    ]
+    summary = controller.summarize_current_head_check_state("head-new", runs)
+    ASSERTIONS.assertEqual(summary["current_blocker_count"], 0)
+    ASSERTIONS.assertIn("1", summary["ignored_stale_run_ids"])
+    ASSERTIONS.assertGreaterEqual(summary["stale_count"], 1)
+
+
+def test_stale_head_failure_duplicate_with_current_success_preserves_ignored_evidence_id():
+    runs = [
+        _with_source(
+            _gh_run("Unit tests", "SUCCESS", "head-new", run_id=22, started="2026-05-25T00:01:00Z"),
+            workflowName="unit-tests-ci",
+        ),
+        {
+            "name": "Unit tests",
+            "status": "FAILURE",
+            "conclusion": "FAILURE",
+            "head_sha": "head-old",
+            "id": 21,
+            "started_at": "2026-05-25T00:00:00Z",
+            "workflowName": "unit-tests-ci",
+        },
+    ]
+    summary = controller.summarize_current_head_check_state("head-new", runs)
+    ASSERTIONS.assertEqual(summary["current_blocker_count"], 0)
+    ASSERTIONS.assertIn("21", summary["ignored_stale_run_ids"])
+    ASSERTIONS.assertGreaterEqual(summary["stale_count"], 1)
+
+
+def test_current_success_with_missing_head_duplicate_is_unknown_head_needs_manual():
+    runs = [
+        _with_source(
+            _gh_run("Unit tests", "SUCCESS", "head-new", run_id=522, started="2026-05-25T00:01:00Z"),
+            workflowName="unit-tests-ci",
+        ),
+        {
+            "name": "Unit tests",
+            "status": "SUCCESS",
+            "conclusion": "SUCCESS",
+            "id": 521,
+            "started_at": "2026-05-25T00:00:00Z",
+            "workflowName": "unit-tests-ci",
+        },
+    ]
+    summary = controller.summarize_current_head_check_state("head-new", runs)
+    ASSERTIONS.assertEqual(summary["category"], "unknown_head")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
+    ASSERTIONS.assertTrue(summary["needs_manual"])
+    ASSERTIONS.assertGreaterEqual(summary["unknown_head_count"], 1)
+    ASSERTIONS.assertIn("521", summary["ignored_unknown_run_ids"])
+
+
+def test_current_head_failed_check_is_blocker():
+    summary = controller.summarize_current_head_check_state(
+        "head-new",
+        [_gh_run("Unit tests", "FAILURE", "head-new", run_id=12)],
+    )
+    ASSERTIONS.assertEqual(summary["current_blocker_count"], 1)
+    ASSERTIONS.assertEqual(summary["next_action"], "fix_current_head_checks")
+
+
+def test_newer_current_head_success_suppresses_older_duplicate_failure():
+    runs = [
+        _gh_run("Unit tests", "FAILURE", "head-new", run_id=1, started="2026-05-25T00:00:00Z"),
+        _gh_run("  Unit   tests ", "SUCCESS", "head-new", run_id=2, started="2026-05-25T00:01:00Z"),
+    ]
+    summary = controller.summarize_current_head_check_state("head-new", runs)
+    ASSERTIONS.assertEqual(summary["current_blocker_count"], 0)
+    ASSERTIONS.assertEqual(summary["next_action"], "ready")
+
+
+def test_current_head_pending_check_returns_wait_pending():
+    summary = controller.summarize_current_head_check_state(
+        "head-new",
+        [_gh_run("Integration", "IN_PROGRESS", "head-new", run_id=13)],
+    )
+    ASSERTIONS.assertEqual(summary["pending_count"], 1)
+    ASSERTIONS.assertEqual(summary["next_action"], "wait_pending")
+
+
+def test_stale_pending_check_does_not_block():
+    summary = controller.summarize_current_head_check_state(
+        "head-new",
+        [_gh_run("Integration", "IN_PROGRESS", "head-old", run_id=14)],
+    )
+    ASSERTIONS.assertEqual(summary["pending_count"], 0)
+    ASSERTIONS.assertEqual(summary["next_action"], "no_action")
+
+
+def test_current_head_cancelled_pr_flow_guardrails_plans_rerun():
+    plan = controller.build_workflow_rerun_plan(
+        "head-new",
+        [_gh_run("PR flow guardrails", "CANCELLED", "head-new", run_id=101)],
+    )
+    ASSERTIONS.assertEqual(plan["rerun_run_ids"], ["101"])
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+
+
+def test_current_head_cancelled_pr_flow_guardrails_string_check_id_no_url_not_rerunnable():
+    run = _gh_run("PR flow guardrails", "CANCELLED", "head-new", run_id=0)
+    run["id"] = "101"
+    plan = controller.build_workflow_rerun_plan("head-new", [run, run])
+    ASSERTIONS.assertEqual(plan["rerun_run_ids"], [])
+    summary = controller.summarize_current_head_check_state("head-new", [run])
+    ASSERTIONS.assertEqual(summary["category"], "current_head_cancelled_unrerunnable")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
+
+
+def test_current_head_cancelled_merge_readiness_plans_rerun():
+    plan = controller.build_workflow_rerun_plan(
+        "head-new",
+        [_gh_run("PR Merge Readiness", "CANCELLED", "head-new", run_id=102)],
+    )
+    ASSERTIONS.assertEqual(plan["rerun_run_ids"], ["102"])
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+
+
+def test_current_head_stale_with_actions_url_plans_rerun():
+    plan = controller.build_workflow_rerun_plan(
+        "head-new",
+        [_gh_run("PR Merge Readiness", "STALE", "head-new", run_id=1202)],
+    )
+    ASSERTIONS.assertEqual(plan["rerun_run_ids"], ["1202"])
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+
+
+def test_current_head_stale_without_actions_url_is_needs_manual():
+    run = _gh_run("PR Merge Readiness", "STALE", "head-new", run_id=0)
+    run["id"] = "1203"
+    plan = controller.build_workflow_rerun_plan("head-new", [run])
+    ASSERTIONS.assertEqual(plan["rerun_run_ids"], [])
+    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+    summary = controller.summarize_current_head_check_state("head-new", [run])
+    ASSERTIONS.assertEqual(summary["category"], "current_head_stale_unrerunnable")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
+    ASSERTIONS.assertTrue(summary["needs_manual"])
+    ASSERTIONS.assertFalse(summary["safe_to_rerun"])
+
+
+def test_stale_cancelled_run_is_ignored():
+    plan = controller.build_workflow_rerun_plan(
+        "head-new",
+        [_gh_run("PR flow guardrails", "CANCELLED", "head-old", run_id=103)],
+    )
+    ASSERTIONS.assertEqual(plan["rerun_run_ids"], [])
+    ASSERTIONS.assertIn("103", plan["ignored_stale_run_ids"])
+
+
+def test_build_workflow_rerun_plan_preserves_ignored_stale_ids_from_dedupe():
+    runs = [
+        _with_source(
+            _gh_run("PR flow guardrails", "SUCCESS", "head-new", run_id=105, started="2026-05-25T00:01:00Z"),
+            workflowName="pr-flow-guardrails",
+        ),
+        {
+            "name": "PR flow guardrails",
+            "status": "STALE",
+            "conclusion": "STALE",
+            "head_sha": "head-old",
+            "id": 104,
+            "started_at": "2026-05-25T00:00:00Z",
+            "workflowName": "pr-flow-guardrails",
+        },
+    ]
+    plan = controller.build_workflow_rerun_plan("head-new", runs)
+    ASSERTIONS.assertEqual(plan["rerun_run_ids"], [])
+    ASSERTIONS.assertIn("104", plan["ignored_stale_run_ids"])
+
+
+def test_duplicate_run_ids_are_deduped():
+    plan = controller.build_workflow_rerun_plan(
+        "head-new",
+        [
+            _gh_run("PR Merge Readiness", "CANCELLED", "head-new", run_id=201),
+            _gh_run("PR Merge Readiness", "CANCELLED", "head-new", run_id=201, started="2026-05-25T00:01:00Z"),
+        ],
+    )
+    ASSERTIONS.assertEqual(plan["rerun_run_ids"], ["201"])
+
+
+def test_blacklisted_cancelled_current_head_check_can_still_be_rerun_planned():
+    plan = controller.build_workflow_rerun_plan(
+        "head-new",
+        [_gh_run("Refresh stale self checks", "CANCELLED", "head-new", run_id=202)],
+    )
+    ASSERTIONS.assertEqual(plan["rerun_run_ids"], ["202"])
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+
+
+def test_empty_current_head_check_set_is_not_ready():
+    summary = controller.summarize_current_head_check_state("head-new", [])
+    ASSERTIONS.assertEqual(summary["category"], "no_current_head_checks")
+    ASSERTIONS.assertEqual(summary["next_action"], "wait_pending")
+    ASSERTIONS.assertFalse(summary["needs_manual"])
+    ASSERTIONS.assertFalse(summary["safe_to_rerun"])
+
+
+def test_missing_head_fails_closed_unknown_not_current():
+    details = controller.classify_github_check_run_staleness("head-new", _gh_run("Unit tests", "FAILURE", "", run_id=9))
+    ASSERTIONS.assertEqual(details["category"], "unknown_head")
+    ASSERTIONS.assertFalse(details["current_head"])
+    ASSERTIONS.assertFalse(details["stale"])
+    ASSERTIONS.assertFalse(details["safe_to_rerun"])
+
+
+def test_workflow_helpers_are_passive_and_no_gh(monkeypatch):
+    monkeypatch.setattr(
+        controller,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("run() must not be called")),
+    )
+    checks = [_gh_run("Unit tests", "SUCCESS", "head-new", run_id=301)]
+    controller.normalize_github_check_name(" Unit  tests ")
+    controller.github_check_run_head(checks[0])
+    controller.classify_github_check_run_staleness("head-new", checks[0])
+    controller.dedupe_github_check_runs("head-new", checks)
+    controller.build_workflow_rerun_plan("head-new", checks)
+    summary = controller.summarize_current_head_check_state("head-new", checks)
+    ASSERTIONS.assertEqual(summary["category"], "ready")
+
+
+def test_summarize_missing_head_check_returns_unknown_head_needs_manual():
+    summary = controller.summarize_current_head_check_state(
+        "head-new",
+        [_gh_run("Unit tests", "SUCCESS", "", run_id=401)],
+    )
+    ASSERTIONS.assertEqual(summary["category"], "unknown_head")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
+    ASSERTIONS.assertTrue(summary["needs_manual"])
+
+
+def test_summarize_missing_head_check_direct_contract():
+    summary = controller.summarize_current_head_check_state(
+        "head-new",
+        [{"name": "Unit tests", "status": "SUCCESS", "conclusion": "SUCCESS", "id": 499}],
+    )
+    ASSERTIONS.assertEqual(summary["category"], "unknown_head")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
+    ASSERTIONS.assertTrue(summary["needs_manual"])
+
+
+def test_summarize_missing_head_check_with_other_current_head_still_needs_manual():
+    summary = controller.summarize_current_head_check_state(
+        "head-new",
+        [
+            _gh_run("Unit tests", "SUCCESS", "head-new", run_id=500),
+            _gh_run("Lint", "SUCCESS", "", run_id=501),
+        ],
+    )
+    ASSERTIONS.assertEqual(summary["category"], "unknown_head")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
+    ASSERTIONS.assertTrue(summary["needs_manual"])
+
+
+def test_summarize_missing_head_variants_return_unknown_head_needs_manual():
+    runs = [
+        {"name": "Unit tests", "status": "SUCCESS", "conclusion": "SUCCESS", "id": 421, "headSha": ""},
+        {"name": "Integration", "status": "SUCCESS", "conclusion": "SUCCESS", "id": 422, "headRefOid": ""},
+    ]
+    summary = controller.summarize_current_head_check_state("head-new", runs)
+    ASSERTIONS.assertEqual(summary["category"], "unknown_head")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
+    ASSERTIONS.assertTrue(summary["needs_manual"])
+
+
+def test_empty_pr_head_sha_returns_unknown_head_needs_manual():
+    summary = controller.summarize_current_head_check_state(
+        "",
+        [_gh_run("Unit tests", "SUCCESS", "head-new", run_id=402)],
+    )
+    ASSERTIONS.assertEqual(summary["category"], "unknown_head")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
+    ASSERTIONS.assertTrue(summary["needs_manual"])
+
+
+def test_dedupe_prefers_current_head_over_newer_stale_duplicate():
+    runs = [
+        _gh_run("Unit tests", "SUCCESS", "head-new", run_id=403, started="2026-05-25T00:00:00Z"),
+        _gh_run("Unit tests", "FAILURE", "head-old", run_id=404, started="2026-05-25T00:10:00Z"),
+    ]
+    deduped = controller.dedupe_github_check_runs("head-new", runs)
+    selected = deduped["selected_runs"][0]
+    ASSERTIONS.assertEqual(selected.get("id"), 403)
+    ASSERTIONS.assertIn("404", deduped["ignored_stale_run_ids"])
+
+
+def test_dedupe_keeps_same_name_checks_with_different_workflow_name_separate():
+    runs = [
+        _with_source(
+            _gh_run("build", "SUCCESS", "head-new", run_id=431),
+            workflowName="ci-build",
+        ),
+        _with_source(
+            _gh_run("build", "FAILURE", "head-new", run_id=432),
+            workflowName="release-build",
+        ),
+    ]
+    deduped = controller.dedupe_github_check_runs("head-new", runs)
+    selected_ids = {check.get("id") for check in deduped["selected_runs"]}
+    ASSERTIONS.assertEqual(selected_ids, {431, 432})
+
+
+def test_same_name_distinct_source_failure_counts_as_current_blocker():
+    runs = [
+        _with_source(_gh_run("build", "SUCCESS", "head-new", run_id=433), source="workflow-a"),
+        _with_source(_gh_run("build", "FAILURE", "head-new", run_id=434), source="workflow-b"),
+    ]
+    summary = controller.summarize_current_head_check_state("head-new", runs)
+    ASSERTIONS.assertEqual(summary["category"], "workflow_failure")
+    ASSERTIONS.assertEqual(summary["current_blocker_count"], 1)
+
+
+def test_dedupe_keeps_same_name_same_app_with_different_source_separate():
+    runs = [
+        _with_source(
+            _gh_run("build", "SUCCESS", "head-new", run_id=443),
+            source="workflow-a",
+            app={"name": "GitHub Actions"},
+        ),
+        _with_source(
+            _gh_run("build", "FAILURE", "head-new", run_id=444),
+            source="workflow-b",
+            app={"name": "GitHub Actions"},
+        ),
+    ]
+    deduped = controller.dedupe_github_check_runs("head-new", runs)
+    selected_ids = {check.get("id") for check in deduped["selected_runs"]}
+    ASSERTIONS.assertEqual(selected_ids, {443, 444})
+
+
+def test_dedupe_coalesces_true_duplicate_same_name_and_source():
+    runs = [
+        _with_source(
+            _gh_run("build", "FAILURE", "head-new", run_id=435, started="2026-05-25T00:00:00Z"),
+            workflow_name="ci-build",
+        ),
+        _with_source(
+            _gh_run("build", "SUCCESS", "head-new", run_id=436, started="2026-05-25T00:01:00Z"),
+            workflow_name="ci-build",
+        ),
+    ]
+    deduped = controller.dedupe_github_check_runs("head-new", runs)
+    ASSERTIONS.assertEqual(len(deduped["selected_runs"]), 1)
+    ASSERTIONS.assertEqual(deduped["selected_runs"][0].get("id"), 436)
+    ASSERTIONS.assertEqual(deduped["ignored_duplicate_run_ids"], ["435"])
+
+
+def test_stale_newer_duplicate_same_source_does_not_suppress_current_head():
+    runs = [
+        _with_source(
+            _gh_run("build", "SUCCESS", "head-new", run_id=437, started="2026-05-25T00:00:00Z"),
+            app={"name": "github-actions"},
+        ),
+        _with_source(
+            _gh_run("build", "FAILURE", "head-old", run_id=438, started="2026-05-25T00:10:00Z"),
+            app={"name": "github-actions"},
+        ),
+    ]
+    deduped = controller.dedupe_github_check_runs("head-new", runs)
+    ASSERTIONS.assertEqual(deduped["selected_runs"][0].get("id"), 437)
+    ASSERTIONS.assertIn("438", deduped["ignored_stale_run_ids"])
+
+
+def test_current_head_failure_not_suppressed_by_newer_stale_duplicate():
+    runs = [
+        _gh_run("Unit tests", "FAILURE", "head-new", run_id=405, started="2026-05-25T00:00:00Z"),
+        _gh_run("Unit tests", "SUCCESS", "head-old", run_id=406, started="2026-05-25T00:10:00Z"),
+    ]
+    summary = controller.summarize_current_head_check_state("head-new", runs)
+    ASSERTIONS.assertEqual(summary["category"], "workflow_failure")
+    ASSERTIONS.assertEqual(summary["next_action"], "fix_current_head_checks")
+    ASSERTIONS.assertEqual(summary["current_blocker_count"], 1)
+
+
+def test_current_head_pending_not_suppressed_by_newer_stale_duplicate():
+    runs = [
+        _gh_run("Integration", "IN_PROGRESS", "head-new", run_id=407, started="2026-05-25T00:00:00Z"),
+        _gh_run("Integration", "SUCCESS", "head-old", run_id=408, started="2026-05-25T00:10:00Z"),
+    ]
+    summary = controller.summarize_current_head_check_state("head-new", runs)
+    ASSERTIONS.assertEqual(summary["category"], "workflow_pending")
+    ASSERTIONS.assertEqual(summary["next_action"], "wait_pending")
+    ASSERTIONS.assertEqual(summary["pending_count"], 1)
+
+
+def test_current_head_cancelled_merge_readiness_rerunnable_even_if_newer_stale_duplicate():
+    runs = [
+        _gh_run("PR Merge Readiness", "CANCELLED", "head-new", run_id=409, started="2026-05-25T00:00:00Z"),
+        _gh_run("PR Merge Readiness", "SUCCESS", "head-old", run_id=410, started="2026-05-25T00:10:00Z"),
+    ]
+    summary = controller.summarize_current_head_check_state("head-new", runs)
+    ASSERTIONS.assertEqual(summary["category"], "workflow_cancelled")
+    ASSERTIONS.assertEqual(summary["next_action"], "rerun_stale_checks")
+    ASSERTIONS.assertEqual(summary["reason"], "rerunnable cancelled current head checks")
+    ASSERTIONS.assertEqual(summary["rerun_run_ids"], ["409"])
+
+
+def test_current_head_failure_takes_priority_over_rerun_cancelled():
+    runs = [
+        _gh_run("Unit tests", "FAILURE", "head-new", run_id=1501),
+        _gh_run("PR Merge Readiness", "CANCELLED", "head-new", run_id=1502),
+    ]
+    summary = controller.summarize_current_head_check_state("head-new", runs)
+    ASSERTIONS.assertGreaterEqual(summary["current_blocker_count"], 1)
+    ASSERTIONS.assertEqual(summary["category"], "workflow_failure")
+    ASSERTIONS.assertEqual(summary["next_action"], "fix_current_head_checks")
+    ASSERTIONS.assertNotEqual(summary["next_action"], "rerun_stale_checks")
+    ASSERTIONS.assertNotEqual(summary["category"], "workflow_cancelled")
+
+
+def test_stale_only_without_unknown_remains_stale_only_no_action():
+    summary = controller.summarize_current_head_check_state(
+        "head-new",
+        [_gh_run("Unit tests", "SUCCESS", "head-old", run_id=411)],
+    )
+    ASSERTIONS.assertEqual(summary["category"], "stale_only")
+    ASSERTIONS.assertEqual(summary["next_action"], "no_action")
+
+
+def test_stale_head_stale_does_not_block_current_head_ready():
+    runs = [
+        _gh_run("Unit tests", "SUCCESS", "head-new", run_id=1311),
+        _gh_run("Unit tests", "STALE", "head-old", run_id=1312),
+    ]
+    summary = controller.summarize_current_head_check_state("head-new", runs)
+    ASSERTIONS.assertEqual(summary["category"], "ready")
+    ASSERTIONS.assertEqual(summary["next_action"], "ready")
+    ASSERTIONS.assertEqual(summary["current_blocker_count"], 0)
+
+
+def test_current_head_cancelled_without_rerunnable_run_id_needs_manual():
+    summary = controller.summarize_current_head_check_state(
+        "head-new",
+        [{"name": "PR flow guardrails", "status": "CANCELLED", "conclusion": "CANCELLED", "head_sha": "head-new"}],
+    )
+    ASSERTIONS.assertEqual(summary["category"], "current_head_cancelled_unrerunnable")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
+    ASSERTIONS.assertTrue(summary["needs_manual"])
+
+
+def test_current_head_cancelled_with_only_check_ids_and_no_actions_url_needs_manual():
+    summary = controller.summarize_current_head_check_state(
+        "head-new",
+        [
+            {
+                "name": "PR flow guardrails",
+                "status": "CANCELLED",
+                "conclusion": "CANCELLED",
+                "head_sha": "head-new",
+                "id": 999,
+                "databaseId": 888,
+            }
+        ],
+    )
+    ASSERTIONS.assertEqual(summary["category"], "current_head_cancelled_unrerunnable")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
+    ASSERTIONS.assertEqual(summary["rerun_run_ids"], [])
+    ASSERTIONS.assertFalse(summary["safe_to_rerun"])
+    ASSERTIONS.assertTrue(summary["needs_manual"])
+
+
+def test_do_not_launch_autofix_for_is_blacklist_not_allowlist():
+    checks = [
+        _gh_run("Refresh stale self checks", "FAILURE", "head-new", run_id=412),
+        _gh_run("Unit tests", "FAILURE", "head-new", run_id=413),
+    ]
+    should_launch, launchable = controller.should_launch_autofix(checks)
+    ASSERTIONS.assertTrue(should_launch)
+    ASSERTIONS.assertEqual([item["name"] for item in launchable], ["Unit tests"])
+
+
+def test_do_not_launch_autofix_for_keeps_guardrail_workflows_blacklisted():
+    checks = [
+        _gh_run("merge readiness", "FAILURE", "head-new", run_id=414),
+        _gh_run("pr merge readiness", "FAILURE", "head-new", run_id=415),
+        _gh_run("pr flow guardrails", "FAILURE", "head-new", run_id=416),
+        _gh_run("Unit tests", "FAILURE", "head-new", run_id=417),
+    ]
+    should_launch, launchable = controller.should_launch_autofix(checks)
+    ASSERTIONS.assertTrue(should_launch)
+    ASSERTIONS.assertEqual([item["name"] for item in launchable], ["Unit tests"])
+
+
+def test_should_not_launch_autofix_for_pr_flow_guardrails_failure_only():
+    checks = [_gh_run("PR flow guardrails", "FAILURE", "head-new", run_id=418)]
+    should_launch, launchable = controller.should_launch_autofix(checks)
+    ASSERTIONS.assertFalse(should_launch)
+    ASSERTIONS.assertEqual(launchable, [])
+
+
+def test_should_not_launch_autofix_for_merge_readiness_failures_only():
+    checks = [
+        _gh_run("Merge readiness", "FAILURE", "head-new", run_id=419),
+        _gh_run("PR Merge Readiness", "FAILURE", "head-new", run_id=420),
+    ]
+    should_launch, launchable = controller.should_launch_autofix(checks)
+    ASSERTIONS.assertFalse(should_launch)
+    ASSERTIONS.assertEqual(launchable, [])
+
+
+def test_should_not_launch_autofix_for_pr_guard_aliases_failure_only():
+    checks = [
+        _gh_run("pr-guard", "FAILURE", "head-new", run_id=421),
+        _gh_run("guard", "FAILURE", "head-new", run_id=422),
+    ]
+    should_launch, launchable = controller.should_launch_autofix(checks)
+    ASSERTIONS.assertFalse(should_launch)
+    ASSERTIONS.assertEqual(launchable, [])
+
+
+def test_run_id_from_check_prefers_actions_run_url_id_over_check_id():
+    check = {
+        "id": 999,
+        "databaseId": 998,
+        "detailsUrl": "https://github.com/org/repo/actions/runs/123456789/jobs/1",
+    }
+    ASSERTIONS.assertEqual(controller.run_id_from_check(check), "123456789")
+
+
+def test_rerun_plan_uses_actions_run_url_id_instead_of_check_id():
+    run = _gh_run("PR flow guardrails", "CANCELLED", "head-new", run_id=999)
+    run["detailsUrl"] = "https://github.com/org/repo/actions/runs/7777777/jobs/2"
+    plan = controller.build_workflow_rerun_plan("head-new", [run])
+    ASSERTIONS.assertEqual(plan["rerun_run_ids"], ["7777777"])
+
+
+def test_rerun_plan_prefers_actions_run_url_id_12345_over_check_id_999():
+    run = _gh_run("PR flow guardrails", "CANCELLED", "head-new", run_id=999)
+    run["details_url"] = "https://github.com/org/repo/actions/runs/12345/job/7"
+    plan = controller.build_workflow_rerun_plan("head-new", [run])
+    ASSERTIONS.assertEqual(plan["rerun_run_ids"], ["12345"])
+    ASSERTIONS.assertNotIn("999", plan["rerun_run_ids"])
+
+
+def test_blacklisted_names_do_not_block_current_head_cancelled_rerun_plan():
+    checks = [
+        _gh_run("PR flow guardrails", "CANCELLED", "head-new", run_id=423),
+        _gh_run("PR Merge Readiness", "CANCELLED", "head-new", run_id=424),
+    ]
+    should_launch, launchable = controller.should_launch_autofix(checks)
+    ASSERTIONS.assertFalse(should_launch)
+    ASSERTIONS.assertEqual(launchable, [])
+    plan = controller.build_workflow_rerun_plan("head-new", checks)
+    ASSERTIONS.assertEqual(plan["rerun_run_ids"], ["423", "424"])
+
+
 def test_codacy_head_match_contract_exposes_pr_head_and_evidence_head():
     """Codacy evidence contract should expose headRefOid vs Codacy evidence head and match flag."""
     if hasattr(controller, "codacy_head_matches"):
@@ -3088,6 +3695,7 @@ def test_route_blocker_action_maps_required_next_actions():
     ASSERTIONS.assertEqual(controller.route_blocker_action("token_missing", {}), "needs_manual_secret")
     ASSERTIONS.assertEqual(controller.route_blocker_action("api_permission_error", {}), "needs_manual_secret")
     ASSERTIONS.assertEqual(controller.route_blocker_action("scope_violation", {}), "needs_manual_scope_violation")
+    ASSERTIONS.assertEqual(controller.route_blocker_action("merge_conflict", {}), "needs_manual_merge_conflict")
     ASSERTIONS.assertEqual(controller.route_blocker_action("unknown", {}), "needs_manual")
 
 
@@ -3139,15 +3747,15 @@ def test_summarize_blocker_actions_preserves_explicit_merge_conflict_next_action
                 "state": "FAILURE",
                 "source": "merge",
                 "mergeStateStatus": "DIRTY",
-                "next_action": "auto_resolve_merge_conflict",
-                "reason": "merge conflict can be auto-resolved",
+                "next_action": "needs_manual_merge_conflict",
+                "reason": "merge conflict requires manual resolution",
             }
         ],
         {},
     )
 
     ASSERTIONS.assertEqual(summary["primary_category"], "merge_conflict")
-    ASSERTIONS.assertEqual(summary["next_action"], "auto_resolve_merge_conflict")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual_merge_conflict")
 
 
 def test_scope_paths_skips_empty_list_and_continues():
@@ -3160,7 +3768,7 @@ def test_scope_paths_skips_empty_list_and_continues():
 
 
 def test_classify_merge_conflict_contract_paths():
-    """Merge conflict classification differentiates safe out-of-scope automation from manual critical files."""
+    """Merge conflict classification mirrors baseline auto/manual taxonomy contract."""
     dirty = controller.classify_merge_conflict(
         {"mergeable": "MERGEABLE", "mergeStateStatus": "DIRTY"},
         ["scripts/pr_flow_automation.py"],

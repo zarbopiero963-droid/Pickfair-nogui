@@ -56,6 +56,8 @@ DO_NOT_LAUNCH_AUTOFIX_FOR = {
     "merge readiness",
     "pr merge readiness",
     "pr flow guardrails",
+    "pr-guard",
+    "guard",
     "refresh stale self checks",
 }
 
@@ -368,7 +370,16 @@ def name_of(check: dict[str, Any]) -> str:
 
 
 def url_of(check: dict[str, Any]) -> str:
-    return str(check.get("detailsUrl") or check.get("targetUrl") or check.get("url") or "").strip()
+    return str(
+        first_nonempty(
+            check.get("detailsUrl"),
+            check.get("details_url"),
+            check.get("html_url"),
+            check.get("targetUrl"),
+            check.get("url"),
+        )
+        or ""
+    ).strip()
 
 
 def check_state(check: dict[str, Any]) -> str:
@@ -411,6 +422,274 @@ def is_codacy_check(check: dict[str, Any]) -> bool:
 def extract_run_id(url: str) -> str:
     m = re.search(r"/actions/runs/(\d+)", str(url or ""))
     return m.group(1) if m else ""
+
+
+def run_id_from_check(check: dict[str, Any]) -> str:
+    return extract_run_id(url_of(check))
+
+
+def stale_evidence_id_from_check(check: dict[str, Any]) -> str:
+    run_id = run_id_from_check(check)
+    if run_id:
+        return run_id
+    value = first_nonempty(check.get("id"), check.get("databaseId"))
+    return str(value).strip() if value is not None else ""
+
+
+def sorted_unique_ids(ids: list[str]) -> list[str]:
+    return sorted({str(run_id or "").strip() for run_id in ids if str(run_id or "").strip()})
+
+
+def normalize_github_check_name(name: object) -> str:
+    return re.sub(r"\s+", " ", str(name or "").strip()).lower()
+
+
+def normalize_github_check_source(value: object) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip()).lower()
+
+
+def github_check_source_identity(check: dict[str, Any]) -> str:
+    for value in _check_source_identity_candidates(check):
+        normalized = normalize_github_check_source(value)
+        if normalized:
+            return normalized
+    return ""
+
+
+def _check_source_identity_candidates(check: dict[str, Any]) -> list[object]:
+    suite = check.get("check_suite") if isinstance(check.get("check_suite"), dict) else {}
+    app = check.get("app") if isinstance(check.get("app"), dict) else {}
+    url = url_of(check)
+    parsed = urllib.parse.urlparse(url) if url else None
+    host = normalize_github_check_source(parsed.netloc if parsed else "")
+    path = _stable_check_source_path(parsed.path if parsed else "")
+    url_identity = f"{host}{path}" if host and path else ""
+    return [
+        check.get("workflowName"),
+        check.get("workflow_name"),
+        check.get("workflow"),
+        check.get("workflow_id"),
+        suite.get("workflow_name"),
+        check.get("source"),
+        url_identity,
+        host,
+        path,
+        check.get("app_name"),
+        app.get("name"),
+        app.get("slug"),
+        "",
+    ]
+
+
+def _stable_check_source_path(path: object) -> str:
+    raw = normalize_github_check_source(path)
+    if not raw:
+        return ""
+    stable = re.sub(r"/actions/runs/\d+.*$", "/actions/runs", raw)
+    stable = re.sub(r"/check-runs/\d+.*$", "/check-runs", stable)
+    return stable
+
+
+def github_check_dedupe_key(check: dict[str, Any]) -> tuple[str, str]:
+    return (normalize_github_check_name(name_of(check)), github_check_source_identity(check))
+
+
+def is_autofix_blacklisted_check(name: object) -> bool:
+    normalized = normalize_github_check_name(name)
+    return normalized in {normalize_github_check_name(value) for value in DO_NOT_LAUNCH_AUTOFIX_FOR}
+
+
+def github_check_run_head(check: dict[str, Any]) -> str:
+    return str(
+        first_nonempty(
+            check.get("head_sha"),
+            check.get("headSha"),
+            check.get("headRefOid"),
+            check.get("head"),
+            check.get("workflow_head_sha"),
+        )
+        or ""
+    ).strip()
+
+
+def classify_github_check_run_staleness(pr_head_sha: str, check: dict[str, Any]) -> dict[str, Any]:
+    pr_head = str(pr_head_sha or "").strip()
+    check_head = github_check_run_head(check)
+    missing_head = not pr_head or not check_head
+    current_head = bool(pr_head and check_head == pr_head)
+    stale_head = bool(pr_head and check_head and check_head != pr_head)
+    if missing_head:
+        category = "unknown_head"
+    elif stale_head:
+        category = "stale_head"
+    else:
+        category = "current_head"
+    return {
+        "category": category,
+        "check_head_sha": check_head,
+        "current_head": current_head,
+        "stale": stale_head,
+        "safe_to_rerun": current_head and (is_cancelled(check) or is_stale(check)),
+    }
+
+
+def dedupe_github_check_runs(pr_head_sha: str, check_runs: list[dict[str, Any]]) -> dict[str, Any]:
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for check in check_runs:
+        groups.setdefault(github_check_dedupe_key(check), []).append(check)
+    selected: list[dict[str, Any]] = []
+    ignored_stale: list[str] = []
+    ignored_unknown: list[str] = []
+    ignored_dupes: list[str] = []
+    for runs in groups.values():
+        ranked = sorted(runs, key=lambda run: _check_run_dedupe_key(pr_head_sha, run), reverse=True)
+        kept = ranked[0]
+        selected.append(kept)
+        for old in ranked[1:]:
+            run_id = stale_evidence_id_from_check(old)
+            info = classify_github_check_run_staleness(pr_head_sha, old)
+            if info["category"] == "unknown_head":
+                ignored_unknown.append(run_id)
+                ignored_stale.append(run_id)
+            elif info["stale"]:
+                ignored_stale.append(run_id)
+            else:
+                ignored_dupes.append(run_id)
+    return {
+        "selected_runs": selected,
+        "ignored_stale_run_ids": sorted_unique_ids(ignored_stale),
+        "ignored_unknown_run_ids": sorted_unique_ids(ignored_unknown),
+        "ignored_duplicate_run_ids": sorted_unique_ids(ignored_dupes),
+    }
+
+
+def _check_run_priority(pr_head_sha: str, check: dict[str, Any]) -> int:
+    category = classify_github_check_run_staleness(pr_head_sha, check)["category"]
+    if category == "current_head":
+        return 2
+    return 1 if category == "unknown_head" else 0
+
+
+def _check_run_dedupe_key(pr_head_sha: str, check: dict[str, Any]) -> tuple[int, str, str, int]:
+    return (_check_run_priority(pr_head_sha, check),) + _check_run_sort_key(check)
+
+
+def _check_run_sort_key(check: dict[str, Any]) -> tuple[str, str, int]:
+    started = str(first_nonempty(check.get("started_at"), check.get("startedAt")) or "")
+    done = str(first_nonempty(check.get("completed_at"), check.get("completedAt")) or "")
+    run_id = safe_nonnegative_int(first_nonempty(check.get("id"), check.get("databaseId")), 0)
+    return (started, done, run_id)
+
+
+def build_workflow_rerun_plan(pr_head_sha: str, check_runs: list[dict[str, Any]]) -> dict[str, Any]:
+    deduped = dedupe_github_check_runs(pr_head_sha, check_runs)
+    rerun_ids: list[str] = []
+    ignored_stale = list(cast(list[str], deduped["ignored_stale_run_ids"]))
+    for check in cast(list[dict[str, Any]], deduped["selected_runs"]):
+        info = classify_github_check_run_staleness(pr_head_sha, check)
+        run_id = run_id_from_check(check)
+        if info["stale"] or info["category"] == "unknown_head":
+            if run_id:
+                ignored_stale.append(run_id)
+            continue
+        if not info["current_head"] or not (is_cancelled(check) or is_stale(check)):
+            continue
+        if run_id:
+            rerun_ids.append(run_id)
+    return {
+        "rerun_run_ids": sorted_unique_ids(rerun_ids),
+        "ignored_stale_run_ids": sorted_unique_ids(ignored_stale),
+        "ignored_duplicate_run_ids": deduped["ignored_duplicate_run_ids"],
+        "safe_to_rerun": bool(rerun_ids),
+    }
+
+
+def summarize_current_head_check_state(pr_head_sha: str, check_runs: list[dict[str, Any]]) -> dict[str, Any]:
+    clean_pr_head = str(pr_head_sha or "").strip()
+    if not clean_pr_head:
+        return {
+            "category": "unknown_head",
+            "next_action": "needs_manual",
+            "reason": "missing pr head sha",
+            "current_head_sha": "",
+            "stale_count": 0,
+            "pending_count": 0,
+            "current_blocker_count": 0,
+            "rerun_run_ids": [],
+            "ignored_stale_run_ids": [],
+            "safe_to_rerun": False,
+            "needs_manual": True,
+        }
+    deduped = dedupe_github_check_runs(pr_head_sha, check_runs)
+    rerun = build_workflow_rerun_plan(pr_head_sha, check_runs)
+    stale_count = 0
+    pending_count = 0
+    blocker_count = 0
+    unknown_count = 0
+    current_count = 0
+    cancelled_without_rerun_count = 0
+    stale_without_rerun_count = 0
+    for check in cast(list[dict[str, Any]], deduped["selected_runs"]):
+        info = classify_github_check_run_staleness(pr_head_sha, check)
+        if info["stale"]:
+            stale_count += 1
+        if info["category"] == "unknown_head":
+            unknown_count += 1
+        if info["current_head"]:
+            current_count += 1
+        if info["current_head"] and is_pending(check):
+            pending_count += 1
+        if info["current_head"] and is_failure(check):
+            blocker_count += 1
+        if info["current_head"] and is_cancelled(check) and not run_id_from_check(check):
+            cancelled_without_rerun_count += 1
+        if info["current_head"] and is_stale(check) and not run_id_from_check(check):
+            stale_without_rerun_count += 1
+    unknown_count += len(cast(list[str], deduped.get("ignored_unknown_run_ids", [])))
+    if unknown_count > 0:
+        category, next_action, reason = "unknown_head", "needs_manual", "missing check head sha"
+    elif not cast(list[dict[str, Any]], deduped["selected_runs"]):
+        category, next_action, reason = "no_current_head_checks", "wait_pending", "waiting for current head checks"
+    elif pending_count > 0:
+        category, next_action, reason = "workflow_pending", "wait_pending", "current head checks still pending"
+    elif blocker_count > 0:
+        category, next_action, reason = "workflow_failure", "fix_current_head_checks", "current head failures present"
+    elif cast(list[str], rerun["rerun_run_ids"]):
+        category, next_action, reason = "workflow_cancelled", "rerun_stale_checks", "rerunnable cancelled current head checks"
+    elif cancelled_without_rerun_count > 0:
+        category, next_action, reason = (
+            "current_head_cancelled_unrerunnable",
+            "needs_manual",
+            "cancelled current head checks are not rerunnable",
+        )
+    elif stale_without_rerun_count > 0:
+        category, next_action, reason = (
+            "current_head_stale_unrerunnable",
+            "needs_manual",
+            "stale current head checks are not rerunnable",
+        )
+    elif stale_count > 0 and current_count == 0:
+        category, next_action, reason = "stale_only", "no_action", "only stale or cancelled old runs detected"
+    else:
+        category, next_action, reason = "ready", "ready", "all current head checks successful"
+    ignored_stale_run_ids = cast(list[str], rerun["ignored_stale_run_ids"])
+    ignored_unknown_run_ids = cast(list[str], deduped.get("ignored_unknown_run_ids", []))
+    stale_count = max(stale_count, len(ignored_stale_run_ids))
+    return {
+        "category": category,
+        "next_action": next_action,
+        "reason": reason,
+        "current_head_sha": clean_pr_head,
+        "stale_count": stale_count,
+        "pending_count": pending_count,
+        "current_blocker_count": blocker_count,
+        "unknown_head_count": unknown_count,
+        "rerun_run_ids": rerun["rerun_run_ids"],
+        "ignored_stale_run_ids": ignored_stale_run_ids,
+        "ignored_unknown_run_ids": ignored_unknown_run_ids,
+        "safe_to_rerun": bool(rerun["safe_to_rerun"]),
+        "needs_manual": next_action == "needs_manual",
+    }
 
 
 def pr_view(repo: str, pr: str) -> dict[str, Any]:
@@ -687,8 +966,7 @@ def should_launch_autofix(checks: list[dict[str, Any]]) -> tuple[bool, list[dict
     for check in checks:
         if not is_failure(check) or is_self_check(check):
             continue
-        name = name_of(check).lower()
-        if name not in DO_NOT_LAUNCH_AUTOFIX_FOR:
+        if not is_autofix_blacklisted_check(name_of(check)):
             launchable.append(compact_check(check))
     return bool(launchable), launchable
 
@@ -4207,7 +4485,7 @@ def classify_merge_conflict(
     conflicted_files: list[str],
     task_scope: dict[str, Any],
 ) -> dict[str, Any]:
-    """Classify merge conflicts into safe automation/manual resolution paths."""
+    """Classify merge conflicts into manual vs auto-resolvable resolution paths."""
     if not _pr_has_merge_conflict(pr):
         return _no_merge_conflict_result()
     if not conflicted_files:
