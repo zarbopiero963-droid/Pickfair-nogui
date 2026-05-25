@@ -539,6 +539,7 @@ def dedupe_github_check_runs(pr_head_sha: str, check_runs: list[dict[str, Any]])
         groups.setdefault(github_check_dedupe_key(check), []).append(check)
     selected: list[dict[str, Any]] = []
     ignored_stale: list[str] = []
+    ignored_unknown: list[str] = []
     ignored_dupes: list[str] = []
     for runs in groups.values():
         ranked = sorted(runs, key=lambda run: _check_run_dedupe_key(pr_head_sha, run), reverse=True)
@@ -547,13 +548,17 @@ def dedupe_github_check_runs(pr_head_sha: str, check_runs: list[dict[str, Any]])
         for old in ranked[1:]:
             run_id = stale_evidence_id_from_check(old)
             info = classify_github_check_run_staleness(pr_head_sha, old)
-            if info["stale"] or info["category"] == "unknown_head":
+            if info["category"] == "unknown_head":
+                ignored_unknown.append(run_id)
+                ignored_stale.append(run_id)
+            elif info["stale"]:
                 ignored_stale.append(run_id)
             else:
                 ignored_dupes.append(run_id)
     return {
         "selected_runs": selected,
         "ignored_stale_run_ids": sorted_unique_ids(ignored_stale),
+        "ignored_unknown_run_ids": sorted_unique_ids(ignored_unknown),
         "ignored_duplicate_run_ids": sorted_unique_ids(ignored_dupes),
     }
 
@@ -640,12 +645,15 @@ def summarize_current_head_check_state(pr_head_sha: str, check_runs: list[dict[s
             cancelled_without_rerun_count += 1
         if info["current_head"] and is_stale(check) and not run_id_from_check(check):
             stale_without_rerun_count += 1
+    unknown_count += len(cast(list[str], deduped.get("ignored_unknown_run_ids", [])))
     if unknown_count > 0:
         category, next_action, reason = "unknown_head", "needs_manual", "missing check head sha"
     elif not cast(list[dict[str, Any]], deduped["selected_runs"]):
         category, next_action, reason = "no_current_head_checks", "wait_pending", "waiting for current head checks"
     elif pending_count > 0:
         category, next_action, reason = "workflow_pending", "wait_pending", "current head checks still pending"
+    elif blocker_count > 0:
+        category, next_action, reason = "workflow_failure", "fix_current_head_checks", "current head failures present"
     elif cast(list[str], rerun["rerun_run_ids"]):
         category, next_action, reason = "workflow_cancelled", "rerun_stale_checks", "rerunnable cancelled current head checks"
     elif cancelled_without_rerun_count > 0:
@@ -660,13 +668,12 @@ def summarize_current_head_check_state(pr_head_sha: str, check_runs: list[dict[s
             "needs_manual",
             "stale current head checks are not rerunnable",
         )
-    elif blocker_count > 0:
-        category, next_action, reason = "workflow_failure", "fix_current_head_checks", "current head failures present"
     elif stale_count > 0 and current_count == 0:
         category, next_action, reason = "stale_only", "no_action", "only stale or cancelled old runs detected"
     else:
         category, next_action, reason = "ready", "ready", "all current head checks successful"
     ignored_stale_run_ids = cast(list[str], rerun["ignored_stale_run_ids"])
+    ignored_unknown_run_ids = cast(list[str], deduped.get("ignored_unknown_run_ids", []))
     stale_count = max(stale_count, len(ignored_stale_run_ids))
     return {
         "category": category,
@@ -676,8 +683,10 @@ def summarize_current_head_check_state(pr_head_sha: str, check_runs: list[dict[s
         "stale_count": stale_count,
         "pending_count": pending_count,
         "current_blocker_count": blocker_count,
+        "unknown_head_count": unknown_count,
         "rerun_run_ids": rerun["rerun_run_ids"],
         "ignored_stale_run_ids": ignored_stale_run_ids,
+        "ignored_unknown_run_ids": ignored_unknown_run_ids,
         "safe_to_rerun": bool(rerun["safe_to_rerun"]),
         "needs_manual": next_action == "needs_manual",
     }

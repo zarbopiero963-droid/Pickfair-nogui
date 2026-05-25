@@ -2527,6 +2527,29 @@ def test_stale_head_failure_duplicate_with_current_success_preserves_ignored_evi
     ASSERTIONS.assertGreaterEqual(summary["stale_count"], 1)
 
 
+def test_current_success_with_missing_head_duplicate_is_unknown_head_needs_manual():
+    runs = [
+        _with_source(
+            _gh_run("Unit tests", "SUCCESS", "head-new", run_id=522, started="2026-05-25T00:01:00Z"),
+            workflowName="unit-tests-ci",
+        ),
+        {
+            "name": "Unit tests",
+            "status": "SUCCESS",
+            "conclusion": "SUCCESS",
+            "id": 521,
+            "started_at": "2026-05-25T00:00:00Z",
+            "workflowName": "unit-tests-ci",
+        },
+    ]
+    summary = controller.summarize_current_head_check_state("head-new", runs)
+    ASSERTIONS.assertEqual(summary["category"], "unknown_head")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
+    ASSERTIONS.assertTrue(summary["needs_manual"])
+    ASSERTIONS.assertGreaterEqual(summary["unknown_head_count"], 1)
+    ASSERTIONS.assertIn("521", summary["ignored_unknown_run_ids"])
+
+
 def test_current_head_failed_check_is_blocker():
     summary = controller.summarize_current_head_check_state(
         "head-new",
@@ -2870,6 +2893,19 @@ def test_current_head_cancelled_merge_readiness_rerunnable_even_if_newer_stale_d
     ASSERTIONS.assertEqual(summary["next_action"], "rerun_stale_checks")
     ASSERTIONS.assertEqual(summary["reason"], "rerunnable cancelled current head checks")
     ASSERTIONS.assertEqual(summary["rerun_run_ids"], ["409"])
+
+
+def test_current_head_failure_takes_priority_over_rerun_cancelled():
+    runs = [
+        _gh_run("Unit tests", "FAILURE", "head-new", run_id=1501),
+        _gh_run("PR Merge Readiness", "CANCELLED", "head-new", run_id=1502),
+    ]
+    summary = controller.summarize_current_head_check_state("head-new", runs)
+    ASSERTIONS.assertGreaterEqual(summary["current_blocker_count"], 1)
+    ASSERTIONS.assertEqual(summary["category"], "workflow_failure")
+    ASSERTIONS.assertEqual(summary["next_action"], "fix_current_head_checks")
+    ASSERTIONS.assertNotEqual(summary["next_action"], "rerun_stale_checks")
+    ASSERTIONS.assertNotEqual(summary["category"], "workflow_cancelled")
 
 
 def test_stale_only_without_unknown_remains_stale_only_no_action():
