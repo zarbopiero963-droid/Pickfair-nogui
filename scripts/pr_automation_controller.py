@@ -436,6 +436,55 @@ def normalize_github_check_name(name: object) -> str:
     return re.sub(r"\s+", " ", str(name or "").strip()).lower()
 
 
+def normalize_github_check_source(value: object) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip()).lower()
+
+
+def github_check_source_identity(check: dict[str, Any]) -> str:
+    for value in _check_source_identity_candidates(check):
+        normalized = normalize_github_check_source(value)
+        if normalized:
+            return normalized
+    return ""
+
+
+def _check_source_identity_candidates(check: dict[str, Any]) -> list[object]:
+    suite = check.get("check_suite") if isinstance(check.get("check_suite"), dict) else {}
+    app = check.get("app") if isinstance(check.get("app"), dict) else {}
+    url = url_of(check)
+    parsed = urllib.parse.urlparse(url) if url else None
+    host = normalize_github_check_source(parsed.netloc if parsed else "")
+    path = _stable_check_source_path(parsed.path if parsed else "")
+    return [
+        check.get("workflowName"),
+        check.get("workflow_name"),
+        check.get("workflow"),
+        check.get("workflow_id"),
+        suite.get("workflow_name"),
+        app.get("name"),
+        app.get("slug"),
+        check.get("app_name"),
+        check.get("app"),
+        check.get("source"),
+        f"{host}{path}" if host and path else "",
+        host,
+        path,
+    ]
+
+
+def _stable_check_source_path(path: object) -> str:
+    raw = normalize_github_check_source(path)
+    if not raw:
+        return ""
+    stable = re.sub(r"/actions/runs/\d+.*$", "/actions/runs", raw)
+    stable = re.sub(r"/check-runs/\d+.*$", "/check-runs", stable)
+    return stable
+
+
+def github_check_dedupe_key(check: dict[str, Any]) -> tuple[str, str]:
+    return (normalize_github_check_name(name_of(check)), github_check_source_identity(check))
+
+
 def is_autofix_blacklisted_check(name: object) -> bool:
     normalized = normalize_github_check_name(name)
     return normalized in {normalize_github_check_name(value) for value in DO_NOT_LAUNCH_AUTOFIX_FOR}
@@ -476,9 +525,9 @@ def classify_github_check_run_staleness(pr_head_sha: str, check: dict[str, Any])
 
 
 def dedupe_github_check_runs(pr_head_sha: str, check_runs: list[dict[str, Any]]) -> dict[str, Any]:
-    groups: dict[str, list[dict[str, Any]]] = {}
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for check in check_runs:
-        groups.setdefault(normalize_github_check_name(name_of(check)), []).append(check)
+        groups.setdefault(github_check_dedupe_key(check), []).append(check)
     selected: list[dict[str, Any]] = []
     ignored_stale: list[str] = []
     ignored_dupes: list[str] = []

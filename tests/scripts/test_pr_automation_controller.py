@@ -2457,6 +2457,13 @@ def _gh_run(
     return check
 
 
+def _with_source(run: dict[str, Any], **fields: Any) -> dict[str, Any]:
+    enriched = dict(run)
+    for key, value in fields.items():
+        enriched[key] = value
+    return enriched
+
+
 def test_stale_head_failed_check_ignored():
     summary = controller.summarize_current_head_check_state(
         "head-new",
@@ -2665,6 +2672,65 @@ def test_dedupe_prefers_current_head_over_newer_stale_duplicate():
     selected = deduped["selected_runs"][0]
     ASSERTIONS.assertEqual(selected.get("id"), 403)
     ASSERTIONS.assertIn("404", deduped["ignored_stale_run_ids"])
+
+
+def test_dedupe_keeps_same_name_checks_with_different_workflow_name_separate():
+    runs = [
+        _with_source(
+            _gh_run("build", "SUCCESS", "head-new", run_id=431),
+            workflowName="ci-build",
+        ),
+        _with_source(
+            _gh_run("build", "FAILURE", "head-new", run_id=432),
+            workflowName="release-build",
+        ),
+    ]
+    deduped = controller.dedupe_github_check_runs("head-new", runs)
+    selected_ids = {check.get("id") for check in deduped["selected_runs"]}
+    ASSERTIONS.assertEqual(selected_ids, {431, 432})
+
+
+def test_same_name_distinct_source_failure_counts_as_current_blocker():
+    runs = [
+        _with_source(_gh_run("build", "SUCCESS", "head-new", run_id=433), source="workflow-a"),
+        _with_source(_gh_run("build", "FAILURE", "head-new", run_id=434), source="workflow-b"),
+    ]
+    summary = controller.summarize_current_head_check_state("head-new", runs)
+    ASSERTIONS.assertEqual(summary["category"], "workflow_failure")
+    ASSERTIONS.assertEqual(summary["current_blocker_count"], 1)
+
+
+def test_dedupe_coalesces_true_duplicate_same_name_and_source():
+    runs = [
+        _with_source(
+            _gh_run("build", "FAILURE", "head-new", run_id=435, started="2026-05-25T00:00:00Z"),
+            workflow_name="ci-build",
+        ),
+        _with_source(
+            _gh_run("build", "SUCCESS", "head-new", run_id=436, started="2026-05-25T00:01:00Z"),
+            workflow_name="ci-build",
+        ),
+    ]
+    deduped = controller.dedupe_github_check_runs("head-new", runs)
+    ASSERTIONS.assertEqual(len(deduped["selected_runs"]), 1)
+    ASSERTIONS.assertEqual(deduped["selected_runs"][0].get("id"), 436)
+    ASSERTIONS.assertEqual(deduped["ignored_duplicate_run_ids"], ["435"])
+
+
+def test_stale_newer_duplicate_same_source_does_not_suppress_current_head():
+    runs = [
+        _with_source(
+            _gh_run("build", "SUCCESS", "head-new", run_id=437, started="2026-05-25T00:00:00Z"),
+            app={"name": "github-actions"},
+        ),
+        _with_source(
+            _gh_run("build", "FAILURE", "head-old", run_id=438, started="2026-05-25T00:10:00Z"),
+            app={"name": "github-actions"},
+        ),
+    ]
+    deduped = controller.dedupe_github_check_runs("head-new", runs)
+    ASSERTIONS.assertEqual(deduped["selected_runs"][0].get("id"), 437)
+    ASSERTIONS.assertIn("438", deduped["ignored_stale_run_ids"])
 
 
 def test_current_head_failure_not_suppressed_by_newer_stale_duplicate():
