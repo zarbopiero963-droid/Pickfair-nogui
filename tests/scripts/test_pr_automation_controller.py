@@ -2556,13 +2556,13 @@ def test_duplicate_run_ids_are_deduped():
     ASSERTIONS.assertEqual(plan["rerun_run_ids"], ["201"])
 
 
-def test_blacklisted_cancelled_current_head_check_is_not_rerun_planned():
+def test_blacklisted_cancelled_current_head_check_can_still_be_rerun_planned():
     plan = controller.build_workflow_rerun_plan(
         "head-new",
         [_gh_run("Refresh stale self checks", "CANCELLED", "head-new", run_id=202)],
     )
-    ASSERTIONS.assertEqual(plan["rerun_run_ids"], [])
-    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+    ASSERTIONS.assertEqual(plan["rerun_run_ids"], ["202"])
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
 
 
 def test_empty_current_head_check_set_is_not_ready():
@@ -2611,6 +2611,19 @@ def test_summarize_missing_head_check_direct_contract():
     summary = controller.summarize_current_head_check_state(
         "head-new",
         [{"name": "Unit tests", "status": "SUCCESS", "conclusion": "SUCCESS", "id": 499}],
+    )
+    ASSERTIONS.assertEqual(summary["category"], "unknown_head")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
+    ASSERTIONS.assertTrue(summary["needs_manual"])
+
+
+def test_summarize_missing_head_check_with_other_current_head_still_needs_manual():
+    summary = controller.summarize_current_head_check_state(
+        "head-new",
+        [
+            _gh_run("Unit tests", "SUCCESS", "head-new", run_id=500),
+            _gh_run("Lint", "SUCCESS", "", run_id=501),
+        ],
     )
     ASSERTIONS.assertEqual(summary["category"], "unknown_head")
     ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
@@ -2692,6 +2705,16 @@ def test_stale_only_without_unknown_remains_stale_only_no_action():
     ASSERTIONS.assertEqual(summary["next_action"], "no_action")
 
 
+def test_current_head_cancelled_without_rerunnable_run_id_needs_manual():
+    summary = controller.summarize_current_head_check_state(
+        "head-new",
+        [{"name": "PR flow guardrails", "status": "CANCELLED", "conclusion": "CANCELLED", "head_sha": "head-new"}],
+    )
+    ASSERTIONS.assertEqual(summary["category"], "current_head_cancelled_unrerunnable")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
+    ASSERTIONS.assertTrue(summary["needs_manual"])
+
+
 def test_do_not_launch_autofix_for_is_blacklist_not_allowlist():
     checks = [
         _gh_run("Refresh stale self checks", "FAILURE", "head-new", run_id=412),
@@ -2700,6 +2723,45 @@ def test_do_not_launch_autofix_for_is_blacklist_not_allowlist():
     should_launch, launchable = controller.should_launch_autofix(checks)
     ASSERTIONS.assertTrue(should_launch)
     ASSERTIONS.assertEqual([item["name"] for item in launchable], ["Unit tests"])
+
+
+def test_do_not_launch_autofix_for_keeps_guardrail_workflows_blacklisted():
+    checks = [
+        _gh_run("merge readiness", "FAILURE", "head-new", run_id=414),
+        _gh_run("pr merge readiness", "FAILURE", "head-new", run_id=415),
+        _gh_run("pr flow guardrails", "FAILURE", "head-new", run_id=416),
+        _gh_run("Unit tests", "FAILURE", "head-new", run_id=417),
+    ]
+    should_launch, launchable = controller.should_launch_autofix(checks)
+    ASSERTIONS.assertTrue(should_launch)
+    ASSERTIONS.assertEqual([item["name"] for item in launchable], ["Unit tests"])
+
+
+def test_should_not_launch_autofix_for_pr_flow_guardrails_failure_only():
+    checks = [_gh_run("PR flow guardrails", "FAILURE", "head-new", run_id=418)]
+    should_launch, launchable = controller.should_launch_autofix(checks)
+    ASSERTIONS.assertFalse(should_launch)
+    ASSERTIONS.assertEqual(launchable, [])
+
+
+def test_should_not_launch_autofix_for_merge_readiness_failures_only():
+    checks = [
+        _gh_run("Merge readiness", "FAILURE", "head-new", run_id=419),
+        _gh_run("PR Merge Readiness", "FAILURE", "head-new", run_id=420),
+    ]
+    should_launch, launchable = controller.should_launch_autofix(checks)
+    ASSERTIONS.assertFalse(should_launch)
+    ASSERTIONS.assertEqual(launchable, [])
+
+
+def test_should_not_launch_autofix_for_pr_guard_aliases_failure_only():
+    checks = [
+        _gh_run("pr-guard", "FAILURE", "head-new", run_id=421),
+        _gh_run("guard", "FAILURE", "head-new", run_id=422),
+    ]
+    should_launch, launchable = controller.should_launch_autofix(checks)
+    ASSERTIONS.assertFalse(should_launch)
+    ASSERTIONS.assertEqual(launchable, [])
 
 
 def test_run_id_from_check_prefers_actions_run_url_id_over_check_id():
@@ -2716,6 +2778,26 @@ def test_rerun_plan_uses_actions_run_url_id_instead_of_check_id():
     run["detailsUrl"] = "https://github.com/org/repo/actions/runs/7777777/jobs/2"
     plan = controller.build_workflow_rerun_plan("head-new", [run])
     ASSERTIONS.assertEqual(plan["rerun_run_ids"], ["7777777"])
+
+
+def test_rerun_plan_prefers_actions_run_url_id_12345_over_check_id_999():
+    run = _gh_run("PR flow guardrails", "CANCELLED", "head-new", run_id=999)
+    run["details_url"] = "https://github.com/org/repo/actions/runs/12345/jobs/9"
+    plan = controller.build_workflow_rerun_plan("head-new", [run])
+    ASSERTIONS.assertEqual(plan["rerun_run_ids"], ["12345"])
+    ASSERTIONS.assertNotIn("999", plan["rerun_run_ids"])
+
+
+def test_blacklisted_names_do_not_block_current_head_cancelled_rerun_plan():
+    checks = [
+        _gh_run("PR flow guardrails", "CANCELLED", "head-new", run_id=423),
+        _gh_run("PR Merge Readiness", "CANCELLED", "head-new", run_id=424),
+    ]
+    should_launch, launchable = controller.should_launch_autofix(checks)
+    ASSERTIONS.assertFalse(should_launch)
+    ASSERTIONS.assertEqual(launchable, [])
+    plan = controller.build_workflow_rerun_plan("head-new", checks)
+    ASSERTIONS.assertEqual(plan["rerun_run_ids"], ["423", "424"])
 
 
 def test_codacy_head_match_contract_exposes_pr_head_and_evidence_head():
@@ -3369,6 +3451,7 @@ def test_route_blocker_action_maps_required_next_actions():
     ASSERTIONS.assertEqual(controller.route_blocker_action("token_missing", {}), "needs_manual_secret")
     ASSERTIONS.assertEqual(controller.route_blocker_action("api_permission_error", {}), "needs_manual_secret")
     ASSERTIONS.assertEqual(controller.route_blocker_action("scope_violation", {}), "needs_manual_scope_violation")
+    ASSERTIONS.assertEqual(controller.route_blocker_action("merge_conflict", {}), "needs_manual_merge_conflict")
     ASSERTIONS.assertEqual(controller.route_blocker_action("unknown", {}), "needs_manual")
 
 

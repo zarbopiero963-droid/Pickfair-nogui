@@ -53,6 +53,11 @@ SELF_CHECK_NAMES = {
 }
 
 DO_NOT_LAUNCH_AUTOFIX_FOR = {
+    "merge readiness",
+    "pr merge readiness",
+    "pr flow guardrails",
+    "pr-guard",
+    "guard",
     "refresh stale self checks",
 }
 
@@ -526,8 +531,6 @@ def build_workflow_rerun_plan(pr_head_sha: str, check_runs: list[dict[str, Any]]
             continue
         if not info["current_head"] or not is_cancelled(check):
             continue
-        if is_autofix_blacklisted_check(name_of(check)):
-            continue
         if run_id:
             rerun_ids.append(run_id)
     return {
@@ -561,6 +564,7 @@ def summarize_current_head_check_state(pr_head_sha: str, check_runs: list[dict[s
     blocker_count = 0
     unknown_count = 0
     current_count = 0
+    cancelled_without_rerun_count = 0
     for check in cast(list[dict[str, Any]], deduped["selected_runs"]):
         info = classify_github_check_run_staleness(pr_head_sha, check)
         if info["stale"]:
@@ -573,6 +577,8 @@ def summarize_current_head_check_state(pr_head_sha: str, check_runs: list[dict[s
             pending_count += 1
         if info["current_head"] and is_failure(check):
             blocker_count += 1
+        if info["current_head"] and is_cancelled(check) and not run_id_from_check(check):
+            cancelled_without_rerun_count += 1
     if unknown_count > 0:
         category, next_action, reason = "unknown_head", "needs_manual", "missing check head sha"
     elif not cast(list[dict[str, Any]], deduped["selected_runs"]):
@@ -581,6 +587,12 @@ def summarize_current_head_check_state(pr_head_sha: str, check_runs: list[dict[s
         category, next_action, reason = "workflow_pending", "wait_pending", "current head checks still pending"
     elif cast(list[str], rerun["rerun_run_ids"]):
         category, next_action, reason = "workflow_cancelled", "rerun_stale_checks", "rerunnable cancelled current head checks"
+    elif cancelled_without_rerun_count > 0:
+        category, next_action, reason = (
+            "current_head_cancelled_unrerunnable",
+            "needs_manual",
+            "cancelled current head checks are not rerunnable",
+        )
     elif blocker_count > 0:
         category, next_action, reason = "workflow_failure", "fix_current_head_checks", "current head failures present"
     elif stale_count > 0 and current_count == 0:
@@ -4346,7 +4358,7 @@ DIRECT_CATEGORY_ACTIONS = {
     "token_missing": "_".join(("manual", "sec" + "ret", "route")),
     "api_permission_error": "_".join(("manual", "sec" + "ret", "route")),
     "scope_violation": "needs_manual_scope_violation",
-    "merge_conflict": "auto_resolve_merge_conflict",
+    "merge_conflict": "needs_manual_merge_conflict",
 }
 MANUAL_AUTH_ACTION = "_".join(("needs", "manual", "sec" + "ret"))
 MANUAL_AUTH_ROUTE = "_".join(("manual", "sec" + "ret", "route"))
