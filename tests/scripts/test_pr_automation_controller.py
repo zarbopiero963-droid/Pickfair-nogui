@@ -210,6 +210,8 @@ def _phase0_pass_payload() -> dict[str, Any]:
         "workflows_affected": ["pr-flow-guardrails"],
         "authoritative_modules": ["scripts/pr_automation_controller.py"],
         "dangerous_gates": ["validate_codex_prompt_contract"],
+        "files_allowed": ["scripts/pr_automation_controller.py"],
+        "files_forbidden": ["scripts/pr_flow_automation.py"],
         "implementation_plan": ["patch validator"],
         "tests_to_run": ["python3 -m pytest tests/scripts/test_pr_automation_controller.py -q"],
         "stop_conditions": ["stop on scope violation"],
@@ -891,7 +893,22 @@ def test_phase0_preflight_parser_non_dict_input_fails_closed():
 def test_parse_phase0_preflight_result_text_phase0_preflight_equals_pass():
     """Text PHASE_0_PREFLIGHT=PASS parses when next_action is present."""
     report = controller.parse_phase0_preflight_result(
-        "PHASE_0_PREFLIGHT=PASS\nnext_action: generate_patch_prompt\nrisk_level: low"
+        "\n".join(
+            [
+                "PHASE_0_PREFLIGHT=PASS",
+                "next_action: generate_patch_prompt",
+                "risk_level: low",
+                "files_inspected: - scripts/pr_automation_controller.py",
+                "static_analysis_rules: - ruff:F401",
+                "workflows_affected: - .github/workflows/pr-automation-controller-v2.yml",
+                "authoritative_modules: - scripts/pr_automation_controller.py",
+                "dangerous_gates: - decide_phase0_gate",
+                "files_allowed: - scripts/pr_automation_controller.py",
+                "files_forbidden: - scripts/pr_flow_automation.py",
+                "tests_to_run: - python3 -m pytest tests/scripts/test_pr_automation_controller.py -q",
+                "stop_conditions: - stop on scope violation",
+            ]
+        )
     )
     ASSERTIONS.assertEqual(report["status"], "PASS")
     ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
@@ -900,7 +917,22 @@ def test_parse_phase0_preflight_result_text_phase0_preflight_equals_pass():
 def test_parse_phase0_preflight_result_text_phase0_preflight_colon_pass():
     """Text phase_0_preflight: PASS parses when next_action is present."""
     report = controller.parse_phase0_preflight_result(
-        "phase_0_preflight: PASS\nnext_action: generate_patch_prompt\nrisk_level: low"
+        "\n".join(
+            [
+                "phase_0_preflight: PASS",
+                "next_action: generate_patch_prompt",
+                "risk_level: low",
+                "files_inspected: - scripts/pr_automation_controller.py",
+                "static_analysis_rules: - ruff:F401",
+                "workflows_affected: - .github/workflows/pr-automation-controller-v2.yml",
+                "authoritative_modules: - scripts/pr_automation_controller.py",
+                "dangerous_gates: - decide_phase0_gate",
+                "files_allowed: - scripts/pr_automation_controller.py",
+                "files_forbidden: - scripts/pr_flow_automation.py",
+                "tests_to_run: - python3 -m pytest tests/scripts/test_pr_automation_controller.py -q",
+                "stop_conditions: - stop on scope violation",
+            ]
+        )
     )
     ASSERTIONS.assertEqual(report["status"], "PASS")
     ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
@@ -978,11 +1010,18 @@ def test_parse_phase0_preflight_result_missing_or_malformed_status_fails_closed(
 
 
 def test_decide_phase0_gate_pass_allows_patch():
-    decision = controller.decide_phase0_gate({"status": "PASS", "next_action": "generate_patch_prompt"})
+    decision = controller.decide_phase0_gate(_phase0_pass_payload())
     ASSERTIONS.assertTrue(decision["phase0_required"])
     ASSERTIONS.assertEqual(decision["phase0_status"], "PASS")
     ASSERTIONS.assertTrue(decision["can_patch"])
     ASSERTIONS.assertFalse(decision["needs_manual"])
+
+
+def test_decide_phase0_gate_blocks_incomplete_pass():
+    decision = controller.decide_phase0_gate({"status": "PASS", "next_action": "generate_patch_prompt"})
+    ASSERTIONS.assertEqual(decision["phase0_status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertFalse(decision["can_patch"])
+    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_phase0_failed")
 
 
 def test_decide_phase0_gate_needs_manual_blocks_patch():
@@ -995,7 +1034,7 @@ def test_decide_phase0_gate_needs_manual_blocks_patch():
 def test_build_codex_patch_task_after_phase0_pass_includes_impl_task_and_constraints():
     result = controller.build_codex_patch_task_after_phase0(
         "Implement the targeted fix only.",
-        {"status": "PASS", "next_action": "generate_patch_prompt"},
+        _phase0_pass_payload(),
     )
     ASSERTIONS.assertFalse(result["blocked"])
     ASSERTIONS.assertIn("Implement the targeted fix only.", result["patch_task"])
@@ -1015,6 +1054,22 @@ def test_build_codex_patch_task_after_phase0_non_pass_blocks_patch_task():
     ASSERTIONS.assertIn("next_action", result)
     ASSERTIONS.assertIn("reason", result)
     ASSERTIONS.assertIn("gate", result)
+
+
+def test_build_codex_patch_task_after_phase0_blocks_incomplete_pass():
+    result = controller.build_codex_patch_task_after_phase0(
+        "Implement the targeted fix only.",
+        {"status": "PASS", "next_action": "generate_patch_prompt"},
+    )
+    ASSERTIONS.assertTrue(result["blocked"])
+    ASSERTIONS.assertFalse(result["can_patch"])
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_phase0_failed")
+
+
+def test_phase0_prompt_builders_return_string_types():
+    ASSERTIONS.assertIsInstance(controller.build_phase0_preflight_prompt({}), str)
+    task = controller.build_phase0_readonly_preflight_task("k", "task", ["a.py"], ["b.py"])
+    ASSERTIONS.assertIsInstance(task, str)
 
 
 def test_phase0_required_for_all_code_edit_triggers():

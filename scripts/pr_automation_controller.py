@@ -143,7 +143,6 @@ PHASE0_REQUIRED_EVIDENCE_FIELDS = (
     "workflows_affected",
     "authoritative_modules",
     "dangerous_gates",
-    "implementation_plan",
     "tests_to_run",
     "stop_conditions",
 )
@@ -389,6 +388,8 @@ def _parse_phase0_json(text: str) -> dict[str, Any] | None:
     if status == "PASS":
         if not next_action:
             return _phase0_failed_result(risk_level)
+        if not _phase0_has_required_evidence(result):
+            return _phase0_failed_result(risk_level)
         result["status"] = "PASS"
         result["risk_level"] = risk_level or "medium"
         result["next_action"] = next_action
@@ -461,6 +462,8 @@ def parse_phase0_preflight_result(output: object) -> dict[str, Any]:
             return _phase0_failed_result(risk_level)
         if not next_action:
             return _phase0_failed_result(risk_level)
+        if not _phase0_has_required_evidence(result):
+            return _phase0_failed_result(risk_level)
         result["status"] = "PASS"
         result["risk_level"] = risk_level or "medium"
         result["next_action"] = next_action
@@ -517,11 +520,12 @@ def decide_phase0_gate(parsed_result: dict[str, Any] | None) -> dict[str, Any]:
     report = parsed_result or {}
     status = normalize_phase0_status(report.get("status"))
     next_action = str(report.get("next_action") or "needs_manual_phase0_malformed")
+    has_evidence = _phase0_has_required_evidence(report)
     allowed_action = _phase0_action(next_action) in {
         "generate_patch_prompt",
         "proceed_with_narrow_patch",
     }
-    can_patch = status == "PASS" and allowed_action
+    can_patch = status == "PASS" and allowed_action and has_evidence
 
     if not can_patch and status == "PASS":
         status = "NEEDS_MANUAL"
@@ -3089,7 +3093,13 @@ def _join_post_fix_segments(segments: list[dict[str, Any]]) -> str:
 
 
 def _phase0_has_required_evidence(report: dict[str, Any]) -> bool:
-    return all(_has_meaningful_list_values(report.get(field)) for field in PHASE0_REQUIRED_EVIDENCE_FIELDS)
+    for field in PHASE0_REQUIRED_EVIDENCE_FIELDS:
+        items = _phase0_list_value(report.get(field), field)
+        if not items:
+            return False
+        if all(_is_placeholder_value(item) for item in items):
+            return False
+    return True
 
 
 def _phase0_status(report: dict[str, Any]) -> str:
