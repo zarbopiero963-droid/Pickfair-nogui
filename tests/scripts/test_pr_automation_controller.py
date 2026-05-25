@@ -2627,6 +2627,36 @@ def test_codacy_annotation_fallback_head_mismatch_with_keyword_inputs_is_stale()
     ASSERTIONS.assertFalse(result["safe_to_patch"])
 
 
+def test_codacy_annotation_fallback_top_level_headref_mismatch_is_stale():
+    summary = controller.summarize_codacy_github_annotation_state(
+        pr_head_sha="head-current",
+        headRefOid="head-old",
+        codacy_api_issues=[],
+        github_annotations=[{"path": "x.py", "message": "issue"}],
+        codacy_check_run={"status": "completed", "conclusion": "action_required"},
+    )
+    ASSERTIONS.assertEqual(summary["category"], "github_stale_check")
+    ASSERTIONS.assertEqual(summary["next_action"], "rerun_stale_checks")
+    ASSERTIONS.assertTrue(summary["stale"])
+    ASSERTIONS.assertFalse(summary["safe_to_patch"])
+    ASSERTIONS.assertEqual(summary["current_head_sha"], "head-current")
+    ASSERTIONS.assertEqual(summary["codacy_head_sha"], "head-old")
+
+
+def test_codacy_annotation_fallback_top_level_headref_match_is_mismatch():
+    summary = controller.summarize_codacy_github_annotation_state(
+        pr_head_sha="head-current",
+        headRefOid="head-current",
+        codacy_api_issues=[],
+        github_annotations=[{"path": "x.py", "message": "issue"}],
+        codacy_check_run={"status": "completed", "conclusion": "action_required"},
+    )
+    ASSERTIONS.assertEqual(summary["category"], "codacy_api_github_mismatch")
+    ASSERTIONS.assertEqual(summary["next_action"], "fix_github_codacy_annotations")
+    ASSERTIONS.assertFalse(summary["stale"])
+    ASSERTIONS.assertTrue(summary["safe_to_patch"])
+
+
 def test_codacy_annotation_fallback_rule_conflict_detects_alias_fields():
     result = controller.classify_codacy_github_annotation_fallback(
         pr_head_sha="head1",
