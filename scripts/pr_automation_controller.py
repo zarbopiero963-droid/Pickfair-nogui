@@ -2877,7 +2877,35 @@ def _codacy_annotation_payload(payload: dict[str, Any] | None, kwargs: dict[str,
     }
 
 
+def _codacy_check_from_checks(payload: dict[str, Any]) -> dict[str, Any]:
+    checks = payload.get("checks")
+    if not isinstance(checks, list):
+        return {}
+    for entry in checks:
+        check = _dict_like(entry)
+        if _is_codacy_check_entry(check):
+            return check
+    return {}
+
+
+def _is_codacy_check_entry(check: dict[str, Any]) -> bool:
+    markers = " ".join(
+        str(value or "")
+        for value in (
+            check.get("name"),
+            check.get("n"),
+            check.get("check_name"),
+            check.get("app"),
+            check.get("app_name"),
+            check.get("details_url"),
+            check.get("url"),
+        )
+    ).lower()
+    return "codacy" in markers
+
+
 def _resolve_codacy_head_sha(payload: dict[str, Any], check_run: dict[str, Any]) -> Any:
+    checks_codacy = _codacy_check_from_checks(payload)
     return first_nonempty(
         payload.get("codacy_head_sha"),
         payload.get("codacy_head"),
@@ -2886,6 +2914,9 @@ def _resolve_codacy_head_sha(payload: dict[str, Any], check_run: dict[str, Any])
         check_run.get("headSha"),
         check_run.get("headRefOid"),
         check_run.get("head"),
+        checks_codacy.get("head_sha"),
+        checks_codacy.get("headSha"),
+        checks_codacy.get("headRefOid"),
         payload.get("headRefOid"),
     )
 
@@ -2924,12 +2955,21 @@ def _github_annotation_count(payload: dict[str, Any], check_run: dict[str, Any])
 def _github_annotation_count_payload(payload: dict[str, Any]) -> Any:
     github_value = payload.get("github_annotations") if "github_annotations" in payload else None
     annotations_value = payload.get("annotations") if "annotations" in payload else None
+    if _malformed_annotation_count(github_value) and isinstance(annotations_value, list) and annotations_value:
+        return annotations_value
     if isinstance(annotations_value, (list, dict)) and safe_nonnegative_int(github_value, -1) == 0:
         return annotations_value
     for value in (github_value, annotations_value):
         if value is not None:
             return value
     return None
+
+
+def _malformed_annotation_count(value: Any) -> bool:
+    if isinstance(value, (int, list, dict)) or value is None:
+        return False
+    text = str(value).strip()
+    return text != "" and safe_nonnegative_int(value, -1) < 0
 
 
 def _github_annotation_items_payload(payload: dict[str, Any]) -> Any:
