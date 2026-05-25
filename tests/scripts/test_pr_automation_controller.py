@@ -5,6 +5,7 @@ import argparse
 import copy
 import json
 import re
+from pathlib import Path
 from typing import Any, cast
 from unittest import TestCase
 
@@ -847,7 +848,116 @@ def test_parse_phase0_preflight_result_malformed_fails_closed():
     report = controller.parse_phase0_preflight_result("```bash\nnot json\n```")
     ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
     ASSERTIONS.assertEqual(report["risk_level"], "high")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_malformed")
+
+
+def test_build_phase0_readonly_preflight_task_includes_readonly_prohibitions():
+    task = controller.build_phase0_readonly_preflight_task(
+        "claude_bug_pr7b_phase0_loop_gate",
+        "task",
+        ["scripts/pr_automation_controller.py"],
+        ["scripts/pr_flow_automation.py"],
+        task_title="PR7B gate",
+        task_scope="PR7B only",
+    )
+    ASSERTIONS.assertIn("PHASE 0 PRE-FLIGHT (READ-ONLY)", task)
+    ASSERTIONS.assertIn("No edit. No commit. No push. No rerun. No resolve.", task)
+    ASSERTIONS.assertIn("No workflow modification.", task)
+    ASSERTIONS.assertIn("No broad refactor. No broad suppressions. No activation.", task)
+
+
+def test_build_phase0_readonly_preflight_task_includes_configs_workflows_and_scope_files():
+    task = controller.build_phase0_readonly_preflight_task(
+        "claude_bug_pr7b_phase0_loop_gate",
+        "codacy",
+        ["scripts/pr_automation_controller.py"],
+        ["scripts/pr_flow_automation.py"],
+        pr_number=7,
+        branch="chore/pr7b-phase0-loop-gate",
+        head_sha="abc123",
+        review_comments=[{"id": 1}],
+        codacy_annotations=[{"id": 2}],
+        failing_checks=[{"name": "lint"}],
+    )
+    ASSERTIONS.assertIn(".codacy.yml", task)
+    ASSERTIONS.assertIn(".deepsource.toml", task)
+    ASSERTIONS.assertIn(".github/workflows/*.yml", task)
+    ASSERTIONS.assertIn("authoritative_modules", task)
+    ASSERTIONS.assertIn("dangerous_gates", task)
+    ASSERTIONS.assertIn("files_allowed: scripts/pr_automation_controller.py", task)
+    ASSERTIONS.assertIn("files_forbidden: scripts/pr_flow_automation.py", task)
+    ASSERTIONS.assertIn("Result contract: status, risk_level", task)
+
+
+def test_parse_phase0_preflight_result_needs_manual_status_text():
+    report = controller.parse_phase0_preflight_result("status: NEEDS_MANUAL\nrisk_level: high")
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
     ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+
+
+def test_parse_phase0_preflight_result_missing_or_malformed_status_fails_closed():
+    missing = controller.parse_phase0_preflight_result("risk_level: low")
+    malformed = controller.parse_phase0_preflight_result("status: MAYBE\nrisk_level: low")
+    ASSERTIONS.assertEqual(missing["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(missing["next_action"], "needs_manual_phase0_malformed")
+    ASSERTIONS.assertEqual(malformed["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(malformed["next_action"], "needs_manual_phase0_malformed")
+
+
+def test_decide_phase0_gate_pass_allows_patch():
+    decision = controller.decide_phase0_gate({"status": "PASS", "next_action": "generate_patch_prompt"})
+    ASSERTIONS.assertTrue(decision["phase0_required"])
+    ASSERTIONS.assertEqual(decision["phase0_status"], "PASS")
+    ASSERTIONS.assertTrue(decision["can_patch"])
+    ASSERTIONS.assertFalse(decision["needs_manual"])
+
+
+def test_decide_phase0_gate_needs_manual_blocks_patch():
+    decision = controller.decide_phase0_gate({"status": "NEEDS_MANUAL", "next_action": "needs_manual_phase0_failed"})
+    ASSERTIONS.assertEqual(decision["phase0_status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertFalse(decision["can_patch"])
+    ASSERTIONS.assertTrue(decision["needs_manual"])
+
+
+def test_build_codex_patch_task_after_phase0_pass_includes_impl_task_and_constraints():
+    result = controller.build_codex_patch_task_after_phase0(
+        "Implement the targeted fix only.",
+        {"status": "PASS", "next_action": "generate_patch_prompt"},
+    )
+    ASSERTIONS.assertFalse(result["blocked"])
+    ASSERTIONS.assertIn("Implement the targeted fix only.", result["patch_task"])
+    ASSERTIONS.assertIn("Phase 0 PASS required and verified.", result["patch_task"])
+    ASSERTIONS.assertIn("Do not modify workflows.", result["patch_task"])
+
+
+def test_build_codex_patch_task_after_phase0_non_pass_blocks_patch_task():
+    result = controller.build_codex_patch_task_after_phase0(
+        "Implement the targeted fix only.",
+        {"status": "NEEDS_MANUAL", "next_action": "needs_manual_phase0_failed"},
+    )
+    ASSERTIONS.assertTrue(result["blocked"])
+    ASSERTIONS.assertEqual(result["patch_task"], "")
+
+
+def test_phase0_required_for_all_code_edit_triggers():
+    for trigger in ("task", "review_comment", "codacy", "deepsource", "github_check", "failing_check"):
+        ASSERTIONS.assertTrue(controller.phase0_required_for_trigger(trigger))
+
+
+def test_phase0_helpers_do_not_call_runtime_tools():
+    source = Path(controller.__file__).read_text(encoding="utf-8")
+    names = (
+        "build_phase0_readonly_preflight_task",
+        "parse_phase0_preflight_result",
+        "decide_phase0_gate",
+        "build_codex_patch_task_after_phase0",
+    )
+    for name in names:
+        block = source.split(f"def {name}(", 1)[1].split("\ndef ", 1)[0]
+        ASSERTIONS.assertNotIn("process-spawning APIs", block)
+        ASSERTIONS.assertNotIn("run(", block)
+        ASSERTIONS.assertNotIn("gh ", block)
+        ASSERTIONS.assertNotIn("codex ", block)
 
 
 def test_codacy_task_lines_keep_post_fix_micro_audit_section_included():
