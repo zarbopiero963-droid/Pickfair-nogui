@@ -284,7 +284,14 @@ def _phase0_list(value: object) -> list[str]:
     if value is None:
         return []
     if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
+        items: list[str] = []
+        for item in value:
+            if item is None:
+                continue
+            cleaned = str(item).strip()
+            if cleaned:
+                items.append(cleaned)
+        return items
     text = str(value).replace("\\n", "\n").strip()
     if not text:
         return []
@@ -354,10 +361,14 @@ def _phase0_malformed_result(risk_level: str = "") -> dict[str, Any]:
 
 
 def _parse_phase0_json(text: str) -> dict[str, Any] | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    candidate = _extract_phase0_json_object(raw)
+    if not candidate:
+        return None
     try:
-        import json
-
-        data = json.loads(text)
+        data = json.loads(candidate)
     except Exception:
         return None
     if not isinstance(data, dict):
@@ -394,10 +405,11 @@ def _parse_phase0_json(text: str) -> dict[str, Any] | None:
 
 def parse_phase0_preflight_result(output: object) -> dict[str, Any]:
     """Parse a Phase 0 read-only preflight report and fail closed."""
-    text = str(output or "").replace("\\n", "\n")
-    parsed_json = _parse_phase0_json(text)
+    raw_text = str(output or "")
+    parsed_json = _parse_phase0_json(raw_text)
     if parsed_json is not None:
         return parsed_json
+    text = raw_text.replace("\\n", "\n")
 
     result = _phase0_empty_result()
     phase0_status = ""
@@ -439,15 +451,19 @@ def parse_phase0_preflight_result(output: object) -> dict[str, Any]:
             result[current_list].extend(_phase0_list(value))
             continue
         if line.startswith("-") and current_list:
-            result[current_list].append(line.lstrip("-").strip())
+            cleaned = line.lstrip("-").strip()
+            if cleaned:
+                result[current_list].append(cleaned)
 
     status = normalize_phase0_status(phase0_status)
     if status == "PASS":
-        if "PHASE_0_PREFLIGHT" not in text:
+        if not _text_has_phase0_marker(text):
+            return _phase0_failed_result(risk_level)
+        if not next_action:
             return _phase0_failed_result(risk_level)
         result["status"] = "PASS"
         result["risk_level"] = risk_level or "medium"
-        result["next_action"] = next_action or "proceed_with_narrow_patch"
+        result["next_action"] = next_action
         return result
 
     if status == "NEEDS_MANUAL":
@@ -462,14 +478,7 @@ def parse_phase0_preflight_result(output: object) -> dict[str, Any]:
 def phase0_required_for_trigger(trigger_type: object) -> bool:
     """Return whether a trigger that can edit code requires Phase 0."""
     normalized = str(trigger_type or "").strip().lower()
-    return normalized in {
-        "task",
-        "review_comment",
-        "codacy",
-        "deepsource",
-        "github_check",
-        "failing_check",
-    }
+    return normalized in PHASE0_EDIT_TRIGGERS
 
 
 def build_phase0_readonly_preflight_task(
@@ -504,17 +513,42 @@ def build_phase0_readonly_preflight_task(
 
 
 def decide_phase0_gate(parsed_result: dict[str, Any] | None) -> dict[str, Any]:
-    status = normalize_phase0_status((parsed_result or {}).get("status"))
-    can_patch = status == "PASS"
-    next_action = (parsed_result or {}).get("next_action") or "needs_manual_phase0_malformed"
+    """Decide whether Phase 0 allows a later passive patch task."""
+    report = parsed_result or {}
+    status = normalize_phase0_status(report.get("status"))
+    next_action = str(report.get("next_action") or "needs_manual_phase0_malformed")
+    allowed_action = _phase0_action(next_action) in {
+        "generate_patch_prompt",
+        "proceed_with_narrow_patch",
+    }
+    can_patch = status == "PASS" and allowed_action
+
+    if not can_patch and status == "PASS":
+        status = "NEEDS_MANUAL"
+        next_action = "needs_manual_phase0_failed"
+
     return {
         "phase0_required": True,
-        "phase0_status": status,
+        "phase0_status": status or "NEEDS_MANUAL",
         "can_patch": can_patch,
         "next_action": next_action if can_patch else str(next_action),
         "reason": "phase0_pass" if can_patch else "phase0_blocked",
         "needs_manual": not can_patch,
     }
+
+def _extract_phase0_json_object(text: str) -> str:
+    stripped = str(text or "").strip()
+    if stripped.startswith("{") and stripped.endswith("}"):
+        return stripped
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", stripped, flags=re.IGNORECASE | re.DOTALL)
+    if fenced:
+        return fenced.group(1).strip()
+    inline = re.search(r"(\{.*\})", stripped, flags=re.DOTALL)
+    return inline.group(1).strip() if inline else ""
+
+
+def _text_has_phase0_marker(text: str) -> bool:
+    return bool(re.search(r"(?im)^\s*phase_0_preflight\s*[:=]\s*(pass|needs_manual)\s*$", str(text or "")))
 
 
 def build_codex_patch_task_after_phase0(

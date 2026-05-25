@@ -711,6 +711,24 @@ def test_parse_phase0_preflight_result_pass_json():
     ASSERTIONS.assertFalse(controller.phase0_preflight_failed(report))
 
 
+def test_parse_phase0_preflight_result_pass_json_phase0_preflight_key():
+    """JSON PHASE_0_PREFLIGHT PASS with valid next_action should pass."""
+    payload = _phase0_pass_payload()
+    payload.pop("status", None)
+    payload["PHASE_0_PREFLIGHT"] = "PASS"
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+
+
+def test_parse_phase0_preflight_result_pass_json_status_key():
+    """JSON status PASS with valid next_action should pass."""
+    payload = _phase0_pass_payload()
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+
+
 def test_parse_phase0_preflight_result_pass_json_uppercase_next_action_normalizes():
     """Complete PASS report with uppercase next_action should normalize and pass."""
     payload = _phase0_pass_payload()
@@ -781,6 +799,41 @@ def test_parse_phase0_preflight_result_complete_pass_missing_next_action_fails_c
     ASSERTIONS.assertTrue(controller.phase0_preflight_failed(report))
 
 
+def test_parse_phase0_preflight_result_phase0_pass_empty_next_action_fails_closed():
+    """PHASE_0_PREFLIGHT PASS with empty next_action fails closed."""
+    payload = _phase0_pass_payload()
+    payload.pop("status", None)
+    payload["PHASE_0_PREFLIGHT"] = "PASS"
+    payload["next_action"] = "   "
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+
+
+def test_parse_phase0_preflight_result_json_string_bullets_drop_empty_entries():
+    """JSON string bullet evidence drops empty list items."""
+    payload = _phase0_pass_payload()
+    payload["files_inspected"] = "- scripts/a.py\n-\n-   \n- scripts/b.py"
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["files_inspected"], ["scripts/a.py", "scripts/b.py"])
+
+
+def test_parse_phase0_preflight_result_json_list_skips_none_and_empty_entries():
+    """JSON list evidence skips None and empty values."""
+    payload = _phase0_pass_payload()
+    payload["files_inspected"] = ["scripts/a.py", None, "  ", "scripts/b.py"]
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["files_inspected"], ["scripts/a.py", "scripts/b.py"])
+
+
+def test_parse_phase0_preflight_result_fenced_json_with_prose_parses():
+    """Prose-wrapped fenced JSON payload should parse."""
+    payload = json.dumps(_phase0_pass_payload())
+    report = controller.parse_phase0_preflight_result(f"preflight result follows\n```json\n{payload}\n```")
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+
+
 def test_phase0_preflight_failed_fails_closed_for_incomplete_pass_report():
     """phase0_preflight_failed should reject PASS reports without required evidence."""
     ASSERTIONS.assertTrue(controller.phase0_preflight_failed({"status": "PASS"}))
@@ -830,9 +883,27 @@ def test_phase0_preflight_helpers_direct_non_dict_or_none_fail_closed():
 
 def test_phase0_preflight_parser_non_dict_input_fails_closed():
     """String payloads are fail-closed after parser normalization."""
-    report = controller.parse_phase0_preflight_result("status: PASS")
+    report = controller.parse_phase0_preflight_result("status: PASS\nnext_action: generate_patch_prompt")
     ASSERTIONS.assertEqual(controller.phase0_preflight_status(report), "NEEDS_MANUAL")
     ASSERTIONS.assertTrue(controller.phase0_preflight_failed(report))
+
+
+def test_parse_phase0_preflight_result_text_phase0_preflight_equals_pass():
+    """Text PHASE_0_PREFLIGHT=PASS parses when next_action is present."""
+    report = controller.parse_phase0_preflight_result(
+        "PHASE_0_PREFLIGHT=PASS\nnext_action: generate_patch_prompt\nrisk_level: low"
+    )
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+
+
+def test_parse_phase0_preflight_result_text_phase0_preflight_colon_pass():
+    """Text phase_0_preflight: PASS parses when next_action is present."""
+    report = controller.parse_phase0_preflight_result(
+        "phase_0_preflight: PASS\nnext_action: generate_patch_prompt\nrisk_level: low"
+    )
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
 
 
 def test_parse_phase0_preflight_result_needs_manual_text():
@@ -887,6 +958,8 @@ def test_build_phase0_readonly_preflight_task_includes_configs_workflows_and_sco
     ASSERTIONS.assertIn("files_allowed: scripts/pr_automation_controller.py", task)
     ASSERTIONS.assertIn("files_forbidden: scripts/pr_flow_automation.py", task)
     ASSERTIONS.assertIn("Result contract: status, risk_level", task)
+    ASSERTIONS.assertIn("PHASE_0_PREFLIGHT=PASS", task)
+    ASSERTIONS.assertIn("PHASE_0_PREFLIGHT=NEEDS_MANUAL", task)
 
 
 def test_parse_phase0_preflight_result_needs_manual_status_text():
@@ -937,10 +1010,20 @@ def test_build_codex_patch_task_after_phase0_non_pass_blocks_patch_task():
     )
     ASSERTIONS.assertTrue(result["blocked"])
     ASSERTIONS.assertEqual(result["patch_task"], "")
+    ASSERTIONS.assertEqual(result["task"], "")
+    ASSERTIONS.assertFalse(result["can_patch"])
+    ASSERTIONS.assertIn("next_action", result)
+    ASSERTIONS.assertIn("reason", result)
+    ASSERTIONS.assertIn("gate", result)
 
 
 def test_phase0_required_for_all_code_edit_triggers():
     for trigger in ("task", "review_comment", "codacy", "deepsource", "github_check", "failing_check"):
+        ASSERTIONS.assertTrue(controller.phase0_required_for_trigger(trigger))
+
+
+def test_phase0_required_for_trigger_uses_phase0_edit_triggers_constant():
+    for trigger in controller.PHASE0_EDIT_TRIGGERS:
         ASSERTIONS.assertTrue(controller.phase0_required_for_trigger(trigger))
 
 
