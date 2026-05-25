@@ -4674,3 +4674,44 @@ def test_build_codex_patch_task_after_phase0_blocks_pass_without_plan():
     ASSERTIONS.assertEqual(result["task"], "")
     ASSERTIONS.assertEqual(result["patch_task"], "")
 
+
+def test_parse_phase0_preflight_result_json_unknown_action_fails_closed():
+    """JSON PASS with unsupported next_action must fail closed."""
+    payload = _phase0_pass_payload()
+    payload["next_action"] = "ship_it_now"
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+
+
+def test_parse_phase0_preflight_result_text_unknown_action_fails_closed():
+    """Text PASS with unsupported next_action must fail closed."""
+    report = controller.parse_phase0_preflight_result(
+        "\n".join(
+            [
+                "PHASE_0_PREFLIGHT=PASS",
+                "risk_level: low",
+                "next_action: ship_it_now",
+                "files_inspected: scripts/pr_automation_controller.py",
+                "static_analysis_rules: ruff",
+                "workflows_affected: pr-automation-controller-v2",
+                "authoritative_modules: scripts/pr_automation_controller.py",
+                "dangerous_gates: phase0 gate",
+                "implementation_plan: keep patch scoped",
+                "tests_to_run: pytest",
+                "stop_conditions: scope violation",
+            ]
+        )
+    )
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+
+
+def test_parse_phase0_preflight_result_json_unknown_action_variant_fails_closed():
+    """Unsupported next_action variants must fail closed after normalization."""
+    payload = _phase0_pass_payload()
+    payload["next_action"] = "Ship-It-Now"
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+

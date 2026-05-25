@@ -388,7 +388,7 @@ def _parse_phase0_json(text: str) -> dict[str, Any] | None:
     next_action = _phase0_action(data.get("next_action"))
 
     if status == "PASS":
-        if not next_action:
+        if next_action not in PHASE0_PASS_ACTIONS:
             return _phase0_failed_result(risk_level)
         if not _phase0_has_required_evidence(result):
             return _phase0_failed_result(risk_level)
@@ -462,7 +462,7 @@ def parse_phase0_preflight_result(output: object) -> dict[str, Any]:
     if status == "PASS":
         if not _text_has_phase0_marker(text):
             return _phase0_failed_result(risk_level)
-        if not next_action:
+        if next_action not in PHASE0_PASS_ACTIONS:
             return _phase0_failed_result(risk_level)
         if not _phase0_has_required_evidence(result):
             return _phase0_failed_result(risk_level)
