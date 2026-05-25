@@ -2580,6 +2580,89 @@ def test_workflow_helpers_are_passive_and_no_gh(monkeypatch):
     ASSERTIONS.assertEqual(summary["category"], "ready")
 
 
+def test_summarize_missing_head_check_returns_unknown_head_needs_manual():
+    summary = controller.summarize_current_head_check_state(
+        "head-new",
+        [_gh_run("Unit tests", "SUCCESS", "", run_id=401)],
+    )
+    ASSERTIONS.assertEqual(summary["category"], "unknown_head")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
+    ASSERTIONS.assertTrue(summary["needs_manual"])
+
+
+def test_empty_pr_head_sha_returns_unknown_head_needs_manual():
+    summary = controller.summarize_current_head_check_state(
+        "",
+        [_gh_run("Unit tests", "SUCCESS", "head-new", run_id=402)],
+    )
+    ASSERTIONS.assertEqual(summary["category"], "unknown_head")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
+    ASSERTIONS.assertTrue(summary["needs_manual"])
+
+
+def test_dedupe_prefers_current_head_over_newer_stale_duplicate():
+    runs = [
+        _gh_run("Unit tests", "SUCCESS", "head-new", run_id=403, started="2026-05-25T00:00:00Z"),
+        _gh_run("Unit tests", "FAILURE", "head-old", run_id=404, started="2026-05-25T00:10:00Z"),
+    ]
+    deduped = controller.dedupe_github_check_runs("head-new", runs)
+    selected = deduped["selected_runs"][0]
+    ASSERTIONS.assertEqual(selected.get("id"), 403)
+    ASSERTIONS.assertIn("404", deduped["ignored_stale_run_ids"])
+
+
+def test_current_head_failure_not_suppressed_by_newer_stale_duplicate():
+    runs = [
+        _gh_run("Unit tests", "FAILURE", "head-new", run_id=405, started="2026-05-25T00:00:00Z"),
+        _gh_run("Unit tests", "SUCCESS", "head-old", run_id=406, started="2026-05-25T00:10:00Z"),
+    ]
+    summary = controller.summarize_current_head_check_state("head-new", runs)
+    ASSERTIONS.assertEqual(summary["category"], "workflow_failure")
+    ASSERTIONS.assertEqual(summary["next_action"], "fix_current_head_checks")
+    ASSERTIONS.assertEqual(summary["current_blocker_count"], 1)
+
+
+def test_current_head_pending_not_suppressed_by_newer_stale_duplicate():
+    runs = [
+        _gh_run("Integration", "IN_PROGRESS", "head-new", run_id=407, started="2026-05-25T00:00:00Z"),
+        _gh_run("Integration", "SUCCESS", "head-old", run_id=408, started="2026-05-25T00:10:00Z"),
+    ]
+    summary = controller.summarize_current_head_check_state("head-new", runs)
+    ASSERTIONS.assertEqual(summary["category"], "workflow_pending")
+    ASSERTIONS.assertEqual(summary["next_action"], "wait_pending")
+    ASSERTIONS.assertEqual(summary["pending_count"], 1)
+
+
+def test_current_head_cancelled_merge_readiness_rerunnable_even_if_newer_stale_duplicate():
+    runs = [
+        _gh_run("PR Merge Readiness", "CANCELLED", "head-new", run_id=409, started="2026-05-25T00:00:00Z"),
+        _gh_run("PR Merge Readiness", "SUCCESS", "head-old", run_id=410, started="2026-05-25T00:10:00Z"),
+    ]
+    summary = controller.summarize_current_head_check_state("head-new", runs)
+    ASSERTIONS.assertEqual(summary["category"], "workflow_cancelled")
+    ASSERTIONS.assertEqual(summary["next_action"], "rerun_stale_checks")
+    ASSERTIONS.assertEqual(summary["rerun_run_ids"], ["409"])
+
+
+def test_stale_only_without_unknown_remains_stale_only_no_action():
+    summary = controller.summarize_current_head_check_state(
+        "head-new",
+        [_gh_run("Unit tests", "SUCCESS", "head-old", run_id=411)],
+    )
+    ASSERTIONS.assertEqual(summary["category"], "stale_only")
+    ASSERTIONS.assertEqual(summary["next_action"], "no_action")
+
+
+def test_do_not_launch_autofix_for_is_blacklist_not_allowlist():
+    checks = [
+        _gh_run("PR flow guardrails", "FAILURE", "head-new", run_id=412),
+        _gh_run("Unit tests", "FAILURE", "head-new", run_id=413),
+    ]
+    should_launch, launchable = controller.should_launch_autofix(checks)
+    ASSERTIONS.assertTrue(should_launch)
+    ASSERTIONS.assertEqual([item["name"] for item in launchable], ["Unit tests"])
+
+
 def test_codacy_head_match_contract_exposes_pr_head_and_evidence_head():
     """Codacy evidence contract should expose headRefOid vs Codacy evidence head and match flag."""
     if hasattr(controller, "codacy_head_matches"):

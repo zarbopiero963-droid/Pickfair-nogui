@@ -441,7 +441,7 @@ def github_check_run_head(check: dict[str, Any]) -> str:
 def classify_github_check_run_staleness(pr_head_sha: str, check: dict[str, Any]) -> dict[str, Any]:
     pr_head = str(pr_head_sha or "").strip()
     check_head = github_check_run_head(check)
-    missing_head = not check_head
+    missing_head = not pr_head or not check_head
     current_head = bool(pr_head and check_head == pr_head)
     stale_head = bool(pr_head and check_head and check_head != pr_head)
     if missing_head:
@@ -467,7 +467,7 @@ def dedupe_github_check_runs(pr_head_sha: str, check_runs: list[dict[str, Any]])
     ignored_stale: list[str] = []
     ignored_dupes: list[str] = []
     for runs in groups.values():
-        ranked = sorted(runs, key=_check_run_sort_key, reverse=True)
+        ranked = sorted(runs, key=lambda run: _check_run_dedupe_key(pr_head_sha, run), reverse=True)
         kept = ranked[0]
         selected.append(kept)
         for old in ranked[1:]:
@@ -482,6 +482,17 @@ def dedupe_github_check_runs(pr_head_sha: str, check_runs: list[dict[str, Any]])
         "ignored_stale_run_ids": sorted_unique_ids(ignored_stale),
         "ignored_duplicate_run_ids": sorted_unique_ids(ignored_dupes),
     }
+
+
+def _check_run_priority(pr_head_sha: str, check: dict[str, Any]) -> int:
+    category = classify_github_check_run_staleness(pr_head_sha, check)["category"]
+    if category == "current_head":
+        return 2
+    return 1 if category == "unknown_head" else 0
+
+
+def _check_run_dedupe_key(pr_head_sha: str, check: dict[str, Any]) -> tuple[int, str, str, int]:
+    return (_check_run_priority(pr_head_sha, check),) + _check_run_sort_key(check)
 
 
 def _check_run_sort_key(check: dict[str, Any]) -> tuple[str, str, int]:
@@ -517,6 +528,21 @@ def build_workflow_rerun_plan(pr_head_sha: str, check_runs: list[dict[str, Any]]
 
 
 def summarize_current_head_check_state(pr_head_sha: str, check_runs: list[dict[str, Any]]) -> dict[str, Any]:
+    clean_pr_head = str(pr_head_sha or "").strip()
+    if not clean_pr_head:
+        return {
+            "category": "unknown_head",
+            "next_action": "needs_manual",
+            "reason": "missing pr head sha",
+            "current_head_sha": "",
+            "stale_count": 0,
+            "pending_count": 0,
+            "current_blocker_count": 0,
+            "rerun_run_ids": [],
+            "ignored_stale_run_ids": [],
+            "safe_to_rerun": False,
+            "needs_manual": True,
+        }
     deduped = dedupe_github_check_runs(pr_head_sha, check_runs)
     rerun = build_workflow_rerun_plan(pr_head_sha, check_runs)
     stale_count = 0
@@ -536,7 +562,9 @@ def summarize_current_head_check_state(pr_head_sha: str, check_runs: list[dict[s
             pending_count += 1
         if info["current_head"] and is_failure(check):
             blocker_count += 1
-    if pending_count > 0:
+    if unknown_count > 0:
+        category, next_action, reason = "unknown_head", "needs_manual", "missing check head sha"
+    elif pending_count > 0:
         category, next_action, reason = "workflow_pending", "wait_pending", "current head checks still pending"
     elif cast(list[str], rerun["rerun_run_ids"]):
         category, next_action, reason = "workflow_cancelled", "rerun_stale_checks", "rerunnable cancelled current head checks"
@@ -544,8 +572,6 @@ def summarize_current_head_check_state(pr_head_sha: str, check_runs: list[dict[s
         category, next_action, reason = "workflow_failure", "fix_current_head_checks", "current head failures present"
     elif stale_count > 0 and current_count == 0:
         category, next_action, reason = "stale_only", "no_action", "only stale or cancelled old runs detected"
-    elif unknown_count > 0:
-        category, next_action, reason = "unknown_head", "needs_manual", "missing check head sha"
     else:
         category, next_action, reason = "ready", "ready", "all current head checks successful"
     ignored_stale_run_ids = sorted_unique_ids(
@@ -556,7 +582,7 @@ def summarize_current_head_check_state(pr_head_sha: str, check_runs: list[dict[s
         "category": category,
         "next_action": next_action,
         "reason": reason,
-        "current_head_sha": str(pr_head_sha or "").strip(),
+        "current_head_sha": clean_pr_head,
         "stale_count": stale_count,
         "pending_count": pending_count,
         "current_blocker_count": blocker_count,
