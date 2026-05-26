@@ -4692,7 +4692,7 @@ def review_comments_summary(nodes: list[dict[str, Any]]) -> dict[str, int]:
     return summary
 
 
-OPTIONAL_REVIEW_PROVIDERS = [
+REVIEW_COMMENT_PROVIDERS = (
     "chatgpt-codex-connector",
     "codacy-production",
     "coderabbitai",
@@ -4701,7 +4701,7 @@ OPTIONAL_REVIEW_PROVIDERS = [
     "greptile",
     "greptile-ai",
     "greptileai",
-]
+)
 
 BLOCKING_REVIEW_KEYWORDS = {
     "action required",
@@ -4713,20 +4713,8 @@ BLOCKING_REVIEW_KEYWORDS = {
     "test coverage",
 }
 ADVISORY_REVIEW_KEYWORDS = {"low", "nit", "nitpick", "style", "suggestion", "docs", "documentation"}
-BLOCKING_REVIEW_SEVERITIES = {"p1", "p2", "high"}
-KNOWN_REVIEW_PROVIDERS = set(OPTIONAL_REVIEW_PROVIDERS)
-
-
-REVIEW_COMMENT_PROVIDERS = (
-    "chatgpt-codex-connector",
-    "codacy-production",
-    "coderabbitai",
-    "qodo-code-review",
-    "sourcery-ai",
-    "greptile",
-    "greptile-ai",
-    "greptileai",
-)
+BLOCKING_REVIEW_SEVERITIES = {"p1", "high"}
+KNOWN_REVIEW_PROVIDERS = set(REVIEW_COMMENT_PROVIDERS)
 
 
 def normalize_review_author(author: object) -> str:
@@ -4746,25 +4734,55 @@ def _review_thread_author(thread: dict[str, Any]) -> str:
     comments = thread.get("comments")
     if isinstance(comments, dict):
         nodes = comments.get("nodes") or []
-        if nodes:
-            return normalize_review_author((nodes[0] or {}).get("author"))
-    if isinstance(comments, list) and comments:
-        return normalize_review_author((comments[0] or {}).get("author"))
+        if isinstance(nodes, list):
+            for comment in nodes:
+                if not isinstance(comment, dict):
+                    continue
+                comment_author = comment.get("author")
+                if comment_author:
+                    return normalize_review_author(comment_author)
+    if isinstance(comments, list):
+        for comment in comments:
+            if not isinstance(comment, dict):
+                continue
+            comment_author = comment.get("author")
+            if comment_author:
+                return normalize_review_author(comment_author)
     return ""
+
+
+def _review_thread_comment_dicts(comment_or_thread: dict[str, Any]) -> list[dict[str, Any]]:
+    comments = comment_or_thread.get("comments")
+    if isinstance(comments, dict):
+        nodes = comments.get("nodes")
+        if isinstance(nodes, list):
+            return [item for item in nodes if isinstance(item, dict)]
+        return []
+    if isinstance(comments, list):
+        return [item for item in comments if isinstance(item, dict)]
+    return []
+
+
+def _review_text_blob(comment_or_thread: dict[str, Any]) -> str:
+    body_bits: list[str] = []
+    body = comment_or_thread.get("body")
+    if body:
+        body_bits.append(str(body))
+    for comment in _review_thread_comment_dicts(comment_or_thread):
+        comment_body = comment.get("body")
+        if comment_body:
+            body_bits.append(str(comment_body))
+    return " ".join(body_bits).strip().lower()
 
 
 def _review_thread_body(thread: dict[str, Any]) -> str:
     body = thread.get("body")
     if body:
         return str(body)
-
-    comments = thread.get("comments")
-    if isinstance(comments, dict):
-        nodes = comments.get("nodes") or []
-        if nodes:
-            return str((nodes[0] or {}).get("body") or "")
-    if isinstance(comments, list) and comments:
-        return str((comments[0] or {}).get("body") or "")
+    for comment in _review_thread_comment_dicts(thread):
+        comment_body = comment.get("body")
+        if comment_body:
+            return str(comment_body)
     return ""
 
 
@@ -4816,32 +4834,32 @@ def review_provider_presence_status(
 
 def classify_review_comment_severity(comment_or_thread: dict[str, Any]) -> str:
     """Classify review comment severity from common review-bot wording."""
-    body = _review_thread_body(comment_or_thread).lower()
-    if "p1" in body:
+    body = _review_text_blob(comment_or_thread)
+    if re.search(r"\bp1\b", body):
         return "p1"
-    if "p2" in body:
+    if re.search(r"\bp2\b", body):
         return "p2"
-    if "high risk" in body or " high " in f" {body} ":
+    if re.search(r"\bhigh risk\b", body) or re.search(r"\bhigh\b", body):
         return "high"
-    if "medium risk" in body or " medium " in f" {body} ":
+    if re.search(r"\bmedium risk\b", body) or re.search(r"\bmedium\b", body):
         return "medium"
-    if "low risk" in body:
+    if re.search(r"\blow risk\b", body):
         return "low"
-    if "nitpick" in body or " nit " in f" {body} ":
+    if re.search(r"\bnitpick\b", body) or re.search(r"\bnit\b", body):
         return "nit"
     return "unknown"
 
 
 def classify_review_comment_actionability(comment_or_thread: dict[str, Any]) -> str:
     """Classify whether a review comment needs a patch, evidence, or manual handling."""
-    body = _review_thread_body(comment_or_thread).lower()
+    body = _review_text_blob(comment_or_thread)
     if any(token in body for token in ("stale", "already fixed", "resolved", "covered by")):
         return "stale_or_already_fixed"
-    if any(token in body for token in ("missing test", "coverage", "add test", "testing")):
+    if any(token in body for token in ("failing test", "missing test", "coverage", "add test", "testing")):
         return "test_required"
-    if any(token in body for token in ("action required", "bug", "correctness", "security")):
+    if re.search(r"\bbug\b", body) or any(token in body for token in ("action required", "correctness", "security")):
         return "fix_required"
-    if any(token in body for token in ("runtime", "failing test")):
+    if "runtime" in body:
         return "fix_required"
     if any(token in body for token in ("nitpick", "style", "suggestion", "docs", "optional")):
         return "advisory"
@@ -4857,8 +4875,7 @@ def _review_thread_active(thread: dict[str, Any]) -> bool:
 
 
 def _review_path_out_of_scope(path: str, context: dict[str, Any] | None) -> bool:
-    allowed = set((context or {}).get("files_allowed") or [])
-    return bool(allowed and path and path not in allowed)
+    return _is_out_of_scope_review_path(path, context or {})
 
 
 def classify_review_thread(thread: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -4897,7 +4914,7 @@ def classify_review_thread(thread: dict[str, Any], context: dict[str, Any] | Non
         classification = "safe_resolve"
         next_action = "resolve_review_thread_with_evidence"
         reason = "review appears stale or already fixed"
-    elif active and (severity in {"p1", "p2", "high"} or actionability in {"fix_required", "test_required"}):
+    elif active and (severity in BLOCKING_REVIEW_SEVERITIES or actionability in {"fix_required", "test_required"}):
         category = "review_comment_active"
         classification = "blocking"
         next_action = "fix_review_comments"
@@ -4961,7 +4978,8 @@ def _codacy_review_evidence_green(evidence: dict[str, Any]) -> bool:
     state = str(evidence.get("codacy_conclusion") or evidence.get("codacy_state") or "").lower()
     if state not in {"success", "successful", "passed", "pass"}:
         return False
-    return int(evidence.get("codacy_annotations_count") or 0) == 0
+    annotations = safe_nonnegative_int(evidence.get("codacy_annotations_count"), -1)
+    return annotations == 0
 
 
 def should_resolve_review_thread(thread: dict[str, Any], evidence: dict[str, Any]) -> bool:
@@ -5080,13 +5098,6 @@ def build_review_thread_resolution_plan(
         "items": items,
         "next_action": next_action,
     }
-
-def _review_text_blob(comment_or_thread: dict[str, Any]) -> str:
-    body_bits = [str(comment_or_thread.get("body") or "")]
-    for comment in _thread_comments(comment_or_thread):
-        body_bits.append(str(comment.get("body") or ""))
-    return " ".join(body_bits).strip().lower()
-
 
 def _is_out_of_scope_review_path(path: str, context: dict[str, Any]) -> bool:
     if not path:
