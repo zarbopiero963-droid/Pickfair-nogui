@@ -1,60 +1,64 @@
+"""Tests for complete-task post-merge task-file handling."""
+
 from __future__ import annotations
 
 import importlib.util
 import os
 from pathlib import Path
+from types import ModuleType
+from unittest import TestCase
 
 
-SCRIPT_PATH = Path(".github/scripts/complete_current_task.py").resolve()
+ASSERTIONS = TestCase()
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _load_module_with_pr_body(pr_body: str):
-    spec = importlib.util.spec_from_file_location(
-        "complete_current_task_test_module",
-        SCRIPT_PATH,
-    )
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
+def load_module(pr_body: str, repo_root: Path) -> ModuleType:
+    """Load complete_current_task with an isolated PR_BODY value."""
     os.environ["PR_BODY"] = pr_body
+    module_path = repo_root / ".github" / "scripts" / "complete_current_task.py"
+    spec = importlib.util.spec_from_file_location("complete_current_task_under_test", module_path)
+    ASSERTIONS.assertIsNotNone(spec)
+    ASSERTIONS.assertIsNotNone(spec.loader)
+    module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-def test_no_task_file_marker_skips_with_success(tmp_path, monkeypatch, capsys):
+def test_missing_marker_skips(tmp_path: Path, capsys) -> None:
+    """No Task-File marker should skip successfully without moving files."""
+    module = load_module("No task marker here", REPO_ROOT)
+    return_code = module.main()
+
+    captured = capsys.readouterr()
+    ASSERTIONS.assertEqual(return_code, 0)
+    ASSERTIONS.assertIn("Skip", captured.out)
+    ASSERTIONS.assertFalse((tmp_path / "ops" / "tasks_done").exists())
+
+
+def test_missing_file_fails(tmp_path: Path, monkeypatch, capsys) -> None:
+    """A Task-File marker pointing to a missing file should fail closed."""
     monkeypatch.chdir(tmp_path)
+    module = load_module("Task-File: ops/tasks/missing.md", REPO_ROOT)
+    return_code = module.main()
 
-    mod = _load_module_with_pr_body("Summary only; no marker")
-    rc = mod.main()
-
-    out = capsys.readouterr()
-    assert rc == 0
-    assert "Skipping task completion: no Task-File marker found in PR body" in out.out
-    assert not (tmp_path / "ops" / "tasks_done").exists()
+    captured = capsys.readouterr()
+    ASSERTIONS.assertEqual(return_code, 1)
+    ASSERTIONS.assertIn("Task file does not exist", captured.err)
 
 
-def test_marker_present_but_file_missing_fails(tmp_path, monkeypatch, capsys):
+def test_existing_file_moves(tmp_path: Path, monkeypatch) -> None:
+    """A valid Task-File marker should move the task file to tasks_done."""
     monkeypatch.chdir(tmp_path)
+    task_dir = tmp_path / "ops" / "tasks"
+    task_dir.mkdir(parents=True)
+    source = task_dir / "task.md"
+    source.write_text("task body", encoding="utf-8")
 
-    mod = _load_module_with_pr_body("Task-File: ops/tasks/missing-task.md")
-    rc = mod.main()
+    module = load_module("Task-File: ops/tasks/task.md", REPO_ROOT)
+    return_code = module.main()
 
-    out = capsys.readouterr()
-    assert rc == 1
-    assert "Task file does not exist: ops/tasks/missing-task.md" in out.err
-
-
-def test_marker_present_and_file_exists_moves_and_succeeds(tmp_path, monkeypatch, capsys):
-    monkeypatch.chdir(tmp_path)
-    src = tmp_path / "ops" / "tasks" / "task-a.md"
-    src.parent.mkdir(parents=True, exist_ok=True)
-    src.write_text("# task", encoding="utf-8")
-
-    mod = _load_module_with_pr_body("Task-File: ops/tasks/task-a.md")
-    rc = mod.main()
-
-    out = capsys.readouterr()
-    dst = tmp_path / "ops" / "tasks_done" / "task-a.md"
-    assert rc == 0
-    assert not src.exists()
-    assert dst.exists()
-    assert f"Moved ops/tasks/task-a.md -> ops/tasks_done/task-a.md" in out.out
+    destination = tmp_path / "ops" / "tasks_done" / "task.md"
+    ASSERTIONS.assertEqual(return_code, 0)
+    ASSERTIONS.assertFalse(source.exists())
+    ASSERTIONS.assertEqual(destination.read_text(encoding="utf-8"), "task body")
