@@ -4072,6 +4072,682 @@ def test_scope_paths_skips_empty_list_and_continues():
     ASSERTIONS.assertEqual(scope_paths, {"scripts/x.py"})
 
 
+def test_normalize_task_file_list_ignores_placeholders_and_normalizes_paths():
+    values = ["./scripts//pr_automation_controller.py", "none", "N/A", "../escape.py", "tests/../tests/scripts/a.py"]
+    normalized = controller.normalize_task_file_list(values)
+    ASSERTIONS.assertEqual(normalized, ["scripts/pr_automation_controller.py"])
+
+
+def test_normalize_task_file_list_rejects_invalid_raw_inputs_before_normalization():
+    values = [
+        "/repo/scripts/tool.py",
+        "C:\\repo\\scripts\\tool.py",
+        "D:/repo/scripts/tool.py",
+        "../scripts/tool.py",
+        "scripts/ x.py",
+        "scripts /x.py",
+        " scripts/x.py",
+        "scripts/x.py ",
+        "scripts/pr_automation_controller.py",
+    ]
+    normalized = controller.normalize_task_file_list(values)
+    ASSERTIONS.assertEqual(normalized, ["scripts/pr_automation_controller.py"])
+
+
+def test_normalize_file_scope_rules_preserves_directory_semantics():
+    normalized = controller.normalize_file_scope_rules(["scripts/"])
+    ASSERTIONS.assertEqual(normalized, ["scripts/"])
+
+
+def test_path_matches_scope_rule_supports_exact_dir_and_wildcard():
+    ASSERTIONS.assertTrue(
+        controller.path_matches_scope_rule("scripts/pr_automation_controller.py", "scripts/pr_automation_controller.py")
+    )
+    ASSERTIONS.assertTrue(controller.path_matches_scope_rule("scripts/x.py", "scripts/"))
+    ASSERTIONS.assertTrue(controller.path_matches_scope_rule(".github/workflows/x.yml", ".github/workflows/*"))
+    ASSERTIONS.assertTrue(controller.path_matches_scope_rule("scripts/sub/x.py", "scripts/*"))
+    ASSERTIONS.assertFalse(controller.path_matches_scope_rule("scripts2/x.py", "scripts/*"))
+    ASSERTIONS.assertFalse(controller.path_matches_scope_rule("scripts_alternate/x.py", "scripts/*"))
+    ASSERTIONS.assertFalse(controller.path_matches_scope_rule("scripts2/x.py", "scripts/"))
+    ASSERTIONS.assertFalse(controller.path_matches_scope_rule("scripts_alternate/x.py", "scripts/"))
+    ASSERTIONS.assertFalse(controller.path_matches_scope_rule("docs", "docs/"))
+    ASSERTIONS.assertTrue(controller.path_matches_scope_rule("docs/x.md", "docs/"))
+    ASSERTIONS.assertTrue(controller.path_matches_scope_rule("docs/sub/x.md", "docs/"))
+    ASSERTIONS.assertFalse(controller.path_matches_scope_rule("docs2/x.md", "docs/"))
+    ASSERTIONS.assertFalse(controller.path_matches_scope_rule("docs_alternate/x.md", "docs/"))
+    ASSERTIONS.assertTrue(controller.path_matches_scope_rule("secrets/server.key", "*.key"))
+    ASSERTIONS.assertTrue(controller.path_matches_scope_rule("config/private.key", "*.key"))
+    ASSERTIONS.assertTrue(controller.path_matches_scope_rule("server.pem", "*.pem"))
+    ASSERTIONS.assertTrue(controller.path_matches_scope_rule("secrets/server.pem", "*.pem"))
+    ASSERTIONS.assertFalse(controller.path_matches_scope_rule("scripts/x.py", "tests/"))
+
+
+def test_path_matches_scope_rule_supports_file_prefix_trailing_star():
+    ASSERTIONS.assertTrue(
+        controller.path_matches_scope_rule("scripts/pr_automation_controller.py", "scripts/pr_*")
+    )
+    ASSERTIONS.assertFalse(controller.path_matches_scope_rule("scripts/pr_private/secret.py", "scripts/pr_*"))
+    ASSERTIONS.assertTrue(controller.path_matches_scope_rule("tests/test_example.py", "tests/test_*"))
+    ASSERTIONS.assertFalse(controller.path_matches_scope_rule("tests/test_private/secret.py", "tests/test_*"))
+    ASSERTIONS.assertFalse(controller.path_matches_scope_rule("scripts/x.py", "scripts/pr_*"))
+
+
+def test_scope_allows_file_change_allowed_file_passes():
+    ASSERTIONS.assertTrue(
+        controller.scope_allows_file_change(
+            "scripts/pr_automation_controller.py",
+            ["scripts/pr_automation_controller.py"],
+            [],
+        )
+    )
+
+
+def test_scope_allows_file_change_forbidden_wins_and_outside_allowlist_denies():
+    ASSERTIONS.assertFalse(
+        controller.scope_allows_file_change(
+            "scripts/pr_flow_automation.py",
+            ["scripts/"],
+            ["scripts/pr_flow_automation.py"],
+        )
+    )
+    ASSERTIONS.assertFalse(
+        controller.scope_allows_file_change(
+            "tests/scripts/test_pr_automation_controller.py",
+            ["scripts/pr_automation_controller.py"],
+            [],
+        )
+    )
+    ASSERTIONS.assertFalse(controller.scope_allows_file_change("docs", ["docs/"], []))
+    ASSERTIONS.assertTrue(controller.scope_allows_file_change("docs/x.md", ["docs/"], []))
+
+
+def test_scope_allows_file_change_default_forbidden_patterns_block():
+    ASSERTIONS.assertFalse(
+        controller.scope_allows_file_change(
+            ".github/workflows/pr-guard.yml",
+            [".github/workflows/pr-guard.yml"],
+            [],
+        )
+    )
+    ASSERTIONS.assertFalse(
+        controller.scope_allows_file_change(
+            "business/core/runtime/engine.py",
+            ["business/core/runtime/engine.py"],
+            [],
+        )
+    )
+    ASSERTIONS.assertFalse(
+        controller.scope_allows_file_change(
+            "config/providers/openai.yaml",
+            ["config/providers/openai.yaml"],
+            [],
+        )
+    )
+    ASSERTIONS.assertFalse(
+        controller.scope_allows_file_change(
+            "secrets/server.key",
+            ["secrets/server.key"],
+            [],
+        )
+    )
+    ASSERTIONS.assertFalse(
+        controller.scope_allows_file_change(
+            "config/private.key",
+            ["config/private.key"],
+            [],
+        )
+    )
+    ASSERTIONS.assertFalse(
+        controller.scope_allows_file_change(
+            "server.pem",
+            ["server.pem"],
+            [],
+        )
+    )
+
+
+def test_scope_allows_file_change_missing_allowlist_denies_by_default():
+    ASSERTIONS.assertFalse(controller.scope_allows_file_change("scripts/pr_automation_controller.py", [], []))
+    ASSERTIONS.assertFalse(controller.scope_allows_file_change("scripts/pr_automation_controller.py", None, []))
+
+
+def test_scope_allows_file_change_malformed_forbidden_dict_fails_closed():
+    ASSERTIONS.assertFalse(
+        controller.scope_allows_file_change("scripts/secret.py", ["scripts/"], {"files": ["scripts/secret.py"]})
+    )
+
+
+def test_scope_allows_file_change_invalid_forbidden_entry_fails_closed():
+    ASSERTIONS.assertFalse(
+        controller.scope_allows_file_change("scripts/secret.py", ["scripts/"], ["scripts/ secret.py"])
+    )
+
+
+def test_scope_allows_file_change_malformed_allowed_dict_fails_closed():
+    ASSERTIONS.assertFalse(
+        controller.scope_allows_file_change("scripts/x.py", {"files": ["scripts/x.py"]}, [])
+    )
+
+
+def test_scope_allows_file_change_invalid_allowed_entry_fails_closed():
+    ASSERTIONS.assertFalse(
+        controller.scope_allows_file_change("scripts/x.py", ["scripts/ x.py"], [])
+    )
+
+
+def test_scope_allows_file_change_absolute_path_fails_closed_even_if_normalizable():
+    ASSERTIONS.assertFalse(controller.scope_allows_file_change("/scripts/x.py", ["scripts/"], []))
+
+
+def test_scope_allows_file_change_whitespace_mutated_paths_fail_closed():
+    ASSERTIONS.assertFalse(controller.scope_allows_file_change("scripts /x.py", ["scripts/x.py"], []))
+    ASSERTIONS.assertFalse(controller.scope_allows_file_change("scripts/ x.py", ["scripts/x.py"], []))
+    ASSERTIONS.assertFalse(controller.scope_allows_file_change(" scripts/x.py", ["scripts/x.py"], []))
+    ASSERTIONS.assertFalse(controller.scope_allows_file_change("scripts/x.py ", ["scripts/x.py"], []))
+
+
+def test_scope_allows_file_change_windows_absolute_path_fails_closed():
+    ASSERTIONS.assertFalse(controller.scope_allows_file_change("C:\\repo\\scripts\\tool.py", ["scripts/"], []))
+    ASSERTIONS.assertFalse(controller.scope_allows_file_change("D:/repo/scripts/tool.py", ["scripts/"], []))
+
+
+def test_scope_allows_file_change_literal_backslash_path_fails_closed():
+    ASSERTIONS.assertFalse(controller.scope_allows_file_change("scripts\\tool.py", ["scripts/"], []))
+
+
+def _invalid_changed_paths() -> list[str]:
+    return [
+        "../secrets/server.key",
+        "../../README.md",
+        "/absolute/path",
+        "C:\\repo\\scripts\\tool.py",
+        "D:/repo/scripts/tool.py",
+        "scripts /x.py",
+        "scripts/ x.py",
+        "scripts/\tpr_tool.py",
+        "scripts/\u00a0pr_tool.py",
+        "scripts\t/x.py",
+        " scripts/x.py",
+        "scripts/x.py ",
+        "",
+        "none",
+        "n/a",
+        "tbd",
+    ]
+
+
+def test_scope_allows_file_change_invalid_changed_file_matrix_fails_closed():
+    for path in _invalid_changed_paths():
+        ASSERTIONS.assertFalse(controller.scope_allows_file_change(path, ["scripts/"], []))
+
+
+def test_classify_changed_file_scope_absolute_path_is_invalid_path():
+    result = controller.classify_changed_file_scope("/scripts/x.py", ["scripts/"], [])
+    ASSERTIONS.assertEqual(result["classification"], "invalid_path")
+    ASSERTIONS.assertEqual(result["path"], "/scripts/x.py")
+
+
+def test_classify_changed_file_scope_whitespace_mutated_paths_are_invalid_path():
+    for path in ("scripts /x.py", "scripts/ x.py", " scripts/x.py", "scripts/x.py "):
+        result = controller.classify_changed_file_scope(path, ["scripts/x.py"], [])
+        ASSERTIONS.assertEqual(result["classification"], "invalid_path")
+
+
+def test_classify_changed_file_scope_windows_absolute_path_is_invalid_path():
+    for path in ("C:\\repo\\scripts\\tool.py", "D:/repo/scripts/tool.py"):
+        result = controller.classify_changed_file_scope(path, ["scripts/"], [])
+        ASSERTIONS.assertEqual(result["classification"], "invalid_path")
+
+
+def test_classify_changed_file_scope_literal_backslash_path_is_invalid_path():
+    result = controller.classify_changed_file_scope("scripts\\tool.py", ["scripts/"], [])
+    ASSERTIONS.assertEqual(result["classification"], "invalid_path")
+    ASSERTIONS.assertEqual(result["path"], "scripts\\tool.py")
+
+
+def test_classify_changed_file_scope_malformed_forbidden_dict_is_forbidden():
+    result = controller.classify_changed_file_scope("scripts/secret.py", ["scripts/"], {"files": ["scripts/secret.py"]})
+    ASSERTIONS.assertEqual(result["classification"], "forbidden")
+
+
+def test_classify_changed_file_scope_invalid_forbidden_entry_is_forbidden():
+    result = controller.classify_changed_file_scope("scripts/secret.py", ["scripts/"], ["scripts/ secret.py"])
+    ASSERTIONS.assertEqual(result["classification"], "forbidden")
+
+
+def test_classify_changed_file_scope_malformed_allowed_dict_is_missing_allowlist():
+    result = controller.classify_changed_file_scope("scripts/x.py", {"files": ["scripts/x.py"]}, [])
+    ASSERTIONS.assertEqual(result["classification"], "missing_allowlist")
+
+
+def test_classify_changed_file_scope_invalid_allowed_entry_is_missing_allowlist():
+    result = controller.classify_changed_file_scope("scripts/x.py", ["scripts/ x.py"], [])
+    ASSERTIONS.assertEqual(result["classification"], "missing_allowlist")
+
+
+def test_audit_changed_files_against_scope_reports_offending_and_blocks_batch():
+    audit = controller.audit_changed_files_against_scope(
+        ["scripts/pr_automation_controller.py", "scripts/pr_flow_automation.py"],
+        ["scripts/pr_automation_controller.py", "tests/scripts/test_pr_automation_controller.py"],
+        ["scripts/pr_flow_automation.py"],
+    )
+    ASSERTIONS.assertFalse(audit["allowed"])
+    ASSERTIONS.assertEqual(audit["offending_files"], ["scripts/pr_flow_automation.py"])
+
+
+def test_audit_changed_files_against_scope_allows_directory_rule_match():
+    audit = controller.audit_changed_files_against_scope(["scripts/x.py"], ["scripts/"], [])
+    ASSERTIONS.assertTrue(audit["allowed"])
+    ASSERTIONS.assertEqual(audit["offending_files"], [])
+
+
+def test_audit_changed_files_against_scope_denies_nonmatching_directory_rule():
+    audit = controller.audit_changed_files_against_scope(["scripts2/x.py"], ["scripts/"], [])
+    ASSERTIONS.assertFalse(audit["allowed"])
+    ASSERTIONS.assertEqual(audit["offending_files"], ["scripts2/x.py"])
+
+
+def test_audit_changed_files_against_scope_string_input_preserves_leading_whitespace_offender():
+    audit = controller.audit_changed_files_against_scope(" scripts/x.py", ["scripts/x.py"], [])
+    ASSERTIONS.assertFalse(audit["allowed"])
+    ASSERTIONS.assertIn(" scripts/x.py", audit["offending_files"])
+
+
+def test_audit_changed_files_against_scope_string_input_preserves_trailing_whitespace_offender():
+    audit = controller.audit_changed_files_against_scope("scripts/x.py ", ["scripts/x.py"], [])
+    ASSERTIONS.assertFalse(audit["allowed"])
+    ASSERTIONS.assertIn("scripts/x.py ", audit["offending_files"])
+
+
+def test_audit_changed_files_against_scope_string_input_without_whitespace_matches_allowlist():
+    audit = controller.audit_changed_files_against_scope("scripts/x.py", ["scripts/x.py"], [])
+    ASSERTIONS.assertTrue(audit["allowed"])
+    ASSERTIONS.assertEqual(audit["offending_files"], [])
+
+
+def test_audit_changed_files_against_scope_csv_string_trims_separator_whitespace():
+    audit = controller.audit_changed_files_against_scope("scripts/a.py, tests/b.py", ["scripts/", "tests/"], [])
+    ASSERTIONS.assertTrue(audit["allowed"])
+    ASSERTIONS.assertEqual(audit["offending_files"], [])
+
+
+def test_audit_changed_files_against_scope_newline_string_trims_separator_whitespace():
+    audit = controller.audit_changed_files_against_scope("scripts/a.py\n tests/b.py", ["scripts/", "tests/"], [])
+    ASSERTIONS.assertTrue(audit["allowed"])
+    ASSERTIONS.assertEqual(audit["offending_files"], [])
+
+
+def test_path_matches_scope_rule_slash_star_requires_child_path():
+    ASSERTIONS.assertFalse(controller.path_matches_scope_rule("scripts", "scripts/*"))
+    ASSERTIONS.assertTrue(controller.path_matches_scope_rule("scripts/x.py", "scripts/*"))
+    ASSERTIONS.assertTrue(controller.path_matches_scope_rule("scripts/sub/x.py", "scripts/*"))
+
+
+def test_scope_allows_file_change_slash_star_does_not_allow_directory_itself():
+    ASSERTIONS.assertFalse(controller.scope_allows_file_change("scripts", ["scripts/*"], []))
+
+
+def test_audit_changed_files_against_scope_blocks_parent_escape_path():
+    audit = controller.audit_changed_files_against_scope(
+        ["../secrets/server.key"],
+        ["scripts/pr_automation_controller.py"],
+        [],
+    )
+    ASSERTIONS.assertFalse(audit["allowed"])
+    ASSERTIONS.assertIn("../secrets/server.key", audit["offending_files"])
+
+
+def test_audit_changed_files_against_scope_blocks_multi_parent_escape_path():
+    audit = controller.audit_changed_files_against_scope(
+        ["../../README.md"],
+        ["scripts/pr_automation_controller.py"],
+        [],
+    )
+    ASSERTIONS.assertFalse(audit["allowed"])
+    ASSERTIONS.assertIn("../../README.md", audit["offending_files"])
+
+
+def test_audit_changed_files_against_scope_blocks_absolute_path():
+    audit = controller.audit_changed_files_against_scope(
+        ["/absolute/path"],
+        ["scripts/pr_automation_controller.py"],
+        [],
+    )
+    ASSERTIONS.assertFalse(audit["allowed"])
+    ASSERTIONS.assertIn("/absolute/path", audit["offending_files"])
+
+
+def test_audit_changed_files_against_scope_blocks_windows_absolute_path():
+    audit = controller.audit_changed_files_against_scope(
+        ["C:\\repo\\scripts\\tool.py"],
+        ["scripts/"],
+        [],
+    )
+    ASSERTIONS.assertFalse(audit["allowed"])
+    ASSERTIONS.assertIn("C:\\repo\\scripts\\tool.py", audit["offending_files"])
+
+
+def test_audit_changed_files_against_scope_blocks_literal_backslash_path():
+    audit = controller.audit_changed_files_against_scope(
+        ["scripts\\tool.py"],
+        ["scripts/"],
+        [],
+    )
+    ASSERTIONS.assertFalse(audit["allowed"])
+    ASSERTIONS.assertIn("scripts\\tool.py", audit["offending_files"])
+
+
+def test_audit_changed_files_against_scope_malformed_forbidden_dict_blocks():
+    audit = controller.audit_changed_files_against_scope(
+        ["scripts/secret.py"],
+        ["scripts/"],
+        {"files": ["scripts/secret.py"]},
+    )
+    ASSERTIONS.assertFalse(audit["allowed"])
+    ASSERTIONS.assertEqual(audit["offending_files"], ["scripts/secret.py"])
+
+
+def test_audit_changed_files_against_scope_invalid_forbidden_entry_blocks():
+    audit = controller.audit_changed_files_against_scope(
+        ["scripts/secret.py"],
+        ["scripts/"],
+        ["scripts/ secret.py"],
+    )
+    ASSERTIONS.assertFalse(audit["allowed"])
+    ASSERTIONS.assertEqual(audit["offending_files"], ["scripts/secret.py"])
+
+
+def test_audit_changed_files_against_scope_malformed_allowed_dict_blocks():
+    audit = controller.audit_changed_files_against_scope(
+        ["scripts/x.py"],
+        {"files": ["scripts/x.py"]},
+        [],
+    )
+    ASSERTIONS.assertFalse(audit["allowed"])
+    ASSERTIONS.assertEqual(audit["offending_files"], ["scripts/x.py"])
+
+
+def test_audit_changed_files_against_scope_invalid_allowed_entry_blocks():
+    audit = controller.audit_changed_files_against_scope(
+        ["scripts/x.py"],
+        ["scripts/ x.py"],
+        [],
+    )
+    ASSERTIONS.assertFalse(audit["allowed"])
+    ASSERTIONS.assertEqual(audit["offending_files"], ["scripts/x.py"])
+
+
+def test_audit_changed_files_against_scope_invalid_changed_file_matrix_blocked():
+    for path in _invalid_changed_paths():
+        audit = controller.audit_changed_files_against_scope([path], ["scripts/"], [])
+        ASSERTIONS.assertFalse(audit["allowed"])
+
+
+def test_audit_changed_files_against_scope_blocks_blank_path_entry():
+    audit = controller.audit_changed_files_against_scope(
+        [""],
+        ["scripts/pr_automation_controller.py"],
+        [],
+    )
+    ASSERTIONS.assertFalse(audit["allowed"])
+    ASSERTIONS.assertIn("<invalid:empty>", audit["offending_files"])
+
+
+def test_audit_changed_files_against_scope_blocks_placeholder_entries():
+    audit = controller.audit_changed_files_against_scope(
+        ["none", "n/a", "tbd"],
+        ["scripts/pr_automation_controller.py"],
+        [],
+    )
+    ASSERTIONS.assertFalse(audit["allowed"])
+    ASSERTIONS.assertEqual(audit["offending_files"], ["n/a", "none", "tbd"])
+
+
+def test_normalize_file_scope_rules_drops_invalid_rules_before_normalization():
+    rules = [
+        "/scripts/x.py",
+        "C:\\repo\\scripts\\x.py",
+        "D:/repo/scripts/x.py",
+        "../scripts/x.py",
+        "../../scripts/x.py",
+        " scripts/x.py",
+        "scripts/x.py ",
+        "scripts/ x.py",
+        "scripts/",
+        "scripts/pr_*",
+    ]
+    normalized = controller.normalize_file_scope_rules(rules)
+    ASSERTIONS.assertEqual(normalized, ["scripts/", "scripts/pr_*"])
+
+
+def test_invalid_allow_rules_do_not_broaden_scope_matching():
+    invalid_rules = [
+        "/scripts/x.py",
+        "C:\\repo\\scripts\\x.py",
+        "D:/repo/scripts/x.py",
+        "../scripts/x.py",
+        "../../scripts/x.py",
+        " scripts/x.py",
+        "scripts/x.py ",
+        "scripts/ x.py",
+    ]
+    ASSERTIONS.assertFalse(controller.scope_allows_file_change("scripts/x.py", invalid_rules, []))
+    ASSERTIONS.assertEqual(controller.normalize_file_scope_rules(invalid_rules), [])
+
+
+def test_audit_changed_files_against_scope_non_list_non_string_input_hardened():
+    audit = controller.audit_changed_files_against_scope(
+        {"path": "scripts/pr_automation_controller.py"},
+        ["scripts/pr_automation_controller.py"],
+        [],
+    )
+    ASSERTIONS.assertFalse(audit["allowed"])
+    ASSERTIONS.assertEqual(audit["offending_files"], [controller.INVALID_CHANGED_FILES_INPUT_MARKER])
+
+
+def test_build_scope_violation_result_contract_shape():
+    result = controller.build_scope_violation_result(
+        ["scripts/pr_flow_automation.py"],
+        ["scripts/pr_automation_controller.py"],
+        ["scripts/pr_flow_automation.py"],
+    )
+    ASSERTIONS.assertEqual(result["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_scope_violation")
+    ASSERTIONS.assertFalse(result["can_patch"])
+    ASSERTIONS.assertFalse(result["can_commit"])
+    ASSERTIONS.assertFalse(result["can_push"])
+    ASSERTIONS.assertEqual(result["offending_files"], ["scripts/pr_flow_automation.py"])
+    ASSERTIONS.assertEqual(result["reason"], "scope_violation")
+
+
+def test_build_scope_violation_result_non_list_non_string_input_hardened():
+    result = controller.build_scope_violation_result(
+        ("scripts/pr_flow_automation.py",),
+        ["scripts/pr_automation_controller.py"],
+        ["scripts/pr_flow_automation.py"],
+    )
+    ASSERTIONS.assertEqual(result["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_scope_violation")
+    ASSERTIONS.assertFalse(result["can_patch"])
+    ASSERTIONS.assertFalse(result["can_commit"])
+    ASSERTIONS.assertFalse(result["can_push"])
+    ASSERTIONS.assertEqual(result["offending_files"], [controller.INVALID_OFFENDING_FILES_INPUT_MARKER])
+
+
+def test_enforce_patch_file_scope_pass_and_violation():
+    ok = controller.enforce_patch_file_scope(
+        ["scripts/pr_automation_controller.py"],
+        ["scripts/pr_automation_controller.py"],
+        ["scripts/pr_flow_automation.py"],
+    )
+    ASSERTIONS.assertEqual(ok["status"], "PASS")
+    ASSERTIONS.assertEqual(ok["next_action"], "allowed")
+    ASSERTIONS.assertTrue(ok["can_patch"])
+    ASSERTIONS.assertTrue(ok["can_commit"])
+    ASSERTIONS.assertTrue(ok["can_push"])
+
+    bad = controller.enforce_patch_file_scope(
+        ["scripts/pr_automation_controller.py", "scripts/pr_flow_automation.py"],
+        ["scripts/pr_automation_controller.py"],
+        ["scripts/pr_flow_automation.py"],
+    )
+    ASSERTIONS.assertEqual(bad["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(bad["next_action"], "needs_manual_scope_violation")
+    ASSERTIONS.assertFalse(bad["can_patch"])
+    ASSERTIONS.assertFalse(bad["can_commit"])
+    ASSERTIONS.assertFalse(bad["can_push"])
+    ASSERTIONS.assertIn("scripts/pr_flow_automation.py", bad["offending_files"])
+
+
+def test_enforce_patch_file_scope_csv_string_trims_separator_whitespace():
+    ok = controller.enforce_patch_file_scope(
+        "scripts/a.py, tests/b.py",
+        ["scripts/", "tests/"],
+        [],
+    )
+    ASSERTIONS.assertEqual(ok["status"], "PASS")
+    ASSERTIONS.assertTrue(ok["can_patch"])
+
+
+def test_enforce_patch_file_scope_invalid_path_blocks_with_needs_manual_scope_violation():
+    bad = controller.enforce_patch_file_scope(
+        ["../secrets/server.key"],
+        ["scripts/pr_automation_controller.py"],
+        [],
+    )
+    ASSERTIONS.assertEqual(bad["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(bad["next_action"], "needs_manual_scope_violation")
+    ASSERTIONS.assertFalse(bad["can_patch"])
+    ASSERTIONS.assertIn("../secrets/server.key", bad["offending_files"])
+
+
+def test_enforce_patch_file_scope_malformed_forbidden_dict_blocks_with_scope_violation_contract():
+    bad = controller.enforce_patch_file_scope(
+        ["scripts/secret.py"],
+        ["scripts/"],
+        {"files": ["scripts/secret.py"]},
+    )
+    ASSERTIONS.assertEqual(bad["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(bad["next_action"], "needs_manual_scope_violation")
+    ASSERTIONS.assertFalse(bad["can_patch"])
+    ASSERTIONS.assertFalse(bad["can_commit"])
+    ASSERTIONS.assertFalse(bad["can_push"])
+    ASSERTIONS.assertIn("scripts/secret.py", bad["offending_files"])
+
+
+def test_enforce_patch_file_scope_invalid_forbidden_entry_blocks_with_scope_violation_contract():
+    bad = controller.enforce_patch_file_scope(
+        ["scripts/secret.py"],
+        ["scripts/"],
+        ["scripts/ secret.py"],
+    )
+    ASSERTIONS.assertEqual(bad["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(bad["next_action"], "needs_manual_scope_violation")
+    ASSERTIONS.assertFalse(bad["can_patch"])
+    ASSERTIONS.assertFalse(bad["can_commit"])
+    ASSERTIONS.assertFalse(bad["can_push"])
+    ASSERTIONS.assertIn("scripts/secret.py", bad["offending_files"])
+
+
+def test_enforce_patch_file_scope_malformed_allowed_dict_blocks_with_scope_violation_contract():
+    bad = controller.enforce_patch_file_scope(
+        ["scripts/x.py"],
+        {"files": ["scripts/x.py"]},
+        [],
+    )
+    ASSERTIONS.assertEqual(bad["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(bad["next_action"], "needs_manual_scope_violation")
+    ASSERTIONS.assertFalse(bad["can_patch"])
+    ASSERTIONS.assertFalse(bad["can_commit"])
+    ASSERTIONS.assertFalse(bad["can_push"])
+    ASSERTIONS.assertIn("scripts/x.py", bad["offending_files"])
+
+
+def test_enforce_patch_file_scope_invalid_allowed_entry_blocks_with_scope_violation_contract():
+    bad = controller.enforce_patch_file_scope(
+        ["scripts/x.py"],
+        ["scripts/ x.py"],
+        [],
+    )
+    ASSERTIONS.assertEqual(bad["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(bad["next_action"], "needs_manual_scope_violation")
+    ASSERTIONS.assertFalse(bad["can_patch"])
+    ASSERTIONS.assertFalse(bad["can_commit"])
+    ASSERTIONS.assertFalse(bad["can_push"])
+    ASSERTIONS.assertIn("scripts/x.py", bad["offending_files"])
+
+
+def test_enforce_commit_file_scope_matches_patch_enforcement():
+    patch_result = controller.enforce_patch_file_scope(
+        ["scripts/pr_flow_automation.py"],
+        ["scripts/pr_automation_controller.py"],
+        ["scripts/pr_flow_automation.py"],
+    )
+    commit_result = controller.enforce_commit_file_scope(
+        ["scripts/pr_flow_automation.py"],
+        ["scripts/pr_automation_controller.py"],
+        ["scripts/pr_flow_automation.py"],
+    )
+    ASSERTIONS.assertEqual(commit_result, patch_result)
+
+
+def test_enforce_commit_file_scope_invalid_path_blocks_commit_and_push():
+    result = controller.enforce_commit_file_scope(
+        ["/absolute/path"],
+        ["scripts/pr_automation_controller.py"],
+        [],
+    )
+    ASSERTIONS.assertEqual(result["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_scope_violation")
+    ASSERTIONS.assertFalse(result["can_commit"])
+    ASSERTIONS.assertFalse(result["can_push"])
+    ASSERTIONS.assertIn("/absolute/path", result["offending_files"])
+
+
+def test_enforce_patch_and_commit_file_scope_windows_absolute_path_blocks_patch_commit_and_push():
+    path = "D:/repo/scripts/tool.py"
+    patch_result = controller.enforce_patch_file_scope(
+        [path],
+        ["scripts/"],
+        [],
+    )
+    commit_result = controller.enforce_commit_file_scope(
+        [path],
+        ["scripts/"],
+        [],
+    )
+    for result in (patch_result, commit_result):
+        ASSERTIONS.assertEqual(result["status"], "NEEDS_MANUAL")
+        ASSERTIONS.assertEqual(result["next_action"], "needs_manual_scope_violation")
+        ASSERTIONS.assertFalse(result["can_patch"])
+        ASSERTIONS.assertFalse(result["can_commit"])
+        ASSERTIONS.assertFalse(result["can_push"])
+        ASSERTIONS.assertTrue(result["offending_files"])
+        ASSERTIONS.assertIn(path, result["offending_files"])
+
+
+def test_enforce_patch_and_commit_file_scope_literal_backslash_path_blocks_patch_commit_and_push():
+    path = "scripts\\tool.py"
+    patch_result = controller.enforce_patch_file_scope(
+        [path],
+        ["scripts/"],
+        [],
+    )
+    commit_result = controller.enforce_commit_file_scope(
+        [path],
+        ["scripts/"],
+        [],
+    )
+    for result in (patch_result, commit_result):
+        ASSERTIONS.assertEqual(result["status"], "NEEDS_MANUAL")
+        ASSERTIONS.assertEqual(result["next_action"], "needs_manual_scope_violation")
+        ASSERTIONS.assertFalse(result["can_patch"])
+        ASSERTIONS.assertFalse(result["can_commit"])
+        ASSERTIONS.assertFalse(result["can_push"])
+        ASSERTIONS.assertTrue(result["offending_files"])
+        ASSERTIONS.assertIn(path, result["offending_files"])
+
+
 def test_classify_merge_conflict_contract_paths():
     """Merge conflict classification mirrors baseline auto/manual taxonomy contract."""
     dirty = controller.classify_merge_conflict(

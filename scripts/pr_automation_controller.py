@@ -1599,6 +1599,321 @@ def matching_files(files: list[str], patterns: Sequence[str]) -> list[str]:
     })
 
 
+SCOPE_DEFAULT_FORBIDDEN_RULES = (
+    ".github/workflows/",
+    "business/core/runtime/",
+    "secrets/",
+    "secret/",
+    "config/providers/",
+    "provider_config/",
+    "*.key",
+    "*.pem",
+)
+
+INVALID_CHANGED_FILES_INPUT_MARKER = "<invalid:changed_files_input>"
+INVALID_OFFENDING_FILES_INPUT_MARKER = "<invalid:offending_files_input>"
+
+
+def _contains_parent_traversal(raw: str) -> bool:
+    tokens = [part.strip() for part in str(raw or "").replace("\\", "/").split("/")]
+    return any(token == ".." for token in tokens if token)
+
+
+def _invalid_raw_path_marker(path: object) -> str | None:
+    raw_input = str(path or "")
+    if "\\" in raw_input:
+        return raw_input
+    raw_text = raw_input.replace("\\", "/")
+    if not raw_text.strip():
+        return "<invalid:empty>"
+    if any(ch.isspace() for ch in raw_text):
+        return raw_text
+    if re.match(r"^[A-Za-z]:/", raw_text):
+        return raw_text
+    raw_text = raw_text.strip()
+    if _is_placeholder_value(raw_text):
+        return raw_text
+    if raw_text.startswith("/"):
+        return raw_text
+    if _contains_parent_traversal(raw_text):
+        return raw_text
+    return None
+
+
+def _normalize_repo_relative_path(path: object) -> str:
+    raw = str(path or "").strip().replace("\\", "/")
+    if not raw:
+        return ""
+    raw = re.sub(r"/{2,}", "/", raw)
+    parts: list[str] = []
+    for part in raw.split("/"):
+        token = part.strip()
+        if not token or token == ".":
+            continue
+        if token == "..":
+            if not parts:
+                return ""
+            parts.pop()
+            continue
+        parts.append(token)
+    return "/".join(parts)
+
+
+def normalize_task_file_list(files: object) -> list[str]:
+    candidates: list[object]
+    if isinstance(files, list):
+        candidates = files
+    elif isinstance(files, str):
+        candidates = parse_csvish(files)
+    else:
+        candidates = []
+    normalized: list[str] = []
+    for item in candidates:
+        if _invalid_raw_path_marker(item):
+            continue
+        normalized_path = _normalize_repo_relative_path(item)
+        if normalized_path:
+            normalized.append(normalized_path)
+    return sorted({item for item in normalized if item and not _is_placeholder_value(item)})
+
+
+def _malformed_scope_rules_input(rules: object) -> bool:
+    if rules is None:
+        return False
+    return not isinstance(rules, (list, str))
+
+
+def _scope_rules_contain_invalid_entries(rules: object) -> bool:
+    if not isinstance(rules, (list, str)):
+        return False
+    candidates: list[object] = rules if isinstance(rules, list) else parse_csvish(rules)
+    for item in candidates:
+        raw_rule = str(item or "").replace("\\", "/")
+        if _invalid_raw_path_marker(raw_rule):
+            return True
+        raw_rule = raw_rule.strip()
+        if not raw_rule or _is_placeholder_value(raw_rule):
+            return True
+        is_directory_rule = raw_rule.endswith("/") and not raw_rule.endswith("/*")
+        base_rule = raw_rule.rstrip("/") if is_directory_rule else raw_rule
+        if not _normalize_repo_relative_path(base_rule):
+            return True
+    return False
+
+
+def normalize_file_scope_rules(rules: object, *, include_defaults: bool = False) -> list[str]:
+    candidates: list[object]
+    if isinstance(rules, list):
+        candidates = rules
+    elif isinstance(rules, str):
+        candidates = parse_csvish(rules)
+    else:
+        candidates = []
+    normalized: list[str] = []
+    for item in candidates:
+        raw_rule = str(item or "").replace("\\", "/")
+        if _invalid_raw_path_marker(raw_rule):
+            continue
+        raw_rule = raw_rule.strip()
+        if not raw_rule or _is_placeholder_value(raw_rule):
+            continue
+        is_directory_rule = raw_rule.endswith("/") and not raw_rule.endswith("/*")
+        base_rule = raw_rule.rstrip("/") if is_directory_rule else raw_rule
+        clean_rule = _normalize_repo_relative_path(base_rule)
+        if not clean_rule:
+            continue
+        normalized.append(f"{clean_rule}/" if is_directory_rule else clean_rule)
+    if not include_defaults:
+        return sorted(set(normalized))
+    merged = list(normalized)
+    merged.extend(SCOPE_DEFAULT_FORBIDDEN_RULES)
+    return sorted({item for item in merged if item})
+
+
+def path_matches_scope_rule(path: str, rule: str) -> bool:
+    if _invalid_raw_path_marker(path):
+        return False
+    clean_path = _normalize_repo_relative_path(path)
+    rule_text = str(rule or "").replace("\\", "/")
+    if not rule_text:
+        return False
+    if rule_text.startswith("*.") and "/" not in rule_text:
+        return bool(clean_path) and clean_path.endswith(rule_text[1:])
+    base_rule_text = rule_text.rstrip("*") if rule_text.endswith("*") else rule_text
+    if _invalid_raw_path_marker(base_rule_text):
+        return False
+    clean_rule = _normalize_repo_relative_path(base_rule_text.strip())
+    if not clean_path or not clean_rule:
+        return False
+    if rule_text.endswith("/*"):
+        return clean_path.startswith(clean_rule + "/")
+    if rule_text.endswith("*"):
+        rule_parent, _, rule_leaf = clean_rule.rpartition("/")
+        path_parent, _, path_leaf = clean_path.rpartition("/")
+        return path_parent == rule_parent and path_leaf.startswith(rule_leaf)
+    if rule_text.strip().endswith("/"):
+        return clean_path.startswith(clean_rule + "/")
+    return clean_path == clean_rule
+
+
+def scope_allows_file_change(path: str, files_allowed: object, files_forbidden: object) -> bool:
+    if _invalid_raw_path_marker(path):
+        return False
+    if _malformed_scope_rules_input(files_allowed) or _malformed_scope_rules_input(files_forbidden):
+        return False
+    if _scope_rules_contain_invalid_entries(files_allowed) or _scope_rules_contain_invalid_entries(files_forbidden):
+        return False
+    normalized_path = _normalize_repo_relative_path(path)
+    if not normalized_path:
+        return False
+    forbidden = normalize_file_scope_rules(files_forbidden, include_defaults=True)
+    if any(path_matches_scope_rule(normalized_path, rule) for rule in forbidden):
+        return False
+    allowed = normalize_file_scope_rules(files_allowed)
+    if not allowed:
+        return False
+    return any(path_matches_scope_rule(normalized_path, rule) for rule in allowed)
+
+
+def classify_changed_file_scope(path: str, files_allowed: object, files_forbidden: object) -> dict[str, Any]:
+    invalid_marker = _invalid_raw_path_marker(path)
+    if invalid_marker:
+        return {"path": invalid_marker if invalid_marker != "<invalid:empty>" else "", "classification": "invalid_path"}
+    malformed_forbidden = _malformed_scope_rules_input(files_forbidden) or _scope_rules_contain_invalid_entries(
+        files_forbidden
+    )
+    malformed_allowed = _malformed_scope_rules_input(files_allowed) or _scope_rules_contain_invalid_entries(
+        files_allowed
+    )
+    if malformed_forbidden:
+        normalized_path = _normalize_repo_relative_path(path)
+        return {"path": normalized_path, "classification": "forbidden"}
+    if malformed_allowed:
+        normalized_path = _normalize_repo_relative_path(path)
+        return {"path": normalized_path, "classification": "missing_allowlist"}
+    normalized_path = _normalize_repo_relative_path(path)
+    forbidden = normalize_file_scope_rules(files_forbidden, include_defaults=True)
+    allowed = normalize_file_scope_rules(files_allowed)
+    if not normalized_path:
+        return {"path": "", "classification": "invalid_path"}
+    if any(path_matches_scope_rule(normalized_path, rule) for rule in forbidden):
+        return {"path": normalized_path, "classification": "forbidden"}
+    if not allowed:
+        return {"path": normalized_path, "classification": "missing_allowlist"}
+    if any(path_matches_scope_rule(normalized_path, rule) for rule in allowed):
+        return {"path": normalized_path, "classification": "allowed"}
+    return {"path": normalized_path, "classification": "outside_allowlist"}
+
+
+def audit_changed_files_against_scope(
+    changed_files: object,
+    files_allowed: object,
+    files_forbidden: object,
+) -> dict[str, Any]:
+    if isinstance(changed_files, list):
+        raw_changed: list[object] = changed_files
+    elif isinstance(changed_files, str):
+        # Keep single-path strings raw so whitespace-mutated paths fail closed.
+        if "," not in changed_files and "\n" not in changed_files:
+            raw_changed = [changed_files] if changed_files else []
+        else:
+            # For CSV/newline lists, normalize separator whitespace per token.
+            raw_changed = [part.strip() for part in re.split(r"[,\n]", changed_files) if part.strip()]
+    else:
+        raw_changed = [INVALID_CHANGED_FILES_INPUT_MARKER]
+    changed: list[str] = []
+    allowed = normalize_file_scope_rules(files_allowed)
+    forbidden = normalize_file_scope_rules(files_forbidden, include_defaults=True)
+    malformed_forbidden = _malformed_scope_rules_input(files_forbidden) or _scope_rules_contain_invalid_entries(
+        files_forbidden
+    )
+    malformed_allowed = _malformed_scope_rules_input(files_allowed) or _scope_rules_contain_invalid_entries(
+        files_allowed
+    )
+    offending: list[str] = []
+    for raw_path in raw_changed:
+        invalid_marker = _invalid_raw_path_marker(raw_path)
+        normalized_path = _normalize_repo_relative_path(raw_path)
+        if invalid_marker or not normalized_path:
+            offending.append(invalid_marker or "<invalid:empty>")
+            continue
+        if malformed_forbidden or malformed_allowed:
+            offending.append(normalized_path)
+            continue
+        changed.append(normalized_path)
+        result = classify_changed_file_scope(normalized_path, files_allowed, files_forbidden)
+        if result["classification"] != "allowed":
+            offending.append(result["path"] or normalized_path)
+    return {
+        "allowed": not offending,
+        "changed_files": sorted(set(changed)),
+        "offending_files": sorted(set(offending)),
+        "allowed_files": allowed,
+        "forbidden_files": forbidden,
+    }
+
+
+def build_scope_violation_result(
+    offending_files: object,
+    allowed_files: object,
+    forbidden_files: object,
+) -> dict[str, Any]:
+    if isinstance(offending_files, list):
+        raw_offending: list[object] = offending_files
+    elif isinstance(offending_files, str):
+        raw_offending = parse_csvish(offending_files)
+    else:
+        raw_offending = [INVALID_OFFENDING_FILES_INPUT_MARKER]
+    offending: list[str] = []
+    for item in raw_offending:
+        value = str(item or "").strip()
+        offending.append(value if value else "<invalid:empty>")
+    return {
+        "status": "NEEDS_MANUAL",
+        "next_action": "needs_manual_scope_violation",
+        "can_patch": False,
+        "can_commit": False,
+        "can_push": False,
+        "offending_files": sorted(set(offending)),
+        "allowed_files": normalize_file_scope_rules(allowed_files),
+        "forbidden_files": normalize_file_scope_rules(forbidden_files, include_defaults=True),
+        "reason": "scope_violation",
+    }
+
+
+def enforce_patch_file_scope(
+    changed_files: object,
+    files_allowed: object,
+    files_forbidden: object,
+) -> dict[str, Any]:
+    audit = audit_changed_files_against_scope(changed_files, files_allowed, files_forbidden)
+    if audit["allowed"]:
+        return {
+            "status": "PASS",
+            "next_action": "allowed",
+            "can_patch": True,
+            "can_commit": True,
+            "can_push": True,
+            "offending_files": [],
+            "allowed_files": audit["allowed_files"],
+            "forbidden_files": audit["forbidden_files"],
+            "reason": "allowed",
+        }
+    return build_scope_violation_result(
+        audit["offending_files"],
+        audit["allowed_files"],
+        audit["forbidden_files"],
+    )
+
+
+def enforce_commit_file_scope(
+    changed_files: object,
+    files_allowed: object,
+    files_forbidden: object,
+) -> dict[str, Any]:
+    return enforce_patch_file_scope(changed_files, files_allowed, files_forbidden)
+
+
 def find_forbidden_files(files: list[str], forbidden_patterns: Sequence[str]) -> list[str]:
     return matching_files(files, forbidden_patterns)
 
