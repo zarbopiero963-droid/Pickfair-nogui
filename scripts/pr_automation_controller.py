@@ -5680,37 +5680,47 @@ _SECRET_LIKE_PATTERNS = (
 def classify_pr_report_status(context: dict[str, Any] | None = None) -> str:
     """Classify PR report status for passive Telegram/report rendering."""
     ctx = context or {}
-    next_action = str(ctx.get("next_action") or "").strip().lower()
-    phase0_status = str(ctx.get("phase0_status") or "").strip().lower()
+    next_action = _report_next_action(ctx.get("next_action"))
+    phase0_status = _report_phase0_status(ctx.get("phase0_status"))
 
-    if next_action.startswith("needs_manual") or phase0_status == "needs_manual":
+    if _report_needs_manual({"next_action": next_action, "phase0_status": phase0_status}):
         return "NEEDS_MANUAL"
 
-    bad = list(ctx.get("bad") or [])
-    pending = list(ctx.get("pending") or [])
-    blockers = list(ctx.get("blockers") or [])
+    bad_raw = ctx.get("bad")
+    pending_raw = ctx.get("pending")
+    blockers_raw = ctx.get("blockers")
+    bad = _report_items(bad_raw)
+    pending = _report_items(pending_raw)
+    blockers = _report_items(blockers_raw)
     if bad or blockers:
         return "BLOCKED"
     if pending:
         return "FIXING"
+    if any(_report_is_scalar_placeholder(value) for value in (bad_raw, pending_raw, blockers_raw)):
+        return "FIXING"
 
     codacy = ctx.get("codacy") if isinstance(ctx.get("codacy"), dict) else {}
     merge_state = str(ctx.get("mergeStateStatus") or ctx.get("merge_state_status") or "").upper()
-    unresolved = int(ctx.get("unresolved_active") or 0)
+    unresolved_raw = ctx.get("unresolved_active")
+    unresolved = safe_nonnegative_int(unresolved_raw, 0)
     codacy_conclusion = str(
         ctx.get("codacy_conclusion") or codacy.get("conclusion") or ""
     ).strip().lower()
-    codacy_annotations = int(
-        ctx.get("codacy_annotations_count") or codacy.get("annotations_count") or 0
-    )
-
-    ready_action = next_action in {"ready", "ready_to_merge", "merge_ready"}
-    ready = (
-        ready_action
-        and merge_state == "CLEAN"
-        and unresolved == 0
-        and codacy_conclusion == "success"
-        and codacy_annotations == 0
+    codacy_annotations_raw = first_nonempty(ctx.get("codacy_annotations_count"), codacy.get("annotations_count"), 0)
+    codacy_annotations = safe_nonnegative_int(codacy_annotations_raw, 0)
+    if _report_unknown_numeric(unresolved_raw) or _report_unknown_numeric(codacy_annotations_raw):
+        return "FIXING"
+    ready = _report_ready_to_merge(
+        {
+            "bad": bad,
+            "pending": pending,
+            "blockers": blockers,
+            "mergeStateStatus": merge_state,
+            "unresolved_active": unresolved,
+            "codacy": {"conclusion": codacy_conclusion, "annotations_count": codacy_annotations},
+            "next_action": next_action,
+            "phase0_status": phase0_status,
+        }
     )
     if ready:
         return "READY_TO_MERGE"
@@ -5745,7 +5755,7 @@ def render_next_action_summary(next_action: object) -> str:
 
 
 def build_telegram_pr_status_message(report: dict[str, Any] | None = None) -> str:
-    payload = report if isinstance(report, dict) and report.get("status") else build_pr_status_report(report)
+    payload = build_pr_status_report(report if isinstance(report, dict) else {})
     blockers = _render_blockers(payload["blockers"])
     lines = [
         "PR Status Report",
@@ -5797,16 +5807,27 @@ def build_telegram_ledger_summary_message(report: dict[str, Any] | None = None) 
 def _report_ready_to_merge(context: dict[str, Any]) -> bool:
     bad = context.get("bad") if isinstance(context.get("bad"), list) else []
     pending = context.get("pending") if isinstance(context.get("pending"), list) else []
+    blockers = context.get("blockers") if isinstance(context.get("blockers"), list) else []
+    next_action = _report_next_action(context.get("next_action"))
+    phase0_status = _report_phase0_status(context.get("phase0_status"))
     unresolved_active = safe_nonnegative_int(context.get("unresolved_active"), 0)
     merge_state_status = norm_state(context.get("mergeStateStatus"))
+    if _report_needs_manual({"next_action": next_action, "phase0_status": phase0_status}):
+        return False
     codacy = context.get("codacy")
     if not isinstance(codacy, dict):
-        return False
+        codacy = {
+            "conclusion": context.get("codacy_conclusion"),
+            "annotations_count": context.get("codacy_annotations_count"),
+        }
     codacy_conclusion = norm_state(codacy.get("conclusion"))
     annotations_count = safe_nonnegative_int(codacy.get("annotations_count"), 0)
+    ready_action = next_action in {"ready", "ready_to_merge", "merge_ready"}
     return (
         not bad
         and not pending
+        and not blockers
+        and ready_action
         and merge_state_status == "CLEAN"
         and unresolved_active == 0
         and codacy_conclusion == "SUCCESS"
@@ -5822,10 +5843,27 @@ def _report_needs_manual(context: dict[str, Any]) -> bool:
 
 
 def _report_blockers(value: object) -> list[str]:
-    if isinstance(value, list):
-        return [entry for entry in (_report_text(item) for item in value) if entry]
-    text = _report_text(value)
-    return [text] if text else []
+    items = _report_items(value)
+    return [entry for entry in (_report_text(item) for item in items) if entry]
+
+
+def _report_items(value: object) -> list[object]:
+    if value is None or isinstance(value, (bool, int, float)):
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return [item for item in value if _report_text(item)]
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    return []
+
+
+def _report_is_scalar_placeholder(value: object) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, (list, tuple, set, str)):
+        return False
+    return True
 
 
 def _report_phase0_status(value: object) -> str:
@@ -5835,6 +5873,15 @@ def _report_phase0_status(value: object) -> str:
     if raw in {"needs_manual", "manual", "fail", "failed"}:
         return "needs_manual"
     return "unknown"
+
+
+def _report_unknown_numeric(value: object) -> bool:
+    if value is None or isinstance(value, int):
+        return False
+    text = str(value).strip()
+    if text == "":
+        return False
+    return safe_nonnegative_int(value, -1) < 0
 
 
 def _report_audit_status(value: object) -> str:
