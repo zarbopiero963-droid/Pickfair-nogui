@@ -361,24 +361,7 @@ def _phase0_malformed_result(risk_level: str = "") -> dict[str, Any]:
     return result
 
 
-def _parse_phase0_json(text: str) -> dict[str, Any] | None:
-    raw = str(text or "").strip()
-    if not raw:
-        return None
-
-    data: dict[str, Any] | None = None
-    for candidate in _extract_phase0_json_candidates(raw):
-        try:
-            loaded = json.loads(candidate)
-        except Exception:
-            continue
-        if isinstance(loaded, dict):
-            data = loaded
-            break
-
-    if data is None:
-        return None
-
+def _phase0_json_candidate_result(data: dict[str, Any]) -> dict[str, Any]:
     result = _phase0_empty_result()
     for field in result:
         result[field] = _phase0_list(data.get(field))
@@ -409,6 +392,28 @@ def _parse_phase0_json(text: str) -> dict[str, Any] | None:
 
     return _phase0_malformed_result(risk_level)
 
+
+def _parse_phase0_json(text: str) -> dict[str, Any] | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+
+    fallback: dict[str, Any] | None = None
+    for candidate in _extract_phase0_json_candidates(raw):
+        try:
+            loaded = json.loads(candidate)
+        except Exception:
+            continue
+        if not isinstance(loaded, dict):
+            continue
+
+        result = _phase0_json_candidate_result(loaded)
+        if result.get("status") == "PASS" or normalize_phase0_status(loaded.get("status")) == "NEEDS_MANUAL":
+            return result
+        if loaded.get("PHASE_0_PREFLIGHT") or loaded.get("phase_0_preflight") or loaded.get("status"):
+            fallback = result
+
+    return fallback
 
 def parse_phase0_preflight_result(output: object) -> dict[str, Any]:
     """Parse a Phase 0 read-only preflight report and fail closed."""
@@ -531,8 +536,9 @@ def decide_phase0_gate(parsed_result: dict[str, Any] | None) -> dict[str, Any]:
     allowed_action = normalized_next_action in PHASE0_PASS_ACTIONS
     can_patch = status == "PASS" and has_evidence and allowed_action
 
-    if not can_patch and status == "PASS":
-        status = "NEEDS_MANUAL"
+    if not can_patch:
+        if status == "PASS":
+            status = "NEEDS_MANUAL"
         next_action = "needs_manual_phase0_failed"
 
     return {

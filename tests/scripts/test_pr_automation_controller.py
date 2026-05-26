@@ -4808,3 +4808,42 @@ def test_build_codex_patch_task_after_phase0_returns_canonical_action():
     ASSERTIONS.assertEqual(result["next_action"], "generate_patch_prompt")
     ASSERTIONS.assertEqual(result["gate"]["next_action"], "generate_patch_prompt")
 
+
+def test_parse_phase0_preflight_result_skips_wrapper_json_before_valid_report():
+    """Parser should skip wrapper metadata JSON before a later valid Phase 0 report."""
+    payload = _phase0_pass_payload()
+    raw = "\n".join(
+        [
+            "wrapper metadata",
+            '{"status": "ok", "kind": "metadata"}',
+            "```json",
+            json.dumps(payload),
+            "```",
+        ]
+    )
+    report = controller.parse_phase0_preflight_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+
+
+def test_decide_phase0_gate_blocked_manual_never_returns_patch_action():
+    """Blocked Phase 0 gate must not return a patch-generation next_action."""
+    decision = controller.decide_phase0_gate(
+        {"status": "NEEDS_MANUAL", "next_action": "generate_patch_prompt"}
+    )
+    ASSERTIONS.assertFalse(decision["can_patch"])
+    ASSERTIONS.assertTrue(decision["needs_manual"])
+    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_phase0_failed")
+
+
+def test_build_codex_patch_task_blocked_manual_uses_manual_next_action():
+    """Blocked patch task wrapper should expose a manual next_action."""
+    result = controller.build_codex_patch_task_after_phase0(
+        "implement narrow fix",
+        {"status": "NEEDS_MANUAL", "next_action": "generate_patch_prompt"},
+    )
+    ASSERTIONS.assertFalse(result["can_patch"])
+    ASSERTIONS.assertTrue(result["blocked"])
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_phase0_failed")
+    ASSERTIONS.assertEqual(result["task"], "")
+
