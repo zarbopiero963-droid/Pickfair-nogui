@@ -5666,6 +5666,286 @@ def _has_stale_only(context: dict[str, Any]) -> bool:
     return bool(context.get("has_stale_or_cancelled_rerun_state")) and not _has_blockers(context)
 
 
+PR_REPORT_STATUSES = frozenset({"BLOCKED", "FIXING", "NEEDS_MANUAL", "READY_TO_MERGE"})
+_TELEGRAM_SAFE_MESSAGE_LIMIT = 3500
+_TELEGRAM_SECTION_LIMIT = 480
+_SECRET_LIKE_PATTERNS = (
+    re.compile(r"\b(?:ghp|gho|github_pat)_[A-Za-z0-9_]{10,}\b"),
+    re.compile(r"\bxox[aboprs]-[A-Za-z0-9-]{10,}\b"),
+    re.compile(r"\b(?:sk|rk)-[A-Za-z0-9]{16,}\b"),
+    re.compile(r"\bAIza[0-9A-Za-z_-]{20,}\b"),
+)
+
+
+def classify_pr_report_status(context: dict[str, Any] | None = None) -> str:
+    """Classify PR report status for passive Telegram/report rendering."""
+    ctx = context or {}
+    next_action = _report_next_action(ctx.get("next_action"))
+    phase0_status = _report_phase0_status(ctx.get("phase0_status"))
+
+    if _report_needs_manual({"next_action": next_action, "phase0_status": phase0_status}):
+        return "NEEDS_MANUAL"
+
+    bad_raw = ctx.get("bad")
+    pending_raw = ctx.get("pending")
+    blockers_raw = ctx.get("blockers")
+    bad = _report_items(bad_raw)
+    pending = _report_items(pending_raw)
+    blockers = _report_items(blockers_raw)
+    if bad or blockers:
+        return "BLOCKED"
+    if pending:
+        return "FIXING"
+    if any(_report_is_scalar_placeholder(value) for value in (bad_raw, pending_raw, blockers_raw)):
+        return "FIXING"
+
+    codacy = ctx.get("codacy") if isinstance(ctx.get("codacy"), dict) else {}
+    merge_state = str(ctx.get("mergeStateStatus") or ctx.get("merge_state_status") or "").upper()
+    unresolved_raw = ctx.get("unresolved_active")
+    unresolved = safe_nonnegative_int(unresolved_raw, 0)
+    codacy_conclusion = str(
+        ctx.get("codacy_conclusion") or codacy.get("conclusion") or ""
+    ).strip().lower()
+    codacy_annotations_raw = first_nonempty(ctx.get("codacy_annotations_count"), codacy.get("annotations_count"), 0)
+    codacy_annotations = safe_nonnegative_int(codacy_annotations_raw, 0)
+    if _report_unknown_numeric(unresolved_raw) or _report_unknown_numeric(codacy_annotations_raw):
+        return "FIXING"
+    ready = _report_ready_to_merge(
+        {
+            "bad": bad,
+            "pending": pending,
+            "blockers": blockers,
+            "mergeStateStatus": merge_state,
+            "unresolved_active": unresolved,
+            "codacy": {"conclusion": codacy_conclusion, "annotations_count": codacy_annotations},
+            "next_action": next_action,
+            "phase0_status": phase0_status,
+        }
+    )
+    if ready:
+        return "READY_TO_MERGE"
+
+    return "FIXING"
+
+def build_pr_status_report(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = context if isinstance(context, dict) else {}
+    blockers = _report_blockers(payload.get("blockers"))
+    status = classify_pr_report_status({**payload, "blockers": blockers})
+    return {
+        "pr_number": _report_text(payload.get("pr_number") or payload.get("pr")),
+        "head_sha": _report_text(payload.get("head_sha") or payload.get("headRefOid") or payload.get("head")),
+        "status": status if status in PR_REPORT_STATUSES else "FIXING",
+        "blockers": blockers,
+        "phase0_status": _report_phase0_status(payload.get("phase0_status")),
+        "last_attempt": _report_text(payload.get("last_attempt"), fallback="none"),
+        "post_fix_audit_status": _report_audit_status(payload.get("post_fix_audit_status")),
+        "validation_status": _report_validation_status(payload.get("validation_status")),
+        "next_action": _report_next_action(payload.get("next_action")),
+        "ledger_summary": _report_ledger_summary(payload.get("ledger_summary")),
+        "pr_url": _report_text(payload.get("pr_url") or payload.get("url")),
+    }
+
+
+def render_next_action_summary(next_action: object) -> str:
+    raw = _report_text(next_action, fallback="unknown")
+    if raw == "unknown":
+        return raw
+    normalized = "_".join(part for part in re.split(r"[\s\-]+", raw.strip().lower()) if part)
+    return normalized or "unknown"
+
+
+def build_telegram_pr_status_message(report: dict[str, Any] | None = None) -> str:
+    payload = build_pr_status_report(report if isinstance(report, dict) else {})
+    blockers = _render_blockers(payload["blockers"])
+    lines = [
+        "PR Status Report",
+        f"PR: #{payload['pr_number'] or 'unknown'}",
+        f"URL: {payload['pr_url']}",
+        f"Head SHA: {payload['head_sha'] or 'unknown'}",
+        f"Status: {payload['status']}",
+        f"Blockers: {blockers}",
+        f"Phase 0: {payload['phase0_status']}",
+        f"Post-fix audit: {payload['post_fix_audit_status']}",
+        f"Validation: {payload['validation_status']}",
+        f"Next action: {payload['next_action']}",
+        f"Ledger: {_truncate_for_telegram(payload['ledger_summary'], _TELEGRAM_SECTION_LIMIT)}",
+        f"Last attempt: {payload['last_attempt']}",
+    ]
+    return _finalize_telegram_message("\n".join(lines))
+
+
+def build_telegram_audit_summary_message(report: dict[str, Any] | None = None) -> str:
+    payload = build_pr_status_report(report if isinstance(report, dict) else {})
+    lines = [
+        "PR Audit Summary",
+        f"PR: #{payload['pr_number'] or 'unknown'}",
+        f"URL: {payload['pr_url']}",
+        f"Head SHA: {payload['head_sha'] or 'unknown'}",
+        f"Status: {payload['status']}",
+        f"Post-fix audit: {payload['post_fix_audit_status']}",
+        f"Validation: {payload['validation_status']}",
+        f"Next action: {payload['next_action']}",
+    ]
+    return _finalize_telegram_message("\n".join(lines))
+
+
+def build_telegram_ledger_summary_message(report: dict[str, Any] | None = None) -> str:
+    payload = build_pr_status_report(report if isinstance(report, dict) else {})
+    lines = [
+        "PR Ledger Summary",
+        f"PR: #{payload['pr_number'] or 'unknown'}",
+        f"URL: {payload['pr_url']}",
+        f"Head SHA: {payload['head_sha'] or 'unknown'}",
+        f"Status: {payload['status']}",
+        f"Ledger: {_truncate_for_telegram(payload['ledger_summary'], _TELEGRAM_SECTION_LIMIT)}",
+        f"Last attempt: {payload['last_attempt']}",
+        f"Next action: {payload['next_action']}",
+    ]
+    return _finalize_telegram_message("\n".join(lines))
+
+
+def _report_ready_to_merge(context: dict[str, Any]) -> bool:
+    bad = context.get("bad") if isinstance(context.get("bad"), list) else []
+    pending = context.get("pending") if isinstance(context.get("pending"), list) else []
+    blockers = context.get("blockers") if isinstance(context.get("blockers"), list) else []
+    next_action = _report_next_action(context.get("next_action"))
+    phase0_status = _report_phase0_status(context.get("phase0_status"))
+    unresolved_active = safe_nonnegative_int(context.get("unresolved_active"), 0)
+    merge_state_status = norm_state(context.get("mergeStateStatus"))
+    if _report_needs_manual({"next_action": next_action, "phase0_status": phase0_status}):
+        return False
+    codacy = context.get("codacy")
+    if not isinstance(codacy, dict):
+        codacy = {
+            "conclusion": context.get("codacy_conclusion"),
+            "annotations_count": context.get("codacy_annotations_count"),
+        }
+    codacy_conclusion = norm_state(codacy.get("conclusion"))
+    annotations_count = safe_nonnegative_int(codacy.get("annotations_count"), 0)
+    ready_action = next_action in {"ready", "ready_to_merge", "merge_ready"}
+    return (
+        not bad
+        and not pending
+        and not blockers
+        and ready_action
+        and merge_state_status == "CLEAN"
+        and unresolved_active == 0
+        and codacy_conclusion == "SUCCESS"
+        and annotations_count == 0
+    )
+
+
+def _report_needs_manual(context: dict[str, Any]) -> bool:
+    next_action = render_next_action_summary(context.get("next_action"))
+    if next_action.startswith("needs_manual"):
+        return True
+    return _report_phase0_status(context.get("phase0_status")) == "needs_manual"
+
+
+def _report_blockers(value: object) -> list[str]:
+    items = _report_items(value)
+    return [entry for entry in (_report_text(item) for item in items) if entry]
+
+
+def _report_items(value: object) -> list[object]:
+    if value is None or isinstance(value, (bool, int, float)):
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return [item for item in value if _report_text(item)]
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    return []
+
+
+def _report_is_scalar_placeholder(value: object) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, (list, tuple, set, str)):
+        return False
+    return True
+
+
+def _report_phase0_status(value: object) -> str:
+    raw = _report_text(value, fallback="unknown").lower()
+    if raw in {"pass", "passed"}:
+        return "pass"
+    if raw in {"needs_manual", "manual", "fail", "failed"}:
+        return "needs_manual"
+    return "unknown"
+
+
+def _report_unknown_numeric(value: object) -> bool:
+    if value is None or isinstance(value, int):
+        return False
+    text = str(value).strip()
+    if text == "":
+        return False
+    return safe_nonnegative_int(value, -1) < 0
+
+
+def _report_audit_status(value: object) -> str:
+    raw = _report_text(value, fallback="unknown").lower()
+    return raw if raw else "unknown"
+
+
+def _report_validation_status(value: object) -> str:
+    raw = _report_text(value, fallback="unknown").lower()
+    return raw if raw else "unknown"
+
+
+def _report_next_action(value: object) -> str:
+    return render_next_action_summary(value)
+
+
+def _report_ledger_summary(value: object) -> str:
+    if value is None:
+        return "unavailable"
+    if isinstance(value, dict):
+        pieces = [f"{key}={_report_text(item, fallback='none')}" for key, item in sorted(value.items())]
+        return ", ".join(piece for piece in pieces if piece) or "none"
+    if isinstance(value, list):
+        values = [_report_text(item) for item in value]
+        text = "; ".join(item for item in values if item)
+        return text or "none"
+    text = _report_text(value)
+    return text or "none"
+
+
+def _report_text(value: object, fallback: str = "") -> str:
+    if value is None:
+        return fallback
+    text = str(value).strip()
+    return text if text else fallback
+
+
+def _render_blockers(blockers: list[str]) -> str:
+    if not blockers:
+        return "none"
+    text = "; ".join(blockers)
+    return _truncate_for_telegram(text, _TELEGRAM_SECTION_LIMIT)
+
+
+def _truncate_for_telegram(text: str, limit: int) -> str:
+    clean = _sanitize_for_telegram(text)
+    if len(clean) <= limit:
+        return clean
+    clipped = clean[: max(0, limit - 13)].rstrip()
+    digest = hashlib.sha1(clean.encode("utf-8")).hexdigest()[:8]
+    return f"{clipped}...[{digest}]"
+
+
+def _sanitize_for_telegram(text: str) -> str:
+    masked = str(text or "")
+    for pattern in _SECRET_LIKE_PATTERNS:
+        masked = pattern.sub("[REDACTED]", masked)
+    return masked
+
+
+def _finalize_telegram_message(text: str) -> str:
+    return _truncate_for_telegram(text, _TELEGRAM_SAFE_MESSAGE_LIMIT)
+
+
 def _decision_has_no_pending_or_bad(decision: dict[str, Any]) -> bool:
     pending = decision.get("pending") if isinstance(decision.get("pending"), list) else []
     bad_checks = decision.get("bad") if isinstance(decision.get("bad"), list) else []
