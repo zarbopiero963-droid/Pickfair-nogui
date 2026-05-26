@@ -5,6 +5,7 @@ import argparse
 import copy
 import json
 import re
+from pathlib import Path
 from typing import Any, cast
 from unittest import TestCase
 
@@ -209,6 +210,8 @@ def _phase0_pass_payload() -> dict[str, Any]:
         "workflows_affected": ["pr-flow-guardrails"],
         "authoritative_modules": ["scripts/pr_automation_controller.py"],
         "dangerous_gates": ["validate_codex_prompt_contract"],
+        "files_allowed": ["scripts/pr_automation_controller.py"],
+        "files_forbidden": ["scripts/pr_flow_automation.py"],
         "implementation_plan": ["patch validator"],
         "tests_to_run": ["python3 -m pytest tests/scripts/test_pr_automation_controller.py -q"],
         "stop_conditions": ["stop on scope violation"],
@@ -710,6 +713,24 @@ def test_parse_phase0_preflight_result_pass_json():
     ASSERTIONS.assertFalse(controller.phase0_preflight_failed(report))
 
 
+def test_parse_phase0_preflight_result_pass_json_phase0_preflight_key():
+    """JSON PHASE_0_PREFLIGHT PASS with valid next_action should pass."""
+    payload = _phase0_pass_payload()
+    payload.pop("status", None)
+    payload["PHASE_0_PREFLIGHT"] = "PASS"
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+
+
+def test_parse_phase0_preflight_result_pass_json_status_key():
+    """JSON status PASS with valid next_action should pass."""
+    payload = _phase0_pass_payload()
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+
+
 def test_parse_phase0_preflight_result_pass_json_uppercase_next_action_normalizes():
     """Complete PASS report with uppercase next_action should normalize and pass."""
     payload = _phase0_pass_payload()
@@ -780,6 +801,96 @@ def test_parse_phase0_preflight_result_complete_pass_missing_next_action_fails_c
     ASSERTIONS.assertTrue(controller.phase0_preflight_failed(report))
 
 
+def test_parse_phase0_preflight_result_json_explicit_needs_manual_stops_before_later_pass():
+    """First explicit PHASE_0_PREFLIGHT NEEDS_MANUAL candidate is authoritative."""
+    manual = _phase0_pass_payload()
+    manual.pop("status", None)
+    manual["PHASE_0_PREFLIGHT"] = "NEEDS_MANUAL"
+    manual["next_action"] = "needs_manual_phase0_failed"
+    later_pass = _phase0_pass_payload()
+    raw = "\n".join(["```json", json.dumps(manual), "```", "```json", json.dumps(later_pass), "```"])
+    report = controller.parse_phase0_preflight_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+
+
+def test_parse_phase0_preflight_result_json_explicit_snake_needs_manual_stops_before_later_pass():
+    """First explicit phase_0_preflight NEEDS_MANUAL candidate is authoritative."""
+    manual = _phase0_pass_payload()
+    manual.pop("status", None)
+    manual["phase_0_preflight"] = "NEEDS_MANUAL"
+    manual["next_action"] = "needs_manual_phase0_failed"
+    later_pass = _phase0_pass_payload()
+    raw = "\n".join(["```json", json.dumps(manual), "```", "```json", json.dumps(later_pass), "```"])
+    report = controller.parse_phase0_preflight_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+
+
+def test_parse_phase0_preflight_result_json_manual_generate_patch_action_normalizes_to_manual():
+    """NEEDS_MANUAL JSON candidate must not leak patch-like next_action."""
+    payload = _phase0_pass_payload()
+    payload.pop("status", None)
+    payload["PHASE_0_PREFLIGHT"] = "NEEDS_MANUAL"
+    payload["next_action"] = "generate_patch_prompt"
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+
+
+def test_parse_phase0_preflight_result_phase0_pass_empty_next_action_fails_closed():
+    """PHASE_0_PREFLIGHT PASS with empty next_action fails closed."""
+    payload = _phase0_pass_payload()
+    payload.pop("status", None)
+    payload["PHASE_0_PREFLIGHT"] = "PASS"
+    payload["next_action"] = "   "
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+
+
+def test_parse_phase0_preflight_result_json_string_bullets_drop_empty_entries():
+    """JSON string bullet evidence drops empty list items."""
+    payload = _phase0_pass_payload()
+    payload["files_inspected"] = "- scripts/a.py\n-\n-   \n- scripts/b.py"
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["files_inspected"], ["scripts/a.py", "scripts/b.py"])
+
+
+def test_parse_phase0_preflight_result_json_list_skips_none_and_empty_entries():
+    """JSON list evidence skips None and empty values."""
+    payload = _phase0_pass_payload()
+    payload["files_inspected"] = ["scripts/a.py", None, "  ", "scripts/b.py"]
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["files_inspected"], ["scripts/a.py", "scripts/b.py"])
+
+
+def test_parse_phase0_preflight_result_json_pass_required_evidence_object_fails_closed():
+    """Required evidence object values must fail closed."""
+    payload = _phase0_pass_payload()
+    payload["files_inspected"] = {"file": "scripts/pr_automation_controller.py"}
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+
+
+def test_parse_phase0_preflight_result_json_pass_required_evidence_object_list_fails_closed():
+    """Required evidence list with only object entries must fail closed."""
+    payload = _phase0_pass_payload()
+    payload["files_inspected"] = [{"file": "scripts/pr_automation_controller.py"}]
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+
+
+def test_parse_phase0_preflight_result_fenced_json_with_prose_parses():
+    """Prose-wrapped fenced JSON payload should parse."""
+    payload = json.dumps(_phase0_pass_payload())
+    report = controller.parse_phase0_preflight_result(f"preflight result follows\n```json\n{payload}\n```")
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+
+
 def test_phase0_preflight_failed_fails_closed_for_incomplete_pass_report():
     """phase0_preflight_failed should reject PASS reports without required evidence."""
     ASSERTIONS.assertTrue(controller.phase0_preflight_failed({"status": "PASS"}))
@@ -829,9 +940,59 @@ def test_phase0_preflight_helpers_direct_non_dict_or_none_fail_closed():
 
 def test_phase0_preflight_parser_non_dict_input_fails_closed():
     """String payloads are fail-closed after parser normalization."""
-    report = controller.parse_phase0_preflight_result("status: PASS")
+    report = controller.parse_phase0_preflight_result("status: PASS\nnext_action: generate_patch_prompt")
     ASSERTIONS.assertEqual(controller.phase0_preflight_status(report), "NEEDS_MANUAL")
     ASSERTIONS.assertTrue(controller.phase0_preflight_failed(report))
+
+
+def test_parse_phase0_preflight_result_text_phase0_preflight_equals_pass():
+    """Text PHASE_0_PREFLIGHT=PASS parses when next_action is present."""
+    report = controller.parse_phase0_preflight_result(
+        "\n".join(
+            [
+                "PHASE_0_PREFLIGHT=PASS",
+                "next_action: generate_patch_prompt",
+                "risk_level: low",
+                "files_inspected: - scripts/pr_automation_controller.py",
+                "static_analysis_rules: - ruff:F401",
+                "workflows_affected: - .github/workflows/pr-automation-controller-v2.yml",
+                "authoritative_modules: - scripts/pr_automation_controller.py",
+                "dangerous_gates: - decide_phase0_gate",
+                "implementation_plan: - keep patch scoped to Phase 0 parser",
+                "files_allowed: - scripts/pr_automation_controller.py",
+                "files_forbidden: - scripts/pr_flow_automation.py",
+                "tests_to_run: - python3 -m pytest tests/scripts/test_pr_automation_controller.py -q",
+                "stop_conditions: - stop on scope violation",
+            ]
+        )
+    )
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+
+
+def test_parse_phase0_preflight_result_text_phase0_preflight_colon_pass():
+    """Text phase_0_preflight: PASS parses when next_action is present."""
+    report = controller.parse_phase0_preflight_result(
+        "\n".join(
+            [
+                "phase_0_preflight: PASS",
+                "next_action: generate_patch_prompt",
+                "risk_level: low",
+                "files_inspected: - scripts/pr_automation_controller.py",
+                "static_analysis_rules: - ruff:F401",
+                "workflows_affected: - .github/workflows/pr-automation-controller-v2.yml",
+                "authoritative_modules: - scripts/pr_automation_controller.py",
+                "dangerous_gates: - decide_phase0_gate",
+                "implementation_plan: - keep patch scoped to Phase 0 parser",
+                "files_allowed: - scripts/pr_automation_controller.py",
+                "files_forbidden: - scripts/pr_flow_automation.py",
+                "tests_to_run: - python3 -m pytest tests/scripts/test_pr_automation_controller.py -q",
+                "stop_conditions: - stop on scope violation",
+            ]
+        )
+    )
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
 
 
 def test_parse_phase0_preflight_result_needs_manual_text():
@@ -847,7 +1008,151 @@ def test_parse_phase0_preflight_result_malformed_fails_closed():
     report = controller.parse_phase0_preflight_result("```bash\nnot json\n```")
     ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
     ASSERTIONS.assertEqual(report["risk_level"], "high")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_malformed")
+
+
+def test_build_phase0_readonly_preflight_task_includes_readonly_prohibitions():
+    task = controller.build_phase0_readonly_preflight_task(
+        "claude_bug_pr7b_phase0_loop_gate",
+        "task",
+        ["scripts/pr_automation_controller.py"],
+        ["scripts/pr_flow_automation.py"],
+        task_title="PR7B gate",
+        task_scope="PR7B only",
+    )
+    ASSERTIONS.assertIn("PHASE 0 PRE-FLIGHT (READ-ONLY)", task)
+    ASSERTIONS.assertIn("No edit. No commit. No push. No rerun. No resolve.", task)
+    ASSERTIONS.assertIn("No workflow modification.", task)
+    ASSERTIONS.assertIn("No broad refactor. No broad suppressions. No activation.", task)
+
+
+def test_build_phase0_readonly_preflight_task_includes_configs_workflows_and_scope_files():
+    task = controller.build_phase0_readonly_preflight_task(
+        "claude_bug_pr7b_phase0_loop_gate",
+        "codacy",
+        ["scripts/pr_automation_controller.py"],
+        ["scripts/pr_flow_automation.py"],
+        pr_number=7,
+        branch="chore/pr7b-phase0-loop-gate",
+        head_sha="abc123",
+        review_comments=[{"id": 1}],
+        codacy_annotations=[{"id": 2}],
+        failing_checks=[{"name": "lint"}],
+    )
+    ASSERTIONS.assertIn(".codacy.yml", task)
+    ASSERTIONS.assertIn(".deepsource.toml", task)
+    ASSERTIONS.assertIn(".github/workflows/*.yml", task)
+    ASSERTIONS.assertIn("authoritative_modules", task)
+    ASSERTIONS.assertIn("dangerous_gates", task)
+    ASSERTIONS.assertIn("files_allowed: scripts/pr_automation_controller.py", task)
+    ASSERTIONS.assertIn("files_forbidden: scripts/pr_flow_automation.py", task)
+    ASSERTIONS.assertIn("Result contract: status, risk_level", task)
+    ASSERTIONS.assertIn("PHASE_0_PREFLIGHT=PASS", task)
+    ASSERTIONS.assertIn("PHASE_0_PREFLIGHT=NEEDS_MANUAL", task)
+
+
+def test_parse_phase0_preflight_result_needs_manual_status_text():
+    report = controller.parse_phase0_preflight_result("status: NEEDS_MANUAL\nrisk_level: high")
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
     ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+
+
+def test_parse_phase0_preflight_result_missing_or_malformed_status_fails_closed():
+    missing = controller.parse_phase0_preflight_result("risk_level: low")
+    malformed = controller.parse_phase0_preflight_result("status: MAYBE\nrisk_level: low")
+    ASSERTIONS.assertEqual(missing["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(missing["next_action"], "needs_manual_phase0_malformed")
+    ASSERTIONS.assertEqual(malformed["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(malformed["next_action"], "needs_manual_phase0_malformed")
+
+
+def test_decide_phase0_gate_pass_allows_patch():
+    decision = controller.decide_phase0_gate(_phase0_pass_payload())
+    ASSERTIONS.assertTrue(decision["phase0_required"])
+    ASSERTIONS.assertEqual(decision["phase0_status"], "PASS")
+    ASSERTIONS.assertTrue(decision["can_patch"])
+    ASSERTIONS.assertFalse(decision["needs_manual"])
+
+
+def test_decide_phase0_gate_blocks_incomplete_pass():
+    decision = controller.decide_phase0_gate({"status": "PASS", "next_action": "generate_patch_prompt"})
+    ASSERTIONS.assertEqual(decision["phase0_status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertFalse(decision["can_patch"])
+    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_phase0_failed")
+
+
+def test_decide_phase0_gate_needs_manual_blocks_patch():
+    decision = controller.decide_phase0_gate({"status": "NEEDS_MANUAL", "next_action": "needs_manual_phase0_failed"})
+    ASSERTIONS.assertEqual(decision["phase0_status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertFalse(decision["can_patch"])
+    ASSERTIONS.assertTrue(decision["needs_manual"])
+
+
+def test_build_codex_patch_task_after_phase0_pass_includes_impl_task_and_constraints():
+    result = controller.build_codex_patch_task_after_phase0(
+        "Implement the targeted fix only.",
+        _phase0_pass_payload(),
+    )
+    ASSERTIONS.assertFalse(result["blocked"])
+    ASSERTIONS.assertIn("Implement the targeted fix only.", result["patch_task"])
+    ASSERTIONS.assertIn("Phase 0 PASS required and verified.", result["patch_task"])
+    ASSERTIONS.assertIn("Do not modify workflows.", result["patch_task"])
+
+
+def test_build_codex_patch_task_after_phase0_non_pass_blocks_patch_task():
+    result = controller.build_codex_patch_task_after_phase0(
+        "Implement the targeted fix only.",
+        {"status": "NEEDS_MANUAL", "next_action": "needs_manual_phase0_failed"},
+    )
+    ASSERTIONS.assertTrue(result["blocked"])
+    ASSERTIONS.assertEqual(result["patch_task"], "")
+    ASSERTIONS.assertEqual(result["task"], "")
+    ASSERTIONS.assertFalse(result["can_patch"])
+    ASSERTIONS.assertIn("next_action", result)
+    ASSERTIONS.assertIn("reason", result)
+    ASSERTIONS.assertIn("gate", result)
+
+
+def test_build_codex_patch_task_after_phase0_blocks_incomplete_pass():
+    result = controller.build_codex_patch_task_after_phase0(
+        "Implement the targeted fix only.",
+        {"status": "PASS", "next_action": "generate_patch_prompt"},
+    )
+    ASSERTIONS.assertTrue(result["blocked"])
+    ASSERTIONS.assertFalse(result["can_patch"])
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_phase0_failed")
+
+
+def test_phase0_prompt_builders_return_string_types():
+    ASSERTIONS.assertIsInstance(controller.build_phase0_preflight_prompt({}), str)
+    task = controller.build_phase0_readonly_preflight_task("k", "task", ["a.py"], ["b.py"])
+    ASSERTIONS.assertIsInstance(task, str)
+
+
+def test_phase0_required_for_all_code_edit_triggers():
+    for trigger in ("task", "review_comment", "codacy", "deepsource", "github_check", "failing_check"):
+        ASSERTIONS.assertTrue(controller.phase0_required_for_trigger(trigger))
+
+
+def test_phase0_required_for_trigger_uses_phase0_edit_triggers_constant():
+    for trigger in controller.PHASE0_EDIT_TRIGGERS:
+        ASSERTIONS.assertTrue(controller.phase0_required_for_trigger(trigger))
+
+
+def test_phase0_helpers_do_not_call_runtime_tools():
+    source = Path(controller.__file__).read_text(encoding="utf-8")
+    names = (
+        "build_phase0_readonly_preflight_task",
+        "parse_phase0_preflight_result",
+        "decide_phase0_gate",
+        "build_codex_patch_task_after_phase0",
+    )
+    for name in names:
+        block = source.split(f"def {name}(", 1)[1].split("\ndef ", 1)[0]
+        ASSERTIONS.assertNotIn("process-spawning APIs", block)
+        ASSERTIONS.assertNotIn("run(", block)
+        ASSERTIONS.assertNotIn("gh ", block)
+        ASSERTIONS.assertNotIn("codex ", block)
 
 
 def test_codacy_task_lines_keep_post_fix_micro_audit_section_included():
@@ -4380,3 +4685,251 @@ def test_set_no_launch_next_action_missing_audit_path_keeps_green_fallback():
     controller.set_no_launch_next_action(decision, [])
 
     ASSERTIONS.assertEqual(decision["next_action"], "checks_green_or_no_action")
+
+
+def test_parse_phase0_preflight_result_json_pass_missing_plan_fails_closed():
+    """JSON PASS without implementation_plan must fail closed."""
+    payload = _phase0_pass_payload()
+    payload.pop("implementation_plan")
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+
+
+def test_parse_phase0_preflight_result_text_pass_missing_plan_fails_closed():
+    """Text PASS without implementation_plan must fail closed."""
+    report = controller.parse_phase0_preflight_result(
+        "\n".join(
+            [
+                "PHASE_0_PREFLIGHT=PASS",
+                "risk_level: low",
+                "next_action: proceed_with_narrow_patch",
+                "files_inspected: scripts/pr_automation_controller.py",
+                "static_analysis_rules: ruff",
+                "workflows_affected: pr-automation-controller-v2",
+                "authoritative_modules: scripts/pr_automation_controller.py",
+                "dangerous_gates: phase0 gate",
+                "tests_to_run: pytest",
+                "stop_conditions: scope violation",
+            ]
+        )
+    )
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+
+
+def test_build_codex_patch_task_after_phase0_blocks_pass_without_plan():
+    """Patch task generation must stay blocked when PASS lacks implementation_plan."""
+    result = controller.build_codex_patch_task_after_phase0(
+        "implement narrow fix",
+        {"status": "PASS", "next_action": "generate_patch_prompt"},
+    )
+    ASSERTIONS.assertFalse(result["can_patch"])
+    ASSERTIONS.assertTrue(result["blocked"])
+    ASSERTIONS.assertEqual(result["task"], "")
+    ASSERTIONS.assertEqual(result["patch_task"], "")
+
+
+def test_parse_phase0_preflight_result_json_unknown_action_fails_closed():
+    """JSON PASS with unsupported next_action must fail closed."""
+    payload = _phase0_pass_payload()
+    payload["next_action"] = "ship_it_now"
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+
+
+def test_parse_phase0_preflight_result_text_unknown_action_fails_closed():
+    """Text PASS with unsupported next_action must fail closed."""
+    report = controller.parse_phase0_preflight_result(
+        "\n".join(
+            [
+                "PHASE_0_PREFLIGHT=PASS",
+                "risk_level: low",
+                "next_action: ship_it_now",
+                "files_inspected: scripts/pr_automation_controller.py",
+                "static_analysis_rules: ruff",
+                "workflows_affected: pr-automation-controller-v2",
+                "authoritative_modules: scripts/pr_automation_controller.py",
+                "dangerous_gates: phase0 gate",
+                "implementation_plan: keep patch scoped",
+                "tests_to_run: pytest",
+                "stop_conditions: scope violation",
+            ]
+        )
+    )
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+
+
+def test_parse_phase0_preflight_result_json_unknown_action_variant_fails_closed():
+    """Unsupported next_action variants must fail closed after normalization."""
+    payload = _phase0_pass_payload()
+    payload["next_action"] = "Ship-It-Now"
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+
+
+def test_parse_phase0_preflight_result_tries_later_fenced_json_candidate():
+    """Invalid earlier fence should not block a later valid Phase 0 JSON fence."""
+    payload = _phase0_pass_payload()
+    raw = "\n".join(
+        [
+            "preflight result follows",
+            "```",
+            "{not-json}",
+            "```",
+            "```json",
+            json.dumps(payload),
+            "```",
+        ]
+    )
+    report = controller.parse_phase0_preflight_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+
+
+def test_parse_phase0_preflight_result_tries_later_inline_json_candidate():
+    """Invalid earlier brace block should not block a later valid inline JSON payload."""
+    payload = _phase0_pass_payload()
+    raw = "ignore this {not-json} and use this " + json.dumps(payload)
+    report = controller.parse_phase0_preflight_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+
+
+def test_parse_phase0_preflight_result_skips_non_dict_json_candidate():
+    """A valid non-dict JSON candidate should be skipped in favor of a later dict."""
+    payload = _phase0_pass_payload()
+    raw = "\n".join(["```json", "[1, 2, 3]", "```", "```json", json.dumps(payload), "```"])
+    report = controller.parse_phase0_preflight_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+
+
+def test_parse_phase0_preflight_result_all_json_candidates_invalid_fails_closed():
+    """All malformed JSON candidates should preserve fail-closed malformed behavior."""
+    report = controller.parse_phase0_preflight_result("```json\n{not-json}\n```\nplain text")
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_malformed")
+
+
+def test_parse_phase0_preflight_result_fenced_json_with_braces_in_string():
+    """Fenced JSON should parse even when JSON string values contain braces."""
+    payload = _phase0_pass_payload()
+    payload["implementation_plan"] = ["handle string with braces {x} safely"]
+    raw = "\n".join(
+        [
+            "preflight result follows",
+            "```",
+            "{not-json}",
+            "```",
+            "```json",
+            json.dumps(payload),
+            "```",
+        ]
+    )
+    report = controller.parse_phase0_preflight_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+    ASSERTIONS.assertEqual(report["implementation_plan"], ["handle string with braces {x} safely"])
+
+
+def test_decide_phase0_gate_returns_canonical_generate_patch_action():
+    """PASS gate should return canonical generate_patch_prompt action."""
+    payload = _phase0_pass_payload()
+    payload["next_action"] = "Generate Patch Prompt"
+    decision = controller.decide_phase0_gate(payload)
+    ASSERTIONS.assertTrue(decision["can_patch"])
+    ASSERTIONS.assertEqual(decision["next_action"], "generate_patch_prompt")
+
+
+def test_decide_phase0_gate_returns_canonical_proceed_action():
+    """PASS gate should return canonical proceed_with_narrow_patch action."""
+    payload = _phase0_pass_payload()
+    payload["next_action"] = "Proceed With Narrow Patch"
+    decision = controller.decide_phase0_gate(payload)
+    ASSERTIONS.assertTrue(decision["can_patch"])
+    ASSERTIONS.assertEqual(decision["next_action"], "proceed_with_narrow_patch")
+
+
+def test_build_codex_patch_task_after_phase0_returns_canonical_action():
+    """Patch task wrapper should expose canonical Phase 0 next_action."""
+    payload = _phase0_pass_payload()
+    payload["next_action"] = "Generate Patch Prompt"
+    result = controller.build_codex_patch_task_after_phase0("implement narrow fix", payload)
+    ASSERTIONS.assertTrue(result["can_patch"])
+    ASSERTIONS.assertEqual(result["next_action"], "generate_patch_prompt")
+    ASSERTIONS.assertEqual(result["gate"]["next_action"], "generate_patch_prompt")
+
+
+def test_parse_phase0_preflight_result_skips_wrapper_json_before_valid_report():
+    """Parser should skip wrapper metadata JSON before a later valid Phase 0 report."""
+    payload = _phase0_pass_payload()
+    raw = "\n".join(
+        [
+            "wrapper metadata",
+            '{"status": "ok", "kind": "metadata"}',
+            "```json",
+            json.dumps(payload),
+            "```",
+        ]
+    )
+    report = controller.parse_phase0_preflight_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+
+
+def test_decide_phase0_gate_blocked_manual_never_returns_patch_action():
+    """Blocked Phase 0 gate must not return a patch-generation next_action."""
+    decision = controller.decide_phase0_gate(
+        {"status": "NEEDS_MANUAL", "next_action": "generate_patch_prompt"}
+    )
+    ASSERTIONS.assertFalse(decision["can_patch"])
+    ASSERTIONS.assertTrue(decision["needs_manual"])
+    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_phase0_failed")
+
+
+def test_build_codex_patch_task_blocked_manual_uses_manual_next_action():
+    """Blocked patch task wrapper should expose a manual next_action."""
+    result = controller.build_codex_patch_task_after_phase0(
+        "implement narrow fix",
+        {"status": "NEEDS_MANUAL", "next_action": "generate_patch_prompt"},
+    )
+    ASSERTIONS.assertFalse(result["can_patch"])
+    ASSERTIONS.assertTrue(result["blocked"])
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_phase0_failed")
+    ASSERTIONS.assertEqual(result["task"], "")
+
+
+def test_parse_phase0_preflight_result_skips_failed_wrapper_before_valid_pass():
+    """Generic failed wrapper metadata should not block a later valid Phase 0 PASS."""
+    payload = _phase0_pass_payload()
+    raw = "\n".join(
+        [
+            '{"status": "failed", "kind": "metadata"}',
+            "```json",
+            json.dumps(payload),
+            "```",
+        ]
+    )
+    report = controller.parse_phase0_preflight_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+
+
+def test_parse_phase0_preflight_result_skips_generic_manual_wrapper_before_valid_pass():
+    """Generic NEEDS_MANUAL wrapper metadata should not override later Phase 0 PASS."""
+    payload = _phase0_pass_payload()
+    raw = "\n".join(
+        [
+            '{"status": "NEEDS_MANUAL", "kind": "metadata"}',
+            "```json",
+            json.dumps(payload),
+            "```",
+        ]
+    )
+    report = controller.parse_phase0_preflight_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")

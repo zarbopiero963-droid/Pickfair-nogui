@@ -147,6 +147,10 @@ PHASE0_REQUIRED_EVIDENCE_FIELDS = (
     "tests_to_run",
     "stop_conditions",
 )
+PHASE0_EDIT_TRIGGERS = frozenset(
+    {"task", "review_comment", "codacy", "deepsource", "github_check", "failing_check"}
+)
+PHASE0_PASS_ACTIONS = frozenset({"generate_patch_prompt", "proceed_with_narrow_patch"})
 PLACEHOLDER_VALUES = frozenset({"", "tbd", "todo", "none", "null", "n/a"})
 ALLOW_COMMIT_PUSH_PATTERN = re.compile(r"(?im)^\s*allow_commit_push\s*:\s*yes\s*$")
 COMMIT_PUSH_NEGATION_PATTERNS = (
@@ -276,11 +280,353 @@ def ensure_phase0_preflight_section(prompt: str, context: dict[str, Any] | None 
     )
 
 
-def parse_phase0_preflight_result(text: str) -> dict[str, Any]:
-    raw = str(text or "").strip()
-    report = _parse_post_fix_audit_json(raw) or _parse_phase0_text(raw)
-    return _normalize_phase0_report(report)
+def _phase0_list(value: object) -> list[str]:
+    """Normalize Phase 0 evidence fields into string lists."""
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return []
+    if isinstance(value, list):
+        items: list[str] = []
+        for item in value:
+            if item is None:
+                continue
+            if isinstance(item, (dict, list)):
+                continue
+            cleaned = str(item).strip()
+            if cleaned:
+                items.append(cleaned)
+        return items
+    if isinstance(value, tuple):
+        return _phase0_list(list(value))
+    text = str(value).replace("\\n", "\n").strip()
+    if not text:
+        return []
+    items: list[str] = []
+    for line in text.splitlines():
+        cleaned = line.strip().lstrip("-").strip()
+        if cleaned:
+            items.append(cleaned)
+    return items
 
+
+def _phase0_action(value: object) -> str:
+    """Normalize Phase 0 next_action spelling variants."""
+    text = str(value or "").strip().lower()
+    normalized: list[str] = []
+    previous_sep = False
+    for char in text:
+        if char.isalnum():
+            normalized.append(char)
+            previous_sep = False
+        elif not previous_sep:
+            normalized.append("_")
+            previous_sep = True
+    return "".join(normalized).strip("_")
+
+
+def normalize_phase0_status(value: object) -> str:
+    """Normalize Phase 0 status values."""
+    text = str(value or "").strip().upper().replace("-", "_").replace(" ", "_")
+    if text in {"PASS", "PASSED"}:
+        return "PASS"
+    if text in {"NEEDS_MANUAL", "MANUAL", "FAIL", "FAILED"}:
+        return "NEEDS_MANUAL"
+    return ""
+
+
+def _phase0_empty_result() -> dict[str, Any]:
+    fields = [
+        "files_inspected",
+        "static_analysis_rules",
+        "workflows_affected",
+        "authoritative_modules",
+        "dangerous_gates",
+        "files_allowed",
+        "files_forbidden",
+        "implementation_plan",
+        "tests_to_run",
+        "stop_conditions",
+    ]
+    return {field: [] for field in fields}
+
+
+def _phase0_failed_result(risk_level: str = "") -> dict[str, Any]:
+    result = _phase0_empty_result()
+    result["status"] = "NEEDS_MANUAL"
+    result["risk_level"] = risk_level or "high"
+    result["next_action"] = "needs_manual_phase0_failed"
+    return result
+
+
+def _phase0_malformed_result(risk_level: str = "") -> dict[str, Any]:
+    result = _phase0_empty_result()
+    result["status"] = "NEEDS_MANUAL"
+    result["risk_level"] = risk_level or "high"
+    result["next_action"] = "needs_manual_phase0_malformed"
+    return result
+
+
+def _phase0_json_candidate_result(data: dict[str, Any]) -> dict[str, Any]:
+    result = _phase0_empty_result()
+    for field in result:
+        result[field] = _phase0_list(data.get(field))
+
+    status = normalize_phase0_status(
+        data.get("PHASE_0_PREFLIGHT")
+        or data.get("phase_0_preflight")
+        or data.get("status")
+    )
+    risk_level = str(data.get("risk_level") or "").strip().lower()
+    next_action = _phase0_action(data.get("next_action"))
+
+    if status == "PASS":
+        if next_action not in PHASE0_PASS_ACTIONS:
+            return _phase0_failed_result(risk_level)
+        if not _phase0_has_required_evidence(result):
+            return _phase0_failed_result(risk_level)
+        result["status"] = "PASS"
+        result["risk_level"] = risk_level or "medium"
+        result["next_action"] = next_action
+        return result
+
+    if status == "NEEDS_MANUAL":
+        result["status"] = "NEEDS_MANUAL"
+        result["risk_level"] = risk_level or "high"
+        if not next_action or next_action in PHASE0_PASS_ACTIONS:
+            result["next_action"] = "needs_manual_phase0_failed"
+        else:
+            result["next_action"] = next_action
+        return result
+
+    return _phase0_malformed_result(risk_level)
+
+
+def _parse_phase0_json(text: str) -> dict[str, Any] | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+
+    fallback: dict[str, Any] | None = None
+    for candidate in _extract_phase0_json_candidates(raw):
+        try:
+            loaded = json.loads(candidate)
+        except Exception:
+            continue
+        if not isinstance(loaded, dict):
+            continue
+
+        result = _phase0_json_candidate_result(loaded)
+        has_explicit_phase0_key = "PHASE_0_PREFLIGHT" in loaded or "phase_0_preflight" in loaded
+        explicit_status = normalize_phase0_status(loaded.get("PHASE_0_PREFLIGHT") or loaded.get("phase_0_preflight"))
+        if has_explicit_phase0_key and explicit_status == "NEEDS_MANUAL":
+            return result
+        if result.get("status") == "PASS":
+            return result
+        if explicit_status == "NEEDS_MANUAL":
+            return result
+        if has_explicit_phase0_key or loaded.get("status"):
+            fallback = result
+
+    return fallback
+
+def parse_phase0_preflight_result(output: object) -> dict[str, Any]:
+    """Parse a Phase 0 read-only preflight report and fail closed."""
+    raw_text = str(output or "")
+    parsed_json = _parse_phase0_json(raw_text)
+    if parsed_json is not None:
+        return parsed_json
+    text = raw_text.replace("\\n", "\n")
+
+    result = _phase0_empty_result()
+    phase0_status = ""
+    risk_level = ""
+    next_action = ""
+    current_list = ""
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        key, separator, value = line.partition("=")
+        if separator and key.strip().upper() == "PHASE_0_PREFLIGHT":
+            phase0_status = value.strip()
+            current_list = ""
+            continue
+
+        key, separator, value = line.partition(":")
+        normalized_key = key.strip().lower().replace("-", "_").replace(" ", "_")
+        if separator and normalized_key == "phase_0_preflight":
+            phase0_status = value.strip()
+            current_list = ""
+            continue
+        if separator and normalized_key == "status":
+            phase0_status = value.strip()
+            current_list = ""
+            continue
+        if separator and normalized_key == "risk_level":
+            risk_level = value.strip().lower()
+            current_list = ""
+            continue
+        if separator and normalized_key == "next_action":
+            next_action = _phase0_action(value)
+            current_list = ""
+            continue
+        if separator and normalized_key in result:
+            current_list = normalized_key
+            result[current_list].extend(_phase0_list(value))
+            continue
+        if line.startswith("-") and current_list:
+            cleaned = line.lstrip("-").strip()
+            if cleaned:
+                result[current_list].append(cleaned)
+
+    status = normalize_phase0_status(phase0_status)
+    if status == "PASS":
+        if not _text_has_phase0_marker(text):
+            return _phase0_failed_result(risk_level)
+        if next_action not in PHASE0_PASS_ACTIONS:
+            return _phase0_failed_result(risk_level)
+        if not _phase0_has_required_evidence(result):
+            return _phase0_failed_result(risk_level)
+        result["status"] = "PASS"
+        result["risk_level"] = risk_level or "medium"
+        result["next_action"] = next_action
+        return result
+
+    if status == "NEEDS_MANUAL":
+        result["status"] = "NEEDS_MANUAL"
+        result["risk_level"] = risk_level or "high"
+        result["next_action"] = next_action or "needs_manual_phase0_failed"
+        return result
+
+    return _phase0_malformed_result(risk_level)
+
+
+def phase0_required_for_trigger(trigger_type: object) -> bool:
+    """Return whether a trigger that can edit code requires Phase 0."""
+    normalized = str(trigger_type or "").strip().lower()
+    return normalized in PHASE0_EDIT_TRIGGERS
+
+
+def build_phase0_readonly_preflight_task(
+    task_key: str,
+    trigger_type: str,
+    files_allowed: list[str],
+    files_forbidden: list[str],
+    **context: Any,
+) -> str:
+    ctx = {**context, "files_allowed": files_allowed}
+    lines = build_phase0_preflight_prompt(ctx).strip().splitlines()
+    lines.extend(
+        [
+            "",
+            f"task_key: {task_key or 'unknown'}",
+            f"task_title: {context.get('task_title') or ''}",
+            f"task_scope: {context.get('task_scope') or ''}",
+            f"trigger_type: {trigger_type or ''}",
+            f"pr_number: {context.get('pr_number') or ''}",
+            f"branch: {context.get('branch') or ''}",
+            f"head_sha: {context.get('head_sha') or ''}",
+            f"review_comments: {len(context.get('review_comments') or [])}",
+            f"codacy_annotations: {len(context.get('codacy_annotations') or [])}",
+            f"failing_checks: {len(context.get('failing_checks') or [])}",
+            "No edit. No commit. No push. No rerun. No resolve. No workflow modification.",
+            "No broad refactor. No broad suppressions. No activation.",
+            f"files_allowed: {', '.join(files_allowed or ['(none)'])}",
+            f"files_forbidden: {', '.join(files_forbidden or ['(none)'])}",
+        ]
+    )
+    return "\n".join(lines).strip() + "\n"
+
+
+def decide_phase0_gate(parsed_result: dict[str, Any] | None) -> dict[str, Any]:
+    """Decide whether Phase 0 allows a later passive patch task."""
+    report = parsed_result or {}
+    status = normalize_phase0_status(report.get("status"))
+    next_action = str(report.get("next_action") or "needs_manual_phase0_malformed")
+    normalized_next_action = _phase0_action(next_action)
+    has_evidence = _phase0_has_required_evidence(report)
+    allowed_action = normalized_next_action in PHASE0_PASS_ACTIONS
+    can_patch = status == "PASS" and has_evidence and allowed_action
+
+    if not can_patch:
+        if status == "PASS":
+            status = "NEEDS_MANUAL"
+        next_action = "needs_manual_phase0_failed"
+
+    return {
+        "phase0_required": True,
+        "phase0_status": status or "NEEDS_MANUAL",
+        "can_patch": can_patch,
+        "next_action": normalized_next_action if can_patch else str(next_action),
+        "reason": "phase0_pass" if can_patch else "phase0_blocked",
+        "needs_manual": not can_patch,
+    }
+
+def _extract_phase0_json_candidates(text: str) -> list[str]:
+    stripped = str(text or "").strip()
+    candidates: list[str] = []
+
+    if stripped.startswith("{") and stripped.endswith("}"):
+        candidates.append(stripped)
+
+    for match in re.finditer(r"```(?:json)?\s*(.*?)\s*```", stripped, flags=re.IGNORECASE | re.DOTALL):
+        candidate = match.group(1).strip()
+        if candidate.startswith("{") and candidate.endswith("}"):
+            candidates.append(candidate)
+
+    for match in re.finditer(r"(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})", stripped, flags=re.DOTALL):
+        candidates.append(match.group(1).strip())
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate and candidate not in seen:
+            deduped.append(candidate)
+            seen.add(candidate)
+    return deduped
+
+
+def _text_has_phase0_marker(text: str) -> bool:
+    return bool(re.search(r"(?im)^\s*phase_0_preflight\s*[:=]\s*(pass|needs_manual)\s*$", str(text or "")))
+
+
+def build_codex_patch_task_after_phase0(
+    implementation_task: object,
+    phase0_result: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build a passive Codex patch task only after Phase 0 passes."""
+    gate = decide_phase0_gate(phase0_result)
+    if not bool(gate.get("can_patch")):
+        return {
+            "can_patch": False,
+            "blocked": True,
+            "task": "",
+            "patch_task": "",
+            "next_action": gate.get("next_action", "needs_manual_phase0"),
+            "reason": gate.get("reason", "phase0_blocked"),
+            "gate": gate,
+        }
+
+    task = (
+        f"{str(implementation_task or '').strip()}\n\n"
+        "Phase 0 constraints:\n"
+        "- Phase 0 PASS required and verified.\n"
+        "- Keep scope strictly to allowed files.\n"
+        "- Do not modify workflows.\n"
+        "- Do not activate automation.\n"
+    )
+    return {
+        "can_patch": True,
+        "blocked": False,
+        "task": task,
+        "patch_task": task,
+        "next_action": gate.get("next_action", "proceed_with_narrow_patch"),
+        "reason": gate.get("reason", "phase0_pass"),
+        "gate": gate,
+    }
 
 def phase0_preflight_status(report: dict[str, Any] | None) -> str:
     if not isinstance(report, dict):
@@ -293,7 +639,7 @@ def phase0_preflight_failed(report: dict[str, Any] | None) -> bool:
     if not isinstance(report, dict):
         return True
     normalized = _normalize_phase0_report(report)
-    return normalized.get("status") != "PASS" or normalized.get("next_action") != "generate_patch_prompt"
+    return normalized.get("status") != "PASS" or normalized.get("next_action") not in PHASE0_PASS_ACTIONS
 
 
 def command_family(command: str) -> str:
@@ -2413,7 +2759,11 @@ def _should_stop_audit_bullets(line: str) -> bool:
 def _list_from_payload(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
-    return [str(item).strip() for item in value if str(item).strip()]
+    return [
+        str(item).strip()
+        for item in value
+        if not isinstance(item, (dict, list)) and str(item).strip()
+    ]
 
 
 def _list_from_raw_audit_section(raw: str, key: str) -> list[str]:
@@ -2718,7 +3068,7 @@ def _normalize_phase0_report(report: dict[str, Any]) -> dict[str, Any]:
         "next_action": next_action,
     }
     _populate_phase0_lists(normalized, report)
-    if status == "PASS" and next_action == "generate_patch_prompt" and _phase0_has_required_evidence(normalized):
+    if status == "PASS" and next_action in PHASE0_PASS_ACTIONS and _phase0_has_required_evidence(normalized):
         return normalized
     normalized["status"] = "NEEDS_MANUAL"
     normalized["next_action"] = "needs_manual_phase0_failed"
@@ -2785,7 +3135,13 @@ def _join_post_fix_segments(segments: list[dict[str, Any]]) -> str:
 
 
 def _phase0_has_required_evidence(report: dict[str, Any]) -> bool:
-    return all(_has_meaningful_list_values(report.get(field)) for field in PHASE0_REQUIRED_EVIDENCE_FIELDS)
+    for field in PHASE0_REQUIRED_EVIDENCE_FIELDS:
+        items = _phase0_list_value(report.get(field), field)
+        if not items:
+            return False
+        if all(_is_placeholder_value(item) for item in items):
+            return False
+    return True
 
 
 def _phase0_status(report: dict[str, Any]) -> str:
@@ -2811,7 +3167,7 @@ def _phase0_preflight_lines(context: dict[str, Any]) -> list[str]:
     return [
         PHASE0_SECTION_TITLE,
         "",
-        "READ-ONLY. Do not edit files. Do not commit. Do not push.",
+        "READ-ONLY. Do not edit files. Do not commit. Do not push. Do not rerun checks. Do not resolve review threads. Do not modify workflows.",
         "Inspect static-analysis config, workflow CI, similar files/tests, authoritative modules, dangerous gates, and forbidden files.",
         "Read .github/workflows/*.yml and map affected workflows/checks; do not edit workflows unless explicitly allowed.",
         _phase0_static_analysis_line(),
@@ -2840,11 +3196,11 @@ def _phase0_blocking_rules_line() -> str:
 
 def _phase0_result_contract_line() -> str:
     return (
-        "Result contract: status, risk_level, files_inspected, static_analysis_rules, workflows_affected, "
-        "authoritative_modules, dangerous_gates, files_allowed, files_forbidden, implementation_plan, "
-        "tests_to_run, stop_conditions, next_action."
+        "Result contract: status, risk_level, PHASE_0_PREFLIGHT=PASS or "
+        "PHASE_0_PREFLIGHT=NEEDS_MANUAL, files_inspected, static_analysis_rules, "
+        "workflows_affected, authoritative_modules, dangerous_gates, files_allowed, "
+        "files_forbidden, implementation_plan, tests_to_run, stop_conditions, next_action."
     )
-
 
 def _codex_scalar_context_map(context: dict[str, Any]) -> dict[str, str]:
     scalar = {name: _context_scalar(context, key) for name, key in CODEX_SCALAR_KEYS}
