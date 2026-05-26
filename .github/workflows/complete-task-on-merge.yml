@@ -11,6 +11,8 @@ jobs:
   complete-task:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
+    outputs:
+      task_moved: ${{ steps.move_task.outputs.task_moved }}
     permissions:
       contents: write
 
@@ -26,6 +28,7 @@ jobs:
           python-version: "3.11"
 
       - name: Move completed task file
+        id: move_task
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: python .github/scripts/complete_current_task.py
@@ -40,6 +43,7 @@ jobs:
 
   prepare-next:
     needs: complete-task
+    if: needs.complete-task.result == 'success' && needs.complete-task.outputs.task_moved == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
