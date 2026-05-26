@@ -5273,3 +5273,140 @@ def test_summarize_review_threads_expected_providers_present_no_missing_and_bloc
     ASSERTIONS.assertFalse(summary["missing_providers_blocking"])
     ASSERTIONS.assertEqual(summary["blocking_count"], 1)
     ASSERTIONS.assertEqual(summary["next_action"], "fix_review_comments")
+
+
+def _pr_report_context(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "pr_number": 9,
+        "head_sha": "abc123",
+        "bad": [],
+        "pending": [],
+        "mergeStateStatus": "CLEAN",
+        "unresolved_active": 0,
+        "codacy": {"conclusion": "success", "annotations_count": 0},
+        "blockers": [],
+        "phase0_status": "PASS",
+        "last_attempt": "attempt-1",
+        "post_fix_audit_status": "pass",
+        "validation_status": "pass",
+        "next_action": "ready_to_merge",
+        "ledger_summary": "none",
+        "pr_url": "https://github.com/owner/repo/pull/9",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_classify_pr_report_status_blocked_with_blockers():
+    status = controller.classify_pr_report_status(_pr_report_context(blockers=["Codacy still failing"]))
+    ASSERTIONS.assertEqual(status, "BLOCKED")
+
+
+def test_classify_pr_report_status_fixing_in_progress_context():
+    status = controller.classify_pr_report_status(_pr_report_context(next_action="continue_checks"))
+    ASSERTIONS.assertEqual(status, "FIXING")
+
+
+def test_classify_pr_report_status_needs_manual_phase0_and_manual_action():
+    status = controller.classify_pr_report_status(
+        _pr_report_context(phase0_status="NEEDS_MANUAL", next_action="needs_manual_phase0_failed")
+    )
+    ASSERTIONS.assertEqual(status, "NEEDS_MANUAL")
+
+
+def test_classify_pr_report_status_ready_to_merge_strict_gate():
+    status = controller.classify_pr_report_status(_pr_report_context())
+    ASSERTIONS.assertEqual(status, "READY_TO_MERGE")
+
+
+def test_not_ready_to_merge_when_codacy_not_success():
+    status = controller.classify_pr_report_status(_pr_report_context(codacy={"conclusion": "action_required"}))
+    ASSERTIONS.assertEqual(status, "FIXING")
+
+
+def test_not_ready_to_merge_when_codacy_annotations_exist():
+    status = controller.classify_pr_report_status(
+        _pr_report_context(codacy={"conclusion": "success", "annotations_count": 2})
+    )
+    ASSERTIONS.assertEqual(status, "FIXING")
+
+
+def test_not_ready_to_merge_when_pending_exists():
+    status = controller.classify_pr_report_status(_pr_report_context(pending=[{"name": "merge readiness"}]))
+    ASSERTIONS.assertEqual(status, "FIXING")
+
+
+def test_not_ready_to_merge_when_unresolved_active_exists():
+    status = controller.classify_pr_report_status(_pr_report_context(unresolved_active=1))
+    ASSERTIONS.assertEqual(status, "FIXING")
+
+
+def test_build_pr_status_report_fallbacks_do_not_crash():
+    report = controller.build_pr_status_report({"pr_number": 9})
+    ASSERTIONS.assertEqual(report["ledger_summary"], "unavailable")
+    ASSERTIONS.assertEqual(report["post_fix_audit_status"], "unknown")
+    ASSERTIONS.assertEqual(report["phase0_status"], "unknown")
+    ASSERTIONS.assertEqual(report["validation_status"], "unknown")
+    ASSERTIONS.assertEqual(report["blockers"], [])
+    ASSERTIONS.assertEqual(report["pr_url"], "")
+
+
+def test_build_telegram_pr_status_message_contains_required_fields():
+    message = controller.build_telegram_pr_status_message(_pr_report_context())
+    ASSERTIONS.assertIn("PR: #9", message)
+    ASSERTIONS.assertIn("URL: https://github.com/owner/repo/pull/9", message)
+    ASSERTIONS.assertIn("Head SHA: abc123", message)
+    ASSERTIONS.assertIn("Status:", message)
+    ASSERTIONS.assertIn("Blockers:", message)
+    ASSERTIONS.assertIn("Phase 0:", message)
+    ASSERTIONS.assertIn("Post-fix audit:", message)
+    ASSERTIONS.assertIn("Validation:", message)
+    ASSERTIONS.assertIn("Next action:", message)
+    ASSERTIONS.assertIn("Ledger:", message)
+
+
+def test_build_telegram_pr_status_message_truncates_long_blockers():
+    long_blocker = "x" * 800
+    message = controller.build_telegram_pr_status_message(_pr_report_context(blockers=[long_blocker]))
+    ASSERTIONS.assertIn("...[", message)
+    ASSERTIONS.assertLessEqual(len(message), 3500)
+
+
+def test_build_telegram_pr_status_message_redacts_secret_like_tokens():
+    message = controller.build_telegram_pr_status_message(
+        _pr_report_context(blockers=["token ghp_abcdefghijklmnopqrstuvwxyz123456"])
+    )
+    ASSERTIONS.assertNotIn("ghp_abcdefghijklmnopqrstuvwxyz123456", message)
+    ASSERTIONS.assertIn("[REDACTED]", message)
+
+
+def test_render_next_action_summary_is_stable():
+    ASSERTIONS.assertEqual(controller.render_next_action_summary(" Needs-Manual Phase0 Failed "), "needs_manual_phase0_failed")
+
+
+def test_pr9_report_ready_to_merge_with_strict_clean_context():
+    """Clean PR context renders READY_TO_MERGE, not FIXING."""
+    report = controller.build_pr_status_report(
+        {
+            "pr_number": 241,
+            "head_sha": "abc123",
+            "bad": [],
+            "pending": [],
+            "blockers": [],
+            "mergeStateStatus": "CLEAN",
+            "unresolved_active": 0,
+            "codacy_conclusion": "success",
+            "codacy_annotations_count": 0,
+            "pr_url": "https://github.com/example/repo/pull/241",
+            "next_action": "ready",
+            "phase0_status": "PASS",
+            "post_fix_audit_status": "PASS",
+            "validation_status": "PASS",
+            "ledger_summary": "latest attempt ok",
+        }
+    )
+    ASSERTIONS.assertEqual(report["status"], "READY_TO_MERGE")
+    message = controller.build_telegram_pr_status_message(report)
+    ASSERTIONS.assertIn("READY_TO_MERGE", message)
+    ASSERTIONS.assertIn("241", message)
+    ASSERTIONS.assertIn("abc123", message)
