@@ -4692,6 +4692,421 @@ def review_comments_summary(nodes: list[dict[str, Any]]) -> dict[str, int]:
     return summary
 
 
+REVIEW_COMMENT_PROVIDERS = (
+    "chatgpt-codex-connector",
+    "codacy-production",
+    "coderabbitai",
+    "qodo-code-review",
+    "sourcery-ai",
+    "greptile",
+    "greptile-ai",
+    "greptileai",
+)
+
+BLOCKING_REVIEW_KEYWORDS = {
+    "action required",
+    "bug",
+    "correctness",
+    "security",
+    "runtime",
+    "failing test",
+    "test coverage",
+}
+ADVISORY_REVIEW_KEYWORDS = {"low", "nit", "nitpick", "style", "suggestion", "docs", "documentation"}
+BLOCKING_REVIEW_SEVERITIES = {"p1", "high"}
+KNOWN_REVIEW_PROVIDERS = set(REVIEW_COMMENT_PROVIDERS)
+
+
+def normalize_review_author(author: object) -> str:
+    """Normalize review author strings and bot suffixes."""
+    if isinstance(author, dict):
+        author = author.get("login") or author.get("name") or author.get("author") or ""
+    normalized = str(author or "").strip().lower().lstrip("@")
+    normalized = normalized.removesuffix("[bot]").removesuffix("-bot").strip()
+    return normalized.replace(" ", "-")
+
+
+def _review_thread_author(thread: dict[str, Any]) -> str:
+    author = thread.get("author") or thread.get("user") or thread.get("login")
+    if author:
+        return normalize_review_author(author)
+
+    comments = thread.get("comments")
+    if isinstance(comments, dict):
+        nodes = comments.get("nodes") or []
+        if isinstance(nodes, list):
+            for comment in nodes:
+                if not isinstance(comment, dict):
+                    continue
+                comment_author = comment.get("author")
+                if comment_author:
+                    return normalize_review_author(comment_author)
+    if isinstance(comments, list):
+        for comment in comments:
+            if not isinstance(comment, dict):
+                continue
+            comment_author = comment.get("author")
+            if comment_author:
+                return normalize_review_author(comment_author)
+    return ""
+
+
+def _review_thread_comment_dicts(comment_or_thread: dict[str, Any]) -> list[dict[str, Any]]:
+    comments = comment_or_thread.get("comments")
+    if isinstance(comments, dict):
+        nodes = comments.get("nodes")
+        if isinstance(nodes, list):
+            return [item for item in nodes if isinstance(item, dict)]
+        return []
+    if isinstance(comments, list):
+        return [item for item in comments if isinstance(item, dict)]
+    return []
+
+
+def _review_text_blob(comment_or_thread: dict[str, Any]) -> str:
+    body_bits: list[str] = []
+    body = comment_or_thread.get("body")
+    if body:
+        body_bits.append(str(body))
+    for comment in _review_thread_comment_dicts(comment_or_thread):
+        comment_body = comment.get("body")
+        if comment_body:
+            body_bits.append(str(comment_body))
+    return " ".join(body_bits).strip().lower()
+
+
+def _review_thread_body(thread: dict[str, Any]) -> str:
+    body = thread.get("body")
+    if body:
+        return str(body)
+    for comment in _review_thread_comment_dicts(thread):
+        comment_body = comment.get("body")
+        if comment_body:
+            return str(comment_body)
+    return ""
+
+
+def review_provider_from_author(author: object) -> str:
+    """Map a review author to a supported optional provider."""
+    normalized = normalize_review_author(author)
+    aliases = {
+        "chatgpt-codex-connector": "chatgpt-codex-connector",
+        "codacy": "codacy-production",
+        "codacy-production": "codacy-production",
+        "coderabbit": "coderabbitai",
+        "coderabbitai": "coderabbitai",
+        "qodo": "qodo-code-review",
+        "qodo-code-review": "qodo-code-review",
+        "sourcery": "sourcery-ai",
+        "sourcery-ai": "sourcery-ai",
+        "greptile": "greptile",
+        "greptile-ai": "greptile-ai",
+        "greptileai": "greptileai",
+    }
+    return aliases.get(normalized, "")
+
+
+def review_provider_presence_status(
+    active_threads: list[dict[str, Any]],
+    expected_providers: list[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    """Summarize provider presence without making missing providers blocking."""
+    expected = list(expected_providers or REVIEW_COMMENT_PROVIDERS)
+    present = sorted(
+        {
+            provider
+            for provider in (
+                review_provider_from_author(_review_thread_author(thread)) for thread in active_threads
+            )
+            if provider
+        }
+    )
+    missing = [provider for provider in expected if provider not in present]
+    return {
+        "present_providers": present,
+        "missing_providers": missing,
+        "missing_providers_blocking": False,
+        "blocking": False,
+        "reason": "missing review providers are optional",
+        "next_action": "continue_checks",
+    }
+
+
+def classify_review_comment_severity(comment_or_thread: dict[str, Any]) -> str:
+    """Classify review comment severity from common review-bot wording."""
+    body = _review_text_blob(comment_or_thread)
+    if re.search(r"\bp1\b", body):
+        return "p1"
+    if re.search(r"\bp2\b", body):
+        return "p2"
+    if re.search(r"\bhigh risk\b", body) or re.search(r"\bhigh\b", body):
+        return "high"
+    if re.search(r"\bmedium risk\b", body) or re.search(r"\bmedium\b", body):
+        return "medium"
+    if re.search(r"\blow risk\b", body):
+        return "low"
+    if re.search(r"\bnitpick\b", body) or re.search(r"\bnit\b", body):
+        return "nit"
+    return "unknown"
+
+
+def classify_review_comment_actionability(comment_or_thread: dict[str, Any]) -> str:
+    """Classify whether a review comment needs a patch, evidence, or manual handling."""
+    body = _review_text_blob(comment_or_thread)
+    if any(token in body for token in ("stale", "already fixed", "resolved", "covered by")):
+        return "stale_or_already_fixed"
+    if any(token in body for token in ("failing test", "missing test", "coverage", "add test", "testing")):
+        return "test_required"
+    if re.search(r"\bbug\b", body) or any(token in body for token in ("action required", "correctness", "security")):
+        return "fix_required"
+    if "runtime" in body:
+        return "fix_required"
+    if any(token in body for token in ("nitpick", "style", "suggestion", "docs", "optional")):
+        return "advisory"
+    return "needs_manual"
+
+
+def _review_thread_active(thread: dict[str, Any]) -> bool:
+    if bool(thread.get("is_resolved") or thread.get("isResolved")):
+        return False
+    if bool(thread.get("is_outdated") or thread.get("isOutdated")):
+        return False
+    if thread.get("is_active") is False or thread.get("isActive") is False:
+        return False
+    return True
+
+
+def classify_review_thread(thread: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Classify an active review thread into PR8 routing categories."""
+    author = _review_thread_author(thread)
+    provider = review_provider_from_author(author)
+    path = str(thread.get("path") or "")
+    active = _review_thread_active(thread)
+    severity = classify_review_comment_severity(thread)
+    actionability = classify_review_comment_actionability(thread)
+    unknown_author = not provider
+    out_of_scope = _is_out_of_scope_review_path(path, context or {})
+
+    category = "review_comment_inactive"
+    classification = "inactive"
+    next_action = "continue_checks"
+    blocking = False
+    advisory = False
+    needs_manual = False
+    reason = "inactive_or_resolved"
+
+    if active and out_of_scope:
+        category = "review_comment_out_of_scope"
+        classification = "needs_manual"
+        next_action = "needs_manual"
+        needs_manual = True
+        reason = "review path outside allowed files"
+    elif active and unknown_author:
+        category = "review_comment_unknown"
+        classification = "needs_manual"
+        next_action = "needs_manual"
+        needs_manual = True
+        reason = "unknown review provider"
+    elif active and actionability == "stale_or_already_fixed":
+        category = "review_comment_safe_resolve"
+        classification = "safe_resolve"
+        next_action = "resolve_review_thread_with_evidence"
+        reason = "review appears stale or already fixed"
+    elif active and (severity in BLOCKING_REVIEW_SEVERITIES or actionability in {"fix_required", "test_required"}):
+        category = "review_comment_active"
+        classification = "blocking"
+        next_action = "fix_review_comments"
+        blocking = True
+        reason = "active actionable review comment"
+    elif active and (severity in {"low", "nit"} or actionability == "advisory"):
+        category = "review_comment_advisory"
+        classification = "advisory"
+        next_action = "needs_manual_or_continue_without_resolve"
+        advisory = True
+        reason = "advisory review comment without safe resolve evidence"
+    elif active:
+        category = "review_comment_unknown"
+        classification = "needs_manual"
+        next_action = "needs_manual"
+        needs_manual = True
+        reason = "ambiguous active review comment"
+
+    return {
+        "thread_id": str(thread.get("thread_id") or thread.get("id") or ""),
+        "comment_id": str(thread.get("comment_id") or thread.get("commentId") or ""),
+        "author": author,
+        "provider": provider,
+        "path": path,
+        "line": thread.get("line"),
+        "url": str(thread.get("url") or ""),
+        "body": _review_thread_body(thread),
+        "is_resolved": not active,
+        "is_active": active,
+        "active": active,
+        "severity": severity,
+        "actionability": actionability,
+        "category": category,
+        "classification": classification,
+        "next_action": next_action,
+        "safe_to_resolve": False,
+        "blocking": blocking,
+        "advisory": advisory,
+        "needs_manual": needs_manual,
+        "unknown_author": unknown_author,
+        "out_of_scope": out_of_scope,
+        "reason": reason,
+    }
+
+
+def _has_blocking_checks(evidence: dict[str, Any]) -> bool:
+    pending = evidence.get("pending_checks")
+    failing = evidence.get("failing_checks")
+    return bool(pending or failing)
+
+
+def _review_fixed_or_stale(evidence: dict[str, Any]) -> bool:
+    return bool(
+        evidence.get("fixed_or_stale")
+        or evidence.get("issue_fixed_or_stale")
+        or evidence.get("safe_to_resolve")
+    )
+
+
+def _codacy_review_evidence_green(evidence: dict[str, Any]) -> bool:
+    state = str(evidence.get("codacy_conclusion") or evidence.get("codacy_state") or "").lower()
+    if state not in {"success", "successful", "passed", "pass"}:
+        return False
+    annotations = safe_nonnegative_int(evidence.get("codacy_annotations_count"), -1)
+    return annotations == 0
+
+
+def should_resolve_review_thread(thread: dict[str, Any], evidence: dict[str, Any]) -> bool:
+    """Return whether a review thread is safe to resolve with evidence."""
+    classified = classify_review_thread(thread, {"files_allowed": evidence.get("files_allowed") or []})
+    if not classified["is_active"] or classified["needs_manual"] or classified["blocking"]:
+        return False
+    if not _review_fixed_or_stale(evidence):
+        return False
+    if not bool(evidence.get("validation_passed")):
+        return False
+    if evidence.get("head_matches") is False:
+        return False
+
+    current_head = evidence.get("current_head_sha")
+    evidence_head = evidence.get("evidence_head_sha")
+    if current_head and evidence_head and current_head != evidence_head:
+        return False
+    if _has_blocking_checks(evidence):
+        return False
+    if classified["provider"] == "codacy-production" or evidence.get("codacy_relevant"):
+        if not _codacy_review_evidence_green(evidence):
+            return False
+    return True
+
+
+def summarize_review_threads(
+    active_threads: list[dict[str, Any]],
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Summarize active review threads and optional provider presence."""
+    ctx = context or {}
+    items = [classify_review_thread(thread, ctx) for thread in active_threads]
+    presence = review_provider_presence_status(active_threads, ctx.get("expected_providers"))
+    blocking_count = sum(1 for item in items if item["blocking"])
+    advisory_count = sum(1 for item in items if item["advisory"])
+    manual_count = sum(1 for item in items if item["needs_manual"])
+    next_action = "fix_review_comments" if blocking_count else "continue_checks"
+    if manual_count and not blocking_count:
+        next_action = "needs_manual"
+    return {
+        **presence,
+        "items": items,
+        "blocking_count": blocking_count,
+        "advisory_count": advisory_count,
+        "needs_manual_count": manual_count,
+        "needs_manual": bool(manual_count),
+        "next_action": next_action,
+    }
+
+
+def _review_reply_body(thread: dict[str, Any], evidence: dict[str, Any]) -> str:
+    if evidence.get("reply_body"):
+        return str(evidence["reply_body"])
+    head = evidence.get("current_head_sha") or evidence.get("evidence_head_sha") or "current head"
+    return (
+        f"Resolved on current head {head}.\n\n"
+        "Evidence:\n"
+        "- The issue is marked fixed or stale by the resolution evidence.\n"
+        "- Local validation passed.\n"
+        "- No pending or failing checks are present.\n"
+        "- Relevant provider evidence is green when required.\n"
+    )
+
+
+def build_review_thread_resolution_plan(
+    active_threads: list[dict[str, Any]],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a passive review-thread resolution plan without resolving threads."""
+    presence = review_provider_presence_status(active_threads, context.get("expected_providers"))
+    resolution_evidence = context.get("resolution_evidence") or {}
+    items: list[dict[str, Any]] = []
+    blocking_count = 0
+    advisory_count = 0
+    needs_manual = False
+
+    for thread in active_threads:
+        classified = classify_review_thread(thread, context)
+        thread_id = classified["thread_id"]
+        item_evidence = {**context, **dict(resolution_evidence.get(thread_id) or {})}
+        safe = should_resolve_review_thread(thread, item_evidence)
+        if classified["blocking"]:
+            blocking_count += 1
+        if classified["advisory"]:
+            advisory_count += 1
+        if classified["needs_manual"]:
+            needs_manual = True
+        items.append(
+            {
+                **classified,
+                "safe_to_resolve": safe,
+                "reply_body": _review_reply_body(thread, item_evidence) if safe else "",
+            }
+        )
+
+    safe_count = sum(1 for item in items if item["safe_to_resolve"])
+    if blocking_count:
+        next_action = "fix_review_comments"
+    elif needs_manual:
+        next_action = "needs_manual"
+    elif safe_count:
+        next_action = "resolve_review_threads"
+    else:
+        next_action = "continue_checks"
+
+    return {
+        "can_resolve_any": bool(safe_count),
+        "needs_manual": needs_manual,
+        "blocking_count": blocking_count,
+        "safe_resolve_count": safe_count,
+        "advisory_count": advisory_count,
+        "missing_providers_blocking": False,
+        "missing_providers": presence["missing_providers"],
+        "present_providers": presence["present_providers"],
+        "items": items,
+        "next_action": next_action,
+    }
+
+def _is_out_of_scope_review_path(path: str, context: dict[str, Any]) -> bool:
+    if not path:
+        return False
+    allowed = context.get("files_allowed")
+    if not isinstance(allowed, list) or not allowed:
+        return False
+    normalized = {str(item).strip() for item in allowed if str(item).strip()}
+    return bool(normalized) and path not in normalized
+
+
 def summarize_next_action(context: dict[str, Any]) -> str:
     for predicate, action in _next_action_rules(context):
         if predicate():

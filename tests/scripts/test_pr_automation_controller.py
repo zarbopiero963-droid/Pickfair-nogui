@@ -4933,3 +4933,343 @@ def test_parse_phase0_preflight_result_skips_generic_manual_wrapper_before_valid
     report = controller.parse_phase0_preflight_result(raw)
     ASSERTIONS.assertEqual(report["status"], "PASS")
     ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+
+
+def _review_thread(
+    *,
+    thread_id: str = "T1",
+    author: str = "coderabbitai[bot]",
+    body: str = "nit: style tweak",
+    path: str = "scripts/pr_automation_controller.py",
+    is_resolved: bool = False,
+    is_outdated: bool = False,
+) -> dict[str, Any]:
+    return {
+        "id": thread_id,
+        "isResolved": is_resolved,
+        "isOutdated": is_outdated,
+        "path": path,
+        "comments": {"nodes": [{"author": {"login": author}, "body": body}]},
+    }
+
+
+def test_review_provider_presence_missing_provider_does_not_block():
+    status = controller.review_provider_presence_status([_review_thread(author="coderabbitai[bot]")])
+    ASSERTIONS.assertFalse(status["blocking"])
+    ASSERTIONS.assertEqual(status["next_action"], "continue_checks")
+    ASSERTIONS.assertIn("greptile", status["missing_providers"])
+
+
+def test_review_thread_author_handles_comments_nodes_with_none_and_non_dict():
+    classified = controller.classify_review_thread(
+        {
+            "comments": {
+                "nodes": [
+                    None,
+                    "bad",
+                    {"author": {"login": "coderabbitai[bot]"}},
+                ],
+            }
+        }
+    )
+    ASSERTIONS.assertEqual(classified["author"], "coderabbitai")
+    ASSERTIONS.assertEqual(classified["provider"], "coderabbitai")
+
+
+def test_review_thread_author_handles_comments_list_with_none_and_non_dict():
+    classified = controller.classify_review_thread(
+        {
+            "comments": [
+                None,
+                "bad",
+                {"author": {"login": "sourcery-ai[bot]"}},
+            ]
+        }
+    )
+    ASSERTIONS.assertEqual(classified["author"], "sourcery-ai")
+    ASSERTIONS.assertEqual(classified["provider"], "sourcery-ai")
+
+
+def test_review_provider_presence_no_comments_does_not_block():
+    status = controller.review_provider_presence_status([])
+    ASSERTIONS.assertFalse(status["blocking"])
+    ASSERTIONS.assertEqual(status["present_providers"], [])
+    ASSERTIONS.assertEqual(status["next_action"], "continue_checks")
+
+
+def test_review_provider_presence_missing_specific_providers_never_block():
+    status = controller.review_provider_presence_status([_review_thread(author="chatgpt-codex-connector[bot]")])
+    ASSERTIONS.assertFalse(status["blocking"])
+    for provider in ("greptile", "coderabbitai", "sourcery-ai", "qodo-code-review", "codacy-production"):
+        ASSERTIONS.assertIn(provider, status["missing_providers"])
+
+
+def test_review_classification_active_p1_and_high_are_blocking():
+    p1 = controller.classify_review_thread(_review_thread(body="P1 bug correctness issue"))
+    high = controller.classify_review_thread(_review_thread(body="HIGH security runtime risk", thread_id="T2"))
+    ASSERTIONS.assertEqual(p1["classification"], "blocking")
+    ASSERTIONS.assertEqual(high["classification"], "blocking")
+
+
+def test_review_classification_uses_later_comment_when_first_is_irrelevant():
+    thread = {
+        "id": "T-later",
+        "isResolved": False,
+        "isOutdated": False,
+        "path": "scripts/pr_automation_controller.py",
+        "comments": {
+            "nodes": [
+                {"author": {"login": "coderabbitai[bot]"}, "body": "looks good"},
+                {"author": {"login": "coderabbitai[bot]"}, "body": "action required: bug in runtime path"},
+            ]
+        },
+    }
+    classified = controller.classify_review_thread(thread)
+    ASSERTIONS.assertEqual(classified["classification"], "blocking")
+    ASSERTIONS.assertEqual(classified["actionability"], "fix_required")
+
+
+def test_review_severity_medium_risk_and_standalone_medium_classify_medium():
+    medium_risk = controller.classify_review_comment_severity(
+        _review_thread(body="This is medium risk")
+    )
+    standalone_medium = controller.classify_review_comment_severity(
+        _review_thread(body="severity: medium")
+    )
+    ASSERTIONS.assertEqual(medium_risk, "medium")
+    ASSERTIONS.assertEqual(standalone_medium, "medium")
+
+
+def test_review_actionability_failing_test_and_missing_test_are_blocking_test_required():
+    failing = controller.classify_review_thread(_review_thread(body="failing test on this path"))
+    missing = controller.classify_review_thread(_review_thread(body="missing test coverage"))
+    ASSERTIONS.assertEqual(failing["classification"], "blocking")
+    ASSERTIONS.assertEqual(failing["actionability"], "test_required")
+    ASSERTIONS.assertEqual(missing["classification"], "blocking")
+    ASSERTIONS.assertEqual(missing["actionability"], "test_required")
+
+
+def test_review_high_word_boundaries_and_unknown_defaults():
+    highly = controller.classify_review_thread(_review_thread(body="this is highly recommended"))
+    highlight = controller.classify_review_thread(_review_thread(body="please highlight docs"))
+    unknown = controller.classify_review_thread(_review_thread(body="consider revisiting this section"))
+    ASSERTIONS.assertEqual(highly["severity"], "unknown")
+    ASSERTIONS.assertEqual(highlight["severity"], "unknown")
+    ASSERTIONS.assertEqual(unknown["severity"], "unknown")
+    ASSERTIONS.assertEqual(unknown["actionability"], "needs_manual")
+
+
+def test_review_keyword_boundaries_for_p1_p2_bug():
+    p1 = controller.classify_review_comment_severity(_review_thread(body="P1 issue"))
+    step1 = controller.classify_review_comment_severity(_review_thread(body="step1 update"))
+    p2 = controller.classify_review_comment_severity(_review_thread(body="P2 polish"))
+    step2 = controller.classify_review_comment_severity(_review_thread(body="step2 update"))
+    bug = controller.classify_review_comment_actionability(_review_thread(body="bug in parser"))
+    debug = controller.classify_review_comment_actionability(_review_thread(body="debug logging only"))
+    ASSERTIONS.assertEqual(p1, "p1")
+    ASSERTIONS.assertEqual(step1, "unknown")
+    ASSERTIONS.assertEqual(p2, "p2")
+    ASSERTIONS.assertEqual(step2, "unknown")
+    ASSERTIONS.assertEqual(bug, "fix_required")
+    ASSERTIONS.assertEqual(debug, "needs_manual")
+
+
+def test_review_p2_style_suggestion_is_advisory_non_blocking():
+    classified = controller.classify_review_thread(_review_thread(body="P2 style suggestion only"))
+    ASSERTIONS.assertEqual(classified["severity"], "p2")
+    ASSERTIONS.assertEqual(classified["actionability"], "advisory")
+    ASSERTIONS.assertEqual(classified["classification"], "advisory")
+    ASSERTIONS.assertFalse(classified["blocking"])
+
+
+def test_review_p2_missing_test_stays_blocking_by_actionability():
+    classified = controller.classify_review_thread(_review_thread(body="P2 missing test coverage"))
+    ASSERTIONS.assertEqual(classified["severity"], "p2")
+    ASSERTIONS.assertEqual(classified["actionability"], "test_required")
+    ASSERTIONS.assertEqual(classified["classification"], "blocking")
+    ASSERTIONS.assertTrue(classified["blocking"])
+
+
+def test_review_classification_low_nit_is_advisory_and_not_safe_without_evidence():
+    thread = _review_thread(body="low nitpick style suggestion docs")
+    classified = controller.classify_review_thread(thread)
+    ASSERTIONS.assertEqual(classified["classification"], "advisory")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, {}))
+
+
+def test_review_stale_fixed_thread_with_evidence_is_safe_to_resolve():
+    thread = _review_thread(body="style", thread_id="T3")
+    evidence = {
+        "safe_to_resolve": True,
+        "issue_fixed_or_stale": True,
+        "head_matches": True,
+        "validation_passed": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "reply_body": "Fixed in latest patch.",
+    }
+    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_review_unknown_author_routes_needs_manual():
+    classified = controller.classify_review_thread(_review_thread(author="mystery-user", body="please revisit"))
+    ASSERTIONS.assertEqual(classified["classification"], "needs_manual")
+
+
+def test_review_out_of_scope_routes_needs_manual():
+    classified = controller.classify_review_thread(
+        _review_thread(path="business/core/runtime.py", body="P2 fix"),
+        {"files_allowed": ["scripts/pr_automation_controller.py"]},
+    )
+    ASSERTIONS.assertEqual(classified["classification"], "needs_manual")
+
+
+def test_review_codacy_safe_resolve_requires_success_and_zero_annotations():
+    thread = _review_thread(author="codacy-production[bot]", body="stale")
+    bad = {
+        "safe_to_resolve": True,
+        "issue_fixed_or_stale": True,
+        "head_matches": True,
+        "validation_passed": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "codacy_relevant": True,
+        "codacy_state": "ACTION_REQUIRED",
+        "codacy_annotations_count": 1,
+        "reply_body": "stale",
+    }
+    good = dict(bad) | {"codacy_state": "SUCCESS", "codacy_annotations_count": 0}
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, bad))
+    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, good))
+
+
+def test_review_codacy_safe_resolve_non_numeric_annotations_fails_safe_without_exception():
+    thread = _review_thread(author="codacy-production[bot]", body="stale")
+    unsafe = {
+        "safe_to_resolve": True,
+        "issue_fixed_or_stale": True,
+        "head_matches": True,
+        "validation_passed": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "codacy_relevant": True,
+        "codacy_state": "SUCCESS",
+        "codacy_annotations_count": "n/a",
+    }
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, unsafe))
+
+
+def test_review_resolution_plan_includes_reply_body_and_missing_providers_not_blocking():
+    thread = _review_thread(thread_id="T9", body="low style")
+    plan = controller.build_review_thread_resolution_plan(
+        [thread],
+        {
+            "resolution_evidence": {
+                "T9": {
+                    "safe_to_resolve": True,
+                    "issue_fixed_or_stale": True,
+                    "head_matches": True,
+                    "validation_passed": True,
+                    "pending_checks": False,
+                    "failing_checks": False,
+                    "reply_body": "Addressed in current head.",
+                }
+            }
+        },
+    )
+    ASSERTIONS.assertFalse(plan["missing_providers_blocking"])
+    ASSERTIONS.assertEqual(plan["items"][0]["reply_body"], "Addressed in current head.")
+
+
+def test_review_head_mismatch_pending_and_failing_checks_block_auto_resolve():
+    thread = _review_thread(thread_id="T10", body="low style")
+    base = {
+        "safe_to_resolve": True,
+        "issue_fixed_or_stale": True,
+        "head_matches": True,
+        "validation_passed": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "reply_body": "fixed",
+    }
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, dict(base) | {"head_matches": False}))
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, dict(base) | {"pending_checks": True}))
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, dict(base) | {"failing_checks": True}))
+
+
+def test_summarize_review_threads_mixed_blocking_advisory_and_manual():
+    items = [
+        _review_thread(thread_id="B", body="P1 bug in runtime"),
+        _review_thread(thread_id="A", body="nit style suggestion"),
+        _review_thread(thread_id="M", author="mystery-user", body="please re-check"),
+    ]
+    summary = controller.summarize_review_threads(items)
+    ASSERTIONS.assertEqual(summary["blocking_count"], 1)
+    ASSERTIONS.assertEqual(summary["advisory_count"], 1)
+    ASSERTIONS.assertEqual(summary["needs_manual_count"], 1)
+    ASSERTIONS.assertEqual(summary["next_action"], "fix_review_comments")
+
+
+def test_summarize_review_threads_only_manual_needs_manual():
+    summary = controller.summarize_review_threads([_review_thread(author="mystery-user", body="consider this")])
+    ASSERTIONS.assertEqual(summary["blocking_count"], 0)
+    ASSERTIONS.assertEqual(summary["advisory_count"], 0)
+    ASSERTIONS.assertEqual(summary["needs_manual_count"], 1)
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
+
+
+def test_summarize_review_threads_only_advisory_continue_checks_and_provider_presence():
+    summary = controller.summarize_review_threads([_review_thread(author="coderabbitai[bot]", body="style suggestion")])
+    ASSERTIONS.assertEqual(summary["blocking_count"], 0)
+    ASSERTIONS.assertEqual(summary["advisory_count"], 1)
+    ASSERTIONS.assertEqual(summary["needs_manual_count"], 0)
+    ASSERTIONS.assertEqual(summary["next_action"], "continue_checks")
+    ASSERTIONS.assertIn("coderabbitai", summary["present_providers"])
+
+
+def test_review_thread_active_false_for_outdated_variants():
+    camel = controller.classify_review_thread(_review_thread(thread_id="TO1", body="P1 bug", is_outdated=True))
+    snake = controller.classify_review_thread(
+        {
+            **_review_thread(thread_id="TO2", body="P1 bug"),
+            "isOutdated": False,
+            "is_outdated": True,
+        }
+    )
+    ASSERTIONS.assertFalse(camel["is_active"])
+    ASSERTIONS.assertFalse(camel["blocking"])
+    ASSERTIONS.assertFalse(snake["is_active"])
+    ASSERTIONS.assertFalse(snake["blocking"])
+
+
+def test_summarize_review_threads_ignores_outdated_unresolved_from_counts():
+    summary = controller.summarize_review_threads([_review_thread(body="P1 bug", is_outdated=True)])
+    ASSERTIONS.assertEqual(summary["blocking_count"], 0)
+    ASSERTIONS.assertEqual(summary["advisory_count"], 0)
+    ASSERTIONS.assertEqual(summary["needs_manual_count"], 0)
+    ASSERTIONS.assertEqual(summary["next_action"], "continue_checks")
+
+
+def test_summarize_review_threads_expected_providers_missing_never_block_or_change_next_action():
+    summary = controller.summarize_review_threads(
+        [_review_thread(author="coderabbitai[bot]", body="style suggestion")],
+        {"expected_providers": ["coderabbitai", "greptile"]},
+    )
+    ASSERTIONS.assertIn("coderabbitai", summary["present_providers"])
+    ASSERTIONS.assertIn("greptile", summary["missing_providers"])
+    ASSERTIONS.assertFalse(summary["missing_providers_blocking"])
+    ASSERTIONS.assertEqual(summary["blocking_count"], 0)
+    ASSERTIONS.assertEqual(summary["advisory_count"], 1)
+    ASSERTIONS.assertEqual(summary["next_action"], "continue_checks")
+
+
+def test_summarize_review_threads_expected_providers_present_no_missing_and_blocking_drives_action():
+    summary = controller.summarize_review_threads(
+        [_review_thread(author="coderabbitai[bot]", body="P1 bug in runtime")],
+        {"expected_providers": ["coderabbitai"]},
+    )
+    ASSERTIONS.assertEqual(summary["present_providers"], ["coderabbitai"])
+    ASSERTIONS.assertEqual(summary["missing_providers"], [])
+    ASSERTIONS.assertFalse(summary["missing_providers_blocking"])
+    ASSERTIONS.assertEqual(summary["blocking_count"], 1)
+    ASSERTIONS.assertEqual(summary["next_action"], "fix_review_comments")
