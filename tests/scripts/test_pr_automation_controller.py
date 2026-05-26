@@ -801,6 +801,43 @@ def test_parse_phase0_preflight_result_complete_pass_missing_next_action_fails_c
     ASSERTIONS.assertTrue(controller.phase0_preflight_failed(report))
 
 
+def test_parse_phase0_preflight_result_json_explicit_needs_manual_stops_before_later_pass():
+    """First explicit PHASE_0_PREFLIGHT NEEDS_MANUAL candidate is authoritative."""
+    manual = _phase0_pass_payload()
+    manual.pop("status", None)
+    manual["PHASE_0_PREFLIGHT"] = "NEEDS_MANUAL"
+    manual["next_action"] = "needs_manual_phase0_failed"
+    later_pass = _phase0_pass_payload()
+    raw = "\n".join(["```json", json.dumps(manual), "```", "```json", json.dumps(later_pass), "```"])
+    report = controller.parse_phase0_preflight_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+
+
+def test_parse_phase0_preflight_result_json_explicit_snake_needs_manual_stops_before_later_pass():
+    """First explicit phase_0_preflight NEEDS_MANUAL candidate is authoritative."""
+    manual = _phase0_pass_payload()
+    manual.pop("status", None)
+    manual["phase_0_preflight"] = "NEEDS_MANUAL"
+    manual["next_action"] = "needs_manual_phase0_failed"
+    later_pass = _phase0_pass_payload()
+    raw = "\n".join(["```json", json.dumps(manual), "```", "```json", json.dumps(later_pass), "```"])
+    report = controller.parse_phase0_preflight_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+
+
+def test_parse_phase0_preflight_result_json_manual_generate_patch_action_normalizes_to_manual():
+    """NEEDS_MANUAL JSON candidate must not leak patch-like next_action."""
+    payload = _phase0_pass_payload()
+    payload.pop("status", None)
+    payload["PHASE_0_PREFLIGHT"] = "NEEDS_MANUAL"
+    payload["next_action"] = "generate_patch_prompt"
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+
+
 def test_parse_phase0_preflight_result_phase0_pass_empty_next_action_fails_closed():
     """PHASE_0_PREFLIGHT PASS with empty next_action fails closed."""
     payload = _phase0_pass_payload()
@@ -826,6 +863,24 @@ def test_parse_phase0_preflight_result_json_list_skips_none_and_empty_entries():
     payload["files_inspected"] = ["scripts/a.py", None, "  ", "scripts/b.py"]
     report = controller.parse_phase0_preflight_result(json.dumps(payload))
     ASSERTIONS.assertEqual(report["files_inspected"], ["scripts/a.py", "scripts/b.py"])
+
+
+def test_parse_phase0_preflight_result_json_pass_required_evidence_object_fails_closed():
+    """Required evidence object values must fail closed."""
+    payload = _phase0_pass_payload()
+    payload["files_inspected"] = {"file": "scripts/pr_automation_controller.py"}
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
+
+
+def test_parse_phase0_preflight_result_json_pass_required_evidence_object_list_fails_closed():
+    """Required evidence list with only object entries must fail closed."""
+    payload = _phase0_pass_payload()
+    payload["files_inspected"] = [{"file": "scripts/pr_automation_controller.py"}]
+    report = controller.parse_phase0_preflight_result(json.dumps(payload))
+    ASSERTIONS.assertEqual(report["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(report["next_action"], "needs_manual_phase0_failed")
 
 
 def test_parse_phase0_preflight_result_fenced_json_with_prose_parses():
@@ -4846,4 +4901,3 @@ def test_build_codex_patch_task_blocked_manual_uses_manual_next_action():
     ASSERTIONS.assertTrue(result["blocked"])
     ASSERTIONS.assertEqual(result["next_action"], "needs_manual_phase0_failed")
     ASSERTIONS.assertEqual(result["task"], "")
-

@@ -284,15 +284,21 @@ def _phase0_list(value: object) -> list[str]:
     """Normalize Phase 0 evidence fields into string lists."""
     if value is None:
         return []
+    if isinstance(value, dict):
+        return []
     if isinstance(value, list):
         items: list[str] = []
         for item in value:
             if item is None:
                 continue
+            if isinstance(item, (dict, list)):
+                continue
             cleaned = str(item).strip()
             if cleaned:
                 items.append(cleaned)
         return items
+    if isinstance(value, tuple):
+        return _phase0_list(list(value))
     text = str(value).replace("\\n", "\n").strip()
     if not text:
         return []
@@ -387,7 +393,10 @@ def _phase0_json_candidate_result(data: dict[str, Any]) -> dict[str, Any]:
     if status == "NEEDS_MANUAL":
         result["status"] = "NEEDS_MANUAL"
         result["risk_level"] = risk_level or "high"
-        result["next_action"] = next_action or "needs_manual_phase0_failed"
+        if not next_action or next_action in PHASE0_PASS_ACTIONS:
+            result["next_action"] = "needs_manual_phase0_failed"
+        else:
+            result["next_action"] = next_action
         return result
 
     return _phase0_malformed_result(risk_level)
@@ -408,9 +417,13 @@ def _parse_phase0_json(text: str) -> dict[str, Any] | None:
             continue
 
         result = _phase0_json_candidate_result(loaded)
+        has_explicit_phase0_key = "PHASE_0_PREFLIGHT" in loaded or "phase_0_preflight" in loaded
+        explicit_status = normalize_phase0_status(loaded.get("PHASE_0_PREFLIGHT") or loaded.get("phase_0_preflight"))
+        if has_explicit_phase0_key and explicit_status == "NEEDS_MANUAL":
+            return result
         if result.get("status") == "PASS" or normalize_phase0_status(loaded.get("status")) == "NEEDS_MANUAL":
             return result
-        if loaded.get("PHASE_0_PREFLIGHT") or loaded.get("phase_0_preflight") or loaded.get("status"):
+        if has_explicit_phase0_key or loaded.get("status"):
             fallback = result
 
     return fallback
@@ -2744,7 +2757,11 @@ def _should_stop_audit_bullets(line: str) -> bool:
 def _list_from_payload(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
-    return [str(item).strip() for item in value if str(item).strip()]
+    return [
+        str(item).strip()
+        for item in value
+        if not isinstance(item, (dict, list)) and str(item).strip()
+    ]
 
 
 def _list_from_raw_audit_section(raw: str, key: str) -> list[str]:
