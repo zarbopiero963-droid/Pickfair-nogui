@@ -526,9 +526,10 @@ def decide_phase0_gate(parsed_result: dict[str, Any] | None) -> dict[str, Any]:
     report = parsed_result or {}
     status = normalize_phase0_status(report.get("status"))
     next_action = str(report.get("next_action") or "needs_manual_phase0_malformed")
+    normalized_next_action = _phase0_action(next_action)
     has_evidence = _phase0_has_required_evidence(report)
-    allowed_action = _phase0_action(next_action) in PHASE0_PASS_ACTIONS
-    can_patch = status == "PASS" and allowed_action and has_evidence
+    allowed_action = normalized_next_action in PHASE0_PASS_ACTIONS
+    can_patch = status == "PASS" and has_evidence and allowed_action
 
     if not can_patch and status == "PASS":
         status = "NEEDS_MANUAL"
@@ -538,7 +539,7 @@ def decide_phase0_gate(parsed_result: dict[str, Any] | None) -> dict[str, Any]:
         "phase0_required": True,
         "phase0_status": status or "NEEDS_MANUAL",
         "can_patch": can_patch,
-        "next_action": next_action if can_patch else str(next_action),
+        "next_action": normalized_next_action if can_patch else str(next_action),
         "reason": "phase0_pass" if can_patch else "phase0_blocked",
         "needs_manual": not can_patch,
     }

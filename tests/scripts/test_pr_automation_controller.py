@@ -4780,3 +4780,31 @@ def test_parse_phase0_preflight_result_fenced_json_with_braces_in_string():
     ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
     ASSERTIONS.assertEqual(report["implementation_plan"], ["handle string with braces {x} safely"])
 
+
+def test_decide_phase0_gate_returns_canonical_generate_patch_action():
+    """PASS gate should return canonical generate_patch_prompt action."""
+    payload = _phase0_pass_payload()
+    payload["next_action"] = "Generate Patch Prompt"
+    decision = controller.decide_phase0_gate(payload)
+    ASSERTIONS.assertTrue(decision["can_patch"])
+    ASSERTIONS.assertEqual(decision["next_action"], "generate_patch_prompt")
+
+
+def test_decide_phase0_gate_returns_canonical_proceed_action():
+    """PASS gate should return canonical proceed_with_narrow_patch action."""
+    payload = _phase0_pass_payload()
+    payload["next_action"] = "Proceed With Narrow Patch"
+    decision = controller.decide_phase0_gate(payload)
+    ASSERTIONS.assertTrue(decision["can_patch"])
+    ASSERTIONS.assertEqual(decision["next_action"], "proceed_with_narrow_patch")
+
+
+def test_build_codex_patch_task_after_phase0_returns_canonical_action():
+    """Patch task wrapper should expose canonical Phase 0 next_action."""
+    payload = _phase0_pass_payload()
+    payload["next_action"] = "Generate Patch Prompt"
+    result = controller.build_codex_patch_task_after_phase0("implement narrow fix", payload)
+    ASSERTIONS.assertTrue(result["can_patch"])
+    ASSERTIONS.assertEqual(result["next_action"], "generate_patch_prompt")
+    ASSERTIONS.assertEqual(result["gate"]["next_action"], "generate_patch_prompt")
+
