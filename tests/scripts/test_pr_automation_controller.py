@@ -5225,3 +5225,51 @@ def test_summarize_review_threads_only_advisory_continue_checks_and_provider_pre
     ASSERTIONS.assertEqual(summary["needs_manual_count"], 0)
     ASSERTIONS.assertEqual(summary["next_action"], "continue_checks")
     ASSERTIONS.assertIn("coderabbitai", summary["present_providers"])
+
+
+def test_review_thread_active_false_for_outdated_variants():
+    camel = controller.classify_review_thread(_review_thread(thread_id="TO1", body="P1 bug", is_outdated=True))
+    snake = controller.classify_review_thread(
+        {
+            **_review_thread(thread_id="TO2", body="P1 bug"),
+            "isOutdated": False,
+            "is_outdated": True,
+        }
+    )
+    ASSERTIONS.assertFalse(camel["is_active"])
+    ASSERTIONS.assertFalse(camel["blocking"])
+    ASSERTIONS.assertFalse(snake["is_active"])
+    ASSERTIONS.assertFalse(snake["blocking"])
+
+
+def test_summarize_review_threads_ignores_outdated_unresolved_from_counts():
+    summary = controller.summarize_review_threads([_review_thread(body="P1 bug", is_outdated=True)])
+    ASSERTIONS.assertEqual(summary["blocking_count"], 0)
+    ASSERTIONS.assertEqual(summary["advisory_count"], 0)
+    ASSERTIONS.assertEqual(summary["needs_manual_count"], 0)
+    ASSERTIONS.assertEqual(summary["next_action"], "continue_checks")
+
+
+def test_summarize_review_threads_expected_providers_missing_never_block_or_change_next_action():
+    summary = controller.summarize_review_threads(
+        [_review_thread(author="coderabbitai[bot]", body="style suggestion")],
+        {"expected_providers": ["coderabbitai", "greptile"]},
+    )
+    ASSERTIONS.assertIn("coderabbitai", summary["present_providers"])
+    ASSERTIONS.assertIn("greptile", summary["missing_providers"])
+    ASSERTIONS.assertFalse(summary["missing_providers_blocking"])
+    ASSERTIONS.assertEqual(summary["blocking_count"], 0)
+    ASSERTIONS.assertEqual(summary["advisory_count"], 1)
+    ASSERTIONS.assertEqual(summary["next_action"], "continue_checks")
+
+
+def test_summarize_review_threads_expected_providers_present_no_missing_and_blocking_drives_action():
+    summary = controller.summarize_review_threads(
+        [_review_thread(author="coderabbitai[bot]", body="P1 bug in runtime")],
+        {"expected_providers": ["coderabbitai"]},
+    )
+    ASSERTIONS.assertEqual(summary["present_providers"], ["coderabbitai"])
+    ASSERTIONS.assertEqual(summary["missing_providers"], [])
+    ASSERTIONS.assertFalse(summary["missing_providers_blocking"])
+    ASSERTIONS.assertEqual(summary["blocking_count"], 1)
+    ASSERTIONS.assertEqual(summary["next_action"], "fix_review_comments")

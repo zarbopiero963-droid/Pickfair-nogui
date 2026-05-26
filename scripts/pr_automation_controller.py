@@ -4869,13 +4869,11 @@ def classify_review_comment_actionability(comment_or_thread: dict[str, Any]) -> 
 def _review_thread_active(thread: dict[str, Any]) -> bool:
     if bool(thread.get("is_resolved") or thread.get("isResolved")):
         return False
+    if bool(thread.get("is_outdated") or thread.get("isOutdated")):
+        return False
     if thread.get("is_active") is False or thread.get("isActive") is False:
         return False
     return True
-
-
-def _review_path_out_of_scope(path: str, context: dict[str, Any] | None) -> bool:
-    return _is_out_of_scope_review_path(path, context or {})
 
 
 def classify_review_thread(thread: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -4887,7 +4885,7 @@ def classify_review_thread(thread: dict[str, Any], context: dict[str, Any] | Non
     severity = classify_review_comment_severity(thread)
     actionability = classify_review_comment_actionability(thread)
     unknown_author = not provider
-    out_of_scope = _review_path_out_of_scope(path, context)
+    out_of_scope = _is_out_of_scope_review_path(path, context or {})
 
     category = "review_comment_inactive"
     classification = "inactive"
