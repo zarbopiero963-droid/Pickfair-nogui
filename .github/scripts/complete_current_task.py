@@ -13,8 +13,8 @@ DONE_DIR = Path("ops/tasks_done")
 def main() -> int:
     match = re.search(r"Task-File:\s*(ops/tasks/[^\s]+\.md)", PR_BODY)
     if not match:
-        print("No Task-File marker found in PR body", file=sys.stderr)
-        return 1
+        print("Skipping task completion: no Task-File marker found in PR body")
+        return 0
 
     src = Path(match.group(1))
     if not src.exists():
