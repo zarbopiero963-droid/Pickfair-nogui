@@ -4933,3 +4933,140 @@ def test_parse_phase0_preflight_result_skips_generic_manual_wrapper_before_valid
     report = controller.parse_phase0_preflight_result(raw)
     ASSERTIONS.assertEqual(report["status"], "PASS")
     ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+
+
+def _review_thread(
+    *,
+    thread_id: str = "T1",
+    author: str = "coderabbitai[bot]",
+    body: str = "nit: style tweak",
+    path: str = "scripts/pr_automation_controller.py",
+    is_resolved: bool = False,
+    is_outdated: bool = False,
+) -> dict[str, Any]:
+    return {
+        "id": thread_id,
+        "isResolved": is_resolved,
+        "isOutdated": is_outdated,
+        "path": path,
+        "comments": {"nodes": [{"author": {"login": author}, "body": body}]},
+    }
+
+
+def test_review_provider_presence_missing_provider_does_not_block():
+    status = controller.review_provider_presence_status([_review_thread(author="coderabbitai[bot]")])
+    ASSERTIONS.assertFalse(status["blocking"])
+    ASSERTIONS.assertEqual(status["next_action"], "continue_checks")
+    ASSERTIONS.assertIn("greptile", status["missing_providers"])
+
+
+def test_review_provider_presence_no_comments_does_not_block():
+    status = controller.review_provider_presence_status([])
+    ASSERTIONS.assertFalse(status["blocking"])
+    ASSERTIONS.assertEqual(status["present_providers"], [])
+    ASSERTIONS.assertEqual(status["next_action"], "continue_checks")
+
+
+def test_review_provider_presence_missing_specific_providers_never_block():
+    status = controller.review_provider_presence_status([_review_thread(author="chatgpt-codex-connector[bot]")])
+    ASSERTIONS.assertFalse(status["blocking"])
+    for provider in ("greptile", "coderabbitai", "sourcery-ai", "qodo-code-review", "codacy-production"):
+        ASSERTIONS.assertIn(provider, status["missing_providers"])
+
+
+def test_review_classification_active_p1_and_high_are_blocking():
+    p1 = controller.classify_review_thread(_review_thread(body="P1 bug correctness issue"))
+    high = controller.classify_review_thread(_review_thread(body="HIGH security runtime risk", thread_id="T2"))
+    ASSERTIONS.assertEqual(p1["classification"], "blocking")
+    ASSERTIONS.assertEqual(high["classification"], "blocking")
+
+
+def test_review_classification_low_nit_is_advisory_and_not_safe_without_evidence():
+    thread = _review_thread(body="low nitpick style suggestion docs")
+    classified = controller.classify_review_thread(thread)
+    ASSERTIONS.assertEqual(classified["classification"], "advisory")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, {}))
+
+
+def test_review_stale_fixed_thread_with_evidence_is_safe_to_resolve():
+    thread = _review_thread(body="style", thread_id="T3")
+    evidence = {
+        "safe_to_resolve": True,
+        "issue_fixed_or_stale": True,
+        "head_matches": True,
+        "validation_passed": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "reply_body": "Fixed in latest patch.",
+    }
+    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_review_unknown_author_routes_needs_manual():
+    classified = controller.classify_review_thread(_review_thread(author="mystery-user", body="please revisit"))
+    ASSERTIONS.assertEqual(classified["classification"], "needs_manual")
+
+
+def test_review_out_of_scope_routes_needs_manual():
+    classified = controller.classify_review_thread(
+        _review_thread(path="business/core/runtime.py", body="P2 fix"),
+        {"files_allowed": ["scripts/pr_automation_controller.py"]},
+    )
+    ASSERTIONS.assertEqual(classified["classification"], "needs_manual")
+
+
+def test_review_codacy_safe_resolve_requires_success_and_zero_annotations():
+    thread = _review_thread(author="codacy-production[bot]", body="stale")
+    bad = {
+        "safe_to_resolve": True,
+        "issue_fixed_or_stale": True,
+        "head_matches": True,
+        "validation_passed": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "codacy_relevant": True,
+        "codacy_state": "ACTION_REQUIRED",
+        "codacy_annotations_count": 1,
+        "reply_body": "stale",
+    }
+    good = dict(bad) | {"codacy_state": "SUCCESS", "codacy_annotations_count": 0}
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, bad))
+    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, good))
+
+
+def test_review_resolution_plan_includes_reply_body_and_missing_providers_not_blocking():
+    thread = _review_thread(thread_id="T9", body="low style")
+    plan = controller.build_review_thread_resolution_plan(
+        [thread],
+        {
+            "resolution_evidence": {
+                "T9": {
+                    "safe_to_resolve": True,
+                    "issue_fixed_or_stale": True,
+                    "head_matches": True,
+                    "validation_passed": True,
+                    "pending_checks": False,
+                    "failing_checks": False,
+                    "reply_body": "Addressed in current head.",
+                }
+            }
+        },
+    )
+    ASSERTIONS.assertFalse(plan["missing_providers_blocking"])
+    ASSERTIONS.assertEqual(plan["items"][0]["reply_body"], "Addressed in current head.")
+
+
+def test_review_head_mismatch_pending_and_failing_checks_block_auto_resolve():
+    thread = _review_thread(thread_id="T10", body="low style")
+    base = {
+        "safe_to_resolve": True,
+        "issue_fixed_or_stale": True,
+        "head_matches": True,
+        "validation_passed": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "reply_body": "fixed",
+    }
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, dict(base) | {"head_matches": False}))
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, dict(base) | {"pending_checks": True}))
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, dict(base) | {"failing_checks": True}))
