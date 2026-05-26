@@ -16,10 +16,13 @@ def load_module(repo_root: Path) -> ModuleType:
     """Load complete_current_task module under test."""
     module_path = repo_root / ".github" / "scripts" / "complete_current_task.py"
     spec = importlib.util.spec_from_file_location("complete_current_task_under_test", module_path)
-    ASSERTIONS.assertIsNotNone(spec)
-    ASSERTIONS.assertIsNotNone(spec.loader)
+    if spec is None:
+        ASSERTIONS.fail("complete_current_task module spec was not created")
+    loader = spec.loader
+    if loader is None:
+        ASSERTIONS.fail("complete_current_task module loader was not created")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    loader.exec_module(module)
     return module
 
 
