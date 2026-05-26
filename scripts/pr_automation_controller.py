@@ -421,7 +421,9 @@ def _parse_phase0_json(text: str) -> dict[str, Any] | None:
         explicit_status = normalize_phase0_status(loaded.get("PHASE_0_PREFLIGHT") or loaded.get("phase_0_preflight"))
         if has_explicit_phase0_key and explicit_status == "NEEDS_MANUAL":
             return result
-        if result.get("status") == "PASS" or normalize_phase0_status(loaded.get("status")) == "NEEDS_MANUAL":
+        if result.get("status") == "PASS":
+            return result
+        if explicit_status == "NEEDS_MANUAL":
             return result
         if has_explicit_phase0_key or loaded.get("status"):
             fallback = result

@@ -4901,3 +4901,35 @@ def test_build_codex_patch_task_blocked_manual_uses_manual_next_action():
     ASSERTIONS.assertTrue(result["blocked"])
     ASSERTIONS.assertEqual(result["next_action"], "needs_manual_phase0_failed")
     ASSERTIONS.assertEqual(result["task"], "")
+
+
+def test_parse_phase0_preflight_result_skips_failed_wrapper_before_valid_pass():
+    """Generic failed wrapper metadata should not block a later valid Phase 0 PASS."""
+    payload = _phase0_pass_payload()
+    raw = "\n".join(
+        [
+            '{"status": "failed", "kind": "metadata"}',
+            "```json",
+            json.dumps(payload),
+            "```",
+        ]
+    )
+    report = controller.parse_phase0_preflight_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
+
+
+def test_parse_phase0_preflight_result_skips_generic_manual_wrapper_before_valid_pass():
+    """Generic NEEDS_MANUAL wrapper metadata should not override later Phase 0 PASS."""
+    payload = _phase0_pass_payload()
+    raw = "\n".join(
+        [
+            '{"status": "NEEDS_MANUAL", "kind": "metadata"}',
+            "```json",
+            json.dumps(payload),
+            "```",
+        ]
+    )
+    report = controller.parse_phase0_preflight_result(raw)
+    ASSERTIONS.assertEqual(report["status"], "PASS")
+    ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
