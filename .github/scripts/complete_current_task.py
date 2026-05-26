@@ -28,14 +28,21 @@ def main() -> int:
         return 0
 
     src = Path(match.group(1))
-    if not src.exists():
+    tasks_root = Path("ops/tasks").resolve()
+    src_resolved = src.resolve()
+    if src_resolved != tasks_root and tasks_root not in src_resolved.parents:
+        print(f"Task file path escapes ops/tasks: {src}", file=sys.stderr)
+        write_task_moved(False)
+        return 1
+
+    if not src_resolved.exists():
         print(f"Task file does not exist: {src}", file=sys.stderr)
         write_task_moved(False)
         return 1
 
     DONE_DIR.mkdir(parents=True, exist_ok=True)
-    dst = DONE_DIR / src.name
-    shutil.move(str(src), str(dst))
+    dst = DONE_DIR / src_resolved.name
+    shutil.move(str(src_resolved), str(dst))
 
     print(f"Moved {src} -> {dst}")
     write_task_moved(True)

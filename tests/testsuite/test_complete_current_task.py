@@ -33,6 +33,7 @@ def read_output_flag(output_file: Path) -> str:
 
 def test_missing_marker_skips(tmp_path: Path, monkeypatch, capsys) -> None:
     """No Task-File marker should skip successfully without moving files."""
+    monkeypatch.chdir(tmp_path)
     output_file = tmp_path / "github_output.txt"
     monkeypatch.setenv("PR_BODY", "No task marker here")
     monkeypatch.setenv("GITHUB_OUTPUT", str(output_file))
@@ -80,3 +81,23 @@ def test_existing_file_moves(tmp_path: Path, monkeypatch) -> None:
     ASSERTIONS.assertFalse(source.exists())
     ASSERTIONS.assertEqual(destination.read_text(encoding="utf-8"), "task body")
     ASSERTIONS.assertEqual(read_output_flag(output_file), "task_moved=true")
+
+
+def test_escaping_task_path_fails(tmp_path: Path, monkeypatch, capsys) -> None:
+    """A Task-File marker escaping ops/tasks should fail closed."""
+    monkeypatch.chdir(tmp_path)
+    output_file = tmp_path / "github_output.txt"
+    readme = tmp_path / "README.md"
+    readme.write_text("do not move", encoding="utf-8")
+    monkeypatch.setenv("PR_BODY", "Task-File: ops/tasks/../../README.md")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output_file))
+
+    module = load_module(REPO_ROOT)
+    return_code = module.main()
+
+    captured = capsys.readouterr()
+    ASSERTIONS.assertEqual(return_code, 1)
+    ASSERTIONS.assertIn("escapes ops/tasks", captured.err)
+    ASSERTIONS.assertIn("task_moved=false", output_file.read_text(encoding="utf-8"))
+    ASSERTIONS.assertTrue(readme.exists())
+    ASSERTIONS.assertFalse((tmp_path / "ops" / "tasks_done" / "README.md").exists())
