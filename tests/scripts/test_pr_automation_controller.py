@@ -6252,3 +6252,740 @@ def test_report_ready_to_merge_with_strict_clean_context():
     ASSERTIONS.assertIn("READY_TO_MERGE", message)
     ASSERTIONS.assertIn("241", message)
     ASSERTIONS.assertIn("abc123", message)
+
+
+def _matrix_phase0_output_complete() -> dict[str, Any]:
+    return {
+        "status": "PASS",
+        "risk_level": "high",
+        "next_action": "generate_patch_prompt",
+        "files_inspected": ["scripts/pr_automation_controller.py"],
+        "authoritative_modules": ["scripts/pr_automation_controller.py"],
+        "dangerous_gates": ["path matching"],
+        "files_allowed": ["scripts/pr_automation_controller.py", "tests/scripts/test_pr_automation_controller.py"],
+        "files_forbidden": [".github/workflows/*"],
+        "exact_patch_plan": ["add passive helpers only"],
+        "test_matrix": ["unit coverage for matrix helpers"],
+        "tests_to_run": ["python3 -m pytest tests/scripts/test_pr_automation_controller.py -q"],
+        "stop_conditions": ["stop on scope drift"],
+        "matcher_semantics": "exact path + normalized matching",
+    }
+
+
+def test_phase0_profile_detection_standard_vs_safety_critical():
+    ASSERTIONS.assertEqual(controller.classify_phase0_profile({"task": "update prompt text"}), "standard")
+    ASSERTIONS.assertEqual(
+        controller.classify_phase0_profile({"task": "harden path matching and wildcard traversal gates"}),
+        "matrix_required",
+    )
+    ASSERTIONS.assertFalse(controller.task_requires_matrix_phase0({"task": "docs only"}))
+    ASSERTIONS.assertTrue(controller.task_requires_matrix_phase0({"task": "automation gate security controls"}))
+
+
+def test_phase0_profile_detection_avoids_substring_false_positives():
+    ASSERTIONS.assertEqual(controller.classify_phase0_profile({"task": "refresh global docs"}), "standard")
+    ASSERTIONS.assertEqual(controller.classify_phase0_profile({"task": "prepare pushback response"}), "standard")
+    ASSERTIONS.assertFalse(controller.task_requires_matrix_phase0({"task": "global docs wording"}))
+    ASSERTIONS.assertFalse(controller.task_requires_matrix_phase0({"task": "pushback wording"}))
+
+
+def test_phase0_profile_detection_matches_word_boundary_risk_keywords():
+    ASSERTIONS.assertTrue(controller.task_requires_matrix_phase0({"task": "glob path matcher"}))
+    ASSERTIONS.assertTrue(controller.task_requires_matrix_phase0({"task": "push permission gate"}))
+
+
+def test_phase0_profile_detection_matches_space_separated_risk_phrases():
+    ASSERTIONS.assertTrue(controller.task_requires_matrix_phase0({"task": "validate live action safety"}))
+    ASSERTIONS.assertTrue(controller.task_requires_matrix_phase0({"task": "resolve merge conflict safely"}))
+
+
+def test_phase0_profile_detection_includes_metadata_risk_keys():
+    ASSERTIONS.assertTrue(controller.task_requires_matrix_phase0({"task_title": "resolve merge conflict safely"}))
+    ASSERTIONS.assertTrue(controller.task_requires_matrix_phase0({"task_scope": "validate live action safety"}))
+
+
+def test_phase0_profile_detection_matches_hyphenated_and_slash_risk_phrases():
+    ASSERTIONS.assertTrue(controller.task_requires_matrix_phase0({"task": "validate live-action safety"}))
+    ASSERTIONS.assertTrue(controller.task_requires_matrix_phase0({"task": "resolve merge-conflict safely"}))
+    ASSERTIONS.assertTrue(controller.task_requires_matrix_phase0({"task": "enable/disable controls"}))
+    ASSERTIONS.assertTrue(controller.task_requires_matrix_phase0({"task": "enable disable controls"}))
+
+
+def test_phase0_profile_detection_uses_dangerous_and_authoritative_lists():
+    ASSERTIONS.assertEqual(
+        controller.classify_phase0_profile({"dangerous_gates": ["workflow execution gate"]}),
+        "matrix_required",
+    )
+    ASSERTIONS.assertEqual(
+        controller.classify_phase0_profile({"authoritative_modules": ["sandbox rollback controls"]}),
+        "matrix_required",
+    )
+    ASSERTIONS.assertTrue(controller.task_requires_matrix_phase0({"dangerous_gates": ["live gate"]}))
+    ASSERTIONS.assertTrue(
+        controller.task_requires_matrix_phase0({"authoritative_modules": ["workflow execution safety"]})
+    )
+
+
+def test_matrix_phase0_requirements_pass_with_all_fields():
+    requirements = controller.build_matrix_phase0_requirements(
+        {"task": "path matching guardrails", "dangerous_gates": ["path matching"]}
+    )
+    validated = controller.validate_phase0_output_contract(_matrix_phase0_output_complete(), requirements)
+    ASSERTIONS.assertEqual(validated["status"], "PASS")
+    ASSERTIONS.assertEqual(validated["next_action"], "generate_patch_prompt")
+    ASSERTIONS.assertTrue(validated["can_patch"])
+
+
+def test_matrix_phase0_missing_fields_fails_closed_needs_manual():
+    requirements = controller.build_matrix_phase0_requirements({"task": "wildcard traversal safety gate"})
+    incomplete = {"status": "PASS", "risk_level": "high", "next_action": "generate_patch_prompt"}
+    validated = controller.validate_phase0_output_contract(incomplete, requirements)
+    ASSERTIONS.assertEqual(validated["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(validated["next_action"], "needs_manual_matrix_phase0_missing")
+    ASSERTIONS.assertFalse(validated["can_patch"])
+    ASSERTIONS.assertIn("files_inspected", validated["missing_fields"])
+
+
+def test_matrix_phase0_incomplete_output_with_safety_task_context_fails_closed():
+    safety_task_context = {"task": "harden wildcard path traversal safety controls"}
+    incomplete = {"status": "PASS", "risk_level": "high", "next_action": "generate_patch_prompt"}
+    validated = controller.validate_phase0_output_contract(incomplete, safety_task_context)
+    ASSERTIONS.assertEqual(validated["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(validated["next_action"], "needs_manual_matrix_phase0_missing")
+    ASSERTIONS.assertFalse(validated["can_patch"])
+    ASSERTIONS.assertTrue(validated["phase0_required"])
+    ASSERTIONS.assertNotEqual(validated["missing_fields"], [])
+
+
+def test_matrix_phase0_complete_output_with_safety_task_context_can_patch():
+    safety_task_context = {"task": "harden wildcard path traversal safety controls"}
+    validated = controller.validate_phase0_output_contract(_matrix_phase0_output_complete(), safety_task_context)
+    ASSERTIONS.assertEqual(validated["status"], "PASS")
+    ASSERTIONS.assertTrue(validated["can_patch"])
+    ASSERTIONS.assertTrue(validated["phase0_required"])
+
+
+def test_standard_task_context_does_not_require_matrix_phase0_fields():
+    standard_task_context = {"task": "update release docs text"}
+    incomplete = {"status": "PASS", "risk_level": "medium", "next_action": "generate_patch_prompt"}
+    validated = controller.validate_phase0_output_contract(incomplete, standard_task_context)
+    ASSERTIONS.assertEqual(validated["status"], "PASS")
+    ASSERTIONS.assertTrue(validated["can_patch"])
+    ASSERTIONS.assertFalse(validated["phase0_required"])
+    ASSERTIONS.assertEqual(validated["missing_fields"], [])
+
+
+def test_matrix_phase0_requires_matcher_semantics_when_relevant():
+    requirements = controller.build_matrix_phase0_requirements(
+        {"task": "normalize glob matcher", "dangerous_gates": ["glob path matching"]}
+    )
+    payload = _matrix_phase0_output_complete()
+    payload.pop("matcher_semantics")
+    validated = controller.validate_phase0_output_contract(payload, requirements)
+    ASSERTIONS.assertEqual(validated["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertIn("matcher_semantics", validated["missing_fields"])
+
+
+def test_matrix_phase0_requires_matcher_semantics_from_task_text_only():
+    requirements = controller.build_matrix_phase0_requirements({"task": "normalize glob matcher"})
+    ASSERTIONS.assertTrue(requirements["matcher_semantics_required"])
+    payload = _matrix_phase0_output_complete()
+    payload.pop("matcher_semantics")
+    validated = controller.validate_phase0_output_contract(payload, requirements)
+    ASSERTIONS.assertEqual(validated["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(validated["next_action"], "needs_manual_matrix_phase0_missing")
+    ASSERTIONS.assertFalse(validated["can_patch"])
+    ASSERTIONS.assertIn("matcher_semantics", validated["missing_fields"])
+
+
+def test_matrix_phase0_requires_matcher_semantics_from_metadata_task_title():
+    requirements = controller.build_matrix_phase0_requirements({"task_title": "normalize allowlist traversal"})
+    ASSERTIONS.assertTrue(requirements["matcher_semantics_required"])
+
+
+def test_matrix_phase0_requires_matcher_semantics_for_allowlist_forbidden_normalization_traversal():
+    for task_text in (
+        "validate allowlist for patch scope",
+        "respect forbidden files guardrails",
+        "ensure path normalization safety",
+        "block traversal path escapes",
+    ):
+        requirements = controller.build_matrix_phase0_requirements({"task": task_text})
+        ASSERTIONS.assertTrue(requirements["matcher_semantics_required"])
+        payload = _matrix_phase0_output_complete()
+        payload.pop("matcher_semantics")
+        validated = controller.validate_phase0_output_contract(payload, requirements)
+        ASSERTIONS.assertEqual(validated["status"], "NEEDS_MANUAL")
+        ASSERTIONS.assertIn("matcher_semantics", validated["missing_fields"])
+
+
+def test_matrix_phase0_semantic_keyword_matching_is_case_insensitive():
+    requirements = controller.build_matrix_phase0_requirements(
+        {
+            "task": "Review Path Matcher behavior",
+            "dangerous_gates": ["Live Action controls"],
+            "authoritative_modules": ["FORBIDDEN FILES policy"],
+        }
+    )
+    ASSERTIONS.assertTrue(requirements["matcher_semantics_required"])
+    ASSERTIONS.assertTrue(requirements["gate_semantics_required"])
+
+
+def test_matrix_phase0_requires_gate_semantics_when_relevant():
+    requirements = controller.build_matrix_phase0_requirements(
+        {"task": "safety docs update", "dangerous_gates": ["live permission gate"]}
+    )
+    payload = _matrix_phase0_output_complete()
+    payload.pop("gate_semantics", None)
+    validated = controller.validate_phase0_output_contract(payload, requirements)
+    ASSERTIONS.assertEqual(validated["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertIn("gate_semantics", validated["missing_fields"])
+    ASSERTIONS.assertFalse(validated["can_patch"])
+
+
+def test_matrix_phase0_requires_gate_semantics_from_task_text_only():
+    requirements = controller.build_matrix_phase0_requirements({"task": "validate live action safety"})
+    ASSERTIONS.assertTrue(requirements["gate_semantics_required"])
+    payload = _matrix_phase0_output_complete()
+    payload.pop("gate_semantics", None)
+    validated = controller.validate_phase0_output_contract(payload, requirements)
+    ASSERTIONS.assertEqual(validated["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(validated["next_action"], "needs_manual_matrix_phase0_missing")
+    ASSERTIONS.assertFalse(validated["can_patch"])
+    ASSERTIONS.assertIn("gate_semantics", validated["missing_fields"])
+
+
+def test_matrix_phase0_requires_gate_semantics_from_metadata_task_scope():
+    requirements = controller.build_matrix_phase0_requirements({"task_scope": "validate live action safety"})
+    ASSERTIONS.assertTrue(requirements["gate_semantics_required"])
+
+
+def test_matrix_phase0_requires_gate_semantics_for_live_gate_permission_tokens():
+    for dangerous_gate in ("live action", "phase0 gate", "merge permission"):
+        requirements = controller.build_matrix_phase0_requirements(
+            {"task": "safety docs update", "dangerous_gates": [dangerous_gate]}
+        )
+        payload = _matrix_phase0_output_complete()
+        payload.pop("gate_semantics", None)
+        validated = controller.validate_phase0_output_contract(payload, requirements)
+        ASSERTIONS.assertEqual(validated["status"], "NEEDS_MANUAL")
+        ASSERTIONS.assertIn("gate_semantics", validated["missing_fields"])
+
+
+def test_matrix_phase0_gate_semantics_required_and_present_passes():
+    requirements = controller.build_matrix_phase0_requirements({"task": "validate Live Action permission gate"})
+    ASSERTIONS.assertTrue(requirements["gate_semantics_required"])
+    payload = _matrix_phase0_output_complete()
+    payload["gate_semantics"] = "live action gate is constrained by explicit permission checks"
+    validated = controller.validate_phase0_output_contract(payload, requirements)
+    ASSERTIONS.assertEqual(validated["status"], "PASS")
+    ASSERTIONS.assertTrue(validated["can_patch"])
+
+
+def test_matrix_phase0_gate_semantics_fail_closed_from_raw_context_requirements():
+    requirements = {"dangerous_gates": ["live gate"]}
+    built = controller.build_matrix_phase0_requirements(requirements)
+    ASSERTIONS.assertTrue(built["gate_semantics_required"])
+    payload = _matrix_phase0_output_complete()
+    payload.pop("gate_semantics", None)
+    validated = controller.validate_phase0_output_contract(payload, requirements)
+    ASSERTIONS.assertEqual(validated["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(validated["next_action"], "needs_manual_matrix_phase0_missing")
+    ASSERTIONS.assertFalse(validated["can_patch"])
+    ASSERTIONS.assertIn("gate_semantics", validated["missing_fields"])
+
+
+def test_matrix_phase0_placeholder_required_values_fail_closed():
+    requirements = controller.build_matrix_phase0_requirements({"task": "wildcard traversal safety gate"})
+    payload = _matrix_phase0_output_complete()
+    payload.update(
+        {
+            "exact_patch_plan": ["todo", " n/a ", "none"],
+            "files_inspected": ["tbd"],
+            "tests_to_run": "null",
+        }
+    )
+    validated = controller.validate_phase0_output_contract(payload, requirements)
+    ASSERTIONS.assertEqual(validated["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertIn("exact_patch_plan", validated["missing_fields"])
+    ASSERTIONS.assertIn("files_inspected", validated["missing_fields"])
+    ASSERTIONS.assertIn("tests_to_run", validated["missing_fields"])
+
+
+def test_matrix_phase0_placeholder_object_and_quoted_values_fail_closed():
+    requirements = controller.build_matrix_phase0_requirements({"task": "wildcard traversal safety gate"})
+    payload = _matrix_phase0_output_complete()
+    payload.update(
+        {
+            "files_inspected": [{}],
+            "exact_patch_plan": ['"TBD"'],
+            "test_matrix": [{"id": "todo"}],
+            "tests_to_run": {"cmd": "pytest"},
+        }
+    )
+    validated = controller.validate_phase0_output_contract(payload, requirements)
+    ASSERTIONS.assertEqual(validated["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertIn("files_inspected", validated["missing_fields"])
+    ASSERTIONS.assertIn("exact_patch_plan", validated["missing_fields"])
+    ASSERTIONS.assertIn("test_matrix", validated["missing_fields"])
+    ASSERTIONS.assertIn("tests_to_run", validated["missing_fields"])
+
+
+def test_matrix_phase0_mixed_real_and_placeholder_list_counts_as_present():
+    requirements = controller.build_matrix_phase0_requirements({"task": "wildcard traversal safety controls"})
+    payload = _matrix_phase0_output_complete()
+    payload["exact_patch_plan"] = ["todo", "add passive matcher check"]
+    validated = controller.validate_phase0_output_contract(payload, requirements)
+    ASSERTIONS.assertEqual(validated["status"], "PASS")
+    ASSERTIONS.assertTrue(validated["can_patch"])
+
+
+def test_matrix_phase0_placeholder_semantic_values_are_missing():
+    requirements = {
+        "phase0_required": False,
+        "required_fields": [],
+        "matcher_semantics_required": True,
+        "gate_semantics_required": True,
+        "next_action": "generate_patch_prompt",
+    }
+    validated = controller.validate_phase0_output_contract(
+        {"status": "PASS", "matcher_semantics": "todo", "gate_semantics": "n/a"},
+        requirements,
+    )
+    ASSERTIONS.assertEqual(validated["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertIn("matcher_semantics", validated["missing_fields"])
+    ASSERTIONS.assertIn("gate_semantics", validated["missing_fields"])
+
+
+def test_matrix_phase0_semantics_fail_closed_even_when_matrix_not_required():
+    requirements = {
+        "phase0_required": False,
+        "required_fields": [],
+        "matcher_semantics_required": True,
+        "next_action": "generate_patch_prompt",
+    }
+    validated = controller.validate_phase0_output_contract({"status": "PASS"}, requirements)
+    ASSERTIONS.assertEqual(validated["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertIn("matcher_semantics", validated["missing_fields"])
+    ASSERTIONS.assertFalse(validated["can_patch"])
+
+
+def test_matrix_phase0_required_false_does_not_override_derived_high_risk_context():
+    requirements = {"task": "wildcard traversal safety gate", "phase0_required": False}
+    validated = controller.validate_phase0_output_contract(
+        {"status": "PASS", "risk_level": "high", "next_action": "generate_patch_prompt"},
+        requirements,
+    )
+    ASSERTIONS.assertEqual(validated["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertTrue(validated["phase0_required"])
+    ASSERTIONS.assertEqual(validated["next_action"], "needs_manual_matrix_phase0_missing")
+
+
+def test_matrix_phase0_matcher_semantics_required_false_does_not_override_derived_context():
+    requirements = {"task": "normalize glob matcher", "matcher_semantics_required": False}
+    validated = controller.validate_phase0_output_contract(
+        {"status": "PASS", "risk_level": "high", "next_action": "generate_patch_prompt"},
+        requirements,
+    )
+    ASSERTIONS.assertEqual(validated["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(validated["next_action"], "needs_manual_matrix_phase0_missing")
+    ASSERTIONS.assertIn("matcher_semantics", validated["missing_fields"])
+    ASSERTIONS.assertFalse(validated["can_patch"])
+
+
+def test_matrix_phase0_gate_semantics_required_false_does_not_override_derived_context():
+    requirements = {"task": "validate live action safety", "gate_semantics_required": False}
+    validated = controller.validate_phase0_output_contract(
+        {"status": "PASS", "risk_level": "high", "next_action": "generate_patch_prompt"},
+        requirements,
+    )
+    ASSERTIONS.assertEqual(validated["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(validated["next_action"], "needs_manual_matrix_phase0_missing")
+    ASSERTIONS.assertIn("gate_semantics", validated["missing_fields"])
+    ASSERTIONS.assertFalse(validated["can_patch"])
+
+
+def test_matrix_phase0_missing_output_fails_closed():
+    validated = controller.validate_phase0_output_contract(None, {"phase0_required": False})
+    ASSERTIONS.assertEqual(validated["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(validated["next_action"], "needs_manual_phase0_missing_output")
+    ASSERTIONS.assertFalse(validated["can_patch"])
+
+
+def test_matrix_phase0_pass_missing_payload_next_action_fails_closed():
+    validated = controller.validate_phase0_output_contract({"status": "PASS"}, {})
+    ASSERTIONS.assertEqual(validated["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(validated["next_action"], "needs_manual_phase0_invalid_action")
+    ASSERTIONS.assertFalse(validated["can_patch"])
+
+
+def test_matrix_phase0_requirements_next_action_cannot_authorize_patch():
+    validated = controller.validate_phase0_output_contract({"status": "PASS"}, {"next_action": "generate_patch_prompt"})
+    ASSERTIONS.assertEqual(validated["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(validated["next_action"], "needs_manual_phase0_invalid_action")
+    ASSERTIONS.assertFalse(validated["can_patch"])
+
+
+def test_matrix_phase0_explicit_payload_generate_patch_prompt_can_patch():
+    validated = controller.validate_phase0_output_contract(
+        {"status": "PASS", "next_action": "generate_patch_prompt"},
+        {"phase0_required": False, "next_action": "needs_manual_phase0_failed"},
+    )
+    ASSERTIONS.assertEqual(validated["status"], "PASS")
+    ASSERTIONS.assertEqual(validated["next_action"], "generate_patch_prompt")
+    ASSERTIONS.assertTrue(validated["can_patch"])
+
+
+def test_matrix_phase0_explicit_payload_proceed_with_narrow_patch_can_patch():
+    validated = controller.validate_phase0_output_contract(
+        {"status": "PASS", "next_action": "proceed_with_narrow_patch"},
+        {"phase0_required": False, "next_action": "generate_patch_prompt"},
+    )
+    ASSERTIONS.assertEqual(validated["status"], "PASS")
+    ASSERTIONS.assertEqual(validated["next_action"], "proceed_with_narrow_patch")
+    ASSERTIONS.assertTrue(validated["can_patch"])
+
+
+def test_matrix_phase0_manual_or_blocked_output_cannot_patch():
+    manual = controller.validate_phase0_output_contract({"status": "manual"}, {"phase0_required": False})
+    blocked = controller.validate_phase0_output_contract({"status": "blocked"}, {"phase0_required": False})
+    ASSERTIONS.assertEqual(manual["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(blocked["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertFalse(manual["can_patch"])
+    ASSERTIONS.assertFalse(blocked["can_patch"])
+
+
+def test_matrix_phase0_invalid_status_fails_closed():
+    validated = controller.validate_phase0_output_contract({"status": "MAYBE"}, {"phase0_required": False})
+    ASSERTIONS.assertEqual(validated["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(validated["next_action"], "needs_manual_phase0_invalid_status")
+    ASSERTIONS.assertFalse(validated["can_patch"])
+
+
+def test_matrix_phase0_required_fields_reject_non_string_scalar_values():
+    requirements = controller.build_matrix_phase0_requirements({"task": "wildcard traversal safety gate"})
+    for scalar in (True, False, 1, 0, 3.14):
+        payload = _matrix_phase0_output_complete()
+        payload["files_inspected"] = scalar
+        validated = controller.validate_phase0_output_contract(payload, requirements)
+        ASSERTIONS.assertEqual(validated["status"], "NEEDS_MANUAL")
+        ASSERTIONS.assertFalse(validated["can_patch"])
+        ASSERTIONS.assertIn("files_inspected", validated["missing_fields"])
+
+
+def test_review_triage_active_reproducible_uncovered_bypass_patch_required():
+    comment = {"body": "Active bypass failure in guard path", "active": True, "reproducible": True}
+    result = controller.classify_review_triage_need(comment, {"checks_green": False})
+    ASSERTIONS.assertEqual(result, "PATCH_REQUIRED")
+
+
+def test_review_triage_covered_by_matrix_tests_evidence_resolve():
+    comment = {"body": "already fixed by matrix", "active": True, "covered_by_matrix": True}
+    result = controller.classify_review_triage_need(comment, {"checks_green": True})
+    ASSERTIONS.assertEqual(result, "EVIDENCE_RESOLVE")
+
+
+def test_review_triage_stale_advisory_with_green_checks_evidence_resolve():
+    comment = {"body": "stale advisory nit", "active": True}
+    result = controller.classify_review_triage_need(comment, {"checks_green": True})
+    ASSERTIONS.assertEqual(result, "EVIDENCE_RESOLVE")
+
+
+def test_review_triage_forbidden_scope_future_roadmap_ambiguous_needs_manual():
+    comment = {"body": "future scope roadmap; ambiguous architecture", "active": True}
+    result = controller.classify_review_triage_need(comment, {"checks_green": True})
+    ASSERTIONS.assertEqual(result, "NEEDS_MANUAL")
+
+
+def test_review_triage_resolved_or_outdated_threads_never_patch_required():
+    base = {"body": "Active bypass failure in guard path", "active": True, "reproducible": True}
+    for flag in ("isResolved", "isOutdated", "is_resolved", "is_outdated"):
+        comment = dict(base)
+        comment[flag] = True
+        result = controller.classify_review_triage_need(comment, {"checks_green": False})
+        ASSERTIONS.assertNotEqual(result, "PATCH_REQUIRED")
+        ASSERTIONS.assertEqual(result, "EVIDENCE_RESOLVE")
+
+
+def test_review_triage_resolved_or_outdated_short_circuits_forbidden_or_workflow_text():
+    base = {"body": "forbidden workflow bypass failure", "active": True, "reproducible": True}
+    for flag in ("isResolved", "isOutdated", "is_resolved", "is_outdated"):
+        comment = dict(base)
+        comment[flag] = True
+        result = controller.classify_review_triage_need(comment, {"checks_green": False})
+        ASSERTIONS.assertEqual(result, "EVIDENCE_RESOLVE")
+
+
+def test_review_triage_is_active_false_and_isActive_false_never_patch_required():
+    snake = {"body": "bypass failure in guard path", "is_active": False, "reproducible": True}
+    camel = {"body": "bypass failure in guard path", "isActive": False, "reproducible": True}
+    snake_result = controller.classify_review_triage_need(snake, {"checks_green": False})
+    camel_result = controller.classify_review_triage_need(camel, {"checks_green": False})
+    ASSERTIONS.assertNotEqual(snake_result, "PATCH_REQUIRED")
+    ASSERTIONS.assertNotEqual(camel_result, "PATCH_REQUIRED")
+    ASSERTIONS.assertEqual(snake_result, "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertEqual(camel_result, "EVIDENCE_RESOLVE")
+
+
+def test_build_review_triage_matrix_patch_required_full_payload():
+    comment = {"thread_id": "t-1", "body": "Active bypass failure in guard path", "active": True, "reproducible": True}
+    matrix = controller.build_review_triage_matrix([comment], {"checks_green": False})
+    item = matrix["items"][0]
+    ASSERTIONS.assertEqual(item["thread_id"], "t-1")
+    ASSERTIONS.assertEqual(item["decision"], "PATCH_REQUIRED")
+    ASSERTIONS.assertEqual(item["next_action"], "patch_missing_matrix_case")
+    ASSERTIONS.assertFalse(item["can_patch"])
+    ASSERTIONS.assertEqual(item["reason"], "active_reproducible_uncovered_failure_like_comment")
+    ASSERTIONS.assertFalse(item["matrix_coverage"])
+    ASSERTIONS.assertEqual(item["tests_covering_behavior"], [])
+    ASSERTIONS.assertTrue(item["requires_patch"])
+    ASSERTIONS.assertFalse(item["can_resolve_with_evidence"])
+    ASSERTIONS.assertEqual(matrix["next_action"], "patch_required")
+
+
+def test_build_review_triage_matrix_patch_required_authorized_can_patch_true():
+    comment = {"thread_id": "t-1", "body": "Active bypass failure in guard path", "active": True, "reproducible": True}
+    matrix = controller.build_review_triage_matrix(
+        [comment],
+        {"checks_green": False, "standing_owner_authorized": True},
+    )
+    item = matrix["items"][0]
+    ASSERTIONS.assertTrue(item["requires_patch"])
+    ASSERTIONS.assertTrue(item["can_patch"])
+    ASSERTIONS.assertEqual(matrix["next_action"], "patch_required")
+
+
+def test_build_review_triage_matrix_ignores_generic_can_patch_without_explicit_authorization():
+    comment = {"thread_id": "t-1", "body": "Active bypass failure in guard path", "active": True, "reproducible": True}
+    matrix = controller.build_review_triage_matrix([comment], {"checks_green": False, "can_patch": True})
+    item = matrix["items"][0]
+    ASSERTIONS.assertTrue(item["requires_patch"])
+    ASSERTIONS.assertFalse(item["can_patch"])
+
+
+def test_build_review_triage_matrix_patch_authorized_key_enables_can_patch():
+    comment = {"thread_id": "t-1", "body": "Active bypass failure in guard path", "active": True, "reproducible": True}
+    matrix = controller.build_review_triage_matrix([comment], {"checks_green": False, "patch_authorized": True})
+    item = matrix["items"][0]
+    ASSERTIONS.assertTrue(item["requires_patch"])
+    ASSERTIONS.assertTrue(item["can_patch"])
+
+
+def test_build_review_triage_matrix_truthy_string_authorization_flags_do_not_enable_patch():
+    comment = {"thread_id": "t-1", "body": "Active bypass failure in guard path", "active": True, "reproducible": True}
+    matrix = controller.build_review_triage_matrix(
+        [comment], {"checks_green": False, "standing_owner_authorized": "yes", "patch_authorized": "1"}
+    )
+    item = matrix["items"][0]
+    ASSERTIONS.assertTrue(item["requires_patch"])
+    ASSERTIONS.assertFalse(item["can_patch"])
+
+
+def test_build_review_triage_matrix_evidence_resolve_full_payload():
+    comment = {
+        "id": "22",
+        "body": "already fixed by matrix",
+        "active": True,
+        "covered_by_matrix": True,
+        "tests_covering_behavior": [
+            "tests/scripts/test_pr_automation_controller.py::"
+            "test_review_triage_covered_by_matrix_tests_evidence_resolve"
+        ],
+    }
+    matrix = controller.build_review_triage_matrix([comment], {"checks_green": True})
+    item = matrix["items"][0]
+    ASSERTIONS.assertEqual(item["thread_id"], "22")
+    ASSERTIONS.assertEqual(item["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertEqual(item["next_action"], "resolve_with_evidence")
+    ASSERTIONS.assertFalse(item["can_patch"])
+    ASSERTIONS.assertEqual(item["reason"], "covered_or_stale_with_green_checks")
+    ASSERTIONS.assertTrue(item["matrix_coverage"])
+    ASSERTIONS.assertEqual(len(item["tests_covering_behavior"]), 1)
+    ASSERTIONS.assertFalse(item["requires_patch"])
+    ASSERTIONS.assertTrue(item["can_resolve_with_evidence"])
+    ASSERTIONS.assertEqual(matrix["next_action"], "resolve_with_evidence")
+
+
+def test_build_review_triage_matrix_needs_manual_full_payload():
+    comment = {"thread_id": "t-3", "body": "future scope roadmap; ambiguous architecture", "active": True}
+    matrix = controller.build_review_triage_matrix([comment], {"checks_green": True})
+    item = matrix["items"][0]
+    ASSERTIONS.assertEqual(item["thread_id"], "t-3")
+    ASSERTIONS.assertEqual(item["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(item["next_action"], "needs_manual")
+    ASSERTIONS.assertFalse(item["can_patch"])
+    ASSERTIONS.assertEqual(item["reason"], "forbidden_scope_or_insufficient_signal_for_passive_action")
+    ASSERTIONS.assertFalse(item["matrix_coverage"])
+    ASSERTIONS.assertEqual(item["tests_covering_behavior"], [])
+    ASSERTIONS.assertFalse(item["requires_patch"])
+    ASSERTIONS.assertFalse(item["can_resolve_with_evidence"])
+    ASSERTIONS.assertEqual(matrix["next_action"], "needs_manual")
+
+
+def test_build_review_triage_matrix_mixed_decisions_patch_required_outranks_other_actions():
+    comments = [
+        {"thread_id": "p", "body": "Active bypass failure in guard path", "active": True, "reproducible": True},
+        {"thread_id": "e", "body": "already fixed by matrix", "active": True, "covered_by_matrix": True},
+        {"thread_id": "m", "body": "future scope roadmap; ambiguous architecture", "active": True},
+    ]
+    matrix = controller.build_review_triage_matrix(comments, {"checks_green": True, "standing_owner_authorized": True})
+    ASSERTIONS.assertEqual(matrix["next_action"], "patch_required")
+
+
+def test_standing_owner_authorization_narrow_in_scope_allowed():
+    result = controller.evaluate_standing_owner_authorization(
+        {
+            "phase0_passed": True,
+            "changed_files": ["scripts/pr_automation_controller.py"],
+            "files_allowed": ["scripts/pr_automation_controller.py", "tests/scripts/test_pr_automation_controller.py"],
+            "files_forbidden": [".github/workflows/*"],
+            "tests_required": True,
+            "tests_prove_behavior": True,
+        }
+    )
+    ASSERTIONS.assertTrue(result["authorized"])
+    ASSERTIONS.assertTrue(result["allowed"])
+    ASSERTIONS.assertFalse(result["needs_manual"])
+    ASSERTIONS.assertEqual(result["reasons"], [])
+
+
+def test_standing_owner_authorization_blocks_for_forbidden_workflow_live_secrets_future_scope():
+    result = controller.evaluate_standing_owner_authorization(
+        {
+            "changed_files": [".github/workflows/pr.yml", "scripts/pr_automation_controller.py"],
+            "files_allowed": ["scripts/pr_automation_controller.py"],
+            "files_forbidden": [".github/workflows/*"],
+            "workflow_edits": True,
+            "live_action": True,
+            "external_api_activation": True,
+            "secrets_or_provider_config": True,
+            "future_scope": True,
+            "tests_required": False,
+            "phase0_passed": False,
+        }
+    )
+    ASSERTIONS.assertFalse(result["authorized"])
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertTrue(result["needs_manual"])
+    ASSERTIONS.assertIn("scope_violation", result["reasons"])
+    ASSERTIONS.assertIn("forbidden_files_touched", result["reasons"])
+    ASSERTIONS.assertIn("files_outside_allowed", result["reasons"])
+    ASSERTIONS.assertIn("workflow_edits_without_explicit_scope", result["reasons"])
+    ASSERTIONS.assertIn("live_action_or_automation_activation_blocked", result["reasons"])
+    ASSERTIONS.assertIn("external_api_activation_blocked", result["reasons"])
+    ASSERTIONS.assertIn("secrets_or_provider_config_blocked", result["reasons"])
+    ASSERTIONS.assertIn("future_roadmap_scope_blocked", result["reasons"])
+    ASSERTIONS.assertNotIn("tests_cannot_prove_behavior", result["reasons"])
+    ASSERTIONS.assertIn("phase0_not_passed", result["reasons"])
+
+
+def test_standing_owner_authorization_tests_not_required_does_not_block_by_itself():
+    result = controller.evaluate_standing_owner_authorization(
+        {
+            "phase0_passed": True,
+            "changed_files": ["scripts/pr_automation_controller.py"],
+            "files_allowed": ["scripts/pr_automation_controller.py", "tests/scripts/test_pr_automation_controller.py"],
+            "files_forbidden": [".github/workflows/*"],
+            "tests_required": False,
+        }
+    )
+    ASSERTIONS.assertTrue(result["authorized"])
+    ASSERTIONS.assertNotIn("tests_cannot_prove_behavior", result["reasons"])
+
+
+def test_standing_owner_authorization_tests_required_missing_proof_blocks():
+    result = controller.evaluate_standing_owner_authorization(
+        {
+            "phase0_passed": True,
+            "changed_files": ["scripts/pr_automation_controller.py"],
+            "files_allowed": ["scripts/pr_automation_controller.py", "tests/scripts/test_pr_automation_controller.py"],
+            "files_forbidden": [".github/workflows/*"],
+            "tests_required": True,
+            "tests_prove_behavior": None,
+        }
+    )
+    ASSERTIONS.assertFalse(result["authorized"])
+    ASSERTIONS.assertIn("tests_cannot_prove_behavior", result["reasons"])
+
+
+def test_standing_owner_authorization_missing_phase0_signals_fails_closed():
+    result = controller.evaluate_standing_owner_authorization(
+        {
+            "changed_files": ["scripts/pr_automation_controller.py"],
+            "files_allowed": ["scripts/pr_automation_controller.py", "tests/scripts/test_pr_automation_controller.py"],
+            "files_forbidden": [".github/workflows/*"],
+            "tests_required": False,
+        }
+    )
+    ASSERTIONS.assertFalse(result["authorized"])
+    ASSERTIONS.assertIn("phase0_not_passed", result["reasons"])
+
+
+def test_standing_owner_authorization_missing_changed_files_scope_fails_closed():
+    result = controller.evaluate_standing_owner_authorization(
+        {
+            "phase0_passed": True,
+            "files_allowed": ["scripts/pr_automation_controller.py", "tests/scripts/test_pr_automation_controller.py"],
+            "files_forbidden": [".github/workflows/*"],
+            "tests_required": False,
+        }
+    )
+    ASSERTIONS.assertFalse(result["authorized"])
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertTrue(result["needs_manual"])
+    ASSERTIONS.assertIn("changed_files_missing", result["reasons"])
+    ASSERTIONS.assertIn("scope_unknown", result["reasons"])
+
+
+def test_standing_owner_authorization_empty_changed_files_scope_fails_closed():
+    for key in ("changed_files", "files_touched", "modified_files"):
+        result = controller.evaluate_standing_owner_authorization(
+            {
+                "phase0_passed": True,
+                key: [],
+                "files_allowed": [
+                    "scripts/pr_automation_controller.py",
+                    "tests/scripts/test_pr_automation_controller.py",
+                ],
+                "files_forbidden": [".github/workflows/*"],
+                "tests_required": False,
+            }
+        )
+        ASSERTIONS.assertFalse(result["authorized"])
+        ASSERTIONS.assertIn("changed_files_missing", result["reasons"])
+        ASSERTIONS.assertIn("scope_unknown", result["reasons"])
+
+
+def test_standing_owner_authorization_uses_modified_files_as_valid_scope_source():
+    result = controller.evaluate_standing_owner_authorization(
+        {
+            "phase0_passed": True,
+            "modified_files": ["scripts/pr_automation_controller.py"],
+            "files_allowed": ["scripts/pr_automation_controller.py", "tests/scripts/test_pr_automation_controller.py"],
+            "files_forbidden": [".github/workflows/*"],
+            "tests_required": False,
+        }
+    )
+    ASSERTIONS.assertTrue(result["authorized"])
+    ASSERTIONS.assertTrue(result["allowed"])
+    ASSERTIONS.assertFalse(result["needs_manual"])
+    ASSERTIONS.assertNotIn("changed_files_missing", result["reasons"])
+    ASSERTIONS.assertNotIn("scope_unknown", result["reasons"])
+
+
+def test_standing_owner_authorization_non_boolean_phase0_values_fail_closed():
+    for value in ("false", "0", "no", "yes", "1"):
+        result = controller.evaluate_standing_owner_authorization(
+            {
+                "phase0_passed": value,
+                "changed_files": ["scripts/pr_automation_controller.py"],
+                "files_allowed": [
+                    "scripts/pr_automation_controller.py",
+                    "tests/scripts/test_pr_automation_controller.py",
+                ],
+                "files_forbidden": [".github/workflows/*"],
+                "tests_required": False,
+            }
+        )
+        ASSERTIONS.assertFalse(result["authorized"])
+        ASSERTIONS.assertIn("phase0_not_passed", result["reasons"])

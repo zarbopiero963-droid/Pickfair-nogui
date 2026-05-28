@@ -151,6 +151,49 @@ PHASE0_EDIT_TRIGGERS = frozenset(
     {"task", "review_comment", "codacy", "deepsource", "github_check", "failing_check"}
 )
 PHASE0_PASS_ACTIONS = frozenset({"generate_patch_prompt", "proceed_with_narrow_patch"})
+MATRIX_PHASE0_REQUIRED_FIELDS = (
+    "files_inspected",
+    "authoritative_modules",
+    "dangerous_gates",
+    "files_allowed",
+    "files_forbidden",
+    "exact_patch_plan",
+    "test_matrix",
+    "tests_to_run",
+    "stop_conditions",
+    "risk_level",
+    "next_action",
+)
+MATRIX_PHASE0_HIGH_RISK_KEYWORDS = (
+    "allowlist",
+    "forbidden files",
+    "path matching",
+    "glob",
+    "wildcard",
+    "normalization",
+    "traversal",
+    "rollback",
+    "sandbox",
+    "dirty worktree",
+    "merge-conflict",
+    "merge conflict",
+    "resolver",
+    "automation gate",
+    "live gate",
+    "live-action",
+    "live action",
+    "commit",
+    "push",
+    "rerun",
+    "merge permission",
+    "enable/disable",
+    "enable disable",
+    "secrets",
+    "token redaction",
+    "credential",
+    "workflow execution",
+    "review loop",
+)
 PLACEHOLDER_VALUES = frozenset({"", "tbd", "todo", "none", "null", "n/a"})
 ALLOW_COMMIT_PUSH_PATTERN = re.compile(r"(?im)^\s*allow_commit_push\s*:\s*yes\s*$")
 COMMIT_PUSH_NEGATION_PATTERNS = (
@@ -330,7 +373,7 @@ def normalize_phase0_status(value: object) -> str:
     text = str(value or "").strip().upper().replace("-", "_").replace(" ", "_")
     if text in {"PASS", "PASSED"}:
         return "PASS"
-    if text in {"NEEDS_MANUAL", "MANUAL", "FAIL", "FAILED"}:
+    if text in {"NEEDS_MANUAL", "MANUAL", "FAIL", "FAILED", "BLOCKED"}:
         return "NEEDS_MANUAL"
     return ""
 
@@ -564,6 +607,7 @@ def decide_phase0_gate(parsed_result: dict[str, Any] | None) -> dict[str, Any]:
         "reason": "phase0_pass" if can_patch else "phase0_blocked",
         "needs_manual": not can_patch,
     }
+
 
 def _extract_phase0_json_candidates(text: str) -> list[str]:
     stripped = str(text or "").strip()
@@ -3517,6 +3561,218 @@ def _phase0_result_contract_line() -> str:
         "files_forbidden, implementation_plan, tests_to_run, stop_conditions, next_action."
     )
 
+
+def _risk_keyword_present(blob: str, keyword: str) -> bool:
+    token = str(keyword or "").strip().lower()
+    if not token:
+        return False
+    pattern = r"\b" + re.escape(token).replace(r"\ ", r"\s+") + r"\b"
+    return bool(re.search(pattern, str(blob or ""), flags=re.IGNORECASE))
+
+
+def _phase0_classification_blob(context: dict[str, Any]) -> str:
+    scalar_blob = " ".join(
+        str(context.get(key) or "")
+        for key in (
+            "task",
+            "task_title",
+            "title",
+            "objective",
+            "task_objective",
+            "context",
+            "scope",
+            "task_scope",
+            "body",
+            "notes",
+        )
+    )
+    dangerous_blob = " ".join(_context_list(context, "dangerous_gates"))
+    authoritative_blob = " ".join(_context_list(context, "authoritative_modules"))
+    return " ".join((scalar_blob, dangerous_blob, authoritative_blob)).lower().strip()
+
+
+def classify_phase0_profile(context: dict[str, Any] | None = None) -> str:
+    """Classify whether task context is standard or matrix-required."""
+    ctx = context if isinstance(context, dict) else {}
+    risk_blob = _phase0_classification_blob(ctx)
+    if any(_risk_keyword_present(risk_blob, keyword) for keyword in MATRIX_PHASE0_HIGH_RISK_KEYWORDS):
+        return "matrix_required"
+    return "standard"
+
+
+def task_requires_matrix_phase0(context: dict[str, Any] | None = None) -> bool:
+    """Return whether matrix phase-0 is required for this task context."""
+    return classify_phase0_profile(context) == "matrix_required"
+
+
+def build_matrix_phase0_requirements(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Build passive Matrix Phase 0 requirements for the current task profile."""
+    ctx = context if isinstance(context, dict) else {}
+    profile = classify_phase0_profile(ctx)
+    task_text_blob = " ".join(
+        str(ctx.get(key) or "")
+        for key in (
+            "task",
+            "task_title",
+            "title",
+            "objective",
+            "task_objective",
+            "context",
+            "scope",
+            "task_scope",
+            "body",
+            "notes",
+        )
+    )
+    semantic_blob = " ".join(
+        _context_list(ctx, "dangerous_gates") + _context_list(ctx, "authoritative_modules") + [task_text_blob]
+    )
+    matcher_semantics_needed = any(
+        _risk_keyword_present(semantic_blob, token)
+        for token in ("path", "glob", "wildcard", "matcher", "path matcher", "allowlist", "forbidden files", "normalization", "traversal")
+    )
+    gate_semantics_needed = any(_risk_keyword_present(semantic_blob, token) for token in ("gate", "permission", "live"))
+    requirements: dict[str, Any] = {
+        "profile": profile,
+        "phase0_required": profile == "matrix_required",
+        "required_fields": list(MATRIX_PHASE0_REQUIRED_FIELDS),
+        "risk_level": "high" if profile == "matrix_required" else "medium",
+        "next_action": "generate_patch_prompt",
+    }
+    if matcher_semantics_needed:
+        requirements["matcher_semantics_required"] = True
+    if gate_semantics_needed:
+        requirements["gate_semantics_required"] = True
+    return requirements
+
+
+def validate_phase0_output_contract(
+    phase0_output: dict[str, Any] | None,
+    requirements: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Validate Matrix Phase 0 output with fail-closed behavior."""
+    output = phase0_output if isinstance(phase0_output, dict) else {}
+    provided_requirements = requirements if isinstance(requirements, dict) else {}
+    # Callers may pass raw task context (e.g. dangerous_gates) instead of explicit
+    # requirement flags; derive a fail-closed requirement baseline in that case.
+    derived_req = build_matrix_phase0_requirements(provided_requirements)
+    req = dict(derived_req)
+    req.update(provided_requirements)
+    # Preserve semantic requirements derived from task context. Callers may
+    # explicitly require semantics (True), but cannot disable derived True with False.
+    req["matcher_semantics_required"] = bool(derived_req.get("matcher_semantics_required")) or bool(
+        provided_requirements.get("matcher_semantics_required")
+    )
+    req["gate_semantics_required"] = bool(derived_req.get("gate_semantics_required")) or bool(
+        provided_requirements.get("gate_semantics_required")
+    )
+    derived_matrix_required = task_requires_matrix_phase0(req)
+    if "phase0_required" in provided_requirements:
+        matrix_required = bool(provided_requirements.get("phase0_required")) or derived_matrix_required
+    else:
+        matrix_required = bool(req.get("phase0_required")) or derived_matrix_required
+    required_fields = list(req.get("required_fields") or MATRIX_PHASE0_REQUIRED_FIELDS)
+    missing: list[str] = []
+    raw_status = str(output.get("status") or "").strip()
+    normalized_status = normalize_phase0_status(raw_status)
+    semantic_requirements_present = bool(req.get("matcher_semantics_required") or req.get("gate_semantics_required"))
+    raw_payload_action = output.get("next_action")
+    patch_safe_action = _phase0_action(raw_payload_action)
+
+    def _normalize_placeholder_token(value: object) -> str:
+        token = str(value or "").strip()
+        while len(token) >= 2 and token[0] == token[-1] and token[0] in {'"', "'"}:
+            token = token[1:-1].strip()
+        return token.lower()
+
+    def _is_placeholder_value(value: object) -> bool:
+        return _normalize_placeholder_token(value) in PLACEHOLDER_VALUES
+
+    def _is_real_scalar_value(value: object) -> bool:
+        if isinstance(value, (dict, list, tuple, set)) or value is None:
+            return False
+        if isinstance(value, str):
+            return not _is_placeholder_value(value)
+        return False
+
+    def _has_real_value(value: object) -> bool:
+        if isinstance(value, dict):
+            return False
+        if isinstance(value, (list, tuple, set)):
+            return any(_is_real_scalar_value(item) for item in value)
+        return _is_real_scalar_value(value)
+
+    for field in required_fields:
+        value = output.get(field)
+        if not _has_real_value(value):
+            missing.append(field)
+
+    if req.get("matcher_semantics_required") and not _has_real_value(output.get("matcher_semantics")):
+        missing.append("matcher_semantics")
+    if req.get("gate_semantics_required") and not _has_real_value(output.get("gate_semantics")):
+        missing.append("gate_semantics")
+
+    fail_closed_on_missing = matrix_required or semantic_requirements_present
+    if fail_closed_on_missing and missing:
+        return {
+            "status": "NEEDS_MANUAL",
+            "next_action": "needs_manual_matrix_phase0_missing",
+            "can_patch": False,
+            "missing_fields": sorted(set(missing)),
+            "risk_level": str(output.get("risk_level") or req.get("risk_level") or "high"),
+            "phase0_required": True,
+        }
+
+    if not output:
+        return {
+            "status": "NEEDS_MANUAL",
+            "next_action": "needs_manual_phase0_missing_output",
+            "can_patch": False,
+            "missing_fields": sorted(set(missing)),
+            "risk_level": str(req.get("risk_level") or "high"),
+            "phase0_required": matrix_required,
+        }
+
+    if raw_status and not normalized_status:
+        return {
+            "status": "NEEDS_MANUAL",
+            "next_action": "needs_manual_phase0_invalid_status",
+            "can_patch": False,
+            "missing_fields": sorted(set(missing)),
+            "risk_level": str(output.get("risk_level") or req.get("risk_level") or "high"),
+            "phase0_required": matrix_required,
+        }
+
+    if normalized_status != "PASS":
+        return {
+            "status": "NEEDS_MANUAL",
+            "next_action": "needs_manual_phase0_blocked",
+            "can_patch": False,
+            "missing_fields": sorted(set(missing)),
+            "risk_level": str(output.get("risk_level") or req.get("risk_level") or "high"),
+            "phase0_required": matrix_required,
+        }
+
+    if patch_safe_action not in PHASE0_PASS_ACTIONS:
+        return {
+            "status": "NEEDS_MANUAL",
+            "next_action": "needs_manual_phase0_invalid_action",
+            "can_patch": False,
+            "missing_fields": sorted(set(missing)),
+            "risk_level": str(output.get("risk_level") or req.get("risk_level") or "high"),
+            "phase0_required": matrix_required,
+        }
+
+    return {
+        "status": "PASS",
+        "next_action": patch_safe_action,
+        "can_patch": True,
+        "missing_fields": [],
+        "risk_level": str(output.get("risk_level") or req.get("risk_level") or "medium"),
+        "phase0_required": matrix_required,
+    }
+
+
 def _codex_scalar_context_map(context: dict[str, Any]) -> dict[str, str]:
     scalar = {name: _context_scalar(context, key) for name, key in CODEX_SCALAR_KEYS}
     scalar["METHOD"] = _context_scalar(context, "method", _codex_scalar_defaults()["method"])
@@ -5145,6 +5401,198 @@ def review_provider_presence_status(
         "reason": "missing review providers are optional",
         "next_action": "continue_checks",
     }
+
+
+def review_comment_requires_patch(comment: dict[str, Any], context: dict[str, Any] | None = None) -> bool:
+    """True only for active reproducible uncovered bypass/failure reports."""
+    ctx = context if isinstance(context, dict) else {}
+    body = _review_text_blob(comment)
+    active_raw = comment.get("is_active")
+    if active_raw is None:
+        active_raw = comment.get("isActive")
+    if active_raw is None:
+        active_raw = comment.get("active", True)
+    active = bool(active_raw)
+    reproducible = bool(comment.get("reproducible", True))
+    covered = bool(comment.get("covered_by_matrix") or comment.get("covered_by_tests") or ctx.get("covered"))
+    failure_like = bool(
+        re.search(r"\b(bypass|failure|failing|broken|regression|security|correctness)\b", body)
+        or bool(comment.get("failure_detected"))
+    )
+    return active and reproducible and failure_like and not covered
+
+
+def review_comment_can_resolve_with_evidence(comment: dict[str, Any], context: dict[str, Any] | None = None) -> bool:
+    """True when issue is covered/already-fixed/advisory and checks are green."""
+    ctx = context if isinstance(context, dict) else {}
+    body = _review_text_blob(comment)
+    covered = bool(comment.get("covered_by_matrix") or comment.get("covered_by_tests") or ctx.get("covered"))
+    stale = bool(re.search(r"\b(stale|already fixed|resolved|advisory|nit|optional)\b", body))
+    checks_green = bool(ctx.get("checks_green", comment.get("checks_green", False)))
+    return checks_green and (covered or stale)
+
+
+def classify_review_triage_need(comment: dict[str, Any], context: dict[str, Any] | None = None) -> str:
+    """Classify review triage as PATCH_REQUIRED, EVIDENCE_RESOLVE, or NEEDS_MANUAL."""
+    ctx = context if isinstance(context, dict) else {}
+    body = _review_text_blob(comment)
+    if bool(comment.get("isResolved") or comment.get("isOutdated") or comment.get("is_resolved") or comment.get("is_outdated")):
+        return "EVIDENCE_RESOLVE"
+    if comment.get("is_active") is False or comment.get("isActive") is False or comment.get("active") is False:
+        return "EVIDENCE_RESOLVE"
+    forbidden_scope = bool(
+        ctx.get("forbidden_scope")
+        or re.search(r"\b(forbidden|workflow|roadmap|future scope|ambiguous architecture|unprovable)\b", body)
+    )
+    if forbidden_scope:
+        return "NEEDS_MANUAL"
+    if review_comment_requires_patch(comment, ctx):
+        return "PATCH_REQUIRED"
+    if review_comment_can_resolve_with_evidence(comment, ctx):
+        return "EVIDENCE_RESOLVE"
+    return "NEEDS_MANUAL"
+
+
+def build_review_evidence_reply(comment: dict[str, Any], evidence: dict[str, Any] | None = None) -> str:
+    """Build a passive evidence reply body for safe review resolution."""
+    _ = comment
+    ev = evidence if isinstance(evidence, dict) else {}
+    head = str(ev.get("head_sha") or ev.get("current_head_sha") or "current head")
+    tests = ev.get("tests") if isinstance(ev.get("tests"), list) else []
+    tests_line = ", ".join(str(test).strip() for test in tests if str(test).strip()) or "no additional tests listed"
+    return (
+        f"Resolved with evidence on {head}.\n\n"
+        "Evidence:\n"
+        f"- Coverage status: {'covered' if ev.get('covered') else 'not covered'}\n"
+        f"- Checks green: {'yes' if ev.get('checks_green') else 'no'}\n"
+        f"- Validation: {tests_line}\n"
+    )
+
+
+def build_review_triage_matrix(
+    comments: list[dict[str, Any]] | None,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build passive triage outcomes for review comments."""
+    ctx = context if isinstance(context, dict) else {}
+    patch_authorized = ctx.get("standing_owner_authorized") is True or ctx.get("patch_authorized") is True
+    items: list[dict[str, Any]] = []
+    for comment in comments or []:
+        decision = classify_review_triage_need(comment, ctx)
+        matrix_coverage = bool(comment.get("covered_by_matrix") or comment.get("covered_by_tests") or ctx.get("covered"))
+        tests_covering_behavior_raw = comment.get("tests_covering_behavior", ctx.get("tests_covering_behavior", []))
+        tests_covering_behavior = (
+            [str(item).strip() for item in tests_covering_behavior_raw if str(item).strip()]
+            if isinstance(tests_covering_behavior_raw, list)
+            else []
+        )
+        requires_patch = decision == "PATCH_REQUIRED"
+        can_resolve_with_evidence = decision == "EVIDENCE_RESOLVE"
+        if decision == "PATCH_REQUIRED":
+            reason = "active_reproducible_uncovered_failure_like_comment"
+            next_action = "patch_missing_matrix_case" if not matrix_coverage else "patch_required"
+        elif decision == "EVIDENCE_RESOLVE":
+            reason = "covered_or_stale_with_green_checks"
+            next_action = "resolve_with_evidence"
+        else:
+            reason = "forbidden_scope_or_insufficient_signal_for_passive_action"
+            next_action = "needs_manual"
+        items.append(
+            {
+                "thread_id": str(comment.get("thread_id") or comment.get("id") or ""),
+                "decision": decision,
+                "next_action": next_action,
+                "can_patch": requires_patch and patch_authorized,
+                "reason": reason,
+                "matrix_coverage": matrix_coverage,
+                "tests_covering_behavior": tests_covering_behavior,
+                "requires_patch": requires_patch,
+                "can_resolve_with_evidence": can_resolve_with_evidence,
+            }
+        )
+    return {
+        "items": items,
+        "next_action": (
+            "patch_required"
+            if any(item["requires_patch"] for item in items)
+            else "resolve_with_evidence"
+            if any(item["can_resolve_with_evidence"] for item in items)
+            else "needs_manual"
+        ),
+    }
+
+
+def evaluate_standing_owner_authorization(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Evaluate standing owner authorization for narrow in-scope passive patching."""
+    ctx = context if isinstance(context, dict) else {}
+    changed_files_sources = ("changed_files", "files_touched", "modified_files")
+    changed_files = None
+    changed_files_key_present = False
+    for key in changed_files_sources:
+        if key in ctx:
+            changed_files_key_present = True
+            candidate = ctx.get(key)
+            if isinstance(candidate, list):
+                if any(str(item).strip() for item in candidate):
+                    changed_files = candidate
+                    break
+            elif isinstance(candidate, str):
+                if any(part.strip() for part in re.split(r"[,\n]", candidate)):
+                    changed_files = candidate
+                    break
+    if changed_files is None:
+        changed_files = []
+    files_allowed = ctx.get("files_allowed", [])
+    files_forbidden = ctx.get("files_forbidden", [])
+    reasons: list[str] = []
+
+    changed_files_missing = not changed_files_key_present or not bool(changed_files)
+    if changed_files_missing:
+        reasons.append("changed_files_missing")
+        reasons.append("scope_unknown")
+
+    scope_audit = audit_changed_files_against_scope(changed_files, files_allowed, files_forbidden)
+    if not changed_files_missing and not bool(scope_audit.get("allowed")):
+        reasons.append("scope_violation")
+        offending = scope_audit.get("offending_files")
+        if isinstance(offending, list):
+            offending_values = {str(item).strip() for item in offending if str(item).strip()}
+            forbidden_hit = any(
+                classify_changed_file_scope(path, files_allowed, files_forbidden).get("classification") == "forbidden"
+                for path in offending_values
+                if not str(path).startswith("<invalid:")
+            )
+            if forbidden_hit:
+                reasons.append("forbidden_files_touched")
+            if offending_values:
+                reasons.append("files_outside_allowed")
+        else:
+            reasons.append("files_outside_allowed")
+
+    if bool(ctx.get("workflow_edits")):
+        reasons.append("workflow_edits_without_explicit_scope")
+    if bool(ctx.get("live_action")) or bool(ctx.get("auto_rerun")) or bool(ctx.get("auto_merge")) or bool(ctx.get("auto_push")):
+        reasons.append("live_action_or_automation_activation_blocked")
+    if bool(ctx.get("external_api_activation")):
+        reasons.append("external_api_activation_blocked")
+    if bool(ctx.get("secrets_or_provider_config")):
+        reasons.append("secrets_or_provider_config_blocked")
+    if bool(ctx.get("future_roadmap_scope")) or bool(ctx.get("future_scope")):
+        reasons.append("future_roadmap_scope_blocked")
+    tests_required = bool(ctx.get("tests_required", True))
+    tests_prove_behavior = ctx.get("tests_prove_behavior")
+    if tests_required and tests_prove_behavior is not True:
+        reasons.append("tests_cannot_prove_behavior")
+    phase0_passed = ctx.get("phase0_passed")
+    phase0_safe_fix_identified = ctx.get("phase0_safe_fix_identified")
+    has_phase0_signal = phase0_passed is not None or phase0_safe_fix_identified is not None
+    phase0_authorized = phase0_passed is True or phase0_safe_fix_identified is True
+    if not has_phase0_signal:
+        reasons.append("phase0_not_passed")
+    elif not phase0_authorized:
+        reasons.append("phase0_not_passed")
+    authorized = not reasons
+    return {"authorized": authorized, "allowed": authorized, "needs_manual": not authorized, "reasons": reasons}
 
 
 def classify_review_comment_severity(comment_or_thread: dict[str, Any]) -> str:
