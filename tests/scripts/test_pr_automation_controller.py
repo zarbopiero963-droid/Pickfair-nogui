@@ -6989,3 +6989,137 @@ def test_standing_owner_authorization_non_boolean_phase0_values_fail_closed():
         )
         ASSERTIONS.assertFalse(result["authorized"])
         ASSERTIONS.assertIn("phase0_not_passed", result["reasons"])
+
+
+def test_manual_unblock_reason_classification_mapping_required_cases():
+    cases = [
+        ("current_head_verification_blocked", "current_head_verification_blocked"),
+        ("matrix_phase0_missing_required_fields", "matrix_phase0_missing_required_fields"),
+        ("matrix_phase0_needs_manual", "matrix_phase0_needs_manual"),
+        ("review_triage_needs_manual", "review_triage_needs_manual"),
+        ("forbidden_files_required", "forbidden_files_required"),
+        ("workflow_edit_not_authorized", "workflow_edit_not_authorized"),
+        ("live_action_requested_while_disabled", "live_action_requested_while_disabled"),
+        ("tests_cannot_prove_behavior", "tests_cannot_prove_behavior"),
+        ("ambiguous_architecture", "ambiguous_architecture"),
+        ("future_roadmap_scope", "future_roadmap_scope"),
+    ]
+    for key, expected in cases:
+        ASSERTIONS.assertEqual(controller.classify_manual_unblock_reason({"reason": key}), expected)
+
+
+def test_manual_unblock_reason_classification_accepts_required_raw_string_inputs():
+    cases = [
+        ("current-head verification blocked", "current_head_verification_blocked"),
+        ("matrix phase0 missing required fields", "matrix_phase0_missing_required_fields"),
+        ("matrix phase0 needs_manual", "matrix_phase0_needs_manual"),
+        ("review triage needs_manual", "review_triage_needs_manual"),
+        ("forbidden files required", "forbidden_files_required"),
+        ("workflow edit not authorized", "workflow_edit_not_authorized"),
+        ("live action requested while disabled", "live_action_requested_while_disabled"),
+        ("tests cannot prove behavior", "tests_cannot_prove_behavior"),
+        ("ambiguous architecture", "ambiguous_architecture"),
+        ("future roadmap scope", "future_roadmap_scope"),
+    ]
+    for raw_reason, expected in cases:
+        ASSERTIONS.assertEqual(controller.classify_manual_unblock_reason(raw_reason), expected)
+
+
+def test_manual_unblock_reason_classification_unknown_raw_string_falls_back_to_ambiguous_architecture():
+    ASSERTIONS.assertEqual(
+        controller.classify_manual_unblock_reason("some unknown reason text"),
+        "ambiguous_architecture",
+    )
+
+
+def test_manual_unblock_authorization_text_exact_format():
+    text = controller.build_manual_authorization_text("PR10E", "matrix_phase0_needs_manual")
+    ASSERTIONS.assertEqual(text, "AUTORIZZO PATCH PR10E NEEDS_MANUAL per matrix_phase0_needs_manual")
+
+
+def test_manual_unblock_command_is_single_line_and_deterministic():
+    first = controller.build_manual_unblock_command("PR10E", "225", "abc123", "matrix_phase0_needs_manual")
+    second = controller.build_manual_unblock_command("PR10E", "225", "abc123", "matrix_phase0_needs_manual")
+    ASSERTIONS.assertEqual(first, second)
+    ASSERTIONS.assertNotIn("\n", first)
+    ASSERTIONS.assertIn("--manual-unblock", first)
+    ASSERTIONS.assertIn("--pr-name PR10E", first)
+    ASSERTIONS.assertIn("--pr-number 225", first)
+    ASSERTIONS.assertIn("--head-sha abc123", first)
+    ASSERTIONS.assertIn("--reason matrix_phase0_needs_manual", first)
+
+
+def test_manual_unblock_telegram_message_contains_pr_head_scope_reason():
+    package = {
+        "pr_number": "225",
+        "head_sha": "abc123",
+        "files_allowed": ["scripts/pr_automation_controller.py"],
+        "files_forbidden": [".github/workflows/*"],
+        "reason": "review_triage_needs_manual",
+        "next_action": "needs_manual",
+    }
+    message = controller.build_manual_unblock_telegram_message(package)
+    ASSERTIONS.assertIn("PR: 225", message)
+    ASSERTIONS.assertIn("Head: abc123", message)
+    ASSERTIONS.assertIn("Scope allowed: scripts/pr_automation_controller.py", message)
+    ASSERTIONS.assertIn("Scope forbidden: .github/workflows/*", message)
+    ASSERTIONS.assertIn("Reason: review_triage_needs_manual", message)
+
+
+def test_manual_unblock_package_shape_and_fixed_status_flags():
+    package = controller.build_manual_unblock_package(
+        {
+            "pr_name": "PR10E",
+            "pr_number": "225",
+            "head_sha": "abc123",
+            "reason": "matrix_phase0_needs_manual",
+            "next_action": "needs_manual",
+            "files_allowed": ["scripts/pr_automation_controller.py", "tests/scripts/test_pr_automation_controller.py"],
+            "files_forbidden": [".github/workflows/*", "scripts/pr_flow_automation.py"],
+        }
+    )
+    ASSERTIONS.assertEqual(
+        set(package.keys()),
+        {
+            "status",
+            "next_action",
+            "reason",
+            "pr_number",
+            "head_sha",
+            "files_allowed",
+            "files_forbidden",
+            "copy_paste_command",
+            "authorization_text",
+            "telegram_message",
+            "can_patch",
+        },
+    )
+    ASSERTIONS.assertEqual(package["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertFalse(package["can_patch"])
+    ASSERTIONS.assertEqual(
+        package["authorization_text"],
+        "AUTORIZZO PATCH PR10E NEEDS_MANUAL per matrix_phase0_needs_manual",
+    )
+
+
+def test_manual_unblock_package_supports_phase0_manual_review_current_head_and_standing_auth_reasons():
+    reason_contexts = [
+        ({"matrix_phase0_needs_manual": True}, "matrix_phase0_needs_manual"),
+        ({"reason": "review_triage_needs_manual"}, "review_triage_needs_manual"),
+        ({"current_head_verification_blocked": True}, "current_head_verification_blocked"),
+        ({"tests_cannot_prove_behavior": True}, "tests_cannot_prove_behavior"),
+    ]
+    for ctx, expected_reason in reason_contexts:
+        package = controller.build_manual_unblock_package(
+            {
+                "pr_name": "PR10E",
+                "pr_number": "225",
+                "head_sha": "abc123",
+                "files_allowed": ["scripts/pr_automation_controller.py"],
+                "files_forbidden": [".github/workflows/*"],
+                **ctx,
+            }
+        )
+        ASSERTIONS.assertEqual(package["reason"], expected_reason)
+        ASSERTIONS.assertEqual(package["status"], "NEEDS_MANUAL")
+        ASSERTIONS.assertFalse(package["can_patch"])

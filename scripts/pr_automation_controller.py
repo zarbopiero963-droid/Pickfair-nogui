@@ -5595,6 +5595,118 @@ def evaluate_standing_owner_authorization(context: dict[str, Any] | None = None)
     return {"authorized": authorized, "allowed": authorized, "needs_manual": not authorized, "reasons": reasons}
 
 
+MANUAL_UNBLOCK_REASON_MAP = {
+    "current_head_verification_blocked": "current_head_verification_blocked",
+    "matrix_phase0_missing_required_fields": "matrix_phase0_missing_required_fields",
+    "matrix_phase0_needs_manual": "matrix_phase0_needs_manual",
+    "review_triage_needs_manual": "review_triage_needs_manual",
+    "forbidden_files_required": "forbidden_files_required",
+    "workflow_edit_not_authorized": "workflow_edit_not_authorized",
+    "live_action_requested_while_disabled": "live_action_requested_while_disabled",
+    "tests_cannot_prove_behavior": "tests_cannot_prove_behavior",
+    "ambiguous_architecture": "ambiguous_architecture",
+    "future_roadmap_scope": "future_roadmap_scope",
+}
+
+
+def classify_manual_unblock_reason(context: dict[str, Any] | str | None = None) -> str:
+    """Classify current blocking state into a deterministic manual-unblock reason."""
+    ctx: dict[str, Any] = context if isinstance(context, dict) else {}
+    raw_reason = context if isinstance(context, str) else ctx.get("reason")
+    reason = re.sub(r"_+", "_", re.sub(r"[-/\s]+", "_", str(raw_reason or "").strip().lower())).strip("_")
+    if reason in MANUAL_UNBLOCK_REASON_MAP:
+        return MANUAL_UNBLOCK_REASON_MAP[reason]
+    if bool(ctx.get("current_head_verification_blocked")):
+        return MANUAL_UNBLOCK_REASON_MAP["current_head_verification_blocked"]
+    if bool(ctx.get("matrix_phase0_missing_required_fields")):
+        return MANUAL_UNBLOCK_REASON_MAP["matrix_phase0_missing_required_fields"]
+    if bool(ctx.get("matrix_phase0_needs_manual")):
+        return MANUAL_UNBLOCK_REASON_MAP["matrix_phase0_needs_manual"]
+    if bool(ctx.get("review_triage_needs_manual")):
+        return MANUAL_UNBLOCK_REASON_MAP["review_triage_needs_manual"]
+    if bool(ctx.get("forbidden_files_required")):
+        return MANUAL_UNBLOCK_REASON_MAP["forbidden_files_required"]
+    if bool(ctx.get("workflow_edit_not_authorized")):
+        return MANUAL_UNBLOCK_REASON_MAP["workflow_edit_not_authorized"]
+    if bool(ctx.get("live_action_requested_while_disabled")):
+        return MANUAL_UNBLOCK_REASON_MAP["live_action_requested_while_disabled"]
+    if bool(ctx.get("tests_cannot_prove_behavior")):
+        return MANUAL_UNBLOCK_REASON_MAP["tests_cannot_prove_behavior"]
+    if bool(ctx.get("ambiguous_architecture")):
+        return MANUAL_UNBLOCK_REASON_MAP["ambiguous_architecture"]
+    if bool(ctx.get("future_roadmap_scope")):
+        return MANUAL_UNBLOCK_REASON_MAP["future_roadmap_scope"]
+    return MANUAL_UNBLOCK_REASON_MAP["ambiguous_architecture"]
+
+
+def build_manual_authorization_text(pr_name: object, specific_reason: object) -> str:
+    """Return mandatory authorization text format for manual unblock."""
+    pr = str(pr_name or "").strip() or "PR"
+    reason = str(specific_reason or "").strip() or MANUAL_UNBLOCK_REASON_MAP["ambiguous_architecture"]
+    return f"AUTORIZZO PATCH {pr} NEEDS_MANUAL per {reason}"
+
+
+def _manual_token(value: object, fallback: str) -> str:
+    token = re.sub(r"[^A-Za-z0-9._:/-]+", "_", str(value or "").strip()).strip("_")
+    return token or fallback
+
+
+def build_manual_unblock_command(
+    pr_name: object,
+    pr_number: object,
+    head_sha: object,
+    specific_reason: object,
+) -> str:
+    """Build a deterministic single-line copy/paste command for manual unblock."""
+    reason_slug = _manual_token(str(specific_reason or "").lower().replace(" ", "_"), "ambiguous_architecture")
+    return (
+        "python3 scripts/pr_automation_controller.py --manual-unblock"
+        f" --pr-name {_manual_token(pr_name, 'PR')}"
+        f" --pr-number {_manual_token(pr_number, 'unknown')}"
+        f" --head-sha {_manual_token(head_sha, 'unknown')}"
+        f" --reason {reason_slug}"
+        " --mode passive"
+    )
+
+
+def build_manual_unblock_telegram_message(package: dict[str, Any] | None = None) -> str:
+    """Render passive Telegram text for manual unblock package (no send)."""
+    payload = package if isinstance(package, dict) else {}
+    return (
+        "[PASSIVE] Manual unblock package generated.\n"
+        f"PR: {payload.get('pr_number') or 'unknown'}\n"
+        f"Head: {payload.get('head_sha') or 'unknown'}\n"
+        f"Scope allowed: {', '.join(payload.get('files_allowed') or []) or '(none)'}\n"
+        f"Scope forbidden: {', '.join(payload.get('files_forbidden') or []) or '(none)'}\n"
+        f"Reason: {payload.get('reason') or MANUAL_UNBLOCK_REASON_MAP['ambiguous_architecture']}\n"
+        f"Next action: {payload.get('next_action') or 'needs_manual'}"
+    )
+
+
+def build_manual_unblock_package(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Build passive manual unblock package; never authorizes patching."""
+    ctx = context if isinstance(context, dict) else {}
+    reason = classify_manual_unblock_reason(ctx)
+    pr_name = str(ctx.get("pr_name") or "PR").strip()
+    package = {
+        "status": "NEEDS_MANUAL",
+        "next_action": str(ctx.get("next_action") or "needs_manual"),
+        "reason": reason,
+        "pr_number": str(ctx.get("pr_number") or ""),
+        "head_sha": str(ctx.get("head_sha") or ""),
+        "files_allowed": [str(item).strip() for item in (ctx.get("files_allowed") or []) if str(item).strip()],
+        "files_forbidden": [str(item).strip() for item in (ctx.get("files_forbidden") or []) if str(item).strip()],
+        "copy_paste_command": "",
+        "authorization_text": "",
+        "telegram_message": "",
+        "can_patch": False,
+    }
+    package["copy_paste_command"] = build_manual_unblock_command(pr_name, package["pr_number"], package["head_sha"], reason)
+    package["authorization_text"] = build_manual_authorization_text(pr_name, reason)
+    package["telegram_message"] = build_manual_unblock_telegram_message(package)
+    return package
+
+
 def classify_review_comment_severity(comment_or_thread: dict[str, Any]) -> str:
     """Classify review comment severity from common review-bot wording."""
     body = _review_text_blob(comment_or_thread)
