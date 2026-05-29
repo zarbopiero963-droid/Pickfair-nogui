@@ -7709,28 +7709,54 @@ def test_can_auto_push_raw_env_live_with_task_no_commit_push_blocks_by_override(
 def test_can_auto_merge_denies_each_guard_condition():
     base = _automation_ctx("live")
     cases = [
-        ("mergeable", {"mergeable": "CONFLICTING"}),
-        ("mergeStateStatus", {"mergeStateStatus": "DIRTY"}),
-        ("bad", {"bad": ["x"]}),
-        ("pending", {"pending": ["x"]}),
-        ("bad_missing", {"bad": "not-a-list"}),
-        ("pending_missing", {"pending": "not-a-list"}),
+        ("mergeable_not_mergeable", {"mergeable": "CONFLICTING"}),
+        ("merge_state_not_clean", {"mergeStateStatus": "DIRTY"}),
+        ("bad_checks_present", {"bad": ["x"]}),
+        ("pending_checks_present", {"pending": ["x"]}),
+        ("bad_checks_missing", {"bad": "not-a-list", "blockers": "not-a-list"}),
+        ("pending_checks_missing", {"pending": "not-a-list"}),
         ("unresolved_active_missing", {"unresolved_active": "bad-value"}),
-        ("unresolved_active", {"unresolved_active": 1}),
-        ("codacy_conclusion", {"codacy_conclusion": "FAILURE", "codacy_status": "FAILURE"}),
-        ("codacy_status", {"codacy_status": "FAILURE", "codacy_conclusion": "FAILURE"}),
-        ("codacy_missing", {"codacy_conclusion": "", "codacy_status": ""}),
-        ("annotations_missing", {"annotations_count": "unknown"}),
-        ("annotations_count", {"annotations_count": 1}),
-        ("current_head_matches", {"current_head_matches": False}),
-        ("explicit_merge_authorization", {"explicit_merge_authorization": False}),
+        ("unresolved_reviews_present", {"unresolved_active": 1}),
+        (
+            "codacy_failure_state_present",
+            {"codacy_conclusion": "SUCCESS", "codacy_status": "FAILURE"},
+        ),
+        ("codacy_not_success", {"codacy_conclusion": "NEUTRAL", "codacy_status": "NEUTRAL"}),
+        ("codacy_not_success", {"codacy_conclusion": "", "codacy_status": ""}),
+        ("annotations_data_missing", {"annotations_count": "unknown"}),
+        ("annotations_present", {"annotations_count": 1}),
+        ("current_head_mismatch", {"current_head_matches": False}),
+        ("explicit_merge_authorization_required", {"explicit_merge_authorization": False}),
     ]
-    for _name, patch in cases:
+    for expected_reason, patch in cases:
         ctx = dict(base)
         ctx.update(patch)
         result = controller.can_auto_merge(ctx)
         ASSERTIONS.assertFalse(result["allowed"])
         ASSERTIONS.assertTrue(result["needs_manual"])
+        ASSERTIONS.assertEqual(result["reason"], expected_reason)
+
+
+def test_can_auto_merge_bad_missing_with_non_empty_blockers_denies_bad_checks_present():
+    result = controller.can_auto_merge(
+        _automation_ctx("live", bad="not-a-list", blockers=[{"name": "failing check"}])
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "bad_checks_present")
+
+
+def test_can_auto_merge_bad_missing_with_empty_blockers_and_all_green_allows():
+    result = controller.can_auto_merge(_automation_ctx("live", bad="not-a-list", blockers=[]))
+    ASSERTIONS.assertTrue(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "enabled")
+
+
+def test_can_auto_merge_bad_missing_and_blockers_missing_denies_bad_checks_missing():
+    result = controller.can_auto_merge(
+        _automation_ctx("live", bad="not-a-list", blockers="not-a-list")
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "bad_checks_missing")
 
 
 def test_can_auto_merge_mixed_codacy_success_failure_denies():
@@ -7743,6 +7769,34 @@ def test_can_auto_merge_mixed_codacy_success_failure_denies():
     )
     ASSERTIONS.assertFalse(result["allowed"])
     ASSERTIONS.assertIn("codacy_failure_state_present", result["reason"])
+
+
+def test_can_auto_merge_codacy_failure_without_success_does_not_add_not_success_reason():
+    result = controller.can_auto_merge(
+        _automation_ctx(
+            "live",
+            codacy_conclusion="FAILURE",
+            codacy_status="",
+            github_codacy_state="",
+        )
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "codacy_failure_state_present")
+
+
+def test_can_auto_merge_codacy_missing_state_denies_with_not_success_only():
+    result = controller.can_auto_merge(
+        _automation_ctx(
+            "live",
+            codacy_conclusion="",
+            codacy_status="",
+            github_codacy_state="",
+            codacy_check_conclusion="",
+            codacy_check_status="",
+        )
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "codacy_not_success")
 
 
 def test_can_auto_merge_uses_controller_codacy_keys():
@@ -8014,12 +8068,12 @@ def test_build_automation_enablement_context_runtime_mode_and_flags_override_env
 
 
 def test_can_auto_merge_reason_codes_for_missing_merge_evidence():
-    bad = controller.can_auto_merge(_automation_ctx("live", bad="bad-type"))
+    bad = controller.can_auto_merge(_automation_ctx("live", bad="bad-type", blockers="bad-type"))
     pending = controller.can_auto_merge(_automation_ctx("live", pending="bad-type"))
     unresolved = controller.can_auto_merge(_automation_ctx("live", unresolved_active="bad-type"))
-    ASSERTIONS.assertIn("bad_checks_missing", bad["reason"])
-    ASSERTIONS.assertIn("pending_checks_missing", pending["reason"])
-    ASSERTIONS.assertIn("unresolved_active_missing", unresolved["reason"])
+    ASSERTIONS.assertEqual(bad["reason"], "bad_checks_missing")
+    ASSERTIONS.assertEqual(pending["reason"], "pending_checks_missing")
+    ASSERTIONS.assertEqual(unresolved["reason"], "unresolved_active_missing")
 
 
 def test_assert_live_action_allowed_raises_when_blocked():

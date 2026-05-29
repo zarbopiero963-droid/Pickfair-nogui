@@ -926,9 +926,11 @@ def can_auto_merge(context: dict[str, Any] | None = None) -> dict[str, Any]:
     mergeable = norm_state(ctx.get("mergeable")) == "MERGEABLE"
     merge_state = norm_state(ctx.get("mergeStateStatus")) == "CLEAN"
     bad_raw = ctx.get("bad")
+    blockers_raw = ctx.get("blockers")
     pending_raw = ctx.get("pending")
     unresolved_active_raw = ctx.get("unresolved_active")
-    bad = bad_raw if isinstance(bad_raw, list) else []
+    selected_bad_checks_raw = bad_raw if isinstance(bad_raw, list) else blockers_raw
+    selected_bad_checks = selected_bad_checks_raw if isinstance(selected_bad_checks_raw, list) else []
     pending = pending_raw if isinstance(pending_raw, list) else []
     unresolved_active = safe_nonnegative_int(unresolved_active_raw, -1)
     codacy = ctx.get("codacy") if isinstance(ctx.get("codacy"), dict) else {}
@@ -970,9 +972,9 @@ def can_auto_merge(context: dict[str, Any] | None = None) -> dict[str, Any]:
         merge_guard_failures.append("mergeable_not_mergeable")
     if not merge_state:
         merge_guard_failures.append("merge_state_not_clean")
-    if not isinstance(bad_raw, list):
+    if not isinstance(selected_bad_checks_raw, list):
         merge_guard_failures.append("bad_checks_missing")
-    elif bad:
+    elif selected_bad_checks:
         merge_guard_failures.append("bad_checks_present")
     if not isinstance(pending_raw, list):
         merge_guard_failures.append("pending_checks_missing")
@@ -984,13 +986,10 @@ def can_auto_merge(context: dict[str, Any] | None = None) -> dict[str, Any]:
         merge_guard_failures.append("unresolved_reviews_present")
     codacy_success = any(state == "SUCCESS" for state in codacy_states)
     codacy_failure = any(state in FAIL_STATES for state in codacy_states)
-    codacy_has_state = any(bool(state) for state in codacy_states)
     if codacy_failure:
         merge_guard_failures.append("codacy_failure_state_present")
-    if not codacy_success:
+    elif not codacy_success:
         merge_guard_failures.append("codacy_not_success")
-    if not codacy_has_state:
-        merge_guard_failures.append("codacy_state_missing")
     if annotations_count < 0:
         merge_guard_failures.append("annotations_data_missing")
     elif annotations_count != 0:
