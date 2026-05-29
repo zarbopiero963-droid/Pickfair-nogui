@@ -959,6 +959,7 @@ def can_auto_merge(context: dict[str, Any] | None = None) -> dict[str, Any]:
     ]
     annotations_value = _first_present(
         ctx.get("annotations_count"),
+        ctx.get("codacy_annotations_count"),
         codacy.get("annotations_count"),
         codacy.get("github_annotations_count"),
         codacy.get("annotations"),

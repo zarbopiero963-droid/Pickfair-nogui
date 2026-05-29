@@ -7841,6 +7841,30 @@ def test_can_auto_merge_annotation_count_aliases_and_missing_reason():
     ASSERTIONS.assertIn("annotations_data_missing", missing["reason"])
 
 
+def test_can_auto_merge_codacy_annotations_count_zero_allows_when_other_guards_green():
+    result = controller.can_auto_merge(
+        _automation_ctx("live", annotations_count=None, codacy_annotations_count=0)
+    )
+    ASSERTIONS.assertTrue(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "enabled")
+
+
+def test_can_auto_merge_codacy_annotations_count_gt_zero_denies_annotations_present():
+    result = controller.can_auto_merge(
+        _automation_ctx("live", annotations_count=None, codacy_annotations_count=2)
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "annotations_present")
+
+
+def test_can_auto_merge_codacy_annotations_count_malformed_denies_data_missing():
+    result = controller.can_auto_merge(
+        _automation_ctx("live", annotations_count=None, codacy_annotations_count="n/a")
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "annotations_data_missing")
+
+
 def test_can_auto_merge_all_green_with_explicit_auth_allows():
     ctx = _automation_ctx("live")
     result = controller.can_auto_merge(ctx)
