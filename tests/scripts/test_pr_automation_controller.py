@@ -7673,6 +7673,20 @@ def test_can_run_safe_autofix_accepts_raw_env_live_with_flag_enabled():
     ASSERTIONS.assertEqual(result["mode"], "live")
 
 
+def test_can_run_safe_autofix_explicit_disabled_context_beats_env_live_true():
+    result = controller.can_run_safe_autofix(
+        {
+            "AUTOMATION_MODE": "live",
+            "SAFE_AUTOFIX_ENABLED": "true",
+            "automation_mode": "disabled",
+            "automation_flags": {"SAFE_AUTOFIX_ENABLED": False},
+        }
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["mode"], "disabled")
+    ASSERTIONS.assertEqual(result["reason"], "mode_disabled_blocks_safe_autofix")
+
+
 def test_task_no_commit_push_overrides_push_and_merge_even_live():
     ctx = _automation_ctx("live", task_no_commit_push=True)
     ASSERTIONS.assertFalse(controller.can_auto_push(ctx)["allowed"])
@@ -7982,7 +7996,7 @@ def test_can_auto_resolve_and_rerun_checks_require_explicit_true_flags():
     ASSERTIONS.assertTrue(rerun_allowed["allowed"])
 
 
-def test_build_automation_enablement_context_preserves_env_and_runtime_context():
+def test_build_automation_enablement_context_runtime_mode_and_flags_override_env():
     context = controller.build_automation_enablement_context(
         {
             "AUTOMATION_MODE": "live",
@@ -7994,8 +8008,8 @@ def test_build_automation_enablement_context_preserves_env_and_runtime_context()
             "mergeable": "MERGEABLE",
         },
     )
-    ASSERTIONS.assertEqual(context["automation_mode"], "live")
-    ASSERTIONS.assertFalse(context["automation_flags"]["AUTO_MERGE_ENABLED"])
+    ASSERTIONS.assertEqual(context["automation_mode"], "report_only")
+    ASSERTIONS.assertTrue(context["automation_flags"]["AUTO_MERGE_ENABLED"])
     ASSERTIONS.assertEqual(context["mergeable"], "MERGEABLE")
 
 

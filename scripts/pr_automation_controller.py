@@ -809,13 +809,16 @@ def build_automation_enablement_context(
         if isinstance(ctx.get("automation_flags"), dict)
         else {}
     )
-    mode_raw = environment.get("AUTOMATION_MODE", ctx.get("automation_mode"))
+    has_runtime_mode_override = "automation_mode" in ctx
+    mode_raw = ctx.get("automation_mode") if has_runtime_mode_override else environment.get("AUTOMATION_MODE")
     mode = normalize_automation_mode(mode_raw)
 
     def _flag_value(name: str) -> object:
+        if name in nested_flags:
+            return nested_flags.get(name)
         if name in environment:
             return environment.get(name)
-        return nested_flags.get(name)
+        return None
 
     flags = {
         "SAFE_AUTOFIX_ENABLED": automation_flag_enabled(_flag_value("SAFE_AUTOFIX_ENABLED")),
