@@ -5028,6 +5028,67 @@ def test_enforce_post_patch_scope_or_rollback_uses_generated_post_snapshot_when_
     ASSERTIONS.assertEqual(allowed.read_text(encoding="utf-8"), "new-allowed")
 
 
+def test_enforce_post_patch_scope_or_rollback_changed_files_only_forbidden_modified_fails_closed(tmp_path):
+    blocked = tmp_path / "blocked.txt"
+    blocked.write_text("after", encoding="utf-8")
+    result = controller.enforce_post_patch_scope_or_rollback(
+        candidate_paths=["blocked.txt"],
+        files_allowed=["allowed.txt"],
+        files_forbidden=["blocked.txt"],
+        changed_files=["blocked.txt"],
+        pre_snapshot=None,
+        post_snapshot=None,
+        repo_root=tmp_path,
+    )
+    ASSERTIONS.assertEqual(result["post_fix_audit"], "FAIL")
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_scope_violation")
+    ASSERTIONS.assertFalse(result["rollback_attempted"])
+    ASSERTIONS.assertFalse(result["rollback_succeeded"])
+    ASSERTIONS.assertFalse(result["can_commit"])
+    ASSERTIONS.assertFalse(result["can_push"])
+    ASSERTIONS.assertIn(
+        result["scope_audit"].get("reason"),
+        {"missing_trusted_pre_snapshot", "rollback_evidence_missing"},
+    )
+    ASSERTIONS.assertIn("rollback_evidence_missing", result["rollback_errors"])
+
+
+def test_enforce_post_patch_scope_or_rollback_malformed_empty_dict_pre_snapshot_fails_closed(tmp_path):
+    blocked = tmp_path / "blocked.txt"
+    blocked.write_text("after", encoding="utf-8")
+    result = controller.enforce_post_patch_scope_or_rollback(
+        candidate_paths=["blocked.txt"],
+        files_allowed=["allowed.txt"],
+        files_forbidden=["blocked.txt"],
+        changed_files=["blocked.txt"],
+        pre_snapshot={},
+        post_snapshot=None,
+        repo_root=tmp_path,
+    )
+    ASSERTIONS.assertEqual(result["post_fix_audit"], "FAIL")
+    ASSERTIONS.assertFalse(result["rollback_succeeded"])
+    ASSERTIONS.assertIn("rollback_evidence_missing", result["rollback_errors"])
+    ASSERTIONS.assertEqual(result["scope_audit"].get("reason"), "rollback_evidence_missing")
+
+
+def test_enforce_post_patch_scope_or_rollback_malformed_non_dict_files_pre_snapshot_fails_closed(tmp_path):
+    blocked = tmp_path / "blocked.txt"
+    blocked.write_text("after", encoding="utf-8")
+    result = controller.enforce_post_patch_scope_or_rollback(
+        candidate_paths=["blocked.txt"],
+        files_allowed=["allowed.txt"],
+        files_forbidden=["blocked.txt"],
+        changed_files=["blocked.txt"],
+        pre_snapshot={"files": []},
+        post_snapshot=None,
+        repo_root=tmp_path,
+    )
+    ASSERTIONS.assertEqual(result["post_fix_audit"], "FAIL")
+    ASSERTIONS.assertFalse(result["rollback_succeeded"])
+    ASSERTIONS.assertIn("rollback_evidence_missing", result["rollback_errors"])
+    ASSERTIONS.assertEqual(result["scope_audit"].get("reason"), "rollback_evidence_missing")
+
+
 def test_build_scope_rollback_result_payload_shape():
     scope_audit = {
         "allowed": False,

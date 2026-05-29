@@ -2496,6 +2496,7 @@ def enforce_post_patch_scope_or_rollback(
     repo_root: str | Path | None = None,
 ) -> dict[str, Any]:
     has_pre_snapshot = isinstance(pre_snapshot, dict)
+    trusted_pre_snapshot = has_pre_snapshot and isinstance(pre_snapshot.get("files"), dict)
     before = pre_snapshot if has_pre_snapshot else build_patch_scope_snapshot(
         candidate_paths,
         repo_root=repo_root,
@@ -2504,7 +2505,7 @@ def enforce_post_patch_scope_or_rollback(
         candidate_paths,
         repo_root=repo_root,
     )
-    trustworthy_snapshot_delta = has_pre_snapshot and isinstance(after, dict) and isinstance(after.get("files"), dict)
+    trustworthy_snapshot_delta = trusted_pre_snapshot and isinstance(after, dict) and isinstance(after.get("files"), dict)
     trustworthy_changed_files = isinstance(changed_files, list)
     if not trustworthy_snapshot_delta and not trustworthy_changed_files:
         return {
@@ -2534,6 +2535,22 @@ def enforce_post_patch_scope_or_rollback(
     scope_audit = audit_changed_files_against_scope(changed, files_allowed, files_forbidden)
     if scope_audit.get("allowed"):
         return build_scope_rollback_result(scope_audit, {}, changed)
+    if not trustworthy_snapshot_delta:
+        reason = (
+            "rollback_evidence_missing"
+            if not trusted_pre_snapshot
+            else "missing_trusted_pre_snapshot"
+        )
+        return build_scope_rollback_result(
+            {**scope_audit, "reason": reason},
+            {
+                "rollback_attempted": False,
+                "rollback_succeeded": False,
+                "rolled_back_files": [],
+                "rollback_errors": [reason],
+            },
+            changed,
+        )
 
     rollback = rollback_scope_violations(
         before,
