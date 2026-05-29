@@ -2248,7 +2248,10 @@ def enforce_commit_file_scope(
 
 def _normalize_snapshot_candidates(paths: object) -> tuple[list[str], list[str]]:
     if isinstance(paths, str):
-        raw_candidates: list[object] = [paths]
+        if "," not in paths and "\n" not in paths:
+            raw_candidates: list[object] = [paths]
+        else:
+            raw_candidates = [part.strip() for part in re.split(r"[,\n]", paths) if part.strip()]
     elif isinstance(paths, (list, tuple, set)):
         raw_candidates = list(paths)
     else:
@@ -2291,14 +2294,26 @@ def build_patch_scope_snapshot(
         if resolved is None:
             invalid_paths.append(relative_path)
             continue
-        exists = resolved.exists()
-        file_bytes = resolved.read_bytes() if exists else b""
+        try:
+            exists = resolved.exists()
+            if exists and not resolved.is_file():
+                invalid_paths.append(relative_path)
+                continue
+            file_bytes = resolved.read_bytes() if exists else b""
+        except (OSError, IsADirectoryError):
+            invalid_paths.append(relative_path)
+            continue
+        try:
+            text = file_bytes.decode("utf-8") if exists else ""
+        except UnicodeDecodeError:
+            invalid_paths.append(relative_path)
+            continue
         files[relative_path] = {
             "path": relative_path,
             "exists": exists,
             "sha256": hashlib.sha256(file_bytes).hexdigest() if exists else "",
             "bytes": file_bytes if exists else b"",
-            "text": file_bytes.decode("utf-8", errors="replace") if exists else "",
+            "text": text,
         }
     return {
         "repo_root": str(root),
@@ -2339,6 +2354,16 @@ def collect_patch_scope_changes(
 
     explicit_paths, invalid_paths = _normalize_snapshot_candidates(changed_files)
     combined_changed = sorted(set(created + modified + deleted + explicit_paths))
+    pre_invalid = (
+        list(pre_snapshot.get("invalid_paths") or [])
+        if isinstance(pre_snapshot, dict)
+        else []
+    )
+    post_invalid = (
+        list(post_snapshot.get("invalid_paths") or [])
+        if isinstance(post_snapshot, dict)
+        else []
+    )
     return {
         "changed_files": combined_changed,
         "created_files": sorted(set(created)),
@@ -2346,8 +2371,8 @@ def collect_patch_scope_changes(
         "deleted_files": sorted(set(deleted)),
         "invalid_paths": sorted(set(
             invalid_paths
-            + list(pre_snapshot.get("invalid_paths") or [])
-            + list(post_snapshot.get("invalid_paths") or [])
+            + pre_invalid
+            + post_invalid
         )),
     }
 
@@ -2431,9 +2456,9 @@ def build_scope_rollback_result(
         "status": "FAIL",
         "post_fix_audit": "FAIL",
         "next_action": (
-            "needs_manual_scope_violation"
-            if rollback_attempted and rollback_succeeded
-            else "needs_manual_scope_violation_rollback_failed"
+            "needs_manual_scope_violation_rollback_failed"
+            if rollback_attempted and not rollback_succeeded
+            else "needs_manual_scope_violation"
         ),
         "can_commit": False,
         "can_push": False,
@@ -2470,14 +2495,41 @@ def enforce_post_patch_scope_or_rollback(
     post_snapshot: dict[str, Any] | None = None,
     repo_root: str | Path | None = None,
 ) -> dict[str, Any]:
-    before = pre_snapshot if isinstance(pre_snapshot, dict) else build_patch_scope_snapshot(
+    has_pre_snapshot = isinstance(pre_snapshot, dict)
+    has_post_snapshot = isinstance(post_snapshot, dict)
+    before = pre_snapshot if has_pre_snapshot else build_patch_scope_snapshot(
         candidate_paths,
         repo_root=repo_root,
     )
-    after = post_snapshot if isinstance(post_snapshot, dict) else build_patch_scope_snapshot(
+    after = post_snapshot if has_post_snapshot else build_patch_scope_snapshot(
         candidate_paths,
         repo_root=repo_root,
     )
+    trustworthy_snapshot_delta = has_pre_snapshot and has_post_snapshot
+    trustworthy_changed_files = isinstance(changed_files, list)
+    if not trustworthy_snapshot_delta and not trustworthy_changed_files:
+        return {
+            "status": "FAIL",
+            "post_fix_audit": "FAIL",
+            "next_action": "needs_manual_scope_violation",
+            "can_commit": False,
+            "can_push": False,
+            "rollback_attempted": False,
+            "rollback_succeeded": False,
+            "changed_files": [],
+            "offending_files": [],
+            "allowed_files": normalize_file_scope_rules(files_allowed),
+            "rolled_back_files": [],
+            "rollback_errors": [],
+            "scope_audit": {
+                "allowed": False,
+                "changed_files": [],
+                "offending_files": [],
+                "allowed_files": normalize_file_scope_rules(files_allowed),
+                "forbidden_files": normalize_file_scope_rules(files_forbidden, include_defaults=True),
+                "reason": "insufficient_scope_evidence",
+            },
+        }
     changes = collect_patch_scope_changes(before, after, changed_files=changed_files)
     changed = sorted(set(changes["changed_files"] + changes["invalid_paths"]))
     scope_audit = audit_changed_files_against_scope(changed, files_allowed, files_forbidden)
