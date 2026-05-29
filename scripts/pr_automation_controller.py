@@ -781,6 +781,8 @@ _AUTOMATION_ACTION_FLAGS = {
     "rerun_checks": "AUTO_RERUN_ENABLED",
     "push": "AUTO_PUSH_ENABLED",
     "merge": "AUTO_MERGE_ENABLED",
+    "github_mutation": "GITHUB_MUTATION_ENABLED",
+    "external_side_effect": "EXTERNAL_SIDE_EFFECT_ENABLED",
     "report": "REPORTING_ENABLED",
 }
 
@@ -798,7 +800,9 @@ def build_automation_enablement_context(
     env: dict[str, object] | None = None,
     base_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    environment = env if isinstance(env, dict) else cast(dict[str, object], os.environ)
+    environment: dict[str, object] = dict(cast(dict[str, object], os.environ))
+    if isinstance(env, dict):
+        environment.update(env)
     ctx = dict(base_context or {})
     nested_flags = (
         ctx["automation_flags"]
@@ -819,6 +823,8 @@ def build_automation_enablement_context(
         "AUTO_RERUN_ENABLED": automation_flag_enabled(_flag_value("AUTO_RERUN_ENABLED")),
         "AUTO_PUSH_ENABLED": automation_flag_enabled(_flag_value("AUTO_PUSH_ENABLED")),
         "AUTO_MERGE_ENABLED": automation_flag_enabled(_flag_value("AUTO_MERGE_ENABLED")),
+        "GITHUB_MUTATION_ENABLED": automation_flag_enabled(_flag_value("GITHUB_MUTATION_ENABLED")),
+        "EXTERNAL_SIDE_EFFECT_ENABLED": automation_flag_enabled(_flag_value("EXTERNAL_SIDE_EFFECT_ENABLED")),
         "REPORTING_ENABLED": automation_flag_enabled(_flag_value("REPORTING_ENABLED")),
     }
     ctx["automation_mode"] = mode
@@ -908,13 +914,37 @@ def can_auto_merge(context: dict[str, Any] | None = None) -> dict[str, Any]:
     if not base["allowed"]:
         return base
     ctx = build_automation_enablement_context(context, context)
+    def _first_present(*values: object) -> object:
+        for value in values:
+            if value is not None:
+                return value
+        return None
+
     mergeable = norm_state(ctx.get("mergeable")) == "MERGEABLE"
     merge_state = norm_state(ctx.get("mergeStateStatus")) == "CLEAN"
-    bad = ctx.get("bad") if isinstance(ctx.get("bad"), list) else []
-    pending = ctx.get("pending") if isinstance(ctx.get("pending"), list) else []
-    unresolved_active = safe_nonnegative_int(ctx.get("unresolved_active"), 0)
+    bad_raw = ctx.get("bad")
+    pending_raw = ctx.get("pending")
+    unresolved_active_raw = ctx.get("unresolved_active")
+    bad = bad_raw if isinstance(bad_raw, list) else []
+    pending = pending_raw if isinstance(pending_raw, list) else []
+    unresolved_active = safe_nonnegative_int(unresolved_active_raw, -1)
     codacy = ctx.get("codacy") if isinstance(ctx.get("codacy"), dict) else {}
+    codacy_state = norm_state(
+        _first_present(
+            codacy.get("github_codacy_state"),
+            ctx.get("github_codacy_state"),
+            codacy.get("conclusion"),
+            codacy.get("status"),
+            ctx.get("codacy_conclusion"),
+            ctx.get("codacy_status"),
+            ctx.get("codacy_check_conclusion"),
+            ctx.get("codacy_check_status"),
+        )
+    )
     codacy_states = [
+        codacy_state,
+        norm_state(codacy.get("github_codacy_state")),
+        norm_state(ctx.get("github_codacy_state")),
         norm_state(codacy.get("conclusion")),
         norm_state(codacy.get("status")),
         norm_state(ctx.get("codacy_conclusion")),
@@ -922,7 +952,13 @@ def can_auto_merge(context: dict[str, Any] | None = None) -> dict[str, Any]:
         norm_state(ctx.get("codacy_check_conclusion")),
         norm_state(ctx.get("codacy_check_status")),
     ]
-    annotations_value = codacy["annotations_count"] if "annotations_count" in codacy else ctx.get("annotations_count")
+    annotations_value = _first_present(
+        ctx.get("annotations_count"),
+        codacy.get("annotations_count"),
+        codacy.get("github_annotations_count"),
+        codacy.get("annotations"),
+        ctx.get("github_annotations_count"),
+    )
     annotations_count = safe_nonnegative_int(annotations_value, -1)
     current_head_matches = ctx.get("current_head_matches") is True
     explicit_merge_authorization = ctx.get("explicit_merge_authorization") is True
@@ -931,16 +967,30 @@ def can_auto_merge(context: dict[str, Any] | None = None) -> dict[str, Any]:
         merge_guard_failures.append("mergeable_not_mergeable")
     if not merge_state:
         merge_guard_failures.append("merge_state_not_clean")
-    if bad:
+    if not isinstance(bad_raw, list):
+        merge_guard_failures.append("bad_checks_missing")
+    elif bad:
         merge_guard_failures.append("bad_checks_present")
-    if pending:
+    if not isinstance(pending_raw, list):
+        merge_guard_failures.append("pending_checks_missing")
+    elif pending:
         merge_guard_failures.append("pending_checks_present")
-    if unresolved_active != 0:
-        merge_guard_failures.append("unresolved_active_reviews_present")
+    if unresolved_active < 0:
+        merge_guard_failures.append("unresolved_active_missing")
+    elif unresolved_active != 0:
+        merge_guard_failures.append("unresolved_reviews_present")
     codacy_success = any(state == "SUCCESS" for state in codacy_states)
+    codacy_failure = any(state in FAIL_STATES for state in codacy_states)
+    codacy_has_state = any(bool(state) for state in codacy_states)
+    if codacy_failure:
+        merge_guard_failures.append("codacy_failure_state_present")
     if not codacy_success:
         merge_guard_failures.append("codacy_not_success")
-    if annotations_count != 0:
+    if not codacy_has_state:
+        merge_guard_failures.append("codacy_state_missing")
+    if annotations_count < 0:
+        merge_guard_failures.append("annotations_data_missing")
+    elif annotations_count != 0:
         merge_guard_failures.append("annotations_present")
     if not current_head_matches:
         merge_guard_failures.append("current_head_mismatch")

@@ -7149,7 +7149,12 @@ def test_manual_unblock_command_is_single_line_and_deterministic():
 
 
 def test_manual_unblock_command_uses_supported_contract_and_quotes_untrusted_pr_values():
-    command = controller.build_manual_unblock_command("PR10E", "-246 with space", "abc123", "matrix_phase0_needs_manual")
+    command = controller.build_manual_unblock_command(
+        "PR10E",
+        "-246 with space",
+        "abc123",
+        "matrix_phase0_needs_manual",
+    )
     ASSERTIONS.assertNotIn("/tmp/check-pr-status.sh", command)
     ASSERTIONS.assertIn("gh pr view", command)
     ASSERTIONS.assertNotIn("--manual-unblock", command)
@@ -7175,7 +7180,8 @@ def test_manual_unblock_command_neutralizes_dash_prefixed_pr_selectors():
         command = controller.build_manual_unblock_command("PR10E", selector, "abc123", "matrix_phase0_needs_manual")
         ASSERTIONS.assertEqual(
             command,
-            "gh pr view -R zarbopiero963-droid/Pickfair-nogui --json number,headRefOid,mergeStateStatus,mergeable,url -- "
+            "gh pr view -R zarbopiero963-droid/Pickfair-nogui "
+            "--json number,headRefOid,mergeStateStatus,mergeable,url -- "
             + shlex.quote(selector),
         )
         ASSERTIONS.assertIn(" -- ", command)
@@ -7515,6 +7521,8 @@ def _automation_ctx(mode: str, **overrides: object) -> dict[str, object]:
             "AUTO_RERUN_ENABLED": True,
             "AUTO_PUSH_ENABLED": True,
             "AUTO_MERGE_ENABLED": True,
+            "GITHUB_MUTATION_ENABLED": True,
+            "EXTERNAL_SIDE_EFFECT_ENABLED": True,
             "REPORTING_ENABLED": True,
         },
         "task_no_commit_push": False,
@@ -7557,6 +7565,8 @@ def test_build_automation_enablement_context_fails_closed_on_missing_and_malform
             "AUTO_RERUN_ENABLED": "on",
             "AUTO_PUSH_ENABLED": "false",
             "AUTO_MERGE_ENABLED": "random",
+            "GITHUB_MUTATION_ENABLED": "1",
+            "EXTERNAL_SIDE_EFFECT_ENABLED": "on",
             "REPORTING_ENABLED": None,
         }
     )
@@ -7569,6 +7579,8 @@ def test_build_automation_enablement_context_fails_closed_on_missing_and_malform
             "AUTO_RERUN_ENABLED": False,
             "AUTO_PUSH_ENABLED": False,
             "AUTO_MERGE_ENABLED": False,
+            "GITHUB_MUTATION_ENABLED": False,
+            "EXTERNAL_SIDE_EFFECT_ENABLED": False,
             "REPORTING_ENABLED": False,
         },
     )
@@ -7615,6 +7627,8 @@ def test_can_run_live_action_requires_mode_and_per_action_flag():
             "AUTO_RERUN_ENABLED": True,
             "AUTO_PUSH_ENABLED": True,
             "AUTO_MERGE_ENABLED": True,
+            "GITHUB_MUTATION_ENABLED": True,
+            "EXTERNAL_SIDE_EFFECT_ENABLED": True,
             "REPORTING_ENABLED": True,
         },
     )
@@ -7685,9 +7699,14 @@ def test_can_auto_merge_denies_each_guard_condition():
         ("mergeStateStatus", {"mergeStateStatus": "DIRTY"}),
         ("bad", {"bad": ["x"]}),
         ("pending", {"pending": ["x"]}),
+        ("bad_missing", {"bad": "not-a-list"}),
+        ("pending_missing", {"pending": "not-a-list"}),
+        ("unresolved_active_missing", {"unresolved_active": "bad-value"}),
         ("unresolved_active", {"unresolved_active": 1}),
         ("codacy_conclusion", {"codacy_conclusion": "FAILURE", "codacy_status": "FAILURE"}),
         ("codacy_status", {"codacy_status": "FAILURE", "codacy_conclusion": "FAILURE"}),
+        ("codacy_missing", {"codacy_conclusion": "", "codacy_status": ""}),
+        ("annotations_missing", {"annotations_count": "unknown"}),
         ("annotations_count", {"annotations_count": 1}),
         ("current_head_matches", {"current_head_matches": False}),
         ("explicit_merge_authorization", {"explicit_merge_authorization": False}),
@@ -7698,6 +7717,60 @@ def test_can_auto_merge_denies_each_guard_condition():
         result = controller.can_auto_merge(ctx)
         ASSERTIONS.assertFalse(result["allowed"])
         ASSERTIONS.assertTrue(result["needs_manual"])
+
+
+def test_can_auto_merge_mixed_codacy_success_failure_denies():
+    result = controller.can_auto_merge(
+        _automation_ctx(
+            "live",
+            codacy_conclusion="SUCCESS",
+            codacy_status="FAILURE",
+        )
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertIn("codacy_failure_state_present", result["reason"])
+
+
+def test_can_auto_merge_uses_controller_codacy_keys():
+    allowed = controller.can_auto_merge(
+        _automation_ctx(
+            "live",
+            codacy_conclusion="",
+            codacy_status="",
+            codacy_check_conclusion="",
+            codacy_check_status="",
+            github_codacy_state="SUCCESS",
+        )
+    )
+    ASSERTIONS.assertTrue(allowed["allowed"])
+
+    denied = controller.can_auto_merge(
+        _automation_ctx(
+            "live",
+            codacy_conclusion="",
+            codacy_status="",
+            codacy_check_conclusion="",
+            codacy_check_status="",
+            github_codacy_state="FAILURE",
+        )
+    )
+    ASSERTIONS.assertFalse(denied["allowed"])
+    ASSERTIONS.assertIn("codacy_failure_state_present", denied["reason"])
+
+
+def test_can_auto_merge_annotation_count_aliases_and_missing_reason():
+    from_codacy_nested = controller.can_auto_merge(
+        _automation_ctx(
+            "live",
+            annotations_count=None,
+            codacy={"github_annotations_count": 0},
+        )
+    )
+    ASSERTIONS.assertTrue(from_codacy_nested["allowed"])
+
+    missing = controller.can_auto_merge(_automation_ctx("live", annotations_count="not-int"))
+    ASSERTIONS.assertFalse(missing["allowed"])
+    ASSERTIONS.assertIn("annotations_data_missing", missing["reason"])
 
 
 def test_can_auto_merge_all_green_with_explicit_auth_allows():
@@ -7863,6 +7936,76 @@ def test_wrapper_helpers_default_to_disabled_when_mode_missing():
     ASSERTIONS.assertFalse(safe["allowed"])
     ASSERTIONS.assertFalse(push["allowed"])
     ASSERTIONS.assertFalse(merge["allowed"])
+
+
+def test_can_run_live_action_github_mutation_requires_explicit_flag():
+    denied = controller.can_run_live_action("github_mutation", {"AUTOMATION_MODE": "live"})
+    ASSERTIONS.assertFalse(denied["allowed"])
+    ASSERTIONS.assertEqual(denied["reason"], "github_mutation_enabled_disabled")
+
+    allowed = controller.can_run_live_action(
+        "github_mutation",
+        {"AUTOMATION_MODE": "live", "GITHUB_MUTATION_ENABLED": "true"},
+    )
+    ASSERTIONS.assertTrue(allowed["allowed"])
+
+
+def test_can_run_live_action_external_side_effect_requires_explicit_flag():
+    denied = controller.can_run_live_action("external_side_effect", {"AUTOMATION_MODE": "live"})
+    ASSERTIONS.assertFalse(denied["allowed"])
+    ASSERTIONS.assertEqual(denied["reason"], "external_side_effect_enabled_disabled")
+
+    allowed = controller.can_run_live_action(
+        "external_side_effect",
+        {"AUTOMATION_MODE": "live", "EXTERNAL_SIDE_EFFECT_ENABLED": "true"},
+    )
+    ASSERTIONS.assertTrue(allowed["allowed"])
+
+
+def test_can_auto_resolve_and_rerun_checks_require_explicit_true_flags():
+    resolve_denied = controller.can_auto_resolve_review_threads(
+        {"AUTOMATION_MODE": "live", "AUTO_RESOLVE_ENABLED": "false"}
+    )
+    rerun_denied = controller.can_auto_rerun_checks(
+        {"AUTOMATION_MODE": "live", "AUTO_RERUN_ENABLED": "1"}
+    )
+    ASSERTIONS.assertFalse(resolve_denied["allowed"])
+    ASSERTIONS.assertFalse(rerun_denied["allowed"])
+
+    resolve_allowed = controller.can_auto_resolve_review_threads(
+        {"AUTOMATION_MODE": "live", "AUTO_RESOLVE_ENABLED": "true"}
+    )
+    rerun_allowed = controller.can_auto_rerun_checks(
+        {"AUTOMATION_MODE": "live", "AUTO_RERUN_ENABLED": "true"}
+    )
+    ASSERTIONS.assertTrue(resolve_allowed["allowed"])
+    ASSERTIONS.assertTrue(rerun_allowed["allowed"])
+
+
+def test_build_automation_enablement_context_preserves_env_and_runtime_context():
+    context = controller.build_automation_enablement_context(
+        {
+            "AUTOMATION_MODE": "live",
+            "AUTO_MERGE_ENABLED": "false",
+        },
+        {
+            "automation_mode": "report_only",
+            "automation_flags": {"AUTO_MERGE_ENABLED": "true"},
+            "mergeable": "MERGEABLE",
+        },
+    )
+    ASSERTIONS.assertEqual(context["automation_mode"], "live")
+    ASSERTIONS.assertFalse(context["automation_flags"]["AUTO_MERGE_ENABLED"])
+    ASSERTIONS.assertEqual(context["mergeable"], "MERGEABLE")
+
+
+def test_can_auto_merge_reason_codes_for_missing_merge_evidence():
+    bad = controller.can_auto_merge(_automation_ctx("live", bad="bad-type"))
+    pending = controller.can_auto_merge(_automation_ctx("live", pending="bad-type"))
+    unresolved = controller.can_auto_merge(_automation_ctx("live", unresolved_active="bad-type"))
+    ASSERTIONS.assertIn("bad_checks_missing", bad["reason"])
+    ASSERTIONS.assertIn("pending_checks_missing", pending["reason"])
+    ASSERTIONS.assertIn("unresolved_active_missing", unresolved["reason"])
 
 
 def test_assert_live_action_allowed_raises_when_blocked():
