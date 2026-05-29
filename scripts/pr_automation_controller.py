@@ -2496,16 +2496,15 @@ def enforce_post_patch_scope_or_rollback(
     repo_root: str | Path | None = None,
 ) -> dict[str, Any]:
     has_pre_snapshot = isinstance(pre_snapshot, dict)
-    has_post_snapshot = isinstance(post_snapshot, dict)
     before = pre_snapshot if has_pre_snapshot else build_patch_scope_snapshot(
         candidate_paths,
         repo_root=repo_root,
     )
-    after = post_snapshot if has_post_snapshot else build_patch_scope_snapshot(
+    after = post_snapshot if isinstance(post_snapshot, dict) else build_patch_scope_snapshot(
         candidate_paths,
         repo_root=repo_root,
     )
-    trustworthy_snapshot_delta = has_pre_snapshot and has_post_snapshot
+    trustworthy_snapshot_delta = has_pre_snapshot and isinstance(after, dict) and isinstance(after.get("files"), dict)
     trustworthy_changed_files = isinstance(changed_files, list)
     if not trustworthy_snapshot_delta and not trustworthy_changed_files:
         return {

@@ -5003,6 +5003,31 @@ def test_enforce_post_patch_scope_or_rollback_fails_closed_on_insufficient_evide
     ASSERTIONS.assertEqual(result["next_action"], "needs_manual_scope_violation")
 
 
+def test_enforce_post_patch_scope_or_rollback_uses_generated_post_snapshot_when_pre_snapshot_provided(tmp_path):
+    allowed = tmp_path / "allowed.txt"
+    forbidden = tmp_path / "forbidden.txt"
+    allowed.write_text("old-allowed", encoding="utf-8")
+    forbidden.write_text("old-forbidden", encoding="utf-8")
+    pre = controller.build_patch_scope_snapshot(["allowed.txt", "forbidden.txt"], repo_root=tmp_path)
+    allowed.write_text("new-allowed", encoding="utf-8")
+    forbidden.write_text("new-forbidden", encoding="utf-8")
+    result = controller.enforce_post_patch_scope_or_rollback(
+        candidate_paths=["allowed.txt", "forbidden.txt"],
+        files_allowed=["allowed.txt"],
+        files_forbidden=["forbidden.txt"],
+        changed_files=None,
+        pre_snapshot=pre,
+        post_snapshot=None,
+        repo_root=tmp_path,
+    )
+    ASSERTIONS.assertNotEqual(result["scope_audit"].get("reason"), "insufficient_scope_evidence")
+    ASSERTIONS.assertTrue(result["scope_audit"].get("changed_files"))
+    ASSERTIONS.assertTrue(result["rollback_attempted"])
+    ASSERTIONS.assertTrue(result["rollback_succeeded"])
+    ASSERTIONS.assertEqual(forbidden.read_text(encoding="utf-8"), "old-forbidden")
+    ASSERTIONS.assertEqual(allowed.read_text(encoding="utf-8"), "new-allowed")
+
+
 def test_build_scope_rollback_result_payload_shape():
     scope_audit = {
         "allowed": False,
