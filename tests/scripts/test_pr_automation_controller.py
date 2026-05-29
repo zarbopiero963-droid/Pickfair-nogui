@@ -7687,6 +7687,34 @@ def test_can_run_safe_autofix_explicit_disabled_context_beats_env_live_true():
     ASSERTIONS.assertEqual(result["reason"], "mode_disabled_blocks_safe_autofix")
 
 
+def test_can_run_safe_autofix_nested_omitted_flag_does_not_inherit_env():
+    result = controller.can_run_safe_autofix(
+        {
+            "AUTOMATION_MODE": "live",
+            "SAFE_AUTOFIX_ENABLED": "true",
+            "automation_mode": "live",
+            "automation_flags": {"AUTO_MERGE_ENABLED": True},
+        }
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["mode"], "live")
+    ASSERTIONS.assertEqual(result["reason"], "safe_autofix_enabled_disabled")
+
+
+def test_can_run_safe_autofix_nested_present_flag_allows_action():
+    result = controller.can_run_safe_autofix(
+        {
+            "AUTOMATION_MODE": "live",
+            "SAFE_AUTOFIX_ENABLED": "false",
+            "automation_mode": "live",
+            "automation_flags": {"SAFE_AUTOFIX_ENABLED": True},
+        }
+    )
+    ASSERTIONS.assertTrue(result["allowed"])
+    ASSERTIONS.assertEqual(result["mode"], "live")
+    ASSERTIONS.assertEqual(result["reason"], "live_action_allowed")
+
+
 def test_task_no_commit_push_overrides_push_and_merge_even_live():
     ctx = _automation_ctx("live", task_no_commit_push=True)
     ASSERTIONS.assertFalse(controller.can_auto_push(ctx)["allowed"])
@@ -7747,6 +7775,18 @@ def test_can_auto_merge_bad_missing_with_non_empty_blockers_denies_bad_checks_pr
 
 def test_can_auto_merge_bad_missing_with_empty_blockers_and_all_green_allows():
     result = controller.can_auto_merge(_automation_ctx("live", bad="not-a-list", blockers=[]))
+    ASSERTIONS.assertTrue(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "enabled")
+
+
+def test_can_auto_merge_bad_empty_and_blockers_non_empty_denies_bad_checks_present():
+    result = controller.can_auto_merge(_automation_ctx("live", bad=[], blockers=[{"name": "failing check"}]))
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "bad_checks_present")
+
+
+def test_can_auto_merge_bad_and_blockers_both_empty_with_all_green_allows():
+    result = controller.can_auto_merge(_automation_ctx("live", bad=[], blockers=[]))
     ASSERTIONS.assertTrue(result["allowed"])
     ASSERTIONS.assertEqual(result["reason"], "enabled")
 

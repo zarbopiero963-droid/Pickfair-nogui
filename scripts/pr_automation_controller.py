@@ -804,18 +804,15 @@ def build_automation_enablement_context(
     if isinstance(env, dict):
         environment.update(env)
     ctx = dict(base_context or {})
-    nested_flags = (
-        ctx["automation_flags"]
-        if isinstance(ctx.get("automation_flags"), dict)
-        else {}
-    )
+    has_nested_flags = isinstance(ctx.get("automation_flags"), dict)
+    nested_flags = ctx["automation_flags"] if has_nested_flags else {}
     has_runtime_mode_override = "automation_mode" in ctx
     mode_raw = ctx.get("automation_mode") if has_runtime_mode_override else environment.get("AUTOMATION_MODE")
     mode = normalize_automation_mode(mode_raw)
 
     def _flag_value(name: str) -> object:
-        if name in nested_flags:
-            return nested_flags.get(name)
+        if has_nested_flags:
+            return nested_flags.get(name) if name in nested_flags else None
         if name in environment:
             return environment.get(name)
         return None
@@ -929,8 +926,13 @@ def can_auto_merge(context: dict[str, Any] | None = None) -> dict[str, Any]:
     blockers_raw = ctx.get("blockers")
     pending_raw = ctx.get("pending")
     unresolved_active_raw = ctx.get("unresolved_active")
-    selected_bad_checks_raw = bad_raw if isinstance(bad_raw, list) else blockers_raw
-    selected_bad_checks = selected_bad_checks_raw if isinstance(selected_bad_checks_raw, list) else []
+    bad_checks = bad_raw if isinstance(bad_raw, list) else None
+    blockers = blockers_raw if isinstance(blockers_raw, list) else None
+    merged_bad_checks: list[Any] = []
+    if isinstance(bad_checks, list):
+        merged_bad_checks.extend(bad_checks)
+    if isinstance(blockers, list):
+        merged_bad_checks.extend(blockers)
     pending = pending_raw if isinstance(pending_raw, list) else []
     unresolved_active = safe_nonnegative_int(unresolved_active_raw, -1)
     codacy = ctx.get("codacy") if isinstance(ctx.get("codacy"), dict) else {}
@@ -973,9 +975,9 @@ def can_auto_merge(context: dict[str, Any] | None = None) -> dict[str, Any]:
         merge_guard_failures.append("mergeable_not_mergeable")
     if not merge_state:
         merge_guard_failures.append("merge_state_not_clean")
-    if not isinstance(selected_bad_checks_raw, list):
+    if not isinstance(bad_checks, list) and not isinstance(blockers, list):
         merge_guard_failures.append("bad_checks_missing")
-    elif selected_bad_checks:
+    elif merged_bad_checks:
         merge_guard_failures.append("bad_checks_present")
     if not isinstance(pending_raw, list):
         merge_guard_failures.append("pending_checks_missing")
