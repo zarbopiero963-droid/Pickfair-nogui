@@ -752,6 +752,228 @@ def parse_csvish(value: str | None) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
+_AUTOMATION_MODES = {"disabled", "report_only", "plan_only", "supervised", "live"}
+_AUTOMATION_ACTIONS = {
+    "report",
+    "plan",
+    "safe_autofix",
+    "review_resolve",
+    "rerun_checks",
+    "push",
+    "merge",
+    "github_mutation",
+    "external_side_effect",
+}
+_AUTOMATION_ACTION_MODE_ALLOWLIST = {
+    "report": {"report_only", "plan_only", "supervised", "live"},
+    "plan": {"plan_only", "supervised", "live"},
+    "safe_autofix": {"live"},
+    "review_resolve": {"live"},
+    "rerun_checks": {"live"},
+    "push": {"live"},
+    "merge": {"live"},
+    "github_mutation": {"live"},
+    "external_side_effect": {"live"},
+}
+_AUTOMATION_ACTION_FLAGS = {
+    "safe_autofix": "SAFE_AUTOFIX_ENABLED",
+    "review_resolve": "AUTO_RESOLVE_ENABLED",
+    "rerun_checks": "AUTO_RERUN_ENABLED",
+    "push": "AUTO_PUSH_ENABLED",
+    "merge": "AUTO_MERGE_ENABLED",
+    "report": "REPORTING_ENABLED",
+}
+
+
+def normalize_automation_mode(raw_mode: object) -> str:
+    text = str(raw_mode or "").strip().lower()
+    return text if text in _AUTOMATION_MODES else "disabled"
+
+
+def automation_flag_enabled(raw_value: object) -> bool:
+    return str(raw_value or "").strip().lower() == "true"
+
+
+def build_automation_enablement_context(
+    env: dict[str, object] | None = None,
+    base_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    environment = env if isinstance(env, dict) else cast(dict[str, object], os.environ)
+    ctx = dict(base_context or {})
+    nested_flags = (
+        ctx["automation_flags"]
+        if isinstance(ctx.get("automation_flags"), dict)
+        else {}
+    )
+    mode_raw = environment.get("AUTOMATION_MODE", ctx.get("automation_mode"))
+    mode = normalize_automation_mode(mode_raw)
+
+    def _flag_value(name: str) -> object:
+        if name in environment:
+            return environment.get(name)
+        return nested_flags.get(name)
+
+    flags = {
+        "SAFE_AUTOFIX_ENABLED": automation_flag_enabled(_flag_value("SAFE_AUTOFIX_ENABLED")),
+        "AUTO_RESOLVE_ENABLED": automation_flag_enabled(_flag_value("AUTO_RESOLVE_ENABLED")),
+        "AUTO_RERUN_ENABLED": automation_flag_enabled(_flag_value("AUTO_RERUN_ENABLED")),
+        "AUTO_PUSH_ENABLED": automation_flag_enabled(_flag_value("AUTO_PUSH_ENABLED")),
+        "AUTO_MERGE_ENABLED": automation_flag_enabled(_flag_value("AUTO_MERGE_ENABLED")),
+        "REPORTING_ENABLED": automation_flag_enabled(_flag_value("REPORTING_ENABLED")),
+    }
+    ctx["automation_mode"] = mode
+    ctx["automation_flags"] = flags
+    return ctx
+
+
+def automation_disabled_result(action: str, mode: str, reason: str, next_action: str = "needs_manual") -> dict[str, Any]:
+    return {
+        "allowed": False,
+        "action": str(action or ""),
+        "mode": normalize_automation_mode(mode),
+        "reason": reason,
+        "next_action": next_action,
+        "needs_manual": True,
+    }
+
+
+def _automation_allowed_result(action: str, mode: str, reason: str, next_action: str = "proceed") -> dict[str, Any]:
+    return {
+        "allowed": True,
+        "action": str(action or ""),
+        "mode": normalize_automation_mode(mode),
+        "reason": reason,
+        "next_action": next_action,
+        "needs_manual": False,
+    }
+
+
+def automation_mode_allows(action: object, context: dict[str, Any] | None = None) -> dict[str, Any]:
+    ctx = build_automation_enablement_context(context, context)
+    normalized_action = str(action or "").strip().lower()
+    mode = normalize_automation_mode(ctx.get("automation_mode"))
+    if normalized_action not in _AUTOMATION_ACTIONS:
+        return automation_disabled_result(normalized_action, mode, "unknown_action")
+    if mode == "supervised" and normalized_action not in {"report", "plan"}:
+        return automation_disabled_result(
+            normalized_action,
+            mode,
+            "manual_authorization_required",
+            next_action="manual_authorization_required",
+        )
+    allowed_modes = _AUTOMATION_ACTION_MODE_ALLOWLIST.get(normalized_action, set())
+    if mode not in allowed_modes:
+        next_action = "report_only" if mode == "report_only" else "needs_manual"
+        reason = f"mode_{mode}_blocks_{normalized_action}"
+        return automation_disabled_result(normalized_action, mode, reason, next_action=next_action)
+    return _automation_allowed_result(normalized_action, mode, "mode_allows_action")
+
+
+def can_run_live_action(action: object, context: dict[str, Any] | None = None) -> dict[str, Any]:
+    ctx = build_automation_enablement_context(context, context)
+    mode_result = automation_mode_allows(action, ctx)
+    if not mode_result["allowed"]:
+        return mode_result
+    normalized_action = str(action or "").strip().lower()
+    mode = normalize_automation_mode(ctx.get("automation_mode"))
+    if mode != "live":
+        return automation_disabled_result(normalized_action, mode, "live_mode_required")
+    if normalized_action in {"push", "merge"} and bool(ctx.get("task_no_commit_push")):
+        return automation_disabled_result(normalized_action, mode, "task_no_commit_push", next_action="needs_manual")
+    flag_name = _AUTOMATION_ACTION_FLAGS.get(normalized_action, "")
+    flags = ctx.get("automation_flags") if isinstance(ctx.get("automation_flags"), dict) else {}
+    if flag_name and not bool(flags.get(flag_name)):
+        return automation_disabled_result(normalized_action, mode, f"{flag_name.lower()}_disabled")
+    return _automation_allowed_result(normalized_action, mode, "live_action_allowed")
+
+
+def can_run_safe_autofix(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    return can_run_live_action("safe_autofix", context)
+
+
+def can_auto_resolve_review_threads(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    return can_run_live_action("review_resolve", context)
+
+
+def can_auto_rerun_checks(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    return can_run_live_action("rerun_checks", context)
+
+
+def can_auto_push(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    return can_run_live_action("push", context)
+
+
+def can_auto_merge(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    base = can_run_live_action("merge", context)
+    if not base["allowed"]:
+        return base
+    ctx = build_automation_enablement_context(context, context)
+    mergeable = norm_state(ctx.get("mergeable")) == "MERGEABLE"
+    merge_state = norm_state(ctx.get("mergeStateStatus")) == "CLEAN"
+    bad = ctx.get("bad") if isinstance(ctx.get("bad"), list) else []
+    pending = ctx.get("pending") if isinstance(ctx.get("pending"), list) else []
+    unresolved_active = safe_nonnegative_int(ctx.get("unresolved_active"), 0)
+    codacy = ctx.get("codacy") if isinstance(ctx.get("codacy"), dict) else {}
+    codacy_states = [
+        norm_state(codacy.get("conclusion")),
+        norm_state(codacy.get("status")),
+        norm_state(ctx.get("codacy_conclusion")),
+        norm_state(ctx.get("codacy_status")),
+        norm_state(ctx.get("codacy_check_conclusion")),
+        norm_state(ctx.get("codacy_check_status")),
+    ]
+    annotations_value = codacy["annotations_count"] if "annotations_count" in codacy else ctx.get("annotations_count")
+    annotations_count = safe_nonnegative_int(annotations_value, -1)
+    current_head_matches = ctx.get("current_head_matches") is True
+    explicit_merge_authorization = ctx.get("explicit_merge_authorization") is True
+    merge_guard_failures: list[str] = []
+    if not mergeable:
+        merge_guard_failures.append("mergeable_not_mergeable")
+    if not merge_state:
+        merge_guard_failures.append("merge_state_not_clean")
+    if bad:
+        merge_guard_failures.append("bad_checks_present")
+    if pending:
+        merge_guard_failures.append("pending_checks_present")
+    if unresolved_active != 0:
+        merge_guard_failures.append("unresolved_active_reviews_present")
+    codacy_success = any(state == "SUCCESS" for state in codacy_states)
+    if not codacy_success:
+        merge_guard_failures.append("codacy_not_success")
+    if annotations_count != 0:
+        merge_guard_failures.append("annotations_present")
+    if not current_head_matches:
+        merge_guard_failures.append("current_head_mismatch")
+    if not explicit_merge_authorization:
+        merge_guard_failures.append("explicit_merge_authorization_required")
+    if merge_guard_failures:
+        return automation_disabled_result(
+            "merge",
+            normalize_automation_mode(ctx.get("automation_mode")),
+            ",".join(merge_guard_failures),
+            next_action="needs_manual",
+        )
+    return _automation_allowed_result("merge", normalize_automation_mode(ctx.get("automation_mode")), "enabled")
+
+
+def assert_live_action_allowed(action: object, context: dict[str, Any] | None = None) -> dict[str, Any]:
+    if str(action or "").strip().lower() == "merge":
+        result = can_auto_merge(context)
+    elif str(action or "").strip().lower() == "safe_autofix":
+        result = can_run_safe_autofix(context)
+    elif str(action or "").strip().lower() == "review_resolve":
+        result = can_auto_resolve_review_threads(context)
+    elif str(action or "").strip().lower() == "rerun_checks":
+        result = can_auto_rerun_checks(context)
+    elif str(action or "").strip().lower() == "push":
+        result = can_auto_push(context)
+    else:
+        result = can_run_live_action(action, context)
+    if not result["allowed"]:
+        raise PermissionError(f"{result['action']} blocked: {result['reason']}")
+    return result
+
+
 def norm_state(value: Any) -> str:
     return str(value or "").strip().upper()
 
