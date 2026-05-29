@@ -7905,6 +7905,42 @@ def test_can_auto_merge_codacy_annotations_count_malformed_denies_data_missing()
     ASSERTIONS.assertEqual(result["reason"], "annotations_data_missing")
 
 
+def test_can_auto_merge_codacy_annotations_empty_list_allows_when_other_guards_green():
+    result = controller.can_auto_merge(
+        _automation_ctx(
+            "live",
+            annotations_count=None,
+            codacy={"conclusion": "SUCCESS", "annotations": []},
+        )
+    )
+    ASSERTIONS.assertTrue(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "enabled")
+
+
+def test_can_auto_merge_codacy_annotations_list_with_dict_denies_present():
+    result = controller.can_auto_merge(
+        _automation_ctx(
+            "live",
+            annotations_count=None,
+            codacy={"conclusion": "SUCCESS", "annotations": [{"x": 1}]},
+        )
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "annotations_present")
+
+
+def test_can_auto_merge_codacy_annotations_list_with_scalar_denies_data_missing():
+    result = controller.can_auto_merge(
+        _automation_ctx(
+            "live",
+            annotations_count=None,
+            codacy={"conclusion": "SUCCESS", "annotations": ["bad"]},
+        )
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "annotations_data_missing")
+
+
 def test_can_auto_merge_all_green_with_explicit_auth_allows():
     ctx = _automation_ctx("live")
     result = controller.can_auto_merge(ctx)

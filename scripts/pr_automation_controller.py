@@ -914,11 +914,19 @@ def can_auto_merge(context: dict[str, Any] | None = None) -> dict[str, Any]:
     if not base["allowed"]:
         return base
     ctx = build_automation_enablement_context(context, context)
+
     def _first_present(*values: object) -> object:
         for value in values:
             if value is not None:
                 return value
         return None
+
+    def _normalize_annotations_count(value: object) -> int:
+        if isinstance(value, list):
+            if not all(isinstance(item, dict) for item in value):
+                return -1
+            return len(value)
+        return safe_nonnegative_int(value, -1)
 
     mergeable = norm_state(ctx.get("mergeable")) == "MERGEABLE"
     merge_state = norm_state(ctx.get("mergeStateStatus")) == "CLEAN"
@@ -967,7 +975,7 @@ def can_auto_merge(context: dict[str, Any] | None = None) -> dict[str, Any]:
         codacy.get("annotations"),
         ctx.get("github_annotations_count"),
     )
-    annotations_count = safe_nonnegative_int(annotations_value, -1)
+    annotations_count = _normalize_annotations_count(annotations_value)
     current_head_matches = ctx.get("current_head_matches") is True
     explicit_merge_authorization = ctx.get("explicit_merge_authorization") is True
     merge_guard_failures: list[str] = []
