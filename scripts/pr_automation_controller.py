@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess  # nosec B404
 import sys
 import time
@@ -1707,6 +1708,8 @@ def normalize_task_file_list(files: object) -> list[str]:
     candidates: list[object]
     if isinstance(files, list):
         candidates = files
+    elif isinstance(files, (tuple, set)):
+        candidates = list(files)
     elif isinstance(files, str):
         candidates = parse_csvish(files)
     else:
@@ -5593,6 +5596,205 @@ def evaluate_standing_owner_authorization(context: dict[str, Any] | None = None)
         reasons.append("phase0_not_passed")
     authorized = not reasons
     return {"authorized": authorized, "allowed": authorized, "needs_manual": not authorized, "reasons": reasons}
+
+
+MANUAL_UNBLOCK_REASON_MAP = {
+    "current_head_verification_blocked": "current_head_verification_blocked",
+    "matrix_phase0_missing_required_fields": "matrix_phase0_missing_required_fields",
+    "matrix_phase0_needs_manual": "matrix_phase0_needs_manual",
+    "review_triage_needs_manual": "review_triage_needs_manual",
+    "forbidden_files_required": "forbidden_files_required",
+    "workflow_edit_not_authorized": "workflow_edit_not_authorized",
+    "live_action_requested_while_disabled": "live_action_requested_while_disabled",
+    "tests_cannot_prove_behavior": "tests_cannot_prove_behavior",
+    "ambiguous_architecture": "ambiguous_architecture",
+    "future_roadmap_scope": "future_roadmap_scope",
+}
+STANDING_AUTH_REASON_ALIAS_MAP = {
+    "phase0_not_passed": "matrix_phase0_needs_manual",
+    "forbidden_files_touched": "forbidden_files_required",
+    "workflow_edits_without_explicit_scope": "workflow_edit_not_authorized",
+    "live_action_or_automation_activation_blocked": "live_action_requested_while_disabled",
+    "future_roadmap_scope_blocked": "future_roadmap_scope",
+}
+DEFAULT_MANUAL_UNBLOCK_REPO = "zarbopiero963-droid/Pickfair-nogui"
+
+
+def _single_line_text(value: object, fallback: str = "") -> str:
+    text = str(value or "")
+    normalized = " ".join(part.strip() for part in text.replace("\r", "\n").split("\n") if part.strip())
+    return normalized.strip() or fallback
+
+
+def _normalized_reason_items(value: object) -> list[object]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple, set)):
+        return list(value)
+    return [value]
+
+
+def classify_manual_unblock_reason(context: dict[str, Any] | str | None = None) -> str:
+    """Classify current blocking state into a deterministic manual-unblock reason."""
+    ctx: dict[str, Any] = context if isinstance(context, dict) else {}
+    raw_reason = context if isinstance(context, str) else ctx.get("reason")
+    reason = re.sub(r"_+", "_", re.sub(r"[-/\s]+", "_", str(raw_reason or "").strip().lower())).strip("_")
+    mapped_direct_reason = STANDING_AUTH_REASON_ALIAS_MAP.get(reason, reason)
+    if mapped_direct_reason in MANUAL_UNBLOCK_REASON_MAP:
+        return MANUAL_UNBLOCK_REASON_MAP[mapped_direct_reason]
+    if reason in MANUAL_UNBLOCK_REASON_MAP:
+        return MANUAL_UNBLOCK_REASON_MAP[reason]
+    if bool(ctx.get("current_head_verification_blocked")):
+        return MANUAL_UNBLOCK_REASON_MAP["current_head_verification_blocked"]
+    if bool(ctx.get("matrix_phase0_missing_required_fields")):
+        return MANUAL_UNBLOCK_REASON_MAP["matrix_phase0_missing_required_fields"]
+    status = str(ctx.get("status") or "").strip().upper()
+    next_action = _phase0_action(ctx.get("next_action"))
+    missing_fields = ctx.get("missing_fields")
+    has_missing_fields = isinstance(missing_fields, list) and bool(missing_fields)
+    if (
+        status == "NEEDS_MANUAL"
+        and next_action == "needs_manual_matrix_phase0_missing"
+        and has_missing_fields
+    ):
+        return MANUAL_UNBLOCK_REASON_MAP["matrix_phase0_missing_required_fields"]
+    if status == "NEEDS_MANUAL" and next_action in {
+        "needs_manual_phase0_blocked",
+        "needs_manual_phase0_failed",
+        "needs_manual_phase0_malformed",
+        "needs_manual_phase0_invalid_status",
+        "needs_manual_phase0_invalid_action",
+        "needs_manual_phase0_missing_output",
+    }:
+        return MANUAL_UNBLOCK_REASON_MAP["matrix_phase0_needs_manual"]
+    if bool(ctx.get("matrix_phase0_needs_manual")):
+        return MANUAL_UNBLOCK_REASON_MAP["matrix_phase0_needs_manual"]
+    if bool(ctx.get("review_triage_needs_manual")):
+        return MANUAL_UNBLOCK_REASON_MAP["review_triage_needs_manual"]
+    if bool(ctx.get("forbidden_files_required")):
+        return MANUAL_UNBLOCK_REASON_MAP["forbidden_files_required"]
+    if bool(ctx.get("workflow_edit_not_authorized")):
+        return MANUAL_UNBLOCK_REASON_MAP["workflow_edit_not_authorized"]
+    if bool(ctx.get("live_action_requested_while_disabled")):
+        return MANUAL_UNBLOCK_REASON_MAP["live_action_requested_while_disabled"]
+    if bool(ctx.get("tests_cannot_prove_behavior")):
+        return MANUAL_UNBLOCK_REASON_MAP["tests_cannot_prove_behavior"]
+    if bool(ctx.get("ambiguous_architecture")):
+        return MANUAL_UNBLOCK_REASON_MAP["ambiguous_architecture"]
+    if bool(ctx.get("future_roadmap_scope")):
+        return MANUAL_UNBLOCK_REASON_MAP["future_roadmap_scope"]
+    for raw_item in _normalized_reason_items(ctx.get("reasons")):
+        normalized_item = re.sub(
+            r"_+",
+            "_",
+            re.sub(r"[-/\s]+", "_", str(raw_item or "").strip().lower()),
+        ).strip("_")
+        mapped_item = STANDING_AUTH_REASON_ALIAS_MAP.get(normalized_item, normalized_item)
+        if mapped_item in MANUAL_UNBLOCK_REASON_MAP:
+            return MANUAL_UNBLOCK_REASON_MAP[mapped_item]
+    return MANUAL_UNBLOCK_REASON_MAP["ambiguous_architecture"]
+
+
+def build_manual_authorization_text(pr_name: object, specific_reason: object) -> str:
+    """Return mandatory authorization text format for manual unblock."""
+    pr = _single_line_text(pr_name, "PR")
+    reason = _single_line_text(specific_reason, MANUAL_UNBLOCK_REASON_MAP["ambiguous_architecture"])
+    return f"AUTORIZZO PATCH {pr} NEEDS_MANUAL per {reason}"
+
+
+def _manual_token(value: object, fallback: str) -> str:
+    token = re.sub(r"[^A-Za-z0-9._:/-]+", "_", str(value or "").strip()).strip("_")
+    return token or fallback
+
+
+def _manual_scope_list(value: object) -> list[str]:
+    normalized = normalize_task_file_list(value)
+    return [item for item in normalized if item and item not in PLACEHOLDER_VALUES]
+
+
+def build_manual_unblock_command(
+    pr_name: object,
+    pr_number: object,
+    head_sha: object,
+    specific_reason: object,
+    repo: object = None,
+) -> str:
+    """Build a deterministic single-line copy/paste command for manual unblock."""
+    _ = pr_name  # kept for stable signature compatibility
+    _ = head_sha  # kept for stable signature compatibility
+    _ = specific_reason  # kept for stable signature compatibility
+    pr_value = _single_line_text(pr_number, "unknown")
+    repo_value = _single_line_text(repo or DEFAULT_MANUAL_UNBLOCK_REPO, DEFAULT_MANUAL_UNBLOCK_REPO)
+    safe_pr = shlex.quote(pr_value)
+    safe_repo = shlex.quote(repo_value)
+    return f"gh pr view -R {safe_repo} --json number,headRefOid,mergeStateStatus,mergeable,url -- {safe_pr}"
+
+
+def _normalize_scope_entries_for_telegram(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        raw_items: list[object] = [value]
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    else:
+        raw_items = [value]
+    normalized: list[str] = []
+    for item in raw_items:
+        if item is None:
+            continue
+        cleaned = str(item).strip()
+        if cleaned and cleaned.lower() not in PLACEHOLDER_VALUES:
+            normalized.append(cleaned)
+    return normalized
+
+
+def build_manual_unblock_telegram_message(package: dict[str, Any] | None = None) -> str:
+    """Render passive Telegram text for manual unblock package (no send)."""
+    payload = package if isinstance(package, dict) else {}
+    allowed = _normalize_scope_entries_for_telegram(payload.get("files_allowed"))
+    forbidden = _normalize_scope_entries_for_telegram(payload.get("files_forbidden"))
+    return (
+        "[PASSIVE] Manual unblock package generated.\n"
+        f"PR: {payload.get('pr_number') or 'unknown'}\n"
+        f"Head: {payload.get('head_sha') or 'unknown'}\n"
+        f"Scope allowed: {', '.join(allowed) or '(none)'}\n"
+        f"Scope forbidden: {', '.join(forbidden) or '(none)'}\n"
+        f"Reason: {payload.get('reason') or MANUAL_UNBLOCK_REASON_MAP['ambiguous_architecture']}\n"
+        f"Next action: {payload.get('next_action') or 'needs_manual'}"
+    )
+
+
+def build_manual_unblock_package(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Build passive manual unblock package; never authorizes patching."""
+    ctx = context if isinstance(context, dict) else {}
+    reason = classify_manual_unblock_reason(ctx)
+    pr_name = _single_line_text(ctx.get("pr_name"), "PR")
+    package = {
+        "status": "NEEDS_MANUAL",
+        "next_action": _single_line_text(ctx.get("next_action"), "needs_manual"),
+        "reason": _single_line_text(reason, MANUAL_UNBLOCK_REASON_MAP["ambiguous_architecture"]),
+        "pr_number": _single_line_text(first_nonempty(ctx.get("pr_number"), ctx.get("pr"), ctx.get("number")), ""),
+        "head_sha": _single_line_text(first_nonempty(ctx.get("head_sha"), ctx.get("headRefOid"), ctx.get("head")), ""),
+        "files_allowed": _manual_scope_list(ctx.get("files_allowed")),
+        "files_forbidden": _manual_scope_list(ctx.get("files_forbidden")),
+        "copy_paste_command": "",
+        "authorization_text": "",
+        "telegram_message": "",
+        "can_patch": False,
+    }
+    package["copy_paste_command"] = build_manual_unblock_command(
+        pr_name,
+        package["pr_number"],
+        package["head_sha"],
+        reason,
+        ctx.get("repo"),
+    )
+    package["authorization_text"] = build_manual_authorization_text(pr_name, reason)
+    package["telegram_message"] = build_manual_unblock_telegram_message(package)
+    return package
 
 
 def classify_review_comment_severity(comment_or_thread: dict[str, Any]) -> str:

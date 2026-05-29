@@ -5,6 +5,7 @@ import argparse
 import copy
 import json
 import re
+import shlex
 from pathlib import Path
 from typing import Any, cast
 from unittest import TestCase
@@ -6989,3 +6990,511 @@ def test_standing_owner_authorization_non_boolean_phase0_values_fail_closed():
         )
         ASSERTIONS.assertFalse(result["authorized"])
         ASSERTIONS.assertIn("phase0_not_passed", result["reasons"])
+
+
+def test_manual_unblock_reason_classification_mapping_required_cases():
+    cases = [
+        ("current_head_verification_blocked", "current_head_verification_blocked"),
+        ("matrix_phase0_missing_required_fields", "matrix_phase0_missing_required_fields"),
+        ("matrix_phase0_needs_manual", "matrix_phase0_needs_manual"),
+        ("review_triage_needs_manual", "review_triage_needs_manual"),
+        ("forbidden_files_required", "forbidden_files_required"),
+        ("workflow_edit_not_authorized", "workflow_edit_not_authorized"),
+        ("live_action_requested_while_disabled", "live_action_requested_while_disabled"),
+        ("tests_cannot_prove_behavior", "tests_cannot_prove_behavior"),
+        ("ambiguous_architecture", "ambiguous_architecture"),
+        ("future_roadmap_scope", "future_roadmap_scope"),
+    ]
+    for key, expected in cases:
+        ASSERTIONS.assertEqual(controller.classify_manual_unblock_reason({"reason": key}), expected)
+
+
+def test_manual_unblock_reason_classification_accepts_required_raw_string_inputs():
+    cases = [
+        ("current-head verification blocked", "current_head_verification_blocked"),
+        ("matrix phase0 missing required fields", "matrix_phase0_missing_required_fields"),
+        ("matrix phase0 needs_manual", "matrix_phase0_needs_manual"),
+        ("review triage needs_manual", "review_triage_needs_manual"),
+        ("forbidden files required", "forbidden_files_required"),
+        ("workflow edit not authorized", "workflow_edit_not_authorized"),
+        ("live action requested while disabled", "live_action_requested_while_disabled"),
+        ("tests cannot prove behavior", "tests_cannot_prove_behavior"),
+        ("ambiguous architecture", "ambiguous_architecture"),
+        ("future roadmap scope", "future_roadmap_scope"),
+    ]
+    for raw_reason, expected in cases:
+        ASSERTIONS.assertEqual(controller.classify_manual_unblock_reason(raw_reason), expected)
+
+
+def test_manual_unblock_reason_classification_unknown_raw_string_falls_back_to_ambiguous_architecture():
+    ASSERTIONS.assertEqual(
+        controller.classify_manual_unblock_reason("some unknown reason text"),
+        "ambiguous_architecture",
+    )
+
+
+def test_manual_unblock_reason_classification_boolean_flag_contexts_and_fallbacks():
+    ASSERTIONS.assertEqual(
+        controller.classify_manual_unblock_reason({"matrix_phase0_needs_manual": True}),
+        "matrix_phase0_needs_manual",
+    )
+    ASSERTIONS.assertEqual(
+        controller.classify_manual_unblock_reason({"review_triage_needs_manual": True}),
+        "review_triage_needs_manual",
+    )
+    ASSERTIONS.assertEqual(
+        controller.classify_manual_unblock_reason(
+            {"matrix_phase0_needs_manual": True, "review_triage_needs_manual": True}
+        ),
+        "matrix_phase0_needs_manual",
+    )
+    for raw in (None, {}, 42, []):
+        ASSERTIONS.assertEqual(controller.classify_manual_unblock_reason(raw), "ambiguous_architecture")
+
+
+def test_manual_unblock_reason_classification_maps_standing_auth_reason_tokens_from_reasons_list():
+    ASSERTIONS.assertEqual(
+        controller.classify_manual_unblock_reason({"reasons": ["phase0_not_passed"]}),
+        "matrix_phase0_needs_manual",
+    )
+    ASSERTIONS.assertEqual(
+        controller.classify_manual_unblock_reason({"reasons": ["forbidden_files_touched"]}),
+        "forbidden_files_required",
+    )
+    ASSERTIONS.assertEqual(
+        controller.classify_manual_unblock_reason({"reasons": ["workflow_edits_without_explicit_scope"]}),
+        "workflow_edit_not_authorized",
+    )
+    ASSERTIONS.assertEqual(
+        controller.classify_manual_unblock_reason({"reasons": ["live_action_or_automation_activation_blocked"]}),
+        "live_action_requested_while_disabled",
+    )
+    ASSERTIONS.assertEqual(
+        controller.classify_manual_unblock_reason({"reasons": ["future_roadmap_scope_blocked"]}),
+        "future_roadmap_scope",
+    )
+
+
+def test_manual_unblock_reason_classification_maps_standing_auth_reason_tokens_from_raw_reason_string():
+    ASSERTIONS.assertEqual(
+        controller.classify_manual_unblock_reason({"reasons": "forbidden_files_touched"}),
+        "forbidden_files_required",
+    )
+    ASSERTIONS.assertEqual(
+        controller.classify_manual_unblock_reason({"reasons": "future_roadmap_scope_blocked"}),
+        "future_roadmap_scope",
+    )
+
+
+def test_manual_unblock_reason_classification_maps_phase0_manual_next_actions_to_matrix_phase0_needs_manual():
+    for next_action in (
+        "needs_manual_phase0_blocked",
+        "needs_manual_phase0_failed",
+        "needs_manual_phase0_malformed",
+        "needs_manual_phase0_invalid_status",
+        "needs_manual_phase0_invalid_action",
+        "needs_manual_phase0_missing_output",
+    ):
+        ASSERTIONS.assertEqual(
+            controller.classify_manual_unblock_reason({"status": "NEEDS_MANUAL", "next_action": next_action}),
+            "matrix_phase0_needs_manual",
+        )
+
+
+def test_manual_unblock_reason_classification_preserves_matrix_phase0_missing_required_fields_priority():
+    ASSERTIONS.assertEqual(
+        controller.classify_manual_unblock_reason(
+            {
+                "status": "NEEDS_MANUAL",
+                "next_action": "needs_manual_matrix_phase0_missing",
+                "missing_fields": ["files_allowed"],
+            }
+        ),
+        "matrix_phase0_missing_required_fields",
+    )
+
+
+def test_manual_unblock_authorization_text_exact_format():
+    text = controller.build_manual_authorization_text("PR10E", "matrix_phase0_needs_manual")
+    ASSERTIONS.assertEqual(text, "AUTORIZZO PATCH PR10E NEEDS_MANUAL per matrix_phase0_needs_manual")
+
+
+def test_manual_unblock_authorization_text_fallbacks_keep_format():
+    ASSERTIONS.assertEqual(
+        controller.build_manual_authorization_text(None, None),
+        "AUTORIZZO PATCH PR NEEDS_MANUAL per ambiguous_architecture",
+    )
+    ASSERTIONS.assertEqual(
+        controller.build_manual_authorization_text("   ", "   "),
+        "AUTORIZZO PATCH PR NEEDS_MANUAL per ambiguous_architecture",
+    )
+    ASSERTIONS.assertEqual(
+        controller.build_manual_authorization_text(123, 999),
+        "AUTORIZZO PATCH 123 NEEDS_MANUAL per 999",
+    )
+
+
+def test_manual_unblock_command_is_single_line_and_deterministic():
+    first = controller.build_manual_unblock_command("PR10E", "225", "abc123", "matrix_phase0_needs_manual")
+    second = controller.build_manual_unblock_command("PR10E", "225", "abc123", "matrix_phase0_needs_manual")
+    ASSERTIONS.assertEqual(first, second)
+    ASSERTIONS.assertNotIn("\n", first)
+    ASSERTIONS.assertEqual(
+        first,
+        "gh pr view -R zarbopiero963-droid/Pickfair-nogui --json number,headRefOid,mergeStateStatus,mergeable,url -- 225",
+    )
+
+
+def test_manual_unblock_command_uses_supported_contract_and_quotes_untrusted_pr_values():
+    command = controller.build_manual_unblock_command("PR10E", "-246 with space", "abc123", "matrix_phase0_needs_manual")
+    ASSERTIONS.assertNotIn("/tmp/check-pr-status.sh", command)
+    ASSERTIONS.assertIn("gh pr view", command)
+    ASSERTIONS.assertNotIn("--manual-unblock", command)
+    ASSERTIONS.assertNotIn("--pr-name", command)
+    ASSERTIONS.assertNotIn("--pr-number", command)
+    ASSERTIONS.assertNotIn("--head-sha", command)
+    ASSERTIONS.assertNotIn("--reason", command)
+    ASSERTIONS.assertNotIn("--mode", command)
+    for keyword in ("gh api", "gh run", "git push", "git commit", "resolveReviewThread"):
+        ASSERTIONS.assertNotIn(keyword, command)
+    ASSERTIONS.assertEqual(
+        command,
+        "gh pr view -R zarbopiero963-droid/Pickfair-nogui --json number,headRefOid,mergeStateStatus,mergeable,url -- '-246 with space'",
+    )
+    ASSERTIONS.assertNotIn("\n", command)
+
+
+def test_manual_unblock_command_neutralizes_dash_prefixed_pr_selectors():
+    for selector in ("--json", "--live", "-246"):
+        command = controller.build_manual_unblock_command("PR10E", selector, "abc123", "matrix_phase0_needs_manual")
+        ASSERTIONS.assertEqual(
+            command,
+            "gh pr view -R zarbopiero963-droid/Pickfair-nogui --json number,headRefOid,mergeStateStatus,mergeable,url -- "
+            + shlex.quote(selector),
+        )
+        ASSERTIONS.assertIn(" -- ", command)
+
+
+def test_manual_unblock_command_supports_explicit_repo_override():
+    command = controller.build_manual_unblock_command(
+        "PR10E",
+        "246",
+        "abc123",
+        "matrix_phase0_needs_manual",
+        "custom/repo",
+    )
+    ASSERTIONS.assertEqual(
+        command,
+        "gh pr view -R custom/repo --json number,headRefOid,mergeStateStatus,mergeable,url -- 246",
+    )
+
+
+def test_manual_unblock_command_strips_newlines_from_pr_and_repo_to_remain_single_line():
+    command = controller.build_manual_unblock_command(
+        "PR10E",
+        "246\n--json",
+        "abc123",
+        "matrix_phase0_needs_manual",
+        "custom/repo\ninjected",
+    )
+    ASSERTIONS.assertNotIn("\n", command)
+    ASSERTIONS.assertEqual(
+        command,
+        "gh pr view -R 'custom/repo injected' --json number,headRefOid,mergeStateStatus,mergeable,url -- '246 --json'",
+    )
+
+
+def test_manual_unblock_telegram_message_contains_pr_head_scope_reason():
+    package = {
+        "pr_number": "225",
+        "head_sha": "abc123",
+        "files_allowed": ["scripts/pr_automation_controller.py"],
+        "files_forbidden": [".github/workflows/*"],
+        "reason": "review_triage_needs_manual",
+        "next_action": "needs_manual",
+    }
+    message = controller.build_manual_unblock_telegram_message(package)
+    ASSERTIONS.assertIn("PR: 225", message)
+    ASSERTIONS.assertIn("Head: abc123", message)
+    ASSERTIONS.assertIn("Scope allowed: scripts/pr_automation_controller.py", message)
+    ASSERTIONS.assertIn("Scope forbidden: .github/workflows/*", message)
+    ASSERTIONS.assertIn("Reason: review_triage_needs_manual", message)
+
+
+def test_manual_unblock_telegram_message_defaults_scope_to_none_for_empty_payload():
+    message_none = controller.build_manual_unblock_telegram_message(None)
+    ASSERTIONS.assertIn("Scope allowed: (none)", message_none)
+    ASSERTIONS.assertIn("Scope forbidden: (none)", message_none)
+    message_empty = controller.build_manual_unblock_telegram_message({})
+    ASSERTIONS.assertIn("Scope allowed: (none)", message_empty)
+    ASSERTIONS.assertIn("Scope forbidden: (none)", message_empty)
+
+
+def test_manual_unblock_telegram_message_coerces_non_string_scope_entries():
+    package = {
+        "pr_number": "225",
+        "head_sha": "abc123",
+        "files_allowed": [None, 42, " scripts/pr_automation_controller.py "],
+        "files_forbidden": ["", {"x": 1}, " .github/workflows/* "],
+        "reason": "review_triage_needs_manual",
+        "next_action": "needs_manual",
+    }
+    message = controller.build_manual_unblock_telegram_message(package)
+    ASSERTIONS.assertIn("Scope allowed: 42, scripts/pr_automation_controller.py", message)
+    ASSERTIONS.assertIn("Scope forbidden: {'x': 1}, .github/workflows/*", message)
+
+
+def test_manual_unblock_telegram_message_treats_raw_string_scope_as_single_entry():
+    package = {
+        "files_allowed": " scripts/pr_automation_controller.py ",
+        "files_forbidden": " .github/workflows/* ",
+    }
+    message = controller.build_manual_unblock_telegram_message(package)
+    ASSERTIONS.assertIn("Scope allowed: scripts/pr_automation_controller.py", message)
+    ASSERTIONS.assertIn("Scope forbidden: .github/workflows/*", message)
+
+
+def test_manual_unblock_telegram_message_handles_none_empty_and_mixed_scope_safely():
+    message_none = controller.build_manual_unblock_telegram_message(
+        {"files_allowed": None, "files_forbidden": None}
+    )
+    ASSERTIONS.assertIn("Scope allowed: (none)", message_none)
+    ASSERTIONS.assertIn("Scope forbidden: (none)", message_none)
+    message_empty = controller.build_manual_unblock_telegram_message(
+        {"files_allowed": "", "files_forbidden": "   "}
+    )
+    ASSERTIONS.assertIn("Scope allowed: (none)", message_empty)
+    ASSERTIONS.assertIn("Scope forbidden: (none)", message_empty)
+    message_mixed = controller.build_manual_unblock_telegram_message(
+        {
+            "files_allowed": [None, 7, " scripts/pr_automation_controller.py ", ""],
+            "files_forbidden": [True, {"x": 1}, " .github/workflows/* "],
+        }
+    )
+    ASSERTIONS.assertIn("Scope allowed: 7, scripts/pr_automation_controller.py", message_mixed)
+    ASSERTIONS.assertIn("Scope forbidden: True, {'x': 1}, .github/workflows/*", message_mixed)
+
+
+def test_manual_unblock_package_shape_and_fixed_status_flags():
+    package = controller.build_manual_unblock_package(
+        {
+            "pr_name": "PR10E",
+            "pr_number": "225",
+            "head_sha": "abc123",
+            "reason": "matrix_phase0_needs_manual",
+            "next_action": "needs_manual",
+            "files_allowed": ["scripts/pr_automation_controller.py", "tests/scripts/test_pr_automation_controller.py"],
+            "files_forbidden": [".github/workflows/*", "scripts/pr_flow_automation.py"],
+        }
+    )
+    ASSERTIONS.assertEqual(
+        set(package.keys()),
+        {
+            "status",
+            "next_action",
+            "reason",
+            "pr_number",
+            "head_sha",
+            "files_allowed",
+            "files_forbidden",
+            "copy_paste_command",
+            "authorization_text",
+            "telegram_message",
+            "can_patch",
+        },
+    )
+    ASSERTIONS.assertEqual(package["status"], "NEEDS_MANUAL")
+    ASSERTIONS.assertFalse(package["can_patch"])
+    ASSERTIONS.assertEqual(
+        package["authorization_text"],
+        "AUTORIZZO PATCH PR10E NEEDS_MANUAL per matrix_phase0_needs_manual",
+    )
+
+
+def test_manual_unblock_package_normalizes_string_scope_lists_and_keeps_can_patch_false():
+    package = controller.build_manual_unblock_package(
+        {
+            "pr_name": "PR10E",
+            "pr_number": "225",
+            "head_sha": "abc123",
+            "reason": "matrix_phase0_needs_manual",
+            "files_allowed": "scripts/pr_automation_controller.py",
+            "files_forbidden": ".github/workflows/*",
+        }
+    )
+    ASSERTIONS.assertEqual(package["files_allowed"], ["scripts/pr_automation_controller.py"])
+    ASSERTIONS.assertEqual(package["files_forbidden"], [".github/workflows/*"])
+    ASSERTIONS.assertFalse(package["can_patch"])
+    ASSERTIONS.assertEqual(
+        package["authorization_text"],
+        "AUTORIZZO PATCH PR10E NEEDS_MANUAL per matrix_phase0_needs_manual",
+    )
+
+
+def test_manual_unblock_package_accepts_tuple_and_set_scope_values():
+    package_tuple = controller.build_manual_unblock_package(
+        {
+            "files_allowed": ("scripts/a.py", "tests/b.py"),
+            "files_forbidden": ("scripts/c.py",),
+        }
+    )
+    ASSERTIONS.assertEqual(package_tuple["files_allowed"], ["scripts/a.py", "tests/b.py"])
+    ASSERTIONS.assertEqual(package_tuple["files_forbidden"], ["scripts/c.py"])
+
+    package_set = controller.build_manual_unblock_package(
+        {
+            "files_allowed": {"scripts/a.py"},
+            "files_forbidden": {"tests/b.py"},
+        }
+    )
+    ASSERTIONS.assertEqual(package_set["files_allowed"], ["scripts/a.py"])
+    ASSERTIONS.assertEqual(package_set["files_forbidden"], ["tests/b.py"])
+
+
+def test_manual_unblock_package_handles_none_empty_and_mixed_scope_values():
+    package_none = controller.build_manual_unblock_package({"files_allowed": None, "files_forbidden": None})
+    ASSERTIONS.assertEqual(package_none["files_allowed"], [])
+    ASSERTIONS.assertEqual(package_none["files_forbidden"], [])
+    package_mixed = controller.build_manual_unblock_package(
+        {
+            "files_allowed": ["scripts/pr_automation_controller.py", None, 9, "  "],
+            "files_forbidden": [".github/workflows/*", "", {"bad": True}],
+        }
+    )
+    ASSERTIONS.assertEqual(package_mixed["files_allowed"], ["9", "scripts/pr_automation_controller.py"])
+    ASSERTIONS.assertEqual(package_mixed["files_forbidden"], [".github/workflows/*"])
+
+
+def test_manual_unblock_package_supports_phase0_manual_review_current_head_and_standing_auth_reasons():
+    reason_contexts = [
+        ({"matrix_phase0_needs_manual": True}, "matrix_phase0_needs_manual"),
+        ({"reason": "review_triage_needs_manual"}, "review_triage_needs_manual"),
+        ({"current_head_verification_blocked": True}, "current_head_verification_blocked"),
+        ({"tests_cannot_prove_behavior": True}, "tests_cannot_prove_behavior"),
+    ]
+    for ctx, expected_reason in reason_contexts:
+        package = controller.build_manual_unblock_package(
+            {
+                "pr_name": "PR10E",
+                "pr_number": "225",
+                "head_sha": "abc123",
+                "files_allowed": ["scripts/pr_automation_controller.py"],
+                "files_forbidden": [".github/workflows/*"],
+                **ctx,
+            }
+        )
+        ASSERTIONS.assertEqual(package["reason"], expected_reason)
+        ASSERTIONS.assertEqual(package["status"], "NEEDS_MANUAL")
+        ASSERTIONS.assertFalse(package["can_patch"])
+
+
+def test_manual_unblock_package_maps_matrix_phase0_missing_next_action_to_required_fields_reason():
+    package = controller.build_manual_unblock_package(
+        {
+            "pr_name": "PR10E",
+            "pr_number": "246",
+            "head_sha": "abc123",
+            "status": "NEEDS_MANUAL",
+            "next_action": "needs_manual_matrix_phase0_missing",
+            "missing_fields": ["files_allowed", "test_matrix"],
+            "files_allowed": ["scripts/pr_automation_controller.py"],
+            "files_forbidden": ["tests/scripts/test_pr_automation_controller.py"],
+        }
+    )
+    ASSERTIONS.assertEqual(package["reason"], "matrix_phase0_missing_required_fields")
+    ASSERTIONS.assertEqual(
+        package["authorization_text"],
+        "AUTORIZZO PATCH PR10E NEEDS_MANUAL per matrix_phase0_missing_required_fields",
+    )
+    ASSERTIONS.assertFalse(package["can_patch"])
+
+
+def test_manual_unblock_package_maps_future_roadmap_scope_blocked_reason_alias():
+    package = controller.build_manual_unblock_package(
+        {
+            "pr_name": "PR10E",
+            "pr_number": "246",
+            "head_sha": "abc123",
+            "reasons": ["future_roadmap_scope_blocked"],
+            "files_allowed": ["scripts/pr_automation_controller.py"],
+            "files_forbidden": ["tests/scripts/test_pr_automation_controller.py"],
+        }
+    )
+    ASSERTIONS.assertEqual(package["reason"], "future_roadmap_scope")
+    ASSERTIONS.assertEqual(
+        package["authorization_text"],
+        "AUTORIZZO PATCH PR10E NEEDS_MANUAL per future_roadmap_scope",
+    )
+    ASSERTIONS.assertFalse(package["can_patch"])
+
+
+def test_manual_unblock_package_maps_phase0_not_passed_reason_alias_to_matrix_phase0_needs_manual():
+    package = controller.build_manual_unblock_package(
+        {
+            "pr_name": "PR10E",
+            "pr_number": "246",
+            "head_sha": "abc123",
+            "reasons": ["phase0_not_passed"],
+            "files_allowed": ["scripts/pr_automation_controller.py"],
+            "files_forbidden": ["tests/scripts/test_pr_automation_controller.py"],
+        }
+    )
+    ASSERTIONS.assertEqual(package["reason"], "matrix_phase0_needs_manual")
+    ASSERTIONS.assertFalse(package["can_patch"])
+    ASSERTIONS.assertEqual(
+        package["authorization_text"],
+        "AUTORIZZO PATCH PR10E NEEDS_MANUAL per matrix_phase0_needs_manual",
+    )
+
+
+def test_manual_unblock_package_strips_newlines_from_pr_head_and_reason_outputs():
+    package = controller.build_manual_unblock_package(
+        {
+            "pr_name": "PR10E\nMANUAL",
+            "pr_number": "246\nx",
+            "head_sha": "abc123\nzzz",
+            "reason": "future_roadmap_scope\nblocked",
+            "repo": "owner/repo\nalt",
+        }
+    )
+    ASSERTIONS.assertNotIn("\n", str(package["pr_number"]))
+    ASSERTIONS.assertNotIn("\n", str(package["head_sha"]))
+    ASSERTIONS.assertNotIn("\n", str(package["reason"]))
+    ASSERTIONS.assertNotIn("\n", str(package["copy_paste_command"]))
+    ASSERTIONS.assertNotIn("\n", str(package["authorization_text"]))
+    ASSERTIONS.assertEqual(package["reason"], "future_roadmap_scope")
+    ASSERTIONS.assertEqual(
+        package["authorization_text"],
+        "AUTORIZZO PATCH PR10E MANUAL NEEDS_MANUAL per future_roadmap_scope",
+    )
+
+
+def test_manual_unblock_package_sanitizes_next_action_to_single_line_for_message_rendering():
+    package = controller.build_manual_unblock_package(
+        {
+            "next_action": "needs_manual\r\ninjected_line",
+        }
+    )
+    ASSERTIONS.assertEqual(package["next_action"], "needs_manual injected_line")
+    ASSERTIONS.assertIn("Next action: needs_manual injected_line", package["telegram_message"])
+    ASSERTIONS.assertNotIn("\ninjected_line", package["telegram_message"])
+
+
+def test_manual_unblock_package_supports_pr_and_number_head_fallback_keys():
+    package_pr_headref = controller.build_manual_unblock_package(
+        {
+            "pr": "246",
+            "headRefOid": "abc123",
+        }
+    )
+    ASSERTIONS.assertEqual(package_pr_headref["pr_number"], "246")
+    ASSERTIONS.assertEqual(package_pr_headref["head_sha"], "abc123")
+
+    package_number_head = controller.build_manual_unblock_package(
+        {
+            "number": "247",
+            "head": "def456",
+        }
+    )
+    ASSERTIONS.assertEqual(package_number_head["pr_number"], "247")
+    ASSERTIONS.assertEqual(package_number_head["head_sha"], "def456")
