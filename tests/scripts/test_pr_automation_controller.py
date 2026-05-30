@@ -3,7 +3,9 @@
 
 import argparse
 import copy
+import hashlib
 import json
+import os
 import re
 import shlex
 from pathlib import Path
@@ -4753,6 +4755,20 @@ def test_build_patch_scope_snapshot_unreadable_candidate_does_not_abort(monkeypa
     ASSERTIONS.assertEqual(snapshot["files"]["ok.txt"]["text"], "ok")
 
 
+def test_build_patch_scope_snapshot_keeps_binary_bytes_on_decode_failure(tmp_path):
+    binary = tmp_path / "binary.bin"
+    payload = b"\xff\xfe\x00\x81"
+    binary.write_bytes(payload)
+    snapshot = controller.build_patch_scope_snapshot(["binary.bin"], repo_root=tmp_path)
+    ASSERTIONS.assertEqual(snapshot["snapshot_paths"], ["binary.bin"])
+    ASSERTIONS.assertEqual(snapshot["invalid_paths"], [])
+    record = snapshot["files"]["binary.bin"]
+    ASSERTIONS.assertTrue(record["exists"])
+    ASSERTIONS.assertEqual(record["bytes"], payload)
+    ASSERTIONS.assertEqual(record["text"], None)
+    ASSERTIONS.assertEqual(record["sha256"], hashlib.sha256(payload).hexdigest())
+
+
 def test_normalize_snapshot_candidates_splits_csv_and_newline_inputs():
     csv_valid, csv_invalid = controller._normalize_snapshot_candidates("a.py,b.py")
     newline_valid, newline_invalid = controller._normalize_snapshot_candidates("a.py\nb.py")
@@ -4822,6 +4838,36 @@ def test_rollback_scope_violations_restores_forbidden_deleted_file(tmp_path):
     result = controller.rollback_scope_violations(pre, ["blocked.txt"], repo_root=tmp_path)
     ASSERTIONS.assertTrue(result["rollback_succeeded"])
     ASSERTIONS.assertEqual(blocked.read_text(encoding="utf-8"), "before")
+
+
+def test_rollback_scope_violations_restores_symlink_path_without_mutating_target(tmp_path):
+    source_a = tmp_path / "source-a.txt"
+    source_b = tmp_path / "source-b.txt"
+    source_a.write_text("A", encoding="utf-8")
+    source_b.write_text("B", encoding="utf-8")
+    link = tmp_path / "link.txt"
+    link.symlink_to("source-a.txt")
+    pre = controller.build_patch_scope_snapshot(["link.txt"], repo_root=tmp_path)
+    link.unlink()
+    link.symlink_to("source-b.txt")
+    result = controller.rollback_scope_violations(pre, ["link.txt"], repo_root=tmp_path)
+    ASSERTIONS.assertTrue(result["rollback_succeeded"])
+    ASSERTIONS.assertTrue(link.is_symlink())
+    ASSERTIONS.assertEqual(os.readlink(link), "source-a.txt")
+    ASSERTIONS.assertEqual(source_a.read_text(encoding="utf-8"), "A")
+    ASSERTIONS.assertEqual(source_b.read_text(encoding="utf-8"), "B")
+
+
+def test_rollback_scope_violations_restores_binary_bytes_exactly(tmp_path):
+    binary = tmp_path / "blocked.bin"
+    before = b"\x00\x01\x02\xfe\xff"
+    after = b"\x10\x20\x30"
+    binary.write_bytes(before)
+    pre = controller.build_patch_scope_snapshot(["blocked.bin"], repo_root=tmp_path)
+    binary.write_bytes(after)
+    result = controller.rollback_scope_violations(pre, ["blocked.bin"], repo_root=tmp_path)
+    ASSERTIONS.assertTrue(result["rollback_succeeded"])
+    ASSERTIONS.assertEqual(binary.read_bytes(), before)
 
 
 def test_enforce_post_patch_scope_or_rollback_mixed_changes_rolls_back_forbidden_only(tmp_path, monkeypatch):

@@ -2272,9 +2272,10 @@ def _normalize_snapshot_candidates(paths: object) -> tuple[list[str], list[str]]
 
 
 def _resolve_snapshot_path(repo_root: Path, relative_path: str) -> Path | None:
-    candidate = (repo_root / relative_path).resolve(strict=False)
+    candidate = repo_root / relative_path
+    resolved = candidate.resolve(strict=False)
     try:
-        candidate.relative_to(repo_root)
+        resolved.relative_to(repo_root)
     except ValueError:
         return None
     return candidate
@@ -2290,27 +2291,43 @@ def build_patch_scope_snapshot(
     valid_paths, invalid_paths = _normalize_snapshot_candidates(candidate_paths)
     files: dict[str, Any] = {}
     for relative_path in valid_paths:
-        resolved = _resolve_snapshot_path(root, relative_path)
-        if resolved is None:
+        scoped_path = _resolve_snapshot_path(root, relative_path)
+        if scoped_path is None:
             invalid_paths.append(relative_path)
             continue
         try:
-            exists = resolved.exists()
-            if exists and not resolved.is_file():
+            is_symlink = scoped_path.is_symlink()
+            exists = scoped_path.exists() or is_symlink
+            link_target = os.readlink(scoped_path) if is_symlink else None
+            if exists and not is_symlink and not scoped_path.is_file():
                 invalid_paths.append(relative_path)
                 continue
-            file_bytes = resolved.read_bytes() if exists else b""
+            if is_symlink:
+                target = (scoped_path.parent / str(link_target)).resolve(strict=False)
+                try:
+                    target.relative_to(root)
+                except ValueError:
+                    invalid_paths.append(relative_path)
+                    continue
+                file_bytes = str(link_target).encode("utf-8", errors="surrogateescape")
+                text: str | None = str(link_target)
+            elif exists:
+                file_bytes = scoped_path.read_bytes()
+                try:
+                    text = file_bytes.decode("utf-8")
+                except UnicodeDecodeError:
+                    text = None
+            else:
+                file_bytes = b""
+                text = ""
         except (OSError, IsADirectoryError):
-            invalid_paths.append(relative_path)
-            continue
-        try:
-            text = file_bytes.decode("utf-8") if exists else ""
-        except UnicodeDecodeError:
             invalid_paths.append(relative_path)
             continue
         files[relative_path] = {
             "path": relative_path,
             "exists": exists,
+            "is_symlink": is_symlink,
+            "link_target": link_target if is_symlink else None,
             "sha256": hashlib.sha256(file_bytes).hexdigest() if exists else "",
             "bytes": file_bytes if exists else b"",
             "text": text,
@@ -2391,8 +2408,8 @@ def rollback_scope_violations(
     rollback_errors: list[str] = []
     rolled_back_files: list[str] = []
     for path in offending:
-        resolved = _resolve_snapshot_path(root, path)
-        if resolved is None:
+        scoped_path = _resolve_snapshot_path(root, path)
+        if scoped_path is None:
             rollback_errors.append(f"{path}:outside_repo")
             continue
         state = pre_map.get(path) if isinstance(pre_map.get(path), dict) else None
@@ -2401,15 +2418,27 @@ def rollback_scope_violations(
             continue
         existed_before = bool(state.get("exists"))
         prior_bytes = state.get("bytes")
+        was_symlink = bool(state.get("is_symlink"))
+        link_target = state.get("link_target")
         try:
             if existed_before:
-                resolved.parent.mkdir(parents=True, exist_ok=True)
-                if not isinstance(prior_bytes, (bytes, bytearray)):
-                    rollback_errors.append(f"{path}:invalid_pre_snapshot_bytes")
-                    continue
-                resolved.write_bytes(bytes(prior_bytes))
-            elif resolved.exists():
-                resolved.unlink()
+                scoped_path.parent.mkdir(parents=True, exist_ok=True)
+                if was_symlink:
+                    if not isinstance(link_target, str) or not link_target:
+                        rollback_errors.append(f"{path}:invalid_pre_snapshot_symlink")
+                        continue
+                    if scoped_path.exists() or scoped_path.is_symlink():
+                        scoped_path.unlink()
+                    scoped_path.symlink_to(link_target)
+                else:
+                    if not isinstance(prior_bytes, (bytes, bytearray)):
+                        rollback_errors.append(f"{path}:invalid_pre_snapshot_bytes")
+                        continue
+                    if scoped_path.is_symlink():
+                        scoped_path.unlink()
+                    scoped_path.write_bytes(bytes(prior_bytes))
+            elif scoped_path.exists() or scoped_path.is_symlink():
+                scoped_path.unlink()
             rolled_back_files.append(path)
         except OSError as exc:
             rollback_errors.append(f"{path}:{exc}")
