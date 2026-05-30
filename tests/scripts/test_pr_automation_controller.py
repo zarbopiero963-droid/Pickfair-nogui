@@ -8310,6 +8310,32 @@ def test_post_fix_audit_gate_fail_status_denies():
     ASSERTIONS.assertEqual(result["reason"], "post_fix_audit_not_pass")
 
 
+def test_post_fix_audit_gate_accepts_normalized_status_sources_and_report_status_fail():
+    via_post_fix = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(POST_FIX_AUDIT=None, post_fix_audit="PASS")
+    )
+    via_report = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(POST_FIX_AUDIT=None, post_fix_audit=None, post_fix_audit_report={"status": "PASS"})
+    )
+    fail_via_report_status = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(POST_FIX_AUDIT=None, post_fix_audit=None, report={"status": "FAIL"})
+    )
+    ASSERTIONS.assertTrue(via_post_fix["allowed"])
+    ASSERTIONS.assertTrue(via_report["allowed"])
+    ASSERTIONS.assertEqual(fail_via_report_status["reason"], "post_fix_audit_not_pass")
+
+
+def test_post_fix_audit_gate_conflicting_or_malformed_status_sources_fail_closed():
+    conflict = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(POST_FIX_AUDIT="PASS", post_fix_audit="FAIL")
+    )
+    malformed = controller.evaluate_post_fix_audit_gate(_post_fix_gate_ctx(POST_FIX_AUDIT="banana"))
+    ASSERTIONS.assertFalse(conflict["allowed"])
+    ASSERTIONS.assertEqual(conflict["reason"], "post_fix_audit_malformed")
+    ASSERTIONS.assertFalse(malformed["allowed"])
+    ASSERTIONS.assertEqual(malformed["reason"], "post_fix_audit_malformed")
+
+
 def test_post_fix_audit_gate_missing_empty_malformed_unknown_or_needs_manual_denies():
     missing_payload = {k: v for k, v in _post_fix_gate_ctx().items() if k != "POST_FIX_AUDIT"}
     result = controller.evaluate_post_fix_audit_gate(missing_payload)
@@ -8318,7 +8344,7 @@ def test_post_fix_audit_gate_missing_empty_malformed_unknown_or_needs_manual_den
 
     cases = [
         ("", "post_fix_audit_missing"),
-        ("garbage", "post_fix_audit_not_pass"),
+        ("garbage", "post_fix_audit_malformed"),
         ("UNKNOWN", "post_fix_audit_not_pass"),
         ("NEEDS_MANUAL", "post_fix_audit_not_pass"),
     ]
@@ -8334,7 +8360,7 @@ def test_post_fix_audit_gate_validation_failed_or_missing_denies():
         {k: v for k, v in _post_fix_gate_ctx().items() if k != "validation_passed"}
     )
     ASSERTIONS.assertEqual(failed["reason"], "validation_failed")
-    ASSERTIONS.assertEqual(missing2["reason"], "validation_missing")
+    ASSERTIONS.assertEqual(missing2["reason"], "evidence_missing")
 
 
 def test_post_fix_audit_gate_current_head_mismatch_or_missing_denies():
@@ -8343,7 +8369,7 @@ def test_post_fix_audit_gate_current_head_mismatch_or_missing_denies():
         {k: v for k, v in _post_fix_gate_ctx().items() if k != "current_head_matches"}
     )
     ASSERTIONS.assertEqual(mismatch["reason"], "current_head_mismatch")
-    ASSERTIONS.assertEqual(missing["reason"], "current_head_missing")
+    ASSERTIONS.assertEqual(missing["reason"], "evidence_missing")
 
 
 def test_post_fix_audit_gate_dirty_worktree_denies():
@@ -8416,13 +8442,37 @@ def test_post_fix_audit_gate_pr10b_scope_rollback_failed_shape_denies():
     ASSERTIONS.assertFalse(result["allowed"])
     ASSERTIONS.assertFalse(result["can_commit"])
     ASSERTIONS.assertFalse(result["can_push"])
-    ASSERTIONS.assertEqual(result["reason"], "post_fix_audit_not_pass")
+    ASSERTIONS.assertEqual(result["reason"], "rollback_failed")
 
 
 def test_post_fix_audit_gate_scope_violation_denies():
     result = controller.evaluate_post_fix_audit_gate(_post_fix_gate_ctx(scope_allowed=False))
     ASSERTIONS.assertFalse(result["allowed"])
     ASSERTIONS.assertEqual(result["reason"], "scope_violation")
+
+
+def test_post_fix_audit_gate_scope_audit_allowed_true_derives_scope_allowed():
+    result = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(scope_allowed=None, scope_audit={"allowed": True})
+    )
+    ASSERTIONS.assertTrue(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "allowed")
+
+
+def test_post_fix_audit_gate_scope_audit_allowed_false_denies_scope_violation():
+    result = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(scope_allowed=None, scope_audit={"allowed": False})
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "scope_violation")
+
+
+def test_post_fix_audit_gate_scope_audit_allowed_string_fails_closed():
+    result = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(scope_allowed=None, scope_audit={"allowed": "false"})
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "evidence_malformed")
 
 
 def test_post_fix_audit_gate_explicit_commit_or_push_false_denies_respective_action():
@@ -8432,6 +8482,70 @@ def test_post_fix_audit_gate_explicit_commit_or_push_false_denies_respective_act
     ASSERTIONS.assertEqual(commit_block["reason"], "commit_not_allowed")
     ASSERTIONS.assertFalse(push_block["can_push"])
     ASSERTIONS.assertEqual(push_block["reason"], "push_not_allowed")
+
+
+def test_post_fix_audit_gate_commit_and_push_false_keeps_deterministic_commit_reason():
+    result = controller.evaluate_post_fix_audit_gate(_post_fix_gate_ctx(can_commit=False, can_push=False))
+    ASSERTIONS.assertFalse(result["can_commit"])
+    ASSERTIONS.assertFalse(result["can_push"])
+    ASSERTIONS.assertEqual(result["reason"], "commit_not_allowed")
+
+
+def test_post_fix_audit_gate_missing_scope_rollback_task_or_action_evidence_denies():
+    missing_scope = controller.evaluate_post_fix_audit_gate(
+        {k: v for k, v in _post_fix_gate_ctx().items() if k != "scope_allowed"}
+    )
+    missing_rollback = controller.evaluate_post_fix_audit_gate(
+        {k: v for k, v in _post_fix_gate_ctx().items() if k != "rollback_succeeded"}
+    )
+    missing_task = controller.evaluate_post_fix_audit_gate(
+        {k: v for k, v in _post_fix_gate_ctx().items() if k != "task_no_commit_push"}
+    )
+    ASSERTIONS.assertEqual(missing_scope["reason"], "evidence_missing")
+    ASSERTIONS.assertEqual(missing_rollback["reason"], "evidence_missing")
+    ASSERTIONS.assertEqual(missing_task["reason"], "evidence_missing")
+
+
+def test_post_fix_audit_gate_boolean_like_string_and_malformed_evidence_fail_closed():
+    false_string = controller.evaluate_post_fix_audit_gate(_post_fix_gate_ctx(task_no_commit_push="false"))
+    malformed_string = controller.evaluate_post_fix_audit_gate(_post_fix_gate_ctx(validation_passed="yes"))
+    ASSERTIONS.assertTrue(false_string["allowed"])
+    ASSERTIONS.assertEqual(malformed_string["reason"], "evidence_malformed")
+
+
+def test_post_fix_audit_gate_scope_and_rollback_reason_precedence_over_audit_not_pass():
+    scope_first = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(POST_FIX_AUDIT="FAIL", scope_allowed=False)
+    )
+    rollback_first = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(POST_FIX_AUDIT="FAIL", rollback_attempted=True, rollback_succeeded=False)
+    )
+    ASSERTIONS.assertEqual(scope_first["reason"], "scope_violation")
+    ASSERTIONS.assertEqual(rollback_first["reason"], "rollback_failed")
+
+
+def test_can_auto_push_live_flag_only_denies_without_pr3h_evidence():
+    denied = controller.can_auto_push({"AUTOMATION_MODE": "live", "AUTO_PUSH_ENABLED": "true"})
+    ASSERTIONS.assertFalse(denied["allowed"])
+    ASSERTIONS.assertEqual(denied["reason"], "post_fix_audit_missing")
+
+
+def test_assert_live_action_allowed_push_denies_without_pr3h_evidence():
+    with ASSERTIONS.assertRaises(PermissionError):
+        controller.assert_live_action_allowed("push", {"AUTOMATION_MODE": "live", "AUTO_PUSH_ENABLED": "true"})
+
+
+def test_post_fix_audit_wrappers_return_action_consistent_payloads():
+    commit_allowed = controller.can_commit_after_post_fix_audit(_post_fix_gate_ctx())
+    push_denied = controller.can_push_after_post_fix_audit(_post_fix_gate_ctx(can_push=False))
+    ASSERTIONS.assertEqual(commit_allowed["allowed"], commit_allowed["can_commit"])
+    ASSERTIONS.assertEqual(push_denied["allowed"], push_denied["can_push"])
+    ASSERTIONS.assertEqual(commit_allowed["status"], "PASS")
+    ASSERTIONS.assertEqual(push_denied["status"], "FAIL")
+    ASSERTIONS.assertFalse(commit_allowed["needs_manual"])
+    ASSERTIONS.assertTrue(push_denied["needs_manual"])
+    ASSERTIONS.assertEqual(commit_allowed["next_action"], "proceed")
+    ASSERTIONS.assertEqual(push_denied["next_action"], "needs_manual")
 
 
 def test_post_fix_audit_gate_contract_shape():
