@@ -910,6 +910,173 @@ def can_auto_push(context: dict[str, Any] | None = None) -> dict[str, Any]:
     return can_run_live_action("push", context)
 
 
+_POST_FIX_AUDIT_GATE_KNOWN_STATUSES = {"PASS", "FAIL", "PARTIAL", "NEEDS_MANUAL", "UNKNOWN"}
+
+
+def normalize_post_fix_audit_gate_input(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    ctx = dict(context or {})
+    report = ctx.get("post_fix_audit_report") if isinstance(ctx.get("post_fix_audit_report"), dict) else {}
+    rollback = ctx.get("rollback") if isinstance(ctx.get("rollback"), dict) else {}
+    raw_audit = first_nonempty(ctx.get("POST_FIX_AUDIT"), ctx.get("post_fix_audit"), report.get("status"))
+    audit = str(raw_audit if raw_audit is not None else "").strip().upper()
+    mode = normalize_automation_mode(ctx.get("automation_mode"))
+    rollback_attempted_raw = (
+        rollback["rollback_attempted"]
+        if "rollback_attempted" in rollback
+        else ctx.get("rollback_attempted")
+    )
+    rollback_succeeded = (
+        rollback["rollback_succeeded"]
+        if "rollback_succeeded" in rollback
+        else ctx.get("rollback_succeeded")
+    )
+    rollback_attempted = bool(rollback_attempted_raw)
+    next_action = str(first_nonempty(ctx.get("next_action"), rollback.get("next_action")) or "").strip()
+    status = str(first_nonempty(ctx.get("status"), rollback.get("status")) or "").strip().upper()
+    rollback_scope_failed = (
+        str(first_nonempty(ctx.get("post_fix_audit"), ctx.get("POST_FIX_AUDIT")) or "").strip().upper() == "FAIL"
+        and status == "FAIL"
+        and next_action == "needs_manual_scope_violation_rollback_failed"
+        and rollback_attempted
+        and rollback_succeeded is False
+    )
+    missing_fields: list[str] = []
+    if "validation_passed" not in ctx:
+        missing_fields.append("validation_passed")
+    if "current_head_matches" not in ctx:
+        missing_fields.append("current_head_matches")
+    if "dirty_worktree" not in ctx:
+        missing_fields.append("dirty_worktree")
+    return {
+        "post_fix_audit": audit,
+        "validation_passed": ctx.get("validation_passed"),
+        "current_head_matches": ctx.get("current_head_matches"),
+        "dirty_worktree": ctx.get("dirty_worktree"),
+        "task_no_commit_push": bool(ctx.get("task_no_commit_push")),
+        "automation_mode": mode,
+        "scope_allowed": ctx.get("scope_allowed"),
+        "scope_audit": ctx.get("scope_audit") if isinstance(ctx.get("scope_audit"), dict) else {},
+        "rollback_attempted": rollback_attempted,
+        "rollback_succeeded": rollback_succeeded,
+        "rollback_scope_failed": rollback_scope_failed,
+        "can_commit_evidence": ctx.get("can_commit"),
+        "can_push_evidence": ctx.get("can_push"),
+        "missing_fields": missing_fields,
+    }
+
+
+def build_post_fix_audit_gate_result(
+    *,
+    allowed: bool,
+    can_commit: bool,
+    can_push: bool,
+    status: str,
+    post_fix_audit: str,
+    reason: str,
+    next_action: str,
+    needs_manual: bool,
+    missing_fields: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "allowed": bool(allowed),
+        "can_commit": bool(can_commit),
+        "can_push": bool(can_push),
+        "status": str(status or ""),
+        "post_fix_audit": str(post_fix_audit or ""),
+        "reason": str(reason or ""),
+        "next_action": str(next_action or ""),
+        "needs_manual": bool(needs_manual),
+        "missing_fields": sorted(set(str(item) for item in (missing_fields or []) if str(item).strip())),
+    }
+
+
+def evaluate_post_fix_audit_gate(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    normalized = normalize_post_fix_audit_gate_input(context)
+    post_fix_audit = normalized["post_fix_audit"]
+    mode = normalized["automation_mode"]
+    missing_fields = list(normalized["missing_fields"])
+    reason = "allowed"
+
+    if not post_fix_audit:
+        reason = "post_fix_audit_missing"
+    elif post_fix_audit not in _POST_FIX_AUDIT_GATE_KNOWN_STATUSES:
+        reason = "post_fix_audit_not_pass"
+    elif post_fix_audit != "PASS":
+        reason = "post_fix_audit_not_pass"
+    elif "validation_passed" in missing_fields:
+        reason = "validation_missing"
+    elif normalized["validation_passed"] is not True:
+        reason = "validation_failed"
+    elif "current_head_matches" in missing_fields:
+        reason = "current_head_missing"
+    elif normalized["current_head_matches"] is not True:
+        reason = "current_head_mismatch"
+    elif "dirty_worktree" in missing_fields:
+        reason = "dirty_worktree"
+    elif bool(normalized["dirty_worktree"]):
+        reason = "dirty_worktree"
+    elif normalized["task_no_commit_push"]:
+        reason = "task_no_commit_push"
+    elif mode != "live":
+        reason = "passive_mode_blocks_commit_push"
+    elif normalized["scope_allowed"] is False:
+        reason = "scope_violation"
+    elif normalized["scope_audit"].get("allowed") is False:
+        reason = "scope_violation"
+    elif normalized["rollback_scope_failed"]:
+        reason = "rollback_failed"
+    elif normalized["rollback_attempted"] and normalized["rollback_succeeded"] is False:
+        reason = "rollback_failed"
+
+    can_commit = reason == "allowed"
+    can_push = reason == "allowed"
+    if can_commit and normalized["can_commit_evidence"] is False:
+        can_commit = False
+        reason = "commit_not_allowed"
+    if can_push and normalized["can_push_evidence"] is False:
+        can_push = False
+        reason = "push_not_allowed"
+    if not can_commit:
+        can_push = False
+    allowed = can_commit and can_push and reason == "allowed"
+    return build_post_fix_audit_gate_result(
+        allowed=allowed,
+        can_commit=can_commit,
+        can_push=can_push,
+        status="PASS" if allowed else "FAIL",
+        post_fix_audit=post_fix_audit or "UNKNOWN",
+        reason=reason,
+        next_action="proceed" if allowed else "needs_manual",
+        needs_manual=not allowed,
+        missing_fields=missing_fields,
+    )
+
+
+def can_commit_after_post_fix_audit(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    result = evaluate_post_fix_audit_gate(context)
+    return {
+        **result,
+        "allowed": bool(result["can_commit"]),
+    }
+
+
+def can_push_after_post_fix_audit(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    result = evaluate_post_fix_audit_gate(context)
+    return {
+        **result,
+        "allowed": bool(result["can_push"]),
+    }
+
+
+def assert_post_fix_audit_gate_or_block(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    result = evaluate_post_fix_audit_gate(context)
+    if result["allowed"]:
+        return result
+    if result["reason"] in {"commit_not_allowed", "push_not_allowed", "task_no_commit_push"}:
+        raise PermissionError(f"post-fix audit gate denied: {result['reason']}")
+    raise RuntimeError(f"post-fix audit gate denied: {result['reason']}")
+
+
 def can_auto_merge(context: dict[str, Any] | None = None) -> dict[str, Any]:
     base = can_run_live_action("merge", context)
     if not base["allowed"]:
