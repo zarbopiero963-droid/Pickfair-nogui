@@ -4809,6 +4809,34 @@ def test_collect_patch_scope_changes_handles_non_dict_snapshots():
     ASSERTIONS.assertEqual(changes["invalid_paths"], [])
 
 
+def test_collect_patch_scope_changes_detects_file_replaced_by_symlink_same_bytes(tmp_path):
+    path = tmp_path / "swap.txt"
+    path.write_text("target.txt", encoding="utf-8")
+    pre = controller.build_patch_scope_snapshot(["swap.txt"], repo_root=tmp_path)
+    path.unlink()
+    path.symlink_to("target.txt")
+    post = controller.build_patch_scope_snapshot(["swap.txt"], repo_root=tmp_path)
+    changes = controller.collect_patch_scope_changes(pre, post)
+    ASSERTIONS.assertEqual(changes["modified_files"], ["swap.txt"])
+    ASSERTIONS.assertIn("swap.txt", changes["changed_files"])
+
+
+def test_collect_patch_scope_changes_detects_symlink_retarget_same_resolved_bytes(tmp_path):
+    target_a = tmp_path / "target-a.txt"
+    target_b = tmp_path / "target-b.txt"
+    target_a.write_text("same-content", encoding="utf-8")
+    target_b.write_text("same-content", encoding="utf-8")
+    link = tmp_path / "link.txt"
+    link.symlink_to("target-a.txt")
+    pre = controller.build_patch_scope_snapshot(["link.txt"], repo_root=tmp_path)
+    link.unlink()
+    link.symlink_to("target-b.txt")
+    post = controller.build_patch_scope_snapshot(["link.txt"], repo_root=tmp_path)
+    changes = controller.collect_patch_scope_changes(pre, post)
+    ASSERTIONS.assertEqual(changes["modified_files"], ["link.txt"])
+    ASSERTIONS.assertIn("link.txt", changes["changed_files"])
+
+
 def test_rollback_scope_violations_removes_forbidden_created_file(tmp_path):
     pre = controller.build_patch_scope_snapshot(["allowed.txt", "forbidden.txt"], repo_root=tmp_path)
     (tmp_path / "allowed.txt").write_text("ok", encoding="utf-8")
@@ -4868,6 +4896,36 @@ def test_rollback_scope_violations_restores_binary_bytes_exactly(tmp_path):
     result = controller.rollback_scope_violations(pre, ["blocked.bin"], repo_root=tmp_path)
     ASSERTIONS.assertTrue(result["rollback_succeeded"])
     ASSERTIONS.assertEqual(binary.read_bytes(), before)
+
+
+def test_rollback_scope_violations_replaces_forbidden_directory_with_original_file(tmp_path):
+    blocked = tmp_path / "blocked.txt"
+    blocked.write_text("before", encoding="utf-8")
+    pre = controller.build_patch_scope_snapshot(["blocked.txt"], repo_root=tmp_path)
+    blocked.unlink()
+    blocked.mkdir()
+    (blocked / "nested.txt").write_text("nested", encoding="utf-8")
+    result = controller.rollback_scope_violations(pre, ["blocked.txt"], repo_root=tmp_path)
+    ASSERTIONS.assertTrue(result["rollback_succeeded"])
+    ASSERTIONS.assertTrue(blocked.is_file())
+    ASSERTIONS.assertEqual(blocked.read_text(encoding="utf-8"), "before")
+
+
+def test_rollback_scope_violations_directory_cleanup_failure_fails_closed(tmp_path, monkeypatch):
+    blocked = tmp_path / "blocked.txt"
+    blocked.write_text("before", encoding="utf-8")
+    pre = controller.build_patch_scope_snapshot(["blocked.txt"], repo_root=tmp_path)
+    blocked.unlink()
+    blocked.mkdir()
+
+    def _fail_rmtree(_path):
+        raise OSError("simulated rmtree failure")
+
+    monkeypatch.setattr(controller.shutil, "rmtree", _fail_rmtree)
+    result = controller.rollback_scope_violations(pre, ["blocked.txt"], repo_root=tmp_path)
+    ASSERTIONS.assertTrue(result["rollback_attempted"])
+    ASSERTIONS.assertFalse(result["rollback_succeeded"])
+    ASSERTIONS.assertIn("blocked.txt:simulated rmtree failure", result["rollback_errors"][0])
 
 
 def test_enforce_post_patch_scope_or_rollback_mixed_changes_rolls_back_forbidden_only(tmp_path, monkeypatch):

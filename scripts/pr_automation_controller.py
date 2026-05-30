@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess  # nosec B404
 import sys
 import time
@@ -2362,11 +2363,26 @@ def collect_patch_scope_changes(
         post_exists = bool(post_state.get("exists"))
         pre_hash = str(pre_state.get("sha256") or "")
         post_hash = str(post_state.get("sha256") or "")
+        pre_symlink = bool(pre_state.get("is_symlink"))
+        post_symlink = bool(post_state.get("is_symlink"))
+        pre_target = pre_state.get("link_target")
+        post_target = post_state.get("link_target")
+        pre_type = "missing"
+        if pre_exists:
+            pre_type = "symlink" if pre_symlink else "file"
+        post_type = "missing"
+        if post_exists:
+            post_type = "symlink" if post_symlink else "file"
         if not pre_exists and post_exists:
             created.append(path)
         elif pre_exists and not post_exists:
             deleted.append(path)
-        elif pre_exists and post_exists and pre_hash != post_hash:
+        elif pre_exists and post_exists and (
+            pre_hash != post_hash
+            or pre_symlink != post_symlink
+            or pre_target != post_target
+            or pre_type != post_type
+        ):
             modified.append(path)
 
     explicit_paths, invalid_paths = _normalize_snapshot_candidates(changed_files)
@@ -2421,6 +2437,8 @@ def rollback_scope_violations(
         was_symlink = bool(state.get("is_symlink"))
         link_target = state.get("link_target")
         try:
+            if scoped_path.exists() and scoped_path.is_dir() and not scoped_path.is_symlink():
+                shutil.rmtree(scoped_path)
             if existed_before:
                 scoped_path.parent.mkdir(parents=True, exist_ok=True)
                 if was_symlink:
