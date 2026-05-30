@@ -978,7 +978,8 @@ def normalize_post_fix_audit_gate_input(context: dict[str, Any] | None = None) -
     audit, post_fix_audit_missing, post_fix_audit_malformed = _normalize_post_fix_audit_status_from_context(
         ctx, report
     )
-    mode = normalize_automation_mode(ctx.get("automation_mode"))
+    mode_raw = ctx.get("automation_mode") if "automation_mode" in ctx else ctx.get("AUTOMATION_MODE")
+    mode = normalize_automation_mode(mode_raw)
     rollback_attempted, rollback_attempted_missing, rollback_attempted_malformed = _strict_gate_bool_from_sources(
         rollback.get("rollback_attempted"), ctx.get("rollback_attempted")
     )

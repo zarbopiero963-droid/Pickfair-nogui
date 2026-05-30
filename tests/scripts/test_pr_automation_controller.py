@@ -8391,6 +8391,32 @@ def test_post_fix_audit_gate_non_live_modes_deny():
         ASSERTIONS.assertEqual(result["reason"], "passive_mode_blocks_commit_push")
 
 
+def test_post_fix_audit_gate_env_style_live_mode_allows_with_full_evidence():
+    payload = _post_fix_gate_ctx()
+    payload.pop("automation_mode", None)
+    payload["AUTOMATION_MODE"] = "live"
+    result = controller.evaluate_post_fix_audit_gate(payload)
+    ASSERTIONS.assertTrue(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "allowed")
+
+
+def test_post_fix_audit_gate_env_style_unknown_mode_denies_fail_closed():
+    result = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(automation_mode=None, AUTOMATION_MODE="banana")
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "passive_mode_blocks_commit_push")
+
+
+def test_post_fix_audit_gate_env_style_live_still_denies_missing_evidence():
+    payload = {k: v for k, v in _post_fix_gate_ctx().items() if k != "validation_passed"}
+    payload.pop("automation_mode", None)
+    payload["AUTOMATION_MODE"] = "live"
+    result = controller.evaluate_post_fix_audit_gate(payload)
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "evidence_missing")
+
+
 def test_post_fix_audit_gate_rollback_failure_denies():
     result = controller.evaluate_post_fix_audit_gate(
         _post_fix_gate_ctx(rollback_attempted=True, rollback_succeeded=False)
@@ -8528,6 +8554,16 @@ def test_can_auto_push_live_flag_only_denies_without_pr3h_evidence():
     denied = controller.can_auto_push({"AUTOMATION_MODE": "live", "AUTO_PUSH_ENABLED": "true"})
     ASSERTIONS.assertFalse(denied["allowed"])
     ASSERTIONS.assertEqual(denied["reason"], "post_fix_audit_missing")
+
+
+def test_can_auto_push_env_style_live_enabled_and_full_pr3h_evidence_allows():
+    payload = _post_fix_gate_ctx()
+    payload.pop("automation_mode", None)
+    payload["AUTOMATION_MODE"] = "live"
+    payload["AUTO_PUSH_ENABLED"] = "true"
+    result = controller.can_auto_push(payload)
+    ASSERTIONS.assertTrue(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "live_action_allowed")
 
 
 def test_assert_live_action_allowed_push_denies_without_pr3h_evidence():
