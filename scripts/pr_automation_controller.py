@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess  # nosec B404
 import sys
 import time
@@ -2244,6 +2245,366 @@ def enforce_commit_file_scope(
     files_forbidden: object,
 ) -> dict[str, Any]:
     return enforce_patch_file_scope(changed_files, files_allowed, files_forbidden)
+
+
+def _normalize_snapshot_candidates(paths: object) -> tuple[list[str], list[str]]:
+    if isinstance(paths, str):
+        if "," not in paths and "\n" not in paths:
+            raw_candidates: list[object] = [paths]
+        else:
+            raw_candidates = [part.strip() for part in re.split(r"[,\n]", paths) if part.strip()]
+    elif isinstance(paths, (list, tuple, set)):
+        raw_candidates = list(paths)
+    else:
+        raw_candidates = []
+    valid: list[str] = []
+    invalid: list[str] = []
+    for candidate in raw_candidates:
+        marker = _invalid_raw_path_marker(candidate)
+        if marker:
+            invalid.append(marker)
+            continue
+        normalized = _normalize_repo_relative_path(candidate)
+        if not normalized:
+            invalid.append("<invalid:empty>")
+            continue
+        valid.append(normalized)
+    return sorted(set(valid)), sorted(set(invalid))
+
+
+def _resolve_snapshot_path(repo_root: Path, relative_path: str) -> Path | None:
+    candidate = repo_root / relative_path
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(repo_root)
+    except ValueError:
+        return None
+    return candidate
+
+
+def build_patch_scope_snapshot(
+    candidate_paths: object,
+    *,
+    repo_root: str | Path | None = None,
+) -> dict[str, Any]:
+    root = Path(repo_root) if repo_root is not None else Path.cwd()
+    root = root.resolve(strict=False)
+    valid_paths, invalid_paths = _normalize_snapshot_candidates(candidate_paths)
+    files: dict[str, Any] = {}
+    for relative_path in valid_paths:
+        scoped_path = _resolve_snapshot_path(root, relative_path)
+        if scoped_path is None:
+            invalid_paths.append(relative_path)
+            continue
+        try:
+            is_symlink = scoped_path.is_symlink()
+            exists = scoped_path.exists() or is_symlink
+            link_target = os.readlink(scoped_path) if is_symlink else None
+            if exists and not is_symlink and not scoped_path.is_file():
+                invalid_paths.append(relative_path)
+                continue
+            if is_symlink:
+                target = (scoped_path.parent / str(link_target)).resolve(strict=False)
+                try:
+                    target.relative_to(root)
+                except ValueError:
+                    invalid_paths.append(relative_path)
+                    continue
+                file_bytes = str(link_target).encode("utf-8", errors="surrogateescape")
+                text: str | None = str(link_target)
+            elif exists:
+                file_bytes = scoped_path.read_bytes()
+                try:
+                    text = file_bytes.decode("utf-8")
+                except UnicodeDecodeError:
+                    text = None
+            else:
+                file_bytes = b""
+                text = ""
+        except (OSError, IsADirectoryError):
+            invalid_paths.append(relative_path)
+            continue
+        files[relative_path] = {
+            "path": relative_path,
+            "exists": exists,
+            "is_symlink": is_symlink,
+            "link_target": link_target if is_symlink else None,
+            "sha256": hashlib.sha256(file_bytes).hexdigest() if exists else "",
+            "bytes": file_bytes if exists else b"",
+            "text": text,
+        }
+    return {
+        "repo_root": str(root),
+        "snapshot_paths": sorted(files.keys()),
+        "invalid_paths": sorted(set(invalid_paths)),
+        "files": files,
+    }
+
+
+def collect_patch_scope_changes(
+    pre_snapshot: dict[str, Any],
+    post_snapshot: dict[str, Any],
+    *,
+    changed_files: object = None,
+) -> dict[str, Any]:
+    pre_files = pre_snapshot.get("files") if isinstance(pre_snapshot, dict) else {}
+    post_files = post_snapshot.get("files") if isinstance(post_snapshot, dict) else {}
+    pre_map = pre_files if isinstance(pre_files, dict) else {}
+    post_map = post_files if isinstance(post_files, dict) else {}
+    snapshot_paths = sorted(set(pre_map.keys()) | set(post_map.keys()))
+
+    created: list[str] = []
+    modified: list[str] = []
+    deleted: list[str] = []
+    for path in snapshot_paths:
+        pre_state = pre_map.get(path) if isinstance(pre_map.get(path), dict) else {}
+        post_state = post_map.get(path) if isinstance(post_map.get(path), dict) else {}
+        pre_exists = bool(pre_state.get("exists"))
+        post_exists = bool(post_state.get("exists"))
+        pre_hash = str(pre_state.get("sha256") or "")
+        post_hash = str(post_state.get("sha256") or "")
+        pre_symlink = bool(pre_state.get("is_symlink"))
+        post_symlink = bool(post_state.get("is_symlink"))
+        pre_target = pre_state.get("link_target")
+        post_target = post_state.get("link_target")
+        pre_type = "missing"
+        if pre_exists:
+            pre_type = "symlink" if pre_symlink else "file"
+        post_type = "missing"
+        if post_exists:
+            post_type = "symlink" if post_symlink else "file"
+        if not pre_exists and post_exists:
+            created.append(path)
+        elif pre_exists and not post_exists:
+            deleted.append(path)
+        elif pre_exists and post_exists and (
+            pre_hash != post_hash
+            or pre_symlink != post_symlink
+            or pre_target != post_target
+            or pre_type != post_type
+        ):
+            modified.append(path)
+
+    explicit_paths, invalid_paths = _normalize_snapshot_candidates(changed_files)
+    combined_changed = sorted(set(created + modified + deleted + explicit_paths))
+    pre_invalid = (
+        list(pre_snapshot.get("invalid_paths") or [])
+        if isinstance(pre_snapshot, dict)
+        else []
+    )
+    post_invalid = (
+        list(post_snapshot.get("invalid_paths") or [])
+        if isinstance(post_snapshot, dict)
+        else []
+    )
+    return {
+        "changed_files": combined_changed,
+        "created_files": sorted(set(created)),
+        "modified_files": sorted(set(modified)),
+        "deleted_files": sorted(set(deleted)),
+        "invalid_paths": sorted(set(
+            invalid_paths
+            + pre_invalid
+            + post_invalid
+        )),
+    }
+
+
+def rollback_scope_violations(
+    pre_snapshot: dict[str, Any],
+    offending_files: object,
+    *,
+    repo_root: str | Path | None = None,
+) -> dict[str, Any]:
+    root = Path(repo_root) if repo_root is not None else Path(str(pre_snapshot.get("repo_root") or Path.cwd()))
+    root = root.resolve(strict=False)
+    pre_files = pre_snapshot.get("files") if isinstance(pre_snapshot, dict) else {}
+    pre_map = pre_files if isinstance(pre_files, dict) else {}
+    offending, invalid = _normalize_snapshot_candidates(offending_files)
+    rollback_errors: list[str] = []
+    rolled_back_files: list[str] = []
+    for path in offending:
+        scoped_path = _resolve_snapshot_path(root, path)
+        if scoped_path is None:
+            rollback_errors.append(f"{path}:outside_repo")
+            continue
+        state = pre_map.get(path) if isinstance(pre_map.get(path), dict) else None
+        if not isinstance(state, dict):
+            rollback_errors.append(f"{path}:missing_pre_snapshot")
+            continue
+        existed_before = bool(state.get("exists"))
+        prior_bytes = state.get("bytes")
+        was_symlink = bool(state.get("is_symlink"))
+        link_target = state.get("link_target")
+        try:
+            if scoped_path.exists() and scoped_path.is_dir() and not scoped_path.is_symlink():
+                shutil.rmtree(scoped_path)
+            if existed_before:
+                scoped_path.parent.mkdir(parents=True, exist_ok=True)
+                if was_symlink:
+                    if not isinstance(link_target, str) or not link_target:
+                        rollback_errors.append(f"{path}:invalid_pre_snapshot_symlink")
+                        continue
+                    if scoped_path.exists() or scoped_path.is_symlink():
+                        scoped_path.unlink()
+                    scoped_path.symlink_to(link_target)
+                else:
+                    if not isinstance(prior_bytes, (bytes, bytearray)):
+                        rollback_errors.append(f"{path}:invalid_pre_snapshot_bytes")
+                        continue
+                    if scoped_path.is_symlink():
+                        scoped_path.unlink()
+                    scoped_path.write_bytes(bytes(prior_bytes))
+            elif scoped_path.exists() or scoped_path.is_symlink():
+                scoped_path.unlink()
+            rolled_back_files.append(path)
+        except OSError as exc:
+            rollback_errors.append(f"{path}:{exc}")
+    if invalid:
+        rollback_errors.extend(f"{item}:invalid_path" for item in invalid)
+    return {
+        "rollback_attempted": bool(offending) or bool(invalid),
+        "rollback_succeeded": not rollback_errors,
+        "rolled_back_files": sorted(set(rolled_back_files)),
+        "rollback_errors": rollback_errors,
+    }
+
+
+def build_scope_rollback_result(
+    scope_audit: dict[str, Any],
+    rollback: dict[str, Any],
+    changed_files: object,
+) -> dict[str, Any]:
+    offending_files = sorted(set(str(item) for item in scope_audit.get("offending_files", []) if str(item)))
+    allowed_changed = sorted(set(
+        file_path
+        for file_path in (changed_files if isinstance(changed_files, list) else [])
+        if file_path not in offending_files
+    ))
+    rollback_attempted = bool(rollback.get("rollback_attempted"))
+    rollback_succeeded = bool(rollback.get("rollback_succeeded"))
+    if not offending_files:
+        return {
+            "status": "PASS",
+            "post_fix_audit": "PASS",
+            "next_action": "allowed",
+            "can_commit": True,
+            "can_push": True,
+            "rollback_attempted": False,
+            "rollback_succeeded": True,
+            "changed_files": sorted(set(changed_files if isinstance(changed_files, list) else [])),
+            "offending_files": [],
+            "allowed_files": allowed_changed,
+            "rolled_back_files": [],
+            "rollback_errors": [],
+            "scope_audit": scope_audit,
+        }
+    return {
+        "status": "FAIL",
+        "post_fix_audit": "FAIL",
+        "next_action": (
+            "needs_manual_scope_violation_rollback_failed"
+            if rollback_attempted and not rollback_succeeded
+            else "needs_manual_scope_violation"
+        ),
+        "can_commit": False,
+        "can_push": False,
+        "rollback_attempted": rollback_attempted,
+        "rollback_succeeded": rollback_succeeded,
+        "changed_files": sorted(set(changed_files if isinstance(changed_files, list) else [])),
+        "offending_files": offending_files,
+        "allowed_files": allowed_changed,
+        "rolled_back_files": sorted(set(str(item) for item in rollback.get("rolled_back_files", []) if str(item))),
+        "rollback_errors": list(rollback.get("rollback_errors") or []),
+        "scope_audit": scope_audit,
+    }
+
+
+def detect_dirty_worktree_precondition() -> dict[str, Any]:
+    status = str(run(["git", "status", "--porcelain"], check=True) or "")
+    dirty = bool(status.strip())
+    return {
+        "dirty_worktree": dirty,
+        "post_fix_audit": "FAIL" if dirty else "PASS",
+        "next_action": "needs_manual_scope_violation" if dirty else "allowed",
+        "can_commit": not dirty,
+        "can_push": not dirty,
+    }
+
+
+def enforce_post_patch_scope_or_rollback(
+    *,
+    candidate_paths: object,
+    files_allowed: object,
+    files_forbidden: object,
+    changed_files: object = None,
+    pre_snapshot: dict[str, Any] | None = None,
+    post_snapshot: dict[str, Any] | None = None,
+    repo_root: str | Path | None = None,
+) -> dict[str, Any]:
+    has_pre_snapshot = isinstance(pre_snapshot, dict)
+    trusted_pre_snapshot = has_pre_snapshot and isinstance(pre_snapshot.get("files"), dict)
+    before = pre_snapshot if has_pre_snapshot else build_patch_scope_snapshot(
+        candidate_paths,
+        repo_root=repo_root,
+    )
+    after = post_snapshot if isinstance(post_snapshot, dict) else build_patch_scope_snapshot(
+        candidate_paths,
+        repo_root=repo_root,
+    )
+    trustworthy_snapshot_delta = trusted_pre_snapshot and isinstance(after, dict) and isinstance(after.get("files"), dict)
+    trustworthy_changed_files = isinstance(changed_files, list)
+    if not trustworthy_snapshot_delta and not trustworthy_changed_files:
+        return {
+            "status": "FAIL",
+            "post_fix_audit": "FAIL",
+            "next_action": "needs_manual_scope_violation",
+            "can_commit": False,
+            "can_push": False,
+            "rollback_attempted": False,
+            "rollback_succeeded": False,
+            "changed_files": [],
+            "offending_files": [],
+            "allowed_files": normalize_file_scope_rules(files_allowed),
+            "rolled_back_files": [],
+            "rollback_errors": [],
+            "scope_audit": {
+                "allowed": False,
+                "changed_files": [],
+                "offending_files": [],
+                "allowed_files": normalize_file_scope_rules(files_allowed),
+                "forbidden_files": normalize_file_scope_rules(files_forbidden, include_defaults=True),
+                "reason": "insufficient_scope_evidence",
+            },
+        }
+    changes = collect_patch_scope_changes(before, after, changed_files=changed_files)
+    changed = sorted(set(changes["changed_files"] + changes["invalid_paths"]))
+    scope_audit = audit_changed_files_against_scope(changed, files_allowed, files_forbidden)
+    if scope_audit.get("allowed"):
+        return build_scope_rollback_result(scope_audit, {}, changed)
+    if not trustworthy_snapshot_delta:
+        reason = (
+            "rollback_evidence_missing"
+            if not trusted_pre_snapshot
+            else "missing_trusted_pre_snapshot"
+        )
+        return build_scope_rollback_result(
+            {**scope_audit, "reason": reason},
+            {
+                "rollback_attempted": False,
+                "rollback_succeeded": False,
+                "rolled_back_files": [],
+                "rollback_errors": [reason],
+            },
+            changed,
+        )
+
+    rollback = rollback_scope_violations(
+        before,
+        scope_audit.get("offending_files", []),
+        repo_root=repo_root,
+    )
+    return build_scope_rollback_result(scope_audit, rollback, changed)
 
 
 def find_forbidden_files(files: list[str], forbidden_patterns: Sequence[str]) -> list[str]:

@@ -3,7 +3,9 @@
 
 import argparse
 import copy
+import hashlib
 import json
+import os
 import re
 import shlex
 from pathlib import Path
@@ -4703,6 +4705,548 @@ def test_enforce_commit_file_scope_invalid_path_blocks_commit_and_push():
     ASSERTIONS.assertFalse(result["can_commit"])
     ASSERTIONS.assertFalse(result["can_push"])
     ASSERTIONS.assertIn("/absolute/path", result["offending_files"])
+
+
+def test_build_patch_scope_snapshot_rejects_invalid_and_snapshots_repo_relative(tmp_path):
+    (tmp_path / "allowed.txt").write_text("before", encoding="utf-8")
+    snapshot = controller.build_patch_scope_snapshot(
+        [
+            "allowed.txt",
+            "/absolute/path",
+            "../escape.txt",
+            "scripts\\tool.py",
+            " ",
+            "none",
+        ],
+        repo_root=tmp_path,
+    )
+    ASSERTIONS.assertEqual(snapshot["snapshot_paths"], ["allowed.txt"])
+    ASSERTIONS.assertIn("/absolute/path", snapshot["invalid_paths"])
+    ASSERTIONS.assertIn("../escape.txt", snapshot["invalid_paths"])
+    ASSERTIONS.assertIn("scripts\\tool.py", snapshot["invalid_paths"])
+    ASSERTIONS.assertIn("none", snapshot["invalid_paths"])
+    ASSERTIONS.assertIn("<invalid:empty>", snapshot["invalid_paths"])
+    ASSERTIONS.assertTrue(snapshot["files"]["allowed.txt"]["exists"])
+    ASSERTIONS.assertEqual(snapshot["files"]["allowed.txt"]["text"], "before")
+
+
+def test_build_patch_scope_snapshot_marks_directory_invalid_without_crashing(tmp_path):
+    (tmp_path / "folder").mkdir()
+    snapshot = controller.build_patch_scope_snapshot(["folder"], repo_root=tmp_path)
+    ASSERTIONS.assertEqual(snapshot["snapshot_paths"], [])
+    ASSERTIONS.assertIn("folder", snapshot["invalid_paths"])
+
+
+def test_build_patch_scope_snapshot_unreadable_candidate_does_not_abort(monkeypatch, tmp_path):
+    (tmp_path / "ok.txt").write_text("ok", encoding="utf-8")
+    broken = tmp_path / "broken.txt"
+    broken.write_text("broken", encoding="utf-8")
+    original_read_bytes = Path.read_bytes
+
+    def _fake_read_bytes(path_obj):
+        if path_obj == broken:
+            raise OSError("simulated unreadable")
+        return original_read_bytes(path_obj)
+
+    monkeypatch.setattr(Path, "read_bytes", _fake_read_bytes)
+    snapshot = controller.build_patch_scope_snapshot(["ok.txt", "broken.txt"], repo_root=tmp_path)
+    ASSERTIONS.assertEqual(snapshot["snapshot_paths"], ["ok.txt"])
+    ASSERTIONS.assertIn("broken.txt", snapshot["invalid_paths"])
+    ASSERTIONS.assertEqual(snapshot["files"]["ok.txt"]["text"], "ok")
+
+
+def test_build_patch_scope_snapshot_keeps_binary_bytes_on_decode_failure(tmp_path):
+    binary = tmp_path / "binary.bin"
+    payload = b"\xff\xfe\x00\x81"
+    binary.write_bytes(payload)
+    snapshot = controller.build_patch_scope_snapshot(["binary.bin"], repo_root=tmp_path)
+    ASSERTIONS.assertEqual(snapshot["snapshot_paths"], ["binary.bin"])
+    ASSERTIONS.assertEqual(snapshot["invalid_paths"], [])
+    record = snapshot["files"]["binary.bin"]
+    ASSERTIONS.assertTrue(record["exists"])
+    ASSERTIONS.assertEqual(record["bytes"], payload)
+    ASSERTIONS.assertEqual(record["text"], None)
+    ASSERTIONS.assertEqual(record["sha256"], hashlib.sha256(payload).hexdigest())
+
+
+def test_normalize_snapshot_candidates_splits_csv_and_newline_inputs():
+    csv_valid, csv_invalid = controller._normalize_snapshot_candidates("a.py,b.py")
+    newline_valid, newline_invalid = controller._normalize_snapshot_candidates("a.py\nb.py")
+    ASSERTIONS.assertEqual(csv_valid, ["a.py", "b.py"])
+    ASSERTIONS.assertEqual(newline_valid, ["a.py", "b.py"])
+    ASSERTIONS.assertEqual(csv_invalid, [])
+    ASSERTIONS.assertEqual(newline_invalid, [])
+
+
+def test_collect_patch_scope_changes_detects_created_modified_deleted(tmp_path):
+    deleted = tmp_path / "deleted.txt"
+    modified = tmp_path / "modified.txt"
+    created = tmp_path / "created.txt"
+    deleted.write_text("delete-me", encoding="utf-8")
+    modified.write_text("before", encoding="utf-8")
+    pre = controller.build_patch_scope_snapshot(["deleted.txt", "modified.txt", "created.txt"], repo_root=tmp_path)
+    deleted.unlink()
+    modified.write_text("after", encoding="utf-8")
+    created.write_text("new", encoding="utf-8")
+    post = controller.build_patch_scope_snapshot(["deleted.txt", "modified.txt", "created.txt"], repo_root=tmp_path)
+    changes = controller.collect_patch_scope_changes(
+        pre,
+        post,
+        changed_files=["scripts\\bad.py", "modified.txt"],
+    )
+    ASSERTIONS.assertEqual(changes["created_files"], ["created.txt"])
+    ASSERTIONS.assertEqual(changes["deleted_files"], ["deleted.txt"])
+    ASSERTIONS.assertEqual(changes["modified_files"], ["modified.txt"])
+    ASSERTIONS.assertIn("scripts\\bad.py", changes["invalid_paths"])
+
+
+def test_collect_patch_scope_changes_handles_non_dict_snapshots():
+    changes = controller.collect_patch_scope_changes("not-a-dict", 42, changed_files=None)
+    ASSERTIONS.assertEqual(changes["changed_files"], [])
+    ASSERTIONS.assertEqual(changes["created_files"], [])
+    ASSERTIONS.assertEqual(changes["modified_files"], [])
+    ASSERTIONS.assertEqual(changes["deleted_files"], [])
+    ASSERTIONS.assertEqual(changes["invalid_paths"], [])
+
+
+def test_collect_patch_scope_changes_detects_file_replaced_by_symlink_same_bytes(tmp_path):
+    path = tmp_path / "swap.txt"
+    path.write_text("target.txt", encoding="utf-8")
+    pre = controller.build_patch_scope_snapshot(["swap.txt"], repo_root=tmp_path)
+    path.unlink()
+    path.symlink_to("target.txt")
+    post = controller.build_patch_scope_snapshot(["swap.txt"], repo_root=tmp_path)
+    changes = controller.collect_patch_scope_changes(pre, post)
+    ASSERTIONS.assertEqual(changes["modified_files"], ["swap.txt"])
+    ASSERTIONS.assertIn("swap.txt", changes["changed_files"])
+
+
+def test_collect_patch_scope_changes_detects_symlink_retarget_same_resolved_bytes(tmp_path):
+    target_a = tmp_path / "target-a.txt"
+    target_b = tmp_path / "target-b.txt"
+    target_a.write_text("same-content", encoding="utf-8")
+    target_b.write_text("same-content", encoding="utf-8")
+    link = tmp_path / "link.txt"
+    link.symlink_to("target-a.txt")
+    pre = controller.build_patch_scope_snapshot(["link.txt"], repo_root=tmp_path)
+    link.unlink()
+    link.symlink_to("target-b.txt")
+    post = controller.build_patch_scope_snapshot(["link.txt"], repo_root=tmp_path)
+    changes = controller.collect_patch_scope_changes(pre, post)
+    ASSERTIONS.assertEqual(changes["modified_files"], ["link.txt"])
+    ASSERTIONS.assertIn("link.txt", changes["changed_files"])
+
+
+def test_rollback_scope_violations_removes_forbidden_created_file(tmp_path):
+    pre = controller.build_patch_scope_snapshot(["allowed.txt", "forbidden.txt"], repo_root=tmp_path)
+    (tmp_path / "allowed.txt").write_text("ok", encoding="utf-8")
+    (tmp_path / "forbidden.txt").write_text("forbidden", encoding="utf-8")
+    result = controller.rollback_scope_violations(pre, ["forbidden.txt"], repo_root=tmp_path)
+    ASSERTIONS.assertTrue(result["rollback_attempted"])
+    ASSERTIONS.assertTrue(result["rollback_succeeded"])
+    ASSERTIONS.assertFalse((tmp_path / "forbidden.txt").exists())
+    ASSERTIONS.assertEqual(result["rolled_back_files"], ["forbidden.txt"])
+
+
+def test_rollback_scope_violations_restores_forbidden_modified_file(tmp_path):
+    blocked = tmp_path / "blocked.txt"
+    blocked.write_text("before", encoding="utf-8")
+    pre = controller.build_patch_scope_snapshot(["blocked.txt"], repo_root=tmp_path)
+    blocked.write_text("after", encoding="utf-8")
+    result = controller.rollback_scope_violations(pre, ["blocked.txt"], repo_root=tmp_path)
+    ASSERTIONS.assertTrue(result["rollback_succeeded"])
+    ASSERTIONS.assertEqual(blocked.read_text(encoding="utf-8"), "before")
+
+
+def test_rollback_scope_violations_restores_forbidden_deleted_file(tmp_path):
+    blocked = tmp_path / "blocked.txt"
+    blocked.write_text("before", encoding="utf-8")
+    pre = controller.build_patch_scope_snapshot(["blocked.txt"], repo_root=tmp_path)
+    blocked.unlink()
+    result = controller.rollback_scope_violations(pre, ["blocked.txt"], repo_root=tmp_path)
+    ASSERTIONS.assertTrue(result["rollback_succeeded"])
+    ASSERTIONS.assertEqual(blocked.read_text(encoding="utf-8"), "before")
+
+
+def test_rollback_scope_violations_restores_symlink_path_without_mutating_target(tmp_path):
+    source_a = tmp_path / "source-a.txt"
+    source_b = tmp_path / "source-b.txt"
+    source_a.write_text("A", encoding="utf-8")
+    source_b.write_text("B", encoding="utf-8")
+    link = tmp_path / "link.txt"
+    link.symlink_to("source-a.txt")
+    pre = controller.build_patch_scope_snapshot(["link.txt"], repo_root=tmp_path)
+    link.unlink()
+    link.symlink_to("source-b.txt")
+    result = controller.rollback_scope_violations(pre, ["link.txt"], repo_root=tmp_path)
+    ASSERTIONS.assertTrue(result["rollback_succeeded"])
+    ASSERTIONS.assertTrue(link.is_symlink())
+    ASSERTIONS.assertEqual(os.readlink(link), "source-a.txt")
+    ASSERTIONS.assertEqual(source_a.read_text(encoding="utf-8"), "A")
+    ASSERTIONS.assertEqual(source_b.read_text(encoding="utf-8"), "B")
+
+
+def test_rollback_scope_violations_restores_binary_bytes_exactly(tmp_path):
+    binary = tmp_path / "blocked.bin"
+    before = b"\x00\x01\x02\xfe\xff"
+    after = b"\x10\x20\x30"
+    binary.write_bytes(before)
+    pre = controller.build_patch_scope_snapshot(["blocked.bin"], repo_root=tmp_path)
+    binary.write_bytes(after)
+    result = controller.rollback_scope_violations(pre, ["blocked.bin"], repo_root=tmp_path)
+    ASSERTIONS.assertTrue(result["rollback_succeeded"])
+    ASSERTIONS.assertEqual(binary.read_bytes(), before)
+
+
+def test_rollback_scope_violations_replaces_forbidden_directory_with_original_file(tmp_path):
+    blocked = tmp_path / "blocked.txt"
+    blocked.write_text("before", encoding="utf-8")
+    pre = controller.build_patch_scope_snapshot(["blocked.txt"], repo_root=tmp_path)
+    blocked.unlink()
+    blocked.mkdir()
+    (blocked / "nested.txt").write_text("nested", encoding="utf-8")
+    result = controller.rollback_scope_violations(pre, ["blocked.txt"], repo_root=tmp_path)
+    ASSERTIONS.assertTrue(result["rollback_succeeded"])
+    ASSERTIONS.assertTrue(blocked.is_file())
+    ASSERTIONS.assertEqual(blocked.read_text(encoding="utf-8"), "before")
+
+
+def test_rollback_scope_violations_directory_cleanup_failure_fails_closed(tmp_path, monkeypatch):
+    blocked = tmp_path / "blocked.txt"
+    blocked.write_text("before", encoding="utf-8")
+    pre = controller.build_patch_scope_snapshot(["blocked.txt"], repo_root=tmp_path)
+    blocked.unlink()
+    blocked.mkdir()
+
+    def _fail_rmtree(_path):
+        raise OSError("simulated rmtree failure")
+
+    monkeypatch.setattr(controller.shutil, "rmtree", _fail_rmtree)
+    result = controller.rollback_scope_violations(pre, ["blocked.txt"], repo_root=tmp_path)
+    ASSERTIONS.assertTrue(result["rollback_attempted"])
+    ASSERTIONS.assertFalse(result["rollback_succeeded"])
+    ASSERTIONS.assertIn("blocked.txt:simulated rmtree failure", result["rollback_errors"][0])
+
+
+def test_enforce_post_patch_scope_or_rollback_mixed_changes_rolls_back_forbidden_only(tmp_path, monkeypatch):
+    allowed = tmp_path / "allowed.txt"
+    forbidden = tmp_path / "forbidden.txt"
+    allowed.write_text("old-allowed", encoding="utf-8")
+    forbidden.write_text("old-forbidden", encoding="utf-8")
+    pre = controller.build_patch_scope_snapshot(["allowed.txt", "forbidden.txt"], repo_root=tmp_path)
+    allowed.write_text("new-allowed", encoding="utf-8")
+    forbidden.write_text("new-forbidden", encoding="utf-8")
+    post = controller.build_patch_scope_snapshot(["allowed.txt", "forbidden.txt"], repo_root=tmp_path)
+    result = controller.enforce_post_patch_scope_or_rollback(
+        candidate_paths=["allowed.txt", "forbidden.txt"],
+        files_allowed=["allowed.txt"],
+        files_forbidden=["forbidden.txt"],
+        pre_snapshot=pre,
+        post_snapshot=post,
+        repo_root=tmp_path,
+    )
+    ASSERTIONS.assertEqual(result["post_fix_audit"], "FAIL")
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_scope_violation")
+    ASSERTIONS.assertIn("forbidden.txt", result["offending_files"])
+    ASSERTIONS.assertEqual(allowed.read_text(encoding="utf-8"), "new-allowed")
+    ASSERTIONS.assertEqual(forbidden.read_text(encoding="utf-8"), "old-forbidden")
+
+
+def test_enforce_post_patch_scope_or_rollback_rollback_failure_fails_closed(tmp_path, monkeypatch):
+    blocked = tmp_path / "blocked.txt"
+    blocked.write_text("before", encoding="utf-8")
+    pre = controller.build_patch_scope_snapshot(["blocked.txt"], repo_root=tmp_path)
+    blocked.write_text("after", encoding="utf-8")
+    post = controller.build_patch_scope_snapshot(["blocked.txt"], repo_root=tmp_path)
+    monkeypatch.setattr(
+        controller,
+        "rollback_scope_violations",
+        lambda *_args, **_kwargs: {
+            "rollback_attempted": True,
+            "rollback_succeeded": False,
+            "rolled_back_files": [],
+            "rollback_errors": ["blocked.txt:simulated-failure"],
+        },
+    )
+    result = controller.enforce_post_patch_scope_or_rollback(
+        candidate_paths=["blocked.txt"],
+        files_allowed=["allowed.txt"],
+        files_forbidden=["blocked.txt"],
+        pre_snapshot=pre,
+        post_snapshot=post,
+        repo_root=tmp_path,
+    )
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_scope_violation_rollback_failed")
+    ASSERTIONS.assertFalse(result["can_commit"])
+    ASSERTIONS.assertFalse(result["can_push"])
+    ASSERTIONS.assertTrue(result["rollback_attempted"])
+    ASSERTIONS.assertFalse(result["rollback_succeeded"])
+
+
+def test_enforce_post_patch_scope_or_rollback_ignores_live_dirty_state(tmp_path, monkeypatch):
+    allowed = tmp_path / "allowed.txt"
+    forbidden = tmp_path / "forbidden.txt"
+    allowed.write_text("old-allowed", encoding="utf-8")
+    forbidden.write_text("old-forbidden", encoding="utf-8")
+    pre = controller.build_patch_scope_snapshot(["allowed.txt", "forbidden.txt"], repo_root=tmp_path)
+    allowed.write_text("new-allowed", encoding="utf-8")
+    forbidden.write_text("new-forbidden", encoding="utf-8")
+    post = controller.build_patch_scope_snapshot(["allowed.txt", "forbidden.txt"], repo_root=tmp_path)
+    result = controller.enforce_post_patch_scope_or_rollback(
+        candidate_paths=["allowed.txt", "forbidden.txt"],
+        files_allowed=["allowed.txt"],
+        files_forbidden=["forbidden.txt"],
+        pre_snapshot=pre,
+        post_snapshot=post,
+        repo_root=tmp_path,
+    )
+    ASSERTIONS.assertEqual(result["status"], "FAIL")
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_scope_violation")
+    ASSERTIONS.assertTrue(result["rollback_attempted"])
+    ASSERTIONS.assertTrue(result["rollback_succeeded"])
+    ASSERTIONS.assertEqual(allowed.read_text(encoding="utf-8"), "new-allowed")
+    ASSERTIONS.assertEqual(forbidden.read_text(encoding="utf-8"), "old-forbidden")
+
+
+def test_detect_dirty_worktree_precondition_fails_closed(monkeypatch):
+    monkeypatch.setattr(
+        controller,
+        "run",
+        lambda *_args, **_kwargs: " M scripts/pr_automation_controller.py\n",
+    )
+    result = controller.detect_dirty_worktree_precondition()
+    ASSERTIONS.assertTrue(result["dirty_worktree"])
+    ASSERTIONS.assertEqual(result["post_fix_audit"], "FAIL")
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_scope_violation")
+    ASSERTIONS.assertFalse(result["can_commit"])
+    ASSERTIONS.assertFalse(result["can_push"])
+
+
+def test_enforce_post_patch_scope_or_rollback_allowed_only_passes_without_rollback(tmp_path, monkeypatch):
+    allowed = tmp_path / "allowed.txt"
+    allowed.write_text("before", encoding="utf-8")
+    pre = controller.build_patch_scope_snapshot(["allowed.txt"], repo_root=tmp_path)
+    allowed.write_text("after", encoding="utf-8")
+    post = controller.build_patch_scope_snapshot(["allowed.txt"], repo_root=tmp_path)
+    result = controller.enforce_post_patch_scope_or_rollback(
+        candidate_paths=["allowed.txt"],
+        files_allowed=["allowed.txt"],
+        files_forbidden=[],
+        pre_snapshot=pre,
+        post_snapshot=post,
+        repo_root=tmp_path,
+    )
+    ASSERTIONS.assertEqual(result["status"], "PASS")
+    ASSERTIONS.assertEqual(result["post_fix_audit"], "PASS")
+    ASSERTIONS.assertEqual(result["next_action"], "allowed")
+    ASSERTIONS.assertFalse(result["rollback_attempted"])
+    ASSERTIONS.assertTrue(result["can_commit"])
+    ASSERTIONS.assertTrue(result["can_push"])
+
+
+def test_enforce_post_patch_scope_or_rollback_malformed_allowlist_defaults_deny(tmp_path, monkeypatch):
+    blocked = tmp_path / "blocked.txt"
+    blocked.write_text("before", encoding="utf-8")
+    pre = controller.build_patch_scope_snapshot(["blocked.txt"], repo_root=tmp_path)
+    blocked.write_text("after", encoding="utf-8")
+    post = controller.build_patch_scope_snapshot(["blocked.txt"], repo_root=tmp_path)
+    result = controller.enforce_post_patch_scope_or_rollback(
+        candidate_paths=["blocked.txt"],
+        files_allowed={"files": ["blocked.txt"]},
+        files_forbidden=[],
+        pre_snapshot=pre,
+        post_snapshot=post,
+        repo_root=tmp_path,
+    )
+    ASSERTIONS.assertEqual(result["post_fix_audit"], "FAIL")
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_scope_violation")
+    ASSERTIONS.assertFalse(result["can_commit"])
+    ASSERTIONS.assertFalse(result["can_push"])
+
+
+def test_enforce_post_patch_scope_or_rollback_removes_created_forbidden_file(
+    tmp_path,
+    monkeypatch,
+):
+    allowed = tmp_path / "allowed.txt"
+    forbidden = tmp_path / "forbidden.txt"
+    allowed.write_text("before-allowed", encoding="utf-8")
+    pre = controller.build_patch_scope_snapshot(["allowed.txt", "forbidden.txt"], repo_root=tmp_path)
+    allowed.write_text("after-allowed", encoding="utf-8")
+    forbidden.write_text("new-forbidden", encoding="utf-8")
+    post = controller.build_patch_scope_snapshot(["allowed.txt", "forbidden.txt"], repo_root=tmp_path)
+    result = controller.enforce_post_patch_scope_or_rollback(
+        candidate_paths=["allowed.txt", "forbidden.txt"],
+        files_allowed=["allowed.txt"],
+        files_forbidden=["forbidden.txt"],
+        pre_snapshot=pre,
+        post_snapshot=post,
+        repo_root=tmp_path,
+    )
+    ASSERTIONS.assertEqual(result["status"], "FAIL")
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_scope_violation")
+    ASSERTIONS.assertTrue(result["rollback_attempted"])
+    ASSERTIONS.assertTrue(result["rollback_succeeded"])
+    ASSERTIONS.assertFalse(forbidden.exists())
+    ASSERTIONS.assertEqual(allowed.read_text(encoding="utf-8"), "after-allowed")
+
+
+def test_enforce_post_patch_scope_or_rollback_fails_closed_on_insufficient_evidence(tmp_path):
+    result = controller.enforce_post_patch_scope_or_rollback(
+        candidate_paths=["allowed.txt"],
+        files_allowed=["allowed.txt"],
+        files_forbidden=[],
+        changed_files=None,
+        pre_snapshot=None,
+        post_snapshot=None,
+        repo_root=tmp_path,
+    )
+    ASSERTIONS.assertEqual(result["post_fix_audit"], "FAIL")
+    ASSERTIONS.assertFalse(result["can_commit"])
+    ASSERTIONS.assertFalse(result["can_push"])
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_scope_violation")
+
+
+def test_enforce_post_patch_scope_or_rollback_uses_generated_post_snapshot_when_pre_snapshot_provided(tmp_path):
+    allowed = tmp_path / "allowed.txt"
+    forbidden = tmp_path / "forbidden.txt"
+    allowed.write_text("old-allowed", encoding="utf-8")
+    forbidden.write_text("old-forbidden", encoding="utf-8")
+    pre = controller.build_patch_scope_snapshot(["allowed.txt", "forbidden.txt"], repo_root=tmp_path)
+    allowed.write_text("new-allowed", encoding="utf-8")
+    forbidden.write_text("new-forbidden", encoding="utf-8")
+    result = controller.enforce_post_patch_scope_or_rollback(
+        candidate_paths=["allowed.txt", "forbidden.txt"],
+        files_allowed=["allowed.txt"],
+        files_forbidden=["forbidden.txt"],
+        changed_files=None,
+        pre_snapshot=pre,
+        post_snapshot=None,
+        repo_root=tmp_path,
+    )
+    ASSERTIONS.assertNotEqual(result["scope_audit"].get("reason"), "insufficient_scope_evidence")
+    ASSERTIONS.assertTrue(result["scope_audit"].get("changed_files"))
+    ASSERTIONS.assertTrue(result["rollback_attempted"])
+    ASSERTIONS.assertTrue(result["rollback_succeeded"])
+    ASSERTIONS.assertEqual(forbidden.read_text(encoding="utf-8"), "old-forbidden")
+    ASSERTIONS.assertEqual(allowed.read_text(encoding="utf-8"), "new-allowed")
+
+
+def test_enforce_post_patch_scope_or_rollback_changed_files_only_forbidden_modified_fails_closed(tmp_path):
+    blocked = tmp_path / "blocked.txt"
+    blocked.write_text("after", encoding="utf-8")
+    result = controller.enforce_post_patch_scope_or_rollback(
+        candidate_paths=["blocked.txt"],
+        files_allowed=["allowed.txt"],
+        files_forbidden=["blocked.txt"],
+        changed_files=["blocked.txt"],
+        pre_snapshot=None,
+        post_snapshot=None,
+        repo_root=tmp_path,
+    )
+    ASSERTIONS.assertEqual(result["post_fix_audit"], "FAIL")
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_scope_violation")
+    ASSERTIONS.assertFalse(result["rollback_attempted"])
+    ASSERTIONS.assertFalse(result["rollback_succeeded"])
+    ASSERTIONS.assertFalse(result["can_commit"])
+    ASSERTIONS.assertFalse(result["can_push"])
+    ASSERTIONS.assertIn(
+        result["scope_audit"].get("reason"),
+        {"missing_trusted_pre_snapshot", "rollback_evidence_missing"},
+    )
+    ASSERTIONS.assertIn("rollback_evidence_missing", result["rollback_errors"])
+
+
+def test_enforce_post_patch_scope_or_rollback_malformed_empty_dict_pre_snapshot_fails_closed(tmp_path):
+    blocked = tmp_path / "blocked.txt"
+    blocked.write_text("after", encoding="utf-8")
+    result = controller.enforce_post_patch_scope_or_rollback(
+        candidate_paths=["blocked.txt"],
+        files_allowed=["allowed.txt"],
+        files_forbidden=["blocked.txt"],
+        changed_files=["blocked.txt"],
+        pre_snapshot={},
+        post_snapshot=None,
+        repo_root=tmp_path,
+    )
+    ASSERTIONS.assertEqual(result["post_fix_audit"], "FAIL")
+    ASSERTIONS.assertFalse(result["rollback_succeeded"])
+    ASSERTIONS.assertIn("rollback_evidence_missing", result["rollback_errors"])
+    ASSERTIONS.assertEqual(result["scope_audit"].get("reason"), "rollback_evidence_missing")
+
+
+def test_enforce_post_patch_scope_or_rollback_malformed_non_dict_files_pre_snapshot_fails_closed(tmp_path):
+    blocked = tmp_path / "blocked.txt"
+    blocked.write_text("after", encoding="utf-8")
+    result = controller.enforce_post_patch_scope_or_rollback(
+        candidate_paths=["blocked.txt"],
+        files_allowed=["allowed.txt"],
+        files_forbidden=["blocked.txt"],
+        changed_files=["blocked.txt"],
+        pre_snapshot={"files": []},
+        post_snapshot=None,
+        repo_root=tmp_path,
+    )
+    ASSERTIONS.assertEqual(result["post_fix_audit"], "FAIL")
+    ASSERTIONS.assertFalse(result["rollback_succeeded"])
+    ASSERTIONS.assertIn("rollback_evidence_missing", result["rollback_errors"])
+    ASSERTIONS.assertEqual(result["scope_audit"].get("reason"), "rollback_evidence_missing")
+
+
+def test_build_scope_rollback_result_payload_shape():
+    scope_audit = {
+        "allowed": False,
+        "offending_files": ["forbidden.txt"],
+    }
+    rollback = {
+        "rollback_attempted": True,
+        "rollback_succeeded": True,
+        "rolled_back_files": ["forbidden.txt"],
+        "rollback_errors": [],
+    }
+    result = controller.build_scope_rollback_result(
+        scope_audit,
+        rollback,
+        ["allowed.txt", "forbidden.txt"],
+    )
+    expected_keys = {
+        "status",
+        "post_fix_audit",
+        "next_action",
+        "can_commit",
+        "can_push",
+        "rollback_attempted",
+        "rollback_succeeded",
+        "changed_files",
+        "offending_files",
+        "allowed_files",
+        "rolled_back_files",
+        "rollback_errors",
+        "scope_audit",
+    }
+    ASSERTIONS.assertEqual(set(result.keys()), expected_keys)
+
+
+def test_build_scope_rollback_result_next_action_contract():
+    scope_audit = {"allowed": False, "offending_files": ["forbidden.txt"]}
+    unattempted = controller.build_scope_rollback_result(
+        scope_audit,
+        {"rollback_attempted": False, "rollback_succeeded": False},
+        ["forbidden.txt"],
+    )
+    succeeded = controller.build_scope_rollback_result(
+        scope_audit,
+        {"rollback_attempted": True, "rollback_succeeded": True},
+        ["forbidden.txt"],
+    )
+    failed = controller.build_scope_rollback_result(
+        scope_audit,
+        {"rollback_attempted": True, "rollback_succeeded": False},
+        ["forbidden.txt"],
+    )
+    ASSERTIONS.assertEqual(unattempted["next_action"], "needs_manual_scope_violation")
+    ASSERTIONS.assertEqual(succeeded["next_action"], "needs_manual_scope_violation")
+    ASSERTIONS.assertEqual(failed["next_action"], "needs_manual_scope_violation_rollback_failed")
 
 
 def test_enforce_patch_and_commit_file_scope_windows_absolute_path_blocks_patch_commit_and_push():
