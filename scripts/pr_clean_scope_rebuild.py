@@ -13,6 +13,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
+try:
+    import scripts.pr_automation_controller as controller
+except ModuleNotFoundError:
+    import pr_automation_controller as controller
+
 SAFE_BRANCH_RE = re.compile(r"^[A-Za-z0-9._/\-]+$")
 SAFE_REPO_RE = re.compile(r"^[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+$")
 SAFE_FILE_RE = re.compile(r"^[A-Za-z0-9_./\-]+$")
@@ -29,6 +34,7 @@ class RebuildArgs:
     allowlist: list[str]
     forbidden: list[str]
     decision_out: str
+    post_fix_gate_context: dict[str, Any] | None
     dry_run: bool
 
 
@@ -150,11 +156,22 @@ def parse_args() -> RebuildArgs:
     for name in ("repo", "pr", "branch", "allowlist", "forbidden"):
         parser.add_argument(f"--{name}", required=True)
     parser.add_argument("--decision-out", required=True)
+    parser.add_argument("--post-fix-gate-context", default="")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    gate_context: dict[str, Any] | None = None
+    raw_context = str(args.post_fix_gate_context or "").strip()
+    if raw_context:
+        try:
+            parsed = json.loads(raw_context)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"invalid --post-fix-gate-context json: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise SystemExit("invalid --post-fix-gate-context: expected json object")
+        gate_context = parsed
     return RebuildArgs(
         args.repo, args.pr, args.branch, parse_csv(args.allowlist),
-        parse_csv(args.forbidden), args.decision_out, args.dry_run,
+        parse_csv(args.forbidden), args.decision_out, gate_context, args.dry_run,
     )
 
 
@@ -304,6 +321,77 @@ def stop_if_forbidden_remains(
     return True
 
 
+def build_clean_gate_ctx(args: RebuildArgs) -> dict[str, Any]:
+    context = dict(args.post_fix_gate_context) if isinstance(args.post_fix_gate_context, dict) else {}
+    context.setdefault("action", "clean_scope_rebuild")
+    context.setdefault("pr", args.pr_number)
+    context.setdefault("branch", args.branch)
+    context.setdefault("repo", args.repo)
+    return context
+
+
+def gate_missing_fields(gate: dict[str, Any]) -> list[Any]:
+    fields = gate.get("missing_fields")
+    return fields if isinstance(fields, list) else []
+
+
+def gate_block_payload(gate: dict[str, Any], action: str) -> dict[str, Any]:
+    reason = str(gate.get("reason") or "post_fix_audit_gate_denied")
+    next_action = str(gate.get("next_action") or "needs_manual")
+    return {
+        "action": action,
+        "status": str(gate.get("status") or "FAIL"),
+        "post_fix_audit": str(gate.get("post_fix_audit") or "UNKNOWN"),
+        "reason": reason,
+        "next_action": next_action,
+        "missing_fields": gate_missing_fields(gate),
+    }
+
+
+def apply_gate_block(decision: dict[str, Any], gate: dict[str, Any], action: str) -> None:
+    payload = gate_block_payload(gate, action)
+    decision["post_fix_audit_gate"] = payload
+    decision["reason"] = payload["reason"]
+    decision["next_action"] = payload["next_action"]
+    decision["final_status"] = "blocked_post_fix_audit_gate"
+
+
+def ensure_clean_commit_gate(
+    args: RebuildArgs,
+    decision: dict[str, Any],
+) -> bool:
+    context = build_clean_gate_ctx(args)
+    gate = controller.can_commit_after_post_fix_audit(context)
+    if not bool(gate.get("allowed")):
+        apply_gate_block(decision, gate, "commit")
+        return False
+    decision["post_fix_audit_gate"] = {
+        "action": "commit",
+        "status": "PASS",
+        "reason": "allowed",
+        "next_action": "proceed",
+    }
+    return True
+
+
+def ensure_clean_push_gate(
+    args: RebuildArgs,
+    decision: dict[str, Any],
+) -> bool:
+    context = build_clean_gate_ctx(args)
+    gate = controller.can_push_after_post_fix_audit(context)
+    if not bool(gate.get("allowed")):
+        apply_gate_block(decision, gate, "push")
+        return False
+    decision["post_fix_audit_gate"] = {
+        "action": "push",
+        "status": "PASS",
+        "reason": "allowed",
+        "next_action": "proceed",
+    }
+    return True
+
+
 def focused_tests_needed(restored_files: list[str]) -> bool:
     focused_suffixes = ("/order_manager.py", "/core/reconciliation_engine.py")
     focused_exact = {suffix.lstrip("/") for suffix in focused_suffixes}
@@ -328,6 +416,10 @@ def ensure_git_identity() -> None:
 
 
 def commit_and_push(args: RebuildArgs, decision: dict[str, Any], restored_files: list[str]) -> None:
+    if not ensure_clean_commit_gate(args, decision):
+        return
+    if not ensure_clean_push_gate(args, decision):
+        return
     ensure_git_identity()
     run(["git", "add", "--", *restored_files])
     run(["git", "commit", "-m", f"Clean rebuild PR {args.pr_number} scope"])
@@ -345,6 +437,8 @@ def execute_rebuild(args: RebuildArgs, decision: dict[str, Any], out_path: Path)
     branches = fetch_heads(args, decision)
     if args.dry_run:
         return block_status(out_path, decision, "dry_run")
+    if not ensure_clean_push_gate(args, decision):
+        return block_status(out_path, decision, "blocked_post_fix_audit_gate")
     create_backup_and_clean_branch(args, branches)
     restore_files(args, restored_files)
     run_diff_guard(decision)

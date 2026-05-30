@@ -907,7 +907,19 @@ def can_auto_rerun_checks(context: dict[str, Any] | None = None) -> dict[str, An
 
 
 def can_auto_push(context: dict[str, Any] | None = None) -> dict[str, Any]:
-    mode_result = can_run_live_action("push", context)
+    ctx = dict(context or {})
+    task_no_commit_push, missing, malformed = _strict_gate_bool_from_sources(
+        ctx.get("task_no_commit_push"),
+        os.environ.get("TASK_NO_COMMIT_PUSH"),
+    )
+    if malformed:
+        return automation_disabled_result(
+            "push",
+            normalize_automation_mode(ctx.get("automation_mode")),
+            "task_no_commit_push",
+        )
+    ctx["task_no_commit_push"] = False if missing else task_no_commit_push
+    mode_result = can_run_live_action("push", ctx)
     if not mode_result["allowed"]:
         return mode_result
     gate = can_push_after_post_fix_audit(context)
@@ -937,22 +949,54 @@ def _strict_gate_bool_from_sources(*values: object) -> tuple[bool | None, bool, 
     selected = [value for value in values if value is not None]
     if not selected:
         return None, True, False
-    parsed, malformed = _strict_gate_bool(selected[0])
-    if malformed or parsed is None:
+    parsed_values: list[bool] = []
+    malformed = False
+    for value in selected:
+        parsed, item_malformed = _strict_gate_bool(value)
+        if item_malformed or parsed is None:
+            malformed = True
+            continue
+        parsed_values.append(parsed)
+    if malformed or not parsed_values:
         return None, False, True
-    return parsed, False, False
+    if any(parsed != parsed_values[0] for parsed in parsed_values[1:]):
+        return None, False, True
+    return bool(parsed_values[0]), False, False
+
+
+def _post_fix_gate_context_value(
+    context: dict[str, Any], key: str, *fallback_keys: str, allow_env: bool = False
+) -> object:
+    value = context.get(key)
+    if value is not None:
+        return value
+    keys = fallback_keys or (key.upper(),)
+    for fallback_key in keys:
+        if fallback_key in context and context.get(fallback_key) is not None:
+            return context.get(fallback_key)
+    if allow_env:
+        for fallback_key in keys:
+            env_value = os.environ.get(fallback_key)
+            if env_value is not None:
+                return env_value
+    return None
 
 
 def _normalize_post_fix_audit_status_from_context(
     context: dict[str, Any], report: dict[str, Any]
 ) -> tuple[str, bool, bool]:
     top_report = context.get("report") if isinstance(context.get("report"), dict) else {}
-    candidates = [
+    explicit_candidates = [
         context.get("POST_FIX_AUDIT"),
         context.get("post_fix_audit"),
         report.get("status"),
         top_report.get("status"),
     ]
+    env_candidate = os.environ.get("POST_FIX_AUDIT")
+
+    candidates = list(explicit_candidates)
+    if all(item is None for item in explicit_candidates):
+        candidates.append(env_candidate)
     statuses: list[str] = []
     for raw in candidates:
         if raw is None:
@@ -978,13 +1022,15 @@ def normalize_post_fix_audit_gate_input(context: dict[str, Any] | None = None) -
     audit, post_fix_audit_missing, post_fix_audit_malformed = _normalize_post_fix_audit_status_from_context(
         ctx, report
     )
-    mode_raw = ctx.get("automation_mode") if "automation_mode" in ctx else ctx.get("AUTOMATION_MODE")
+    mode_raw = _post_fix_gate_context_value(ctx, "automation_mode", "AUTOMATION_MODE", allow_env=True)
     mode = normalize_automation_mode(mode_raw)
     rollback_attempted, rollback_attempted_missing, rollback_attempted_malformed = _strict_gate_bool_from_sources(
-        rollback.get("rollback_attempted"), ctx.get("rollback_attempted")
+        rollback.get("rollback_attempted"),
+        _post_fix_gate_context_value(ctx, "rollback_attempted", "ROLLBACK_ATTEMPTED"),
     )
     rollback_succeeded, rollback_succeeded_missing, rollback_succeeded_malformed = _strict_gate_bool_from_sources(
-        rollback.get("rollback_succeeded"), ctx.get("rollback_succeeded")
+        rollback.get("rollback_succeeded"),
+        _post_fix_gate_context_value(ctx, "rollback_succeeded", "ROLLBACK_SUCCEEDED"),
     )
     next_action = str(
         first_nonempty(
@@ -1004,18 +1050,20 @@ def normalize_post_fix_audit_gate_input(context: dict[str, Any] | None = None) -
         and rollback_succeeded is False
     )
     validation_passed, validation_passed_missing, validation_passed_malformed = _strict_gate_bool_from_sources(
-        ctx.get("validation_passed")
+        _post_fix_gate_context_value(ctx, "validation_passed", "VALIDATION_PASSED")
     )
     current_head_matches, current_head_matches_missing, current_head_matches_malformed = _strict_gate_bool_from_sources(
-        ctx.get("current_head_matches")
+        _post_fix_gate_context_value(ctx, "current_head_matches", "CURRENT_HEAD_MATCHES")
     )
     dirty_worktree, dirty_worktree_missing, dirty_worktree_malformed = _strict_gate_bool_from_sources(
-        ctx.get("dirty_worktree")
+        _post_fix_gate_context_value(ctx, "dirty_worktree", "DIRTY_WORKTREE")
     )
     task_no_commit_push, task_no_commit_push_missing, task_no_commit_push_malformed = _strict_gate_bool_from_sources(
-        ctx.get("task_no_commit_push")
+        _post_fix_gate_context_value(ctx, "task_no_commit_push", "TASK_NO_COMMIT_PUSH")
     )
-    scope_allowed, scope_allowed_missing, scope_allowed_malformed = _strict_gate_bool_from_sources(ctx.get("scope_allowed"))
+    scope_allowed, scope_allowed_missing, scope_allowed_malformed = _strict_gate_bool_from_sources(
+        _post_fix_gate_context_value(ctx, "scope_allowed", "SCOPE_ALLOWED")
+    )
     if scope_allowed_missing and "allowed" in scope_audit:
         scope_audit_allowed = scope_audit.get("allowed")
         if isinstance(scope_audit_allowed, bool):
@@ -1026,11 +1074,19 @@ def normalize_post_fix_audit_gate_input(context: dict[str, Any] | None = None) -
             scope_allowed = None
             scope_allowed_missing = False
             scope_allowed_malformed = True
-    can_commit_evidence, can_commit_missing, can_commit_malformed = _strict_gate_bool_from_sources(
-        ctx.get("can_commit")
+    can_commit_evidence, _can_commit_missing, can_commit_malformed = _strict_gate_bool_from_sources(
+        _post_fix_gate_context_value(ctx, "can_commit", "CAN_COMMIT")
     )
-    can_push_evidence, can_push_missing, can_push_malformed = _strict_gate_bool_from_sources(
-        ctx.get("can_push")
+    can_push_evidence, _can_push_missing, can_push_malformed = _strict_gate_bool_from_sources(
+        _post_fix_gate_context_value(ctx, "can_push", "CAN_PUSH")
+    )
+    explicit_commit_authorization, _, explicit_commit_authorization_malformed = _strict_gate_bool_from_sources(
+        _post_fix_gate_context_value(ctx, "explicit_commit_authorization", "EXPLICIT_COMMIT_AUTHORIZATION"),
+        _post_fix_gate_context_value(ctx, "commit_authorized", "COMMIT_AUTHORIZED"),
+    )
+    explicit_push_authorization, _, explicit_push_authorization_malformed = _strict_gate_bool_from_sources(
+        _post_fix_gate_context_value(ctx, "explicit_push_authorization", "EXPLICIT_PUSH_AUTHORIZATION"),
+        _post_fix_gate_context_value(ctx, "push_authorized", "PUSH_AUTHORIZED"),
     )
     missing_fields: list[str] = []
     malformed_fields: list[str] = []
@@ -1048,10 +1104,6 @@ def normalize_post_fix_audit_gate_input(context: dict[str, Any] | None = None) -
         missing_fields.append("rollback_attempted")
     if rollback_succeeded_missing:
         missing_fields.append("rollback_succeeded")
-    if can_commit_missing:
-        missing_fields.append("can_commit")
-    if can_push_missing:
-        missing_fields.append("can_push")
     if post_fix_audit_malformed:
         malformed_fields.append("post_fix_audit")
     if validation_passed_malformed:
@@ -1072,6 +1124,10 @@ def normalize_post_fix_audit_gate_input(context: dict[str, Any] | None = None) -
         malformed_fields.append("can_commit")
     if can_push_malformed:
         malformed_fields.append("can_push")
+    if explicit_commit_authorization_malformed:
+        malformed_fields.append("explicit_commit_authorization")
+    if explicit_push_authorization_malformed:
+        malformed_fields.append("explicit_push_authorization")
     return {
         "post_fix_audit": audit,
         "post_fix_audit_missing": post_fix_audit_missing,
@@ -1088,6 +1144,8 @@ def normalize_post_fix_audit_gate_input(context: dict[str, Any] | None = None) -
         "rollback_scope_failed": rollback_scope_failed,
         "can_commit_evidence": can_commit_evidence,
         "can_push_evidence": can_push_evidence,
+        "explicit_commit_authorization": explicit_commit_authorization,
+        "explicit_push_authorization": explicit_push_authorization,
         "missing_fields": missing_fields,
         "malformed_fields": malformed_fields,
     }
@@ -1125,11 +1183,21 @@ def evaluate_post_fix_audit_gate(context: dict[str, Any] | None = None) -> dict[
     missing_fields = list(normalized["missing_fields"])
     malformed_fields = list(normalized["malformed_fields"])
     reason = "allowed"
+    rollback_tuple_inconsistent = (
+        normalized["rollback_attempted"] is False
+        and normalized["rollback_succeeded"] is False
+        and "rollback_attempted" not in missing_fields
+        and "rollback_succeeded" not in missing_fields
+        and "rollback_attempted" not in malformed_fields
+        and "rollback_succeeded" not in malformed_fields
+    )
 
     if normalized["scope_allowed"] is False:
         reason = "scope_violation"
     elif normalized["scope_audit"].get("allowed") is False:
         reason = "scope_violation"
+    elif rollback_tuple_inconsistent:
+        reason = "evidence_malformed"
     elif normalized["rollback_scope_failed"]:
         reason = "rollback_failed"
     elif normalized["rollback_attempted"] is True and normalized["rollback_succeeded"] is False:
@@ -1140,6 +1208,8 @@ def evaluate_post_fix_audit_gate(context: dict[str, Any] | None = None) -> dict[
         reason = "post_fix_audit_missing"
     elif post_fix_audit != "PASS":
         reason = "post_fix_audit_not_pass"
+    elif "dirty_worktree" in missing_fields:
+        reason = "dirty_worktree_missing"
     elif malformed_fields:
         reason = "evidence_malformed"
     elif missing_fields:
@@ -1152,8 +1222,6 @@ def evaluate_post_fix_audit_gate(context: dict[str, Any] | None = None) -> dict[
         reason = "current_head_missing"
     elif normalized["current_head_matches"] is not True:
         reason = "current_head_mismatch"
-    elif "dirty_worktree" in missing_fields:
-        reason = "dirty_worktree"
     elif bool(normalized["dirty_worktree"]):
         reason = "dirty_worktree"
     elif normalized["task_no_commit_push"] is True:
@@ -1163,14 +1231,18 @@ def evaluate_post_fix_audit_gate(context: dict[str, Any] | None = None) -> dict[
 
     can_commit = reason == "allowed"
     can_push = reason == "allowed"
-    if can_commit and normalized["can_commit_evidence"] is False:
+    commit_evidence = normalized["can_commit_evidence"]
+    push_evidence = normalized["can_push_evidence"]
+    commit_allowed = commit_evidence is True
+    push_allowed = push_evidence is True
+    if can_commit and not commit_allowed:
         can_commit = False
         reason = "commit_not_allowed"
-    if can_push and normalized["can_push_evidence"] is False:
+    if can_push and not push_allowed:
         can_push = False
         if reason == "allowed":
             reason = "push_not_allowed"
-    if (normalized["can_commit_evidence"] is False) and (normalized["can_push_evidence"] is False):
+    if reason in {"allowed", "push_not_allowed", "commit_not_allowed"} and not commit_allowed and not push_allowed:
         reason = "commit_not_allowed"
     if not can_commit:
         can_push = False
@@ -1795,6 +1867,7 @@ class CleanRebuildConfig:
     head_branch: str
     dry_run: bool
     rules: CleanScopeRules
+    post_fix_gate_context: dict[str, Any] | None
 
 
 @dataclass(frozen=True)
@@ -2992,7 +3065,7 @@ def collect_clean_scope_signals(
 
 
 def clean_rebuild_command(config: CleanRebuildConfig, decision_path: str) -> list[str]:
-    return [
+    cmd = [
         sys.executable,
         "scripts/pr_clean_scope_rebuild.py",
         "--repo",
@@ -3008,6 +3081,10 @@ def clean_rebuild_command(config: CleanRebuildConfig, decision_path: str) -> lis
         "--decision-out",
         decision_path,
     ]
+    if isinstance(config.post_fix_gate_context, dict):
+        context_payload = json.dumps(config.post_fix_gate_context, sort_keys=True)
+        cmd.extend(["--post-fix-gate-context", context_payload])
+    return cmd
 
 
 def run_clean_scope_rebuild(config: CleanRebuildConfig) -> dict[str, Any]:
@@ -3148,13 +3225,31 @@ def clean_rebuild_config_from_context(
     ctx: NextActionContext,
     rules: CleanScopeRules,
 ) -> CleanRebuildConfig:
+    payload = ctx.decision.get("post_fix_audit_gate_context")
+    gate_context = payload if isinstance(payload, dict) else None
     return CleanRebuildConfig(
         repo=ctx.args.repo,
         pr_number=ctx.args.pr,
         head_branch=str(ctx.pr.get("headRefName") or ""),
         dry_run=ctx.args.dry_run,
         rules=rules,
+        post_fix_gate_context=gate_context,
     )
+
+
+def build_post_fix_audit_gate_context_for_clean_scope(ctx: NextActionContext) -> dict[str, Any] | None:
+    raw = ctx.decision.get("post_fix_audit_gate_context")
+    if not isinstance(raw, dict):
+        return None
+    context = dict(raw)
+    context["repo"] = str(ctx.args.repo)
+    context["pr"] = str(ctx.args.pr)
+    context["headRefName"] = str(ctx.pr.get("headRefName") or "")
+    context["headRefOid"] = str(ctx.pr.get("headRefOid") or "")
+    gate = evaluate_post_fix_audit_gate(context)
+    if not gate["can_push"]:
+        return None
+    return context
 
 
 def record_action(decision: dict[str, Any], action: dict[str, Any]) -> None:
@@ -3200,6 +3295,12 @@ def maybe_launch_clean_rebuild(
         return True
     if ctx.args.clean_scope_rebuild_mode != "execute":
         return False
+    gate_context = build_post_fix_audit_gate_context_for_clean_scope(ctx)
+    if not isinstance(gate_context, dict):
+        ctx.decision["next_action"] = "needs_manual_clean_scope_gate_context_missing_or_invalid"
+        ctx.decision["warnings"].append("clean-scope rebuild blocked: missing or invalid post-fix gate context")
+        return True
+    ctx.decision["post_fix_audit_gate_context"] = gate_context
     action = run_clean_scope_rebuild(clean_rebuild_config_from_context(ctx, rules))
     record_action(ctx.decision, action)
     return True
