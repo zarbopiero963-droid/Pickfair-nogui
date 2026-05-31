@@ -891,18 +891,139 @@ def test_should_notify_ready_to_merge_true_when_all_conditions_match():
     ASSERTIONS.assertTrue(should_notify)
 
 
-def test_auto_resolve_review_comments_contract_active_only():
-    """Only active unresolved review comments should be eligible for auto-resolve."""
+def _review_nodes_for_auto_resolve() -> list[dict[str, Any]]:
+    return [
+        {"id": "a", "body": "stale advisory nit", "isResolved": False, "isOutdated": False},
+        {
+            "id": "b",
+            "body": "active bypass in guard path",
+            "isResolved": False,
+            "isOutdated": False,
+            "reproducible": True,
+        },
+        {"id": "c", "body": "future scope roadmap", "isResolved": False, "isOutdated": False},
+    ]
+
+
+def _review_evidence_context(**extra: Any) -> dict[str, Any]:
+    context: dict[str, Any] = {
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "checks_green": True,
+        "tests": ["pytest"],
+    }
+    context.update(extra)
+    return context
+
+
+def test_auto_resolve_review_comments_contract_evidence_only_filters_strictly():
+    """When evidence_only=True, only deterministic EVIDENCE_RESOLVE threads are eligible."""
     if not hasattr(flow, "eligible_review_comments_for_auto_resolve"):
         raise NotImplementedError("eligible_review_comments_for_auto_resolve not implemented")
     eligible = flow.eligible_review_comments_for_auto_resolve(
-        [
-            {"id": "a", "isResolved": False, "isOutdated": False},
-            {"id": "b", "isResolved": True, "isOutdated": False},
-            {"id": "c", "isResolved": False, "isOutdated": True},
-        ]
+        _review_nodes_for_auto_resolve(),
+        _review_evidence_context(evidence_only=True),
     )
     ASSERTIONS.assertEqual([item["id"] for item in eligible], ["a"])
+
+
+def test_auto_resolve_review_comments_contract_non_evidence_mode_allows_valid_triage_outputs():
+    """When evidence_only=False, deterministic triage outputs are eligible except resolved/inactive nodes."""
+    eligible = flow.eligible_review_comments_for_auto_resolve(
+        [
+            {"id": "p", "body": "active bypass in guard path", "isResolved": False, "reproducible": True},
+            {"id": "e", "body": "stale advisory nit", "isResolved": False},
+            {"id": "m", "body": "future scope roadmap", "isResolved": False},
+            {"id": "r", "body": "already resolved", "isResolved": True},
+        ],
+        _review_evidence_context(),
+    )
+    ASSERTIONS.assertEqual([item["id"] for item in eligible], ["p", "e", "m"])
+
+
+def test_auto_resolve_review_comments_contract_fails_closed_without_evidence_context():
+    """Missing evidence context should fail closed for evidence-only resolution."""
+    eligible = flow.eligible_review_comments_for_auto_resolve(
+        [{"id": "a", "body": "stale advisory nit", "isResolved": False}],
+        {"evidence_only": True},
+    )
+    ASSERTIONS.assertEqual(eligible, [])
+
+
+def test_auto_resolve_review_comments_contract_outdated_bypass_is_excluded_from_auto_resolve():
+    """Outdated bypass thread is prefiltered from auto-resolve eligibility."""
+    eligible = flow.eligible_review_comments_for_auto_resolve(
+        [{"id": "a", "body": "stale advisory but fail open bypass remains", "isResolved": False, "isOutdated": True}],
+        _review_evidence_context(),
+    )
+    ASSERTIONS.assertEqual(eligible, [])
+
+
+def test_auto_resolve_review_comments_contract_ignores_malformed_nodes():
+    """Malformed/non-dict nodes are ignored without raising type errors."""
+    eligible = flow.eligible_review_comments_for_auto_resolve(
+        [
+            "not-a-dict",
+            None,
+            {"id": "ok", "body": "stale advisory nit", "isResolved": False},
+        ],
+        _review_evidence_context(),
+    )
+    ASSERTIONS.assertEqual([item["id"] for item in eligible], ["ok"])
+
+
+def test_auto_resolve_review_comments_contract_outdated_normal_without_evidence_context_excluded():
+    """Outdated advisory thread without evidence context must not inflate active blockers."""
+    eligible = flow.eligible_review_comments_for_auto_resolve(
+        [{"id": "o1", "body": "stale advisory nit", "isResolved": False, "isOutdated": True}],
+        {"checks_green": True},
+    )
+    ASSERTIONS.assertEqual(eligible, [])
+
+
+def test_auto_resolve_review_comments_contract_outdated_snake_case_without_evidence_context_excluded():
+    """Outdated advisory thread using snake_case field must not inflate active blockers."""
+    eligible = flow.eligible_review_comments_for_auto_resolve(
+        [{"id": "o1s", "body": "stale advisory nit", "isResolved": False, "is_outdated": True}],
+        {"checks_green": True},
+    )
+    ASSERTIONS.assertEqual(eligible, [])
+
+
+def test_auto_resolve_review_comments_contract_resolved_snake_case_excluded():
+    """Resolved thread using snake_case field must be excluded from eligibility."""
+    eligible = flow.eligible_review_comments_for_auto_resolve(
+        [{"id": "r1s", "body": "already resolved", "is_resolved": True}],
+        _review_evidence_context(),
+    )
+    ASSERTIONS.assertEqual(eligible, [])
+
+
+def test_auto_resolve_review_comments_contract_resolved_camel_case_excluded():
+    """Resolved thread using camelCase field remains excluded from eligibility."""
+    eligible = flow.eligible_review_comments_for_auto_resolve(
+        [{"id": "r1", "body": "already resolved", "isResolved": True}],
+        _review_evidence_context(),
+    )
+    ASSERTIONS.assertEqual(eligible, [])
+
+
+def test_auto_resolve_review_comments_contract_outdated_snake_case_excluded_with_full_context():
+    """Outdated snake_case thread remains excluded when evidence context is present."""
+    eligible = flow.eligible_review_comments_for_auto_resolve(
+        [{"id": "o2s", "body": "stale advisory nit", "isResolved": False, "is_outdated": True}],
+        _review_evidence_context(),
+    )
+    ASSERTIONS.assertEqual(eligible, [])
+
+
+def test_auto_resolve_review_comments_contract_active_unresolved_node_still_eligible():
+    """Active unresolved thread remains eligible in non-evidence mode."""
+    eligible = flow.eligible_review_comments_for_auto_resolve(
+        [{"id": "a1", "body": "stale advisory nit", "isResolved": False, "is_outdated": False}],
+        _review_evidence_context(evidence_only=False),
+    )
+    ASSERTIONS.assertEqual([item["id"] for item in eligible], ["a1"])
 
 
 def test_d203_d211_rule_conflict_detection_contract():
