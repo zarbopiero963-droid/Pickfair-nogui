@@ -5301,9 +5301,9 @@ def test_classify_merge_conflict_contract_paths():
         {"files": ["scripts/pr_automation_controller.py"]},
     )
     ASSERTIONS.assertEqual(dirty["category"], "merge_conflict")
-    ASSERTIONS.assertTrue(dirty["auto_resolvable"])
-    ASSERTIONS.assertEqual(dirty["resolution_strategy"], "take_main_for_out_of_scope_automation")
-    ASSERTIONS.assertEqual(dirty["next_action"], "auto_resolve_merge_conflict")
+    ASSERTIONS.assertFalse(dirty["auto_resolvable"])
+    ASSERTIONS.assertEqual(dirty["resolution_strategy"], "needs_manual")
+    ASSERTIONS.assertEqual(dirty["next_action"], "needs_manual_merge_conflict")
     conflicting = controller.classify_merge_conflict(
         {"mergeable": "CONFLICTING", "mergeStateStatus": "CLEAN"},
         ["order_manager.py"],
@@ -5324,6 +5324,266 @@ def test_classify_merge_conflict_clean_pr_is_not_conflict():
     ASSERTIONS.assertFalse(clean["auto_resolvable"])
     ASSERTIONS.assertEqual(clean["resolution_strategy"], "")
     ASSERTIONS.assertEqual(clean["next_action"], "")
+
+
+def test_merge_conflict_default_deny_with_empty_allowlist(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "scripts").mkdir()
+    path = tmp_path / "scripts" / "candidate.py"
+    path.write_text("<<<<<<< ours\nx=1\n=======\nx=2\n>>>>>>> theirs\n", encoding="utf-8")
+    result = controller.classify_merge_conflict(
+        {"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"},
+        ["scripts/candidate.py"],
+        {},
+    )
+    ASSERTIONS.assertTrue(result["denied"])
+    ASSERTIONS.assertEqual(result["reason"], "path_default_deny_empty_allowlist")
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_merge_conflict")
+
+
+def test_merge_conflict_allowlisted_automation_file_with_valid_markers_is_safe(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "scripts").mkdir()
+    path = tmp_path / "scripts" / "candidate.py"
+    path.write_text("<<<<<<< ours\nx=1\n=======\nx=2\n>>>>>>> theirs\n", encoding="utf-8")
+    result = controller.classify_merge_conflict(
+        {"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"},
+        ["scripts/candidate.py"],
+        {"files": ["scripts/candidate.py"]},
+    )
+    ASSERTIONS.assertTrue(result["allowed"])
+    ASSERTIONS.assertFalse(result["denied"])
+    ASSERTIONS.assertTrue(result["auto_resolvable"])
+    ASSERTIONS.assertEqual(result["action"], "auto_resolve_merge_conflict")
+    ASSERTIONS.assertEqual(result["next_action"], "auto_resolve_merge_conflict")
+
+
+def test_merge_conflict_result_payload_has_required_keys(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "scripts").mkdir()
+    path = tmp_path / "scripts" / "candidate.py"
+    path.write_text("<<<<<<< ours\nx=1\n=======\nx=2\n>>>>>>> theirs\n", encoding="utf-8")
+    result = controller.classify_merge_conflict(
+        {"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"},
+        ["scripts/candidate.py"],
+        {"files": ["scripts/candidate.py"]},
+    )
+    required_keys = (
+        "allowed",
+        "denied",
+        "action",
+        "path",
+        "reason",
+        "next_action",
+        "needs_manual",
+        "conflict_class",
+        "evidence",
+    )
+    for key in required_keys:
+        ASSERTIONS.assertIn(key, result)
+
+
+def test_merge_conflict_forbidden_paths_denied_even_when_allowlisted():
+    for path in (
+        ".github/workflows/pr-autofix-selfhosted.yml",
+        "core/engine.py",
+        "runtime/worker.py",
+        "business/logic.py",
+        "secrets/token.txt",
+        "config/providers/openai.yml",
+    ):
+        result = controller.classify_merge_conflict(
+            {"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"},
+            [path],
+            {"files": [path]},
+        )
+        ASSERTIONS.assertTrue(result["denied"])
+        ASSERTIONS.assertEqual(result["reason"], "path_forbidden")
+        ASSERTIONS.assertEqual(result["next_action"], "needs_manual_merge_conflict")
+
+
+def test_merge_conflict_non_allowlisted_paths_denied():
+    result = controller.classify_merge_conflict(
+        {"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"},
+        ["scripts/candidate.py"],
+        {"files": ["scripts/other.py"]},
+    )
+    ASSERTIONS.assertTrue(result["denied"])
+    ASSERTIONS.assertEqual(result["reason"], "path_not_allowlisted")
+
+
+def test_merge_conflict_malformed_path_candidates_denied():
+    bad_paths = [
+        "../scripts/a.py",
+        "/abs/path.py",
+        "C:/repo/scripts/a.py",
+        "scripts\\a.py",
+        " scripts/a.py",
+        "scripts/a.py ",
+        "scripts /a.py",
+        "",
+        None,
+        {"path": "scripts/a.py"},
+        "<path>",
+    ]
+    for bad in bad_paths:
+        result = controller.classify_merge_conflict(
+            {"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"},
+            [bad],
+            {"files": ["scripts/a.py"]},
+        )
+        ASSERTIONS.assertTrue(result["denied"])
+        ASSERTIONS.assertTrue(result["needs_manual"])
+        if not isinstance(bad, str):
+            ASSERTIONS.assertEqual(result["reason"], "path_non_string")
+        ASSERTIONS.assertEqual(result["next_action"], "needs_manual_merge_conflict")
+        ASSERTIONS.assertNotEqual(result["action"], "auto_resolve_merge_conflict")
+
+
+def test_merge_conflict_missing_binary_unreadable_and_symlink_denied(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "scripts").mkdir()
+    missing = controller.classify_merge_conflict(
+        {"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"},
+        ["scripts/missing.py"],
+        {"files": ["scripts/missing.py"]},
+    )
+    ASSERTIONS.assertEqual(missing["reason"], "missing_file")
+
+    binary_path = tmp_path / "scripts" / "binary.py"
+    binary_path.write_bytes(b"\x00\x01\x02")
+    binary = controller.classify_merge_conflict(
+        {"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"},
+        ["scripts/binary.py"],
+        {"files": ["scripts/binary.py"]},
+    )
+    ASSERTIONS.assertEqual(binary["reason"], "binary_file")
+
+    monkeypatch.setattr(controller.os, "access", lambda _path, _mode: False)
+    unreadable_path = tmp_path / "scripts" / "unreadable.py"
+    unreadable_path.write_text("<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\n", encoding="utf-8")
+    unreadable = controller.classify_merge_conflict(
+        {"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"},
+        ["scripts/unreadable.py"],
+        {"files": ["scripts/unreadable.py"]},
+    )
+    ASSERTIONS.assertEqual(unreadable["reason"], "unreadable_file")
+    ASSERTIONS.assertNotEqual(unreadable["reason"], "safe_auto_resolve_candidate")
+
+    symlink_target = tmp_path / "scripts" / "target.py"
+    symlink_target.write_text("<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\n", encoding="utf-8")
+    symlink_path = tmp_path / "scripts" / "link.py"
+    symlink_path.symlink_to(symlink_target)
+    symlink = controller.classify_merge_conflict(
+        {"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"},
+        ["scripts/link.py"],
+        {"files": ["scripts/link.py"]},
+    )
+    ASSERTIONS.assertEqual(symlink["reason"], "symlink_file")
+
+
+def test_merge_conflict_marker_failures_denied(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "scripts").mkdir()
+    cases = {
+        "scripts/no_markers.py": "unknown_marker_shape",
+        "scripts/malformed.py": "unbalanced_conflict_markers",
+        "scripts/nested.py": "nested_conflict_markers",
+        "scripts/duplicate.py": "duplicate_conflict_separator",
+        "scripts/onesided.py": "one_sided_deletion_marker_shape",
+        "scripts/multi.py": "safety_gate_conflict",
+    }
+    (tmp_path / "scripts" / "no_markers.py").write_text("print('x')\n", encoding="utf-8")
+    (tmp_path / "scripts" / "malformed.py").write_text("<<<<<<< ours\nx\n=======\ny\n", encoding="utf-8")
+    (tmp_path / "scripts" / "nested.py").write_text(
+        "<<<<<<< ours\nx\n<<<<<<< ours2\ny\n=======\nz\n>>>>>>> theirs2\n>>>>>>> theirs\n", encoding="utf-8"
+    )
+    (tmp_path / "scripts" / "duplicate.py").write_text(
+        "<<<<<<< ours\nx\n=======\ny\n=======\nz\n>>>>>>> theirs\n", encoding="utf-8"
+    )
+    (tmp_path / "scripts" / "onesided.py").write_text("<<<<<<< ours\nx\n>>>>>>> theirs\n", encoding="utf-8")
+    (tmp_path / "scripts" / "multi.py").write_text(
+        "<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\n\n<<<<<<< ours2\na\n=======\nb\n>>>>>>> theirs2\n",
+        encoding="utf-8",
+    )
+    for file_path, expected_reason in cases.items():
+        result = controller.classify_merge_conflict(
+            {"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"},
+            [file_path],
+            {"files": [file_path]},
+        )
+        ASSERTIONS.assertTrue(result["denied"])
+        ASSERTIONS.assertEqual(result["reason"], expected_reason)
+
+
+def test_merge_conflict_mixed_safe_and_forbidden_denied(tmp_path, monkeypatch):
+    """Mixed conflicted files must deny immediately when any path is forbidden."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "candidate.py").write_text(
+        "<<<<<<< ours\nx=1\n=======\nx=2\n>>>>>>> theirs\n",
+        encoding="utf-8",
+    )
+    result = controller.classify_merge_conflict(
+        {"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"},
+        ["scripts/candidate.py", "core/engine.py"],
+        {"files": ["scripts/candidate.py", "core/engine.py"]},
+    )
+    ASSERTIONS.assertTrue(result["denied"])
+    ASSERTIONS.assertEqual(result["reason"], "path_forbidden")
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_merge_conflict")
+    evidence = cast(dict[str, Any], result.get("evidence") or {})
+    ASSERTIONS.assertEqual(evidence.get("validated_paths"), ["scripts/candidate.py"])
+
+
+def test_merge_conflict_all_safe_files_validate_before_allowing_auto_resolve(tmp_path, monkeypatch):
+    """All conflicted files must validate before reporting safe auto-resolve evidence."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "a.py").write_text(
+        "<<<<<<< ours\nx=1\n=======\nx=2\n>>>>>>> theirs\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "scripts" / "b.py").write_text(
+        "<<<<<<< ours\ny=1\n=======\ny=2\n>>>>>>> theirs\n",
+        encoding="utf-8",
+    )
+    result = controller.classify_merge_conflict(
+        {"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"},
+        ["scripts/a.py", "scripts/b.py"],
+        {"files": ["scripts/a.py", "scripts/b.py"]},
+    )
+    ASSERTIONS.assertTrue(result["auto_resolvable"])
+    ASSERTIONS.assertEqual(result["reason"], "safe_auto_resolve_candidate")
+    evidence = result.get("evidence") if isinstance(result.get("evidence"), dict) else {}
+    ASSERTIONS.assertEqual(
+        cast(dict[str, Any], evidence).get("validated_paths"),
+        ["scripts/a.py", "scripts/b.py"],
+    )
+    ASSERTIONS.assertEqual(result["path"], "multiple_files_validated")
+
+
+def test_merge_conflict_multi_file_evidence_never_collapses_to_first_path(tmp_path, monkeypatch):
+    """Success evidence must carry all validated files and avoid first-file-only path signals."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "a.py").write_text(
+        "<<<<<<< ours\nx=1\n=======\nx=2\n>>>>>>> theirs\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "scripts" / "b.py").write_text(
+        "<<<<<<< ours\ny=1\n=======\ny=2\n>>>>>>> theirs\n",
+        encoding="utf-8",
+    )
+    result = controller.classify_merge_conflict(
+        {"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"},
+        ["scripts/a.py", "scripts/b.py"],
+        {"files": ["scripts/a.py", "scripts/b.py"]},
+    )
+    ASSERTIONS.assertEqual(result["path"], "multiple_files_validated")
+    ASSERTIONS.assertNotEqual(result["path"], "scripts/a.py")
+    evidence = cast(dict[str, Any], result.get("evidence") or {})
+    ASSERTIONS.assertEqual(evidence.get("validated_paths"), ["scripts/a.py", "scripts/b.py"])
 
 
 def test_review_task_lines_include_only_unresolved_active_threads():

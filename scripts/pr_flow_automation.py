@@ -453,7 +453,7 @@ def build_decision(
     decision = _base_decision({"repo": repo, "pr_number": pr_number}, pr, checks, merge_state)
     taxonomy_context = _taxonomy_context(pr, checks, merge_state["can_merge"])
     taxonomy_items = _decision_taxonomy_items(checks, review_threads or [])
-    taxonomy_items.extend(_merge_conflict_taxonomy_items(pr))
+    taxonomy_items.extend(_merge_conflict_taxonomy_items(pr, _effective_merge_conflict_scope(pr, decision)))
     decision["blocker_taxonomy"] = controller.summarize_blocker_actions(taxonomy_items, taxonomy_context)
     _apply_taxonomy_next_action(decision)
     return decision
@@ -646,11 +646,58 @@ def _decision_taxonomy_items(checks: dict[str, Any], review_threads: list[dict[s
     return items
 
 
-def _merge_conflict_taxonomy_items(pr_data: dict[str, Any]) -> list[dict[str, Any]]:
-    classified = controller.classify_merge_conflict(pr_data, _conflicted_files_from_pr(pr_data), {})
+def _merge_conflict_taxonomy_items(pr_data: dict[str, Any], task_scope: dict[str, Any]) -> list[dict[str, Any]]:
+    classified = controller.classify_merge_conflict(pr_data, _conflicted_files_from_pr(pr_data), task_scope)
     if str(classified.get("category") or "") != "merge_conflict":
         return []
     return [dict(classified, name="PR merge conflict", state="FAILURE", source="merge")]
+
+
+def _effective_merge_conflict_scope(pr_data: dict[str, Any], decision: dict[str, Any]) -> dict[str, Any]:
+    candidates: list[Any] = [
+        pr_data.get("task_scope"),
+        pr_data.get("taskScope"),
+        pr_data.get("scope"),
+        decision.get("task_scope"),
+        decision.get("taskScope"),
+    ]
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        scoped = _extract_effective_scope(candidate)
+        if scoped:
+            return scoped
+    return {}
+
+
+def _extract_effective_scope(scope: dict[str, Any]) -> dict[str, Any]:
+    scoped: dict[str, Any] = {}
+    for key in _scope_keys():
+        files = _scope_list_values(scope.get(key))
+        if files:
+            scoped[key] = files
+    return scoped
+
+
+def _scope_keys() -> tuple[str, ...]:
+    return ("files", "allowed_files", "allowlist", "in_scope_files")
+
+
+def _scope_list_values(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    cleaned: list[str] = []
+    for path in value:
+        candidate = _clean_scope_path(path)
+        if candidate:
+            cleaned.append(candidate)
+    return cleaned
+
+
+def _clean_scope_path(path: Any) -> str:
+    if not isinstance(path, str):
+        return ""
+    return path.strip()
 
 
 def _conflicted_files_from_pr(pr_data: dict[str, Any]) -> list[str]:
