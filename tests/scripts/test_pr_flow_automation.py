@@ -772,7 +772,7 @@ def test_classify_merge_conflict_reports_merge_conflict_category():
         {},
     )
     ASSERTIONS.assertEqual(result["category"], "merge_conflict")
-    ASSERTIONS.assertEqual(result["next_action"], "auto_resolve_merge_conflict")
+    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_merge_conflict")
 
 
 def test_classify_merge_conflict_clean_pr_not_merge_conflict():
@@ -783,6 +783,89 @@ def test_classify_merge_conflict_clean_pr_not_merge_conflict():
         {},
     )
     ASSERTIONS.assertNotEqual(result.get("category"), "merge_conflict")
+
+
+def test_merge_conflict_taxonomy_items_passes_effective_task_scope(monkeypatch):
+    """Taxonomy merge-conflict classifier should receive explicit task scope unchanged."""
+    captured: dict[str, Any] = {}
+
+    def _fake_classifier(
+        pr_data: dict[str, Any],
+        conflicted_files: list[str],
+        task_scope: dict[str, Any],
+    ) -> dict[str, Any]:
+        captured["pr_data"] = pr_data
+        captured["conflicted_files"] = conflicted_files
+        captured["task_scope"] = task_scope
+        return {"category": "merge_conflict", "next_action": "needs_manual_merge_conflict"}
+
+    monkeypatch.setattr(flow.controller, "classify_merge_conflict", _fake_classifier)
+    pr_data = {
+        "mergeable": "CONFLICTING",
+        "mergeStateStatus": "DIRTY",
+        "conflicted_files": ["scripts/pr_flow_automation.py"],
+    }
+    scope = {"files": ["scripts/pr_flow_automation.py"]}
+    taxonomy_items = getattr(flow, "_merge_conflict_taxonomy_items")
+    items = taxonomy_items(pr_data, scope)
+
+    ASSERTIONS.assertEqual(len(items), 1)
+    ASSERTIONS.assertEqual(cast(dict[str, Any], captured["task_scope"]), scope)
+    ASSERTIONS.assertEqual(
+        cast(list[str], captured["conflicted_files"]),
+        ["scripts/pr_flow_automation.py"],
+    )
+
+
+def test_merge_conflict_taxonomy_scope_fallback_manual_when_scope_absent():
+    """Missing task scope must preserve manual/default-deny merge-conflict routing."""
+    pr_data = {
+        "mergeable": "CONFLICTING",
+        "mergeStateStatus": "DIRTY",
+        "conflicted_files": ["scripts/pr_flow_automation.py"],
+    }
+    taxonomy_items = getattr(flow, "_merge_conflict_taxonomy_items")
+    items = taxonomy_items(pr_data, {})
+
+    ASSERTIONS.assertEqual(len(items), 1)
+    item = items[0]
+    ASSERTIONS.assertEqual(item.get("category"), "merge_conflict")
+    ASSERTIONS.assertTrue(bool(item.get("denied")))
+    ASSERTIONS.assertEqual(item.get("next_action"), "needs_manual_merge_conflict")
+    ASSERTIONS.assertIn(item.get("reason"), {"path_default_deny_empty_allowlist", "path_not_allowlisted"})
+
+
+def test_effective_merge_conflict_scope_prefers_explicit_scope_from_pr_data():
+    """Explicit task scope in PR data should propagate to merge-conflict classification input."""
+    scope_resolver = getattr(flow, "_effective_merge_conflict_scope")
+    result = scope_resolver(
+        {
+            "task_scope": {"files": ["scripts/pr_flow_automation.py"], "ignored": ["x"]},
+            "scope": {"files": ["scripts/other.py"]},
+        },
+        {},
+    )
+    ASSERTIONS.assertEqual(result, {"files": ["scripts/pr_flow_automation.py"]})
+
+
+def test_extract_effective_scope_equivalence_with_expected_keys_and_trimming():
+    """Scope extraction should preserve supported keys, values, and default-deny semantics."""
+    extractor = getattr(flow, "_extract_effective_scope")
+    scope = {
+        "files": [" scripts/a.py ", "", None],
+        "allowed_files": ["tests/scripts/test_pr_flow_automation.py"],
+        "allowlist": [123, " scripts/pr_flow_automation.py "],
+        "in_scope_files": [],
+        "extra": ["not-copied"],
+    }
+    ASSERTIONS.assertEqual(
+        extractor(scope),
+        {
+            "files": ["scripts/a.py"],
+            "allowed_files": ["tests/scripts/test_pr_flow_automation.py"],
+            "allowlist": ["scripts/pr_flow_automation.py"],
+        },
+    )
 
 
 def test_telegram_ready_summary_contract():

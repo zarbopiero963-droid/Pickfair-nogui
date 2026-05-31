@@ -7283,13 +7283,24 @@ def classify_merge_conflict(
     if not _pr_has_merge_conflict(pr):
         return _no_merge_conflict_result()
     if not conflicted_files:
-        return _merge_conflict_result(conflicted_files, False, "needs_manual", "needs_manual_merge_conflict")
-    strategy, auto_resolvable = _conflict_resolution_strategy(conflicted_files, task_scope)
+        return _merge_conflict_result(
+            conflicted_files,
+            False,
+            "needs_manual",
+            "needs_manual_merge_conflict",
+            path="",
+            reason="missing_conflicted_files",
+            evidence={"validation": "missing_conflicted_files"},
+        )
+    strategy, auto_resolvable, path, reason, evidence = _conflict_resolution_strategy(conflicted_files, task_scope)
     return _merge_conflict_result(
         conflicted_files,
         auto_resolvable,
         strategy,
         _merge_conflict_next_action(strategy),
+        path=path,
+        reason=reason,
+        evidence=evidence,
     )
 
 
@@ -7552,10 +7563,18 @@ def _test_or_unknown_category(details: dict[str, str]) -> str:
 def _no_merge_conflict_result() -> dict[str, Any]:
     return {
         "category": "none",
+        "conflict_class": "none",
         "conflicted_files": [],
         "auto_resolvable": False,
+        "allowed": False,
+        "denied": False,
+        "action": "none",
+        "path": "",
+        "reason": "no_merge_conflict",
         "resolution_strategy": "",
         "next_action": "",
+        "needs_manual": False,
+        "evidence": {"validation": "no_merge_conflict"},
     }
 
 
@@ -7588,12 +7607,53 @@ def _pr_has_merge_conflict(payload: dict[str, Any]) -> bool:
     return norm_state(payload.get("mergeable")) == "CONFLICTING" or norm_state(payload.get("mergeStateStatus")) == "DIRTY"
 
 
-def _conflict_resolution_strategy(conflicted_files: list[str], task_scope: dict[str, Any]) -> tuple[str, bool]:
-    if _has_non_automation_conflict(conflicted_files):
-        return "needs_manual", False
-    if all(_is_out_of_scope(path, task_scope) for path in conflicted_files):
-        return "take_main_for_out_of_scope_automation", True
-    return "attempt_safe_file_resolution", True
+def _conflict_resolution_strategy(
+    conflicted_files: list[str], task_scope: dict[str, Any]
+) -> tuple[str, bool, str, str, dict[str, Any]]:
+    if not conflicted_files:
+        return "needs_manual", False, "", "missing_conflicted_files", {"validation": "missing_conflicted_files"}
+    validated_paths: list[str] = []
+    validation_steps: list[dict[str, Any]] = []
+    for raw_path in conflicted_files:
+        candidate = _validate_conflict_path_candidate(raw_path)
+        validation_steps.append({"path": raw_path, "step": "path_candidate", "result": candidate})
+        if candidate["denied"]:
+            return (
+                "needs_manual",
+                False,
+                "",
+                str(candidate["reason"]),
+                {"validated_paths": validated_paths, "validation": validation_steps},
+            )
+        path = str(candidate["path"])
+        gate = _path_conflict_safety_gate(path, task_scope)
+        validation_steps.append({"path": path, "step": "scope_gate", "result": gate})
+        if gate["denied"]:
+            return (
+                "needs_manual",
+                False,
+                path,
+                str(gate["reason"]),
+                {"validated_paths": validated_paths, "validation": validation_steps},
+            )
+        payload = _validate_conflict_payload(path)
+        validation_steps.append({"path": path, "step": "payload", "result": payload})
+        if payload["denied"]:
+            return (
+                "needs_manual",
+                False,
+                path,
+                str(payload["reason"]),
+                {"validated_paths": validated_paths, "validation": validation_steps},
+            )
+        validated_paths.append(path)
+    return (
+        "attempt_safe_file_resolution",
+        True,
+        "multiple_files_validated" if len(validated_paths) > 1 else validated_paths[0],
+        "safe_auto_resolve_candidate",
+        {"validated_paths": validated_paths, "validation": validation_steps},
+    )
 
 
 def _has_non_automation_conflict(conflicted_files: list[str]) -> bool:
@@ -7638,14 +7698,148 @@ def _merge_conflict_result(
     auto_resolvable: bool,
     resolution_strategy: str,
     next_action: str,
+    *,
+    path: str,
+    reason: str,
+    evidence: dict[str, Any],
 ) -> dict[str, Any]:
+    denied = not auto_resolvable
+    action = "auto_resolve_merge_conflict" if auto_resolvable else "needs_manual_merge_conflict"
     return {
         "category": "merge_conflict",
+        "conflict_class": "merge_conflict",
         "conflicted_files": conflicted_files,
         "auto_resolvable": auto_resolvable,
+        "allowed": auto_resolvable,
+        "denied": denied,
+        "action": action,
+        "path": path,
+        "reason": reason,
         "resolution_strategy": resolution_strategy,
-        "next_action": next_action,
+        "next_action": next_action if auto_resolvable else "needs_manual_merge_conflict",
+        "needs_manual": denied,
+        "evidence": evidence,
     }
+
+
+MERGE_CONFLICT_FORBIDDEN_PREFIXES = (
+    ".github/workflows/",
+    "core/",
+    "runtime/",
+    "business/",
+    "secrets/",
+    "secret/",
+    "provider/",
+    "providers/",
+    "config/",
+    "config/providers/",
+    "provider_config/",
+)
+MERGE_CONFLICT_ALLOWED_PREFIXES = ("scripts/", "tests/scripts/")
+
+
+def _validate_conflict_path_candidate(path: object) -> dict[str, Any]:
+    if not isinstance(path, str):
+        return {"denied": True, "reason": "path_non_string", "path": ""}
+    if path != path.strip():
+        return {"denied": True, "reason": "path_whitespace_boundary", "path": ""}
+    if not path:
+        return {"denied": True, "reason": "path_empty", "path": ""}
+    if any(ch.isspace() for ch in path):
+        return {"denied": True, "reason": "path_whitespace_embedded", "path": ""}
+    if "\\" in path:
+        return {"denied": True, "reason": "path_backslash_separator", "path": ""}
+    if path.startswith("/"):
+        return {"denied": True, "reason": "path_absolute", "path": ""}
+    if re.match(r"^[A-Za-z]:[/\\\\]", path):
+        return {"denied": True, "reason": "path_windows_drive", "path": ""}
+    if _contains_parent_traversal(path):
+        return {"denied": True, "reason": "path_traversal", "path": ""}
+    if _is_placeholder_value(path) or (path.startswith("<") and path.endswith(">")):
+        return {"denied": True, "reason": "path_placeholder_token", "path": ""}
+    normalized = _normalize_repo_relative_path(path)
+    if not normalized or normalized != path:
+        return {"denied": True, "reason": "path_malformed", "path": ""}
+    return {"denied": False, "reason": "", "path": normalized}
+
+
+def _path_conflict_safety_gate(path: str, task_scope: dict[str, Any]) -> dict[str, Any]:
+    if _is_forbidden_conflict_path(path):
+        return {"denied": True, "reason": "path_forbidden", "path": path}
+    allowed_scope = _scope_paths(task_scope)
+    if not allowed_scope:
+        return {"denied": True, "reason": "path_default_deny_empty_allowlist", "path": path}
+    if path not in allowed_scope:
+        return {"denied": True, "reason": "path_not_allowlisted", "path": path}
+    if not any(path.startswith(prefix) for prefix in MERGE_CONFLICT_ALLOWED_PREFIXES):
+        return {"denied": True, "reason": "path_not_automation_test", "path": path}
+    return {"denied": False, "reason": "", "path": path}
+
+
+def _is_forbidden_conflict_path(path: str) -> bool:
+    return any(path.startswith(prefix) for prefix in MERGE_CONFLICT_FORBIDDEN_PREFIXES)
+
+
+def _validate_conflict_payload(path: str) -> dict[str, Any]:
+    target = Path(path)
+    if not target.exists():
+        return {"denied": True, "reason": "missing_file", "path": path}
+    if target.is_symlink():
+        return {"denied": True, "reason": "symlink_file", "path": path}
+    if not target.is_file():
+        return {"denied": True, "reason": "unreadable_file", "path": path}
+    if not os.access(target, os.R_OK):
+        return {"denied": True, "reason": "unreadable_file", "path": path}
+    try:
+        raw = target.read_bytes()
+    except OSError:
+        return {"denied": True, "reason": "unreadable_file", "path": path}
+    if b"\x00" in raw:
+        return {"denied": True, "reason": "binary_file", "path": path}
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return {"denied": True, "reason": "binary_file", "path": path}
+    marker = _validate_merge_conflict_markers(text)
+    if marker["denied"]:
+        return {"denied": True, "reason": marker["reason"], "path": path, "marker": marker}
+    return {"denied": False, "reason": "", "path": path, "marker": marker}
+
+
+def _validate_merge_conflict_markers(text: str) -> dict[str, Any]:
+    in_block = False
+    seen_separator = False
+    blocks = 0
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip("\n")
+        if line.startswith("<<<<<<<"):
+            if in_block:
+                return {"denied": True, "reason": "nested_conflict_markers"}
+            in_block = True
+            seen_separator = False
+            blocks += 1
+            continue
+        if line.startswith("======="):
+            if not in_block:
+                return {"denied": True, "reason": "malformed_conflict_markers"}
+            if seen_separator:
+                return {"denied": True, "reason": "duplicate_conflict_separator"}
+            seen_separator = True
+            continue
+        if line.startswith(">>>>>>>"):
+            if not in_block:
+                return {"denied": True, "reason": "malformed_conflict_markers"}
+            if not seen_separator:
+                return {"denied": True, "reason": "one_sided_deletion_marker_shape"}
+            in_block = False
+            seen_separator = False
+    if in_block:
+        return {"denied": True, "reason": "unbalanced_conflict_markers"}
+    if blocks == 0:
+        return {"denied": True, "reason": "unknown_marker_shape"}
+    if blocks > 1:
+        return {"denied": True, "reason": "safety_gate_conflict"}
+    return {"denied": False, "reason": "", "blocks": blocks}
 
 
 def _has_rerun_state(context: dict[str, Any]) -> bool:
