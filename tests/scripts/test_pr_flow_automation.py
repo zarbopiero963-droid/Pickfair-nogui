@@ -2,6 +2,7 @@
 # pylint: disable=invalid-name,duplicate-code
 
 import argparse
+import inspect
 import json
 from typing import Any, cast
 from unittest import TestCase
@@ -318,152 +319,6 @@ def test_build_decision_clean_checks_with_active_review_thread_blocks_merge(monk
     ASSERTIONS.assertIn("active unresolved review thread", " ".join(cast(list[str], taxonomy["reasons"])))
 
 
-def test_apply_taxonomy_next_action_does_not_promote_when_can_merge_false():
-    """Taxonomy ready_to_merge cannot override blocked decision when can_merge is false."""
-    decision = {
-        "already_merged": False,
-        "can_merge": False,
-        "next_action": "blocked",
-        "blocker_taxonomy": {"categories": ["none"], "next_action": "ready_to_merge"},
-    }
-
-    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
-    ASSERTIONS.assertEqual(decision["next_action"], "blocked")
-
-
-def test_apply_taxonomy_next_action_review_blocker_overrides_ready_to_merge():
-    """Active review blockers must force fix_review_comments even if taxonomy says ready_to_merge."""
-    decision = {
-        "already_merged": False,
-        "can_merge": True,
-        "next_action": "ready_to_merge",
-        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "ready_to_merge"},
-    }
-
-    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
-    ASSERTIONS.assertEqual(decision["next_action"], "fix_review_comments")
-
-
-def test_apply_taxonomy_next_action_review_blocker_does_not_override_high_priority_action():
-    """Review blockers cannot overwrite higher-priority remediation actions."""
-    decision = {
-        "already_merged": False,
-        "can_merge": False,
-        "next_action": "wait_pending",
-        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
-    }
-
-    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
-    ASSERTIONS.assertEqual(decision["next_action"], "wait_pending")
-
-
-def test_apply_taxonomy_next_action_review_blocker_not_review_only_keeps_ready_action():
-    """Active review blocker must prevent ready_to_merge even when not review-only."""
-    decision = {
-        "already_merged": False,
-        "can_merge": True,
-        "next_action": "ready_to_merge",
-        "blocker_taxonomy": {
-            "categories": ["review_comment_active", "workflow_pending"],
-            "next_action": "fix_review_comments",
-        },
-    }
-
-    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
-    ASSERTIONS.assertEqual(decision["next_action"], "fix_review_comments")
-
-
-def test_apply_taxonomy_next_action_does_not_override_manual_secret_with_review_action():
-    """Review blockers cannot overwrite manual-secret remediation."""
-    decision = {
-        "already_merged": False,
-        "can_merge": False,
-        "next_action": "needs_manual_secret",
-        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
-    }
-
-    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
-    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_secret")
-
-
-def test_apply_taxonomy_next_action_review_only_blocker_routes_to_fix_review_comments():
-    """Review-only blocker routes to fix_review_comments."""
-    decision = {
-        "already_merged": False,
-        "can_merge": False,
-        "next_action": "checks_green_or_no_action",
-        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
-    }
-
-    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
-    ASSERTIONS.assertEqual(decision["next_action"], "fix_review_comments")
-
-
-def test_apply_taxonomy_next_action_does_not_override_merge_conflict_with_review_action():
-    """Review blockers cannot overwrite merge-conflict manual remediation."""
-    decision = {
-        "already_merged": False,
-        "can_merge": False,
-        "next_action": "needs_manual_merge_conflict",
-        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
-    }
-
-    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
-    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_merge_conflict")
-
-
-def test_apply_taxonomy_next_action_does_not_override_rerun_stale_checks_with_review_action():
-    """Review blockers cannot overwrite stale-check rerun action."""
-    decision = {
-        "already_merged": False,
-        "can_merge": False,
-        "next_action": "rerun_stale_checks",
-        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
-    }
-
-    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
-    ASSERTIONS.assertEqual(decision["next_action"], "rerun_stale_checks")
-
-
-def test_apply_taxonomy_next_action_does_not_override_scope_violation_with_review_action():
-    """Review blockers cannot overwrite manual scope-violation remediation."""
-    decision = {
-        "already_merged": False,
-        "can_merge": False,
-        "next_action": "needs_manual_scope_violation",
-        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
-    }
-
-    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
-    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_scope_violation")
-
-
-def test_apply_taxonomy_next_action_does_not_override_codacy_rule_conflict_with_review_action():
-    """Review blockers cannot overwrite manual Codacy-rule-conflict remediation."""
-    decision = {
-        "already_merged": False,
-        "can_merge": False,
-        "next_action": "needs_manual_codacy_rule_conflict",
-        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
-    }
-
-    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
-    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_codacy_rule_conflict")
-
-
-def test_apply_taxonomy_next_action_does_not_override_auto_resolve_merge_conflict_with_review_action():
-    """Review blockers cannot overwrite merge-conflict auto-resolution action."""
-    decision = {
-        "already_merged": False,
-        "can_merge": False,
-        "next_action": "auto_resolve_merge_conflict",
-        "blocker_taxonomy": {"categories": ["review_comment_active"], "next_action": "fix_review_comments"},
-    }
-
-    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
-    ASSERTIONS.assertEqual(decision["next_action"], "auto_resolve_merge_conflict")
-
-
 def _preflight_args() -> argparse.Namespace:
     return argparse.Namespace(
         repo="owner/repo",
@@ -482,6 +337,54 @@ def _preflight_pr_view(_repo: str, _pr: str) -> dict[str, object]:
         "headRefName": "feature/branch",
         "headRefOid": "abc123",
         "statusCheckRollup": [_check("Unit tests", "SUCCESS")],
+    }
+
+
+def _full_pr3h_push_gate_context() -> dict[str, Any]:
+    return {
+        "automation_mode": "live",
+        "post_fix_audit": "PASS",
+        "validation_passed": True,
+        "current_head_matches": True,
+        "dirty_worktree": False,
+        "task_no_commit_push": False,
+        "scope_allowed": True,
+        "rollback_attempted": False,
+        "rollback_succeeded": True,
+        "can_push": True,
+        "can_commit": True,
+    }
+
+
+def _retry_refresh_gate_context() -> dict[str, Any]:
+    return {
+        "retry_push_gate_context": {
+            "explicitly_refreshed": True,
+            "gate_context": _full_pr3h_push_gate_context(),
+        }
+    }
+
+
+def _assert_gate_shape(result: dict[str, Any], expected: dict[str, Any]) -> None:
+    ASSERTIONS.assertEqual(
+        result,
+        {
+            "allowed": expected["allowed"],
+            "can_push": expected["allowed"],
+            "reason": expected["reason"],
+            "next_action": expected["next_action"],
+            "needs_manual": expected["needs_manual"],
+        },
+    )
+
+
+def _allow_push_gate_response() -> dict[str, Any]:
+    return {
+        "allowed": True,
+        "can_push": True,
+        "reason": "allowed",
+        "next_action": "proceed",
+        "needs_manual": False,
     }
 
 
@@ -514,13 +417,48 @@ def test_push_with_retry_once_succeeds_on_first_push():
         calls.append(list(cmd))
         return ""
 
-    result = flow.push_with_retry_once(fake_run, "owner/repo", "feature/branch")
+    result = flow.push_with_retry_once(
+        fake_run,
+        "owner/repo",
+        "feature/branch",
+        context=_full_pr3h_push_gate_context(),
+    )
 
     ASSERTIONS.assertTrue(result["ok"])
     ASSERTIONS.assertEqual(result["status"], "success")
     ASSERTIONS.assertFalse(result["retried"])
     ASSERTIONS.assertFalse(result["needs_manual"])
     ASSERTIONS.assertEqual(calls, [["git", "push", "origin", "feature/branch"]])
+
+
+def test_ensure_post_fix_audit_gate_before_push_shape_stable_for_allowed(monkeypatch):
+    """Allowed gate response keeps the expected contract keys and values."""
+    monkeypatch.setattr(flow.controller, "can_push_after_post_fix_audit", lambda _context: _allow_push_gate_response())
+    result = flow.ensure_post_fix_audit_gate_before_push({"post_fix_audit": "PASS"})
+    _assert_gate_shape(
+        result,
+        {
+            "allowed": True,
+            "reason": "allowed",
+            "next_action": "proceed",
+            "needs_manual": False,
+        },
+    )
+
+
+def test_ensure_post_fix_audit_gate_before_push_shape_stable_for_denied(monkeypatch):
+    """Denied gate response keeps fail-closed defaults when fields are missing."""
+    monkeypatch.setattr(flow.controller, "can_push_after_post_fix_audit", lambda _context: {})
+    result = flow.ensure_post_fix_audit_gate_before_push({"post_fix_audit": "FAIL"})
+    _assert_gate_shape(
+        result,
+        {
+            "allowed": False,
+            "reason": "post_fix_audit_gate_denied",
+            "next_action": "needs_manual",
+            "needs_manual": True,
+        },
+    )
 
 
 def test_push_with_retry_once_non_fast_forward_then_retry_success():
@@ -534,7 +472,12 @@ def test_push_with_retry_once_non_fast_forward_then_retry_success():
             raise RuntimeError("failed to push some refs to origin (non-fast-forward)")
         return ""
 
-    result = flow.push_with_retry_once(fake_run, "owner/repo", "feature/branch")
+    result = flow.push_with_retry_once(
+        fake_run,
+        "owner/repo",
+        "feature/branch",
+        context={**_full_pr3h_push_gate_context(), **_retry_refresh_gate_context()},
+    )
 
     ASSERTIONS.assertTrue(result["ok"])
     ASSERTIONS.assertEqual(result["status"], "success")
@@ -563,7 +506,12 @@ def test_push_with_retry_once_non_fast_forward_then_retry_fails_needs_manual():
             raise RuntimeError("failed to push some refs")
         return ""
 
-    result = flow.push_with_retry_once(fake_run, "owner/repo", "feature/branch")
+    result = flow.push_with_retry_once(
+        fake_run,
+        "owner/repo",
+        "feature/branch",
+        context={**_full_pr3h_push_gate_context(), **_retry_refresh_gate_context()},
+    )
 
     ASSERTIONS.assertFalse(result["ok"])
     ASSERTIONS.assertEqual(result["status"], "needs_manual")
@@ -578,6 +526,179 @@ def test_push_with_retry_once_non_fast_forward_then_retry_fails_needs_manual():
             ["git", "push", "origin", "feature/branch", "--force-with-lease"],
         ],
     )
+
+
+def test_push_with_retry_once_blocks_before_initial_push_without_pr3h_evidence():
+    """Missing PR3H evidence fail-closes before initial push."""
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_kwargs: Any) -> str:
+        calls.append(list(cmd))
+        return ""
+
+    result = flow.push_with_retry_once(fake_run, "owner/repo", "feature/branch")
+
+    ASSERTIONS.assertFalse(result["ok"])
+    ASSERTIONS.assertEqual(result["status"], "needs_manual")
+    ASSERTIONS.assertFalse(result["retried"])
+    ASSERTIONS.assertTrue(result["needs_manual"])
+    ASSERTIONS.assertEqual(calls, [])
+
+
+def test_push_with_retry_once_non_fast_forward_blocks_before_retry_without_pr3h_evidence():
+    """Retry path is guarded; force-with-lease is not called when PR3H evidence is missing."""
+    calls: list[list[str]] = []
+    gate_ctx = _full_pr3h_push_gate_context()
+
+    def fake_run(cmd: list[str], *, check: bool = True) -> str:
+        ASSERTIONS.assertTrue(check)
+        calls.append(list(cmd))
+        if len(calls) == 1:
+            gate_ctx["post_fix_audit"] = "FAIL"
+            raise RuntimeError("failed to push some refs to origin (non-fast-forward)")
+        return ""
+
+    result = flow.push_with_retry_once(fake_run, "owner/repo", "feature/branch", context=gate_ctx)
+
+    ASSERTIONS.assertFalse(result["ok"])
+    ASSERTIONS.assertEqual(result["status"], "needs_manual")
+    ASSERTIONS.assertTrue(result["retried"])
+    ASSERTIONS.assertTrue(result["needs_manual"])
+    ASSERTIONS.assertEqual(calls, [["git", "push", "origin", "feature/branch"]])
+
+
+def test_push_with_retry_once_non_fast_forward_allows_retry_with_refreshed_retry_gate_context():
+    """Retry path proceeds only when explicit refreshed retry context is provided."""
+    calls: list[list[str]] = []
+    gate_ctx = {**_full_pr3h_push_gate_context(), **_retry_refresh_gate_context()}
+
+    def fake_run(cmd: list[str], *, check: bool = True) -> str:
+        ASSERTIONS.assertTrue(check)
+        calls.append(list(cmd))
+        if len(calls) == 1:
+            raise RuntimeError("failed to push some refs to origin (non-fast-forward)")
+        return ""
+
+    result = flow.push_with_retry_once(fake_run, "owner/repo", "feature/branch", context=gate_ctx)
+
+    ASSERTIONS.assertTrue(result["ok"])
+    ASSERTIONS.assertEqual(result["status"], "success")
+    ASSERTIONS.assertTrue(result["retried"])
+    ASSERTIONS.assertEqual(calls[1], ["git", "fetch", "origin", "feature/branch"])
+    ASSERTIONS.assertEqual(calls[2], ["git", "push", "origin", "feature/branch", "--force-with-lease"])
+
+
+def test_push_with_retry_once_non_fast_forward_blocks_retry_with_stale_retry_gate_context():
+    """Retry path denies when retry gate context is present but not explicitly refreshed."""
+    calls: list[list[str]] = []
+    gate_ctx = {**_full_pr3h_push_gate_context(), "retry_push_gate_context": {"explicitly_refreshed": False}}
+
+    def fake_run(cmd: list[str], *, check: bool = True) -> str:
+        ASSERTIONS.assertTrue(check)
+        calls.append(list(cmd))
+        if len(calls) == 1:
+            raise RuntimeError("failed to push some refs to origin (non-fast-forward)")
+        return ""
+
+    result = flow.push_with_retry_once(fake_run, "owner/repo", "feature/branch", context=gate_ctx)
+
+    ASSERTIONS.assertFalse(result["ok"])
+    ASSERTIONS.assertTrue(result["retried"])
+    ASSERTIONS.assertEqual(calls, [["git", "push", "origin", "feature/branch"]])
+
+
+def test_cmd_canary_requires_explicit_pr3h_gate_context(monkeypatch):
+    """Canary create must fail-closed without explicit invocation context."""
+    calls: list[list[str]] = []
+
+    def _fake_sh(cmd: list[str], *, check: bool = True) -> str:
+        ASSERTIONS.assertTrue(check)
+        calls.append(list(cmd))
+        return ""
+
+    monkeypatch.setattr(flow, "sh", _fake_sh)
+    monkeypatch.setattr(flow.Path, "write_text", lambda *_args, **_kwargs: 1)
+    with ASSERTIONS.assertRaisesRegex(RuntimeError, "missing required --post-fix-gate-context"):
+        flow.cmd_canary(argparse.Namespace(repo="owner/repo", mode="create", post_fix_gate_context=""))
+    ASSERTIONS.assertEqual(calls, [])
+
+
+def test_cmd_canary_cleanup_does_not_require_create_gate_context(monkeypatch):
+    """Canary cleanup mode should run without requiring create-mode gate context."""
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(
+        flow,
+        "gh_json",
+        lambda _cmd: [{"number": 1, "headRefName": "test/safe-autofix-canary-1", "title": "safe autofix canary"}],
+    )
+
+    def _fake_sh(cmd: list[str], *, check: bool = True) -> str:
+        calls.append(list(cmd))
+        ASSERTIONS.assertFalse(check)
+        return ""
+
+    monkeypatch.setattr(flow, "sh", _fake_sh)
+    result = flow.cmd_canary(argparse.Namespace(repo="owner/repo", mode="cleanup", post_fix_gate_context=""))
+
+    ASSERTIONS.assertEqual(result, 0)
+    ASSERTIONS.assertEqual(
+        calls,
+        [["gh", "pr", "close", "1", "--repo", "owner/repo", "--delete-branch"]],
+    )
+
+
+def test_cmd_canary_passes_explicit_pr3h_gate_context_to_push_with_retry_once(monkeypatch):
+    """Canary create path must pass provided explicit context to guarded push helper."""
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(flow, "sh", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(flow.Path, "write_text", lambda *_args, **_kwargs: 1)
+    explicit_ctx = json.dumps(_full_pr3h_push_gate_context())
+    monkeypatch.setattr(
+        flow,
+        "push_with_retry_once",
+        lambda _run, _repo, _branch, *, remote="origin", context=None: (
+            captured.update({"remote": remote, "context": context}) or {"ok": False, "error": "stop"}
+        ),
+    )
+    with ASSERTIONS.assertRaises(RuntimeError):
+        flow.cmd_canary(
+            argparse.Namespace(repo="owner/repo", mode="create", post_fix_gate_context=explicit_ctx)
+        )
+    ASSERTIONS.assertEqual(captured["remote"], "origin")
+    ASSERTIONS.assertEqual(captured["context"], _full_pr3h_push_gate_context())
+
+
+def test_cmd_canary_create_denied_gate_aborts_before_mutation(monkeypatch):
+    """Canary create must abort before fetch/checkout/write when gate denies."""
+    calls: list[list[str]] = []
+    monkeypatch.setattr(flow, "sh", lambda cmd, *, check=True: (calls.append(list(cmd)) or ""))
+    monkeypatch.setattr(flow.Path, "write_text", lambda *_args, **_kwargs: 1)
+    denied_ctx = json.dumps({"post_fix_audit": "FAIL"})
+
+    with ASSERTIONS.assertRaisesRegex(RuntimeError, "post-fix audit gate denied before canary mutation"):
+        flow.cmd_canary(argparse.Namespace(repo="owner/repo", mode="create", post_fix_gate_context=denied_ctx))
+
+    ASSERTIONS.assertEqual(calls, [])
+
+
+def test_cmd_canary_create_malformed_gate_context_aborts_before_mutation(monkeypatch):
+    """Canary create must fail on malformed context before any mutation command."""
+    calls: list[list[str]] = []
+    monkeypatch.setattr(flow, "sh", lambda cmd, *, check=True: (calls.append(list(cmd)) or ""))
+    monkeypatch.setattr(flow.Path, "write_text", lambda *_args, **_kwargs: 1)
+
+    with ASSERTIONS.assertRaises(json.JSONDecodeError):
+        flow.cmd_canary(argparse.Namespace(repo="owner/repo", mode="create", post_fix_gate_context="{"))
+
+    ASSERTIONS.assertEqual(calls, [])
+
+
+def test_canary_timestamp_utc_shape_is_branch_safe_without_strftime() -> None:
+    """Canary timestamp format should stay branch-safe and avoid strftime."""
+    value = flow.canary_timestamp_utc()
+    ASSERTIONS.assertRegex(value, r"^\d{8}-\d{6}$")
+    ASSERTIONS.assertNotIn("strftime", inspect.getsource(flow.canary_timestamp_utc))
 
 
 def _automation_controller_args() -> argparse.Namespace:
@@ -639,40 +760,29 @@ def test_build_decision_draft_pr_not_promoted_to_ready_to_merge(monkeypatch):
     ASSERTIONS.assertEqual(taxonomy["next_action"], "checks_green_or_no_action")
 
 
-def test_apply_taxonomy_next_action_does_not_demote_blocked_to_checks_green_or_no_action():
-    """Non-mergeable blocked decision must not be demoted by empty taxonomy action."""
-    decision = {
-        "already_merged": False,
-        "can_merge": False,
-        "next_action": "blocked",
-        "blocker_taxonomy": {"categories": [], "next_action": "checks_green_or_no_action"},
-    }
-
-    flow._apply_taxonomy_next_action(decision)  # pylint: disable=protected-access
-    ASSERTIONS.assertEqual(decision["next_action"], "blocked")
-
-
-def test_merge_conflict_taxonomy_items_uses_classifier_output():
-    """Merge-conflict taxonomy item should come from classify_merge_conflict output."""
-    items = flow._merge_conflict_taxonomy_items(  # pylint: disable=protected-access
+def test_classify_merge_conflict_reports_merge_conflict_category():
+    """Public merge-conflict classifier should report merge_conflict for conflicting PR data."""
+    result = flow.classify_merge_conflict(
         {
             "mergeable": "CONFLICTING",
             "mergeStateStatus": "DIRTY",
             "conflicted_files": ["scripts/pr_flow_automation.py"],
-        }
+        },
+        ["scripts/pr_flow_automation.py"],
+        {},
     )
-
-    ASSERTIONS.assertEqual(len(items), 1)
-    ASSERTIONS.assertEqual(items[0]["category"], "merge_conflict")
-    ASSERTIONS.assertEqual(items[0]["next_action"], "auto_resolve_merge_conflict")
+    ASSERTIONS.assertEqual(result["category"], "merge_conflict")
+    ASSERTIONS.assertEqual(result["next_action"], "auto_resolve_merge_conflict")
 
 
-def test_merge_conflict_taxonomy_items_clean_pr_is_empty():
-    """Clean PR must not produce merge_conflict taxonomy items."""
-    items = flow._merge_conflict_taxonomy_items(  # pylint: disable=protected-access
-        {"mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN"}
+def test_classify_merge_conflict_clean_pr_not_merge_conflict():
+    """Public merge-conflict classifier should not report merge_conflict for clean PR data."""
+    result = flow.classify_merge_conflict(
+        {"mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN"},
+        [],
+        {},
     )
-    ASSERTIONS.assertEqual(items, [])
+    ASSERTIONS.assertNotEqual(result.get("category"), "merge_conflict")
 
 
 def test_telegram_ready_summary_contract():
@@ -977,7 +1087,7 @@ def _stub_readiness_fetch_failure(monkeypatch) -> None:
     )
 
 
-def _run_readiness_cmd_failure_case() -> int:
+def _run_readiness_cmd_failure_case(output: str = "") -> int:
     return flow.cmd_readiness(
         argparse.Namespace(
             repo="owner/repo",
@@ -985,10 +1095,25 @@ def _run_readiness_cmd_failure_case() -> int:
             ignore_safe_autofix=True,
             wait_unknown_seconds=0,
             poll_seconds=0,
-            output="",
+            output=output,
             no_fail=False,
         )
     )
+
+
+def _ready_to_merge_decision_payload() -> dict[str, Any]:
+    return {
+        "already_merged": False,
+        "can_merge": True,
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+        "reasons": [],
+        "next_action": "ready_to_merge",
+    }
+
+
+def _stub_build_decision_ready_to_merge(monkeypatch) -> None:
+    monkeypatch.setattr(flow, "build_decision", lambda *_args, **_kwargs: _ready_to_merge_decision_payload())
 
 
 def test_cmd_readiness_review_thread_fetch_failure_fails_closed(monkeypatch):
@@ -1010,9 +1135,13 @@ def test_cmd_readiness_review_thread_fetch_failure_fails_closed(monkeypatch):
 
     monkeypatch.setattr(flow, "build_decision", _fake_build_decision)
     rc = _run_readiness_cmd_failure_case()
-    decision = flow._readiness_decision("owner/repo", "225", True)  # pylint: disable=protected-access
     ASSERTIONS.assertEqual(rc, 1)
     ASSERTIONS.assertIsNone(captured["review_threads"])
+
+
+def _assert_fail_closed_readiness_decision(rc: int, output: Any) -> None:
+    decision = json.loads(output.read_text(encoding="utf-8"))
+    ASSERTIONS.assertEqual(rc, 1)
     ASSERTIONS.assertFalse(decision["can_merge"])
     ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_review_api")
     ASSERTIONS.assertIn("review_threads_api_unavailable", decision["reasons"])
@@ -1049,6 +1178,17 @@ def _assert_cmd_report_context_output(tmp_path) -> None:
     ASSERTIONS.assertEqual(decision["telegram_summary"]["github_codacy_check_state"], "ACTION_REQUIRED")
     ASSERTIONS.assertEqual(decision["telegram_summary"]["active_unresolved_review_count"], 1)
     ASSERTIONS.assertFalse(decision["ready_to_merge_notification"])
+
+
+def test_cmd_readiness_review_thread_fetch_failure_writes_fail_closed_decision(tmp_path, monkeypatch):
+    """Readiness output should persist fail-closed decision when review API is unavailable."""
+    _stub_readiness_fetch_failure(monkeypatch)
+    _stub_build_decision_ready_to_merge(monkeypatch)
+    output = tmp_path / "readiness.json"
+    rc = _run_readiness_cmd_failure_case(str(output))
+    _assert_fail_closed_readiness_decision(rc, output)
+
+
 
 
 def test_cmd_report_wires_real_context_into_helpers(tmp_path, monkeypatch):

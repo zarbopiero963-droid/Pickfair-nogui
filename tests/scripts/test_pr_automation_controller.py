@@ -8278,6 +8278,594 @@ def test_can_auto_push_raw_env_live_with_task_no_commit_push_blocks_by_override(
     ASSERTIONS.assertEqual(result["reason"], "task_no_commit_push")
 
 
+def _post_fix_gate_ctx(**overrides: object) -> dict[str, object]:
+    ctx: dict[str, object] = {
+        "POST_FIX_AUDIT": "PASS",
+        "validation_passed": True,
+        "current_head_matches": True,
+        "dirty_worktree": False,
+        "scope_allowed": True,
+        "rollback_attempted": False,
+        "rollback_succeeded": True,
+        "task_no_commit_push": False,
+        "automation_mode": "live",
+        "can_commit": True,
+        "can_push": True,
+    }
+    ctx.update(overrides)
+    return ctx
+
+
+def test_post_fix_audit_gate_all_green_live_allows_commit_and_push():
+    result = controller.evaluate_post_fix_audit_gate(_post_fix_gate_ctx())
+    ASSERTIONS.assertTrue(result["allowed"])
+    ASSERTIONS.assertTrue(result["can_commit"])
+    ASSERTIONS.assertTrue(result["can_push"])
+    ASSERTIONS.assertEqual(result["reason"], "allowed")
+
+
+def test_post_fix_audit_gate_fail_status_denies():
+    result = controller.evaluate_post_fix_audit_gate(_post_fix_gate_ctx(POST_FIX_AUDIT="FAIL"))
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "post_fix_audit_not_pass")
+
+
+def test_post_fix_audit_gate_accepts_normalized_status_sources_and_report_status_fail():
+    via_post_fix = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(POST_FIX_AUDIT=None, post_fix_audit="PASS")
+    )
+    via_report = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(POST_FIX_AUDIT=None, post_fix_audit=None, post_fix_audit_report={"status": "PASS"})
+    )
+    fail_via_report_status = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(POST_FIX_AUDIT=None, post_fix_audit=None, report={"status": "FAIL"})
+    )
+    ASSERTIONS.assertTrue(via_post_fix["allowed"])
+    ASSERTIONS.assertTrue(via_report["allowed"])
+    ASSERTIONS.assertEqual(fail_via_report_status["reason"], "post_fix_audit_not_pass")
+
+
+def test_post_fix_audit_gate_conflicting_or_malformed_status_sources_fail_closed():
+    conflict = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(POST_FIX_AUDIT="PASS", post_fix_audit="FAIL")
+    )
+    malformed = controller.evaluate_post_fix_audit_gate(_post_fix_gate_ctx(POST_FIX_AUDIT="banana"))
+    ASSERTIONS.assertFalse(conflict["allowed"])
+    ASSERTIONS.assertEqual(conflict["reason"], "post_fix_audit_malformed")
+    ASSERTIONS.assertFalse(malformed["allowed"])
+    ASSERTIONS.assertEqual(malformed["reason"], "post_fix_audit_malformed")
+
+
+def test_post_fix_audit_gate_missing_empty_malformed_unknown_or_needs_manual_denies():
+    missing_payload = {k: v for k, v in _post_fix_gate_ctx().items() if k != "POST_FIX_AUDIT"}
+    result = controller.evaluate_post_fix_audit_gate(missing_payload)
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "post_fix_audit_missing")
+
+    cases = [
+        ("", "post_fix_audit_missing"),
+        ("garbage", "post_fix_audit_malformed"),
+        ("UNKNOWN", "post_fix_audit_not_pass"),
+        ("NEEDS_MANUAL", "post_fix_audit_not_pass"),
+    ]
+    for status, reason in cases:
+        case_result = controller.evaluate_post_fix_audit_gate(_post_fix_gate_ctx(POST_FIX_AUDIT=status))
+        ASSERTIONS.assertFalse(case_result["allowed"])
+        ASSERTIONS.assertEqual(case_result["reason"], reason)
+
+
+def test_post_fix_audit_gate_validation_failed_or_missing_denies():
+    failed = controller.evaluate_post_fix_audit_gate(_post_fix_gate_ctx(validation_passed=False))
+    missing2 = controller.evaluate_post_fix_audit_gate(
+        {k: v for k, v in _post_fix_gate_ctx().items() if k != "validation_passed"}
+    )
+    ASSERTIONS.assertEqual(failed["reason"], "validation_failed")
+    ASSERTIONS.assertEqual(missing2["reason"], "evidence_missing")
+
+
+def test_post_fix_audit_gate_current_head_mismatch_or_missing_denies():
+    mismatch = controller.evaluate_post_fix_audit_gate(_post_fix_gate_ctx(current_head_matches=False))
+    missing = controller.evaluate_post_fix_audit_gate(
+        {k: v for k, v in _post_fix_gate_ctx().items() if k != "current_head_matches"}
+    )
+    ASSERTIONS.assertEqual(mismatch["reason"], "current_head_mismatch")
+    ASSERTIONS.assertEqual(missing["reason"], "evidence_missing")
+
+
+def test_post_fix_audit_gate_dirty_worktree_denies():
+    result = controller.evaluate_post_fix_audit_gate(_post_fix_gate_ctx(dirty_worktree=True))
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "dirty_worktree")
+
+
+def test_post_fix_audit_gate_missing_dirty_worktree_uses_distinct_reason():
+    payload = {k: v for k, v in _post_fix_gate_ctx().items() if k != "dirty_worktree"}
+    result = controller.evaluate_post_fix_audit_gate(payload)
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "dirty_worktree_missing")
+
+
+def test_post_fix_audit_gate_task_no_commit_push_denies():
+    result = controller.evaluate_post_fix_audit_gate(_post_fix_gate_ctx(task_no_commit_push=True))
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "task_no_commit_push")
+
+
+def test_post_fix_audit_gate_non_live_modes_deny():
+    for mode in ["disabled", "report_only", "plan_only", "supervised"]:
+        result = controller.evaluate_post_fix_audit_gate(_post_fix_gate_ctx(automation_mode=mode))
+        ASSERTIONS.assertFalse(result["allowed"])
+        ASSERTIONS.assertEqual(result["reason"], "passive_mode_blocks_commit_push")
+
+
+def test_post_fix_audit_gate_env_style_live_mode_allows_with_full_evidence():
+    payload = _post_fix_gate_ctx()
+    payload.pop("automation_mode", None)
+    payload["AUTOMATION_MODE"] = "live"
+    result = controller.evaluate_post_fix_audit_gate(payload)
+    ASSERTIONS.assertTrue(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "allowed")
+
+
+def test_post_fix_audit_gate_env_style_unknown_mode_denies_fail_closed():
+    result = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(automation_mode=None, AUTOMATION_MODE="banana")
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "passive_mode_blocks_commit_push")
+
+
+def test_post_fix_audit_gate_env_style_live_still_denies_missing_evidence():
+    payload = {k: v for k, v in _post_fix_gate_ctx().items() if k != "validation_passed"}
+    payload.pop("automation_mode", None)
+    payload["AUTOMATION_MODE"] = "live"
+    result = controller.evaluate_post_fix_audit_gate(payload)
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "evidence_missing")
+
+
+def test_post_fix_audit_gate_explicit_status_overrides_ambient_env_lowercase_source(monkeypatch):
+    monkeypatch.setenv("POST_FIX_AUDIT", "FAIL")
+    result = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(POST_FIX_AUDIT=None, post_fix_audit="PASS")
+    )
+    ASSERTIONS.assertTrue(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "allowed")
+
+
+def test_post_fix_audit_gate_explicit_status_overrides_ambient_env_uppercase_source(monkeypatch):
+    monkeypatch.setenv("POST_FIX_AUDIT", "FAIL")
+    result = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(POST_FIX_AUDIT="PASS", post_fix_audit=None)
+    )
+    ASSERTIONS.assertTrue(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "allowed")
+
+
+def test_post_fix_audit_gate_rollback_failure_denies():
+    result = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(rollback_attempted=True, rollback_succeeded=False)
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "rollback_failed")
+
+
+def test_post_fix_audit_gate_explicit_false_false_rollback_tuple_denies():
+    result = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(rollback_attempted=False, rollback_succeeded=False)
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertFalse(result["can_commit"])
+    ASSERTIONS.assertFalse(result["can_push"])
+    ASSERTIONS.assertEqual(result["reason"], "evidence_malformed")
+
+
+def test_post_fix_audit_gate_nested_rollback_attempted_failed_denies():
+    result = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(
+            rollback_attempted=False,
+            rollback_succeeded=True,
+            rollback={"rollback_attempted": True, "rollback_succeeded": False},
+        )
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertFalse(result["can_commit"])
+    ASSERTIONS.assertFalse(result["can_push"])
+    ASSERTIONS.assertEqual(result["reason"], "evidence_malformed")
+
+
+def test_post_fix_audit_gate_nested_rollback_attempted_succeeded_stays_green():
+    result = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(
+            rollback_attempted=False,
+            rollback_succeeded=False,
+            rollback={"rollback_attempted": True, "rollback_succeeded": True},
+        )
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertFalse(result["can_commit"])
+    ASSERTIONS.assertFalse(result["can_push"])
+    ASSERTIONS.assertEqual(result["reason"], "evidence_malformed")
+
+
+def test_post_fix_audit_gate_pr10b_scope_rollback_failed_shape_denies():
+    result = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(
+            POST_FIX_AUDIT="FAIL",
+            post_fix_audit="FAIL",
+            status="FAIL",
+            next_action="needs_manual_scope_violation_rollback_failed",
+            rollback_attempted=False,
+            rollback_succeeded=True,
+            rollback={"rollback_attempted": True, "rollback_succeeded": False},
+        )
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertFalse(result["can_commit"])
+    ASSERTIONS.assertFalse(result["can_push"])
+    ASSERTIONS.assertEqual(result["reason"], "post_fix_audit_not_pass")
+
+
+def test_post_fix_audit_gate_scope_violation_denies():
+    result = controller.evaluate_post_fix_audit_gate(_post_fix_gate_ctx(scope_allowed=False))
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "scope_violation")
+
+
+def test_post_fix_audit_gate_scope_audit_allowed_true_derives_scope_allowed():
+    result = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(scope_allowed=None, scope_audit={"allowed": True})
+    )
+    ASSERTIONS.assertTrue(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "allowed")
+
+
+def test_post_fix_audit_gate_scope_audit_allowed_false_denies_scope_violation():
+    result = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(scope_allowed=None, scope_audit={"allowed": False})
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "scope_violation")
+
+
+def test_post_fix_audit_gate_scope_audit_allowed_string_fails_closed():
+    result = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(scope_allowed=None, scope_audit={"allowed": "false"})
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "evidence_malformed")
+
+
+def test_post_fix_audit_gate_explicit_commit_or_push_false_denies_respective_action():
+    commit_block = controller.evaluate_post_fix_audit_gate(_post_fix_gate_ctx(can_commit=False))
+    push_block = controller.evaluate_post_fix_audit_gate(_post_fix_gate_ctx(can_push=False))
+    ASSERTIONS.assertFalse(commit_block["can_commit"])
+    ASSERTIONS.assertEqual(commit_block["reason"], "commit_not_allowed")
+    ASSERTIONS.assertFalse(push_block["can_push"])
+    ASSERTIONS.assertEqual(push_block["reason"], "push_not_allowed")
+
+
+def test_post_fix_audit_gate_explicit_authorization_cannot_override_explicit_false():
+    result = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(
+            can_commit=False,
+            can_push=False,
+            explicit_commit_authorization=True,
+            explicit_push_authorization=True,
+        )
+    )
+    ASSERTIONS.assertFalse(result["can_commit"])
+    ASSERTIONS.assertFalse(result["can_push"])
+    ASSERTIONS.assertEqual(result["reason"], "commit_not_allowed")
+
+
+def test_post_fix_audit_gate_commit_and_push_false_keeps_deterministic_commit_reason():
+    result = controller.evaluate_post_fix_audit_gate(_post_fix_gate_ctx(can_commit=False, can_push=False))
+    ASSERTIONS.assertFalse(result["can_commit"])
+    ASSERTIONS.assertFalse(result["can_push"])
+    ASSERTIONS.assertEqual(result["reason"], "commit_not_allowed")
+
+
+def test_clean_rebuild_command_includes_post_fix_gate_context():
+    rules = controller.CleanScopeRules(allowlist=("a.py",), forbidden=("b.py",), commit_limit=3)
+    config = controller.CleanRebuildConfig(
+        repo="owner/repo",
+        pr_number="249",
+        head_branch="feature/branch",
+        dry_run=True,
+        rules=rules,
+        post_fix_gate_context={"post_fix_audit": "PASS", "can_push": True},
+    )
+    cmd = controller.clean_rebuild_command(config, "out.json")
+    ASSERTIONS.assertIn("--post-fix-gate-context", cmd)
+    context_index = cmd.index("--post-fix-gate-context") + 1
+    parsed = json.loads(cmd[context_index])
+    ASSERTIONS.assertEqual(parsed["post_fix_audit"], "PASS")
+
+
+def test_clean_rebuild_command_skips_post_fix_gate_context_when_missing():
+    rules = controller.CleanScopeRules(allowlist=("a.py",), forbidden=("b.py",), commit_limit=3)
+    config = controller.CleanRebuildConfig(
+        repo="owner/repo",
+        pr_number="249",
+        head_branch="feature/branch",
+        dry_run=True,
+        rules=rules,
+        post_fix_gate_context=None,
+    )
+    cmd = controller.clean_rebuild_command(config, "out.json")
+    ASSERTIONS.assertNotIn("--post-fix-gate-context", cmd)
+
+
+def test_maybe_launch_clean_rebuild_populates_decision_gate_context_and_launches(monkeypatch):
+    args = _args()
+    args.clean_scope_rebuild = True
+    args.clean_scope_rebuild_mode = "execute"
+    decision: dict[str, Any] = {
+        "actions": [],
+        "warnings": [],
+        "post_fix_audit_gate_context": _post_fix_gate_ctx(),
+    }
+    pr = {"headRefName": "feature/branch", "headRefOid": "abc123"}
+    ctx = controller.NextActionContext(args, pr, [], [], [], [], decision)
+    rules = controller.CleanScopeRules(allowlist=("a.py",), forbidden=("b.py",), commit_limit=3)
+    signals = {
+        "forbidden_files": ["b.py"],
+        "has_allowlisted_file": True,
+        "autofix_commit_count": 4,
+        "autofix_commit_limit_exceeded": True,
+        "possible_autofix_oscillation": False,
+    }
+    monkeypatch.setattr(
+        controller,
+        "run_clean_scope_rebuild",
+        lambda _config: {
+            "action": "would_launch_clean_scope_rebuild",
+            "cmd": ["python3", "scripts/pr_clean_scope_rebuild.py"],
+        },
+    )
+    launched = controller.maybe_launch_clean_rebuild(ctx, rules, signals)
+    ASSERTIONS.assertTrue(launched)
+    ASSERTIONS.assertEqual(decision["next_action"], "would_launch_clean_scope_rebuild")
+    ASSERTIONS.assertEqual(decision["post_fix_audit_gate_context"]["repo"], "owner/repo")
+    ASSERTIONS.assertEqual(decision["post_fix_audit_gate_context"]["pr"], "225")
+    ASSERTIONS.assertEqual(decision["post_fix_audit_gate_context"]["headRefOid"], "abc123")
+
+
+def test_maybe_launch_clean_rebuild_fails_closed_without_gate_context(monkeypatch):
+    args = _args()
+    args.clean_scope_rebuild = True
+    args.clean_scope_rebuild_mode = "execute"
+    decision: dict[str, Any] = {"actions": [], "warnings": []}
+    pr = {"headRefName": "feature/branch", "headRefOid": "abc123"}
+    ctx = controller.NextActionContext(args, pr, [], [], [], [], decision)
+    rules = controller.CleanScopeRules(allowlist=("a.py",), forbidden=("b.py",), commit_limit=3)
+    signals = {
+        "forbidden_files": ["b.py"],
+        "has_allowlisted_file": True,
+        "autofix_commit_count": 4,
+        "autofix_commit_limit_exceeded": True,
+        "possible_autofix_oscillation": False,
+    }
+    called = {"value": False}
+
+    def _unexpected_launch(_config):
+        called["value"] = True
+        return {"action": "would_launch_clean_scope_rebuild"}
+
+    monkeypatch.setattr(controller, "run_clean_scope_rebuild", _unexpected_launch)
+    launched = controller.maybe_launch_clean_rebuild(ctx, rules, signals)
+    ASSERTIONS.assertTrue(launched)
+    ASSERTIONS.assertFalse(called["value"])
+    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_clean_scope_gate_context_missing_or_invalid")
+
+
+def test_post_fix_audit_gate_missing_scope_rollback_task_or_action_evidence_denies():
+    missing_scope = controller.evaluate_post_fix_audit_gate(
+        {k: v for k, v in _post_fix_gate_ctx().items() if k != "scope_allowed"}
+    )
+    missing_rollback = controller.evaluate_post_fix_audit_gate(
+        {k: v for k, v in _post_fix_gate_ctx().items() if k != "rollback_succeeded"}
+    )
+    missing_task = controller.evaluate_post_fix_audit_gate(
+        {k: v for k, v in _post_fix_gate_ctx().items() if k != "task_no_commit_push"}
+    )
+    ASSERTIONS.assertEqual(missing_scope["reason"], "evidence_missing")
+    ASSERTIONS.assertEqual(missing_rollback["reason"], "evidence_missing")
+    ASSERTIONS.assertEqual(missing_task["reason"], "evidence_missing")
+
+
+def test_post_fix_audit_gate_boolean_like_string_and_malformed_evidence_fail_closed():
+    false_string = controller.evaluate_post_fix_audit_gate(_post_fix_gate_ctx(task_no_commit_push="false"))
+    malformed_string = controller.evaluate_post_fix_audit_gate(_post_fix_gate_ctx(validation_passed="yes"))
+    ASSERTIONS.assertTrue(false_string["allowed"])
+    ASSERTIONS.assertEqual(malformed_string["reason"], "evidence_malformed")
+
+
+def test_post_fix_audit_gate_scope_and_rollback_reason_precedence_over_audit_not_pass():
+    scope_first = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(POST_FIX_AUDIT="FAIL", scope_allowed=False)
+    )
+    rollback_first = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(POST_FIX_AUDIT="FAIL", rollback_attempted=True, rollback_succeeded=False)
+    )
+    ASSERTIONS.assertEqual(scope_first["reason"], "scope_violation")
+    ASSERTIONS.assertEqual(rollback_first["reason"], "rollback_failed")
+
+
+def test_can_auto_push_live_flag_only_denies_without_pr3h_evidence():
+    denied = controller.can_auto_push({"AUTOMATION_MODE": "live", "AUTO_PUSH_ENABLED": "true"})
+    ASSERTIONS.assertFalse(denied["allowed"])
+    ASSERTIONS.assertEqual(denied["reason"], "post_fix_audit_missing")
+
+
+def test_can_auto_push_env_style_live_enabled_and_full_pr3h_evidence_allows():
+    payload = _post_fix_gate_ctx()
+    payload.pop("automation_mode", None)
+    payload["AUTOMATION_MODE"] = "live"
+    payload["AUTO_PUSH_ENABLED"] = "true"
+    result = controller.can_auto_push(payload)
+    ASSERTIONS.assertTrue(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "live_action_allowed")
+
+
+def test_post_fix_audit_gate_env_only_run_evidence_denies(monkeypatch):
+    monkeypatch.setenv("POST_FIX_AUDIT", "PASS")
+    monkeypatch.setenv("VALIDATION_PASSED", "true")
+    monkeypatch.setenv("CURRENT_HEAD_MATCHES", "true")
+    monkeypatch.setenv("DIRTY_WORKTREE", "false")
+    monkeypatch.setenv("SCOPE_ALLOWED", "true")
+    monkeypatch.setenv("ROLLBACK_ATTEMPTED", "false")
+    monkeypatch.setenv("ROLLBACK_SUCCEEDED", "true")
+    monkeypatch.setenv("TASK_NO_COMMIT_PUSH", "false")
+    payload = {"automation_mode": "live", "can_commit": True, "can_push": True}
+    result = controller.evaluate_post_fix_audit_gate(payload)
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "dirty_worktree_missing")
+
+
+def test_can_auto_push_env_mode_flag_with_explicit_run_evidence_allows(monkeypatch):
+    monkeypatch.setenv("AUTOMATION_MODE", "live")
+    monkeypatch.setenv("AUTO_PUSH_ENABLED", "true")
+    payload = _post_fix_gate_ctx(automation_mode=None)
+    payload.pop("AUTOMATION_MODE", None)
+    payload.pop("automation_mode", None)
+    result = controller.can_auto_push(payload)
+    ASSERTIONS.assertTrue(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "live_action_allowed")
+
+
+def test_can_auto_push_task_no_commit_push_string_false_does_not_block():
+    result = controller.can_auto_push(
+        {
+            "AUTOMATION_MODE": "live",
+            "AUTO_PUSH_ENABLED": "true",
+            "POST_FIX_AUDIT": "PASS",
+            "validation_passed": True,
+            "current_head_matches": True,
+            "dirty_worktree": False,
+            "scope_allowed": True,
+            "rollback_attempted": False,
+            "rollback_succeeded": True,
+            "task_no_commit_push": "false",
+            "can_commit": True,
+            "can_push": True,
+        }
+    )
+    ASSERTIONS.assertTrue(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "live_action_allowed")
+
+
+def test_can_auto_push_task_no_commit_push_string_true_blocks():
+    result = controller.can_auto_push(
+        {
+            "AUTOMATION_MODE": "live",
+            "AUTO_PUSH_ENABLED": "true",
+            "POST_FIX_AUDIT": "PASS",
+            "validation_passed": True,
+            "current_head_matches": True,
+            "dirty_worktree": False,
+            "scope_allowed": True,
+            "rollback_attempted": False,
+            "rollback_succeeded": True,
+            "task_no_commit_push": "true",
+            "can_commit": True,
+            "can_push": True,
+        }
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "task_no_commit_push")
+
+
+def test_can_auto_push_task_no_commit_push_malformed_denies_fail_closed():
+    result = controller.can_auto_push(
+        {
+            "AUTOMATION_MODE": "live",
+            "AUTO_PUSH_ENABLED": "true",
+            "task_no_commit_push": "banana",
+        }
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "task_no_commit_push")
+
+
+def test_post_fix_audit_gate_conflicting_boolean_sources_deny_fail_closed():
+    result = controller.evaluate_post_fix_audit_gate(
+        _post_fix_gate_ctx(rollback_succeeded=False, rollback={"rollback_succeeded": True})
+    )
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "evidence_malformed")
+
+
+def test_post_fix_audit_gate_missing_can_commit_and_can_push_denies():
+    payload = _post_fix_gate_ctx()
+    payload.pop("can_commit")
+    payload.pop("can_push")
+    result = controller.evaluate_post_fix_audit_gate(payload)
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertEqual(result["reason"], "commit_not_allowed")
+
+
+def test_post_fix_audit_gate_missing_can_push_denies_push():
+    payload = _post_fix_gate_ctx()
+    payload.pop("can_push")
+    result = controller.evaluate_post_fix_audit_gate(payload)
+    ASSERTIONS.assertFalse(result["can_push"])
+    ASSERTIONS.assertEqual(result["reason"], "push_not_allowed")
+
+
+def test_post_fix_audit_gate_missing_can_commit_denies_commit():
+    payload = _post_fix_gate_ctx()
+    payload.pop("can_commit")
+    result = controller.evaluate_post_fix_audit_gate(payload)
+    ASSERTIONS.assertFalse(result["can_commit"])
+    ASSERTIONS.assertEqual(result["reason"], "commit_not_allowed")
+
+
+def test_assert_live_action_allowed_push_denies_without_pr3h_evidence():
+    with ASSERTIONS.assertRaises(PermissionError):
+        controller.assert_live_action_allowed(
+            "push",
+            {"AUTOMATION_MODE": "live", "AUTO_PUSH_ENABLED": "true"},
+        )
+
+
+def test_post_fix_audit_wrappers_return_action_consistent_payloads():
+    commit_allowed = controller.can_commit_after_post_fix_audit(_post_fix_gate_ctx())
+    push_denied = controller.can_push_after_post_fix_audit(_post_fix_gate_ctx(can_push=False))
+    ASSERTIONS.assertEqual(commit_allowed["allowed"], commit_allowed["can_commit"])
+    ASSERTIONS.assertEqual(push_denied["allowed"], push_denied["can_push"])
+    ASSERTIONS.assertEqual(commit_allowed["status"], "PASS")
+    ASSERTIONS.assertEqual(push_denied["status"], "FAIL")
+    ASSERTIONS.assertFalse(commit_allowed["needs_manual"])
+    ASSERTIONS.assertTrue(push_denied["needs_manual"])
+    ASSERTIONS.assertEqual(commit_allowed["next_action"], "proceed")
+    ASSERTIONS.assertEqual(push_denied["next_action"], "needs_manual")
+
+
+def test_post_fix_audit_gate_contract_shape():
+    result = controller.evaluate_post_fix_audit_gate(_post_fix_gate_ctx())
+    keys = {
+        "allowed",
+        "can_commit",
+        "can_push",
+        "status",
+        "post_fix_audit",
+        "reason",
+        "next_action",
+        "needs_manual",
+        "missing_fields",
+    }
+    ASSERTIONS.assertEqual(set(result.keys()), keys)
+
+
+def test_assert_post_fix_audit_gate_or_block_raises_on_deny():
+    with ASSERTIONS.assertRaises(RuntimeError):
+        controller.assert_post_fix_audit_gate_or_block(_post_fix_gate_ctx(POST_FIX_AUDIT="FAIL"))
+    with ASSERTIONS.assertRaises(PermissionError):
+        controller.assert_post_fix_audit_gate_or_block(_post_fix_gate_ctx(task_no_commit_push=True))
+
+
 def test_can_auto_merge_denies_each_guard_condition():
     base = _automation_ctx("live")
     cases = [

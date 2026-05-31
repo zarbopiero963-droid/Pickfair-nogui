@@ -1331,6 +1331,50 @@ def _build_push_result(
     return PushRetryResult(ok=ok, status=status, ctx=ctx).to_dict()
 
 
+def _post_fix_push_gate_raw(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    gate_func = getattr(controller, "can_push_after_post_fix_audit", None)
+    raw = gate_func(context) if callable(gate_func) else controller.evaluate_post_fix_audit_gate(context)
+    return raw if isinstance(raw, dict) else {}
+
+
+def _post_fix_push_gate_allowed(gate: dict[str, Any]) -> bool:
+    return bool(gate.get("allowed")) and bool(gate.get("can_push"))
+
+
+def _post_fix_push_gate_can_push(gate: dict[str, Any], allowed: bool) -> bool:
+    return bool(gate.get("can_push")) if gate else allowed
+
+
+def _post_fix_push_gate_reason(gate: dict[str, Any], allowed: bool) -> str:
+    default_reason = "allowed" if allowed else "post_fix_audit_gate_denied"
+    return str(gate.get("reason") or default_reason)
+
+
+def _post_fix_push_gate_next_action(gate: dict[str, Any], allowed: bool) -> str:
+    default_action = "proceed" if allowed else "needs_manual"
+    return str(gate.get("next_action") or default_action)
+
+
+def _post_fix_push_gate_needs_manual(gate: dict[str, Any], allowed: bool) -> bool:
+    return bool(gate.get("needs_manual")) or not allowed
+
+
+def _post_fix_push_gate_response(gate: dict[str, Any], allowed: bool) -> dict[str, Any]:
+    return {
+        "allowed": allowed,
+        "can_push": _post_fix_push_gate_can_push(gate, allowed),
+        "reason": _post_fix_push_gate_reason(gate, allowed),
+        "next_action": _post_fix_push_gate_next_action(gate, allowed),
+        "needs_manual": _post_fix_push_gate_needs_manual(gate, allowed),
+    }
+
+
+def ensure_post_fix_audit_gate_before_push(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Evaluate PR3H gate before any push path; fail closed on malformed payloads."""
+    gate = _post_fix_push_gate_raw(context)
+    return _post_fix_push_gate_response(gate, _post_fix_push_gate_allowed(gate))
+
+
 def _failed_push_result(repo: str, branch: str, exc: RuntimeError) -> dict[str, Any]:
     return _build_push_result(
         False,
@@ -1363,7 +1407,23 @@ def _retry_non_fast_forward_push(
     run_func: Any,
     ctx: NonFastForwardRetryContext,
     remote: str,
+    gate_context: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    retry_gate_context = build_retry_push_gate_context(gate_context)
+    gate = ensure_post_fix_audit_gate_before_push(retry_gate_context)
+    if not gate["allowed"]:
+        return _build_push_result(
+            False,
+            "needs_manual",
+            PushResultContext(
+                repo=ctx.repo,
+                branch=ctx.branch,
+                retried=True,
+                needs_manual=True,
+                error=f"post-fix audit gate denied before retry push: {gate['reason']}",
+                initial_error=str(ctx.initial_exc),
+            ),
+        )
     try:
         push_retry_with_force_lease(run_func, remote, ctx.branch)
         return _build_push_result(
@@ -1373,14 +1433,56 @@ def _retry_non_fast_forward_push(
         return _needs_manual_push_result(ctx.repo, ctx.branch, ctx.initial_exc, retry_exc)
 
 
+def _retry_gate_context_payload(context: dict[str, Any]) -> dict[str, Any]:
+    payload = context.get("retry_push_gate_context")
+    return payload if isinstance(payload, dict) else {}
+
+
+def build_retry_push_gate_context(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Require explicit refreshed gate evidence before non-fast-forward retry push."""
+    if not isinstance(context, dict):
+        return {"post_fix_audit": "FAIL", "retry_push_gate_context": "missing"}
+    retry_payload = _retry_gate_context_payload(context)
+    refreshed = retry_payload.get("explicitly_refreshed")
+    if refreshed is not True:
+        return {"post_fix_audit": "FAIL", "retry_push_gate_context": "stale_or_missing"}
+    retry_gate = retry_payload.get("gate_context")
+    if not isinstance(retry_gate, dict):
+        return {"post_fix_audit": "FAIL", "retry_push_gate_context": "malformed"}
+    return retry_gate
+
+
+def canary_timestamp_utc() -> str:
+    """Build a UTC timestamp for canary branch names."""
+    now = dt.datetime.now(dt.UTC)
+    return (
+        f"{now.year:04d}{now.month:02d}{now.day:02d}"
+        f"-{now.hour:02d}{now.minute:02d}{now.second:02d}"
+    )
+
+
 def push_with_retry_once(
     run_func: Any,
     repo: str,
     branch: str,
     *,
     remote: str = "origin",
+    context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Push once, recover once on non-fast-forward, then stop with explicit status."""
+    gate = ensure_post_fix_audit_gate_before_push(context)
+    if not gate["allowed"]:
+        return _build_push_result(
+            False,
+            "needs_manual",
+            PushResultContext(
+                repo=repo,
+                branch=branch,
+                retried=False,
+                needs_manual=True,
+                error=f"post-fix audit gate denied before push: {gate['reason']}",
+            ),
+        )
     try:
         _push_initial(run_func, remote, branch)
         return _build_push_result(
@@ -1390,7 +1492,7 @@ def push_with_retry_once(
         if not is_non_fast_forward_push_error(exc):
             return _failed_push_result(repo, branch, exc)
         retry_ctx = NonFastForwardRetryContext(repo=repo, branch=branch, initial_exc=exc)
-        return _retry_non_fast_forward_push(run_func, retry_ctx, remote)
+        return _retry_non_fast_forward_push(run_func, retry_ctx, remote, context)
 
 
 def codacy_task_error_result(
@@ -1411,7 +1513,15 @@ def codacy_task_error_result(
 
 
 def cmd_canary(args: argparse.Namespace) -> int:
-    ts = dt.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    gate_context: dict[str, Any] | None = None
+    raw_context = str(getattr(args, "post_fix_gate_context", "") or "").strip()
+    if raw_context:
+        parsed = json.loads(raw_context)
+        if not isinstance(parsed, dict):
+            raise RuntimeError("invalid --post-fix-gate-context: expected json object")
+        gate_context = parsed
+
+    ts = canary_timestamp_utc()
     branch = f"test/safe-autofix-canary-{ts}"
     filename = ".safe-autofix-auto-trigger-test.md"
 
@@ -1431,6 +1541,12 @@ def cmd_canary(args: argparse.Namespace) -> int:
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
 
+    if not isinstance(gate_context, dict):
+        raise RuntimeError("missing required --post-fix-gate-context for canary create")
+    gate = ensure_post_fix_audit_gate_before_push(gate_context)
+    if not gate["allowed"]:
+        raise RuntimeError(f"post-fix audit gate denied before canary mutation: {gate['reason']}")
+
     sh(["git", "fetch", "origin", "main"])
     sh(["git", "checkout", "-B", branch, "origin/main"])
     Path(filename).write_text(
@@ -1440,7 +1556,7 @@ def cmd_canary(args: argparse.Namespace) -> int:
     )
     sh(["git", "add", filename])
     sh(["git", "commit", "-m", "test: safe autofix canary"])
-    push_status = push_with_retry_once(sh, args.repo, branch)
+    push_status = push_with_retry_once(sh, args.repo, branch, context=gate_context)
     if not push_status["ok"]:
         raise RuntimeError(f"cannot push canary branch: {push_status.get('error', 'unknown error')}")
 
@@ -1513,6 +1629,7 @@ def main() -> int:
     p = sub.add_parser("canary")
     p.add_argument("--repo", required=True)
     p.add_argument("--mode", choices=["create", "cleanup"], default="create")
+    p.add_argument("--post-fix-gate-context", default="")
     p.set_defaults(func=cmd_canary)
 
     args = parser.parse_args()
