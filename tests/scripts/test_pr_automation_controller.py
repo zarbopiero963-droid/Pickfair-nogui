@@ -6488,8 +6488,12 @@ def test_review_provider_presence_missing_specific_providers_never_block():
 def test_review_classification_active_p1_and_high_are_blocking():
     p1 = controller.classify_review_thread(_review_thread(body="P1 bug correctness issue"))
     high = controller.classify_review_thread(_review_thread(body="HIGH security runtime risk", thread_id="T2"))
+    fail_open = controller.classify_review_thread(
+        _review_thread(body="FAIL-OPEN security path remains", thread_id="T3")
+    )
     ASSERTIONS.assertEqual(p1["classification"], "blocking")
     ASSERTIONS.assertEqual(high["classification"], "blocking")
+    ASSERTIONS.assertEqual(fail_open["classification"], "blocking")
 
 
 def test_review_classification_uses_later_comment_when_first_is_irrelevant():
@@ -6579,14 +6583,18 @@ def test_review_classification_low_nit_is_advisory_and_not_safe_without_evidence
 
 
 def test_review_stale_fixed_thread_with_evidence_is_safe_to_resolve():
-    thread = _review_thread(body="style", thread_id="T3")
+    thread = _review_thread(body="stale style", thread_id="T3")
     evidence = {
         "safe_to_resolve": True,
         "issue_fixed_or_stale": True,
         "head_matches": True,
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
         "validation_passed": True,
+        "checks_green": True,
         "pending_checks": False,
         "failing_checks": False,
+        "tests": ["pytest"],
         "reply_body": "Fixed in latest patch.",
     }
     ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, evidence))
@@ -6595,6 +6603,49 @@ def test_review_stale_fixed_thread_with_evidence_is_safe_to_resolve():
 def test_review_unknown_author_routes_needs_manual():
     classified = controller.classify_review_thread(_review_thread(author="mystery-user", body="please revisit"))
     ASSERTIONS.assertEqual(classified["classification"], "needs_manual")
+
+
+def test_review_unknown_author_with_strict_generic_evidence_does_not_auto_resolve():
+    thread = _review_thread(author="human-reviewer", body="already fixed stale")
+    evidence = {
+        "safe_to_resolve": True,
+        "issue_fixed_or_stale": True,
+        "head_matches": True,
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "validation_passed": True,
+        "checks_green": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "tests": ["pytest"],
+    }
+    triage = controller.triage_review_thread_contract(thread, evidence)
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "unknown_review_provider")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_review_unknown_author_active_failure_language_routes_patch_required():
+    evidence = {
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "checks_green": True,
+        "pending_checks": False,
+        "failing_checks": False,
+    }
+    bodies = (
+        "not already fixed; the failing behavior is still present",
+        "this is failing on current head",
+        "security bypass still present",
+        "broken correctness failure in guard",
+    )
+    for body in bodies:
+        triage = controller.triage_review_thread_contract(
+            _review_thread(author="human-reviewer", body=body),
+            evidence,
+        )
+        ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
+        ASSERTIONS.assertEqual(triage["next_action"], "patch_required")
 
 
 def test_review_out_of_scope_routes_needs_manual():
@@ -6611,17 +6662,89 @@ def test_review_codacy_safe_resolve_requires_success_and_zero_annotations():
         "safe_to_resolve": True,
         "issue_fixed_or_stale": True,
         "head_matches": True,
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
         "validation_passed": True,
+        "checks_green": True,
         "pending_checks": False,
         "failing_checks": False,
         "codacy_relevant": True,
         "codacy_state": "ACTION_REQUIRED",
         "codacy_annotations_count": 1,
+        "tests": ["pytest"],
         "reply_body": "stale",
     }
     good = dict(bad) | {"codacy_state": "SUCCESS", "codacy_annotations_count": 0}
     ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, bad))
     ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, good))
+
+
+def test_review_codacy_aliases_require_codacy_specific_green_evidence_for_triage():
+    evidence = {
+        "safe_to_resolve": True,
+        "issue_fixed_or_stale": True,
+        "head_matches": True,
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "validation_passed": True,
+        "checks_green": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "tests": ["pytest"],
+    }
+    for author in ("codacy", "codacy[bot]", "codacy-production", "codacy-production[bot]"):
+        thread = _review_thread(author=author, body="already fixed stale")
+        triage = controller.triage_review_thread_contract(thread, evidence)
+        ASSERTIONS.assertEqual(triage["provider"], "codacy-production")
+        ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+        ASSERTIONS.assertEqual(triage["reason"], "missing_or_blocking_codacy_evidence")
+        ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_review_codacy_alias_action_required_or_annotations_blocks_evidence_resolve():
+    thread = _review_thread(author="codacy", body="already fixed stale")
+    base = {
+        "safe_to_resolve": True,
+        "issue_fixed_or_stale": True,
+        "head_matches": True,
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "validation_passed": True,
+        "checks_green": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "tests": ["pytest"],
+    }
+    action_required = dict(base) | {"codacy_conclusion": "action_required", "annotations_count": 0}
+    annotations = dict(base) | {"codacy_conclusion": "success", "annotations_count": 1}
+    ASSERTIONS.assertNotEqual(
+        controller.triage_review_thread_contract(thread, action_required)["decision"], "EVIDENCE_RESOLVE"
+    )
+    ASSERTIONS.assertNotEqual(
+        controller.triage_review_thread_contract(thread, annotations)["decision"], "EVIDENCE_RESOLVE"
+    )
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, action_required))
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, annotations))
+
+
+def test_review_codacy_alias_success_zero_annotations_allows_evidence_resolve():
+    thread = _review_thread(author="codacy", body="already fixed stale")
+    evidence = {
+        "safe_to_resolve": True,
+        "issue_fixed_or_stale": True,
+        "head_matches": True,
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "validation_passed": True,
+        "checks_green": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "codacy_conclusion": "success",
+        "annotations_count": 0,
+        "tests": ["pytest"],
+    }
+    ASSERTIONS.assertEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, evidence))
 
 
 def test_review_codacy_safe_resolve_non_numeric_annotations_fails_safe_without_exception():
@@ -6630,9 +6753,10 @@ def test_review_codacy_safe_resolve_non_numeric_annotations_fails_safe_without_e
         "safe_to_resolve": True,
         "issue_fixed_or_stale": True,
         "head_matches": True,
-        "validation_passed": True,
-        "pending_checks": False,
-        "failing_checks": False,
+                        "validation_passed": True,
+                        "checks_green": True,
+                        "pending_checks": False,
+                        "failing_checks": False,
         "codacy_relevant": True,
         "codacy_state": "SUCCESS",
         "codacy_annotations_count": "n/a",
@@ -6641,7 +6765,7 @@ def test_review_codacy_safe_resolve_non_numeric_annotations_fails_safe_without_e
 
 
 def test_review_resolution_plan_includes_reply_body_and_missing_providers_not_blocking():
-    thread = _review_thread(thread_id="T9", body="low style")
+    thread = _review_thread(thread_id="T9", body="stale advisory style")
     plan = controller.build_review_thread_resolution_plan(
         [thread],
         {
@@ -6650,9 +6774,13 @@ def test_review_resolution_plan_includes_reply_body_and_missing_providers_not_bl
                     "safe_to_resolve": True,
                     "issue_fixed_or_stale": True,
                     "head_matches": True,
+                    "current_head_sha": "abc",
+                    "evidence_head_sha": "abc",
                     "validation_passed": True,
+                    "checks_green": True,
                     "pending_checks": False,
                     "failing_checks": False,
+                    "tests": ["pytest"],
                     "reply_body": "Addressed in current head.",
                 }
             }
@@ -7485,15 +7613,21 @@ def test_review_triage_active_reproducible_uncovered_bypass_patch_required():
 
 
 def test_review_triage_covered_by_matrix_tests_evidence_resolve():
-    comment = {"body": "already fixed by matrix", "active": True, "covered_by_matrix": True}
-    result = controller.classify_review_triage_need(comment, {"checks_green": True})
-    ASSERTIONS.assertEqual(result, "EVIDENCE_RESOLVE")
+    comment = {"id": "t-1", "body": "already fixed by matrix", "active": True, "covered_by_matrix": True}
+    triage = controller.triage_review_thread_contract(
+        comment,
+        {"current_head_sha": "abc", "evidence_head_sha": "abc", "checks_green": True, "tests": ["pytest"]},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
 
 
 def test_review_triage_stale_advisory_with_green_checks_evidence_resolve():
-    comment = {"body": "stale advisory nit", "active": True}
-    result = controller.classify_review_triage_need(comment, {"checks_green": True})
-    ASSERTIONS.assertEqual(result, "EVIDENCE_RESOLVE")
+    comment = {"id": "t-2", "body": "stale advisory nit", "active": True}
+    triage = controller.triage_review_thread_contract(
+        comment,
+        {"current_head_sha": "abc", "evidence_head_sha": "abc", "checks_green": True, "tests": ["pytest"]},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
 
 
 def test_review_triage_forbidden_scope_future_roadmap_ambiguous_needs_manual():
@@ -7502,34 +7636,36 @@ def test_review_triage_forbidden_scope_future_roadmap_ambiguous_needs_manual():
     ASSERTIONS.assertEqual(result, "NEEDS_MANUAL")
 
 
-def test_review_triage_resolved_or_outdated_threads_never_patch_required():
-    base = {"body": "Active bypass failure in guard path", "active": True, "reproducible": True}
-    for flag in ("isResolved", "isOutdated", "is_resolved", "is_outdated"):
-        comment = dict(base)
-        comment[flag] = True
-        result = controller.classify_review_triage_need(comment, {"checks_green": False})
-        ASSERTIONS.assertNotEqual(result, "PATCH_REQUIRED")
-        ASSERTIONS.assertEqual(result, "EVIDENCE_RESOLVE")
+def test_review_triage_outdated_without_evidence_fails_closed_needs_manual():
+    comment = {"id": "t-o", "body": "stale advisory nit", "isOutdated": True}
+    triage = controller.triage_review_thread_contract(comment, {"checks_green": True})
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "inactive_or_resolved_thread")
 
 
-def test_review_triage_resolved_or_outdated_short_circuits_forbidden_or_workflow_text():
-    base = {"body": "forbidden workflow bypass failure", "active": True, "reproducible": True}
-    for flag in ("isResolved", "isOutdated", "is_resolved", "is_outdated"):
-        comment = dict(base)
-        comment[flag] = True
-        result = controller.classify_review_triage_need(comment, {"checks_green": False})
-        ASSERTIONS.assertEqual(result, "EVIDENCE_RESOLVE")
+def test_review_triage_malformed_thread_payload_fails_closed_needs_manual():
+    triage = controller.triage_review_thread_contract(cast(dict[str, Any], "invalid"), {"checks_green": True})
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "malformed_thread_payload")
 
 
-def test_review_triage_is_active_false_and_isActive_false_never_patch_required():
+def test_review_triage_outdated_with_head_mismatch_denies_evidence_resolve():
+    comment = {"id": "t-m", "body": "already fixed stale", "isOutdated": True}
+    triage = controller.triage_review_thread_contract(
+        comment,
+        {"current_head_sha": "abc", "evidence_head_sha": "def", "checks_green": True, "tests": ["pytest"]},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "inactive_or_resolved_thread")
+
+
+def test_review_triage_is_active_false_and_isActive_false_follow_contract_semantics():
     snake = {"body": "bypass failure in guard path", "is_active": False, "reproducible": True}
     camel = {"body": "bypass failure in guard path", "isActive": False, "reproducible": True}
     snake_result = controller.classify_review_triage_need(snake, {"checks_green": False})
     camel_result = controller.classify_review_triage_need(camel, {"checks_green": False})
-    ASSERTIONS.assertNotEqual(snake_result, "PATCH_REQUIRED")
-    ASSERTIONS.assertNotEqual(camel_result, "PATCH_REQUIRED")
-    ASSERTIONS.assertEqual(snake_result, "EVIDENCE_RESOLVE")
-    ASSERTIONS.assertEqual(camel_result, "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertEqual(snake_result, "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(camel_result, "NEEDS_MANUAL")
 
 
 def test_build_review_triage_matrix_patch_required_full_payload():
@@ -7537,10 +7673,11 @@ def test_build_review_triage_matrix_patch_required_full_payload():
     matrix = controller.build_review_triage_matrix([comment], {"checks_green": False})
     item = matrix["items"][0]
     ASSERTIONS.assertEqual(item["thread_id"], "t-1")
+    ASSERTIONS.assertEqual(item["review_thread_id"], "t-1")
     ASSERTIONS.assertEqual(item["decision"], "PATCH_REQUIRED")
-    ASSERTIONS.assertEqual(item["next_action"], "patch_missing_matrix_case")
+    ASSERTIONS.assertEqual(item["next_action"], "patch_required")
     ASSERTIONS.assertFalse(item["can_patch"])
-    ASSERTIONS.assertEqual(item["reason"], "active_reproducible_uncovered_failure_like_comment")
+    ASSERTIONS.assertEqual(item["reason"], "active_safety_or_current_head_failure_or_contract_violation")
     ASSERTIONS.assertFalse(item["matrix_coverage"])
     ASSERTIONS.assertEqual(item["tests_covering_behavior"], [])
     ASSERTIONS.assertTrue(item["requires_patch"])
@@ -7597,13 +7734,16 @@ def test_build_review_triage_matrix_evidence_resolve_full_payload():
             "test_review_triage_covered_by_matrix_tests_evidence_resolve"
         ],
     }
-    matrix = controller.build_review_triage_matrix([comment], {"checks_green": True})
+    matrix = controller.build_review_triage_matrix(
+        [comment],
+        {"checks_green": True, "current_head_sha": "abc", "evidence_head_sha": "abc"},
+    )
     item = matrix["items"][0]
     ASSERTIONS.assertEqual(item["thread_id"], "22")
     ASSERTIONS.assertEqual(item["decision"], "EVIDENCE_RESOLVE")
     ASSERTIONS.assertEqual(item["next_action"], "resolve_with_evidence")
     ASSERTIONS.assertFalse(item["can_patch"])
-    ASSERTIONS.assertEqual(item["reason"], "covered_or_stale_with_green_checks")
+    ASSERTIONS.assertEqual(item["reason"], "stale_or_advisory_with_current_head_evidence")
     ASSERTIONS.assertTrue(item["matrix_coverage"])
     ASSERTIONS.assertEqual(len(item["tests_covering_behavior"]), 1)
     ASSERTIONS.assertFalse(item["requires_patch"])
@@ -7619,12 +7759,1015 @@ def test_build_review_triage_matrix_needs_manual_full_payload():
     ASSERTIONS.assertEqual(item["decision"], "NEEDS_MANUAL")
     ASSERTIONS.assertEqual(item["next_action"], "needs_manual")
     ASSERTIONS.assertFalse(item["can_patch"])
-    ASSERTIONS.assertEqual(item["reason"], "forbidden_scope_or_insufficient_signal_for_passive_action")
+    ASSERTIONS.assertEqual(item["reason"], "future_roadmap_scope")
     ASSERTIONS.assertFalse(item["matrix_coverage"])
     ASSERTIONS.assertEqual(item["tests_covering_behavior"], [])
     ASSERTIONS.assertFalse(item["requires_patch"])
     ASSERTIONS.assertFalse(item["can_resolve_with_evidence"])
     ASSERTIONS.assertEqual(matrix["next_action"], "needs_manual")
+
+
+def test_review_triage_contract_forbidden_file_request_needs_manual():
+    triage = controller.triage_review_thread_contract(
+        {
+            "id": "f1",
+            "body": "please touch forbidden file .github/workflows/pr.yml",
+            "path": ".github/workflows/pr.yml",
+        },
+        {"files_allowed": ["scripts/pr_automation_controller.py"]},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "forbidden_file_request")
+
+
+def test_review_triage_contract_review_path_allowlist_exact_file_allows_patch_scope():
+    triage = controller.triage_review_thread_contract(
+        {
+            "id": "review-allow-exact",
+            "body": "security bypass still present",
+            "path": "scripts/pr_automation_controller.py",
+            "active": True,
+        },
+        {"files_allowed": ["scripts/pr_automation_controller.py"], "checks_green": False},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
+    ASSERTIONS.assertEqual(triage["reason"], "active_safety_or_current_head_failure_or_contract_violation")
+
+
+def test_review_triage_contract_review_path_allowlist_directory_prefix_allows_patch_scope():
+    triage = controller.triage_review_thread_contract(
+        {
+            "id": "review-allow-dir",
+            "body": "security bypass still present",
+            "path": "scripts/pr_automation_controller.py",
+            "active": True,
+        },
+        {"files_allowed": ["scripts/"], "checks_green": False},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
+    ASSERTIONS.assertEqual(triage["reason"], "active_safety_or_current_head_failure_or_contract_violation")
+
+
+def test_review_triage_contract_review_path_allowlist_simple_star_prefix_allows_patch_scope():
+    triage = controller.triage_review_thread_contract(
+        {
+            "id": "review-allow-star",
+            "body": "security bypass still present",
+            "path": "scripts/pr_automation_controller.py",
+            "active": True,
+        },
+        {"files_allowed": ["scripts/*"], "checks_green": False},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
+    ASSERTIONS.assertEqual(triage["reason"], "active_safety_or_current_head_failure_or_contract_violation")
+
+
+def test_review_triage_contract_review_path_outside_allowlist_is_forbidden_file_request():
+    triage = controller.triage_review_thread_contract(
+        {
+            "id": "review-outside-allow",
+            "body": "security bypass still present",
+            "path": "core/runtime.py",
+            "active": True,
+        },
+        {"files_allowed": ["scripts/"], "checks_green": False},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "forbidden_file_request")
+
+
+def test_review_triage_contract_review_path_forbidden_over_allowed_precedence():
+    triage = controller.triage_review_thread_contract(
+        {
+            "id": "review-forbidden-precedence",
+            "body": "security bypass still present",
+            "path": "scripts/secret.py",
+            "active": True,
+        },
+        {
+            "files_allowed": ["scripts/"],
+            "files_forbidden": ["scripts/secret.py"],
+            "checks_green": False,
+        },
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "forbidden_file_request")
+
+
+def test_review_triage_contract_review_path_missing_or_empty_allowlist_does_not_forbid_by_itself():
+    for context in ({}, {"files_allowed": []}, {"files_allowed": ""}, {"files_allowed": None}):
+        triage = controller.triage_review_thread_contract(
+            {
+                "id": f"review-empty-allow-{len(context)}",
+                "body": "security bypass still present",
+                "path": "scripts/pr_automation_controller.py",
+                "active": True,
+            },
+            dict(context, checks_green=False),
+        )
+        ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
+        ASSERTIONS.assertEqual(triage["reason"], "active_safety_or_current_head_failure_or_contract_violation")
+
+
+def test_review_triage_contract_review_path_malformed_allowlist_fails_closed():
+    cases = [
+        [" scripts/pr_automation_controller.py"],
+        ["scripts/pr_automation_controller.py "],
+        ["scripts/../core/x.py"],
+        ["/repo/scripts/pr_automation_controller.py"],
+        ["scripts\\pr_automation_controller.py"],
+        ["C:\\repo\\scripts\\pr_automation_controller.py"],
+    ]
+    for files_allowed in cases:
+        triage = controller.triage_review_thread_contract(
+            {
+                "id": f"review-malformed-allow-{files_allowed[0]}",
+                "body": "security bypass still present",
+                "path": "scripts/pr_automation_controller.py",
+                "active": True,
+            },
+            {"files_allowed": files_allowed, "checks_green": False},
+        )
+        ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+        ASSERTIONS.assertEqual(triage["reason"], "forbidden_file_request")
+
+
+def test_review_triage_contract_review_path_unsafe_paths_fail_closed():
+    unsafe_paths = [
+        "../x",
+        "scripts/../core/x.py",
+        "/etc/passwd",
+        "/home/pickfair/actions-runner/_work/Pickfair-nogui/Pickfair-nogui/scripts/pr_automation_controller.py",
+        "scripts\\pr_automation_controller.py",
+        "C:\\repo\\scripts\\pr_automation_controller.py",
+        " scripts/pr_automation_controller.py",
+        "scripts/pr_automation_controller.py ",
+    ]
+    for path in unsafe_paths:
+        triage = controller.triage_review_thread_contract(
+            {
+                "id": f"review-unsafe-path-{path}",
+                "body": "security bypass still present",
+                "path": path,
+                "active": True,
+            },
+            {"files_allowed": ["scripts/"], "checks_green": False},
+        )
+        ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+        ASSERTIONS.assertEqual(triage["reason"], "forbidden_file_request")
+
+
+def test_review_triage_contract_future_scope_needs_manual():
+    triage = controller.triage_review_thread_contract({"id": "f2", "body": "future scope roadmap item"}, {})
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "future_roadmap_scope")
+
+
+def test_review_triage_contract_later_in_the_flow_is_not_future_scope():
+    triage = controller.triage_review_thread_contract(
+        {"id": "f2b", "body": "this is handled later in the flow after validation"},
+        {"reproducible": True},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "reproducible_without_patch_signal")
+
+
+def test_review_triage_contract_style_suggestion_reproducible_is_not_patch_required():
+    triage = controller.triage_review_thread_contract(
+        {"id": "f2b-style", "body": "style suggestion: align spacing", "active": True, "reproducible": True},
+        {"reproducible": True},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "reproducible_without_patch_signal")
+
+
+def test_review_triage_contract_docs_suggestion_reproducible_is_not_patch_required():
+    triage = controller.triage_review_thread_contract(
+        {"id": "f2b-docs", "body": "docs suggestion: clarify this comment", "active": True, "reproducible": True},
+        {"reproducible": True},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "reproducible_without_patch_signal")
+
+
+def test_review_triage_contract_naming_suggestion_reproducible_is_not_patch_required():
+    triage = controller.triage_review_thread_contract(
+        {"id": "f2b-naming", "body": "please improve naming", "active": True, "reproducible": True},
+        {"reproducible": True},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "reproducible_without_patch_signal")
+
+
+def test_review_triage_contract_explicit_reproducible_false_blocks_patch_required():
+    phrases = [
+        "security regression broken",
+        "broken correctness failure in guard",
+        "security bypass still present",
+    ]
+    for index, phrase in enumerate(phrases):
+        triage = controller.triage_review_thread_contract(
+            {"id": f"explicit-not-repro-{index}", "body": phrase, "active": True, "reproducible": False},
+            {"checks_green": False},
+        )
+        ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+        ASSERTIONS.assertEqual(triage["reason"], "explicitly_not_reproducible")
+
+
+def test_review_triage_contract_explicit_is_reproducible_false_blocks_patch_required():
+    triage = controller.triage_review_thread_contract(
+        {
+            "id": "explicit-is-not-repro",
+            "body": "security bypass still present",
+            "active": True,
+            "is_reproducible": False,
+        },
+        {"checks_green": False},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "explicitly_not_reproducible")
+
+
+def test_review_triage_contract_context_explicit_reproducible_false_blocks_patch_required():
+    triage = controller.triage_review_thread_contract(
+        {"id": "context-explicit-not-repro", "body": "this is failing on current head", "active": True},
+        {"checks_green": False, "reproducible": False},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "explicitly_not_reproducible")
+
+
+def test_review_triage_contract_active_security_bypass_without_reproducible_is_patch_required():
+    triage = controller.triage_review_thread_contract(
+        {"id": "f2e", "body": "active security bypass in guard path", "active": True},
+        {"checks_green": False},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
+    ASSERTIONS.assertEqual(triage["reason"], "active_safety_or_current_head_failure_or_contract_violation")
+
+
+def test_review_triage_contract_active_fail_open_without_reproducible_is_patch_required():
+    triage = controller.triage_review_thread_contract(
+        {"id": "f2f", "body": "active fail-open route allows unsafe pass-through", "active": True},
+        {"checks_green": False},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
+    ASSERTIONS.assertEqual(triage["reason"], "active_safety_or_current_head_failure_or_contract_violation")
+
+
+def test_review_triage_contract_active_failing_current_head_without_reproducible_is_patch_required():
+    triage = controller.triage_review_thread_contract(
+        {"id": "f2h", "body": "this is failing on current head", "active": True},
+        {"checks_green": False},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
+    ASSERTIONS.assertEqual(triage["reason"], "active_safety_or_current_head_failure_or_contract_violation")
+
+
+def test_review_triage_contract_active_broken_correctness_without_reproducible_is_patch_required():
+    triage = controller.triage_review_thread_contract(
+        {"id": "f2i", "body": "broken correctness failure in guard", "active": True},
+        {"checks_green": False},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
+    ASSERTIONS.assertEqual(triage["reason"], "active_safety_or_current_head_failure_or_contract_violation")
+
+
+def test_review_triage_contract_missing_reproducible_metadata_allows_active_failure_patch_required():
+    phrases = [
+        "this is failing on current head",
+        "broken correctness failure in guard",
+        "security bypass still present",
+    ]
+    for index, phrase in enumerate(phrases):
+        triage = controller.triage_review_thread_contract(
+            {"id": f"missing-repro-active-{index}", "body": phrase, "active": True},
+            {"checks_green": False},
+        )
+        ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
+        ASSERTIONS.assertEqual(triage["reason"], "active_safety_or_current_head_failure_or_contract_violation")
+
+
+def test_review_triage_contract_active_regression_breaks_without_reproducible_is_patch_required():
+    triage = controller.triage_review_thread_contract(
+        {"id": "f2j", "body": "this regression breaks the resolver", "active": True},
+        {"checks_green": False},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
+    ASSERTIONS.assertEqual(triage["reason"], "active_safety_or_current_head_failure_or_contract_violation")
+
+
+def test_review_triage_contract_active_failure_wording_current_head_overrides_fixed_or_stale_context():
+    triage = controller.triage_review_thread_contract(
+        {
+            "id": "safe-override-1",
+            "body": "this is failing on current head",
+            "active": True,
+            "issue_fixed_or_stale": True,
+        },
+        {
+            "issue_fixed_or_stale": True,
+            "current_head_sha": "abc",
+            "evidence_head_sha": "abc",
+            "checks_green": True,
+            "pending_checks": False,
+            "failing_checks": False,
+            "tests": ["pytest -q tests/scripts/test_pr_automation_controller.py -k review_triage"],
+        },
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
+    ASSERTIONS.assertEqual(triage["reason"], "active_safety_or_current_head_failure_or_contract_violation")
+
+
+def test_review_triage_contract_active_failure_wording_remains_overrides_fixed_or_stale_context():
+    triage = controller.triage_review_thread_contract(
+        {
+            "id": "safe-override-2",
+            "body": "security bypass remains in guard path",
+            "active": True,
+            "issue_fixed_or_stale": True,
+        },
+        {
+            "issue_fixed_or_stale": True,
+            "current_head_sha": "abc",
+            "evidence_head_sha": "abc",
+            "checks_green": True,
+            "pending_checks": False,
+            "failing_checks": False,
+            "tests": ["pytest -q tests/scripts/test_pr_automation_controller.py -k review_triage"],
+        },
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
+    ASSERTIONS.assertEqual(triage["reason"], "active_safety_or_current_head_failure_or_contract_violation")
+
+
+def test_review_triage_contract_active_failure_wording_matrix_always_routes_patch_required():
+    phrases = [
+        "this is failing in the resolver",
+        "broken state propagation remains",
+        "correctness failure in guard evaluation",
+        "this regression breaks the resolver",
+        "security bypass still present",
+        "security bypass remains",
+        "this is failing on current head",
+    ]
+    for index, phrase in enumerate(phrases):
+        triage = controller.triage_review_thread_contract(
+            {
+                "id": f"safe-override-matrix-{index}",
+                "body": phrase,
+                "active": True,
+                "issue_fixed_or_stale": True,
+            },
+            {
+                "issue_fixed_or_stale": True,
+                "current_head_sha": "abc",
+                "evidence_head_sha": "abc",
+                "checks_green": True,
+                "pending_checks": False,
+                "failing_checks": False,
+                "tests": ["pytest -q tests/scripts/test_pr_automation_controller.py -k review_triage"],
+            },
+        )
+        ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
+        ASSERTIONS.assertEqual(triage["reason"], "active_safety_or_current_head_failure_or_contract_violation")
+
+
+def test_review_triage_contract_negated_fixed_stale_failure_wording_routes_patch_required():
+    phrases = [
+        "not already fixed; the failing behavior is still present",
+        "not fixed; broken behavior remains",
+        "not resolved; correctness failure still present",
+        "stale advisory: the failure remains on current head",
+        "stale advisory: regression remains on current head",
+        "already fixed? no, the failure remains",
+        "already fixed on current head, but the failure remains",
+        "already fixed on current head but regression remains",
+    ]
+    for index, phrase in enumerate(phrases):
+        triage = controller.triage_review_thread_contract(
+            {
+                "id": f"negated-fixed-{index}",
+                "body": phrase,
+                "active": True,
+                "issue_fixed_or_stale": True,
+            },
+            {
+                "issue_fixed_or_stale": True,
+                "current_head_sha": "abc",
+                "evidence_head_sha": "abc",
+                "checks_green": True,
+                "pending_checks": False,
+                "failing_checks": False,
+                "tests": ["pytest -q tests/scripts/test_pr_automation_controller.py -k review_triage"],
+            },
+        )
+        ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
+        ASSERTIONS.assertEqual(triage["reason"], "active_safety_or_current_head_failure_or_contract_violation")
+
+
+def test_review_triage_contract_already_fixed_on_current_head_with_strict_evidence_resolves():
+    triage = controller.triage_review_thread_contract(
+        {"id": "safe-fixed-head-1", "body": "already fixed on current head", "active": True},
+        {
+            "current_head_sha": "abc",
+            "evidence_head_sha": "abc",
+            "checks_green": True,
+            "tests": ["pytest"],
+        },
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
+
+
+def test_review_triage_contract_already_fixed_no_failure_remains_with_strict_evidence_resolves():
+    triage = controller.triage_review_thread_contract(
+        {"id": "safe-fixed-head-2", "body": "already fixed; no failure remains", "active": True},
+        {
+            "current_head_sha": "abc",
+            "evidence_head_sha": "abc",
+            "checks_green": True,
+            "tests": ["pytest"],
+        },
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
+
+
+def test_review_triage_contract_already_covered_style_nit_with_strict_evidence_resolves():
+    triage = controller.triage_review_thread_contract(
+        {"id": "safe-covered-style", "body": "already covered style nit", "active": True},
+        {
+            "current_head_sha": "abc",
+            "evidence_head_sha": "abc",
+            "checks_green": True,
+            "tests": ["pytest"],
+        },
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
+
+
+def test_review_triage_contract_standalone_roadmap_is_future_scope_needs_manual():
+    triage = controller.triage_review_thread_contract(
+        {"id": "f2d", "body": "roadmap"},
+        {"reproducible": True},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "future_roadmap_scope")
+
+
+def test_review_triage_contract_roadmap_with_reproducible_metadata_still_needs_manual():
+    triage = controller.triage_review_thread_contract(
+        {"id": "f2g", "body": "roadmap", "active": True, "reproducible": True},
+        {"reproducible": True, "checks_green": True},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "future_roadmap_scope")
+
+
+def test_review_triage_contract_active_fixed_security_with_matching_evidence_resolves():
+    triage = controller.triage_review_thread_contract(
+        {
+            "id": "safe-1",
+            "body": "security regression previously reported and now already fixed",
+            "active": True,
+            "issue_fixed_or_stale": True,
+        },
+        {
+            "current_head_sha": "abc",
+            "evidence_head_sha": "abc",
+            "checks_green": True,
+            "tests": ["pytest -q tests/scripts/test_pr_automation_controller.py -k review"],
+        },
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertEqual(triage["reason"], "stale_or_advisory_with_current_head_evidence")
+
+
+def test_review_triage_contract_safe_to_resolve_only_fixed_safety_with_matching_evidence_resolves():
+    triage = controller.triage_review_thread_contract(
+        {
+            "id": "safe-safe-to-resolve-1",
+            "body": "already fixed security regression",
+            "active": True,
+        },
+        {
+            "safe_to_resolve": True,
+            "current_head_sha": "abc",
+            "evidence_head_sha": "abc",
+            "checks_green": True,
+            "tests": ["pytest -q tests/scripts/test_pr_automation_controller.py -k review"],
+        },
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertEqual(triage["reason"], "stale_or_advisory_with_current_head_evidence")
+
+
+def test_review_triage_contract_active_fixed_security_missing_tests_denies_evidence_resolve():
+    triage = controller.triage_review_thread_contract(
+        {
+            "id": "safe-2",
+            "body": "security regression already fixed",
+            "active": True,
+            "issue_fixed_or_stale": True,
+        },
+        {"current_head_sha": "abc", "evidence_head_sha": "abc", "checks_green": True},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "missing_tests_or_evidence")
+
+
+def test_review_triage_contract_active_fixed_security_pending_checks_denies_evidence_resolve():
+    triage = controller.triage_review_thread_contract(
+        {
+            "id": "safe-3",
+            "body": "fail-open path fixed with tests",
+            "active": True,
+            "issue_fixed_or_stale": True,
+        },
+        {
+            "current_head_sha": "abc",
+            "evidence_head_sha": "abc",
+            "checks_green": True,
+            "tests": ["pytest"],
+            "pending_checks": True,
+        },
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "checks_or_codacy_block_evidence_resolve")
+
+
+def test_review_triage_contract_handle_this_later_is_future_scope():
+    triage = controller.triage_review_thread_contract({"id": "f2c", "body": "please handle this later"}, {})
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "future_roadmap_scope")
+
+
+def test_review_triage_contract_outdated_forbidden_workflow_file_still_needs_manual():
+    triage = controller.triage_review_thread_contract(
+        {"id": "f3", "body": "stale note: please update .github/workflows/ci.yml", "isOutdated": True},
+        {"current_head_sha": "abc", "evidence_head_sha": "abc", "checks_green": True, "tests": ["pytest"]},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "forbidden_file_request")
+
+
+def test_review_triage_contract_outdated_future_scope_still_needs_manual():
+    triage = controller.triage_review_thread_contract(
+        {"id": "f4", "body": "outdated thread; future roadmap for next quarter", "isOutdated": True},
+        {"current_head_sha": "abc", "evidence_head_sha": "abc", "checks_green": True, "tests": ["pytest"]},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "future_roadmap_scope")
+
+
+def test_review_triage_contract_outdated_fail_open_claim_still_patch_required():
+    triage = controller.triage_review_thread_contract(
+        {"id": "f5", "body": "stale advisory but fail open bypass remains", "isOutdated": True},
+        {"current_head_sha": "abc", "evidence_head_sha": "abc", "checks_green": True, "tests": ["pytest"]},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "inactive_or_resolved_thread")
+
+
+def test_review_triage_contract_resolved_fail_open_claim_is_not_patch_required():
+    triage = controller.triage_review_thread_contract(
+        {"id": "f5b", "body": "fail open bypass remains", "isResolved": True, "reproducible": True},
+        {"checks_green": False},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "inactive_or_resolved_thread")
+
+
+def test_review_triage_contract_inactive_security_bypass_is_not_patch_required():
+    triage = controller.triage_review_thread_contract(
+        {"id": "f5c", "body": "security bypass remains", "active": False},
+        {"checks_green": False},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "inactive_or_resolved_thread")
+
+
+def test_review_triage_contract_missing_tests_or_evidence_denies_evidence_resolve():
+    triage = controller.triage_review_thread_contract(
+        {"id": "e1", "body": "stale advisory"},
+        {"current_head_sha": "abc", "evidence_head_sha": "abc", "checks_green": True},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "missing_tests_or_evidence")
+
+
+def test_review_triage_contract_missing_checks_green_denies_evidence_resolve():
+    triage = controller.triage_review_thread_contract(
+        {"id": "e1b", "body": "stale advisory"},
+        {"current_head_sha": "abc", "evidence_head_sha": "abc", "tests": ["pytest"]},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "checks_or_codacy_block_evidence_resolve")
+
+
+def test_review_triage_contract_uses_author_extracted_from_comments_nodes():
+    triage = controller.triage_review_thread_contract(
+        {
+            "id": "author-1",
+            "body": "stale advisory",
+            "comments": {"nodes": [{"author": {"login": "coderabbitai[bot]"}, "body": "nit"}]},
+        },
+        {"current_head_sha": "abc", "evidence_head_sha": "abc", "checks_green": True, "tests": ["pytest"]},
+    )
+    ASSERTIONS.assertEqual(triage["author"], "coderabbitai")
+
+
+def test_review_triage_contract_checks_green_false_denies_evidence_resolve():
+    triage = controller.triage_review_thread_contract(
+        {"id": "e1c", "body": "stale advisory"},
+        {"current_head_sha": "abc", "evidence_head_sha": "abc", "checks_green": False, "tests": ["pytest"]},
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "checks_or_codacy_block_evidence_resolve")
+
+
+def test_review_triage_contract_codacy_action_required_blocks_evidence_resolve():
+    triage = controller.triage_review_thread_contract(
+        {"id": "e2", "body": "already fixed stale"},
+        {
+            "current_head_sha": "abc",
+            "evidence_head_sha": "abc",
+            "checks_green": True,
+            "tests": ["pytest"],
+            "github_codacy_state": "ACTION_REQUIRED",
+        },
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "checks_or_codacy_block_evidence_resolve")
+
+
+def test_review_triage_contract_context_evidence_present_without_tests_denies_evidence_resolve():
+    triage = controller.triage_review_thread_contract(
+        {"id": "e3", "body": "already fixed stale"},
+        {
+            "current_head_sha": "abc",
+            "evidence_head_sha": "abc",
+            "checks_green": True,
+            "evidence_present": True,
+        },
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "missing_tests_or_evidence")
+
+
+def test_review_triage_contract_non_scalar_tests_covering_behavior_denies_evidence_resolve():
+    triage = controller.triage_review_thread_contract(
+        {"id": "e4", "body": "already fixed stale"},
+        {"current_head_sha": "abc", "evidence_head_sha": "abc", "checks_green": True, "tests_covering_behavior": [{}]},
+    )
+    ASSERTIONS.assertEqual(triage["tests_covering_behavior"], [])
+    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(triage["reason"], "missing_tests_or_evidence")
+
+
+def test_review_triage_contract_mixed_scalar_and_non_scalar_tests_covering_behavior_keeps_scalars_only():
+    triage = controller.triage_review_thread_contract(
+        {"id": "e4b", "body": "already fixed stale"},
+        {
+            "current_head_sha": "abc",
+            "evidence_head_sha": "abc",
+            "checks_green": True,
+            "tests_covering_behavior": [None, {}, [], (), set(), "test_alpha", "  ", 42, 3.5, False],
+        },
+    )
+    ASSERTIONS.assertEqual(triage["tests_covering_behavior"], ["test_alpha", "42", "3.5", "False"])
+    ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertEqual(triage["reason"], "stale_or_advisory_with_current_head_evidence")
+
+
+def test_review_triage_contract_scalar_tests_covering_behavior_allows_evidence_resolve():
+    triage = controller.triage_review_thread_contract(
+        {"id": "e5", "body": "already fixed stale"},
+        {
+            "current_head_sha": "abc",
+            "evidence_head_sha": "abc",
+            "checks_green": True,
+            "tests_covering_behavior": ["tests/scripts/test_pr_automation_controller.py::test_example_behavior"],
+        },
+    )
+    ASSERTIONS.assertEqual(
+        triage["tests_covering_behavior"],
+        ["tests/scripts/test_pr_automation_controller.py::test_example_behavior"],
+    )
+    ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertEqual(triage["reason"], "stale_or_advisory_with_current_head_evidence")
+
+
+def test_should_resolve_review_thread_requires_deterministic_evidence_resolve_result():
+    thread = {"id": "r1", "body": "stale advisory", "isResolved": False, "isOutdated": True}
+    denied = controller.should_resolve_review_thread(
+        thread,
+        {"validation_passed": True, "current_head_sha": "abc", "evidence_head_sha": "def", "tests": ["pytest"]},
+    )
+    ASSERTIONS.assertFalse(denied)
+
+
+def test_should_resolve_review_thread_fixed_safety_requires_deterministic_evidence():
+    thread = {
+        "id": "safe-r1",
+        "body": "security bypass fixed now",
+        "active": True,
+        "issue_fixed_or_stale": True,
+        "comments": {"nodes": [{"author": {"login": "coderabbitai[bot]"}, "body": "security bypass fixed"}]},
+    }
+    allowed = controller.should_resolve_review_thread(
+        thread,
+        {
+            "validation_passed": True,
+            "issue_fixed_or_stale": True,
+            "current_head_sha": "abc",
+            "evidence_head_sha": "abc",
+            "checks_green": True,
+            "tests": ["pytest"],
+            "files_allowed": ["scripts/pr_automation_controller.py", "tests/scripts/test_pr_automation_controller.py"],
+        },
+    )
+    ASSERTIONS.assertTrue(allowed)
+
+
+def test_should_resolve_review_thread_fixed_safety_denied_on_head_mismatch_or_failing_checks():
+    thread = {
+        "id": "safe-r2",
+        "body": "security bypass fixed now",
+        "active": True,
+        "issue_fixed_or_stale": True,
+        "comments": {"nodes": [{"author": {"login": "coderabbitai[bot]"}, "body": "security bypass fixed"}]},
+    }
+    mismatch = controller.should_resolve_review_thread(
+        thread,
+        {
+            "validation_passed": True,
+            "issue_fixed_or_stale": True,
+            "current_head_sha": "abc",
+            "evidence_head_sha": "def",
+            "checks_green": True,
+            "tests": ["pytest"],
+            "files_allowed": ["scripts/pr_automation_controller.py", "tests/scripts/test_pr_automation_controller.py"],
+        },
+    )
+    failing = controller.should_resolve_review_thread(
+        thread,
+        {
+            "validation_passed": True,
+            "issue_fixed_or_stale": True,
+            "current_head_sha": "abc",
+            "evidence_head_sha": "abc",
+            "checks_green": True,
+            "tests": ["pytest"],
+            "failing_checks": True,
+            "files_allowed": ["scripts/pr_automation_controller.py", "tests/scripts/test_pr_automation_controller.py"],
+        },
+    )
+    ASSERTIONS.assertFalse(mismatch)
+    ASSERTIONS.assertFalse(failing)
+
+
+def test_should_resolve_review_thread_fixed_safety_with_full_evidence_returns_true():
+    thread = {
+        "id": "safe-r3",
+        "body": "already fixed security regression",
+        "active": True,
+        "issue_fixed_or_stale": True,
+        "comments": {"nodes": [{"author": {"login": "coderabbitai[bot]"}, "body": "already fixed"}]},
+    }
+    evidence = {
+        "validation_passed": True,
+        "issue_fixed_or_stale": True,
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "checks_green": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "tests": ["pytest -q tests/scripts/test_pr_automation_controller.py -k should_resolve_review_thread"],
+    }
+    ASSERTIONS.assertEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_should_resolve_review_thread_fixed_safety_safe_to_resolve_only_with_full_evidence_returns_true():
+    thread = {
+        "id": "safe-r3-safe-to-resolve",
+        "body": "already fixed security regression",
+        "active": True,
+        "comments": {"nodes": [{"author": {"login": "coderabbitai[bot]"}, "body": "already fixed"}]},
+    }
+    evidence = {
+        "validation_passed": True,
+        "safe_to_resolve": True,
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "checks_green": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "tests": ["pytest -q tests/scripts/test_pr_automation_controller.py -k should_resolve_review_thread"],
+    }
+    ASSERTIONS.assertEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_should_resolve_review_thread_already_covered_style_nit_with_full_evidence_returns_true():
+    thread = {
+        "id": "safe-r3-style",
+        "body": "already covered style nit",
+        "active": True,
+        "issue_fixed_or_stale": True,
+        "comments": {"nodes": [{"author": {"login": "coderabbitai[bot]"}, "body": "already covered"}]},
+    }
+    evidence = {
+        "validation_passed": True,
+        "issue_fixed_or_stale": True,
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "checks_green": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "tests": ["pytest -q tests/scripts/test_pr_automation_controller.py -k should_resolve_review_thread"],
+    }
+    ASSERTIONS.assertEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_should_resolve_review_thread_denies_when_validation_passed_missing():
+    thread = {
+        "id": "safe-r3b",
+        "body": "already fixed security regression",
+        "active": True,
+        "issue_fixed_or_stale": True,
+    }
+    evidence = {
+        "issue_fixed_or_stale": True,
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "checks_green": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "tests": ["pytest"],
+    }
+    ASSERTIONS.assertEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_should_resolve_review_thread_denies_when_validation_passed_false():
+    thread = {
+        "id": "safe-r3c",
+        "body": "already fixed security regression",
+        "active": True,
+        "issue_fixed_or_stale": True,
+    }
+    evidence = {
+        "validation_passed": False,
+        "issue_fixed_or_stale": True,
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "checks_green": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "tests": ["pytest"],
+    }
+    ASSERTIONS.assertEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_should_resolve_review_thread_fixed_current_head_note_validation_gate_contract():
+    thread = {
+        "id": "safe-r3d",
+        "body": "already fixed on current head",
+        "active": True,
+        "issue_fixed_or_stale": True,
+        "comments": {"nodes": [{"author": {"login": "coderabbitai[bot]"}, "body": "already fixed"}]},
+    }
+    base = {
+        "issue_fixed_or_stale": True,
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "checks_green": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "tests": ["pytest"],
+    }
+    ASSERTIONS.assertEqual(controller.triage_review_thread_contract(thread, base)["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, base))
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, dict(base) | {"validation_passed": False}))
+    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, dict(base) | {"validation_passed": True}))
+
+
+def test_should_resolve_review_thread_fixed_safety_with_pending_checks_returns_false():
+    thread = {
+        "id": "safe-r4",
+        "body": "already fixed security regression",
+        "active": True,
+        "issue_fixed_or_stale": True,
+    }
+    evidence = {
+        "issue_fixed_or_stale": True,
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "checks_green": True,
+        "pending_checks": True,
+        "failing_checks": False,
+        "tests": ["pytest"],
+    }
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_should_resolve_review_thread_fixed_safety_with_head_mismatch_returns_false():
+    thread = {
+        "id": "safe-r5",
+        "body": "already fixed security regression",
+        "active": True,
+        "issue_fixed_or_stale": True,
+    }
+    evidence = {
+        "issue_fixed_or_stale": True,
+        "current_head_sha": "abc",
+        "evidence_head_sha": "def",
+        "checks_green": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "tests": ["pytest"],
+    }
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_should_resolve_review_thread_active_unresolved_bypass_returns_false():
+    thread = {
+        "id": "safe-r6",
+        "body": "active unresolved bypass in guard path",
+        "active": True,
+    }
+    evidence = {
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "checks_green": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "tests": ["pytest"],
+    }
+    ASSERTIONS.assertEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "PATCH_REQUIRED")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_should_resolve_review_thread_active_security_bypass_still_present_ignores_safe_to_resolve():
+    thread = {
+        "id": "safe-r7",
+        "body": "security bypass still present",
+        "active": True,
+    }
+    evidence = {
+        "safe_to_resolve": True,
+        "issue_fixed_or_stale": False,
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "checks_green": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "tests": ["pytest"],
+    }
+    ASSERTIONS.assertEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "PATCH_REQUIRED")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_should_resolve_review_thread_active_fail_open_still_present_ignores_safe_to_resolve():
+    thread = {
+        "id": "safe-r8",
+        "body": "active fail-open still present",
+        "active": True,
+    }
+    evidence = {
+        "safe_to_resolve": True,
+        "issue_fixed_or_stale": False,
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "checks_green": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "tests": ["pytest"],
+    }
+    ASSERTIONS.assertEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "PATCH_REQUIRED")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_should_resolve_review_thread_roadmap_scope_ignores_safe_to_resolve():
+    thread = {
+        "id": "safe-r9",
+        "body": "roadmap",
+        "active": True,
+    }
+    evidence = {
+        "safe_to_resolve": True,
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "checks_green": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "tests": ["pytest"],
+    }
+    ASSERTIONS.assertEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
 
 
 def test_build_review_triage_matrix_mixed_decisions_patch_required_outranks_other_actions():
@@ -9540,6 +10683,21 @@ def test_can_auto_resolve_and_rerun_checks_require_explicit_true_flags():
     )
     ASSERTIONS.assertTrue(resolve_allowed["allowed"])
     ASSERTIONS.assertTrue(rerun_allowed["allowed"])
+
+
+def test_can_auto_resolve_review_threads_modes_block_live_actions_fail_closed():
+    for mode in ("disabled", "report_only", "plan_only", "supervised", "unknown"):
+        result = controller.can_auto_resolve_review_threads(
+            {"AUTOMATION_MODE": mode, "AUTO_RESOLVE_ENABLED": "true"}
+        )
+        ASSERTIONS.assertFalse(result["allowed"])
+
+
+def test_can_auto_resolve_review_threads_malformed_flag_fails_closed():
+    malformed = controller.can_auto_resolve_review_threads(
+        {"AUTOMATION_MODE": "live", "AUTO_RESOLVE_ENABLED": "yes"}
+    )
+    ASSERTIONS.assertFalse(malformed["allowed"])
 
 
 def test_build_automation_enablement_context_runtime_mode_and_flags_override_env():

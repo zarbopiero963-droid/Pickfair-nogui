@@ -866,15 +866,74 @@ def should_notify_ready_to_merge(context: dict[str, Any]) -> bool:
     )
 
 
-def eligible_review_comments_for_auto_resolve(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return only active unresolved review comments eligible for auto-resolve."""
-    return [
-        node
-        for node in nodes
-        if isinstance(node, dict)
-        and node.get("isResolved") is False
-        and node.get("isOutdated") is False
-    ]
+def eligible_review_comments_for_auto_resolve(
+    nodes: list[object],
+    context: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Return deterministic review-thread eligibility; fail closed for malformed threads."""
+    ctx = context if isinstance(context, dict) else {}
+    evidence_only = ctx.get("evidence_only") is True
+    eligible: list[dict[str, Any]] = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        decision = _eligible_review_triage_decision(node, ctx)
+        if not _decision_is_eligible_for_auto_resolve(decision, evidence_only):
+            continue
+        eligible.append(node)
+    return eligible
+
+
+def _eligible_review_triage_decision(node: dict[str, Any], context: dict[str, Any]) -> str:
+    if not _node_is_open_for_triage(node):
+        return ""
+    triage = controller.triage_review_thread_contract(node, context)
+    decision = str(triage.get("decision") or "")
+    if decision not in {"PATCH_REQUIRED", "EVIDENCE_RESOLVE", "NEEDS_MANUAL"}:
+        return ""
+    if _is_outdated_needs_manual_without_evidence(node, context, decision):
+        return ""
+    return decision
+
+
+def _node_is_open_for_triage(node: dict[str, Any]) -> bool:
+    if _node_is_resolved(node):
+        return False
+    if _node_is_inactive(node):
+        return False
+    return True
+
+
+def _node_is_resolved(node: dict[str, Any]) -> bool:
+    return node.get("isResolved") is True or node.get("is_resolved") is True
+
+
+def _node_is_inactive(node: dict[str, Any]) -> bool:
+    return (
+        node.get("isActive") is False
+        or node.get("is_active") is False
+        or node.get("active") is False
+    )
+
+
+def _is_outdated_needs_manual_without_evidence(
+    node: dict[str, Any],
+    context: dict[str, Any],
+    decision: str,
+) -> bool:
+    return (
+        (node.get("isOutdated") is True or node.get("is_outdated") is True)
+        and decision == "NEEDS_MANUAL"
+        and not bool(context.get("evidence_present"))
+    )
+
+
+def _decision_is_eligible_for_auto_resolve(decision: str, evidence_only: bool) -> bool:
+    if not decision:
+        return False
+    if evidence_only:
+        return decision == "EVIDENCE_RESOLVE"
+    return True
 
 
 def classify_codacy_rule_conflict(issues: list[dict[str, Any]]) -> dict[str, Any]:

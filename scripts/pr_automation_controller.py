@@ -2405,7 +2405,10 @@ def _scope_rules_contain_invalid_entries(rules: object) -> bool:
         return False
     candidates: list[object] = rules if isinstance(rules, list) else parse_csvish(rules)
     for item in candidates:
-        raw_rule = str(item or "").replace("\\", "/")
+        raw_rule_input = str(item or "")
+        if _invalid_raw_path_marker(raw_rule_input):
+            return True
+        raw_rule = raw_rule_input.replace("\\", "/")
         if _invalid_raw_path_marker(raw_rule):
             return True
         raw_rule = raw_rule.strip()
@@ -6438,6 +6441,10 @@ def review_provider_from_author(author: object) -> str:
     return aliases.get(normalized, "")
 
 
+def _review_thread_provider(thread: dict[str, Any]) -> str:
+    return review_provider_from_author(_review_thread_author(thread))
+
+
 def review_provider_presence_status(
     active_threads: list[dict[str, Any]],
     expected_providers: list[str] | tuple[str, ...] | None = None,
@@ -6494,24 +6501,366 @@ def review_comment_can_resolve_with_evidence(comment: dict[str, Any], context: d
 
 
 def classify_review_triage_need(comment: dict[str, Any], context: dict[str, Any] | None = None) -> str:
-    """Classify review triage as PATCH_REQUIRED, EVIDENCE_RESOLVE, or NEEDS_MANUAL."""
-    ctx = context if isinstance(context, dict) else {}
-    body = _review_text_blob(comment)
-    if bool(comment.get("isResolved") or comment.get("isOutdated") or comment.get("is_resolved") or comment.get("is_outdated")):
-        return "EVIDENCE_RESOLVE"
-    if comment.get("is_active") is False or comment.get("isActive") is False or comment.get("active") is False:
-        return "EVIDENCE_RESOLVE"
-    forbidden_scope = bool(
-        ctx.get("forbidden_scope")
-        or re.search(r"\b(forbidden|workflow|roadmap|future scope|ambiguous architecture|unprovable)\b", body)
+    """Classify review triage by delegating to the deterministic thread contract."""
+    triage = triage_review_thread_contract(comment, context)
+    decision = triage.get("decision")
+    return str(decision) if decision in {"PATCH_REQUIRED", "EVIDENCE_RESOLVE", "NEEDS_MANUAL"} else "NEEDS_MANUAL"
+
+
+def _normalize_tests_covering_behavior(value: object) -> list[str]:
+    if isinstance(value, list):
+        normalized: list[str] = []
+        for item in value:
+            if item is None:
+                continue
+            if isinstance(item, (dict, list, tuple, set)):
+                continue
+            cleaned = str(item).strip()
+            if cleaned:
+                normalized.append(cleaned)
+        return normalized
+    if isinstance(value, str):
+        parts = [part.strip() for part in re.split(r"[,\n]", value) if part.strip()]
+        return parts
+    return []
+
+
+def _review_thread_id(thread: dict[str, Any]) -> str:
+    return str(thread.get("review_thread_id") or thread.get("thread_id") or thread.get("id") or "").strip()
+
+
+def _review_thread_is_outdated(thread: dict[str, Any]) -> bool:
+    return bool(thread.get("isOutdated") or thread.get("is_outdated"))
+
+
+def _review_thread_is_reproducible(thread: dict[str, Any], context: dict[str, Any]) -> bool:
+    if "is_reproducible" in thread:
+        return thread.get("is_reproducible") is True
+    if "reproducible" in thread:
+        return thread.get("reproducible") is True
+    if "is_reproducible" in context:
+        return context.get("is_reproducible") is True
+    if "reproducible" in context:
+        return context.get("reproducible") is True
+    return False
+
+
+def _review_thread_explicitly_not_reproducible(thread: dict[str, Any], context: dict[str, Any]) -> bool:
+    for source in (thread, context):
+        if source.get("is_reproducible") is False:
+            return True
+        if source.get("reproducible") is False:
+            return True
+    return False
+
+
+def _review_triage_checks_block_evidence(context: dict[str, Any], claimed_issue: str) -> bool:
+    explicit_unrelated = context.get("explicitly_unrelated_and_proven") is True
+    codacy_state = str(
+        first_nonempty(
+            context.get("codacy_state"),
+            context.get("codacy_conclusion"),
+            context.get("github_codacy_state"),
+            context.get("github_codacy_check_state"),
+        )
+        or ""
+    ).strip().upper()
+    codacy_action_required = codacy_state in {"ACTION_REQUIRED", "FAILURE", "ERROR", "TIMED_OUT"}
+    check_failures = bool(
+        context.get("failing_current_head_checks")
+        or context.get("check_failures_present")
+        or context.get("checks_failed")
+        or context.get("check_failure")
+        or context.get("failing_checks")
+        or context.get("pending_checks")
     )
-    if forbidden_scope:
-        return "NEEDS_MANUAL"
-    if review_comment_requires_patch(comment, ctx):
-        return "PATCH_REQUIRED"
-    if review_comment_can_resolve_with_evidence(comment, ctx):
-        return "EVIDENCE_RESOLVE"
-    return "NEEDS_MANUAL"
+    checks_green = context.get("checks_green") is True
+    if not checks_green:
+        return not explicit_unrelated
+    if codacy_action_required or check_failures:
+        return not explicit_unrelated
+    # Security/bypass/fail-open reports fail closed unless checks are explicitly green.
+    if re.search(r"\b(security|bypass|fail-open|crash|contract violation)\b", claimed_issue):
+        return not checks_green and not explicit_unrelated
+    return False
+
+
+_FUTURE_SCOPE_PATTERN = re.compile(
+    r"\b(do this later|handle this later|future roadmap|future scope|later pr)\b"
+)
+_ROADMAP_ONLY_PATTERN = re.compile(r"^\s*(?:handoff\s*:\s*)?roadmap\s*$")
+_ACTIVE_FAILURE_WORDING_PATTERN = re.compile(
+    r"\b("
+    r"failing|broken|correctness failure|regression breaks|still present|"
+    r"(?:the\s+)?failure remains|regression remains|"
+    r"(?:security|bypass|fail-open|fail open).{0,80}\bremains\b"
+    r")\b"
+)
+
+
+def _review_thread_fixed_or_stale(thread: dict[str, Any], context: dict[str, Any], claimed_issue: str) -> bool:
+    normalized_issue = claimed_issue.lower()
+    if re.search(r"\b(security|bypass|fail-open|fail open|current_head_check_failure)\b", normalized_issue):
+        return bool(
+            thread.get("issue_fixed_or_stale")
+            or thread.get("fixed_or_stale")
+            or thread.get("safe_to_resolve")
+            or context.get("issue_fixed_or_stale")
+            or context.get("fixed_or_stale")
+            or context.get("safe_to_resolve")
+        )
+    return bool(
+        thread.get("issue_fixed_or_stale")
+        or thread.get("fixed_or_stale")
+        or thread.get("safe_to_resolve")
+        or context.get("issue_fixed_or_stale")
+        or context.get("fixed_or_stale")
+        or context.get("safe_to_resolve")
+        or re.search(r"\b(stale|already fixed|resolved|advisory|nit|optional|covered by)\b", claimed_issue)
+    )
+
+
+def _review_thread_explicit_fixed_stale_note(claimed_issue: str) -> bool:
+    lowered = claimed_issue.lower()
+    if re.search(r"\bnot\s+(?:already\s+)?(?:fixed|resolved|stale)\b", lowered):
+        return False
+    if re.search(r"\balready fixed\?\s*no\b", lowered):
+        return False
+    return bool(
+        re.search(r"\balready fixed\b", lowered)
+        or re.search(r"\balready covered\b", lowered)
+        or re.search(r"\bno failure remains\b", lowered)
+    )
+
+
+def _review_thread_has_active_failure_wording(claimed_issue: str) -> bool:
+    lowered = claimed_issue.lower()
+    if re.search(r"\bno\s+failure\s+remains\b", lowered):
+        return False
+    if _ACTIVE_FAILURE_WORDING_PATTERN.search(lowered):
+        return True
+    return False
+
+
+def _review_evidence_head_matches(current_head_sha: str, evidence_head_sha: str) -> bool:
+    return bool(current_head_sha and evidence_head_sha and current_head_sha == evidence_head_sha)
+
+
+def _review_evidence_checks_green(context: dict[str, Any], claimed_issue: str) -> bool:
+    return not _review_triage_checks_block_evidence(context, claimed_issue)
+
+
+def _review_triage_has_sufficient_evidence(
+    current_head_sha: str,
+    evidence_head_sha: str,
+    evidence_present: bool,
+    context: dict[str, Any],
+    claimed_issue: str,
+) -> tuple[bool, str]:
+    if not current_head_sha:
+        return False, "missing_current_head_sha"
+    if not evidence_head_sha:
+        return False, "missing_evidence_head_sha"
+    if not _review_evidence_head_matches(current_head_sha, evidence_head_sha):
+        return False, "evidence_head_mismatch"
+    if not evidence_present:
+        return False, "missing_tests_or_evidence"
+    if not _review_evidence_checks_green(context, claimed_issue):
+        return False, "checks_or_codacy_block_evidence_resolve"
+    return True, "stale_or_advisory_with_current_head_evidence"
+
+
+def _review_triage_can_evidence_resolve(
+    thread: dict[str, Any],
+    context: dict[str, Any],
+    claimed_issue: str,
+    current_head_sha: str,
+    evidence_head_sha: str,
+    evidence_present: bool,
+) -> tuple[bool, str]:
+    if _review_thread_has_active_failure_wording(claimed_issue):
+        return False, "active_failure_wording_requires_patch"
+    if not _review_thread_fixed_or_stale(thread, context, claimed_issue):
+        return False, "not_fixed_or_stale"
+    return _review_triage_has_sufficient_evidence(
+        current_head_sha,
+        evidence_head_sha,
+        evidence_present,
+        context,
+        claimed_issue,
+    )
+
+
+def _review_triage_patch_required(
+    is_active: bool,
+    patch_signal: bool,
+    is_reproducible: bool,
+    explicitly_not_reproducible: bool,
+) -> tuple[bool, str]:
+    if explicitly_not_reproducible:
+        return False, "explicitly_not_reproducible"
+    if is_active and patch_signal:
+        return True, "active_safety_or_current_head_failure_or_contract_violation"
+    if is_reproducible:
+        return False, "reproducible_without_patch_signal"
+    return False, "non_reproducible_or_missing_reproducibility"
+
+
+def _review_triage_manual_reason(
+    explicit_forbidden_request: bool,
+    future_scope: bool,
+    ambiguous_arch: bool,
+    is_active: bool,
+) -> str:
+    if explicit_forbidden_request:
+        return "forbidden_file_request"
+    if future_scope:
+        return "future_roadmap_scope"
+    if ambiguous_arch:
+        return "ambiguous_architecture"
+    if not is_active:
+        return "inactive_or_resolved_thread"
+    return "insufficient_or_malformed_context"
+
+
+def triage_review_thread_contract(
+    thread: dict[str, Any],
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Deterministic review-thread triage contract for PATCH_REQUIRED/EVIDENCE_RESOLVE/NEEDS_MANUAL."""
+    if not isinstance(thread, dict):
+        return {
+            "review_thread_id": "",
+            "thread_id": "",
+            "author": "",
+            "severity": "unknown",
+            "claimed_issue": "",
+            "current_head_sha": "",
+            "is_outdated": False,
+            "is_reproducible": False,
+            "matrix_coverage": False,
+            "tests_covering_behavior": [],
+            "decision": "NEEDS_MANUAL",
+            "reason": "malformed_thread_payload",
+            "next_action": "needs_manual",
+        }
+    ctx = context if isinstance(context, dict) else {}
+    claimed_issue = _review_text_blob(thread)
+    severity = classify_review_comment_severity(thread)
+    review_thread_id = _review_thread_id(thread)
+    author = _review_thread_author(thread)
+    provider = review_provider_from_author(author)
+    current_head_sha = str(
+        first_nonempty(ctx.get("current_head_sha"), ctx.get("head_sha"), ctx.get("headRefOid")) or ""
+    ).strip()
+    evidence_head_sha = str(first_nonempty(ctx.get("evidence_head_sha"), thread.get("evidence_head_sha")) or "").strip()
+    is_outdated = _review_thread_is_outdated(thread)
+    is_resolved = bool(thread.get("isResolved") or thread.get("is_resolved"))
+    is_active = not is_resolved and not is_outdated and not (
+        thread.get("isActive") is False
+        or thread.get("is_active") is False
+        or thread.get("active") is False
+    )
+    is_reproducible = _review_thread_is_reproducible(thread, ctx)
+    explicitly_not_reproducible = _review_thread_explicitly_not_reproducible(thread, ctx)
+    matrix_coverage = bool(thread.get("covered_by_matrix") or thread.get("covered_by_tests") or ctx.get("covered"))
+    tests_covering_behavior = _normalize_tests_covering_behavior(
+        first_nonempty(thread.get("tests_covering_behavior"), ctx.get("tests_covering_behavior"), ctx.get("tests"))
+    )
+    evidence_present = bool(matrix_coverage or tests_covering_behavior)
+    explicit_forbidden_request = bool(
+        ctx.get("forbidden_file_request")
+        or _is_out_of_scope_review_path(str(thread.get("path") or ""), ctx)
+        or re.search(r"\b(forbidden file|workflow edit|touch \.github/workflows|outside allowed files)\b", claimed_issue)
+        or re.search(r"\.github/workflows/[^\s`\"')]+", claimed_issue)
+    )
+    future_scope = bool(
+        ctx.get("future_scope")
+        or _FUTURE_SCOPE_PATTERN.search(claimed_issue)
+        or _ROADMAP_ONLY_PATTERN.fullmatch(claimed_issue)
+    )
+    ambiguous_arch = bool(
+        ctx.get("ambiguous_architecture") or re.search(r"\b(ambiguous architecture|unclear design|insufficient context)\b", claimed_issue)
+    )
+    patch_signal = bool(
+        re.search(
+            r"\b("
+            r"bypass|security|fail-open|fail open|crash|regression|breaks|"
+            r"failure|failing|broken|correctness|contract violation|action required"
+            r")\b",
+            claimed_issue,
+        )
+        or thread.get("failure_detected")
+        or (ctx.get("current_head_check_failure") is True)
+    )
+    manual_reason = _review_triage_manual_reason(explicit_forbidden_request, future_scope, ambiguous_arch, is_active)
+    if manual_reason != "insufficient_or_malformed_context":
+        decision = "NEEDS_MANUAL"
+        reason = manual_reason
+        next_action = "needs_manual"
+    else:
+        can_resolve, resolve_reason = _review_triage_can_evidence_resolve(
+            thread,
+            ctx,
+            claimed_issue,
+            current_head_sha,
+            evidence_head_sha,
+            evidence_present,
+        )
+        if can_resolve:
+            decision = "EVIDENCE_RESOLVE"
+            reason = resolve_reason
+            next_action = "resolve_with_evidence"
+            if author and not provider:
+                decision = "NEEDS_MANUAL"
+                reason = "unknown_review_provider"
+                next_action = "needs_manual"
+            elif provider == "codacy-production" and not _codacy_review_evidence_green(ctx):
+                decision = "NEEDS_MANUAL"
+                reason = "missing_or_blocking_codacy_evidence"
+                next_action = "needs_manual"
+        elif resolve_reason in {
+            "missing_current_head_sha",
+            "missing_evidence_head_sha",
+            "evidence_head_mismatch",
+            "missing_tests_or_evidence",
+            "checks_or_codacy_block_evidence_resolve",
+        }:
+            decision = "NEEDS_MANUAL"
+            reason = resolve_reason
+            next_action = "needs_manual"
+        else:
+            patch_required, patch_reason = _review_triage_patch_required(
+                is_active,
+                patch_signal,
+                is_reproducible,
+                explicitly_not_reproducible,
+            )
+            if patch_required:
+                decision = "PATCH_REQUIRED"
+                reason = patch_reason
+                next_action = "patch_required"
+            else:
+                decision = "NEEDS_MANUAL"
+                reason = patch_reason
+                next_action = "needs_manual"
+
+    return {
+        "review_thread_id": review_thread_id,
+        "thread_id": review_thread_id,
+        "author": author,
+        "provider": provider,
+        "severity": severity,
+        "claimed_issue": claimed_issue,
+        "current_head_sha": current_head_sha,
+        "is_outdated": is_outdated,
+        "is_reproducible": is_reproducible,
+        "matrix_coverage": matrix_coverage,
+        "tests_covering_behavior": tests_covering_behavior,
+        "decision": decision,
+        "reason": reason,
+        "next_action": next_action,
+    }
 
 
 def build_review_evidence_reply(comment: dict[str, Any], evidence: dict[str, Any] | None = None) -> str:
@@ -6539,28 +6888,24 @@ def build_review_triage_matrix(
     patch_authorized = ctx.get("standing_owner_authorized") is True or ctx.get("patch_authorized") is True
     items: list[dict[str, Any]] = []
     for comment in comments or []:
-        decision = classify_review_triage_need(comment, ctx)
-        matrix_coverage = bool(comment.get("covered_by_matrix") or comment.get("covered_by_tests") or ctx.get("covered"))
-        tests_covering_behavior_raw = comment.get("tests_covering_behavior", ctx.get("tests_covering_behavior", []))
-        tests_covering_behavior = (
-            [str(item).strip() for item in tests_covering_behavior_raw if str(item).strip()]
-            if isinstance(tests_covering_behavior_raw, list)
-            else []
-        )
+        triage = triage_review_thread_contract(comment, ctx)
+        decision = str(triage["decision"])
+        matrix_coverage = bool(triage["matrix_coverage"])
+        tests_covering_behavior = _normalize_tests_covering_behavior(triage.get("tests_covering_behavior"))
         requires_patch = decision == "PATCH_REQUIRED"
         can_resolve_with_evidence = decision == "EVIDENCE_RESOLVE"
-        if decision == "PATCH_REQUIRED":
-            reason = "active_reproducible_uncovered_failure_like_comment"
-            next_action = "patch_missing_matrix_case" if not matrix_coverage else "patch_required"
-        elif decision == "EVIDENCE_RESOLVE":
-            reason = "covered_or_stale_with_green_checks"
-            next_action = "resolve_with_evidence"
-        else:
-            reason = "forbidden_scope_or_insufficient_signal_for_passive_action"
-            next_action = "needs_manual"
+        reason = str(triage["reason"])
+        next_action = str(triage["next_action"])
         items.append(
             {
-                "thread_id": str(comment.get("thread_id") or comment.get("id") or ""),
+                "thread_id": str(triage["review_thread_id"]),
+                "review_thread_id": str(triage["review_thread_id"]),
+                "author": str(triage["author"]),
+                "severity": str(triage["severity"]),
+                "claimed_issue": str(triage["claimed_issue"]),
+                "current_head_sha": str(triage["current_head_sha"]),
+                "is_outdated": bool(triage["is_outdated"]),
+                "is_reproducible": bool(triage["is_reproducible"]),
                 "decision": decision,
                 "next_action": next_action,
                 "can_patch": requires_patch and patch_authorized,
@@ -6999,29 +7344,37 @@ def _codacy_review_evidence_green(evidence: dict[str, Any]) -> bool:
     state = str(evidence.get("codacy_conclusion") or evidence.get("codacy_state") or "").lower()
     if state not in {"success", "successful", "passed", "pass"}:
         return False
-    annotations = safe_nonnegative_int(evidence.get("codacy_annotations_count"), -1)
+    annotations_raw = (
+        evidence.get("codacy_annotations_count")
+        if "codacy_annotations_count" in evidence
+        else evidence.get("annotations_count")
+    )
+    annotations = safe_nonnegative_int(annotations_raw, -1)
     return annotations == 0
 
 
 def should_resolve_review_thread(thread: dict[str, Any], evidence: dict[str, Any]) -> bool:
     """Return whether a review thread is safe to resolve with evidence."""
-    classified = classify_review_thread(thread, {"files_allowed": evidence.get("files_allowed") or []})
-    if not classified["is_active"] or classified["needs_manual"] or classified["blocking"]:
+    triage = triage_review_thread_contract(thread, evidence)
+    if triage.get("decision") != "EVIDENCE_RESOLVE":
+        return False
+    provider = _review_thread_provider(thread)
+    if not provider:
+        return False
+    # Fail closed: explicit local validation is mandatory for any auto-resolve.
+    if evidence.get("validation_passed") is not True:
         return False
     if not _review_fixed_or_stale(evidence):
         return False
-    if not bool(evidence.get("validation_passed")):
-        return False
     if evidence.get("head_matches") is False:
         return False
-
-    current_head = evidence.get("current_head_sha")
-    evidence_head = evidence.get("evidence_head_sha")
-    if current_head and evidence_head and current_head != evidence_head:
+    current_head = str(evidence.get("current_head_sha") or "").strip()
+    evidence_head = str(evidence.get("evidence_head_sha") or "").strip()
+    if current_head and evidence_head and not _review_evidence_head_matches(current_head, evidence_head):
         return False
-    if _has_blocking_checks(evidence):
+    if _has_blocking_checks(evidence) or not _review_evidence_checks_green(evidence, str(triage.get("claimed_issue") or "")):
         return False
-    if classified["provider"] == "codacy-production" or evidence.get("codacy_relevant"):
+    if provider == "codacy-production" or evidence.get("codacy_relevant"):
         if not _codacy_review_evidence_green(evidence):
             return False
     return True
@@ -7123,11 +7476,14 @@ def build_review_thread_resolution_plan(
 def _is_out_of_scope_review_path(path: str, context: dict[str, Any]) -> bool:
     if not path:
         return False
-    allowed = context.get("files_allowed")
-    if not isinstance(allowed, list) or not allowed:
+    files_allowed = context.get("files_allowed")
+    files_forbidden = context.get("files_forbidden")
+    malformed_allowed = _malformed_scope_rules_input(files_allowed) or _scope_rules_contain_invalid_entries(
+        files_allowed
+    )
+    if not malformed_allowed and not normalize_file_scope_rules(files_allowed):
         return False
-    normalized = {str(item).strip() for item in allowed if str(item).strip()}
-    return bool(normalized) and path not in normalized
+    return not scope_allows_file_change(path, files_allowed, files_forbidden)
 
 
 def summarize_next_action(context: dict[str, Any]) -> str:
