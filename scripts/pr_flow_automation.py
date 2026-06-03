@@ -891,6 +891,15 @@ def _eligible_review_triage_decision(node: dict[str, Any], context: dict[str, An
     decision = str(triage.get("decision") or "")
     if decision not in {"PATCH_REQUIRED", "EVIDENCE_RESOLVE", "NEEDS_MANUAL"}:
         return ""
+    provider = str(triage.get("provider") or "")
+    if (
+        controller.is_deepsource_review_provider(provider)
+        and decision != "PATCH_REQUIRED"
+        and context.get("evidence_only") is not True
+    ):
+        if decision == "NEEDS_MANUAL" and str(triage.get("reason") or "") == "deepsource_broad_refactor_or_roadmap":
+            return decision
+        return ""
     if _is_outdated_needs_manual_without_evidence(node, context, decision):
         return ""
     return decision

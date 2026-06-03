@@ -6350,13 +6350,41 @@ BLOCKING_REVIEW_KEYWORDS = {
 ADVISORY_REVIEW_KEYWORDS = {"low", "nit", "nitpick", "style", "suggestion", "docs", "documentation"}
 BLOCKING_REVIEW_SEVERITIES = {"p1", "high"}
 KNOWN_REVIEW_PROVIDERS = set(REVIEW_COMMENT_PROVIDERS)
+DEEPSOURCE_PROVIDER = "deepsource"
+DEEPSOURCE_ADVISORY_PATTERN = re.compile(
+    r"\b("
+    r"cyclomatic complexity|cognitive complexity|collapsible if|readability|style|"
+    r"maintainability|duplicate|repeated"
+    r")\b"
+)
+DEEPSOURCE_BROAD_REFACTOR_PATTERN = re.compile(
+    r"\b("
+    r"broad refactor|large refactor|major refactor|future roadmap|roadmap|"
+    r"ambiguous architecture|unclear architecture|redesign|re-architect"
+    r")\b"
+)
+DEEPSOURCE_BLOCKING_CLAIM_PATTERN = re.compile(
+    r"\b("
+    r"security bypass|safety bypass|fail-open|fail open|crash|crashes|"
+    r"contract violation|current-head behavior gap|current head behavior gap|"
+    r"uncovered behavior gap|uncovered current-head behavior|"
+    r"reproducible[\s-]+(?:security[\s-]+)?(?:regression|contract violation)"
+    r")\b"
+)
+DEEPSOURCE_REPRODUCIBLE_PATCH_CLAIM_PATTERN = re.compile(
+    r"\b("
+    r"security|correctness|regression|failure|failing|broken|"
+    r"contract violation|action required"
+    r")\b"
+)
+DEEPSOURCE_FAILURE_STATES = {"ACTION_REQUIRED", "FAILURE", "FAILED", "ERROR", "TIMED_OUT"}
 
 
 def normalize_review_author(author: object) -> str:
     """Normalize review author strings and bot suffixes."""
     if isinstance(author, dict):
         author = author.get("login") or author.get("name") or author.get("author") or ""
-    normalized = str(author or "").strip().lower().lstrip("@")
+    normalized = str(author or "").strip().lower().lstrip("@").replace(":", "")
     normalized = normalized.removesuffix("[bot]").removesuffix("-bot").strip()
     return normalized.replace(" ", "-")
 
@@ -6437,8 +6465,17 @@ def review_provider_from_author(author: object) -> str:
         "greptile": "greptile",
         "greptile-ai": "greptile-ai",
         "greptileai": "greptileai",
+        "deepsource": DEEPSOURCE_PROVIDER,
+        "deepsource-io": DEEPSOURCE_PROVIDER,
+        "deepsource-app": DEEPSOURCE_PROVIDER,
+        "deepsource-python": DEEPSOURCE_PROVIDER,
     }
     return aliases.get(normalized, "")
+
+
+def is_deepsource_review_provider(provider: object) -> bool:
+    """Return whether a normalized review provider is DeepSource."""
+    return str(provider or "").strip().lower() == DEEPSOURCE_PROVIDER
 
 
 def _review_thread_provider(thread: dict[str, Any]) -> str:
@@ -6585,6 +6622,224 @@ def _review_triage_checks_block_evidence(context: dict[str, Any], claimed_issue:
     return False
 
 
+def _check_state_is_failure(state: object) -> bool:
+    return str(state or "").strip().upper() in DEEPSOURCE_FAILURE_STATES
+
+
+def _check_head_matches_current(check: dict[str, Any], current_head_sha: str) -> bool:
+    if not current_head_sha:
+        return False
+    check_head = _check_head_sha(check)
+    return bool(check_head and check_head == current_head_sha)
+
+
+def _check_head_sha(check: dict[str, Any]) -> str:
+    return str(
+        first_nonempty(
+            check.get("head_sha"),
+            check.get("headSha"),
+            check.get("headRefOid"),
+            check.get("commit"),
+            check.get("sha"),
+        )
+        or ""
+    ).strip()
+
+
+def _deepsource_context_check_head(context: dict[str, Any]) -> str:
+    return str(
+        first_nonempty(
+            context.get("deepsource_head_sha"),
+            context.get("deepsource_check_head_sha"),
+            context.get("github_deepsource_head_sha"),
+            context.get("github_deepsource_check_head_sha"),
+            context.get("check_head_sha"),
+        )
+        or ""
+    ).strip()
+
+
+def _deepsource_check_required(check: dict[str, Any], context: dict[str, Any]) -> bool:
+    if check.get("required") is True or check.get("blocking") is True:
+        return True
+    if context.get("deepsource_required") is True or context.get("deepsource_blocking") is True:
+        return True
+    required_names = context.get("required_checks")
+    if isinstance(required_names, (list, tuple, set)):
+        check_name = str(check.get("name") or check.get("context") or "").strip().lower()
+        return any(str(name or "").strip().lower() == check_name for name in required_names)
+    return False
+
+
+def _iter_context_checks(context: dict[str, Any]) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+    for key in (
+        "required_failing_checks",
+        "failing_current_head_checks",
+        "deepsource_checks",
+        "failing_checks",
+        "checks",
+        "statusCheckRollup",
+    ):
+        value = context.get(key)
+        if isinstance(value, list):
+            checks.extend(item for item in value if isinstance(item, dict))
+    return checks
+
+
+def _iter_deepsource_required_failing_checks(context: dict[str, Any]) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+    for key in (
+        "required_failing_checks",
+        "failing_current_head_checks",
+        "deepsource_checks",
+        "failing_checks",
+        "checks",
+        "statusCheckRollup",
+    ):
+        value = context.get(key)
+        if not isinstance(value, list):
+            continue
+        container_requires_check = key == "required_failing_checks"
+        for check in value:
+            if not isinstance(check, dict) or not _is_deepsource_check(check):
+                continue
+            state_value = first_nonempty(check.get("state"), check.get("conclusion"), check.get("status"))
+            if _check_state_is_failure(state_value) and (
+                container_requires_check or _deepsource_check_required(check, context)
+            ):
+                checks.append(check)
+    return checks
+
+
+def _deepsource_required_failing_checks_gap_reason(
+    context: dict[str, Any],
+    current_head_sha: str,
+) -> str:
+    if not current_head_sha:
+        return "missing_current_head_sha"
+    checks = _iter_deepsource_required_failing_checks(context)
+    if any(_check_head_matches_current(check, current_head_sha) for check in checks):
+        return ""
+    if any(not _check_head_sha(check) for check in checks):
+        return "missing_deepsource_check_head_sha"
+    if checks:
+        return "deepsource_check_head_mismatch"
+    return "missing_deepsource_check_head_sha"
+
+
+def _deepsource_required_current_head_check_failing(context: dict[str, Any], current_head_sha: str) -> bool:
+    if not current_head_sha:
+        return False
+    context_check = {"head_sha": _deepsource_context_check_head(context)}
+    if (
+        context.get("deepsource_required_current_head_check_failing") is True
+        or context.get("deepsource_required_check_failing") is True
+    ):
+        return _check_head_matches_current(context_check, current_head_sha) or any(
+            _check_head_matches_current(check, current_head_sha)
+            for check in _iter_deepsource_required_failing_checks(context)
+        )
+    state = first_nonempty(
+        context.get("deepsource_state"),
+        context.get("deepsource_conclusion"),
+        context.get("github_deepsource_state"),
+        context.get("github_deepsource_check_state"),
+    )
+    if (
+        _check_state_is_failure(state)
+        and (context.get("deepsource_required") is True or context.get("deepsource_blocking") is True)
+    ):
+        return _check_head_matches_current(context_check, current_head_sha)
+    for check in _iter_deepsource_required_failing_checks(context):
+        if _check_head_matches_current(check, current_head_sha):
+            return True
+    return False
+
+
+def _deepsource_required_check_failure_gap_reason(
+    context: dict[str, Any],
+    current_head_sha: str,
+) -> str:
+    context_check = {"head_sha": _deepsource_context_check_head(context)}
+    if (
+        context.get("deepsource_required_current_head_check_failing") is True
+        or context.get("deepsource_required_check_failing") is True
+    ):
+        if not current_head_sha:
+            return "missing_current_head_sha"
+        if _check_head_sha(context_check):
+            if _check_head_matches_current(context_check, current_head_sha):
+                return ""
+            return "deepsource_check_head_mismatch"
+        return _deepsource_required_failing_checks_gap_reason(context, current_head_sha)
+    state = first_nonempty(
+        context.get("deepsource_state"),
+        context.get("deepsource_conclusion"),
+        context.get("github_deepsource_state"),
+        context.get("github_deepsource_check_state"),
+    )
+    if (
+        _check_state_is_failure(state)
+        and (context.get("deepsource_required") is True or context.get("deepsource_blocking") is True)
+    ):
+        if not current_head_sha:
+            return "missing_current_head_sha"
+        if not _check_head_sha(context_check):
+            return "missing_deepsource_check_head_sha"
+        if not _check_head_matches_current(context_check, current_head_sha):
+            return "deepsource_check_head_mismatch"
+    check_gap_reason = _deepsource_required_failing_checks_gap_reason(context, current_head_sha)
+    if check_gap_reason and _iter_deepsource_required_failing_checks(context):
+        return check_gap_reason
+    return ""
+
+
+def _deepsource_claim_is_blocking(claimed_issue: str) -> bool:
+    normalized = re.sub(
+        (
+            r"\b(?:not|never)(?:[\s-]+currently)?[\s-]+"
+            r"(?:a[\s-]+)?reproducible\b"
+        ),
+        "nonreproducible",
+        claimed_issue,
+    )
+    return bool(DEEPSOURCE_BLOCKING_CLAIM_PATTERN.search(normalized))
+
+
+def _deepsource_claim_is_reproducible_patch_claim(claimed_issue: str) -> bool:
+    return bool(DEEPSOURCE_REPRODUCIBLE_PATCH_CLAIM_PATTERN.search(claimed_issue))
+
+
+def _deepsource_claim_is_broad_manual(claimed_issue: str) -> bool:
+    return bool(DEEPSOURCE_BROAD_REFACTOR_PATTERN.search(claimed_issue))
+
+
+def _deepsource_claim_is_advisory(claimed_issue: str) -> bool:
+    return bool(DEEPSOURCE_ADVISORY_PATTERN.search(claimed_issue) or _deepsource_claim_is_broad_manual(claimed_issue))
+
+
+def _deepsource_advisory_evidence_decision(
+    claimed_issue: str,
+    current_head_sha: str,
+    evidence_head_sha: str,
+    evidence_present: bool,
+    context: dict[str, Any],
+) -> tuple[str, str, str]:
+    if _review_thread_negated_fixed_stale_note(claimed_issue):
+        return "NEEDS_MANUAL", "not_fixed_or_stale", "needs_manual"
+    sufficient, reason = _review_triage_has_sufficient_evidence(
+        current_head_sha,
+        evidence_head_sha,
+        evidence_present,
+        context,
+        claimed_issue,
+    )
+    if sufficient:
+        return "EVIDENCE_RESOLVE", reason, "resolve_with_evidence"
+    return "NEEDS_MANUAL", reason, "needs_manual"
+
+
 _FUTURE_SCOPE_PATTERN = re.compile(
     r"\b(do this later|handle this later|future roadmap|future scope|later pr)\b"
 )
@@ -6598,8 +6853,28 @@ _ACTIVE_FAILURE_WORDING_PATTERN = re.compile(
 )
 
 
+def _review_thread_negated_fixed_stale_note(claimed_issue: str) -> bool:
+    lowered = claimed_issue.lower()
+    return bool(
+        re.search(r"\bnot\s+(?:yet\s+|already\s+)?(?:fixed|resolved|stale)\b", lowered)
+        or re.search(r"\bstill\s+not\s+(?:fixed|resolved|stale)\b", lowered)
+        or re.search(r"\b(?:wasn'?t|hasn'?t\s+been|hadn'?t\s+been)\s+(?:fixed|resolved|stale)\b", lowered)
+        or re.search(r"\bnever\s+(?:fixed|resolved|stale)\b", lowered)
+        or re.search(r"\balready fixed\?\s*no\b", lowered)
+    )
+
+
+def _review_thread_required_fix_wording(claimed_issue: str) -> bool:
+    lowered = claimed_issue.lower()
+    return bool(re.search(r"\b(?:must|should|needs?\s+to|has\s+to|have\s+to)\s+be\s+fixed\b", lowered))
+
+
 def _review_thread_fixed_or_stale(thread: dict[str, Any], context: dict[str, Any], claimed_issue: str) -> bool:
     normalized_issue = claimed_issue.lower()
+    if _review_thread_negated_fixed_stale_note(normalized_issue):
+        return False
+    if _review_thread_required_fix_wording(normalized_issue):
+        return False
     if re.search(r"\b(security|bypass|fail-open|fail open|current_head_check_failure)\b", normalized_issue):
         return bool(
             thread.get("issue_fixed_or_stale")
@@ -6616,18 +6891,26 @@ def _review_thread_fixed_or_stale(thread: dict[str, Any], context: dict[str, Any
         or context.get("issue_fixed_or_stale")
         or context.get("fixed_or_stale")
         or context.get("safe_to_resolve")
+        or _review_thread_explicit_fixed_stale_note(claimed_issue)
         or re.search(r"\b(stale|already fixed|resolved|advisory|nit|optional|covered by)\b", claimed_issue)
     )
 
 
 def _review_thread_explicit_fixed_stale_note(claimed_issue: str) -> bool:
     lowered = claimed_issue.lower()
-    if re.search(r"\bnot\s+(?:already\s+)?(?:fixed|resolved|stale)\b", lowered):
+    if _review_thread_negated_fixed_stale_note(lowered):
         return False
-    if re.search(r"\balready fixed\?\s*no\b", lowered):
+    if _review_thread_required_fix_wording(lowered):
         return False
     return bool(
         re.search(r"\balready fixed\b", lowered)
+        or re.search(r"\bnow fixed\b", lowered)
+        or re.search(r"\bfixed\s+now\b", lowered)
+        or re.search(r"\bfixed\s+(?:in|by)\b", lowered)
+        or re.search(r"\bfixed\s+with\b", lowered)
+        or re.search(r"\bresolved\s+by\b", lowered)
+        or re.search(r"\bstale\b", lowered)
+        or re.search(r"\bcovered by\b", lowered)
         or re.search(r"\balready covered\b", lowered)
         or re.search(r"\bno failure remains\b", lowered)
     )
@@ -6782,7 +7065,7 @@ def triage_review_thread_contract(
     ambiguous_arch = bool(
         ctx.get("ambiguous_architecture") or re.search(r"\b(ambiguous architecture|unclear design|insufficient context)\b", claimed_issue)
     )
-    patch_signal = bool(
+    generic_patch_signal = bool(
         re.search(
             r"\b("
             r"bypass|security|fail-open|fail open|crash|regression|breaks|"
@@ -6793,50 +7076,123 @@ def triage_review_thread_contract(
         or thread.get("failure_detected")
         or (ctx.get("current_head_check_failure") is True)
     )
+    deepsource_provider = is_deepsource_review_provider(provider)
+    deepsource_required_check_failing = (
+        _deepsource_required_current_head_check_failing(ctx, current_head_sha) if deepsource_provider else False
+    )
+    deepsource_required_check_gap_reason = (
+        _deepsource_required_check_failure_gap_reason(ctx, current_head_sha) if deepsource_provider else ""
+    )
+    deepsource_blocking_claim = deepsource_provider and _deepsource_claim_is_blocking(claimed_issue)
+    deepsource_reproducible_patch_claim = (
+        deepsource_provider
+        and is_reproducible
+        and _deepsource_claim_is_reproducible_patch_claim(claimed_issue)
+    )
+    deepsource_broad_manual = deepsource_provider and _deepsource_claim_is_broad_manual(claimed_issue)
+    deepsource_advisory = deepsource_provider and _deepsource_claim_is_advisory(claimed_issue)
+    patch_signal = (
+        deepsource_required_check_failing or deepsource_blocking_claim or deepsource_reproducible_patch_claim
+        if deepsource_provider
+        else generic_patch_signal
+    )
     manual_reason = _review_triage_manual_reason(explicit_forbidden_request, future_scope, ambiguous_arch, is_active)
-    if manual_reason != "insufficient_or_malformed_context":
+    if explicit_forbidden_request or not is_active:
+        decision = "NEEDS_MANUAL"
+        reason = manual_reason
+        next_action = "needs_manual"
+    elif deepsource_provider and (
+        deepsource_required_check_failing
+        or (deepsource_blocking_claim and not explicitly_not_reproducible)
+        or (deepsource_reproducible_patch_claim and not explicitly_not_reproducible)
+    ):
+        decision = "PATCH_REQUIRED"
+        reason = (
+            "deepsource_required_current_head_check_failing"
+            if deepsource_required_check_failing
+            else (
+                "deepsource_reproducible_safety_or_correctness_claim"
+                if deepsource_reproducible_patch_claim and not deepsource_blocking_claim
+                else "deepsource_blocking_safety_or_contract_claim"
+            )
+        )
+        next_action = "patch_required"
+    elif deepsource_required_check_gap_reason:
+        decision = "NEEDS_MANUAL"
+        reason = deepsource_required_check_gap_reason
+        next_action = "needs_manual"
+    elif deepsource_provider and explicitly_not_reproducible:
+        decision = "NEEDS_MANUAL"
+        reason = "explicitly_not_reproducible"
+        next_action = "needs_manual"
+    elif deepsource_broad_manual:
+        decision = "NEEDS_MANUAL"
+        reason = "deepsource_broad_refactor_or_roadmap"
+        next_action = "needs_manual"
+    elif future_scope or ambiguous_arch:
+        decision = "NEEDS_MANUAL"
+        reason = manual_reason
+        next_action = "needs_manual"
+    elif deepsource_advisory:
+        if _review_thread_required_fix_wording(claimed_issue):
+            decision = "NEEDS_MANUAL"
+            reason = "required_fix_wording_needs_manual"
+            next_action = "needs_manual"
+        else:
+            decision, reason, next_action = _deepsource_advisory_evidence_decision(
+                claimed_issue,
+                current_head_sha,
+                evidence_head_sha,
+                evidence_present,
+                ctx,
+            )
+    elif manual_reason != "insufficient_or_malformed_context":
         decision = "NEEDS_MANUAL"
         reason = manual_reason
         next_action = "needs_manual"
     else:
-        can_resolve, resolve_reason = _review_triage_can_evidence_resolve(
-            thread,
-            ctx,
-            claimed_issue,
-            current_head_sha,
-            evidence_head_sha,
-            evidence_present,
+        patch_required, patch_reason = _review_triage_patch_required(
+            is_active,
+            patch_signal,
+            is_reproducible,
+            explicitly_not_reproducible,
         )
-        if can_resolve:
-            decision = "EVIDENCE_RESOLVE"
-            reason = resolve_reason
-            next_action = "resolve_with_evidence"
-            if author and not provider:
-                decision = "NEEDS_MANUAL"
-                reason = "unknown_review_provider"
-                next_action = "needs_manual"
-            elif provider == "codacy-production" and not _codacy_review_evidence_green(ctx):
-                decision = "NEEDS_MANUAL"
-                reason = "missing_or_blocking_codacy_evidence"
-                next_action = "needs_manual"
-        elif resolve_reason in {
-            "missing_current_head_sha",
-            "missing_evidence_head_sha",
-            "evidence_head_mismatch",
-            "missing_tests_or_evidence",
-            "checks_or_codacy_block_evidence_resolve",
-        }:
-            decision = "NEEDS_MANUAL"
-            reason = resolve_reason
-            next_action = "needs_manual"
+        if patch_required and not _review_thread_explicit_fixed_stale_note(claimed_issue):
+            decision = "PATCH_REQUIRED"
+            reason = patch_reason
+            next_action = "patch_required"
         else:
-            patch_required, patch_reason = _review_triage_patch_required(
-                is_active,
-                patch_signal,
-                is_reproducible,
-                explicitly_not_reproducible,
+            can_resolve, resolve_reason = _review_triage_can_evidence_resolve(
+                thread,
+                ctx,
+                claimed_issue,
+                current_head_sha,
+                evidence_head_sha,
+                evidence_present,
             )
-            if patch_required:
+            if can_resolve:
+                decision = "EVIDENCE_RESOLVE"
+                reason = resolve_reason
+                next_action = "resolve_with_evidence"
+                if author and not provider:
+                    decision = "NEEDS_MANUAL"
+                    reason = "unknown_review_provider"
+                    next_action = "needs_manual"
+                elif provider == "codacy-production" and not _codacy_review_evidence_green(ctx):
+                    decision = "NEEDS_MANUAL"
+                    reason = "missing_or_blocking_codacy_evidence"
+                    next_action = "needs_manual"
+            elif resolve_reason in {
+                "missing_current_head_sha",
+                "missing_evidence_head_sha",
+                "evidence_head_mismatch",
+                "missing_tests_or_evidence",
+                "checks_or_codacy_block_evidence_resolve",
+            }:
+                decision = "NEEDS_MANUAL"
+                reason = resolve_reason
+                next_action = "needs_manual"
+            elif patch_required:
                 decision = "PATCH_REQUIRED"
                 reason = patch_reason
                 next_action = "patch_required"
@@ -7254,6 +7610,36 @@ def classify_review_thread(thread: dict[str, Any], context: dict[str, Any] | Non
     actionability = classify_review_comment_actionability(thread)
     unknown_author = not provider
     out_of_scope = _is_out_of_scope_review_path(path, context or {})
+    body = _review_text_blob(thread)
+    current_head_sha = str(
+        first_nonempty((context or {}).get("current_head_sha"), (context or {}).get("head_sha"), (context or {}).get("headRefOid")) or ""
+    ).strip()
+    deepsource_provider = is_deepsource_review_provider(provider)
+    deepsource_required_check_failing = (
+        _deepsource_required_current_head_check_failing(context or {}, current_head_sha) if deepsource_provider else False
+    )
+    deepsource_required_check_gap_reason = (
+        _deepsource_required_check_failure_gap_reason(context or {}, current_head_sha) if deepsource_provider else ""
+    )
+    is_reproducible = _review_thread_is_reproducible(thread, context or {})
+    explicitly_not_reproducible = _review_thread_explicitly_not_reproducible(thread, context or {})
+    deepsource_blocking_claim = deepsource_provider and _deepsource_claim_is_blocking(body)
+    deepsource_reproducible_patch_claim = (
+        deepsource_provider
+        and is_reproducible
+        and _deepsource_claim_is_reproducible_patch_claim(body)
+    )
+    deepsource_broad_manual = deepsource_provider and _deepsource_claim_is_broad_manual(body)
+    deepsource_advisory = deepsource_provider and _deepsource_claim_is_advisory(body)
+    future_scope = bool(
+        (context or {}).get("future_scope")
+        or _FUTURE_SCOPE_PATTERN.search(body)
+        or _ROADMAP_ONLY_PATTERN.fullmatch(body)
+    )
+    ambiguous_arch = bool(
+        (context or {}).get("ambiguous_architecture")
+        or re.search(r"\b(ambiguous architecture|unclear design|insufficient context)\b", body)
+    )
 
     category = "review_comment_inactive"
     classification = "inactive"
@@ -7275,6 +7661,50 @@ def classify_review_thread(thread: dict[str, Any], context: dict[str, Any] | Non
         next_action = "needs_manual"
         needs_manual = True
         reason = "unknown review provider"
+    elif active and deepsource_provider and (
+        deepsource_required_check_failing
+        or (deepsource_blocking_claim and not explicitly_not_reproducible)
+        or (deepsource_reproducible_patch_claim and not explicitly_not_reproducible)
+    ):
+        category = "review_comment_active"
+        classification = "blocking"
+        next_action = "fix_review_comments"
+        blocking = True
+        reason = (
+            "deepsource required current-head check is failing"
+            if deepsource_required_check_failing
+            else "deepsource reproducible safety or correctness claim"
+        )
+    elif active and deepsource_provider and deepsource_required_check_gap_reason:
+        category = "review_comment_deepsource_manual"
+        classification = "needs_manual"
+        next_action = "needs_manual"
+        needs_manual = True
+        reason = deepsource_required_check_gap_reason
+    elif active and deepsource_provider and explicitly_not_reproducible:
+        category = "review_comment_deepsource_manual"
+        classification = "needs_manual"
+        next_action = "needs_manual"
+        needs_manual = True
+        reason = "deepsource explicitly non-reproducible claim"
+    elif active and deepsource_broad_manual:
+        category = "review_comment_deepsource_manual"
+        classification = "needs_manual"
+        next_action = "needs_manual"
+        needs_manual = True
+        reason = "deepsource broad refactor or roadmap advisory"
+    elif active and (future_scope or ambiguous_arch):
+        category = "review_comment_deepsource_manual" if deepsource_provider else "review_comment_unknown"
+        classification = "needs_manual"
+        next_action = "needs_manual"
+        needs_manual = True
+        reason = "future roadmap or ambiguous architecture"
+    elif active and deepsource_advisory:
+        category = "review_comment_deepsource_advisory"
+        classification = "advisory"
+        next_action = "needs_manual_or_continue_without_resolve"
+        advisory = True
+        reason = "deepsource advisory comment"
     elif active and actionability == "stale_or_already_fixed":
         category = "review_comment_safe_resolve"
         classification = "safe_resolve"
