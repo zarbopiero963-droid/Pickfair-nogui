@@ -31,6 +31,17 @@ SELF_CHECK_NAMES = {
 OK_STATES = {"SUCCESS", "SKIPPED", "NEUTRAL"}
 PENDING_STATES = {"", "PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"}
 BAD_STATES = {"FAILURE", "ERROR", "ACTION_REQUIRED", "CANCELLED", "TIMED_OUT", "STARTUP_FAILURE", "STALE"}
+DEEPSOURCE_ADVISORY_PATTERN = re.compile(
+    r"\b(cyclomatic|complexity|readability|refactor|maintainability|duplicate|style)\b",
+    re.IGNORECASE,
+)
+DEEPSOURCE_SAFETY_OR_CORRECTNESS_PATTERN = re.compile(
+    r"\b("
+    r"security|safety|fail[- ]?open|crash|crashes|correctness|regression|"
+    r"reproducible|broken|failure|failing|contract violation"
+    r")\b",
+    re.IGNORECASE,
+)
 
 FLOW_WORKFLOWS = {
     "PR Autofix Safe Supervisor",
@@ -134,6 +145,9 @@ def split_checks(pr: dict[str, Any], *, ignore_self: bool = True) -> dict[str, l
             "state": norm_state(raw.get("conclusion") or raw.get("state") or raw.get("status")),
             "url": check_url(raw),
             "is_self_check": is_self_check(raw),
+            "head_sha": _check_head_sha(raw),
+            "required": bool(raw.get("required") or raw.get("isRequired")),
+            "text": _check_text(raw),
         }
 
         if ignore_self and item["is_self_check"]:
@@ -164,6 +178,31 @@ def effective_merge_state_ok(merge_state: str, blockers: list[dict[str, Any]], p
     if state == "UNSTABLE" and not blockers and not pending:
         return True
     return False
+
+
+def _check_head_sha(check: dict[str, Any]) -> str:
+    for key in ("headSha", "head_sha", "headRefOid", "sha"):
+        value = str(check.get(key) or "").strip()
+        if value:
+            return value
+    commit = check.get("commit")
+    if isinstance(commit, dict):
+        return str(commit.get("oid") or commit.get("sha") or "").strip()
+    if commit:
+        return str(commit).strip()
+    return ""
+
+
+def _check_text(check: dict[str, Any]) -> str:
+    values: list[str] = []
+    for key in ("name", "context", "description", "summary", "title", "text", "message", "detailsUrl", "targetUrl"):
+        value = check.get(key)
+        if value:
+            values.append(str(value))
+    output = check.get("output")
+    if isinstance(output, dict):
+        values.extend(str(output.get(key) or "") for key in ("title", "summary", "text"))
+    return " ".join(part for part in values if part).strip()
 
 
 
@@ -449,6 +488,7 @@ def build_decision(
     pr = pr_view(repo, pr_number)
     checks = split_checks(pr, ignore_self=ignore_self)
     active_review_threads = eligible_review_comments_for_auto_resolve(review_threads or [])
+    checks = apply_deepsource_advisory_policy(pr, checks, _active_unresolved_review_threads(review_threads or []))
     merge_state = _merge_readiness_state(pr, checks, active_review_threads)
     decision = _base_decision({"repo": repo, "pr_number": pr_number}, pr, checks, merge_state)
     taxonomy_context = _taxonomy_context(pr, checks, merge_state["can_merge"])
@@ -473,6 +513,127 @@ def _merge_readiness_state(
     )
     can_merge = _can_merge_from_reasons(already_merged, reasons, active_review_threads)
     return {"already_merged": already_merged, "can_merge": can_merge, "reasons": reasons}
+
+
+def _active_unresolved_review_threads(review_threads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        thread
+        for thread in review_threads
+        if not bool(thread.get("isResolved") or thread.get("is_resolved"))
+        and not bool(thread.get("isOutdated") or thread.get("is_outdated"))
+    ]
+
+
+def apply_deepsource_advisory_policy(
+    pr_data: dict[str, Any],
+    checks: dict[str, list[dict[str, Any]]],
+    active_review_threads: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Ignore only advisory DeepSource Python failures with complete safe evidence."""
+    result = {key: list(value) for key, value in checks.items()}
+    advisory: list[dict[str, Any]] = []
+    remaining: list[dict[str, Any]] = []
+    for blocker in result.get("blockers", []):
+        if deepsource_python_failure_is_advisory(pr_data, result, active_review_threads, blocker):
+            ignored = dict(blocker)
+            ignored["ignored"] = True
+            ignored["advisory_only"] = True
+            ignored["reason"] = "deepsource_python_advisory_only"
+            advisory.append(ignored)
+            continue
+        remaining.append(blocker)
+    result["blockers"] = remaining
+    if advisory:
+        result.setdefault("ignored", []).extend(advisory)
+        result["deepsource_advisory"] = advisory
+    return result
+
+
+def deepsource_python_failure_is_advisory(
+    pr_data: dict[str, Any],
+    checks: dict[str, list[dict[str, Any]]],
+    active_review_threads: list[dict[str, Any]],
+    check: dict[str, Any],
+) -> bool:
+    """Return True when a DeepSource Python failure is provably non-blocking."""
+    current_head = str(pr_data.get("headRefOid") or "").strip()
+    if not current_head or active_review_threads or checks.get("pending"):
+        return False
+    if not _is_deepsource_python_check(check) or check.get("state") not in BAD_STATES:
+        return False
+    if check.get("required") is True:
+        return False
+    if not _check_has_current_head(check, current_head):
+        return False
+    if not _codacy_success_zero_annotations(pr_data):
+        return False
+    if _other_check_failures_present(checks, check):
+        return False
+    return _deepsource_check_is_advisory_only(check)
+
+
+def _is_deepsource_python_check(check: dict[str, Any]) -> bool:
+    text = f"{check.get('name') or ''} {check.get('url') or ''}".lower()
+    return "deepsource" in text and "python" in text
+
+
+def _check_has_current_head(check: dict[str, Any], current_head: str) -> bool:
+    check_head = str(check.get("head_sha") or "").strip()
+    return bool(check_head and check_head == current_head)
+
+
+def _codacy_success_zero_annotations(pr_data: dict[str, Any]) -> bool:
+    codacy_checks = [
+        raw
+        for raw in pr_data.get("statusCheckRollup") or []
+        if isinstance(raw, dict) and "codacy" in f"{check_name(raw)} {check_url(raw)}".lower()
+    ]
+    if not codacy_checks:
+        return False
+    return any(_codacy_check_clean(raw) for raw in codacy_checks)
+
+
+def _codacy_check_clean(check: dict[str, Any]) -> bool:
+    state = norm_state(check.get("conclusion") or check.get("state") or check.get("status"))
+    if state not in OK_STATES:
+        return False
+    annotation_count = _annotation_count(check)
+    return annotation_count == 0
+
+
+def _annotation_count(check: dict[str, Any]) -> int:
+    for key in ("annotations_count", "annotationsCount", "annotation_count", "annotationCount"):
+        if key in check:
+            return _safe_nonnegative_int(check.get(key), -1)
+    annotations = check.get("annotations")
+    if isinstance(annotations, list):
+        return len(annotations)
+    return 0
+
+
+def _safe_nonnegative_int(value: Any, default: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return number if number >= 0 else default
+
+
+def _other_check_failures_present(checks: dict[str, list[dict[str, Any]]], advisory_check: dict[str, Any]) -> bool:
+    for blocker in checks.get("blockers", []):
+        if blocker is advisory_check:
+            continue
+        if blocker == advisory_check:
+            continue
+        return True
+    return False
+
+
+def _deepsource_check_is_advisory_only(check: dict[str, Any]) -> bool:
+    text = str(check.get("text") or "").strip()
+    return bool(DEEPSOURCE_ADVISORY_PATTERN.search(text)) and not bool(
+        DEEPSOURCE_SAFETY_OR_CORRECTNESS_PATTERN.search(text)
+    )
 
 
 def _merge_state_reasons(
