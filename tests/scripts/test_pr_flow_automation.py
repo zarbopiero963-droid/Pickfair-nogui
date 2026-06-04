@@ -2022,3 +2022,15 @@ def _required_telegram_summary_keys() -> tuple[str, ...]:
         "active_unresolved_review_count",
         "next_action",
     )
+
+def test_pr253_deepsource_advisory_missing_check_head_stays_blocking():
+    """Advisory DeepSource suppression requires explicit current-head evidence."""
+    blocker = _deepsource_python_check(description="Cyclomatic complexity advisory")
+    blocker.pop("headSha", None)
+    blocker.pop("head_sha", None)
+
+    result = flow.summarize_blocker_actions([blocker], _deepsource_summary_context(blocker))
+
+    ASSERTIONS.assertEqual(result["categories"], ["test_failure"])
+    ASSERTIONS.assertEqual(result["primary_category"], "test_failure")
+    ASSERTIONS.assertIn("DeepSource: Python FAILURE", str(result.get("reasons", [])))

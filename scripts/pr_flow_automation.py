@@ -1105,7 +1105,7 @@ def summarize_blocker_actions(blockers: list[dict[str, Any]], context: dict[str,
 
     def head_matches(item: dict[str, Any]) -> bool:
         check_head = str(item.get("head_sha") or item.get("headSha") or item.get("check_head_sha") or "").strip()
-        return not check_head or bool(current_head() and check_head == current_head())
+        return bool(check_head and current_head() and check_head == current_head())
 
     def required_item(item: dict[str, Any]) -> bool:
         return any(item.get(key) is True for key in ("required", "is_required", "required_check", "requiredCheck"))
