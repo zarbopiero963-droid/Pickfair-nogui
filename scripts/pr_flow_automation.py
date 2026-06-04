@@ -195,7 +195,7 @@ def _check_head_sha(check: dict[str, Any]) -> str:
 
 def _check_text(check: dict[str, Any]) -> str:
     values: list[str] = []
-    for key in ("name", "context", "description", "summary", "title", "text", "message", "detailsUrl", "targetUrl"):
+    for key in ("name", "context", "description", "summary", "title", "text", "message"):
         value = check.get(key)
         if value:
             values.append(str(value))
@@ -531,18 +531,27 @@ def apply_deepsource_advisory_policy(
 ) -> dict[str, list[dict[str, Any]]]:
     """Ignore only advisory DeepSource Python failures with complete safe evidence."""
     result = {key: list(value) for key, value in checks.items()}
+    blockers = result.get("blockers", [])
+    advisory_blockers = [
+        blocker
+        for blocker in blockers
+        if deepsource_python_failure_is_advisory(pr_data, result, active_review_threads, blocker)
+    ]
+    if not advisory_blockers:
+        return result
+
     advisory: list[dict[str, Any]] = []
-    remaining: list[dict[str, Any]] = []
-    for blocker in result.get("blockers", []):
-        if deepsource_python_failure_is_advisory(pr_data, result, active_review_threads, blocker):
-            ignored = dict(blocker)
-            ignored["ignored"] = True
-            ignored["advisory_only"] = True
-            ignored["reason"] = "deepsource_python_advisory_only"
-            advisory.append(ignored)
-            continue
-        remaining.append(blocker)
-    result["blockers"] = remaining
+    for blocker in advisory_blockers:
+        ignored = dict(blocker)
+        ignored["ignored"] = True
+        ignored["advisory_only"] = True
+        ignored["reason"] = "deepsource_python_advisory_only"
+        advisory.append(ignored)
+    result["blockers"] = [
+        blocker
+        for blocker in blockers
+        if not any(blocker is advisory or blocker == advisory for advisory in advisory_blockers)
+    ]
     if advisory:
         result.setdefault("ignored", []).extend(advisory)
         result["deepsource_advisory"] = advisory
@@ -566,8 +575,6 @@ def deepsource_python_failure_is_advisory(
     if not _check_has_current_head(check, current_head):
         return False
     if not _codacy_success_zero_annotations(pr_data):
-        return False
-    if _other_check_failures_present(checks, check):
         return False
     return _deepsource_check_is_advisory_only(check)
 
@@ -608,7 +615,7 @@ def _annotation_count(check: dict[str, Any]) -> int:
     annotations = check.get("annotations")
     if isinstance(annotations, list):
         return len(annotations)
-    return 0
+    return -1
 
 
 def _safe_nonnegative_int(value: Any, default: int) -> int:
@@ -617,16 +624,6 @@ def _safe_nonnegative_int(value: Any, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return number if number >= 0 else default
-
-
-def _other_check_failures_present(checks: dict[str, list[dict[str, Any]]], advisory_check: dict[str, Any]) -> bool:
-    for blocker in checks.get("blockers", []):
-        if blocker is advisory_check:
-            continue
-        if blocker == advisory_check:
-            continue
-        return True
-    return False
 
 
 def _deepsource_check_is_advisory_only(check: dict[str, Any]) -> bool:
@@ -991,9 +988,177 @@ def classify_merge_conflict(
 
 
 def summarize_blocker_actions(blockers: list[dict[str, Any]], context: dict[str, Any]) -> dict[str, Any]:
-    """Proxy taxonomy summarization to controller helper."""
-    return controller.summarize_blocker_actions(blockers, context)
+    """Summarize blockers after removing safe DeepSource advisory-only failures."""
+    ctx = context if isinstance(context, dict) else {}
 
+    def value_int(source: dict[str, Any], *keys: str, default: int = -1) -> int:
+        for key in keys:
+            if key in source:
+                try:
+                    return int(source.get(key))
+                except (TypeError, ValueError):
+                    return default
+        return default
+
+    def current_head() -> str:
+        return str(ctx.get("current_head_sha") or ctx.get("headRefOid") or ctx.get("head_sha") or "").strip()
+
+    def text(item: dict[str, Any], urls: bool = False) -> str:
+        keys = ["name", "n", "context", "title", "description", "message", "summary", "body"]
+        if urls:
+            keys += ["url", "detailsUrl", "details_url", "targetUrl", "target_url", "target_url", "html_url"]
+        return " ".join(str(item.get(key) or "") for key in keys).lower()
+
+    def codacy_green_zero() -> bool:
+        state = str(
+            ctx.get("codacy_conclusion")
+            or ctx.get("github_codacy_check_state")
+            or ctx.get("codacy_check_state")
+            or ""
+        ).strip().lower()
+        count = value_int(
+            ctx,
+            "codacy_annotations_count",
+            "codacy_annotation_count",
+            "annotations_count",
+            "annotationsCount",
+            "annotation_count",
+            "annotationCount",
+            default=-1,
+        )
+
+        codacy = ctx.get("codacy")
+        if isinstance(codacy, dict):
+            if not state:
+                state = str(
+                    codacy.get("conclusion")
+                    or codacy.get("state")
+                    or codacy.get("classification")
+                    or ""
+                ).strip().lower()
+            if count == -1:
+                count = value_int(
+                    codacy,
+                    "annotations_count",
+                    "annotationsCount",
+                    "annotation_count",
+                    "annotationCount",
+                    "issues_returned",
+                    default=-1,
+                )
+
+        rollup = ctx.get("statusCheckRollup")
+        if isinstance(rollup, list) and (not state or count == -1):
+            for check in rollup:
+                if not isinstance(check, dict):
+                    continue
+                check_name = str(check.get("name") or check.get("n") or "").lower()
+                check_url = str(
+                    check.get("detailsUrl")
+                    or check.get("details_url")
+                    or check.get("targetUrl")
+                    or check.get("target_url")
+                    or check.get("url")
+                    or ""
+                ).lower()
+                if "codacy" not in f"{check_name} {check_url}":
+                    continue
+                if not state:
+                    state = str(
+                        check.get("conclusion")
+                        or check.get("state")
+                        or check.get("s")
+                        or ""
+                    ).strip().lower()
+                if count == -1:
+                    count = value_int(
+                        check,
+                        "annotations_count",
+                        "annotationsCount",
+                        "annotation_count",
+                        "annotationCount",
+                        default=-1,
+                    )
+                break
+
+        return state in {"success", "successful", "passed", "pass", "green", "clean"} and count == 0
+
+    def unresolved_active() -> int:
+        if "unresolved_active" in ctx:
+            return value_int(ctx, "unresolved_active", default=1)
+        review = ctx.get("review")
+        if isinstance(review, dict):
+            return value_int(review, "unresolved_active", default=1)
+        return 0
+
+    def pending_present() -> bool:
+        pending = ctx.get("pending")
+        return ctx.get("pending_checks") is True or (isinstance(pending, list) and bool(pending))
+
+    def is_deepsource_python(item: dict[str, Any]) -> bool:
+        identity = text(item, urls=True)
+        return "deepsource" in identity and ("python" in identity or "/python" in identity)
+
+    def is_failure(item: dict[str, Any]) -> bool:
+        state = str(item.get("state") or item.get("conclusion") or "").lower()
+        return state in {"failure", "failed", "action_required", "error", "timed_out"}
+
+    def head_matches(item: dict[str, Any]) -> bool:
+        check_head = str(item.get("head_sha") or item.get("headSha") or item.get("check_head_sha") or "").strip()
+        return not check_head or bool(current_head() and check_head == current_head())
+
+    def required_item(item: dict[str, Any]) -> bool:
+        return any(item.get(key) is True for key in ("required", "is_required", "required_check", "requiredCheck"))
+
+    def required_deepsource_context() -> bool:
+        if ctx.get("deepsource_required_check_failing") is True:
+            return True
+        for key in ("required_failing_checks", "failing_current_head_checks", "deepsource_checks"):
+            checks = ctx.get(key)
+            if not isinstance(checks, list):
+                continue
+            for check in checks:
+                if isinstance(check, dict) and is_deepsource_python(check) and is_failure(check):
+                    if key == "required_failing_checks" or required_item(check):
+                        return True
+        return False
+
+    def advisory_text(non_url_text: str) -> bool:
+        return any(term in non_url_text for term in ("advisory", "cyclomatic", "complexity", "maintainability", "readability", "refactor", "style"))
+
+    def safety_text(non_url_text: str, item: dict[str, Any]) -> bool:
+        blocking_terms = (
+            "security", "safety", "fail-open", "fail open", "crash",
+            "contract violation", "correctness failure", "correctness regression",
+            "security regression", "reproducible regression", "reproducible failure",
+        )
+        if any(term in non_url_text for term in blocking_terms):
+            return True
+        reproducible = item.get("reproducible") is True or item.get("is_reproducible") is True
+        return reproducible and any(term in non_url_text for term in ("regression", "correctness", "failure"))
+
+    def safe_global_context() -> bool:
+        return (
+            bool(current_head())
+            and codacy_green_zero()
+            and not pending_present()
+            and unresolved_active() == 0
+            and ctx.get("checks_green") is not False
+            and not required_deepsource_context()
+        )
+
+    def removable(item: dict[str, Any]) -> bool:
+        if not safe_global_context():
+            return False
+        if not is_deepsource_python(item) or not is_failure(item):
+            return False
+        if required_item(item) or not head_matches(item):
+            return False
+        non_url_text = text(item, urls=False)
+        return advisory_text(non_url_text) and not safety_text(non_url_text, item)
+
+    filtered = [item for item in blockers if not (isinstance(item, dict) and removable(item))]
+    return controller.summarize_blocker_actions(filtered, ctx)
 
 def build_telegram_summary(context: dict[str, Any]) -> dict[str, Any]:
     """Build a Telegram-ready summary payload from workflow context."""
