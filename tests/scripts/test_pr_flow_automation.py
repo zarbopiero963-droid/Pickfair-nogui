@@ -1026,6 +1026,134 @@ def test_auto_resolve_review_comments_contract_active_unresolved_node_still_elig
     ASSERTIONS.assertEqual([item["id"] for item in eligible], ["a1"])
 
 
+def test_deepsource_advisory_cannot_enter_patch_loop():
+    """Deepsource advisory comments must not become synthetic review blockers."""
+    eligible = flow.eligible_review_comments_for_auto_resolve(
+        [
+            {
+                "id": "ds1",
+                "author": "deepsource[bot]",
+                "body": "Cyclomatic complexity and readability advisory",
+                "isResolved": False,
+            }
+        ],
+        _review_evidence_context(evidence_only=False),
+    )
+    ASSERTIONS.assertEqual(eligible, [])
+
+
+def test_deepsource_duplicate_complexity_comment_not_patch_eligible_in_flow():
+    """Deepsource duplicate complexity comments must not route PATCH_REQUIRED."""
+    thread = {
+        "id": "ds1b",
+        "author": "deepsource[bot]",
+        "body": "Duplicate cyclomatic complexity readability advisory",
+        "isResolved": False,
+    }
+    triage = controller.triage_review_thread_contract(
+        thread,
+        _review_evidence_context(evidence_only=False),
+    )
+    eligible = flow.eligible_review_comments_for_auto_resolve(
+        [thread],
+        _review_evidence_context(evidence_only=False),
+    )
+    ASSERTIONS.assertNotEqual(triage["decision"], "PATCH_REQUIRED")
+    ASSERTIONS.assertEqual(eligible, [])
+
+
+def test_deepsource_broad_manual_remains_visible_in_flow():
+    """Deepsource broad refactor NEEDS_MANUAL should remain visible."""
+    eligible = flow.eligible_review_comments_for_auto_resolve(
+        [
+            {
+                "id": "ds-manual",
+                "author": "deepsource[bot]",
+                "body": "Broad refactor suggestion for future roadmap",
+                "isResolved": False,
+            }
+        ],
+        _review_evidence_context(evidence_only=False),
+    )
+    ASSERTIONS.assertEqual([item["id"] for item in eligible], ["ds-manual"])
+
+
+def test_deepsource_advisory_evidence_only_can_resolve_with_current_head_tests():
+    """Deepsource advisory resolution is allowed only through evidence-only routing."""
+    eligible = flow.eligible_review_comments_for_auto_resolve(
+        [
+            {
+                "id": "ds2",
+                "author": "deepsource-app",
+                "body": "Maintainability readability advisory",
+                "isResolved": False,
+            }
+        ],
+        _review_evidence_context(evidence_only=True),
+    )
+    ASSERTIONS.assertEqual([item["id"] for item in eligible], ["ds2"])
+
+
+def _deepsource_required_check_context(**extra: Any) -> dict[str, Any]:
+    """Build Deepsource required-check context for flow eligibility tests."""
+    check = {
+        "name": "DeepSource: Python",
+        "conclusion": "FAILURE",
+        "required": True,
+    } | extra.pop("check", {})
+    return {"current_head_sha": "abc", "failing_current_head_checks": [check]} | extra
+
+
+def test_deepsource_required_current_head_failure_remains_patch_eligible():
+    """Deepsource required current-head failure remains patch eligible."""
+    eligible = flow.eligible_review_comments_for_auto_resolve(
+        [
+            {
+                "id": "ds3",
+                "author": "DeepSource: Python",
+                "body": "Cyclomatic complexity is high",
+                "isResolved": False,
+            }
+        ],
+        _deepsource_required_check_context(check={"head_sha": "abc"}),
+    )
+    ASSERTIONS.assertEqual([item["id"] for item in eligible], ["ds3"])
+
+
+def test_deepsource_required_check_missing_current_head_fails_closed_in_flow():
+    """Deepsource required check without current head is not patch eligible."""
+    eligible = flow.eligible_review_comments_for_auto_resolve(
+        [{"id": "ds4", "author": "DeepSource: Python", "body": "Required check is failing"}],
+        _deepsource_required_check_context(current_head_sha="", check={"head_sha": "abc"}),
+    )
+    ASSERTIONS.assertEqual(eligible, [])
+
+
+def test_deepsource_required_check_missing_check_head_fails_closed_in_flow():
+    """Deepsource required check without check head is not patch eligible."""
+    eligible = flow.eligible_review_comments_for_auto_resolve(
+        [{"id": "ds5", "author": "DeepSource: Python", "body": "Required check is failing"}],
+        _deepsource_required_check_context(),
+    )
+    ASSERTIONS.assertEqual(eligible, [])
+
+
+def test_unknown_author_complexity_text_still_fails_closed_in_flow():
+    """Unknown author complexity text remains visible as manual flow work."""
+    eligible = flow.eligible_review_comments_for_auto_resolve(
+        [
+            {
+                "id": "u1",
+                "author": "unknown-reviewer",
+                "body": "Cyclomatic complexity is high",
+                "isResolved": False,
+            }
+        ],
+        _review_evidence_context(evidence_only=False),
+    )
+    ASSERTIONS.assertEqual([item["id"] for item in eligible], ["u1"])
+
+
 def test_d203_d211_rule_conflict_detection_contract():
     """D203 and D211 on same file/symbol should classify as codacy rule conflict needing manual action."""
     if not hasattr(flow, "classify_codacy_rule_conflict"):
