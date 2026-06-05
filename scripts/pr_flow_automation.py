@@ -881,58 +881,65 @@ def _apply_deepsource_advisory_policy(
     blockers = checks.get("blockers", [])
     if not blockers or not _has_explicit_deepsource_advisory_context(pr_data):
         return checks
-    kept: list[dict[str, Any]] = []
-    nonblocking: list[dict[str, Any]] = []
-    for check in blockers:
-        other_blockers = [item for item in blockers if item is not check]
-        context = _deepsource_advisory_policy_context(
-            pr_data,
-            checks,
-            active_review_threads,
-            other_blockers,
-        )
-        decision = deepsource_advisory_status_nonblocking_evidence(check, context)
-        if decision.get("nonblocking") is True:
-            nonblocking.append(dict(check, advisory_nonblocking_reason=decision.get("reason")))
-        else:
-            kept.append(check)
-    if not nonblocking:
+    advisory, kept = _split_deepsource_advisory_blockers(blockers)
+    if not advisory:
         return checks
+    context = _deepsource_advisory_policy_context(pr_data, checks, active_review_threads, kept)
+    decisions = [deepsource_advisory_status_nonblocking_evidence(check, context) for check in advisory]
+    if not all(decision.get("nonblocking") is True for decision in decisions):
+        return checks
+    nonblocking = _deepsource_nonblocking_checks(advisory, decisions)
     updated = dict(checks)
     updated["blockers"] = kept
     updated["deepsource_advisory_nonblocking"] = nonblocking
     return updated
 
 
+def _split_deepsource_advisory_blockers(
+    blockers: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    advisory: list[dict[str, Any]] = []
+    kept: list[dict[str, Any]] = []
+    for check in blockers:
+        target = advisory if _deepsource_advisory_check_reason(check) == "" else kept
+        target.append(check)
+    return advisory, kept
+
+
+def _deepsource_nonblocking_checks(
+    checks: list[dict[str, Any]],
+    decisions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        dict(check, advisory_nonblocking_reason=decision.get("reason"))
+        for check, decision in zip(checks, decisions)
+    ]
+
+
 def _deepsource_advisory_policy_context(
     pr_data: dict[str, Any],
     checks: dict[str, list[dict[str, Any]]],
     active_review_threads: list[dict[str, Any]],
-    other_blockers: list[dict[str, Any]],
+    non_advisory_blockers: list[dict[str, Any]],
 ) -> dict[str, Any]:
     configured = _deepsource_advisory_configured_context(pr_data)
-    context = {
-        "current_head_sha": configured.get("current_head_sha"),
-        "evidence_head_sha": configured.get("evidence_head_sha"),
-        "evidence_present": configured.get("evidence_present"),
-        "deepsource_advisory_evidence": configured.get("deepsource_advisory_evidence"),
-        "codacy": configured.get("codacy"),
-        "codacy_state": configured.get("codacy_state"),
-        "codacy_annotations_count": configured.get("codacy_annotations_count"),
-        "unresolved_active": len(active_review_threads),
-        "pending_checks": checks.get("pending", []),
-        "pending_checks_count": len(checks.get("pending", [])),
-        "checks_green": not other_blockers and not checks.get("pending", []),
-        "deepsource_required_current_head_check_failing": configured.get(
-            "deepsource_required_current_head_check_failing"
-        ),
-    }
-    context.update(configured)
-    context["unresolved_active"] = len(active_review_threads)
-    context["pending_checks"] = checks.get("pending", [])
-    context["pending_checks_count"] = len(checks.get("pending", []))
-    context["checks_green"] = not other_blockers and not checks.get("pending", [])
+    pending = checks.get("pending", [])
+    context = dict(configured)
+    context.update(_deepsource_merge_policy_context(active_review_threads, pending, non_advisory_blockers))
     return context
+
+
+def _deepsource_merge_policy_context(
+    active_review_threads: list[dict[str, Any]],
+    pending: list[dict[str, Any]],
+    non_advisory_blockers: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "unresolved_active": len(active_review_threads),
+        "pending_checks": pending,
+        "pending_checks_count": len(pending),
+        "checks_green": not non_advisory_blockers and not pending,
+    }
 
 
 def _has_explicit_deepsource_advisory_context(pr_data: dict[str, Any]) -> bool:
@@ -1042,49 +1049,85 @@ def _deepsource_required_check_reason(context: dict[str, Any]) -> str:
 
 def _is_deepsource_python_check(check: dict[str, Any]) -> bool:
     name = check_name(check)
+    return _check_name_mentions_python(name) and _check_provider_or_name_is_deepsource(check, name)
+
+
+def _check_name_mentions_python(name: object) -> bool:
+    return "python" in str(name or "").lower()
+
+
+def _check_provider_or_name_is_deepsource(check: dict[str, Any], name: object) -> bool:
     provider = str(check.get("provider") or check.get("source") or name)
-    normalized_provider = controller.review_provider_from_author(provider) or provider.strip().lower()
-    name_text = str(name).lower()
-    provider_is_deepsource = controller.is_deepsource_review_provider(normalized_provider)
-    return "python" in name_text and (provider_is_deepsource or "deepsource" in name_text)
+    normalized = controller.review_provider_from_author(provider) or provider.strip().lower()
+    return controller.is_deepsource_review_provider(normalized) or "deepsource" in str(name or "").lower()
 
 
 def _is_completed_deepsource_failure(check: dict[str, Any]) -> bool:
-    failure_state = norm_state(check.get("conclusion") or check.get("state") or check.get("external_status"))
-    progress_state = norm_state(check.get("status") or check.get("analysis_status"))
-    fail_closed = {"CANCELLED", "CANCELED", "TIMED_OUT", "STALE", "IN_PROGRESS", "PENDING", "QUEUED", "WAITING"}
-    if failure_state in fail_closed or progress_state in fail_closed:
+    failure_state, progress_state = _deepsource_check_states(check)
+    if failure_state in _DEEPSOURCE_INCOMPLETE_STATES or progress_state in _DEEPSOURCE_INCOMPLETE_STATES:
         return False
     return failure_state == "FAILURE" and progress_state in {"", "COMPLETED", "SUCCESS"}
 
 
+_DEEPSOURCE_INCOMPLETE_STATES = {
+    "CANCELLED",
+    "CANCELED",
+    "TIMED_OUT",
+    "STALE",
+    "IN_PROGRESS",
+    "PENDING",
+    "QUEUED",
+    "WAITING",
+}
+
+
+def _deepsource_check_states(check: dict[str, Any]) -> tuple[str, str]:
+    return (
+        norm_state(check.get("conclusion") or check.get("state") or check.get("external_status")),
+        norm_state(check.get("status") or check.get("analysis_status")),
+    )
+
+
 def _deepsource_current_head_evidence_decision(context: dict[str, Any]) -> str:
-    current_head_sha = str(context.get("current_head_sha") or "").strip()
-    evidence_head_sha = str(context.get("evidence_head_sha") or "").strip()
-    if not current_head_sha:
+    current_head = _deepsource_evidence_head_pair(context)
+    if not current_head[0]:
         return "missing_current_head_sha"
-    if not evidence_head_sha:
+    if not current_head[1]:
         return "missing_evidence_head_sha"
-    if evidence_head_sha != current_head_sha:
+    if current_head[1] != current_head[0]:
         return "evidence_head_mismatch"
     return ""
 
 
+def _deepsource_evidence_head_pair(context: dict[str, Any]) -> tuple[str, str]:
+    return (
+        str(context.get("current_head_sha") or "").strip(),
+        str(context.get("evidence_head_sha") or "").strip(),
+    )
+
+
 def _deepsource_advisory_claim_decision(context: dict[str, Any]) -> str:
-    claimed_issue = str(
+    claimed_issue = _deepsource_claimed_issue(context)
+    if not claimed_issue or not controller.deepsource_claim_is_advisory(claimed_issue):
+        return "missing_advisory_evidence"
+    if _deepsource_claim_has_blocking_signal(claimed_issue):
+        return "deepsource_safety_or_correctness_signal"
+    return ""
+
+
+def _deepsource_claimed_issue(context: dict[str, Any]) -> str:
+    return str(
         context.get("deepsource_advisory_evidence")
         or context.get("claimed_issue")
         or context.get("body")
         or ""
     ).lower()
-    if not claimed_issue or not controller.deepsource_claim_is_advisory(claimed_issue):
-        return "missing_advisory_evidence"
-    if (
-        controller.deepsource_claim_is_blocking(claimed_issue)
-        or controller.deepsource_claim_is_reproducible_patch_claim(claimed_issue)
-    ):
-        return "deepsource_safety_or_correctness_signal"
-    return ""
+
+
+def _deepsource_claim_has_blocking_signal(claimed_issue: str) -> bool:
+    return controller.deepsource_claim_is_blocking(
+        claimed_issue
+    ) or controller.deepsource_claim_is_reproducible_patch_claim(claimed_issue)
 
 
 def _deepsource_codacy_evidence_clear(context: dict[str, Any]) -> bool:

@@ -993,6 +993,83 @@ def test_deepsource_advisory_status_wired_into_readiness_filtering(monkeypatch):
     ASSERTIONS.assertEqual(decision["reasons"], [])
 
 
+def test_deepsource_advisory_status_group_filtering_with_explicit_evidence(monkeypatch):
+    """Readiness ignores multiple evidenced DeepSource Python advisory failures together."""
+    monkeypatch.setattr(
+        flow,
+        "pr_view",
+        lambda _repo, _pr: {
+            "state": "OPEN",
+            "isDraft": False,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "headRefOid": "abc",
+            "statusCheckRollup": [
+                _deepsource_python_failure_check(name="DeepSource: Python"),
+                _deepsource_python_failure_check(name="DeepSource: Python / complexity"),
+            ],
+            "deepsource_advisory_context": _deepsource_advisory_status_context(),
+        },
+    )
+
+    decision = flow.build_decision("owner/repo", "254", ignore_self=True, review_threads=[])
+
+    ASSERTIONS.assertTrue(decision["can_merge"])
+    ASSERTIONS.assertEqual(decision["blockers"], [])
+    ASSERTIONS.assertEqual(decision["reasons"], [])
+
+
+def test_deepsource_advisory_status_group_keeps_unit_test_failure_blocking(monkeypatch):
+    """A non-advisory failure keeps evidenced advisory failures blocking as a group."""
+    monkeypatch.setattr(
+        flow,
+        "pr_view",
+        lambda _repo, _pr: {
+            "state": "OPEN",
+            "isDraft": False,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "headRefOid": "abc",
+            "statusCheckRollup": [
+                _deepsource_python_failure_check(),
+                _check("Unit tests", "FAILURE"),
+            ],
+            "deepsource_advisory_context": _deepsource_advisory_status_context(),
+        },
+    )
+
+    decision = flow.build_decision("owner/repo", "254", ignore_self=True, review_threads=[])
+
+    ASSERTIONS.assertFalse(decision["can_merge"])
+    ASSERTIONS.assertEqual(len(decision["blockers"]), 2)
+    ASSERTIONS.assertEqual(decision["reasons"], ["2 real blocking check(s)"])
+
+
+def test_deepsource_advisory_status_group_without_evidence_stays_blocking(monkeypatch):
+    """Multiple DeepSource advisory failures stay blocking without explicit evidence."""
+    monkeypatch.setattr(
+        flow,
+        "pr_view",
+        lambda _repo, _pr: {
+            "state": "OPEN",
+            "isDraft": False,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "headRefOid": "abc",
+            "statusCheckRollup": [
+                _deepsource_python_failure_check(),
+                _deepsource_python_failure_check(name="DeepSource: Python / complexity"),
+            ],
+        },
+    )
+
+    decision = flow.build_decision("owner/repo", "254", ignore_self=True, review_threads=[])
+
+    ASSERTIONS.assertFalse(decision["can_merge"])
+    ASSERTIONS.assertEqual(len(decision["blockers"]), 2)
+    ASSERTIONS.assertEqual(decision["reasons"], ["2 real blocking check(s)"])
+
+
 def test_deepsource_advisory_status_without_explicit_context_stays_blocking(monkeypatch):
     """Keep DeepSource blocking when advisory evidence is absent from live PR data."""
     monkeypatch.setattr(
@@ -1289,12 +1366,17 @@ def test_deepsource_advisory_status_non_deepsource_failure_manual():
 
 def test_deepsource_advisory_status_non_python_deepsource_failure_manual():
     """Non-Python DeepSource analyzers are never advisory-nonblocking."""
-    decision = flow.deepsource_advisory_status_nonblocking_evidence(
+    for check in (
         _deepsource_python_failure_check(name="DeepSource: JavaScript"),
-        _deepsource_advisory_status_context(),
-    )
-    ASSERTIONS.assertFalse(decision["nonblocking"])
-    ASSERTIONS.assertEqual(decision["reason"], "not_deepsource_python")
+        _deepsource_python_failure_check(name="DeepSource: Ruby", source="deepsource"),
+        _deepsource_python_failure_check(name="Quality Gate", source="deepsource"),
+    ):
+        decision = flow.deepsource_advisory_status_nonblocking_evidence(
+            check,
+            _deepsource_advisory_status_context(),
+        )
+        ASSERTIONS.assertFalse(decision["nonblocking"])
+        ASSERTIONS.assertEqual(decision["reason"], "not_deepsource_python")
 
 
 def test_deepsource_advisory_status_none_safe_name_provider_manual():
@@ -1309,7 +1391,7 @@ def test_deepsource_advisory_status_none_safe_name_provider_manual():
 
 def test_flow_uses_public_controller_deepsource_wrappers():
     """Flow code must not call controller underscore DeepSource helpers directly."""
-    source = inspect.getsource(flow.deepsource_advisory_status_nonblocking_evidence)
+    source = inspect.getsource(flow)
     ASSERTIONS.assertNotIn("controller._deepsource_", source)
 
 
