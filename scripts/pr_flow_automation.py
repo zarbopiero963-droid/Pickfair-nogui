@@ -133,6 +133,12 @@ def split_checks(pr: dict[str, Any], *, ignore_self: bool = True) -> dict[str, l
             "name": check_name(raw),
             "state": norm_state(raw.get("conclusion") or raw.get("state") or raw.get("status")),
             "url": check_url(raw),
+            "provider": str(raw.get("provider") or raw.get("source") or ""),
+            "source": str(raw.get("source") or raw.get("provider") or ""),
+            "status": raw.get("status"),
+            "conclusion": raw.get("conclusion"),
+            "external_status": raw.get("external_status"),
+            "analysis_status": raw.get("analysis_status"),
             "is_self_check": is_self_check(raw),
         }
 
@@ -449,6 +455,7 @@ def build_decision(
     pr = pr_view(repo, pr_number)
     checks = split_checks(pr, ignore_self=ignore_self)
     active_review_threads = eligible_review_comments_for_auto_resolve(review_threads or [])
+    checks = _apply_deepsource_advisory_policy(pr, checks, active_review_threads)
     merge_state = _merge_readiness_state(pr, checks, active_review_threads)
     decision = _base_decision({"repo": repo, "pr_number": pr_number}, pr, checks, merge_state)
     taxonomy_context = _taxonomy_context(pr, checks, merge_state["can_merge"])
@@ -866,44 +873,175 @@ def should_notify_ready_to_merge(context: dict[str, Any]) -> bool:
     )
 
 
+def _apply_deepsource_advisory_policy(
+    pr_data: dict[str, Any],
+    checks: dict[str, list[dict[str, Any]]],
+    active_review_threads: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    blockers = checks.get("blockers", [])
+    if not blockers:
+        return checks
+    kept: list[dict[str, Any]] = []
+    nonblocking: list[dict[str, Any]] = []
+    for check in blockers:
+        other_blockers = [item for item in blockers if item is not check]
+        context = _deepsource_advisory_policy_context(
+            pr_data,
+            checks,
+            active_review_threads,
+            other_blockers,
+        )
+        decision = deepsource_advisory_status_nonblocking_evidence(check, context)
+        if decision.get("nonblocking") is True:
+            nonblocking.append(dict(check, advisory_nonblocking_reason=decision.get("reason")))
+        else:
+            kept.append(check)
+    if not nonblocking:
+        return checks
+    updated = dict(checks)
+    updated["blockers"] = kept
+    updated["deepsource_advisory_nonblocking"] = nonblocking
+    return updated
+
+
+def _deepsource_advisory_policy_context(
+    pr_data: dict[str, Any],
+    checks: dict[str, list[dict[str, Any]]],
+    active_review_threads: list[dict[str, Any]],
+    other_blockers: list[dict[str, Any]],
+) -> dict[str, Any]:
+    configured = _deepsource_advisory_configured_context(pr_data)
+    current_head_sha = str(pr_data.get("headRefOid") or configured.get("current_head_sha") or "").strip()
+    context = {
+        "current_head_sha": current_head_sha,
+        "evidence_head_sha": configured.get("evidence_head_sha"),
+        "evidence_present": configured.get("evidence_present"),
+        "deepsource_advisory_evidence": configured.get("deepsource_advisory_evidence"),
+        "codacy": configured.get("codacy"),
+        "codacy_state": configured.get("codacy_state"),
+        "codacy_annotations_count": configured.get("codacy_annotations_count"),
+        "unresolved_active": len(active_review_threads),
+        "pending_checks": checks.get("pending", []),
+        "pending_checks_count": len(checks.get("pending", [])),
+        "checks_green": not other_blockers and not checks.get("pending", []),
+        "deepsource_required_current_head_check_failing": configured.get(
+            "deepsource_required_current_head_check_failing"
+        ),
+    }
+    context.update(configured)
+    context["current_head_sha"] = current_head_sha
+    context["unresolved_active"] = len(active_review_threads)
+    context["pending_checks"] = checks.get("pending", [])
+    context["pending_checks_count"] = len(checks.get("pending", []))
+    context["checks_green"] = not other_blockers and not checks.get("pending", [])
+    return context
+
+
+def _deepsource_advisory_configured_context(pr_data: dict[str, Any]) -> dict[str, Any]:
+    context = pr_data.get("deepsource_advisory_context")
+    if isinstance(context, dict):
+        return dict(context)
+    return {
+        key: pr_data.get(key)
+        for key in (
+            "current_head_sha",
+            "evidence_head_sha",
+            "evidence_present",
+            "deepsource_advisory_evidence",
+            "claimed_issue",
+            "body",
+            "codacy",
+            "codacy_state",
+            "codacy_annotations_count",
+            "deepsource_required_current_head_check_failing",
+            "required_failing_checks",
+            "failing_current_head_checks",
+            "deepsource_checks",
+            "failing_checks",
+            "checks",
+            "statusCheckRollup",
+        )
+        if key in pr_data
+    }
+
+
 def deepsource_advisory_status_nonblocking_evidence(
     check: dict[str, Any],
     context: dict[str, Any],
 ) -> dict[str, Any]:
     """Return a fail-closed DeepSource advisory external-status decision."""
     manual = {"nonblocking": False, "next_action": "needs_manual"}
+    if not _is_deepsource_python_check(check):
+        return manual | {"reason": "not_deepsource_python"}
+    if not _is_completed_deepsource_failure(check):
+        return manual | {"reason": "deepsource_status_not_completed_failure"}
+    head_decision = _deepsource_current_head_evidence_decision(context)
+    if head_decision:
+        return manual | {"reason": head_decision}
+    current_head_sha = str(context.get("current_head_sha") or "").strip()
+    claim_decision = _deepsource_advisory_claim_decision(context)
+    if claim_decision:
+        return manual | {"reason": claim_decision}
+    if context.get("evidence_present") is not True:
+        return manual | {"reason": "missing_explicit_evidence"}
+    if not _deepsource_codacy_evidence_clear(context):
+        return manual | {"reason": "codacy_evidence_not_clear"}
+    if not _deepsource_merge_evidence_clear(context):
+        return manual | {"reason": "merge_evidence_not_clear"}
+    if context.get("deepsource_required_current_head_check_failing") is not False:
+        return manual | {"reason": "missing_required_deepsource_evidence"}
+    if controller.deepsource_required_current_head_check_failing(context, current_head_sha):
+        return manual | {"reason": "required_deepsource_check_failing"}
+    return {
+        "nonblocking": True,
+        "reason": "deepsource_advisory_completed_failure_nonblocking",
+        "next_action": "nonblocking",
+    }
+
+
+def _is_deepsource_python_check(check: dict[str, Any]) -> bool:
     name = check_name(check)
     provider = str(check.get("provider") or check.get("source") or name)
     normalized_provider = controller.review_provider_from_author(provider) or provider.strip().lower()
-    if not (controller.is_deepsource_review_provider(normalized_provider) and "python" in name.lower()):
-        return manual | {"reason": "not_deepsource_python"}
+    return controller.is_deepsource_review_provider(normalized_provider) and "python" in str(name).lower()
+
+
+def _is_completed_deepsource_failure(check: dict[str, Any]) -> bool:
     status = norm_state(check.get("conclusion") or check.get("state") or check.get("external_status"))
     analysis_status = norm_state(check.get("status") or check.get("analysis_status"))
-    if status != "FAILURE" or analysis_status != "COMPLETED":
-        return manual | {"reason": "deepsource_status_not_completed_failure"}
+    return status == "FAILURE" and analysis_status == "COMPLETED"
+
+
+def _deepsource_current_head_evidence_decision(context: dict[str, Any]) -> str:
     current_head_sha = str(context.get("current_head_sha") or "").strip()
     evidence_head_sha = str(context.get("evidence_head_sha") or "").strip()
     if not current_head_sha:
-        return manual | {"reason": "missing_current_head_sha"}
+        return "missing_current_head_sha"
     if not evidence_head_sha:
-        return manual | {"reason": "missing_evidence_head_sha"}
+        return "missing_evidence_head_sha"
     if evidence_head_sha != current_head_sha:
-        return manual | {"reason": "evidence_head_mismatch"}
+        return "evidence_head_mismatch"
+    return ""
+
+
+def _deepsource_advisory_claim_decision(context: dict[str, Any]) -> str:
     claimed_issue = str(
         context.get("deepsource_advisory_evidence")
         or context.get("claimed_issue")
         or context.get("body")
         or ""
     ).lower()
-    if not claimed_issue or not controller._deepsource_claim_is_advisory(claimed_issue):
-        return manual | {"reason": "missing_advisory_evidence"}
+    if not claimed_issue or not controller.deepsource_claim_is_advisory(claimed_issue):
+        return "missing_advisory_evidence"
     if (
-        controller._deepsource_claim_is_blocking(claimed_issue)
-        or controller._deepsource_claim_is_reproducible_patch_claim(claimed_issue)
+        controller.deepsource_claim_is_blocking(claimed_issue)
+        or controller.deepsource_claim_is_reproducible_patch_claim(claimed_issue)
     ):
-        return manual | {"reason": "deepsource_safety_or_correctness_signal"}
-    if context.get("evidence_present") is not True:
-        return manual | {"reason": "missing_explicit_evidence"}
+        return "deepsource_safety_or_correctness_signal"
+    return ""
+
+
+def _deepsource_codacy_evidence_clear(context: dict[str, Any]) -> bool:
     codacy = context.get("codacy")
     codacy_dict = codacy if isinstance(codacy, dict) else {}
     codacy_state = norm_state(context.get("codacy_state") or codacy_dict.get("state"))
@@ -911,23 +1049,22 @@ def deepsource_advisory_status_nonblocking_evidence(
         context.get("codacy_annotations_count", codacy_dict.get("annotations_count")),
         -1,
     )
-    if codacy_state != "SUCCESS" or annotations_count != 0:
-        return manual | {"reason": "codacy_evidence_not_clear"}
+    return codacy_state == "SUCCESS" and annotations_count == 0
+
+
+def _deepsource_merge_evidence_clear(context: dict[str, Any]) -> bool:
     unresolved_active = controller.safe_nonnegative_int(context.get("unresolved_active"), -1)
+    return (
+        unresolved_active == 0
+        and _deepsource_pending_checks_clear(context)
+        and context.get("checks_green") is True
+    )
+
+
+def _deepsource_pending_checks_clear(context: dict[str, Any]) -> bool:
     pending_checks = context.get("pending_checks")
     pending_checks_count = controller.safe_nonnegative_int(context.get("pending_checks_count"), -1)
-    no_pending_checks = pending_checks == [] or pending_checks_count == 0
-    if unresolved_active != 0 or not no_pending_checks or context.get("checks_green") is not True:
-        return manual | {"reason": "merge_evidence_not_clear"}
-    if context.get("deepsource_required_current_head_check_failing") is not False:
-        return manual | {"reason": "missing_required_deepsource_evidence"}
-    if controller._deepsource_required_current_head_check_failing(context, current_head_sha):
-        return manual | {"reason": "required_deepsource_check_failing"}
-    return {
-        "nonblocking": True,
-        "reason": "deepsource_advisory_completed_failure_nonblocking",
-        "next_action": "nonblocking",
-    }
+    return isinstance(pending_checks, list) and not pending_checks and pending_checks_count == 0
 
 
 def eligible_review_comments_for_auto_resolve(

@@ -6763,6 +6763,21 @@ def test_deepsource_complexity_with_green_evidence_is_not_patch_required():
     ASSERTIONS.assertNotEqual(triage["decision"], "PATCH_REQUIRED")
 
 
+def test_public_deepsource_wrappers_preserve_private_gate_behavior():
+    """Public DeepSource wrappers expose existing private logic without changing triage."""
+    advisory = "cyclomatic complexity readability advisory"
+    blocking = "readability advisory but fail-open regression remains"
+    context = {
+        "deepsource_required_current_head_check_failing": True,
+        "deepsource_check_head_sha": "abc",
+    }
+
+    ASSERTIONS.assertTrue(controller.deepsource_claim_is_advisory(advisory))
+    ASSERTIONS.assertTrue(controller.deepsource_claim_is_blocking(blocking))
+    ASSERTIONS.assertFalse(controller.deepsource_claim_is_reproducible_patch_claim(advisory))
+    ASSERTIONS.assertTrue(controller.deepsource_required_current_head_check_failing(context, "abc"))
+
+
 def test_deepsource_required_fix_wording_advisory_routes_needs_manual():
     evidence = {
         "current_head_sha": "abc",

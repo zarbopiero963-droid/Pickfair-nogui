@@ -937,6 +937,7 @@ def _deepsource_advisory_status_context(**extra: Any) -> dict[str, Any]:
         "codacy_annotations_count": 0,
         "unresolved_active": 0,
         "pending_checks": [],
+        "pending_checks_count": 0,
         "checks_green": True,
         "deepsource_required_current_head_check_failing": False,
     }
@@ -952,6 +953,39 @@ def test_deepsource_advisory_status_full_evidence_nonblocking():
     )
     ASSERTIONS.assertTrue(decision["nonblocking"])
     ASSERTIONS.assertEqual(decision["next_action"], "nonblocking")
+
+
+def test_deepsource_advisory_status_wired_into_readiness_filtering(monkeypatch):
+    """Readiness ignores only a fully evidenced DeepSource Python advisory failure."""
+    monkeypatch.setattr(
+        flow,
+        "pr_view",
+        lambda _repo, _pr: {
+            "state": "OPEN",
+            "isDraft": False,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "headRefOid": "abc",
+            "statusCheckRollup": [_deepsource_python_failure_check()],
+            "deepsource_advisory_context": _deepsource_advisory_status_context(),
+        },
+    )
+
+    decision = flow.build_decision("owner/repo", "254", ignore_self=True, review_threads=[])
+
+    ASSERTIONS.assertTrue(decision["can_merge"])
+    ASSERTIONS.assertEqual(decision["blockers"], [])
+    ASSERTIONS.assertEqual(decision["reasons"], [])
+
+
+def test_deepsource_advisory_status_missing_current_head_sha_manual():
+    """Missing current-head SHA keeps DeepSource advisory status manual."""
+    decision = flow.deepsource_advisory_status_nonblocking_evidence(
+        _deepsource_python_failure_check(),
+        _deepsource_advisory_status_context(current_head_sha=""),
+    )
+    ASSERTIONS.assertFalse(decision["nonblocking"])
+    ASSERTIONS.assertEqual(decision["reason"], "missing_current_head_sha")
 
 
 def test_deepsource_advisory_status_missing_evidence_head_sha_manual():
@@ -972,6 +1006,16 @@ def test_deepsource_advisory_status_stale_evidence_head_sha_manual():
     )
     ASSERTIONS.assertFalse(decision["nonblocking"])
     ASSERTIONS.assertEqual(decision["reason"], "evidence_head_mismatch")
+
+
+def test_deepsource_advisory_status_missing_explicit_evidence_manual():
+    """Advisory words without explicit evidence flag keep DeepSource manual."""
+    decision = flow.deepsource_advisory_status_nonblocking_evidence(
+        _deepsource_python_failure_check(),
+        _deepsource_advisory_status_context(evidence_present=False),
+    )
+    ASSERTIONS.assertFalse(decision["nonblocking"])
+    ASSERTIONS.assertEqual(decision["reason"], "missing_explicit_evidence")
 
 
 def test_deepsource_advisory_status_missing_codacy_annotations_manual():
@@ -998,6 +1042,57 @@ def test_deepsource_advisory_status_codacy_action_required_or_annotations_manual
         )
         ASSERTIONS.assertFalse(decision["nonblocking"])
         ASSERTIONS.assertEqual(decision["reason"], "codacy_evidence_not_clear")
+
+
+def test_deepsource_advisory_status_merge_evidence_not_clear_manual():
+    """Unresolved, pending, or non-green checks keep advisory status manual."""
+    contexts = (
+        _deepsource_advisory_status_context(unresolved_active=1),
+        _deepsource_advisory_status_context(
+            pending_checks=[{"name": "Unit tests", "state": "PENDING"}],
+            pending_checks_count=0,
+        ),
+        _deepsource_advisory_status_context(checks_green=False),
+    )
+    for context in contexts:
+        decision = flow.deepsource_advisory_status_nonblocking_evidence(
+            _deepsource_python_failure_check(),
+            context,
+        )
+        ASSERTIONS.assertFalse(decision["nonblocking"])
+        ASSERTIONS.assertEqual(decision["reason"], "merge_evidence_not_clear")
+
+
+def test_deepsource_advisory_status_missing_required_deepsource_evidence_manual():
+    """Missing required DeepSource evidence keeps advisory status manual."""
+    context = _deepsource_advisory_status_context()
+    context.pop("deepsource_required_current_head_check_failing")
+    decision = flow.deepsource_advisory_status_nonblocking_evidence(
+        _deepsource_python_failure_check(),
+        context,
+    )
+    ASSERTIONS.assertFalse(decision["nonblocking"])
+    ASSERTIONS.assertEqual(decision["reason"], "missing_required_deepsource_evidence")
+
+
+def test_deepsource_advisory_status_required_deepsource_check_failing_manual():
+    """A required current-head DeepSource failure keeps advisory status manual."""
+    decision = flow.deepsource_advisory_status_nonblocking_evidence(
+        _deepsource_python_failure_check(),
+        _deepsource_advisory_status_context(
+            deepsource_required_current_head_check_failing=False,
+            required_failing_checks=[
+                {
+                    "name": "DeepSource: Python",
+                    "provider": "deepsource",
+                    "state": "FAILURE",
+                    "head_sha": "abc",
+                }
+            ],
+        ),
+    )
+    ASSERTIONS.assertFalse(decision["nonblocking"])
+    ASSERTIONS.assertEqual(decision["reason"], "required_deepsource_check_failing")
 
 
 def test_deepsource_advisory_status_noncompleted_deepsource_manual():
@@ -1029,14 +1124,15 @@ def test_deepsource_advisory_status_url_only_advisory_words_manual():
 
 def test_deepsource_advisory_status_safety_security_fail_open_manual():
     """DeepSource safety/security/fail-open/crash signals stay manual."""
-    decision = flow.deepsource_advisory_status_nonblocking_evidence(
-        _deepsource_python_failure_check(),
-        _deepsource_advisory_status_context(
-            deepsource_advisory_evidence="Readability advisory but fail-open crash regression remains"
-        ),
-    )
-    ASSERTIONS.assertFalse(decision["nonblocking"])
-    ASSERTIONS.assertEqual(decision["reason"], "deepsource_safety_or_correctness_signal")
+    for signal in ("security", "fail-open", "crash", "correctness", "regression"):
+        decision = flow.deepsource_advisory_status_nonblocking_evidence(
+            _deepsource_python_failure_check(),
+            _deepsource_advisory_status_context(
+                deepsource_advisory_evidence=f"Readability advisory but {signal} remains"
+            ),
+        )
+        ASSERTIONS.assertFalse(decision["nonblocking"])
+        ASSERTIONS.assertEqual(decision["reason"], "deepsource_safety_or_correctness_signal")
 
 
 def test_deepsource_advisory_status_non_deepsource_failure_manual():
@@ -1047,6 +1143,32 @@ def test_deepsource_advisory_status_non_deepsource_failure_manual():
     )
     ASSERTIONS.assertFalse(decision["nonblocking"])
     ASSERTIONS.assertEqual(decision["reason"], "not_deepsource_python")
+
+
+def test_deepsource_advisory_status_non_python_deepsource_failure_manual():
+    """Non-Python DeepSource analyzers are never advisory-nonblocking."""
+    decision = flow.deepsource_advisory_status_nonblocking_evidence(
+        _deepsource_python_failure_check(name="DeepSource: JavaScript"),
+        _deepsource_advisory_status_context(),
+    )
+    ASSERTIONS.assertFalse(decision["nonblocking"])
+    ASSERTIONS.assertEqual(decision["reason"], "not_deepsource_python")
+
+
+def test_deepsource_advisory_status_none_safe_name_provider_manual():
+    """None check name/provider/source fields fail closed instead of crashing."""
+    decision = flow.deepsource_advisory_status_nonblocking_evidence(
+        _deepsource_python_failure_check(name=None, provider=None, source=None),
+        _deepsource_advisory_status_context(),
+    )
+    ASSERTIONS.assertFalse(decision["nonblocking"])
+    ASSERTIONS.assertEqual(decision["reason"], "not_deepsource_python")
+
+
+def test_flow_uses_public_controller_deepsource_wrappers():
+    """Flow code must not call controller underscore DeepSource helpers directly."""
+    source = inspect.getsource(flow.deepsource_advisory_status_nonblocking_evidence)
+    ASSERTIONS.assertNotIn("controller._deepsource_", source)
 
 
 def test_auto_resolve_review_comments_contract_evidence_only_filters_strictly():
