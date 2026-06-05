@@ -978,8 +978,61 @@ def test_deepsource_advisory_status_wired_into_readiness_filtering(monkeypatch):
     ASSERTIONS.assertEqual(decision["reasons"], [])
 
 
+def test_deepsource_advisory_status_without_explicit_context_stays_blocking(monkeypatch):
+    """Keep DeepSource blocking when advisory evidence is not in explicit context."""
+    monkeypatch.setattr(
+        flow,
+        "pr_view",
+        lambda _repo, _pr: {
+            "state": "OPEN",
+            "isDraft": False,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "headRefOid": "abc",
+            "statusCheckRollup": [_deepsource_python_failure_check()],
+            "current_head_sha": "abc",
+            "evidence_head_sha": "abc",
+            "evidence_present": True,
+            "deepsource_advisory_evidence": "Cyclomatic complexity readability advisory",
+            "codacy_state": "SUCCESS",
+            "codacy_annotations_count": 0,
+            "deepsource_required_current_head_check_failing": False,
+        },
+    )
+
+    decision = flow.build_decision("owner/repo", "254", ignore_self=True, review_threads=[])
+
+    ASSERTIONS.assertFalse(decision["can_merge"])
+    ASSERTIONS.assertEqual(len(decision["blockers"]), 1)
+    ASSERTIONS.assertEqual(decision["reasons"], ["1 real blocking check(s)"])
+
+
+def test_deepsource_advisory_status_does_not_guess_current_head_from_pr(monkeypatch):
+    """Require explicit current-head evidence even when PR headRefOid is available."""
+    context = _deepsource_advisory_status_context(current_head_sha="")
+    monkeypatch.setattr(
+        flow,
+        "pr_view",
+        lambda _repo, _pr: {
+            "state": "OPEN",
+            "isDraft": False,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "headRefOid": "abc",
+            "statusCheckRollup": [_deepsource_python_failure_check()],
+            "deepsource_advisory_context": context,
+        },
+    )
+
+    decision = flow.build_decision("owner/repo", "254", ignore_self=True, review_threads=[])
+
+    ASSERTIONS.assertFalse(decision["can_merge"])
+    ASSERTIONS.assertEqual(len(decision["blockers"]), 1)
+    ASSERTIONS.assertEqual(decision["reasons"], ["1 real blocking check(s)"])
+
+
 def test_deepsource_advisory_status_missing_current_head_sha_manual():
-    """Missing current-head SHA keeps DeepSource advisory status manual."""
+    """Keep DeepSource advisory status manual without current-head SHA."""
     decision = flow.deepsource_advisory_status_nonblocking_evidence(
         _deepsource_python_failure_check(),
         _deepsource_advisory_status_context(current_head_sha=""),
@@ -1010,12 +1063,13 @@ def test_deepsource_advisory_status_stale_evidence_head_sha_manual():
 
 def test_deepsource_advisory_status_missing_explicit_evidence_manual():
     """Advisory words without explicit evidence flag keep DeepSource manual."""
-    decision = flow.deepsource_advisory_status_nonblocking_evidence(
-        _deepsource_python_failure_check(),
-        _deepsource_advisory_status_context(evidence_present=False),
-    )
-    ASSERTIONS.assertFalse(decision["nonblocking"])
-    ASSERTIONS.assertEqual(decision["reason"], "missing_explicit_evidence")
+    for evidence_present in (False, None, "true", 1):
+        decision = flow.deepsource_advisory_status_nonblocking_evidence(
+            _deepsource_python_failure_check(),
+            _deepsource_advisory_status_context(evidence_present=evidence_present),
+        )
+        ASSERTIONS.assertFalse(decision["nonblocking"])
+        ASSERTIONS.assertEqual(decision["reason"], "missing_explicit_evidence")
 
 
 def test_deepsource_advisory_status_missing_codacy_annotations_manual():
@@ -1065,14 +1119,18 @@ def test_deepsource_advisory_status_merge_evidence_not_clear_manual():
 
 def test_deepsource_advisory_status_missing_required_deepsource_evidence_manual():
     """Missing required DeepSource evidence keeps advisory status manual."""
-    context = _deepsource_advisory_status_context()
-    context.pop("deepsource_required_current_head_check_failing")
-    decision = flow.deepsource_advisory_status_nonblocking_evidence(
-        _deepsource_python_failure_check(),
-        context,
-    )
-    ASSERTIONS.assertFalse(decision["nonblocking"])
-    ASSERTIONS.assertEqual(decision["reason"], "missing_required_deepsource_evidence")
+    contexts = []
+    missing = _deepsource_advisory_status_context()
+    missing.pop("deepsource_required_current_head_check_failing")
+    contexts.append(missing)
+    contexts.append(_deepsource_advisory_status_context(deepsource_required_current_head_check_failing=True))
+    for context in contexts:
+        decision = flow.deepsource_advisory_status_nonblocking_evidence(
+            _deepsource_python_failure_check(),
+            context,
+        )
+        ASSERTIONS.assertFalse(decision["nonblocking"])
+        ASSERTIONS.assertEqual(decision["reason"], "missing_required_deepsource_evidence")
 
 
 def test_deepsource_advisory_status_required_deepsource_check_failing_manual():

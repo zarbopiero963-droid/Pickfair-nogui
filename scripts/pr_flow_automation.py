@@ -879,7 +879,7 @@ def _apply_deepsource_advisory_policy(
     active_review_threads: list[dict[str, Any]],
 ) -> dict[str, list[dict[str, Any]]]:
     blockers = checks.get("blockers", [])
-    if not blockers:
+    if not blockers or not _has_explicit_deepsource_advisory_context(pr_data):
         return checks
     kept: list[dict[str, Any]] = []
     nonblocking: list[dict[str, Any]] = []
@@ -911,9 +911,8 @@ def _deepsource_advisory_policy_context(
     other_blockers: list[dict[str, Any]],
 ) -> dict[str, Any]:
     configured = _deepsource_advisory_configured_context(pr_data)
-    current_head_sha = str(pr_data.get("headRefOid") or configured.get("current_head_sha") or "").strip()
     context = {
-        "current_head_sha": current_head_sha,
+        "current_head_sha": configured.get("current_head_sha"),
         "evidence_head_sha": configured.get("evidence_head_sha"),
         "evidence_present": configured.get("evidence_present"),
         "deepsource_advisory_evidence": configured.get("deepsource_advisory_evidence"),
@@ -929,7 +928,6 @@ def _deepsource_advisory_policy_context(
         ),
     }
     context.update(configured)
-    context["current_head_sha"] = current_head_sha
     context["unresolved_active"] = len(active_review_threads)
     context["pending_checks"] = checks.get("pending", [])
     context["pending_checks_count"] = len(checks.get("pending", []))
@@ -937,32 +935,15 @@ def _deepsource_advisory_policy_context(
     return context
 
 
+def _has_explicit_deepsource_advisory_context(pr_data: dict[str, Any]) -> bool:
+    return isinstance(pr_data.get("deepsource_advisory_context"), dict)
+
+
 def _deepsource_advisory_configured_context(pr_data: dict[str, Any]) -> dict[str, Any]:
     context = pr_data.get("deepsource_advisory_context")
     if isinstance(context, dict):
         return dict(context)
-    return {
-        key: pr_data.get(key)
-        for key in (
-            "current_head_sha",
-            "evidence_head_sha",
-            "evidence_present",
-            "deepsource_advisory_evidence",
-            "claimed_issue",
-            "body",
-            "codacy",
-            "codacy_state",
-            "codacy_annotations_count",
-            "deepsource_required_current_head_check_failing",
-            "required_failing_checks",
-            "failing_current_head_checks",
-            "deepsource_checks",
-            "failing_checks",
-            "checks",
-            "statusCheckRollup",
-        )
-        if key in pr_data
-    }
+    return {}
 
 
 def deepsource_advisory_status_nonblocking_evidence(
@@ -971,32 +952,66 @@ def deepsource_advisory_status_nonblocking_evidence(
 ) -> dict[str, Any]:
     """Return a fail-closed DeepSource advisory external-status decision."""
     manual = {"nonblocking": False, "next_action": "needs_manual"}
-    if not _is_deepsource_python_check(check):
-        return manual | {"reason": "not_deepsource_python"}
-    if not _is_completed_deepsource_failure(check):
-        return manual | {"reason": "deepsource_status_not_completed_failure"}
-    head_decision = _deepsource_current_head_evidence_decision(context)
-    if head_decision:
-        return manual | {"reason": head_decision}
-    current_head_sha = str(context.get("current_head_sha") or "").strip()
-    claim_decision = _deepsource_advisory_claim_decision(context)
-    if claim_decision:
-        return manual | {"reason": claim_decision}
-    if context.get("evidence_present") is not True:
-        return manual | {"reason": "missing_explicit_evidence"}
-    if not _deepsource_codacy_evidence_clear(context):
-        return manual | {"reason": "codacy_evidence_not_clear"}
-    if not _deepsource_merge_evidence_clear(context):
-        return manual | {"reason": "merge_evidence_not_clear"}
-    if context.get("deepsource_required_current_head_check_failing") is not False:
-        return manual | {"reason": "missing_required_deepsource_evidence"}
-    if controller.deepsource_required_current_head_check_failing(context, current_head_sha):
-        return manual | {"reason": "required_deepsource_check_failing"}
+    reason = _deepsource_advisory_status_manual_reason(check, context)
+    if reason:
+        return manual | {"reason": reason}
     return {
         "nonblocking": True,
         "reason": "deepsource_advisory_completed_failure_nonblocking",
         "next_action": "nonblocking",
     }
+
+
+def _deepsource_advisory_status_manual_reason(check: dict[str, Any], context: dict[str, Any]) -> str:
+    check_reason = _deepsource_advisory_check_reason(check)
+    if check_reason:
+        return check_reason
+    evidence_reason = _deepsource_advisory_evidence_reason(context)
+    if evidence_reason:
+        return evidence_reason
+    return _deepsource_required_check_reason(context)
+
+
+def _deepsource_advisory_check_reason(check: dict[str, Any]) -> str:
+    if not _is_deepsource_python_check(check):
+        return "not_deepsource_python"
+    if not _is_completed_deepsource_failure(check):
+        return "deepsource_status_not_completed_failure"
+    return ""
+
+
+def _deepsource_advisory_evidence_reason(context: dict[str, Any]) -> str:
+    for decision in (
+        _deepsource_current_head_evidence_decision(context),
+        _deepsource_advisory_claim_decision(context),
+        _deepsource_explicit_evidence_decision(context),
+        _deepsource_codacy_evidence_decision(context),
+        _deepsource_merge_evidence_decision(context),
+    ):
+        if decision:
+            return decision
+    return ""
+
+
+def _deepsource_explicit_evidence_decision(context: dict[str, Any]) -> str:
+    return "" if context.get("evidence_present") is True else "missing_explicit_evidence"
+
+
+def _deepsource_codacy_evidence_decision(context: dict[str, Any]) -> str:
+    return "" if _deepsource_codacy_evidence_clear(context) else "codacy_evidence_not_clear"
+
+
+def _deepsource_merge_evidence_decision(context: dict[str, Any]) -> str:
+    return "" if _deepsource_merge_evidence_clear(context) else "merge_evidence_not_clear"
+
+
+def _deepsource_required_check_reason(context: dict[str, Any]) -> str:
+    current_head_sha = str(context.get("current_head_sha") or "").strip()
+    if context.get("deepsource_required_current_head_check_failing") is not False:
+        return "missing_required_deepsource_evidence"
+    if controller.deepsource_required_current_head_check_failing(context, current_head_sha):
+        return "required_deepsource_check_failing"
+    return ""
 
 
 def _is_deepsource_python_check(check: dict[str, Any]) -> bool:
