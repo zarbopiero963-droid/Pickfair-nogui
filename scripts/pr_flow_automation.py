@@ -885,14 +885,24 @@ def _apply_deepsource_advisory_policy(
     if not advisory:
         return checks
     context = _deepsource_advisory_policy_context(pr_data, checks, active_review_threads, kept)
-    decisions = [deepsource_advisory_status_nonblocking_evidence(check, context) for check in advisory]
-    if not all(decision.get("nonblocking") is True for decision in decisions):
+    decisions = _deepsource_advisory_policy_decisions(advisory, context)
+    if not _deepsource_advisory_decisions_nonblocking(decisions):
         return checks
-    nonblocking = _deepsource_nonblocking_checks(advisory, decisions)
     updated = dict(checks)
     updated["blockers"] = kept
-    updated["deepsource_advisory_nonblocking"] = nonblocking
+    updated["deepsource_advisory_nonblocking"] = _deepsource_nonblocking_checks(advisory, decisions)
     return updated
+
+
+def _deepsource_advisory_policy_decisions(
+    advisory: list[dict[str, Any]],
+    context: dict[str, Any],
+) -> list[dict[str, Any]]:
+    return [deepsource_advisory_status_nonblocking_evidence(check, context) for check in advisory]
+
+
+def _deepsource_advisory_decisions_nonblocking(decisions: list[dict[str, Any]]) -> bool:
+    return all(decision.get("nonblocking") is True for decision in decisions)
 
 
 def _split_deepsource_advisory_blockers(
@@ -926,7 +936,17 @@ def _deepsource_advisory_policy_context(
     pending = checks.get("pending", [])
     context = dict(configured)
     context.update(_deepsource_merge_policy_context(active_review_threads, pending, non_advisory_blockers))
+    context["unresolved_active"] = _deepsource_policy_unresolved_active(configured, active_review_threads)
     return context
+
+
+def _deepsource_policy_unresolved_active(
+    configured: dict[str, Any],
+    active_review_threads: list[dict[str, Any]],
+) -> Any:
+    if "unresolved_active" in configured:
+        return configured.get("unresolved_active")
+    return len(active_review_threads)
 
 
 def _deepsource_merge_policy_context(
@@ -965,6 +985,7 @@ def _deepsource_advisory_top_level_context(pr_data: dict[str, Any]) -> dict[str,
         "codacy_annotations_count",
         "github_annotations_count",
         "github_annotations",
+        "unresolved_active",
         "deepsource_required_current_head_check_failing",
     )
     context = {key: pr_data.get(key) for key in keys if key in pr_data}

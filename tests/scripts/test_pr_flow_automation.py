@@ -1019,6 +1019,81 @@ def test_deepsource_advisory_status_group_filtering_with_explicit_evidence(monke
     ASSERTIONS.assertEqual(decision["reasons"], [])
 
 
+def test_deepsource_advisory_status_preserves_explicit_unresolved_active(monkeypatch):
+    """Explicit unresolved review evidence remains blocking even without thread data."""
+    monkeypatch.setattr(
+        flow,
+        "pr_view",
+        lambda _repo, _pr: {
+            "state": "OPEN",
+            "isDraft": False,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "headRefOid": "abc",
+            "statusCheckRollup": [_deepsource_python_failure_check()],
+            "deepsource_advisory_context": _deepsource_advisory_status_context(unresolved_active=1),
+        },
+    )
+
+    decision = flow.build_decision("owner/repo", "254", ignore_self=True, review_threads=[])
+
+    ASSERTIONS.assertFalse(decision["can_merge"])
+    ASSERTIONS.assertEqual(len(decision["blockers"]), 1)
+    ASSERTIONS.assertEqual(decision["reasons"], ["1 real blocking check(s)"])
+
+
+def test_deepsource_advisory_status_preserves_top_level_unresolved_active(monkeypatch):
+    """Top-level unresolved review evidence remains blocking."""
+    context = _deepsource_advisory_status_context(unresolved_active=1)
+    context.pop("deepsource_advisory_context", None)
+    monkeypatch.setattr(
+        flow,
+        "pr_view",
+        lambda _repo, _pr: {
+            "state": "OPEN",
+            "isDraft": False,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "headRefOid": "abc",
+            "statusCheckRollup": [_deepsource_python_failure_check()],
+            **context,
+        },
+    )
+
+    decision = flow.build_decision("owner/repo", "254", ignore_self=True, review_threads=[])
+
+    ASSERTIONS.assertFalse(decision["can_merge"])
+    ASSERTIONS.assertEqual(len(decision["blockers"]), 1)
+    ASSERTIONS.assertEqual(decision["reasons"], ["1 real blocking check(s)"])
+
+
+def test_deepsource_advisory_status_malformed_unresolved_active_manual():
+    """Malformed explicit unresolved evidence stays manual instead of becoming clean."""
+    decision = flow.deepsource_advisory_status_nonblocking_evidence(
+        _deepsource_python_failure_check(),
+        _deepsource_advisory_status_context(unresolved_active="unknown"),
+    )
+
+    ASSERTIONS.assertFalse(decision["nonblocking"])
+    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual")
+    ASSERTIONS.assertEqual(decision["reason"], "merge_evidence_not_clear")
+
+
+def test_deepsource_advisory_policy_context_derives_missing_unresolved_active():
+    """Missing explicit unresolved evidence derives from active review threads."""
+    configured = _deepsource_advisory_status_context()
+    configured.pop("unresolved_active")
+
+    context = flow._deepsource_advisory_policy_context(
+        {"deepsource_advisory_context": configured},
+        {"pending": []},
+        [{"id": "active-review-thread"}],
+        [],
+    )
+
+    ASSERTIONS.assertEqual(context["unresolved_active"], 1)
+
+
 def test_deepsource_advisory_status_group_keeps_unit_test_failure_blocking(monkeypatch):
     """A non-advisory failure keeps evidenced advisory failures blocking as a group."""
     monkeypatch.setattr(
@@ -2026,7 +2101,7 @@ def test_taxonomy_summary_prioritizes_pending_and_manual_blockers():
 
 
 def test_route_blocker_action_test_failure_requires_clear_logs():
-    """test_failure routes to autofix only with explicit clear logs context."""
+    """Test_failure routes to autofix only with explicit clear logs context."""
     ASSERTIONS.assertEqual(flow.route_blocker_action("test_failure", {}), "needs_manual")
     ASSERTIONS.assertEqual(flow.route_blocker_action("test_failure", {"logs_clear": True}), "fix_test_failure")
 
