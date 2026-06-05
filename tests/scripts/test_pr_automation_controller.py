@@ -6778,6 +6778,11 @@ def test_public_deepsource_wrappers_preserve_private_gate_behavior():
     ASSERTIONS.assertTrue(controller.deepsource_required_current_head_check_failing(context, "abc"))
 
 
+def test_public_deepsource_required_wrapper_non_dict_context_fails_closed():
+    """Malformed wrapper context fails closed instead of crashing."""
+    ASSERTIONS.assertFalse(controller.deepsource_required_current_head_check_failing("bad context", "abc"))
+
+
 def test_deepsource_required_fix_wording_advisory_routes_needs_manual():
     evidence = {
         "current_head_sha": "abc",

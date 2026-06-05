@@ -955,6 +955,21 @@ def test_deepsource_advisory_status_full_evidence_nonblocking():
     ASSERTIONS.assertEqual(decision["next_action"], "nonblocking")
 
 
+def test_deepsource_advisory_status_context_shape_nonblocking():
+    """GitHub StatusContext DeepSource Python failure is nonblocking with explicit evidence."""
+    decision = flow.deepsource_advisory_status_nonblocking_evidence(
+        {
+            "context": "DeepSource: Python",
+            "state": "FAILURE",
+            "targetUrl": "https://deepsource.io/gh/owner/repo/run/python/",
+        },
+        _deepsource_advisory_status_context(github_codacy_state="SUCCESS", github_annotations_count=0),
+    )
+
+    ASSERTIONS.assertTrue(decision["nonblocking"])
+    ASSERTIONS.assertEqual(decision["next_action"], "nonblocking")
+
+
 def test_deepsource_advisory_status_wired_into_readiness_filtering(monkeypatch):
     """Readiness ignores only a fully evidenced DeepSource Python advisory failure."""
     monkeypatch.setattr(
@@ -979,7 +994,29 @@ def test_deepsource_advisory_status_wired_into_readiness_filtering(monkeypatch):
 
 
 def test_deepsource_advisory_status_without_explicit_context_stays_blocking(monkeypatch):
-    """Keep DeepSource blocking when advisory evidence is not in explicit context."""
+    """Keep DeepSource blocking when advisory evidence is absent from live PR data."""
+    monkeypatch.setattr(
+        flow,
+        "pr_view",
+        lambda _repo, _pr: {
+            "state": "OPEN",
+            "isDraft": False,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "headRefOid": "abc",
+            "statusCheckRollup": [_deepsource_python_failure_check()],
+        },
+    )
+
+    decision = flow.build_decision("owner/repo", "254", ignore_self=True, review_threads=[])
+
+    ASSERTIONS.assertFalse(decision["can_merge"])
+    ASSERTIONS.assertEqual(len(decision["blockers"]), 1)
+    ASSERTIONS.assertEqual(decision["reasons"], ["1 real blocking check(s)"])
+
+
+def test_deepsource_advisory_status_live_top_level_evidence_can_filter(monkeypatch):
+    """Explicit top-level advisory evidence can remove the advisory blocker."""
     monkeypatch.setattr(
         flow,
         "pr_view",
@@ -994,17 +1031,17 @@ def test_deepsource_advisory_status_without_explicit_context_stays_blocking(monk
             "evidence_head_sha": "abc",
             "evidence_present": True,
             "deepsource_advisory_evidence": "Cyclomatic complexity readability advisory",
-            "codacy_state": "SUCCESS",
-            "codacy_annotations_count": 0,
+            "github_codacy_state": "SUCCESS",
+            "github_annotations_count": 0,
             "deepsource_required_current_head_check_failing": False,
         },
     )
 
     decision = flow.build_decision("owner/repo", "254", ignore_self=True, review_threads=[])
 
-    ASSERTIONS.assertFalse(decision["can_merge"])
-    ASSERTIONS.assertEqual(len(decision["blockers"]), 1)
-    ASSERTIONS.assertEqual(decision["reasons"], ["1 real blocking check(s)"])
+    ASSERTIONS.assertTrue(decision["can_merge"])
+    ASSERTIONS.assertEqual(decision["blockers"], [])
+    ASSERTIONS.assertEqual(decision["reasons"], [])
 
 
 def test_deepsource_advisory_status_does_not_guess_current_head_from_pr(monkeypatch):
@@ -1084,11 +1121,54 @@ def test_deepsource_advisory_status_missing_codacy_annotations_manual():
     ASSERTIONS.assertEqual(decision["reason"], "codacy_evidence_not_clear")
 
 
+def test_deepsource_advisory_status_github_codacy_count_clear():
+    """Top-level GitHub Codacy state and annotation count can prove Codacy clear."""
+    context = _deepsource_advisory_status_context(
+        codacy_state=None,
+        codacy_annotations_count=None,
+        github_codacy_state="SUCCESS",
+        github_annotations_count=0,
+    )
+    decision = flow.deepsource_advisory_status_nonblocking_evidence(
+        _deepsource_python_failure_check(),
+        context,
+    )
+
+    ASSERTIONS.assertTrue(decision["nonblocking"])
+
+
+def test_deepsource_advisory_status_github_annotations_list_clear():
+    """A GitHub annotations list is accepted as explicit annotation evidence."""
+    context = _deepsource_advisory_status_context(
+        codacy_state=None,
+        codacy_annotations_count=None,
+        codacy={"github_codacy_state": "SUCCESS", "github_annotations": []},
+    )
+    decision = flow.deepsource_advisory_status_nonblocking_evidence(
+        _deepsource_python_failure_check(),
+        context,
+    )
+
+    ASSERTIONS.assertTrue(decision["nonblocking"])
+
+
 def test_deepsource_advisory_status_codacy_action_required_or_annotations_manual():
     """Codacy action-required or annotation evidence keeps advisory status manual."""
     for context in (
         _deepsource_advisory_status_context(codacy_state="ACTION_REQUIRED"),
         _deepsource_advisory_status_context(codacy_annotations_count=1),
+        _deepsource_advisory_status_context(
+            codacy_state=None,
+            codacy_annotations_count=None,
+            github_codacy_state="ACTION_REQUIRED",
+            github_annotations_count=0,
+        ),
+        _deepsource_advisory_status_context(
+            codacy_state=None,
+            codacy_annotations_count=None,
+            github_codacy_state="SUCCESS",
+            github_annotations=[{"path": "scripts/pr_flow_automation.py"}],
+        ),
     ):
         decision = flow.deepsource_advisory_status_nonblocking_evidence(
             _deepsource_python_failure_check(),
@@ -1160,6 +1240,10 @@ def test_deepsource_advisory_status_noncompleted_deepsource_manual():
         _deepsource_python_failure_check(conclusion="TIMED_OUT"),
         _deepsource_python_failure_check(conclusion="STALE"),
         _deepsource_python_failure_check(status="IN_PROGRESS"),
+        {"context": "DeepSource: Python", "state": "CANCELLED", "targetUrl": "https://deepsource.io/python/"},
+        {"context": "DeepSource: Python", "state": "TIMED_OUT", "targetUrl": "https://deepsource.io/python/"},
+        {"context": "DeepSource: Python", "state": "STALE", "targetUrl": "https://deepsource.io/python/"},
+        {"context": "DeepSource: Python", "state": "FAILURE", "status": "IN_PROGRESS"},
     )
     for check in checks:
         decision = flow.deepsource_advisory_status_nonblocking_evidence(

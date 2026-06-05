@@ -6498,7 +6498,8 @@ def deepsource_required_current_head_check_failing(
     current_head_sha: object,
 ) -> bool:
     """Return whether a required DeepSource check fails on the current head."""
-    return _deepsource_required_current_head_check_failing(context, str(current_head_sha or "").strip())
+    ctx = context if isinstance(context, dict) else {}
+    return _deepsource_required_current_head_check_failing(ctx, str(current_head_sha or "").strip())
 
 
 def _review_thread_provider(thread: dict[str, Any]) -> str:

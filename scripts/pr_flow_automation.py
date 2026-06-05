@@ -936,14 +936,40 @@ def _deepsource_advisory_policy_context(
 
 
 def _has_explicit_deepsource_advisory_context(pr_data: dict[str, Any]) -> bool:
-    return isinstance(pr_data.get("deepsource_advisory_context"), dict)
+    return bool(_deepsource_advisory_configured_context(pr_data))
 
 
 def _deepsource_advisory_configured_context(pr_data: dict[str, Any]) -> dict[str, Any]:
     context = pr_data.get("deepsource_advisory_context")
     if isinstance(context, dict):
         return dict(context)
-    return {}
+    return _deepsource_advisory_top_level_context(pr_data)
+
+
+def _deepsource_advisory_top_level_context(pr_data: dict[str, Any]) -> dict[str, Any]:
+    keys = (
+        "current_head_sha",
+        "evidence_head_sha",
+        "evidence_present",
+        "deepsource_advisory_evidence",
+        "codacy",
+        "codacy_state",
+        "github_codacy_state",
+        "codacy_annotations_count",
+        "github_annotations_count",
+        "github_annotations",
+        "deepsource_required_current_head_check_failing",
+    )
+    context = {key: pr_data.get(key) for key in keys if key in pr_data}
+    return context if _deepsource_has_explicit_advisory_evidence(context) else {}
+
+
+def _deepsource_has_explicit_advisory_evidence(context: dict[str, Any]) -> bool:
+    return (
+        context.get("evidence_present") is True
+        or bool(context.get("deepsource_advisory_evidence"))
+        or isinstance(context.get("codacy"), dict)
+    )
 
 
 def deepsource_advisory_status_nonblocking_evidence(
@@ -1018,13 +1044,18 @@ def _is_deepsource_python_check(check: dict[str, Any]) -> bool:
     name = check_name(check)
     provider = str(check.get("provider") or check.get("source") or name)
     normalized_provider = controller.review_provider_from_author(provider) or provider.strip().lower()
-    return controller.is_deepsource_review_provider(normalized_provider) and "python" in str(name).lower()
+    name_text = str(name).lower()
+    provider_is_deepsource = controller.is_deepsource_review_provider(normalized_provider)
+    return "python" in name_text and (provider_is_deepsource or "deepsource" in name_text)
 
 
 def _is_completed_deepsource_failure(check: dict[str, Any]) -> bool:
-    status = norm_state(check.get("conclusion") or check.get("state") or check.get("external_status"))
-    analysis_status = norm_state(check.get("status") or check.get("analysis_status"))
-    return status == "FAILURE" and analysis_status == "COMPLETED"
+    failure_state = norm_state(check.get("conclusion") or check.get("state") or check.get("external_status"))
+    progress_state = norm_state(check.get("status") or check.get("analysis_status"))
+    fail_closed = {"CANCELLED", "CANCELED", "TIMED_OUT", "STALE", "IN_PROGRESS", "PENDING", "QUEUED", "WAITING"}
+    if failure_state in fail_closed or progress_state in fail_closed:
+        return False
+    return failure_state == "FAILURE" and progress_state in {"", "COMPLETED", "SUCCESS"}
 
 
 def _deepsource_current_head_evidence_decision(context: dict[str, Any]) -> str:
@@ -1059,12 +1090,48 @@ def _deepsource_advisory_claim_decision(context: dict[str, Any]) -> str:
 def _deepsource_codacy_evidence_clear(context: dict[str, Any]) -> bool:
     codacy = context.get("codacy")
     codacy_dict = codacy if isinstance(codacy, dict) else {}
-    codacy_state = norm_state(context.get("codacy_state") or codacy_dict.get("state"))
-    annotations_count = controller.safe_nonnegative_int(
-        context.get("codacy_annotations_count", codacy_dict.get("annotations_count")),
-        -1,
-    )
+    codacy_state = _deepsource_codacy_state(context, codacy_dict)
+    annotations_count = _deepsource_codacy_annotations_count(context, codacy_dict)
     return codacy_state == "SUCCESS" and annotations_count == 0
+
+
+def _deepsource_codacy_state(context: dict[str, Any], codacy: dict[str, Any]) -> str:
+    return norm_state(
+        context.get("codacy_state")
+        or context.get("github_codacy_state")
+        or codacy.get("codacy_state")
+        or codacy.get("github_codacy_state")
+        or codacy.get("state")
+    )
+
+
+def _deepsource_codacy_annotations_count(context: dict[str, Any], codacy: dict[str, Any]) -> int:
+    for value in _deepsource_codacy_annotation_values(context, codacy):
+        count = _deepsource_annotation_count(value)
+        if count >= 0:
+            return count
+    return -1
+
+
+def _deepsource_codacy_annotation_values(context: dict[str, Any], codacy: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        context.get("codacy_annotations_count"),
+        context.get("github_annotations_count"),
+        context.get("github_annotations"),
+        codacy.get("codacy_annotations_count"),
+        codacy.get("github_annotations_count"),
+        codacy.get("github_annotations"),
+        codacy.get("annotations_count"),
+        codacy.get("annotations"),
+    )
+
+
+def _deepsource_annotation_count(value: Any) -> int:
+    if isinstance(value, list):
+        return len(value)
+    if value is None:
+        return -1
+    return controller.safe_nonnegative_int(value, -1)
 
 
 def _deepsource_merge_evidence_clear(context: dict[str, Any]) -> bool:
