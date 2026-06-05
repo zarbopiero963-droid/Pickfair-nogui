@@ -945,6 +945,77 @@ def _deepsource_advisory_status_context(**extra: Any) -> dict[str, Any]:
     return context
 
 
+def _stub_deepsource_advisory_pr_view(monkeypatch, advisory_context: dict[str, Any]) -> None:
+    monkeypatch.setattr(flow, "pr_view", lambda _repo, _pr: _deepsource_advisory_pr(advisory_context))
+
+
+def _deepsource_advisory_pr(
+    advisory_context: dict[str, Any] | None = None,
+    checks: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    payload = {
+        "state": "OPEN",
+        "isDraft": False,
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+        "headRefOid": "abc",
+        "statusCheckRollup": checks or [_deepsource_python_failure_check()],
+    }
+    if advisory_context is not None:
+        payload["deepsource_advisory_context"] = advisory_context
+    return payload
+
+
+def _stub_deepsource_advisory_pr_checks(
+    monkeypatch,
+    checks: list[dict[str, Any]],
+    advisory_context: dict[str, Any] | None = None,
+) -> None:
+    monkeypatch.setattr(
+        flow,
+        "pr_view",
+        lambda _repo, _pr: _deepsource_advisory_pr(advisory_context, checks),
+    )
+
+
+def _build_deepsource_advisory_decision(
+    monkeypatch,
+    advisory_context: dict[str, Any],
+    review_threads: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    _stub_deepsource_advisory_pr_view(monkeypatch, advisory_context)
+    return flow.build_decision("owner/repo", "254", ignore_self=True, review_threads=review_threads or [])
+
+
+def _build_deepsource_advisory_decision_from_top_level(
+    monkeypatch,
+    advisory_context: dict[str, Any],
+) -> dict[str, Any]:
+    monkeypatch.setattr(
+        flow,
+        "pr_view",
+        lambda _repo, _pr: {
+            "state": "OPEN",
+            "isDraft": False,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "headRefOid": "abc",
+            "statusCheckRollup": [_deepsource_python_failure_check()],
+            **advisory_context,
+        },
+    )
+    return flow.build_decision("owner/repo", "254", ignore_self=True, review_threads=[])
+
+
+def _assert_deepsource_advisory_blocks(
+    decision: dict[str, Any],
+    reasons: list[str] | None = None,
+) -> None:
+    ASSERTIONS.assertFalse(decision["can_merge"])
+    ASSERTIONS.assertEqual(len(decision["blockers"]), 1)
+    ASSERTIONS.assertEqual(decision["reasons"], reasons or ["1 real blocking check(s)"])
+
+
 def test_deepsource_advisory_status_full_evidence_nonblocking():
     """Completed DeepSource Python advisory failure is nonblocking with full current evidence."""
     decision = flow.deepsource_advisory_status_nonblocking_evidence(
@@ -970,21 +1041,24 @@ def test_deepsource_advisory_status_context_shape_nonblocking():
     ASSERTIONS.assertEqual(decision["next_action"], "nonblocking")
 
 
+def test_deepsource_advisory_status_context_pending_or_error_manual():
+    """GitHub StatusContext pending or error states fail closed."""
+    for state in ("PENDING", "ERROR"):
+        decision = flow.deepsource_advisory_status_nonblocking_evidence(
+            {
+                "context": "DeepSource: Python",
+                "state": state,
+                "targetUrl": "https://deepsource.io/gh/owner/repo/run/python/",
+            },
+            _deepsource_advisory_status_context(),
+        )
+        ASSERTIONS.assertFalse(decision["nonblocking"])
+        ASSERTIONS.assertEqual(decision["reason"], "deepsource_status_not_completed_failure")
+
+
 def test_deepsource_advisory_status_wired_into_readiness_filtering(monkeypatch):
     """Readiness ignores only a fully evidenced DeepSource Python advisory failure."""
-    monkeypatch.setattr(
-        flow,
-        "pr_view",
-        lambda _repo, _pr: {
-            "state": "OPEN",
-            "isDraft": False,
-            "mergeable": "MERGEABLE",
-            "mergeStateStatus": "CLEAN",
-            "headRefOid": "abc",
-            "statusCheckRollup": [_deepsource_python_failure_check()],
-            "deepsource_advisory_context": _deepsource_advisory_status_context(),
-        },
-    )
+    _stub_deepsource_advisory_pr_view(monkeypatch, _deepsource_advisory_status_context())
 
     decision = flow.build_decision("owner/repo", "254", ignore_self=True, review_threads=[])
 
@@ -995,21 +1069,13 @@ def test_deepsource_advisory_status_wired_into_readiness_filtering(monkeypatch):
 
 def test_deepsource_advisory_status_group_filtering_with_explicit_evidence(monkeypatch):
     """Readiness ignores multiple evidenced DeepSource Python advisory failures together."""
-    monkeypatch.setattr(
-        flow,
-        "pr_view",
-        lambda _repo, _pr: {
-            "state": "OPEN",
-            "isDraft": False,
-            "mergeable": "MERGEABLE",
-            "mergeStateStatus": "CLEAN",
-            "headRefOid": "abc",
-            "statusCheckRollup": [
-                _deepsource_python_failure_check(name="DeepSource: Python"),
-                _deepsource_python_failure_check(name="DeepSource: Python / complexity"),
-            ],
-            "deepsource_advisory_context": _deepsource_advisory_status_context(),
-        },
+    _stub_deepsource_advisory_pr_checks(
+        monkeypatch,
+        [
+            _deepsource_python_failure_check(name="DeepSource: Python"),
+            _deepsource_python_failure_check(name="DeepSource: Python / complexity"),
+        ],
+        _deepsource_advisory_status_context(),
     )
 
     decision = flow.build_decision("owner/repo", "254", ignore_self=True, review_threads=[])
@@ -1021,50 +1087,62 @@ def test_deepsource_advisory_status_group_filtering_with_explicit_evidence(monke
 
 def test_deepsource_advisory_status_preserves_explicit_unresolved_active(monkeypatch):
     """Explicit unresolved review evidence remains blocking even without thread data."""
-    monkeypatch.setattr(
-        flow,
-        "pr_view",
-        lambda _repo, _pr: {
-            "state": "OPEN",
-            "isDraft": False,
-            "mergeable": "MERGEABLE",
-            "mergeStateStatus": "CLEAN",
-            "headRefOid": "abc",
-            "statusCheckRollup": [_deepsource_python_failure_check()],
-            "deepsource_advisory_context": _deepsource_advisory_status_context(unresolved_active=1),
-        },
+    decision = _build_deepsource_advisory_decision(
+        monkeypatch,
+        _deepsource_advisory_status_context(unresolved_active=1),
     )
 
-    decision = flow.build_decision("owner/repo", "254", ignore_self=True, review_threads=[])
+    _assert_deepsource_advisory_blocks(decision)
 
-    ASSERTIONS.assertFalse(decision["can_merge"])
-    ASSERTIONS.assertEqual(len(decision["blockers"]), 1)
-    ASSERTIONS.assertEqual(decision["reasons"], ["1 real blocking check(s)"])
+
+def test_deepsource_advisory_status_preserves_explicit_pending_count(monkeypatch):
+    """Explicit pending count remains blocking when derived checks are clean."""
+    decision = _build_deepsource_advisory_decision(
+        monkeypatch,
+        _deepsource_advisory_status_context(pending_checks_count=1),
+    )
+
+    _assert_deepsource_advisory_blocks(decision)
+
+
+def test_deepsource_advisory_status_preserves_explicit_pending_checks(monkeypatch):
+    """Explicit pending checks remain blocking when derived checks are clean."""
+    decision = _build_deepsource_advisory_decision(
+        monkeypatch,
+        _deepsource_advisory_status_context(pending_checks=[{"name": "Unit tests", "state": "PENDING"}]),
+    )
+
+    _assert_deepsource_advisory_blocks(decision)
+
+
+def test_deepsource_advisory_status_preserves_explicit_checks_not_green(monkeypatch):
+    """Explicit non-green checks remain blocking when derived checks are clean."""
+    decision = _build_deepsource_advisory_decision(
+        monkeypatch,
+        _deepsource_advisory_status_context(checks_green=False),
+    )
+
+    _assert_deepsource_advisory_blocks(decision)
+
+
+def test_deepsource_advisory_status_preserves_top_level_pending_count(monkeypatch):
+    """Top-level pending count remains blocking when derived checks are clean."""
+    decision = _build_deepsource_advisory_decision_from_top_level(
+        monkeypatch,
+        _deepsource_advisory_status_context(pending_checks_count=1),
+    )
+
+    _assert_deepsource_advisory_blocks(decision)
 
 
 def test_deepsource_advisory_status_preserves_top_level_unresolved_active(monkeypatch):
     """Top-level unresolved review evidence remains blocking."""
-    context = _deepsource_advisory_status_context(unresolved_active=1)
-    context.pop("deepsource_advisory_context", None)
-    monkeypatch.setattr(
-        flow,
-        "pr_view",
-        lambda _repo, _pr: {
-            "state": "OPEN",
-            "isDraft": False,
-            "mergeable": "MERGEABLE",
-            "mergeStateStatus": "CLEAN",
-            "headRefOid": "abc",
-            "statusCheckRollup": [_deepsource_python_failure_check()],
-            **context,
-        },
+    decision = _build_deepsource_advisory_decision_from_top_level(
+        monkeypatch,
+        _deepsource_advisory_status_context(unresolved_active=1),
     )
 
-    decision = flow.build_decision("owner/repo", "254", ignore_self=True, review_threads=[])
-
-    ASSERTIONS.assertFalse(decision["can_merge"])
-    ASSERTIONS.assertEqual(len(decision["blockers"]), 1)
-    ASSERTIONS.assertEqual(decision["reasons"], ["1 real blocking check(s)"])
+    _assert_deepsource_advisory_blocks(decision)
 
 
 def test_deepsource_advisory_status_malformed_unresolved_active_manual():
@@ -1079,38 +1157,29 @@ def test_deepsource_advisory_status_malformed_unresolved_active_manual():
     ASSERTIONS.assertEqual(decision["reason"], "merge_evidence_not_clear")
 
 
-def test_deepsource_advisory_policy_context_derives_missing_unresolved_active():
+def test_deepsource_advisory_status_derives_missing_unresolved_active(monkeypatch):
     """Missing explicit unresolved evidence derives from active review threads."""
     configured = _deepsource_advisory_status_context()
     configured.pop("unresolved_active")
 
-    context = flow._deepsource_advisory_policy_context(
-        {"deepsource_advisory_context": configured},
-        {"pending": []},
+    decision = _build_deepsource_advisory_decision(
+        monkeypatch,
+        configured,
         [{"id": "active-review-thread"}],
-        [],
     )
 
-    ASSERTIONS.assertEqual(context["unresolved_active"], 1)
+    _assert_deepsource_advisory_blocks(
+        decision,
+        ["1 real blocking check(s)", "1 active unresolved review thread(s)"],
+    )
 
 
 def test_deepsource_advisory_status_group_keeps_unit_test_failure_blocking(monkeypatch):
     """A non-advisory failure keeps evidenced advisory failures blocking as a group."""
-    monkeypatch.setattr(
-        flow,
-        "pr_view",
-        lambda _repo, _pr: {
-            "state": "OPEN",
-            "isDraft": False,
-            "mergeable": "MERGEABLE",
-            "mergeStateStatus": "CLEAN",
-            "headRefOid": "abc",
-            "statusCheckRollup": [
-                _deepsource_python_failure_check(),
-                _check("Unit tests", "FAILURE"),
-            ],
-            "deepsource_advisory_context": _deepsource_advisory_status_context(),
-        },
+    _stub_deepsource_advisory_pr_checks(
+        monkeypatch,
+        [_deepsource_python_failure_check(), _check("Unit tests", "FAILURE")],
+        _deepsource_advisory_status_context(),
     )
 
     decision = flow.build_decision("owner/repo", "254", ignore_self=True, review_threads=[])
@@ -1122,20 +1191,12 @@ def test_deepsource_advisory_status_group_keeps_unit_test_failure_blocking(monke
 
 def test_deepsource_advisory_status_group_without_evidence_stays_blocking(monkeypatch):
     """Multiple DeepSource advisory failures stay blocking without explicit evidence."""
-    monkeypatch.setattr(
-        flow,
-        "pr_view",
-        lambda _repo, _pr: {
-            "state": "OPEN",
-            "isDraft": False,
-            "mergeable": "MERGEABLE",
-            "mergeStateStatus": "CLEAN",
-            "headRefOid": "abc",
-            "statusCheckRollup": [
-                _deepsource_python_failure_check(),
-                _deepsource_python_failure_check(name="DeepSource: Python / complexity"),
-            ],
-        },
+    _stub_deepsource_advisory_pr_checks(
+        monkeypatch,
+        [
+            _deepsource_python_failure_check(),
+            _deepsource_python_failure_check(name="DeepSource: Python / complexity"),
+        ],
     )
 
     decision = flow.build_decision("owner/repo", "254", ignore_self=True, review_threads=[])
@@ -1169,27 +1230,8 @@ def test_deepsource_advisory_status_without_explicit_context_stays_blocking(monk
 
 def test_deepsource_advisory_status_live_top_level_evidence_can_filter(monkeypatch):
     """Explicit top-level advisory evidence can remove the advisory blocker."""
-    monkeypatch.setattr(
-        flow,
-        "pr_view",
-        lambda _repo, _pr: {
-            "state": "OPEN",
-            "isDraft": False,
-            "mergeable": "MERGEABLE",
-            "mergeStateStatus": "CLEAN",
-            "headRefOid": "abc",
-            "statusCheckRollup": [_deepsource_python_failure_check()],
-            "current_head_sha": "abc",
-            "evidence_head_sha": "abc",
-            "evidence_present": True,
-            "deepsource_advisory_evidence": "Cyclomatic complexity readability advisory",
-            "github_codacy_state": "SUCCESS",
-            "github_annotations_count": 0,
-            "deepsource_required_current_head_check_failing": False,
-        },
-    )
-
-    decision = flow.build_decision("owner/repo", "254", ignore_self=True, review_threads=[])
+    context = _deepsource_advisory_status_context(github_codacy_state="SUCCESS", github_annotations_count=0)
+    decision = _build_deepsource_advisory_decision_from_top_level(monkeypatch, context)
 
     ASSERTIONS.assertTrue(decision["can_merge"])
     ASSERTIONS.assertEqual(decision["blockers"], [])
@@ -1198,24 +1240,12 @@ def test_deepsource_advisory_status_live_top_level_evidence_can_filter(monkeypat
 
 def test_deepsource_advisory_status_does_not_guess_current_head_from_pr(monkeypatch):
     """Require explicit current-head evidence even when PR headRefOid is available."""
-    context = _deepsource_advisory_status_context(current_head_sha="")
-    monkeypatch.setattr(
-        flow,
-        "pr_view",
-        lambda _repo, _pr: {
-            "state": "OPEN",
-            "isDraft": False,
-            "mergeable": "MERGEABLE",
-            "mergeStateStatus": "CLEAN",
-            "headRefOid": "abc",
-            "statusCheckRollup": [_deepsource_python_failure_check()],
-            "deepsource_advisory_context": context,
-        },
+    decision = _build_deepsource_advisory_decision(
+        monkeypatch,
+        _deepsource_advisory_status_context(current_head_sha=""),
     )
 
-    decision = flow.build_decision("owner/repo", "254", ignore_self=True, review_threads=[])
-
-    ASSERTIONS.assertFalse(decision["can_merge"])
+    _assert_deepsource_advisory_blocks(decision)
     ASSERTIONS.assertEqual(len(decision["blockers"]), 1)
     ASSERTIONS.assertEqual(decision["reasons"], ["1 real blocking check(s)"])
 
@@ -1304,17 +1334,33 @@ def test_deepsource_advisory_status_github_annotations_list_clear():
     ASSERTIONS.assertTrue(decision["nonblocking"])
 
 
-def test_deepsource_advisory_status_codacy_action_required_or_annotations_manual():
-    """Codacy action-required or annotation evidence keeps advisory status manual."""
+def _assert_deepsource_codacy_evidence_manual(context: dict[str, Any]) -> None:
+    decision = flow.deepsource_advisory_status_nonblocking_evidence(
+        _deepsource_python_failure_check(),
+        context,
+    )
+    ASSERTIONS.assertFalse(decision["nonblocking"])
+    ASSERTIONS.assertEqual(decision["reason"], "codacy_evidence_not_clear")
+
+
+def test_deepsource_advisory_status_codacy_state_manual():
+    """Codacy action-required state keeps advisory status manual."""
     for context in (
         _deepsource_advisory_status_context(codacy_state="ACTION_REQUIRED"),
-        _deepsource_advisory_status_context(codacy_annotations_count=1),
         _deepsource_advisory_status_context(
             codacy_state=None,
             codacy_annotations_count=None,
             github_codacy_state="ACTION_REQUIRED",
             github_annotations_count=0,
         ),
+    ):
+        _assert_deepsource_codacy_evidence_manual(context)
+
+
+def test_deepsource_advisory_status_codacy_annotations_manual():
+    """Codacy annotation evidence keeps advisory status manual."""
+    for context in (
+        _deepsource_advisory_status_context(codacy_annotations_count=1),
         _deepsource_advisory_status_context(
             codacy_state=None,
             codacy_annotations_count=None,
@@ -1322,12 +1368,7 @@ def test_deepsource_advisory_status_codacy_action_required_or_annotations_manual
             github_annotations=[{"path": "scripts/pr_flow_automation.py"}],
         ),
     ):
-        decision = flow.deepsource_advisory_status_nonblocking_evidence(
-            _deepsource_python_failure_check(),
-            context,
-        )
-        ASSERTIONS.assertFalse(decision["nonblocking"])
-        ASSERTIONS.assertEqual(decision["reason"], "codacy_evidence_not_clear")
+        _assert_deepsource_codacy_evidence_manual(context)
 
 
 def test_deepsource_advisory_status_merge_evidence_not_clear_manual():
@@ -1385,17 +1426,27 @@ def test_deepsource_advisory_status_required_deepsource_check_failing_manual():
     ASSERTIONS.assertEqual(decision["reason"], "required_deepsource_check_failing")
 
 
-def test_deepsource_advisory_status_noncompleted_deepsource_manual():
-    """Cancelled, timed-out, stale, or in-progress DeepSource states stay manual."""
+def test_deepsource_advisory_checkrun_terminal_incomplete_states_manual():
+    """CheckRun cancelled, timed-out, or stale conclusions stay manual."""
     checks = (
         _deepsource_python_failure_check(conclusion="CANCELLED"),
         _deepsource_python_failure_check(conclusion="TIMED_OUT"),
         _deepsource_python_failure_check(conclusion="STALE"),
+    )
+    for check in checks:
+        decision = flow.deepsource_advisory_status_nonblocking_evidence(
+            check,
+            _deepsource_advisory_status_context(),
+        )
+        ASSERTIONS.assertFalse(decision["nonblocking"])
+        ASSERTIONS.assertEqual(decision["reason"], "deepsource_status_not_completed_failure")
+
+
+def test_deepsource_advisory_in_progress_checkrun_manual():
+    """CheckRun in-progress status stays manual."""
+    checks = (
         _deepsource_python_failure_check(status="IN_PROGRESS"),
-        {"context": "DeepSource: Python", "state": "CANCELLED", "targetUrl": "https://deepsource.io/python/"},
-        {"context": "DeepSource: Python", "state": "TIMED_OUT", "targetUrl": "https://deepsource.io/python/"},
-        {"context": "DeepSource: Python", "state": "STALE", "targetUrl": "https://deepsource.io/python/"},
-        {"context": "DeepSource: Python", "state": "FAILURE", "status": "IN_PROGRESS"},
+        _deepsource_python_failure_check(conclusion="FAILURE", status="IN_PROGRESS"),
     )
     for check in checks:
         decision = flow.deepsource_advisory_status_nonblocking_evidence(

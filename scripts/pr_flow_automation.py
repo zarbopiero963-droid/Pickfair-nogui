@@ -937,7 +937,25 @@ def _deepsource_advisory_policy_context(
     context = dict(configured)
     context.update(_deepsource_merge_policy_context(active_review_threads, pending, non_advisory_blockers))
     context["unresolved_active"] = _deepsource_policy_unresolved_active(configured, active_review_threads)
+    _preserve_explicit_deepsource_merge_evidence(context, configured)
     return context
+
+
+def _preserve_explicit_deepsource_merge_evidence(
+    context: dict[str, Any],
+    configured: dict[str, Any],
+) -> None:
+    if _deepsource_has_explicit_pending_checks(configured):
+        context["pending_checks"] = configured.get("pending_checks")
+    if controller.safe_nonnegative_int(configured.get("pending_checks_count"), -1) > 0:
+        context["pending_checks_count"] = configured.get("pending_checks_count")
+    if configured.get("checks_green") is False:
+        context["checks_green"] = False
+
+
+def _deepsource_has_explicit_pending_checks(context: dict[str, Any]) -> bool:
+    pending_checks = context.get("pending_checks")
+    return isinstance(pending_checks, list) and bool(pending_checks)
 
 
 def _deepsource_policy_unresolved_active(
@@ -986,6 +1004,9 @@ def _deepsource_advisory_top_level_context(pr_data: dict[str, Any]) -> dict[str,
         "github_annotations_count",
         "github_annotations",
         "unresolved_active",
+        "pending_checks",
+        "pending_checks_count",
+        "checks_green",
         "deepsource_required_current_head_check_failing",
     )
     context = {key: pr_data.get(key) for key in keys if key in pr_data}
@@ -1078,9 +1099,21 @@ def _check_name_mentions_python(name: object) -> bool:
 
 
 def _check_provider_or_name_is_deepsource(check: dict[str, Any], name: object) -> bool:
-    provider = str(check.get("provider") or check.get("source") or name)
+    provider = _check_provider_or_source(check, name)
+    return _check_provider_is_deepsource(provider) or _check_name_mentions_deepsource(name)
+
+
+def _check_provider_or_source(check: dict[str, Any], fallback: object) -> str:
+    return str(check.get("provider") or check.get("source") or fallback)
+
+
+def _check_provider_is_deepsource(provider: str) -> bool:
     normalized = controller.review_provider_from_author(provider) or provider.strip().lower()
-    return controller.is_deepsource_review_provider(normalized) or "deepsource" in str(name or "").lower()
+    return controller.is_deepsource_review_provider(normalized)
+
+
+def _check_name_mentions_deepsource(name: object) -> bool:
+    return "deepsource" in str(name or "").lower()
 
 
 def _is_completed_deepsource_failure(check: dict[str, Any]) -> bool:
