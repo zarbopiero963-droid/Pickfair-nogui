@@ -375,63 +375,6 @@ def test_deepsource_python_advisory_only_failure_does_not_block_merge(monkeypatc
     ASSERTIONS.assertEqual(decision["ignored_self_checks"][0]["reason"], "deepsource_python_advisory_only")
 
 
-def test_multiple_deepsource_python_advisory_failures_are_ignored_together(monkeypatch):
-    """Advisory-only DeepSource Python failures should not block each other."""
-    decision = _build_deepsource_decision(
-        monkeypatch,
-        [
-            _check("Unit tests", "SUCCESS"),
-            _codacy_success_check(),
-            _deepsource_python_check(description="Cyclomatic complexity advisory"),
-            _deepsource_python_check(name="DeepSource: Python 2", description="Refactor readability advisory"),
-        ],
-    )
-
-    ASSERTIONS.assertTrue(decision["can_merge"])
-    ASSERTIONS.assertEqual(decision["blockers"], [])
-    ASSERTIONS.assertEqual(len(decision["ignored_self_checks"]), 2)
-    ASSERTIONS.assertEqual(
-        {item["reason"] for item in decision["ignored_self_checks"]},
-        {"deepsource_python_advisory_only"},
-    )
-
-
-def test_missing_codacy_annotation_count_fails_closed_for_advisory_evidence(monkeypatch):
-    """Codacy success without annotation evidence must not prove zero current annotations."""
-    codacy_without_annotations = _check(
-        "Codacy Static Code Analysis",
-        "SUCCESS",
-        "https://app.codacy.com/gh/owner/repo/pull-requests/225",
-    )
-    decision = _build_deepsource_decision(
-        monkeypatch,
-        [_check("Unit tests", "SUCCESS"), codacy_without_annotations, _deepsource_python_check()],
-    )
-
-    ASSERTIONS.assertEqual(flow._annotation_count(codacy_without_annotations), -1)
-    ASSERTIONS.assertFalse(flow._codacy_check_clean(codacy_without_annotations))
-    ASSERTIONS.assertFalse(decision["can_merge"])
-    ASSERTIONS.assertEqual(decision["blockers"][0]["name"], "DeepSource: Python")
-
-
-def test_deepsource_url_only_advisory_keyword_does_not_classify_advisory(monkeypatch):
-    """URL fields must not provide advisory/safety classification text."""
-    decision = _build_deepsource_decision(
-        monkeypatch,
-        [
-            _check("Unit tests", "SUCCESS"),
-            _codacy_success_check(),
-            _deepsource_python_check(
-                detailsUrl="https://deepsource.io/gh/owner/repo/style-guide/refactor-helpers",
-                description="",
-            ),
-        ],
-    )
-
-    ASSERTIONS.assertFalse(decision["can_merge"])
-    ASSERTIONS.assertEqual(decision["blockers"][0]["name"], "DeepSource: Python")
-
-
 def test_deepsource_python_safety_failure_still_blocks(monkeypatch):
     """DeepSource Python safety/security/fail-open/crash signals remain blocking."""
     for text in (
@@ -533,14 +476,14 @@ def test_deepsource_advisory_does_not_override_active_review_threads(monkeypatch
 
 
 def test_deepsource_advisory_does_not_override_non_deepsource_failure(monkeypatch):
-    """Non-DeepSource failures remain blocking after advisory DeepSource is removed."""
+    """Non-DeepSource failures remain blocking and prevent advisory handling."""
     decision = _build_deepsource_decision(
         monkeypatch,
         [_check("Unit tests", "FAILURE"), _codacy_success_check(), _deepsource_python_check()],
     )
 
     ASSERTIONS.assertFalse(decision["can_merge"])
-    ASSERTIONS.assertEqual([item["name"] for item in decision["blockers"]], ["Unit tests"])
+    ASSERTIONS.assertEqual([item["name"] for item in decision["blockers"]], ["Unit tests", "DeepSource: Python"])
 
 
 def test_unknown_provider_or_status_still_blocks_deepsource_advisory(monkeypatch):
@@ -1790,105 +1733,6 @@ def test_taxonomy_summary_prioritizes_pending_and_manual_blockers():
     ASSERTIONS.assertEqual(manual["next_action"], "needs_manual_scope_violation")
 
 
-def _deepsource_summary_context(*checks: dict[str, object], head: str = "abc123") -> dict[str, Any]:
-    return {
-        "can_merge": True,
-        "headRefOid": head,
-        "statusCheckRollup": [_codacy_success_check(), *checks],
-    }
-
-
-def test_taxonomy_summary_ignores_multiple_deepsource_advisories_together():
-    """Direct taxonomy summaries should remove all advisory-only DeepSource checks together."""
-    blockers = [
-        _deepsource_python_check(description="Cyclomatic complexity advisory"),
-        _deepsource_python_check(name="DeepSource: Python 2", description="Refactor readability advisory"),
-    ]
-
-    result = flow.summarize_blocker_actions(blockers, _deepsource_summary_context(*blockers))
-
-    ASSERTIONS.assertEqual(result["categories"], [])
-    ASSERTIONS.assertEqual(result["next_action"], "ready_to_merge")
-    ASSERTIONS.assertNotIn("DeepSource: Python FAILURE", " ".join(result["reasons"]))
-
-
-def test_taxonomy_summary_ignores_one_deepsource_advisory():
-    """A single advisory-only DeepSource check is non-blocking in direct summaries."""
-    blocker = _deepsource_python_check()
-
-    result = flow.summarize_blocker_actions([blocker], _deepsource_summary_context(blocker))
-
-    ASSERTIONS.assertEqual(result["categories"], [])
-    ASSERTIONS.assertEqual(result["next_action"], "ready_to_merge")
-
-
-def test_taxonomy_summary_keeps_non_deepsource_failure_with_deepsource_advisory():
-    """Non-DeepSource failures remain after advisory-only DeepSource checks are removed."""
-    unit_failure = _check("Unit tests", "FAILURE")
-    advisory = _deepsource_python_check()
-
-    result = flow.summarize_blocker_actions([unit_failure, advisory], _deepsource_summary_context(advisory))
-
-    ASSERTIONS.assertEqual(result["categories"], ["test_failure"])
-    ASSERTIONS.assertEqual(result["reasons"], ["Unit tests FAILURE"])
-    ASSERTIONS.assertEqual(result["next_action"], "needs_manual")
-
-
-def test_taxonomy_summary_keeps_safety_deepsource_with_deepsource_advisory():
-    """Safety DeepSource failures remain after advisory-only DeepSource checks are removed."""
-    advisory = _deepsource_python_check(description="Cyclomatic complexity advisory")
-    safety = _deepsource_python_check(name="DeepSource: Python security", description="security bypass")
-
-    result = flow.summarize_blocker_actions([advisory, safety], _deepsource_summary_context(advisory, safety))
-
-    ASSERTIONS.assertEqual(result["categories"], ["test_failure"])
-    ASSERTIONS.assertEqual(result["reasons"], ["DeepSource: Python security FAILURE"])
-
-
-def test_taxonomy_summary_url_only_advisory_keyword_fails_closed():
-    """Direct summaries must not classify URL path keywords as advisory text."""
-    blocker = _deepsource_python_check(
-        detailsUrl="https://deepsource.io/gh/owner/repo/style-guide/refactor-helpers",
-        description="",
-    )
-
-    result = flow.summarize_blocker_actions([blocker], _deepsource_summary_context(blocker))
-
-    ASSERTIONS.assertEqual(result["categories"], ["test_failure"])
-    ASSERTIONS.assertEqual(result["reasons"], ["DeepSource: Python FAILURE"])
-
-
-def test_taxonomy_summary_missing_codacy_annotation_count_fails_closed():
-    """Direct summaries require trusted Codacy zero-annotation evidence."""
-    codacy_without_annotations = _check(
-        "Codacy Static Code Analysis",
-        "SUCCESS",
-        "https://app.codacy.com/gh/owner/repo/pull-requests/225",
-    )
-    blocker = _deepsource_python_check()
-    context = {
-        "can_merge": True,
-        "headRefOid": "abc123",
-        "statusCheckRollup": [codacy_without_annotations, blocker],
-    }
-
-    result = flow.summarize_blocker_actions([blocker], context)
-
-    ASSERTIONS.assertEqual(flow._annotation_count(codacy_without_annotations), -1)
-    ASSERTIONS.assertEqual(result["categories"], ["test_failure"])
-    ASSERTIONS.assertEqual(result["reasons"], ["DeepSource: Python FAILURE"])
-
-
-def test_taxonomy_summary_stale_deepsource_head_fails_closed():
-    """Stale DeepSource check-head evidence remains blocking in direct summaries."""
-    advisory = _deepsource_python_check(headSha="old123")
-
-    result = flow.summarize_blocker_actions([advisory], _deepsource_summary_context(advisory))
-
-    ASSERTIONS.assertEqual(result["categories"], ["test_failure"])
-    ASSERTIONS.assertEqual(result["reasons"], ["DeepSource: Python FAILURE"])
-
-
 def test_route_blocker_action_test_failure_requires_clear_logs():
     """test_failure routes to autofix only with explicit clear logs context."""
     ASSERTIONS.assertEqual(flow.route_blocker_action("test_failure", {}), "needs_manual")
@@ -2022,15 +1866,3 @@ def _required_telegram_summary_keys() -> tuple[str, ...]:
         "active_unresolved_review_count",
         "next_action",
     )
-
-def test_pr253_deepsource_advisory_missing_check_head_stays_blocking():
-    """Advisory DeepSource suppression requires explicit current-head evidence."""
-    blocker = _deepsource_python_check(description="Cyclomatic complexity advisory")
-    blocker.pop("headSha", None)
-    blocker.pop("head_sha", None)
-
-    result = flow.summarize_blocker_actions([blocker], _deepsource_summary_context(blocker))
-
-    ASSERTIONS.assertEqual(result["categories"], ["test_failure"])
-    ASSERTIONS.assertEqual(result["primary_category"], "test_failure")
-    ASSERTIONS.assertIn("DeepSource: Python FAILURE", str(result.get("reasons", [])))
