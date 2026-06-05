@@ -1027,7 +1027,7 @@ def test_deepsource_advisory_status_full_evidence_nonblocking():
 
 
 def test_deepsource_advisory_status_context_shape_nonblocking():
-    """GitHub StatusContext DeepSource Python failure is nonblocking with explicit evidence."""
+    """Status context failure is nonblocking with explicit advisory evidence."""
     decision = flow.deepsource_advisory_status_nonblocking_evidence(
         {
             "context": "DeepSource: Python",
@@ -1042,7 +1042,7 @@ def test_deepsource_advisory_status_context_shape_nonblocking():
 
 
 def test_deepsource_advisory_status_context_pending_or_error_manual():
-    """GitHub StatusContext pending or error states fail closed."""
+    """Status context pending or error states fail closed."""
     for state in ("PENDING", "ERROR"):
         decision = flow.deepsource_advisory_status_nonblocking_evidence(
             {
@@ -1105,6 +1105,16 @@ def test_deepsource_advisory_status_preserves_explicit_pending_count(monkeypatch
     _assert_deepsource_advisory_blocks(decision)
 
 
+def test_deepsource_advisory_status_preserves_malformed_pending_count(monkeypatch):
+    """Malformed explicit pending count remains blocking when derived checks are clean."""
+    decision = _build_deepsource_advisory_decision(
+        monkeypatch,
+        _deepsource_advisory_status_context(pending_checks_count="unknown"),
+    )
+
+    _assert_deepsource_advisory_blocks(decision)
+
+
 def test_deepsource_advisory_status_preserves_explicit_pending_checks(monkeypatch):
     """Explicit pending checks remain blocking when derived checks are clean."""
     decision = _build_deepsource_advisory_decision(
@@ -1130,6 +1140,16 @@ def test_deepsource_advisory_status_preserves_top_level_pending_count(monkeypatc
     decision = _build_deepsource_advisory_decision_from_top_level(
         monkeypatch,
         _deepsource_advisory_status_context(pending_checks_count=1),
+    )
+
+    _assert_deepsource_advisory_blocks(decision)
+
+
+def test_deepsource_advisory_status_preserves_top_level_malformed_pending_count(monkeypatch):
+    """Top-level malformed pending count remains blocking when derived checks are clean."""
+    decision = _build_deepsource_advisory_decision_from_top_level(
+        monkeypatch,
+        _deepsource_advisory_status_context(pending_checks_count="unknown"),
     )
 
     _assert_deepsource_advisory_blocks(decision)
@@ -1427,7 +1447,7 @@ def test_deepsource_advisory_status_required_deepsource_check_failing_manual():
 
 
 def test_deepsource_advisory_checkrun_terminal_incomplete_states_manual():
-    """CheckRun cancelled, timed-out, or stale conclusions stay manual."""
+    """Terminal incomplete conclusions stay manual."""
     checks = (
         _deepsource_python_failure_check(conclusion="CANCELLED"),
         _deepsource_python_failure_check(conclusion="TIMED_OUT"),
@@ -1443,7 +1463,7 @@ def test_deepsource_advisory_checkrun_terminal_incomplete_states_manual():
 
 
 def test_deepsource_advisory_in_progress_checkrun_manual():
-    """CheckRun in-progress status stays manual."""
+    """In-progress status stays manual."""
     checks = (
         _deepsource_python_failure_check(status="IN_PROGRESS"),
         _deepsource_python_failure_check(conclusion="FAILURE", status="IN_PROGRESS"),
@@ -1468,7 +1488,7 @@ def test_deepsource_advisory_status_url_only_advisory_words_manual():
 
 
 def test_deepsource_advisory_status_safety_security_fail_open_manual():
-    """DeepSource safety/security/fail-open/crash signals stay manual."""
+    """Safety, security, fail-open, and crash signals stay manual."""
     for signal in ("security", "fail-open", "crash", "correctness", "regression"):
         decision = flow.deepsource_advisory_status_nonblocking_evidence(
             _deepsource_python_failure_check(),

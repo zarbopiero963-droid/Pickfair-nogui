@@ -947,7 +947,7 @@ def _preserve_explicit_deepsource_merge_evidence(
 ) -> None:
     if _deepsource_has_explicit_pending_checks(configured):
         context["pending_checks"] = configured.get("pending_checks")
-    if controller.safe_nonnegative_int(configured.get("pending_checks_count"), -1) > 0:
+    if "pending_checks_count" in configured:
         context["pending_checks_count"] = configured.get("pending_checks_count")
     if configured.get("checks_green") is False:
         context["checks_green"] = False
