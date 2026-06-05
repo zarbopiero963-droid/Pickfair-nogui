@@ -916,6 +916,139 @@ def _review_evidence_context(**extra: Any) -> dict[str, Any]:
     return context
 
 
+def _deepsource_python_failure_check(**extra: Any) -> dict[str, Any]:
+    check: dict[str, Any] = {
+        "name": "DeepSource: Python",
+        "provider": "deepsource",
+        "status": "COMPLETED",
+        "conclusion": "FAILURE",
+    }
+    check.update(extra)
+    return check
+
+
+def _deepsource_advisory_status_context(**extra: Any) -> dict[str, Any]:
+    context: dict[str, Any] = {
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "evidence_present": True,
+        "deepsource_advisory_evidence": "Cyclomatic complexity readability advisory",
+        "codacy_state": "SUCCESS",
+        "codacy_annotations_count": 0,
+        "unresolved_active": 0,
+        "pending_checks": [],
+        "checks_green": True,
+        "deepsource_required_current_head_check_failing": False,
+    }
+    context.update(extra)
+    return context
+
+
+def test_deepsource_advisory_status_full_evidence_nonblocking():
+    """Completed DeepSource Python advisory failure is nonblocking with full current evidence."""
+    decision = flow.deepsource_advisory_status_nonblocking_evidence(
+        _deepsource_python_failure_check(),
+        _deepsource_advisory_status_context(),
+    )
+    ASSERTIONS.assertTrue(decision["nonblocking"])
+    ASSERTIONS.assertEqual(decision["next_action"], "nonblocking")
+
+
+def test_deepsource_advisory_status_missing_evidence_head_sha_manual():
+    """Missing evidence head SHA keeps DeepSource advisory status manual."""
+    decision = flow.deepsource_advisory_status_nonblocking_evidence(
+        _deepsource_python_failure_check(),
+        _deepsource_advisory_status_context(evidence_head_sha=""),
+    )
+    ASSERTIONS.assertFalse(decision["nonblocking"])
+    ASSERTIONS.assertEqual(decision["reason"], "missing_evidence_head_sha")
+
+
+def test_deepsource_advisory_status_stale_evidence_head_sha_manual():
+    """Stale evidence head SHA keeps DeepSource advisory status manual."""
+    decision = flow.deepsource_advisory_status_nonblocking_evidence(
+        _deepsource_python_failure_check(),
+        _deepsource_advisory_status_context(evidence_head_sha="old"),
+    )
+    ASSERTIONS.assertFalse(decision["nonblocking"])
+    ASSERTIONS.assertEqual(decision["reason"], "evidence_head_mismatch")
+
+
+def test_deepsource_advisory_status_missing_codacy_annotations_manual():
+    """Missing Codacy annotation evidence keeps DeepSource advisory status manual."""
+    context = _deepsource_advisory_status_context()
+    context.pop("codacy_annotations_count")
+    decision = flow.deepsource_advisory_status_nonblocking_evidence(
+        _deepsource_python_failure_check(),
+        context,
+    )
+    ASSERTIONS.assertFalse(decision["nonblocking"])
+    ASSERTIONS.assertEqual(decision["reason"], "codacy_evidence_not_clear")
+
+
+def test_deepsource_advisory_status_codacy_action_required_or_annotations_manual():
+    """Codacy action-required or annotation evidence keeps advisory status manual."""
+    for context in (
+        _deepsource_advisory_status_context(codacy_state="ACTION_REQUIRED"),
+        _deepsource_advisory_status_context(codacy_annotations_count=1),
+    ):
+        decision = flow.deepsource_advisory_status_nonblocking_evidence(
+            _deepsource_python_failure_check(),
+            context,
+        )
+        ASSERTIONS.assertFalse(decision["nonblocking"])
+        ASSERTIONS.assertEqual(decision["reason"], "codacy_evidence_not_clear")
+
+
+def test_deepsource_advisory_status_noncompleted_deepsource_manual():
+    """Cancelled, timed-out, stale, or in-progress DeepSource states stay manual."""
+    checks = (
+        _deepsource_python_failure_check(conclusion="CANCELLED"),
+        _deepsource_python_failure_check(conclusion="TIMED_OUT"),
+        _deepsource_python_failure_check(conclusion="STALE"),
+        _deepsource_python_failure_check(status="IN_PROGRESS"),
+    )
+    for check in checks:
+        decision = flow.deepsource_advisory_status_nonblocking_evidence(
+            check,
+            _deepsource_advisory_status_context(),
+        )
+        ASSERTIONS.assertFalse(decision["nonblocking"])
+        ASSERTIONS.assertEqual(decision["reason"], "deepsource_status_not_completed_failure")
+
+
+def test_deepsource_advisory_status_url_only_advisory_words_manual():
+    """Advisory words in URLs alone must not create advisory evidence."""
+    decision = flow.deepsource_advisory_status_nonblocking_evidence(
+        _deepsource_python_failure_check(detailsUrl="https://example.test/readability-advisory"),
+        _deepsource_advisory_status_context(deepsource_advisory_evidence=""),
+    )
+    ASSERTIONS.assertFalse(decision["nonblocking"])
+    ASSERTIONS.assertEqual(decision["reason"], "missing_advisory_evidence")
+
+
+def test_deepsource_advisory_status_safety_security_fail_open_manual():
+    """DeepSource safety/security/fail-open/crash signals stay manual."""
+    decision = flow.deepsource_advisory_status_nonblocking_evidence(
+        _deepsource_python_failure_check(),
+        _deepsource_advisory_status_context(
+            deepsource_advisory_evidence="Readability advisory but fail-open crash regression remains"
+        ),
+    )
+    ASSERTIONS.assertFalse(decision["nonblocking"])
+    ASSERTIONS.assertEqual(decision["reason"], "deepsource_safety_or_correctness_signal")
+
+
+def test_deepsource_advisory_status_non_deepsource_failure_manual():
+    """Non-DeepSource failures are never treated as advisory nonblocking."""
+    decision = flow.deepsource_advisory_status_nonblocking_evidence(
+        _deepsource_python_failure_check(name="Unit tests", provider="github-actions"),
+        _deepsource_advisory_status_context(),
+    )
+    ASSERTIONS.assertFalse(decision["nonblocking"])
+    ASSERTIONS.assertEqual(decision["reason"], "not_deepsource_python")
+
+
 def test_auto_resolve_review_comments_contract_evidence_only_filters_strictly():
     """When evidence_only=True, only deterministic EVIDENCE_RESOLVE threads are eligible."""
     if not hasattr(flow, "eligible_review_comments_for_auto_resolve"):
