@@ -7806,6 +7806,7 @@ def _codacy_review_state(evidence: dict[str, Any]) -> str:
 
 def _codacy_review_annotations_count(evidence: dict[str, Any]) -> int:
     codacy = evidence.get("codacy") if isinstance(evidence.get("codacy"), dict) else {}
+    saw_zero = False
     for source, key in (
         (evidence, "codacy_annotations_count"),
         (evidence, "github_annotations_count"),
@@ -7814,12 +7815,32 @@ def _codacy_review_annotations_count(evidence: dict[str, Any]) -> int:
         (codacy, "github_annotations_count"),
     ):
         if key in source:
-            return safe_nonnegative_int(source.get(key), -1)
-    for source, key in ((evidence, "github_annotations"), (evidence, "codacy_annotations"), (codacy, "annotations")):
+            count = safe_nonnegative_int(source.get(key), -1)
+            if count > 0:
+                return count
+            if count == 0:
+                saw_zero = True
+    for source, key in (
+        (evidence, "github_annotations"),
+        (evidence, "codacy_annotations"),
+        (codacy, "github_annotations"),
+        (codacy, "codacy_annotations"),
+        (codacy, "annotations"),
+    ):
         annotations = source.get(key)
         if isinstance(annotations, list):
-            return len(annotations) if all(isinstance(item, dict) for item in annotations) else -1
-    return -1
+            if not all(isinstance(item, dict) for item in annotations):
+                continue
+            if annotations:
+                return len(annotations)
+            saw_zero = True
+        else:
+            count = safe_nonnegative_int(annotations, -1)
+            if count > 0:
+                return count
+            if count == 0:
+                saw_zero = True
+    return 0 if saw_zero else -1
 
 
 def _review_fixed_or_stale(evidence: dict[str, Any]) -> bool:

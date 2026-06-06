@@ -5116,6 +5116,68 @@ def test_passive_rerun_readiness_accepts_controller_codacy_evidence_keys():
     ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
 
 
+def test_passive_rerun_readiness_accepts_integer_github_annotations_zero():
+    """Passive rerun readiness should accept integer zero GitHub annotation evidence."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    evidence = _passive_review_evidence(
+        review_resolution_plan=review_plan,
+        github_codacy_state="SUCCESS",
+        github_annotations=0,
+    )
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    plan = controller.build_passive_rerun_readiness_plan(evidence)
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_accepts_nested_integer_github_annotations_zero():
+    """Passive rerun readiness should accept nested integer zero GitHub annotation evidence."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    evidence = _passive_review_evidence(review_resolution_plan=review_plan)
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    evidence["codacy"] = {"github_codacy_state": "SUCCESS", "github_annotations": 0}
+    plan = controller.build_passive_rerun_readiness_plan(evidence)
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_blocks_nonzero_github_annotations_counts():
+    """Passive rerun readiness should block nonzero GitHub annotation evidence."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    for extra in (
+        {"github_codacy_state": "SUCCESS", "github_annotations": 1},
+        {"codacy": {"github_codacy_state": "SUCCESS", "github_annotations": 1}},
+    ):
+        evidence = _passive_review_evidence(review_resolution_plan=review_plan, **extra)
+        evidence.pop("codacy_state")
+        evidence.pop("codacy_annotations_count")
+        plan = controller.build_passive_rerun_readiness_plan(evidence)
+        ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+        ASSERTIONS.assertIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_malformed_github_annotations_fail_closed_unless_zero_alias_present():
+    """Malformed GitHub annotation evidence should fail closed unless another explicit zero source is present."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    malformed = _passive_review_evidence(
+        review_resolution_plan=review_plan,
+        github_codacy_state="SUCCESS",
+        github_annotations="n/a",
+    )
+    malformed.pop("codacy_state")
+    malformed.pop("codacy_annotations_count")
+    blocked = controller.build_passive_rerun_readiness_plan(malformed)
+    ASSERTIONS.assertFalse(blocked["safe_to_rerun"])
+    ASSERTIONS.assertIn("codacy_not_green", blocked["blocked_reasons"])
+
+    allowed = dict(malformed) | {"github_annotations_count": "0"}
+    plan = controller.build_passive_rerun_readiness_plan(allowed)
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
+
+
 def test_passive_rerun_readiness_accepts_github_codacy_check_state_alias():
     """Passive rerun readiness should accept github_codacy_check_state as green evidence."""
     review_plan = _single_review_plan(_passive_review_thread())
