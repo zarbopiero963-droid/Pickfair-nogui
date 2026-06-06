@@ -922,6 +922,28 @@ def _review_evidence_context(**extra: Any) -> dict[str, Any]:
     return context
 
 
+def _full_green_review_evidence_context(**extra: Any) -> dict[str, Any]:
+    context = _review_evidence_context(
+        evidence_only=True,
+        safe_to_resolve=True,
+        validation_passed=True,
+        issue_fixed_or_stale=True,
+        current_head_sha="abc",
+        evidence_head_sha="abc",
+        checks_green=True,
+        tests=["pytest"],
+        pending_checks=[],
+        pending_checks_count=0,
+        failing_checks=[],
+        failing_checks_count=0,
+        codacy_state="SUCCESS",
+        github_codacy_state="SUCCESS",
+        codacy_annotations_count=0,
+    )
+    context.update(extra)
+    return context
+
+
 def _deepsource_python_failure_check(**extra: Any) -> dict[str, Any]:
     check: dict[str, Any] = {
         "name": "DeepSource: Python",
@@ -1553,26 +1575,14 @@ def test_auto_resolve_review_comments_contract_evidence_only_filters_strictly():
         raise NotImplementedError("eligible_review_comments_for_auto_resolve not implemented")
     eligible = flow.eligible_review_comments_for_auto_resolve(
         _review_nodes_for_auto_resolve(),
-        _review_evidence_context(
-            evidence_only=True,
-            validation_passed=True,
-            issue_fixed_or_stale=True,
-            pending_checks=[],
-            failing_checks=[],
-        ),
+        _full_green_review_evidence_context(),
     )
     ASSERTIONS.assertEqual([item["id"] for item in eligible], ["a"])
 
 
 def test_auto_resolve_review_comments_evidence_only_excludes_unknown_provider():
     """Flow evidence-only eligibility rejects providerless threads even if triage allows evidence resolve."""
-    context = _review_evidence_context(
-        evidence_only=True,
-        validation_passed=True,
-        issue_fixed_or_stale=True,
-        pending_checks=[],
-        failing_checks=[],
-    )
+    context = _full_green_review_evidence_context()
     threads = [
         {
             "id": "unknown-provider",
@@ -1600,13 +1610,7 @@ def test_auto_resolve_review_comments_evidence_only_excludes_unknown_provider():
 
 def test_auto_resolve_review_comments_evidence_only_excludes_providerless_active_thread():
     """Flow evidence-only eligibility must reject providerless current-head stale/advisory fixtures."""
-    context = _review_evidence_context(
-        evidence_only=True,
-        validation_passed=True,
-        issue_fixed_or_stale=True,
-        pending_checks=[],
-        failing_checks=[],
-    )
+    context = _full_green_review_evidence_context()
     thread = {
         "id": "unknown-flow-evidence-only",
         "body": "style nit already covered by tests",
@@ -1623,13 +1627,7 @@ def test_auto_resolve_review_comments_evidence_only_excludes_providerless_active
 
 def test_auto_resolve_review_comments_evidence_only_excludes_comments_nodes_missing_author():
     """Flow evidence-only eligibility must reject comments.nodes without a usable author."""
-    context = _review_evidence_context(
-        evidence_only=True,
-        validation_passed=True,
-        issue_fixed_or_stale=True,
-        pending_checks=[],
-        failing_checks=[],
-    )
+    context = _full_green_review_evidence_context()
     threads = [
         {
             "id": "none-node-author",
@@ -1651,15 +1649,7 @@ def test_auto_resolve_review_comments_evidence_only_excludes_comments_nodes_miss
 
 def test_auto_resolve_review_comments_evidence_only_keeps_codacy_with_full_green_evidence():
     """Known Codacy provider remains evidence-only eligible when full green evidence is present."""
-    context = _review_evidence_context(
-        evidence_only=True,
-        validation_passed=True,
-        issue_fixed_or_stale=True,
-        pending_checks=[],
-        failing_checks=[],
-        codacy_state="success",
-        codacy_annotations_count=0,
-    )
+    context = _full_green_review_evidence_context()
     thread = {
         "id": "codacy-green",
         "author": "codacy[bot]",
@@ -1669,6 +1659,55 @@ def test_auto_resolve_review_comments_evidence_only_keeps_codacy_with_full_green
 
     eligible = flow.eligible_review_comments_for_auto_resolve([thread], context)
     ASSERTIONS.assertEqual([item["id"] for item in eligible], ["codacy-green"])
+
+
+def test_auto_resolve_review_comments_evidence_only_excludes_codacy_without_validation():
+    """Known Codacy provider is not evidence-only eligible without passed validation."""
+    context = _full_green_review_evidence_context(validation_passed=False)
+    thread = {
+        "id": "codacy-validation-failed",
+        "author": "codacy[bot]",
+        "body": "style nit already covered by tests",
+        "active": True,
+    }
+
+    ASSERTIONS.assertEqual(
+        controller.triage_review_thread_contract(thread, context)["decision"],
+        "EVIDENCE_RESOLVE",
+    )
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, context))
+    eligible = flow.eligible_review_comments_for_auto_resolve([thread], context)
+    ASSERTIONS.assertEqual(eligible, [])
+
+
+def test_auto_resolve_review_comments_evidence_only_excludes_codacy_with_stale_evidence_head():
+    """Known Codacy provider is not evidence-only eligible with stale head evidence."""
+    context = _full_green_review_evidence_context(evidence_head_sha="old")
+    thread = {
+        "id": "codacy-stale-evidence",
+        "author": "codacy[bot]",
+        "body": "style nit already covered by tests",
+        "active": True,
+    }
+
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, context))
+    eligible = flow.eligible_review_comments_for_auto_resolve([thread], context)
+    ASSERTIONS.assertEqual(eligible, [])
+
+
+def test_auto_resolve_review_comments_evidence_only_excludes_codacy_without_tests():
+    """Known Codacy provider is not evidence-only eligible without test evidence."""
+    context = _full_green_review_evidence_context(tests=[])
+    thread = {
+        "id": "codacy-missing-tests",
+        "author": "codacy[bot]",
+        "body": "style nit already covered by tests",
+        "active": True,
+    }
+
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, context))
+    eligible = flow.eligible_review_comments_for_auto_resolve([thread], context)
+    ASSERTIONS.assertEqual(eligible, [])
 
 
 def test_auto_resolve_review_comments_contract_non_evidence_mode_allows_valid_triage_outputs():
@@ -1683,6 +1722,24 @@ def test_auto_resolve_review_comments_contract_non_evidence_mode_allows_valid_tr
         _review_evidence_context(),
     )
     ASSERTIONS.assertEqual([item["id"] for item in eligible], ["p", "e", "m"])
+
+
+def test_auto_resolve_review_comments_non_evidence_mode_keeps_unknown_active_thread_visible():
+    """Normal mode keeps unknown active unresolved threads eligible for blocking/reporting."""
+    context = _review_evidence_context(evidence_only=False)
+    thread = {
+        "id": "unknown-active",
+        "author": "unknown-reviewer",
+        "body": "stale advisory nit",
+        "isResolved": False,
+    }
+
+    ASSERTIONS.assertEqual(
+        controller.triage_review_thread_contract(thread, context)["decision"],
+        "EVIDENCE_RESOLVE",
+    )
+    eligible = flow.eligible_review_comments_for_auto_resolve([thread], context)
+    ASSERTIONS.assertEqual([item["id"] for item in eligible], ["unknown-active"])
 
 
 def test_auto_resolve_review_comments_contract_fails_closed_without_evidence_context():
