@@ -6635,6 +6635,12 @@ def _review_triage_checks_block_evidence(context: dict[str, Any], claimed_issue:
         or context.get("failing_checks")
         or context.get("pending_checks")
     )
+    pending_count = _strict_nonnegative_check_count(context.get("pending_checks_count"))
+    failing_count = _strict_nonnegative_check_count(context.get("failing_checks_count"))
+    if pending_count is None or failing_count is None:
+        return not explicit_unrelated
+    if pending_count > 0 or failing_count > 0:
+        return not explicit_unrelated
     checks_green = context.get("checks_green") is True
     if not checks_green:
         return not explicit_unrelated
@@ -7887,11 +7893,38 @@ def _review_evidence_tests_present(evidence: dict[str, Any]) -> bool:
     tests = _normalize_tests_covering_behavior(
         first_nonempty(
             evidence.get("tests"),
-            evidence.get("validation"),
             evidence.get("tests_covering_behavior"),
         )
     )
     return bool(tests)
+
+
+def _strict_nonnegative_check_count(value: object) -> int | None:
+    if value is None:
+        return 0
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        if re.fullmatch(r"\d+", cleaned):
+            return int(cleaned)
+        return None
+    return None
+
+
+def _check_count_blocker_reasons(evidence: dict[str, Any], key: str, active_reason: str) -> list[str]:
+    if key not in evidence:
+        return []
+    count = _strict_nonnegative_check_count(evidence.get(key))
+    if count is None:
+        return [active_reason, f"{key}_unknown"]
+    if count > 0:
+        return [active_reason]
+    return []
 
 
 def _review_evidence_safety_proven(thread: dict[str, Any], evidence: dict[str, Any], claimed_issue: str) -> bool:
@@ -7945,10 +7978,12 @@ def _review_resolution_evidence_blockers(
         blockers.append("missing_tests")
     if evidence.get("checks_green") is not True:
         blockers.append("checks_not_green")
-    if bool(evidence.get("pending_checks")) or safe_nonnegative_int(evidence.get("pending_checks_count"), 0) > 0:
+    if bool(evidence.get("pending_checks")):
         blockers.append("pending_checks")
-    if bool(evidence.get("failing_checks")) or safe_nonnegative_int(evidence.get("failing_checks_count"), 0) > 0:
+    blockers.extend(_check_count_blocker_reasons(evidence, "pending_checks_count", "pending_checks"))
+    if bool(evidence.get("failing_checks")):
         blockers.append("failing_checks")
+    blockers.extend(_check_count_blocker_reasons(evidence, "failing_checks_count", "failing_checks"))
     if _review_thread_codacy_involved(thread, evidence, provider) and not _codacy_review_evidence_green(evidence):
         blockers.append("codacy_not_green")
     if not _review_evidence_safety_proven(thread, evidence, claimed_issue):
@@ -8154,7 +8189,9 @@ def _review_plan_items_for_rerun(review_plan: dict[str, Any]) -> list[Any]:
 
 def _review_plan_item_explicitly_clear_for_rerun(item: dict[str, Any]) -> bool:
     decision = item.get("decision")
-    if decision in {"EVIDENCE_RESOLVE", "SKIPPED"}:
+    if decision == "EVIDENCE_RESOLVE":
+        return item.get("safe_to_resolve") is True
+    if decision == "SKIPPED":
         return True
     if item.get("safe_to_resolve") is True:
         return True
@@ -8164,7 +8201,7 @@ def _review_plan_item_explicitly_clear_for_rerun(item: dict[str, Any]) -> bool:
         return True
     if item.get("nonblocking") is True or item.get("non_blocking") is True:
         return True
-    return "blocking" in item and item.get("blocking") is False
+    return False
 
 
 def _review_plan_item_blocks_passive_rerun(item: Any) -> bool:

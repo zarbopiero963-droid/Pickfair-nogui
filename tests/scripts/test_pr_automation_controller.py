@@ -4896,6 +4896,22 @@ def test_passive_review_plan_outdated_stale_full_evidence_resolves_only():
     ASSERTIONS.assertEqual(plan["next_action"], "resolve_review_threads")
 
 
+def test_passive_review_plan_outdated_validation_passed_without_tests_fails_closed():
+    thread = _passive_review_thread(isOutdated=True)
+    plan = _single_review_plan(thread, tests=[], tests_covering_behavior=[], validation_passed=True, validation="PASS")
+    item = plan["items"][0]
+    ASSERTIONS.assertNotEqual(item["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertIn("missing_tests", item["skipped_reasons"])
+
+    evidence = _passive_review_evidence(tests=[], tests_covering_behavior=[], validation_passed=True, validation="PASS")
+    ASSERTIONS.assertEqual(
+        controller.triage_review_thread_contract(thread, evidence)["decision"],
+        "NEEDS_MANUAL",
+    )
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+
+
 def test_passive_review_plan_codacy_stale_green_zero_annotations_resolves_only():
     plan = _single_review_plan(
         _passive_review_thread("stale Codacy annotation already fixed", author="codacy-production[bot]"),
@@ -4967,6 +4983,28 @@ def test_passive_review_plan_pending_or_failing_checks_fail_closed():
     failing = _single_review_plan(_passive_review_thread(), failing_checks=[{"name": "CI"}])
     ASSERTIONS.assertEqual(pending["items"][0]["decision"], "NEEDS_MANUAL")
     ASSERTIONS.assertEqual(failing["items"][0]["decision"], "NEEDS_MANUAL")
+
+
+def test_passive_review_plan_malformed_check_counts_fail_closed_before_evidence_resolve():
+    pending = _single_review_plan(_passive_review_thread(), pending_checks_count="unknown")
+    failing = _single_review_plan(_passive_review_thread(), failing_checks_count="unknown")
+
+    ASSERTIONS.assertEqual(pending["items"][0]["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertIn("pending_checks_count_unknown", pending["items"][0]["skipped_reasons"])
+    ASSERTIONS.assertFalse(
+        controller.should_resolve_review_thread(
+            _passive_review_thread(),
+            _passive_review_evidence(pending_checks_count="unknown"),
+        )
+    )
+    ASSERTIONS.assertEqual(failing["items"][0]["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertIn("failing_checks_count_unknown", failing["items"][0]["skipped_reasons"])
+    ASSERTIONS.assertFalse(
+        controller.should_resolve_review_thread(
+            _passive_review_thread(),
+            _passive_review_evidence(failing_checks_count="unknown"),
+        )
+    )
 
 
 def test_passive_review_plan_codacy_action_required_or_annotations_fail_closed():
@@ -5121,6 +5159,7 @@ def test_passive_rerun_readiness_blocks_legacy_review_plan_items():
     """Legacy unresolved review plan shapes should block passive rerun readiness."""
     for item in (
         {"blocking": True, "safe_to_resolve": False},
+        {"blocking": False, "safe_to_resolve": False},
         {"needs_manual": True, "safe_to_resolve": False},
         {"safe_to_resolve": False},
     ):
@@ -5134,10 +5173,10 @@ def test_passive_rerun_readiness_blocks_legacy_review_plan_items():
 def test_passive_rerun_readiness_accepts_explicitly_clear_legacy_review_items():
     """Explicit skipped, resolved, or nonblocking legacy items should not block reruns."""
     for item in (
+        {"decision": "EVIDENCE_RESOLVE", "safe_to_resolve": True},
         {"safe_to_resolve": False, "decision": "SKIPPED"},
         {"safe_to_resolve": False, "skipped": True},
         {"safe_to_resolve": False, "resolved": True},
-        {"safe_to_resolve": False, "blocking": False},
         {"safe_to_resolve": False, "nonblocking": True},
     ):
         plan = controller.build_passive_rerun_readiness_plan(
