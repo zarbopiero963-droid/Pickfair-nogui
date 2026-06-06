@@ -5065,6 +5065,57 @@ def test_passive_rerun_readiness_blocks_on_active_review_decisions():
         ASSERTIONS.assertIn("active_reviews_not_clear", plan["blocked_reasons"])
 
 
+def test_passive_rerun_readiness_blocks_legacy_review_plan_items():
+    """Legacy unresolved review plan shapes should block passive rerun readiness."""
+    for item in (
+        {"blocking": True, "safe_to_resolve": False},
+        {"needs_manual": True, "safe_to_resolve": False},
+        {"safe_to_resolve": False},
+    ):
+        plan = controller.build_passive_rerun_readiness_plan(
+            _passive_review_evidence(review_resolution_plan={"triage_items": [item]})
+        )
+        ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+        ASSERTIONS.assertIn("active_reviews_not_clear", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_accepts_explicitly_clear_legacy_review_items():
+    """Explicit skipped, resolved, or nonblocking legacy items should not block reruns."""
+    for item in (
+        {"safe_to_resolve": False, "decision": "SKIPPED"},
+        {"safe_to_resolve": False, "skipped": True},
+        {"safe_to_resolve": False, "resolved": True},
+        {"safe_to_resolve": False, "blocking": False},
+        {"safe_to_resolve": False, "nonblocking": True},
+    ):
+        plan = controller.build_passive_rerun_readiness_plan(
+            _passive_review_evidence(review_resolution_plan={"triage_items": [item]})
+        )
+        ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+        ASSERTIONS.assertNotIn("active_reviews_not_clear", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_uses_triage_items_and_items():
+    """Passive rerun readiness should inspect both review plan item keys."""
+    for key in ("triage_items", "items"):
+        plan = controller.build_passive_rerun_readiness_plan(
+            _passive_review_evidence(review_resolution_plan={key: [{"safe_to_resolve": False}]})
+        )
+        ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+        ASSERTIONS.assertIn("active_reviews_not_clear", plan["blocked_reasons"])
+
+    mixed = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(
+            review_resolution_plan={
+                "triage_items": [{"decision": "EVIDENCE_RESOLVE", "safe_to_resolve": True}],
+                "items": [{"blocking": True, "safe_to_resolve": False}],
+            }
+        )
+    )
+    ASSERTIONS.assertFalse(mixed["safe_to_rerun"])
+    ASSERTIONS.assertIn("active_reviews_not_clear", mixed["blocked_reasons"])
+
+
 def test_passive_rerun_readiness_blocks_on_check_counts():
     """Passive rerun readiness should block nonzero or malformed check counts."""
     review_plan = _single_review_plan(_passive_review_thread())
@@ -5083,11 +5134,16 @@ def test_passive_rerun_readiness_blocks_on_check_counts():
 
 def test_passive_rerun_readiness_malformed_review_plan_items_fail_closed():
     """Passive rerun readiness should not trust malformed review plan items."""
-    plan = controller.build_passive_rerun_readiness_plan(
-        _passive_review_evidence(review_resolution_plan={"triage_items": ["not-a-dict"]})
-    )
-    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
-    ASSERTIONS.assertIn("active_reviews_not_clear", plan["blocked_reasons"])
+    for review_plan in (
+        {"triage_items": ["not-a-dict"]},
+        {"triage_items": [{}]},
+        {"triage_items": "not-a-list"},
+    ):
+        plan = controller.build_passive_rerun_readiness_plan(
+            _passive_review_evidence(review_resolution_plan=review_plan)
+        )
+        ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+        ASSERTIONS.assertIn("active_reviews_not_clear", plan["blocked_reasons"])
 
 
 def test_passive_review_plan_malformed_per_thread_evidence_fails_closed():

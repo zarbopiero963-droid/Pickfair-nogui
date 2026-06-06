@@ -8142,19 +8142,54 @@ def build_review_thread_resolution_plan(
 
 
 def _review_plan_items_for_rerun(review_plan: dict[str, Any]) -> list[Any]:
+    normalized: list[Any] = []
     for key in ("triage_items", "items"):
+        if key not in review_plan:
+            continue
         items = review_plan.get(key)
-        if isinstance(items, list):
-            return items
-    return []
+        if not isinstance(items, list):
+            normalized.append(items)
+            continue
+        normalized.extend(items)
+    return normalized
+
+
+def _review_plan_item_explicitly_clear_for_rerun(item: dict[str, Any]) -> bool:
+    decision = item.get("decision")
+    if decision in {"EVIDENCE_RESOLVE", "SKIPPED"}:
+        return True
+    if item.get("safe_to_resolve") is True:
+        return True
+    if item.get("resolved") is True or item.get("isResolved") is True or item.get("is_resolved") is True:
+        return True
+    if item.get("skipped") is True:
+        return True
+    if item.get("nonblocking") is True or item.get("non_blocking") is True:
+        return True
+    return "blocking" in item and item.get("blocking") is False
+
+
+def _review_plan_item_blocks_passive_rerun(item: Any) -> bool:
+    if not isinstance(item, dict):
+        return True
+    if item.get("decision") in {"PATCH_REQUIRED", "NEEDS_MANUAL"}:
+        return True
+    if item.get("blocking") is True:
+        return True
+    if item.get("needs_manual") is True:
+        return True
+    explicitly_clear = _review_plan_item_explicitly_clear_for_rerun(item)
+    if item.get("safe_to_resolve") is False and not explicitly_clear:
+        return True
+    if explicitly_clear:
+        return False
+    return True
 
 
 def _review_plan_blocks_passive_rerun(review_plan: dict[str, Any]) -> bool:
     items = _review_plan_items_for_rerun(review_plan)
     for item in items:
-        if not isinstance(item, dict):
-            return True
-        if item.get("decision") in {"PATCH_REQUIRED", "NEEDS_MANUAL"}:
+        if _review_plan_item_blocks_passive_rerun(item):
             return True
     return False
 
