@@ -8229,6 +8229,18 @@ def _review_plan_blocks_passive_rerun(review_plan: dict[str, Any]) -> bool:
     return False
 
 
+def _review_plan_has_rerun_items(review_plan: dict[str, Any]) -> bool:
+    for key in ("triage_items", "items"):
+        if key not in review_plan:
+            continue
+        items = review_plan.get(key)
+        if not isinstance(items, list):
+            return True
+        if items:
+            return True
+    return False
+
+
 def _check_count_blocks_rerun(context: dict[str, Any], key: str) -> bool:
     if key not in context:
         return False
@@ -8241,9 +8253,10 @@ def build_passive_rerun_readiness_plan(context: dict[str, Any] | None = None) ->
     current_head = str(first_nonempty(ctx.get("current_head_sha"), ctx.get("head_sha"), ctx.get("headRefOid")) or "").strip()
     evidence_head = str(ctx.get("evidence_head_sha") or "").strip()
     review_plan = ctx.get("review_resolution_plan")
-    if not isinstance(review_plan, dict):
+    active_review_threads = ctx.get("active_review_threads") if isinstance(ctx.get("active_review_threads"), list) else []
+    if not isinstance(review_plan, dict) or (active_review_threads and not _review_plan_has_rerun_items(review_plan)):
         review_plan = build_review_thread_resolution_plan(
-            ctx.get("active_review_threads") if isinstance(ctx.get("active_review_threads"), list) else [],
+            active_review_threads,
             ctx,
         )
     blockers: list[str] = []

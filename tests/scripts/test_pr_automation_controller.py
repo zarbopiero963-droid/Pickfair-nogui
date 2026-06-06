@@ -5144,6 +5144,69 @@ def test_passive_rerun_readiness_checks_green_true_allows_clear_gates():
     ASSERTIONS.assertNotIn("checks_not_green", plan["blocked_reasons"])
 
 
+def test_passive_rerun_readiness_rebuilds_empty_supplied_plan_when_active_reviews_present():
+    """Itemless supplied review plans must not bypass active review threads."""
+    active_thread = _passive_review_thread(
+        "security fail-open regression remains",
+        reproducible=True,
+    )
+    for review_plan in ({}, {"items": []}, {"summary": "no usable items"}):
+        plan = controller.build_passive_rerun_readiness_plan(
+            _passive_review_evidence(
+                review_resolution_plan=review_plan,
+                active_review_threads=[active_thread],
+                safety_proven_fixed=False,
+            )
+        )
+        ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+        ASSERTIONS.assertIn("active_reviews_not_clear", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_no_supplied_plan_blocks_active_reviews():
+    """Absent supplied review plan should continue to rebuild from active reviews."""
+    plan = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(
+            active_review_threads=[
+                _passive_review_thread(
+                    "active blocking correctness bug remains",
+                    reproducible=True,
+                )
+            ],
+            safety_proven_fixed=False,
+        )
+    )
+    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+    ASSERTIONS.assertIn("active_reviews_not_clear", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_itemless_plan_without_active_reviews_allows_clear_gates():
+    """No active review state should remain safe when the other rerun gates are green."""
+    plan = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(review_resolution_plan={})
+    )
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("active_reviews_not_clear", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_valid_evidence_resolve_plan_remains_safe_with_active_reviews():
+    """A usable safe evidence-resolve plan should remain authoritative."""
+    plan = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(
+            review_resolution_plan={
+                "items": [{"decision": "EVIDENCE_RESOLVE", "safe_to_resolve": True}]
+            },
+            active_review_threads=[
+                _passive_review_thread(
+                    "security fail-open regression remains",
+                    reproducible=True,
+                )
+            ],
+        )
+    )
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("active_reviews_not_clear", plan["blocked_reasons"])
+
+
 def test_passive_rerun_readiness_blocks_on_active_review_decisions():
     """Passive rerun readiness should block unresolved patch or manual review items."""
     for decision in ("PATCH_REQUIRED", "NEEDS_MANUAL"):
