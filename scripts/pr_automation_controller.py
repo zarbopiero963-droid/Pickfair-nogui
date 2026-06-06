@@ -7862,8 +7862,6 @@ def _codacy_review_evidence_green(evidence: dict[str, Any]) -> bool:
 
 
 def _codacy_review_evidence_present(evidence: dict[str, Any]) -> bool:
-    if evidence.get("codacy_relevant") is True:
-        return True
     codacy = evidence.get("codacy") if isinstance(evidence.get("codacy"), dict) else {}
     if codacy:
         return True
@@ -8220,7 +8218,8 @@ def build_passive_rerun_readiness_plan(context: dict[str, Any] | None = None) ->
         blockers.append("active_reviews_not_clear")
     if ctx.get("checks_green") is False:
         blockers.append("checks_not_green")
-    if _codacy_review_evidence_present(ctx) and not _codacy_review_evidence_green(ctx):
+    codacy_required = ctx.get("codacy_relevant") is True
+    if (codacy_required or _codacy_review_evidence_present(ctx)) and not _codacy_review_evidence_green(ctx):
         blockers.append("codacy_not_green")
     if bool(ctx.get("pending_checks")) or _check_count_blocks_rerun(ctx, "pending_checks_count"):
         blockers.append("pending_checks")
