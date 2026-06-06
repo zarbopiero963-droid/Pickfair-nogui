@@ -4905,6 +4905,20 @@ def test_passive_review_plan_codacy_stale_green_zero_annotations_resolves_only()
     ASSERTIONS.assertEqual(plan["items"][0]["decision"], "EVIDENCE_RESOLVE")
 
 
+def test_passive_review_plan_accepts_github_codacy_check_state_alias():
+    evidence = _passive_review_evidence(
+        github_codacy_check_state="SUCCESS",
+        github_annotations_count=0,
+    )
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    plan = controller.build_review_thread_resolution_plan(
+        [_passive_review_thread("stale Codacy annotation already fixed", author="codacy-production[bot]")],
+        evidence,
+    )
+    ASSERTIONS.assertEqual(plan["items"][0]["decision"], "EVIDENCE_RESOLVE")
+
+
 def test_passive_review_plan_deepsource_advisory_green_evidence_resolves_only():
     for body in (
         "Cyclomatic complexity advisory covered by tests",
@@ -5094,6 +5108,23 @@ def test_passive_rerun_readiness_accepts_controller_codacy_evidence_keys():
         review_resolution_plan=review_plan,
         github_codacy_state="SUCCESS",
         github_annotations_count=0,
+    )
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    plan = controller.build_passive_rerun_readiness_plan(evidence)
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_accepts_github_codacy_check_state_alias():
+    """Passive rerun readiness should accept github_codacy_check_state as green evidence."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    evidence = _passive_review_evidence(
+        review_resolution_plan=review_plan,
+        github_codacy_check_state="SUCCESS",
+        github_annotations_count=0,
+        pending_checks_count=0,
+        failing_checks_count=0,
     )
     evidence.pop("codacy_state")
     evidence.pop("codacy_annotations_count")

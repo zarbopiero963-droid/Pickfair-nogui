@@ -7793,9 +7793,12 @@ def _codacy_review_state(evidence: dict[str, Any]) -> str:
             evidence.get("codacy_conclusion"),
             evidence.get("codacy_state"),
             evidence.get("github_codacy_state"),
+            evidence.get("github_codacy_check_state"),
             codacy.get("conclusion"),
             codacy.get("state"),
+            codacy.get("status"),
             codacy.get("github_codacy_state"),
+            codacy.get("github_codacy_check_state"),
         )
         or ""
     ).strip().lower()
