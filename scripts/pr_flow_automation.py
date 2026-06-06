@@ -1325,6 +1325,19 @@ def _decision_is_eligible_for_auto_resolve(decision: str, evidence_only: bool) -
     return True
 
 
+def build_passive_review_evidence_resolution_plan(
+    review_threads: list[dict[str, Any]],
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return a passive evidence-resolution plan without GitHub mutations."""
+    return controller.build_review_thread_resolution_plan(review_threads, context if isinstance(context, dict) else {})
+
+
+def build_passive_rerun_readiness_plan(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Return passive rerun readiness without executing workflow reruns."""
+    return controller.build_passive_rerun_readiness_plan(context)
+
+
 def classify_codacy_rule_conflict(issues: list[dict[str, Any]]) -> dict[str, Any]:
     """Detect contradictory Codacy D203/D211 rule findings on the same entity."""
     grouped_patterns: dict[tuple[str, str, str, str], set[str]] = {}

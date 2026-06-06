@@ -4,6 +4,7 @@
 import argparse
 import copy
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -4835,6 +4836,194 @@ def test_collect_patch_scope_changes_detects_symlink_retarget_same_resolved_byte
     changes = controller.collect_patch_scope_changes(pre, post)
     ASSERTIONS.assertEqual(changes["modified_files"], ["link.txt"])
     ASSERTIONS.assertIn("link.txt", changes["changed_files"])
+
+
+def _passive_review_evidence(**extra: Any) -> dict[str, Any]:
+    evidence: dict[str, Any] = {
+        "current_head_sha": "head-1",
+        "evidence_head_sha": "head-1",
+        "validation_passed": True,
+        "tests": ["python3 -m pytest tests/scripts/test_pr_automation_controller.py -q"],
+        "checks_green": True,
+        "pending_checks": [],
+        "failing_checks": [],
+        "codacy_state": "success",
+        "codacy_annotations_count": 0,
+    }
+    evidence.update(extra)
+    return evidence
+
+
+def _passive_review_thread(
+    body: str = "stale advisory nit covered by tests",
+    *,
+    author: str = "coderabbitai[bot]",
+    thread_id: str = "thread-1",
+    **extra: Any,
+) -> dict[str, Any]:
+    thread: dict[str, Any] = {
+        "id": thread_id,
+        "author": author,
+        "body": body,
+        "isResolved": False,
+        "isOutdated": False,
+    }
+    thread.update(extra)
+    return thread
+
+
+def _single_review_plan(thread: object, **evidence_extra: Any) -> dict[str, Any]:
+    plan = controller.build_review_thread_resolution_plan(
+        [thread],
+        _passive_review_evidence(**evidence_extra),
+    )
+    ASSERTIONS.assertEqual(len(plan["items"]), 1)
+    return plan
+
+
+def test_passive_review_plan_active_advisory_full_evidence_resolves_only():
+    plan = _single_review_plan(_passive_review_thread())
+    item = plan["items"][0]
+    ASSERTIONS.assertEqual(item["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertTrue(item["safe_to_resolve"])
+    ASSERTIONS.assertIn("Local validation passed", item["reply_body"])
+    ASSERTIONS.assertEqual(plan["next_action"], "resolve_review_threads")
+
+
+def test_passive_review_plan_outdated_stale_full_evidence_resolves_only():
+    plan = _single_review_plan(_passive_review_thread(isOutdated=True))
+    ASSERTIONS.assertEqual(plan["items"][0]["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertEqual(plan["next_action"], "resolve_review_threads")
+
+
+def test_passive_review_plan_codacy_stale_green_zero_annotations_resolves_only():
+    plan = _single_review_plan(
+        _passive_review_thread("stale Codacy annotation already fixed", author="codacy-production[bot]"),
+        codacy_state="success",
+        codacy_annotations_count=0,
+    )
+    ASSERTIONS.assertEqual(plan["items"][0]["decision"], "EVIDENCE_RESOLVE")
+
+
+def test_passive_review_plan_deepsource_advisory_green_evidence_resolves_only():
+    for body in (
+        "Cyclomatic complexity advisory covered by tests",
+        "Readability advisory already fixed",
+        "Collapsible if advisory stale",
+    ):
+        plan = _single_review_plan(_passive_review_thread(body, author="deepsource-app"))
+        ASSERTIONS.assertEqual(plan["items"][0]["decision"], "EVIDENCE_RESOLVE")
+
+
+def test_passive_review_plan_missing_optional_provider_non_blocking():
+    plan = controller.build_review_thread_resolution_plan([], {"expected_providers": ["codacy-production"]})
+    ASSERTIONS.assertFalse(plan["missing_providers_blocking"])
+    ASSERTIONS.assertEqual(plan["missing_providers"], ["codacy-production"])
+
+
+def test_passive_review_plan_patch_required_uncovered_not_resolved():
+    plan = _single_review_plan(
+        _passive_review_thread("security fail-open regression remains", reproducible=True),
+        safety_proven_fixed=False,
+    )
+    ASSERTIONS.assertEqual(plan["items"][0]["decision"], "PATCH_REQUIRED")
+    ASSERTIONS.assertFalse(plan["items"][0]["safe_to_resolve"])
+
+
+def test_passive_review_plan_needs_manual_not_resolved():
+    plan = _single_review_plan(_passive_review_thread("ambiguous architecture needs owner policy"))
+    ASSERTIONS.assertEqual(plan["items"][0]["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertFalse(plan["items"][0]["safe_to_resolve"])
+
+
+def test_passive_review_plan_safety_not_proven_fixed_fails_closed():
+    plan = _single_review_plan(_passive_review_thread("stale advisory but security regression remains"))
+    ASSERTIONS.assertNotEqual(plan["items"][0]["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertIn("safety_or_regression_not_proven_fixed", plan["items"][0]["skipped_reasons"])
+
+
+def test_passive_review_plan_head_mismatch_fails_closed():
+    plan = _single_review_plan(_passive_review_thread(), evidence_head_sha="old-head")
+    ASSERTIONS.assertEqual(plan["items"][0]["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertIn("evidence_head_mismatch", plan["items"][0]["skipped_reasons"])
+
+
+def test_passive_review_plan_pending_or_failing_checks_fail_closed():
+    pending = _single_review_plan(_passive_review_thread(), pending_checks=[{"name": "CI"}])
+    failing = _single_review_plan(_passive_review_thread(), failing_checks=[{"name": "CI"}])
+    ASSERTIONS.assertEqual(pending["items"][0]["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(failing["items"][0]["decision"], "NEEDS_MANUAL")
+
+
+def test_passive_review_plan_codacy_action_required_or_annotations_fail_closed():
+    action_required = _single_review_plan(
+        _passive_review_thread("stale Codacy annotation", author="codacy-production[bot]"),
+        codacy_state="action_required",
+    )
+    annotated = _single_review_plan(
+        _passive_review_thread("stale Codacy annotation", author="codacy-production[bot]"),
+        codacy_annotations_count=2,
+    )
+    ASSERTIONS.assertEqual(action_required["items"][0]["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(annotated["items"][0]["decision"], "NEEDS_MANUAL")
+
+
+def test_passive_review_plan_missing_validation_tests_or_evidence_head_fail_closed():
+    missing_validation = _single_review_plan(_passive_review_thread(), validation_passed=False)
+    missing_tests = _single_review_plan(_passive_review_thread(), tests=[])
+    missing_head = _single_review_plan(_passive_review_thread(), evidence_head_sha="")
+    ASSERTIONS.assertEqual(missing_validation["items"][0]["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(missing_tests["items"][0]["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(missing_head["items"][0]["decision"], "NEEDS_MANUAL")
+
+
+def test_passive_review_plan_malformed_thread_payload_fails_closed():
+    plan = _single_review_plan("not-a-thread")
+    ASSERTIONS.assertEqual(plan["items"][0]["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(plan["items"][0]["skipped_reason"], "malformed_thread_payload")
+
+
+def test_passive_review_plan_unknown_provider_active_failure_manual_or_patch():
+    plan = _single_review_plan(_passive_review_thread("failure remains active", author="unknown-reviewer"))
+    ASSERTIONS.assertIn(plan["items"][0]["decision"], {"PATCH_REQUIRED", "NEEDS_MANUAL"})
+    ASSERTIONS.assertFalse(plan["items"][0]["safe_to_resolve"])
+
+
+def test_passive_review_plan_forbidden_workflow_future_scope_needs_manual():
+    for body in (
+        "Please edit forbidden file order_manager.py",
+        "Touch .github/workflows/pr.yml to fix this",
+        "Future roadmap scope",
+    ):
+        plan = _single_review_plan(_passive_review_thread(body))
+        ASSERTIONS.assertEqual(plan["items"][0]["decision"], "NEEDS_MANUAL")
+
+
+def test_passive_rerun_readiness_plan_is_passive_and_gate_checked():
+    review_plan = _single_review_plan(_passive_review_thread())
+    allowed = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(review_resolution_plan=review_plan, rerun_run_ids=["123"])
+    )
+    ASSERTIONS.assertTrue(allowed["safe_to_rerun"])
+    ASSERTIONS.assertFalse(allowed["would_execute"])
+    ASSERTIONS.assertEqual(allowed["next_action"], "plan_rerun_stale_checks")
+
+    blocked = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(review_resolution_plan=review_plan, pending_checks=[{"name": "CI"}])
+    )
+    ASSERTIONS.assertFalse(blocked["safe_to_rerun"])
+    ASSERTIONS.assertIn("pending_checks", blocked["blocked_reasons"])
+
+
+def test_passive_review_helpers_do_not_contain_live_mutation_calls():
+    for helper in (
+        controller.build_review_thread_resolution_plan,
+        controller.build_passive_rerun_readiness_plan,
+    ):
+        source = inspect.getsource(helper)
+        ASSERTIONS.assertNotIn("resolveReviewThread", source)
+        ASSERTIONS.assertNotIn("gh run rerun", source)
+        ASSERTIONS.assertNotIn("auto_merge", source)
 
 
 def test_rollback_scope_violations_removes_forbidden_created_file(tmp_path):

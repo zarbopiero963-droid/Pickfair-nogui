@@ -1719,6 +1719,53 @@ def test_deepsource_advisory_evidence_only_can_resolve_with_current_head_tests()
     ASSERTIONS.assertEqual([item["id"] for item in eligible], ["ds2"])
 
 
+def test_flow_passive_review_evidence_plan_resolves_without_mutation():
+    plan = flow.build_passive_review_evidence_resolution_plan(
+        [
+            {
+                "id": "flow-review-1",
+                "author": "coderabbitai[bot]",
+                "body": "stale advisory nit covered by tests",
+                "isResolved": False,
+            }
+        ],
+        _review_evidence_context(
+            validation_passed=True,
+            pending_checks=[],
+            failing_checks=[],
+            codacy_state="success",
+            codacy_annotations_count=0,
+        ),
+    )
+    ASSERTIONS.assertEqual(plan["items"][0]["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertEqual(plan["next_action"], "resolve_review_threads")
+
+
+def test_flow_passive_rerun_readiness_plan_is_report_only():
+    context = _review_evidence_context(
+        validation_passed=True,
+        pending_checks=[],
+        failing_checks=[],
+        codacy_state="success",
+        codacy_annotations_count=0,
+        active_review_threads=[],
+    )
+    plan = flow.build_passive_rerun_readiness_plan(context)
+    ASSERTIONS.assertTrue(plan["passive_only"])
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertFalse(plan["would_execute"])
+
+
+def test_flow_passive_helpers_do_not_include_live_mutation_calls():
+    for helper in (
+        flow.build_passive_review_evidence_resolution_plan,
+        flow.build_passive_rerun_readiness_plan,
+    ):
+        source = inspect.getsource(helper)
+        ASSERTIONS.assertNotIn("resolveReviewThread", source)
+        ASSERTIONS.assertNotIn("gh run rerun", source)
+
+
 def _deepsource_required_check_context(**extra: Any) -> dict[str, Any]:
     """Build Deepsource required-check context for flow eligibility tests."""
     check = {
