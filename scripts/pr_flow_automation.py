@@ -1246,23 +1246,108 @@ def _deepsource_pending_checks_clear(context: dict[str, Any]) -> bool:
     return isinstance(pending_checks, list) and not pending_checks and pending_checks_count == 0
 
 
+
+def _review_thread_has_known_auto_resolve_provider(node: dict[str, Any]) -> bool:
+    """Return True only for trusted review providers in evidence-only auto-resolve."""
+    if not isinstance(node, dict):
+        return False
+
+    known = {
+        "chatgpt-codex-connector",
+        "codacy",
+        "codacy-production",
+        "coderabbit",
+        "coderabbitai",
+        "deepsource",
+        "deepsource-io",
+        "greptile",
+        "greptile-ai",
+        "greptileai",
+        "qodo-code-review",
+        "sourcery",
+        "sourcery-ai",
+    }
+
+    candidates: list[str] = []
+
+    for key in ("provider", "author", "review_provider", "source"):
+        value = node.get(key)
+        if isinstance(value, str):
+            candidates.append(value)
+        elif isinstance(value, dict):
+            for nested_key in ("login", "name", "provider"):
+                nested = value.get(nested_key)
+                if isinstance(nested, str):
+                    candidates.append(nested)
+
+    comments = node.get("comments")
+    comment_nodes: list[object] = []
+    if isinstance(comments, dict):
+        nodes = comments.get("nodes")
+        if isinstance(nodes, list):
+            comment_nodes = nodes
+    elif isinstance(comments, list):
+        comment_nodes = comments
+
+    for comment in comment_nodes:
+        if not isinstance(comment, dict):
+            continue
+        author = comment.get("author")
+        if isinstance(author, str):
+            candidates.append(author)
+        elif isinstance(author, dict):
+            login = author.get("login")
+            if isinstance(login, str):
+                candidates.append(login)
+        provider = comment.get("provider")
+        if isinstance(provider, str):
+            candidates.append(provider)
+
+    for candidate in candidates:
+        raw = candidate.strip()
+        if not raw:
+            continue
+
+        aliases = {
+            raw.lower(),
+            str(controller.review_provider_from_author(raw) or "").strip().lower(),
+            str(controller.normalize_review_author(raw) or "").strip().lower(),
+        }
+
+        if any(alias in known for alias in aliases if alias):
+            return True
+        if any(controller.is_deepsource_review_provider(alias) for alias in aliases if alias):
+            return True
+
+    return False
+
 def eligible_review_comments_for_auto_resolve(
-    nodes: list[object],
+    review_nodes: list[dict[str, Any]],
     context: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Return deterministic review-thread eligibility; fail closed for malformed threads."""
     ctx = context if isinstance(context, dict) else {}
-    evidence_only = ctx.get("evidence_only") is True
+    evidence_only = bool(ctx.get("evidence_only", False))
     eligible: list[dict[str, Any]] = []
+
+    nodes = review_nodes if isinstance(review_nodes, list) else []
     for node in nodes:
         if not isinstance(node, dict):
             continue
-        decision = _eligible_review_triage_decision(node, ctx)
-        if not _decision_is_eligible_for_auto_resolve(decision, evidence_only):
-            continue
-        eligible.append(node)
-    return eligible
 
+        if evidence_only:
+            if not _review_thread_has_known_auto_resolve_provider(node):
+                continue
+            triage = controller.triage_review_thread_contract(node, ctx)
+            if triage.get("decision") == "EVIDENCE_RESOLVE":
+                eligible.append(node)
+            continue
+
+        decision = _eligible_review_triage_decision(node, ctx)
+        if decision in {"PATCH_REQUIRED", "EVIDENCE_RESOLVE", "NEEDS_MANUAL"}:
+            eligible.append(node)
+
+    return eligible
 
 def _eligible_review_triage_decision(node: dict[str, Any], context: dict[str, Any]) -> str:
     if not _node_is_open_for_triage(node):
@@ -1282,7 +1367,22 @@ def _eligible_review_triage_decision(node: dict[str, Any], context: dict[str, An
         return ""
     if _is_outdated_needs_manual_without_evidence(node, context, decision):
         return ""
+    if context.get("evidence_only") is True and not _flow_evidence_only_review_thread_is_safe(node, context):
+        return ""
     return decision
+
+
+def _flow_evidence_only_review_thread_is_safe(node: dict[str, Any], context: dict[str, Any]) -> bool:
+    classified = controller.classify_review_thread(node, context)
+    author = str(classified.get("author") or "")
+    provider = str(classified.get("provider") or "")
+    if not author or not provider:
+        return False
+    if classified.get("unknown_author") is True or classified.get("needs_manual") is True:
+        return False
+    if str(classified.get("classification") or "") == "needs_manual":
+        return False
+    return controller.should_resolve_review_thread(node, context)
 
 
 def _node_is_open_for_triage(node: dict[str, Any]) -> bool:

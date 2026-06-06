@@ -893,7 +893,13 @@ def test_should_notify_ready_to_merge_true_when_all_conditions_match():
 
 def _review_nodes_for_auto_resolve() -> list[dict[str, Any]]:
     return [
-        {"id": "a", "body": "stale advisory nit", "isResolved": False, "isOutdated": False},
+        {
+            "id": "a",
+            "author": "chatgpt-codex-connector[bot]",
+            "body": "stale advisory nit",
+            "isResolved": False,
+            "isOutdated": False,
+        },
         {
             "id": "b",
             "body": "active bypass in guard path",
@@ -1547,9 +1553,122 @@ def test_auto_resolve_review_comments_contract_evidence_only_filters_strictly():
         raise NotImplementedError("eligible_review_comments_for_auto_resolve not implemented")
     eligible = flow.eligible_review_comments_for_auto_resolve(
         _review_nodes_for_auto_resolve(),
-        _review_evidence_context(evidence_only=True),
+        _review_evidence_context(
+            evidence_only=True,
+            validation_passed=True,
+            issue_fixed_or_stale=True,
+            pending_checks=[],
+            failing_checks=[],
+        ),
     )
     ASSERTIONS.assertEqual([item["id"] for item in eligible], ["a"])
+
+
+def test_auto_resolve_review_comments_evidence_only_excludes_unknown_provider():
+    """Flow evidence-only eligibility rejects providerless threads even if triage allows evidence resolve."""
+    context = _review_evidence_context(
+        evidence_only=True,
+        validation_passed=True,
+        issue_fixed_or_stale=True,
+        pending_checks=[],
+        failing_checks=[],
+    )
+    threads = [
+        {
+            "id": "unknown-provider",
+            "author": "unknown-reviewer",
+            "body": "stale advisory already fixed",
+            "isResolved": False,
+        },
+        {
+            "id": "missing-author",
+            "body": "stale advisory already fixed",
+            "isResolved": False,
+        },
+    ]
+
+    for thread in threads:
+        ASSERTIONS.assertEqual(
+            controller.triage_review_thread_contract(thread, context)["decision"],
+            "EVIDENCE_RESOLVE",
+        )
+        ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, context))
+
+    eligible = flow.eligible_review_comments_for_auto_resolve(threads, context)
+    ASSERTIONS.assertEqual(eligible, [])
+
+
+def test_auto_resolve_review_comments_evidence_only_excludes_providerless_active_thread():
+    """Flow evidence-only eligibility must reject providerless current-head stale/advisory fixtures."""
+    context = _review_evidence_context(
+        evidence_only=True,
+        validation_passed=True,
+        issue_fixed_or_stale=True,
+        pending_checks=[],
+        failing_checks=[],
+    )
+    thread = {
+        "id": "unknown-flow-evidence-only",
+        "body": "style nit already covered by tests",
+        "active": True,
+    }
+
+    ASSERTIONS.assertEqual(
+        controller.triage_review_thread_contract(thread, context)["decision"],
+        "EVIDENCE_RESOLVE",
+    )
+    eligible = flow.eligible_review_comments_for_auto_resolve([thread], context)
+    ASSERTIONS.assertEqual(eligible, [])
+
+
+def test_auto_resolve_review_comments_evidence_only_excludes_comments_nodes_missing_author():
+    """Flow evidence-only eligibility must reject comments.nodes without a usable author."""
+    context = _review_evidence_context(
+        evidence_only=True,
+        validation_passed=True,
+        issue_fixed_or_stale=True,
+        pending_checks=[],
+        failing_checks=[],
+    )
+    threads = [
+        {
+            "id": "none-node-author",
+            "body": "style nit already covered by tests",
+            "active": True,
+            "comments": {"nodes": [{"author": None, "body": "already covered"}]},
+        },
+        {
+            "id": "missing-node-author",
+            "body": "style nit already covered by tests",
+            "active": True,
+            "comments": {"nodes": [{"body": "already covered"}]},
+        },
+    ]
+
+    eligible = flow.eligible_review_comments_for_auto_resolve(threads, context)
+    ASSERTIONS.assertEqual(eligible, [])
+
+
+def test_auto_resolve_review_comments_evidence_only_keeps_codacy_with_full_green_evidence():
+    """Known Codacy provider remains evidence-only eligible when full green evidence is present."""
+    context = _review_evidence_context(
+        evidence_only=True,
+        validation_passed=True,
+        issue_fixed_or_stale=True,
+        pending_checks=[],
+        failing_checks=[],
+        codacy_state="success",
+        codacy_annotations_count=0,
+    )
+    thread = {
+        "id": "codacy-green",
+        "author": "codacy[bot]",
+        "body": "style nit already covered by tests",
+        "active": True,
+    }
+
+    eligible = flow.eligible_review_comments_for_auto_resolve([thread], context)
+    ASSERTIONS.assertEqual([item["id"] for item in eligible], ["codacy-green"])
 
 
 def test_auto_resolve_review_comments_contract_non_evidence_mode_allows_valid_triage_outputs():
@@ -1714,7 +1833,13 @@ def test_deepsource_advisory_evidence_only_can_resolve_with_current_head_tests()
                 "isResolved": False,
             }
         ],
-        _review_evidence_context(evidence_only=True),
+        _review_evidence_context(
+            evidence_only=True,
+            validation_passed=True,
+            issue_fixed_or_stale=True,
+            pending_checks=[],
+            failing_checks=[],
+        ),
     )
     ASSERTIONS.assertEqual([item["id"] for item in eligible], ["ds2"])
 
