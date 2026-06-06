@@ -8218,6 +8218,8 @@ def build_passive_rerun_readiness_plan(context: dict[str, Any] | None = None) ->
         blockers.append("evidence_head_mismatch")
     if _review_plan_blocks_passive_rerun(review_plan):
         blockers.append("active_reviews_not_clear")
+    if ctx.get("checks_green") is False:
+        blockers.append("checks_not_green")
     if _codacy_review_evidence_present(ctx) and not _codacy_review_evidence_green(ctx):
         blockers.append("codacy_not_green")
     if bool(ctx.get("pending_checks")) or _check_count_blocks_rerun(ctx, "pending_checks_count"):

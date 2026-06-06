@@ -5054,6 +5054,58 @@ def test_passive_rerun_readiness_blocks_on_codacy_not_green():
     ASSERTIONS.assertIn("codacy_not_green", plan["blocked_reasons"])
 
 
+def test_passive_rerun_readiness_blocks_when_checks_green_false():
+    """Explicit non-green current-head check evidence should block passive reruns."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    plan = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(
+            review_resolution_plan=review_plan,
+            checks_green=False,
+            pending_checks=[],
+            failing_checks=[],
+            pending_checks_count=0,
+            failing_checks_count=0,
+        )
+    )
+    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+    ASSERTIONS.assertIn("checks_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_checks_green_false_overrides_green_codacy_evidence():
+    """Green Codacy evidence should not allow reruns when current-head checks are not green."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    plan = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(
+            review_resolution_plan=review_plan,
+            checks_green=False,
+            codacy_state="success",
+            codacy_annotations_count=0,
+            pending_checks=[],
+            failing_checks=[],
+        )
+    )
+    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+    ASSERTIONS.assertIn("checks_not_green", plan["blocked_reasons"])
+    ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_checks_green_true_allows_clear_gates():
+    """Explicit green current-head check evidence should allow reruns when other gates are clear."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    plan = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(
+            review_resolution_plan=review_plan,
+            checks_green=True,
+            pending_checks=[],
+            failing_checks=[],
+            pending_checks_count=0,
+            failing_checks_count=0,
+        )
+    )
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("checks_not_green", plan["blocked_reasons"])
+
+
 def test_passive_rerun_readiness_blocks_on_active_review_decisions():
     """Passive rerun readiness should block unresolved patch or manual review items."""
     for decision in ("PATCH_REQUIRED", "NEEDS_MANUAL"):
