@@ -5143,6 +5143,63 @@ def test_passive_rerun_readiness_accepts_nested_integer_github_annotations_zero(
     ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
 
 
+def test_passive_rerun_readiness_blocks_nonempty_dict_github_annotations():
+    """Dict-shaped GitHub annotations should count as present annotation evidence."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    evidence = _passive_review_evidence(
+        review_resolution_plan=review_plan,
+        github_codacy_state="SUCCESS",
+        github_annotations={"path": "x.py", "message": "issue"},
+    )
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    plan = controller.build_passive_rerun_readiness_plan(evidence)
+    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+    ASSERTIONS.assertIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_accepts_empty_dict_github_annotations():
+    """Empty dict GitHub annotations should be explicit zero-annotation evidence."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    evidence = _passive_review_evidence(
+        review_resolution_plan=review_plan,
+        github_codacy_state="SUCCESS",
+        github_annotations={},
+    )
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    plan = controller.build_passive_rerun_readiness_plan(evidence)
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_blocks_nested_nonempty_dict_github_annotations():
+    """Nested dict-shaped GitHub annotations should count as present annotation evidence."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    evidence = _passive_review_evidence(review_resolution_plan=review_plan)
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    evidence["codacy"] = {
+        "github_codacy_state": "SUCCESS",
+        "github_annotations": {"path": "x.py", "message": "issue"},
+    }
+    plan = controller.build_passive_rerun_readiness_plan(evidence)
+    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+    ASSERTIONS.assertIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_accepts_nested_empty_dict_github_annotations():
+    """Nested empty dict GitHub annotations should be explicit zero-annotation evidence."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    evidence = _passive_review_evidence(review_resolution_plan=review_plan)
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    evidence["codacy"] = {"github_codacy_state": "SUCCESS", "github_annotations": {}}
+    plan = controller.build_passive_rerun_readiness_plan(evidence)
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
+
+
 def test_passive_rerun_readiness_blocks_nonzero_github_annotations_counts():
     """Passive rerun readiness should block nonzero GitHub annotation evidence."""
     review_plan = _single_review_plan(_passive_review_thread())
@@ -5176,6 +5233,28 @@ def test_passive_rerun_readiness_malformed_github_annotations_fail_closed_unless
     plan = controller.build_passive_rerun_readiness_plan(allowed)
     ASSERTIONS.assertTrue(plan["safe_to_rerun"])
     ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_ignores_absent_codacy_evidence_when_not_relevant():
+    """Codacy should not gate passive reruns when no Codacy signal is present."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    evidence = _passive_review_evidence(review_resolution_plan=review_plan)
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    plan = controller.build_passive_rerun_readiness_plan(evidence)
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_codacy_relevant_missing_evidence_blocks():
+    """Explicit Codacy relevance should require green state and zero annotations."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    evidence = _passive_review_evidence(review_resolution_plan=review_plan, codacy_relevant=True)
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    plan = controller.build_passive_rerun_readiness_plan(evidence)
+    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+    ASSERTIONS.assertIn("codacy_not_green", plan["blocked_reasons"])
 
 
 def test_passive_rerun_readiness_accepts_github_codacy_check_state_alias():

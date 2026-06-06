@@ -7834,6 +7834,10 @@ def _codacy_review_annotations_count(evidence: dict[str, Any]) -> int:
             if annotations:
                 return len(annotations)
             saw_zero = True
+        elif isinstance(annotations, dict):
+            if annotations:
+                return len(annotations)
+            saw_zero = True
         else:
             count = safe_nonnegative_int(annotations, -1)
             if count > 0:
@@ -7855,6 +7859,30 @@ def _codacy_review_evidence_green(evidence: dict[str, Any]) -> bool:
     if _codacy_review_state(evidence) not in {"success", "successful", "passed", "pass"}:
         return False
     return _codacy_review_annotations_count(evidence) == 0
+
+
+def _codacy_review_evidence_present(evidence: dict[str, Any]) -> bool:
+    if evidence.get("codacy_relevant") is True:
+        return True
+    codacy = evidence.get("codacy") if isinstance(evidence.get("codacy"), dict) else {}
+    if codacy:
+        return True
+    for key in (
+        "codacy_state",
+        "codacy_conclusion",
+        "github_codacy_state",
+        "github_codacy_check_state",
+        "github_annotations",
+        "github_annotations_count",
+        "codacy_annotations",
+        "codacy_annotations_count",
+    ):
+        if key in evidence:
+            return True
+    for key in ("annotations", "annotations_count"):
+        if key in codacy:
+            return True
+    return False
 
 
 def _review_evidence_tests_present(evidence: dict[str, Any]) -> bool:
@@ -8155,7 +8183,7 @@ def build_passive_rerun_readiness_plan(context: dict[str, Any] | None = None) ->
         blockers.append("evidence_head_mismatch")
     if _review_plan_blocks_passive_rerun(review_plan):
         blockers.append("active_reviews_not_clear")
-    if not _codacy_review_evidence_green(ctx):
+    if _codacy_review_evidence_present(ctx) and not _codacy_review_evidence_green(ctx):
         blockers.append("codacy_not_green")
     if bool(ctx.get("pending_checks")) or _check_count_blocks_rerun(ctx, "pending_checks_count"):
         blockers.append("pending_checks")
