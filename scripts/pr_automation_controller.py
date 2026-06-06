@@ -7204,11 +7204,7 @@ def triage_review_thread_contract(
                 decision = "EVIDENCE_RESOLVE"
                 reason = resolve_reason
                 next_action = "resolve_with_evidence"
-                if author and not provider:
-                    decision = "NEEDS_MANUAL"
-                    reason = "unknown_review_provider"
-                    next_action = "needs_manual"
-                elif provider == "codacy-production" and not _codacy_review_evidence_green(ctx):
+                if provider == "codacy-production" and not _codacy_review_evidence_green(ctx):
                     decision = "NEEDS_MANUAL"
                     reason = "missing_or_blocking_codacy_evidence"
                     next_action = "needs_manual"
@@ -8089,9 +8085,18 @@ def _review_plan_item_decision(
     classified = classify_review_thread(thread, context)
     blockers = _review_resolution_evidence_blockers(thread, item_evidence, triage)
     triage_decision = str(triage.get("decision") or "NEEDS_MANUAL")
+    manual_classification = bool(
+        classified.get("unknown_author")
+        or classified.get("needs_manual")
+        or classified.get("classification") == "needs_manual"
+        or not str(triage.get("provider") or "").strip()
+    )
     if _node_is_resolved_or_inactive(thread):
         decision = "SKIPPED"
         skipped_reason = "inactive_or_resolved_thread"
+    elif manual_classification:
+        decision = "NEEDS_MANUAL"
+        skipped_reason = str(classified.get("reason") or triage.get("reason") or "needs_manual")
     elif _review_thread_is_outdated(thread) and _review_thread_fixed_or_stale(
         thread,
         item_evidence,

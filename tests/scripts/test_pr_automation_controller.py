@@ -4945,6 +4945,91 @@ def test_passive_review_plan_deepsource_advisory_green_evidence_resolves_only():
         ASSERTIONS.assertEqual(plan["items"][0]["decision"], "EVIDENCE_RESOLVE")
 
 
+def test_passive_review_plan_unknown_provider_active_thread_stays_manual_with_green_evidence():
+    thread = _passive_review_thread("stale advisory already fixed", author="unknown-reviewer")
+    evidence = _passive_review_evidence(issue_fixed_or_stale=True, safe_to_resolve=True)
+
+    triage = controller.triage_review_thread_contract(thread, evidence)
+    plan = controller.build_review_thread_resolution_plan([thread], evidence)
+    item = plan["items"][0]
+
+    ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+    ASSERTIONS.assertEqual(item["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertTrue(item["unknown_author"])
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertEqual(item["reply_body"], "")
+    ASSERTIONS.assertFalse(plan["can_resolve_any"])
+
+
+def test_passive_review_plan_missing_author_active_thread_stays_manual_with_green_evidence():
+    thread = _passive_review_thread("stale advisory already fixed", author="")
+    evidence = _passive_review_evidence(issue_fixed_or_stale=True, safe_to_resolve=True)
+
+    triage = controller.triage_review_thread_contract(thread, evidence)
+    plan = controller.build_review_thread_resolution_plan([thread], evidence)
+    item = plan["items"][0]
+
+    ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+    ASSERTIONS.assertEqual(item["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertTrue(item["unknown_author"])
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertEqual(item["reply_body"], "")
+    ASSERTIONS.assertFalse(plan["can_resolve_any"])
+
+
+def test_passive_review_plan_unknown_provider_outdated_stale_thread_stays_manual():
+    thread = _passive_review_thread("stale advisory already fixed", author="", isOutdated=True)
+    evidence = _passive_review_evidence(issue_fixed_or_stale=True, safe_to_resolve=True)
+
+    plan = controller.build_review_thread_resolution_plan([thread], evidence)
+    item = plan["items"][0]
+
+    ASSERTIONS.assertEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+    ASSERTIONS.assertEqual(item["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertTrue(item["unknown_author"])
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertEqual(item["reply_body"], "")
+    ASSERTIONS.assertFalse(plan["can_resolve_any"])
+
+
+def test_passive_review_plan_unknown_comments_nodes_author_missing_stays_manual():
+    thread = {
+        "id": "missing-author-thread",
+        "isResolved": False,
+        "isOutdated": False,
+        "comments": {"nodes": [{"body": "already fixed stale advisory"}]},
+    }
+    evidence = _passive_review_evidence(issue_fixed_or_stale=True, safe_to_resolve=True)
+
+    triage = controller.triage_review_thread_contract(thread, evidence)
+    plan = controller.build_review_thread_resolution_plan([thread], evidence)
+    item = plan["items"][0]
+
+    ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+    ASSERTIONS.assertEqual(item["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertTrue(item["unknown_author"])
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertEqual(item["reply_body"], "")
+    ASSERTIONS.assertFalse(plan["can_resolve_any"])
+
+
+def test_passive_review_plan_known_provider_stale_advisory_full_evidence_still_resolves():
+    thread = _passive_review_thread(
+        "stale advisory already fixed",
+        author="chatgpt-codex-connector[bot]",
+        isOutdated=True,
+    )
+    plan = _single_review_plan(thread, issue_fixed_or_stale=True, safe_to_resolve=True)
+
+    ASSERTIONS.assertEqual(plan["items"][0]["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertTrue(plan["items"][0]["safe_to_resolve"])
+    ASSERTIONS.assertTrue(plan["can_resolve_any"])
+
+
 def test_passive_review_plan_missing_optional_provider_non_blocking():
     plan = controller.build_review_thread_resolution_plan([], {"expected_providers": ["codacy-production"]})
     ASSERTIONS.assertFalse(plan["missing_providers_blocking"])
@@ -7315,8 +7400,7 @@ def test_review_unknown_author_with_strict_generic_evidence_does_not_auto_resolv
         "tests": ["pytest"],
     }
     triage = controller.triage_review_thread_contract(thread, evidence)
-    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
-    ASSERTIONS.assertEqual(triage["reason"], "unknown_review_provider")
+    ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
     ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
 
 
@@ -10327,6 +10411,7 @@ def test_should_resolve_review_thread_already_covered_style_nit_with_full_eviden
 def test_should_resolve_review_thread_denies_when_validation_passed_missing():
     thread = {
         "id": "safe-r3b",
+        "author": "coderabbitai[bot]",
         "body": "already fixed security regression",
         "active": True,
         "issue_fixed_or_stale": True,
@@ -10347,6 +10432,7 @@ def test_should_resolve_review_thread_denies_when_validation_passed_missing():
 def test_should_resolve_review_thread_denies_when_validation_passed_false():
     thread = {
         "id": "safe-r3c",
+        "author": "coderabbitai[bot]",
         "body": "already fixed security regression",
         "active": True,
         "issue_fixed_or_stale": True,
@@ -10429,6 +10515,7 @@ def test_should_resolve_review_thread_fixed_safety_with_head_mismatch_returns_fa
 def test_should_resolve_review_thread_active_unresolved_bypass_returns_false():
     thread = {
         "id": "safe-r6",
+        "author": "coderabbitai[bot]",
         "body": "active unresolved bypass in guard path",
         "active": True,
     }
@@ -10447,6 +10534,7 @@ def test_should_resolve_review_thread_active_unresolved_bypass_returns_false():
 def test_should_resolve_review_thread_active_security_bypass_still_present_ignores_safe_to_resolve():
     thread = {
         "id": "safe-r7",
+        "author": "coderabbitai[bot]",
         "body": "security bypass still present",
         "active": True,
     }
@@ -10467,6 +10555,7 @@ def test_should_resolve_review_thread_active_security_bypass_still_present_ignor
 def test_should_resolve_review_thread_active_fail_open_still_present_ignores_safe_to_resolve():
     thread = {
         "id": "safe-r8",
+        "author": "coderabbitai[bot]",
         "body": "active fail-open still present",
         "active": True,
     }
