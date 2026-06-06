@@ -1720,6 +1720,7 @@ def test_deepsource_advisory_evidence_only_can_resolve_with_current_head_tests()
 
 
 def test_flow_passive_review_evidence_plan_resolves_without_mutation():
+    """Flow review evidence planning should resolve only in the passive plan."""
     plan = flow.build_passive_review_evidence_resolution_plan(
         [
             {
@@ -1742,6 +1743,7 @@ def test_flow_passive_review_evidence_plan_resolves_without_mutation():
 
 
 def test_flow_passive_rerun_readiness_plan_is_report_only():
+    """Flow rerun readiness should report eligibility without executing reruns."""
     context = _review_evidence_context(
         validation_passed=True,
         pending_checks=[],
@@ -1756,7 +1758,24 @@ def test_flow_passive_rerun_readiness_plan_is_report_only():
     ASSERTIONS.assertFalse(plan["would_execute"])
 
 
+def test_flow_active_or_ambiguous_review_decision_blocks_passive_rerun_readiness():
+    """Flow rerun readiness should block on active or ambiguous review decisions."""
+    for decision in ("PATCH_REQUIRED", "NEEDS_MANUAL"):
+        context = _review_evidence_context(
+            validation_passed=True,
+            pending_checks=[],
+            failing_checks=[],
+            codacy_state="success",
+            codacy_annotations_count=0,
+            review_resolution_plan={"triage_items": [{"decision": decision}]},
+        )
+        plan = flow.build_passive_rerun_readiness_plan(context)
+        ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+        ASSERTIONS.assertIn("active_reviews_not_clear", plan["blocked_reasons"])
+
+
 def test_flow_passive_helpers_do_not_include_live_mutation_calls():
+    """Flow passive helpers should not include live mutation calls."""
     for helper in (
         flow.build_passive_review_evidence_resolution_plan,
         flow.build_passive_rerun_readiness_plan,

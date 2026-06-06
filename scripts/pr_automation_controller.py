@@ -7786,6 +7786,39 @@ def _has_blocking_checks(evidence: dict[str, Any]) -> bool:
     return bool(pending or failing)
 
 
+def _codacy_review_state(evidence: dict[str, Any]) -> str:
+    codacy = evidence.get("codacy") if isinstance(evidence.get("codacy"), dict) else {}
+    return str(
+        first_nonempty(
+            evidence.get("codacy_conclusion"),
+            evidence.get("codacy_state"),
+            evidence.get("github_codacy_state"),
+            codacy.get("conclusion"),
+            codacy.get("state"),
+            codacy.get("github_codacy_state"),
+        )
+        or ""
+    ).strip().lower()
+
+
+def _codacy_review_annotations_count(evidence: dict[str, Any]) -> int:
+    codacy = evidence.get("codacy") if isinstance(evidence.get("codacy"), dict) else {}
+    for source, key in (
+        (evidence, "codacy_annotations_count"),
+        (evidence, "github_annotations_count"),
+        (evidence, "annotations_count"),
+        (codacy, "annotations_count"),
+        (codacy, "github_annotations_count"),
+    ):
+        if key in source:
+            return safe_nonnegative_int(source.get(key), -1)
+    for source, key in ((evidence, "github_annotations"), (evidence, "codacy_annotations"), (codacy, "annotations")):
+        annotations = source.get(key)
+        if isinstance(annotations, list):
+            return len(annotations) if all(isinstance(item, dict) for item in annotations) else -1
+    return -1
+
+
 def _review_fixed_or_stale(evidence: dict[str, Any]) -> bool:
     return bool(
         evidence.get("fixed_or_stale")
@@ -7795,16 +7828,9 @@ def _review_fixed_or_stale(evidence: dict[str, Any]) -> bool:
 
 
 def _codacy_review_evidence_green(evidence: dict[str, Any]) -> bool:
-    state = str(evidence.get("codacy_conclusion") or evidence.get("codacy_state") or "").lower()
-    if state not in {"success", "successful", "passed", "pass"}:
+    if _codacy_review_state(evidence) not in {"success", "successful", "passed", "pass"}:
         return False
-    annotations_raw = (
-        evidence.get("codacy_annotations_count")
-        if "codacy_annotations_count" in evidence
-        else evidence.get("annotations_count")
-    )
-    annotations = safe_nonnegative_int(annotations_raw, -1)
-    return annotations == 0
+    return _codacy_review_annotations_count(evidence) == 0
 
 
 def _review_evidence_tests_present(evidence: dict[str, Any]) -> bool:
@@ -7968,7 +7994,9 @@ def _review_plan_item_decision(
             "next_action": "needs_manual",
         }
     thread_id = _review_thread_id(thread)
-    item_evidence = {**context, **dict(resolution_evidence.get(thread_id) or {})}
+    raw_item_evidence = resolution_evidence.get(thread_id)
+    item_specific_evidence = raw_item_evidence if isinstance(raw_item_evidence, dict) else {}
+    item_evidence = {**context, **item_specific_evidence}
     triage = triage_review_thread_contract(thread, item_evidence)
     thread_id = str(triage.get("thread_id") or thread_id)
     classified = classify_review_thread(thread, context)
@@ -8061,6 +8089,30 @@ def build_review_thread_resolution_plan(
     }
 
 
+def _review_plan_items_for_rerun(review_plan: dict[str, Any]) -> list[Any]:
+    for key in ("triage_items", "items"):
+        items = review_plan.get(key)
+        if isinstance(items, list):
+            return items
+    return []
+
+
+def _review_plan_blocks_passive_rerun(review_plan: dict[str, Any]) -> bool:
+    items = _review_plan_items_for_rerun(review_plan)
+    for item in items:
+        if not isinstance(item, dict):
+            return True
+        if item.get("decision") in {"PATCH_REQUIRED", "NEEDS_MANUAL"}:
+            return True
+    return False
+
+
+def _check_count_blocks_rerun(context: dict[str, Any], key: str) -> bool:
+    if key not in context:
+        return False
+    return safe_nonnegative_int(context.get(key), -1) != 0
+
+
 def build_passive_rerun_readiness_plan(context: dict[str, Any] | None = None) -> dict[str, Any]:
     """Plan rerun readiness without executing workflow reruns."""
     ctx = context if isinstance(context, dict) else {}
@@ -8072,29 +8124,18 @@ def build_passive_rerun_readiness_plan(context: dict[str, Any] | None = None) ->
             ctx.get("active_review_threads") if isinstance(ctx.get("active_review_threads"), list) else [],
             ctx,
         )
-    codacy = ctx.get("codacy") if isinstance(ctx.get("codacy"), dict) else {}
-    codacy_state = str(
-        first_nonempty(ctx.get("codacy_state"), ctx.get("codacy_conclusion"), codacy.get("state"), codacy.get("conclusion"))
-        or ""
-    ).strip().lower()
-    annotations_raw = (
-        ctx.get("codacy_annotations_count")
-        if "codacy_annotations_count" in ctx
-        else codacy.get("annotations_count", 0)
-    )
-    annotations = safe_nonnegative_int(annotations_raw, -1)
     blockers: list[str] = []
     if not current_head or not evidence_head:
         blockers.append("missing_head_evidence")
     elif current_head != evidence_head:
         blockers.append("evidence_head_mismatch")
-    if any(item.get("decision") in {"PATCH_REQUIRED", "NEEDS_MANUAL"} for item in review_plan.get("items", [])):
+    if _review_plan_blocks_passive_rerun(review_plan):
         blockers.append("active_reviews_not_clear")
-    if codacy_state not in {"success", "successful", "passed", "pass"} or annotations != 0:
+    if not _codacy_review_evidence_green(ctx):
         blockers.append("codacy_not_green")
-    if bool(ctx.get("pending_checks")):
+    if bool(ctx.get("pending_checks")) or _check_count_blocks_rerun(ctx, "pending_checks_count"):
         blockers.append("pending_checks")
-    if bool(ctx.get("failing_checks")):
+    if bool(ctx.get("failing_checks")) or _check_count_blocks_rerun(ctx, "failing_checks_count"):
         blockers.append("failing_checks")
     allowed = not blockers
     return {

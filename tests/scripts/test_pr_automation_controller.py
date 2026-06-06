@@ -5015,6 +5015,93 @@ def test_passive_rerun_readiness_plan_is_passive_and_gate_checked():
     ASSERTIONS.assertIn("pending_checks", blocked["blocked_reasons"])
 
 
+def test_passive_rerun_readiness_blocks_on_head_mismatch_or_missing_head_evidence():
+    """Passive rerun readiness should require matching current-head evidence."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    mismatch = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(review_resolution_plan=review_plan, evidence_head_sha="old-head")
+    )
+    missing = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(review_resolution_plan=review_plan, evidence_head_sha="")
+    )
+    ASSERTIONS.assertFalse(mismatch["safe_to_rerun"])
+    ASSERTIONS.assertIn("evidence_head_mismatch", mismatch["blocked_reasons"])
+    ASSERTIONS.assertFalse(missing["safe_to_rerun"])
+    ASSERTIONS.assertIn("missing_head_evidence", missing["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_blocks_on_codacy_not_green():
+    """Passive rerun readiness should fail closed when Codacy is not green."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    plan = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(review_resolution_plan=review_plan, codacy_state="action_required")
+    )
+    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+    ASSERTIONS.assertIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_blocks_on_active_review_decisions():
+    """Passive rerun readiness should block unresolved patch or manual review items."""
+    for decision in ("PATCH_REQUIRED", "NEEDS_MANUAL"):
+        review_plan = {"triage_items": [{"decision": decision}]}
+        plan = controller.build_passive_rerun_readiness_plan(
+            _passive_review_evidence(review_resolution_plan=review_plan)
+        )
+        ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+        ASSERTIONS.assertIn("active_reviews_not_clear", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_blocks_on_check_counts():
+    """Passive rerun readiness should block nonzero or malformed check counts."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    for key, reason in (("pending_checks_count", "pending_checks"), ("failing_checks_count", "failing_checks")):
+        counted = controller.build_passive_rerun_readiness_plan(
+            _passive_review_evidence(review_resolution_plan=review_plan, **{key: 1})
+        )
+        malformed = controller.build_passive_rerun_readiness_plan(
+            _passive_review_evidence(review_resolution_plan=review_plan, **{key: "n/a"})
+        )
+        ASSERTIONS.assertFalse(counted["safe_to_rerun"])
+        ASSERTIONS.assertIn(reason, counted["blocked_reasons"])
+        ASSERTIONS.assertFalse(malformed["safe_to_rerun"])
+        ASSERTIONS.assertIn(reason, malformed["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_malformed_review_plan_items_fail_closed():
+    """Passive rerun readiness should not trust malformed review plan items."""
+    plan = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(review_resolution_plan={"triage_items": ["not-a-dict"]})
+    )
+    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+    ASSERTIONS.assertIn("active_reviews_not_clear", plan["blocked_reasons"])
+
+
+def test_passive_review_plan_malformed_per_thread_evidence_fails_closed():
+    """Review resolution planning should ignore malformed per-thread evidence."""
+    thread = _passive_review_thread(thread_id="T-malformed")
+    plan = controller.build_review_thread_resolution_plan(
+        [thread],
+        {"current_head_sha": "head-1", "resolution_evidence": {"T-malformed": "not-a-dict"}},
+    )
+    ASSERTIONS.assertEqual(plan["items"][0]["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertIn("missing_evidence_head_sha", plan["items"][0]["skipped_reasons"])
+
+
+def test_passive_rerun_readiness_accepts_controller_codacy_evidence_keys():
+    """Passive rerun readiness should accept controller Codacy evidence aliases."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    evidence = _passive_review_evidence(
+        review_resolution_plan=review_plan,
+        github_codacy_state="SUCCESS",
+        github_annotations_count=0,
+    )
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    plan = controller.build_passive_rerun_readiness_plan(evidence)
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
+
+
 def test_passive_review_helpers_do_not_contain_live_mutation_calls():
     for helper in (
         controller.build_review_thread_resolution_plan,
