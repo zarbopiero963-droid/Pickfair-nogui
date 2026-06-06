@@ -895,7 +895,7 @@ def test_parse_phase0_preflight_result_fenced_json_with_prose_parses():
 
 
 def test_phase0_preflight_failed_fails_closed_for_incomplete_pass_report():
-    """phase0_preflight_failed should reject PASS reports without required evidence."""
+    """Phase0_preflight_failed should reject PASS reports without required evidence."""
     ASSERTIONS.assertTrue(controller.phase0_preflight_failed({"status": "PASS"}))
 
 
@@ -6761,6 +6761,26 @@ def test_deepsource_complexity_with_green_evidence_is_not_patch_required():
     ASSERTIONS.assertEqual(triage["provider"], "deepsource")
     ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
     ASSERTIONS.assertNotEqual(triage["decision"], "PATCH_REQUIRED")
+
+
+def test_public_deepsource_wrappers_preserve_private_gate_behavior():
+    """Public DeepSource wrappers expose existing private logic without changing triage."""
+    advisory = "cyclomatic complexity readability advisory"
+    blocking = "readability advisory but fail-open regression remains"
+    context = {
+        "deepsource_required_current_head_check_failing": True,
+        "deepsource_check_head_sha": "abc",
+    }
+
+    ASSERTIONS.assertTrue(controller.deepsource_claim_is_advisory(advisory))
+    ASSERTIONS.assertTrue(controller.deepsource_claim_is_blocking(blocking))
+    ASSERTIONS.assertFalse(controller.deepsource_claim_is_reproducible_patch_claim(advisory))
+    ASSERTIONS.assertTrue(controller.deepsource_required_current_head_check_failing(context, "abc"))
+
+
+def test_public_deepsource_required_wrapper_non_dict_context_fails_closed():
+    """Malformed wrapper context fails closed instead of crashing."""
+    ASSERTIONS.assertFalse(controller.deepsource_required_current_head_check_failing("bad context", "abc"))
 
 
 def test_deepsource_required_fix_wording_advisory_routes_needs_manual():

@@ -6478,6 +6478,30 @@ def is_deepsource_review_provider(provider: object) -> bool:
     return str(provider or "").strip().lower() == DEEPSOURCE_PROVIDER
 
 
+def deepsource_claim_is_advisory(claimed_issue: object) -> bool:
+    """Return whether DeepSource claim text is advisory-only."""
+    return _deepsource_claim_is_advisory(str(claimed_issue or "").lower())
+
+
+def deepsource_claim_is_blocking(claimed_issue: object) -> bool:
+    """Return whether DeepSource claim text contains blocking risk."""
+    return _deepsource_claim_is_blocking(str(claimed_issue or "").lower())
+
+
+def deepsource_claim_is_reproducible_patch_claim(claimed_issue: object) -> bool:
+    """Return whether DeepSource claim text requests a reproducible patch."""
+    return _deepsource_claim_is_reproducible_patch_claim(str(claimed_issue or "").lower())
+
+
+def deepsource_required_current_head_check_failing(
+    context: dict[str, Any],
+    current_head_sha: object,
+) -> bool:
+    """Return whether a required DeepSource check fails on the current head."""
+    ctx = context if isinstance(context, dict) else {}
+    return _deepsource_required_current_head_check_failing(ctx, str(current_head_sha or "").strip())
+
+
 def _review_thread_provider(thread: dict[str, Any]) -> str:
     return review_provider_from_author(_review_thread_author(thread))
 
