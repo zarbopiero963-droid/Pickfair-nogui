@@ -7526,6 +7526,63 @@ def test_review_codacy_alias_success_zero_annotations_allows_evidence_resolve():
     ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, evidence))
 
 
+def test_review_codacy_nested_codacy_annotations_count_zero_allows_evidence_resolve():
+    thread = _review_thread(author="codacy", body="already fixed stale")
+    evidence = {
+        "safe_to_resolve": True,
+        "issue_fixed_or_stale": True,
+        "head_matches": True,
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "validation_passed": True,
+        "checks_green": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "codacy": {"codacy_state": "SUCCESS", "codacy_annotations_count": 0},
+        "tests": ["pytest"],
+    }
+    ASSERTIONS.assertEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_review_codacy_nested_codacy_annotations_count_nonzero_blocks_evidence_resolve():
+    thread = _review_thread(author="codacy", body="already fixed stale")
+    evidence = {
+        "safe_to_resolve": True,
+        "issue_fixed_or_stale": True,
+        "head_matches": True,
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "validation_passed": True,
+        "checks_green": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "codacy": {"codacy_state": "SUCCESS", "codacy_annotations_count": 2},
+        "tests": ["pytest"],
+    }
+    ASSERTIONS.assertNotEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_review_codacy_nested_codacy_annotations_count_malformed_blocks_evidence_resolve():
+    thread = _review_thread(author="codacy", body="already fixed stale")
+    evidence = {
+        "safe_to_resolve": True,
+        "issue_fixed_or_stale": True,
+        "head_matches": True,
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "validation_passed": True,
+        "checks_green": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "codacy": {"codacy_state": "SUCCESS", "codacy_annotations_count": "n/a"},
+        "tests": ["pytest"],
+    }
+    ASSERTIONS.assertNotEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+
+
 def test_deepsource_complexity_with_green_evidence_is_not_patch_required():
     thread = _review_thread(author="deepsource[bot]", body="Cyclomatic complexity is high")
     evidence = {

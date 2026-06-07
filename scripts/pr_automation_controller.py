@@ -7815,6 +7815,15 @@ def _codacy_review_annotations_count(evidence: dict[str, Any]) -> int:
         (evidence, "codacy_annotations_count"),
         (evidence, "github_annotations_count"),
         (evidence, "annotations_count"),
+    ):
+        if key in source:
+            count = safe_nonnegative_int(source.get(key), -1)
+            if count > 0:
+                return count
+            if count == 0:
+                saw_zero = True
+    for source, key in (
+        (codacy, "codacy_annotations_count"),
         (codacy, "annotations_count"),
         (codacy, "github_annotations_count"),
     ):
@@ -7824,6 +7833,8 @@ def _codacy_review_annotations_count(evidence: dict[str, Any]) -> int:
                 return count
             if count == 0:
                 saw_zero = True
+            else:
+                return -1
     for source, key in (
         (evidence, "github_annotations"),
         (evidence, "codacy_annotations"),
