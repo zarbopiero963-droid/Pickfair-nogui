@@ -4932,6 +4932,33 @@ def test_passive_review_plan_outdated_validation_passed_without_tests_fails_clos
     ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
 
 
+def test_passive_review_plan_thread_tests_covering_behavior_satisfies_missing_tests_blocker():
+    thread = _passive_review_thread(
+        tests_covering_behavior=["python3 -m pytest tests/scripts/test_pr_automation_controller.py -q"]
+    )
+    evidence = _passive_review_evidence(tests=[], tests_covering_behavior=[])
+    plan = controller.build_review_thread_resolution_plan([thread], evidence)
+    item = plan["items"][0]
+
+    ASSERTIONS.assertEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertEqual(item["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertTrue(item["safe_to_resolve"])
+    ASSERTIONS.assertNotIn("missing_tests", item["skipped_reasons"])
+    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_passive_review_plan_missing_context_and_thread_tests_fails_closed():
+    thread = _passive_review_thread(tests=[], tests_covering_behavior=[])
+    evidence = _passive_review_evidence(tests=[], tests_covering_behavior=[])
+    plan = controller.build_review_thread_resolution_plan([thread], evidence)
+    item = plan["items"][0]
+
+    ASSERTIONS.assertEqual(item["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertIn("missing_tests", item["skipped_reasons"])
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+
+
 def test_passive_review_plan_thread_evidence_head_matching_current_head_resolves():
     thread = _passive_review_thread(evidence_head_sha="head-1")
     plan = _single_review_plan(thread, evidence_head_sha="")
@@ -5075,6 +5102,44 @@ def test_passive_review_plan_missing_author_active_thread_stays_manual_with_gree
     ASSERTIONS.assertFalse(plan["can_resolve_any"])
 
 
+def test_passive_review_plan_resolved_or_inactive_providerless_thread_is_skipped_and_rerun_clear():
+    evidence = _passive_review_evidence(issue_fixed_or_stale=True, safe_to_resolve=True)
+
+    for thread in (
+        _passive_review_thread("stale advisory already fixed", author="", isResolved=True),
+        _passive_review_thread("stale advisory already fixed", author="", isActive=False, isOutdated=True),
+    ):
+        plan = controller.build_review_thread_resolution_plan([thread], evidence)
+        item = plan["items"][0]
+        readiness = controller.build_passive_rerun_readiness_plan(
+            _passive_review_evidence(review_resolution_plan=plan)
+        )
+
+        ASSERTIONS.assertEqual(item["decision"], "SKIPPED")
+        ASSERTIONS.assertFalse(item["safe_to_resolve"])
+        ASSERTIONS.assertFalse(item["needs_manual"])
+        ASSERTIONS.assertFalse(plan["needs_manual"])
+        ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+        ASSERTIONS.assertTrue(readiness["safe_to_rerun"])
+        ASSERTIONS.assertNotIn("active_reviews_not_clear", readiness["blocked_reasons"])
+
+
+def test_passive_review_plan_active_providerless_thread_stays_manual_and_blocks_rerun():
+    thread = _passive_review_thread("stale advisory already fixed", author="")
+    evidence = _passive_review_evidence(issue_fixed_or_stale=True, safe_to_resolve=True)
+    plan = controller.build_review_thread_resolution_plan([thread], evidence)
+    item = plan["items"][0]
+    readiness = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(review_resolution_plan=plan)
+    )
+
+    ASSERTIONS.assertEqual(item["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertTrue(item["needs_manual"])
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertFalse(readiness["safe_to_rerun"])
+    ASSERTIONS.assertIn("active_reviews_not_clear", readiness["blocked_reasons"])
+
+
 def test_passive_review_plan_unknown_provider_outdated_stale_thread_stays_manual():
     thread = _passive_review_thread("stale advisory already fixed", author="", isOutdated=True)
     evidence = _passive_review_evidence(issue_fixed_or_stale=True, safe_to_resolve=True)
@@ -5211,6 +5276,41 @@ def test_passive_review_plan_codacy_action_required_or_annotations_fail_closed()
     )
     ASSERTIONS.assertEqual(action_required["items"][0]["decision"], "NEEDS_MANUAL")
     ASSERTIONS.assertEqual(annotated["items"][0]["decision"], "NEEDS_MANUAL")
+
+
+def test_should_resolve_review_thread_existing_gates_remain_fail_closed():
+    covered_tests = ["python3 -m pytest tests/scripts/test_pr_automation_controller.py -q"]
+    base_thread = _passive_review_thread(tests_covering_behavior=covered_tests)
+    cases = (
+        (base_thread, {"validation_passed": False}),
+        (_passive_review_thread(evidence_head_sha="old-head", tests_covering_behavior=covered_tests), {"evidence_head_sha": ""}),
+        (base_thread, {"pending_checks": [{"name": "CI"}]}),
+        (base_thread, {"failing_checks": [{"name": "CI"}]}),
+        (
+            _passive_review_thread(
+                "stale Codacy annotation",
+                author="codacy-production[bot]",
+                tests_covering_behavior=covered_tests,
+            ),
+            {"codacy_state": "action_required"},
+        ),
+        (
+            _passive_review_thread(
+                "stale Codacy annotation",
+                author="codacy-production[bot]",
+                tests_covering_behavior=covered_tests,
+            ),
+            {"codacy_state": "", "codacy_annotations_count": -1},
+        ),
+    )
+
+    for thread, extra in cases:
+        ASSERTIONS.assertFalse(
+            controller.should_resolve_review_thread(
+                thread,
+                _passive_review_evidence(tests=[], tests_covering_behavior=[], **extra),
+            )
+        )
 
 
 def test_passive_review_plan_missing_validation_tests_or_evidence_head_fail_closed():
