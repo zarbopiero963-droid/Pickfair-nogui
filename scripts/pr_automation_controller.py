@@ -7979,7 +7979,7 @@ def _review_resolution_evidence_blockers(
     claimed_issue = str(triage.get("claimed_issue") or "")
     provider = str(triage.get("provider") or "")
     current_head = str(evidence.get("current_head_sha") or triage.get("current_head_sha") or "").strip()
-    evidence_head = str(evidence.get("evidence_head_sha") or "").strip()
+    evidence_head = str(first_nonempty(evidence.get("evidence_head_sha"), thread.get("evidence_head_sha")) or "").strip()
     blockers: list[str] = []
     if not current_head:
         blockers.append("missing_current_head_sha")
@@ -8012,6 +8012,11 @@ def should_resolve_review_thread(thread: dict[str, Any], evidence: dict[str, Any
     """Return whether a review thread is safe to resolve with evidence."""
     if not isinstance(thread, dict) or not isinstance(evidence, dict):
         return False
+    resolution_evidence = evidence.get("resolution_evidence")
+    if isinstance(resolution_evidence, dict):
+        item_evidence = resolution_evidence.get(_review_thread_id(thread))
+        if isinstance(item_evidence, dict):
+            evidence = {**evidence, **item_evidence}
     triage = triage_review_thread_contract(thread, evidence)
     if triage.get("decision") != "EVIDENCE_RESOLVE":
         return False
@@ -8021,12 +8026,15 @@ def should_resolve_review_thread(thread: dict[str, Any], evidence: dict[str, Any
     # Fail closed: explicit local validation is mandatory for any auto-resolve.
     if evidence.get("validation_passed") is not True:
         return False
-    if not _review_fixed_or_stale(evidence):
+    triage_stale_or_advisory = (
+        triage.get("reason") == "stale_or_advisory_with_current_head_evidence"
+    )
+    if not (_review_fixed_or_stale(evidence) or triage_stale_or_advisory):
         return False
     if evidence.get("head_matches") is False:
         return False
     current_head = str(evidence.get("current_head_sha") or "").strip()
-    evidence_head = str(evidence.get("evidence_head_sha") or "").strip()
+    evidence_head = str(first_nonempty(evidence.get("evidence_head_sha"), thread.get("evidence_head_sha")) or "").strip()
     if current_head and evidence_head and not _review_evidence_head_matches(current_head, evidence_head):
         return False
     if _has_blocking_checks(evidence) or not _review_evidence_checks_green(evidence, str(triage.get("claimed_issue") or "")):

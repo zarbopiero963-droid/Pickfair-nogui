@@ -4932,6 +4932,70 @@ def test_passive_review_plan_outdated_validation_passed_without_tests_fails_clos
     ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
 
 
+def test_passive_review_plan_thread_evidence_head_matching_current_head_resolves():
+    thread = _passive_review_thread(evidence_head_sha="head-1")
+    plan = _single_review_plan(thread, evidence_head_sha="")
+    item = plan["items"][0]
+    ASSERTIONS.assertEqual(item["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertTrue(item["safe_to_resolve"])
+    ASSERTIONS.assertEqual(item["skipped_reasons"], [])
+
+
+def test_should_resolve_review_thread_thread_evidence_head_matching_current_head_returns_true():
+    thread = _passive_review_thread(evidence_head_sha="head-1")
+    evidence = _passive_review_evidence(evidence_head_sha="")
+    triage = controller.triage_review_thread_contract(thread, evidence)
+    ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertEqual(triage["reason"], "stale_or_advisory_with_current_head_evidence")
+    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_should_resolve_review_thread_thread_evidence_head_matches_plan_resolution_evidence():
+    thread = _passive_review_thread(evidence_head_sha="head-1")
+    context = {
+        "current_head_sha": "head-1",
+        "resolution_evidence": {
+            "thread-1": _passive_review_evidence(evidence_head_sha=""),
+        },
+    }
+    plan = controller.build_review_thread_resolution_plan([thread], context)
+    item = plan["items"][0]
+
+    ASSERTIONS.assertTrue(plan["can_resolve_any"])
+    ASSERTIONS.assertEqual(item["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertTrue(item["safe_to_resolve"])
+    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, context))
+
+
+def test_should_resolve_review_thread_thread_evidence_head_validation_false_blocks():
+    thread = _passive_review_thread(evidence_head_sha="head-1")
+    evidence = _passive_review_evidence(evidence_head_sha="", validation_passed=False)
+    triage = controller.triage_review_thread_contract(thread, evidence)
+    ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertEqual(triage["reason"], "stale_or_advisory_with_current_head_evidence")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_passive_review_plan_thread_evidence_head_mismatch_blocks():
+    thread = _passive_review_thread(evidence_head_sha="old-head")
+    plan = _single_review_plan(thread, evidence_head_sha="")
+    item = plan["items"][0]
+    ASSERTIONS.assertEqual(item["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertIn("evidence_head_mismatch", item["skipped_reasons"])
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, _passive_review_evidence(evidence_head_sha="")))
+
+
+def test_passive_review_plan_missing_context_and_thread_evidence_head_blocks():
+    thread = _passive_review_thread()
+    plan = _single_review_plan(thread, evidence_head_sha="")
+    item = plan["items"][0]
+    ASSERTIONS.assertEqual(item["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertIn("missing_evidence_head_sha", item["skipped_reasons"])
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, _passive_review_evidence(evidence_head_sha="")))
+
+
 def test_passive_review_plan_non_outdated_inactive_remains_skipped():
     for thread in (
         _passive_review_thread(isActive=False),
