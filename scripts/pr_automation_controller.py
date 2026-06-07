@@ -7878,8 +7878,6 @@ def _codacy_review_evidence_green(evidence: dict[str, Any]) -> bool:
 
 def _codacy_review_evidence_present(evidence: dict[str, Any]) -> bool:
     codacy = evidence.get("codacy") if isinstance(evidence.get("codacy"), dict) else {}
-    if codacy:
-        return True
     for key in (
         "codacy_state",
         "codacy_conclusion",
@@ -7892,7 +7890,21 @@ def _codacy_review_evidence_present(evidence: dict[str, Any]) -> bool:
     ):
         if key in evidence:
             return True
-    for key in ("annotations", "annotations_count"):
+    for key in (
+        "codacy_state",
+        "codacy_conclusion",
+        "github_codacy_state",
+        "github_codacy_check_state",
+        "conclusion",
+        "state",
+        "status",
+        "github_annotations",
+        "github_annotations_count",
+        "codacy_annotations",
+        "codacy_annotations_count",
+        "annotations",
+        "annotations_count",
+    ):
         if key in codacy:
             return True
     return False
