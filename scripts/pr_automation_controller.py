@@ -8145,7 +8145,7 @@ def _review_plan_item_decision(
         )
         and not blockers
     )
-    if resolved_or_inactive and (not provider or not _review_thread_is_outdated(thread)):
+    if resolved_or_inactive:
         decision = "SKIPPED"
         skipped_reason = "inactive_or_resolved_thread"
     elif manual_classification:
@@ -8301,6 +8301,39 @@ def _review_plan_has_rerun_items(review_plan: dict[str, Any]) -> bool:
     return False
 
 
+def _review_plan_item_thread_id(item: Any) -> str:
+    if not isinstance(item, dict):
+        return ""
+    return str(
+        item.get("review_thread_id")
+        or item.get("thread_id")
+        or item.get("id")
+        or ""
+    ).strip()
+
+
+def _review_plan_covers_active_thread_ids(
+    review_plan: dict[str, Any],
+    active_review_threads: list[Any],
+) -> bool:
+    active_thread_ids = {
+        _review_thread_id(thread)
+        for thread in active_review_threads
+        if isinstance(thread, dict) and _review_thread_id(thread)
+    }
+    if not active_thread_ids:
+        return True
+    plan_thread_ids = {
+        item_id
+        for item_id in (
+            _review_plan_item_thread_id(item)
+            for item in _review_plan_items_for_rerun(review_plan)
+        )
+        if item_id
+    }
+    return active_thread_ids.issubset(plan_thread_ids)
+
+
 def _check_count_blocks_rerun(context: dict[str, Any], key: str) -> bool:
     if key not in context:
         return False
@@ -8314,7 +8347,16 @@ def build_passive_rerun_readiness_plan(context: dict[str, Any] | None = None) ->
     evidence_head = str(ctx.get("evidence_head_sha") or "").strip()
     review_plan = ctx.get("review_resolution_plan")
     active_review_threads = ctx.get("active_review_threads") if isinstance(ctx.get("active_review_threads"), list) else []
-    if not isinstance(review_plan, dict) or (active_review_threads and not _review_plan_has_rerun_items(review_plan)):
+    if (
+        not isinstance(review_plan, dict)
+        or (
+            active_review_threads
+            and (
+                not _review_plan_has_rerun_items(review_plan)
+                or not _review_plan_covers_active_thread_ids(review_plan, active_review_threads)
+            )
+        )
+    ):
         review_plan = build_review_thread_resolution_plan(
             active_review_threads,
             ctx,

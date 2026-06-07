@@ -4899,7 +4899,7 @@ def test_passive_review_plan_outdated_stale_full_evidence_resolves_only():
     ASSERTIONS.assertEqual(plan["next_action"], "resolve_review_threads")
 
 
-def test_passive_review_plan_outdated_inactive_with_real_tests_evidence_resolves():
+def test_passive_review_plan_outdated_inactive_with_real_tests_evidence_skips():
     thread = _passive_review_thread(isOutdated=True, isActive=False)
     plan = _single_review_plan(
         thread,
@@ -4907,9 +4907,10 @@ def test_passive_review_plan_outdated_inactive_with_real_tests_evidence_resolves
         tests_covering_behavior=["pytest tests/scripts/test_pr_automation_controller.py -k outdated"],
     )
     item = plan["items"][0]
-    ASSERTIONS.assertEqual(item["decision"], "EVIDENCE_RESOLVE")
-    ASSERTIONS.assertTrue(item["safe_to_resolve"])
-    ASSERTIONS.assertEqual(item["skipped_reason"], "")
+    ASSERTIONS.assertEqual(item["decision"], "SKIPPED")
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertEqual(item["skipped_reason"], "inactive_or_resolved_thread")
+    ASSERTIONS.assertFalse(plan["can_resolve_any"])
     ASSERTIONS.assertEqual(
         item["tests_covering_behavior"],
         ["pytest tests/scripts/test_pr_automation_controller.py -k outdated"],
@@ -5035,6 +5036,25 @@ def test_passive_review_plan_non_outdated_inactive_remains_skipped():
         ASSERTIONS.assertEqual(item["skipped_reason"], "inactive_or_resolved_thread")
 
 
+def test_passive_review_plan_resolved_known_provider_outdated_thread_is_skipped_not_resolved():
+    evidence = _passive_review_evidence(issue_fixed_or_stale=True, safe_to_resolve=True)
+    thread = _passive_review_thread(
+        "stale advisory already fixed",
+        author="coderabbitai[bot]",
+        isResolved=True,
+        isOutdated=True,
+    )
+    plan = controller.build_review_thread_resolution_plan([thread], evidence)
+    item = plan["items"][0]
+
+    ASSERTIONS.assertEqual(item["decision"], "SKIPPED")
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertFalse(item["needs_manual"])
+    ASSERTIONS.assertFalse(plan["can_resolve_any"])
+    ASSERTIONS.assertEqual(plan["next_action"], "continue_checks")
+    ASSERTIONS.assertEqual(item["reply_body"], "")
+
+
 def test_passive_review_plan_codacy_stale_green_zero_annotations_resolves_only():
     plan = _single_review_plan(
         _passive_review_thread("stale Codacy annotation already fixed", author="codacy-production[bot]"),
@@ -5122,6 +5142,30 @@ def test_passive_review_plan_resolved_or_inactive_providerless_thread_is_skipped
         ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
         ASSERTIONS.assertTrue(readiness["safe_to_rerun"])
         ASSERTIONS.assertNotIn("active_reviews_not_clear", readiness["blocked_reasons"])
+
+
+def test_passive_review_plan_resolved_providerless_outdated_thread_is_skipped_not_manual_and_rerun_clear():
+    evidence = _passive_review_evidence(issue_fixed_or_stale=True, safe_to_resolve=True)
+    thread = _passive_review_thread(
+        "stale advisory already fixed",
+        author="",
+        isResolved=True,
+        isOutdated=True,
+    )
+
+    plan = controller.build_review_thread_resolution_plan([thread], evidence)
+    item = plan["items"][0]
+    readiness = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(review_resolution_plan=plan)
+    )
+
+    ASSERTIONS.assertEqual(item["decision"], "SKIPPED")
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertFalse(item["needs_manual"])
+    ASSERTIONS.assertFalse(plan["needs_manual"])
+    ASSERTIONS.assertNotEqual(item["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertTrue(readiness["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("active_reviews_not_clear", readiness["blocked_reasons"])
 
 
 def test_passive_review_plan_active_providerless_thread_stays_manual_and_blocks_rerun():
@@ -5472,6 +5516,65 @@ def test_passive_rerun_readiness_no_supplied_plan_blocks_active_reviews():
     ASSERTIONS.assertIn("active_reviews_not_clear", plan["blocked_reasons"])
 
 
+def test_passive_rerun_readiness_rebuilds_stale_clear_plan_for_new_active_providerless_thread():
+    stale_review_plan = {
+        "items": [
+            {
+                "review_thread_id": "old-thread",
+                "thread_id": "old-thread",
+                "decision": "EVIDENCE_RESOLVE",
+                "safe_to_resolve": True,
+            }
+        ]
+    }
+    plan = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(
+            review_resolution_plan=stale_review_plan,
+            active_review_threads=[
+                _passive_review_thread("stale advisory already fixed", author="", thread_id="new-thread")
+            ],
+            issue_fixed_or_stale=True,
+            safe_to_resolve=True,
+        )
+    )
+
+    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+    ASSERTIONS.assertIn("active_reviews_not_clear", plan["blocked_reasons"])
+    ASSERTIONS.assertEqual(plan["review_resolution_plan"]["items"][0]["thread_id"], "new-thread")
+    ASSERTIONS.assertEqual(plan["review_resolution_plan"]["items"][0]["decision"], "NEEDS_MANUAL")
+
+
+def test_passive_rerun_readiness_rebuilds_stale_clear_plan_for_new_active_blocking_thread():
+    stale_review_plan = {
+        "items": [
+            {
+                "review_thread_id": "old-thread",
+                "thread_id": "old-thread",
+                "decision": "EVIDENCE_RESOLVE",
+                "safe_to_resolve": True,
+            }
+        ]
+    }
+    for body in (
+        "ambiguous architecture needs owner policy",
+        "security fail-open regression remains",
+    ):
+        plan = controller.build_passive_rerun_readiness_plan(
+            _passive_review_evidence(
+                review_resolution_plan=stale_review_plan,
+                active_review_threads=[
+                    _passive_review_thread(body, author="coderabbitai[bot]", thread_id="new-thread")
+                ],
+                safety_proven_fixed=False,
+            )
+        )
+
+        ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+        ASSERTIONS.assertIn("active_reviews_not_clear", plan["blocked_reasons"])
+        ASSERTIONS.assertEqual(plan["review_resolution_plan"]["items"][0]["thread_id"], "new-thread")
+        ASSERTIONS.assertIn(plan["review_resolution_plan"]["items"][0]["decision"], {"NEEDS_MANUAL", "PATCH_REQUIRED"})
+
+
 def test_passive_rerun_readiness_itemless_plan_without_active_reviews_allows_clear_gates():
     """No active review state should remain safe when the other rerun gates are green."""
     plan = controller.build_passive_rerun_readiness_plan(
@@ -5483,21 +5586,57 @@ def test_passive_rerun_readiness_itemless_plan_without_active_reviews_allows_cle
 
 def test_passive_rerun_readiness_valid_evidence_resolve_plan_remains_safe_with_active_reviews():
     """A usable safe evidence-resolve plan should remain authoritative."""
+    active_thread = _passive_review_thread(
+        "security fail-open regression remains",
+        reproducible=True,
+        thread_id="current-thread",
+    )
     plan = controller.build_passive_rerun_readiness_plan(
         _passive_review_evidence(
             review_resolution_plan={
-                "items": [{"decision": "EVIDENCE_RESOLVE", "safe_to_resolve": True}]
+                "items": [
+                    {
+                        "review_thread_id": "current-thread",
+                        "thread_id": "current-thread",
+                        "decision": "EVIDENCE_RESOLVE",
+                        "safe_to_resolve": True,
+                    }
+                ]
             },
-            active_review_threads=[
-                _passive_review_thread(
-                    "security fail-open regression remains",
-                    reproducible=True,
-                )
-            ],
+            active_review_threads=[active_thread],
         )
     )
     ASSERTIONS.assertTrue(plan["safe_to_rerun"])
     ASSERTIONS.assertNotIn("active_reviews_not_clear", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_matching_supplied_clear_plan_for_current_active_threads_remains_allowed():
+    active_thread = _passive_review_thread(
+        "security fail-open regression remains",
+        reproducible=True,
+        thread_id="current-thread",
+    )
+    review_plan = {
+        "triage_items": [
+            {
+                "review_thread_id": "current-thread",
+                "thread_id": "current-thread",
+                "decision": "EVIDENCE_RESOLVE",
+                "safe_to_resolve": True,
+            }
+        ]
+    }
+
+    plan = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(
+            review_resolution_plan=review_plan,
+            active_review_threads=[active_thread],
+        )
+    )
+
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("active_reviews_not_clear", plan["blocked_reasons"])
+    ASSERTIONS.assertEqual(plan["review_resolution_plan"], review_plan)
 
 
 def test_passive_rerun_readiness_blocks_on_active_review_decisions():
