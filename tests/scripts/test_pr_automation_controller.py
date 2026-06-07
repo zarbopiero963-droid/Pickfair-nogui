@@ -4892,8 +4892,28 @@ def test_passive_review_plan_active_advisory_full_evidence_resolves_only():
 
 def test_passive_review_plan_outdated_stale_full_evidence_resolves_only():
     plan = _single_review_plan(_passive_review_thread(isOutdated=True))
-    ASSERTIONS.assertEqual(plan["items"][0]["decision"], "EVIDENCE_RESOLVE")
+    item = plan["items"][0]
+    ASSERTIONS.assertEqual(item["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertTrue(item["safe_to_resolve"])
+    ASSERTIONS.assertEqual(item["skipped_reason"], "")
     ASSERTIONS.assertEqual(plan["next_action"], "resolve_review_threads")
+
+
+def test_passive_review_plan_outdated_inactive_with_real_tests_evidence_resolves():
+    thread = _passive_review_thread(isOutdated=True, isActive=False)
+    plan = _single_review_plan(
+        thread,
+        tests=[],
+        tests_covering_behavior=["pytest tests/scripts/test_pr_automation_controller.py -k outdated"],
+    )
+    item = plan["items"][0]
+    ASSERTIONS.assertEqual(item["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertTrue(item["safe_to_resolve"])
+    ASSERTIONS.assertEqual(item["skipped_reason"], "")
+    ASSERTIONS.assertEqual(
+        item["tests_covering_behavior"],
+        ["pytest tests/scripts/test_pr_automation_controller.py -k outdated"],
+    )
 
 
 def test_passive_review_plan_outdated_validation_passed_without_tests_fails_closed():
@@ -4910,6 +4930,18 @@ def test_passive_review_plan_outdated_validation_passed_without_tests_fails_clos
         "NEEDS_MANUAL",
     )
     ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_passive_review_plan_non_outdated_inactive_remains_skipped():
+    for thread in (
+        _passive_review_thread(isActive=False),
+        _passive_review_thread(thread_id="thread-2", isResolved=True),
+    ):
+        plan = _single_review_plan(thread)
+        item = plan["items"][0]
+        ASSERTIONS.assertEqual(item["decision"], "SKIPPED")
+        ASSERTIONS.assertFalse(item["safe_to_resolve"])
+        ASSERTIONS.assertEqual(item["skipped_reason"], "inactive_or_resolved_thread")
 
 
 def test_passive_review_plan_codacy_stale_green_zero_annotations_resolves_only():
@@ -5028,6 +5060,18 @@ def test_passive_review_plan_known_provider_stale_advisory_full_evidence_still_r
     ASSERTIONS.assertEqual(plan["items"][0]["decision"], "EVIDENCE_RESOLVE")
     ASSERTIONS.assertTrue(plan["items"][0]["safe_to_resolve"])
     ASSERTIONS.assertTrue(plan["can_resolve_any"])
+
+
+def test_review_resolution_plan_classified_blocking_manual_routes_to_fix_comments():
+    thread = _passive_review_thread("P1 bug in runtime", author="coderabbitai[bot]")
+    plan = _single_review_plan(thread)
+    item = plan["items"][0]
+
+    ASSERTIONS.assertTrue(item["blocking"])
+    ASSERTIONS.assertEqual(item["triage_decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(item["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(plan["blocking_count"], 1)
+    ASSERTIONS.assertEqual(plan["next_action"], "fix_review_comments")
 
 
 def test_passive_review_plan_missing_optional_provider_non_blocking():

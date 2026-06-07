@@ -7908,6 +7908,12 @@ def _review_evidence_tests_present(evidence: dict[str, Any]) -> bool:
     return bool(tests)
 
 
+def _review_evidence_behavior_tests_present(evidence: dict[str, Any]) -> bool:
+    tests = _normalize_tests_covering_behavior(evidence.get("tests"))
+    tests_covering_behavior = _normalize_tests_covering_behavior(evidence.get("tests_covering_behavior"))
+    return bool(tests or tests_covering_behavior)
+
+
 def _strict_nonnegative_check_count(value: object) -> int | None:
     if value is None:
         return 0
@@ -7983,7 +7989,7 @@ def _review_resolution_evidence_blockers(
         blockers.append("evidence_head_mismatch")
     if evidence.get("validation_passed") is not True:
         blockers.append("missing_validation")
-    if not _review_evidence_tests_present(evidence):
+    if not _review_evidence_behavior_tests_present(evidence):
         blockers.append("missing_tests")
     if evidence.get("checks_green") is not True:
         blockers.append("checks_not_green")
@@ -8102,19 +8108,24 @@ def _review_plan_item_decision(
         or classified.get("classification") == "needs_manual"
         or not str(triage.get("provider") or "").strip()
     )
-    if _node_is_resolved_or_inactive(thread):
-        decision = "SKIPPED"
-        skipped_reason = "inactive_or_resolved_thread"
-    elif manual_classification:
+    outdated_evidence_resolve = (
+        _review_thread_is_outdated(thread)
+        and _review_thread_fixed_or_stale(
+            thread,
+            item_evidence,
+            str(triage.get("claimed_issue") or ""),
+        )
+        and not blockers
+    )
+    if manual_classification:
         decision = "NEEDS_MANUAL"
         skipped_reason = str(classified.get("reason") or triage.get("reason") or "needs_manual")
-    elif _review_thread_is_outdated(thread) and _review_thread_fixed_or_stale(
-        thread,
-        item_evidence,
-        str(triage.get("claimed_issue") or ""),
-    ) and not blockers:
+    elif outdated_evidence_resolve:
         decision = "EVIDENCE_RESOLVE"
         skipped_reason = ""
+    elif _node_is_resolved_or_inactive(thread):
+        decision = "SKIPPED"
+        skipped_reason = "inactive_or_resolved_thread"
     elif triage_decision == "EVIDENCE_RESOLVE" and not blockers:
         decision = "EVIDENCE_RESOLVE"
         skipped_reason = ""
@@ -8164,7 +8175,9 @@ def build_review_thread_resolution_plan(
     for thread in active_threads:
         items.append(_review_plan_item_decision(thread, context, resolution_evidence))
 
-    blocking_count = sum(1 for item in items if item["decision"] == "PATCH_REQUIRED")
+    blocking_count = sum(
+        1 for item in items if item["decision"] == "PATCH_REQUIRED" or bool(item.get("blocking"))
+    )
     advisory_count = sum(1 for item in items if bool(item.get("advisory")))
     needs_manual = any(item["decision"] == "NEEDS_MANUAL" for item in items)
     safe_count = sum(1 for item in items if item["safe_to_resolve"])

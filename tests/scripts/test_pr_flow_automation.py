@@ -1580,9 +1580,17 @@ def test_auto_resolve_review_comments_contract_evidence_only_filters_strictly():
     ASSERTIONS.assertEqual([item["id"] for item in eligible], ["a"])
 
 
+def _assert_providerless_threads_excluded_from_auto_resolve(threads: list[dict[str, Any]]) -> None:
+    context = _full_green_review_evidence_context()
+    for thread in threads:
+        triage = controller.triage_review_thread_contract(thread, context)
+        ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
+        ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, context))
+    ASSERTIONS.assertEqual(flow.eligible_review_comments_for_auto_resolve(threads, context), [])
+
+
 def test_auto_resolve_review_comments_evidence_only_excludes_unknown_provider():
     """Flow evidence-only eligibility rejects providerless threads even if triage allows evidence resolve."""
-    context = _full_green_review_evidence_context()
     threads = [
         {
             "id": "unknown-provider",
@@ -1596,16 +1604,7 @@ def test_auto_resolve_review_comments_evidence_only_excludes_unknown_provider():
             "isResolved": False,
         },
     ]
-
-    for thread in threads:
-        ASSERTIONS.assertEqual(
-            controller.triage_review_thread_contract(thread, context)["decision"],
-            "EVIDENCE_RESOLVE",
-        )
-        ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, context))
-
-    eligible = flow.eligible_review_comments_for_auto_resolve(threads, context)
-    ASSERTIONS.assertEqual(eligible, [])
+    _assert_providerless_threads_excluded_from_auto_resolve(threads)
 
 
 def test_auto_resolve_review_comments_evidence_only_excludes_providerless_active_thread():
