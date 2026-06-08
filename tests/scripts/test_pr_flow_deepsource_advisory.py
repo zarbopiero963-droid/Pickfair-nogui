@@ -140,7 +140,7 @@ def test_mismatched_heads_block(monkeypatch):
     _blocked(decision)
 
 
-def test_live_rollup_missing_evidence_blocks(monkeypatch):
+def test_live_missing_evidence(monkeypatch):
     """Live gh StatusContext shape does not infer advisory evidence from name or URL."""
     decision = _decision(
         monkeypatch,
@@ -157,7 +157,7 @@ def test_live_rollup_missing_evidence_blocks(monkeypatch):
     _blocked(decision)
 
 
-def test_live_rollup_top_evidence_passes(monkeypatch):
+def test_live_top_evidence_pass(monkeypatch):
     """Top-level explicit evidence can pair with live gh rollup head derivation."""
     decision = _decision(
         monkeypatch,
@@ -172,7 +172,7 @@ def test_live_rollup_top_evidence_passes(monkeypatch):
     ASSERTIONS.assertEqual(decision["blockers"], [])
 
 
-def test_explicit_head_mismatch_blocks(monkeypatch):
+def test_head_mismatch_blocks(monkeypatch):
     """Explicit mismatching DeepSource head evidence wins over live rollup derivation."""
     decision = _decision(
         monkeypatch,
@@ -301,7 +301,7 @@ def test_pending_check_blocks(monkeypatch):
     _blocked(decision)
 
 
-def test_non_deepsource_failure_blocks(monkeypatch):
+def test_other_failure_blocks(monkeypatch):
     """Non-DeepSource failures are not bypassed."""
     decision = _decision(
         monkeypatch,

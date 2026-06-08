@@ -1084,69 +1084,116 @@ def _deepsource_completed_advisory_context(
     advisory: list[dict[str, Any]],
 ) -> dict[str, Any]:
     context = dict(configured)
-    current_head_sha = str(context.get("current_head_sha") or pr_data.get("headRefOid") or "").strip()
+    current_head_sha = _completed_advisory_current_head_sha(pr_data, context)
+    _complete_advisory_head_context(pr_data, context, advisory, current_head_sha)
+    _complete_advisory_explicit_evidence(context)
+    _complete_advisory_codacy_context(pr_data, context)
+    _complete_advisory_required_context(pr_data, context, current_head_sha)
+    return context
+
+
+def _completed_advisory_current_head_sha(pr_data: dict[str, Any], context: dict[str, Any]) -> str:
+    return str(context.get("current_head_sha") or pr_data.get("headRefOid") or "").strip()
+
+
+def _complete_advisory_head_context(
+    pr_data: dict[str, Any],
+    context: dict[str, Any],
+    advisory: list[dict[str, Any]],
+    current_head_sha: str,
+) -> None:
     if current_head_sha and "current_head_sha" not in context:
         context["current_head_sha"] = current_head_sha
     if "evidence_head_sha" not in context:
         context["evidence_head_sha"] = _deepsource_advisory_group_head_sha(pr_data, advisory)
+
+
+def _complete_advisory_explicit_evidence(context: dict[str, Any]) -> None:
     if context.get("deepsource_advisory_evidence") and "evidence_present" not in context:
         context["evidence_present"] = True
+
+
+def _complete_advisory_codacy_context(pr_data: dict[str, Any], context: dict[str, Any]) -> None:
     if "codacy_state" not in context and "github_codacy_state" not in context:
         context["codacy_state"] = _deepsource_autoderived_codacy_state(pr_data)
     codacy = _normalized_codacy_payload(context)
     if not _deepsource_has_codacy_annotation_count(context, codacy):
         context["codacy_annotations_count"] = _deepsource_autoderived_codacy_annotations_count(pr_data)
+
+
+def _complete_advisory_required_context(
+    pr_data: dict[str, Any],
+    context: dict[str, Any],
+    current_head_sha: str,
+) -> None:
     if "deepsource_required_current_head_check_failing" not in context:
         context["deepsource_required_current_head_check_failing"] = _deepsource_autoderived_required_failing(
             pr_data, current_head_sha
         )
-    return context
 
 
 def _deepsource_autoderived_advisory_context(
     pr_data: dict[str, Any],
     advisory: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    current_head_sha = str(pr_data.get("headRefOid") or "").strip()
-    evidence_head_sha = _deepsource_advisory_group_head_sha(pr_data, advisory)
-    evidence = _deepsource_advisory_group_evidence(advisory)
-    codacy_state = _deepsource_autoderived_codacy_state(pr_data)
-    annotations_count = _deepsource_autoderived_codacy_annotations_count(pr_data)
     if _deepsource_autoderived_merge_evidence_malformed(pr_data):
         return {}
-    context = {
-        "current_head_sha": current_head_sha,
-        "evidence_head_sha": evidence_head_sha,
-        "evidence_present": True,
-        "deepsource_advisory_evidence": evidence,
-        "codacy_state": codacy_state,
-        "codacy_annotations_count": annotations_count,
-        "deepsource_required_current_head_check_failing": _deepsource_autoderived_required_failing(
-            pr_data, current_head_sha
-        ),
-        "required_failing_checks": pr_data.get("required_failing_checks"),
-    }
+    context = _deepsource_autoderived_context(pr_data, advisory)
     if _deepsource_autoderived_context_missing(context):
         return {}
     return context
 
 
+def _deepsource_autoderived_context(
+    pr_data: dict[str, Any],
+    advisory: list[dict[str, Any]],
+) -> dict[str, Any]:
+    current_head_sha = str(pr_data.get("headRefOid") or "").strip()
+    return {
+        "current_head_sha": current_head_sha,
+        "evidence_head_sha": _deepsource_advisory_group_head_sha(pr_data, advisory),
+        "evidence_present": True,
+        "deepsource_advisory_evidence": _deepsource_advisory_group_evidence(advisory),
+        "codacy_state": _deepsource_autoderived_codacy_state(pr_data),
+        "codacy_annotations_count": _deepsource_autoderived_codacy_annotations_count(pr_data),
+        "deepsource_required_current_head_check_failing": _deepsource_autoderived_required_failing(
+            pr_data, current_head_sha
+        ),
+        "required_failing_checks": pr_data.get("required_failing_checks"),
+    }
+
+
 def _deepsource_autoderived_context_missing(context: dict[str, Any]) -> bool:
-    annotations_count = _deepsource_annotation_count(context.get("codacy_annotations_count"))
     return (
-        not context.get("current_head_sha")
-        or not context.get("evidence_head_sha")
-        or not context.get("deepsource_advisory_evidence")
-        or context.get("codacy_state") != "SUCCESS"
-        or annotations_count != 0
+        _deepsource_autoderived_head_or_evidence_missing(context)
+        or _deepsource_autoderived_codacy_missing(context)
         or context.get("deepsource_required_current_head_check_failing") is not False
     )
 
 
+def _deepsource_autoderived_head_or_evidence_missing(context: dict[str, Any]) -> bool:
+    return (
+        not context.get("current_head_sha")
+        or not context.get("evidence_head_sha")
+        or not context.get("deepsource_advisory_evidence")
+    )
+
+
+def _deepsource_autoderived_codacy_missing(context: dict[str, Any]) -> bool:
+    annotations_count = _deepsource_annotation_count(context.get("codacy_annotations_count"))
+    return context.get("codacy_state") != "SUCCESS" or annotations_count != 0
+
+
 def _deepsource_autoderived_merge_evidence_malformed(pr_data: dict[str, Any]) -> bool:
+    return _deepsource_pending_checks_malformed(pr_data) or _deepsource_merge_counts_malformed(pr_data)
+
+
+def _deepsource_pending_checks_malformed(pr_data: dict[str, Any]) -> bool:
     pending_checks = pr_data.get("pending_checks")
-    if "pending_checks" in pr_data and (not isinstance(pending_checks, list) or bool(pending_checks)):
-        return True
+    return "pending_checks" in pr_data and (not isinstance(pending_checks, list) or bool(pending_checks))
+
+
+def _deepsource_merge_counts_malformed(pr_data: dict[str, Any]) -> bool:
     return any(
         key in pr_data and controller.safe_nonnegative_int(pr_data.get(key), -1) != 0
         for key in ("pending_checks_count", "unresolved_active")
@@ -1160,16 +1207,20 @@ def _deepsource_advisory_group_head_sha(
     current_head_sha = str(pr_data.get("headRefOid") or "").strip()
     heads: set[str] = set()
     for check in advisory:
-        head = _check_head_sha(check)
-        if head and head != current_head_sha:
+        head = _deepsource_advisory_check_head_sha(check, current_head_sha)
+        if not head:
             return ""
-        if not head and not _is_live_current_pr_rollup_item(check):
-            return ""
-        if not head and not current_head_sha:
-            return ""
-        head = head or current_head_sha
         heads.add(head)
     return heads.pop() if len(heads) == 1 else ""
+
+
+def _deepsource_advisory_check_head_sha(check: dict[str, Any], current_head_sha: str) -> str:
+    head = _check_head_sha(check)
+    if head:
+        return head if head == current_head_sha else ""
+    if current_head_sha and _is_live_current_pr_rollup_item(check):
+        return current_head_sha
+    return ""
 
 
 def _is_live_current_pr_rollup_item(check: dict[str, Any]) -> bool:
@@ -1248,28 +1299,34 @@ def _deepsource_has_codacy_annotation_count(
 def _deepsource_autoderived_required_failing(pr_data: dict[str, Any], current_head_sha: str) -> Any:
     if "deepsource_required_current_head_check_failing" in pr_data:
         return pr_data.get("deepsource_required_current_head_check_failing")
-    if not current_head_sha:
-        return None
     context = dict(pr_data)
-    if controller.deepsource_required_current_head_check_failing(context, current_head_sha):
-        return None
-    if _deepsource_required_evidence_indicates_required(context):
-        return None
-    if _deepsource_required_evidence_ambiguous(context):
-        return None
-    if not _deepsource_live_checks_show_no_required_failure(context, current_head_sha):
+    if _deepsource_required_failure_unknown(context, current_head_sha):
         return None
     return False
 
 
+def _deepsource_required_failure_unknown(context: dict[str, Any], current_head_sha: str) -> bool:
+    return (
+        not current_head_sha
+        or controller.deepsource_required_current_head_check_failing(context, current_head_sha)
+        or _deepsource_required_evidence_indicates_required(context)
+        or _deepsource_required_evidence_ambiguous(context)
+        or not _deepsource_live_checks_show_no_required_failure(context, current_head_sha)
+    )
+
+
 def _deepsource_live_checks_show_no_required_failure(context: dict[str, Any], current_head_sha: str) -> bool:
-    rollup = context.get("statusCheckRollup")
-    if not isinstance(rollup, list):
-        return False
-    deepsource_checks = [check for check in rollup if isinstance(check, dict) and _is_deepsource_python_check(check)]
+    deepsource_checks = _deepsource_live_rollup_checks(context)
     if not deepsource_checks:
         return False
     return all(_live_rollup_check_matches_head(check, current_head_sha) for check in deepsource_checks)
+
+
+def _deepsource_live_rollup_checks(context: dict[str, Any]) -> list[dict[str, Any]]:
+    rollup = context.get("statusCheckRollup")
+    if not isinstance(rollup, list):
+        return []
+    return [check for check in rollup if isinstance(check, dict) and _is_deepsource_python_check(check)]
 
 
 def _live_rollup_check_matches_head(check: dict[str, Any], current_head_sha: str) -> bool:
@@ -1309,9 +1366,19 @@ def _branch_protection_required_names(context: dict[str, Any]) -> list[Any]:
 
 
 def _deepsource_required_evidence_ambiguous(context: dict[str, Any]) -> bool:
-    for key in ("required_failing_checks", "required_checks"):
-        if key in context and not isinstance(context.get(key), (list, tuple, set)):
-            return True
+    if _deepsource_required_list_evidence_ambiguous(context):
+        return True
+    return _deepsource_branch_protection_evidence_ambiguous(context)
+
+
+def _deepsource_required_list_evidence_ambiguous(context: dict[str, Any]) -> bool:
+    return any(
+        key in context and not isinstance(context.get(key), (list, tuple, set))
+        for key in ("required_failing_checks", "required_checks")
+    )
+
+
+def _deepsource_branch_protection_evidence_ambiguous(context: dict[str, Any]) -> bool:
     for key in ("branchProtectionRule", "branch_protection", "branchProtection"):
         if key not in context:
             continue
