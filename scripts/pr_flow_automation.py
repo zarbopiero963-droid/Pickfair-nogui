@@ -179,7 +179,7 @@ def _check_head_sha(check: Any) -> str:
     payload = check if isinstance(check, dict) else {}
     suite = payload.get("checkSuite") if isinstance(payload.get("checkSuite"), dict) else {}
     commit = payload.get("commit") if isinstance(payload.get("commit"), dict) else {}
-    return str(
+    return _clean_check_text(
         first_nonempty(
             payload.get("head_sha"),
             payload.get("headSha"),
@@ -188,14 +188,13 @@ def _check_head_sha(check: Any) -> str:
             suite.get("headSha"),
             commit.get("oid"),
         )
-        or ""
-    ).strip()
+    )
 
 
 def _check_advisory_evidence(check: Any) -> str:
     payload = check if isinstance(check, dict) else {}
     output = payload.get("output") if isinstance(payload.get("output"), dict) else {}
-    return str(
+    return _clean_check_text(
         first_nonempty(
             payload.get("advisory_evidence"),
             payload.get("summary"),
@@ -205,8 +204,12 @@ def _check_advisory_evidence(check: Any) -> str:
             output.get("summary"),
             output.get("text"),
         )
-        or ""
-    ).strip()
+    )
+
+
+def _clean_check_text(value: Any) -> str:
+    text = str(value or "").strip()
+    return "" if text.lower() in {"none", "null"} else text
 
 
 
@@ -1121,7 +1124,7 @@ def _deepsource_autoderived_merge_evidence_malformed(pr_data: dict[str, Any]) ->
 def _deepsource_advisory_group_head_sha(advisory: list[dict[str, Any]]) -> str:
     heads: set[str] = set()
     for check in advisory:
-        head = str(check.get("head_sha") or "").strip()
+        head = _check_head_sha(check)
         if not head:
             return ""
         heads.add(head)
@@ -1131,7 +1134,7 @@ def _deepsource_advisory_group_head_sha(advisory: list[dict[str, Any]]) -> str:
 def _deepsource_advisory_group_evidence(advisory: list[dict[str, Any]]) -> str:
     evidence: list[str] = []
     for check in advisory:
-        text = str(check.get("advisory_evidence") or "").strip()
+        text = _check_advisory_evidence(check)
         if not text or not controller.deepsource_claim_is_advisory(text):
             return ""
         if _deepsource_claim_has_blocking_signal(text.lower()):
@@ -1166,7 +1169,17 @@ def _check_is_codacy(check: dict[str, Any]) -> bool:
 
 def _deepsource_autoderived_codacy_annotations_count(pr_data: dict[str, Any]) -> int:
     codacy = _normalized_codacy_payload(pr_data)
-    return _deepsource_codacy_annotations_count(pr_data, codacy)
+    count = _deepsource_codacy_annotations_count(pr_data, codacy)
+    if count >= 0 or _deepsource_has_codacy_annotation_count(pr_data, codacy):
+        return count
+    return 0 if _find_codacy_status_in_rollup(pr_data) == "SUCCESS" else -1
+
+
+def _deepsource_has_codacy_annotation_count(
+    context: dict[str, Any],
+    codacy: dict[str, Any],
+) -> bool:
+    return any(value is not None for value in _deepsource_codacy_annotation_values(context, codacy))
 
 
 def _deepsource_autoderived_required_failing(pr_data: dict[str, Any], current_head_sha: str) -> Any:
@@ -1181,7 +1194,19 @@ def _deepsource_autoderived_required_failing(pr_data: dict[str, Any], current_he
         return None
     if _deepsource_required_evidence_ambiguous(context):
         return None
+    if not _deepsource_live_checks_show_no_required_failure(context, current_head_sha):
+        return None
     return False
+
+
+def _deepsource_live_checks_show_no_required_failure(context: dict[str, Any], current_head_sha: str) -> bool:
+    rollup = context.get("statusCheckRollup")
+    if not isinstance(rollup, list):
+        return False
+    deepsource_checks = [check for check in rollup if isinstance(check, dict) and _is_deepsource_python_check(check)]
+    if not deepsource_checks:
+        return False
+    return all(_check_head_sha(check) == current_head_sha for check in deepsource_checks)
 
 
 def _deepsource_required_evidence_indicates_required(context: dict[str, Any]) -> bool:
