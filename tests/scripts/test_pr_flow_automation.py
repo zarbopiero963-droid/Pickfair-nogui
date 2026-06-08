@@ -979,7 +979,7 @@ def _stub_deepsource_advisory_pr_view(monkeypatch, advisory_context: dict[str, A
 
 def _deepsource_advisory_pr(
     advisory_context: dict[str, Any] | None = None,
-    checks: list[dict[str, Any]] | None = None,
+    checks: list[Any] | None = None,
 ) -> dict[str, Any]:
     payload = {
         "state": "OPEN",
@@ -996,7 +996,7 @@ def _deepsource_advisory_pr(
 
 def _stub_deepsource_advisory_pr_checks(
     monkeypatch,
-    checks: list[dict[str, Any]],
+    checks: list[Any],
     advisory_context: dict[str, Any] | None = None,
 ) -> None:
     monkeypatch.setattr(
@@ -1042,7 +1042,6 @@ def _assert_deepsource_advisory_blocks(
     ASSERTIONS.assertFalse(decision["can_merge"])
     ASSERTIONS.assertEqual(len(decision["blockers"]), 1)
     ASSERTIONS.assertEqual(decision["reasons"], reasons or ["1 real blocking check(s)"])
-
 
 def test_deepsource_advisory_status_full_evidence_nonblocking():
     """Completed DeepSource Python advisory failure is nonblocking with full current evidence."""
