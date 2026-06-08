@@ -17,8 +17,15 @@ def _check_run(name: str, conclusion: str, url: str = "") -> dict[str, str]:
     return {"__typename": "CheckRun", "name": name, "conclusion": conclusion, "detailsUrl": url}
 
 
-def _status_context(context: str, state: str, url: str = "") -> dict[str, str]:
-    return {"__typename": "StatusContext", "context": context, "state": state, "targetUrl": url}
+def _status_context(context: str, state: str, url: str = "", **extra: Any) -> dict[str, Any]:
+    check: dict[str, Any] = {
+        "__typename": "StatusContext",
+        "context": context,
+        "state": state,
+        "targetUrl": url,
+    }
+    check.update(extra)
+    return check
 
 
 def _ds_fail(**extra: Any) -> dict[str, Any]:
@@ -159,6 +166,59 @@ def test_live_missing_evidence(monkeypatch):
 
 def test_live_top_evidence_pass(monkeypatch):
     """Top-level explicit evidence can pair with live gh rollup head derivation."""
+    decision = _decision(
+        monkeypatch,
+        [
+            _status_context("DeepSource: Python", "FAILURE", "https://example.test/deepsource"),
+            _check_run("Codacy Static Code Analysis", "SUCCESS"),
+        ],
+        deepsource_advisory_evidence="Cyclomatic complexity readability advisory",
+    )
+
+    ASSERTIONS.assertTrue(decision["can_merge"])
+    ASSERTIONS.assertEqual(decision["blockers"], [])
+
+
+def test_required_live_deepsource_without_head_blocks(monkeypatch):
+    """Required live DeepSource rollup failure without headSha fails closed."""
+    decision = _decision(
+        monkeypatch,
+        [
+            _status_context(
+                "DeepSource: Python",
+                "FAILURE",
+                "https://example.test/deepsource",
+                required=True,
+            ),
+            _check_run("Codacy Static Code Analysis", "SUCCESS"),
+        ],
+        deepsource_advisory_evidence="Cyclomatic complexity readability advisory",
+    )
+
+    _blocked(decision)
+
+
+def test_blocking_live_deepsource_without_head_blocks(monkeypatch):
+    """Blocking live DeepSource rollup failure without headSha fails closed."""
+    decision = _decision(
+        monkeypatch,
+        [
+            _status_context(
+                "DeepSource: Python",
+                "FAILURE",
+                "https://example.test/deepsource",
+                blocking=True,
+            ),
+            _check_run("Codacy Static Code Analysis", "SUCCESS"),
+        ],
+        deepsource_advisory_evidence="Cyclomatic complexity readability advisory",
+    )
+
+    _blocked(decision)
+
+
+def test_non_required_live_deepsource_advisory_without_head_passes(monkeypatch):
+    """Non-required live advisory evidence remains nonblocking."""
     decision = _decision(
         monkeypatch,
         [

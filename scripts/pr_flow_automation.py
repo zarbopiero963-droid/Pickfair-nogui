@@ -1309,9 +1309,24 @@ def _deepsource_required_failure_unknown(context: dict[str, Any], current_head_s
     return (
         not current_head_sha
         or controller.deepsource_required_current_head_check_failing(context, current_head_sha)
+        or _deepsource_live_rollup_has_required_failure(context)
         or _deepsource_required_evidence_indicates_required(context)
         or _deepsource_required_evidence_ambiguous(context)
         or not _deepsource_live_checks_show_no_required_failure(context, current_head_sha)
+    )
+
+
+def _deepsource_live_rollup_has_required_failure(context: dict[str, Any]) -> bool:
+    return any(
+        _is_completed_deepsource_failure(check) and _deepsource_rollup_check_has_required_marker(check)
+        for check in _deepsource_live_rollup_checks(context)
+    )
+
+
+def _deepsource_rollup_check_has_required_marker(check: dict[str, Any]) -> bool:
+    return any(
+        check.get(marker) is True
+        for marker in ("required", "isRequired", "blocking", "isBlocking", "requiredStatus")
     )
 
 
