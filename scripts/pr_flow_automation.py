@@ -176,9 +176,9 @@ def effective_merge_state_ok(merge_state: str, blockers: list[dict[str, Any]], p
 
 
 def _check_head_sha(check: Any) -> str:
-    payload = check if isinstance(check, dict) else {}
-    suite = payload.get("checkSuite") if isinstance(payload.get("checkSuite"), dict) else {}
-    commit = payload.get("commit") if isinstance(payload.get("commit"), dict) else {}
+    payload = _dict_payload(check)
+    suite = _dict_payload(payload.get("checkSuite"))
+    commit = _dict_payload(payload.get("commit"))
     return _clean_check_text(
         first_nonempty(
             payload.get("head_sha"),
@@ -192,8 +192,8 @@ def _check_head_sha(check: Any) -> str:
 
 
 def _check_advisory_evidence(check: Any) -> str:
-    payload = check if isinstance(check, dict) else {}
-    output = payload.get("output") if isinstance(payload.get("output"), dict) else {}
+    payload = _dict_payload(check)
+    output = _dict_payload(payload.get("output"))
     return _clean_check_text(
         first_nonempty(
             payload.get("advisory_evidence"),
@@ -205,6 +205,10 @@ def _check_advisory_evidence(check: Any) -> str:
             output.get("text"),
         )
     )
+
+
+def _dict_payload(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
 def _clean_check_text(value: Any) -> str:
@@ -1157,10 +1161,22 @@ def _normalized_codacy_payload(pr_data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _find_codacy_status_in_rollup(pr_data: dict[str, Any]) -> str:
-    for check in pr_data.get("statusCheckRollup") or []:
-        if isinstance(check, dict) and _check_is_codacy(check):
-            return norm_state(check.get("conclusion") or check.get("state") or check.get("status"))
+    check = _find_codacy_check_in_rollup(pr_data)
+    if check:
+        return _codacy_rollup_check_state(check)
     return ""
+
+
+def _find_codacy_check_in_rollup(pr_data: dict[str, Any]) -> dict[str, Any]:
+    for item in pr_data.get("statusCheckRollup") or []:
+        check = _dict_payload(item)
+        if check and _check_is_codacy(check):
+            return check
+    return {}
+
+
+def _codacy_rollup_check_state(check: dict[str, Any]) -> str:
+    return norm_state(check.get("conclusion") or check.get("state") or check.get("status"))
 
 
 def _check_is_codacy(check: dict[str, Any]) -> bool:
@@ -1170,9 +1186,15 @@ def _check_is_codacy(check: dict[str, Any]) -> bool:
 def _deepsource_autoderived_codacy_annotations_count(pr_data: dict[str, Any]) -> int:
     codacy = _normalized_codacy_payload(pr_data)
     count = _deepsource_codacy_annotations_count(pr_data, codacy)
-    if count >= 0 or _deepsource_has_codacy_annotation_count(pr_data, codacy):
+    if _deepsource_has_codacy_annotation_count(pr_data, codacy):
         return count
-    return 0 if _find_codacy_status_in_rollup(pr_data) == "SUCCESS" else -1
+    if count >= 0:
+        return count
+    return 0 if _codacy_rollup_success(pr_data) else -1
+
+
+def _codacy_rollup_success(pr_data: dict[str, Any]) -> bool:
+    return _find_codacy_status_in_rollup(pr_data) == "SUCCESS"
 
 
 def _deepsource_has_codacy_annotation_count(
@@ -1414,7 +1436,18 @@ def _deepsource_claimed_issue(context: dict[str, Any]) -> str:
 def _deepsource_claim_has_blocking_signal(claimed_issue: str) -> bool:
     return controller.deepsource_claim_is_blocking(
         claimed_issue
-    ) or controller.deepsource_claim_is_reproducible_patch_claim(claimed_issue)
+    ) or controller.deepsource_claim_is_reproducible_patch_claim(
+        claimed_issue
+    ) or _deepsource_claim_has_guardrail_signal(claimed_issue)
+
+
+def _deepsource_claim_has_guardrail_signal(claimed_issue: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:safety|security|fail-open|fail open|correctness|regression|bypass)\b",
+            claimed_issue,
+        )
+    )
 
 
 def _deepsource_codacy_evidence_clear(context: dict[str, Any]) -> bool:

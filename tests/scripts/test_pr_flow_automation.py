@@ -1043,13 +1043,6 @@ def _assert_deepsource_advisory_blocks(
     ASSERTIONS.assertEqual(len(decision["blockers"]), 1)
     ASSERTIONS.assertEqual(decision["reasons"], reasons or ["1 real blocking check(s)"])
 
-
-def _assert_blocked_with_blocker_count(decision: dict[str, Any], count: int) -> None:
-    ASSERTIONS.assertFalse(decision["can_merge"])
-    ASSERTIONS.assertEqual(len(decision["blockers"]), count)
-    ASSERTIONS.assertIn(f"{count} real blocking check(s)", decision["reasons"])
-
-
 def test_deepsource_advisory_status_full_evidence_nonblocking():
     """Completed DeepSource Python advisory failure is nonblocking with full current evidence."""
     decision = flow.deepsource_advisory_status_nonblocking_evidence(
