@@ -1,3 +1,4 @@
+# [TASK: claude_bug_pr8c_deepsource_advisory_context_autoderive] PR256 review/Codacy follow-up coverage.
 # [TASK: claude_bug_pr8c_deepsource_advisory_context_autoderive] DeepSource advisory context autoderive regression coverage.
 """Tests for PR flow automation decisions."""
 # pylint: disable=invalid-name,duplicate-code
@@ -966,7 +967,7 @@ def _deepsource_python_advisory_failure(**extra: Any) -> dict[str, Any]:
 
 
 def _deepsource_autoderive_pr(
-    checks: list[dict[str, Any]] | None = None,
+    checks: list[Any] | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
     payload = _deepsource_advisory_pr(
@@ -977,19 +978,14 @@ def _deepsource_autoderive_pr(
             _check("Codacy Static Code Analysis", "SUCCESS"),
         ],
     )
-    payload.update(
-        {
-            "github_annotations_count": 0,
-            "deepsource_required_current_head_check_failing": False,
-        }
-    )
+    payload.update({"github_annotations_count": 0})
     payload.update(extra)
     return payload
 
 
 def _build_deepsource_autoderive_decision(
     monkeypatch,
-    checks: list[dict[str, Any]] | None = None,
+    checks: list[Any] | None = None,
     review_threads: list[dict[str, Any]] | None = None,
     **pr_extra: Any,
 ) -> dict[str, Any]:
@@ -1025,7 +1021,7 @@ def _stub_deepsource_advisory_pr_view(monkeypatch, advisory_context: dict[str, A
 
 def _deepsource_advisory_pr(
     advisory_context: dict[str, Any] | None = None,
-    checks: list[dict[str, Any]] | None = None,
+    checks: list[Any] | None = None,
 ) -> dict[str, Any]:
     payload = {
         "state": "OPEN",
@@ -1042,7 +1038,7 @@ def _deepsource_advisory_pr(
 
 def _stub_deepsource_advisory_pr_checks(
     monkeypatch,
-    checks: list[dict[str, Any]],
+    checks: list[Any],
     advisory_context: dict[str, Any] | None = None,
 ) -> None:
     monkeypatch.setattr(
@@ -1088,6 +1084,12 @@ def _assert_deepsource_advisory_blocks(
     ASSERTIONS.assertFalse(decision["can_merge"])
     ASSERTIONS.assertEqual(len(decision["blockers"]), 1)
     ASSERTIONS.assertEqual(decision["reasons"], reasons or ["1 real blocking check(s)"])
+
+
+def _assert_blocked_with_blocker_count(decision: dict[str, Any], count: int) -> None:
+    ASSERTIONS.assertFalse(decision["can_merge"])
+    ASSERTIONS.assertEqual(len(decision["blockers"]), count)
+    ASSERTIONS.assertIn(f"{count} real blocking check(s)", decision["reasons"])
 
 
 def test_deepsource_advisory_status_full_evidence_nonblocking():
@@ -1160,12 +1162,77 @@ def test_deepsource_advisory_status_group_filtering_with_explicit_evidence(monke
 
 
 def test_deepsource_advisory_status_autoderives_safe_python_advisory(monkeypatch):
-    """Readiness can derive current-head advisory context from safe passive evidence."""
+    """Live PR evidence can auto-derive safe context without injected custom fields."""
     decision = _build_deepsource_autoderive_decision(monkeypatch)
 
     ASSERTIONS.assertTrue(decision["can_merge"])
     ASSERTIONS.assertEqual(decision["blockers"], [])
     ASSERTIONS.assertEqual(decision["reasons"], [])
+
+
+def test_check_payload_helpers_handle_none_and_missing_evidence():
+    """Malformed check payload evidence normalizes to empty strings."""
+    ASSERTIONS.assertEqual(flow._check_head_sha(None), "")
+    ASSERTIONS.assertEqual(flow._check_head_sha("not-a-check"), "")
+    ASSERTIONS.assertEqual(flow._check_head_sha({}), "")
+    ASSERTIONS.assertEqual(flow._check_advisory_evidence(None), "")
+    ASSERTIONS.assertEqual(flow._check_advisory_evidence("not-a-check"), "")
+    ASSERTIONS.assertEqual(flow._check_advisory_evidence({}), "")
+
+
+def test_deepsource_advisory_status_autoderive_none_check_payload_blocks(monkeypatch):
+    """Malformed rollup items do not crash and cannot provide advisory evidence."""
+    decision = _build_deepsource_autoderive_decision(
+        monkeypatch,
+        [
+            None,
+            _deepsource_python_advisory_failure(),
+            _check("Codacy Static Code Analysis", "SUCCESS"),
+        ],
+    )
+
+    _assert_blocked_with_blocker_count(decision, 1)
+
+
+def test_deepsource_advisory_status_autoderive_missing_head_blocks(monkeypatch):
+    """Missing advisory check head evidence keeps the group blocking."""
+    decision = _build_deepsource_autoderive_decision(
+        monkeypatch,
+        [
+            _deepsource_python_advisory_failure(headSha=""),
+            _check("Codacy Static Code Analysis", "SUCCESS"),
+        ],
+    )
+
+    _assert_blocked_with_blocker_count(decision, 1)
+
+
+def test_deepsource_advisory_status_autoderive_one_missing_group_head_blocks(monkeypatch):
+    """Every advisory check in a group must carry matching head evidence."""
+    decision = _build_deepsource_autoderive_decision(
+        monkeypatch,
+        [
+            _deepsource_python_advisory_failure(name="DeepSource: Python"),
+            _deepsource_python_advisory_failure(name="DeepSource: Python / complexity", headSha=""),
+            _check("Codacy Static Code Analysis", "SUCCESS"),
+        ],
+    )
+
+    _assert_blocked_with_blocker_count(decision, 2)
+
+
+def test_deepsource_advisory_status_autoderive_mismatched_group_heads_blocks(monkeypatch):
+    """Advisory checks from different heads cannot be filtered together."""
+    decision = _build_deepsource_autoderive_decision(
+        monkeypatch,
+        [
+            _deepsource_python_advisory_failure(name="DeepSource: Python"),
+            _deepsource_python_advisory_failure(name="DeepSource: Python / complexity", headSha="old"),
+            _check("Codacy Static Code Analysis", "SUCCESS"),
+        ],
+    )
+
+    _assert_blocked_with_blocker_count(decision, 2)
 
 
 def test_deepsource_advisory_status_autoderives_multiple_python_advisories(monkeypatch):
@@ -1198,7 +1265,7 @@ def test_deepsource_advisory_status_autoderive_missing_advisory_evidence_blocks(
         ],
     )
 
-    _assert_deepsource_advisory_blocks(decision)
+    _assert_blocked_with_blocker_count(decision, 1)
 
 
 def test_deepsource_advisory_status_autoderive_missing_or_malformed_codacy_blocks(monkeypatch):
@@ -1215,7 +1282,28 @@ def test_deepsource_advisory_status_autoderive_codacy_annotations_block(monkeypa
     """Codacy annotations keep an otherwise advisory DeepSource failure blocking."""
     decision = _build_deepsource_autoderive_decision(monkeypatch, github_annotations_count=1)
 
-    _assert_deepsource_advisory_blocks(decision)
+    _assert_blocked_with_blocker_count(decision, 1)
+
+
+def test_deepsource_advisory_status_autoderive_codacy_action_required_blocks(monkeypatch):
+    """Codacy action-required state keeps auto-derived advisory context blocking."""
+    decision = _build_deepsource_autoderive_decision(
+        monkeypatch,
+        [
+            _deepsource_python_advisory_failure(),
+            _check("Codacy Static Code Analysis", "ACTION_REQUIRED"),
+        ],
+    )
+
+    _assert_blocked_with_blocker_count(decision, 2)
+
+
+def test_deepsource_autoderived_codacy_dict_success_zero_count():
+    """Normalized Codacy payload can prove success with zero annotations."""
+    pr_data = {"codacy": {"state": "SUCCESS", "annotations_count": 0}}
+
+    ASSERTIONS.assertEqual(flow._deepsource_autoderived_codacy_state(pr_data), "SUCCESS")
+    ASSERTIONS.assertEqual(flow._deepsource_autoderived_codacy_annotations_count(pr_data), 0)
 
 
 def test_deepsource_advisory_status_autoderive_active_reviews_block(monkeypatch):
@@ -1280,6 +1368,18 @@ def test_deepsource_advisory_status_autoderive_required_deepsource_evidence_bloc
     for pr_extra in (
         {"deepsource_required_current_head_check_failing": None},
         {"deepsource_required_current_head_check_failing": True},
+        {
+            "required_failing_checks": [
+                {
+                    "name": "DeepSource: Python",
+                    "provider": "deepsource",
+                    "state": "FAILURE",
+                    "head_sha": "abc",
+                }
+            ]
+        },
+        {"required_checks": ["DeepSource: Python"]},
+        {"branchProtectionRule": {"requiredStatusCheckContexts": ["DeepSource: Python"]}},
     ):
         decision = _build_deepsource_autoderive_decision(monkeypatch, **pr_extra)
         _assert_deepsource_advisory_blocks(decision)
