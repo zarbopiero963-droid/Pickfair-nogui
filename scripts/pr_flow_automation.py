@@ -1382,13 +1382,18 @@ def _deepsource_branch_protection_evidence_ambiguous(context: dict[str, Any]) ->
     for key in ("branchProtectionRule", "branch_protection", "branchProtection"):
         if key not in context:
             continue
-        protection = context.get(key)
-        if not isinstance(protection, dict):
+        if _branch_protection_value_ambiguous(context.get(key)):
             return True
-        for names_key in ("requiredStatusCheckContexts", "required_status_checks", "requiredChecks"):
-            if names_key in protection and not isinstance(protection.get(names_key), list):
-                return True
     return False
+
+
+def _branch_protection_value_ambiguous(protection: Any) -> bool:
+    if not isinstance(protection, dict):
+        return True
+    return any(
+        names_key in protection and not isinstance(protection.get(names_key), list)
+        for names_key in ("requiredStatusCheckContexts", "required_status_checks", "requiredChecks")
+    )
 
 
 def deepsource_advisory_status_nonblocking_evidence(
