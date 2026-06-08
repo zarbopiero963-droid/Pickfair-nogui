@@ -1,3 +1,4 @@
+# [TASK: claude_bug_pr8c_deepsource_advisory_context_autoderive] DeepSource advisory context autoderive regression coverage.
 """Tests for PR flow automation decisions."""
 # pylint: disable=invalid-name,duplicate-code
 
@@ -955,6 +956,51 @@ def _deepsource_python_failure_check(**extra: Any) -> dict[str, Any]:
     return check
 
 
+def _deepsource_python_advisory_failure(**extra: Any) -> dict[str, Any]:
+    check = _deepsource_python_failure_check(
+        headSha="abc",
+        summary="Cyclomatic complexity readability advisory",
+    )
+    check.update(extra)
+    return check
+
+
+def _deepsource_autoderive_pr(
+    checks: list[dict[str, Any]] | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    payload = _deepsource_advisory_pr(
+        advisory_context=None,
+        checks=checks
+        or [
+            _deepsource_python_advisory_failure(),
+            _check("Codacy Static Code Analysis", "SUCCESS"),
+        ],
+    )
+    payload.update(
+        {
+            "github_annotations_count": 0,
+            "deepsource_required_current_head_check_failing": False,
+        }
+    )
+    payload.update(extra)
+    return payload
+
+
+def _build_deepsource_autoderive_decision(
+    monkeypatch,
+    checks: list[dict[str, Any]] | None = None,
+    review_threads: list[dict[str, Any]] | None = None,
+    **pr_extra: Any,
+) -> dict[str, Any]:
+    monkeypatch.setattr(
+        flow,
+        "pr_view",
+        lambda _repo, _pr: _deepsource_autoderive_pr(checks, **pr_extra),
+    )
+    return flow.build_decision("owner/repo", "254", ignore_self=True, review_threads=review_threads or [])
+
+
 def _deepsource_advisory_status_context(**extra: Any) -> dict[str, Any]:
     context: dict[str, Any] = {
         "current_head_sha": "abc",
@@ -1111,6 +1157,189 @@ def test_deepsource_advisory_status_group_filtering_with_explicit_evidence(monke
     ASSERTIONS.assertTrue(decision["can_merge"])
     ASSERTIONS.assertEqual(decision["blockers"], [])
     ASSERTIONS.assertEqual(decision["reasons"], [])
+
+
+def test_deepsource_advisory_status_autoderives_safe_python_advisory(monkeypatch):
+    """Readiness can derive current-head advisory context from safe passive evidence."""
+    decision = _build_deepsource_autoderive_decision(monkeypatch)
+
+    ASSERTIONS.assertTrue(decision["can_merge"])
+    ASSERTIONS.assertEqual(decision["blockers"], [])
+    ASSERTIONS.assertEqual(decision["reasons"], [])
+
+
+def test_deepsource_advisory_status_autoderives_multiple_python_advisories(monkeypatch):
+    """Multiple current-head DeepSource Python advisory failures are filtered together."""
+    decision = _build_deepsource_autoderive_decision(
+        monkeypatch,
+        [
+            _deepsource_python_advisory_failure(name="DeepSource: Python"),
+            _deepsource_python_advisory_failure(name="DeepSource: Python / complexity"),
+            _check("Codacy Static Code Analysis", "SUCCESS"),
+        ],
+    )
+
+    ASSERTIONS.assertTrue(decision["can_merge"])
+    ASSERTIONS.assertEqual(decision["blockers"], [])
+    ASSERTIONS.assertEqual(decision["reasons"], [])
+
+
+def test_deepsource_advisory_status_autoderive_missing_advisory_evidence_blocks(monkeypatch):
+    """URL/name-only advisory wording is not enough to auto-derive advisory evidence."""
+    decision = _build_deepsource_autoderive_decision(
+        monkeypatch,
+        [
+            _deepsource_python_failure_check(
+                headSha="abc",
+                name="DeepSource: Python / readability advisory",
+                detailsUrl="https://example.test/complexity-advisory",
+            ),
+            _check("Codacy Static Code Analysis", "SUCCESS"),
+        ],
+    )
+
+    _assert_deepsource_advisory_blocks(decision)
+
+
+def test_deepsource_advisory_status_autoderive_missing_or_malformed_codacy_blocks(monkeypatch):
+    """Codacy state and annotation evidence must both be present and parseable."""
+    for pr_extra in (
+        {"statusCheckRollup": [_deepsource_python_advisory_failure()]},
+        {"github_annotations_count": "unknown"},
+    ):
+        decision = _build_deepsource_autoderive_decision(monkeypatch, **pr_extra)
+        _assert_deepsource_advisory_blocks(decision)
+
+
+def test_deepsource_advisory_status_autoderive_codacy_annotations_block(monkeypatch):
+    """Codacy annotations keep an otherwise advisory DeepSource failure blocking."""
+    decision = _build_deepsource_autoderive_decision(monkeypatch, github_annotations_count=1)
+
+    _assert_deepsource_advisory_blocks(decision)
+
+
+def test_deepsource_advisory_status_autoderive_active_reviews_block(monkeypatch):
+    """Active unresolved review threads prevent auto-derived advisory filtering."""
+    decision = _build_deepsource_autoderive_decision(
+        monkeypatch,
+        review_threads=[{"id": "thread-1", "isResolved": False, "isOutdated": False}],
+    )
+
+    _assert_deepsource_advisory_blocks(
+        decision,
+        ["1 real blocking check(s)", "1 active unresolved review thread(s)"],
+    )
+
+
+def test_deepsource_advisory_status_autoderive_pending_checks_block(monkeypatch):
+    """Pending checks prevent auto-derived advisory filtering."""
+    decision = _build_deepsource_autoderive_decision(
+        monkeypatch,
+        [
+            _deepsource_python_advisory_failure(),
+            _check("Codacy Static Code Analysis", "SUCCESS"),
+            _check("Unit tests", "PENDING"),
+        ],
+    )
+
+    ASSERTIONS.assertFalse(decision["can_merge"])
+    ASSERTIONS.assertEqual(len(decision["blockers"]), 1)
+    ASSERTIONS.assertEqual(decision["reasons"], ["1 real blocking check(s)", "1 real pending check(s)"])
+
+
+def test_deepsource_advisory_status_autoderive_supplied_merge_counts_block(monkeypatch):
+    """Supplied merge evidence must be parseable and explicitly clear."""
+    for pr_extra in (
+        {"pending_checks_count": "unknown"},
+        {"pending_checks_count": 1},
+        {"pending_checks": [{"name": "Unit tests", "state": "PENDING"}]},
+        {"unresolved_active": 1},
+    ):
+        decision = _build_deepsource_autoderive_decision(monkeypatch, **pr_extra)
+        _assert_deepsource_advisory_blocks(decision)
+
+
+def test_deepsource_advisory_status_autoderive_non_deepsource_failure_blocks(monkeypatch):
+    """A failing non-DeepSource check keeps DeepSource advisory failures blocking."""
+    decision = _build_deepsource_autoderive_decision(
+        monkeypatch,
+        [
+            _deepsource_python_advisory_failure(),
+            _check("Codacy Static Code Analysis", "SUCCESS"),
+            _check("Unit tests", "FAILURE"),
+        ],
+    )
+
+    ASSERTIONS.assertFalse(decision["can_merge"])
+    ASSERTIONS.assertEqual(len(decision["blockers"]), 2)
+    ASSERTIONS.assertEqual(decision["reasons"], ["2 real blocking check(s)"])
+
+
+def test_deepsource_advisory_status_autoderive_required_deepsource_evidence_blocks(monkeypatch):
+    """Required-current-head DeepSource evidence must be explicitly false."""
+    for pr_extra in (
+        {"deepsource_required_current_head_check_failing": None},
+        {"deepsource_required_current_head_check_failing": True},
+    ):
+        decision = _build_deepsource_autoderive_decision(monkeypatch, **pr_extra)
+        _assert_deepsource_advisory_blocks(decision)
+
+
+def test_deepsource_advisory_status_autoderive_safety_signal_blocks(monkeypatch):
+    """Safety, fail-open, correctness, and regression wording cannot auto-derive."""
+    for signal in ("security", "fail-open", "correctness", "regression"):
+        decision = _build_deepsource_autoderive_decision(
+            monkeypatch,
+            [
+                _deepsource_python_advisory_failure(
+                    summary=f"Cyclomatic complexity readability advisory with {signal} concern"
+                ),
+                _check("Codacy Static Code Analysis", "SUCCESS"),
+            ],
+        )
+        _assert_deepsource_advisory_blocks(decision)
+
+
+def test_deepsource_advisory_status_autoderive_non_python_deepsource_blocks(monkeypatch):
+    """Non-Python DeepSource analyzer failures are never auto-derived as advisory."""
+    decision = _build_deepsource_autoderive_decision(
+        monkeypatch,
+        [
+            _deepsource_python_failure_check(
+                name="DeepSource: JavaScript",
+                headSha="abc",
+                summary="Cyclomatic complexity readability advisory",
+            ),
+            _check("Codacy Static Code Analysis", "SUCCESS"),
+        ],
+    )
+
+    _assert_deepsource_advisory_blocks(decision)
+
+
+def test_deepsource_advisory_status_autoderive_incomplete_deepsource_blocks(monkeypatch):
+    """In-progress, cancelled, timed-out, and stale DeepSource checks remain blocking/manual."""
+    for check in (
+        _deepsource_python_advisory_failure(status="IN_PROGRESS"),
+        _deepsource_python_advisory_failure(conclusion="CANCELLED"),
+        _deepsource_python_advisory_failure(conclusion="TIMED_OUT"),
+        _deepsource_python_advisory_failure(conclusion="STALE"),
+    ):
+        decision = _build_deepsource_autoderive_decision(
+            monkeypatch,
+            [check, _check("Codacy Static Code Analysis", "SUCCESS")],
+        )
+        ASSERTIONS.assertFalse(decision["can_merge"])
+
+
+def test_deepsource_advisory_status_malformed_context_container_blocks_autoderive(monkeypatch):
+    """Malformed explicit advisory context prevents fallback to auto-derived evidence."""
+    decision = _build_deepsource_autoderive_decision(
+        monkeypatch,
+        deepsource_advisory_context=["not", "a", "dict"],
+    )
+
+    _assert_deepsource_advisory_blocks(decision)
 
 
 def test_deepsource_advisory_status_preserves_explicit_unresolved_active(monkeypatch):
