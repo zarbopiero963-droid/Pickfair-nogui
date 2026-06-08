@@ -1336,14 +1336,18 @@ def _required_checks_exclude_deepsource_python(context: dict[str, Any]) -> bool:
 def _branch_protection_excludes_deepsource_python(context: dict[str, Any]) -> bool:
     for key in ("branchProtectionRule", "branch_protection", "branchProtection"):
         protection = context.get(key)
-        if not isinstance(protection, dict):
-            continue
-        names = _branch_protection_required_names({key: protection})
-        if names and not _required_names_include_deepsource_python(names):
-            return True
-        if _branch_protection_required_names_present_empty(protection):
+        if isinstance(protection, dict) and _branch_protection_rule_excludes_deepsource(key, protection):
             return True
     return False
+
+
+def _branch_protection_rule_excludes_deepsource(key: str, protection: dict[str, Any]) -> bool:
+    names = _branch_protection_required_names({key: protection})
+    return (
+        bool(names)
+        and not _required_names_include_deepsource_python(names)
+        or _branch_protection_required_names_present_empty(protection)
+    )
 
 
 def _branch_protection_required_names_present_empty(protection: dict[str, Any]) -> bool:

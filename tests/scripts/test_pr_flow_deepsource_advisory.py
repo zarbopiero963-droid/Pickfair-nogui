@@ -4,8 +4,6 @@
 from typing import Any
 from unittest import TestCase
 
-import pytest
-
 import scripts.pr_flow_automation as flow
 
 ASSERTIONS = TestCase()
@@ -168,21 +166,20 @@ def test_explicit_false_pass(monkeypatch):
     ASSERTIONS.assertEqual(decision["blockers"], [])
 
 
-@pytest.mark.parametrize("marker", ("required", "blocking", "isRequired", "isBlocking", "requiredStatus"))
-def test_req_markers_block(monkeypatch, marker):
+def test_req_markers_block(monkeypatch):
     """Required or blocking live DeepSource rollup markers fail closed."""
-    decision = _decision(
-        monkeypatch,
-        [
-            _status_context(
-                "DeepSource: Python", "FAILURE", "https://example.test/deepsource", **{marker: True}
-            ),
-            _check_run("Codacy Static Code Analysis", "SUCCESS"),
-        ],
-        deepsource_advisory_evidence="Cyclomatic complexity readability advisory",
-    )
-
-    _blocked(decision)
+    for marker in ("required", "blocking", "isRequired", "isBlocking", "requiredStatus"):
+        decision = _decision(
+            monkeypatch,
+            [
+                _status_context(
+                    "DeepSource: Python", "FAILURE", "https://example.test/deepsource", **{marker: True}
+                ),
+                _check_run("Codacy Static Code Analysis", "SUCCESS"),
+            ],
+            deepsource_advisory_evidence="Cyclomatic complexity readability advisory",
+        )
+        _blocked(decision)
 
 
 def test_missing_req_blocks(monkeypatch):
@@ -251,18 +248,19 @@ def test_codacy_bad_states_block(monkeypatch):
 
 def test_codacy_counts_block(monkeypatch):
     """Explicit non-zero or malformed annotation counts fail closed."""
-    for pr_extra in (
+    cases: tuple[dict[str, Any], ...] = (
         {"github_annotations_count": 1},
         {"github_annotations_count": "unknown"},
         {"codacy_annotations_count": 2},
-    ):
+    )
+    for pr_extra in cases:
         decision = _decision(monkeypatch, **pr_extra)
         _blocked(decision)
 
 
 def test_required_ds_blocks(monkeypatch):
     """Required or failing current-head DeepSource evidence remains blocking."""
-    for pr_extra in (
+    cases: tuple[dict[str, Any], ...] = (
         {"deepsource_required_current_head_check_failing": True},
         {
             "required_failing_checks": [
@@ -276,7 +274,8 @@ def test_required_ds_blocks(monkeypatch):
         },
         {"required_checks": ["DeepSource: Python"]},
         {"deepsource_required_current_head_check_failing": None},
-    ):
+    )
+    for pr_extra in cases:
         decision = _decision(monkeypatch, **pr_extra)
         _blocked(decision)
 
