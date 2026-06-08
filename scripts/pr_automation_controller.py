@@ -6635,6 +6635,12 @@ def _review_triage_checks_block_evidence(context: dict[str, Any], claimed_issue:
         or context.get("failing_checks")
         or context.get("pending_checks")
     )
+    pending_count = _strict_nonnegative_check_count(context.get("pending_checks_count"))
+    failing_count = _strict_nonnegative_check_count(context.get("failing_checks_count"))
+    if pending_count is None or failing_count is None:
+        return not explicit_unrelated
+    if pending_count > 0 or failing_count > 0:
+        return not explicit_unrelated
     checks_green = context.get("checks_green") is True
     if not checks_green:
         return not explicit_unrelated
@@ -7198,11 +7204,7 @@ def triage_review_thread_contract(
                 decision = "EVIDENCE_RESOLVE"
                 reason = resolve_reason
                 next_action = "resolve_with_evidence"
-                if author and not provider:
-                    decision = "NEEDS_MANUAL"
-                    reason = "unknown_review_provider"
-                    next_action = "needs_manual"
-                elif provider == "codacy-production" and not _codacy_review_evidence_green(ctx):
+                if provider == "codacy-production" and not _codacy_review_evidence_green(ctx):
                     decision = "NEEDS_MANUAL"
                     reason = "missing_or_blocking_codacy_evidence"
                     next_action = "needs_manual"
@@ -7786,6 +7788,80 @@ def _has_blocking_checks(evidence: dict[str, Any]) -> bool:
     return bool(pending or failing)
 
 
+def _codacy_review_state(evidence: dict[str, Any]) -> str:
+    codacy = evidence.get("codacy") if isinstance(evidence.get("codacy"), dict) else {}
+    return str(
+        first_nonempty(
+            evidence.get("codacy_conclusion"),
+            evidence.get("codacy_state"),
+            evidence.get("github_codacy_state"),
+            evidence.get("github_codacy_check_state"),
+            codacy.get("codacy_state"),
+            codacy.get("codacy_conclusion"),
+            codacy.get("github_codacy_state"),
+            codacy.get("github_codacy_check_state"),
+            codacy.get("conclusion"),
+            codacy.get("state"),
+            codacy.get("status"),
+        )
+        or ""
+    ).strip().lower()
+
+
+def _codacy_review_annotations_count(evidence: dict[str, Any]) -> int:
+    codacy = evidence.get("codacy") if isinstance(evidence.get("codacy"), dict) else {}
+    saw_zero = False
+    for source, key in (
+        (evidence, "codacy_annotations_count"),
+        (evidence, "github_annotations_count"),
+        (evidence, "annotations_count"),
+    ):
+        if key in source:
+            count = safe_nonnegative_int(source.get(key), -1)
+            if count > 0:
+                return count
+            if count == 0:
+                saw_zero = True
+    for source, key in (
+        (codacy, "codacy_annotations_count"),
+        (codacy, "annotations_count"),
+        (codacy, "github_annotations_count"),
+    ):
+        if key in source:
+            count = safe_nonnegative_int(source.get(key), -1)
+            if count > 0:
+                return count
+            if count == 0:
+                saw_zero = True
+            else:
+                return -1
+    for source, key in (
+        (evidence, "github_annotations"),
+        (evidence, "codacy_annotations"),
+        (codacy, "github_annotations"),
+        (codacy, "codacy_annotations"),
+        (codacy, "annotations"),
+    ):
+        annotations = source.get(key)
+        if isinstance(annotations, list):
+            if not all(isinstance(item, dict) for item in annotations):
+                continue
+            if annotations:
+                return len(annotations)
+            saw_zero = True
+        elif isinstance(annotations, dict):
+            if annotations:
+                return len(annotations)
+            saw_zero = True
+        else:
+            count = safe_nonnegative_int(annotations, -1)
+            if count > 0:
+                return count
+            if count == 0:
+                saw_zero = True
+    return 0 if saw_zero else -1
+
+
 def _review_fixed_or_stale(evidence: dict[str, Any]) -> bool:
     return bool(
         evidence.get("fixed_or_stale")
@@ -7795,20 +7871,170 @@ def _review_fixed_or_stale(evidence: dict[str, Any]) -> bool:
 
 
 def _codacy_review_evidence_green(evidence: dict[str, Any]) -> bool:
-    state = str(evidence.get("codacy_conclusion") or evidence.get("codacy_state") or "").lower()
-    if state not in {"success", "successful", "passed", "pass"}:
+    if _codacy_review_state(evidence) not in {"success", "successful", "passed", "pass"}:
         return False
-    annotations_raw = (
-        evidence.get("codacy_annotations_count")
-        if "codacy_annotations_count" in evidence
-        else evidence.get("annotations_count")
+    return _codacy_review_annotations_count(evidence) == 0
+
+
+def _codacy_review_evidence_present(evidence: dict[str, Any]) -> bool:
+    codacy = evidence.get("codacy") if isinstance(evidence.get("codacy"), dict) else {}
+    for key in (
+        "codacy_state",
+        "codacy_conclusion",
+        "github_codacy_state",
+        "github_codacy_check_state",
+        "github_annotations",
+        "github_annotations_count",
+        "codacy_annotations",
+        "codacy_annotations_count",
+    ):
+        if key in evidence:
+            return True
+    for key in (
+        "codacy_state",
+        "codacy_conclusion",
+        "github_codacy_state",
+        "github_codacy_check_state",
+        "conclusion",
+        "state",
+        "status",
+        "github_annotations",
+        "github_annotations_count",
+        "codacy_annotations",
+        "codacy_annotations_count",
+        "annotations",
+        "annotations_count",
+    ):
+        if key in codacy:
+            return True
+    return False
+
+
+def _review_evidence_tests_present(evidence: dict[str, Any]) -> bool:
+    tests = _normalize_tests_covering_behavior(
+        first_nonempty(
+            evidence.get("tests"),
+            evidence.get("tests_covering_behavior"),
+        )
     )
-    annotations = safe_nonnegative_int(annotations_raw, -1)
-    return annotations == 0
+    return bool(tests)
+
+
+def _review_evidence_behavior_tests_present(evidence: dict[str, Any]) -> bool:
+    tests = _normalize_tests_covering_behavior(evidence.get("tests"))
+    tests_covering_behavior = _normalize_tests_covering_behavior(evidence.get("tests_covering_behavior"))
+    return bool(tests or tests_covering_behavior)
+
+
+def _review_resolution_behavior_tests_present(thread: dict[str, Any], evidence: dict[str, Any]) -> bool:
+    thread_tests = _normalize_tests_covering_behavior(thread.get("tests"))
+    thread_tests_covering_behavior = _normalize_tests_covering_behavior(thread.get("tests_covering_behavior"))
+    return bool(thread_tests or thread_tests_covering_behavior or _review_evidence_behavior_tests_present(evidence))
+
+
+def _strict_nonnegative_check_count(value: object) -> int | None:
+    if value is None:
+        return 0
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        if re.fullmatch(r"\d+", cleaned):
+            return int(cleaned)
+        return None
+    return None
+
+
+def _check_count_blocker_reasons(evidence: dict[str, Any], key: str, active_reason: str) -> list[str]:
+    if key not in evidence:
+        return []
+    count = _strict_nonnegative_check_count(evidence.get(key))
+    if count is None:
+        return [active_reason, f"{key}_unknown"]
+    if count > 0:
+        return [active_reason]
+    return []
+
+
+def _review_evidence_safety_proven(thread: dict[str, Any], evidence: dict[str, Any], claimed_issue: str) -> bool:
+    safety_signal = bool(
+        re.search(
+            r"\b(security|safety|fail-open|fail open|crash|regression|correctness|bypass)\b",
+            claimed_issue,
+        )
+    )
+    if not safety_signal:
+        return True
+    return bool(
+        thread.get("issue_fixed_or_stale")
+        or thread.get("fixed_or_stale")
+        or thread.get("safe_to_resolve")
+        or evidence.get("issue_fixed_or_stale")
+        or evidence.get("fixed_or_stale")
+        or evidence.get("safe_to_resolve")
+        or evidence.get("safety_proven_fixed")
+        or evidence.get("regression_proven_fixed")
+    )
+
+
+def _review_thread_codacy_involved(thread: dict[str, Any], evidence: dict[str, Any], provider: str) -> bool:
+    return bool(
+        provider == "codacy-production"
+        or evidence.get("codacy_relevant")
+        or "codacy" in _review_text_blob(thread)
+    )
+
+
+def _review_resolution_evidence_blockers(
+    thread: dict[str, Any],
+    evidence: dict[str, Any],
+    triage: dict[str, Any],
+) -> list[str]:
+    claimed_issue = str(triage.get("claimed_issue") or "")
+    provider = str(triage.get("provider") or "")
+    current_head = str(evidence.get("current_head_sha") or triage.get("current_head_sha") or "").strip()
+    evidence_head = str(first_nonempty(evidence.get("evidence_head_sha"), thread.get("evidence_head_sha")) or "").strip()
+    blockers: list[str] = []
+    if not current_head:
+        blockers.append("missing_current_head_sha")
+    if not evidence_head:
+        blockers.append("missing_evidence_head_sha")
+    elif current_head and not _review_evidence_head_matches(current_head, evidence_head):
+        blockers.append("evidence_head_mismatch")
+    if evidence.get("validation_passed") is not True:
+        blockers.append("missing_validation")
+    if not _review_resolution_behavior_tests_present(thread, evidence):
+        blockers.append("missing_tests")
+    if evidence.get("checks_green") is not True:
+        blockers.append("checks_not_green")
+    if bool(evidence.get("pending_checks")):
+        blockers.append("pending_checks")
+    blockers.extend(_check_count_blocker_reasons(evidence, "pending_checks_count", "pending_checks"))
+    if bool(evidence.get("failing_checks")):
+        blockers.append("failing_checks")
+    blockers.extend(_check_count_blocker_reasons(evidence, "failing_checks_count", "failing_checks"))
+    if _review_thread_codacy_involved(thread, evidence, provider) and not _codacy_review_evidence_green(evidence):
+        blockers.append("codacy_not_green")
+    if not _review_evidence_safety_proven(thread, evidence, claimed_issue):
+        blockers.append("safety_or_regression_not_proven_fixed")
+    if _review_thread_has_active_failure_wording(claimed_issue) and not _review_fixed_or_stale(evidence):
+        blockers.append("active_failure_wording")
+    return blockers
 
 
 def should_resolve_review_thread(thread: dict[str, Any], evidence: dict[str, Any]) -> bool:
     """Return whether a review thread is safe to resolve with evidence."""
+    if not isinstance(thread, dict) or not isinstance(evidence, dict):
+        return False
+    resolution_evidence = evidence.get("resolution_evidence")
+    if isinstance(resolution_evidence, dict):
+        item_evidence = resolution_evidence.get(_review_thread_id(thread))
+        if isinstance(item_evidence, dict):
+            evidence = {**evidence, **item_evidence}
     triage = triage_review_thread_contract(thread, evidence)
     if triage.get("decision") != "EVIDENCE_RESOLVE":
         return False
@@ -7818,12 +8044,15 @@ def should_resolve_review_thread(thread: dict[str, Any], evidence: dict[str, Any
     # Fail closed: explicit local validation is mandatory for any auto-resolve.
     if evidence.get("validation_passed") is not True:
         return False
-    if not _review_fixed_or_stale(evidence):
+    triage_stale_or_advisory = (
+        triage.get("reason") == "stale_or_advisory_with_current_head_evidence"
+    )
+    if not (_review_fixed_or_stale(evidence) or triage_stale_or_advisory):
         return False
     if evidence.get("head_matches") is False:
         return False
     current_head = str(evidence.get("current_head_sha") or "").strip()
-    evidence_head = str(evidence.get("evidence_head_sha") or "").strip()
+    evidence_head = str(first_nonempty(evidence.get("evidence_head_sha"), thread.get("evidence_head_sha")) or "").strip()
     if current_head and evidence_head and not _review_evidence_head_matches(current_head, evidence_head):
         return False
     if _has_blocking_checks(evidence) or not _review_evidence_checks_green(evidence, str(triage.get("claimed_issue") or "")):
@@ -7831,7 +8060,7 @@ def should_resolve_review_thread(thread: dict[str, Any], evidence: dict[str, Any
     if provider == "codacy-production" or evidence.get("codacy_relevant"):
         if not _codacy_review_evidence_green(evidence):
             return False
-    return True
+    return not _review_resolution_evidence_blockers(thread, evidence, triage)
 
 
 def summarize_review_threads(
@@ -7873,37 +8102,113 @@ def _review_reply_body(thread: dict[str, Any], evidence: dict[str, Any]) -> str:
     )
 
 
+def _review_plan_item_decision(
+    thread: object,
+    context: dict[str, Any],
+    resolution_evidence: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(thread, dict):
+        return {
+            "thread_id": "",
+            "review_thread_id": "",
+            "decision": "NEEDS_MANUAL",
+            "triage_decision": "NEEDS_MANUAL",
+            "reason": "malformed_thread_payload",
+            "skipped_reason": "malformed_thread_payload",
+            "safe_to_resolve": False,
+            "reply_body": "",
+            "next_action": "needs_manual",
+        }
+    thread_id = _review_thread_id(thread)
+    raw_item_evidence = resolution_evidence.get(thread_id)
+    item_specific_evidence = raw_item_evidence if isinstance(raw_item_evidence, dict) else {}
+    item_evidence = {**context, **item_specific_evidence}
+    triage = triage_review_thread_contract(thread, item_evidence)
+    thread_id = str(triage.get("thread_id") or thread_id)
+    classified = classify_review_thread(thread, context)
+    blockers = _review_resolution_evidence_blockers(thread, item_evidence, triage)
+    triage_decision = str(triage.get("decision") or "NEEDS_MANUAL")
+    provider = str(triage.get("provider") or "").strip()
+    resolved_or_inactive = _node_is_resolved_or_inactive(thread)
+    manual_classification = bool(
+        classified.get("unknown_author")
+        or classified.get("needs_manual")
+        or classified.get("classification") == "needs_manual"
+        or not provider
+    )
+    outdated_evidence_resolve = (
+        _review_thread_is_outdated(thread)
+        and _review_thread_fixed_or_stale(
+            thread,
+            item_evidence,
+            str(triage.get("claimed_issue") or ""),
+        )
+        and not blockers
+    )
+    if resolved_or_inactive:
+        decision = "SKIPPED"
+        skipped_reason = "inactive_or_resolved_thread"
+    elif manual_classification:
+        decision = "NEEDS_MANUAL"
+        skipped_reason = str(classified.get("reason") or triage.get("reason") or "needs_manual")
+    elif outdated_evidence_resolve:
+        decision = "EVIDENCE_RESOLVE"
+        skipped_reason = ""
+    elif triage_decision == "EVIDENCE_RESOLVE" and not blockers:
+        decision = "EVIDENCE_RESOLVE"
+        skipped_reason = ""
+    elif triage_decision == "PATCH_REQUIRED":
+        decision = "PATCH_REQUIRED"
+        skipped_reason = str(triage.get("reason") or "patch_required")
+    else:
+        decision = "NEEDS_MANUAL"
+        skipped_reason = blockers[0] if blockers else str(triage.get("reason") or "needs_manual")
+    safe = decision == "EVIDENCE_RESOLVE"
+    return {
+        **classified,
+        **triage,
+        "thread_id": thread_id,
+        "review_thread_id": thread_id,
+        "decision": decision,
+        "triage_decision": triage_decision,
+        "reason": str(triage.get("reason") or classified.get("reason") or skipped_reason),
+        "skipped_reason": skipped_reason,
+        "skipped_reasons": blockers or ([skipped_reason] if skipped_reason else []),
+        "safe_to_resolve": safe,
+        "needs_manual": decision == "NEEDS_MANUAL",
+        "reply_body": _review_reply_body(thread, item_evidence) if safe else "",
+        "next_action": "resolve_with_evidence" if safe else str(triage.get("next_action") or "needs_manual"),
+    }
+
+
+def _node_is_resolved_or_inactive(thread: dict[str, Any]) -> bool:
+    return bool(
+        thread.get("isResolved")
+        or thread.get("is_resolved")
+        or thread.get("isActive") is False
+        or thread.get("is_active") is False
+        or thread.get("active") is False
+    )
+
+
 def build_review_thread_resolution_plan(
     active_threads: list[dict[str, Any]],
     context: dict[str, Any],
 ) -> dict[str, Any]:
     """Build a passive review-thread resolution plan without resolving threads."""
-    presence = review_provider_presence_status(active_threads, context.get("expected_providers"))
-    resolution_evidence = context.get("resolution_evidence") or {}
+    dict_threads = [thread for thread in active_threads if isinstance(thread, dict)]
+    presence = review_provider_presence_status(dict_threads, context.get("expected_providers"))
+    raw_resolution_evidence = context.get("resolution_evidence") or {}
+    resolution_evidence = raw_resolution_evidence if isinstance(raw_resolution_evidence, dict) else {}
     items: list[dict[str, Any]] = []
-    blocking_count = 0
-    advisory_count = 0
-    needs_manual = False
-
     for thread in active_threads:
-        classified = classify_review_thread(thread, context)
-        thread_id = classified["thread_id"]
-        item_evidence = {**context, **dict(resolution_evidence.get(thread_id) or {})}
-        safe = should_resolve_review_thread(thread, item_evidence)
-        if classified["blocking"]:
-            blocking_count += 1
-        if classified["advisory"]:
-            advisory_count += 1
-        if classified["needs_manual"]:
-            needs_manual = True
-        items.append(
-            {
-                **classified,
-                "safe_to_resolve": safe,
-                "reply_body": _review_reply_body(thread, item_evidence) if safe else "",
-            }
-        )
+        items.append(_review_plan_item_decision(thread, context, resolution_evidence))
 
+    blocking_count = sum(
+        1 for item in items if item["decision"] == "PATCH_REQUIRED" or bool(item.get("blocking"))
+    )
+    advisory_count = sum(1 for item in items if bool(item.get("advisory")))
+    needs_manual = any(item["decision"] == "NEEDS_MANUAL" for item in items)
     safe_count = sum(1 for item in items if item["safe_to_resolve"])
     if blocking_count:
         next_action = "fix_review_comments"
@@ -7920,11 +8225,168 @@ def build_review_thread_resolution_plan(
         "blocking_count": blocking_count,
         "safe_resolve_count": safe_count,
         "advisory_count": advisory_count,
+        "triage_items": items,
         "missing_providers_blocking": False,
         "missing_providers": presence["missing_providers"],
         "present_providers": presence["present_providers"],
         "items": items,
         "next_action": next_action,
+    }
+
+
+def _review_plan_items_for_rerun(review_plan: dict[str, Any]) -> list[Any]:
+    normalized: list[Any] = []
+    for key in ("triage_items", "items"):
+        if key not in review_plan:
+            continue
+        items = review_plan.get(key)
+        if not isinstance(items, list):
+            normalized.append(items)
+            continue
+        normalized.extend(items)
+    return normalized
+
+
+def _review_plan_item_explicitly_clear_for_rerun(item: dict[str, Any]) -> bool:
+    decision = item.get("decision")
+    if decision == "EVIDENCE_RESOLVE":
+        return item.get("safe_to_resolve") is True
+    if decision == "SKIPPED":
+        return True
+    if item.get("safe_to_resolve") is True:
+        return True
+    if item.get("resolved") is True or item.get("isResolved") is True or item.get("is_resolved") is True:
+        return True
+    if item.get("skipped") is True:
+        return True
+    if item.get("nonblocking") is True or item.get("non_blocking") is True:
+        return True
+    return False
+
+
+def _review_plan_item_blocks_passive_rerun(item: Any) -> bool:
+    if not isinstance(item, dict):
+        return True
+    if item.get("decision") in {"PATCH_REQUIRED", "NEEDS_MANUAL"}:
+        return True
+    if item.get("blocking") is True:
+        return True
+    if item.get("needs_manual") is True:
+        return True
+    explicitly_clear = _review_plan_item_explicitly_clear_for_rerun(item)
+    if item.get("safe_to_resolve") is False and not explicitly_clear:
+        return True
+    if explicitly_clear:
+        return False
+    return True
+
+
+def _review_plan_blocks_passive_rerun(review_plan: dict[str, Any]) -> bool:
+    items = _review_plan_items_for_rerun(review_plan)
+    for item in items:
+        if _review_plan_item_blocks_passive_rerun(item):
+            return True
+    return False
+
+
+def _review_plan_has_rerun_items(review_plan: dict[str, Any]) -> bool:
+    for key in ("triage_items", "items"):
+        if key not in review_plan:
+            continue
+        items = review_plan.get(key)
+        if not isinstance(items, list):
+            return True
+        if items:
+            return True
+    return False
+
+
+def _review_plan_item_thread_id(item: Any) -> str:
+    if not isinstance(item, dict):
+        return ""
+    return str(
+        item.get("review_thread_id")
+        or item.get("thread_id")
+        or item.get("id")
+        or ""
+    ).strip()
+
+
+def _review_plan_covers_active_thread_ids(
+    review_plan: dict[str, Any],
+    active_review_threads: list[Any],
+) -> bool:
+    active_thread_ids = {
+        _review_thread_id(thread)
+        for thread in active_review_threads
+        if isinstance(thread, dict) and _review_thread_id(thread)
+    }
+    if not active_thread_ids:
+        return True
+    plan_thread_ids = {
+        item_id
+        for item_id in (
+            _review_plan_item_thread_id(item)
+            for item in _review_plan_items_for_rerun(review_plan)
+        )
+        if item_id
+    }
+    return active_thread_ids.issubset(plan_thread_ids)
+
+
+def _check_count_blocks_rerun(context: dict[str, Any], key: str) -> bool:
+    if key not in context:
+        return False
+    return safe_nonnegative_int(context.get(key), -1) != 0
+
+
+def build_passive_rerun_readiness_plan(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Plan rerun readiness without executing workflow reruns."""
+    ctx = context if isinstance(context, dict) else {}
+    current_head = str(first_nonempty(ctx.get("current_head_sha"), ctx.get("head_sha"), ctx.get("headRefOid")) or "").strip()
+    evidence_head = str(ctx.get("evidence_head_sha") or "").strip()
+    review_plan = ctx.get("review_resolution_plan")
+    active_review_threads = ctx.get("active_review_threads") if isinstance(ctx.get("active_review_threads"), list) else []
+    if (
+        not isinstance(review_plan, dict)
+        or (
+            active_review_threads
+            and (
+                not _review_plan_has_rerun_items(review_plan)
+                or not _review_plan_covers_active_thread_ids(review_plan, active_review_threads)
+            )
+        )
+    ):
+        review_plan = build_review_thread_resolution_plan(
+            active_review_threads,
+            ctx,
+        )
+    blockers: list[str] = []
+    if not current_head or not evidence_head:
+        blockers.append("missing_head_evidence")
+    elif current_head != evidence_head:
+        blockers.append("evidence_head_mismatch")
+    if _review_plan_blocks_passive_rerun(review_plan):
+        blockers.append("active_reviews_not_clear")
+    if ctx.get("checks_green") is False:
+        blockers.append("checks_not_green")
+    codacy_required = ctx.get("codacy_relevant") is True
+    if (codacy_required or _codacy_review_evidence_present(ctx)) and not _codacy_review_evidence_green(ctx):
+        blockers.append("codacy_not_green")
+    if bool(ctx.get("pending_checks")) or _check_count_blocks_rerun(ctx, "pending_checks_count"):
+        blockers.append("pending_checks")
+    if bool(ctx.get("failing_checks")) or _check_count_blocks_rerun(ctx, "failing_checks_count"):
+        blockers.append("failing_checks")
+    allowed = not blockers
+    return {
+        "passive_only": True,
+        "safe_to_rerun": allowed,
+        "can_rerun": allowed,
+        "would_execute": False,
+        "rerun_run_ids": list(ctx.get("rerun_run_ids") or []),
+        "review_resolution_plan": review_plan,
+        "blocked_reasons": blockers,
+        "next_action": "plan_rerun_stale_checks" if allowed else "needs_manual_or_wait",
     }
 
 def _is_out_of_scope_review_path(path: str, context: dict[str, Any]) -> bool:

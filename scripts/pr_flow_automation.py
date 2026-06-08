@@ -1245,24 +1245,34 @@ def _deepsource_pending_checks_clear(context: dict[str, Any]) -> bool:
     pending_checks_count = controller.safe_nonnegative_int(context.get("pending_checks_count"), -1)
     return isinstance(pending_checks, list) and not pending_checks and pending_checks_count == 0
 
-
 def eligible_review_comments_for_auto_resolve(
-    nodes: list[object],
+    review_nodes: list[dict[str, Any]],
     context: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Return deterministic review-thread eligibility; fail closed for malformed threads."""
     ctx = context if isinstance(context, dict) else {}
-    evidence_only = ctx.get("evidence_only") is True
+    evidence_only = bool(ctx.get("evidence_only", False))
     eligible: list[dict[str, Any]] = []
+
+    nodes = review_nodes if isinstance(review_nodes, list) else []
     for node in nodes:
         if not isinstance(node, dict):
             continue
-        decision = _eligible_review_triage_decision(node, ctx)
-        if not _decision_is_eligible_for_auto_resolve(decision, evidence_only):
-            continue
-        eligible.append(node)
-    return eligible
 
+        if evidence_only:
+            triage = controller.triage_review_thread_contract(node, ctx)
+            if (
+                triage.get("decision") == "EVIDENCE_RESOLVE"
+                and controller.should_resolve_review_thread(node, ctx)
+            ):
+                eligible.append(node)
+            continue
+
+        decision = _eligible_review_triage_decision(node, ctx)
+        if decision in {"PATCH_REQUIRED", "EVIDENCE_RESOLVE", "NEEDS_MANUAL"}:
+            eligible.append(node)
+
+    return eligible
 
 def _eligible_review_triage_decision(node: dict[str, Any], context: dict[str, Any]) -> str:
     if not _node_is_open_for_triage(node):
@@ -1323,6 +1333,19 @@ def _decision_is_eligible_for_auto_resolve(decision: str, evidence_only: bool) -
     if evidence_only:
         return decision == "EVIDENCE_RESOLVE"
     return True
+
+
+def build_passive_review_evidence_resolution_plan(
+    review_threads: list[dict[str, Any]],
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return a passive evidence-resolution plan without GitHub mutations."""
+    return controller.build_review_thread_resolution_plan(review_threads, context if isinstance(context, dict) else {})
+
+
+def build_passive_rerun_readiness_plan(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Return passive rerun readiness without executing workflow reruns."""
+    return controller.build_passive_rerun_readiness_plan(context)
 
 
 def classify_codacy_rule_conflict(issues: list[dict[str, Any]]) -> dict[str, Any]:

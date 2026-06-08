@@ -4,6 +4,7 @@
 import argparse
 import copy
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -4837,6 +4838,1210 @@ def test_collect_patch_scope_changes_detects_symlink_retarget_same_resolved_byte
     ASSERTIONS.assertIn("link.txt", changes["changed_files"])
 
 
+def _passive_review_evidence(**extra: Any) -> dict[str, Any]:
+    evidence: dict[str, Any] = {
+        "current_head_sha": "head-1",
+        "evidence_head_sha": "head-1",
+        "validation_passed": True,
+        "tests": ["python3 -m pytest tests/scripts/test_pr_automation_controller.py -q"],
+        "checks_green": True,
+        "pending_checks": [],
+        "failing_checks": [],
+        "codacy_state": "success",
+        "codacy_annotations_count": 0,
+    }
+    evidence.update(extra)
+    return evidence
+
+
+def _passive_review_thread(
+    body: str = "stale advisory nit covered by tests",
+    *,
+    author: str = "coderabbitai[bot]",
+    thread_id: str = "thread-1",
+    **extra: Any,
+) -> dict[str, Any]:
+    thread: dict[str, Any] = {
+        "id": thread_id,
+        "author": author,
+        "body": body,
+        "isResolved": False,
+        "isOutdated": False,
+    }
+    thread.update(extra)
+    return thread
+
+
+def _single_review_plan(thread: object, **evidence_extra: Any) -> dict[str, Any]:
+    plan = controller.build_review_thread_resolution_plan(
+        [thread],
+        _passive_review_evidence(**evidence_extra),
+    )
+    ASSERTIONS.assertEqual(len(plan["items"]), 1)
+    return plan
+
+
+def test_passive_review_plan_active_advisory_full_evidence_resolves_only():
+    plan = _single_review_plan(_passive_review_thread())
+    item = plan["items"][0]
+    ASSERTIONS.assertEqual(item["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertTrue(item["safe_to_resolve"])
+    ASSERTIONS.assertIn("Local validation passed", item["reply_body"])
+    ASSERTIONS.assertEqual(plan["next_action"], "resolve_review_threads")
+
+
+def test_passive_review_plan_outdated_stale_full_evidence_resolves_only():
+    plan = _single_review_plan(_passive_review_thread(isOutdated=True))
+    item = plan["items"][0]
+    ASSERTIONS.assertEqual(item["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertTrue(item["safe_to_resolve"])
+    ASSERTIONS.assertEqual(item["skipped_reason"], "")
+    ASSERTIONS.assertEqual(plan["next_action"], "resolve_review_threads")
+
+
+def test_passive_review_plan_outdated_inactive_with_real_tests_evidence_skips():
+    thread = _passive_review_thread(isOutdated=True, isActive=False)
+    plan = _single_review_plan(
+        thread,
+        tests=[],
+        tests_covering_behavior=["pytest tests/scripts/test_pr_automation_controller.py -k outdated"],
+    )
+    item = plan["items"][0]
+    ASSERTIONS.assertEqual(item["decision"], "SKIPPED")
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertEqual(item["skipped_reason"], "inactive_or_resolved_thread")
+    ASSERTIONS.assertFalse(plan["can_resolve_any"])
+    ASSERTIONS.assertEqual(
+        item["tests_covering_behavior"],
+        ["pytest tests/scripts/test_pr_automation_controller.py -k outdated"],
+    )
+
+
+def test_passive_review_plan_outdated_validation_passed_without_tests_fails_closed():
+    thread = _passive_review_thread(isOutdated=True)
+    plan = _single_review_plan(thread, tests=[], tests_covering_behavior=[], validation_passed=True, validation="PASS")
+    item = plan["items"][0]
+    ASSERTIONS.assertNotEqual(item["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertIn("missing_tests", item["skipped_reasons"])
+
+    evidence = _passive_review_evidence(tests=[], tests_covering_behavior=[], validation_passed=True, validation="PASS")
+    ASSERTIONS.assertEqual(
+        controller.triage_review_thread_contract(thread, evidence)["decision"],
+        "NEEDS_MANUAL",
+    )
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_passive_review_plan_thread_tests_covering_behavior_satisfies_missing_tests_blocker():
+    thread = _passive_review_thread(
+        tests_covering_behavior=["python3 -m pytest tests/scripts/test_pr_automation_controller.py -q"]
+    )
+    evidence = _passive_review_evidence(tests=[], tests_covering_behavior=[])
+    plan = controller.build_review_thread_resolution_plan([thread], evidence)
+    item = plan["items"][0]
+
+    ASSERTIONS.assertEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertEqual(item["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertTrue(item["safe_to_resolve"])
+    ASSERTIONS.assertNotIn("missing_tests", item["skipped_reasons"])
+    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_passive_review_plan_missing_context_and_thread_tests_fails_closed():
+    thread = _passive_review_thread(tests=[], tests_covering_behavior=[])
+    evidence = _passive_review_evidence(tests=[], tests_covering_behavior=[])
+    plan = controller.build_review_thread_resolution_plan([thread], evidence)
+    item = plan["items"][0]
+
+    ASSERTIONS.assertEqual(item["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertIn("missing_tests", item["skipped_reasons"])
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_passive_review_plan_thread_evidence_head_matching_current_head_resolves():
+    thread = _passive_review_thread(evidence_head_sha="head-1")
+    plan = _single_review_plan(thread, evidence_head_sha="")
+    item = plan["items"][0]
+    ASSERTIONS.assertEqual(item["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertTrue(item["safe_to_resolve"])
+    ASSERTIONS.assertEqual(item["skipped_reasons"], [])
+
+
+def test_should_resolve_review_thread_thread_evidence_head_matching_current_head_returns_true():
+    thread = _passive_review_thread(evidence_head_sha="head-1")
+    evidence = _passive_review_evidence(evidence_head_sha="")
+    triage = controller.triage_review_thread_contract(thread, evidence)
+    ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertEqual(triage["reason"], "stale_or_advisory_with_current_head_evidence")
+    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_should_resolve_review_thread_thread_evidence_head_matches_plan_resolution_evidence():
+    thread = _passive_review_thread(evidence_head_sha="head-1")
+    context = {
+        "current_head_sha": "head-1",
+        "resolution_evidence": {
+            "thread-1": _passive_review_evidence(evidence_head_sha=""),
+        },
+    }
+    plan = controller.build_review_thread_resolution_plan([thread], context)
+    item = plan["items"][0]
+
+    ASSERTIONS.assertTrue(plan["can_resolve_any"])
+    ASSERTIONS.assertEqual(item["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertTrue(item["safe_to_resolve"])
+    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, context))
+
+
+def test_should_resolve_review_thread_thread_evidence_head_validation_false_blocks():
+    thread = _passive_review_thread(evidence_head_sha="head-1")
+    evidence = _passive_review_evidence(evidence_head_sha="", validation_passed=False)
+    triage = controller.triage_review_thread_contract(thread, evidence)
+    ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertEqual(triage["reason"], "stale_or_advisory_with_current_head_evidence")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_passive_review_plan_thread_evidence_head_mismatch_blocks():
+    thread = _passive_review_thread(evidence_head_sha="old-head")
+    plan = _single_review_plan(thread, evidence_head_sha="")
+    item = plan["items"][0]
+    ASSERTIONS.assertEqual(item["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertIn("evidence_head_mismatch", item["skipped_reasons"])
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, _passive_review_evidence(evidence_head_sha="")))
+
+
+def test_passive_review_plan_missing_context_and_thread_evidence_head_blocks():
+    thread = _passive_review_thread()
+    plan = _single_review_plan(thread, evidence_head_sha="")
+    item = plan["items"][0]
+    ASSERTIONS.assertEqual(item["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertIn("missing_evidence_head_sha", item["skipped_reasons"])
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, _passive_review_evidence(evidence_head_sha="")))
+
+
+def test_passive_review_plan_non_outdated_inactive_remains_skipped():
+    for thread in (
+        _passive_review_thread(isActive=False),
+        _passive_review_thread(thread_id="thread-2", isResolved=True),
+    ):
+        plan = _single_review_plan(thread)
+        item = plan["items"][0]
+        ASSERTIONS.assertEqual(item["decision"], "SKIPPED")
+        ASSERTIONS.assertFalse(item["safe_to_resolve"])
+        ASSERTIONS.assertEqual(item["skipped_reason"], "inactive_or_resolved_thread")
+
+
+def test_passive_review_plan_resolved_known_provider_outdated_thread_is_skipped_not_resolved():
+    evidence = _passive_review_evidence(issue_fixed_or_stale=True, safe_to_resolve=True)
+    thread = _passive_review_thread(
+        "stale advisory already fixed",
+        author="coderabbitai[bot]",
+        isResolved=True,
+        isOutdated=True,
+    )
+    plan = controller.build_review_thread_resolution_plan([thread], evidence)
+    item = plan["items"][0]
+
+    ASSERTIONS.assertEqual(item["decision"], "SKIPPED")
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertFalse(item["needs_manual"])
+    ASSERTIONS.assertFalse(plan["can_resolve_any"])
+    ASSERTIONS.assertEqual(plan["next_action"], "continue_checks")
+    ASSERTIONS.assertEqual(item["reply_body"], "")
+
+
+def test_passive_review_plan_codacy_stale_green_zero_annotations_resolves_only():
+    plan = _single_review_plan(
+        _passive_review_thread("stale Codacy annotation already fixed", author="codacy-production[bot]"),
+        codacy_state="success",
+        codacy_annotations_count=0,
+    )
+    ASSERTIONS.assertEqual(plan["items"][0]["decision"], "EVIDENCE_RESOLVE")
+
+
+def test_passive_review_plan_accepts_github_codacy_check_state_alias():
+    evidence = _passive_review_evidence(
+        github_codacy_check_state="SUCCESS",
+        github_annotations_count=0,
+    )
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    plan = controller.build_review_thread_resolution_plan(
+        [_passive_review_thread("stale Codacy annotation already fixed", author="codacy-production[bot]")],
+        evidence,
+    )
+    ASSERTIONS.assertEqual(plan["items"][0]["decision"], "EVIDENCE_RESOLVE")
+
+
+def test_passive_review_plan_deepsource_advisory_green_evidence_resolves_only():
+    for body in (
+        "Cyclomatic complexity advisory covered by tests",
+        "Readability advisory already fixed",
+        "Collapsible if advisory stale",
+    ):
+        plan = _single_review_plan(_passive_review_thread(body, author="deepsource-app"))
+        ASSERTIONS.assertEqual(plan["items"][0]["decision"], "EVIDENCE_RESOLVE")
+
+
+def test_passive_review_plan_unknown_provider_active_thread_stays_manual_with_green_evidence():
+    thread = _passive_review_thread("stale advisory already fixed", author="unknown-reviewer")
+    evidence = _passive_review_evidence(issue_fixed_or_stale=True, safe_to_resolve=True)
+
+    triage = controller.triage_review_thread_contract(thread, evidence)
+    plan = controller.build_review_thread_resolution_plan([thread], evidence)
+    item = plan["items"][0]
+
+    ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+    ASSERTIONS.assertEqual(item["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertTrue(item["unknown_author"])
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertEqual(item["reply_body"], "")
+    ASSERTIONS.assertFalse(plan["can_resolve_any"])
+
+
+def test_passive_review_plan_missing_author_active_thread_stays_manual_with_green_evidence():
+    thread = _passive_review_thread("stale advisory already fixed", author="")
+    evidence = _passive_review_evidence(issue_fixed_or_stale=True, safe_to_resolve=True)
+
+    triage = controller.triage_review_thread_contract(thread, evidence)
+    plan = controller.build_review_thread_resolution_plan([thread], evidence)
+    item = plan["items"][0]
+
+    ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+    ASSERTIONS.assertEqual(item["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertTrue(item["unknown_author"])
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertEqual(item["reply_body"], "")
+    ASSERTIONS.assertFalse(plan["can_resolve_any"])
+
+
+def test_passive_review_plan_resolved_or_inactive_providerless_thread_is_skipped_and_rerun_clear():
+    evidence = _passive_review_evidence(issue_fixed_or_stale=True, safe_to_resolve=True)
+
+    for thread in (
+        _passive_review_thread("stale advisory already fixed", author="", isResolved=True),
+        _passive_review_thread("stale advisory already fixed", author="", isActive=False, isOutdated=True),
+    ):
+        plan = controller.build_review_thread_resolution_plan([thread], evidence)
+        item = plan["items"][0]
+        readiness = controller.build_passive_rerun_readiness_plan(
+            _passive_review_evidence(review_resolution_plan=plan)
+        )
+
+        ASSERTIONS.assertEqual(item["decision"], "SKIPPED")
+        ASSERTIONS.assertFalse(item["safe_to_resolve"])
+        ASSERTIONS.assertFalse(item["needs_manual"])
+        ASSERTIONS.assertFalse(plan["needs_manual"])
+        ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+        ASSERTIONS.assertTrue(readiness["safe_to_rerun"])
+        ASSERTIONS.assertNotIn("active_reviews_not_clear", readiness["blocked_reasons"])
+
+
+def test_passive_review_plan_resolved_providerless_outdated_thread_is_skipped_not_manual_and_rerun_clear():
+    evidence = _passive_review_evidence(issue_fixed_or_stale=True, safe_to_resolve=True)
+    thread = _passive_review_thread(
+        "stale advisory already fixed",
+        author="",
+        isResolved=True,
+        isOutdated=True,
+    )
+
+    plan = controller.build_review_thread_resolution_plan([thread], evidence)
+    item = plan["items"][0]
+    readiness = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(review_resolution_plan=plan)
+    )
+
+    ASSERTIONS.assertEqual(item["decision"], "SKIPPED")
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertFalse(item["needs_manual"])
+    ASSERTIONS.assertFalse(plan["needs_manual"])
+    ASSERTIONS.assertNotEqual(item["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertTrue(readiness["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("active_reviews_not_clear", readiness["blocked_reasons"])
+
+
+def test_passive_review_plan_active_providerless_thread_stays_manual_and_blocks_rerun():
+    thread = _passive_review_thread("stale advisory already fixed", author="")
+    evidence = _passive_review_evidence(issue_fixed_or_stale=True, safe_to_resolve=True)
+    plan = controller.build_review_thread_resolution_plan([thread], evidence)
+    item = plan["items"][0]
+    readiness = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(review_resolution_plan=plan)
+    )
+
+    ASSERTIONS.assertEqual(item["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertTrue(item["needs_manual"])
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertFalse(readiness["safe_to_rerun"])
+    ASSERTIONS.assertIn("active_reviews_not_clear", readiness["blocked_reasons"])
+
+
+def test_passive_review_plan_unknown_provider_outdated_stale_thread_stays_manual():
+    thread = _passive_review_thread("stale advisory already fixed", author="", isOutdated=True)
+    evidence = _passive_review_evidence(issue_fixed_or_stale=True, safe_to_resolve=True)
+
+    plan = controller.build_review_thread_resolution_plan([thread], evidence)
+    item = plan["items"][0]
+
+    ASSERTIONS.assertEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+    ASSERTIONS.assertEqual(item["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertTrue(item["unknown_author"])
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertEqual(item["reply_body"], "")
+    ASSERTIONS.assertFalse(plan["can_resolve_any"])
+
+
+def test_passive_review_plan_unknown_comments_nodes_author_missing_stays_manual():
+    thread = {
+        "id": "missing-author-thread",
+        "isResolved": False,
+        "isOutdated": False,
+        "comments": {"nodes": [{"body": "already fixed stale advisory"}]},
+    }
+    evidence = _passive_review_evidence(issue_fixed_or_stale=True, safe_to_resolve=True)
+
+    triage = controller.triage_review_thread_contract(thread, evidence)
+    plan = controller.build_review_thread_resolution_plan([thread], evidence)
+    item = plan["items"][0]
+
+    ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+    ASSERTIONS.assertEqual(item["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertTrue(item["unknown_author"])
+    ASSERTIONS.assertFalse(item["safe_to_resolve"])
+    ASSERTIONS.assertEqual(item["reply_body"], "")
+    ASSERTIONS.assertFalse(plan["can_resolve_any"])
+
+
+def test_passive_review_plan_known_provider_stale_advisory_full_evidence_still_resolves():
+    thread = _passive_review_thread(
+        "stale advisory already fixed",
+        author="chatgpt-codex-connector[bot]",
+        isOutdated=True,
+    )
+    plan = _single_review_plan(thread, issue_fixed_or_stale=True, safe_to_resolve=True)
+
+    ASSERTIONS.assertEqual(plan["items"][0]["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertTrue(plan["items"][0]["safe_to_resolve"])
+    ASSERTIONS.assertTrue(plan["can_resolve_any"])
+
+
+def test_review_resolution_plan_classified_blocking_manual_routes_to_fix_comments():
+    thread = _passive_review_thread("P1 bug in runtime", author="coderabbitai[bot]")
+    plan = _single_review_plan(thread)
+    item = plan["items"][0]
+
+    ASSERTIONS.assertTrue(item["blocking"])
+    ASSERTIONS.assertEqual(item["triage_decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(item["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(plan["blocking_count"], 1)
+    ASSERTIONS.assertEqual(plan["next_action"], "fix_review_comments")
+
+
+def test_passive_review_plan_missing_optional_provider_non_blocking():
+    plan = controller.build_review_thread_resolution_plan([], {"expected_providers": ["codacy-production"]})
+    ASSERTIONS.assertFalse(plan["missing_providers_blocking"])
+    ASSERTIONS.assertEqual(plan["missing_providers"], ["codacy-production"])
+
+
+def test_passive_review_plan_patch_required_uncovered_not_resolved():
+    plan = _single_review_plan(
+        _passive_review_thread("security fail-open regression remains", reproducible=True),
+        safety_proven_fixed=False,
+    )
+    ASSERTIONS.assertEqual(plan["items"][0]["decision"], "PATCH_REQUIRED")
+    ASSERTIONS.assertFalse(plan["items"][0]["safe_to_resolve"])
+
+
+def test_passive_review_plan_needs_manual_not_resolved():
+    plan = _single_review_plan(_passive_review_thread("ambiguous architecture needs owner policy"))
+    ASSERTIONS.assertEqual(plan["items"][0]["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertFalse(plan["items"][0]["safe_to_resolve"])
+
+
+def test_passive_review_plan_safety_not_proven_fixed_fails_closed():
+    plan = _single_review_plan(_passive_review_thread("stale advisory but security regression remains"))
+    ASSERTIONS.assertNotEqual(plan["items"][0]["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertIn("safety_or_regression_not_proven_fixed", plan["items"][0]["skipped_reasons"])
+
+
+def test_passive_review_plan_head_mismatch_fails_closed():
+    plan = _single_review_plan(_passive_review_thread(), evidence_head_sha="old-head")
+    ASSERTIONS.assertEqual(plan["items"][0]["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertIn("evidence_head_mismatch", plan["items"][0]["skipped_reasons"])
+
+
+def test_passive_review_plan_pending_or_failing_checks_fail_closed():
+    pending = _single_review_plan(_passive_review_thread(), pending_checks=[{"name": "CI"}])
+    failing = _single_review_plan(_passive_review_thread(), failing_checks=[{"name": "CI"}])
+    ASSERTIONS.assertEqual(pending["items"][0]["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(failing["items"][0]["decision"], "NEEDS_MANUAL")
+
+
+def test_passive_review_plan_malformed_check_counts_fail_closed_before_evidence_resolve():
+    pending = _single_review_plan(_passive_review_thread(), pending_checks_count="unknown")
+    failing = _single_review_plan(_passive_review_thread(), failing_checks_count="unknown")
+
+    ASSERTIONS.assertEqual(pending["items"][0]["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertIn("pending_checks_count_unknown", pending["items"][0]["skipped_reasons"])
+    ASSERTIONS.assertFalse(
+        controller.should_resolve_review_thread(
+            _passive_review_thread(),
+            _passive_review_evidence(pending_checks_count="unknown"),
+        )
+    )
+    ASSERTIONS.assertEqual(failing["items"][0]["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertIn("failing_checks_count_unknown", failing["items"][0]["skipped_reasons"])
+    ASSERTIONS.assertFalse(
+        controller.should_resolve_review_thread(
+            _passive_review_thread(),
+            _passive_review_evidence(failing_checks_count="unknown"),
+        )
+    )
+
+
+def test_passive_review_plan_codacy_action_required_or_annotations_fail_closed():
+    action_required = _single_review_plan(
+        _passive_review_thread("stale Codacy annotation", author="codacy-production[bot]"),
+        codacy_state="action_required",
+    )
+    annotated = _single_review_plan(
+        _passive_review_thread("stale Codacy annotation", author="codacy-production[bot]"),
+        codacy_annotations_count=2,
+    )
+    ASSERTIONS.assertEqual(action_required["items"][0]["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(annotated["items"][0]["decision"], "NEEDS_MANUAL")
+
+
+def test_should_resolve_review_thread_existing_gates_remain_fail_closed():
+    covered_tests = ["python3 -m pytest tests/scripts/test_pr_automation_controller.py -q"]
+    base_thread = _passive_review_thread(tests_covering_behavior=covered_tests)
+    cases = (
+        (base_thread, {"validation_passed": False}),
+        (_passive_review_thread(evidence_head_sha="old-head", tests_covering_behavior=covered_tests), {"evidence_head_sha": ""}),
+        (base_thread, {"pending_checks": [{"name": "CI"}]}),
+        (base_thread, {"failing_checks": [{"name": "CI"}]}),
+        (
+            _passive_review_thread(
+                "stale Codacy annotation",
+                author="codacy-production[bot]",
+                tests_covering_behavior=covered_tests,
+            ),
+            {"codacy_state": "action_required"},
+        ),
+        (
+            _passive_review_thread(
+                "stale Codacy annotation",
+                author="codacy-production[bot]",
+                tests_covering_behavior=covered_tests,
+            ),
+            {"codacy_state": "", "codacy_annotations_count": -1},
+        ),
+    )
+
+    for thread, extra in cases:
+        ASSERTIONS.assertFalse(
+            controller.should_resolve_review_thread(
+                thread,
+                _passive_review_evidence(tests=[], tests_covering_behavior=[], **extra),
+            )
+        )
+
+
+def test_passive_review_plan_missing_validation_tests_or_evidence_head_fail_closed():
+    missing_validation = _single_review_plan(_passive_review_thread(), validation_passed=False)
+    missing_tests = _single_review_plan(_passive_review_thread(), tests=[])
+    missing_head = _single_review_plan(_passive_review_thread(), evidence_head_sha="")
+    ASSERTIONS.assertEqual(missing_validation["items"][0]["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(missing_tests["items"][0]["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(missing_head["items"][0]["decision"], "NEEDS_MANUAL")
+
+
+def test_passive_review_plan_malformed_thread_payload_fails_closed():
+    plan = _single_review_plan("not-a-thread")
+    ASSERTIONS.assertEqual(plan["items"][0]["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertEqual(plan["items"][0]["skipped_reason"], "malformed_thread_payload")
+
+
+def test_passive_review_plan_unknown_provider_active_failure_manual_or_patch():
+    plan = _single_review_plan(_passive_review_thread("failure remains active", author="unknown-reviewer"))
+    ASSERTIONS.assertIn(plan["items"][0]["decision"], {"PATCH_REQUIRED", "NEEDS_MANUAL"})
+    ASSERTIONS.assertFalse(plan["items"][0]["safe_to_resolve"])
+
+
+def test_passive_review_plan_forbidden_workflow_future_scope_needs_manual():
+    for body in (
+        "Please edit forbidden file order_manager.py",
+        "Touch .github/workflows/pr.yml to fix this",
+        "Future roadmap scope",
+    ):
+        plan = _single_review_plan(_passive_review_thread(body))
+        ASSERTIONS.assertEqual(plan["items"][0]["decision"], "NEEDS_MANUAL")
+
+
+def test_passive_rerun_readiness_plan_is_passive_and_gate_checked():
+    review_plan = _single_review_plan(_passive_review_thread())
+    allowed = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(review_resolution_plan=review_plan, rerun_run_ids=["123"])
+    )
+    ASSERTIONS.assertTrue(allowed["safe_to_rerun"])
+    ASSERTIONS.assertFalse(allowed["would_execute"])
+    ASSERTIONS.assertEqual(allowed["next_action"], "plan_rerun_stale_checks")
+
+    blocked = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(review_resolution_plan=review_plan, pending_checks=[{"name": "CI"}])
+    )
+    ASSERTIONS.assertFalse(blocked["safe_to_rerun"])
+    ASSERTIONS.assertIn("pending_checks", blocked["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_blocks_on_head_mismatch_or_missing_head_evidence():
+    """Passive rerun readiness should require matching current-head evidence."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    mismatch = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(review_resolution_plan=review_plan, evidence_head_sha="old-head")
+    )
+    missing = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(review_resolution_plan=review_plan, evidence_head_sha="")
+    )
+    ASSERTIONS.assertFalse(mismatch["safe_to_rerun"])
+    ASSERTIONS.assertIn("evidence_head_mismatch", mismatch["blocked_reasons"])
+    ASSERTIONS.assertFalse(missing["safe_to_rerun"])
+    ASSERTIONS.assertIn("missing_head_evidence", missing["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_blocks_on_codacy_not_green():
+    """Passive rerun readiness should fail closed when Codacy is not green."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    plan = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(review_resolution_plan=review_plan, codacy_state="action_required")
+    )
+    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+    ASSERTIONS.assertIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_blocks_when_checks_green_false():
+    """Explicit non-green current-head check evidence should block passive reruns."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    plan = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(
+            review_resolution_plan=review_plan,
+            checks_green=False,
+            pending_checks=[],
+            failing_checks=[],
+            pending_checks_count=0,
+            failing_checks_count=0,
+        )
+    )
+    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+    ASSERTIONS.assertIn("checks_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_checks_green_false_overrides_green_codacy_evidence():
+    """Green Codacy evidence should not allow reruns when current-head checks are not green."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    plan = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(
+            review_resolution_plan=review_plan,
+            checks_green=False,
+            codacy_state="success",
+            codacy_annotations_count=0,
+            pending_checks=[],
+            failing_checks=[],
+        )
+    )
+    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+    ASSERTIONS.assertIn("checks_not_green", plan["blocked_reasons"])
+    ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_checks_green_true_allows_clear_gates():
+    """Explicit green current-head check evidence should allow reruns when other gates are clear."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    plan = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(
+            review_resolution_plan=review_plan,
+            checks_green=True,
+            pending_checks=[],
+            failing_checks=[],
+            pending_checks_count=0,
+            failing_checks_count=0,
+        )
+    )
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("checks_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_rebuilds_empty_supplied_plan_when_active_reviews_present():
+    """Itemless supplied review plans must not bypass active review threads."""
+    active_thread = _passive_review_thread(
+        "security fail-open regression remains",
+        reproducible=True,
+    )
+    for review_plan in ({}, {"items": []}, {"summary": "no usable items"}):
+        plan = controller.build_passive_rerun_readiness_plan(
+            _passive_review_evidence(
+                review_resolution_plan=review_plan,
+                active_review_threads=[active_thread],
+                safety_proven_fixed=False,
+            )
+        )
+        ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+        ASSERTIONS.assertIn("active_reviews_not_clear", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_no_supplied_plan_blocks_active_reviews():
+    """Absent supplied review plan should continue to rebuild from active reviews."""
+    plan = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(
+            active_review_threads=[
+                _passive_review_thread(
+                    "active blocking correctness bug remains",
+                    reproducible=True,
+                )
+            ],
+            safety_proven_fixed=False,
+        )
+    )
+    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+    ASSERTIONS.assertIn("active_reviews_not_clear", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_rebuilds_stale_clear_plan_for_new_active_providerless_thread():
+    stale_review_plan = {
+        "items": [
+            {
+                "review_thread_id": "old-thread",
+                "thread_id": "old-thread",
+                "decision": "EVIDENCE_RESOLVE",
+                "safe_to_resolve": True,
+            }
+        ]
+    }
+    plan = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(
+            review_resolution_plan=stale_review_plan,
+            active_review_threads=[
+                _passive_review_thread("stale advisory already fixed", author="", thread_id="new-thread")
+            ],
+            issue_fixed_or_stale=True,
+            safe_to_resolve=True,
+        )
+    )
+
+    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+    ASSERTIONS.assertIn("active_reviews_not_clear", plan["blocked_reasons"])
+    ASSERTIONS.assertEqual(plan["review_resolution_plan"]["items"][0]["thread_id"], "new-thread")
+    ASSERTIONS.assertEqual(plan["review_resolution_plan"]["items"][0]["decision"], "NEEDS_MANUAL")
+
+
+def test_passive_rerun_readiness_rebuilds_stale_clear_plan_for_new_active_blocking_thread():
+    stale_review_plan = {
+        "items": [
+            {
+                "review_thread_id": "old-thread",
+                "thread_id": "old-thread",
+                "decision": "EVIDENCE_RESOLVE",
+                "safe_to_resolve": True,
+            }
+        ]
+    }
+    for body in (
+        "ambiguous architecture needs owner policy",
+        "security fail-open regression remains",
+    ):
+        plan = controller.build_passive_rerun_readiness_plan(
+            _passive_review_evidence(
+                review_resolution_plan=stale_review_plan,
+                active_review_threads=[
+                    _passive_review_thread(body, author="coderabbitai[bot]", thread_id="new-thread")
+                ],
+                safety_proven_fixed=False,
+            )
+        )
+
+        ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+        ASSERTIONS.assertIn("active_reviews_not_clear", plan["blocked_reasons"])
+        ASSERTIONS.assertEqual(plan["review_resolution_plan"]["items"][0]["thread_id"], "new-thread")
+        ASSERTIONS.assertIn(plan["review_resolution_plan"]["items"][0]["decision"], {"NEEDS_MANUAL", "PATCH_REQUIRED"})
+
+
+def test_passive_rerun_readiness_itemless_plan_without_active_reviews_allows_clear_gates():
+    """No active review state should remain safe when the other rerun gates are green."""
+    plan = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(review_resolution_plan={})
+    )
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("active_reviews_not_clear", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_valid_evidence_resolve_plan_remains_safe_with_active_reviews():
+    """A usable safe evidence-resolve plan should remain authoritative."""
+    active_thread = _passive_review_thread(
+        "security fail-open regression remains",
+        reproducible=True,
+        thread_id="current-thread",
+    )
+    plan = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(
+            review_resolution_plan={
+                "items": [
+                    {
+                        "review_thread_id": "current-thread",
+                        "thread_id": "current-thread",
+                        "decision": "EVIDENCE_RESOLVE",
+                        "safe_to_resolve": True,
+                    }
+                ]
+            },
+            active_review_threads=[active_thread],
+        )
+    )
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("active_reviews_not_clear", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_matching_supplied_clear_plan_for_current_active_threads_remains_allowed():
+    active_thread = _passive_review_thread(
+        "security fail-open regression remains",
+        reproducible=True,
+        thread_id="current-thread",
+    )
+    review_plan = {
+        "triage_items": [
+            {
+                "review_thread_id": "current-thread",
+                "thread_id": "current-thread",
+                "decision": "EVIDENCE_RESOLVE",
+                "safe_to_resolve": True,
+            }
+        ]
+    }
+
+    plan = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(
+            review_resolution_plan=review_plan,
+            active_review_threads=[active_thread],
+        )
+    )
+
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("active_reviews_not_clear", plan["blocked_reasons"])
+    ASSERTIONS.assertEqual(plan["review_resolution_plan"], review_plan)
+
+
+def test_passive_rerun_readiness_blocks_on_active_review_decisions():
+    """Passive rerun readiness should block unresolved patch or manual review items."""
+    for decision in ("PATCH_REQUIRED", "NEEDS_MANUAL"):
+        review_plan = {"triage_items": [{"decision": decision}]}
+        plan = controller.build_passive_rerun_readiness_plan(
+            _passive_review_evidence(review_resolution_plan=review_plan)
+        )
+        ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+        ASSERTIONS.assertIn("active_reviews_not_clear", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_blocks_legacy_review_plan_items():
+    """Legacy unresolved review plan shapes should block passive rerun readiness."""
+    for item in (
+        {"blocking": True, "safe_to_resolve": False},
+        {"blocking": False, "safe_to_resolve": False},
+        {"needs_manual": True, "safe_to_resolve": False},
+        {"safe_to_resolve": False},
+    ):
+        plan = controller.build_passive_rerun_readiness_plan(
+            _passive_review_evidence(review_resolution_plan={"triage_items": [item]})
+        )
+        ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+        ASSERTIONS.assertIn("active_reviews_not_clear", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_accepts_explicitly_clear_legacy_review_items():
+    """Explicit skipped, resolved, or nonblocking legacy items should not block reruns."""
+    for item in (
+        {"decision": "EVIDENCE_RESOLVE", "safe_to_resolve": True},
+        {"safe_to_resolve": False, "decision": "SKIPPED"},
+        {"safe_to_resolve": False, "skipped": True},
+        {"safe_to_resolve": False, "resolved": True},
+        {"safe_to_resolve": False, "nonblocking": True},
+    ):
+        plan = controller.build_passive_rerun_readiness_plan(
+            _passive_review_evidence(review_resolution_plan={"triage_items": [item]})
+        )
+        ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+        ASSERTIONS.assertNotIn("active_reviews_not_clear", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_uses_triage_items_and_items():
+    """Passive rerun readiness should inspect both review plan item keys."""
+    for key in ("triage_items", "items"):
+        plan = controller.build_passive_rerun_readiness_plan(
+            _passive_review_evidence(review_resolution_plan={key: [{"safe_to_resolve": False}]})
+        )
+        ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+        ASSERTIONS.assertIn("active_reviews_not_clear", plan["blocked_reasons"])
+
+    mixed = controller.build_passive_rerun_readiness_plan(
+        _passive_review_evidence(
+            review_resolution_plan={
+                "triage_items": [{"decision": "EVIDENCE_RESOLVE", "safe_to_resolve": True}],
+                "items": [{"blocking": True, "safe_to_resolve": False}],
+            }
+        )
+    )
+    ASSERTIONS.assertFalse(mixed["safe_to_rerun"])
+    ASSERTIONS.assertIn("active_reviews_not_clear", mixed["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_blocks_on_check_counts():
+    """Passive rerun readiness should block nonzero or malformed check counts."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    for key, reason in (("pending_checks_count", "pending_checks"), ("failing_checks_count", "failing_checks")):
+        counted = controller.build_passive_rerun_readiness_plan(
+            _passive_review_evidence(review_resolution_plan=review_plan, **{key: 1})
+        )
+        malformed = controller.build_passive_rerun_readiness_plan(
+            _passive_review_evidence(review_resolution_plan=review_plan, **{key: "n/a"})
+        )
+        ASSERTIONS.assertFalse(counted["safe_to_rerun"])
+        ASSERTIONS.assertIn(reason, counted["blocked_reasons"])
+        ASSERTIONS.assertFalse(malformed["safe_to_rerun"])
+        ASSERTIONS.assertIn(reason, malformed["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_malformed_review_plan_items_fail_closed():
+    """Passive rerun readiness should not trust malformed review plan items."""
+    for review_plan in (
+        {"triage_items": ["not-a-dict"]},
+        {"triage_items": [{}]},
+        {"triage_items": "not-a-list"},
+    ):
+        plan = controller.build_passive_rerun_readiness_plan(
+            _passive_review_evidence(review_resolution_plan=review_plan)
+        )
+        ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+        ASSERTIONS.assertIn("active_reviews_not_clear", plan["blocked_reasons"])
+
+
+def test_passive_review_plan_malformed_per_thread_evidence_fails_closed():
+    """Review resolution planning should ignore malformed per-thread evidence."""
+    thread = _passive_review_thread(thread_id="T-malformed")
+    plan = controller.build_review_thread_resolution_plan(
+        [thread],
+        {"current_head_sha": "head-1", "resolution_evidence": {"T-malformed": "not-a-dict"}},
+    )
+    ASSERTIONS.assertEqual(plan["items"][0]["decision"], "NEEDS_MANUAL")
+    ASSERTIONS.assertIn("missing_evidence_head_sha", plan["items"][0]["skipped_reasons"])
+
+
+def test_passive_rerun_readiness_accepts_controller_codacy_evidence_keys():
+    """Passive rerun readiness should accept controller Codacy evidence aliases."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    evidence = _passive_review_evidence(
+        review_resolution_plan=review_plan,
+        github_codacy_state="SUCCESS",
+        github_annotations_count=0,
+    )
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    plan = controller.build_passive_rerun_readiness_plan(evidence)
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_accepts_integer_github_annotations_zero():
+    """Passive rerun readiness should accept integer zero GitHub annotation evidence."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    evidence = _passive_review_evidence(
+        review_resolution_plan=review_plan,
+        github_codacy_state="SUCCESS",
+        github_annotations=0,
+    )
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    plan = controller.build_passive_rerun_readiness_plan(evidence)
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_accepts_nested_integer_github_annotations_zero():
+    """Passive rerun readiness should accept nested integer zero GitHub annotation evidence."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    evidence = _passive_review_evidence(review_resolution_plan=review_plan)
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    evidence["codacy"] = {"github_codacy_state": "SUCCESS", "github_annotations": 0}
+    plan = controller.build_passive_rerun_readiness_plan(evidence)
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_accepts_nested_codacy_state_aliases():
+    """Passive rerun readiness should accept nested Codacy green-state aliases."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    for alias in ("codacy_state", "codacy_conclusion", "github_codacy_check_state"):
+        evidence = _passive_review_evidence(
+            review_resolution_plan=review_plan,
+            codacy_relevant=True,
+        )
+        evidence.pop("codacy_state")
+        evidence.pop("codacy_annotations_count")
+        evidence["codacy"] = {alias: "SUCCESS", "annotations_count": 0}
+        plan = controller.build_passive_rerun_readiness_plan(evidence)
+        ASSERTIONS.assertTrue(plan["safe_to_rerun"], alias)
+        ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"], alias)
+
+
+def test_passive_rerun_readiness_blocks_nested_codacy_non_green_state():
+    """Passive rerun readiness should fail closed on nested non-green Codacy state."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    evidence = _passive_review_evidence(
+        review_resolution_plan=review_plan,
+        codacy_relevant=True,
+    )
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    evidence["codacy"] = {"codacy_state": "ACTION_REQUIRED", "annotations_count": 0}
+    plan = controller.build_passive_rerun_readiness_plan(evidence)
+    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+    ASSERTIONS.assertIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_blocks_nonempty_dict_github_annotations():
+    """Dict-shaped GitHub annotations should count as present annotation evidence."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    evidence = _passive_review_evidence(
+        review_resolution_plan=review_plan,
+        github_codacy_state="SUCCESS",
+        github_annotations={"path": "x.py", "message": "issue"},
+    )
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    plan = controller.build_passive_rerun_readiness_plan(evidence)
+    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+    ASSERTIONS.assertIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_accepts_empty_dict_github_annotations():
+    """Empty dict GitHub annotations should be explicit zero-annotation evidence."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    evidence = _passive_review_evidence(
+        review_resolution_plan=review_plan,
+        github_codacy_state="SUCCESS",
+        github_annotations={},
+    )
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    plan = controller.build_passive_rerun_readiness_plan(evidence)
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_blocks_nested_nonempty_dict_github_annotations():
+    """Nested dict-shaped GitHub annotations should count as present annotation evidence."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    evidence = _passive_review_evidence(review_resolution_plan=review_plan)
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    evidence["codacy"] = {
+        "github_codacy_state": "SUCCESS",
+        "github_annotations": {"path": "x.py", "message": "issue"},
+    }
+    plan = controller.build_passive_rerun_readiness_plan(evidence)
+    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+    ASSERTIONS.assertIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_accepts_nested_empty_dict_github_annotations():
+    """Nested empty dict GitHub annotations should be explicit zero-annotation evidence."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    evidence = _passive_review_evidence(review_resolution_plan=review_plan)
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    evidence["codacy"] = {"github_codacy_state": "SUCCESS", "github_annotations": {}}
+    plan = controller.build_passive_rerun_readiness_plan(evidence)
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_blocks_nonzero_github_annotations_counts():
+    """Passive rerun readiness should block nonzero GitHub annotation evidence."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    for extra in (
+        {"github_codacy_state": "SUCCESS", "github_annotations": 1},
+        {"codacy": {"github_codacy_state": "SUCCESS", "github_annotations": 1}},
+    ):
+        evidence = _passive_review_evidence(review_resolution_plan=review_plan, **extra)
+        evidence.pop("codacy_state")
+        evidence.pop("codacy_annotations_count")
+        plan = controller.build_passive_rerun_readiness_plan(evidence)
+        ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+        ASSERTIONS.assertIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_malformed_github_annotations_fail_closed_unless_zero_alias_present():
+    """Malformed GitHub annotation evidence should fail closed unless another explicit zero source is present."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    malformed = _passive_review_evidence(
+        review_resolution_plan=review_plan,
+        github_codacy_state="SUCCESS",
+        github_annotations="n/a",
+    )
+    malformed.pop("codacy_state")
+    malformed.pop("codacy_annotations_count")
+    blocked = controller.build_passive_rerun_readiness_plan(malformed)
+    ASSERTIONS.assertFalse(blocked["safe_to_rerun"])
+    ASSERTIONS.assertIn("codacy_not_green", blocked["blocked_reasons"])
+
+    allowed = dict(malformed) | {"github_annotations_count": "0"}
+    plan = controller.build_passive_rerun_readiness_plan(allowed)
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_ignores_absent_codacy_evidence_when_not_relevant():
+    """Codacy should not gate passive reruns when no Codacy signal is present."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    evidence = _passive_review_evidence(review_resolution_plan=review_plan)
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    plan = controller.build_passive_rerun_readiness_plan(evidence)
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
+
+    explicit_not_relevant = dict(evidence, codacy_relevant=False)
+    explicit_plan = controller.build_passive_rerun_readiness_plan(explicit_not_relevant)
+    ASSERTIONS.assertTrue(explicit_plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("codacy_not_green", explicit_plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_ignores_summary_only_codacy_dict_when_not_relevant():
+    """Summary-only Codacy classification output should not count as check evidence."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    evidence = _passive_review_evidence(
+        review_resolution_plan=review_plan,
+        codacy={
+            "classification": "none",
+            "issues_returned": 0,
+            "next_action": "",
+            "treat_annotations_as_blockers": False,
+        },
+    )
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    plan = controller.build_passive_rerun_readiness_plan(evidence)
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_codacy_relevant_missing_evidence_blocks():
+    """Explicit Codacy relevance should require green state and zero annotations."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    evidence = _passive_review_evidence(review_resolution_plan=review_plan, codacy_relevant=True)
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    plan = controller.build_passive_rerun_readiness_plan(evidence)
+    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+    ASSERTIONS.assertIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_codacy_relevant_summary_only_evidence_blocks():
+    """Explicit Codacy relevance should not accept summary-only classification output."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    evidence = _passive_review_evidence(
+        review_resolution_plan=review_plan,
+        codacy_relevant=True,
+        codacy={
+            "classification": "none",
+            "issues_returned": 0,
+            "next_action": "",
+            "treat_annotations_as_blockers": False,
+        },
+    )
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    plan = controller.build_passive_rerun_readiness_plan(evidence)
+    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
+    ASSERTIONS.assertIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_nested_codacy_state_and_annotations_count():
+    """Nested Codacy state plus Codacy annotation count should gate readiness."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    green = _passive_review_evidence(
+        review_resolution_plan=review_plan,
+        codacy={"codacy_state": "SUCCESS", "codacy_annotations_count": 0},
+    )
+    green.pop("codacy_state")
+    green.pop("codacy_annotations_count")
+    green_plan = controller.build_passive_rerun_readiness_plan(green)
+    ASSERTIONS.assertTrue(green_plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("codacy_not_green", green_plan["blocked_reasons"])
+
+    bad = dict(green, codacy={"codacy_state": "ACTION_REQUIRED", "codacy_annotations_count": 1})
+    bad_plan = controller.build_passive_rerun_readiness_plan(bad)
+    ASSERTIONS.assertFalse(bad_plan["safe_to_rerun"])
+    ASSERTIONS.assertIn("codacy_not_green", bad_plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_top_level_codacy_state_and_annotations_count():
+    """Top-level GitHub Codacy state plus annotation count should gate readiness."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    green = _passive_review_evidence(
+        review_resolution_plan=review_plan,
+        github_codacy_state="SUCCESS",
+        github_annotations_count=0,
+    )
+    green.pop("codacy_state")
+    green.pop("codacy_annotations_count")
+    green_plan = controller.build_passive_rerun_readiness_plan(green)
+    ASSERTIONS.assertTrue(green_plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("codacy_not_green", green_plan["blocked_reasons"])
+
+    bad = dict(green, github_codacy_state="ACTION_REQUIRED", github_annotations_count=1)
+    bad_plan = controller.build_passive_rerun_readiness_plan(bad)
+    ASSERTIONS.assertFalse(bad_plan["safe_to_rerun"])
+    ASSERTIONS.assertIn("codacy_not_green", bad_plan["blocked_reasons"])
+
+
+def test_passive_rerun_readiness_accepts_github_codacy_check_state_alias():
+    """Passive rerun readiness should accept github_codacy_check_state as green evidence."""
+    review_plan = _single_review_plan(_passive_review_thread())
+    evidence = _passive_review_evidence(
+        review_resolution_plan=review_plan,
+        codacy_relevant=True,
+        github_codacy_check_state="SUCCESS",
+        github_annotations_count=0,
+        pending_checks_count=0,
+        failing_checks_count=0,
+    )
+    evidence.pop("codacy_state")
+    evidence.pop("codacy_annotations_count")
+    plan = controller.build_passive_rerun_readiness_plan(evidence)
+    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
+    ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
+
+
+def test_passive_review_helpers_do_not_contain_live_mutation_calls():
+    for helper in (
+        controller.build_review_thread_resolution_plan,
+        controller.build_passive_rerun_readiness_plan,
+    ):
+        source = inspect.getsource(helper)
+        ASSERTIONS.assertNotIn("resolveReviewThread", source)
+        ASSERTIONS.assertNotIn("gh run rerun", source)
+        ASSERTIONS.assertNotIn("auto_merge", source)
+
+
 def test_rollback_scope_violations_removes_forbidden_created_file(tmp_path):
     pre = controller.build_patch_scope_snapshot(["allowed.txt", "forbidden.txt"], repo_root=tmp_path)
     (tmp_path / "allowed.txt").write_text("ok", encoding="utf-8")
@@ -6620,8 +7825,7 @@ def test_review_unknown_author_with_strict_generic_evidence_does_not_auto_resolv
         "tests": ["pytest"],
     }
     triage = controller.triage_review_thread_contract(thread, evidence)
-    ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
-    ASSERTIONS.assertEqual(triage["reason"], "unknown_review_provider")
+    ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
     ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
 
 
@@ -6745,6 +7949,63 @@ def test_review_codacy_alias_success_zero_annotations_allows_evidence_resolve():
     }
     ASSERTIONS.assertEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "EVIDENCE_RESOLVE")
     ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_review_codacy_nested_codacy_annotations_count_zero_allows_evidence_resolve():
+    thread = _review_thread(author="codacy", body="already fixed stale")
+    evidence = {
+        "safe_to_resolve": True,
+        "issue_fixed_or_stale": True,
+        "head_matches": True,
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "validation_passed": True,
+        "checks_green": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "codacy": {"codacy_state": "SUCCESS", "codacy_annotations_count": 0},
+        "tests": ["pytest"],
+    }
+    ASSERTIONS.assertEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_review_codacy_nested_codacy_annotations_count_nonzero_blocks_evidence_resolve():
+    thread = _review_thread(author="codacy", body="already fixed stale")
+    evidence = {
+        "safe_to_resolve": True,
+        "issue_fixed_or_stale": True,
+        "head_matches": True,
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "validation_passed": True,
+        "checks_green": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "codacy": {"codacy_state": "SUCCESS", "codacy_annotations_count": 2},
+        "tests": ["pytest"],
+    }
+    ASSERTIONS.assertNotEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+
+
+def test_review_codacy_nested_codacy_annotations_count_malformed_blocks_evidence_resolve():
+    thread = _review_thread(author="codacy", body="already fixed stale")
+    evidence = {
+        "safe_to_resolve": True,
+        "issue_fixed_or_stale": True,
+        "head_matches": True,
+        "current_head_sha": "abc",
+        "evidence_head_sha": "abc",
+        "validation_passed": True,
+        "checks_green": True,
+        "pending_checks": False,
+        "failing_checks": False,
+        "codacy": {"codacy_state": "SUCCESS", "codacy_annotations_count": "n/a"},
+        "tests": ["pytest"],
+    }
+    ASSERTIONS.assertNotEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
 
 
 def test_deepsource_complexity_with_green_evidence_is_not_patch_required():
@@ -9632,6 +10893,7 @@ def test_should_resolve_review_thread_already_covered_style_nit_with_full_eviden
 def test_should_resolve_review_thread_denies_when_validation_passed_missing():
     thread = {
         "id": "safe-r3b",
+        "author": "coderabbitai[bot]",
         "body": "already fixed security regression",
         "active": True,
         "issue_fixed_or_stale": True,
@@ -9652,6 +10914,7 @@ def test_should_resolve_review_thread_denies_when_validation_passed_missing():
 def test_should_resolve_review_thread_denies_when_validation_passed_false():
     thread = {
         "id": "safe-r3c",
+        "author": "coderabbitai[bot]",
         "body": "already fixed security regression",
         "active": True,
         "issue_fixed_or_stale": True,
@@ -9734,6 +10997,7 @@ def test_should_resolve_review_thread_fixed_safety_with_head_mismatch_returns_fa
 def test_should_resolve_review_thread_active_unresolved_bypass_returns_false():
     thread = {
         "id": "safe-r6",
+        "author": "coderabbitai[bot]",
         "body": "active unresolved bypass in guard path",
         "active": True,
     }
@@ -9752,6 +11016,7 @@ def test_should_resolve_review_thread_active_unresolved_bypass_returns_false():
 def test_should_resolve_review_thread_active_security_bypass_still_present_ignores_safe_to_resolve():
     thread = {
         "id": "safe-r7",
+        "author": "coderabbitai[bot]",
         "body": "security bypass still present",
         "active": True,
     }
@@ -9772,6 +11037,7 @@ def test_should_resolve_review_thread_active_security_bypass_still_present_ignor
 def test_should_resolve_review_thread_active_fail_open_still_present_ignores_safe_to_resolve():
     thread = {
         "id": "safe-r8",
+        "author": "coderabbitai[bot]",
         "body": "active fail-open still present",
         "active": True,
     }
