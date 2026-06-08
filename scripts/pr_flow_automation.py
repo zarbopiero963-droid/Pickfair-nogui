@@ -134,6 +134,7 @@ def split_checks(pr: dict[str, Any], *, ignore_self: bool = True) -> dict[str, l
             "name": check_name(raw),
             "state": norm_state(raw.get("conclusion") or raw.get("state") or raw.get("status")),
             "url": check_url(raw),
+            "rollup_typename": str(raw.get("__typename") or ""),
             "provider": str(raw.get("provider") or raw.get("source") or ""),
             "source": str(raw.get("source") or raw.get("provider") or ""),
             "status": raw.get("status"),
@@ -980,7 +981,9 @@ def _deepsource_advisory_policy_context(
     advisory: list[dict[str, Any]],
 ) -> dict[str, Any]:
     configured = _deepsource_advisory_configured_context(pr_data)
-    if not configured and not _has_supplied_deepsource_advisory_context(pr_data):
+    if configured:
+        configured = _deepsource_completed_advisory_context(pr_data, configured, advisory)
+    elif not _has_supplied_deepsource_advisory_context(pr_data):
         configured = _deepsource_autoderived_advisory_context(pr_data, advisory)
     pending = checks.get("pending", [])
     context = dict(configured)
@@ -1075,12 +1078,37 @@ def _has_supplied_deepsource_advisory_context(pr_data: dict[str, Any]) -> bool:
 
 
 # [TASK: claude_bug_pr8c_deepsource_advisory_context_autoderive]
+def _deepsource_completed_advisory_context(
+    pr_data: dict[str, Any],
+    configured: dict[str, Any],
+    advisory: list[dict[str, Any]],
+) -> dict[str, Any]:
+    context = dict(configured)
+    current_head_sha = str(context.get("current_head_sha") or pr_data.get("headRefOid") or "").strip()
+    if current_head_sha and "current_head_sha" not in context:
+        context["current_head_sha"] = current_head_sha
+    if "evidence_head_sha" not in context:
+        context["evidence_head_sha"] = _deepsource_advisory_group_head_sha(pr_data, advisory)
+    if context.get("deepsource_advisory_evidence") and "evidence_present" not in context:
+        context["evidence_present"] = True
+    if "codacy_state" not in context and "github_codacy_state" not in context:
+        context["codacy_state"] = _deepsource_autoderived_codacy_state(pr_data)
+    codacy = _normalized_codacy_payload(context)
+    if not _deepsource_has_codacy_annotation_count(context, codacy):
+        context["codacy_annotations_count"] = _deepsource_autoderived_codacy_annotations_count(pr_data)
+    if "deepsource_required_current_head_check_failing" not in context:
+        context["deepsource_required_current_head_check_failing"] = _deepsource_autoderived_required_failing(
+            pr_data, current_head_sha
+        )
+    return context
+
+
 def _deepsource_autoderived_advisory_context(
     pr_data: dict[str, Any],
     advisory: list[dict[str, Any]],
 ) -> dict[str, Any]:
     current_head_sha = str(pr_data.get("headRefOid") or "").strip()
-    evidence_head_sha = _deepsource_advisory_group_head_sha(advisory)
+    evidence_head_sha = _deepsource_advisory_group_head_sha(pr_data, advisory)
     evidence = _deepsource_advisory_group_evidence(advisory)
     codacy_state = _deepsource_autoderived_codacy_state(pr_data)
     annotations_count = _deepsource_autoderived_codacy_annotations_count(pr_data)
@@ -1125,14 +1153,27 @@ def _deepsource_autoderived_merge_evidence_malformed(pr_data: dict[str, Any]) ->
     )
 
 
-def _deepsource_advisory_group_head_sha(advisory: list[dict[str, Any]]) -> str:
+def _deepsource_advisory_group_head_sha(
+    pr_data: dict[str, Any],
+    advisory: list[dict[str, Any]],
+) -> str:
+    current_head_sha = str(pr_data.get("headRefOid") or "").strip()
     heads: set[str] = set()
     for check in advisory:
         head = _check_head_sha(check)
-        if not head:
+        if head and head != current_head_sha:
             return ""
+        if not head and not _is_live_current_pr_rollup_item(check):
+            return ""
+        if not head and not current_head_sha:
+            return ""
+        head = head or current_head_sha
         heads.add(head)
     return heads.pop() if len(heads) == 1 else ""
+
+
+def _is_live_current_pr_rollup_item(check: dict[str, Any]) -> bool:
+    return (check.get("rollup_typename") or check.get("__typename")) in {"StatusContext", "CheckRun"}
 
 
 def _deepsource_advisory_group_evidence(advisory: list[dict[str, Any]]) -> str:
@@ -1228,7 +1269,14 @@ def _deepsource_live_checks_show_no_required_failure(context: dict[str, Any], cu
     deepsource_checks = [check for check in rollup if isinstance(check, dict) and _is_deepsource_python_check(check)]
     if not deepsource_checks:
         return False
-    return all(_check_head_sha(check) == current_head_sha for check in deepsource_checks)
+    return all(_live_rollup_check_matches_head(check, current_head_sha) for check in deepsource_checks)
+
+
+def _live_rollup_check_matches_head(check: dict[str, Any], current_head_sha: str) -> bool:
+    head_sha = _check_head_sha(check)
+    if head_sha:
+        return head_sha == current_head_sha
+    return bool(current_head_sha and _is_live_current_pr_rollup_item(check))
 
 
 def _deepsource_required_evidence_indicates_required(context: dict[str, Any]) -> bool:

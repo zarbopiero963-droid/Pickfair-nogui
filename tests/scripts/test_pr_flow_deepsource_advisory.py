@@ -13,6 +13,14 @@ def _chk(name: str, state: str, url: str = "") -> dict[str, str]:
     return {"name": name, "conclusion": state, "detailsUrl": url}
 
 
+def _check_run(name: str, conclusion: str, url: str = "") -> dict[str, str]:
+    return {"__typename": "CheckRun", "name": name, "conclusion": conclusion, "detailsUrl": url}
+
+
+def _status_context(context: str, state: str, url: str = "") -> dict[str, str]:
+    return {"__typename": "StatusContext", "context": context, "state": state, "targetUrl": url}
+
+
 def _ds_fail(**extra: Any) -> dict[str, Any]:
     check: dict[str, Any] = {
         "name": "DeepSource: Python",
@@ -132,6 +140,52 @@ def test_mismatched_heads_block(monkeypatch):
     _blocked(decision)
 
 
+def test_live_rollup_missing_evidence_blocks(monkeypatch):
+    """Live gh StatusContext shape does not infer advisory evidence from name or URL."""
+    decision = _decision(
+        monkeypatch,
+        [
+            _status_context(
+                "DeepSource: Python / readability advisory",
+                "FAILURE",
+                "https://example.test/complexity-advisory",
+            ),
+            _check_run("Codacy Static Code Analysis", "SUCCESS"),
+        ],
+    )
+
+    _blocked(decision)
+
+
+def test_live_rollup_top_evidence_passes(monkeypatch):
+    """Top-level explicit evidence can pair with live gh rollup head derivation."""
+    decision = _decision(
+        monkeypatch,
+        [
+            _status_context("DeepSource: Python", "FAILURE", "https://example.test/deepsource"),
+            _check_run("Codacy Static Code Analysis", "SUCCESS"),
+        ],
+        deepsource_advisory_evidence="Cyclomatic complexity readability advisory",
+    )
+
+    ASSERTIONS.assertTrue(decision["can_merge"])
+    ASSERTIONS.assertEqual(decision["blockers"], [])
+
+
+def test_explicit_head_mismatch_blocks(monkeypatch):
+    """Explicit mismatching DeepSource head evidence wins over live rollup derivation."""
+    decision = _decision(
+        monkeypatch,
+        [
+            _ds_adv(__typename="CheckRun", headSha="old"),
+            _check_run("Codacy Static Code Analysis", "SUCCESS"),
+        ],
+        deepsource_advisory_evidence="Cyclomatic complexity readability advisory",
+    )
+
+    _blocked(decision)
+
+
 def test_matching_advisories_pass(monkeypatch):
     """Multiple current-head DeepSource Python advisory failures are filtered together."""
     decision = _decision(
@@ -148,7 +202,7 @@ def test_matching_advisories_pass(monkeypatch):
     ASSERTIONS.assertEqual(decision["reasons"], [])
 
 
-def test_codacy_success_derives_zero(monkeypatch):
+def test_codacy_success_zero(monkeypatch):
     """Live Codacy SUCCESS check can prove annotations clear when no explicit count exists."""
     decision = _decision(monkeypatch)
 
@@ -169,7 +223,12 @@ def test_codacy_bad_states_block(monkeypatch):
 
 def test_codacy_counts_block(monkeypatch):
     """Explicit non-zero or malformed annotation counts fail closed."""
-    for pr_extra in ({"github_annotations_count": 1}, {"github_annotations_count": "unknown"}):
+    cases: list[dict[str, Any]] = [
+        {"github_annotations_count": 1},
+        {"github_annotations_count": "unknown"},
+        {"codacy_annotations_count": 2},
+    ]
+    for pr_extra in cases:
         decision = _decision(monkeypatch, **pr_extra)
         _blocked(decision)
 
@@ -228,32 +287,39 @@ def test_blocking_wording_blocks(monkeypatch):
         _blocked(decision)
 
 
-def test_merge_evidence_blocks(monkeypatch):
-    """Reviews, pending checks, and non-DeepSource failures are not bypassed."""
-    cases: list[dict[str, Any]] = [
-        {
-            "checks": [
-                _ds_adv(),
-                _chk("Codacy Static Code Analysis", "SUCCESS"),
-                _chk("Unit tests", "PENDING"),
-            ]
-        },
-        {
-            "checks": [
-                _ds_adv(),
-                _chk("Codacy Static Code Analysis", "SUCCESS"),
-                _chk("Unit tests", "FAILURE"),
-            ]
-        },
-        {"reviews": [{"id": "thread-1", "isResolved": False}]},
-    ]
-    for case in cases:
-        decision = _decision(
-            monkeypatch,
-            case.get("checks"),
-            reviews=case.get("reviews"),
-        )
-        _blocked(decision)
+def test_pending_check_blocks(monkeypatch):
+    """Pending non-DeepSource checks are not bypassed."""
+    decision = _decision(
+        monkeypatch,
+        [
+            _ds_adv(),
+            _chk("Codacy Static Code Analysis", "SUCCESS"),
+            _chk("Unit tests", "PENDING"),
+        ],
+    )
+
+    _blocked(decision)
+
+
+def test_non_deepsource_failure_blocks(monkeypatch):
+    """Non-DeepSource failures are not bypassed."""
+    decision = _decision(
+        monkeypatch,
+        [
+            _ds_adv(),
+            _chk("Codacy Static Code Analysis", "SUCCESS"),
+            _chk("Unit tests", "FAILURE"),
+        ],
+    )
+
+    _blocked(decision)
+
+
+def test_active_review_blocks(monkeypatch):
+    """Active review threads are not bypassed."""
+    decision = _decision(monkeypatch, reviews=[{"id": "thread-1", "isResolved": False}])
+
+    _blocked(decision)
 
 
 def test_pr254_context_still_passes(monkeypatch):
