@@ -4,6 +4,8 @@
 from typing import Any
 from unittest import TestCase
 
+import pytest
+
 import scripts.pr_flow_automation as flow
 
 ASSERTIONS = TestCase()
@@ -40,29 +42,19 @@ def _ds_fail(**extra: Any) -> dict[str, Any]:
 
 
 def _ds_adv(**extra: Any) -> dict[str, Any]:
-    check = _ds_fail(
-        headSha="abc",
-        summary="Cyclomatic complexity readability advisory",
-    )
+    check = _ds_fail(headSha="abc", summary="Cyclomatic complexity readability advisory")
     check.update(extra)
     return check
 
 
-def _pr_payload(
-    checks: list[Any] | None = None,
-    **extra: Any,
-) -> dict[str, Any]:
+def _pr_payload(checks: list[Any] | None = None, **extra: Any) -> dict[str, Any]:
     payload = {
         "state": "OPEN",
         "isDraft": False,
         "mergeable": "MERGEABLE",
         "mergeStateStatus": "CLEAN",
         "headRefOid": "abc",
-        "statusCheckRollup": checks
-        or [
-            _ds_adv(),
-            _chk("Codacy Static Code Analysis", "SUCCESS"),
-        ],
+        "statusCheckRollup": checks or [_ds_adv(), _chk("Codacy Static Code Analysis", "SUCCESS")],
     }
     payload.update(extra)
     return payload
@@ -74,11 +66,7 @@ def _decision(
     reviews: list[dict[str, Any]] | None = None,
     **pr_extra: Any,
 ) -> dict[str, Any]:
-    monkeypatch.setattr(
-        flow,
-        "pr_view",
-        lambda _repo, _pr: _pr_payload(checks, **pr_extra),
-    )
+    monkeypatch.setattr(flow, "pr_view", lambda _repo, _pr: _pr_payload(checks, **pr_extra))
     return flow.build_decision("owner/repo", "256", ignore_self=True, review_threads=reviews or [])
 
 
@@ -164,8 +152,8 @@ def test_live_missing_evidence(monkeypatch):
     _blocked(decision)
 
 
-def test_live_top_evidence_pass(monkeypatch):
-    """Top-level explicit evidence can pair with live gh rollup head derivation."""
+def test_explicit_false_pass(monkeypatch):
+    """Explicit non-required evidence can pair with live gh rollup head derivation."""
     decision = _decision(
         monkeypatch,
         [
@@ -173,22 +161,21 @@ def test_live_top_evidence_pass(monkeypatch):
             _check_run("Codacy Static Code Analysis", "SUCCESS"),
         ],
         deepsource_advisory_evidence="Cyclomatic complexity readability advisory",
+        deepsource_required_current_head_check_failing=False,
     )
 
     ASSERTIONS.assertTrue(decision["can_merge"])
     ASSERTIONS.assertEqual(decision["blockers"], [])
 
 
-def test_required_live_deepsource_without_head_blocks(monkeypatch):
-    """Required live DeepSource rollup failure without headSha fails closed."""
+@pytest.mark.parametrize("marker", ("required", "blocking", "isRequired", "isBlocking", "requiredStatus"))
+def test_req_markers_block(monkeypatch, marker):
+    """Required or blocking live DeepSource rollup markers fail closed."""
     decision = _decision(
         monkeypatch,
         [
             _status_context(
-                "DeepSource: Python",
-                "FAILURE",
-                "https://example.test/deepsource",
-                required=True,
+                "DeepSource: Python", "FAILURE", "https://example.test/deepsource", **{marker: True}
             ),
             _check_run("Codacy Static Code Analysis", "SUCCESS"),
         ],
@@ -198,27 +185,8 @@ def test_required_live_deepsource_without_head_blocks(monkeypatch):
     _blocked(decision)
 
 
-def test_blocking_live_deepsource_without_head_blocks(monkeypatch):
-    """Blocking live DeepSource rollup failure without headSha fails closed."""
-    decision = _decision(
-        monkeypatch,
-        [
-            _status_context(
-                "DeepSource: Python",
-                "FAILURE",
-                "https://example.test/deepsource",
-                blocking=True,
-            ),
-            _check_run("Codacy Static Code Analysis", "SUCCESS"),
-        ],
-        deepsource_advisory_evidence="Cyclomatic complexity readability advisory",
-    )
-
-    _blocked(decision)
-
-
-def test_non_required_live_deepsource_advisory_without_head_passes(monkeypatch):
-    """Non-required live advisory evidence remains nonblocking."""
+def test_missing_req_blocks(monkeypatch):
+    """Advisory evidence plus Codacy SUCCESS is not enough to prove non-required."""
     decision = _decision(
         monkeypatch,
         [
@@ -228,8 +196,7 @@ def test_non_required_live_deepsource_advisory_without_head_passes(monkeypatch):
         deepsource_advisory_evidence="Cyclomatic complexity readability advisory",
     )
 
-    ASSERTIONS.assertTrue(decision["can_merge"])
-    ASSERTIONS.assertEqual(decision["blockers"], [])
+    _blocked(decision)
 
 
 def test_head_mismatch_blocks(monkeypatch):
@@ -255,6 +222,7 @@ def test_matching_advisories_pass(monkeypatch):
             _ds_adv(name="DeepSource: Python / complexity"),
             _chk("Codacy Static Code Analysis", "SUCCESS"),
         ],
+        required_checks=["Codacy Static Code Analysis"],
     )
 
     ASSERTIONS.assertTrue(decision["can_merge"])
@@ -264,7 +232,7 @@ def test_matching_advisories_pass(monkeypatch):
 
 def test_codacy_success_zero(monkeypatch):
     """Live Codacy SUCCESS check can prove annotations clear when no explicit count exists."""
-    decision = _decision(monkeypatch)
+    decision = _decision(monkeypatch, required_checks=["Codacy Static Code Analysis"])
 
     ASSERTIONS.assertTrue(decision["can_merge"])
     ASSERTIONS.assertEqual(decision["blockers"], [])
@@ -283,19 +251,18 @@ def test_codacy_bad_states_block(monkeypatch):
 
 def test_codacy_counts_block(monkeypatch):
     """Explicit non-zero or malformed annotation counts fail closed."""
-    cases: list[dict[str, Any]] = [
+    for pr_extra in (
         {"github_annotations_count": 1},
         {"github_annotations_count": "unknown"},
         {"codacy_annotations_count": 2},
-    ]
-    for pr_extra in cases:
+    ):
         decision = _decision(monkeypatch, **pr_extra)
         _blocked(decision)
 
 
-def test_required_deepsource_blocks(monkeypatch):
+def test_required_ds_blocks(monkeypatch):
     """Required or failing current-head DeepSource evidence remains blocking."""
-    cases: list[dict[str, Any]] = [
+    for pr_extra in (
         {"deepsource_required_current_head_check_failing": True},
         {
             "required_failing_checks": [
@@ -309,8 +276,7 @@ def test_required_deepsource_blocks(monkeypatch):
         },
         {"required_checks": ["DeepSource: Python"]},
         {"deepsource_required_current_head_check_failing": None},
-    ]
-    for pr_extra in cases:
+    ):
         decision = _decision(monkeypatch, **pr_extra)
         _blocked(decision)
 
@@ -338,9 +304,7 @@ def test_blocking_wording_blocks(monkeypatch):
         decision = _decision(
             monkeypatch,
             [
-                _ds_adv(
-                    summary=f"Cyclomatic complexity readability advisory with {signal} concern"
-                ),
+                _ds_adv(summary=f"Cyclomatic complexity readability advisory with {signal} concern"),
                 _chk("Codacy Static Code Analysis", "SUCCESS"),
             ],
         )
@@ -382,7 +346,7 @@ def test_active_review_blocks(monkeypatch):
     _blocked(decision)
 
 
-def test_pr254_context_still_passes(monkeypatch):
+def test_pr254_context_passes(monkeypatch):
     """Explicit PR254 context still feeds the existing advisory evidence gate."""
     context = {
         "current_head_sha": "abc",

@@ -1300,19 +1300,56 @@ def _deepsource_autoderived_required_failing(pr_data: dict[str, Any], current_he
     if "deepsource_required_current_head_check_failing" in pr_data:
         return pr_data.get("deepsource_required_current_head_check_failing")
     context = dict(pr_data)
-    if _deepsource_required_failure_unknown(context, current_head_sha):
+    if _deepsource_required_failure_blocking(context, current_head_sha):
+        return True
+    if _deepsource_required_evidence_ambiguous(context):
         return None
-    return False
+    if _deepsource_affirmative_nonrequired_evidence(context):
+        return False
+    return None
 
 
-def _deepsource_required_failure_unknown(context: dict[str, Any], current_head_sha: str) -> bool:
+def _deepsource_required_failure_blocking(context: dict[str, Any], current_head_sha: str) -> bool:
     return (
         not current_head_sha
         or controller.deepsource_required_current_head_check_failing(context, current_head_sha)
         or _deepsource_live_rollup_has_required_failure(context)
         or _deepsource_required_evidence_indicates_required(context)
-        or _deepsource_required_evidence_ambiguous(context)
-        or not _deepsource_live_checks_show_no_required_failure(context, current_head_sha)
+    )
+
+
+def _deepsource_affirmative_nonrequired_evidence(context: dict[str, Any]) -> bool:
+    if _required_checks_exclude_deepsource_python(context):
+        return True
+    return _branch_protection_excludes_deepsource_python(context)
+
+
+def _required_checks_exclude_deepsource_python(context: dict[str, Any]) -> bool:
+    required_checks = context.get("required_checks")
+    return (
+        "required_checks" in context
+        and isinstance(required_checks, (list, tuple, set))
+        and not _required_names_include_deepsource_python(required_checks)
+    )
+
+
+def _branch_protection_excludes_deepsource_python(context: dict[str, Any]) -> bool:
+    for key in ("branchProtectionRule", "branch_protection", "branchProtection"):
+        protection = context.get(key)
+        if not isinstance(protection, dict):
+            continue
+        names = _branch_protection_required_names({key: protection})
+        if names and not _required_names_include_deepsource_python(names):
+            return True
+        if _branch_protection_required_names_present_empty(protection):
+            return True
+    return False
+
+
+def _branch_protection_required_names_present_empty(protection: dict[str, Any]) -> bool:
+    return any(
+        names_key in protection and protection.get(names_key) == []
+        for names_key in ("requiredStatusCheckContexts", "required_status_checks", "requiredChecks")
     )
 
 
@@ -1330,25 +1367,11 @@ def _deepsource_rollup_check_has_required_marker(check: dict[str, Any]) -> bool:
     )
 
 
-def _deepsource_live_checks_show_no_required_failure(context: dict[str, Any], current_head_sha: str) -> bool:
-    deepsource_checks = _deepsource_live_rollup_checks(context)
-    if not deepsource_checks:
-        return False
-    return all(_live_rollup_check_matches_head(check, current_head_sha) for check in deepsource_checks)
-
-
 def _deepsource_live_rollup_checks(context: dict[str, Any]) -> list[dict[str, Any]]:
     rollup = context.get("statusCheckRollup")
     if not isinstance(rollup, list):
         return []
     return [check for check in rollup if isinstance(check, dict) and _is_deepsource_python_check(check)]
-
-
-def _live_rollup_check_matches_head(check: dict[str, Any], current_head_sha: str) -> bool:
-    head_sha = _check_head_sha(check)
-    if head_sha:
-        return head_sha == current_head_sha
-    return bool(current_head_sha and _is_live_current_pr_rollup_item(check))
 
 
 def _deepsource_required_evidence_indicates_required(context: dict[str, Any]) -> bool:
