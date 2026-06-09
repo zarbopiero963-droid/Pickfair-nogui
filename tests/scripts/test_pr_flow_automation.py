@@ -2562,3 +2562,66 @@ def _required_telegram_summary_keys() -> tuple[str, ...]:
         "active_unresolved_review_count",
         "next_action",
     )
+
+
+def test_nested_context_uses_top_required_evidence(monkeypatch):
+    """Nested advisory contexts inherit top-level required-check proof."""
+    context = _deepsource_advisory_status_context()
+    for key in (
+        "branch_protection_absent",
+        "required_checks",
+        "required_checks_source",
+        "required_checks_head_sha",
+        "deepsource_required",
+        "deepsource_blocking",
+    ):
+        context.pop(key, None)
+
+    head = context["current_head_sha"]
+
+    def _view(_repo: str, _pr: str) -> dict[str, Any]:
+        payload = _deepsource_advisory_pr(context)
+        payload.update(
+            {
+                "branch_protection_absent": False,
+                "required_checks": ["Codacy Static Code Analysis"],
+                "required_checks_source": "branch_protection",
+                "required_checks_head_sha": head,
+                "deepsource_required": False,
+                "deepsource_blocking": False,
+            }
+        )
+        return payload
+
+    monkeypatch.setattr(flow, "pr_view", _view)
+
+    decision = flow.build_decision("owner/repo", "258", ignore_self=True, review_threads=[])
+
+    ASSERTIONS.assertTrue(decision["can_merge"])
+    ASSERTIONS.assertEqual(decision["blockers"], [])
+
+
+def test_nested_context_preserves_top_required_api_error(monkeypatch):
+    """Top-level required-check API errors remain fail-closed for nested contexts."""
+    context = _deepsource_advisory_status_context()
+    for key in (
+        "branch_protection_absent",
+        "required_checks",
+        "required_checks_source",
+        "required_checks_head_sha",
+        "deepsource_required",
+        "deepsource_blocking",
+    ):
+        context.pop(key, None)
+
+    def _view(_repo: str, _pr: str) -> dict[str, Any]:
+        payload = _deepsource_advisory_pr(context)
+        payload["required_checks_api_error"] = True
+        return payload
+
+    monkeypatch.setattr(flow, "pr_view", _view)
+
+    decision = flow.build_decision("owner/repo", "258", ignore_self=True, review_threads=[])
+
+    ASSERTIONS.assertFalse(decision["can_merge"])
+    ASSERTIONS.assertGreaterEqual(len(decision["blockers"]), 1)

@@ -1086,12 +1086,31 @@ def _has_supplied_deepsource_advisory_context(pr_data: dict[str, Any]) -> bool:
 
 
 # [TASK: claude_bug_pr8c_deepsource_advisory_context_autoderive]
+
+_ADVISORY_REQUIRED_CHECK_CONTEXT_KEYS = (
+    "branch_protection_absent",
+    "branch_protection_api_error",
+    "required_checks",
+    "required_checks_source",
+    "required_checks_head_sha",
+    "required_checks_api_error",
+    "deepsource_required",
+    "deepsource_blocking",
+)
+
+
+def _complete_advisory_required_check_context(pr_data: dict[str, Any], context: dict[str, Any]) -> None:
+    for key in _ADVISORY_REQUIRED_CHECK_CONTEXT_KEYS:
+        if key in pr_data and key not in context:
+            context[key] = pr_data.get(key)
+
 def _deepsource_completed_advisory_context(
     pr_data: dict[str, Any],
     configured: dict[str, Any],
     advisory: list[dict[str, Any]],
 ) -> dict[str, Any]:
     context = dict(configured)
+    _complete_advisory_required_check_context(pr_data, context)
     current_head_sha = _completed_advisory_current_head_sha(pr_data, context)
     _complete_advisory_head_context(pr_data, context, advisory, current_head_sha)
     _complete_advisory_explicit_evidence(context, advisory)
