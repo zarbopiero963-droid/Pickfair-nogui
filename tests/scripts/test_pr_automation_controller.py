@@ -1,3 +1,4 @@
+# [TASK: ledger_layout_alignment] PR257 empty latest ledger default-safe coverage.
 """Tests for PR automation controller decisions."""
 # pylint: disable=invalid-name,duplicate-code
 
@@ -1751,17 +1752,94 @@ def test_missing_post_fix_micro_audit_result_fails_closed():
     ASSERTIONS.assertTrue(controller.post_fix_micro_audit_failed(report))
 
 
+# [TASK: ledger_layout_alignment] PR257 append ledger path bypass coverage.
+# [TASK: ledger_layout_alignment] PR257 parent symlink ledger directory coverage.
 def test_automation_ledger_append_creates_jsonl_and_reads_in_order(tmp_path):
     """Ledger appends events as JSONL and preserves insertion order."""
-    path = controller.automation_ledger_path(str(tmp_path), 225)
+    path = controller.automation_ledger_path(tmp_path, 256)
+    ASSERTIONS.assertEqual(path, tmp_path / "pr-256" / "automation-ledger.jsonl")
     first = controller.build_automation_ledger_event(event_type="post_fix_audit_failure", reason="alpha")
     second = controller.build_automation_ledger_event(event_type="post_fix_audit_failure", reason="beta", attempt=2)
     controller.append_automation_ledger_event(path, first)
     controller.append_automation_ledger_event(path, second)
-    ASSERTIONS.assertTrue((tmp_path / "pr-225" / "automation-ledger.jsonl").exists())
+    ASSERTIONS.assertTrue((tmp_path / "pr-256" / "automation-ledger.jsonl").exists())
     events = controller.read_automation_ledger_events(path)
     ASSERTIONS.assertEqual([item["reason"] for item in events], ["alpha", "beta"])
-    ASSERTIONS.assertEqual(len((tmp_path / "pr-225" / "automation-ledger.jsonl").read_text().splitlines()), 2)
+    ASSERTIONS.assertEqual(len((tmp_path / "pr-256" / "automation-ledger.jsonl").read_text().splitlines()), 2)
+
+
+def test_automation_ledger_append_rejects_absolute_noncanonical_jsonl():
+    """Raw JSONL paths outside the canonical ledger layout must not append."""
+    event = controller.build_automation_ledger_event(event_type="post_fix_audit_failure", reason="blocked")
+    with ASSERTIONS.assertRaises(ValueError):
+        controller.append_automation_ledger_event(Path("/tmp/outside.jsonl"), event)
+
+
+def test_automation_ledger_append_rejects_tmp_noncanonical_jsonl(tmp_path):
+    """Ledger appends require the canonical pr-<n>/automation-ledger.jsonl layout."""
+    path = tmp_path / "outside.jsonl"
+    event = controller.build_automation_ledger_event(event_type="post_fix_audit_failure", reason="blocked")
+    with ASSERTIONS.assertRaises(ValueError):
+        controller.append_automation_ledger_event(path, event)
+
+    ASSERTIONS.assertFalse(path.exists())
+
+
+def test_automation_ledger_append_rejects_wrong_canonical_filename(tmp_path):
+    """Ledger appends must reject files under pr-<n> with the wrong leaf name."""
+    path = tmp_path / "pr-257" / "not-ledger.jsonl"
+    event = controller.build_automation_ledger_event(event_type="post_fix_audit_failure", reason="blocked")
+    with ASSERTIONS.assertRaises(ValueError):
+        controller.append_automation_ledger_event(path, event)
+
+    ASSERTIONS.assertFalse(path.exists())
+
+
+def test_automation_ledger_append_rejects_symlink_leaf_without_mutating_target(tmp_path):
+    """Ledger append must reject a symlinked JSONL leaf."""
+    outside = tmp_path / "outside-ledger.jsonl"
+    outside.write_text("outside\n", encoding="utf-8")
+    path = controller.automation_ledger_path(tmp_path, 225)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.symlink_to(outside)
+
+    event = controller.build_automation_ledger_event(event_type="post_fix_audit_failure", reason="blocked")
+    with ASSERTIONS.assertRaises(ValueError):
+        controller.append_automation_ledger_event(path, event)
+
+    ASSERTIONS.assertEqual(outside.read_text(encoding="utf-8"), "outside\n")
+
+
+def test_automation_ledger_append_rejects_symlink_parent_without_mutating_target(tmp_path):
+    """Ledger append must reject a symlinked pr-257 directory."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_ledger = outside / "automation-ledger.jsonl"
+    outside_ledger.write_text("outside\n", encoding="utf-8")
+    path = controller.automation_ledger_path(tmp_path, 257)
+    path.parent.symlink_to(outside, target_is_directory=True)
+
+    event = controller.build_automation_ledger_event(event_type="post_fix_audit_failure", reason="blocked")
+    with ASSERTIONS.assertRaises(ValueError):
+        controller.append_automation_ledger_event(path, event)
+
+    ASSERTIONS.assertEqual(outside_ledger.read_text(encoding="utf-8"), "outside\n")
+
+
+def test_automation_ledger_append_canonical_path_preserves_order(tmp_path):
+    """Canonical ledger appends should keep existing rows and append in call order."""
+    path = controller.automation_ledger_path(tmp_path, 257)
+    first = controller.build_automation_ledger_event(event_type="first", reason="alpha")
+    second = controller.build_automation_ledger_event(event_type="second", reason="beta")
+    third = controller.build_automation_ledger_event(event_type="third", reason="gamma")
+
+    controller.append_automation_ledger_event(path, first)
+    controller.append_automation_ledger_event(path, second)
+    controller.append_automation_ledger_event(path, third)
+
+    events = controller.read_automation_ledger_events(path)
+    ASSERTIONS.assertEqual([event["event_type"] for event in events], ["first", "second", "third"])
+    ASSERTIONS.assertEqual([event["reason"] for event in events], ["alpha", "beta", "gamma"])
 
 
 def test_build_automation_ledger_event_defaults_safe_optionals():
@@ -1786,22 +1864,24 @@ def test_read_automation_ledger_events_missing_or_malformed_safe(tmp_path):
 
 def test_automation_ledger_path_accepts_string_pr_number(tmp_path):
     """String PR numbers should normalize to numeric directories."""
-    path = controller.automation_ledger_path(str(tmp_path), "225")
-    ASSERTIONS.assertEqual(path, str(tmp_path / "pr-225" / "automation-ledger.jsonl"))
+    path = controller.automation_ledger_path(tmp_path, "225")
+    ASSERTIONS.assertEqual(path, tmp_path / "pr-225" / "automation-ledger.jsonl")
 
 
-def test_automation_ledger_path_handles_invalid_pr_number_safely(tmp_path):
-    """None, empty, and invalid PR values should fail-safe to pr-0."""
-    ASSERTIONS.assertIn("/pr-0/", controller.automation_ledger_path(str(tmp_path), ""))
-    ASSERTIONS.assertIn("/pr-0/", controller.automation_ledger_path(str(tmp_path), None))
-    ASSERTIONS.assertIn("/pr-0/", controller.automation_ledger_path(str(tmp_path), "abc"))
-    ASSERTIONS.assertIn("/pr-0/", controller.automation_ledger_path(str(tmp_path), -5))
+def test_automation_ledger_path_rejects_invalid_pr_values(tmp_path):
+    """Unsafe PR values must be default-denied instead of normalized to a path."""
+    invalid_values = [True, False, "", " ", "abc", "0", "-1", "1.2", "../1", "1/../2", "/1"]
+    invalid_values += ["C:\\1", "..\\1", "*", "?", "[1]", "pr-*", "25 6", "1\n2"]
+    for value in invalid_values:
+        with ASSERTIONS.assertRaises(ValueError):
+            controller.automation_ledger_path(tmp_path, value)
 
 
 def test_automation_ledger_path_handles_empty_base_dir_safely():
     """Empty base_dir should not crash and should still return a ledger file path."""
     path = controller.automation_ledger_path("", 225)
-    ASSERTIONS.assertTrue(path.endswith("pr-225/automation-ledger.jsonl"))
+    ASSERTIONS.assertEqual(path.name, "automation-ledger.jsonl")
+    ASSERTIONS.assertEqual(path.parts[-2:], ("pr-225", "automation-ledger.jsonl"))
 
 
 def test_build_automation_ledger_event_normalizes_non_dict_details():
@@ -2577,16 +2657,129 @@ def test_build_automation_ledger_latest_sets_churn_detected_and_needs_manual():
 
 def test_write_automation_ledger_summary_files_writes_latest_and_summary(tmp_path):
     """Summary writer should create deterministic latest.json and summary.md files."""
-    latest = controller.build_automation_ledger_latest([_ledger_event("x", pr=225)], retry_limit=2)
-    paths = controller.write_automation_ledger_summary_files(tmp_path / ".autofix" / "ledger", latest)
-    latest_path = tmp_path / ".autofix" / "ledger" / "latest.json"
-    summary_path = tmp_path / ".autofix" / "ledger" / "summary.md"
+    latest = controller.build_automation_ledger_latest(
+        [_ledger_event("x", pr=225, head_sha="abc123", task_id="ledger_layout_alignment")],
+        retry_limit=2,
+    )
+    paths = controller.write_automation_ledger_summary_files(tmp_path, latest)
+    latest_path = tmp_path / "pr-225" / "latest.json"
+    summary_path = tmp_path / "pr-225" / "summary.md"
     ASSERTIONS.assertEqual(paths["latest_json"], str(latest_path))
     ASSERTIONS.assertEqual(paths["summary_md"], str(summary_path))
     ASSERTIONS.assertTrue(latest_path.exists())
     ASSERTIONS.assertTrue(summary_path.exists())
     persisted = json.loads(latest_path.read_text(encoding="utf-8"))
     ASSERTIONS.assertEqual(persisted["next_action"], latest["next_action"])
+    ASSERTIONS.assertEqual(persisted["latest_event_type"], "x")
+    ASSERTIONS.assertEqual(persisted["head_sha"], "abc123")
+    summary = summary_path.read_text(encoding="utf-8")
+    ASSERTIONS.assertIn("# PR #225 Ledger Status:", summary)
+    ASSERTIONS.assertIn("- Next action:", summary)
+    ASSERTIONS.assertIn("- Task ID: ledger_layout_alignment", summary)
+    updated = controller.build_automation_ledger_latest(
+        [_ledger_event("clean_ready", pr=225, head_sha="def456", task_id="ledger_layout_alignment_updated")],
+        retry_limit=2,
+    )
+    controller.write_automation_ledger_summary_files(tmp_path, updated)
+    overwritten = json.loads(latest_path.read_text(encoding="utf-8"))
+    ASSERTIONS.assertEqual(overwritten["head_sha"], "def456")
+    ASSERTIONS.assertNotIn("abc123", summary_path.read_text(encoding="utf-8"))
+
+
+def test_write_automation_ledger_summary_files_rejects_latest_symlink_leaf_without_mutating_target(tmp_path):
+    """Summary writer must reject a symlinked latest.json leaf."""
+    target_dir = tmp_path / "pr-225"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside-latest.json"
+    outside.write_text('{"outside": true}\n', encoding="utf-8")
+    (target_dir / "latest.json").symlink_to(outside)
+    latest = controller.build_automation_ledger_latest([_ledger_event("x", pr=225, head_sha="abc123")])
+
+    with ASSERTIONS.assertRaises(ValueError):
+        controller.write_automation_ledger_summary_files(tmp_path, latest)
+
+    ASSERTIONS.assertEqual(outside.read_text(encoding="utf-8"), '{"outside": true}\n')
+
+
+def test_write_automation_ledger_summary_files_rejects_summary_symlink_leaf_without_mutating_target(tmp_path):
+    """Summary writer must reject a symlinked summary.md leaf."""
+    target_dir = tmp_path / "pr-225"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside-summary.md"
+    outside.write_text("outside summary\n", encoding="utf-8")
+    (target_dir / "summary.md").symlink_to(outside)
+    latest = controller.build_automation_ledger_latest([_ledger_event("x", pr=225, head_sha="abc123")])
+
+    with ASSERTIONS.assertRaises(ValueError):
+        controller.write_automation_ledger_summary_files(tmp_path, latest)
+
+    ASSERTIONS.assertEqual(outside.read_text(encoding="utf-8"), "outside summary\n")
+
+
+def test_write_automation_ledger_summary_files_rejects_symlink_parent_without_mutating_target(tmp_path):
+    """Summary writer must reject a symlinked pr-257 directory."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_latest = outside / "latest.json"
+    outside_summary = outside / "summary.md"
+    outside_latest.write_text('{"outside": true}\n', encoding="utf-8")
+    outside_summary.write_text("outside summary\n", encoding="utf-8")
+    (tmp_path / "pr-257").symlink_to(outside, target_is_directory=True)
+    latest = controller.build_automation_ledger_latest([_ledger_event("x", pr=257, head_sha="abc123")])
+
+    with ASSERTIONS.assertRaises(ValueError):
+        controller.write_automation_ledger_summary_files(tmp_path, latest)
+
+    ASSERTIONS.assertEqual(outside_latest.read_text(encoding="utf-8"), '{"outside": true}\n')
+    ASSERTIONS.assertEqual(outside_summary.read_text(encoding="utf-8"), "outside summary\n")
+
+
+def test_automation_ledger_existing_regular_files_still_append_and_overwrite(tmp_path):
+    """Existing regular ledger/latest/summary files should keep their write behavior."""
+    ledger_path = controller.automation_ledger_path(tmp_path, 225)
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    ledger_path.write_text('{"reason":"old"}\n', encoding="utf-8")
+    controller.append_automation_ledger_event(
+        ledger_path,
+        controller.build_automation_ledger_event(event_type="post_fix_audit_failure", reason="new"),
+    )
+    events = controller.read_automation_ledger_events(ledger_path)
+    ASSERTIONS.assertEqual([event["reason"] for event in events], ["old", "new"])
+
+    latest_path = tmp_path / "pr-225" / "latest.json"
+    summary_path = tmp_path / "pr-225" / "summary.md"
+    latest_path.write_text('{"head_sha":"old"}\n', encoding="utf-8")
+    summary_path.write_text("old summary\n", encoding="utf-8")
+    latest = controller.build_automation_ledger_latest(
+        [_ledger_event("clean_ready", pr=225, head_sha="def456", task_id="ledger_layout_alignment_regular")],
+        retry_limit=2,
+    )
+    controller.write_automation_ledger_summary_files(tmp_path, latest)
+
+    ASSERTIONS.assertEqual(json.loads(latest_path.read_text(encoding="utf-8"))["head_sha"], "def456")
+    ASSERTIONS.assertNotIn("old summary", summary_path.read_text(encoding="utf-8"))
+
+
+def test_write_automation_ledger_summary_files_empty_latest_writes_unknown_pr(tmp_path):
+    """No-event latest state should write default-safe summary files under pr-unknown."""
+    latest = controller.build_automation_ledger_latest([], retry_limit=2)
+    paths = controller.write_automation_ledger_summary_files(tmp_path, latest)
+    latest_path = tmp_path / "pr-unknown" / "latest.json"
+    summary_path = tmp_path / "pr-unknown" / "summary.md"
+    ASSERTIONS.assertEqual(paths["latest_json"], str(latest_path))
+    ASSERTIONS.assertEqual(paths["summary_md"], str(summary_path))
+    ASSERTIONS.assertTrue(latest_path.exists())
+    ASSERTIONS.assertTrue(summary_path.exists())
+    ASSERTIONS.assertEqual(json.loads(latest_path.read_text(encoding="utf-8"))["pr"], 0)
+
+
+def test_write_automation_ledger_summary_files_fails_when_base_is_file(tmp_path):
+    """A file base path should fail safely through normal pathlib directory creation."""
+    base_file = tmp_path / "ledger-base"
+    base_file.write_text("not a directory", encoding="utf-8")
+    latest = controller.build_automation_ledger_latest([_ledger_event("x", pr=225)], retry_limit=2)
+    with ASSERTIONS.assertRaises(OSError):
+        controller.write_automation_ledger_summary_files(base_file, latest)
 
 
 def test_build_automation_ledger_latest_does_not_expose_env_secrets(monkeypatch):
