@@ -3765,6 +3765,16 @@ def _reject_ledger_symlink(path: Path) -> None:
         raise ValueError("ledger leaf file must not be a symlink")
 
 
+def _reject_ledger_parent_symlink(path: Path) -> None:
+    if path.parent.is_symlink():
+        raise ValueError("ledger parent directory must not be a symlink")
+
+
+def _reject_ledger_directory_symlink(path: Path) -> None:
+    if path.is_symlink():
+        raise ValueError("ledger directory must not be a symlink")
+
+
 def _validate_automation_ledger_append_path(path: Path) -> None:
     if path.name != "automation-ledger.jsonl":
         raise ValueError("automation ledger appends require automation-ledger.jsonl")
@@ -3841,6 +3851,7 @@ def build_automation_ledger_event(
 def append_automation_ledger_event(path: str, event: dict[str, Any]) -> None:
     target = Path(str(path or "")).expanduser()
     _validate_automation_ledger_append_path(target)
+    _reject_ledger_parent_symlink(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     _reject_ledger_symlink(target)
     row = json.dumps(event if isinstance(event, dict) else {}, sort_keys=True)
@@ -4132,6 +4143,7 @@ def write_automation_ledger_summary_files(
     ledger_dir: str | Path, latest: dict[str, Any]
 ) -> dict[str, str]:
     target_dir = _ledger_summary_pr_dir(ledger_dir, latest.get("pr") if isinstance(latest, dict) else None)
+    _reject_ledger_directory_symlink(target_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
     latest_path = target_dir / "latest.json"
     summary_path = target_dir / "summary.md"

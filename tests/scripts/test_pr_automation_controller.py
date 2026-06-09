@@ -1753,6 +1753,7 @@ def test_missing_post_fix_micro_audit_result_fails_closed():
 
 
 # [TASK: ledger_layout_alignment] PR257 append ledger path bypass coverage.
+# [TASK: ledger_layout_alignment] PR257 parent symlink ledger directory coverage.
 def test_automation_ledger_append_creates_jsonl_and_reads_in_order(tmp_path):
     """Ledger appends events as JSONL and preserves insertion order."""
     path = controller.automation_ledger_path(tmp_path, 256)
@@ -1807,6 +1808,22 @@ def test_automation_ledger_append_rejects_symlink_leaf_without_mutating_target(t
         controller.append_automation_ledger_event(path, event)
 
     ASSERTIONS.assertEqual(outside.read_text(encoding="utf-8"), "outside\n")
+
+
+def test_automation_ledger_append_rejects_symlink_parent_without_mutating_target(tmp_path):
+    """Ledger append must reject a symlinked pr-257 directory."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_ledger = outside / "automation-ledger.jsonl"
+    outside_ledger.write_text("outside\n", encoding="utf-8")
+    path = controller.automation_ledger_path(tmp_path, 257)
+    path.parent.symlink_to(outside, target_is_directory=True)
+
+    event = controller.build_automation_ledger_event(event_type="post_fix_audit_failure", reason="blocked")
+    with ASSERTIONS.assertRaises(ValueError):
+        controller.append_automation_ledger_event(path, event)
+
+    ASSERTIONS.assertEqual(outside_ledger.read_text(encoding="utf-8"), "outside\n")
 
 
 def test_automation_ledger_append_canonical_path_preserves_order(tmp_path):
@@ -2697,6 +2714,24 @@ def test_write_automation_ledger_summary_files_rejects_summary_symlink_leaf_with
         controller.write_automation_ledger_summary_files(tmp_path, latest)
 
     ASSERTIONS.assertEqual(outside.read_text(encoding="utf-8"), "outside summary\n")
+
+
+def test_write_automation_ledger_summary_files_rejects_symlink_parent_without_mutating_target(tmp_path):
+    """Summary writer must reject a symlinked pr-257 directory."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_latest = outside / "latest.json"
+    outside_summary = outside / "summary.md"
+    outside_latest.write_text('{"outside": true}\n', encoding="utf-8")
+    outside_summary.write_text("outside summary\n", encoding="utf-8")
+    (tmp_path / "pr-257").symlink_to(outside, target_is_directory=True)
+    latest = controller.build_automation_ledger_latest([_ledger_event("x", pr=257, head_sha="abc123")])
+
+    with ASSERTIONS.assertRaises(ValueError):
+        controller.write_automation_ledger_summary_files(tmp_path, latest)
+
+    ASSERTIONS.assertEqual(outside_latest.read_text(encoding="utf-8"), '{"outside": true}\n')
+    ASSERTIONS.assertEqual(outside_summary.read_text(encoding="utf-8"), "outside summary\n")
 
 
 def test_automation_ledger_existing_regular_files_still_append_and_overwrite(tmp_path):
