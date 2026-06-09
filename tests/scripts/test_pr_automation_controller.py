@@ -1752,6 +1752,7 @@ def test_missing_post_fix_micro_audit_result_fails_closed():
     ASSERTIONS.assertTrue(controller.post_fix_micro_audit_failed(report))
 
 
+# [TASK: ledger_layout_alignment] PR257 append ledger path bypass coverage.
 def test_automation_ledger_append_creates_jsonl_and_reads_in_order(tmp_path):
     """Ledger appends events as JSONL and preserves insertion order."""
     path = controller.automation_ledger_path(tmp_path, 256)
@@ -1764,6 +1765,33 @@ def test_automation_ledger_append_creates_jsonl_and_reads_in_order(tmp_path):
     events = controller.read_automation_ledger_events(path)
     ASSERTIONS.assertEqual([item["reason"] for item in events], ["alpha", "beta"])
     ASSERTIONS.assertEqual(len((tmp_path / "pr-256" / "automation-ledger.jsonl").read_text().splitlines()), 2)
+
+
+def test_automation_ledger_append_rejects_absolute_noncanonical_jsonl():
+    """Raw JSONL paths outside the canonical ledger layout must not append."""
+    event = controller.build_automation_ledger_event(event_type="post_fix_audit_failure", reason="blocked")
+    with ASSERTIONS.assertRaises(ValueError):
+        controller.append_automation_ledger_event(Path("/tmp/outside.jsonl"), event)
+
+
+def test_automation_ledger_append_rejects_tmp_noncanonical_jsonl(tmp_path):
+    """Ledger appends require the canonical pr-<n>/automation-ledger.jsonl layout."""
+    path = tmp_path / "outside.jsonl"
+    event = controller.build_automation_ledger_event(event_type="post_fix_audit_failure", reason="blocked")
+    with ASSERTIONS.assertRaises(ValueError):
+        controller.append_automation_ledger_event(path, event)
+
+    ASSERTIONS.assertFalse(path.exists())
+
+
+def test_automation_ledger_append_rejects_wrong_canonical_filename(tmp_path):
+    """Ledger appends must reject files under pr-<n> with the wrong leaf name."""
+    path = tmp_path / "pr-257" / "not-ledger.jsonl"
+    event = controller.build_automation_ledger_event(event_type="post_fix_audit_failure", reason="blocked")
+    with ASSERTIONS.assertRaises(ValueError):
+        controller.append_automation_ledger_event(path, event)
+
+    ASSERTIONS.assertFalse(path.exists())
 
 
 def test_automation_ledger_append_rejects_symlink_leaf_without_mutating_target(tmp_path):
@@ -1779,6 +1807,22 @@ def test_automation_ledger_append_rejects_symlink_leaf_without_mutating_target(t
         controller.append_automation_ledger_event(path, event)
 
     ASSERTIONS.assertEqual(outside.read_text(encoding="utf-8"), "outside\n")
+
+
+def test_automation_ledger_append_canonical_path_preserves_order(tmp_path):
+    """Canonical ledger appends should keep existing rows and append in call order."""
+    path = controller.automation_ledger_path(tmp_path, 257)
+    first = controller.build_automation_ledger_event(event_type="first", reason="alpha")
+    second = controller.build_automation_ledger_event(event_type="second", reason="beta")
+    third = controller.build_automation_ledger_event(event_type="third", reason="gamma")
+
+    controller.append_automation_ledger_event(path, first)
+    controller.append_automation_ledger_event(path, second)
+    controller.append_automation_ledger_event(path, third)
+
+    events = controller.read_automation_ledger_events(path)
+    ASSERTIONS.assertEqual([event["event_type"] for event in events], ["first", "second", "third"])
+    ASSERTIONS.assertEqual([event["reason"] for event in events], ["alpha", "beta", "gamma"])
 
 
 def test_build_automation_ledger_event_defaults_safe_optionals():

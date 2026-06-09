@@ -3765,6 +3765,15 @@ def _reject_ledger_symlink(path: Path) -> None:
         raise ValueError("ledger leaf file must not be a symlink")
 
 
+def _validate_automation_ledger_append_path(path: Path) -> None:
+    if path.name != "automation-ledger.jsonl":
+        raise ValueError("automation ledger appends require automation-ledger.jsonl")
+    if ".." in path.parts:
+        raise ValueError("automation ledger path must not contain traversal")
+    if not re.fullmatch(r"pr-[1-9][0-9]*", path.parent.name):
+        raise ValueError("automation ledger parent must be pr-<positive decimal>")
+
+
 def _ledger_summary_pr_dir(base_dir: str | Path | None, pr_number: Any) -> Path:
     root = _normalized_ledger_base_dir(base_dir)
     try:
@@ -3831,6 +3840,7 @@ def build_automation_ledger_event(
 
 def append_automation_ledger_event(path: str, event: dict[str, Any]) -> None:
     target = Path(str(path or "")).expanduser()
+    _validate_automation_ledger_append_path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     _reject_ledger_symlink(target)
     row = json.dumps(event if isinstance(event, dict) else {}, sort_keys=True)
