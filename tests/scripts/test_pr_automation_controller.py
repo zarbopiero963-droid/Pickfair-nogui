@@ -1,3 +1,4 @@
+# [TASK: ledger_layout_alignment] PR257 empty latest ledger default-safe coverage.
 """Tests for PR automation controller decisions."""
 # pylint: disable=invalid-name,duplicate-code
 
@@ -1793,7 +1794,7 @@ def test_automation_ledger_path_accepts_string_pr_number(tmp_path):
 
 def test_automation_ledger_path_rejects_invalid_pr_values(tmp_path):
     """Unsafe PR values must be default-denied instead of normalized to a path."""
-    invalid_values = ["", " ", "abc", "0", "-1", "1.2", "../1", "1/../2", "/1"]
+    invalid_values = [True, False, "", " ", "abc", "0", "-1", "1.2", "../1", "1/../2", "/1"]
     invalid_values += ["C:\\1", "..\\1", "*", "?", "[1]", "pr-*", "25 6", "1\n2"]
     for value in invalid_values:
         with ASSERTIONS.assertRaises(ValueError):
@@ -1803,7 +1804,8 @@ def test_automation_ledger_path_rejects_invalid_pr_values(tmp_path):
 def test_automation_ledger_path_handles_empty_base_dir_safely():
     """Empty base_dir should not crash and should still return a ledger file path."""
     path = controller.automation_ledger_path("", 225)
-    ASSERTIONS.assertTrue(str(path).endswith("pr-225/automation-ledger.jsonl"))
+    ASSERTIONS.assertEqual(path.name, "automation-ledger.jsonl")
+    ASSERTIONS.assertEqual(path.parts[-2:], ("pr-225", "automation-ledger.jsonl"))
 
 
 def test_build_automation_ledger_event_normalizes_non_dict_details():
@@ -2606,6 +2608,19 @@ def test_write_automation_ledger_summary_files_writes_latest_and_summary(tmp_pat
     overwritten = json.loads(latest_path.read_text(encoding="utf-8"))
     ASSERTIONS.assertEqual(overwritten["head_sha"], "def456")
     ASSERTIONS.assertNotIn("abc123", summary_path.read_text(encoding="utf-8"))
+
+
+def test_write_automation_ledger_summary_files_empty_latest_writes_unknown_pr(tmp_path):
+    """No-event latest state should write default-safe summary files under pr-unknown."""
+    latest = controller.build_automation_ledger_latest([], retry_limit=2)
+    paths = controller.write_automation_ledger_summary_files(tmp_path, latest)
+    latest_path = tmp_path / "pr-unknown" / "latest.json"
+    summary_path = tmp_path / "pr-unknown" / "summary.md"
+    ASSERTIONS.assertEqual(paths["latest_json"], str(latest_path))
+    ASSERTIONS.assertEqual(paths["summary_md"], str(summary_path))
+    ASSERTIONS.assertTrue(latest_path.exists())
+    ASSERTIONS.assertTrue(summary_path.exists())
+    ASSERTIONS.assertEqual(json.loads(latest_path.read_text(encoding="utf-8"))["pr"], 0)
 
 
 def test_write_automation_ledger_summary_files_fails_when_base_is_file(tmp_path):
