@@ -1291,6 +1291,15 @@ def test_deepsource_advisory_status_live_top_level_evidence_can_filter(monkeypat
     ASSERTIONS.assertEqual(decision["reasons"], [])
 
 
+
+def test_api_error_top_blocks(monkeypatch):
+    """Top-level required-check API errors remain fail-closed."""
+    context = _deepsource_advisory_status_context(required_checks_api_error=True)
+    decision = _build_deepsource_advisory_decision_from_top_level(monkeypatch, context)
+
+    _assert_deepsource_advisory_blocks(decision)
+
+
 def test_deepsource_advisory_status_does_not_guess_current_head_from_pr(monkeypatch):
     """Require explicit current-head evidence even when PR headRefOid is available."""
     decision = _build_deepsource_advisory_decision(
@@ -1445,19 +1454,16 @@ def test_deepsource_advisory_status_merge_evidence_not_clear_manual():
 
 def test_deepsource_advisory_status_missing_required_deepsource_evidence_manual():
     """Missing required DeepSource evidence keeps advisory status manual."""
-    contexts = []
-    missing = _deepsource_advisory_status_context()
-    missing.pop("deepsource_required_current_head_check_failing")
-    contexts.append(missing)
-    contexts.append(_deepsource_advisory_status_context(deepsource_required_current_head_check_failing=True))
-    for context in contexts:
-        decision = flow.deepsource_advisory_status_nonblocking_evidence(
-            _deepsource_python_failure_check(),
-            context,
-        )
-        ASSERTIONS.assertFalse(decision["nonblocking"])
-        ASSERTIONS.assertEqual(decision["reason"], "missing_required_deepsource_evidence")
+    context = _deepsource_advisory_status_context()
+    context.pop("deepsource_required_current_head_check_failing")
 
+    decision = flow.deepsource_advisory_status_nonblocking_evidence(
+        _deepsource_python_failure_check(),
+        context,
+    )
+
+    ASSERTIONS.assertFalse(decision["nonblocking"])
+    ASSERTIONS.assertEqual(decision["reason"], "missing_required_deepsource_evidence")
 
 def test_deepsource_advisory_status_required_deepsource_check_failing_manual():
     """A required current-head DeepSource failure keeps advisory status manual."""
