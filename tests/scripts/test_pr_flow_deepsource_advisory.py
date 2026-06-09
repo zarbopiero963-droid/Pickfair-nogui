@@ -160,6 +160,11 @@ def test_explicit_false_pass(monkeypatch):
         ],
         deepsource_advisory_evidence="Cyclomatic complexity readability advisory",
         deepsource_required_current_head_check_failing=False,
+        branch_protection_absent=True,
+        required_checks=[],
+        required_checks_head_sha="abc",
+        deepsource_required=False,
+        deepsource_blocking=False,
     )
 
     ASSERTIONS.assertTrue(decision["can_merge"])
@@ -219,7 +224,12 @@ def test_matching_advisories_pass(monkeypatch):
             _ds_adv(name="DeepSource: Python / complexity"),
             _chk("Codacy Static Code Analysis", "SUCCESS"),
         ],
+        branch_protection_absent=False,
         required_checks=["Codacy Static Code Analysis"],
+        required_checks_head_sha="abc",
+        deepsource_required=False,
+        deepsource_blocking=False,
+        deepsource_required_current_head_check_failing=False,
     )
 
     ASSERTIONS.assertTrue(decision["can_merge"])
@@ -229,7 +239,15 @@ def test_matching_advisories_pass(monkeypatch):
 
 def test_codacy_success_zero(monkeypatch):
     """Live Codacy SUCCESS check can prove annotations clear when no explicit count exists."""
-    decision = _decision(monkeypatch, required_checks=["Codacy Static Code Analysis"])
+    decision = _decision(
+        monkeypatch,
+        branch_protection_absent=False,
+        required_checks=["Codacy Static Code Analysis"],
+        required_checks_head_sha="abc",
+        deepsource_required=False,
+        deepsource_blocking=False,
+        deepsource_required_current_head_check_failing=False,
+    )
 
     ASSERTIONS.assertTrue(decision["can_merge"])
     ASSERTIONS.assertEqual(decision["blockers"], [])
@@ -358,6 +376,11 @@ def test_pr254_context_passes(monkeypatch):
         "pending_checks_count": 0,
         "checks_green": True,
         "deepsource_required_current_head_check_failing": False,
+        "branch_protection_absent": False,
+        "required_checks": ["Codacy Static Code Analysis"],
+        "required_checks_head_sha": "abc",
+        "deepsource_required": False,
+        "deepsource_blocking": False,
     }
     decision = _decision(
         monkeypatch,

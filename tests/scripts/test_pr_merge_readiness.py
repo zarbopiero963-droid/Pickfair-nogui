@@ -28,29 +28,30 @@ def _ds_failure_check(**extra: Any) -> dict[str, Any]:
     return check
 
 
+_BASE_REQUIRED_CONTEXT: dict[str, Any] = {
+    "current_head_sha": "head-sha",
+    "evidence_head_sha": "head-sha",
+    "evidence_present": True,
+    "deepsource_advisory_evidence": "Cyclomatic complexity readability advisory",
+    "codacy_state": "SUCCESS",
+    "codacy_annotations_count": 0,
+    "unresolved_active": 0,
+    "pending_checks": [],
+    "pending_checks_count": 0,
+    "checks_green": True,
+    "deepsource_required_current_head_check_failing": False,
+    "branch_protection_absent": True,
+    "required_checks": [],
+    "required_checks_source": "branch_protection",
+    "required_checks_head_sha": "head-sha",
+    "deepsource_required": False,
+    "deepsource_blocking": False,
+}
+
+
 def _required_context(**extra: Any) -> dict[str, Any]:
     """Build explicit current-head required-check evidence."""
-    context = {
-        "current_head_sha": "head-sha",
-        "evidence_head_sha": "head-sha",
-        "evidence_present": True,
-        "deepsource_advisory_evidence": "Cyclomatic complexity readability advisory",
-        "codacy_state": "SUCCESS",
-        "codacy_annotations_count": 0,
-        "unresolved_active": 0,
-        "pending_checks": [],
-        "pending_checks_count": 0,
-        "checks_green": True,
-        "deepsource_required_current_head_check_failing": False,
-        "branch_protection_absent": True,
-        "required_checks": [],
-        "required_checks_source": "branch_protection",
-        "required_checks_head_sha": "head-sha",
-        "deepsource_required": False,
-        "deepsource_blocking": False,
-    }
-    context.update(extra)
-    return context
+    return _BASE_REQUIRED_CONTEXT | extra
 
 
 def _decision(context: dict[str, Any], **check_extra: Any) -> dict[str, Any]:
