@@ -3760,6 +3760,11 @@ def _validate_ledger_child_path(root: Path, target: Path) -> None:
         raise ValueError("ledger path must resolve under the ledger base directory") from exc
 
 
+def _reject_ledger_symlink(path: Path) -> None:
+    if path.is_symlink():
+        raise ValueError("ledger leaf file must not be a symlink")
+
+
 def _ledger_summary_pr_dir(base_dir: str | Path | None, pr_number: Any) -> Path:
     root = _normalized_ledger_base_dir(base_dir)
     try:
@@ -3827,6 +3832,7 @@ def build_automation_ledger_event(
 def append_automation_ledger_event(path: str, event: dict[str, Any]) -> None:
     target = Path(str(path or "")).expanduser()
     target.parent.mkdir(parents=True, exist_ok=True)
+    _reject_ledger_symlink(target)
     row = json.dumps(event if isinstance(event, dict) else {}, sort_keys=True)
     with target.open("a", encoding="utf-8") as handle:
         handle.write(f"{row}\n")
@@ -4119,6 +4125,8 @@ def write_automation_ledger_summary_files(
     target_dir.mkdir(parents=True, exist_ok=True)
     latest_path = target_dir / "latest.json"
     summary_path = target_dir / "summary.md"
+    _reject_ledger_symlink(latest_path)
+    _reject_ledger_symlink(summary_path)
     latest_path.write_text(json.dumps(latest, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     summary_path.write_text(render_automation_ledger_summary(latest), encoding="utf-8")
     return {"latest_json": str(latest_path), "summary_md": str(summary_path)}

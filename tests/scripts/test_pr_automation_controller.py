@@ -1766,6 +1766,21 @@ def test_automation_ledger_append_creates_jsonl_and_reads_in_order(tmp_path):
     ASSERTIONS.assertEqual(len((tmp_path / "pr-256" / "automation-ledger.jsonl").read_text().splitlines()), 2)
 
 
+def test_automation_ledger_append_rejects_symlink_leaf_without_mutating_target(tmp_path):
+    """Ledger append must reject a symlinked JSONL leaf."""
+    outside = tmp_path / "outside-ledger.jsonl"
+    outside.write_text("outside\n", encoding="utf-8")
+    path = controller.automation_ledger_path(tmp_path, 225)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.symlink_to(outside)
+
+    event = controller.build_automation_ledger_event(event_type="post_fix_audit_failure", reason="blocked")
+    with ASSERTIONS.assertRaises(ValueError):
+        controller.append_automation_ledger_event(path, event)
+
+    ASSERTIONS.assertEqual(outside.read_text(encoding="utf-8"), "outside\n")
+
+
 def test_build_automation_ledger_event_defaults_safe_optionals():
     """Optional fields are normalized to safe defaults."""
     event = controller.build_automation_ledger_event()
@@ -2608,6 +2623,62 @@ def test_write_automation_ledger_summary_files_writes_latest_and_summary(tmp_pat
     overwritten = json.loads(latest_path.read_text(encoding="utf-8"))
     ASSERTIONS.assertEqual(overwritten["head_sha"], "def456")
     ASSERTIONS.assertNotIn("abc123", summary_path.read_text(encoding="utf-8"))
+
+
+def test_write_automation_ledger_summary_files_rejects_latest_symlink_leaf_without_mutating_target(tmp_path):
+    """Summary writer must reject a symlinked latest.json leaf."""
+    target_dir = tmp_path / "pr-225"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside-latest.json"
+    outside.write_text('{"outside": true}\n', encoding="utf-8")
+    (target_dir / "latest.json").symlink_to(outside)
+    latest = controller.build_automation_ledger_latest([_ledger_event("x", pr=225, head_sha="abc123")])
+
+    with ASSERTIONS.assertRaises(ValueError):
+        controller.write_automation_ledger_summary_files(tmp_path, latest)
+
+    ASSERTIONS.assertEqual(outside.read_text(encoding="utf-8"), '{"outside": true}\n')
+
+
+def test_write_automation_ledger_summary_files_rejects_summary_symlink_leaf_without_mutating_target(tmp_path):
+    """Summary writer must reject a symlinked summary.md leaf."""
+    target_dir = tmp_path / "pr-225"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside-summary.md"
+    outside.write_text("outside summary\n", encoding="utf-8")
+    (target_dir / "summary.md").symlink_to(outside)
+    latest = controller.build_automation_ledger_latest([_ledger_event("x", pr=225, head_sha="abc123")])
+
+    with ASSERTIONS.assertRaises(ValueError):
+        controller.write_automation_ledger_summary_files(tmp_path, latest)
+
+    ASSERTIONS.assertEqual(outside.read_text(encoding="utf-8"), "outside summary\n")
+
+
+def test_automation_ledger_existing_regular_files_still_append_and_overwrite(tmp_path):
+    """Existing regular ledger/latest/summary files should keep their write behavior."""
+    ledger_path = controller.automation_ledger_path(tmp_path, 225)
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    ledger_path.write_text('{"reason":"old"}\n', encoding="utf-8")
+    controller.append_automation_ledger_event(
+        ledger_path,
+        controller.build_automation_ledger_event(event_type="post_fix_audit_failure", reason="new"),
+    )
+    events = controller.read_automation_ledger_events(ledger_path)
+    ASSERTIONS.assertEqual([event["reason"] for event in events], ["old", "new"])
+
+    latest_path = tmp_path / "pr-225" / "latest.json"
+    summary_path = tmp_path / "pr-225" / "summary.md"
+    latest_path.write_text('{"head_sha":"old"}\n', encoding="utf-8")
+    summary_path.write_text("old summary\n", encoding="utf-8")
+    latest = controller.build_automation_ledger_latest(
+        [_ledger_event("clean_ready", pr=225, head_sha="def456", task_id="ledger_layout_alignment_regular")],
+        retry_limit=2,
+    )
+    controller.write_automation_ledger_summary_files(tmp_path, latest)
+
+    ASSERTIONS.assertEqual(json.loads(latest_path.read_text(encoding="utf-8"))["head_sha"], "def456")
+    ASSERTIONS.assertNotIn("old summary", summary_path.read_text(encoding="utf-8"))
 
 
 def test_write_automation_ledger_summary_files_empty_latest_writes_unknown_pr(tmp_path):
