@@ -13333,8 +13333,6 @@ def test_read_automation_ledger_events_rejects_raw_path_outside_configured_base(
 
 
 def test_read_automation_ledger_events_rejects_symlinked_leaf_with_configured_base(tmp_path):
-    import json
-
     base = tmp_path / "ledger"
     pr_dir = base / "pr-225"
     pr_dir.mkdir(parents=True)
