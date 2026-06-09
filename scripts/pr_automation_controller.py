@@ -3585,6 +3585,7 @@ def _dict_option_or_empty(value: Any) -> dict[str, Any]:
 
 
 def _post_fix_retry_options(options: dict[str, Any]) -> dict[str, Any]:
+    ledger_metadata = _dict_option_or_empty(options.get("ledger_metadata"))
     return {
         "files_allowed": _list_option_or_empty(options.get("files_allowed")),
         "files_forbidden": _list_option_or_empty(options.get("files_forbidden")),
@@ -3592,7 +3593,14 @@ def _post_fix_retry_options(options: dict[str, Any]) -> dict[str, Any]:
         "retry_limit": safe_nonnegative_int(options.get("retry_limit"), 1),
         "previous_failure_reasons": _list_option_or_empty(options.get("previous_failure_reasons")),
         "ledger_path": str(options.get("ledger_path") or ""),
-        "ledger_metadata": _dict_option_or_empty(options.get("ledger_metadata")),
+        "ledger_base_dir": str(
+            options.get("ledger_base_dir")
+            or options.get("automation_ledger_base_dir")
+            or options.get("ledger_dir")
+            or ""
+        ),
+        "ledger_pr_number": options.get("pr_number") or options.get("pr") or ledger_metadata.get("pr"),
+        "ledger_metadata": ledger_metadata,
     }
 
 
@@ -3638,6 +3646,33 @@ def _post_fix_retryability(state: dict[str, Any], flags: dict[str, bool]) -> boo
     return not _post_fix_retryability_blocked(flags, state["raw_status"]) and _post_fix_retryability_allowed(state)
 
 
+def _post_fix_retry_ledger_base_dir(options: dict[str, Any]) -> Path | None:
+    raw_base = options.get("ledger_base_dir")
+    if raw_base in (None, ""):
+        return None
+    return _normalized_ledger_base_dir(raw_base)
+
+
+def _post_fix_retry_ledger_target(
+    options: dict[str, Any], event: dict[str, Any]
+) -> tuple[Path, Path | None]:
+    target = Path(str(options.get("ledger_path") or "")).expanduser()
+    base = _post_fix_retry_ledger_base_dir(options)
+    if base is None:
+        _validate_automation_ledger_append_path(target)
+        return target, None
+
+    pr_number = options.get("ledger_pr_number")
+    if pr_number in (None, ""):
+        pr_number = event.get("pr") if isinstance(event, dict) else None
+
+    expected = automation_ledger_path(base, pr_number)
+    _validate_automation_ledger_append_path(target, base_dir=base)
+    if target.resolve(strict=False) != expected.resolve(strict=False):
+        raise ValueError("automation ledger path must match the configured ledger base and PR")
+    return expected, base
+
+
 def _append_post_fix_retry_ledger_event(
     options: dict[str, Any], state: dict[str, Any], decision: dict[str, Any]
 ) -> None:
@@ -3651,7 +3686,8 @@ def _append_post_fix_retry_ledger_event(
         details=_post_fix_retry_ledger_details(options, state, decision),
         **(options["ledger_metadata"] or {}),
     )
-    append_automation_ledger_event(options["ledger_path"], event)
+    ledger_target, ledger_base = _post_fix_retry_ledger_target(options, event)
+    append_automation_ledger_event(ledger_target, event, base_dir=ledger_base)
 
 
 def _post_fix_retry_ledger_details(
@@ -3735,13 +3771,73 @@ def _normalized_ledger_base_dir(base_dir: Any) -> Path:
 
 
 def _normalized_ledger_pr_number(pr_number: Any) -> int:
-    return safe_nonnegative_int(pr_number, 0)
+    if isinstance(pr_number, bool):
+        raise ValueError("ledger PR number must be a positive decimal integer")
+    raw = str(pr_number if pr_number is not None else "")
+    if not re.fullmatch(r"[1-9][0-9]*", raw):
+        raise ValueError("ledger PR number must be a positive decimal integer")
+    return int(raw)
 
 
-def automation_ledger_path(base_dir: str | Path | None, pr_number: str | int | None) -> str:
+def _ledger_pr_dir(base_dir: str | Path | None, pr_number: str | int | None) -> Path:
     root = _normalized_ledger_base_dir(base_dir)
     pr_value = _normalized_ledger_pr_number(pr_number)
-    return str(root / f"pr-{pr_value}" / "automation-ledger.jsonl")
+    target = root / f"pr-{pr_value}"
+    _validate_ledger_child_path(root, target)
+    return target
+
+
+def _validate_ledger_child_path(root: Path, target: Path) -> None:
+    try:
+        root_resolved = root.resolve(strict=False)
+        if root.exists() and not root.is_dir():
+            raise ValueError("ledger base path must be a directory")
+        target_resolved = target.resolve(strict=False)
+        target_resolved.relative_to(root_resolved)
+    except ValueError as exc:
+        raise ValueError("ledger path must resolve under the ledger base directory") from exc
+
+
+def _reject_ledger_symlink(path: Path) -> None:
+    if path.is_symlink():
+        raise ValueError("ledger leaf file must not be a symlink")
+
+
+def _reject_ledger_parent_symlink(path: Path) -> None:
+    if path.parent.is_symlink():
+        raise ValueError("ledger parent directory must not be a symlink")
+
+
+def _reject_ledger_directory_symlink(path: Path) -> None:
+    if path.is_symlink():
+        raise ValueError("ledger directory must not be a symlink")
+
+
+def _validate_automation_ledger_append_path(path: Path, base_dir: str | Path | None = None) -> None:
+    if path.name != "automation-ledger.jsonl":
+        raise ValueError("automation ledger appends require automation-ledger.jsonl")
+    if ".." in path.parts:
+        raise ValueError("automation ledger path must not contain traversal")
+    if not re.fullmatch(r"pr-[1-9][0-9]*", path.parent.name):
+        raise ValueError("automation ledger parent must be pr-<positive decimal>")
+    if base_dir is not None:
+        root = _normalized_ledger_base_dir(base_dir)
+        _validate_ledger_child_path(root, path.parent)
+
+
+def _ledger_summary_pr_dir(base_dir: str | Path | None, pr_number: Any) -> Path:
+    root = _normalized_ledger_base_dir(base_dir)
+    try:
+        pr_value = _normalized_ledger_pr_number(pr_number)
+        target = root / f"pr-{pr_value}"
+    except ValueError:
+        target = root / "pr-unknown"
+    _validate_ledger_child_path(root, target)
+    return target
+
+
+def automation_ledger_path(base_dir: str | Path | None, pr_number: str | int | None) -> Path:
+    return _ledger_pr_dir(base_dir, pr_number) / "automation-ledger.jsonl"
 
 
 def _normalized_ledger_details(details: Any) -> dict[str, Any]:
@@ -3793,16 +3889,32 @@ def build_automation_ledger_event(
     }
 
 
-def append_automation_ledger_event(path: str, event: dict[str, Any]) -> None:
+def append_automation_ledger_event(
+    path: str | Path,
+    event: dict[str, Any],
+    *,
+    base_dir: str | Path | None = None,
+) -> None:
     target = Path(str(path or "")).expanduser()
+    _validate_automation_ledger_append_path(target, base_dir=base_dir)
+    _reject_ledger_parent_symlink(target)
     target.parent.mkdir(parents=True, exist_ok=True)
+    _reject_ledger_symlink(target)
     row = json.dumps(event if isinstance(event, dict) else {}, sort_keys=True)
     with target.open("a", encoding="utf-8") as handle:
         handle.write(f"{row}\n")
 
 
-def read_automation_ledger_events(path: str) -> list[dict[str, Any]]:
+def read_automation_ledger_events(
+    path: str | Path,
+    *,
+    base_dir: str | Path | None = None,
+) -> list[dict[str, Any]]:
     target = Path(str(path or "")).expanduser()
+    if base_dir is not None:
+        _validate_automation_ledger_append_path(target, base_dir=base_dir)
+        _reject_ledger_parent_symlink(target)
+        _reject_ledger_symlink(target)
     if not target.is_file():
         return []
     try:
@@ -4084,10 +4196,13 @@ def render_automation_ledger_summary(latest: dict[str, Any]) -> str:
 def write_automation_ledger_summary_files(
     ledger_dir: str | Path, latest: dict[str, Any]
 ) -> dict[str, str]:
-    target_dir = Path(str(ledger_dir or ".")).expanduser()
+    target_dir = _ledger_summary_pr_dir(ledger_dir, latest.get("pr") if isinstance(latest, dict) else None)
+    _reject_ledger_directory_symlink(target_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
     latest_path = target_dir / "latest.json"
     summary_path = target_dir / "summary.md"
+    _reject_ledger_symlink(latest_path)
+    _reject_ledger_symlink(summary_path)
     latest_path.write_text(json.dumps(latest, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     summary_path.write_text(render_automation_ledger_summary(latest), encoding="utf-8")
     return {"latest_json": str(latest_path), "summary_md": str(summary_path)}
