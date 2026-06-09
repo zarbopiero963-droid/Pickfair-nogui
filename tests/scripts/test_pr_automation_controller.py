@@ -2774,11 +2774,11 @@ def test_write_automation_ledger_summary_files_empty_latest_writes_unknown_pr(tm
 
 
 def test_write_automation_ledger_summary_files_fails_when_base_is_file(tmp_path):
-    """A file base path should fail safely through normal pathlib directory creation."""
+    """A file base path should fail deterministically at the ledger validation boundary."""
     base_file = tmp_path / "ledger-base"
     base_file.write_text("not a directory", encoding="utf-8")
     latest = controller.build_automation_ledger_latest([_ledger_event("x", pr=225)], retry_limit=2)
-    with ASSERTIONS.assertRaises(OSError):
+    with ASSERTIONS.assertRaises(ValueError):
         controller.write_automation_ledger_summary_files(base_file, latest)
 
 
@@ -13229,3 +13229,112 @@ def test_assert_live_action_allowed_raises_when_blocked():
 
     allowed = controller.assert_live_action_allowed("safe_autofix", _automation_ctx("live"))
     ASSERTIONS.assertTrue(allowed["allowed"])
+
+def test_append_automation_ledger_event_rejects_raw_path_outside_configured_base(tmp_path):
+    import pytest
+
+    import scripts.pr_automation_controller as controller
+
+    base = tmp_path / "ledger"
+    base.mkdir()
+    outside = tmp_path / "outside" / "pr-225" / "automation-ledger.jsonl"
+    event = controller.build_automation_ledger_event(
+        "matrix-phase0",
+        repo="owner/repo",
+        pr=225,
+        branch="branch",
+        head_sha="abc",
+        task_id="claude_bug_pr5a_automation_ledger_base",
+        details={"status": "PASS"},
+    )
+
+    with pytest.raises(ValueError):
+        controller.append_automation_ledger_event(outside, event, base_dir=base)
+
+    ASSERTIONS.assertFalse(outside.exists())
+
+
+def test_append_automation_ledger_event_accepts_canonical_path_under_configured_base(tmp_path):
+    import scripts.pr_automation_controller as controller
+
+    base = tmp_path / "ledger"
+    path = controller.automation_ledger_path(base, 225)
+    event = controller.build_automation_ledger_event(
+        "matrix-phase0",
+        repo="owner/repo",
+        pr=225,
+        branch="branch",
+        head_sha="abc",
+        task_id="claude_bug_pr5a_automation_ledger_base",
+        details={"status": "PASS"},
+    )
+
+    controller.append_automation_ledger_event(path, event, base_dir=base)
+
+    ASSERTIONS.assertTrue(path.exists())
+    ASSERTIONS.assertEqual(len(controller.read_automation_ledger_events(path, base_dir=base)), 1)
+
+
+def test_decide_post_fix_audit_retry_rejects_raw_ledger_path_outside_configured_base(tmp_path):
+    import pytest
+
+    import scripts.pr_automation_controller as controller
+
+    base = tmp_path / "ledger"
+    base.mkdir()
+    outside = tmp_path / "outside" / "pr-225" / "automation-ledger.jsonl"
+
+    with pytest.raises(ValueError):
+        controller.decide_post_fix_audit_retry(
+            {"status": "FAIL", "reasons": ["lint failed"]},
+            original_task_scope="claude_bug_pr5a_automation_ledger_base",
+            files_allowed=["scripts/pr_automation_controller.py"],
+            files_forbidden=[],
+            retry_count=0,
+            retry_limit=1,
+            ledger_path=outside,
+            ledger_base_dir=base,
+            ledger_metadata={
+                "repo": "owner/repo",
+                "pr": 225,
+                "branch": "branch",
+                "head_sha": "abc",
+                "task_id": "claude_bug_pr5a_automation_ledger_base",
+            },
+        )
+
+    ASSERTIONS.assertFalse(outside.exists())
+
+
+def test_automation_ledger_path_rejects_existing_file_base(tmp_path):
+    import pytest
+
+    import scripts.pr_automation_controller as controller
+
+    base = tmp_path / "ledger-file"
+    base.write_text("not-a-directory", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        controller.automation_ledger_path(base, 225)
+
+
+def test_write_automation_ledger_summary_files_rejects_existing_file_base_deterministically(tmp_path):
+    import pytest
+
+    import scripts.pr_automation_controller as controller
+
+    base = tmp_path / "ledger-file"
+    base.write_text("not-a-directory", encoding="utf-8")
+    event = controller.build_automation_ledger_event(
+        "matrix-phase0",
+        repo="owner/repo",
+        pr=225,
+        branch="branch",
+        head_sha="abc",
+        task_id="claude_bug_pr5a_automation_ledger_base",
+        details={"status": "PASS"},
+    )
+    latest = controller.build_automation_ledger_latest([event], retry_limit=2)
+
+    with pytest.raises(ValueError):
+        controller.write_automation_ledger_summary_files(base, latest)
