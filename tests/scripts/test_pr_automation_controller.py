@@ -13231,10 +13231,6 @@ def test_assert_live_action_allowed_raises_when_blocked():
     ASSERTIONS.assertTrue(allowed["allowed"])
 
 def test_append_automation_ledger_event_rejects_raw_path_outside_configured_base(tmp_path):
-    import pytest
-
-    import scripts.pr_automation_controller as controller
-
     base = tmp_path / "ledger"
     base.mkdir()
     outside = tmp_path / "outside" / "pr-225" / "automation-ledger.jsonl"
@@ -13248,15 +13244,13 @@ def test_append_automation_ledger_event_rejects_raw_path_outside_configured_base
         details={"status": "PASS"},
     )
 
-    with pytest.raises(ValueError):
+    with ASSERTIONS.assertRaises(ValueError):
         controller.append_automation_ledger_event(outside, event, base_dir=base)
 
     ASSERTIONS.assertFalse(outside.exists())
 
 
 def test_append_automation_ledger_event_accepts_canonical_path_under_configured_base(tmp_path):
-    import scripts.pr_automation_controller as controller
-
     base = tmp_path / "ledger"
     path = controller.automation_ledger_path(base, 225)
     event = controller.build_automation_ledger_event(
@@ -13276,15 +13270,11 @@ def test_append_automation_ledger_event_accepts_canonical_path_under_configured_
 
 
 def test_decide_post_fix_audit_retry_rejects_raw_ledger_path_outside_configured_base(tmp_path):
-    import pytest
-
-    import scripts.pr_automation_controller as controller
-
     base = tmp_path / "ledger"
     base.mkdir()
     outside = tmp_path / "outside" / "pr-225" / "automation-ledger.jsonl"
 
-    with pytest.raises(ValueError):
+    with ASSERTIONS.assertRaises(ValueError):
         controller.decide_post_fix_audit_retry(
             {"status": "FAIL", "reasons": ["lint failed"]},
             original_task_scope="claude_bug_pr5a_automation_ledger_base",
@@ -13307,22 +13297,14 @@ def test_decide_post_fix_audit_retry_rejects_raw_ledger_path_outside_configured_
 
 
 def test_automation_ledger_path_rejects_existing_file_base(tmp_path):
-    import pytest
-
-    import scripts.pr_automation_controller as controller
-
     base = tmp_path / "ledger-file"
     base.write_text("not-a-directory", encoding="utf-8")
 
-    with pytest.raises(ValueError):
+    with ASSERTIONS.assertRaises(ValueError):
         controller.automation_ledger_path(base, 225)
 
 
 def test_write_automation_ledger_summary_files_rejects_existing_file_base_deterministically(tmp_path):
-    import pytest
-
-    import scripts.pr_automation_controller as controller
-
     base = tmp_path / "ledger-file"
     base.write_text("not-a-directory", encoding="utf-8")
     event = controller.build_automation_ledger_event(
@@ -13336,5 +13318,5 @@ def test_write_automation_ledger_summary_files_rejects_existing_file_base_determ
     )
     latest = controller.build_automation_ledger_latest([event], retry_limit=2)
 
-    with pytest.raises(ValueError):
+    with ASSERTIONS.assertRaises(ValueError):
         controller.write_automation_ledger_summary_files(base, latest)
