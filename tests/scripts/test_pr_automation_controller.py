@@ -1753,15 +1753,16 @@ def test_missing_post_fix_micro_audit_result_fails_closed():
 
 def test_automation_ledger_append_creates_jsonl_and_reads_in_order(tmp_path):
     """Ledger appends events as JSONL and preserves insertion order."""
-    path = controller.automation_ledger_path(str(tmp_path), 225)
+    path = controller.automation_ledger_path(tmp_path, 256)
+    ASSERTIONS.assertEqual(path, tmp_path / "pr-256" / "automation-ledger.jsonl")
     first = controller.build_automation_ledger_event(event_type="post_fix_audit_failure", reason="alpha")
     second = controller.build_automation_ledger_event(event_type="post_fix_audit_failure", reason="beta", attempt=2)
     controller.append_automation_ledger_event(path, first)
     controller.append_automation_ledger_event(path, second)
-    ASSERTIONS.assertTrue((tmp_path / "pr-225" / "automation-ledger.jsonl").exists())
+    ASSERTIONS.assertTrue((tmp_path / "pr-256" / "automation-ledger.jsonl").exists())
     events = controller.read_automation_ledger_events(path)
     ASSERTIONS.assertEqual([item["reason"] for item in events], ["alpha", "beta"])
-    ASSERTIONS.assertEqual(len((tmp_path / "pr-225" / "automation-ledger.jsonl").read_text().splitlines()), 2)
+    ASSERTIONS.assertEqual(len((tmp_path / "pr-256" / "automation-ledger.jsonl").read_text().splitlines()), 2)
 
 
 def test_build_automation_ledger_event_defaults_safe_optionals():
@@ -1786,22 +1787,23 @@ def test_read_automation_ledger_events_missing_or_malformed_safe(tmp_path):
 
 def test_automation_ledger_path_accepts_string_pr_number(tmp_path):
     """String PR numbers should normalize to numeric directories."""
-    path = controller.automation_ledger_path(str(tmp_path), "225")
-    ASSERTIONS.assertEqual(path, str(tmp_path / "pr-225" / "automation-ledger.jsonl"))
+    path = controller.automation_ledger_path(tmp_path, "225")
+    ASSERTIONS.assertEqual(path, tmp_path / "pr-225" / "automation-ledger.jsonl")
 
 
-def test_automation_ledger_path_handles_invalid_pr_number_safely(tmp_path):
-    """None, empty, and invalid PR values should fail-safe to pr-0."""
-    ASSERTIONS.assertIn("/pr-0/", controller.automation_ledger_path(str(tmp_path), ""))
-    ASSERTIONS.assertIn("/pr-0/", controller.automation_ledger_path(str(tmp_path), None))
-    ASSERTIONS.assertIn("/pr-0/", controller.automation_ledger_path(str(tmp_path), "abc"))
-    ASSERTIONS.assertIn("/pr-0/", controller.automation_ledger_path(str(tmp_path), -5))
+def test_automation_ledger_path_rejects_invalid_pr_values(tmp_path):
+    """Unsafe PR values must be default-denied instead of normalized to a path."""
+    invalid_values = ["", " ", "abc", "0", "-1", "1.2", "../1", "1/../2", "/1"]
+    invalid_values += ["C:\\1", "..\\1", "*", "?", "[1]", "pr-*", "25 6", "1\n2"]
+    for value in invalid_values:
+        with ASSERTIONS.assertRaises(ValueError):
+            controller.automation_ledger_path(tmp_path, value)
 
 
 def test_automation_ledger_path_handles_empty_base_dir_safely():
     """Empty base_dir should not crash and should still return a ledger file path."""
     path = controller.automation_ledger_path("", 225)
-    ASSERTIONS.assertTrue(path.endswith("pr-225/automation-ledger.jsonl"))
+    ASSERTIONS.assertTrue(str(path).endswith("pr-225/automation-ledger.jsonl"))
 
 
 def test_build_automation_ledger_event_normalizes_non_dict_details():
@@ -2577,16 +2579,42 @@ def test_build_automation_ledger_latest_sets_churn_detected_and_needs_manual():
 
 def test_write_automation_ledger_summary_files_writes_latest_and_summary(tmp_path):
     """Summary writer should create deterministic latest.json and summary.md files."""
-    latest = controller.build_automation_ledger_latest([_ledger_event("x", pr=225)], retry_limit=2)
-    paths = controller.write_automation_ledger_summary_files(tmp_path / ".autofix" / "ledger", latest)
-    latest_path = tmp_path / ".autofix" / "ledger" / "latest.json"
-    summary_path = tmp_path / ".autofix" / "ledger" / "summary.md"
+    latest = controller.build_automation_ledger_latest(
+        [_ledger_event("x", pr=225, head_sha="abc123", task_id="ledger_layout_alignment")],
+        retry_limit=2,
+    )
+    paths = controller.write_automation_ledger_summary_files(tmp_path, latest)
+    latest_path = tmp_path / "pr-225" / "latest.json"
+    summary_path = tmp_path / "pr-225" / "summary.md"
     ASSERTIONS.assertEqual(paths["latest_json"], str(latest_path))
     ASSERTIONS.assertEqual(paths["summary_md"], str(summary_path))
     ASSERTIONS.assertTrue(latest_path.exists())
     ASSERTIONS.assertTrue(summary_path.exists())
     persisted = json.loads(latest_path.read_text(encoding="utf-8"))
     ASSERTIONS.assertEqual(persisted["next_action"], latest["next_action"])
+    ASSERTIONS.assertEqual(persisted["latest_event_type"], "x")
+    ASSERTIONS.assertEqual(persisted["head_sha"], "abc123")
+    summary = summary_path.read_text(encoding="utf-8")
+    ASSERTIONS.assertIn("# PR #225 Ledger Status:", summary)
+    ASSERTIONS.assertIn("- Next action:", summary)
+    ASSERTIONS.assertIn("- Task ID: ledger_layout_alignment", summary)
+    updated = controller.build_automation_ledger_latest(
+        [_ledger_event("clean_ready", pr=225, head_sha="def456", task_id="ledger_layout_alignment_updated")],
+        retry_limit=2,
+    )
+    controller.write_automation_ledger_summary_files(tmp_path, updated)
+    overwritten = json.loads(latest_path.read_text(encoding="utf-8"))
+    ASSERTIONS.assertEqual(overwritten["head_sha"], "def456")
+    ASSERTIONS.assertNotIn("abc123", summary_path.read_text(encoding="utf-8"))
+
+
+def test_write_automation_ledger_summary_files_fails_when_base_is_file(tmp_path):
+    """A file base path should fail safely through normal pathlib directory creation."""
+    base_file = tmp_path / "ledger-base"
+    base_file.write_text("not a directory", encoding="utf-8")
+    latest = controller.build_automation_ledger_latest([_ledger_event("x", pr=225)], retry_limit=2)
+    with ASSERTIONS.assertRaises(OSError):
+        controller.write_automation_ledger_summary_files(base_file, latest)
 
 
 def test_build_automation_ledger_latest_does_not_expose_env_secrets(monkeypatch):

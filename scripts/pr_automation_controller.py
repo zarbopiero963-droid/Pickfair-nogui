@@ -3735,13 +3735,29 @@ def _normalized_ledger_base_dir(base_dir: Any) -> Path:
 
 
 def _normalized_ledger_pr_number(pr_number: Any) -> int:
-    return safe_nonnegative_int(pr_number, 0)
+    if isinstance(pr_number, bool):
+        raise ValueError("ledger PR number must be a positive decimal integer")
+    raw = str(pr_number if pr_number is not None else "")
+    if not re.fullmatch(r"[1-9][0-9]*", raw):
+        raise ValueError("ledger PR number must be a positive decimal integer")
+    return int(raw)
 
 
-def automation_ledger_path(base_dir: str | Path | None, pr_number: str | int | None) -> str:
+def _ledger_pr_dir(base_dir: str | Path | None, pr_number: str | int | None) -> Path:
     root = _normalized_ledger_base_dir(base_dir)
     pr_value = _normalized_ledger_pr_number(pr_number)
-    return str(root / f"pr-{pr_value}" / "automation-ledger.jsonl")
+    target = root / f"pr-{pr_value}"
+    try:
+        root_resolved = root.resolve(strict=False)
+        target_resolved = target.resolve(strict=False)
+        target_resolved.relative_to(root_resolved)
+    except ValueError as exc:
+        raise ValueError("ledger path must resolve under the ledger base directory") from exc
+    return target
+
+
+def automation_ledger_path(base_dir: str | Path | None, pr_number: str | int | None) -> Path:
+    return _ledger_pr_dir(base_dir, pr_number) / "automation-ledger.jsonl"
 
 
 def _normalized_ledger_details(details: Any) -> dict[str, Any]:
@@ -4084,7 +4100,7 @@ def render_automation_ledger_summary(latest: dict[str, Any]) -> str:
 def write_automation_ledger_summary_files(
     ledger_dir: str | Path, latest: dict[str, Any]
 ) -> dict[str, str]:
-    target_dir = Path(str(ledger_dir or ".")).expanduser()
+    target_dir = _ledger_pr_dir(ledger_dir, latest.get("pr") if isinstance(latest, dict) else None)
     target_dir.mkdir(parents=True, exist_ok=True)
     latest_path = target_dir / "latest.json"
     summary_path = target_dir / "summary.md"
