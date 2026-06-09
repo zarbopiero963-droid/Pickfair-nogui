@@ -956,22 +956,28 @@ def _deepsource_python_failure_check(**extra: Any) -> dict[str, Any]:
 
 
 def _deepsource_advisory_status_context(**extra: Any) -> dict[str, Any]:
-    context: dict[str, Any] = {
+    context = {
         "current_head_sha": "abc",
         "evidence_head_sha": "abc",
         "evidence_present": True,
         "deepsource_advisory_evidence": "Cyclomatic complexity readability advisory",
         "codacy_state": "SUCCESS",
+        "github_codacy_state": "SUCCESS",
         "codacy_annotations_count": 0,
         "unresolved_active": 0,
         "pending_checks": [],
         "pending_checks_count": 0,
         "checks_green": True,
         "deepsource_required_current_head_check_failing": False,
+        "branch_protection_absent": True,
+        "required_checks": [],
+        "required_checks_source": "branch_protection",
+        "required_checks_head_sha": "abc",
+        "deepsource_required": False,
+        "deepsource_blocking": False,
     }
     context.update(extra)
     return context
-
 
 def _stub_deepsource_advisory_pr_view(monkeypatch, advisory_context: dict[str, Any]) -> None:
     monkeypatch.setattr(flow, "pr_view", lambda _repo, _pr: _deepsource_advisory_pr(advisory_context))

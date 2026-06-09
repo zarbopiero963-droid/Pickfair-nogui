@@ -1060,6 +1060,13 @@ def _deepsource_advisory_top_level_context(pr_data: dict[str, Any]) -> dict[str,
         "pending_checks_count",
         "checks_green",
         "deepsource_required_current_head_check_failing",
+        "branch_protection_absent",
+        "branch_protection_api_error",
+        "required_checks",
+        "required_checks_source",
+        "required_checks_head_sha",
+        "deepsource_required",
+        "deepsource_blocking",
     )
     context = {key: pr_data.get(key) for key in keys if key in pr_data}
     return context if _deepsource_has_explicit_advisory_evidence(context) else {}
@@ -1070,8 +1077,8 @@ def _deepsource_has_explicit_advisory_evidence(context: dict[str, Any]) -> bool:
         context.get("evidence_present") is True
         or bool(context.get("deepsource_advisory_evidence"))
         or isinstance(context.get("codacy"), dict)
+        or _required_check_evidence_supplied(context)
     )
-
 
 def _has_supplied_deepsource_advisory_context(pr_data: dict[str, Any]) -> bool:
     return "deepsource_advisory_context" in pr_data
@@ -1318,20 +1325,117 @@ def _deepsource_required_failure_blocking(context: dict[str, Any], current_head_
     )
 
 
+
+def _required_check_evidence_supplied(context: dict[str, Any]) -> bool:
+    return any(
+        key in context
+        for key in (
+            "branch_protection_absent",
+            "branch_protection_api_error",
+            "required_checks",
+            "required_checks_source",
+            "required_checks_head_sha",
+            "required_checks_api_error",
+            "branch_protection",
+            "deepsource_required",
+            "deepsource_blocking",
+        )
+    )
+
+
+def _required_check_evidence_missing(context: dict[str, Any]) -> bool:
+    return not _required_check_evidence_supplied(context)
+
+
+def _required_check_bool_malformed(value: Any) -> bool:
+    return value is not None and not isinstance(value, bool)
+
+
+def _required_check_name(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        return str(value.get("name") or value.get("context") or value.get("check") or "").strip()
+    return ""
+
+
+def _required_check_item_malformed(value: Any) -> bool:
+    if isinstance(value, str):
+        return not bool(value.strip())
+    if not isinstance(value, dict):
+        return True
+    if not _required_check_name(value):
+        return True
+    state = str(value.get("state") or value.get("status") or value.get("conclusion") or "").strip().upper()
+    return bool(state and state not in {"SUCCESS", "COMPLETED"})
+
+
+def _required_checks_malformed_value(required_checks: Any) -> bool:
+    if not isinstance(required_checks, (list, tuple, set)):
+        return True
+    return any(_required_check_item_malformed(item) for item in required_checks)
+
+
+def _required_check_head_mismatch(context: dict[str, Any]) -> bool:
+    evidence_head = str(context.get("required_checks_head_sha") or "").strip()
+    if not evidence_head:
+        return False
+    current_head = str(context.get("current_head_sha") or context.get("headRefOid") or "").strip()
+    return not current_head or evidence_head != current_head
+
+
+def _branch_protection_absent_conflicts(context: dict[str, Any]) -> bool:
+    required_checks = context.get("required_checks")
+    return context.get("branch_protection_absent") is True and isinstance(
+        required_checks, (list, tuple, set)
+    ) and bool(required_checks)
+
+
+def _required_check_contract_malformed(context: dict[str, Any]) -> bool:
+    if _required_check_bool_malformed(context.get("branch_protection_absent")):
+        return True
+    if _required_check_bool_malformed(context.get("deepsource_required")):
+        return True
+    if _required_check_bool_malformed(context.get("deepsource_blocking")):
+        return True
+    if _required_check_bool_malformed(context.get("deepsource_required_current_head_check_failing")):
+        return True
+    if context.get("branch_protection_api_error") or context.get("required_checks_api_error"):
+        return True
+    if "required_checks" in context and _required_checks_malformed_value(context.get("required_checks")):
+        return True
+    if _branch_protection_absent_conflicts(context):
+        return True
+    return _required_check_head_mismatch(context)
+
+
+def _branch_protection_absent_excludes_deepsource_python(context: dict[str, Any]) -> bool:
+    required_checks = context.get("required_checks")
+    return (
+        context.get("branch_protection_absent") is True
+        and isinstance(required_checks, (list, tuple, set))
+        and not required_checks
+    )
+
 def _deepsource_affirmative_nonrequired_evidence(context: dict[str, Any]) -> bool:
+    if _required_check_evidence_missing(context) or _required_check_contract_malformed(context):
+        return False
+    if context.get("deepsource_required") is False and context.get("deepsource_blocking") is False:
+        return True
     if _required_checks_exclude_deepsource_python(context):
         return True
+    if _branch_protection_absent_excludes_deepsource_python(context):
+        return True
     return _branch_protection_excludes_deepsource_python(context)
-
 
 def _required_checks_exclude_deepsource_python(context: dict[str, Any]) -> bool:
     required_checks = context.get("required_checks")
     return (
         "required_checks" in context
         and isinstance(required_checks, (list, tuple, set))
+        and not _required_checks_malformed_value(required_checks)
         and not _required_names_include_deepsource_python(required_checks)
     )
-
 
 def _branch_protection_excludes_deepsource_python(context: dict[str, Any]) -> bool:
     for key in ("branchProtectionRule", "branch_protection", "branchProtection"):
@@ -1381,10 +1485,11 @@ def _deepsource_live_rollup_checks(context: dict[str, Any]) -> list[dict[str, An
 def _deepsource_required_evidence_indicates_required(context: dict[str, Any]) -> bool:
     if context.get("deepsource_required") is True or context.get("deepsource_blocking") is True:
         return True
+    if context.get("deepsource_required_current_head_check_failing") is True:
+        return True
     return _required_names_include_deepsource_python(
         context.get("required_checks")
     ) or _required_names_include_deepsource_python(_branch_protection_required_names(context))
-
 
 def _required_names_include_deepsource_python(required_checks: Any) -> bool:
     if not isinstance(required_checks, (list, tuple, set)):
@@ -1408,10 +1513,13 @@ def _branch_protection_required_names(context: dict[str, Any]) -> list[Any]:
 
 
 def _deepsource_required_evidence_ambiguous(context: dict[str, Any]) -> bool:
+    if _required_check_evidence_missing(context):
+        return True
+    if _required_check_contract_malformed(context):
+        return True
     if _deepsource_required_list_evidence_ambiguous(context):
         return True
     return _deepsource_branch_protection_evidence_ambiguous(context)
-
 
 def _deepsource_required_list_evidence_ambiguous(context: dict[str, Any]) -> bool:
     return any(
@@ -1501,6 +1609,10 @@ def _deepsource_required_check_reason(context: dict[str, Any]) -> str:
     current_head_sha = str(context.get("current_head_sha") or "").strip()
     if context.get("deepsource_required_current_head_check_failing") is not False:
         return "missing_required_deepsource_evidence"
+    if _deepsource_required_evidence_ambiguous(context):
+        return "required_check_evidence_not_clear"
+    if _deepsource_required_evidence_indicates_required(context):
+        return "required_deepsource_check_failing"
     if controller.deepsource_required_current_head_check_failing(context, current_head_sha):
         return "required_deepsource_check_failing"
     return ""
