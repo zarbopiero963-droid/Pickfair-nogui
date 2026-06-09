@@ -13320,3 +13320,48 @@ def test_write_automation_ledger_summary_files_rejects_existing_file_base_determ
 
     with ASSERTIONS.assertRaises(ValueError):
         controller.write_automation_ledger_summary_files(base, latest)
+
+def test_read_automation_ledger_events_rejects_raw_path_outside_configured_base(tmp_path):
+    base = tmp_path / "ledger"
+    base.mkdir()
+    outside = tmp_path / "outside" / "pr-225" / "automation-ledger.jsonl"
+    outside.parent.mkdir(parents=True)
+    outside.write_text('{"event_type":"outside","pr":225}\n', encoding="utf-8")
+
+    with ASSERTIONS.assertRaises(ValueError):
+        controller.read_automation_ledger_events(outside, base_dir=base)
+
+
+def test_read_automation_ledger_events_rejects_symlinked_leaf_with_configured_base(tmp_path):
+    import json
+
+    base = tmp_path / "ledger"
+    pr_dir = base / "pr-225"
+    pr_dir.mkdir(parents=True)
+    outside = tmp_path / "outside.jsonl"
+    outside.write_text(
+        json.dumps(
+            {
+                "event_type": "outside",
+                "repo": "owner/repo",
+                "pr": 225,
+                "branch": "branch",
+                "head_sha": "abc",
+                "task_id": "claude_bug_pr5a_automation_ledger_base",
+                "attempt": 0,
+                "next_action": "outside",
+                "reason": "outside",
+                "created_at": "2026-06-09T00:00:00Z",
+                "details": {"source": "outside"},
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    target = pr_dir / "automation-ledger.jsonl"
+    target.symlink_to(outside)
+
+    with ASSERTIONS.assertRaises(ValueError):
+        controller.read_automation_ledger_events(target, base_dir=base)

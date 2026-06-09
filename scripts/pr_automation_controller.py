@@ -3913,6 +3913,8 @@ def read_automation_ledger_events(
     target = Path(str(path or "")).expanduser()
     if base_dir is not None:
         _validate_automation_ledger_append_path(target, base_dir=base_dir)
+        _reject_ledger_parent_symlink(target)
+        _reject_ledger_symlink(target)
     if not target.is_file():
         return []
     try:
