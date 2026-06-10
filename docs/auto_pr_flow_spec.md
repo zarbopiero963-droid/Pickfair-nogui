@@ -30,6 +30,13 @@ TASK_MARKER=[TASK: claude_bug_pr8e_required_check_evidence_integration]
 
 Capisce se il task è valido, se ha marker corretto, branch previsto, file ammessi e file vietati. Se manca il task key o il task spec è malformato, si ferma fail-closed. Il task spec minimo è richiesto dall'orchestrator.
 
+Nota di scope: la validazione formale del task spec (questo step) si applica
+ai task di automazione con TASK_MARKER. Il lavoro PR richiesto direttamente
+dall'owner senza marker segue comunque il resto del flusso (preflight,
+Matrix Phase 0 se safety-critical, micro-audit, gate su push/resolve) ma
+senza validazione formale dello spec — coerente con CLAUDE.md e AGENTS.md,
+che ammettono task da prompt diretto, commenti GitHub e handoff.
+
 Output interno:
 
 ```
