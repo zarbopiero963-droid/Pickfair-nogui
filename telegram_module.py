@@ -316,7 +316,7 @@ class _PatternDialog(_CTK_TOPLEVEL_BASE):
             text_color=COLORS["text_primary"],
         ).pack(side=tk.LEFT)
 
-        # Filtri Score e Priority (minuti rimossi — live/prematch gestisce il contesto)
+        # Filtri numerici (opzionali — vuoto = nessun filtro)
         filters = ctk.CTkFrame(outer, fg_color="transparent")
         filters.grid(row=10, column=0, columnspan=2, sticky="w", padx=10, pady=(8, 0))
 
@@ -327,9 +327,17 @@ class _PatternDialog(_CTK_TOPLEVEL_BASE):
             return ctk.CTkEntry(parent, textvariable=var, width=w,
                                 fg_color=COLORS["bg_card"], border_color=COLORS["border"])
 
-        self._min_sc_var = tk.StringVar(value="" if c.get("min_score") is None else str(c["min_score"]))
-        self._max_sc_var = tk.StringVar(value="" if c.get("max_score") is None else str(c["max_score"]))
-        self._prio_var   = tk.StringVar(value=str(c.get("priority", 100)))
+        self._min_min_var = tk.StringVar(value="" if c.get("min_minute") is None else str(c["min_minute"]))
+        self._max_min_var = tk.StringVar(value="" if c.get("max_minute") is None else str(c["max_minute"]))
+        self._min_sc_var  = tk.StringVar(value="" if c.get("min_score")  is None else str(c["min_score"]))
+        self._max_sc_var  = tk.StringVar(value="" if c.get("max_score")  is None else str(c["max_score"]))
+        self._prio_var    = tk.StringVar(value=str(c.get("priority", 100)))
+
+        _lbl("Minuti (opz.):").pack(side=tk.LEFT)
+        _lbl("da").pack(side=tk.LEFT, padx=(4, 2))
+        _num_entry(self._min_min_var).pack(side=tk.LEFT, padx=(0, 4))
+        _lbl("a").pack(side=tk.LEFT, padx=(0, 2))
+        _num_entry(self._max_min_var).pack(side=tk.LEFT, padx=(0, 16))
 
         _lbl("Score (opz.):").pack(side=tk.LEFT)
         _lbl("da").pack(side=tk.LEFT, padx=(4, 2))
@@ -496,8 +504,8 @@ class _PatternDialog(_CTK_TOPLEVEL_BASE):
             "live_only":          self._live_var.get(),
             "prematch":           self._prematch_var.get(),
             "enabled":            self._active_var.get(),
-            "min_minute":         None,
-            "max_minute":         None,
+            "min_minute":         self._parse_int_opt(self._min_min_var),
+            "max_minute":         self._parse_int_opt(self._max_min_var),
             "min_score":          self._parse_int_opt(self._min_sc_var),
             "max_score":          self._parse_int_opt(self._max_sc_var),
             "priority":           self._parse_int_opt(self._prio_var) or 100,
@@ -1151,7 +1159,6 @@ class TelegramModule:
 
         for rule in rules:
             state = "Sì" if rule.get("enabled") else "No"
-            live_txt = "LIVE" if rule.get("live_only") else ("Pre" if rule.get("prematch") else "-")
             self.rules_tree.insert(
                 "",
                 tk.END,
@@ -1159,13 +1166,13 @@ class TelegramModule:
                 values=(
                     state,
                     rule.get("label", ""),
-                    _MARKET_CODE_TO_LABEL.get(rule.get("market_type", ""), rule.get("market_type", "")),
+                    rule.get("market_type", "MATCH_ODDS"),
                     rule.get("bet_side", ""),
                     rule.get("selection_template", ""),
+                    self._minute_range_text(rule),
                     self._score_range_text(rule),
-                    live_txt,
+                    "Sì" if rule.get("live_only") else "No",
                     rule.get("priority", 100),
-                    rule.get("keyword", ""),
                     rule.get("pattern", ""),
                 ),
             )
