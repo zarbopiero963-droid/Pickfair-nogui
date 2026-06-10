@@ -23,9 +23,10 @@ REGOLE NON NEGOZIABILI (valgono sempre):
   Phase 0 assente o NEEDS_MANUAL => non patchare.
 - Patch strette: solo bug reali, riproducibili, current-head,
   o required blockers. Mai "fix everything".
-- Rispetta files_allowed / files_forbidden. MAI toccare:
+- Rispetta files_allowed / files_forbidden. Di default MAI toccare:
   .github/workflows/*, core/*, services/*, secrets, runtime
-  trading, Betfair, Telegram live. Violazione => FAILED.
+  trading, Betfair, Telegram live — SALVO che il task spec li
+  includa esplicitamente in files_allowed. Violazione => FAILED.
 - Micro-audit post-fix obbligatorio PRIMA di test/commit/push.
 - NESSUN push, resolve, rerun o merge di default. Ogni azione
   esterna richiede la flag esplicita (AUTO_PUSH_ENABLED,
