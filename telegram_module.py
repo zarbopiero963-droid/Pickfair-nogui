@@ -34,11 +34,11 @@ except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
     messagebox = _MessageBoxFallback()
     simpledialog = _SimpleDialogFallback()
 
-from theme import COLORS
-from services.telegram_signal_processor import TelegramSignalProcessor
-from services.telegram_bet_resolver import TelegramBetResolver
-from telegram_sanitizer import sanitize_telegram_payload as _sanitize_telegram_payload
 from observability.sanitizers import sanitize_dict
+from services.telegram_bet_resolver import TelegramBetResolver
+from services.telegram_signal_processor import TelegramSignalProcessor
+from telegram_sanitizer import sanitize_telegram_payload as _sanitize_telegram_payload
+from theme import COLORS
 
 logger = logging.getLogger(__name__)
 

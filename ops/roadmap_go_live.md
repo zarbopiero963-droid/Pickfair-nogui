@@ -50,9 +50,9 @@
 
 | Task | Descrizione | Note |
 |---|---|---|
-| 0.1 | Ambiente riproducibile: venv + `requirements-lock.txt` + pytest installato; doc ambiente CI/audit | Senza questo nessuna evidence è producibile (UFA-001 valido) |
-| 0.2 | Fix issue test: rename file duplicati (`test_betfair_client_failures.py`, `test_trading_engine.py`), fix `FakeBatchManager.get_open_batches()` | Sblocca la baseline verde (B9) |
-| 0.3 | Lint baseline live-critical: 38 errori ruff, 22 auto-fixabili | Cosmetico, mezz'ora (UFA-003) |
+| 0.1 ✅ | Ambiente riproducibile: `bash scripts/setup_dev_env.sh` (venv dedicato; il setuptools Debian rompe la build di pyaes) | Fatto 2026-06-10 |
+| 0.2 ✅ | Issue test: verificate già risolte su main (file rinominati in passato, FakeBatchManager 7/7 pass); doc in `issues/` aggiornati | Baseline: **3057 passed, 0 failed** |
+| 0.3 ✅ | Lint baseline live-critical: 38 errori ruff azzerati (incl. bug latente `Set` non importato in `trading_engine.py`); import canonico `order_manager` protetto con `# isort: off` per il guardrail architetturale | Fatto 2026-06-10 |
 | 0.4 | Rebase/merge del branch copy-trading su main aggiornato | Attenzione: `telegram_module.py` +600 righe, ~80 PR di distanza |
 
 ## FASE 1 — Blocker live (3–4 giorni)

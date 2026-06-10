@@ -12,9 +12,9 @@ from core.market_tracker import MarketTracker
 from core.money_management import RoserpinaMoneyManagement
 from core.reconciliation_engine import ReconciliationEngine
 from core.risk_desk import RiskDesk
+from core.safety_layer import assert_live_gate_or_refuse
 from core.system_state import DeskMode, RuntimeMode
 from core.table_manager import TableManager
-from core.safety_layer import assert_live_gate_or_refuse
 from core.type_helpers import safe_bool
 from order_manager import TERMINAL_LIFECYCLE_EVENTS
 from services.streaming_feed import StreamingConfigError, StreamingFeed
