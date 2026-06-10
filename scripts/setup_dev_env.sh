@@ -14,7 +14,7 @@ cd "$(dirname "$0")/.."
 PYTHON="${PYTHON:-python3}"
 VENV_DIR="${VENV_DIR:-.venv}"
 
-"$PYTHON" -m venv "$VENV_DIR"
+"$PYTHON" -m venv --clear "$VENV_DIR"
 "$VENV_DIR/bin/pip" install --quiet --upgrade pip setuptools wheel
 "$VENV_DIR/bin/pip" install --quiet -r requirements.txt -r requirements-test.txt
 

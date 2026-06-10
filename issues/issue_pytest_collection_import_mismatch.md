@@ -48,6 +48,7 @@ Pick one consistent strategy:
 ## Status: RESOLVED (2026-06-10)
 
 Verifica su main corrente (post #259):
+
 - `tests/unit/test_betfair_client_failures.py` e `tests/unit/test_trading_engine.py`
   non esistono più (rinominati in passato, es. `tests/unit/test_trading_engine_unit.py`).
 - `pytest --collect-only -q` in ambiente venv pulito: **3057 test raccolti, 0 errori**.
