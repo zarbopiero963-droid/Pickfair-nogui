@@ -4,6 +4,7 @@
 
 Segui la macchina a stati definita in docs/auto_pr_flow_spec.md
 per QUALSIASI task che:
+
 - modifica codice destinato a una PR (con o senza TASK_MARKER)
 - tocca scripts/pr_*.py o i relativi test
 - richiede commit, push, resolve thread o valutazione merge readiness
@@ -16,6 +17,7 @@ validazione formale del task spec (step 1 INIT). Marker
 mancante o spec malformato => fermati fail-closed.
 
 REGOLE NON NEGOZIABILI (valgono sempre):
+
 - Fail-closed: evidence mancante, ambigua o contraddittoria
   => AUTO_PR_FLOW_STATUS=NEEDS_MANUAL. Non inventare, non forzare.
 - Lavora SOLO sul current head della PR. Head mismatch => NEEDS_MANUAL.

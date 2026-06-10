@@ -83,7 +83,7 @@
 | 3.3 | Topic `RECONCILE_NOW`/`RECOVER_PENDING`: collegare handler reali o rinominarli (UFA-014) |
 | 3.4 | Decisione esplicita su cifratura `username` (UFA-004, parte valida) |
 | 3.5 | Backup DB automatizzato: cron + `scripts/db_restore_validate.py` (B10) |
-| 3.6 | Enforcement dei nuovi item del gate micro-stake (`cashout_mirror_verified_or_copy_trading_disabled`, `simulated_payload_guard_active`) in `LIVE_MICRO_REQUIRED_CHECKS` (`scripts/live_gate.py:16`) + test |
+| 3.6 | ~~Enforcement dei nuovi item del gate micro-stake in `LIVE_MICRO_REQUIRED_CHECKS`~~ — già fatto in questa PR (`scripts/live_gate.py` + test aggiornati) |
 
 ## FASE 4 — Deploy su VPS Windows (2 giorni)
 

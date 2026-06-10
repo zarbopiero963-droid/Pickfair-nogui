@@ -50,6 +50,8 @@ def test_live_micro_pass_with_all_required_evidence(tmp_path: Path) -> None:
             "- [x] paper_results_reviewed",
             "- [x] max_stake_approved",
             "- [x] kill_switch_confirmed",
+            "- [x] cashout_mirror_verified_or_copy_trading_disabled",
+            "- [x] simulated_payload_guard_active",
         ]),
         encoding="utf-8",
     )
@@ -69,6 +71,8 @@ def test_live_micro_fail_when_required_evidence_missing(tmp_path: Path) -> None:
     assert result["status"] == "FAIL"
     assert "rollback_passed" in result["missing_checks"]
     assert "kill_switch_confirmed" in result["missing_checks"]
+    assert "cashout_mirror_verified_or_copy_trading_disabled" in result["missing_checks"]
+    assert "simulated_payload_guard_active" in result["missing_checks"]
 
 
 def test_live_gate_main_writes_machine_readable_report(tmp_path: Path) -> None:
