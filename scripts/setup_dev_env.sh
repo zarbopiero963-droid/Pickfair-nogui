@@ -16,7 +16,10 @@ VENV_DIR="${VENV_DIR:-.venv}"
 
 "$PYTHON" -m venv --clear "$VENV_DIR"
 "$VENV_DIR/bin/pip" install --quiet --upgrade pip setuptools wheel
-"$VENV_DIR/bin/pip" install --quiet -r requirements.txt -r requirements-test.txt
+# Il lock file vincola le versioni: ambiente riproducibile, non flottante.
+"$VENV_DIR/bin/pip" install --quiet \
+  -r requirements.txt -r requirements-test.txt \
+  -c requirements-lock.txt
 
 "$VENV_DIR/bin/python" - <<'PY'
 import importlib.util as u
