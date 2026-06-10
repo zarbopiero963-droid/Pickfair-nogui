@@ -215,7 +215,6 @@ class _PatternDialog(_CTK_TOPLEVEL_BASE):
     # ----------------------------------------------------------
     def _build(self):
         c = self._current
-        pad = {"padx": 10, "pady": 4}
 
         outer = ctk.CTkFrame(self, fg_color=COLORS["bg_panel"], corner_radius=10)
         outer.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)

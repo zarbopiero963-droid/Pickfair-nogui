@@ -53,7 +53,7 @@
 | 0.1 ✅ | Ambiente riproducibile: `bash scripts/setup_dev_env.sh` (venv dedicato; il setuptools Debian rompe la build di pyaes) | Fatto 2026-06-10 |
 | 0.2 ✅ | Issue di test: verificate già risolte su main (file rinominati in passato, FakeBatchManager 7/7 pass); doc in `issues/` aggiornati | Baseline: **3057 passed, 0 failed** |
 | 0.3 ✅ | Lint baseline live-critical: ruff a zero sui file in scope, incl. fix del bug latente `Set` in `trading_engine.py` | Import canonico protetto con `# isort: off` (guardrail); `order_manager.py` rinviato per overlap con PR #224 |
-| 0.4 | Rebase/merge del branch copy-trading su main aggiornato | Attenzione: `telegram_module.py` +600 righe, ~80 PR di distanza |
+| 0.4 ✅ | Rebase del branch copy-trading su main: 5 commit cherry-pickati (form pattern modale, parola chiave, tutti i mercati Betfair, stake fisso/MM auto/pre-match per pattern, fix estrattori, E2E Telegram reali + workflow CI) | Import `customtkinter` reso guarded per compatibilità headless; suite 3057 passed + 7 E2E skipped senza secrets |
 
 ## FASE 1 — Blocker live (3–4 giorni)
 

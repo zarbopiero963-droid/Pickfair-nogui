@@ -21,7 +21,6 @@ from __future__ import annotations
 import asyncio
 import os
 import sqlite3
-import time
 import uuid
 
 import pytest
@@ -356,8 +355,8 @@ async def test_master_follower_full_flow():
     2. Listener Telethon (follower) lo riceve
     3. Il parser produce un payload con market_id e selection_id pronti per il broker
     """
-    from telegram_listener import TelegramListener
     from services.telegram_signal_processor import TelegramSignalProcessor
+    from telegram_listener import TelegramListener
 
     listener = TelegramListener(
         api_id=int(TG_API_ID),
