@@ -33,6 +33,10 @@ REGOLE NON NEGOZIABILI (valgono sempre):
 - NESSUN push, resolve, rerun o merge di default. Ogni azione
   esterna richiede la flag esplicita (AUTO_PUSH_ENABLED,
   AUTO_RESOLVE_ENABLED, AUTO_RERUN_ENABLED) E tutti i gate passati.
+  Eccezione: la richiesta esplicita dell'owner (prompt diretto,
+  handoff, riparazione della PR corrente) vale come autorizzazione
+  al push/resolve sulla PR in lavorazione; le flag restano
+  obbligatorie per l'automazione non presidiata.
 - AUTO_MERGE_ENABLED=false sempre: il merge è manuale dell'owner.
 - DeepSource è advisory di default: patcha solo se è required
   failing current-head o dimostra bug reale/safety/fail-open.
