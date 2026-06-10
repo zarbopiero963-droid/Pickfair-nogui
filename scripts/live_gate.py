@@ -25,6 +25,8 @@ LIVE_MICRO_REQUIRED_CHECKS = (
     "paper_results_reviewed",
     "max_stake_approved",
     "kill_switch_confirmed",
+    "cashout_mirror_verified_or_copy_trading_disabled",
+    "simulated_payload_guard_active",
 )
 
 
