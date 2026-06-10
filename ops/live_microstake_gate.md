@@ -16,3 +16,5 @@ It does not activate runtime, submit orders, close/cashout positions, or perform
 - [ ] paper_results_reviewed
 - [ ] max_stake_approved
 - [ ] kill_switch_confirmed
+- [ ] cashout_mirror_verified_or_copy_trading_disabled
+- [ ] simulated_payload_guard_active

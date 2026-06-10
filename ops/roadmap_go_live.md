@@ -9,6 +9,7 @@
 ## Stato di partenza (verificato)
 
 **Solido in `main`:**
+
 - Esecuzione live Betfair completa: `placeOrders` JSON-RPC reale, login con certificati,
   gate fail-closed SIMULATION/LIVE (`core/safety_layer.py:91`), cancel orders.
 - Deploy gate LIVE con blocker reali (`core/runtime_controller.py:771-851`), incluso:
@@ -22,19 +23,21 @@
 - Parser follower multi-formato + resolver con best-price dal book live (percorso resolver).
 
 **Sul branch `claude/test-copy-trading-features-EgIvQ` (NON mergiato, base ~80 PR indietro):**
+
 - Form pattern modale unico; parola chiave (keyword/regex/entrambi); dropdown con tutti
   i mercati Betfair; pattern predefiniti; stake fisso / MM auto / pre-match per pattern;
   fix estrattori per messaggi senza emoji; 7 test E2E con Telegram reale + workflow CI
   (`telegram-live-integration.yml`, cron + manuale, skip senza secrets).
 
 **Blocker confermati (tutte le fonti concordano):**
+
 | # | Blocker | Evidenza |
 |---|---|---|
 | B1 | Listener Telegram = stub, nessuna connessione reale | `telegram_listener.py:83-90` (stub anche sul branch) |
 | B2 | Keepalive sessione betting assente (scade ~20 min) | keepalive solo su streaming (`streaming_feed.py:246`) |
 | B3 | `get_current_orders`/`listCurrentOrders` mancanti nel client live | chiamati da `reconciliation_engine.py:644,1898` |
 | B4 | Daily-loss breach allerta ma non ferma | `test_..._is_alerted_and_does_not_force_stop` |
-| B5 | Cashout mirror rotto in 3 punti | nessun publisher `CASHOUT_SUCCESS`, nessun routing, nessun executor `CMD_EXECUTE_CASHOUT` |
+| B5 | Cashout mirror incompleto: manca publisher `CASHOUT_SUCCESS`, manca routing segnale→`REQ_EXECUTE_CASHOUT`, manca executor `CMD_EXECUTE_CASHOUT` | il bus REQ→CMD esiste già (`core/risk_middleware.py:41,243`) |
 | B6 | Best price NON sul percorso DIRECT (copy) | `telegram_signal_processor.py:262`; flag `use_best_price` morto |
 | B7 | Stake master non trasmesso; MM sovrascrive sempre lo stake | `telegram_sender.py:47-57`; `runtime_controller.py:1410` |
 | B8 | `replace_orders` chiamato ma inesistente; niente `sizeReduction` | `order_manager.py:842`; `betfair_client.py:552` |
@@ -66,7 +69,7 @@
 
 | Task | Descrizione | Note |
 |---|---|---|
-| 2.1 | **Cashout mirror**: pubblicare `CASHOUT_SUCCESS` dove il cashout viene eseguito; instradare `signal_type` CASHOUT/CASHOUT_ALL → `REQ_EXECUTE_CASHOUT`; executor per `CMD_EXECUTE_CASHOUT` (matematica già pronta in `pnl_engine`/`dutching`) | Senza questo il copy parziale è più pericoloso di nessun copy (B5) |
+| 2.1 | **Cashout mirror**, 3 pezzi: publisher `CASHOUT_SUCCESS` all'esecuzione; routing `signal_type` CASHOUT → `REQ_EXECUTE_CASHOUT`; executor per `CMD_EXECUTE_CASHOUT`. Bus REQ→CMD e matematica (`pnl_engine`, `dutching`) già pronti | Senza questo il copy parziale è più pericoloso di nessun copy (B5) |
 | 2.2 | **Best price su percorso DIRECT**: rilettura book per i MASTER SIGNAL (riuso logica resolver) + tolleranza massima di deviazione configurabile + gestione ordini non matchati (TTL/cancel) | B6 |
 | 2.3 | **Stake mode**: aggiungere `master_stake` al messaggio broadcast; selettore FISSO / 100% MASTER / MM nelle impostazioni; runtime che rispetta il mode (MM continua a validare i limiti di esposizione) | B7 |
 | 2.4 | **Micro-stake**: `sizeReduction` su cancel + orchestrazione (piazza a quota non abbinabile → riduci → replace quota) + regola payout-minimo per saltare il trucco a quote alte | ⚠️ uso sistematico sotto-minimo = violazione T&C Betfair; usare solo per fase validazione/green-up |
@@ -80,6 +83,7 @@
 | 3.3 | Topic `RECONCILE_NOW`/`RECOVER_PENDING`: collegare handler reali o rinominarli (UFA-014) |
 | 3.4 | Decisione esplicita su cifratura `username` (UFA-004, parte valida) |
 | 3.5 | Backup DB automatizzato: cron + `scripts/db_restore_validate.py` (B10) |
+| 3.6 | Enforcement dei nuovi item del gate micro-stake (`cashout_mirror_verified_or_copy_trading_disabled`, `simulated_payload_guard_active`) in `LIVE_MICRO_REQUIRED_CHECKS` (`scripts/live_gate.py:16`) + test |
 
 ## FASE 4 — Deploy su VPS Windows (2 giorni)
 
@@ -90,13 +94,13 @@
 
 | Task | Descrizione |
 |---|---|
-| 4.1 | Aggiungere `customtkinter` ai requirements (oggi importata dalla GUI ma non dichiarata) |
+| 4.1 | Dichiarare `customtkinter` in un `requirements-gui.txt` dedicato (oggi importata dalla GUI ma non dichiarata; tenerla fuori dai requirements core) |
 | 4.2 | Packaging PyInstaller: `Pickfair.exe` (GUI) + modalità headless avviabile come servizio |
-| 4.3 | Servizio Windows via NSSM (o Task Scheduler all'avvio) con riavvio automatico, equivalente di systemd `Restart=always` |
-| 4.4 | Protezione chiave su Windows: preferire `PICKFAIR_SECRET_KEY` come variabile d'ambiente (il `chmod 0600` di `~/.pickfair/db.key` è quasi no-op su NTFS; in alternativa ACL) |
+| 4.3 | Servizio Windows via NSSM (o Task Scheduler all'avvio) con riavvio automatico, equivalente di systemd `Restart=always`; variabili d'ambiente del servizio configurate via `nssm set <servizio> AppEnvironmentExtra` |
+| 4.4 | Protezione chiave su Windows: preferire ACL NTFS su directory dedicata (`icacls`); in alternativa `PICKFAIR_SECRET_KEY` come variabile d'ambiente, sapendo che è leggibile da ogni processo dello stesso utente (il `chmod 0600` di `~/.pickfair/db.key` è quasi no-op su NTFS) |
 | 4.5 | Hardening VPS: sospensione disattivata, Windows Update con orari attivi + riavvio programmato seguito da auto-start dell'app |
 | 4.6 | Credenziali nel DB: Betfair live (app key attivata, certificato registrato sull'account) e Telegram (api_id/api_hash/session) |
-| 4.7 | Esecuzione completa della suite test su Windows (SQLite WAL e path sono cross-platform, ma va provato almeno una volta; nota: handler SIGTERM in `headless_main.py:804` non viene consegnato su Windows — verificare lo shutdown pulito via servizio) |
+| 4.7 | Suite test eseguita su Windows + shutdown pulito via servizio: mappare l'handler di `headless_main.py:804` su SIGINT/SIGBREAK, perché SIGTERM non viene consegnato su Windows |
 | 4.8 | Evidence leggera: script che genera artifact di readiness (commit, env, esito test, config hard-stop) + checklist firmata — versione snella di UFA-010/011 |
 
 ## FASE 5 — Validazione progressiva (calendario, bot autonomo)
@@ -104,7 +108,7 @@
 | Step | Durata | Uscita |
 |---|---|---|
 | 5.1 Paper compresso: SIMULATION con canale segnali reale | 2–3 giorni | N segnali reali parsati/risolti correttamente → spunta `ops/paper_trading_gate.md` |
-| 5.2 Micro-stake live: stake minimo, hard-stop giornaliero basso, `auto_bet` attivo | 1–2 settimane | riconciliazione pulita, zero incidenti → spunta `ops/live_microstake_gate.md` |
+| 5.2 Micro-stake live: stake minimo, hard-stop giornaliero basso, `auto_bet` attivo | fino a ~20–30 scommesse validate (max 2 settimane); il minimo di transazioni necessario, NON una durata fissa — l'uso prolungato del sotto-minimo aumenta il rischio di flag sull'account | riconciliazione pulita, zero incidenti → spunta `ops/live_microstake_gate.md` |
 | 5.3 Ramp-up: alzare gradualmente i limiti MM | — | operatività a regime |
 
 ## Backlog (non bloccante)
@@ -130,6 +134,8 @@
 | Validazione (Fase 5) | 2–3 settimane calendario (bot autonomo, supervisione log) |
 | Primo euro reale (micro-stake) | possibile a fine Fase 4 + step 5.1 |
 
-**Regola non negoziabile**: l'`auto_bet` senza supervisione si attiva solo dopo 1.4
-(daily-loss → kill switch) e dopo lo step 5.1. È ciò che trasforma un bug del parser
-da catastrofe a perdita contenuta.
+**Regola non negoziabile**: l'`auto_bet` senza supervisione si attiva solo con TUTTE
+le Fasi 0–4 completate — in particolare cashout mirror (B5/2.1), guard anti-payload-simulato
+(3.1) e daily-loss → kill switch (1.4) — e dopo lo step 5.1. Soddisfare solo una parte
+dei prerequisiti NON autorizza l'operatività non supervisionata. È ciò che trasforma
+un bug del parser da catastrofe a perdita contenuta.

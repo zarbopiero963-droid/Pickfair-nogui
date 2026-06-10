@@ -122,6 +122,7 @@ REASON=required_check_evidence_missing_or_ambiguous
 Quindi il comportamento sarà:
 
 PASS:
+
 - branch_protection_absent=true
 - required_checks=[]
 - DeepSource failure non-required
@@ -130,6 +131,7 @@ PASS:
 - => non bloccare
 
 BLOCK:
+
 - branch protection API errore
 - required_checks malformati
 - DeepSource required=true
@@ -162,11 +164,13 @@ e deve includere file ispezionati, moduli autoritativi, dangerous gates, file am
 Per esempio su questo task capirà:
 
 authoritative modules:
+
 - scripts/pr_merge_readiness.py
 - scripts/pr_flow_automation.py
 - scripts/pr_automation_controller.py
 
 dangerous gates:
+
 - required checks
 - DeepSource required/advisory
 - branch protection absent
@@ -458,6 +462,12 @@ Se incontra stesso errore ripetuto, churn o retry budget esaurito:
 AUTO_PR_FLOW_STATUS=NEEDS_MANUAL
 REASON=patch_required_loop_stopped
 ```
+
+Retry budget: massimo 3 iterazioni del fix loop per PR. Il conteggio è
+per-PR e cumulativo (non si resetta su progresso parziale), in linea con
+il cap di 3 tentativi auto-fix per PR definito in AGENTS.md. Una nuova
+iterazione si conta a ogni passaggio patch→push innescato da
+PATCH_REQUIRED sulla stessa PR.
 
 ---
 
