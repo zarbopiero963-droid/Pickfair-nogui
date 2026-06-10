@@ -45,3 +45,14 @@ REGOLE NON NEGOZIABILI (valgono sempre):
 
 NON serve il flusso per: domande, spiegazioni, analisi read-only,
 lavoro che non tocca codice PR.
+
+## HARD VERIFY (OBBLIGATORIO)
+
+Prima di dichiarare un task/PR "implementato" o "pronto per il merge",
+applica la verifica a strati definita in docs/hard_verify_spec.md:
+contratto del task, current-head, static audit nei file autoritativi,
+test PASS e BLOCK, py_compile, pytest mirato, wiring nel flusso finale,
+scope pulito, fail-closed. Il report finale DEVE includere una delle
+etichette: MISSING, PARTIAL, IMPLEMENTED_WITH_NOTE, FULLY_IMPLEMENTED,
+MERGED_BUT_NOT_FULLY_AUTOMATED. "PR merged" da sola non è prova di
+implementazione.
