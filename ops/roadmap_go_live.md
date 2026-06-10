@@ -81,12 +81,23 @@
 | 3.4 | Decisione esplicita su cifratura `username` (UFA-004, parte valida) |
 | 3.5 | Backup DB automatizzato: cron + `scripts/db_restore_validate.py` (B10) |
 
-## FASE 4 — Deploy (1 giorno)
+## FASE 4 — Deploy su VPS Windows (2 giorni)
+
+> Decisione: deploy su **VPS Windows** con app desktop (opzione B). L'operatore usa
+> solo Windows: configurazione e monitoraggio via GUI in Desktop Remoto, alert via
+> Telegram. Il PC di casa NON è un host valido per il 24/7 (update/sospensioni);
+> l'eventuale migrazione futura a Linux headless resta banale (stesso codice).
 
 | Task | Descrizione |
 |---|---|
-| 4.1 | VPS: systemd unit (`Restart=always`) per `headless_main.py --headless`; `PICKFAIR_SECRET_KEY`; credenziali Betfair live (app key attivata, cert registrato) e Telegram nel DB |
-| 4.2 | Evidence leggera: script che genera artifact di readiness (commit, env, esito test, config hard-stop) + checklist firmata — versione snella di UFA-010/011 |
+| 4.1 | Aggiungere `customtkinter` ai requirements (oggi importata dalla GUI ma non dichiarata) |
+| 4.2 | Packaging PyInstaller: `Pickfair.exe` (GUI) + modalità headless avviabile come servizio |
+| 4.3 | Servizio Windows via NSSM (o Task Scheduler all'avvio) con riavvio automatico, equivalente di systemd `Restart=always` |
+| 4.4 | Protezione chiave su Windows: preferire `PICKFAIR_SECRET_KEY` come variabile d'ambiente (il `chmod 0600` di `~/.pickfair/db.key` è quasi no-op su NTFS; in alternativa ACL) |
+| 4.5 | Hardening VPS: sospensione disattivata, Windows Update con orari attivi + riavvio programmato seguito da auto-start dell'app |
+| 4.6 | Credenziali nel DB: Betfair live (app key attivata, certificato registrato sull'account) e Telegram (api_id/api_hash/session) |
+| 4.7 | Esecuzione completa della suite test su Windows (SQLite WAL e path sono cross-platform, ma va provato almeno una volta; nota: handler SIGTERM in `headless_main.py:804` non viene consegnato su Windows — verificare lo shutdown pulito via servizio) |
+| 4.8 | Evidence leggera: script che genera artifact di readiness (commit, env, esito test, config hard-stop) + checklist firmata — versione snella di UFA-010/011 |
 
 ## FASE 5 — Validazione progressiva (calendario, bot autonomo)
 
@@ -115,7 +126,7 @@
 
 | Voce | Stima |
 |---|---|
-| Sviluppo (Fasi 0–4) | **~10–13 giorni** lavorativi caso peggiore |
+| Sviluppo (Fasi 0–4) | **~11–14 giorni** lavorativi caso peggiore (Fase 4 Windows: +1 giorno per packaging/servizio) |
 | Validazione (Fase 5) | 2–3 settimane calendario (bot autonomo, supervisione log) |
 | Primo euro reale (micro-stake) | possibile a fine Fase 4 + step 5.1 |
 
