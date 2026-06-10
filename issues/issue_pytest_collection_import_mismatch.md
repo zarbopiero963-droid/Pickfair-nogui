@@ -44,3 +44,15 @@ Pick one consistent strategy:
 ## Acceptance criteria
 - `pytest -q` no longer fails with `import file mismatch` collection errors.
 - Both conflicting test groups still run and report independently.
+
+## Status: RESOLVED (2026-06-10)
+
+Verifica su main corrente (post #259):
+
+- `tests/unit/test_betfair_client_failures.py` e `tests/unit/test_trading_engine.py`
+  non esistono più (rinominati in passato, es. `tests/unit/test_trading_engine_unit.py`).
+- `pytest --collect-only -q` in ambiente venv pulito: **3057 test raccolti, 0 errori**.
+
+Nota ambiente: i 21 errori di collection osservati negli audit esterni erano causati
+da dipendenze non installate (betfairlightweight/telethon/aiohttp), non dalle
+collisioni di basename. Setup riproducibile: `bash scripts/setup_dev_env.sh`.

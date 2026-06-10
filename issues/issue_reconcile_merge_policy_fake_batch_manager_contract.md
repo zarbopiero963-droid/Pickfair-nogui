@@ -41,3 +41,9 @@ Contract drift between production component and test fake:
 ## Acceptance criteria
 - `pytest -q --import-mode=importlib tests/unit/test_reconcile_merge_policy.py` passes.
 - Tests fail only on real policy regressions, not on contract initialization errors.
+
+## Status: RESOLVED (2026-06-10)
+
+Verifica su main corrente (post #259):
+`pytest tests/unit/test_reconcile_merge_policy.py -q` → **7 passed**.
+Il contratto `get_open_batches()` del FakeBatchManager è allineato alla produzione.

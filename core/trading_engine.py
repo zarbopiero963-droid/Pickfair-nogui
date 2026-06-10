@@ -1,30 +1,56 @@
 from __future__ import annotations
+
 import inspect
 import logging
 import threading
 import time
 import uuid
 from collections import deque
-from typing import Any, Deque, Dict, Optional
-from order_manager import OrderManager
-from order_manager import LIFECYCLE_CONTRACT
+from typing import Any, Deque, Dict, Optional, Set
+
 from circuit_breaker import CircuitBreaker
 from core.trading_constants import (  # noqa: F401 – re-exported for backward compat
-    REQ_QUICK_BET, CMD_QUICK_BET,
-    STATUS_INFLIGHT, STATUS_SUBMITTED, STATUS_COMPLETED, STATUS_FAILED,
-    STATUS_AMBIGUOUS, STATUS_DENIED, STATUS_ACCEPTED_FOR_PROCESSING,
-    STATUS_DUPLICATE_BLOCKED,
-    OUTCOME_SUCCESS, OUTCOME_FAILURE, OUTCOME_AMBIGUOUS,
-    ERROR_TRANSIENT, ERROR_PERMANENT, ERROR_AMBIGUOUS,
-    READY, DEGRADED, NOT_READY,
-    AMBIGUITY_SUBMIT_TIMEOUT, AMBIGUITY_RESPONSE_LOST, AMBIGUITY_SUBMIT_UNKNOWN,
-    AMBIGUITY_PERSISTED_NOT_CONFIRMED, AMBIGUITY_SPLIT_STATE,
-    ORIGIN_NORMAL, ORIGIN_COPY, ORIGIN_PATTERN,
-    COPY_META_KEYS, PATTERN_META_KEYS,
-    _PASSTHROUGH_KEYS, _ACK_STATES, _TERMINAL_STATES,
+    _ACK_STATES,
+    _PASSTHROUGH_KEYS,
+    _TERMINAL_STATES,
     ALLOWED_TRANSITIONS,
+    AMBIGUITY_PERSISTED_NOT_CONFIRMED,
+    AMBIGUITY_RESPONSE_LOST,
+    AMBIGUITY_SPLIT_STATE,
+    AMBIGUITY_SUBMIT_TIMEOUT,
+    AMBIGUITY_SUBMIT_UNKNOWN,
+    CMD_QUICK_BET,
+    COPY_META_KEYS,
+    DEGRADED,
+    ERROR_AMBIGUOUS,
+    ERROR_PERMANENT,
+    ERROR_TRANSIENT,
+    NOT_READY,
+    ORIGIN_COPY,
+    ORIGIN_NORMAL,
+    ORIGIN_PATTERN,
+    OUTCOME_AMBIGUOUS,
+    OUTCOME_FAILURE,
+    OUTCOME_SUCCESS,
+    PATTERN_META_KEYS,
+    READY,
+    REQ_QUICK_BET,
+    STATUS_ACCEPTED_FOR_PROCESSING,
+    STATUS_AMBIGUOUS,
+    STATUS_COMPLETED,
+    STATUS_DENIED,
+    STATUS_DUPLICATE_BLOCKED,
+    STATUS_FAILED,
+    STATUS_INFLIGHT,
+    STATUS_SUBMITTED,
     _ExecutionContext,
 )
+
+# Forma canonica richiesta da tests/guardrails/test_architecture_guardrails.py
+# isort: off
+from order_manager import LIFECYCLE_CONTRACT
+from order_manager import OrderManager
+# isort: on
 
 logger = logging.getLogger(__name__)
 
@@ -104,14 +130,14 @@ class _NullAsyncDbWriter:
 class TradingEngine:
     """
     Trading Engine — Core Order Lifecycle Orchestrator
-    
+
     RESPONSIBILITIES:
     - Orchestrates order lifecycle (INFLIGHT → SUBMITTED → TERMINAL)
     - Manages dedup (RAM + DB)
     - Handles ambiguity resolution
     - Persists audit trail
     - Enforces state machine transitions
-    
+
     DOES NOT IMPLEMENT:
     - Broker logic (delegated to executor/client_getter)
     - Recovery loop (delegated to state_recovery)
@@ -119,25 +145,25 @@ class TradingEngine:
     - Simulation logic (simulation_mode is metadata only)
     - Copy cashout logic (copy_meta is passthrough only)
     - Dutching lifecycle (dutching metadata is passthrough only)
-    
+
     ANTI-BYPASS NOTES:
     - _ExecutionContext has _engine_token as deterrent against accidental misuse
     - Real protection: use _new_execution_context() factory, do not export class
     - Code review and tests should verify no direct context construction
-    
+
     [P2] SIMULATION_MODE GUARD RAIL:
     - simulation_mode is metadata ONLY
     - NO semantic branches based on simulation_mode in this engine
     - Live and Sim differ ONLY in executor/broker implementation
     - No "simplified simulation" paths exist here
-    
+
     DB CONTRACT REQUIRED:
     - insert_order() must persist INFLIGHT before submit paths continue
     - update_order() must be immediately visible to get_order() from TradingEngine perspective
     - get_order() must provide read-your-writes semantics
     - order_exists_inflight() must reflect current persisted state coherently
     """
-    
+
     def __init__(self, bus: Any, db: Any, client_getter: Any, executor: Any,
                  safe_mode: Any = None, risk_middleware: Any = None,
                  reconciliation_engine: Any = None, state_recovery: Any = None,
@@ -255,7 +281,7 @@ class TradingEngine:
     def _assert_valid_ctx(ctx: Any) -> None:
         """
         Validates execution context.
-        
+
         NOTE: This is a deterrent against accidental misuse, not a security barrier.
         Real protection comes from using _new_execution_context() factory
         and not exporting _ExecutionContext from the module.
@@ -324,9 +350,9 @@ class TradingEngine:
                       is_terminal: bool = True) -> Dict[str, Any]:
         self._assert_valid_ctx(ctx)
         public_audit = {k: v for k, v in audit.items() if not k.startswith("_")}
-        
+
         lifecycle_stage = "finalized" if is_terminal else "accepted"
-        
+
         result: Dict[str, Any] = {
             "ok": outcome == OUTCOME_SUCCESS,
             "status": self._public_status(status),
@@ -364,7 +390,7 @@ class TradingEngine:
         self._emit(ctx, audit, "ACKNOWLEDGED",
                    {"order_id": order_id, "status": status, "response": response},
                    category="execution")
-        
+
         self._log_ack_state(ctx, order_id, status)
         self._metric_inc("quick_bet_accepted_total")
 
@@ -455,7 +481,7 @@ class TradingEngine:
             if isinstance(order, dict):
                 if order.get("finalized"):
                     raise RuntimeError("ORDER_ALREADY_FINALIZED")
-                
+
                 db_status = order.get("status")
                 if db_status and db_status not in _TERMINAL_STATES:
                     raise RuntimeError(f"FINALIZE_ON_NON_TERMINAL_DB_STATE:status={db_status}")
@@ -466,15 +492,15 @@ class TradingEngine:
     def _execute_via_executor(self, operation_name: str, fn: Any) -> Any:
         """
         [A2] Executor routing with explicit contract.
-        
+
         SUPPORTED MODES:
         1. executor.submit(operation_name, fn) returning final concrete result
         2. direct fn() execution when executor is None or has no submit()
-        
+
         NOT SUPPORTED:
         - raw coroutine return values
         - native async awaiting inside TradingEngine
-        
+
         REQUIREMENT:
         - async executors must normalize internally and return concrete result, not awaitable
         """
@@ -624,7 +650,7 @@ class TradingEngine:
 
         if not isinstance(recovery_result, dict):
             recovery_result = {"ok": bool(recovery_result), "reason": None}
-        
+
         reconcile_result: Optional[Dict[str, Any]] = None
         for mn in ("enqueue_pending", "notify_restart", "on_restart"):
             fn = getattr(self.reconciliation_engine, mn, None)
@@ -637,7 +663,7 @@ class TradingEngine:
 
         ok = bool(recovery_result.get("ok", True))
         logger.info("RECOVERY_COMPLETED ok=%s reconcile=%s", ok, reconcile_result)
-        
+
         return {
             "ok": ok,
             "status": "RECOVERY_TRIGGERED" if ok else "RECOVERY_FAILED",
@@ -662,14 +688,14 @@ class TradingEngine:
             normalization_error = exc
             logger.warning("Request normalization failed: %s", exc)
             raw = request if isinstance(request, dict) else {}
-            
+
             # [FIX] Best-effort origin preservation for invalid requests
             origin_fields = self._extract_origin_fields_best_effort(raw)
-            
+
             # [FIX] Proper customer_ref handling to avoid empty string
             raw_customer_ref = str(raw.get("customer_ref") or "").strip()
             customer_ref = raw_customer_ref or "UNKNOWN"
-            
+
             # [D1] Construct normalized dict for factory, even on error
             normalized = {
                 "customer_ref": customer_ref,
@@ -743,7 +769,7 @@ class TradingEngine:
 
         except Exception as exc:
             logger.exception("Fatal error in trading engine")
-            
+
             # [FIX 1] HARD FIX: degraded se DB non aggiornabile
             marked_failed = False
             if order_id is not None:
@@ -856,7 +882,7 @@ class TradingEngine:
             response=response, extra_fields=extra_fields,
             is_terminal=True,
         )
-        
+
         # [FINAL FIX] Honest contract: report persistence status
         result["finalization_persisted"] = finalization_persisted
         if not finalization_persisted:
@@ -866,7 +892,7 @@ class TradingEngine:
             self._metric_inc("finalization_degraded_total")
         else:
             self._metric_inc("quick_bet_finalized_total")
-        
+
         return result
 
     # ==================================================================
@@ -878,7 +904,7 @@ class TradingEngine:
         """
         Build result when engine cannot safely finalize due to DB failure.
         Bypasses _complete_order_lifecycle to avoid precheck crashes.
-        
+
         Returns honest contract:
         - is_terminal=False (engine knows it failed, but DB didn't confirm)
         - lifecycle_stage="degraded"
@@ -887,11 +913,11 @@ class TradingEngine:
         self._assert_valid_ctx(ctx)
         logger.error("DEGRADED_FATAL_RESULT order_id=%s cid=%s error=%s",
                      order_id, ctx.correlation_id, exc)
-        
+
         # Emit memory-only audit since DB is likely unavailable
         self._emit(ctx, audit, "FATAL_DEGRADED",
                    {"order_id": order_id, "error": str(exc)}, category="failure")
-        
+
         result = self._build_result(
             ctx, audit,
             status=STATUS_FAILED,
@@ -965,11 +991,11 @@ class TradingEngine:
 
         # [P0] Use cleaner routing helper
         response = self._execute_via_executor("quick_bet", _do)
-        
+
         # [A1] Block coroutine not normalized
         if inspect.isawaitable(response):
             raise RuntimeError("ASYNC_EXECUTOR_NOT_NORMALIZED")
-        
+
         # [A1] None is ambiguity
         if response is None:
             raise ExecutionError(
@@ -1342,10 +1368,14 @@ class TradingEngine:
 
     def _classify_ambiguity(self, exc: Exception) -> str:
         text = str(exc).lower()
-        if "timeout" in text: return AMBIGUITY_SUBMIT_TIMEOUT
-        if "response lost" in text or "lost response" in text: return AMBIGUITY_RESPONSE_LOST
-        if "persist" in text and "confirm" in text: return AMBIGUITY_PERSISTED_NOT_CONFIRMED
-        if "split" in text: return AMBIGUITY_SPLIT_STATE
+        if "timeout" in text:
+            return AMBIGUITY_SUBMIT_TIMEOUT
+        if "response lost" in text or "lost response" in text:
+            return AMBIGUITY_RESPONSE_LOST
+        if "persist" in text and "confirm" in text:
+            return AMBIGUITY_PERSISTED_NOT_CONFIRMED
+        if "split" in text:
+            return AMBIGUITY_SPLIT_STATE
         return AMBIGUITY_SUBMIT_UNKNOWN
 
     def _enqueue_reconcile(self, ctx: _ExecutionContext, audit: Dict[str, Any],
