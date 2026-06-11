@@ -183,7 +183,65 @@ Recovery/reconciliation: copertura GIÀ FORTE (26 file di test dedicati:
 crash mid-order, saga replay, dedup post-restart, ghost detection,
 fencing) — non duplicare evidenza.
 
-## Backlog (non bloccante)
+## Programma test "hedge-fund grade" (richiesta owner, giugno 2026)
+
+Obiettivo: provare che il sistema NON perde soldi negli stati strani
+(duplicati, crash, rete lenta, Telegram doppio, Betfair ambiguo, live gate
+sbagliato, emergency stop, reconciliation post-riavvio). Le proprietà chiave:
+
+- 1 segnale valido → max 1 ordine; segnale ambiguo → 0 ordini o AMBIGUOUS
+- timeout Betfair → mai doppia bet; Telegram duplicato → mai doppia bet
+- DB crash → recovery coerente; emergency stop → LIVE impossibile
+- readiness incerta / secret mancante / audit mancante → fail-closed
+
+NOTA DEDUP (dagli audit di questa sessione): molte aree sono GIÀ coperte —
+duplication guard atomico, reconciliation matrix (12 file), recovery (14
+file), commissione/dutching/PnL (audit matematico STRONG), lifecycle
+Telegram (17 test). Ogni PR del programma DEVE verificare la copertura
+esistente prima di scrivere: si aggiunge solo signal nuovo.
+
+### Ordine PR (serie A-M, una alla volta)
+
+| PR | Suite | Note dedup |
+|---|---|---|
+| A | **Live gate fail-closed matrix**: execution_mode mancante/invalido→SIM; LIVE bloccato senza live_enabled/readiness/kill-switch/key-source/hard-stop; stato contraddittorio→blocca | `assert_live_gate_or_refuse` + deploy gate runtime esistono: testare la MATRICE completa |
+| B | **Order lifecycle FSM hard**: transizioni vietate (COMPLETED→altro, FAILED→COMPLETED), AMBIGUOUS senza reason, doppia finalize | TradingEngine ha già invariants: provarli a matrice |
+| C | **Duplicate/concurrency storm**: 100 thread stesso event_key→1 acquire; payload senza key→blocca; TTL; seed post-restart | acquire atomico già testato: aggiungere storm + edge |
+| D | **Reconciliation crash matrix**: INFLIGHT vs Betfair MATCHED/assente/persa; audit persist fallisce→fail-closed; batch parallelo→uno solo | 12 file esistenti: SOLO i buchi della matrice |
+| E | **Money management caps + malformed**: cap 25%, quota≤1→0, lockdown→0, DEFENSE ridotto, esposizione piena→blocca, NaN/inf/stringhe→safe | include TOP30 #22-24 |
+| F | **Betfair network ambiguity**: timeout placeOrders→AMBIGUOUS mai SUCCESS, response persa→reconciliation, circuit breaker, session expired | |
+| G | **Telegram E2E sim-only + live (secrets)**: stale message→blocca, canale non autorizzato→blocca, flood 100 msg | full chain già in main: aggiungere stale/flood/unauthorized |
+| H | **Emergency stop + lockdown hard**: cancelOrders fallisce durante stop→resta LOCKDOWN | |
+| I | **Observability secret redaction**: password/api_key/session_string/cert mai nei log/alert; correlation_id obbligatorio | |
+| L | **Chaos/stress**: partition post-submit, DB locked, kill a metà ordine, clock skew, 100 segnali/5s, restart con INFLIGHT | |
+| M | **Hard-verify PR gate**: PASS/BLOCK/MALFORMED/EDGE su scope guard, current-head, forbidden files | |
+
+### TOP 20 operazionali (task `test_suite_top20`)
+
+I 20 bucket (runtime invariants, lifecycle contract, ACK/terminal, copy/
+pattern exclusivity, restart no-reexec, dedup stabile, reconciliation
+isolation, no-false-recovery, Telegram no-false-healthy/watchdog grace/
+autoheal bounded, parity live-sim runtime+engine, risk contract, event bus
+isolamento+ordering, throttle bounded, watchdog purity, MM exposure block,
+dual PnL distinti) si integrano dentro le PR A-M dove naturale; i residui
+(event bus, watchdog, autoheal bounded) = PR dedicata "proof operazionali"
+già pianificata sopra. Regola: estendere i file test esistenti, zero
+modifiche di produzione salvo seam minimi giustificati.
+
+### TOP 30 matematici (task `test_suite_top30_math`)
+
+Cashout esatto BACK/LAY ±, break-even senza flip di segno, partial exit,
+dutching uniformità 2/3/N esiti, budget, no stake negativi, order
+independence, invalid odds fail-closed, cache coerente, esiti non coperti
+mai etichettati hedged, MM caps, PnL no-NaN/inf, property/metamorphic.
+NOTA: l'audit matematico ha già verificato STRONG gran parte del core —
+questa PR copre: i numeri 1-8 (cashout exact math, casa naturale
+`tests/unit/test_cashout_math.py` su `dynamic_cashout_single` +
+`calculate_cashout_pnl`), 20-21, 28-30 property-based, più gli 11 test
+mancanti dell'audit matematico (sezione sopra). Vietato inventare un
+cashout engine finto: usare le superfici reali.
+
+
 
 - Supporto runner "Under X.5" in `TelegramBetResolver` (oggi risolve solo "Over X.5";
   i preset Under del form pattern sono disattivati finché manca — vedi nota in
