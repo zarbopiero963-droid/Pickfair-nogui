@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from observability.telegram_health_probe import TelegramHealthProbe
@@ -29,10 +29,14 @@ class TelegramService:
     - non contiene logica di trading
     """
 
-    def __init__(self, settings_service, db, bus):
+    def __init__(self, settings_service, db, bus, client_factory=None, connect_timeout: float = 10.0):
         self.settings_service = settings_service
         self.db = db
         self.bus = bus
+        # Factory iniettabile del client Telegram (test/diagnostica);
+        # None = client Telethon reale costruito dal listener.
+        self._client_factory = client_factory
+        self._connect_timeout = float(connect_timeout)
         self.listener: Optional[TelegramListener] = None
         self.connected = False
         self.last_error = ""
@@ -67,8 +71,11 @@ class TelegramService:
     # =========================================================
     def _handle_signal(self, signal: dict) -> None:
         signal = dict(signal or {})
-        signal["received_at"] = datetime.utcnow().isoformat()
-        self.last_successful_message_ts = signal["received_at"]
+        # Preserva il timestamp di RICEZIONE messo dal listener; qui si
+        # genera solo come fallback (l'ora di processing non e' la ricezione).
+        received_at = signal.get("received_at") or datetime.now(timezone.utc).isoformat()
+        signal["received_at"] = received_at
+        self.last_successful_message_ts = received_at
 
         # conserva eventuale flag simulation_mode già presente
         signal["simulation_mode"] = bool(signal.get("simulation_mode", False))
@@ -118,8 +125,12 @@ class TelegramService:
             self.active_network_resources = int(snap.get("active_network_resources", self.active_network_resources) or 0)
             if not self.last_error:
                 self.last_error = str(snap.get("last_error") or "")
-            if self.last_successful_message_ts is None:
-                self.last_successful_message_ts = snap.get("last_successful_message_ts")
+            # Liveness: il listener è la fonte di verità runtime (si aggiorna
+            # su ogni messaggio, anche non-segnale); il cache del service
+            # resta solo come fallback quando il listener non ha un valore.
+            listener_ts = snap.get("last_successful_message_ts")
+            if listener_ts is not None:
+                self.last_successful_message_ts = listener_ts
         self.connected = self.state == "CONNECTED"
 
     # =========================================================
@@ -160,6 +171,13 @@ class TelegramService:
                 "state": self.state,
             }
 
+        old_thread = getattr(self.listener, "_runtime_thread", None) if self.listener else None
+        if old_thread is not None and old_thread.is_alive():
+            self.last_error = "previous_runtime_still_alive"
+            self._set_state("FAILED")
+            self.connected = False
+            return {"started": False, "reason": "previous_runtime_still_alive", "state": self.state}
+
         try:
             self.intentional_stop = False
             self.reconnect_in_progress = False
@@ -168,6 +186,8 @@ class TelegramService:
                 api_id=int(cfg.api_id),
                 api_hash=cfg.api_hash,
                 session_string=cfg.session_string or None,
+                client_factory=self._client_factory,
+                connect_timeout=self._connect_timeout,
             )
 
             self.listener.set_database(self.db)
@@ -207,23 +227,33 @@ class TelegramService:
             logger.exception("Errore start Telegram listener: %s", exc)
             raise
 
-    def stop(self) -> None:
+    def stop(self) -> dict:
         if self.state == "STOPPED" and not self.listener:
             self.connected = False
-            return
+            return {"stopped": True, "reason": "already_stopped", "state": self.state}
 
         self.intentional_stop = True
         self.reconnect_in_progress = False
         if self.listener:
+            stop_result = {}
             try:
-                self.listener.stop()
+                stop_result = self.listener.stop() or {}
             except Exception as exc:
                 logger.warning("Errore stop Telegram listener: %s", exc)
+            # Se il runtime del listener non e' davvero uscito, NON va
+            # dichiarato STOPPED ne' staccato il listener: un restart
+            # creerebbe un secondo runtime sopra quello ancora vivo.
+            if stop_result.get("stopped") is False:
+                self.connected = False
+                self.last_error = str(stop_result.get("error") or "listener_stop_failed")
+                self._set_state("FAILED")
+                return {"stopped": False, "error": self.last_error, "state": self.state}
 
         self.listener = None
         self.connected = False
         self._set_state("STOPPED")
         self.active_network_resources = 0
+        return {"stopped": True, "state": self.state}
 
     def restart(self) -> dict:
         if self.intentional_stop:
@@ -246,9 +276,18 @@ class TelegramService:
         ]
         self._set_state("RECONNECTING")
         try:
-            self.stop()
+            stop_result = self.stop() or {}
             self.intentional_stop = False
             self.reconnect_in_progress = False
+            # Stop non riuscito (runtime ancora vivo): NON avviare un secondo
+            # listener sopra quello esistente; resta FAILED, riprovera' l'autoheal.
+            if stop_result.get("stopped") is False:
+                return {
+                    "started": False,
+                    "recovered": False,
+                    "reason": "listener_stop_failed",
+                    "state": self.state,
+                }
             result = self.start()
             if not bool(result.get("started", False)):
                 result["recovered"] = False
@@ -299,17 +338,31 @@ class TelegramService:
             "running": bool(status["running"]),
             "listener_started": bool(status["listener_started"]),
             "client_alive": bool(listener_snapshot.get("client_alive", False)),
-            "handlers_registered": int(status["handlers_registered"]),
+            # Verita' runtime dal listener (handler Telethon, 0 o 1): il guard
+            # richiede esattamente 1 handler quando CONNECTED; i callback
+            # applicativi restano conteggiati in status().
+            "handlers_registered": int(
+                listener_snapshot.get("handlers_registered", status["handlers_registered"])
+            ),
             "reconnect_in_progress": bool(status["reconnect_in_progress"]),
             "reconnect_attempts": int(status["reconnect_attempts"]),
             "active_network_resources": int(status["active_network_resources"]),
             "intentional_stop": bool(status["intentional_stop"]),
             "retry_loop_active": bool(status["reconnect_in_progress"]),
             "last_error": str(status["last_error"] or ""),
-            "last_successful_message_ts": status["last_successful_message_ts"],
+            # Liveness dal listener: il valore cache del service si aggiorna
+            # solo via callback segnale, i messaggi non-segnale no.
+            "last_successful_message_ts": (
+                listener_snapshot.get("last_successful_message_ts")
+                or status["last_successful_message_ts"]
+            ),
         }
 
     def health_status(self, *, checked_at: str | None = None) -> dict:
+        # now_ts e' obbligatorio per il guard: senza, ogni stato operativo
+        # verrebbe marcato STALE_RUNTIME_NO_TIMESTAMP (e l'autoheal
+        # riavvierebbe un listener sano). Default fail-safe: adesso.
+        checked_at = checked_at or datetime.now(timezone.utc).isoformat()
         snap = self.runtime_snapshot()
         invariant_snapshot = TelegramInvariantSnapshot(
             state=str(snap["state"]),
@@ -360,8 +413,10 @@ class TelegramService:
         reconnect_grace_active: bool,
         failure_escalated: bool,
     ) -> TelegramAutohealDecision:
-        health = self.health_status()
         now_ts = float(checked_at_ts if checked_at_ts is not None else self._autoheal_policy.now())
+        health = self.health_status(
+            checked_at=datetime.fromtimestamp(now_ts, tz=timezone.utc).isoformat()
+        )
         snapshot = TelegramAutohealSnapshot(
             state=str(health.get("state") or self.state),
             invariant_ok=bool(health.get("invariant_ok", True)),

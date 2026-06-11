@@ -59,7 +59,7 @@
 
 | Task | Descrizione | Note |
 |---|---|---|
-| 1.1 | **Listener Telethon reale**: client da credenziali DB (auth già pronta in `telegram_controller.py`), handler NewMessage sui `monitored_chats`, aggiorna `last_successful_message_ts`, reconnect/FloodWait | L'autoheal (`recovery/telegram_autoheal.py`) è già pronto a gestirlo (B1) |
+| 1.1 ✅ | **Listener Telethon reale**: runtime in thread dedicato con event loop proprio, handler NewMessage sui `monitored_chats`, `last_successful_message_ts` su ogni messaggio, fail-closed su telethon/sessione mancante o non autorizzata, disconnessione inattesa → FAILED (autoheal decide); client factory iniettabile per i test; fix keyword: le righe statistiche (📈🥅🎯📊/Possesso) sono escluse dal match parola chiave | Lo snapshot runtime ora riporta gli handler Telethon (0/1) come richiesto dall'invariant guard; i callback restano in `status()` |
 | 1.2 | **Keepalive sessione betting**: loop ~10 min (`keepAlive`/`get_account_funds`), re-auth fail-closed già esistente | B2 |
 | 1.3 | **`get_current_orders` + RPC `listCurrentOrders`** nel client live + interfaccia `BetfairService.list_current_orders` senza fallback silenzioso in LIVE | Abilita rilevamento ghost orders (B3, UFA-005) |
 | 1.4 | **Daily-loss breach → kill switch**: collegare `DAILY_LOSS_BREACH_TRIGGERED` all'emergency stop | Piccolo: monitoring ed eventi esistono già (B4) |

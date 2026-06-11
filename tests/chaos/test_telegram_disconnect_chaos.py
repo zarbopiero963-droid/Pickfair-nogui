@@ -4,8 +4,37 @@ from dataclasses import dataclass
 
 import pytest
 
-from recovery.telegram_autoheal import TelegramAutohealHistory, TelegramAutohealPolicy, TelegramAutohealSnapshot
+from recovery.telegram_autoheal import (
+    TelegramAutohealHistory,
+    TelegramAutohealPolicy,
+    TelegramAutohealSnapshot,
+)
 from services.telegram_service import TelegramService
+
+
+class _FakeTelethonClient:
+    def __init__(self):
+        self._disconnected = None
+
+    async def connect(self):
+        import asyncio as _aio
+        self._disconnected = _aio.Event()
+
+    async def is_user_authorized(self):
+        return True
+
+    def add_event_handler(self, callback, event_filter=None):
+        """No-op: il fake accetta la registrazione senza usare il filtro."""
+
+    def is_connected(self):
+        return self._disconnected is not None and not self._disconnected.is_set()
+
+    async def run_until_disconnected(self):
+        await self._disconnected.wait()
+
+    async def disconnect(self):
+        if self._disconnected is not None:
+            self._disconnected.set()
 
 
 @dataclass
@@ -39,7 +68,13 @@ class _Bus:
 
 @pytest.mark.chaos
 def test_disconnect_storm_keeps_recovery_deterministic_and_idempotent():
-    svc = TelegramService(settings_service=_Settings(_TelegramCfg()), db=_DB(), bus=_Bus())
+    svc = TelegramService(
+        settings_service=_Settings(_TelegramCfg()),
+        db=_DB(),
+        bus=_Bus(),
+        client_factory=lambda *_a: _FakeTelethonClient(),
+        connect_timeout=5.0,
+    )
     svc.start()
 
     actions = []
@@ -61,11 +96,12 @@ def test_disconnect_storm_keeps_recovery_deterministic_and_idempotent():
 
         status = svc.status()
         assert status["handlers_registered"] == 2
-        assert status["state"] == "CONNECTING"
+        assert status["state"] == "CONNECTED"
         assert status["reconnect_attempts"] == cycle + 1
         assert svc._restart_in_progress is False
 
     assert actions == ["SCHEDULE_RESTART", "SCHEDULE_RESTART", "SCHEDULE_RESTART", "SCHEDULE_RESTART"]
+    svc.stop()
 
 
 @pytest.mark.chaos
