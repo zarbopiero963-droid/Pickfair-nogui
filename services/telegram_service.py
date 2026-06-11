@@ -202,7 +202,6 @@ class TelegramService:
 
             start_result = self.listener.start()
             started_ok = bool(start_result.get("started", False))
-            self.listener_started = started_ok
             self.last_error = str(start_result.get("error") or "")
             self._refresh_runtime_truth_from_listener()
             if self.state == "CREATED":

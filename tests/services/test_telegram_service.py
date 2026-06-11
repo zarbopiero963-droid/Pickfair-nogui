@@ -465,7 +465,9 @@ def test_hung_connect_fails_closed_and_restart_does_not_overlap():
     svc.listener._stop_timeout = 0.2
     suppressed = svc.restart()
     assert suppressed["started"] is False
-    assert suppressed["reason"] in {"listener_stop_failed", "previous_runtime_still_alive"}
+    # restart() chiama stop() per primo: con il thread ancora vivo l'esito
+    # raggiungibile e' solo listener_stop_failed (start() non viene mai chiamato).
+    assert suppressed["reason"] == "listener_stop_failed"
 
 
 @pytest.mark.unit

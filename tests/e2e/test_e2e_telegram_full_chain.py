@@ -48,19 +48,20 @@ MSG_STATS_COLLISION = """P.Bet. OVER SUCCESSIVO 🔊 ❌
 
 class _FakeTelethonClient:
     def __init__(self):
-        self._disconnected = None
+        self._disconnected = asyncio.Event()
 
     async def connect(self):
         self._disconnected = asyncio.Event()
 
-    async def is_user_authorized(self):
+    @staticmethod
+    async def is_user_authorized():
         return True
 
     def add_event_handler(self, callback, event_filter=None):
         """No-op: il fake registra senza dispatch (i messaggi si iniettano)."""
 
     def is_connected(self):
-        return self._disconnected is not None and not self._disconnected.is_set()
+        return not self._disconnected.is_set()
 
     async def run_until_disconnected(self):
         await self._disconnected.wait()
@@ -94,7 +95,8 @@ class _Db:
         self.received_signals = []
         self.saved_bets = []
 
-    def get_signal_patterns(self, enabled_only=True):
+    @staticmethod
+    def get_signal_patterns(enabled_only=True):
         _ = enabled_only
         return [
             {
@@ -149,12 +151,10 @@ def _build_pipeline():
     )
 
     def trading_handler(signal):
+        # acquire() e' atomico (check+register); is_duplicate da solo non
+        # registra la chiave e non va usato per gating ordini.
         key = guard.build_event_key(signal)
-        acquire = getattr(guard, "acquire", None)
-        if callable(acquire):
-            if not acquire(key):
-                return
-        elif guard.is_duplicate(key):
+        if not guard.acquire(key):
             return
         broker.place_bet(
             market_type=signal.get("market_type"),
@@ -207,14 +207,21 @@ def test_raw_channel_message_to_simulated_order_and_db():
 
 @pytest.mark.e2e
 def test_duplicate_message_places_single_order():
-    svc, _bus, _db, broker = _build_pipeline()
-    svc.start()
+    svc, _bus, db, broker = _build_pipeline()
+    assert svc.start()["started"] is True
     try:
         svc.listener.handle_incoming(MSG_NEXT_GOL, chat_id=-100999)
         svc.listener.handle_incoming(MSG_NEXT_GOL, chat_id=-100999)
         _wait_until(lambda: len(broker.placed_orders) >= 1)
+        # Finestra di grazia DELIBERATA: il bus e' asincrono e un eventuale
+        # secondo ordine (bug) arriverebbe dopo il primo; senza attesa il
+        # test non potrebbe mai fallire per un duplicato.
         time.sleep(0.1)
         assert len(broker.placed_orders) == 1
+        # Dedup a livello ordine: la bet simulata persiste una sola volta
+        # (i segnali ricevuti restano 2: il dedup e' del trading handler).
+        assert len(db.saved_bets) == 1
+        assert len(db.received_signals) == 2
     finally:
         svc.stop()
 
@@ -222,7 +229,7 @@ def test_duplicate_message_places_single_order():
 @pytest.mark.e2e
 def test_non_signal_message_places_no_order_but_updates_liveness():
     svc, _bus, db, broker = _build_pipeline()
-    svc.start()
+    assert svc.start()["started"] is True
     try:
         out = svc.listener.handle_incoming(MSG_CHIACCHIERE, chat_id=-100999)
         assert out is None
@@ -237,7 +244,7 @@ def test_non_signal_message_places_no_order_but_updates_liveness():
 @pytest.mark.e2e
 def test_keyword_in_stats_line_does_not_place_order():
     svc, _bus, _db, broker = _build_pipeline()
-    svc.start()
+    assert svc.start()["started"] is True
     try:
         out = svc.listener.handle_incoming(MSG_STATS_COLLISION, chat_id=-100999)
         assert out is None

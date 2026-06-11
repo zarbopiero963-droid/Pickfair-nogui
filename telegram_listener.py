@@ -65,6 +65,7 @@ class TelegramListener:
         self._connect_timeout = float(connect_timeout)
         self._stop_timeout = float(stop_timeout)
 
+        self._state_lock = threading.Lock()
         self._runtime_thread: threading.Thread | None = None
         self._runtime_loop: asyncio.AbstractEventLoop | None = None
         self._client = None
@@ -161,8 +162,13 @@ class TelegramListener:
         # per sempre bloccherebbe anche l'autoheal (restart soppresso durante
         # CONNECTING) con un runtime appeso indefinitamente.
         ready = self._runtime_ready.wait(timeout=self._connect_timeout)
-        if not ready and self.state == "CONNECTING":
-            self.mark_failed("connect_timeout")
+        if not ready:
+            # Serializzato col runtime: o il timeout marca FAILED prima che
+            # il runtime pubblichi CONNECTED, o trova lo stato gia' CONNECTED
+            # e non lo tocca. Mai un CONNECTED che sovrascrive il timeout.
+            with self._state_lock:
+                if self.state == "CONNECTING":
+                    self.mark_failed("connect_timeout")
         return {
             "started": self.state not in {"FAILED", "STOPPED"},
             "chat_count": len(self.monitored_chats),
@@ -254,11 +260,19 @@ class TelegramListener:
             client.add_event_handler(self._on_new_message_event, event_filter)
             self.runtime_handlers_registered = 1
 
-            self.active_network_resources = 1
-            # Seed liveness: senza timestamp il guard segnerebbe stale un
-            # canale sano ma silenzioso e l'autoheal lo riavvierebbe.
-            self.last_successful_message_ts = datetime.now(timezone.utc).isoformat()
-            self._set_state("CONNECTED")
+            # Transizione a CONNECTED serializzata con il timeout di start():
+            # se nel frattempo la startup e' stata marcata FAILED (o stop),
+            # il runtime abbandona invece di sovrascrivere lo stato.
+            with self._state_lock:
+                if self.intentional_stop or self.state == "FAILED":
+                    self.runtime_handlers_registered = 0
+                    self._runtime_ready.set()
+                    return
+                self.active_network_resources = 1
+                # Seed liveness: senza timestamp il guard segnerebbe stale un
+                # canale sano ma silenzioso e l'autoheal lo riavvierebbe.
+                self.last_successful_message_ts = datetime.now(timezone.utc).isoformat()
+                self._set_state("CONNECTED")
             self._emit_status("CONNECTED", "Listener connesso a Telegram")
             self._runtime_ready.set()
 

@@ -149,6 +149,33 @@ Accettabile oggi; serve per automazione hedge intelligente (vedi 2.x).
 - **Limiti quota minima / stake massimo come flusso E2E** (oggi coperti solo a livello unit/MM)
 - ✅ Catena completa messaggio→ordine simulato→DB: aggiunta in PR #263
 
+### Proof operazionali deterministici (audit Phase 0 — giugno 2026)
+
+Audit total-control su dove estendere le suite di prova operazionale
+(restart equivalence, disconnect storm, stale su tempo simulato,
+cooldown/lockout, no false-healthy) oltre Telegram — che dopo la Fase 1.1
+è il sottosistema meglio provato (17 test runtime + race/timeout/lock).
+
+Ordine sicuro (PR piccole, solo test, zero modifiche alle autorità):
+
+1. **StreamingFeed** (`services/streaming_feed.py`): base esistente (18 unit
+   + soak chaos) ma mancano: equivalenza storm di riconnessione, stale su
+   tempo simulato lungo, budget degradazione auth — miglior rapporto
+   valore/rischio CI (non mappato dal routing dinamico → blast contenuto)
+2. **EventBus** (`core/event_bus.py`): drain vs lossy shutdown, isolamento
+   subscriber avvelenato, metriche di pressione sotto carico
+3. **BetfairService session gate**: re-auth bounded, fail-closed su sessione
+   invalida (integra i 17 test di `test_session_expiry_recovery.py`)
+4. **RuntimeController control-path** (solo dopo 1-3): start/stop/pause/
+   emergency non bloccanti — alta autorità, va toccato per ultimo
+
+Vietato senza prova di necessità: `core/trading_engine.py`,
+`core/runtime_controller.py`, `core/reconciliation_engine.py`,
+`database.py`, `betfair_client.py`, `observability/watchdog_service.py`.
+Recovery/reconciliation: copertura GIÀ FORTE (26 file di test dedicati:
+crash mid-order, saga replay, dedup post-restart, ghost detection,
+fencing) — non duplicare evidenza.
+
 ## Backlog (non bloccante)
 
 - Supporto runner "Under X.5" in `TelegramBetResolver` (oggi risolve solo "Over X.5";
