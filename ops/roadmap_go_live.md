@@ -113,6 +113,12 @@
 
 ## Backlog (non bloccante)
 
+- Supporto runner "Under X.5" in `TelegramBetResolver` (oggi risolve solo "Over X.5";
+  i preset Under del form pattern sono disattivati finché manca — vedi nota in
+  `telegram_module._PREDEFINED`).
+- Fix `pr-self-check-refresh.yml`: sui trigger `workflow_run` il PR number arriva
+  vuoto e il refresh esce senza fare nulla (bug latente dell'automazione).
+
 - Parser Trainer (proposto, mai implementato): bottone "Addestra" su messaggio →
   form guidato → auto-generazione regex → test immediato.
 - Pre-submit risk envelope centralizzato (UFA-007), policy esecuzione per origine

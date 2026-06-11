@@ -145,8 +145,9 @@ _PREDEFINED: dict[str, dict] = {
     "Over 2.5 FT":              {"pattern": r"(?:OVER|O)\s*2[,.]?5\b", "market_type": "OVER_UNDER_25"},
     "Over 3.5 FT":              {"pattern": r"(?:OVER|O)\s*3[,.]?5\b", "market_type": "OVER_UNDER_35"},
     "Over 4.5 FT":              {"pattern": r"(?:OVER|O)\s*4[,.]?5\b", "market_type": "OVER_UNDER_45"},
-    "Under 2.5 FT":             {"pattern": r"(?:UNDER|U)\s*2[,.]?5\b", "market_type": "OVER_UNDER_25"},
-    "Under 3.5 FT":             {"pattern": r"(?:UNDER|U)\s*3[,.]?5\b", "market_type": "OVER_UNDER_35"},
+    # NOTA: i preset "Under X.5" sono rimossi finché TelegramBetResolver
+    # non supporta la risoluzione dei runner Under (oggi cerca solo "Over X.5");
+    # un preset Under produrrebbe sempre segnali UNRESOLVED.
     "Over 0.5 PT":              {"pattern": r"(?:OVER|O)\s*0[,.]?5.{0,20}(?:PT|HT|PRIMO)", "market_type": "OVER_UNDER_HT_05"},
     "Over 1.5 PT":              {"pattern": r"(?:OVER|O)\s*1[,.]?5.{0,20}(?:PT|HT|PRIMO)", "market_type": "OVER_UNDER_HT_15"},
     "Over 2.5 PT":              {"pattern": r"(?:OVER|O)\s*2[,.]?5.{0,20}(?:PT|HT|PRIMO)", "market_type": "OVER_UNDER_HT_25"},
