@@ -206,6 +206,17 @@ def test_telegram_service_exposes_probe_snapshot():
 
 
 @pytest.mark.unit
+def test_handle_signal_preserves_listener_received_at():
+    svc = _svc()
+    svc.start()
+    svc._handle_signal({"market_type": "NEXT_GOAL", "received_at": "2026-04-15T00:00:00+00:00"})
+    topic, payload = svc.bus.events[-1]
+    assert topic == "SIGNAL_RECEIVED"
+    assert payload["received_at"] == "2026-04-15T00:00:00+00:00"
+    svc.stop()
+
+
+@pytest.mark.unit
 def test_runtime_snapshot_prefers_listener_liveness_timestamp():
     svc = _svc()
     svc.start()

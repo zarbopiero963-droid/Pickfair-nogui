@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from observability.telegram_health_probe import TelegramHealthProbe
@@ -71,8 +71,11 @@ class TelegramService:
     # =========================================================
     def _handle_signal(self, signal: dict) -> None:
         signal = dict(signal or {})
-        signal["received_at"] = datetime.utcnow().isoformat()
-        self.last_successful_message_ts = signal["received_at"]
+        # Preserva il timestamp di RICEZIONE messo dal listener; qui si
+        # genera solo come fallback (l'ora di processing non e' la ricezione).
+        received_at = signal.get("received_at") or datetime.now(timezone.utc).isoformat()
+        signal["received_at"] = received_at
+        self.last_successful_message_ts = received_at
 
         # conserva eventuale flag simulation_mode già presente
         signal["simulation_mode"] = bool(signal.get("simulation_mode", False))
