@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 
 import pytest
@@ -253,8 +254,6 @@ def test_connect_error_fails_closed():
 
 @pytest.mark.unit
 def test_stop_during_slow_connect_aborts_startup():
-    import threading
-
     client = FakeTelethonClient(slow_connect=True)
     listener = _make_listener(client, connect_timeout=0.2)
     result = listener.start()

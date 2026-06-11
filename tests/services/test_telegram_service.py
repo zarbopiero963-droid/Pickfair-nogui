@@ -213,7 +213,24 @@ def test_handle_signal_preserves_listener_received_at():
     topic, payload = svc.bus.events[-1]
     assert topic == "SIGNAL_RECEIVED"
     assert payload["received_at"] == "2026-04-15T00:00:00+00:00"
+    assert svc.last_successful_message_ts == "2026-04-15T00:00:00+00:00"
     svc.stop()
+
+
+@pytest.mark.unit
+def test_stop_with_hung_runtime_fails_closed_and_keeps_listener():
+    svc = _svc(hang_connect=True, connect_timeout=0.2)
+    svc.start()
+    assert svc.listener is not None
+    svc.listener._stop_timeout = 0.2
+
+    svc.stop()
+
+    # Runtime mai uscito: il service NON deve dichiarare STOPPED ne'
+    # staccare il listener (un restart creerebbe un secondo runtime).
+    assert svc.state == "FAILED"
+    assert svc.listener is not None
+    assert "stop_timeout" in svc.status()["last_error"]
 
 
 @pytest.mark.unit

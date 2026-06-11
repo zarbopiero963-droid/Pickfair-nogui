@@ -228,10 +228,19 @@ class TelegramService:
         self.intentional_stop = True
         self.reconnect_in_progress = False
         if self.listener:
+            stop_result = {}
             try:
-                self.listener.stop()
+                stop_result = self.listener.stop() or {}
             except Exception as exc:
                 logger.warning("Errore stop Telegram listener: %s", exc)
+            # Se il runtime del listener non e' davvero uscito, NON va
+            # dichiarato STOPPED ne' staccato il listener: un restart
+            # creerebbe un secondo runtime sopra quello ancora vivo.
+            if stop_result.get("stopped") is False:
+                self.connected = False
+                self.last_error = str(stop_result.get("error") or "listener_stop_failed")
+                self._set_state("FAILED")
+                return
 
         self.listener = None
         self.connected = False
