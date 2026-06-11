@@ -267,25 +267,30 @@ class TelegramListener:
                 live_only  = bool(cp.get("live_only", False))
                 prematch   = bool(cp.get("prematch", False))
 
+                if live_only and prematch:
+                    continue  # contraddizione: ignora
+
                 # Filtri opzionali — se il minuto non è nel messaggio (0)
                 # i filtri minuto vengono saltati per non bloccare inutilmente.
                 if minute > 0:
-                    if min_minute is not None and minute < int(min_minute):
+                    min_minute_i = self._safe_int_or_none(min_minute)
+                    max_minute_i = self._safe_int_or_none(max_minute)
+                    if min_minute_i is not None and minute < min_minute_i:
                         continue
-                    if max_minute is not None and minute > int(max_minute):
+                    if max_minute_i is not None and minute > max_minute_i:
                         continue
-                    if live_only and prematch:
-                        continue  # contraddizione: ignora
-                    if live_only and minute <= 0:
-                        continue
+                    if prematch:
+                        continue  # regola solo pre-match: ignora messaggi live
                 else:
                     # Minuto assente: blocca solo se live_only richiede minuto presente
                     if live_only:
                         continue
 
-                if min_score is not None and total_goals < int(min_score):
+                min_score_i = self._safe_int_or_none(min_score)
+                max_score_i = self._safe_int_or_none(max_score)
+                if min_score_i is not None and total_goals < min_score_i:
                     continue
-                if max_score is not None and total_goals > int(max_score):
+                if max_score_i is not None and total_goals > max_score_i:
                     continue
 
                 selection_template = str(cp.get("selection_template") or "").strip()
@@ -505,7 +510,7 @@ class TelegramListener:
         if m:
             return m.group(1).strip()
         # Fallback: riga con " vs " tra due nomi di squadra
-        m = re.search(r"^(.{3,40}\s+vs\.?\s+.{3,40})$", text, flags=re.IGNORECASE | re.MULTILINE)
+        m = re.search(r"^(.{3,40}\s+vs?\.?\s+.{3,40})$", text, flags=re.IGNORECASE | re.MULTILINE)
         if m:
             return m.group(1).strip()
         return ""
@@ -517,9 +522,18 @@ class TelegramListener:
             return int(m.group(1)), int(m.group(2))
         return 0, 0
 
+    @staticmethod
+    def _safe_int_or_none(value) -> int | None:
+        if value in (None, ""):
+            return None
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return None
+
     def _extract_minute(self, text: str) -> int:
         # Formato classico: "55m" o "55'"
-        m = re.search(r"(\d+)\s*(?:m|')\b", text, flags=re.IGNORECASE)
+        m = re.search(r"(\d+)\s*(?:m\b|')", text, flags=re.IGNORECASE)
         if m:
             return int(m.group(1))
         # Formato con etichetta: ⏱Minuto⏱\n55  oppure  Minuto: 55  oppure  Min: 55
@@ -533,7 +547,7 @@ class TelegramListener:
 
     def _extract_odds(self, text: str) -> Optional[float]:
         # Formato @2.50 o @ 2,50
-        m = re.search(r"@\s*(\d+[.,]\d+)", text, flags=re.IGNORECASE)
+        m = re.search(r"@\s*(\d+(?:[.,]\d+)?)", text, flags=re.IGNORECASE)
         if m:
             return float(m.group(1).replace(",", "."))
         # Formato "Quota: 2.50" o "Odd: 2.50"

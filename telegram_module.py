@@ -176,6 +176,10 @@ class _PatternDialog(_CTK_TOPLEVEL_BASE):
     """
 
     def __init__(self, parent, current: dict | None = None):
+        if ctk is None:
+            raise RuntimeError(
+                "customtkinter non disponibile: il form pattern richiede la GUI"
+            )
         super().__init__(parent)
         self.result: dict | None = None
         self._current = current or {}
@@ -472,6 +476,13 @@ class _PatternDialog(_CTK_TOPLEVEL_BASE):
 
         if not nome:
             messagebox.showwarning("Attenzione", "Il campo Nome è obbligatorio.", parent=self)
+            return
+        if self._live_var.get() and self._prematch_var.get():
+            messagebox.showwarning(
+                "Attenzione",
+                "Solo LIVE e Pre-match sono mutuamente esclusivi.",
+                parent=self,
+            )
             return
         if not regex and not keyword:
             messagebox.showwarning(

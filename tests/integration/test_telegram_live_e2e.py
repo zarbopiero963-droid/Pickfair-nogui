@@ -68,7 +68,7 @@ async def _listen_and_send(text_to_send: str, tag: str, timeout: float = 25.0) -
     from telethon.sessions import StringSession
 
     chat_id = int(TG_TEST_CHAT_ID)
-    received: asyncio.Future = asyncio.get_event_loop().create_future()
+    received: asyncio.Future = asyncio.get_running_loop().create_future()
 
     client = TelegramClient(StringSession(TG_SESSION_STRING), int(TG_API_ID), TG_API_HASH)
 
@@ -93,7 +93,7 @@ async def _listen_and_send(text_to_send: str, tag: str, timeout: float = 25.0) -
 
 def _run(coro):
     """Esegue una coroutine nel loop di test."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 # =========================================================
