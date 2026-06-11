@@ -234,6 +234,24 @@ def test_stop_with_hung_runtime_fails_closed_and_keeps_listener():
 
 
 @pytest.mark.unit
+def test_restart_aborts_when_listener_stop_fails():
+    svc = _svc(hang_connect=True, connect_timeout=0.2)
+    svc.start()
+    first_listener = svc.listener
+    assert first_listener is not None
+    first_listener._stop_timeout = 0.2
+    svc._set_state("FAILED")
+
+    result = svc.restart()
+
+    # Lo stop non e' riuscito: nessun secondo listener sopra il runtime vivo.
+    assert result["started"] is False
+    assert result["reason"] in {"listener_stop_failed", "previous_runtime_still_alive"}
+    assert svc.listener is first_listener
+    assert svc.state == "FAILED"
+
+
+@pytest.mark.unit
 def test_runtime_snapshot_prefers_listener_liveness_timestamp():
     svc = _svc()
     svc.start()

@@ -171,6 +171,13 @@ class TelegramService:
                 "state": self.state,
             }
 
+        old_thread = getattr(self.listener, "_runtime_thread", None) if self.listener else None
+        if old_thread is not None and old_thread.is_alive():
+            self.last_error = "previous_runtime_still_alive"
+            self._set_state("FAILED")
+            self.connected = False
+            return {"started": False, "reason": "previous_runtime_still_alive", "state": self.state}
+
         try:
             self.intentional_stop = False
             self.reconnect_in_progress = False
@@ -220,10 +227,10 @@ class TelegramService:
             logger.exception("Errore start Telegram listener: %s", exc)
             raise
 
-    def stop(self) -> None:
+    def stop(self) -> dict:
         if self.state == "STOPPED" and not self.listener:
             self.connected = False
-            return
+            return {"stopped": True, "reason": "already_stopped", "state": self.state}
 
         self.intentional_stop = True
         self.reconnect_in_progress = False
@@ -240,12 +247,13 @@ class TelegramService:
                 self.connected = False
                 self.last_error = str(stop_result.get("error") or "listener_stop_failed")
                 self._set_state("FAILED")
-                return
+                return {"stopped": False, "error": self.last_error, "state": self.state}
 
         self.listener = None
         self.connected = False
         self._set_state("STOPPED")
         self.active_network_resources = 0
+        return {"stopped": True, "state": self.state}
 
     def restart(self) -> dict:
         if self.intentional_stop:
@@ -268,9 +276,18 @@ class TelegramService:
         ]
         self._set_state("RECONNECTING")
         try:
-            self.stop()
+            stop_result = self.stop() or {}
             self.intentional_stop = False
             self.reconnect_in_progress = False
+            # Stop non riuscito (runtime ancora vivo): NON avviare un secondo
+            # listener sopra quello esistente; resta FAILED, riprovera' l'autoheal.
+            if stop_result.get("stopped") is False:
+                return {
+                    "started": False,
+                    "recovered": False,
+                    "reason": "listener_stop_failed",
+                    "state": self.state,
+                }
             result = self.start()
             if not bool(result.get("started", False)):
                 result["recovered"] = False
