@@ -1,10 +1,40 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+import threading
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+try:
+    from telethon import TelegramClient, events
+    from telethon.sessions import StringSession
+except ModuleNotFoundError:  # pragma: no cover - ambienti senza telethon
+    TelegramClient = None
+    events = None
+    StringSession = None
+
 logger = logging.getLogger(__name__)
+
+# Prefissi delle righe statistiche del canale: la parola chiave NON deve
+# cercare qui dentro (es. "📈Quota 0,5 HT Prematch:1.42" farebbe scattare
+# la keyword "0,5 HT" su qualsiasi messaggio, mercato sbagliato).
+_STATS_LINE_PREFIXES = ("📈", "🥅", "🎯", "📊")
+_STATS_LINE_KEYWORDS = ("possesso palla",)
+
+
+def _keyword_searchable_text(text: str) -> str:
+    """Testo del messaggio senza le righe statistiche (per il match keyword)."""
+    lines = []
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith(_STATS_LINE_PREFIXES):
+            continue
+        if any(stripped.lower().startswith(k) for k in _STATS_LINE_KEYWORDS):
+            continue
+        lines.append(line)
+    return "\n".join(lines)
 
 
 class TelegramListener:
@@ -17,11 +47,27 @@ class TelegramListener:
     - callback registration
     """
 
-    def __init__(self, api_id: int, api_hash: str, session_string: str | None = None, db=None):
+    def __init__(
+        self,
+        api_id: int,
+        api_hash: str,
+        session_string: str | None = None,
+        db=None,
+        client_factory=None,
+        connect_timeout: float = 10.0,
+    ):
         self.api_id = int(api_id)
         self.api_hash = str(api_hash)
         self.session_string = session_string
         self.db = db
+        self._client_factory = client_factory
+        self._connect_timeout = float(connect_timeout)
+
+        self._runtime_thread: threading.Thread | None = None
+        self._runtime_loop: asyncio.AbstractEventLoop | None = None
+        self._client = None
+        self._runtime_ready = threading.Event()
+        self.runtime_handlers_registered = 0
 
         self.running = False
         self.monitored_chats: List[int] = []
@@ -75,19 +121,36 @@ class TelegramListener:
         self.intentional_stop = False
         self.reconnect_in_progress = False
         self.last_error = ""
+
+        # Preflight fail-closed: niente runtime finto. Se mancano i prerequisiti
+        # il listener va in FAILED con errore esplicito, mai in finto LISTENING.
+        if self._client_factory is None and TelegramClient is None:
+            self.mark_failed("telethon_not_available")
+            return {"started": False, "state": self.state, "error": self.last_error}
+        if self._client_factory is None and not self.session_string:
+            self.mark_failed("missing_session_string")
+            return {"started": False, "state": self.state, "error": self.last_error}
+
         self._set_state("CONNECTING")
         self.running = True
         self.listener_started = True
         self.active_network_resources = 0
+        self._runtime_ready.clear()
 
-        # This listener currently does not manage a live Telegram client socket.
-        # Keep lifecycle honest: started runtime, but no proven CONNECTED state.
-        self._emit_status("LISTENING", "Listener avviato")
+        self._runtime_thread = threading.Thread(
+            target=self._runtime_main, name="telegram-listener-runtime", daemon=True
+        )
+        self._runtime_thread.start()
+
+        # Attende l'esito della connessione (CONNECTED o FAILED) per dare al
+        # chiamante uno stato veritiero; oltre il timeout resta CONNECTING e
+        # l'esito arriva via callback on_status.
+        self._runtime_ready.wait(timeout=self._connect_timeout)
         return {
-            "started": True,
+            "started": self.state not in {"FAILED", "STOPPED"},
             "chat_count": len(self.monitored_chats),
             "state": self.state,
-            "reason": "no_live_runtime_client",
+            "error": self.last_error or None,
         }
 
     def stop(self):
@@ -96,11 +159,126 @@ class TelegramListener:
 
         self.intentional_stop = True
         self.reconnect_in_progress = False
+
+        loop, client = self._runtime_loop, self._client
+        if loop is not None and client is not None and not loop.is_closed():
+            try:
+                future = asyncio.run_coroutine_threadsafe(client.disconnect(), loop)
+                future.result(timeout=10)
+            except Exception:
+                logger.exception("[TelegramListener] Errore durante disconnect")
+        thread = self._runtime_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=10)
+
         self.running = False
         self.active_network_resources = 0
+        self.runtime_handlers_registered = 0
         self._set_state("STOPPED")
         self._emit_status("STOPPED", "Listener fermato")
         return {"stopped": True, "state": self.state}
+
+    # =========================================================
+    # RUNTIME TELETHON (thread dedicato con event loop proprio)
+    # =========================================================
+    def _create_client(self):
+        if self._client_factory is not None:
+            return self._client_factory(self.api_id, self.api_hash, self.session_string)
+        return TelegramClient(
+            StringSession(self.session_string), self.api_id, self.api_hash
+        )
+
+    def _runtime_main(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        self._runtime_loop = loop
+        try:
+            loop.run_until_complete(self._runtime_async())
+        except Exception as exc:
+            if not self.intentional_stop:
+                self.mark_failed(f"runtime_error: {exc}")
+        finally:
+            self.active_network_resources = 0
+            self.runtime_handlers_registered = 0
+            self._client = None
+            self._runtime_ready.set()
+            try:
+                loop.close()
+            except Exception:
+                pass
+            self._runtime_loop = None
+
+    async def _runtime_async(self) -> None:
+        client = self._create_client()
+        self._client = client
+        try:
+            await client.connect()
+            authorized = await client.is_user_authorized()
+            if not authorized:
+                self.mark_failed("session_not_authorized")
+                self._runtime_ready.set()
+                return
+
+            if events is not None and self._client_factory is None:
+                event_filter = events.NewMessage(chats=self.monitored_chats or None)
+            else:
+                event_filter = None
+            if event_filter is not None:
+                client.add_event_handler(self._on_new_message_event, event_filter)
+            else:
+                client.add_event_handler(self._on_new_message_event)
+            self.runtime_handlers_registered = 1
+
+            self.active_network_resources = 1
+            self._set_state("CONNECTED")
+            self._emit_status("CONNECTED", "Listener connesso a Telegram")
+            self._runtime_ready.set()
+
+            await client.run_until_disconnected()
+
+            if self.intentional_stop:
+                return
+            # Disconnessione non richiesta: stato honesto, l'autoheal decide.
+            self.mark_failed("disconnected_unexpectedly")
+        finally:
+            try:
+                if client.is_connected():
+                    await client.disconnect()
+            except Exception:
+                pass
+
+    async def _on_new_message_event(self, event) -> None:
+        try:
+            text = getattr(event, "raw_text", None)
+            if text is None:
+                message = getattr(event, "message", None)
+                text = getattr(message, "message", "") if message else ""
+            chat_id = getattr(event, "chat_id", None)
+            self.handle_incoming(text or "", chat_id=chat_id)
+        except Exception:
+            logger.exception("[TelegramListener] Errore gestione messaggio")
+
+    def handle_incoming(self, text: str, chat_id: int | None = None) -> Optional[Dict[str, Any]]:
+        """Processa un messaggio ricevuto: liveness, callback, parsing, segnale."""
+        received_at = datetime.now(timezone.utc).isoformat()
+        self.last_successful_message_ts = received_at
+
+        cb = self._callbacks.get("on_message")
+        if callable(cb):
+            try:
+                cb(text)
+            except Exception:
+                self.last_error = "on_message_callback_failed"
+                logger.exception("[TelegramListener] Errore callback on_message")
+
+        signal = self.parse_signal(text)
+        if not signal:
+            return None
+        signal.setdefault("received_at", received_at)
+        if chat_id is not None:
+            signal.setdefault("chat_id", chat_id)
+        self._emit_signal(signal)
+        return signal
 
     def mark_failed(self, error: str) -> None:
         self.last_error = str(error or "")
@@ -151,7 +329,9 @@ class TelegramListener:
             "running": status["running"],
             "listener_started": status["listener_started"],
             "client_alive": bool(self.running and self.active_network_resources > 0),
-            "handlers_registered": status["handlers_registered"],
+            # Verità runtime per l'invariant guard: conta gli handler Telethon
+            # registrati (0 o 1), non i callback applicativi di status().
+            "handlers_registered": int(self.runtime_handlers_registered),
             "reconnect_in_progress": status["reconnect_in_progress"],
             "reconnect_attempts": status["reconnect_attempts"],
             "active_network_resources": status["active_network_resources"],
@@ -244,16 +424,18 @@ class TelegramListener:
 
                 # Logica di attivazione:
                 # - Solo regex: deve matchare
-                # - Solo keyword: deve essere presente nel testo
+                # - Solo keyword: deve essere presente nel testo (escluse le
+                #   righe statistiche, che contengono frasi tipo "Quota 0,5 HT")
                 # - Entrambi: entrambi devono essere soddisfatti
+                keyword_text = _keyword_searchable_text(text).lower() if keyword else ""
                 if pattern and keyword:
-                    if not regex_match or keyword.lower() not in text.lower():
+                    if not regex_match or keyword.lower() not in keyword_text:
                         continue
                 elif pattern:
                     if not regex_match:
                         continue
                 elif keyword:
-                    if keyword.lower() not in text.lower():
+                    if keyword.lower() not in keyword_text:
                         continue
 
                 home_score, away_score = self._extract_score(text)

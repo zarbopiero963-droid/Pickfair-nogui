@@ -29,10 +29,14 @@ class TelegramService:
     - non contiene logica di trading
     """
 
-    def __init__(self, settings_service, db, bus):
+    def __init__(self, settings_service, db, bus, client_factory=None, connect_timeout: float = 10.0):
         self.settings_service = settings_service
         self.db = db
         self.bus = bus
+        # Factory iniettabile del client Telegram (test/diagnostica);
+        # None = client Telethon reale costruito dal listener.
+        self._client_factory = client_factory
+        self._connect_timeout = float(connect_timeout)
         self.listener: Optional[TelegramListener] = None
         self.connected = False
         self.last_error = ""
@@ -168,6 +172,8 @@ class TelegramService:
                 api_id=int(cfg.api_id),
                 api_hash=cfg.api_hash,
                 session_string=cfg.session_string or None,
+                client_factory=self._client_factory,
+                connect_timeout=self._connect_timeout,
             )
 
             self.listener.set_database(self.db)
@@ -299,7 +305,12 @@ class TelegramService:
             "running": bool(status["running"]),
             "listener_started": bool(status["listener_started"]),
             "client_alive": bool(listener_snapshot.get("client_alive", False)),
-            "handlers_registered": int(status["handlers_registered"]),
+            # Verita' runtime dal listener (handler Telethon, 0 o 1): il guard
+            # richiede esattamente 1 handler quando CONNECTED; i callback
+            # applicativi restano conteggiati in status().
+            "handlers_registered": int(
+                listener_snapshot.get("handlers_registered", status["handlers_registered"])
+            ),
             "reconnect_in_progress": bool(status["reconnect_in_progress"]),
             "reconnect_attempts": int(status["reconnect_attempts"]),
             "active_network_resources": int(status["active_network_resources"]),
