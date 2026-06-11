@@ -11,16 +11,25 @@ from telegram_listener import TelegramListener, _keyword_searchable_text
 class FakeTelethonClient:
     """Client fake con la stessa interfaccia async usata dal runtime."""
 
-    def __init__(self, *, authorized: bool = True, connect_error: Exception | None = None):
+    def __init__(self, *, authorized: bool = True, connect_error: Exception | None = None,
+                 slow_connect: bool = False):
         self.authorized = authorized
         self.connect_error = connect_error
+        self.slow_connect = slow_connect
         self.handlers = []
         self.connected = False
         self._disconnected = None  # asyncio.Event creato nel loop del runtime
+        self._connect_gate = None
+
+    def release_connect(self, loop):
+        loop.call_soon_threadsafe(self._connect_gate.set)
 
     async def connect(self):
         if self.connect_error is not None:
             raise self.connect_error
+        if self.slow_connect:
+            self._connect_gate = asyncio.Event()
+            await self._connect_gate.wait()
         self.connected = True
         self._disconnected = asyncio.Event()
 
@@ -44,13 +53,13 @@ class FakeTelethonClient:
             self._disconnected.set()
 
 
-def _make_listener(client, *, chats=(-100999,), **kwargs):
+def _make_listener(client, *, chats=(-100999,), connect_timeout=5.0, **kwargs):
     listener = TelegramListener(
         api_id=1,
         api_hash="x",
         session_string="sess",
         client_factory=lambda api_id, api_hash, session: client,
-        connect_timeout=5.0,
+        connect_timeout=connect_timeout,
         **kwargs,
     )
     listener.set_monitored_chats(list(chats))
@@ -240,6 +249,32 @@ def test_connect_error_fails_closed():
     assert result["started"] is False
     assert listener.state == "FAILED"
     assert "boom" in listener.last_error
+
+
+@pytest.mark.unit
+def test_stop_during_slow_connect_aborts_startup():
+    import threading
+
+    client = FakeTelethonClient(slow_connect=True)
+    listener = _make_listener(client, connect_timeout=0.2)
+    result = listener.start()
+    assert result["state"] == "CONNECTING"  # connect ancora in corso
+
+    # stop() mentre il connect è in volo: NON deve restare un handler vivo.
+    stopper = threading.Thread(target=listener.stop)
+    stopper.start()
+    time.sleep(0.1)
+    client.release_connect(listener._runtime_loop)
+    stopper.join(timeout=15)
+    assert not stopper.is_alive()
+
+    deadline = time.time() + 5
+    while listener._runtime_thread.is_alive() and time.time() < deadline:
+        time.sleep(0.05)
+    assert not listener._runtime_thread.is_alive()
+    assert listener.state == "STOPPED"
+    assert client.handlers == []  # mai registrato
+    assert listener.runtime_handlers_registered == 0
 
 
 @pytest.mark.unit

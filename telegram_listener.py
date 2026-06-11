@@ -124,7 +124,7 @@ class TelegramListener:
 
         # Preflight fail-closed: niente runtime finto. Se mancano i prerequisiti
         # il listener va in FAILED con errore esplicito, mai in finto LISTENING.
-        if self._client_factory is None and TelegramClient is None:
+        if TelegramClient is None or events is None:
             self.mark_failed("telethon_not_available")
             return {"started": False, "state": self.state, "error": self.last_error}
         if self._client_factory is None and not self.session_string:
@@ -224,15 +224,15 @@ class TelegramListener:
                 self._runtime_ready.set()
                 return
 
-            if events is not None:
-                # monitored_chats è garantito non vuoto dal preflight di start()
-                event_filter = events.NewMessage(chats=self.monitored_chats)
-            else:
-                event_filter = None
-            if event_filter is not None:
-                client.add_event_handler(self._on_new_message_event, event_filter)
-            else:
-                client.add_event_handler(self._on_new_message_event)
+            # stop() può arrivare mentre connect() è ancora in corso: in quel
+            # caso NON va registrato alcun handler (un emergency stop non deve
+            # lasciare un runtime vivo dopo lo STOPPED); il finally disconnette.
+            if self.intentional_stop:
+                return
+
+            # monitored_chats non vuoto ed events presente: garantiti dal preflight
+            event_filter = events.NewMessage(chats=self.monitored_chats)
+            client.add_event_handler(self._on_new_message_event, event_filter)
             self.runtime_handlers_registered = 1
 
             self.active_network_resources = 1
