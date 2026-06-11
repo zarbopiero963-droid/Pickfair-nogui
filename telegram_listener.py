@@ -55,6 +55,7 @@ class TelegramListener:
         db=None,
         client_factory=None,
         connect_timeout: float = 10.0,
+        stop_timeout: float = 10.0,
     ):
         self.api_id = int(api_id)
         self.api_hash = str(api_hash)
@@ -62,6 +63,7 @@ class TelegramListener:
         self.db = db
         self._client_factory = client_factory
         self._connect_timeout = float(connect_timeout)
+        self._stop_timeout = float(stop_timeout)
 
         self._runtime_thread: threading.Thread | None = None
         self._runtime_loop: asyncio.AbstractEventLoop | None = None
@@ -118,12 +120,13 @@ class TelegramListener:
         if monitored_chats is not None:
             self.set_monitored_chats(monitored_chats)
 
-        self.intentional_stop = False
         self.reconnect_in_progress = False
         self.last_error = ""
 
         # Preflight fail-closed: niente runtime finto. Se mancano i prerequisiti
         # il listener va in FAILED con errore esplicito, mai in finto LISTENING.
+        # NOTA: intentional_stop si resetta solo DOPO i preflight: un runtime
+        # precedente ancora vivo deve continuare a vedere lo stop richiesto.
         if TelegramClient is None or events is None:
             self.mark_failed("telethon_not_available")
             return {"started": False, "state": self.state, "error": self.last_error}
@@ -135,7 +138,13 @@ class TelegramListener:
         if not self.monitored_chats:
             self.mark_failed("no_monitored_chats")
             return {"started": False, "state": self.state, "error": self.last_error}
+        # Mai sovrascrivere un runtime precedente ancora vivo: due thread
+        # condividerebbero client/loop e lo stato diventerebbe inattendibile.
+        if self._runtime_thread is not None and self._runtime_thread.is_alive():
+            self.mark_failed("previous_runtime_still_alive")
+            return {"started": False, "state": self.state, "error": self.last_error}
 
+        self.intentional_stop = False
         self._set_state("CONNECTING")
         self.running = True
         self.listener_started = True
@@ -169,12 +178,18 @@ class TelegramListener:
         if loop is not None and client is not None and not loop.is_closed():
             try:
                 future = asyncio.run_coroutine_threadsafe(client.disconnect(), loop)
-                future.result(timeout=10)
+                future.result(timeout=self._stop_timeout)
             except Exception:
                 logger.exception("[TelegramListener] Errore durante disconnect")
         thread = self._runtime_thread
         if thread is not None and thread.is_alive():
-            thread.join(timeout=10)
+            thread.join(timeout=self._stop_timeout)
+
+        # STOPPED solo a runtime davvero uscito: dichiararlo con un thread
+        # ancora vivo permetterebbe a un nuovo start() di sovrapporsi.
+        if thread is not None and thread.is_alive():
+            self.mark_failed("stop_timeout_runtime_thread_alive")
+            return {"stopped": False, "state": self.state, "error": self.last_error}
 
         self.running = False
         self.active_network_resources = 0
@@ -203,15 +218,16 @@ class TelegramListener:
             if not self.intentional_stop:
                 self.mark_failed(f"runtime_error: {exc}")
         finally:
-            self.active_network_resources = 0
-            self.runtime_handlers_registered = 0
-            self._client = None
+            if self._runtime_loop is loop:
+                self.active_network_resources = 0
+                self.runtime_handlers_registered = 0
+                self._client = None
+                self._runtime_loop = None
             self._runtime_ready.set()
             try:
                 loop.close()
             except Exception:
                 pass
-            self._runtime_loop = None
 
     async def _runtime_async(self) -> None:
         client = self._create_client()

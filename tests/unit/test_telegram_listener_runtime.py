@@ -278,6 +278,32 @@ def test_stop_during_slow_connect_aborts_startup():
 
 
 @pytest.mark.unit
+def test_stop_timeout_does_not_claim_stopped_with_live_runtime():
+    client = FakeTelethonClient(slow_connect=True)
+    listener = _make_listener(client, connect_timeout=0.2)
+    listener._stop_timeout = 0.2
+    listener.start()
+
+    # connect mai completato e stop_timeout breve: il thread resta vivo.
+    result = listener.stop()
+    assert result["stopped"] is False
+    assert listener.state == "FAILED"
+    assert listener.last_error == "stop_timeout_runtime_thread_alive"
+
+    # Un nuovo start NON deve sovrapporsi al runtime ancora vivo.
+    again = listener.start()
+    assert again["started"] is False
+    assert listener.last_error == "previous_runtime_still_alive"
+
+    # Cleanup: sblocca il connect, il runtime esce da solo (intentional_stop).
+    client.release_connect(listener._runtime_loop)
+    deadline = time.time() + 5
+    while listener._runtime_thread.is_alive() and time.time() < deadline:
+        time.sleep(0.05)
+    assert not listener._runtime_thread.is_alive()
+
+
+@pytest.mark.unit
 def test_double_start_is_idempotent():
     client = FakeTelethonClient()
     listener = _make_listener(client)
