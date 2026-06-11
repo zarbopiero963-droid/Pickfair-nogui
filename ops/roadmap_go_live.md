@@ -111,6 +111,44 @@
 | 5.2 Micro-stake live: stake minimo, hard-stop giornaliero basso, `auto_bet` attivo | fino a ~20–30 scommesse validate (max 2 settimane); il minimo di transazioni necessario, NON una durata fissa — l'uso prolungato del sotto-minimo aumenta il rischio di flag sull'account | riconciliazione pulita, zero incidenti → spunta `ops/live_microstake_gate.md` |
 | 5.3 Ramp-up: alzare gradualmente i limiti MM | — | operatività a regime |
 
+## Audit matematica Exchange (giugno 2026) — esiti e test mancanti
+
+Triplo audit read-only (commissione 4.5%, dutching BACK/LAY, hedge/green-up)
+eseguito su richiesta dell'owner contro la matematica di riferimento.
+
+**Verdetti** (evidenza file:riga negli audit di sessione):
+
+| Dominio | Esito | Note |
+|---|---|---|
+| Commissione 4.5% | ✅ CORRETTA | Tasso centralizzato fail-closed (`trading_config.py`); solo su vincite nette positive; mai doppia; netting per MERCATO via `MarketNetRealizedSettlementAggregator` |
+| Dutching BACK | ✅ CORRETTO | Formula ≡ riferimento `stake_i=(B/oᵢ)/S`; spread post-rounding ≤0.15 testato; dutch non profittevole riportato onestamente |
+| Dutching LAY | ✅ CORRETTO | Modello equal-profit esplicito; liability `stake×(odds−1)`; worst-case esposta dal controller |
+| Hedge/green-up | ✅ formule corrette | Prezzo medio ponderato, chiusura parziale, realized/unrealized separati, no doppia realizzazione (`core/position_ledger.py`); live/sim condividono gli stessi componenti |
+
+**Limite architetturale noto (MEDIUM)**: il green-up è helper/preview-only —
+il runtime non dichiara mai uno stato "posizione green/hedged" autoritativo.
+Accettabile oggi; serve per automazione hedge intelligente (vedi 2.x).
+
+### Test matematici mancanti (in ordine di priorità)
+
+1. **Parity live/sim commissione end-to-end** (unico gap vero della commissione)
+2. **Parity settlement LAY** (`test_dutching_realized_settlement_parity` esiste solo per BACK)
+3. **Worst-case liability LAY mai sottostimata** (`max(liability_i)`)
+4. **Idempotenza commissione su retry settlement** (stesso market/correlation 2× → mai doppia)
+5. **Chiusura parziale multi-fill (3+ leg)** con prezzo medio residuo ponderato
+6. **Stress dutching su N grandi** (20-100 esiti stile risultato esatto)
+7. **Idempotenza equalizzazione rounding** (equalize 2× → nessun drift)
+8. **Precisione Decimal su stake estremi** + refund commissione esatto su +X/−X
+9. **Integrazione tick ladder Betfair nel dutching** (oggi rounding a centesimi, preview-only: documentato)
+10. **Smoke integrazione: settlement rifiutato su basis ≠ market_net_realized**
+11. **Segregazione ledger commissioni per market_id** (no crosstalk)
+
+### Gap E2E (da analisi formato canale + checklist owner)
+
+- **Real-money guard esplicito** negli E2E (env/flag → RuntimeError, indipendente da safe mode)
+- **Limiti quota minima / stake massimo come flusso E2E** (oggi coperti solo a livello unit/MM)
+- ✅ Catena completa messaggio→ordine simulato→DB: aggiunta in PR #263
+
 ## Backlog (non bloccante)
 
 - Supporto runner "Under X.5" in `TelegramBetResolver` (oggi risolve solo "Over X.5";
