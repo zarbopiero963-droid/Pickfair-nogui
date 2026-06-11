@@ -120,10 +120,17 @@ eseguito su richiesta dell'owner contro la matematica di riferimento.
 
 | Dominio | Esito | Note |
 |---|---|---|
-| Commissione 4.5% | ✅ CORRETTA | Tasso centralizzato fail-closed (`trading_config.py`); solo su vincite nette positive; mai doppia; netting per MERCATO via `MarketNetRealizedSettlementAggregator` |
+| Commissione 4.5% | ✅ CORRETTA | vedi nota sotto |
 | Dutching BACK | ✅ CORRETTO | Formula ≡ riferimento `stake_i=(B/oᵢ)/S`; spread post-rounding ≤0.15 testato; dutch non profittevole riportato onestamente |
 | Dutching LAY | ✅ CORRETTO | Modello equal-profit esplicito; liability `stake×(odds−1)`; worst-case esposta dal controller |
-| Hedge/green-up | ✅ formule corrette | Prezzo medio ponderato, chiusura parziale, realized/unrealized separati, no doppia realizzazione (`core/position_ledger.py`); live/sim condividono gli stessi componenti |
+| Hedge/green-up | ✅ formule corrette | vedi nota sotto |
+
+Nota commissione: tasso centralizzato fail-closed (`trading_config.py`);
+solo su vincite nette positive; mai doppia applicazione; netting per
+MERCATO via `MarketNetRealizedSettlementAggregator`.
+Nota hedge: prezzo medio ponderato, chiusura parziale onesta,
+realized/unrealized separati, no doppia realizzazione
+(`core/position_ledger.py`); live e sim condividono gli stessi componenti.
 
 **Limite architetturale noto (MEDIUM)**: il green-up è helper/preview-only —
 il runtime non dichiara mai uno stato "posizione green/hedged" autoritativo.

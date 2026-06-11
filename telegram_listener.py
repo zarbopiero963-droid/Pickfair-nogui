@@ -243,6 +243,11 @@ class TelegramListener:
         self._client = client
         try:
             await client.connect()
+            # Abort PRIMA di altre chiamate Telethon: se nel frattempo la
+            # startup e' fallita (connect_timeout) o e' arrivato stop(), una
+            # is_user_authorized lenta terrebbe vivo il thread inutilmente.
+            if self.intentional_stop or self.state == "FAILED":
+                return
             authorized = await client.is_user_authorized()
             if not authorized:
                 self.mark_failed("session_not_authorized")

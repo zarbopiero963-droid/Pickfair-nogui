@@ -13,12 +13,17 @@ class _FakeTelethonClient:
     def __init__(self, hang_connect: bool = False):
         self.hang_connect = hang_connect
         self._disconnected = None
+        self._connect_gate = None
+
+    def release_connect(self, loop):
+        if self._connect_gate is not None:
+            loop.call_soon_threadsafe(self._connect_gate.set)
 
     async def connect(self):
-        if self.hang_connect:
-            import asyncio as _aio
-            await _aio.Event().wait()
         import asyncio as _aio
+        if self.hang_connect:
+            self._connect_gate = _aio.Event()
+            await self._connect_gate.wait()
         self._disconnected = _aio.Event()
 
     async def is_user_authorized(self):
@@ -220,17 +225,20 @@ def test_handle_signal_preserves_listener_received_at():
 @pytest.mark.unit
 def test_stop_with_hung_runtime_fails_closed_and_keeps_listener():
     svc = _svc(hang_connect=True, connect_timeout=0.2)
-    svc.start()
-    assert svc.listener is not None
-    svc.listener._stop_timeout = 0.2
+    try:
+        svc.start()
+        assert svc.listener is not None
+        svc.listener._stop_timeout = 0.2
 
-    svc.stop()
+        svc.stop()
 
-    # Runtime mai uscito: il service NON deve dichiarare STOPPED ne'
-    # staccare il listener (un restart creerebbe un secondo runtime).
-    assert svc.state == "FAILED"
-    assert svc.listener is not None
-    assert "stop_timeout" in svc.status()["last_error"]
+        # Runtime mai uscito: il service NON deve dichiarare STOPPED ne'
+        # staccare il listener (un restart creerebbe un secondo runtime).
+        assert svc.state == "FAILED"
+        assert svc.listener is not None
+        assert "stop_timeout" in svc.status()["last_error"]
+    finally:
+        _teardown_hung_listener(svc)
 
 
 @pytest.mark.unit
@@ -450,24 +458,43 @@ def test_dirty_stop_and_intentional_stop_are_distinguishable_for_restart_paths()
     dirty.stop()
 
 
+
+
+def _teardown_hung_listener(svc):
+    """Sblocca il connect appeso e chiude il runtime (no thread leak)."""
+    listener = svc.listener
+    if listener is None:
+        return
+    client = getattr(listener, "_client", None)
+    loop = getattr(listener, "_runtime_loop", None)
+    if client is not None and loop is not None and hasattr(client, "release_connect"):
+        client.release_connect(loop)
+    thread = getattr(listener, "_runtime_thread", None)
+    if thread is not None:
+        thread.join(timeout=5)
+
+
 @pytest.mark.unit
 def test_hung_connect_fails_closed_and_restart_does_not_overlap():
     svc = _svc(hang_connect=True, connect_timeout=0.2)
-    result = svc.start()
+    try:
+        result = svc.start()
 
-    # Connect oltre il timeout: startup fallita, mai CONNECTING eterno.
-    assert result["started"] is False
-    assert svc.status()["state"] == "FAILED"
-    assert "connect_timeout" in svc.status()["last_error"]
+        # Connect oltre il timeout: startup fallita, mai CONNECTING eterno.
+        assert result["started"] is False
+        assert svc.status()["state"] == "FAILED"
+        assert "connect_timeout" in svc.status()["last_error"]
 
-    # Il restart non deve sovrapporre un secondo runtime a quello appeso.
-    assert svc.listener is not None
-    svc.listener._stop_timeout = 0.2
-    suppressed = svc.restart()
-    assert suppressed["started"] is False
-    # restart() chiama stop() per primo: con il thread ancora vivo l'esito
-    # raggiungibile e' solo listener_stop_failed (start() non viene mai chiamato).
-    assert suppressed["reason"] == "listener_stop_failed"
+        # Il restart non deve sovrapporre un secondo runtime a quello appeso.
+        assert svc.listener is not None
+        svc.listener._stop_timeout = 0.2
+        suppressed = svc.restart()
+        assert suppressed["started"] is False
+        # restart() chiama stop() per primo: con il thread ancora vivo l'esito
+        # raggiungibile e' solo listener_stop_failed (start() non e' mai chiamato).
+        assert suppressed["reason"] == "listener_stop_failed"
+    finally:
+        _teardown_hung_listener(svc)
 
 
 @pytest.mark.unit
