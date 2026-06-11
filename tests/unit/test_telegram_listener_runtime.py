@@ -44,8 +44,8 @@ class FakeTelethonClient:
             self._disconnected.set()
 
 
-def _make_listener(client, **kwargs):
-    return TelegramListener(
+def _make_listener(client, *, chats=(-100999,), **kwargs):
+    listener = TelegramListener(
         api_id=1,
         api_hash="x",
         session_string="sess",
@@ -53,6 +53,8 @@ def _make_listener(client, **kwargs):
         connect_timeout=5.0,
         **kwargs,
     )
+    listener.set_monitored_chats(list(chats))
+    return listener
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +207,18 @@ def test_missing_session_fails_closed_without_factory():
     assert result["started"] is False
     assert listener.state == "FAILED"
     assert listener.last_error in {"missing_session_string", "telethon_not_available"}
+
+
+@pytest.mark.unit
+def test_empty_monitored_chats_fails_closed():
+    # chats=None in Telethon significa NESSUN filtro: il listener
+    # ascolterebbe tutti i dialoghi dell'account. Mai di default.
+    client = FakeTelethonClient()
+    listener = _make_listener(client, chats=())
+    result = listener.start()
+    assert result["started"] is False
+    assert listener.state == "FAILED"
+    assert listener.last_error == "no_monitored_chats"
 
 
 @pytest.mark.unit

@@ -130,6 +130,11 @@ class TelegramListener:
         if self._client_factory is None and not self.session_string:
             self.mark_failed("missing_session_string")
             return {"started": False, "state": self.state, "error": self.last_error}
+        # Fail-closed: senza chat monitorate Telethon ascolterebbe TUTTI i
+        # dialoghi dell'account (chats=None = nessun filtro). Mai di default.
+        if not self.monitored_chats:
+            self.mark_failed("no_monitored_chats")
+            return {"started": False, "state": self.state, "error": self.last_error}
 
         self._set_state("CONNECTING")
         self.running = True
@@ -220,7 +225,8 @@ class TelegramListener:
                 return
 
             if events is not None:
-                event_filter = events.NewMessage(chats=self.monitored_chats or None)
+                # monitored_chats è garantito non vuoto dal preflight di start()
+                event_filter = events.NewMessage(chats=self.monitored_chats)
             else:
                 event_filter = None
             if event_filter is not None:
