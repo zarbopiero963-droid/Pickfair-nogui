@@ -219,7 +219,7 @@ class TelegramListener:
                 self._runtime_ready.set()
                 return
 
-            if events is not None and self._client_factory is None:
+            if events is not None:
                 event_filter = events.NewMessage(chats=self.monitored_chats or None)
             else:
                 event_filter = None
@@ -230,6 +230,9 @@ class TelegramListener:
             self.runtime_handlers_registered = 1
 
             self.active_network_resources = 1
+            # Seed liveness: senza timestamp il guard segnerebbe stale un
+            # canale sano ma silenzioso e l'autoheal lo riavvierebbe.
+            self.last_successful_message_ts = datetime.now(timezone.utc).isoformat()
             self._set_state("CONNECTED")
             self._emit_status("CONNECTED", "Listener connesso a Telegram")
             self._runtime_ready.set()
@@ -254,7 +257,10 @@ class TelegramListener:
                 message = getattr(event, "message", None)
                 text = getattr(message, "message", "") if message else ""
             chat_id = getattr(event, "chat_id", None)
-            self.handle_incoming(text or "", chat_id=chat_id)
+            # Offload su executor: parse_signal e i callback toccano il DB in
+            # modo sincrono e non devono bloccare il loop Telethon.
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self.handle_incoming, text or "", chat_id)
         except Exception:
             logger.exception("[TelegramListener] Errore gestione messaggio")
 
@@ -409,6 +415,8 @@ class TelegramListener:
             logger.exception("[TelegramListener] Errore get_signal_patterns")
             return None
 
+        keyword_haystack = _keyword_searchable_text(text).lower()
+
         for cp in patterns or []:
             try:
                 pattern = cp.get("pattern") or ""
@@ -427,15 +435,14 @@ class TelegramListener:
                 # - Solo keyword: deve essere presente nel testo (escluse le
                 #   righe statistiche, che contengono frasi tipo "Quota 0,5 HT")
                 # - Entrambi: entrambi devono essere soddisfatti
-                keyword_text = _keyword_searchable_text(text).lower() if keyword else ""
                 if pattern and keyword:
-                    if not regex_match or keyword.lower() not in keyword_text:
+                    if not regex_match or keyword.lower() not in keyword_haystack:
                         continue
                 elif pattern:
                     if not regex_match:
                         continue
                 elif keyword:
-                    if keyword.lower() not in keyword_text:
+                    if keyword.lower() not in keyword_haystack:
                         continue
 
                 home_score, away_score = self._extract_score(text)

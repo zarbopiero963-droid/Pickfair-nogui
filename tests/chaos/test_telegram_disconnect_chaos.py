@@ -24,7 +24,7 @@ class _FakeTelethonClient:
         return True
 
     def add_event_handler(self, callback, event_filter=None):
-        pass
+        """No-op: il fake accetta la registrazione senza usare il filtro."""
 
     def is_connected(self):
         return self._disconnected is not None and not self._disconnected.is_set()

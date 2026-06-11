@@ -122,8 +122,12 @@ class TelegramService:
             self.active_network_resources = int(snap.get("active_network_resources", self.active_network_resources) or 0)
             if not self.last_error:
                 self.last_error = str(snap.get("last_error") or "")
-            if self.last_successful_message_ts is None:
-                self.last_successful_message_ts = snap.get("last_successful_message_ts")
+            # Liveness: il listener è la fonte di verità runtime (si aggiorna
+            # su ogni messaggio, anche non-segnale); il cache del service
+            # resta solo come fallback quando il listener non ha un valore.
+            listener_ts = snap.get("last_successful_message_ts")
+            if listener_ts is not None:
+                self.last_successful_message_ts = listener_ts
         self.connected = self.state == "CONNECTED"
 
     # =========================================================
@@ -317,7 +321,12 @@ class TelegramService:
             "intentional_stop": bool(status["intentional_stop"]),
             "retry_loop_active": bool(status["reconnect_in_progress"]),
             "last_error": str(status["last_error"] or ""),
-            "last_successful_message_ts": status["last_successful_message_ts"],
+            # Liveness dal listener: il valore cache del service si aggiorna
+            # solo via callback segnale, i messaggi non-segnale no.
+            "last_successful_message_ts": (
+                listener_snapshot.get("last_successful_message_ts")
+                or status["last_successful_message_ts"]
+            ),
         }
 
     def health_status(self, *, checked_at: str | None = None) -> dict:

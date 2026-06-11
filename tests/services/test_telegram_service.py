@@ -25,7 +25,7 @@ class _FakeTelethonClient:
         return True
 
     def add_event_handler(self, callback, event_filter=None):
-        pass
+        """No-op: il fake accetta la registrazione senza usare il filtro."""
 
     def is_connected(self):
         return self._disconnected is not None and not self._disconnected.is_set()
@@ -202,6 +202,22 @@ def test_telegram_service_exposes_probe_snapshot():
     assert snapshot["handlers_registered"] == 1
     assert snapshot["active_network_resources"] == 1
     assert snapshot["client_alive"] is True
+    svc.stop()
+
+
+@pytest.mark.unit
+def test_runtime_snapshot_prefers_listener_liveness_timestamp():
+    svc = _svc()
+    svc.start()
+    # Messaggio non-segnale: aggiorna la liveness del listener ma non
+    # passa dal callback on_signal del service.
+    svc.listener.handle_incoming("messaggio senza segnale")
+    listener_ts = svc.listener.last_successful_message_ts
+
+    snapshot = svc.runtime_snapshot()
+
+    assert listener_ts is not None
+    assert snapshot["last_successful_message_ts"] == listener_ts
     svc.stop()
 
 

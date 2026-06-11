@@ -29,6 +29,8 @@ class FakeTelethonClient:
 
     def add_event_handler(self, callback, event_filter=None):
         self.handlers.append(callback)
+        self.event_filters = getattr(self, "event_filters", [])
+        self.event_filters.append(event_filter)
 
     def is_connected(self):
         return self.connected
@@ -137,6 +139,59 @@ def test_non_signal_message_updates_liveness_only():
         assert listener.last_successful_message_ts is not None
     finally:
         listener.stop()
+
+
+@pytest.mark.unit
+def test_connected_seeds_liveness_timestamp():
+    client = FakeTelethonClient()
+    listener = _make_listener(client)
+    try:
+        listener.start()
+        # Senza seed il guard segnerebbe STALE_RUNTIME_NO_TIMESTAMP su un
+        # canale sano ma silenzioso, e l'autoheal lo riavvierebbe.
+        assert listener.state == "CONNECTED"
+        assert listener.last_successful_message_ts is not None
+    finally:
+        listener.stop()
+
+
+@pytest.mark.unit
+def test_monitored_chats_filter_applied_with_injected_factory():
+    client = FakeTelethonClient()
+    listener = _make_listener(client)
+    listener.set_monitored_chats([-100123, -100456])
+    try:
+        listener.start()
+        assert len(client.event_filters) == 1
+        event_filter = client.event_filters[0]
+        # Con telethon installato il filtro NewMessage va passato anche ai
+        # client iniettati: senza, il listener processerebbe tutte le chat.
+        assert event_filter is not None
+        assert list(getattr(event_filter, "chats", [])) == [-100123, -100456]
+    finally:
+        listener.stop()
+
+
+@pytest.mark.unit
+def test_unexpected_disconnect_marks_failed():
+    client = FakeTelethonClient()
+    listener = _make_listener(client)
+    listener.start()
+    assert listener.state == "CONNECTED"
+
+    # Disconnessione lato client SENZA listener.stop(): fail-closed.
+    future = asyncio.run_coroutine_threadsafe(client.disconnect(), listener._runtime_loop)
+    future.result(timeout=5)
+
+    deadline = time.time() + 5
+    while listener.state != "FAILED" and time.time() < deadline:
+        time.sleep(0.05)
+
+    assert listener.state == "FAILED"
+    assert listener.last_error == "disconnected_unexpectedly"
+    snap = listener.runtime_snapshot()
+    assert snap["active_network_resources"] == 0
+    assert snap["client_alive"] is False
 
 
 # ---------------------------------------------------------------------------
