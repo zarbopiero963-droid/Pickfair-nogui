@@ -232,12 +232,29 @@ class TelegramListener:
         for cp in patterns or []:
             try:
                 pattern = cp.get("pattern") or ""
-                if not pattern:
+                keyword = str(cp.get("keyword") or "").strip()
+
+                if not pattern and not keyword:
                     continue
 
-                m = re.search(pattern, text, flags=re.IGNORECASE | re.MULTILINE)
-                if not m:
-                    continue
+                regex_match = (
+                    re.search(pattern, text, flags=re.IGNORECASE | re.MULTILINE)
+                    if pattern else None
+                )
+
+                # Logica di attivazione:
+                # - Solo regex: deve matchare
+                # - Solo keyword: deve essere presente nel testo
+                # - Entrambi: entrambi devono essere soddisfatti
+                if pattern and keyword:
+                    if not regex_match or keyword.lower() not in text.lower():
+                        continue
+                elif pattern:
+                    if not regex_match:
+                        continue
+                elif keyword:
+                    if keyword.lower() not in text.lower():
+                        continue
 
                 home_score, away_score = self._extract_score(text)
                 minute = self._extract_minute(text)
@@ -245,19 +262,35 @@ class TelegramListener:
 
                 min_minute = cp.get("min_minute")
                 max_minute = cp.get("max_minute")
-                min_score = cp.get("min_score")
-                max_score = cp.get("max_score")
-                live_only = bool(cp.get("live_only", False))
+                min_score  = cp.get("min_score")
+                max_score  = cp.get("max_score")
+                live_only  = bool(cp.get("live_only", False))
+                prematch   = bool(cp.get("prematch", False))
 
-                if min_minute is not None and minute < int(min_minute):
+                if live_only and prematch:
+                    continue  # contraddizione: ignora
+
+                # Filtri opzionali — se il minuto non è nel messaggio (0)
+                # i filtri minuto vengono saltati per non bloccare inutilmente.
+                if minute > 0:
+                    min_minute_i = self._safe_int_or_none(min_minute)
+                    max_minute_i = self._safe_int_or_none(max_minute)
+                    if min_minute_i is not None and minute < min_minute_i:
+                        continue
+                    if max_minute_i is not None and minute > max_minute_i:
+                        continue
+                    if prematch:
+                        continue  # regola solo pre-match: ignora messaggi live
+                else:
+                    # Minuto assente: blocca solo se live_only richiede minuto presente
+                    if live_only:
+                        continue
+
+                min_score_i = self._safe_int_or_none(min_score)
+                max_score_i = self._safe_int_or_none(max_score)
+                if min_score_i is not None and total_goals < min_score_i:
                     continue
-                if max_minute is not None and minute > int(max_minute):
-                    continue
-                if min_score is not None and total_goals < int(min_score):
-                    continue
-                if max_score is not None and total_goals > int(max_score):
-                    continue
-                if live_only and minute <= 0:
+                if max_score_i is not None and total_goals > max_score_i:
                     continue
 
                 selection_template = str(cp.get("selection_template") or "").strip()
@@ -275,19 +308,33 @@ class TelegramListener:
                 if not selection:
                     selection = str(cp.get("label") or cp.get("name") or "Custom Pattern")
 
+                # Stake: priorità → stake_fisso dal pattern → testo messaggio → default
+                stake_fixed        = bool(cp.get("stake_fixed", False))
+                stake_fixed_amount = cp.get("stake_fixed_amount")
+                mm_auto            = bool(cp.get("mm_auto", False))
+
+                if stake_fixed and stake_fixed_amount is not None:
+                    stake = float(stake_fixed_amount)
+                else:
+                    stake = self._extract_stake(text) or 0.0  # 0 = lascia decidere al MM
+
                 return {
-                    "event_name": event_name,
-                    "selection": selection,
-                    "market_type": market_type,
-                    "bet_type": bet_side,
-                    "price": self._extract_odds(text) or 2.0,
-                    "stake": self._extract_stake(text) or 1.0,
-                    "minute": minute,
-                    "home_score": home_score,
-                    "away_score": away_score,
-                    "pattern_id": cp.get("id"),
-                    "pattern_label": cp.get("label") or cp.get("name") or "",
-                    "raw_text": text,
+                    "event_name":         event_name,
+                    "selection":          selection,
+                    "market_type":        market_type,
+                    "bet_type":           bet_side,
+                    "price":              self._extract_odds(text),   # None → broker cerca best price
+                    "stake":              stake,
+                    "minute":             minute,
+                    "home_score":         home_score,
+                    "away_score":         away_score,
+                    "pattern_id":         cp.get("id"),
+                    "pattern_label":      cp.get("label") or cp.get("name") or "",
+                    "stake_fixed":        stake_fixed,
+                    "stake_fixed_amount": stake_fixed_amount,
+                    "mm_auto":            mm_auto,
+                    "prematch":           prematch,
+                    "raw_text":           text,
                 }
 
             except Exception:
@@ -454,25 +501,57 @@ class TelegramListener:
     # EXTRACTORS
     # =========================================================
     def _extract_event_name(self, text: str) -> str:
+        # Formato classico con emoji 🆚
         m = re.search(r"🆚\s*(.+?)(?:\n|$)", text, flags=re.IGNORECASE)
         if m:
             return m.group(1).strip("* ").strip()
+        # Formato con etichetta "Partita:" o "Match:" (con o senza emoji) seguito da riga con i nomi
+        m = re.search(r"(?:partita|match)\s*[^:\n]*:?\s*\n\s*(.+?)(?:\n|$)", text, flags=re.IGNORECASE)
+        if m:
+            return m.group(1).strip()
+        # Fallback: riga con " vs " tra due nomi di squadra
+        m = re.search(r"^(.{3,40}\s+vs?\.?\s+.{3,40})$", text, flags=re.IGNORECASE | re.MULTILINE)
+        if m:
+            return m.group(1).strip()
         return ""
 
     def _extract_score(self, text: str) -> tuple[int, int]:
+        # Formato "0 - 0" o "0-0" o "0–0"
         m = re.search(r"(\d+)\s*[-–]\s*(\d+)", text)
         if m:
             return int(m.group(1)), int(m.group(2))
         return 0, 0
 
+    @staticmethod
+    def _safe_int_or_none(value) -> int | None:
+        if value in (None, ""):
+            return None
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return None
+
     def _extract_minute(self, text: str) -> int:
-        m = re.search(r"(\d+)m\b", text, flags=re.IGNORECASE)
+        # Formato classico: "55m" o "55'"
+        m = re.search(r"(\d+)\s*(?:m\b|')", text, flags=re.IGNORECASE)
+        if m:
+            return int(m.group(1))
+        # Formato con etichetta: ⏱Minuto⏱\n55  oppure  Minuto: 55  oppure  Min: 55
+        m = re.search(
+            r"(?:⏱[^\n]*|minuto|minute|min)\s*[:\s]*\n?\s*(\d+)(?:\D|$)",
+            text, flags=re.IGNORECASE,
+        )
         if m:
             return int(m.group(1))
         return 0
 
     def _extract_odds(self, text: str) -> Optional[float]:
-        m = re.search(r"@\s*(\d+[.,]\d+)", text, flags=re.IGNORECASE)
+        # Formato @2.50 o @ 2,50
+        m = re.search(r"@\s*(\d+(?:[.,]\d+)?)", text, flags=re.IGNORECASE)
+        if m:
+            return float(m.group(1).replace(",", "."))
+        # Formato "Quota: 2.50" o "Odd: 2.50"
+        m = re.search(r"(?:quota|odd|odds)\s*[:\s]+(\d+[.,]\d+)", text, flags=re.IGNORECASE)
         if m:
             return float(m.group(1).replace(",", "."))
         return None
