@@ -252,6 +252,34 @@ def test_restart_aborts_when_listener_stop_fails():
 
 
 @pytest.mark.unit
+def test_health_status_without_checked_at_is_not_stale_for_healthy_runtime():
+    svc = _svc()
+    svc.start()
+    health = svc.health_status()
+    assert "STALE_RUNTIME_NO_TIMESTAMP" not in set(health["active_alert_codes"])
+    assert health["invariant_ok"] is True
+    svc.stop()
+
+
+@pytest.mark.unit
+def test_autoheal_does_not_restart_healthy_connected_runtime():
+    import time as _time
+
+    svc = _svc()
+    svc.start()
+    # checked_at coerente con l'orologio reale: la liveness e' appena
+    # stata seminata dal connect, quindi il runtime NON e' stale.
+    decision = svc.evaluate_autoheal(
+        checked_at_ts=_time.time(),
+        startup_grace_active=False,
+        reconnect_grace_active=False,
+        failure_escalated=False,
+    )
+    assert decision.action.name == "NO_ACTION"
+    svc.stop()
+
+
+@pytest.mark.unit
 def test_runtime_snapshot_prefers_listener_liveness_timestamp():
     svc = _svc()
     svc.start()

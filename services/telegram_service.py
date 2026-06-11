@@ -359,6 +359,10 @@ class TelegramService:
         }
 
     def health_status(self, *, checked_at: str | None = None) -> dict:
+        # now_ts e' obbligatorio per il guard: senza, ogni stato operativo
+        # verrebbe marcato STALE_RUNTIME_NO_TIMESTAMP (e l'autoheal
+        # riavvierebbe un listener sano). Default fail-safe: adesso.
+        checked_at = checked_at or datetime.now(timezone.utc).isoformat()
         snap = self.runtime_snapshot()
         invariant_snapshot = TelegramInvariantSnapshot(
             state=str(snap["state"]),
@@ -409,8 +413,10 @@ class TelegramService:
         reconnect_grace_active: bool,
         failure_escalated: bool,
     ) -> TelegramAutohealDecision:
-        health = self.health_status()
         now_ts = float(checked_at_ts if checked_at_ts is not None else self._autoheal_policy.now())
+        health = self.health_status(
+            checked_at=datetime.fromtimestamp(now_ts, tz=timezone.utc).isoformat()
+        )
         snapshot = TelegramAutohealSnapshot(
             state=str(health.get("state") or self.state),
             invariant_ok=bool(health.get("invariant_ok", True)),
