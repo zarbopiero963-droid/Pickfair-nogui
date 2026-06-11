@@ -451,15 +451,35 @@ def test_dirty_stop_and_intentional_stop_are_distinguishable_for_restart_paths()
 
 
 @pytest.mark.unit
-def test_restart_during_unstable_lifecycle_phase_is_safely_suppressed():
+def test_hung_connect_fails_closed_and_restart_does_not_overlap():
     svc = _svc(hang_connect=True, connect_timeout=0.2)
+    result = svc.start()
+
+    # Connect oltre il timeout: startup fallita, mai CONNECTING eterno.
+    assert result["started"] is False
+    assert svc.status()["state"] == "FAILED"
+    assert "connect_timeout" in svc.status()["last_error"]
+
+    # Il restart non deve sovrapporre un secondo runtime a quello appeso.
+    assert svc.listener is not None
+    svc.listener._stop_timeout = 0.2
+    suppressed = svc.restart()
+    assert suppressed["started"] is False
+    assert suppressed["reason"] in {"listener_stop_failed", "previous_runtime_still_alive"}
+
+
+@pytest.mark.unit
+def test_restart_suppressed_while_service_is_connecting():
+    svc = _svc()
     svc.start()
+    svc._set_state("CONNECTING")
 
     suppressed = svc.restart()
 
     assert suppressed["started"] is False
     assert suppressed["reason"] == "connection_in_progress"
-    assert svc.status()["state"] == "CONNECTING"
+    svc._set_state("CONNECTED")
+    svc.stop()
 
 
 @pytest.mark.unit

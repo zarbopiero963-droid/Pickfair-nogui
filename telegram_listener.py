@@ -156,10 +156,13 @@ class TelegramListener:
         )
         self._runtime_thread.start()
 
-        # Attende l'esito della connessione (CONNECTED o FAILED) per dare al
-        # chiamante uno stato veritiero; oltre il timeout resta CONNECTING e
-        # l'esito arriva via callback on_status.
-        self._runtime_ready.wait(timeout=self._connect_timeout)
+        # Attende l'esito della connessione entro connect_timeout. Un connect
+        # che sfora il timeout e' una startup FALLITA: lasciare CONNECTING
+        # per sempre bloccherebbe anche l'autoheal (restart soppresso durante
+        # CONNECTING) con un runtime appeso indefinitamente.
+        ready = self._runtime_ready.wait(timeout=self._connect_timeout)
+        if not ready and self.state == "CONNECTING":
+            self.mark_failed("connect_timeout")
         return {
             "started": self.state not in {"FAILED", "STOPPED"},
             "chat_count": len(self.monitored_chats),
@@ -240,10 +243,10 @@ class TelegramListener:
                 self._runtime_ready.set()
                 return
 
-            # stop() può arrivare mentre connect() è ancora in corso: in quel
-            # caso NON va registrato alcun handler (un emergency stop non deve
-            # lasciare un runtime vivo dopo lo STOPPED); il finally disconnette.
-            if self.intentional_stop:
+            # stop() o il timeout di start() possono arrivare mentre connect()
+            # è ancora in corso: in quel caso NON va registrato alcun handler
+            # (niente runtime vivo dopo STOPPED/FAILED); il finally disconnette.
+            if self.intentional_stop or self.state == "FAILED":
                 return
 
             # monitored_chats non vuoto ed events presente: garantiti dal preflight
