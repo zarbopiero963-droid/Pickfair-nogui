@@ -257,7 +257,11 @@ def test_stop_during_slow_connect_aborts_startup():
     client = FakeTelethonClient(slow_connect=True)
     listener = _make_listener(client, connect_timeout=0.2)
     result = listener.start()
-    assert result["state"] == "CONNECTING"  # connect ancora in corso
+    # Timeout di connessione = startup fallita (mai CONNECTING eterno:
+    # bloccherebbe l'autoheal con un runtime appeso indefinitamente).
+    assert result["started"] is False
+    assert listener.state == "FAILED"
+    assert listener.last_error == "connect_timeout"
 
     # stop() mentre il connect è in volo: NON deve restare un handler vivo.
     stopper = threading.Thread(target=listener.stop)

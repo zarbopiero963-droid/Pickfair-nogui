@@ -65,6 +65,7 @@ class TelegramListener:
         self._connect_timeout = float(connect_timeout)
         self._stop_timeout = float(stop_timeout)
 
+        self._state_lock = threading.Lock()
         self._runtime_thread: threading.Thread | None = None
         self._runtime_loop: asyncio.AbstractEventLoop | None = None
         self._client = None
@@ -156,10 +157,18 @@ class TelegramListener:
         )
         self._runtime_thread.start()
 
-        # Attende l'esito della connessione (CONNECTED o FAILED) per dare al
-        # chiamante uno stato veritiero; oltre il timeout resta CONNECTING e
-        # l'esito arriva via callback on_status.
-        self._runtime_ready.wait(timeout=self._connect_timeout)
+        # Attende l'esito della connessione entro connect_timeout. Un connect
+        # che sfora il timeout e' una startup FALLITA: lasciare CONNECTING
+        # per sempre bloccherebbe anche l'autoheal (restart soppresso durante
+        # CONNECTING) con un runtime appeso indefinitamente.
+        ready = self._runtime_ready.wait(timeout=self._connect_timeout)
+        if not ready:
+            # Serializzato col runtime: o il timeout marca FAILED prima che
+            # il runtime pubblichi CONNECTED, o trova lo stato gia' CONNECTED
+            # e non lo tocca. Mai un CONNECTED che sovrascrive il timeout.
+            with self._state_lock:
+                if self.state == "CONNECTING":
+                    self.mark_failed("connect_timeout")
         return {
             "started": self.state not in {"FAILED", "STOPPED"},
             "chat_count": len(self.monitored_chats),
@@ -234,16 +243,21 @@ class TelegramListener:
         self._client = client
         try:
             await client.connect()
+            # Abort PRIMA di altre chiamate Telethon: se nel frattempo la
+            # startup e' fallita (connect_timeout) o e' arrivato stop(), una
+            # is_user_authorized lenta terrebbe vivo il thread inutilmente.
+            if self.intentional_stop or self.state == "FAILED":
+                return
             authorized = await client.is_user_authorized()
             if not authorized:
                 self.mark_failed("session_not_authorized")
                 self._runtime_ready.set()
                 return
 
-            # stop() può arrivare mentre connect() è ancora in corso: in quel
-            # caso NON va registrato alcun handler (un emergency stop non deve
-            # lasciare un runtime vivo dopo lo STOPPED); il finally disconnette.
-            if self.intentional_stop:
+            # stop() o il timeout di start() possono arrivare mentre connect()
+            # è ancora in corso: in quel caso NON va registrato alcun handler
+            # (niente runtime vivo dopo STOPPED/FAILED); il finally disconnette.
+            if self.intentional_stop or self.state == "FAILED":
                 return
 
             # monitored_chats non vuoto ed events presente: garantiti dal preflight
@@ -251,11 +265,19 @@ class TelegramListener:
             client.add_event_handler(self._on_new_message_event, event_filter)
             self.runtime_handlers_registered = 1
 
-            self.active_network_resources = 1
-            # Seed liveness: senza timestamp il guard segnerebbe stale un
-            # canale sano ma silenzioso e l'autoheal lo riavvierebbe.
-            self.last_successful_message_ts = datetime.now(timezone.utc).isoformat()
-            self._set_state("CONNECTED")
+            # Transizione a CONNECTED serializzata con il timeout di start():
+            # se nel frattempo la startup e' stata marcata FAILED (o stop),
+            # il runtime abbandona invece di sovrascrivere lo stato.
+            with self._state_lock:
+                if self.intentional_stop or self.state == "FAILED":
+                    self.runtime_handlers_registered = 0
+                    self._runtime_ready.set()
+                    return
+                self.active_network_resources = 1
+                # Seed liveness: senza timestamp il guard segnerebbe stale un
+                # canale sano ma silenzioso e l'autoheal lo riavvierebbe.
+                self.last_successful_message_ts = datetime.now(timezone.utc).isoformat()
+                self._set_state("CONNECTED")
             self._emit_status("CONNECTED", "Listener connesso a Telegram")
             self._runtime_ready.set()
 

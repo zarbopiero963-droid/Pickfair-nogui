@@ -201,7 +201,7 @@ class TelegramService:
             )
 
             start_result = self.listener.start()
-            self.listener_started = bool(start_result.get("started", False))
+            started_ok = bool(start_result.get("started", False))
             self.last_error = str(start_result.get("error") or "")
             self._refresh_runtime_truth_from_listener()
             if self.state == "CREATED":
@@ -211,7 +211,10 @@ class TelegramService:
                 self.connected = False
 
             return {
-                "started": bool(self.listener_started),
+                # Esito dal risultato di start, NON dal flag runtime
+                # listener_started (che il refresh riallinea al listener,
+                # dove resta True anche per una startup fallita).
+                "started": started_ok and not self.last_error,
                 "chat_count": len(cfg.monitored_chat_ids),
                 "state": self.state,
                 "connected": self.connected,
