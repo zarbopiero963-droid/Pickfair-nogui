@@ -872,6 +872,13 @@ class RuntimeController:
         return bool(self.evaluate_live_readiness(**kwargs).get("ready", False))
 
     def is_live_allowed(self) -> bool:
+        # Choke point unico per OGNI submission live (manuale, dutching, copy):
+        # l'emergenza blocca qui anche se qualcuno riabilita live/execution_mode
+        # senza passare da reset_emergency() (es. start() dopo un riavvio con
+        # emergenza ripristinata).
+        if self._emergency_stopped:
+            return False
+
         if self._is_kill_switch_active():
             return False
 

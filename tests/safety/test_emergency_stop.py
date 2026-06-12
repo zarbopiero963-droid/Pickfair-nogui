@@ -543,6 +543,30 @@ def test_auto_trade_gate_blocks_during_emergency():
 
 @pytest.mark.unit
 @pytest.mark.safety
+def test_live_gate_blocks_during_emergency_even_if_live_reenabled():
+    """Il percorso dutching/manuale pubblica CMD_QUICK_BET direttamente e il
+    motore interroga solo is_live_allowed(): l'emergenza deve bloccare in
+    quel choke point anche se qualcuno riabilita live/execution_mode senza
+    reset_emergency() (es. start() dopo riavvio con emergenza ripristinata)."""
+    rc, _bus = _make_rc(db=_PersistentDb())
+    rc.emergency_stop(reason="live_gate_case")
+
+    # Simula la riabilitazione forzata del live SENZA reset_emergency().
+    rc.live_enabled = True
+    rc.execution_mode = "LIVE"
+    rc.live_readiness_ok = True
+
+    assert rc.is_live_allowed() is False
+    assert rc.get_effective_execution_mode() == "SIMULATION"
+
+    # Dopo il reset esplicito il gate torna a valutare gli altri criteri
+    # (non deve restare bloccato per emergenza).
+    rc.reset_emergency()
+    assert rc.is_emergency_stopped is False
+
+
+@pytest.mark.unit
+@pytest.mark.safety
 @pytest.mark.recovery
 def test_reset_emergency_clears_persisted_state_too():
     """reset_emergency() pulisce ANCHE lo stato persistito: il riavvio
