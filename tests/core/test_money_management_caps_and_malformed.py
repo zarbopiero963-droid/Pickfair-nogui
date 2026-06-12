@@ -31,7 +31,7 @@ def _mm(**overrides):
     return RoserpinaMoneyManagement(cfg)
 
 
-def _calc(mm, price, br=100.0, peak=100.0, tot=0.0, ev=0.0, table=None):
+def _calc(mm, price, *, br=100.0, peak=100.0, tot=0.0, ev=0.0, table=None):
     return mm.calculate(
         signal={"price": price},
         bankroll_current=br,
@@ -49,14 +49,28 @@ def _calc(mm, price, br=100.0, peak=100.0, tot=0.0, ev=0.0, table=None):
 @pytest.mark.core
 def test_recovery_stake_never_exceeds_single_bet_cap():
     """Tavolo in recovery con perdita grossa: lo stake calcolato sarebbe
-    ~103 ma il cap del 25% su bankroll 100 lo blocca a 25."""
+    ~103 ma il cap del 25% su bankroll 100 lo CLAMPA a 25 — la decisione
+    resta APPROVATA (e' il clamp, non un rifiuto)."""
     mm = _mm()
     decision = _calc(
         mm, price=2.0,
         table={"table_id": 3, "loss_amount": 100.0, "in_recovery": True},
     )
-    assert decision.recommended_stake <= 25.0
-    assert decision.recommended_stake > 0
+    assert decision.approved is True
+    assert decision.recommended_stake == pytest.approx(25.0, abs=0.01)
+
+
+@pytest.mark.core
+def test_tiny_bankroll_rejects_with_suggested_cap_stake():
+    """Contratto del percorso supera_max_single_bet: con bankroll
+    minuscolo (cap 25% di 0.30 = 0.075 < min_stake) la decisione e'
+    RIFIUTATA ma recommended_stake porta il cap SUGGERITO (positivo) —
+    e' l'unica eccezione alla regola 'non approvato => stake 0'."""
+    mm = _mm()
+    decision = _calc(mm, price=2.0, br=0.3, peak=0.3)
+    assert decision.approved is False
+    assert decision.reason == "supera_max_single_bet"
+    assert decision.recommended_stake == pytest.approx(0.075, abs=0.001)
 
 
 @pytest.mark.core
@@ -135,19 +149,18 @@ def test_full_event_exposure_blocks():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.core
-@pytest.mark.parametrize("bad_price,expected_reason", [
-    (float("nan"), "quota_non_valida"),
-    (float("inf"), None),               # inf -> safe default, reason variabile
-    ("abc", "quota_non_valida"),
-    (None, "quota_non_valida"),
+@pytest.mark.parametrize("bad_price", [
+    float("nan"),
+    float("inf"),   # _safe_float(inf) -> 0.0 -> quota <= 1: deterministico
+    "abc",
+    None,
 ])
-def test_malformed_price_is_fail_safe(bad_price, expected_reason):
+def test_malformed_price_is_fail_safe(bad_price):
     mm = _mm()
     decision = _calc(mm, price=bad_price)
-    assert decision.recommended_stake == 0.0 or math.isfinite(decision.recommended_stake)
-    if expected_reason is not None:
-        assert decision.approved is False
-        assert decision.reason == expected_reason
+    assert math.isfinite(decision.recommended_stake)
+    assert decision.approved is False
+    assert decision.reason == "quota_non_valida"
 
 
 @pytest.mark.core
@@ -164,20 +177,29 @@ def test_malformed_bankroll_blocks_with_zero_stake(bad_bankroll):
 @pytest.mark.invariant
 def test_adversarial_grid_never_produces_invalid_stake():
     """Proprieta' globale (TOP30 #24): su tutta la griglia avversaria lo
-    stake raccomandato e' SEMPRE un float finito >= 0, e quando la
-    decisione non e' approvata lo stake e' SEMPRE 0."""
+    stake raccomandato e' SEMPRE un float finito >= 0; quando la decisione
+    non e' approvata lo stake e' 0, con l'UNICA eccezione documentata di
+    supera_max_single_bet (che porta il cap suggerito, positivo)."""
     mm = _mm()
     adversarial = [
         float("nan"), float("inf"), float("-inf"),
-        -1.0, 0.0, 1.0, 2.5, "abc", None, 1e308,
+        -1.0, 0.0, 0.3, 1.0, 2.5, "abc", None, 1e308,
     ]
     for price in adversarial:
         for br in adversarial:
             for exposure in (0.0, float("nan"), -5.0, 1e308):
-                decision = _calc(mm, price=price, br=br, tot=exposure, ev=exposure)
+                # peak == bankroll dove possibile: cosi' la griglia esercita
+                # anche il percorso supera_max_single_bet (br piccoli) e non
+                # solo il lockdown da drawdown.
+                peak = br if isinstance(br, float) and math.isfinite(br) and br > 0 else 100.0
+                decision = _calc(mm, price=price, br=br, peak=peak, tot=exposure, ev=exposure)
                 stake = float(decision.recommended_stake)
                 assert math.isfinite(stake), f"stake non finito per price={price!r} br={br!r}"
                 assert stake >= 0.0, f"stake negativo per price={price!r} br={br!r}"
                 if not decision.approved:
-                    assert stake == 0.0
+                    # Unica eccezione legittima: supera_max_single_bet porta
+                    # il cap SUGGERITO (positivo) in recommended_stake.
+                    assert stake == 0.0 or decision.reason == "supera_max_single_bet", (
+                        f"non approvato con stake>0 e reason={decision.reason!r}"
+                    )
                 assert decision.reason, "reason sempre presente"
