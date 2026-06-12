@@ -81,6 +81,28 @@ def test_dirty_values_invalidate_config(field, dirty):
 
 @pytest.mark.safety
 @pytest.mark.invariant
+@pytest.mark.parametrize("field", sorted(_VALID))
+def test_boolean_false_is_invalid(field):
+    # bool e' sottoclasse di int: False -> 0.0 -> bound <= 0 -> invalido.
+    report = _controller_with_config(**{field: False})._validate_live_hard_stop_config()
+    assert report["valid"] is False
+    assert field in report["invalid_fields"]
+
+
+@pytest.mark.safety
+@pytest.mark.invariant
+def test_boolean_true_coerces_to_one_documented_contract():
+    # CONTRATTO DOCUMENTATO: True -> float(True) = 1.0, che e' un limite
+    # numericamente valido (1 EUR). Direzione fail-safe (limite piu'
+    # stretto, non piu' largo); il rifiuto esplicito dei bool sarebbe una
+    # modifica di produzione fuori scope per questa PR solo-test.
+    report = _controller_with_config(max_daily_loss=True)._validate_live_hard_stop_config()
+    assert report["valid"] is True
+    assert report["values"]["max_daily_loss"] == 1.0
+
+
+@pytest.mark.safety
+@pytest.mark.invariant
 def test_drawdown_pct_over_100_is_invalid():
     report = _controller_with_config(
         max_drawdown_hard_stop_pct=150.0

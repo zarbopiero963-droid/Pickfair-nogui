@@ -202,6 +202,9 @@ esistente prima di scrivere: si aggiunge solo signal nuovo.
 
 ### Ordine PR (serie A-M, una alla volta)
 
+Nota: le lettere J e K non sono usate (numerazione all'italiana del
+piano originale dell'owner: A-I poi L, M). Nessuna PR mancante.
+
 | PR | Suite | Note dedup |
 |---|---|---|
 | A | **Live gate fail-closed matrix**: execution_mode mancante/invalido→SIM; LIVE bloccato senza live_enabled/readiness/kill-switch/key-source/hard-stop; stato contraddittorio→blocca | `assert_live_gate_or_refuse` + deploy gate runtime esistono: testare la MATRICE completa |
