@@ -88,6 +88,22 @@ def test_keyless_payloads_collapse_to_single_bounded_passage():
 
 
 @pytest.mark.unit
+def test_falsy_selection_id_collapses_like_missing_field():
+    """selection_id=0 (falsy, raggiungibile da payload exchange malformati)
+    cade nel ramo 'or' come un campo ASSENTE: chiave degenere scoped al
+    mercato, condivisa da tutti i payload con selection falsy -> al
+    massimo un passaggio per TTL anche qui."""
+    guard = DuplicationGuard()
+
+    key_zero = guard.build_event_key({"market_id": "1.5", "selection_id": 0})
+    key_missing = guard.build_event_key({"market_id": "1.5"})
+    assert key_zero == key_missing == "1.5::BACK:default"
+
+    assert guard.acquire(key_zero) is True
+    assert guard.acquire(key_missing) is False
+
+
+@pytest.mark.unit
 @pytest.mark.recovery
 def test_startup_seed_protects_live_orders_after_restart():
     """Riavvio con ordini vivi su Betfair: il seed registra le chiavi e
