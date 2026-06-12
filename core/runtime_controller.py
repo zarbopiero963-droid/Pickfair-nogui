@@ -174,6 +174,13 @@ class RuntimeController:
 
         self._subscribe_bus()
 
+        # Fail-closed cross-riavvio: senza il reload, un crash/restart del
+        # processo durante l'emergenza farebbe ripartire il bot operativo,
+        # bypassando il contratto "solo reset_emergency() riapre". Va eseguito
+        # a costruzione COMPLETATA: ripristina l'intera postura (lockdown
+        # incluso), non solo il flag.
+        self._reload_persisted_emergency_state()
+
     def _record_runtime_io(self, *, operation: str, started_at: float, ok: bool, error: str = "") -> None:
         elapsed_ms = max(0.0, (time.monotonic() - started_at) * 1000.0)
         slow_threshold_ms = 2000.0
@@ -865,6 +872,13 @@ class RuntimeController:
         return bool(self.evaluate_live_readiness(**kwargs).get("ready", False))
 
     def is_live_allowed(self) -> bool:
+        # Choke point unico per OGNI submission live (manuale, dutching, copy):
+        # l'emergenza blocca qui anche se qualcuno riabilita live/execution_mode
+        # senza passare da reset_emergency() (es. start() dopo un riavvio con
+        # emergenza ripristinata).
+        if self._emergency_stopped:
+            return False
+
         if self._is_kill_switch_active():
             return False
 
@@ -934,6 +948,75 @@ class RuntimeController:
     def is_emergency_stopped(self) -> bool:
         return self._emergency_stopped
 
+    def _reload_persisted_emergency_state(self) -> None:
+        """Ripristina lo stato di emergenza persistito (fail-closed al riavvio).
+
+        Solo i valori truthy espliciti ('1'/'true') riattivano l'emergenza;
+        spazzatura o errori di lettura non bloccano la costruzione (il flag
+        in-sessione resta la barriera primaria, la persistenza e' difesa in
+        profondita' contro i riavvii del processo).
+        """
+        try:
+            settings = self.db.get_settings() if hasattr(self.db, "get_settings") else {}
+            flag = str((settings or {}).get("emergency_stopped", "")).strip().lower()
+            if flag not in {"1", "true"}:
+                return
+            self._emergency_stopped = True
+            self._emergency_stopped_at = str(settings.get("emergency_stopped_at") or "")
+            self._emergency_reason = str(
+                settings.get("emergency_reason") or "RESTORED_AFTER_RESTART"
+            )
+        except Exception:
+            # Fail-closed: se NON si riesce a leggere lo stato persistito non
+            # si puo' PROVARE che non ci fosse un'emergenza in corso => si
+            # riparte in emergenza; la riapre solo reset_emergency() (o un
+            # riavvio con settings di nuovo leggibili e puliti).
+            logger.exception(
+                "emergency_state: reload from settings failed — fail-closed, "
+                "riparto in emergenza"
+            )
+            self._emergency_stopped = True
+            self._emergency_stopped_at = datetime.utcnow().isoformat()
+            self._emergency_reason = "EMERGENCY_STATE_UNREADABLE"
+
+        # Postura COMPLETA, non solo il flag: senza lockdown/live-gate anche
+        # i percorsi che non leggono il flag (es. mode-based) resterebbero
+        # aperti dopo il riavvio.
+        self.live_enabled = False
+        self.execution_mode = "SIMULATION"
+        try:
+            self.set_simulation_mode(True)
+        except Exception:
+            logger.exception("emergency_state: set_simulation_mode failed on restore")
+        try:
+            # Ri-emette anche RUNTIME_LOCKDOWN per i monitor event-driven.
+            self.force_lockdown(self._emergency_reason)
+        except Exception:
+            logger.exception("emergency_state: force_lockdown failed on restore")
+            self.mode = RuntimeMode.LOCKDOWN
+            self.last_error = self._emergency_reason
+        logger.critical(
+            "EMERGENCY STOP ripristinato da stato persistito (at=%s reason=%r): "
+            "trading bloccato finche' non viene chiamato reset_emergency()",
+            self._emergency_stopped_at,
+            self._emergency_reason,
+        )
+
+    def _persist_emergency_state(self) -> str:
+        """Persiste lo stato di emergenza; ritorna '' o l'errore (mai raise)."""
+        if not hasattr(self.db, "save_settings"):
+            return "db_save_settings_unavailable"
+        try:
+            self.db.save_settings({
+                "emergency_stopped": "1" if self._emergency_stopped else "0",
+                "emergency_stopped_at": self._emergency_stopped_at,
+                "emergency_reason": self._emergency_reason,
+            })
+            return ""
+        except Exception as exc:
+            logger.exception("emergency_state: persist failed")
+            return str(exc)
+
     def emergency_stop(self, reason: str = "") -> dict:
         """
         Global emergency stop.
@@ -955,6 +1038,10 @@ class RuntimeController:
         self._emergency_stopped = True
         self._emergency_stopped_at = triggered_at
         self._emergency_reason = reason or "EMERGENCY_STOP"
+
+        # Persist SUBITO (prima del cancel): anche se il processo muore
+        # durante il cancel-all, il riavvio riparte in emergenza.
+        persist_error = self._persist_emergency_state()
 
         # Hard-close live gate
         self.live_enabled = False
@@ -1052,6 +1139,7 @@ class RuntimeController:
             "cancel_results": cancel_results,
             "cancel_errors": cancel_errors,
             "live_client_available": live_client is not None,
+            "persist_error": persist_error,
         }
 
         # Emit observable structured event
@@ -1076,8 +1164,9 @@ class RuntimeController:
         self._emergency_stopped = False
         self._emergency_stopped_at = ""
         self._emergency_reason = ""
+        persist_error = self._persist_emergency_state()
         self.bus.publish("EMERGENCY_STOP_RESET", {"reset_at": datetime.utcnow().isoformat()})
-        return {"emergency_reset": True}
+        return {"emergency_reset": True, "persist_error": persist_error}
 
     # =========================================================
     # LIFECYCLE
@@ -2446,6 +2535,11 @@ class RuntimeController:
             logger.exception("Errore persist checkpoint settlement_key=%s", key)
 
     def _risk_allows_auto_trade(self) -> tuple[bool, str]:
+        # L'auto-trade da settlement non passa da _on_signal_received: senza
+        # questo controllo una trade automatica partirebbe anche in emergenza
+        # (es. dopo riavvio + start() senza reset_emergency()).
+        if self._emergency_stopped:
+            return False, "emergency_stop_active"
         if not self._runtime_active():
             return False, "runtime_not_active"
         if self._desk_mode() == DeskMode.LOCKDOWN:
@@ -2529,6 +2623,9 @@ class RuntimeController:
         data["live_enabled"] = bool(self.live_enabled)
         data["live_readiness_ok"] = bool(self.live_readiness_ok)
         data["kill_switch_active"] = bool(self._is_kill_switch_active())
+        data["is_emergency_stopped"] = bool(self._emergency_stopped)
+        data["emergency_stopped_at"] = str(self._emergency_stopped_at)
+        data["emergency_reason"] = str(self._emergency_reason)
         data["execution_gate_reason"] = str(self.last_execution_gate_reason)
         data["deploy_gate"] = dict(self.last_deploy_gate_status or {})
         data["runtime_io"] = self.runtime_io_snapshot()

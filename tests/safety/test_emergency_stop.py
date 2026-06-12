@@ -14,7 +14,6 @@ import pytest
 
 from core.runtime_controller import RuntimeController
 
-
 # ===========================================================================
 # Stubs
 # ===========================================================================
@@ -431,3 +430,439 @@ def test_gui_emergency_stop_cancel_semantics_flat_cancel():
             "cancel must be market-wide (no bet_ids) to flatten all unmatched orders"
     # Emergency flag remains set regardless
     assert rc.is_emergency_stopped is True
+
+
+# ===========================================================================
+# PR-H: persistenza cross-riavvio, timeout/parziale, race, lifecycle
+# ===========================================================================
+
+class _PersistentDb(_Db):
+    """DB fake con settings persistenti (stringhe, come la tabella reale)."""
+
+    def __init__(self, sagas=None, settings=None):
+        super().__init__(sagas)
+        self.settings = dict(settings or {})
+
+    def save_settings(self, data):
+        for key, value in (data or {}).items():
+            self.settings[str(key)] = str(value)
+
+    def get_settings(self):
+        return dict(self.settings)
+
+
+class _TimeoutClient:
+    def cancel_orders(self, *, market_id, bet_ids=None, **_kw):
+        raise TimeoutError(f"cancelOrders timeout on {market_id}")
+
+
+class _PartialFailClient:
+    """Il cancel riesce su un mercato e fallisce sull'altro (N su M)."""
+
+    def __init__(self, failing_market):
+        self.failing_market = failing_market
+        self.cancel_calls = []
+
+    def cancel_orders(self, *, market_id, bet_ids=None, **_kw):
+        self.cancel_calls.append(market_id)
+        if market_id == self.failing_market:
+            return {"ok": False, "error": "MARKET_SUSPENDED"}
+        return {"ok": True, "cancelled_count": 1}
+
+
+class _ReentrantSignalClient:
+    """Simula un segnale che ARRIVA mentre il cancel e' in corso."""
+
+    def __init__(self):
+        self.controller = None
+        self.rejected_during_cancel = []
+
+    def cancel_orders(self, *, market_id, bet_ids=None, **_kw):
+        # Il segnale concorrente arriva nel mezzo dell'emergency stop: il
+        # flag e' settato PRIMA del cancel, quindi DEVE essere rifiutato.
+        self.controller._on_signal_received({"market_type": "NEXT_GOAL"})
+        events = self.controller.bus.last("SIGNAL_REJECTED")
+        self.rejected_during_cancel.append(events)
+        return {"ok": True, "cancelled_count": 1}
+
+
+def _signal_rejections(bus):
+    return [p for e, p in bus.published if e == "SIGNAL_REJECTED"]
+
+
+# --------------------------- BUCKET 3: persistenza -------------------------
+
+@pytest.mark.unit
+@pytest.mark.safety
+@pytest.mark.recovery
+def test_emergency_state_survives_process_restart():
+    """Crash o riavvio del processo (VPS/supervisor) DURANTE l'emergenza:
+    il nuovo processo DEVE ripartire in emergenza — senza persistenza il
+    bot riprenderebbe a tradare da solo, bypassando reset_emergency()."""
+    db = _PersistentDb()
+    rc1, _bus1 = _make_rc(db=db)
+    rc1.emergency_stop(reason="operator_panic")
+    assert rc1.is_emergency_stopped is True
+
+    # "Riavvio": nuovo controller sullo stesso DB.
+    rc2, bus2 = _make_rc(db=db)
+
+    assert rc2.is_emergency_stopped is True, (
+        "stato di emergenza PERSO al riavvio: il bot tornerebbe a tradare"
+    )
+    # Postura COMPLETA ripristinata, non solo il flag: i percorsi mode-based
+    # devono vedere il lockdown e i monitor event-driven l'evento ri-emesso.
+    assert rc2.mode.name == "LOCKDOWN"
+    assert rc2.live_enabled is False
+    assert rc2.execution_mode == "SIMULATION"
+    assert "RUNTIME_LOCKDOWN" in bus2.events()
+    rc2._on_signal_received({"market_type": "NEXT_GOAL"})
+    rejections = _signal_rejections(bus2)
+    assert rejections, "segnale non rifiutato dopo riavvio in emergenza"
+    assert "emergency_stop_active" in rejections[-1]["reason"]
+
+
+@pytest.mark.unit
+@pytest.mark.safety
+def test_auto_trade_gate_blocks_during_emergency():
+    """L'auto-trade da settlement NON passa da _on_signal_received: il suo
+    gate deve controllare l'emergenza direttamente — altrimenti dopo un
+    riavvio + start() (senza reset_emergency) una trade automatica
+    partirebbe con runtime ACTIVE e desk normale."""
+    rc, _bus = _make_rc(db=_PersistentDb())
+    rc.emergency_stop(reason="auto_trade_case")
+
+    # Simula il runtime riportato ACTIVE (es. start() post-riavvio).
+    from core.runtime_controller import RuntimeMode
+    rc.mode = RuntimeMode.ACTIVE
+
+    allowed, reason = rc._risk_allows_auto_trade()
+    assert allowed is False
+    assert reason == "emergency_stop_active"
+
+
+@pytest.mark.unit
+@pytest.mark.safety
+def test_trading_engine_submit_path_hard_blocks_during_emergency():
+    """Round 4 (P1 Codex): la sola demotion a SIMULATION non basta — senza
+    sim broker configurato il ramo SIMULATION cade su order_manager/
+    client_getter (che puo' essere il client live). Il chokepoint di
+    submission del motore deve rifiutare con emergenza attiva, per OGNI
+    modalita' e percorso (manuale, dutching, copy, fallback)."""
+    from core.trading_engine import TradingEngine
+
+    class _EmergencyRuntime:
+        is_emergency_stopped = True
+
+        @staticmethod
+        def get_effective_execution_mode():
+            return "SIMULATION"  # demotion da is_live_allowed()=False
+
+        @staticmethod
+        def is_live_allowed():
+            return False
+
+    class _LiveClientSpy:
+        def __init__(self):
+            self.place_calls = []
+
+        def place_bet(self, **payload):
+            self.place_calls.append(payload)
+            return {"ok": True}
+
+        def place_order(self, payload):
+            self.place_calls.append(payload)
+            return {"ok": True}
+
+    class _EngineBus:
+        def subscribe(self, *_):
+            pass
+
+        def publish(self, *_):
+            pass
+
+    class _EngineDb:
+        def insert_order(self, payload):
+            return "OID-EMG-1"
+
+        def update_order(self, *_args, **_kwargs):
+            pass
+
+    live_spy = _LiveClientSpy()
+    engine = TradingEngine(
+        bus=_EngineBus(),
+        db=_EngineDb(),
+        client_getter=lambda: live_spy,
+        executor=None,
+    )
+    engine._runtime_state = "READY"
+    engine.runtime_controller = _EmergencyRuntime()
+    engine.betfair_client = live_spy
+    engine.simulation_broker = None
+
+    result = engine.submit_quick_bet({"customer_ref": "C-EMG", "price": 2.0})
+
+    assert live_spy.place_calls == [], (
+        "submission arrivata al client live durante l'emergenza"
+    )
+    assert result["status"] == "FAILED"
+    assert "EMERGENCY_STOP_ACTIVE" in str(result.get("error", ""))
+
+
+@pytest.mark.unit
+@pytest.mark.safety
+def test_live_gate_blocks_during_emergency_even_if_live_reenabled():
+    """Il percorso dutching/manuale pubblica CMD_QUICK_BET direttamente e il
+    motore interroga solo is_live_allowed(): l'emergenza deve bloccare in
+    quel choke point anche se qualcuno riabilita live/execution_mode senza
+    reset_emergency() (es. start() dopo riavvio con emergenza ripristinata)."""
+    rc, _bus = _make_rc(db=_PersistentDb())
+    rc.emergency_stop(reason="live_gate_case")
+
+    # Simula la riabilitazione forzata del live SENZA reset_emergency().
+    rc.live_enabled = True
+    rc.execution_mode = "LIVE"
+    rc.live_readiness_ok = True
+
+    assert rc.is_live_allowed() is False
+    assert rc.get_effective_execution_mode() == "SIMULATION"
+
+    # Dopo il reset esplicito il gate torna a valutare gli altri criteri
+    # (non deve restare bloccato per emergenza).
+    rc.reset_emergency()
+    assert rc.is_emergency_stopped is False
+
+
+@pytest.mark.unit
+@pytest.mark.safety
+@pytest.mark.recovery
+def test_reset_emergency_clears_persisted_state_too():
+    """reset_emergency() pulisce ANCHE lo stato persistito: il riavvio
+    successivo riparte pulito."""
+    db = _PersistentDb()
+    rc1, _bus = _make_rc(db=db)
+    rc1.emergency_stop(reason="x")
+    rc1.reset_emergency()
+
+    rc2, _bus2 = _make_rc(db=db)
+    assert rc2.is_emergency_stopped is False
+
+
+@pytest.mark.unit
+@pytest.mark.safety
+@pytest.mark.recovery
+def test_unreadable_settings_at_startup_fails_closed_into_emergency():
+    """Lettura settings IMPOSSIBILE al riavvio (es. lock SQLite): non si
+    puo' provare che non ci fosse un'emergenza persistita => si riparte
+    IN emergenza (fail-closed), e la riapre solo reset_emergency()."""
+    class _UnreadableDb(_Db):
+        def get_settings(self):
+            raise RuntimeError("database is locked")
+
+        def save_settings(self, _data):
+            return None
+
+    rc, bus = _make_rc(db=_UnreadableDb())
+
+    assert rc.is_emergency_stopped is True
+    assert rc.mode.name == "LOCKDOWN"
+    assert "EMERGENCY_STATE_UNREADABLE" in rc._emergency_reason
+    rc._on_signal_received({"market_type": "NEXT_GOAL"})
+    assert any(
+        "emergency_stop_active" in r["reason"] for r in _signal_rejections(bus)
+    )
+    # Uscita esplicita: reset_emergency() riapre.
+    rc.reset_emergency()
+    assert rc.is_emergency_stopped is False
+
+
+@pytest.mark.unit
+@pytest.mark.safety
+def test_emergency_persist_failure_is_reported_not_silent():
+    """DB che fallisce il persist: l'emergenza resta attiva in memoria e
+    il risultato riporta l'errore (mai fallimento silenzioso)."""
+    class _BrokenSettingsDb(_Db):
+        def save_settings(self, _data):
+            raise RuntimeError("disk full")
+
+        def get_settings(self):
+            return {}
+
+    rc, _bus = _make_rc(db=_BrokenSettingsDb())
+    result = rc.emergency_stop(reason="x")
+
+    assert rc.is_emergency_stopped is True
+    assert result.get("persist_error"), (
+        "persist fallito deve essere visibile nel risultato"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.safety
+@pytest.mark.parametrize("persisted_value,expected", [
+    ("garbage", False),
+    ("True", True),
+    ("1", True),
+    ("true", True),
+    ("0", False),
+    ("false", False),
+    ("", False),
+])
+def test_persisted_emergency_flag_values_are_parsed_strictly(persisted_value, expected):
+    """Contratto di parsing: nessun crash su spazzatura, e SOLO i valori
+    truthy espliciti ('1'/'true', case-insensitive) ripristinano l'emergenza."""
+    db = _PersistentDb(settings={"emergency_stopped": persisted_value})
+    rc, _bus = _make_rc(db=db)
+    assert rc.is_emergency_stopped is expected
+
+
+@pytest.mark.unit
+@pytest.mark.safety
+def test_reset_persist_failure_is_reported_and_memory_state_resets():
+    """Simmetrico del persist fallito: anche in reset_emergency() l'errore
+    e' visibile, ma lo stato in memoria viene comunque resettato."""
+    class _BrokenSettingsDb(_Db):
+        def save_settings(self, _data):
+            raise RuntimeError("disk full")
+
+        def get_settings(self):
+            return {}
+
+    rc, bus = _make_rc(db=_BrokenSettingsDb())
+    rc.emergency_stop(reason="x")
+
+    result = rc.reset_emergency()
+
+    assert rc.is_emergency_stopped is False
+    assert result.get("persist_error")
+    rc._on_signal_received({"market_type": "NEXT_GOAL"})
+    assert not any(
+        "emergency_stop_active" in r["reason"] for r in _signal_rejections(bus)
+    )
+
+
+# --------------------------- get_status onesto -----------------------------
+
+@pytest.mark.unit
+@pytest.mark.safety
+def test_get_status_exposes_emergency_state():
+    """L'operatore DEVE vedere lo stato di emergenza nello snapshot."""
+    rc, _bus = _make_rc(db=_PersistentDb())
+    rc.emergency_stop(reason="visibility")
+
+    status = rc.get_status()
+    assert status["is_emergency_stopped"] is True
+    assert status["emergency_stopped_at"] != ""
+    assert status["emergency_reason"] == "visibility"
+
+    rc.reset_emergency()
+    status_after = rc.get_status()
+    assert status_after["is_emergency_stopped"] is False
+    assert status_after["emergency_stopped_at"] == ""
+    assert status_after["emergency_reason"] == ""
+
+
+# --------------------------- BUCKET 1: cancel degradato --------------------
+
+@pytest.mark.unit
+@pytest.mark.safety
+def test_emergency_stop_timeout_during_cancel_stays_locked():
+    """Timeout Betfair durante il cancel-all: il sistema RESTA in emergenza
+    (mai 'tornare operativo perche' tanto ci ha provato')."""
+    sagas = [_FakeSaga("1.111", "bet_a", "ref1")]
+    rc, bus = _make_rc(
+        betfair=_BetfairService(live_client=_TimeoutClient()), sagas=sagas,
+    )
+
+    result = rc.emergency_stop(reason="timeout_case")
+
+    assert rc.is_emergency_stopped is True
+    assert result["cancel_error_count"] >= 1
+    rc._on_signal_received({"market_type": "NEXT_GOAL"})
+    assert any(
+        "emergency_stop_active" in r["reason"] for r in _signal_rejections(bus)
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.safety
+def test_emergency_stop_partial_market_failure_stays_locked():
+    """N mercati su M falliscono il cancel: anche con successi parziali il
+    sistema resta bloccato e il conteggio errori e' onesto."""
+    client = _PartialFailClient(failing_market="1.222")
+    sagas = [
+        _FakeSaga("1.111", "bet_a", "ref1"),
+        _FakeSaga("1.222", "bet_b", "ref2"),
+    ]
+    rc, bus = _make_rc(betfair=_BetfairService(live_client=client), sagas=sagas)
+
+    result = rc.emergency_stop(reason="partial_case")
+
+    assert sorted(client.cancel_calls) == ["1.111", "1.222"]
+    assert result["cancelled_count"] >= 1
+    assert result["cancel_error_count"] >= 1
+    assert rc.is_emergency_stopped is True
+    rc._on_signal_received({"market_type": "NEXT_GOAL"})
+    assert any(
+        "emergency_stop_active" in r["reason"] for r in _signal_rejections(bus)
+    )
+
+
+# --------------------------- BUCKET 2: race segnale ------------------------
+
+@pytest.mark.unit
+@pytest.mark.safety
+@pytest.mark.concurrency
+def test_signal_arriving_during_cancel_is_rejected():
+    """Il flag e' settato PRIMA del cancel: un segnale che arriva MENTRE il
+    cancel-all e' in corso viene gia' rifiutato (niente finestra aperta)."""
+    client = _ReentrantSignalClient()
+    sagas = [_FakeSaga("1.111", "bet_a", "ref1")]
+    rc, _bus = _make_rc(betfair=_BetfairService(live_client=client), sagas=sagas)
+    client.controller = rc
+
+    rc.emergency_stop(reason="race_case")
+
+    assert client.rejected_during_cancel, "il cancel non e' stato eseguito"
+    rejection = client.rejected_during_cancel[0]
+    assert rejection is not None
+    assert "emergency_stop_active" in rejection["reason"]
+
+
+# --------------------------- BUCKET 3: lifecycle ----------------------------
+
+@pytest.mark.unit
+@pytest.mark.safety
+def test_reset_cycle_does_not_clear_emergency():
+    """'Reset Ciclo' NON e' reset_emergency(): l'emergenza resta attiva."""
+    rc, bus = _make_rc(db=_PersistentDb())
+    rc.emergency_stop(reason="cycle_case")
+
+    rc.reset_cycle()
+
+    assert rc.is_emergency_stopped is True
+    rc._on_signal_received({"market_type": "NEXT_GOAL"})
+    assert any(
+        "emergency_stop_active" in r["reason"] for r in _signal_rejections(bus)
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.safety
+def test_reset_emergency_then_signals_not_emergency_blocked():
+    """Controllo PASS: dopo reset_emergency() i segnali non sono piu'
+    rifiutati per emergenza (possono esserlo per altri gate, es. runtime
+    fermo, ma MAI con reason emergency_stop_active)."""
+    rc, bus = _make_rc(db=_PersistentDb())
+    rc.emergency_stop(reason="flow_case")
+    rc.reset_emergency()
+
+    rc._on_signal_received({"market_type": "NEXT_GOAL"})
+
+    emergency_rejections = [
+        r for r in _signal_rejections(bus)
+        if r["reason"].startswith("emergency_stop_active")
+    ]
+    assert emergency_rejections == [], (
+        "dopo reset_emergency() nessun segnale deve essere rifiutato per emergenza"
+    )
