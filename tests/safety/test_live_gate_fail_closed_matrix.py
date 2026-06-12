@@ -7,6 +7,8 @@ contraddittorio — deve degradare a SIMULATION con reason esplicita.
 """
 from __future__ import annotations
 
+import itertools
+
 import pytest
 
 from core.safety_layer import assert_live_gate_or_refuse
@@ -117,31 +119,34 @@ def test_kill_switch_blocks_even_simulation_requests_with_explicit_reason():
 @pytest.mark.safety
 @pytest.mark.invariant
 def test_exhaustive_adversarial_matrix_allows_live_only_on_golden_combo():
-    """Forza l'intera matrice avversaria: allowed=True implica combo d'oro."""
+    """Forza l'intera matrice avversaria: l'insieme delle combinazioni
+    ammesse deve coincidere ESATTAMENTE con quello atteso (niente pass
+    vacuo se il gate smettesse di permettere LIVE del tutto)."""
     modes = ["LIVE", "SIMULATION", None, "", "garbage", 0]
     flags = [True, False, None, 0, 1, ""]
 
-    allowed_combos = []
-    for mode in modes:
-        for enabled in flags:
-            for readiness in flags:
-                for kill in flags:
-                    decision = assert_live_gate_or_refuse(
-                        execution_mode=mode,
-                        live_enabled=enabled,
-                        live_readiness_ok=readiness,
-                        kill_switch=kill,
-                    )
-                    # Invariante di coerenza: mai stati contraddittori.
-                    assert decision.allowed == (
-                        decision.effective_execution_mode == "LIVE"
-                    )
-                    assert decision.reason_code, "reason_code sempre presente"
-                    if decision.allowed:
-                        allowed_combos.append((mode, enabled, readiness, kill))
+    expected_allowed = {
+        (mode, enabled, readiness, kill)
+        for mode, enabled, readiness, kill in itertools.product(modes, flags, flags, flags)
+        if str(mode or "").strip().upper() == "LIVE"
+        and bool(enabled)
+        and bool(readiness)
+        and not bool(kill)
+    }
+    assert expected_allowed, "la matrice deve contenere la combo d'oro"
 
-    for mode, enabled, readiness, kill in allowed_combos:
-        assert str(mode).strip().upper() == "LIVE"
-        assert bool(enabled) is True
-        assert bool(readiness) is True
-        assert bool(kill) is False
+    allowed_combos = set()
+    for mode, enabled, readiness, kill in itertools.product(modes, flags, flags, flags):
+        decision = assert_live_gate_or_refuse(
+            execution_mode=mode,
+            live_enabled=enabled,
+            live_readiness_ok=readiness,
+            kill_switch=kill,
+        )
+        # Invariante di coerenza: mai stati contraddittori.
+        assert decision.allowed == (decision.effective_execution_mode == "LIVE")
+        assert decision.reason_code, "reason_code sempre presente"
+        if decision.allowed:
+            allowed_combos.add((mode, enabled, readiness, kill))
+
+    assert allowed_combos == expected_allowed

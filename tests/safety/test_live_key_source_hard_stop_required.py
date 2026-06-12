@@ -71,9 +71,12 @@ def test_none_field_invalidates_config(field):
 def test_dirty_values_invalidate_config(field, dirty):
     report = _controller_with_config(**{field: dirty})._validate_live_hard_stop_config()
     assert report["valid"] is False
-    assert field in report["invalid_fields"] or field in report["missing_fields"]
-    # Il report puo' esporre il valore parsato (anche non finito) a fini
-    # diagnostici: la proprieta' di sicurezza e' valid=False, non il contenuto.
+    # Classificazione precisa: i valori sporchi non-None finiscono SEMPRE
+    # in invalid_fields (parse error o bound), mai in missing_fields.
+    assert field in report["invalid_fields"], (
+        f"{field}={dirty!r} atteso in invalid_fields; "
+        f"missing={report['missing_fields']}, invalid={report['invalid_fields']}"
+    )
 
 
 @pytest.mark.safety
@@ -84,6 +87,17 @@ def test_drawdown_pct_over_100_is_invalid():
     )._validate_live_hard_stop_config()
     assert report["valid"] is False
     assert "max_drawdown_hard_stop_pct" in report["invalid_fields"]
+
+
+@pytest.mark.safety
+@pytest.mark.invariant
+@pytest.mark.parametrize("pct", [100.0, 99.999])
+def test_drawdown_pct_at_or_below_100_is_valid(pct):
+    report = _controller_with_config(
+        max_drawdown_hard_stop_pct=pct
+    )._validate_live_hard_stop_config()
+    assert report["valid"] is True
+    assert "max_drawdown_hard_stop_pct" not in report["invalid_fields"]
 
 
 @pytest.mark.safety
