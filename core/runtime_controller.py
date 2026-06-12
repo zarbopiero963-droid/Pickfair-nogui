@@ -967,8 +967,17 @@ class RuntimeController:
                 settings.get("emergency_reason") or "RESTORED_AFTER_RESTART"
             )
         except Exception:
-            logger.exception("emergency_state: reload from settings failed")
-            return
+            # Fail-closed: se NON si riesce a leggere lo stato persistito non
+            # si puo' PROVARE che non ci fosse un'emergenza in corso => si
+            # riparte in emergenza; la riapre solo reset_emergency() (o un
+            # riavvio con settings di nuovo leggibili e puliti).
+            logger.exception(
+                "emergency_state: reload from settings failed — fail-closed, "
+                "riparto in emergenza"
+            )
+            self._emergency_stopped = True
+            self._emergency_stopped_at = datetime.utcnow().isoformat()
+            self._emergency_reason = "EMERGENCY_STATE_UNREADABLE"
 
         # Postura COMPLETA, non solo il flag: senza lockdown/live-gate anche
         # i percorsi che non leggono il flag (es. mode-based) resterebbero

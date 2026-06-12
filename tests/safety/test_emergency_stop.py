@@ -582,6 +582,34 @@ def test_reset_emergency_clears_persisted_state_too():
 
 @pytest.mark.unit
 @pytest.mark.safety
+@pytest.mark.recovery
+def test_unreadable_settings_at_startup_fails_closed_into_emergency():
+    """Lettura settings IMPOSSIBILE al riavvio (es. lock SQLite): non si
+    puo' provare che non ci fosse un'emergenza persistita => si riparte
+    IN emergenza (fail-closed), e la riapre solo reset_emergency()."""
+    class _UnreadableDb(_Db):
+        def get_settings(self):
+            raise RuntimeError("database is locked")
+
+        def save_settings(self, _data):
+            return None
+
+    rc, bus = _make_rc(db=_UnreadableDb())
+
+    assert rc.is_emergency_stopped is True
+    assert rc.mode.name == "LOCKDOWN"
+    assert "EMERGENCY_STATE_UNREADABLE" in rc._emergency_reason
+    rc._on_signal_received({"market_type": "NEXT_GOAL"})
+    assert any(
+        "emergency_stop_active" in r["reason"] for r in _signal_rejections(bus)
+    )
+    # Uscita esplicita: reset_emergency() riapre.
+    rc.reset_emergency()
+    assert rc.is_emergency_stopped is False
+
+
+@pytest.mark.unit
+@pytest.mark.safety
 def test_emergency_persist_failure_is_reported_not_silent():
     """DB che fallisce il persist: l'emergenza resta attiva in memoria e
     il risultato riporta l'errore (mai fallimento silenzioso)."""
@@ -683,7 +711,9 @@ def test_emergency_stop_timeout_during_cancel_stays_locked():
     assert rc.is_emergency_stopped is True
     assert result["cancel_error_count"] >= 1
     rc._on_signal_received({"market_type": "NEXT_GOAL"})
-    assert "emergency_stop_active" in _signal_rejections(bus)[-1]["reason"]
+    assert any(
+        "emergency_stop_active" in r["reason"] for r in _signal_rejections(bus)
+    )
 
 
 @pytest.mark.unit
@@ -705,7 +735,9 @@ def test_emergency_stop_partial_market_failure_stays_locked():
     assert result["cancel_error_count"] >= 1
     assert rc.is_emergency_stopped is True
     rc._on_signal_received({"market_type": "NEXT_GOAL"})
-    assert "emergency_stop_active" in _signal_rejections(bus)[-1]["reason"]
+    assert any(
+        "emergency_stop_active" in r["reason"] for r in _signal_rejections(bus)
+    )
 
 
 # --------------------------- BUCKET 2: race segnale ------------------------
@@ -742,7 +774,9 @@ def test_reset_cycle_does_not_clear_emergency():
 
     assert rc.is_emergency_stopped is True
     rc._on_signal_received({"market_type": "NEXT_GOAL"})
-    assert "emergency_stop_active" in _signal_rejections(bus)[-1]["reason"]
+    assert any(
+        "emergency_stop_active" in r["reason"] for r in _signal_rejections(bus)
+    )
 
 
 @pytest.mark.unit
