@@ -171,6 +171,27 @@ def test_short_or_empty_token_does_not_break_redaction():
 
 
 @pytest.mark.observability
+def test_login_network_error_redacts_live_token_in_raised_message():
+    """Re-login con un token vivo ancora in mano (Codex/Greptile P2): se
+    l'eccezione di rete del login contiene il token corrente, il
+    RuntimeError sollevato al chiamante (che puo' loggarlo) e last_error
+    devono essere redatti."""
+    session = FakeSession([
+        requests.exceptions.ConnectionError(f"reset with live {SECRET_TOKEN}"),
+    ])
+    client = _client(session)
+    client._cert_tuple = lambda: ("cert.pem", "key.pem")
+    client.session_token = SECRET_TOKEN
+
+    with pytest.raises(RuntimeError) as excinfo:
+        client.login(password="pw")
+
+    assert SECRET_TOKEN not in str(excinfo.value)
+    assert "LOGIN_NETWORK_ERROR" in str(excinfo.value)
+    assert SECRET_TOKEN not in str(client.io_snapshot().get("last_error", ""))
+
+
+@pytest.mark.observability
 def test_rotated_token_is_still_redacted_via_request_snapshot():
     """Race di rotazione (CodeRabbit): un altro thread azzera/ruota il token
     tra l'invio e la gestione dell'eccezione — il token VECCHIO nel testo

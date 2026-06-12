@@ -266,6 +266,9 @@ class BetfairClient:
         # single_shot: le chiamate non idempotenti (placeOrders) non vanno MAI
         # re-inviate — un timeout non prova che l'ordine non sia stato piazzato.
         attempts = 1 if single_shot else (self.max_retries + 1)
+        # Inizializzato PRIMA del try: se _headers() stessa solleva, il
+        # branch except lo referenzia senza UnboundLocalError.
+        token_snapshot = ""
         for attempt in range(attempts):
             try:
                 headers = self._headers()
@@ -384,12 +387,14 @@ class BetfairClient:
             raise RuntimeError("LOGIN_TIMEOUT") from exc
 
         except HTTPError as exc:
-            self._record_io(operation="login", started_at=started_at, status="DEGRADED", error=f"LOGIN_HTTP_ERROR:{exc}")
-            raise RuntimeError(f"LOGIN_HTTP_ERROR: {exc}") from exc
+            err = self._redact_error_text(exc)
+            self._record_io(operation="login", started_at=started_at, status="DEGRADED", error=f"LOGIN_HTTP_ERROR:{err}")
+            raise RuntimeError(f"LOGIN_HTTP_ERROR: {err}") from exc
 
         except RequestException as exc:
-            self._record_io(operation="login", started_at=started_at, status="DEGRADED", error=f"LOGIN_NETWORK_ERROR:{exc}")
-            raise RuntimeError(f"LOGIN_NETWORK_ERROR: {exc}") from exc
+            err = self._redact_error_text(exc)
+            self._record_io(operation="login", started_at=started_at, status="DEGRADED", error=f"LOGIN_NETWORK_ERROR:{err}")
+            raise RuntimeError(f"LOGIN_NETWORK_ERROR: {err}") from exc
 
     def logout(self) -> Dict[str, Any]:
         self._clear_session_state()
