@@ -543,6 +543,74 @@ def test_auto_trade_gate_blocks_during_emergency():
 
 @pytest.mark.unit
 @pytest.mark.safety
+def test_trading_engine_submit_path_hard_blocks_during_emergency():
+    """Round 4 (P1 Codex): la sola demotion a SIMULATION non basta — senza
+    sim broker configurato il ramo SIMULATION cade su order_manager/
+    client_getter (che puo' essere il client live). Il chokepoint di
+    submission del motore deve rifiutare con emergenza attiva, per OGNI
+    modalita' e percorso (manuale, dutching, copy, fallback)."""
+    from core.trading_engine import TradingEngine
+
+    class _EmergencyRuntime:
+        is_emergency_stopped = True
+
+        @staticmethod
+        def get_effective_execution_mode():
+            return "SIMULATION"  # demotion da is_live_allowed()=False
+
+        @staticmethod
+        def is_live_allowed():
+            return False
+
+    class _LiveClientSpy:
+        def __init__(self):
+            self.place_calls = []
+
+        def place_bet(self, **payload):
+            self.place_calls.append(payload)
+            return {"ok": True}
+
+        def place_order(self, payload):
+            self.place_calls.append(payload)
+            return {"ok": True}
+
+    class _EngineBus:
+        def subscribe(self, *_):
+            pass
+
+        def publish(self, *_):
+            pass
+
+    class _EngineDb:
+        def insert_order(self, payload):
+            return "OID-EMG-1"
+
+        def update_order(self, *_args, **_kwargs):
+            pass
+
+    live_spy = _LiveClientSpy()
+    engine = TradingEngine(
+        bus=_EngineBus(),
+        db=_EngineDb(),
+        client_getter=lambda: live_spy,
+        executor=None,
+    )
+    engine._runtime_state = "READY"
+    engine.runtime_controller = _EmergencyRuntime()
+    engine.betfair_client = live_spy
+    engine.simulation_broker = None
+
+    result = engine.submit_quick_bet({"customer_ref": "C-EMG", "price": 2.0})
+
+    assert live_spy.place_calls == [], (
+        "submission arrivata al client live durante l'emergenza"
+    )
+    assert result["status"] == "FAILED"
+    assert "EMERGENCY_STOP_ACTIVE" in str(result.get("error", ""))
+
+
+@pytest.mark.unit
+@pytest.mark.safety
 def test_live_gate_blocks_during_emergency_even_if_live_reenabled():
     """Il percorso dutching/manuale pubblica CMD_QUICK_BET direttamente e il
     motore interroga solo is_live_allowed(): l'emergenza deve bloccare in

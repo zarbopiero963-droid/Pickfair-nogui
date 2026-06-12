@@ -1294,6 +1294,13 @@ class TradingEngine:
         payload["correlation_id"] = ctx.correlation_id
 
         runtime = self.runtime_controller
+        # Hard block d'emergenza al chokepoint di submission: vale per OGNI
+        # modalita' e percorso (manuale, dutching, copy, fallback). La sola
+        # demotion a SIMULATION non basta: senza sim broker configurato il
+        # ramo SIMULATION cadrebbe su order_manager/client_getter (live).
+        # `is True` per evitare falsi positivi con MagicMock nei test.
+        if runtime is not None and getattr(runtime, "is_emergency_stopped", False) is True:
+            raise RuntimeError("EMERGENCY_STOP_ACTIVE")
         if runtime is not None and callable(getattr(runtime, "get_effective_execution_mode", None)):
             mode = str(runtime.get_effective_execution_mode() or "SIMULATION").upper()
             if mode == "SIMULATION":
