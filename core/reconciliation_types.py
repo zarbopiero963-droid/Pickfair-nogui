@@ -102,8 +102,8 @@ _AUTH_ERROR_MARKERS: Tuple[str, ...] = (
     "not logged in",
     "invalid session",
     "no session",
-    # Codici letterali dell'API Betfair (forma underscore): senza questi,
-    # una sessione scaduta veniva classificata TRANSIENT e ritentata.
+    # Literal Betfair API error codes (underscore form): without these,
+    # an expired session was classified TRANSIENT and retried.
     "invalid_session",
     "no_session",
     "ssoid",

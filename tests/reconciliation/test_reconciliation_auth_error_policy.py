@@ -74,6 +74,11 @@ class FakeClient:
 
     def get_current_orders(self, market_ids=None):
         self.calls += 1
+        if not self.side_effects:
+            raise AssertionError(
+                f"FakeClient esaurito dopo {self.calls} chiamate: "
+                "il test ha configurato meno side_effects del previsto"
+            )
         effect = self.side_effects.pop(0)
         if isinstance(effect, Exception):
             raise effect
@@ -125,7 +130,7 @@ def test_auth_marker_beats_transient_marker_in_same_message():
     client = FakeClient([RuntimeError("connection forbidden by proxy")])
     eng = make_engine(client)
 
-    orders, failure_reason = eng._fetch_current_orders_by_market("1.1")
+    _orders, failure_reason = eng._fetch_current_orders_by_market("1.1")
 
     assert failure_reason == ReasonCode.AUTH_ERROR
     assert client.calls == 1
