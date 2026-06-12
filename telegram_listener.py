@@ -67,7 +67,14 @@ class TelegramListener:
         self._stop_timeout = float(stop_timeout)
         # Guardia anti-stale: i messaggi piu' vecchi di questa soglia non
         # generano segnali (backlog post-reconnect su partita gia' cambiata).
-        self.max_message_age_seconds = float(max_message_age_seconds)
+        # Soglia <= 0 vietata: renderebbe stale OGNI messaggio reale,
+        # silenziando il listener senza alcun errore visibile.
+        max_age = float(max_message_age_seconds)
+        if max_age <= 0:
+            raise ValueError(
+                f"max_message_age_seconds deve essere positivo, ricevuto {max_age}"
+            )
+        self.max_message_age_seconds = max_age
 
         self._state_lock = threading.Lock()
         self._runtime_thread: threading.Thread | None = None
@@ -353,6 +360,15 @@ class TelegramListener:
                     "[TelegramListener] message_date non confrontabile (%r): "
                     "messaggio scartato fail-closed",
                     message_date,
+                )
+                return None
+            # Guardia simmetrica: una data molto nel FUTURO (clock skew serio
+            # tra server Telegram e host) neutralizzerebbe il controllo stale;
+            # oltre la stessa tolleranza il messaggio va scartato fail-closed.
+            if age_seconds < -self.max_message_age_seconds:
+                logger.warning(
+                    "[TelegramListener] Messaggio con data futura (%.0fs) scartato",
+                    age_seconds,
                 )
                 return None
             if age_seconds > self.max_message_age_seconds:

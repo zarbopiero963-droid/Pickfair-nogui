@@ -240,9 +240,11 @@ def test_flood_100_identical_messages_places_exactly_one_order():
 
         assert _wait_until(lambda: len(db.received_signals) == 100)
         _wait_until(lambda: len(broker.placed_orders) >= 1)
-        # Finestra di grazia: un eventuale ordine duplicato (bug) arriverebbe
-        # dopo il primo; senza attesa il test non potrebbe mai fallire.
-        time.sleep(0.2)
+        # Finestra di grazia con polling: aspetta (fino a 0.5s) che un
+        # eventuale ordine duplicato si manifesti — ci si ASPETTA che il
+        # polling scada senza mai vederlo; senza attesa il test non
+        # potrebbe mai fallire per un duplicato tardivo.
+        _wait_until(lambda: len(broker.placed_orders) > 1, timeout=0.5)
         assert len(broker.placed_orders) == 1
         assert len(db.saved_bets) == 1
         assert len(db.received_signals) == 100

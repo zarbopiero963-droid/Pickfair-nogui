@@ -179,6 +179,39 @@ def test_malformed_message_date_is_fail_closed():
 
 
 @pytest.mark.unit
+def test_future_dated_message_is_discarded_symmetric_guard():
+    """Clock skew serio (data molto nel futuro) neutralizzerebbe il
+    controllo stale (eta' negativa < soglia): oltre la stessa tolleranza
+    il messaggio va scartato. Uno skew piccolo (secondi) invece passa."""
+    listener, signals, _messages = _listener()
+
+    far_future = listener.handle_incoming(
+        MSG_NEXT_GOL, chat_id=AUTHORIZED_CHAT,
+        message_date=_utc_now() + timedelta(seconds=3600),
+    )
+    small_skew = listener.handle_incoming(
+        MSG_NEXT_GOL, chat_id=AUTHORIZED_CHAT,
+        message_date=_utc_now() + timedelta(seconds=5),
+    )
+
+    assert far_future is None
+    assert small_skew is not None
+    assert len(signals) == 1
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("bad_threshold", [0, -5, -0.1])
+def test_non_positive_max_age_is_rejected_at_construction(bad_threshold):
+    """Soglia <= 0 renderebbe stale OGNI messaggio reale (listener muto
+    senza errori): la misconfigurazione deve fallire subito, esplicita."""
+    with pytest.raises(ValueError, match="max_message_age_seconds"):
+        TelegramListener(
+            api_id=123, api_hash="hash",
+            max_message_age_seconds=bad_threshold,
+        )
+
+
+@pytest.mark.unit
 def test_internal_call_without_date_keeps_working():
     """Controllo PASS (retrocompatibilita'): le chiamate interne/sim senza
     message_date non sono filtrate."""
