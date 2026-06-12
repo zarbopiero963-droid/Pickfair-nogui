@@ -1,5 +1,8 @@
 {
   "module": "core.risk_middleware",
+  "module_paths": [
+    "core/risk_middleware.py"
+  ],
   "required_functions": [
     "validate_request",
     "normalize_payload",

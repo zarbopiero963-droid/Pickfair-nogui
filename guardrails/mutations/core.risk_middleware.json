@@ -1,5 +1,8 @@
 {
   "module": "core.risk_middleware",
+  "module_paths": [
+    "core/risk_middleware.py"
+  ],
   "description": "Hardcore mutations for payload validation and hard deny behavior.",
   "mutations": [
     {

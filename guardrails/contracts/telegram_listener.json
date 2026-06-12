@@ -1,4 +1,8 @@
 {
+  "module": "telegram_listener",
+  "module_paths": [
+    "telegram_listener.py"
+  ],
   "return_keys": [
     "parsed",
     "signal_type",

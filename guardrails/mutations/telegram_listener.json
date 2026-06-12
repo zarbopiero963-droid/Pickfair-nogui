@@ -1,5 +1,8 @@
 {
   "module": "telegram_listener",
+  "module_paths": [
+    "telegram_listener.py"
+  ],
   "description": "Hardcore mutations for parsing, reconnect, and non-blocking safety.",
   "mutations": [
     {

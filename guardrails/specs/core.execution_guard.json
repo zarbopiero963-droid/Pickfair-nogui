@@ -1,5 +1,8 @@
 {
   "module": "core.execution_guard",
+  "module_paths": [
+    "core/execution_guard.py"
+  ],
   "required_functions": [
     "check_duplicate",
     "register_execution",

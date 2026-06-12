@@ -1,5 +1,8 @@
 {
   "module": "simulation_broker",
+  "module_paths": [
+    "simulation_broker.py"
+  ],
   "required_functions": [
     "place_order",
     "cancel_order",

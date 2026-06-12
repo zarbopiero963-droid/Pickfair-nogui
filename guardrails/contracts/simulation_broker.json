@@ -1,4 +1,8 @@
 {
+  "module": "simulation_broker",
+  "module_paths": [
+    "simulation_broker.py"
+  ],
   "return_keys": [
     "status",
     "order_id",

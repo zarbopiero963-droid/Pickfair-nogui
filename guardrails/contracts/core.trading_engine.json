@@ -1,4 +1,8 @@
 {
+  "module": "core.trading_engine",
+  "module_paths": [
+    "core/trading_engine.py"
+  ],
   "return_keys": [
     "status",
     "order_id",

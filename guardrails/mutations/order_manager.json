@@ -1,5 +1,8 @@
 {
   "module": "order_manager",
+  "module_paths": [
+    "order_manager.py"
+  ],
   "description": "Hardcore mutations for order lifecycle, idempotency, mapping, partial fill, and restart safety.",
   "mutations": [
     {

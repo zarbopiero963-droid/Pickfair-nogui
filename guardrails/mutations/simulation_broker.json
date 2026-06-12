@@ -1,5 +1,8 @@
 {
   "module": "simulation_broker",
+  "module_paths": [
+    "simulation_broker.py"
+  ],
   "description": "Hardcore mutations for live/sim parity, partial fills, and order lifecycle realism.",
   "mutations": [
     {
