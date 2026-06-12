@@ -70,13 +70,28 @@ class BetfairClient:
             "last_call_at": 0.0,
         }
 
+    def _redact_error_text(self, text: Any) -> str:
+        """Maschera il valore del session token nelle stringhe d'errore.
+
+        La redazione strutturata (observability/sanitizers) lavora per
+        CHIAVE sui payload: le stringhe d'errore grezze (eccezioni di rete,
+        risposte API) passerebbero intatte fino a log, io_snapshot e
+        get_status()['runtime_io']. Soglia minima di lunghezza per evitare
+        sostituzioni spurie su token degeneri.
+        """
+        out = str(text or "")
+        token = self._session_token_value()
+        if token and len(token) >= 8 and token in out:
+            out = out.replace(token, "***SESSION_TOKEN***")
+        return out
+
     def _record_io(self, *, operation: str, started_at: float, status: str, error: str = "") -> None:
         elapsed_ms = max(0.0, (time.monotonic() - started_at) * 1000.0)
         status_up = str(status or "UNKNOWN").strip().upper()
         self._io_stats["last_operation"] = str(operation)
         self._io_stats["last_latency_ms"] = round(elapsed_ms, 3)
         self._io_stats["last_status"] = status_up
-        self._io_stats["last_error"] = str(error or "")
+        self._io_stats["last_error"] = self._redact_error_text(error)
         self._io_stats["last_call_at"] = time.time()
         self._io_stats["total_calls"] = int(self._io_stats.get("total_calls", 0) or 0) + 1
         if status_up == "SLOW":
@@ -293,15 +308,15 @@ class BetfairClient:
                 logger.warning("http error attempt=%s method=%s code=%s", attempt, method, code)
 
             except RequestException as exc:
-                last_error = f"NETWORK_ERROR: {exc}"
-                logger.warning("network error attempt=%s method=%s error=%s", attempt, method, exc)
+                last_error = f"NETWORK_ERROR: {self._redact_error_text(exc)}"
+                logger.warning("network error attempt=%s method=%s error=%s", attempt, method, last_error)
 
             except RuntimeError:
                 raise
 
             except Exception as exc:
-                last_error = f"UNKNOWN_ERROR: {exc}"
-                logger.warning("unknown error attempt=%s method=%s error=%s", attempt, method, exc)
+                last_error = f"UNKNOWN_ERROR: {self._redact_error_text(exc)}"
+                logger.warning("unknown error attempt=%s method=%s error=%s", attempt, method, last_error)
 
         err = RuntimeError(f"REQUEST_FAILED: {last_error}")
         self._api_breaker.record_failure(err)
@@ -331,7 +346,9 @@ class BetfairClient:
             data = self._parse_json(response, "INVALID_LOGIN_JSON")
 
             if str(data.get("loginStatus")) != "SUCCESS":
-                raise RuntimeError(f"LOGIN_FAILED: {data}")
+                # Solo il loginStatus diagnostico: la risposta grezza puo'
+                # contenere un sessionToken e finirebbe in log/last_error.
+                raise RuntimeError(f"LOGIN_FAILED: {data.get('loginStatus')}")
 
             session_token = str(data.get("sessionToken") or "")
             session_expiry = str(data.get("sessionExpiryTime") or "")
