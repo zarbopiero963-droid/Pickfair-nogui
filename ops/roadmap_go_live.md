@@ -244,7 +244,31 @@ questa PR copre: i numeri 1-8 (cashout exact math, casa naturale
 mancanti dell'audit matematico (sezione sopra). Vietato inventare un
 cashout engine finto: usare le superfici reali.
 
+## Backlog (non bloccante)
 
+### Selezione "quant" a basso costo (valutazione owner, giugno 2026)
+
+Dalla lista hedge-fund: scartati multi-account/churning Premium Charge
+(violazione T&C Betfair), spoofing (manipolazione di mercato), latenza
+HFT/FPGA/co-location (fuori scala per il caso d'uso). Vale la pena:
+
+- **Market-level volatility breaker**: congela il singolo match se la
+  quota si muove oltre soglia anomala in N secondi senza evento nel feed
+  (gol fantasma/VAR); si aggancia allo stack breaker esistente e ai tick
+  gia' disponibili. Azione: cancel ordini pendenti su quel mercato +
+  pausa 180s. Complessita' media, valore alto in-play.
+- **Bet delay in-play nel broker simulato**: simulare i ~5s di ritardo
+  Betfair sui mercati live (requote/lapse durante l'attesa) per paper
+  trading fedele. Complessita' bassa.
+- **Stake mode Fractional Kelly (opzionale)**: accanto a FISSO/MASTER/MM
+  (task 2.3), mode Kelly frazionario (10-25%) con cap MM sempre validi.
+  Solo matematica + test. Complessita' medio-bassa.
+- **Alert breaker ad alta priorita' su Telegram**: formattazione
+  d'emergenza quando scatta un breaker (stack alert gia' esistente);
+  NIENTE comandi remoti di sblocco senza 2FA (superficie d'attacco,
+  decisione owner separata).
+
+### Altri item
 
 - Supporto runner "Under X.5" in `TelegramBetResolver` (oggi risolve solo "Over X.5";
   i preset Under del form pattern sono disattivati finché manca — vedi nota in
