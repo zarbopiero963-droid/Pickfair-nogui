@@ -126,13 +126,15 @@ def test_incoming_message_emits_signal_and_liveness():
     listener.set_database(Db())
     try:
         listener.start()
+        # chat_id DEVE essere tra i monitored della fixture (-100999): da
+        # PR-G handle_incoming ricontrolla la chat (difesa in profondita').
         out = listener.handle_incoming(
             "🆚Reading v Burton Albion\n⌚ time, 11m, 0 - 0\n🔥 P.Exc. NEXT GOL 🔊 ✅",
-            chat_id=-100123,
+            chat_id=-100999,
         )
         assert out is not None
         assert out["market_type"] == "NEXT_GOAL"
-        assert out["chat_id"] == -100123
+        assert out["chat_id"] == -100999
         assert out["received_at"]
         assert listener.last_successful_message_ts == out["received_at"]
         assert len(signals) == 1 and len(messages) == 1
