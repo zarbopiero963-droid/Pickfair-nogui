@@ -1,9 +1,10 @@
 """PR-B programma test hedge-fund grade: invarianti hard del lifecycle ordini.
 
 Gap chiusi (guard di produzione ESISTENTI ma mai testati prima):
-- doppia finalize bloccata (ORDER_ALREADY_FINALIZED)
+- doppia finalize bloccata per TUTTI e 5 gli status terminali
+  (ORDER_ALREADY_FINALIZED, 25 coppie)
 - finalize su stato DB non terminale bloccata (FINALIZE_ON_NON_TERMINAL_DB_STATE)
-- status sconosciuto nel lifecycle bloccato (UNKNOWN_STATUS_IN_LIFECYCLE)
+- status non terminale/farlocco respinto (NON_TERMINAL_STATUS)
 - "transizione" vietata FAILED->COMPLETED a livello engine: un ordine gia'
   finalizzato FAILED non puo' essere ri-finalizzato COMPLETED
 
@@ -38,19 +39,23 @@ class FakeDB:
         self.audit_events = []
         self.order = order
 
-    def is_ready(self):
+    @staticmethod
+    def is_ready():
         return True
 
     def insert_audit_event(self, event):
         self.audit_events.append(event)
 
-    def order_exists_inflight(self, *, customer_ref, correlation_id):
+    @staticmethod
+    def order_exists_inflight(*, customer_ref, correlation_id):
         return False
 
-    def load_pending_customer_refs(self):
+    @staticmethod
+    def load_pending_customer_refs():
         return []
 
-    def load_pending_correlation_ids(self):
+    @staticmethod
+    def load_pending_correlation_ids():
         return []
 
     def get_order(self, order_id):
@@ -59,10 +64,12 @@ class FakeDB:
 
 
 class InlineExecutor:
-    def is_ready(self):
+    @staticmethod
+    def is_ready():
         return True
 
-    def submit(self, _name, fn):
+    @staticmethod
+    def submit(_name, fn):
         return fn()
 
 
@@ -81,28 +88,37 @@ def _engine(db: FakeDB) -> tuple[TradingEngine, _ExecutionContext, dict]:
     return engine, ctx, engine._new_audit(ctx)
 
 
+_ALL_TERMINAL = ["COMPLETED", "FAILED", "DENIED", "AMBIGUOUS", "DUPLICATE_BLOCKED"]
+
+
 @pytest.mark.invariant
-@pytest.mark.parametrize("first_status", ["COMPLETED", "FAILED", "AMBIGUOUS"])
+@pytest.mark.parametrize("first_status", _ALL_TERMINAL)
 def test_double_finalize_is_blocked_for_every_terminal_status(first_status):
-    """Un ordine gia' finalizzato non puo' MAI essere ri-finalizzato:
-    copre anche le 'transizioni' vietate FAILED->COMPLETED e
-    COMPLETED->FAILED a livello engine."""
+    """Un ordine gia' finalizzato non puo' MAI essere ri-finalizzato,
+    per TUTTI e 5 gli status terminali del contratto (25 coppie):
+    copre anche le 'transizioni' vietate tipo FAILED->COMPLETED."""
     db = FakeDB(order={"finalized": True, "status": first_status})
     engine, ctx, audit = _engine(db)
 
-    for second_status, ambiguity in [
-        ("COMPLETED", None),
-        ("FAILED", None),
-        ("AMBIGUOUS", "timeout_after_submit"),
-    ]:
+    # payload coerenti con gli invariant terminali (che girano PRIMA
+    # del guard di doppia finalize): AMBIGUOUS richiede reason, DENIED
+    # non puo' portare errore tecnico.
+    second_attempts = [
+        ("COMPLETED", None, None),
+        ("FAILED", "boom", None),
+        ("DENIED", None, None),
+        ("AMBIGUOUS", None, "timeout_after_submit"),
+        ("DUPLICATE_BLOCKED", None, None),
+    ]
+    for second_status, error, ambiguity in second_attempts:
         with pytest.raises(RuntimeError, match="ORDER_ALREADY_FINALIZED"):
             engine._finalize(
                 ctx=ctx,
                 audit=audit,
                 order_id="ORD-1",
                 status=second_status,
-                outcome="SUCCESS" if second_status == "COMPLETED" else second_status,
-                error="boom" if second_status == "FAILED" else None,
+                outcome="SUCCESS",
+                error=error,
                 ambiguity_reason=ambiguity,
             )
 
@@ -127,14 +143,15 @@ def test_finalize_on_non_terminal_db_state_is_blocked(db_status):
 
 @pytest.mark.invariant
 @pytest.mark.parametrize("bogus_status", ["DONE", "OK", "", "completed", "MATCHED"])
-def test_unknown_status_in_lifecycle_is_blocked(bogus_status):
-    """Solo gli status del contratto sono finalizzabili: tutto il resto
-    (inclusi case sbagliati e status del layer order_manager) esplode.
-    Due guard in cascata: _assert_terminal_status (NON_TERMINAL_STATUS)
-    e il mapping del lifecycle (UNKNOWN_STATUS_IN_LIFECYCLE)."""
+def test_non_terminal_or_bogus_status_is_blocked(bogus_status):
+    """Solo gli status terminali del contratto sono finalizzabili: tutto
+    il resto (case sbagliati, status del layer order_manager, spazzatura)
+    viene respinto da _assert_terminal_status. NOTA: il secondo guard
+    UNKNOWN_STATUS_IN_LIFECYCLE e' oggi irraggiungibile (ogni status
+    terminale ha un mapping outcome) - difesa in profondita'."""
     engine, ctx, audit = _engine(FakeDB())
 
-    with pytest.raises(RuntimeError, match="UNKNOWN_STATUS_IN_LIFECYCLE|NON_TERMINAL_STATUS"):
+    with pytest.raises(RuntimeError, match="NON_TERMINAL_STATUS"):
         engine._finalize(
             ctx=ctx,
             audit=audit,
@@ -156,7 +173,13 @@ def test_finalize_on_terminal_db_state_with_flag_false_is_allowed_once():
         audit=audit,
         order_id="ORD-3",
         status="COMPLETED",
-        outcome="SUCCESS",
+        outcome="IGNORED_BY_DESIGN",  # _finalize ri-deriva l'outcome dallo status
     )
     assert isinstance(result, dict)
-    assert result.get("status") == "COMPLETED"
+    assert result["status"] == "COMPLETED"
+    # L'outcome viene dal mapping _STATUS_TO_OUTCOME, non dal parametro:
+    # se il mapping driftasse, questa asserzione lo cattura.
+    assert result["outcome"] == "SUCCESS"
+    assert result["ok"] is True
+    assert result["is_terminal"] is True
+    assert result["finalization_persisted"] is True
