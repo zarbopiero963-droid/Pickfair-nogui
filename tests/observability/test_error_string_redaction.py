@@ -170,6 +170,36 @@ def test_short_or_empty_token_does_not_break_redaction():
     assert "reset by peer" in out["error"]
 
 
+@pytest.mark.observability
+def test_rotated_token_is_still_redacted_via_request_snapshot():
+    """Race di rotazione (CodeRabbit): un altro thread azzera/ruota il token
+    tra l'invio e la gestione dell'eccezione — il token VECCHIO nel testo
+    dell'eccezione deve comunque essere redatto (snapshot per-tentativo)."""
+    class _RotatingSession:
+        def __init__(self, client_holder):
+            self.client_holder = client_holder
+
+        def post(self, url, **kwargs):
+            _ = url, kwargs
+            # Rotazione concorrente simulata PRIMA dell'eccezione.
+            self.client_holder["client"].session_token = ""
+            raise requests.exceptions.ConnectionError(
+                f"reset with stale session {SECRET_TOKEN}"
+            )
+
+    holder = {}
+    client = _client(_RotatingSession(holder))
+    holder["client"] = client
+    client.session_token = SECRET_TOKEN
+
+    out = client.place_bet(
+        market_id="1.234", selection_id=1, side="BACK", price=2.0, size=2.0,
+    )
+
+    assert SECRET_TOKEN not in str(out.get("error", ""))
+    assert SECRET_TOKEN not in str(client.io_snapshot().get("last_error", ""))
+
+
 # ---------------------------------------------------------------------------
 # correlation_id: il sanitizer NON deve redarlo (e' il filo del forensics)
 # ---------------------------------------------------------------------------

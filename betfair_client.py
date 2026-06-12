@@ -70,19 +70,21 @@ class BetfairClient:
             "last_call_at": 0.0,
         }
 
-    def _redact_error_text(self, text: Any) -> str:
+    def _redact_error_text(self, text: Any, *, token_snapshot: str = "") -> str:
         """Maschera il valore del session token nelle stringhe d'errore.
 
         La redazione strutturata (observability/sanitizers) lavora per
         CHIAVE sui payload: le stringhe d'errore grezze (eccezioni di rete,
         risposte API) passerebbero intatte fino a log, io_snapshot e
-        get_status()['runtime_io']. Soglia minima di lunghezza per evitare
-        sostituzioni spurie su token degeneri.
+        get_status()['runtime_io']. Redatta sia il token CORRENTE sia lo
+        snapshot del token usato per la richiesta (un altro thread puo'
+        ruotarlo/azzerarlo tra invio ed eccezione). Soglia minima di
+        lunghezza per evitare sostituzioni spurie su token degeneri.
         """
         out = str(text or "")
-        token = self._session_token_value()
-        if token and len(token) >= 8 and token in out:
-            out = out.replace(token, "***SESSION_TOKEN***")
+        for token in {self._session_token_value(), str(token_snapshot or "")}:
+            if token and len(token) >= 8 and token in out:
+                out = out.replace(token, "***SESSION_TOKEN***")
         return out
 
     def _record_io(self, *, operation: str, started_at: float, status: str, error: str = "") -> None:
@@ -266,9 +268,14 @@ class BetfairClient:
         attempts = 1 if single_shot else (self.max_retries + 1)
         for attempt in range(attempts):
             try:
+                headers = self._headers()
+                # Snapshot del token del TENTATIVO: la redazione deve coprire
+                # anche un token ruotato/azzerato da un altro thread prima
+                # della gestione dell'eccezione.
+                token_snapshot = str(headers.get("X-Authentication") or "")
                 response = self.session.post(
                     url,
-                    headers=self._headers(),
+                    headers=headers,
                     data=json.dumps(payload),
                     timeout=self.timeout,
                 )
@@ -308,14 +315,18 @@ class BetfairClient:
                 logger.warning("http error attempt=%s method=%s code=%s", attempt, method, code)
 
             except RequestException as exc:
-                last_error = f"NETWORK_ERROR: {self._redact_error_text(exc)}"
+                last_error = (
+                    f"NETWORK_ERROR: {self._redact_error_text(exc, token_snapshot=token_snapshot)}"
+                )
                 logger.warning("network error attempt=%s method=%s error=%s", attempt, method, last_error)
 
             except RuntimeError:
                 raise
 
             except Exception as exc:
-                last_error = f"UNKNOWN_ERROR: {self._redact_error_text(exc)}"
+                last_error = (
+                    f"UNKNOWN_ERROR: {self._redact_error_text(exc, token_snapshot=token_snapshot)}"
+                )
                 logger.warning("unknown error attempt=%s method=%s error=%s", attempt, method, last_error)
 
         err = RuntimeError(f"REQUEST_FAILED: {last_error}")
