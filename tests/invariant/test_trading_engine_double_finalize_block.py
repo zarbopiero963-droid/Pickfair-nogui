@@ -183,3 +183,5 @@ def test_finalize_on_terminal_db_state_with_flag_false_is_allowed_once():
     assert result["ok"] is True
     assert result["is_terminal"] is True
     assert result["finalization_persisted"] is True
+    # Effetto collaterale: la finalize legittima lascia traccia nell'audit.
+    assert db.audit_events, "la finalize deve persistere eventi di audit"
