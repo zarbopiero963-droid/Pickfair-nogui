@@ -227,6 +227,30 @@ def test_duplicate_message_places_single_order():
 
 
 @pytest.mark.e2e
+def test_flood_100_identical_messages_places_exactly_one_order():
+    """PR-G: raffica di 100 messaggi identici (flood/replay) attraverso la
+    catena REALE -> il dedup regge: ESATTAMENTE 1 ordine simulato, gli
+    altri 99 bloccati dal guard; i segnali ricevuti restano 100 (il dedup
+    e' del trading handler, non del listener)."""
+    svc, _bus, db, broker = _build_pipeline()
+    assert svc.start()["started"] is True
+    try:
+        for _ in range(100):
+            svc.listener.handle_incoming(MSG_NEXT_GOL, chat_id=-100999)
+
+        assert _wait_until(lambda: len(db.received_signals) == 100)
+        _wait_until(lambda: len(broker.placed_orders) >= 1)
+        # Finestra di grazia: un eventuale ordine duplicato (bug) arriverebbe
+        # dopo il primo; senza attesa il test non potrebbe mai fallire.
+        time.sleep(0.2)
+        assert len(broker.placed_orders) == 1
+        assert len(db.saved_bets) == 1
+        assert len(db.received_signals) == 100
+    finally:
+        svc.stop()
+
+
+@pytest.mark.e2e
 def test_non_signal_message_places_no_order_but_updates_liveness():
     svc, _bus, db, broker = _build_pipeline()
     assert svc.start()["started"] is True

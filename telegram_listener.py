@@ -56,6 +56,7 @@ class TelegramListener:
         client_factory=None,
         connect_timeout: float = 10.0,
         stop_timeout: float = 10.0,
+        max_message_age_seconds: float = 300.0,
     ):
         self.api_id = int(api_id)
         self.api_hash = str(api_hash)
@@ -64,6 +65,9 @@ class TelegramListener:
         self._client_factory = client_factory
         self._connect_timeout = float(connect_timeout)
         self._stop_timeout = float(stop_timeout)
+        # Guardia anti-stale: i messaggi piu' vecchi di questa soglia non
+        # generano segnali (backlog post-reconnect su partita gia' cambiata).
+        self.max_message_age_seconds = float(max_message_age_seconds)
 
         self._state_lock = threading.Lock()
         self._runtime_thread: threading.Thread | None = None
@@ -296,22 +300,68 @@ class TelegramListener:
 
     async def _on_new_message_event(self, event) -> None:
         try:
+            message = getattr(event, "message", None)
             text = getattr(event, "raw_text", None)
             if text is None:
-                message = getattr(event, "message", None)
                 text = getattr(message, "message", "") if message else ""
             chat_id = getattr(event, "chat_id", None)
+            # La data ORIGINALE del messaggio (non l'ora di ricezione): serve
+            # alla guardia anti-stale in handle_incoming.
+            message_date = getattr(message, "date", None) if message is not None else None
             # Offload su executor: parse_signal e i callback toccano il DB in
             # modo sincrono e non devono bloccare il loop Telethon.
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, self.handle_incoming, text or "", chat_id)
+            await loop.run_in_executor(
+                None, self.handle_incoming, text or "", chat_id, message_date
+            )
         except Exception:
             logger.exception("[TelegramListener] Errore gestione messaggio")
 
-    def handle_incoming(self, text: str, chat_id: int | None = None) -> Optional[Dict[str, Any]]:
-        """Processa un messaggio ricevuto: liveness, callback, parsing, segnale."""
-        received_at = datetime.now(timezone.utc).isoformat()
+    def handle_incoming(self, text: str, chat_id: int | None = None,
+                        message_date: Any = None) -> Optional[Dict[str, Any]]:
+        """Processa un messaggio ricevuto: liveness, callback, parsing, segnale.
+
+        Difesa in profondita' sul chat_id: il filtro Telethon
+        (events.NewMessage(chats=...)) e' l'unica barriera a monte; se un
+        messaggio fuori lista arriva comunque qui va scartato integralmente.
+        chat_id/monitored_chats assenti = chiamata interna/sim (il preflight
+        di start() garantisce monitored_chats non vuoto in runtime).
+        """
+        if chat_id is not None and self.monitored_chats and chat_id not in self.monitored_chats:
+            logger.warning(
+                "[TelegramListener] Messaggio da chat non autorizzata %s scartato",
+                chat_id,
+            )
+            return None
+
+        now = datetime.now(timezone.utc)
+        received_at = now.isoformat()
         self.last_successful_message_ts = received_at
+
+        # Guardia anti-stale: il backlog consegnato dopo un reconnect non deve
+        # piazzare bet su una situazione di gioco che non esiste piu'. La
+        # liveness sopra resta aggiornata (il canale e' vivo, il segnale no).
+        # message_date assente = chiamata interna/sim: nessun filtro.
+        if message_date is not None:
+            try:
+                message_dt = message_date
+                if message_dt.tzinfo is None:
+                    message_dt = message_dt.replace(tzinfo=timezone.utc)
+                age_seconds = (now - message_dt).total_seconds()
+            except Exception:
+                logger.warning(
+                    "[TelegramListener] message_date non confrontabile (%r): "
+                    "messaggio scartato fail-closed",
+                    message_date,
+                )
+                return None
+            if age_seconds > self.max_message_age_seconds:
+                logger.warning(
+                    "[TelegramListener] Messaggio stale (%.0fs > %.0fs) scartato",
+                    age_seconds,
+                    self.max_message_age_seconds,
+                )
+                return None
 
         cb = self._callbacks.get("on_message")
         if callable(cb):
