@@ -38,6 +38,10 @@ class FakeDB:
     def __init__(self, order: dict | None = None):
         self.audit_events = []
         self.order = order
+        self.metadata_writes = []
+
+    def update_order(self, order_id, meta):
+        self.metadata_writes.append((order_id, dict(meta)))
 
     @staticmethod
     def is_ready():
@@ -182,6 +186,10 @@ def test_finalize_on_terminal_db_state_with_flag_false_is_allowed_once():
     assert result["outcome"] == "SUCCESS"
     assert result["ok"] is True
     assert result["is_terminal"] is True
+    # Persistenza REALE: il fake ha update_order, quindi questo True
+    # certifica una scrittura avvenuta, non una scrittura saltata.
     assert result["finalization_persisted"] is True
+    assert db.metadata_writes, "la finalize deve scrivere i metadata terminali"
+    assert db.metadata_writes[0][0] == "ORD-3"
     # Effetto collaterale: la finalize legittima lascia traccia nell'audit.
     assert db.audit_events, "la finalize deve persistere eventi di audit"
