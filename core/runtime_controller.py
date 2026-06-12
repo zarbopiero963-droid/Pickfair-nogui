@@ -98,10 +98,6 @@ class RuntimeController:
         self._emergency_stopped: bool = False
         self._emergency_stopped_at: str = ""
         self._emergency_reason: str = ""
-        # Fail-closed cross-riavvio: senza il reload, un crash/restart del
-        # processo durante l'emergenza farebbe ripartire il bot operativo,
-        # bypassando il contratto "solo reset_emergency() riapre".
-        self._reload_persisted_emergency_state()
         self._io_observations: dict[str, Any] = {
             "last_operation": "",
             "last_status": "UNKNOWN",
@@ -177,6 +173,13 @@ class RuntimeController:
         }
 
         self._subscribe_bus()
+
+        # Fail-closed cross-riavvio: senza il reload, un crash/restart del
+        # processo durante l'emergenza farebbe ripartire il bot operativo,
+        # bypassando il contratto "solo reset_emergency() riapre". Va eseguito
+        # a costruzione COMPLETATA: ripristina l'intera postura (lockdown
+        # incluso), non solo il flag.
+        self._reload_persisted_emergency_state()
 
     def _record_runtime_io(self, *, operation: str, started_at: float, ok: bool, error: str = "") -> None:
         elapsed_ms = max(0.0, (time.monotonic() - started_at) * 1000.0)
@@ -948,22 +951,40 @@ class RuntimeController:
         """
         try:
             settings = self.db.get_settings() if hasattr(self.db, "get_settings") else {}
-        except Exception:
-            logger.exception("emergency_state: reload from settings failed")
-            return
-        flag = str((settings or {}).get("emergency_stopped", "")).strip().lower()
-        if flag in {"1", "true"}:
+            flag = str((settings or {}).get("emergency_stopped", "")).strip().lower()
+            if flag not in {"1", "true"}:
+                return
             self._emergency_stopped = True
             self._emergency_stopped_at = str(settings.get("emergency_stopped_at") or "")
             self._emergency_reason = str(
                 settings.get("emergency_reason") or "RESTORED_AFTER_RESTART"
             )
-            logger.critical(
-                "EMERGENCY STOP ripristinato da stato persistito (at=%s reason=%r): "
-                "trading bloccato finche' non viene chiamato reset_emergency()",
-                self._emergency_stopped_at,
-                self._emergency_reason,
-            )
+        except Exception:
+            logger.exception("emergency_state: reload from settings failed")
+            return
+
+        # Postura COMPLETA, non solo il flag: senza lockdown/live-gate anche
+        # i percorsi che non leggono il flag (es. mode-based) resterebbero
+        # aperti dopo il riavvio.
+        self.live_enabled = False
+        self.execution_mode = "SIMULATION"
+        try:
+            self.set_simulation_mode(True)
+        except Exception:
+            logger.exception("emergency_state: set_simulation_mode failed on restore")
+        try:
+            # Ri-emette anche RUNTIME_LOCKDOWN per i monitor event-driven.
+            self.force_lockdown(self._emergency_reason)
+        except Exception:
+            logger.exception("emergency_state: force_lockdown failed on restore")
+            self.mode = RuntimeMode.LOCKDOWN
+            self.last_error = self._emergency_reason
+        logger.critical(
+            "EMERGENCY STOP ripristinato da stato persistito (at=%s reason=%r): "
+            "trading bloccato finche' non viene chiamato reset_emergency()",
+            self._emergency_stopped_at,
+            self._emergency_reason,
+        )
 
     def _persist_emergency_state(self) -> str:
         """Persiste lo stato di emergenza; ritorna '' o l'errore (mai raise)."""
@@ -2498,6 +2519,11 @@ class RuntimeController:
             logger.exception("Errore persist checkpoint settlement_key=%s", key)
 
     def _risk_allows_auto_trade(self) -> tuple[bool, str]:
+        # L'auto-trade da settlement non passa da _on_signal_received: senza
+        # questo controllo una trade automatica partirebbe anche in emergenza
+        # (es. dopo riavvio + start() senza reset_emergency()).
+        if self._emergency_stopped:
+            return False, "emergency_stop_active"
         if not self._runtime_active():
             return False, "runtime_not_active"
         if self._desk_mode() == DeskMode.LOCKDOWN:
@@ -2583,6 +2609,7 @@ class RuntimeController:
         data["kill_switch_active"] = bool(self._is_kill_switch_active())
         data["is_emergency_stopped"] = bool(self._emergency_stopped)
         data["emergency_stopped_at"] = str(self._emergency_stopped_at)
+        data["emergency_reason"] = str(self._emergency_reason)
         data["execution_gate_reason"] = str(self.last_execution_gate_reason)
         data["deploy_gate"] = dict(self.last_deploy_gate_status or {})
         data["runtime_io"] = self.runtime_io_snapshot()

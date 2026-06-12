@@ -510,10 +510,35 @@ def test_emergency_state_survives_process_restart():
     assert rc2.is_emergency_stopped is True, (
         "stato di emergenza PERSO al riavvio: il bot tornerebbe a tradare"
     )
+    # Postura COMPLETA ripristinata, non solo il flag: i percorsi mode-based
+    # devono vedere il lockdown e i monitor event-driven l'evento ri-emesso.
+    assert rc2.mode.name == "LOCKDOWN"
+    assert rc2.live_enabled is False
+    assert rc2.execution_mode == "SIMULATION"
+    assert "RUNTIME_LOCKDOWN" in bus2.events()
     rc2._on_signal_received({"market_type": "NEXT_GOAL"})
     rejections = _signal_rejections(bus2)
     assert rejections, "segnale non rifiutato dopo riavvio in emergenza"
     assert "emergency_stop_active" in rejections[-1]["reason"]
+
+
+@pytest.mark.unit
+@pytest.mark.safety
+def test_auto_trade_gate_blocks_during_emergency():
+    """L'auto-trade da settlement NON passa da _on_signal_received: il suo
+    gate deve controllare l'emergenza direttamente — altrimenti dopo un
+    riavvio + start() (senza reset_emergency) una trade automatica
+    partirebbe con runtime ACTIVE e desk normale."""
+    rc, _bus = _make_rc(db=_PersistentDb())
+    rc.emergency_stop(reason="auto_trade_case")
+
+    # Simula il runtime riportato ACTIVE (es. start() post-riavvio).
+    from core.runtime_controller import RuntimeMode
+    rc.mode = RuntimeMode.ACTIVE
+
+    allowed, reason = rc._risk_allows_auto_trade()
+    assert allowed is False
+    assert reason == "emergency_stop_active"
 
 
 @pytest.mark.unit
@@ -554,16 +579,46 @@ def test_emergency_persist_failure_is_reported_not_silent():
 
 @pytest.mark.unit
 @pytest.mark.safety
-def test_corrupt_persisted_flag_does_not_crash_and_stays_clean():
-    """Valore spazzatura nella setting persistita: nessun crash, e solo i
-    valori truthy espliciti ('1'/'true') ripristinano l'emergenza."""
-    db = _PersistentDb(settings={"emergency_stopped": "garbage"})
+@pytest.mark.parametrize("persisted_value,expected", [
+    ("garbage", False),
+    ("True", True),
+    ("1", True),
+    ("true", True),
+    ("0", False),
+    ("false", False),
+    ("", False),
+])
+def test_persisted_emergency_flag_values_are_parsed_strictly(persisted_value, expected):
+    """Contratto di parsing: nessun crash su spazzatura, e SOLO i valori
+    truthy espliciti ('1'/'true', case-insensitive) ripristinano l'emergenza."""
+    db = _PersistentDb(settings={"emergency_stopped": persisted_value})
     rc, _bus = _make_rc(db=db)
-    assert rc.is_emergency_stopped is False
+    assert rc.is_emergency_stopped is expected
 
-    db_true = _PersistentDb(settings={"emergency_stopped": "True"})
-    rc2, _bus2 = _make_rc(db=db_true)
-    assert rc2.is_emergency_stopped is True
+
+@pytest.mark.unit
+@pytest.mark.safety
+def test_reset_persist_failure_is_reported_and_memory_state_resets():
+    """Simmetrico del persist fallito: anche in reset_emergency() l'errore
+    e' visibile, ma lo stato in memoria viene comunque resettato."""
+    class _BrokenSettingsDb(_Db):
+        def save_settings(self, _data):
+            raise RuntimeError("disk full")
+
+        def get_settings(self):
+            return {}
+
+    rc, bus = _make_rc(db=_BrokenSettingsDb())
+    rc.emergency_stop(reason="x")
+
+    result = rc.reset_emergency()
+
+    assert rc.is_emergency_stopped is False
+    assert result.get("persist_error")
+    rc._on_signal_received({"market_type": "NEXT_GOAL"})
+    assert not any(
+        "emergency_stop_active" in r["reason"] for r in _signal_rejections(bus)
+    )
 
 
 # --------------------------- get_status onesto -----------------------------
@@ -577,10 +632,14 @@ def test_get_status_exposes_emergency_state():
 
     status = rc.get_status()
     assert status["is_emergency_stopped"] is True
+    assert status["emergency_stopped_at"] != ""
+    assert status["emergency_reason"] == "visibility"
 
     rc.reset_emergency()
     status_after = rc.get_status()
     assert status_after["is_emergency_stopped"] is False
+    assert status_after["emergency_stopped_at"] == ""
+    assert status_after["emergency_reason"] == ""
 
 
 # --------------------------- BUCKET 1: cancel degradato --------------------
