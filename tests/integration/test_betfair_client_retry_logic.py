@@ -98,7 +98,9 @@ def test_market_book_http_500_then_success_recovers():
 
 
 @pytest.mark.integration
-def test_place_bet_network_then_success_recovers():
+def test_place_bet_network_error_is_single_shot_never_recovers_by_resend():
+    """placeOrders non e' idempotente: il "recovery" via re-invio era il bug
+    doppia-bet. Contratto: un solo POST, ok=False, order_unknown=True."""
     from betfair_client import BetfairClient
 
     session = FakeSession([
@@ -133,8 +135,9 @@ def test_place_bet_network_then_success_recovers():
         size=5.0,
     )
 
-    assert out["ok"] is True
-    assert len(session.calls) == 2
+    assert out["ok"] is False
+    assert out["order_unknown"] is True
+    assert len(session.calls) == 1
 
 
 @pytest.mark.integration

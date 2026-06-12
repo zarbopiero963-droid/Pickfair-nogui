@@ -83,10 +83,13 @@ def test_network_error_then_success_recovers_for_market_book():
 
 @pytest.mark.integration
 @pytest.mark.net
-def test_network_error_then_success_recovers_for_place_bet():
+def test_network_error_place_bet_is_single_shot_order_unknown():
+    """placeOrders NON viene mai re-inviato dopo un errore di rete: la prima
+    richiesta puo' aver piazzato la bet (rischio doppia bet reale). Esito:
+    order_unknown -> reconciliation, non un retry "che recupera"."""
     from betfair_client import BetfairClient
 
-    session = FakeSession([
+    session = RecordingSession([
         requests.exceptions.ConnectionError("net down"),
         FakeResponse(
             json_data=[{
@@ -117,7 +120,9 @@ def test_network_error_then_success_recovers_for_place_bet():
         price=2.0,
         size=5.0,
     )
-    assert out["ok"] is True
+    assert len(session.calls) == 1
+    assert out["ok"] is False
+    assert out["order_unknown"] is True
 
 
 @pytest.mark.integration
@@ -322,10 +327,12 @@ def test_market_book_retry_does_not_mutate_request_payload():
 
 @pytest.mark.integration
 @pytest.mark.net
-def test_http_500_then_success_recovers_for_place_bet():
+def test_http_500_place_bet_is_single_shot_order_unknown():
+    """HTTP 5xx su placeOrders: la richiesta ha raggiunto il server, l'esito
+    e' sconosciuto. Niente retry (rischio doppia bet), order_unknown=True."""
     from betfair_client import BetfairClient
 
-    session = FakeSession([
+    session = RecordingSession([
         FakeResponse(status_code=500, raise_http=True, text="server error"),
         FakeResponse(
             json_data=[{
@@ -357,27 +364,21 @@ def test_http_500_then_success_recovers_for_place_bet():
         size=5.0,
     )
 
-    assert out["ok"] is True
+    assert len(session.calls) == 1
+    assert out["ok"] is False
+    assert out["order_unknown"] is True
+    assert out["classification"] == "TRANSIENT"
 
 
 @pytest.mark.integration
 @pytest.mark.net
-def test_place_bet_http_500_then_success_preserves_result_shape():
+def test_place_bet_http_500_failure_dict_preserves_contract_shape():
+    """Il dict di fallimento mantiene il contratto completo (error/
+    classification/order_unknown) anche nel percorso 5xx single-shot."""
     from betfair_client import BetfairClient
 
     session = FakeSession([
         FakeResponse(status_code=500, raise_http=True),
-        FakeResponse(
-            json_data=[{
-                "result": {
-                    "status": "SUCCESS",
-                    "marketId": "1.704",
-                    "instructionReports": [
-                        {"status": "SUCCESS", "betId": "BET704"}
-                    ],
-                }
-            }]
-        ),
     ])
 
     client = BetfairClient(
@@ -398,9 +399,10 @@ def test_place_bet_http_500_then_success_preserves_result_shape():
         size=3.0,
     )
 
-    assert out["ok"] is True
-    assert out["result"]["status"] == "SUCCESS"
-    assert out["result"]["instructionReports"][0]["betId"] == "BET704"
+    assert out["ok"] is False
+    assert "HTTP_500" in out["error"]
+    assert out["classification"] == "TRANSIENT"
+    assert out["order_unknown"] is True
 
 
 @pytest.mark.integration
@@ -469,7 +471,9 @@ def test_place_bet_http_503_persistent_failure():
 
 @pytest.mark.integration
 @pytest.mark.net
-def test_place_bet_connection_error_persistent_failure_classified_transient():
+def test_place_bet_connection_error_failure_classified_transient_order_unknown():
+    """Connection error su placeOrders: TRANSIENT ma con order_unknown=True
+    (la richiesta puo' essere arrivata; era False -> ordine fantasma)."""
     from betfair_client import BetfairClient
 
     session = FakeSession([
@@ -497,7 +501,7 @@ def test_place_bet_connection_error_persistent_failure_classified_transient():
 
     assert out["ok"] is False
     assert out["classification"] == "TRANSIENT"
-    assert out["order_unknown"] is False
+    assert out["order_unknown"] is True
 
 
 @pytest.mark.integration
@@ -608,7 +612,11 @@ def test_place_bet_timeout_exhausted_single_attempt_marks_order_unknown():
 
 @pytest.mark.integration
 @pytest.mark.net
-def test_place_bet_timeout_then_retry_submits_same_payload():
+def test_place_bet_timeout_never_retries_single_post_only():
+    """INVERSIONE del vecchio contratto "retry submits same payload": il
+    re-invio dello STESSO payload placeOrders dopo timeout era proprio il
+    bug doppia-bet (la prima richiesta puo' essere passata, niente
+    customerRef => Betfair non deduplica). Ora: UN solo POST, sempre."""
     from betfair_client import BetfairClient
 
     session = RecordingSession([
@@ -643,14 +651,9 @@ def test_place_bet_timeout_then_retry_submits_same_payload():
         size=5.0,
     )
 
-    assert out["ok"] is True
-    assert len(session.calls) == 2
-
-    first_url, first_kwargs = session.calls[0]
-    second_url, second_kwargs = session.calls[1]
-
-    assert first_url == second_url
-    assert json.loads(first_kwargs["data"]) == json.loads(second_kwargs["data"])
+    assert len(session.calls) == 1
+    assert out["ok"] is False
+    assert out["order_unknown"] is True
 
 
 @pytest.mark.integration

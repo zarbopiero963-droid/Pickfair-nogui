@@ -1019,6 +1019,10 @@ class TradingEngine:
             error_class == ERROR_AMBIGUOUS
             or status == STATUS_AMBIGUOUS
             or reason_code in {"SUBMIT_TIMEOUT", "UNKNOWN"}
+            # order_unknown e' il contratto del client Betfair: risposta persa
+            # dopo l'invio, l'ordine puo' esistere sull'exchange => mai FAILED
+            # definitivo, sempre AMBIGUOUS + reconciliation.
+            or response.get("order_unknown") is True
         ):
             raise ExecutionError(
                 f"DOWNSTREAM_AMBIGUOUS_RESPONSE:{response}",
