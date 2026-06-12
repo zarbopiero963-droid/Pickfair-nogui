@@ -1,13 +1,36 @@
 {
+  "module": "core.runtime_controller",
+  "module_paths": [
+    "core/runtime_controller.py"
+  ],
   "states": {
-    "INIT": ["READY"],
-    "READY": ["RUNNING", "STOPPED"],
-    "RUNNING": ["STOPPED", "DEGRADED"],
-    "DEGRADED": ["RUNNING", "STOPPED"],
-    "STOPPED": ["INIT"]
+    "INIT": [
+      "READY"
+    ],
+    "READY": [
+      "RUNNING",
+      "STOPPED"
+    ],
+    "RUNNING": [
+      "STOPPED",
+      "DEGRADED"
+    ],
+    "DEGRADED": [
+      "RUNNING",
+      "STOPPED"
+    ],
+    "STOPPED": [
+      "INIT"
+    ]
   },
   "forbidden_transitions": [
-    ["RUNNING", "INIT"],
-    ["STOPPED", "RUNNING"]
+    [
+      "RUNNING",
+      "INIT"
+    ],
+    [
+      "STOPPED",
+      "RUNNING"
+    ]
   ]
 }

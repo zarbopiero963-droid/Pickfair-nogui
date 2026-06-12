@@ -1,5 +1,8 @@
 {
   "module": "core.trading_engine",
+  "module_paths": [
+    "core/trading_engine.py"
+  ],
   "required_functions": [
     "submit_order",
     "finalize_order",

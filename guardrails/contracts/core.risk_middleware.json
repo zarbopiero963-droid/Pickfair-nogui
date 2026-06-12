@@ -1,4 +1,8 @@
 {
+  "module": "core.risk_middleware",
+  "module_paths": [
+    "core/risk_middleware.py"
+  ],
   "return_keys": [
     "allowed",
     "reason",

@@ -1,5 +1,8 @@
 {
   "module": "core.runtime_controller",
+  "module_paths": [
+    "core/runtime_controller.py"
+  ],
   "required_functions": [
     "start",
     "stop",

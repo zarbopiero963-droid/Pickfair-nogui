@@ -1,7 +1,18 @@
 {
+  "module": "simulation_broker",
+  "module_paths": [
+    "simulation_broker.py"
+  ],
   "states": {
-    "INFLIGHT": ["PARTIAL", "MATCHED", "CANCELLED"],
-    "PARTIAL": ["MATCHED", "CANCELLED"],
+    "INFLIGHT": [
+      "PARTIAL",
+      "MATCHED",
+      "CANCELLED"
+    ],
+    "PARTIAL": [
+      "MATCHED",
+      "CANCELLED"
+    ],
     "MATCHED": [],
     "CANCELLED": []
   },

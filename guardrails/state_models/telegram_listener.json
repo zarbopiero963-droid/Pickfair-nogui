@@ -1,9 +1,24 @@
 {
+  "module": "telegram_listener",
+  "module_paths": [
+    "telegram_listener.py"
+  ],
   "states": {
-    "DISCONNECTED": ["CONNECTING"],
-    "CONNECTING": ["CONNECTED", "DISCONNECTED"],
-    "CONNECTED": ["DISCONNECTED", "RECONNECTING"],
-    "RECONNECTING": ["CONNECTED", "DISCONNECTED"]
+    "DISCONNECTED": [
+      "CONNECTING"
+    ],
+    "CONNECTING": [
+      "CONNECTED",
+      "DISCONNECTED"
+    ],
+    "CONNECTED": [
+      "DISCONNECTED",
+      "RECONNECTING"
+    ],
+    "RECONNECTING": [
+      "CONNECTED",
+      "DISCONNECTED"
+    ]
   },
   "rules": [
     "connection_must_recover_on_failure",

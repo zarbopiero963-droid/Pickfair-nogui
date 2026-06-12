@@ -1,5 +1,8 @@
 {
   "module": "core.money_management",
+  "module_paths": [
+    "core/money_management.py"
+  ],
   "required_functions": [
     "calculate_stake",
     "update_bankroll",

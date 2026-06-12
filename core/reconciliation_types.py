@@ -17,7 +17,6 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum, unique
 from typing import Any, Dict, FrozenSet, Optional, Tuple
 
-
 # =============================================================================
 # REASON CODES – standardised, machine-readable
 # =============================================================================
@@ -103,6 +102,10 @@ _AUTH_ERROR_MARKERS: Tuple[str, ...] = (
     "not logged in",
     "invalid session",
     "no session",
+    # Literal Betfair API error codes (underscore form): without these,
+    # an expired session was classified TRANSIENT and retried.
+    "invalid_session",
+    "no_session",
     "ssoid",
     "401",
     "403",

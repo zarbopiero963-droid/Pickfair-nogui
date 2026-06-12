@@ -1,10 +1,17 @@
 {
+  "module": "core.execution_guard",
+  "module_paths": [
+    "core/execution_guard.py"
+  ],
   "return_keys": [
     "allowed",
     "reason",
     "timestamp"
   ],
-  "allowed_values": [true, false],
+  "allowed_values": [
+    true,
+    false
+  ],
   "deny_reasons": [
     "DUPLICATE_DETECTED",
     "MISSING_KEY",

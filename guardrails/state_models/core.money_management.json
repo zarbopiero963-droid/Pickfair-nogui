@@ -1,4 +1,8 @@
 {
+  "module": "core.money_management",
+  "module_paths": [
+    "core/money_management.py"
+  ],
   "rules": [
     "bankroll >= 0",
     "stake <= bankroll",

@@ -1,4 +1,8 @@
 {
+  "module": "core.execution_guard",
+  "module_paths": [
+    "core/execution_guard.py"
+  ],
   "rules": [
     "duplicate_request_must_be_blocked",
     "missing_dedup_key_must_be_denied",

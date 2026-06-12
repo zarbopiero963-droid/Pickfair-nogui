@@ -1,4 +1,8 @@
 {
+  "module": "core.risk_middleware",
+  "module_paths": [
+    "core/risk_middleware.py"
+  ],
   "rules": [
     "invalid_payload -> DENY",
     "missing_field -> DENY",

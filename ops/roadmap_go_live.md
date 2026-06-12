@@ -275,6 +275,11 @@ HFT/FPGA/co-location (fuori scala per il caso d'uso). Vale la pena:
   `telegram_module._PREDEFINED`).
 - Fix `pr-self-check-refresh.yml`: sui trigger `workflow_run` il PR number arriva
   vuoto e il refresh esce senza fare nulla (bug latente dell'automazione).
+- Guardrail JSON orfani: `copy_engine`, `session_manager`, `rate_limiter`,
+  `live_gate` referenziano moduli i cui file NON esistono nel repo (creati
+  dal bot autofix di maggio); i loro ultra-check fallirebbero se mai
+  innescati. Decidere: creare i moduli o rimuovere spec+routing. (I 9
+  moduli con file reali sono stati riparati nella PR-D del programma test.)
 
 - Parser Trainer (proposto, mai implementato): bottone "Addestra" su messaggio →
   form guidato → auto-generazione regex → test immediato.

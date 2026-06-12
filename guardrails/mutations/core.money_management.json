@@ -1,5 +1,8 @@
 {
   "module": "core.money_management",
+  "module_paths": [
+    "core/money_management.py"
+  ],
   "description": "Hardcore mutations for bankroll safety, exposure limits, and cycle logic.",
   "mutations": [
     {

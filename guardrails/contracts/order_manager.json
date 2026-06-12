@@ -1,4 +1,8 @@
 {
+  "module": "order_manager",
+  "module_paths": [
+    "order_manager.py"
+  ],
   "return_keys": [
     "status",
     "order_id",

@@ -1,5 +1,8 @@
 {
   "module": "order_manager",
+  "module_paths": [
+    "order_manager.py"
+  ],
   "required_functions": [
     "create_order",
     "update_order_status",

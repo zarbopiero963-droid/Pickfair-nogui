@@ -1,5 +1,8 @@
 {
   "module": "core.runtime_controller",
+  "module_paths": [
+    "core/runtime_controller.py"
+  ],
   "description": "Hardcore mutations for lifecycle integrity and recovery on boot.",
   "mutations": [
     {
