@@ -34,7 +34,10 @@ class FakeSession:
 
 
 @pytest.mark.chaos
-def test_transient_then_success_place_bet():
+def test_transient_error_place_bet_is_single_shot_no_hidden_recovery():
+    """Sotto chaos di rete placeOrders NON "recupera" ritentando: il re-invio
+    era il bug doppia-bet (la prima richiesta puo' essere passata). Esito:
+    ok=False + order_unknown, un solo POST."""
     from betfair_client import BetfairClient
 
     session = FakeSession([
@@ -68,7 +71,10 @@ def test_transient_then_success_place_bet():
         price=2.0,
         size=2.0,
     )
-    assert out["ok"] is True
+    assert out["ok"] is False
+    assert out["order_unknown"] is True
+    # La risposta SUCCESS e' rimasta in coda: mai consumata = mai re-inviato.
+    assert len(session.responses) == 1
 
 
 @pytest.mark.chaos

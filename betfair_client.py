@@ -226,7 +226,8 @@ class BetfairClient:
     # =========================================================
     # CORE JSON-RPC
     # =========================================================
-    def _post_jsonrpc(self, url: str, method: str, params: Dict[str, Any]) -> Any:
+    def _post_jsonrpc(self, url: str, method: str, params: Dict[str, Any],
+                      *, single_shot: bool = False) -> Any:
         started_at = time.monotonic()
         if not self._session_token_value():
             self._record_io(operation=method, started_at=started_at, status="UNAVAILABLE", error="NOT_AUTHENTICATED")
@@ -245,7 +246,10 @@ class BetfairClient:
 
         last_error: Optional[str] = None
 
-        for attempt in range(self.max_retries + 1):
+        # single_shot: le chiamate non idempotenti (placeOrders) non vanno MAI
+        # re-inviate — un timeout non prova che l'ordine non sia stato piazzato.
+        attempts = 1 if single_shot else (self.max_retries + 1)
+        for attempt in range(attempts):
             try:
                 response = self.session.post(
                     url,
@@ -517,6 +521,11 @@ class BetfairClient:
                         },
                     }],
                 },
+                # placeOrders non e' idempotente e non ha customerRef: un retry
+                # dopo timeout/reset puo' piazzare una SECONDA bet reale (la
+                # prima puo' essere passata). Esito incerto => order_unknown
+                # sotto, risolve la reconciliation. Mai re-inviare.
+                single_shot=True,
             )
 
             status = str(result.get("status") or "").upper()
@@ -539,11 +548,18 @@ class BetfairClient:
 
         except RuntimeError as exc:
             error_text = str(exc)
+            error_upper = error_text.upper()
             return {
                 "ok": False,
                 "error": error_text,
                 "classification": self._classify_error(error_text),
-                "order_unknown": "TIMEOUT" in error_text.upper(),
+                # TIMEOUT/NETWORK_ERROR/HTTP_5xx: la richiesta puo' aver
+                # raggiunto Betfair anche se la risposta e' andata persa =>
+                # esito SCONOSCIUTO (reconciliation), non fallimento definitivo.
+                "order_unknown": any(
+                    marker in error_upper
+                    for marker in ("TIMEOUT", "NETWORK_ERROR", "HTTP_5")
+                ),
             }
 
     # =========================================================
