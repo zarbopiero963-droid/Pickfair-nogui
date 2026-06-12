@@ -134,6 +134,8 @@ def test_place_orders_network_error_is_never_resent():
 
     assert len(session.calls) == 1, "placeOrders RI-INVIATO dopo network error"
     assert out["ok"] is False
+    assert out["order_unknown"] is True
+    assert out["classification"] == "TRANSIENT"
 
 
 @pytest.mark.failure
@@ -157,14 +159,18 @@ def test_idempotent_reads_keep_retrying():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.failure
-@pytest.mark.parametrize("effect", [
-    requests.exceptions.ConnectionError("connection reset by peer"),
-    FakeResponse(status_code=503, raise_http=True),
-    FakeResponse(status_code=500, raise_http=True),
-], ids=["connection_reset", "http_503", "http_500"])
-def test_response_lost_after_send_marks_order_unknown(effect):
+@pytest.mark.parametrize("effect,classification", [
+    (requests.exceptions.ConnectionError("connection reset by peer"), "TRANSIENT"),
+    (FakeResponse(status_code=503, raise_http=True), "TRANSIENT"),
+    (FakeResponse(status_code=500, raise_http=True), "TRANSIENT"),
+    # Eccezione inattesa DOPO la consegna dei byte al socket: fail-closed,
+    # l'esito resta sconosciuto anche se la classe d'errore e' UNKNOWN.
+    (OSError("unexpected low-level failure"), "UNKNOWN"),
+], ids=["connection_reset", "http_503", "http_500", "unknown_error"])
+def test_response_lost_after_send_marks_order_unknown(effect, classification):
     """La richiesta puo' aver raggiunto Betfair anche se la risposta e'
-    andata persa (reset/5xx): l'esito e' SCONOSCIUTO, mai FAILED definitivo."""
+    andata persa (reset/5xx/errore inatteso): esito SCONOSCIUTO, mai
+    FAILED definitivo."""
     client = _client(RecordingSession([effect]))
 
     out = _place(client)
@@ -174,6 +180,7 @@ def test_response_lost_after_send_marks_order_unknown(effect):
         "risposta persa dopo l'invio marcata come fallimento definitivo: "
         "ordine fantasma possibile sull'exchange senza reconciliation"
     )
+    assert out["classification"] == classification
 
 
 @pytest.mark.failure
@@ -326,4 +333,4 @@ def test_engine_keeps_definitive_rejection_failed_without_reconcile():
     })
 
     assert result["status"] == "FAILED"
-    assert reconcile.enqueued == []
+    assert not reconcile.enqueued

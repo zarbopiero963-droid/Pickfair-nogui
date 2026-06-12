@@ -558,7 +558,7 @@ class BetfairClient:
                 # esito SCONOSCIUTO (reconciliation), non fallimento definitivo.
                 "order_unknown": any(
                     marker in error_upper
-                    for marker in ("TIMEOUT", "NETWORK_ERROR", "HTTP_5")
+                    for marker in ("TIMEOUT", "NETWORK_ERROR", "HTTP_5", "UNKNOWN_ERROR")
                 ),
             }
 
