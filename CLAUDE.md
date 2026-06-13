@@ -40,6 +40,10 @@ REGOLE NON NEGOZIABILI (valgono sempre):
 - AUTO_MERGE_ENABLED=false sempre: il merge è manuale dell'owner.
 - DeepSource è advisory di default: patcha solo se è required
   failing current-head o dimostra bug reale/safety/fail-open.
+- A ogni check-in della PR leggi **anche** i corpi delle review e i
+  commenti di conversazione, non solo i thread inline: i rilievi
+  "outside diff range" (es. CodeRabbit) vivono solo nel corpo della
+  review e non arrivano né come thread né via webhook.
 - Riporta sempre lo stato finale: READY_TO_MERGE, NEEDS_MANUAL,
   FAILED, CHECKS_PENDING o PATCH_REQUIRED_LOOP_STOPPED, con REASON.
 

@@ -70,13 +70,33 @@ class BetfairClient:
             "last_call_at": 0.0,
         }
 
+    def _redact_error_text(self, text: Any, *, token_snapshot: str = "") -> str:
+        """Maschera il valore del session token nelle stringhe d'errore.
+
+        La redazione strutturata (observability/sanitizers) lavora per
+        CHIAVE sui payload: le stringhe d'errore grezze (eccezioni di rete,
+        risposte API) passerebbero intatte fino a log, io_snapshot e
+        get_status()['runtime_io']. Redatta sia il token CORRENTE sia lo
+        snapshot del token usato per la richiesta (un altro thread puo'
+        ruotarlo/azzerarlo tra invio ed eccezione). Soglia minima di
+        lunghezza per evitare sostituzioni spurie su token degeneri.
+        """
+        out = str(text or "")
+        candidates = {self._session_token_value(), str(token_snapshot or "")}
+        # Dal piu' lungo al piu' corto: se un token e' substring dell'altro,
+        # sostituire prima il corto lascerebbe un residuo parziale del lungo.
+        for token in sorted(candidates, key=len, reverse=True):
+            if token and len(token) >= 8 and token in out:
+                out = out.replace(token, "***SESSION_TOKEN***")
+        return out
+
     def _record_io(self, *, operation: str, started_at: float, status: str, error: str = "") -> None:
         elapsed_ms = max(0.0, (time.monotonic() - started_at) * 1000.0)
         status_up = str(status or "UNKNOWN").strip().upper()
         self._io_stats["last_operation"] = str(operation)
         self._io_stats["last_latency_ms"] = round(elapsed_ms, 3)
         self._io_stats["last_status"] = status_up
-        self._io_stats["last_error"] = str(error or "")
+        self._io_stats["last_error"] = self._redact_error_text(error)
         self._io_stats["last_call_at"] = time.time()
         self._io_stats["total_calls"] = int(self._io_stats.get("total_calls", 0) or 0) + 1
         if status_up == "SLOW":
@@ -249,11 +269,19 @@ class BetfairClient:
         # single_shot: le chiamate non idempotenti (placeOrders) non vanno MAI
         # re-inviate — un timeout non prova che l'ordine non sia stato piazzato.
         attempts = 1 if single_shot else (self.max_retries + 1)
+        # Inizializzato PRIMA del try: se _headers() stessa solleva, il
+        # branch except lo referenzia senza UnboundLocalError.
+        token_snapshot = ""
         for attempt in range(attempts):
             try:
+                headers = self._headers()
+                # Snapshot del token del TENTATIVO: la redazione deve coprire
+                # anche un token ruotato/azzerato da un altro thread prima
+                # della gestione dell'eccezione.
+                token_snapshot = str(headers.get("X-Authentication") or "")
                 response = self.session.post(
                     url,
-                    headers=self._headers(),
+                    headers=headers,
                     data=json.dumps(payload),
                     timeout=self.timeout,
                 )
@@ -268,7 +296,9 @@ class BetfairClient:
                 item = data[0]
 
                 if "error" in item:
-                    err = str(item["error"])
+                    # Redatta anche l'errore API: la risposta puo' riflettere
+                    # il session token nel payload d'errore.
+                    err = self._redact_error_text(item["error"], token_snapshot=token_snapshot)
 
                     if "INVALID_SESSION" in err or "NO_SESSION" in err:
                         self._clear_session_state()
@@ -293,15 +323,19 @@ class BetfairClient:
                 logger.warning("http error attempt=%s method=%s code=%s", attempt, method, code)
 
             except RequestException as exc:
-                last_error = f"NETWORK_ERROR: {exc}"
-                logger.warning("network error attempt=%s method=%s error=%s", attempt, method, exc)
+                last_error = (
+                    f"NETWORK_ERROR: {self._redact_error_text(exc, token_snapshot=token_snapshot)}"
+                )
+                logger.warning("network error attempt=%s method=%s error=%s", attempt, method, last_error)
 
             except RuntimeError:
                 raise
 
             except Exception as exc:
-                last_error = f"UNKNOWN_ERROR: {exc}"
-                logger.warning("unknown error attempt=%s method=%s error=%s", attempt, method, exc)
+                last_error = (
+                    f"UNKNOWN_ERROR: {self._redact_error_text(exc, token_snapshot=token_snapshot)}"
+                )
+                logger.warning("unknown error attempt=%s method=%s error=%s", attempt, method, last_error)
 
         err = RuntimeError(f"REQUEST_FAILED: {last_error}")
         self._api_breaker.record_failure(err)
@@ -314,6 +348,10 @@ class BetfairClient:
     # =========================================================
     def login(self, password: str) -> Dict[str, Any]:
         started_at = time.monotonic()
+        # Snapshot del token vivo a inizio login: la redazione deve coprire
+        # anche un token ruotato/azzerato da un altro thread prima della
+        # gestione dell'eccezione (stessa difesa di _post_jsonrpc).
+        token_snapshot = self._session_token_value()
         try:
             response = self.session.post(
                 self.IDENTITY_URL,
@@ -331,7 +369,9 @@ class BetfairClient:
             data = self._parse_json(response, "INVALID_LOGIN_JSON")
 
             if str(data.get("loginStatus")) != "SUCCESS":
-                raise RuntimeError(f"LOGIN_FAILED: {data}")
+                # Solo il loginStatus diagnostico: la risposta grezza puo'
+                # contenere un sessionToken e finirebbe in log/last_error.
+                raise RuntimeError(f"LOGIN_FAILED: {data.get('loginStatus')}")
 
             session_token = str(data.get("sessionToken") or "")
             session_expiry = str(data.get("sessionExpiryTime") or "")
@@ -351,17 +391,23 @@ class BetfairClient:
                 "expiry": session_expiry,
             }
 
-        except Timeout as exc:
+        except Timeout:
             self._record_io(operation="login", started_at=started_at, status="DEGRADED", error="LOGIN_TIMEOUT")
-            raise RuntimeError("LOGIN_TIMEOUT") from exc
+            # from None: come per gli altri handler, la causa originale
+            # potrebbe contenere il token e finire nel traceback renderizzato.
+            raise RuntimeError("LOGIN_TIMEOUT") from None
 
         except HTTPError as exc:
-            self._record_io(operation="login", started_at=started_at, status="DEGRADED", error=f"LOGIN_HTTP_ERROR:{exc}")
-            raise RuntimeError(f"LOGIN_HTTP_ERROR: {exc}") from exc
+            err = self._redact_error_text(exc, token_snapshot=token_snapshot)
+            self._record_io(operation="login", started_at=started_at, status="DEGRADED", error=f"LOGIN_HTTP_ERROR:{err}")
+            # from None: la causa originale conterrebbe il token grezzo e
+            # logger.exception/traceback la renderizzerebbero.
+            raise RuntimeError(f"LOGIN_HTTP_ERROR: {err}") from None
 
         except RequestException as exc:
-            self._record_io(operation="login", started_at=started_at, status="DEGRADED", error=f"LOGIN_NETWORK_ERROR:{exc}")
-            raise RuntimeError(f"LOGIN_NETWORK_ERROR: {exc}") from exc
+            err = self._redact_error_text(exc, token_snapshot=token_snapshot)
+            self._record_io(operation="login", started_at=started_at, status="DEGRADED", error=f"LOGIN_NETWORK_ERROR:{err}")
+            raise RuntimeError(f"LOGIN_NETWORK_ERROR: {err}") from None
 
     def logout(self) -> Dict[str, Any]:
         self._clear_session_state()
