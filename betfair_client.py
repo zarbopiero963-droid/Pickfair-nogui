@@ -82,7 +82,10 @@ class BetfairClient:
         lunghezza per evitare sostituzioni spurie su token degeneri.
         """
         out = str(text or "")
-        for token in {self._session_token_value(), str(token_snapshot or "")}:
+        candidates = {self._session_token_value(), str(token_snapshot or "")}
+        # Dal piu' lungo al piu' corto: se un token e' substring dell'altro,
+        # sostituire prima il corto lascerebbe un residuo parziale del lungo.
+        for token in sorted(candidates, key=len, reverse=True):
             if token and len(token) >= 8 and token in out:
                 out = out.replace(token, "***SESSION_TOKEN***")
         return out
@@ -393,12 +396,14 @@ class BetfairClient:
         except HTTPError as exc:
             err = self._redact_error_text(exc, token_snapshot=token_snapshot)
             self._record_io(operation="login", started_at=started_at, status="DEGRADED", error=f"LOGIN_HTTP_ERROR:{err}")
-            raise RuntimeError(f"LOGIN_HTTP_ERROR: {err}") from exc
+            # from None: la causa originale conterrebbe il token grezzo e
+            # logger.exception/traceback la renderizzerebbero.
+            raise RuntimeError(f"LOGIN_HTTP_ERROR: {err}") from None
 
         except RequestException as exc:
             err = self._redact_error_text(exc, token_snapshot=token_snapshot)
             self._record_io(operation="login", started_at=started_at, status="DEGRADED", error=f"LOGIN_NETWORK_ERROR:{err}")
-            raise RuntimeError(f"LOGIN_NETWORK_ERROR: {err}") from exc
+            raise RuntimeError(f"LOGIN_NETWORK_ERROR: {err}") from None
 
     def logout(self) -> Dict[str, Any]:
         self._clear_session_state()

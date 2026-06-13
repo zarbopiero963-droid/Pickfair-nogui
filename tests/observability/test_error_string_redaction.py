@@ -251,6 +251,68 @@ def test_rotated_token_is_still_redacted_via_request_snapshot():
     assert SECRET_TOKEN not in str(client.io_snapshot().get("last_error", ""))
 
 
+@pytest.mark.observability
+def test_overlapping_tokens_are_redacted_longest_first():
+    """Codex round 4: se il token ruotato e quello dello snapshot si
+    sovrappongono (uno e' prefisso dell'altro), sostituire prima il corto
+    lascerebbe un residuo parziale del lungo (es. ***SESSION_TOKEN***890).
+    La redazione deve procedere dal token piu' lungo."""
+    short_token = SECRET_TOKEN[:12]
+    remnant = SECRET_TOKEN[12:]
+
+    class _RotatingSession:
+        def __init__(self, client_holder):
+            self.client_holder = client_holder
+
+        def post(self, url, **kwargs):
+            _ = url, kwargs
+            # Rotazione verso un token che e' PREFISSO di quello vecchio.
+            self.client_holder["client"].session_token = short_token
+            raise requests.exceptions.ConnectionError(
+                f"reset with stale session {SECRET_TOKEN}"
+            )
+
+    holder = {}
+    client = _client(_RotatingSession(holder))
+    holder["client"] = client
+    client.session_token = SECRET_TOKEN
+
+    out = client.place_bet(
+        market_id="1.234", selection_id=1, side="BACK", price=2.0, size=2.0,
+    )
+
+    assert SECRET_TOKEN not in str(out.get("error", ""))
+    assert remnant not in str(out.get("error", "")), (
+        "residuo parziale del token lungo dopo la sostituzione del corto"
+    )
+    assert remnant not in str(client.io_snapshot().get("last_error", ""))
+
+
+@pytest.mark.observability
+def test_login_error_cause_chain_does_not_render_token():
+    """Codex round 4: il messaggio era redatto ma 'raise ... from exc'
+    conservava in __cause__ l'eccezione originale col token — chiunque
+    renderizzi il traceback (logger.exception) lo avrebbe stampato. La
+    catena deve essere soppressa."""
+    import traceback
+
+    session = FakeSession([
+        requests.exceptions.ConnectionError(f"reset with live {SECRET_TOKEN}"),
+    ])
+    client = _client(session)
+    client._cert_tuple = lambda: ("cert.pem", "key.pem")
+    client.session_token = SECRET_TOKEN
+
+    with pytest.raises(RuntimeError) as excinfo:
+        client.login(password="pw")
+
+    assert excinfo.value.__cause__ is None
+    rendered = "".join(traceback.format_exception(excinfo.value))
+    assert SECRET_TOKEN not in rendered, (
+        "token grezzo nel traceback renderizzato via catena delle cause"
+    )
+
+
 # ---------------------------------------------------------------------------
 # correlation_id: il sanitizer NON deve redarlo (e' il filo del forensics)
 # ---------------------------------------------------------------------------
