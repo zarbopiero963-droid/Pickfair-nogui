@@ -404,6 +404,13 @@ La policy dice di non patchare mentre Codacy/checks sono in progress salvo bug c
 
 ## 11. REVIEW_TRIAGE — classifica commenti e bot
 
+Fonti OBBLIGATORIE del triage, ad ogni check-in: oltre ai thread
+inline vanno letti anche i CORPI delle review e i commenti di
+conversazione della PR. I rilievi "outside diff range" (es.
+CodeRabbit) non compaiono come thread inline e non arrivano via
+webhook: vivono solo nel corpo della review. Leggere solo i thread
+=> triage incompleto.
+
 Il flusso classifica ogni thread attivo:
 
 - PATCH_REQUIRED
