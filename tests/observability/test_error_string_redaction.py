@@ -313,6 +313,30 @@ def test_login_error_cause_chain_does_not_render_token():
     )
 
 
+@pytest.mark.observability
+def test_api_error_payload_with_reflected_token_is_redacted():
+    """Codacy (corpo review, outside diff): il branch API_ERROR sollevava il
+    payload d'errore grezzo della risposta Betfair — un token riflesso
+    dall'API passerebbe non redatto a log/circuit breaker. I marker di
+    sessione (INVALID_SESSION/NO_SESSION) restano riconoscibili."""
+    session = FakeSession([
+        FakeResponse(json_data=[{
+            "error": {"code": -32099, "data": f"rejected for session {SECRET_TOKEN}"},
+        }]),
+    ])
+    client = _client(session)
+    client.session_token = SECRET_TOKEN
+
+    out = client.place_bet(
+        market_id="1.234", selection_id=1, side="BACK", price=2.0, size=2.0,
+    )
+
+    assert out["ok"] is False
+    assert "API_ERROR" in str(out.get("error", ""))
+    assert SECRET_TOKEN not in str(out.get("error", ""))
+    assert SECRET_TOKEN not in str(client.io_snapshot().get("last_error", ""))
+
+
 # ---------------------------------------------------------------------------
 # correlation_id: il sanitizer NON deve redarlo (e' il filo del forensics)
 # ---------------------------------------------------------------------------

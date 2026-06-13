@@ -296,7 +296,9 @@ class BetfairClient:
                 item = data[0]
 
                 if "error" in item:
-                    err = str(item["error"])
+                    # Redatta anche l'errore API: la risposta puo' riflettere
+                    # il session token nel payload d'errore.
+                    err = self._redact_error_text(item["error"], token_snapshot=token_snapshot)
 
                     if "INVALID_SESSION" in err or "NO_SESSION" in err:
                         self._clear_session_state()
