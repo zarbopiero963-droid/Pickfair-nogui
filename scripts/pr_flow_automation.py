@@ -26,19 +26,29 @@ SELF_CHECK_NAMES = {
     "pr autofix safe supervisor",
     "merge readiness",
     "pr merge readiness",
-    # Meta-check dell'automazione di flusso (vedi FLOW_WORKFLOWS): le loro
-    # run vengono cancellate dalla concurrency per-PR e il check resta
-    # CANCELLED. Senza queste voci finivano in `blockers` (CANCELLED e' in
-    # BAD_STATES) bloccando la readiness per sempre. is_self_check le
-    # intendeva gia' self-check via URL marker; qui si chiude la falla
-    # per-nome quando l'URL e' generico (/actions/runs/.../job/...).
-    "pr flow guardrails",
-    "pr self check refresh",
 }
 
 OK_STATES = {"SUCCESS", "SKIPPED", "NEUTRAL"}
 PENDING_STATES = {"", "PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"}
 BAD_STATES = {"FAILURE", "ERROR", "ACTION_REQUIRED", "CANCELLED", "TIMED_OUT", "STARTUP_FAILURE", "STALE"}
+
+# States of a run that was superseded (cancelled by per-PR concurrency or
+# marked stale), as opposed to a genuine failure. Used to ignore superseded
+# flow meta-check runs without ignoring real failures.
+SUPERSEDED_STATES = {"CANCELLED", "CANCELED", "STALE"}
+
+# Check (job) names of the flow-automation meta-workflows. Their runs are
+# routinely cancelled by per-PR concurrency, leaving a CANCELLED check on the
+# PR. A superseded run of these must NOT block readiness (it caused a
+# permanent deadlock: CANCELLED is in BAD_STATES, so the check landed in
+# `blockers`). A genuine FAILURE of these still blocks — these jobs run real
+# preflight guardrails (secrets/limits/oscillation), so failures matter.
+# Names must match the actual job/check names (see the respective workflows),
+# not the workflow titles.
+FLOW_META_CHECK_NAMES = {
+    "pr flow guardrails",
+    "refresh stale self checks",
+}
 
 FLOW_WORKFLOWS = {
     "PR Autofix Safe Supervisor",
@@ -121,6 +131,15 @@ def is_self_check(check: dict[str, Any]) -> bool:
     )
 
 
+def is_superseded_flow_meta_check(check: dict[str, Any]) -> bool:
+    """A flow-automation meta-check whose run was superseded (cancelled by
+    per-PR concurrency or stale), not genuinely failed. These must not block
+    readiness; a real failure of the same check still does."""
+    name = check_name(check).lower()
+    state = norm_state(check.get("conclusion") or check.get("state") or check.get("status"))
+    return name in FLOW_META_CHECK_NAMES and state in SUPERSEDED_STATES
+
+
 def pr_view(repo: str, pr: str) -> dict[str, Any]:
     return gh_json([
         "gh", "pr", "view", str(pr),
@@ -159,6 +178,16 @@ def split_checks(pr: dict[str, Any], *, ignore_self: bool = True) -> dict[str, l
             ignored.append(item)
             if item["state"] in BAD_STATES:
                 self_stale.append(item)
+            continue
+
+        # Superseded run of a flow meta-check (cancelled by per-PR concurrency
+        # or stale): ignore it instead of counting it as a blocker. A genuine
+        # failure of these checks is NOT superseded and still falls through to
+        # the blocker branch below.
+        if is_superseded_flow_meta_check(raw):
+            item["ignored"] = True
+            ignored.append(item)
+            self_stale.append(item)
             continue
 
         item["ignored"] = False
