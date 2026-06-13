@@ -391,9 +391,11 @@ class BetfairClient:
                 "expiry": session_expiry,
             }
 
-        except Timeout as exc:
+        except Timeout:
             self._record_io(operation="login", started_at=started_at, status="DEGRADED", error="LOGIN_TIMEOUT")
-            raise RuntimeError("LOGIN_TIMEOUT") from exc
+            # from None: come per gli altri handler, la causa originale
+            # potrebbe contenere il token e finire nel traceback renderizzato.
+            raise RuntimeError("LOGIN_TIMEOUT") from None
 
         except HTTPError as exc:
             err = self._redact_error_text(exc, token_snapshot=token_snapshot)

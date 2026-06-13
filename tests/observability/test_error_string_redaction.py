@@ -314,6 +314,29 @@ def test_login_error_cause_chain_does_not_render_token():
 
 
 @pytest.mark.observability
+def test_login_timeout_cause_chain_does_not_render_token():
+    """Codex round 5: anche l'handler Timeout del login conservava la causa
+    grezza via 'from exc' — un token nel testo del timeout sarebbe finito
+    nel traceback renderizzato nonostante il messaggio costante."""
+    import traceback
+
+    session = FakeSession([
+        requests.exceptions.Timeout(f"timed out with session {SECRET_TOKEN}"),
+    ])
+    client = _client(session)
+    client._cert_tuple = lambda: ("cert.pem", "key.pem")
+    client.session_token = SECRET_TOKEN
+
+    with pytest.raises(RuntimeError) as excinfo:
+        client.login(password="pw")
+
+    assert "LOGIN_TIMEOUT" in str(excinfo.value)
+    assert excinfo.value.__cause__ is None
+    rendered = "".join(traceback.format_exception(excinfo.value))
+    assert SECRET_TOKEN not in rendered
+
+
+@pytest.mark.observability
 def test_api_error_payload_with_reflected_token_is_redacted():
     """Codacy (corpo review, outside diff): il branch API_ERROR sollevava il
     payload d'errore grezzo della risposta Betfair — un token riflesso
