@@ -26,6 +26,14 @@ SELF_CHECK_NAMES = {
     "pr autofix safe supervisor",
     "merge readiness",
     "pr merge readiness",
+    # Meta-check dell'automazione di flusso (vedi FLOW_WORKFLOWS): le loro
+    # run vengono cancellate dalla concurrency per-PR e il check resta
+    # CANCELLED. Senza queste voci finivano in `blockers` (CANCELLED e' in
+    # BAD_STATES) bloccando la readiness per sempre. is_self_check le
+    # intendeva gia' self-check via URL marker; qui si chiude la falla
+    # per-nome quando l'URL e' generico (/actions/runs/.../job/...).
+    "pr flow guardrails",
+    "pr self check refresh",
 }
 
 OK_STATES = {"SUCCESS", "SKIPPED", "NEUTRAL"}

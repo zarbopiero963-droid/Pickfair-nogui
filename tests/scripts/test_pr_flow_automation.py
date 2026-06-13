@@ -76,6 +76,53 @@ def test_split_checks_ignores_self_checks_when_requested():
     ASSERTIONS.assertEqual(buckets["self_stale"][0]["name"], "PR Merge Readiness")
 
 
+def test_split_checks_cancelled_flow_guardrails_is_not_a_blocker():
+    """Una run di 'PR Flow Guardrails' cancellata dalla concurrency per-PR e'
+    un meta-check di flusso: deve essere ignorata, non bloccare la readiness.
+
+    Regressione del deadlock: il check ha URL generico
+    (/actions/runs/.../job/...) che non contiene il marker 'pr-flow-guardrails',
+    quindi senza la voce per-nome in SELF_CHECK_NAMES finiva in `blockers`
+    (CANCELLED e' in BAD_STATES) e teneva can_merge=false per sempre.
+    """
+    checks = {
+        "statusCheckRollup": [
+            _check(
+                "PR flow guardrails",
+                "CANCELLED",
+                "https://github.com/o/r/actions/runs/123/job/456",
+            ),
+            _check("PR Self Check Refresh", "CANCELLED"),
+            _check("Unit tests", "SUCCESS"),
+        ]
+    }
+
+    buckets = flow.split_checks(checks, ignore_self=True)
+
+    blocker_names = {b["name"] for b in buckets["blockers"]}
+    ASSERTIONS.assertNotIn("PR flow guardrails", blocker_names)
+    ASSERTIONS.assertNotIn("PR Self Check Refresh", blocker_names)
+    ASSERTIONS.assertEqual(buckets["blockers"], [])
+    ignored_names = {c["name"] for c in buckets["ignored"]}
+    ASSERTIONS.assertIn("PR flow guardrails", ignored_names)
+    self_stale_names = {c["name"] for c in buckets["self_stale"]}
+    ASSERTIONS.assertIn("PR flow guardrails", self_stale_names)
+
+
+def test_split_checks_cancelled_non_self_check_still_blocks():
+    """La fix e' circoscritta ai meta-check di flusso: un check di codice
+    reale (non-self) in stato CANCELLED resta un blocker."""
+    checks = {
+        "statusCheckRollup": [
+            _check("Unit tests", "CANCELLED"),
+        ]
+    }
+
+    buckets = flow.split_checks(checks, ignore_self=True)
+
+    ASSERTIONS.assertEqual(buckets["blockers"][0]["name"], "Unit tests")
+
+
 def test_codacy_task_normalizes_common_issue_fields(tmp_path):
     """Codacy API output is persisted raw and rendered into a concise task file."""
     controller.write_codacy_task(tmp_path, {"data": [_codacy_issue()]}, [_codacy_issue()])
