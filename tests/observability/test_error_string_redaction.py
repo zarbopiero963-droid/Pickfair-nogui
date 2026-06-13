@@ -39,7 +39,8 @@ class FakeResponse:
         self.status_code = 200
         self._json_data = json_data
 
-    def raise_for_status(self):
+    @staticmethod
+    def raise_for_status():
         return None
 
     def json(self):
