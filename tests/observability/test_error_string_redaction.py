@@ -192,6 +192,36 @@ def test_login_network_error_redacts_live_token_in_raised_message():
 
 
 @pytest.mark.observability
+def test_login_rotated_token_is_still_redacted_via_snapshot():
+    """Stessa race di rotazione, lato login (CodeRabbit round 3): un altro
+    thread azzera il token vivo durante il re-login — il token VECCHIO nel
+    testo dell'eccezione deve comunque essere redatto (snapshot a inizio
+    login)."""
+    class _RotatingSession:
+        def __init__(self, client_holder):
+            self.client_holder = client_holder
+
+        def post(self, url, **kwargs):
+            _ = url, kwargs
+            self.client_holder["client"].session_token = ""
+            raise requests.exceptions.ConnectionError(
+                f"reset with stale session {SECRET_TOKEN}"
+            )
+
+    holder = {}
+    client = _client(_RotatingSession(holder))
+    holder["client"] = client
+    client._cert_tuple = lambda: ("cert.pem", "key.pem")
+    client.session_token = SECRET_TOKEN
+
+    with pytest.raises(RuntimeError) as excinfo:
+        client.login(password="pw")
+
+    assert SECRET_TOKEN not in str(excinfo.value)
+    assert SECRET_TOKEN not in str(client.io_snapshot().get("last_error", ""))
+
+
+@pytest.mark.observability
 def test_rotated_token_is_still_redacted_via_request_snapshot():
     """Race di rotazione (CodeRabbit): un altro thread azzera/ruota il token
     tra l'invio e la gestione dell'eccezione — il token VECCHIO nel testo

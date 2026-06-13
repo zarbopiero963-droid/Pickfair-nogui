@@ -343,6 +343,10 @@ class BetfairClient:
     # =========================================================
     def login(self, password: str) -> Dict[str, Any]:
         started_at = time.monotonic()
+        # Snapshot del token vivo a inizio login: la redazione deve coprire
+        # anche un token ruotato/azzerato da un altro thread prima della
+        # gestione dell'eccezione (stessa difesa di _post_jsonrpc).
+        token_snapshot = self._session_token_value()
         try:
             response = self.session.post(
                 self.IDENTITY_URL,
@@ -387,12 +391,12 @@ class BetfairClient:
             raise RuntimeError("LOGIN_TIMEOUT") from exc
 
         except HTTPError as exc:
-            err = self._redact_error_text(exc)
+            err = self._redact_error_text(exc, token_snapshot=token_snapshot)
             self._record_io(operation="login", started_at=started_at, status="DEGRADED", error=f"LOGIN_HTTP_ERROR:{err}")
             raise RuntimeError(f"LOGIN_HTTP_ERROR: {err}") from exc
 
         except RequestException as exc:
-            err = self._redact_error_text(exc)
+            err = self._redact_error_text(exc, token_snapshot=token_snapshot)
             self._record_io(operation="login", started_at=started_at, status="DEGRADED", error=f"LOGIN_NETWORK_ERROR:{err}")
             raise RuntimeError(f"LOGIN_NETWORK_ERROR: {err}") from exc
 
