@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 import time
 from datetime import datetime
 from typing import Any, Optional
@@ -98,6 +99,9 @@ class RuntimeController:
         self._emergency_stopped: bool = False
         self._emergency_stopped_at: str = ""
         self._emergency_reason: str = ""
+        # Serializza il trigger della kill-switch da daily-loss: rende atomico
+        # il check-and-stop dell'handler sotto dispatch EventBus concorrente.
+        self._daily_loss_stop_lock = threading.Lock()
         self._io_observations: dict[str, Any] = {
             "last_operation": "",
             "last_status": "UNKNOWN",
@@ -432,7 +436,6 @@ class RuntimeController:
         self.bus.subscribe("QUICK_BET_SUCCESS", self._on_quick_bet_success)
         self.bus.subscribe("QUICK_BET_AMBIGUOUS", self._on_quick_bet_ambiguous)
         self.bus.subscribe("RUNTIME_CLOSE_POSITION", self._on_close_position)
-        self.bus.subscribe("DAILY_LOSS_BREACH_TRIGGERED", self._on_daily_loss_breach_triggered)
 
     # =========================================================
     # CONFIG / MODE
@@ -1049,12 +1052,23 @@ class RuntimeController:
         self.execution_mode = "SIMULATION"
         self.set_simulation_mode(True)
 
-        # Force LOCKDOWN
-        self.force_lockdown(self._emergency_reason)
-
-        # Attempt cancel-all open/pending orders
+        # Force LOCKDOWN. Lo snapshot di status dentro force_lockdown puo'
+        # fallire in un outage broker (es. get_account_funds che solleva), ma
+        # NON deve impedire il cancel-all: il flag e' gia' settato e persistito
+        # sopra, quindi garantiamo il LOCKDOWN e proseguiamo alla cancellazione.
         cancel_results: list = []
         cancel_errors: list = []
+        try:
+            self.force_lockdown(self._emergency_reason)
+        except Exception as exc:
+            logger.exception(
+                "emergency_stop: force_lockdown/status snapshot failed; "
+                "forcing LOCKDOWN and continuing to cancel-all"
+            )
+            self.mode = RuntimeMode.LOCKDOWN
+            cancel_errors.append({"stage": "force_lockdown", "error": str(exc)})
+
+        # Attempt cancel-all open/pending orders
         cancelled_count = 0
         error_count = 0
 
@@ -1169,23 +1183,39 @@ class RuntimeController:
         self.bus.publish("EMERGENCY_STOP_RESET", {"reset_at": datetime.utcnow().isoformat()})
         return {"emergency_reset": True, "persist_error": persist_error}
 
-    def _on_daily_loss_breach_triggered(self, payload: Optional[dict] = None) -> None:
-        """Daily-loss hard stop: a DAILY_LOSS_BREACH_TRIGGERED event triggers a
-        full emergency stop (cancel-all + persist + lockdown, fail-closed).
+    def _enforce_daily_loss_hard_stop(self, breach_state: dict) -> bool:
+        """Kill-switch SINCRONO da perdita giornaliera. Ritorna True se lo stop
+        e' scattato (o e' gia' attivo), cioe' se NON si deve piazzare altro.
 
-        max_daily_loss e' obbligatorio in LIVE (readiness gate), quindi il
-        breach e' incondizionatamente un evento di stop. L'evento TRIGGERED e'
-        pubblicato solo al primo breach (i successivi sono _ACTIVE, non
-        sottoscritti); il guard _emergency_stopped rende l'handler idempotente
-        e impedisce ri-stop su eventuali duplicati."""
-        if self._emergency_stopped:
-            return
-        amount = (payload or {}).get("daily_loss_amount", 0.0)
-        logger.critical(
-            "DAILY_LOSS_BREACH_TRIGGERED -> emergency_stop (daily_loss_amount=%s)",
-            amount,
-        )
-        self.emergency_stop(reason=f"DAILY_LOSS_BREACH:{amount}")
+        Chiamato da _on_close_position SUBITO dopo aver applicato il PnL del
+        settlement e PRIMA della valutazione/submission dell'auto-trade: cosi'
+        un breach ferma il bot in modo sincrono (persist + cancel-all +
+        lockdown) e nessun ordine successivo parte dopo aver sfondato il limite.
+
+        Difese:
+        - solo-trading-attivo: il monitor calcola/pubblica il breach anche da
+          get_status() (sola lettura); l'enforcement avviene SOLO da
+          _on_close_position e solo se il runtime e' ACTIVE, cosi' una
+          status-poll all'avvio (mode=STOPPED, realized_pnl gia' in perdita)
+          non forza un'emergenza che bloccherebbe lo start();
+        - atomicita': check-and-stop sotto lock, cosi' con _on_close_position
+          dispatchato da piu' worker EventBus un solo chiamante esegue lo stop
+          (il guard _emergency_stopped da solo sarebbe un check-then-act non
+          atomico)."""
+        if not breach_state.get("breached"):
+            return False
+        if not self._runtime_active():
+            return False
+        with self._daily_loss_stop_lock:
+            if self._emergency_stopped:
+                return True
+            amount = float(breach_state.get("daily_loss_amount", 0.0) or 0.0)
+            logger.critical(
+                "DAILY_LOSS_BREACH -> emergency_stop (daily_loss_amount=%s)",
+                amount,
+            )
+            self.emergency_stop(reason=f"DAILY_LOSS_BREACH:{amount}")
+            return True
 
     # =========================================================
     # LIFECYCLE
@@ -1715,11 +1745,17 @@ class RuntimeController:
         sync_result = self._sync_bankroll_post_settlement(payload)
         self._last_bankroll_sync_result = dict(sync_result)
         self.bus.publish("BANKROLL_SYNC_RESULT", dict(sync_result))
+        # Daily-loss hard stop PRIMA della prossima submission: il PnL del
+        # settlement e' gia' applicato sopra (_apply_realized_pnl...). Se sfonda
+        # il limite giornaliero fermiamo SINCRONO (persist + cancel-all +
+        # lockdown); l'auto-trade sotto viene quindi bloccato da
+        # _risk_allows_auto_trade e nessun ordine parte dopo il breach.
+        daily_loss_state = self._monitor_daily_loss_breach(source="RUNTIME_CLOSE_POSITION", payload=payload)
+        self._enforce_daily_loss_hard_stop(daily_loss_state)
         auto_trade_result = self._evaluate_and_maybe_submit_auto_next_trade(payload=payload, sync_result=sync_result)
         self._last_auto_trade_result = dict(auto_trade_result)
         self._last_cycle_executor_result = dict(auto_trade_result)
         self.bus.publish("AUTO_TRADE_MM_RESULT", dict(auto_trade_result))
-        self._monitor_daily_loss_breach(source="RUNTIME_CLOSE_POSITION", payload=payload)
 
         current_drawdown = self.risk_desk.drawdown_pct()
 
