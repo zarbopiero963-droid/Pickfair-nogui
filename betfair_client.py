@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 class BetfairClient:
     IDENTITY_URL = "https://identitysso.betfair.it/api/certlogin"
+    KEEPALIVE_URL = "https://identitysso.betfair.it/api/keepAlive"
     BETTING_URL = "https://api.betfair.com/exchange/betting/json-rpc/v1"
     ACCOUNT_URL = "https://api.betfair.com/exchange/account/json-rpc/v1"
 
@@ -439,16 +440,57 @@ class BetfairClient:
         }
 
     def keep_alive(self) -> Dict[str, Any]:
-        """Mantiene viva la sessione betting (il token scade ~20 min di
-        inattivita') con una chiamata LEGGERA a getAccountFunds: NON modifica
-        ordini ne' stato del conto, ma il solo fatto di chiamare l'API con un
-        token valido rinnova la sessione lato Betfair.
+        """Estende la sessione betting via l'endpoint Betfair keepAlive.
 
-        Propaga le eccezioni (SESSION_EXPIRED, errori di rete/HTTP) al chiamante:
-        il loop di keepalive in BetfairService le intercetta e instrada un
-        SESSION_EXPIRED al re-auth fail-closed (`handle_session_expiry`)."""
-        self.get_account_funds()
-        return {"ok": True, "kept_alive": True}
+        Per i doc Betfair (Login & Session Management) SOLO l'operazione
+        keepAlive resetta il timeout della sessione (Italian exchange ~20 min);
+        una normale API (es. getAccountFunds) NON estende il timer. Non modifica
+        ordini ne' stato del conto. Propaga SESSION_EXPIRED / errori di rete/HTTP
+        al chiamante: il loop di keepalive in BetfairService li intercetta e
+        instrada un session-error al re-auth fail-closed (handle_session_expiry).
+        """
+        started_at = time.monotonic()
+        token_snapshot = self._session_token_value()
+        if not token_snapshot:
+            raise RuntimeError("SESSION_EXPIRED")
+        try:
+            response = self.session.post(
+                self.KEEPALIVE_URL,
+                headers={
+                    "X-Application": self.app_key,
+                    "X-Authentication": token_snapshot,
+                    "Accept": "application/json",
+                },
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            data = self._parse_json(response, "INVALID_KEEPALIVE_JSON")
+            if str(data.get("status")) != "SUCCESS":
+                # Solo il campo error diagnostico (un codice tipo
+                # INVALID_SESSION_INFORMATION), mai la risposta grezza che puo'
+                # contenere un token. Il classifier del loop riconosce i codici
+                # di sessione e instrada al re-auth.
+                error = str(data.get("error") or data.get("status") or "KEEPALIVE_FAILED")
+                self._record_io(operation="keep_alive", started_at=started_at, status="DEGRADED", error=f"KEEPALIVE_FAILED:{error}")
+                raise RuntimeError(f"KEEPALIVE_FAILED: {error}")
+            elapsed_ms = max(0.0, (time.monotonic() - started_at) * 1000.0)
+            status = "SLOW" if elapsed_ms >= max(2000.0, self.timeout * 1000.0 * 0.8) else "SUCCESS"
+            self._record_io(operation="keep_alive", started_at=started_at, status=status)
+            return {"ok": True, "kept_alive": True}
+
+        except Timeout:
+            self._record_io(operation="keep_alive", started_at=started_at, status="DEGRADED", error="KEEPALIVE_TIMEOUT")
+            raise RuntimeError("KEEPALIVE_TIMEOUT") from None
+
+        except HTTPError as exc:
+            err = self._redact_error_text(exc, token_snapshot=token_snapshot)
+            self._record_io(operation="keep_alive", started_at=started_at, status="DEGRADED", error=f"KEEPALIVE_HTTP_ERROR:{err}")
+            raise RuntimeError(f"KEEPALIVE_HTTP_ERROR: {err}") from None
+
+        except RequestException as exc:
+            err = self._redact_error_text(exc, token_snapshot=token_snapshot)
+            self._record_io(operation="keep_alive", started_at=started_at, status="DEGRADED", error=f"KEEPALIVE_NETWORK_ERROR:{err}")
+            raise RuntimeError(f"KEEPALIVE_NETWORK_ERROR: {err}") from None
 
     # =========================================================
     # CASHOUT

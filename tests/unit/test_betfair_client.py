@@ -156,23 +156,49 @@ def test_place_bet_invalid_size_fails_fast(client):
             size=0.0,
         )
 
+class _KAResp:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._payload
+
+
 @pytest.mark.unit
-def test_keep_alive_calls_get_account_funds(client):
-    calls = []
-    client.get_account_funds = lambda: (calls.append(1) or {"available": 1.0})
+def test_keep_alive_hits_keepalive_endpoint_with_token(client):
+    captured = {}
+
+    def _post(url, headers=None, timeout=None, **kw):
+        captured["url"] = url
+        captured["auth"] = (headers or {}).get("X-Authentication")
+        return _KAResp({"status": "SUCCESS", "token": "x"})
+
+    client.session.post = _post
+    client.session_token = "TOK"
 
     out = client.keep_alive()
 
-    assert calls == [1]
     assert out == {"ok": True, "kept_alive": True}
+    assert captured["url"] == client.KEEPALIVE_URL
+    assert captured["url"].endswith("/api/keepAlive")
+    assert captured["auth"] == "TOK"  # estende la sessione, non getAccountFunds
 
 
 @pytest.mark.unit
-def test_keep_alive_propagates_session_expired(client):
-    def _raise():
-        raise RuntimeError("SESSION_EXPIRED")
-
-    client.get_account_funds = _raise
-
+def test_keep_alive_without_token_raises_session_expired(client):
+    client.session_token = ""
     with pytest.raises(RuntimeError, match="SESSION_EXPIRED"):
+        client.keep_alive()
+
+
+@pytest.mark.unit
+def test_keep_alive_non_success_status_raises_with_error_code(client):
+    client.session_token = "TOK"
+    client.session.post = lambda *a, **k: _KAResp(
+        {"status": "FAIL", "error": "INVALID_SESSION_INFORMATION"}
+    )
+    with pytest.raises(RuntimeError, match="INVALID_SESSION_INFORMATION"):
         client.keep_alive()
