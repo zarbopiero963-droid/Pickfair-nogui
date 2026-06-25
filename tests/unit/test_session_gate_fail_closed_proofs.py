@@ -35,6 +35,8 @@ Tutto pure-unit e deterministico, nessuna modifica al codice di produzione
 """
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from services.betfair_service import BetfairService
@@ -51,12 +53,15 @@ class _Settings:
       - qualunque altro valore (None, "", "   ", "secret"): viene ritornato
     """
 
-    _RAISE = object()
-
     def __init__(self, password_behavior):
+        """Memorizza il comportamento desiderato di load_password()."""
         self._behavior = password_behavior
 
-    def load_betfair_config(self):
+    @staticmethod
+    def load_betfair_config():
+        """Config Betfair completa: rispecchia il contratto reale che
+        _connect_live() legge come gate di completezza (username/app_key/
+        certificate/private_key tutti presenti)."""
         class Cfg:
             username = "user"
             app_key = "key"
@@ -65,6 +70,7 @@ class _Settings:
         return Cfg()
 
     def load_password(self):
+        """Ritorna la password configurata, o solleva se behavior == 'raise'."""
         if self._behavior == "raise":
             raise RuntimeError("keystore indisponibile")
         return self._behavior
@@ -123,6 +129,7 @@ def test_whitespace_password_is_passed_through_then_fails_closed(monkeypatch):
     seen = {}
 
     def fake_connect_live(password=None, force=False):
+        """Registra la password ricevuta e simula un login rifiutato."""
         seen["password"] = password
         raise RuntimeError("login rifiutato")
 
@@ -148,8 +155,6 @@ def test_sim_fallback_allowed_but_live_reentry_still_refused_while_invalid():
     """Con sessione invalida l'operatore puo' ripiegare in simulazione, ma un
     successivo rientro in LIVE resta RIFIUTATO: il flag invalid persiste e non
     viene azzerato dal passaggio a simulazione (niente live accidentale)."""
-    from unittest.mock import MagicMock
-
     svc = BetfairService(_Settings("secret"))
     svc.simulation_mode = False
     svc._session_invalid = True
@@ -197,7 +202,7 @@ def test_place_order_already_invalid_does_not_reinvoke_recovery(monkeypatch):
         "bet_type": "BACK", "price": 2.0, "stake": 10.0,
     })
 
-    assert calls == [], "place_order non deve richiamare il recovery se gia' invalido"
+    assert not calls, "place_order non deve richiamare il recovery se gia' invalido"
     assert result["ok"] is False
     assert "LIVE_BLOCKED_SESSION_INVALID" in result["error"]
     assert result.get("session_invalid") is True
@@ -214,7 +219,11 @@ def test_place_order_exception_path_triggers_recovery_and_reraises():
     dalla risposta ok=False gia' coperta), place_order invoca il recovery e
     ri-solleva: il servizio resta bloccato e l'errore non viene inghiottito."""
     class _RaisingClient:
-        def place_bet(self, **_kw):
+        """Client live finto: place_bet solleva sempre SESSION_EXPIRED."""
+
+        @staticmethod
+        def place_bet(**_kw):
+            """Simula place_bet che solleva SESSION_EXPIRED."""
             raise RuntimeError("SESSION_EXPIRED")
 
     svc = BetfairService(_Settings(""))  # nessuna password: recovery resta bloccato
