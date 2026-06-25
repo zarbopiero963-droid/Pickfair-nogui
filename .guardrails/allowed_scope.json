@@ -82,6 +82,14 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 8
+    },
+    "test_suite_pr_m_hardverify_gate": {
+      "allow_tests": true,
+      "files": [
+        "ops/roadmap_go_live.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 8
     }
   }
 }
