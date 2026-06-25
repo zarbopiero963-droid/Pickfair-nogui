@@ -35,12 +35,13 @@ def test_is_outdated_rest_position_fallback():
 
 
 @pytest.mark.unit
-def test_is_outdated_fail_closed_keeps_live_findings():
-    # Null position alone must NOT mark a live finding outdated (fail-closed):
-    # file-level comments and comments with a current line/side are still live.
+def test_is_outdated_rest_file_level_is_live_but_line_is_outdated():
+    # Whole-file comments never have a position and stay live; a null-position
+    # LINE comment no longer maps to the diff and is outdated (line/side are not
+    # reliable live signals).
     assert parser._is_outdated({"position": None, "subject_type": "file"}) is False
-    assert parser._is_outdated({"position": None, "line": 10}) is False
-    assert parser._is_outdated({"position": None, "side": "RIGHT"}) is False
+    assert parser._is_outdated({"position": None, "line": 10}) is True
+    assert parser._is_outdated({"position": None, "side": "RIGHT"}) is True
 
 
 @pytest.mark.unit
@@ -81,6 +82,36 @@ def test_flatten_thread_marks_outdated_and_resolved():
     assert parser._flatten_thread(outdated_thread)[0]["outdated"] is True
     assert parser._flatten_thread(resolved_thread)[0]["outdated"] is True
     assert parser._flatten_thread(live_thread)[0]["outdated"] is False
+
+
+@pytest.mark.unit
+def test_flatten_thread_includes_replies():
+    # A Codex finding posted as a reply (2nd comment) must still be captured.
+    thread = {
+        "isOutdated": False, "isResolved": False,
+        "comments": {"nodes": [
+            {"databaseId": 1, "author": {"login": "deepsource-io"},
+             "path": "x.py", "body": "opener", "url": "u1"},
+            {"databaseId": 2, "author": {"login": "chatgpt-codex-connector"},
+             "path": "x.py", "body": "codex reply finding", "url": "u2"},
+        ]},
+    }
+    rows = parser._flatten_thread(thread)
+    assert [r["user"]["login"] for r in rows] == ["deepsource-io", "chatgpt-codex-connector"]
+
+
+@pytest.mark.unit
+def test_graphql_raises_when_thread_comments_overflow(monkeypatch):
+    import json as _json
+    payload = {"data": {"repository": {"pullRequest": {"reviewThreads": {
+        "nodes": [{"isOutdated": False, "isResolved": False, "comments": {
+            "nodes": [{"databaseId": 1, "author": {"login": "chatgpt-codex-connector"},
+                       "path": "x.py", "body": "f", "url": "u"}],
+            "pageInfo": {"hasNextPage": True}}}],
+        "pageInfo": {"hasNextPage": False}}}}}}
+    monkeypatch.setattr(parser, "_run", lambda cmd: _json.dumps(payload))
+    with pytest.raises(RuntimeError, match="exceeds comment page size"):
+        parser._fetch_review_comments_graphql("o/r", 1)
 
 
 @pytest.mark.unit

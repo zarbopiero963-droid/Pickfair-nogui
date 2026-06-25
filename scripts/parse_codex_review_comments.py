@@ -68,17 +68,17 @@ def _get_repo_and_pr(event: Dict[str, Any]) -> tuple[str, int]:
 # Fetch — GraphQL (authoritative isOutdated/isResolved) with REST fallback
 # ---------------------------------------------------------------------------
 
-# A review THREAD corresponds to a single finding location: its opening
-# (first) comment IS the Codex finding; later comments are replies/discussion,
-# never new findings. We therefore read only the first comment per thread —
-# this also makes inner-comment pagination unnecessary (no finding can be
-# truncated past a comment page) while paginating the threads themselves.
+# We read every comment in a thread (a Codex finding can be a reply, not only
+# the thread opener), inheriting the thread-level outdated/resolved status.
+# Threads are paginated; on the rare thread that exceeds the inner comment page
+# we fall back to REST (which paginates the full flat comment list).
 _REVIEW_THREADS_QUERY = (
     "query($owner:String!,$name:String!,$number:Int!,$after:String){"
     " repository(owner:$owner,name:$name){ pullRequest(number:$number){"
     " reviewThreads(first:100,after:$after){"
     " nodes{ isResolved isOutdated"
-    " comments(first:1){ nodes{ databaseId author{login} path line originalLine body url } } }"
+    " comments(first:100){ nodes{ databaseId author{login} path line originalLine body url }"
+    " pageInfo{ hasNextPage } } }"
     " pageInfo{ hasNextPage endCursor } } } } }"
 )
 
@@ -141,8 +141,14 @@ def _fetch_review_comments_graphql(repo: str, pr_number: int) -> List[Dict[str, 
         if not isinstance(threads, dict):
             raise RuntimeError("GraphQL response missing reviewThreads (partial/empty)")
         for node in threads.get("nodes") or []:
-            if isinstance(node, dict):
-                comments.extend(_flatten_thread(node))
+            if not isinstance(node, dict):
+                continue
+            # A thread with more comments than one page would truncate replies;
+            # raise so the REST fallback fetches the complete flat list.
+            inner_page = ((node.get("comments") or {}).get("pageInfo")) or {}
+            if inner_page.get("hasNextPage"):
+                raise RuntimeError("review thread exceeds comment page size")
+            comments.extend(_flatten_thread(node))
         page = threads.get("pageInfo") or {}
         if page.get("hasNextPage") and page.get("endCursor"):
             after = page["endCursor"]
@@ -197,12 +203,11 @@ def _is_outdated(comment: Dict[str, Any]) -> bool:
     """Whether a comment is outdated/resolved (i.e. NOT a live finding).
 
     Honours an explicit boolean from the GraphQL path. The REST fallback infers
-    it from a null `position` (GitHub nulls it when a comment no longer maps to
-    the current diff), but FAIL-CLOSED: a null position alone is not enough —
-    file-level comments (`subject_type == "file"`) and comments still carrying a
-    current `line`/`side` anchor are live despite a null position. Treating a
-    live finding as outdated would let the gate drop a real unresolved bug, so
-    when in doubt we keep it live.
+    it from a null `position`: GitHub nulls `position` when a line comment no
+    longer maps to the current diff (outdated). The only null-position comment
+    that is still live is a whole-file comment (`subject_type == "file"`), which
+    never has a position; `line`/`side` can persist on an already-stale line
+    comment and are NOT reliable live signals.
     """
     for key in ("outdated", "isOutdated", "is_outdated"):
         value = comment.get(key)
@@ -212,12 +217,9 @@ def _is_outdated(comment: Dict[str, Any]) -> bool:
         return False
     if comment.get("position") is not None:
         return False
-    # Null position — only outdated if it is a genuinely stale line comment.
-    if comment.get("subject_type") == "file":
-        return False
-    if comment.get("line") is not None or comment.get("side"):
-        return False
-    return True
+    # Null position: whole-file comments are still live; any other (line) comment
+    # with a null position no longer maps to the current diff and is outdated.
+    return comment.get("subject_type") != "file"
 
 
 def _normalize_whitespace(s: str) -> str:
