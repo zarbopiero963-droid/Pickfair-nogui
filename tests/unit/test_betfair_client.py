@@ -202,3 +202,73 @@ def test_keep_alive_non_success_status_raises_with_error_code(client):
     )
     with pytest.raises(RuntimeError, match="INVALID_SESSION_INFORMATION"):
         client.keep_alive()
+
+
+class _RPCResp:
+    """Minimal JSON-RPC response stub for _post_jsonrpc (list payload)."""
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._payload
+
+
+@pytest.mark.unit
+def test_get_current_orders_returns_list_and_sends_market_filter(client):
+    import json as _json
+
+    captured = {}
+
+    def _post(url, headers=None, data=None, timeout=None, **kw):
+        captured["url"] = url
+        captured["body"] = _json.loads(data) if data else None
+        return _RPCResp(
+            [{"jsonrpc": "2.0", "id": 1, "result": {
+                "currentOrders": [
+                    {"betId": "1", "marketId": "1.100", "selectionId": 7,
+                     "side": "BACK", "sizeRemaining": 2.0, "status": "EXECUTABLE"},
+                ],
+                "moreAvailable": False,
+            }}]
+        )
+
+    client.session.post = _post
+    client.session_token = "TOK"
+
+    out = client.get_current_orders(market_ids=["1.100"])
+
+    assert isinstance(out, list)
+    assert out[0]["betId"] == "1"
+    assert captured["url"] == client.BETTING_URL
+    assert captured["body"][0]["method"] == "SportsAPING/v1.0/listCurrentOrders"
+    assert captured["body"][0]["params"]["marketIds"] == ["1.100"]
+
+
+@pytest.mark.unit
+def test_get_current_orders_empty_result_returns_empty_list(client):
+    client.session_token = "TOK"
+    client.session.post = lambda *a, **k: _RPCResp(
+        [{"jsonrpc": "2.0", "id": 1, "result": {"moreAvailable": False}}]
+    )
+
+    out = client.get_current_orders()
+
+    assert out == []
+
+
+@pytest.mark.unit
+def test_get_current_orders_propagates_session_expired(client):
+    # Fail-closed: a session error MUST propagate (no silent empty list that
+    # would be mistaken for "no remote orders" by ghost-order detection).
+    client.session_token = "TOK"
+    client.session.post = lambda *a, **k: _RPCResp(
+        [{"jsonrpc": "2.0", "id": 1, "error": {"code": -32099,
+          "message": "INVALID_SESSION_INFORMATION"}}]
+    )
+
+    with pytest.raises(RuntimeError, match="SESSION_EXPIRED"):
+        client.get_current_orders(market_ids=["1.100"])

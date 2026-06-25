@@ -724,6 +724,35 @@ class BetfairClient:
             }
 
     # =========================================================
+    # ORDERS – CURRENT (ghost-order detection)
+    # =========================================================
+    def get_current_orders(
+        self,
+        market_ids: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch current (unmatched/active) orders via listCurrentOrders.
+
+        Returns the raw ``currentOrders`` list from Betfair (a list of order
+        dicts), filtered to ``market_ids`` when provided. Used by the
+        reconciliation engine to detect ghost orders (B3 / UFA-005): any
+        API/session/network failure PROPAGATES to the caller (no silent empty
+        list) so a fetch failure is never mistaken for "no remote orders".
+        """
+        params: Dict[str, Any] = {}
+        wanted = [str(m).strip() for m in (market_ids or []) if str(m).strip()]
+        if wanted:
+            params["marketIds"] = wanted
+
+        result = self._post_jsonrpc(
+            self.BETTING_URL,
+            "SportsAPING/v1.0/listCurrentOrders",
+            params,
+        )
+
+        orders = result.get("currentOrders")
+        return list(orders) if orders else []
+
+    # =========================================================
     # STATUS
     # =========================================================
     def status(self) -> Dict[str, Any]:

@@ -582,6 +582,17 @@ class SimulationBroker:
             "simulated": True,
         }
 
+    def get_current_orders(
+        self, market_ids: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """Return current orders as a plain list of order dicts.
+
+        Mirrors ``BetfairClient.get_current_orders`` so the reconciliation
+        engine sees the same list-of-dicts contract in simulation mode.
+        Reuses ``list_current_orders`` for the order-shape mapping.
+        """
+        return list(self.list_current_orders(market_ids).get("currentOrders") or [])
+
     def cancel_orders(
         self,
         *,

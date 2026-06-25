@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from betfair_client import BetfairClient
 from simulation_broker import SimulationBroker
@@ -660,6 +660,52 @@ class BetfairService:
                 "total": 0.0,
                 "simulated": bool(self.simulation_mode),
             }
+
+    def list_current_orders(
+        self, market_ids: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """Return current (unmatched/active) orders as a list of order dicts.
+
+        Used by the reconciliation engine's startup ghost-order hook (B3 /
+        UFA-005). **Fail-closed in LIVE**: never returns a silent empty list to
+        mask a fetch failure — a known-invalid session or a missing live client
+        raises, and a SESSION_EXPIRED during the fetch routes bounded recovery
+        and then re-raises. Only the simulation broker path returns its orders
+        directly. Callers (state_recovery) treat the raised error as
+        "ghost reconciliation REQUIRED but NOT completed", never as "no orders".
+        """
+        broker = self.get_client()
+
+        if self.simulation_mode:
+            if not broker:
+                return []
+            orders = broker.get_current_orders(market_ids)
+            return [o for o in (orders or []) if isinstance(o, dict)]
+
+        # LIVE — fail-closed.
+        if self._session_invalid:
+            raise RuntimeError(
+                f"LIVE_BLOCKED_SESSION_INVALID: {self._session_invalid_reason}"
+            )
+        if not broker:
+            raise RuntimeError("NO_LIVE_CLIENT")
+
+        try:
+            orders = broker.get_current_orders(market_ids)
+        except Exception as exc:
+            error_text = str(exc)
+            self.last_error = error_text
+            if self._is_session_expiry_error(error_text):
+                logger.warning(
+                    "betfair_service: session expiry detected in "
+                    "list_current_orders; invoking recovery"
+                )
+                self.handle_session_expiry(reason=error_text)
+            else:
+                logger.exception("Errore list_current_orders: %s", exc)
+            raise
+
+        return [o for o in (orders or []) if isinstance(o, dict)]
 
     def place_order(self, payload: dict) -> dict:
         """Session-aware live-order facade.
