@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 from betfair_client import BetfairClient
@@ -35,6 +37,18 @@ class BetfairService:
         # Bounded re-auth: max 1 attempt per expiry event to avoid loops.
         self._reauth_attempts: int = 0
         self._MAX_REAUTH_ATTEMPTS: int = 1
+
+        # Betting-session keepalive (B2 / Fase 1.2): la sessione betting scade
+        # ~20 min di inattivita'; un loop ~10 min tocca la sessione con
+        # client.keep_alive() (getAccountFunds leggero). Lo streaming ha gia' il
+        # suo keepalive separato; questo copre la sessione REST/betting.
+        self._keepalive_interval: float = 600.0
+        self._keepalive_thread: Optional[threading.Thread] = None
+        self._keepalive_stop_event: Optional[threading.Event] = None
+        self._keepalive_lock = threading.Lock()
+        self._keepalive_failure_count: int = 0
+        self._last_keepalive_error: str = ""
+        self._keepalive_last_ok_ts: str = ""
 
     # =========================================================
     # SESSION EXPIRY DETECTION & RECOVERY
@@ -187,6 +201,102 @@ class BetfairService:
         return bool(self.simulation_mode)
 
     # =========================================================
+    # SESSION KEEPALIVE (B2 / Fase 1.2)
+    # =========================================================
+    @staticmethod
+    def _is_session_expiry_error(message: str) -> bool:
+        text = str(message or "").upper()
+        return "SESSION_EXPIRED" in text or "INVALID_SESSION" in text or "NO_SESSION" in text
+
+    def _start_session_keepalive(self) -> None:
+        """Avvia (idempotente) il loop di keepalive della sessione betting.
+        Ogni avvio crea un proprio stop_event passato al thread, cosi' un thread
+        vecchio (es. lasciato dal ramo di re-auth) si ferma sul suo evento mentre
+        quello nuovo gira sul suo."""
+        with self._keepalive_lock:
+            if self._keepalive_thread is not None and self._keepalive_thread.is_alive():
+                return
+            stop_event = threading.Event()
+            self._keepalive_stop_event = stop_event
+            thread = threading.Thread(
+                target=self._session_keepalive_loop,
+                args=(stop_event,),
+                name="betfair-session-keepalive",
+                daemon=True,
+            )
+            self._keepalive_thread = thread
+            thread.start()
+
+    def _stop_session_keepalive(self) -> None:
+        """Ferma il loop di keepalive. RE-ENTRANCY-SAFE: se chiamato dallo stesso
+        thread di keepalive (via handle_session_expiry -> _connect_live(force) ->
+        disconnect), NON fa self-join (eviterebbe un deadlock); segnala lo stop e
+        azzera il riferimento, cosi' un eventuale ri-avvio parte pulito."""
+        with self._keepalive_lock:
+            stop_event = self._keepalive_stop_event
+            thread = self._keepalive_thread
+            self._keepalive_thread = None
+            self._keepalive_stop_event = None
+        if stop_event is not None:
+            stop_event.set()
+        if (
+            thread is not None
+            and thread.is_alive()
+            and thread is not threading.current_thread()
+        ):
+            thread.join(timeout=5.0)
+
+    def _session_keepalive_loop(self, stop_event: threading.Event) -> None:
+        while not stop_event.wait(self._keepalive_interval):
+            if not self._keepalive_tick():
+                return
+
+    def _keepalive_tick(self) -> bool:
+        """Una iterazione di keepalive. Ritorna True se il loop deve CONTINUARE,
+        False se deve USCIRE (session-expiry instradato al re-auth fail-closed:
+        se riesce, _connect_live avvia un nuovo thread sul client ri-autenticato;
+        se fallisce, la sessione resta bloccata fino a riconnessione)."""
+        # Niente keepalive in simulazione o se la sessione e' gia' nota invalida.
+        if self.simulation_mode or self._session_invalid:
+            return True
+        client = self.client
+        if client is None:
+            return True
+        keep_alive = getattr(client, "keep_alive", None)
+        if not callable(keep_alive):
+            return True
+        try:
+            keep_alive()
+            with self._keepalive_lock:
+                self._last_keepalive_error = ""
+                self._keepalive_last_ok_ts = datetime.utcnow().isoformat()
+            return True
+        except Exception as exc:
+            message = str(exc)
+            with self._keepalive_lock:
+                self._keepalive_failure_count += 1
+                self._last_keepalive_error = message
+            logger.warning("betfair session keep_alive failed: %s", message)
+            if self._is_session_expiry_error(message):
+                try:
+                    self.handle_session_expiry(reason="KEEPALIVE_SESSION_EXPIRED")
+                except Exception:
+                    logger.exception("betfair keepalive: handle_session_expiry raised")
+                return False
+            return True
+
+    def keepalive_status(self) -> Dict[str, Any]:
+        with self._keepalive_lock:
+            running = bool(self._keepalive_thread is not None and self._keepalive_thread.is_alive())
+            return {
+                "running": running,
+                "interval_seconds": float(self._keepalive_interval),
+                "failure_count": int(self._keepalive_failure_count),
+                "last_error": str(self._last_keepalive_error),
+                "last_ok_ts": str(self._keepalive_last_ok_ts),
+            }
+
+    # =========================================================
     # BROKER GETTERS
     # =========================================================
     def get_client(self):
@@ -273,6 +383,10 @@ class BetfairService:
                     session_info.get("expiry", ""),
                 )
 
+            # Avvia il keepalive della sessione betting (idempotente: il ramo di
+            # re-auth ri-entra qui e non duplica il thread).
+            self._start_session_keepalive()
+
             return {
                 "connected": True,
                 "session": session_info,
@@ -346,6 +460,10 @@ class BetfairService:
             raise
 
     def disconnect(self) -> None:
+        # Ferma il keepalive PRIMA del logout (re-entrancy-safe: niente self-join
+        # se invocato dal thread di keepalive via re-auth).
+        self._stop_session_keepalive()
+
         self._persist_simulation_state_if_needed()
 
         if self.simulation_broker:

@@ -155,3 +155,24 @@ def test_place_bet_invalid_size_fails_fast(client):
             price=2.0,
             size=0.0,
         )
+
+@pytest.mark.unit
+def test_keep_alive_calls_get_account_funds(client):
+    calls = []
+    client.get_account_funds = lambda: (calls.append(1) or {"available": 1.0})
+
+    out = client.keep_alive()
+
+    assert calls == [1]
+    assert out == {"ok": True, "kept_alive": True}
+
+
+@pytest.mark.unit
+def test_keep_alive_propagates_session_expired(client):
+    def _raise():
+        raise RuntimeError("SESSION_EXPIRED")
+
+    client.get_account_funds = _raise
+
+    with pytest.raises(RuntimeError, match="SESSION_EXPIRED"):
+        client.keep_alive()

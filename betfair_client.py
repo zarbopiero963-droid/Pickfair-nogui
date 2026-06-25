@@ -438,6 +438,18 @@ class BetfairClient:
             "points_balance": self._safe_float(result.get("pointsBalance"), 0.0),
         }
 
+    def keep_alive(self) -> Dict[str, Any]:
+        """Mantiene viva la sessione betting (il token scade ~20 min di
+        inattivita') con una chiamata LEGGERA a getAccountFunds: NON modifica
+        ordini ne' stato del conto, ma il solo fatto di chiamare l'API con un
+        token valido rinnova la sessione lato Betfair.
+
+        Propaga le eccezioni (SESSION_EXPIRED, errori di rete/HTTP) al chiamante:
+        il loop di keepalive in BetfairService le intercetta e instrada un
+        SESSION_EXPIRED al re-auth fail-closed (`handle_session_expiry`)."""
+        self.get_account_funds()
+        return {"ok": True, "kept_alive": True}
+
     # =========================================================
     # CASHOUT
     # =========================================================
