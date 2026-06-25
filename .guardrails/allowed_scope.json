@@ -117,6 +117,15 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 8
+    },
+    "test_suite_proof_streaming_feed": {
+      "allow_tests": true,
+      "files": [
+        "tests/unit/test_streaming_feed_operational_proofs.py",
+        "ops/roadmap_go_live.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 8
     }
   }
 }
