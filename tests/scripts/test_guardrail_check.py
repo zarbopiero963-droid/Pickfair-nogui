@@ -180,7 +180,7 @@ def test_touches_critical_files_none_when_absent():
 
 def test_resolve_task_registered_from_title():
     meta = {"title": "[TASK: my_registered_key] fix"}
-    task, source, unknown, ignored = g.resolve_task(meta, [], {"my_registered_key"})
+    task, source, unknown, _ignored = g.resolve_task(meta, [], {"my_registered_key"})
     ASSERTIONS.assertEqual(task, "my_registered_key")
     ASSERTIONS.assertEqual(source, "pr_title")
     ASSERTIONS.assertEqual(unknown, [])
@@ -188,14 +188,14 @@ def test_resolve_task_registered_from_title():
 
 def test_resolve_task_unknown_recorded_not_selected():
     meta = {"title": "[TASK: not_registered] fix"}
-    task, source, unknown, ignored = g.resolve_task(meta, [], set())
+    task, _source, unknown, _ignored = g.resolve_task(meta, [], set())
     ASSERTIONS.assertIsNone(task)
     ASSERTIONS.assertIn(("pr_title", "not_registered"), unknown)
 
 
 def test_resolve_task_placeholder_ignored():
     meta = {"title": "[TASK: todo] wip"}
-    task, source, unknown, ignored = g.resolve_task(meta, [], set())
+    task, _source, unknown, ignored = g.resolve_task(meta, [], set())
     ASSERTIONS.assertIsNone(task)
     ASSERTIONS.assertIn(("pr_title", "todo"), ignored)
     ASSERTIONS.assertEqual(unknown, [])
@@ -212,7 +212,7 @@ def test_resolve_task_from_task_file_change_paths():
 
 
 def test_resolve_task_none_when_no_marker_anywhere():
-    task, source, unknown, ignored = g.resolve_task({}, ["src/x.py"], set())
+    task, source, unknown, _ignored = g.resolve_task({}, ["src/x.py"], set())
     ASSERTIONS.assertIsNone(task)
     ASSERTIONS.assertIsNone(source)
     ASSERTIONS.assertEqual(unknown, [])
