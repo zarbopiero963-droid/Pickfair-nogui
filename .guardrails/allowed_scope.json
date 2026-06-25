@@ -181,7 +181,7 @@
       "max_files": 6
     },
     "windows_exe_packaging": {
-      "allow_tests": false,
+      "allow_tests": true,
       "files": [
         ".github/workflows/build-windows-exe.yml",
         ".github/workflows/codex-comment-on-pr-check-failure.yml\nQuesto",
@@ -189,7 +189,7 @@
         "ops/windows_exe.md",
         ".guardrails/allowed_scope.json"
       ],
-      "max_files": 6
+      "max_files": 9
     }
   }
 }

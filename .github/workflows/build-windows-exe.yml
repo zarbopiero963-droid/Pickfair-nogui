@@ -1,20 +1,27 @@
 name: Build Windows EXE
 
-# Builds the Pickfair desktop GUI into a single-file Windows executable and
-# uploads it as a downloadable artifact. Run it on demand from the Actions tab
-# ("Run workflow"), or it runs automatically when a v* tag is pushed.
+# Builds the Pickfair desktop GUI (and a console headless variant) into single-
+# file Windows executables and uploads them as downloadable artifacts. Run on
+# demand from the Actions tab ("Run workflow"); on a v* tag the executables are
+# also attached to a GitHub Release.
 on:
   workflow_dispatch: {}
   push:
     tags:
       - "v*"
-  # Validate the build whenever the packaging config itself changes, so a
-  # broken spec/workflow is caught on the PR rather than on demand later.
+  # Validate the build when the packaging config OR any packaged source the spec
+  # bundles changes, so a broken build is caught on the PR rather than on demand.
   pull_request:
     paths:
       - ".github/workflows/build-windows-exe.yml"
       - "pickfair.spec"
       - "requirements.txt"
+      - "main.py"
+      - "mini_gui.py"
+      - "headless_main.py"
+      - "telegram_tab_ui.py"
+      - "theme.py"
+      - "ui_panels/**"
 
 permissions:
   contents: read
@@ -30,6 +37,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -40,17 +49,46 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # customtkinter is an optional (guarded) runtime import, not pinned in
-          # requirements; install it so the bundled GUI uses the modern theme.
+          # customtkinter (and its darkdetect dependency) is a guarded runtime
+          # import not pinned in requirements; install it so the bundled GUI
+          # uses the modern theme.
           pip install customtkinter
-          pip install pyinstaller
+          pip install "pyinstaller>=6,<7"
 
-      - name: Build executable
+      - name: Build executables
         run: pyinstaller --noconfirm --clean pickfair.spec
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: pickfair-windows-exe
-          path: dist/pickfair.exe
+          path: |
+            dist/pickfair.exe
+            dist/pickfair-headless.exe
           if-no-files-found: error
+
+  release:
+    # Attach the executables to the GitHub Release for v* tags (durable, on the
+    # Releases page — unlike Actions artifacts, which expire under retention).
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download built executables
+        uses: actions/download-artifact@v4
+        with:
+          name: pickfair-windows-exe
+          path: dist
+
+      - name: Attach to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/pickfair.exe dist/pickfair-headless.exe \
+            --repo "${GITHUB_REPOSITORY}" --generate-notes \
+          || gh release upload "${GITHUB_REF_NAME}" \
+            dist/pickfair.exe dist/pickfair-headless.exe \
+            --repo "${GITHUB_REPOSITORY}" --clobber
