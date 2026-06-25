@@ -724,6 +724,146 @@ class BetfairClient:
             }
 
     # =========================================================
+    # ORDERS – CURRENT (ghost-order detection)
+    # =========================================================
+    # listCurrentOrders is paginated: Betfair caps a single response at
+    # CURRENT_ORDERS_PAGE_SIZE records and sets ``moreAvailable=True`` when the
+    # result is truncated. We MUST walk every page — a truncated list would let
+    # the reconciliation engine treat absent remote orders as reconciled
+    # (fail-open ghost detection). The page cap is a runaway guard: exceeding it
+    # raises (fail-closed) rather than returning a partial set.
+    CURRENT_ORDERS_PAGE_SIZE = 1000
+    CURRENT_ORDERS_MAX_PAGES = 20
+
+    def get_current_orders(
+        self,
+        market_ids: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch ALL current (unmatched/active) orders via listCurrentOrders.
+
+        Walks every page (``moreAvailable``) and returns the concatenated
+        ``currentOrders`` list of order dicts, filtered to ``market_ids`` when
+        provided. Used by the reconciliation engine to detect ghost orders
+        (B3 / UFA-005), so the contract is fail-closed: any API/session/network
+        failure PROPAGATES (no silent empty list), a truncated response is
+        never silently returned (pagination), and an unterminated pagination
+        (cap exceeded) RAISES rather than returning a partial set — a fetch
+        problem must never be mistaken for "no remote orders".
+        """
+        base_params: Dict[str, Any] = {}
+        wanted = [str(m).strip() for m in (market_ids or []) if str(m).strip()]
+        if wanted:
+            base_params["marketIds"] = wanted
+
+        all_orders: List[Dict[str, Any]] = []
+        from_record = 0
+        for _page in range(self.CURRENT_ORDERS_MAX_PAGES):
+            params = dict(base_params)
+            params["fromRecord"] = from_record
+            params["recordCount"] = self.CURRENT_ORDERS_PAGE_SIZE
+
+            result = self._post_jsonrpc(
+                self.BETTING_URL,
+                "SportsAPING/v1.0/listCurrentOrders",
+                params,
+            )
+
+            page_orders = result.get("currentOrders") or []
+            all_orders.extend(page_orders)
+
+            # No more records → complete snapshot, return it.
+            if not result.get("moreAvailable"):
+                return all_orders
+
+            # moreAvailable but an empty/missing page is an inconsistent or
+            # stale paginated snapshot: fail closed instead of returning a
+            # partial set the ghost detector would treat as the complete remote
+            # state (and to avoid a non-advancing loop).
+            if not page_orders:
+                raise RuntimeError(
+                    "CURRENT_ORDERS_TRUNCATED: moreAvailable with empty page"
+                )
+
+            from_record += len(page_orders)
+
+        # Cap exceeded with moreAvailable still set: fail closed.
+        raise RuntimeError("CURRENT_ORDERS_TRUNCATED: pagination cap exceeded")
+
+    def cancel_order(
+        self,
+        *,
+        bet_id: Any,
+        market_id: Any = None,
+    ) -> Dict[str, Any]:
+        """Cancel a single order by bet id (ghost-order cancellation shim).
+
+        The reconciliation engine cancels detected live ghosts one bet id at a
+        time (``_cancel_ghost_orders`` calls ``cancel_order(bet_id=...)``), but
+        the Betfair cancelOrders RPC needs the order's market id. When
+        ``market_id`` is not supplied we resolve it from the current orders; if
+        the bet is no longer a current order there is nothing on the exchange to
+        cancel (no-op). Delegates the actual cancel to ``cancel_orders``.
+        """
+        bid = str(bet_id or "").strip()
+        if not bid:
+            raise RuntimeError("INVALID_BET_ID")
+
+        market_id_s = str(market_id or "").strip()
+        if not market_id_s:
+            for order in self.get_current_orders():
+                row_bid = str(
+                    order.get("betId") or order.get("bet_id") or ""
+                ).strip()
+                if row_bid == bid:
+                    market_id_s = str(
+                        order.get("marketId") or order.get("market_id") or ""
+                    ).strip()
+                    break
+
+        if not market_id_s:
+            # Bet is not among the current orders → nothing to cancel.
+            return {
+                "ok": True,
+                "bet_id": bid,
+                "status": "NOT_CURRENT",
+                "cancelled_count": 0,
+            }
+
+        result = self.cancel_orders(market_id=market_id_s, bet_ids=[bid])
+        # cancel_orders converts API/session failures into ok=False (it does not
+        # raise). The reconciliation ghost-cancel path only reacts to
+        # exceptions, so surface a failed cancel as a raise — otherwise a ghost
+        # that is still live on the exchange would be logged as cancelled
+        # (fail-open).
+        if isinstance(result, dict) and not result.get("ok"):
+            raise RuntimeError(
+                f"CANCEL_ORDER_FAILED: {result.get('error') or 'UNKNOWN'}"
+            )
+
+        # cancel_orders only flags a top-level FAILURE as ok=False; an ok=True
+        # envelope can still hide PROCESSED_WITH_ERRORS/TIMEOUT or a
+        # per-instruction FAILURE/TIMEOUT, i.e. the exchange did NOT confirm the
+        # cancellation. For a single-bet ghost cancel, require explicit
+        # confirmation (fail-closed) so a still-live ghost is never recorded as
+        # cancelled.
+        raw = result.get("result") if isinstance(result, dict) else None
+        reports = (raw or {}).get("instructionReports") or []
+        report_statuses = {
+            str(r.get("status") or "").upper()
+            for r in reports
+            if isinstance(r, dict)
+        }
+        top_status = str((result or {}).get("status") or "").upper()
+        if top_status != "SUCCESS" or report_statuses != {"SUCCESS"}:
+            raise RuntimeError(
+                "CANCEL_ORDER_UNCONFIRMED: "
+                f"status={top_status or 'UNKNOWN'} "
+                f"reports={sorted(report_statuses) or []}"
+            )
+        return result
+
+
+    # =========================================================
     # STATUS
     # =========================================================
     def status(self) -> Dict[str, Any]:

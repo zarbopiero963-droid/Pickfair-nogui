@@ -202,3 +202,254 @@ def test_keep_alive_non_success_status_raises_with_error_code(client):
     )
     with pytest.raises(RuntimeError, match="INVALID_SESSION_INFORMATION"):
         client.keep_alive()
+
+
+class _RPCResp:
+    """Minimal JSON-RPC response stub for _post_jsonrpc (list payload)."""
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._payload
+
+
+@pytest.mark.unit
+def test_get_current_orders_returns_list_and_sends_market_filter(client):
+    import json as _json
+
+    captured = {}
+
+    def _post(url, headers=None, data=None, timeout=None, **kw):
+        captured["url"] = url
+        captured["body"] = _json.loads(data) if data else None
+        return _RPCResp(
+            [{"jsonrpc": "2.0", "id": 1, "result": {
+                "currentOrders": [
+                    {"betId": "1", "marketId": "1.100", "selectionId": 7,
+                     "side": "BACK", "sizeRemaining": 2.0, "status": "EXECUTABLE"},
+                ],
+                "moreAvailable": False,
+            }}]
+        )
+
+    client.session.post = _post
+    client.session_token = "TOK"
+
+    out = client.get_current_orders(market_ids=["1.100"])
+
+    assert isinstance(out, list)
+    assert out[0]["betId"] == "1"
+    assert captured["url"] == client.BETTING_URL
+    params = captured["body"][0]["params"]
+    assert captured["body"][0]["method"] == "SportsAPING/v1.0/listCurrentOrders"
+    assert params["marketIds"] == ["1.100"]
+    # Pagination params are always sent.
+    assert params["fromRecord"] == 0
+    assert params["recordCount"] == client.CURRENT_ORDERS_PAGE_SIZE
+
+
+@pytest.mark.unit
+def test_get_current_orders_walks_all_pages_when_more_available(client):
+    # moreAvailable=True must drive a follow-up page; both pages concatenate and
+    # fromRecord advances. A truncated single page would fail-open ghost detect.
+    import json as _json
+
+    pages = [
+        {"currentOrders": [{"betId": "1"}], "moreAvailable": True},
+        {"currentOrders": [{"betId": "2"}], "moreAvailable": False},
+    ]
+    seen_from = []
+
+    def _post(url, headers=None, data=None, timeout=None, **kw):
+        body = _json.loads(data)
+        seen_from.append(body[0]["params"]["fromRecord"])
+        page = pages[len(seen_from) - 1]
+        return _RPCResp([{"jsonrpc": "2.0", "id": 1, "result": page}])
+
+    client.session.post = _post
+    client.session_token = "TOK"
+
+    out = client.get_current_orders()
+
+    assert [o["betId"] for o in out] == ["1", "2"]
+    assert seen_from == [0, 1]
+
+
+@pytest.mark.unit
+def test_get_current_orders_raises_when_pagination_never_terminates(client):
+    # Fail-closed: a response that keeps signalling moreAvailable must raise once
+    # the page cap is hit, never return a partial (silently truncated) set.
+    client.session_token = "TOK"
+    client.session.post = lambda *a, **k: _RPCResp(
+        [{"jsonrpc": "2.0", "id": 1, "result": {
+            "currentOrders": [{"betId": "x"}], "moreAvailable": True}}]
+    )
+
+    with pytest.raises(RuntimeError, match="CURRENT_ORDERS_TRUNCATED"):
+        client.get_current_orders()
+
+
+@pytest.mark.unit
+def test_get_current_orders_empty_result_returns_empty_list(client):
+    client.session_token = "TOK"
+    client.session.post = lambda *a, **k: _RPCResp(
+        [{"jsonrpc": "2.0", "id": 1, "result": {"moreAvailable": False}}]
+    )
+
+    out = client.get_current_orders()
+
+    assert out == []
+
+
+@pytest.mark.unit
+def test_get_current_orders_propagates_session_expired(client):
+    # Fail-closed: a session error MUST propagate (no silent empty list that
+    # would be mistaken for "no remote orders" by ghost-order detection).
+    client.session_token = "TOK"
+    client.session.post = lambda *a, **k: _RPCResp(
+        [{"jsonrpc": "2.0", "id": 1, "error": {"code": -32099,
+          "message": "INVALID_SESSION_INFORMATION"}}]
+    )
+
+    with pytest.raises(RuntimeError, match="SESSION_EXPIRED"):
+        client.get_current_orders(market_ids=["1.100"])
+
+
+@pytest.mark.unit
+def test_get_current_orders_raises_on_more_available_empty_page(client):
+    # moreAvailable=True with no rows is an inconsistent/stale snapshot: fail
+    # closed rather than return a partial set treated as complete.
+    client.session_token = "TOK"
+    client.session.post = lambda *a, **k: _RPCResp(
+        [{"jsonrpc": "2.0", "id": 1, "result": {
+            "currentOrders": [], "moreAvailable": True}}]
+    )
+
+    with pytest.raises(RuntimeError, match="CURRENT_ORDERS_TRUNCATED"):
+        client.get_current_orders()
+
+
+@pytest.mark.unit
+def test_cancel_order_resolves_market_then_delegates(client):
+    import json as _json
+
+    posts = []
+
+    def _post(url, headers=None, data=None, timeout=None, **kw):
+        body = _json.loads(data)
+        method = body[0]["method"]
+        posts.append(method)
+        if method.endswith("listCurrentOrders"):
+            return _RPCResp([{"jsonrpc": "2.0", "id": 1, "result": {
+                "currentOrders": [{"betId": "B9", "marketId": "1.222"}],
+                "moreAvailable": False}}])
+        # cancelOrders
+        assert body[0]["params"]["marketId"] == "1.222"
+        assert body[0]["params"]["instructions"] == [{"betId": "B9"}]
+        return _RPCResp([{"jsonrpc": "2.0", "id": 1, "result": {
+            "status": "SUCCESS", "instructionReports": [{"status": "SUCCESS"}]}}])
+
+    client.session.post = _post
+    client.session_token = "TOK"
+
+    out = client.cancel_order(bet_id="B9")
+
+    assert out["ok"] is True
+    assert any(m.endswith("listCurrentOrders") for m in posts)
+    assert any(m.endswith("cancelOrders") for m in posts)
+
+
+@pytest.mark.unit
+def test_cancel_order_noop_when_bet_not_current(client):
+    # Bet id not among current orders → nothing to cancel (no cancelOrders call).
+    client.session_token = "TOK"
+    client.session.post = lambda *a, **k: _RPCResp(
+        [{"jsonrpc": "2.0", "id": 1, "result": {
+            "currentOrders": [{"betId": "OTHER", "marketId": "1.1"}],
+            "moreAvailable": False}}]
+    )
+
+    out = client.cancel_order(bet_id="MISSING")
+
+    assert out["ok"] is True
+    assert out["status"] == "NOT_CURRENT"
+    assert out["cancelled_count"] == 0
+
+
+@pytest.mark.unit
+def test_cancel_order_uses_given_market_without_lookup(client):
+    import json as _json
+
+    posts = []
+
+    def _post(url, headers=None, data=None, timeout=None, **kw):
+        body = _json.loads(data)
+        posts.append(body[0]["method"])
+        return _RPCResp([{"jsonrpc": "2.0", "id": 1, "result": {
+            "status": "SUCCESS", "instructionReports": [{"status": "SUCCESS"}]}}])
+
+    client.session.post = _post
+    client.session_token = "TOK"
+
+    out = client.cancel_order(bet_id="B1", market_id="1.5")
+
+    assert out["ok"] is True
+    # No listCurrentOrders lookup when market is supplied.
+    assert all(m.endswith("cancelOrders") for m in posts)
+
+
+@pytest.mark.unit
+def test_cancel_order_empty_bet_id_raises(client):
+    with pytest.raises(RuntimeError, match="INVALID_BET_ID"):
+        client.cancel_order(bet_id="")
+
+
+@pytest.mark.unit
+def test_cancel_order_raises_when_cancel_fails(client):
+    # cancel_orders returns ok=False on a FAILURE; the shim must RAISE so the
+    # ghost-cancel path records a real failure instead of a false "cancelled"
+    # (the live ghost would otherwise stay active on the exchange).
+    def _post(url, headers=None, data=None, timeout=None, **kw):
+        import json as _json
+        method = _json.loads(data)[0]["method"]
+        if method.endswith("listCurrentOrders"):
+            return _RPCResp([{"jsonrpc": "2.0", "id": 1, "result": {
+                "currentOrders": [{"betId": "B1", "marketId": "1.9"}],
+                "moreAvailable": False}}])
+        # cancelOrders → FAILURE status (cancel_orders returns ok=False)
+        return _RPCResp([{"jsonrpc": "2.0", "id": 1, "result": {
+            "status": "FAILURE", "errorCode": "BET_ACTION_ERROR",
+            "instructionReports": []}}])
+
+    client.session.post = _post
+    client.session_token = "TOK"
+
+    with pytest.raises(RuntimeError, match="CANCEL_ORDER_FAILED"):
+        client.cancel_order(bet_id="B1")
+
+
+@pytest.mark.unit
+def test_cancel_order_raises_when_cancel_unconfirmed(client):
+    # Top-level SUCCESS but a per-instruction TIMEOUT means the exchange did NOT
+    # confirm the cancel: the ghost may still be live → must raise (fail-closed),
+    # not be recorded as cancelled.
+    def _post(url, headers=None, data=None, timeout=None, **kw):
+        import json as _json
+        method = _json.loads(data)[0]["method"]
+        if method.endswith("listCurrentOrders"):
+            return _RPCResp([{"jsonrpc": "2.0", "id": 1, "result": {
+                "currentOrders": [{"betId": "B1", "marketId": "1.9"}],
+                "moreAvailable": False}}])
+        return _RPCResp([{"jsonrpc": "2.0", "id": 1, "result": {
+            "status": "SUCCESS",
+            "instructionReports": [{"status": "TIMEOUT", "errorCode": "ERROR_IN_ORDER"}]}}])
+
+    client.session.post = _post
+    client.session_token = "TOK"
+
+    with pytest.raises(RuntimeError, match="CANCEL_ORDER_UNCONFIRMED"):
+        client.cancel_order(bet_id="B1")
