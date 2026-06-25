@@ -406,3 +406,27 @@ def test_cancel_order_uses_given_market_without_lookup(client):
 def test_cancel_order_empty_bet_id_raises(client):
     with pytest.raises(RuntimeError, match="INVALID_BET_ID"):
         client.cancel_order(bet_id="")
+
+
+@pytest.mark.unit
+def test_cancel_order_raises_when_cancel_fails(client):
+    # cancel_orders returns ok=False on a FAILURE; the shim must RAISE so the
+    # ghost-cancel path records a real failure instead of a false "cancelled"
+    # (the live ghost would otherwise stay active on the exchange).
+    def _post(url, headers=None, data=None, timeout=None, **kw):
+        import json as _json
+        method = _json.loads(data)[0]["method"]
+        if method.endswith("listCurrentOrders"):
+            return _RPCResp([{"jsonrpc": "2.0", "id": 1, "result": {
+                "currentOrders": [{"betId": "B1", "marketId": "1.9"}],
+                "moreAvailable": False}}])
+        # cancelOrders → FAILURE status (cancel_orders returns ok=False)
+        return _RPCResp([{"jsonrpc": "2.0", "id": 1, "result": {
+            "status": "FAILURE", "errorCode": "BET_ACTION_ERROR",
+            "instructionReports": []}}])
+
+    client.session.post = _post
+    client.session_token = "TOK"
+
+    with pytest.raises(RuntimeError, match="CANCEL_ORDER_FAILED"):
+        client.cancel_order(bet_id="B1")

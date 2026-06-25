@@ -829,7 +829,17 @@ class BetfairClient:
                 "cancelled_count": 0,
             }
 
-        return self.cancel_orders(market_id=market_id_s, bet_ids=[bid])
+        result = self.cancel_orders(market_id=market_id_s, bet_ids=[bid])
+        # cancel_orders converts API/session failures into ok=False (it does not
+        # raise). The reconciliation ghost-cancel path only reacts to
+        # exceptions, so surface a failed cancel as a raise — otherwise a ghost
+        # that is still live on the exchange would be logged as cancelled
+        # (fail-open).
+        if isinstance(result, dict) and not result.get("ok"):
+            raise RuntimeError(
+                f"CANCEL_ORDER_FAILED: {result.get('error') or 'UNKNOWN'}"
+            )
+        return result
 
 
     # =========================================================
