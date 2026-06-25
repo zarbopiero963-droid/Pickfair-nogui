@@ -20,6 +20,8 @@ SOLO dal monotonico.
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 
 from core.duplication_guard import DuplicationGuard
@@ -152,3 +154,6 @@ def test_registered_at_audit_stays_wallclock(monkeypatch):
     # ISO wall-clock (es. "2023-11-14T..."), non lo stub monotonico "10000".
     assert "T" in registered_at
     assert str(int(clock.mono)) not in registered_at
+    # Deve restare un datetime ISO parsabile: il test fallisce se l'audit
+    # smette di usare una rappresentazione wall-clock leggibile.
+    assert isinstance(datetime.fromisoformat(registered_at), datetime)
