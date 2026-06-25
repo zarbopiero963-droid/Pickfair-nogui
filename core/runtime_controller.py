@@ -1259,6 +1259,38 @@ class RuntimeController:
             except Exception:
                 requested_live_enabled = False
 
+        # Fail-closed daily-loss: non avviare in LIVE se la perdita giornaliera
+        # e' GIA' sfondata (stesso giorno). Copre il caso di una posizione live
+        # settlata DOPO uno stop() (che disconnette ma non chiude le posizioni):
+        # il breach viene registrato mentre il runtime e' STOPPED, e questo
+        # impedisce che un start() successivo riprenda a fare trading live nello
+        # stesso giorno. Il day-rollover del monitor azzera al nuovo giorno.
+        if requested_execution_mode == "LIVE":
+            daily_loss_start = self._monitor_daily_loss_breach(source="RUNTIME_START")
+            if daily_loss_start.get("breached"):
+                status = self.get_status()
+                self.bus.publish(
+                    "LIVE_EXECUTION_REFUSED",
+                    {
+                        "reason_code": "DAILY_LOSS_BREACHED",
+                        "message": "LIVE richiesto ma perdita giornaliera gia' sfondata",
+                        "requested_execution_mode": requested_execution_mode,
+                        "daily_loss_monitor": daily_loss_start,
+                    },
+                )
+                return {
+                    "ok": False,
+                    "started": False,
+                    "refused": True,
+                    "reason": "daily_loss_breached",
+                    "reason_code": "DAILY_LOSS_BREACHED",
+                    "refusal_message": "LIVE richiesto ma perdita giornaliera gia' sfondata",
+                    "requested_execution_mode": requested_execution_mode,
+                    "effective_execution_mode": "SIMULATION",
+                    "daily_loss_monitor": daily_loss_start,
+                    "status": status,
+                }
+
         deploy_gate = self.enforce_deploy_gate(
             execution_mode=requested_execution_mode,
             live_enabled=requested_live_enabled,

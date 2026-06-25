@@ -474,6 +474,32 @@ def test_daily_loss_enforced_even_on_early_return_branch():
 
 
 @pytest.mark.integration
+def test_start_refuses_live_when_daily_loss_breached_same_day():
+    """Codex P1: una posizione live settlata DOPO stop() (che lascia STOPPED ma
+    non chiude le posizioni) registra il breach giornaliero; un start() in LIVE
+    deve RIFIUTARE (fail-closed, reason=daily_loss_breached) invece di riprendere
+    il trading nello stesso giorno con _emergency_stopped=False."""
+    rc, bus = _make_controller(responses=[{"available": 50.0}] * 4)
+    # le settings devono fornire la soglia: start() ricarica la config.
+    cfg = RoserpinaConfig()
+    cfg.anti_duplication_enabled = False
+    cfg.max_daily_loss = 10.0
+    rc.settings_service.load_roserpina_config = lambda: cfg
+    rc.mode = RuntimeMode.STOPPED  # scenario reale: dopo stop()
+    rc.risk_desk.apply_closed_pnl(-50.0)  # breach realized registrato da STOPPED
+
+    out = rc.start(execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)
+
+    assert out["ok"] is False
+    assert out["reason"] == "daily_loss_breached"
+    assert rc.mode != RuntimeMode.ACTIVE
+    assert any(
+        topic == "LIVE_EXECUTION_REFUSED" and payload.get("reason_code") == "DAILY_LOSS_BREACHED"
+        for topic, payload in bus.events
+    )
+
+
+@pytest.mark.integration
 def test_runtime_controller_daily_loss_breach_state_is_persistent_until_day_rollover():
     # Isola la logica di PERSISTENZA dello stato del monitor dal kill-switch
     # (testato a parte): in mode non-ACTIVE l'enforcement non scatta, quindi
