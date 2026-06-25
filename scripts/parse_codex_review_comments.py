@@ -1,4 +1,20 @@
 #!/usr/bin/env python3
+"""Parse Codex review comments into the structured findings the bug gate scores.
+
+OUTDATED DETECTION (fix): the gate treats `outdated` comments as NOISE
+(`codex_bug_gate.py: _classify` / `_should_fail`), but the REST endpoint
+`/pulls/{pr}/comments` does NOT return a boolean `outdated` field — so the
+previous `comment.get("outdated", False)` was ALWAYS False and the gate counted
+already-fixed (outdated) comments as REAL_BUG, producing false-red gates on
+every iteration of a PR.
+
+We now resolve the outdated/resolved status authoritatively via the GraphQL
+`reviewThreads { isOutdated isResolved }` API (a comment whose thread is
+outdated — its code changed — or resolved is not a live finding). If GraphQL is
+unavailable we fall back to the REST comments endpoint and infer outdated from a
+null `position` (GitHub nulls `position` once a comment no longer maps to the
+current diff).
+"""
 from __future__ import annotations
 
 import json
@@ -7,7 +23,6 @@ import re
 import subprocess
 import sys
 from typing import Any, Dict, List, Optional
-
 
 CODEX_AUTHORS = {
     "chatgpt-codex-connector[bot]",
@@ -49,23 +64,202 @@ def _get_repo_and_pr(event: Dict[str, Any]) -> tuple[str, int]:
     raise RuntimeError("Could not determine PR number from event payload")
 
 
-def _fetch_review_comments(repo: str, pr_number: int) -> List[Dict[str, Any]]:
+# ---------------------------------------------------------------------------
+# Fetch — GraphQL (authoritative isOutdated/isResolved) with REST fallback
+# ---------------------------------------------------------------------------
+
+# We read every comment in a thread (a Codex finding can be a reply, not only
+# the thread opener), inheriting the thread-level outdated/resolved status.
+# Both the threads list AND each thread's inner comments are paginated — we
+# never abandon GraphQL for REST mid-PR (the REST fallback has no resolved-state
+# signal, so doing so would lose `isResolved` for every other thread).
+_REVIEW_THREADS_QUERY = (
+    "query($owner:String!,$name:String!,$number:Int!,$after:String){"
+    " repository(owner:$owner,name:$name){ pullRequest(number:$number){"
+    " reviewThreads(first:100,after:$after){"
+    " nodes{ id isResolved isOutdated"
+    " comments(first:100){ nodes{ databaseId author{login} path line originalLine body url }"
+    " pageInfo{ hasNextPage endCursor } } }"
+    " pageInfo{ hasNextPage endCursor } } } } }"
+)
+
+# Paginate a single thread's comments beyond the first page (rare).
+_THREAD_COMMENTS_QUERY = (
+    "query($id:ID!,$after:String){ node(id:$id){"
+    " ... on PullRequestReviewThread {"
+    " comments(first:100,after:$after){"
+    " nodes{ databaseId author{login} path line originalLine body url }"
+    " pageInfo{ hasNextPage endCursor } } } } }"
+)
+
+
+def _comment_to_row(comment: Dict[str, Any], not_live: bool) -> Dict[str, Any]:
+    return {
+        "id": comment.get("databaseId"),
+        "user": {"login": ((comment.get("author") or {}).get("login") or "")},
+        "path": comment.get("path") or "",
+        "line": comment.get("line"),
+        "original_line": comment.get("originalLine"),
+        "body": comment.get("body") or "",
+        "html_url": comment.get("url") or "",
+        # Authoritative signal the rest of the parser consumes.
+        "outdated": not_live,
+    }
+
+
+def _remaining_thread_comments(thread_id: str, after: str) -> List[Dict[str, Any]]:
+    """Fetch a thread's comments past the first page (GraphQL node pagination)."""
+    nodes: List[Dict[str, Any]] = []
+    cursor: Optional[str] = after
+    while cursor:
+        data = json.loads(_run([
+            "gh", "api", "graphql",
+            "-f", f"id={thread_id}",
+            "-f", f"after={cursor}",
+            "-f", f"query={_THREAD_COMMENTS_QUERY}",
+        ]))
+        if data.get("errors"):
+            raise RuntimeError(f"GraphQL returned errors: {data.get('errors')}")
+        conn = ((data.get("data") or {}).get("node") or {}).get("comments")
+        if not isinstance(conn, dict):
+            raise RuntimeError("GraphQL thread-comments response malformed")
+        nodes.extend(n for n in (conn.get("nodes") or []) if isinstance(n, dict))
+        page = conn.get("pageInfo") or {}
+        cursor = page["endCursor"] if (page.get("hasNextPage") and page.get("endCursor")) else None
+    return nodes
+
+
+def _flatten_thread(thread: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Turn a GraphQL review thread into REST-shaped comment dicts.
+
+    Each comment inherits the thread-level outdated/resolved status: a comment
+    whose thread is outdated (code changed) or resolved is not a live finding,
+    so the gate must not count it. All comments in the thread are read,
+    paginating the inner connection when needed.
+    """
+    not_live = bool(thread.get("isOutdated")) or bool(thread.get("isResolved"))
+    conn = thread.get("comments") or {}
+    comments = list(conn.get("nodes") or [])
+    page = conn.get("pageInfo") or {}
+    if page.get("hasNextPage") and page.get("endCursor") and thread.get("id"):
+        comments.extend(_remaining_thread_comments(thread["id"], page["endCursor"]))
+    return [_comment_to_row(c, not_live) for c in comments if isinstance(c, dict)]
+
+
+def _graphql_review_threads_page(
+    owner: str, name: str, pr_number: int, after: Optional[str]
+) -> Dict[str, Any]:
+    """Fetch one page of reviewThreads, raising on partial/error responses.
+
+    GraphQL-over-HTTP can return 200 with `errors` and partial/omitted data;
+    raising (instead of silently treating it as empty) lets the REST fallback
+    run, so a transient resolver/permission/schema issue never makes the gate
+    see zero findings.
+    """
+    cmd = [
+        "gh", "api", "graphql",
+        "-f", f"owner={owner}",
+        "-f", f"name={name}",
+        "-F", f"number={pr_number}",
+        "-f", f"query={_REVIEW_THREADS_QUERY}",
+    ]
+    if after:
+        cmd.extend(["-f", f"after={after}"])
+    data = json.loads(_run(cmd))
+    if data.get("errors"):
+        raise RuntimeError(f"GraphQL returned errors: {data.get('errors')}")
+    threads = (
+        ((data.get("data") or {}).get("repository") or {}).get("pullRequest") or {}
+    ).get("reviewThreads")
+    if not isinstance(threads, dict):
+        raise RuntimeError("GraphQL response missing reviewThreads (partial/empty)")
+    return threads
+
+
+def _fetch_review_comments_graphql(repo: str, pr_number: int) -> List[Dict[str, Any]]:
+    owner, name = str(repo).split("/", 1)
+    comments: List[Dict[str, Any]] = []
+    after: Optional[str] = None
+    while True:
+        threads = _graphql_review_threads_page(owner, name, pr_number, after)
+        for node in threads.get("nodes") or []:
+            if not isinstance(node, dict):
+                continue
+            # _flatten_thread paginates the inner comments connection itself, so
+            # a long thread never forces a whole-PR REST fallback (which would
+            # lose the GraphQL resolved/outdated state for the other threads).
+            comments.extend(_flatten_thread(node))
+        page = threads.get("pageInfo") or {}
+        if page.get("hasNextPage") and page.get("endCursor"):
+            after = page["endCursor"]
+        else:
+            break
+    return comments
+
+
+def _fetch_review_comments_rest(repo: str, pr_number: int) -> List[Dict[str, Any]]:
+    # --paginate follows every page so the fallback is not capped at 100
+    # comments. Without --slurp each page is emitted as a separate JSON array
+    # (so json.loads would fail on >1 page); --slurp wraps the pages into a
+    # single array of page-arrays which we then flatten.
     cmd = [
         "gh",
         "api",
+        "--paginate",
+        "--slurp",
         f"/repos/{repo}/pulls/{pr_number}/comments?per_page=100",
     ]
-    raw = _run(cmd)
-    data = json.loads(raw)
+    data = json.loads(_run(cmd))
     if not isinstance(data, list):
         raise RuntimeError("Unexpected GitHub API response for review comments")
-    return data
+    comments: List[Dict[str, Any]] = []
+    for item in data:
+        if isinstance(item, list):  # a page (array of comments)
+            comments.extend(c for c in item if isinstance(c, dict))
+        elif isinstance(item, dict):  # already a flat comment
+            comments.append(item)
+    return comments
+
+
+def _fetch_review_comments(repo: str, pr_number: int) -> List[Dict[str, Any]]:
+    """Authoritative GraphQL fetch, degrading to REST if GraphQL is unavailable."""
+    try:
+        return _fetch_review_comments_graphql(repo, pr_number)
+    except (RuntimeError, json.JSONDecodeError, OSError) as exc:  # pragma: no cover - network/credential dependent
+        print(
+            f"GraphQL review-thread fetch failed ({exc}); falling back to REST",
+            file=sys.stderr,
+        )
+        return _fetch_review_comments_rest(repo, pr_number)
 
 
 def _is_codex_comment(comment: Dict[str, Any]) -> bool:
     user = comment.get("user") or {}
     login = (user.get("login") or "").strip()
     return login in CODEX_AUTHORS or "codex" in login.lower()
+
+
+def _is_outdated(comment: Dict[str, Any]) -> bool:
+    """Whether a comment is outdated/resolved (i.e. NOT a live finding).
+
+    Honours an explicit boolean from the GraphQL path. The REST fallback infers
+    it from a null `position`: GitHub nulls `position` when a line comment no
+    longer maps to the current diff (outdated). The only null-position comment
+    that is still live is a whole-file comment (`subject_type == "file"`), which
+    never has a position; `line`/`side` can persist on an already-stale line
+    comment and are NOT reliable live signals.
+    """
+    for key in ("outdated", "isOutdated", "is_outdated"):
+        value = comment.get(key)
+        if isinstance(value, bool):
+            return value
+    if "position" not in comment:
+        return False
+    if comment.get("position") is not None:
+        return False
+    # Null position: whole-file comments are still live; any other (line) comment
+    # with a null position no longer maps to the current diff and is outdated.
+    return comment.get("subject_type") != "file"
 
 
 def _normalize_whitespace(s: str) -> str:
@@ -132,7 +326,7 @@ def _make_finding(comment: Dict[str, Any]) -> Dict[str, Any]:
         "path": comment.get("path") or "",
         "line": _find_line(comment),
         "side": comment.get("side"),
-        "outdated": bool(comment.get("outdated", False)),
+        "outdated": _is_outdated(comment),
         "url": comment.get("html_url") or "",
         "title": _extract_title(body),
         "claim": _extract_claim(body),

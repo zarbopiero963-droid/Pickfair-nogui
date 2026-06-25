@@ -170,6 +170,15 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 8
+    },
+    "fix_codex_gate_outdated": {
+      "allow_tests": true,
+      "files": [
+        "scripts/parse_codex_review_comments.py",
+        "tests/unit/test_codex_gate_parser.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
     }
   }
 }
