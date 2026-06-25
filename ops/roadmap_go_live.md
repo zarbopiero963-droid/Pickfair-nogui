@@ -196,6 +196,14 @@ Ordine sicuro (PR piccole, solo test, zero modifiche alle autorità):
      Solo test, nessuna modifica a `services/betfair_service.py`.
 4. **RuntimeController control-path** (solo dopo 1-3): start/stop/pause/
    emergency non bloccanti — alta autorità, va toccato per ultimo
+   - ✅ **FATTA (PR proof_runtime_controller)** — `tests/unit/test_runtime_controller_gate_proofs.py`
+     (6 proof fail-closed deterministiche netto-nuove, dedup sui 13+ file
+     esistenti e sulla matrice `assert_live_gate_or_refuse`): is_live_allowed
+     con solo `live_enabled=False`; is_live_allowed fail-closed se il deploy
+     gate SOLLEVA (+ effective mode→SIMULATION); rifiuto segnale LIVE con reason
+     `deploy_gate_no_go:` e `session_invalid_live_blocked`; `_risk_allows_auto_trade`
+     negato con `runtime_not_active`/`desk_lockdown` e approvato in stato normale.
+     Solo test, nessuna modifica a `core/runtime_controller.py`/`core/safety_layer.py`.
 
 Vietato senza prova di necessità: `core/trading_engine.py`,
 `core/runtime_controller.py`, `core/reconciliation_engine.py`,
