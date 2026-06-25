@@ -394,6 +394,86 @@ def test_emergency_stop_cancel_all_survives_status_snapshot_failure():
 
 
 @pytest.mark.integration
+def test_daily_loss_enforced_before_bankroll_sync_network_window():
+    """Codex P1: l'enforcement avviene PRIMA del bankroll sync (rete). Lo spy
+    registra che, quando _sync_bankroll_post_settlement viene chiamato,
+    l'emergenza e' GIA' attiva — cosi' nella finestra di rete del sync nessun
+    SIGNAL_RECEIVED concorrente puo' piazzare un ordine dopo il breach."""
+    rc, _ = _make_controller(responses=[{"available": 85.0}] * 4)
+    rc.config.max_daily_loss = 10.0
+    rc.risk_desk.sync_bankroll(100.0)
+
+    seen: dict = {}
+    original = rc._sync_bankroll_post_settlement
+
+    def _spy(payload):
+        seen["emergency_at_sync"] = rc._emergency_stopped
+        return original(payload)
+
+    rc._sync_bankroll_post_settlement = _spy
+
+    rc._on_close_position(dict(_BREACHING_SETTLEMENT))
+
+    assert seen["emergency_at_sync"] is True
+    assert rc.mode == RuntimeMode.LOCKDOWN
+
+
+@pytest.mark.integration
+def test_daily_loss_breach_while_paused_hard_stops():
+    """Codex P1: un settlement che sfonda il limite mentre il runtime e' PAUSED
+    fa scattare l'emergency stop (non solo da ACTIVE) — niente bypass."""
+    rc, bus = _make_controller(responses=[{"available": 85.0}] * 4)
+    rc.mode = RuntimeMode.PAUSED
+    rc.config.max_daily_loss = 10.0
+    rc.risk_desk.sync_bankroll(100.0)
+
+    rc._on_close_position(dict(_BREACHING_SETTLEMENT))
+
+    assert rc._emergency_stopped is True
+    assert rc.mode == RuntimeMode.LOCKDOWN
+    assert any(topic == "EMERGENCY_STOP_TRIGGERED" for topic, _ in bus.events)
+
+
+@pytest.mark.integration
+def test_resume_refused_after_daily_loss_breach():
+    """Codex P1: resume() non riattiva il trading se la perdita giornaliera e'
+    gia' sfondata (stesso giorno): fail-closed, niente bypass dell'emergenza."""
+    rc, _ = _make_controller(responses=[{"available": 85.0}] * 4)
+    rc.mode = RuntimeMode.PAUSED
+    rc.config.max_daily_loss = 10.0
+    rc.risk_desk.apply_closed_pnl(-50.0)  # breach registrato
+
+    out = rc.resume()
+
+    assert out["resumed"] is False
+    assert out["reason"] == "daily_loss_breached"
+    assert rc.mode != RuntimeMode.ACTIVE
+
+
+@pytest.mark.integration
+def test_daily_loss_enforced_even_on_early_return_branch():
+    """Codex P1: se la perdita realized e' GIA' oltre il limite, anche un
+    settlement che esce da un ramo di early-return (rejected / recovery
+    ambiguo) viene comunque hard-stoppato dal precheck — nessun percorso salta
+    l'enforcement."""
+    rc, _ = _make_controller(responses=[{"available": 85.0}] * 4)
+    rc.mode = RuntimeMode.ACTIVE
+    rc.config.max_daily_loss = 10.0
+    rc.risk_desk.apply_closed_pnl(-50.0)
+    # stato monitor gia' breached (come l'avrebbe lasciato un settlement prima),
+    # ma non ancora fermato (corner di breached-but-not-stopped)
+    rc._daily_loss_monitor_state = dict(rc._monitor_daily_loss_breach(source="PRIME"))
+    rc._emergency_stopped = False
+    rc.mode = RuntimeMode.ACTIVE
+
+    rejected = {**_BREACHING_SETTLEMENT, "settlement_validation": "rejected_bad"}
+    rc._on_close_position(rejected)
+
+    assert rc._emergency_stopped is True
+    assert rc.mode == RuntimeMode.LOCKDOWN
+
+
+@pytest.mark.integration
 def test_runtime_controller_daily_loss_breach_state_is_persistent_until_day_rollover():
     # Isola la logica di PERSISTENZA dello stato del monitor dal kill-switch
     # (testato a parte): in mode non-ACTIVE l'enforcement non scatta, quindi

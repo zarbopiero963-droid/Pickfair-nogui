@@ -1204,7 +1204,13 @@ class RuntimeController:
           atomico)."""
         if not breach_state.get("breached"):
             return False
-        if not self._runtime_active():
+        # Ferma se il runtime GESTISCE posizioni live (ACTIVE o PAUSED): un
+        # settlement che sfonda il limite mentre si e' in pausa e' un evento
+        # reale e deve hard-stoppare (impedendo anche un resume() successivo).
+        # NON da STOPPED/LOCKDOWN (avvio/replay o gia' fermo): li' il monitor
+        # calcola lo stato ma l'enforcement non parte, evitando emergenze
+        # innescate da percorsi non-operativi.
+        if self.mode not in (RuntimeMode.ACTIVE, RuntimeMode.PAUSED):
             return False
         with self._daily_loss_stop_lock:
             if self._emergency_stopped:
@@ -1386,6 +1392,18 @@ class RuntimeController:
             return {
                 "resumed": False,
                 "reason": "lockdown_attivo",
+                "status": self.get_status(),
+            }
+
+        # Non riattivare il trading se la perdita giornaliera e' gia' sfondata
+        # (stesso giorno): un breach rilevato mentre si era in pausa NON deve
+        # poter essere bypassato con un resume(). Fail-closed.
+        daily_loss = self._monitor_daily_loss_breach(source="RUNTIME_RESUME")
+        if daily_loss.get("breached"):
+            self._enforce_daily_loss_hard_stop(daily_loss)
+            return {
+                "resumed": False,
+                "reason": "daily_loss_breached",
                 "status": self.get_status(),
             }
 
@@ -1665,6 +1683,14 @@ class RuntimeController:
         validation_status = str(settlement.get("settlement_validation") or "accepted")
         settlement_acceptance = str(settlement.get("settlement_acceptance") or "")
 
+        # Daily-loss precheck (fail-closed): se la perdita realized e' GIA' oltre
+        # il limite (da settlement precedenti) hard-stop SUBITO, prima di
+        # qualunque ramo di early-return (rejected / recovery fail-closed), cosi'
+        # nessun percorso salta l'enforcement. Usa lo stato gia' calcolato del
+        # monitor (no nuova publish/alert): non altera la contabilita' del
+        # monitor, applica solo l'enforcement.
+        self._enforce_daily_loss_hard_stop(dict(self._daily_loss_monitor_state or {}))
+
         if validation_status.startswith("rejected"):
             rejection_context = self._build_settlement_rejection_context(payload, settlement)
             logger.warning(
@@ -1742,16 +1768,17 @@ class RuntimeController:
         if settlement_key and settlement_key not in self._processed_realized_pnl_keys:
             self._apply_realized_pnl_without_mutating_bankroll(pnl)
             self._processed_realized_pnl_keys.add(settlement_key)
+        # Daily-loss hard stop SUBITO dopo l'applicazione del PnL e PRIMA del
+        # bankroll sync (rete) e dell'auto-trade: se questo settlement sfonda il
+        # limite fermiamo SINCRONO (persist + cancel-all + lockdown) prima che la
+        # finestra del sync lasci il runtime ACTIVE — cosi' nemmeno un
+        # SIGNAL_RECEIVED concorrente puo' piazzare un ordine dopo il breach, e
+        # l'auto-trade sotto e' bloccato da _risk_allows_auto_trade.
+        daily_loss_state = self._monitor_daily_loss_breach(source="RUNTIME_CLOSE_POSITION", payload=payload)
+        self._enforce_daily_loss_hard_stop(daily_loss_state)
         sync_result = self._sync_bankroll_post_settlement(payload)
         self._last_bankroll_sync_result = dict(sync_result)
         self.bus.publish("BANKROLL_SYNC_RESULT", dict(sync_result))
-        # Daily-loss hard stop PRIMA della prossima submission: il PnL del
-        # settlement e' gia' applicato sopra (_apply_realized_pnl...). Se sfonda
-        # il limite giornaliero fermiamo SINCRONO (persist + cancel-all +
-        # lockdown); l'auto-trade sotto viene quindi bloccato da
-        # _risk_allows_auto_trade e nessun ordine parte dopo il breach.
-        daily_loss_state = self._monitor_daily_loss_breach(source="RUNTIME_CLOSE_POSITION", payload=payload)
-        self._enforce_daily_loss_hard_stop(daily_loss_state)
         auto_trade_result = self._evaluate_and_maybe_submit_auto_next_trade(payload=payload, sync_result=sync_result)
         self._last_auto_trade_result = dict(auto_trade_result)
         self._last_cycle_executor_result = dict(auto_trade_result)
