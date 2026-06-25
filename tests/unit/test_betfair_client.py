@@ -317,3 +317,92 @@ def test_get_current_orders_propagates_session_expired(client):
 
     with pytest.raises(RuntimeError, match="SESSION_EXPIRED"):
         client.get_current_orders(market_ids=["1.100"])
+
+
+@pytest.mark.unit
+def test_get_current_orders_raises_on_more_available_empty_page(client):
+    # moreAvailable=True with no rows is an inconsistent/stale snapshot: fail
+    # closed rather than return a partial set treated as complete.
+    client.session_token = "TOK"
+    client.session.post = lambda *a, **k: _RPCResp(
+        [{"jsonrpc": "2.0", "id": 1, "result": {
+            "currentOrders": [], "moreAvailable": True}}]
+    )
+
+    with pytest.raises(RuntimeError, match="CURRENT_ORDERS_TRUNCATED"):
+        client.get_current_orders()
+
+
+@pytest.mark.unit
+def test_cancel_order_resolves_market_then_delegates(client):
+    import json as _json
+
+    posts = []
+
+    def _post(url, headers=None, data=None, timeout=None, **kw):
+        body = _json.loads(data)
+        method = body[0]["method"]
+        posts.append(method)
+        if method.endswith("listCurrentOrders"):
+            return _RPCResp([{"jsonrpc": "2.0", "id": 1, "result": {
+                "currentOrders": [{"betId": "B9", "marketId": "1.222"}],
+                "moreAvailable": False}}])
+        # cancelOrders
+        assert body[0]["params"]["marketId"] == "1.222"
+        assert body[0]["params"]["instructions"] == [{"betId": "B9"}]
+        return _RPCResp([{"jsonrpc": "2.0", "id": 1, "result": {
+            "status": "SUCCESS", "instructionReports": [{"status": "SUCCESS"}]}}])
+
+    client.session.post = _post
+    client.session_token = "TOK"
+
+    out = client.cancel_order(bet_id="B9")
+
+    assert out["ok"] is True
+    assert any(m.endswith("listCurrentOrders") for m in posts)
+    assert any(m.endswith("cancelOrders") for m in posts)
+
+
+@pytest.mark.unit
+def test_cancel_order_noop_when_bet_not_current(client):
+    # Bet id not among current orders → nothing to cancel (no cancelOrders call).
+    client.session_token = "TOK"
+    client.session.post = lambda *a, **k: _RPCResp(
+        [{"jsonrpc": "2.0", "id": 1, "result": {
+            "currentOrders": [{"betId": "OTHER", "marketId": "1.1"}],
+            "moreAvailable": False}}]
+    )
+
+    out = client.cancel_order(bet_id="MISSING")
+
+    assert out["ok"] is True
+    assert out["status"] == "NOT_CURRENT"
+    assert out["cancelled_count"] == 0
+
+
+@pytest.mark.unit
+def test_cancel_order_uses_given_market_without_lookup(client):
+    import json as _json
+
+    posts = []
+
+    def _post(url, headers=None, data=None, timeout=None, **kw):
+        body = _json.loads(data)
+        posts.append(body[0]["method"])
+        return _RPCResp([{"jsonrpc": "2.0", "id": 1, "result": {
+            "status": "SUCCESS", "instructionReports": [{"status": "SUCCESS"}]}}])
+
+    client.session.post = _post
+    client.session_token = "TOK"
+
+    out = client.cancel_order(bet_id="B1", market_id="1.5")
+
+    assert out["ok"] is True
+    # No listCurrentOrders lookup when market is supplied.
+    assert all(m.endswith("cancelOrders") for m in posts)
+
+
+@pytest.mark.unit
+def test_cancel_order_empty_bet_id_raises(client):
+    with pytest.raises(RuntimeError, match="INVALID_BET_ID"):
+        client.cancel_order(bet_id="")

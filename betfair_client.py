@@ -771,16 +771,66 @@ class BetfairClient:
             page_orders = result.get("currentOrders") or []
             all_orders.extend(page_orders)
 
-            # Stop when Betfair signals no more records. An empty page also
-            # terminates the walk (defends against a stuck moreAvailable flag
-            # that would otherwise loop without advancing).
-            if not result.get("moreAvailable") or not page_orders:
+            # No more records → complete snapshot, return it.
+            if not result.get("moreAvailable"):
                 return all_orders
+
+            # moreAvailable but an empty/missing page is an inconsistent or
+            # stale paginated snapshot: fail closed instead of returning a
+            # partial set the ghost detector would treat as the complete remote
+            # state (and to avoid a non-advancing loop).
+            if not page_orders:
+                raise RuntimeError(
+                    "CURRENT_ORDERS_TRUNCATED: moreAvailable with empty page"
+                )
 
             from_record += len(page_orders)
 
         # Cap exceeded with moreAvailable still set: fail closed.
         raise RuntimeError("CURRENT_ORDERS_TRUNCATED: pagination cap exceeded")
+
+    def cancel_order(
+        self,
+        *,
+        bet_id: Any,
+        market_id: Any = None,
+    ) -> Dict[str, Any]:
+        """Cancel a single order by bet id (ghost-order cancellation shim).
+
+        The reconciliation engine cancels detected live ghosts one bet id at a
+        time (``_cancel_ghost_orders`` calls ``cancel_order(bet_id=...)``), but
+        the Betfair cancelOrders RPC needs the order's market id. When
+        ``market_id`` is not supplied we resolve it from the current orders; if
+        the bet is no longer a current order there is nothing on the exchange to
+        cancel (no-op). Delegates the actual cancel to ``cancel_orders``.
+        """
+        bid = str(bet_id or "").strip()
+        if not bid:
+            raise RuntimeError("INVALID_BET_ID")
+
+        market_id_s = str(market_id or "").strip()
+        if not market_id_s:
+            for order in self.get_current_orders():
+                row_bid = str(
+                    order.get("betId") or order.get("bet_id") or ""
+                ).strip()
+                if row_bid == bid:
+                    market_id_s = str(
+                        order.get("marketId") or order.get("market_id") or ""
+                    ).strip()
+                    break
+
+        if not market_id_s:
+            # Bet is not among the current orders → nothing to cancel.
+            return {
+                "ok": True,
+                "bet_id": bid,
+                "status": "NOT_CURRENT",
+                "cancelled_count": 0,
+            }
+
+        return self.cancel_orders(market_id=market_id_s, bet_ids=[bid])
+
 
     # =========================================================
     # STATUS

@@ -673,6 +673,11 @@ class BetfairService:
         and then re-raises. Only the simulation broker path returns its orders
         directly. Callers (state_recovery) treat the raised error as
         "ghost reconciliation REQUIRED but NOT completed", never as "no orders".
+
+        Rows are normalized for the startup recovery store, which keys on
+        snake_case ``order_id``/``bet_id`` (``state_recovery._is_missing_in_db``)
+        — without it a persisted live order (raw Betfair ``betId``) would be
+        treated as missing on every restart and re-flagged as a ghost.
         """
         broker = self.get_client()
 
@@ -680,7 +685,11 @@ class BetfairService:
             if not broker:
                 return []
             orders = broker.get_current_orders(market_ids)
-            return [o for o in (orders or []) if isinstance(o, dict)]
+            return [
+                self._normalize_startup_order(o)
+                for o in (orders or [])
+                if isinstance(o, dict)
+            ]
 
         # LIVE — fail-closed.
         if self._session_invalid:
@@ -705,7 +714,30 @@ class BetfairService:
                 logger.exception("Errore list_current_orders: %s", exc)
             raise
 
-        return [o for o in (orders or []) if isinstance(o, dict)]
+        return [
+            self._normalize_startup_order(o)
+            for o in (orders or [])
+            if isinstance(o, dict)
+        ]
+
+    @staticmethod
+    def _normalize_startup_order(order: Dict[str, Any]) -> Dict[str, Any]:
+        """Add snake_case ``bet_id``/``order_id``/``customer_ref`` to a row.
+
+        Betfair's listCurrentOrders returns camelCase keys (``betId``,
+        ``customerOrderRef``). The startup recovery store and dedup guard key on
+        snake_case, so we mirror the value under both spellings (originals are
+        preserved for the reconciliation engine's own camelCase-aware lookups).
+        """
+        row = dict(order)
+        bet_id = str(row.get("bet_id") or row.get("betId") or "").strip()
+        if bet_id:
+            row.setdefault("bet_id", bet_id)
+            row.setdefault("order_id", bet_id)
+        ref = str(row.get("customer_ref") or row.get("customerOrderRef") or "").strip()
+        if ref:
+            row.setdefault("customer_ref", ref)
+        return row
 
     def place_order(self, payload: dict) -> dict:
         """Session-aware live-order facade.

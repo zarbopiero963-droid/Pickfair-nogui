@@ -563,6 +563,10 @@ class SimulationBroker:
                 orders.append(
                     {
                         "betId": order.bet_id,
+                        # customerOrderRef lets the reconciliation engine match
+                        # by the strongest (user-assigned) key, mirroring the
+                        # live listCurrentOrders payload.
+                        "customerOrderRef": order.customer_ref,
                         "marketId": order.market_id,
                         "selectionId": order.selection_id,
                         "side": order.side,
@@ -606,6 +610,25 @@ class SimulationBroker:
             for o in orders
             if str(o.get("status") or "").upper() not in self._TERMINAL_ORDER_STATUSES
         ]
+
+    def cancel_order(
+        self,
+        *,
+        bet_id: Any,
+        market_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Cancel a single simulated order by bet id.
+
+        Parity with ``BetfairClient.cancel_order`` so the reconciliation
+        engine's ghost-cancellation path works identically in simulation mode.
+        """
+        bid = str(bet_id or "").strip()
+        if not bid:
+            raise RuntimeError("INVALID_BET_ID")
+        return self.cancel_orders(
+            market_id=market_id,
+            instructions=[{"betId": bid}],
+        )
 
     def cancel_orders(
         self,

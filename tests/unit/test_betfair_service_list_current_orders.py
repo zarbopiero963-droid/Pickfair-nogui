@@ -54,7 +54,13 @@ def test_simulation_delegates_to_broker_and_returns_list():
 
     out = svc.list_current_orders(["1.100"])
 
-    assert out == orders
+    # Original keys preserved; snake_case bet_id/order_id added for the startup
+    # recovery store (state_recovery._is_missing_in_db keys on those).
+    assert len(out) == 1
+    assert out[0]["betId"] == "1"
+    assert out[0]["marketId"] == "1.100"
+    assert out[0]["bet_id"] == "1"
+    assert out[0]["order_id"] == "1"
     assert svc.simulation_broker.calls == [["1.100"]]
 
 
@@ -73,7 +79,9 @@ def test_simulation_filters_non_dict_entries():
     svc.simulation_mode = True
     svc.simulation_broker = _OrdersBroker(orders=[{"betId": "1"}, None, "x"])
 
-    assert svc.list_current_orders() == [{"betId": "1"}]
+    out = svc.list_current_orders()
+    assert len(out) == 1
+    assert out[0]["betId"] == "1" and out[0]["bet_id"] == "1"
 
 
 @pytest.mark.unit
@@ -110,7 +118,10 @@ def test_live_success_returns_order_dicts():
 
     out = svc.list_current_orders()
 
-    assert out == [{"betId": "1", "marketId": "1.100"}]
+    assert len(out) == 1
+    assert out[0]["betId"] == "1"
+    assert out[0]["marketId"] == "1.100"
+    assert out[0]["bet_id"] == "1" and out[0]["order_id"] == "1"
 
 
 @pytest.mark.unit
@@ -168,6 +179,51 @@ def test_simulation_broker_get_current_orders_excludes_cancelled():
     # ...but get_current_orders drops the now-terminal (cancelled) orders.
     current = broker.get_current_orders(["1.100"])
     assert all(o.get("status") != "CANCELLED" for o in current)
+
+
+@pytest.mark.unit
+def test_simulation_broker_rows_carry_customer_ref():
+    # The reconciliation engine matches remote orders by customer ref first;
+    # the sim rows must expose it (customerOrderRef), like the live payload.
+    broker = SimulationBroker()
+    broker.place_bet(
+        market_id="1.100", selection_id=7, side="BACK", price=2.0, size=5.0,
+        customer_ref="REF-123",
+    )
+
+    row = broker.get_current_orders(["1.100"])[0]
+    assert row["customerOrderRef"] == "REF-123"
+
+
+@pytest.mark.unit
+def test_simulation_broker_cancel_order_cancels_single_bet():
+    broker = SimulationBroker()
+    res = broker.place_bet(
+        market_id="1.100", selection_id=7, side="BACK", price=2.0, size=5.0
+    )
+    bet_id = res.get("betId") or res.get("bet_id") or res["instructionReports"][0]["betId"]
+
+    broker.cancel_order(bet_id=bet_id)
+
+    # Cancelled order is no longer a current order.
+    assert broker.get_current_orders(["1.100"]) == []
+
+
+@pytest.mark.unit
+def test_service_normalizes_customer_ref_for_startup_recovery():
+    # Live rows use camelCase customerOrderRef; the startup store keys on
+    # snake_case customer_ref — the service must mirror it.
+    svc = _make_service()
+    svc.simulation_mode = False
+    svc._session_invalid = False
+    svc.client = _OrdersBroker(orders=[
+        {"betId": "B1", "marketId": "1.1", "customerOrderRef": "REF-9"},
+    ])
+
+    row = svc.list_current_orders()[0]
+    assert row["bet_id"] == "B1" and row["order_id"] == "B1"
+    assert row["customer_ref"] == "REF-9"
+    assert row["customerOrderRef"] == "REF-9"  # original preserved
 
 
 @pytest.mark.unit
