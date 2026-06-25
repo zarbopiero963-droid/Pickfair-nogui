@@ -32,15 +32,30 @@ import pytest
 from services.streaming_feed import StreamingFeed
 
 
+def _opaque(*_args, **_kwargs):
+    """Stub inerte: ritorna un oggetto opaco (client/listener finto)."""
+    return object()
+
+
+def _ignore(*_args, **_kwargs):
+    """Callback inerte: ignora gli argomenti e non fa nulla."""
+    return None
+
+
+def _allow(*_args, **_kwargs):
+    """Session gate finto: concede sempre l'accesso."""
+    return True
+
+
 def _make_feed(on_disconnect=None, **cfg):
     """Costruisce uno StreamingFeed con dipendenze finte inerti."""
     return StreamingFeed(
-        client_getter=lambda: object(),
+        client_getter=_opaque,
         config=dict(cfg),
-        on_market_book=lambda _book: None,
+        on_market_book=_ignore,
         on_disconnect=on_disconnect,
-        listener_factory=lambda **_k: object(),
-        session_gate=lambda: True,
+        listener_factory=_opaque,
+        session_gate=_allow,
     )
 
 
