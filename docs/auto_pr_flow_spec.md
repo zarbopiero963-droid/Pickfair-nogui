@@ -498,6 +498,10 @@ può rispondere e risolvere solo se:
 - AUTO_RESOLVE_ENABLED=true
 - current head combacia
 - validation passata
+- TUTTI i check current-head SETTLED (non solo Codacy): nessun check in
+  PENDING/QUEUED/IN_PROGRESS/WAITING/REQUESTED/EXPECTED/UNKNOWN/null —
+  i bot pubblicano rilievi solo a check completato, quindi il resolve
+  definitivo aspetta l'intero rollup (vedi CLAUDE.md check-completion gate)
 - Codacy success
 - annotations_count=0
 - test/evidence coprono il commento
