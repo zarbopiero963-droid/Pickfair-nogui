@@ -1177,6 +1177,27 @@ class RuntimeController:
             logger.exception("emergency_state: persist failed")
             return str(exc)
 
+    def _persist_db_emergency_marker(self, *, active: bool, reason: str = "") -> str:
+        """Scrive SOLO su db il marker di emergenza (senza mutare lo stato
+        in-memory), cosi' il successivo emergency_stop esegue comunque il
+        lockdown completo. Usato per persistere DUREVOLMENTE un breach daily-loss
+        PRIMA dell'I/O di rete del bankroll-sync: se il processo muore mentre
+        get_account_funds() e' lento/bloccato in quella finestra, il reload
+        fail-closed al riavvio ricarica l'emergenza (lo stato monitor/risk-desk
+        in-memory andrebbe perso). Ritorna '' o l'errore (mai raise)."""
+        if not hasattr(self.db, "save_settings"):
+            return "db_save_settings_unavailable"
+        try:
+            self.db.save_settings({
+                "emergency_stopped": "1" if active else "0",
+                "emergency_stopped_at": datetime.utcnow().isoformat() if active else self._emergency_stopped_at,
+                "emergency_reason": reason if active else self._emergency_reason,
+            })
+            return ""
+        except Exception as exc:
+            logger.exception("daily-loss: durable db emergency marker persist failed")
+            return str(exc)
+
     def emergency_stop(self, reason: str = "") -> dict:
         """
         Global emergency stop.
@@ -1817,22 +1838,12 @@ class RuntimeController:
                 "simulation_mode": payload["simulation_mode"],
             },
         )
-        self.bus.publish(
-            "SIGNAL_APPROVED",
-            {
-                "signal": signal,
-                "decision": {
-                    "table_id": decision.table_id,
-                    "recommended_stake": decision.recommended_stake,
-                    "desk_mode": decision.desk_mode.value,
-                    "reason": decision.reason,
-                    "metadata": decision.metadata,
-                },
-            },
-        )
-        # Recheck kill-switch daily-loss subito prima della submission: il gate
-        # d'ingresso e' una-tantum, ma un settlement perdente concorrente puo'
-        # aver armato pending/emergency mentre questo segnale era in validazione.
+        # Recheck kill-switch daily-loss PRIMA di pubblicare SIGNAL_APPROVED: il
+        # gate d'ingresso e' una-tantum, ma un settlement perdente concorrente
+        # puo' aver armato pending/emergency mentre questo segnale era in
+        # validazione. Va PRIMA dell'approvazione perche' l'audit consuma sia
+        # SIGNAL_APPROVED sia SIGNAL_REJECTED: approvare-poi-rifiutare
+        # registrerebbe un ordine saltato come "approvato".
         if self._daily_loss_entry_blocked():
             # Rilascia le risorse gia' acquisite (duplication guard + tavolo
             # attivato): nessun CMD_QUICK_BET parte, quindi nessun evento
@@ -1846,6 +1857,19 @@ class RuntimeController:
                 logger.exception("Errore force_unlock table_id=%s", decision.table_id)
             self._reject_signal(signal, "emergency_stop_active:pre_submit_recheck")
             return
+        self.bus.publish(
+            "SIGNAL_APPROVED",
+            {
+                "signal": signal,
+                "decision": {
+                    "table_id": decision.table_id,
+                    "recommended_stake": decision.recommended_stake,
+                    "desk_mode": decision.desk_mode.value,
+                    "reason": decision.reason,
+                    "metadata": decision.metadata,
+                },
+            },
+        )
         self.bus.publish("CMD_QUICK_BET", payload)
 
     # =========================================================
@@ -2019,6 +2043,13 @@ class RuntimeController:
         if arm_pending:
             with self._daily_loss_stop_lock:
                 self._daily_loss_pending_stop = True
+            # Persisti DUREVOLMENTE il breach su db PRIMA dell'I/O di rete del
+            # sync (il pending-stop e' solo in-memory): se il processo muore
+            # mentre get_account_funds() e' lento/bloccato, al riavvio il reload
+            # fail-closed ricarica l'emergenza invece di perdere l'hard-stop.
+            # NON muta _emergency_stopped in-memory, cosi' il sync usa ancora il
+            # client live e l'emergency_stop sotto esegue il lockdown completo.
+            self._persist_db_emergency_marker(active=True, reason=f"DAILY_LOSS_BREACH_PENDING:{float(projected_close.get('daily_loss_amount', 0.0) or 0.0)}")
         try:
             if settlement_key and settlement_key not in self._processed_realized_pnl_keys:
                 self._apply_realized_pnl_without_mutating_bankroll(pnl)
@@ -2040,10 +2071,12 @@ class RuntimeController:
         finally:
             # Disarma il bridge se NON e' subentrato l'emergency_stop definitivo
             # (es. il breach non si e' materializzato): evita un pending-stop
-            # appiccicato che bloccherebbe i segnali leciti fino al reset.
+            # appiccicato che bloccherebbe i segnali leciti fino al reset, e
+            # ripulisci il marker durevole speculativo scritto prima del sync.
             if arm_pending and not self._emergency_stopped:
                 with self._daily_loss_stop_lock:
                     self._daily_loss_pending_stop = False
+                self._persist_db_emergency_marker(active=False)
         auto_trade_result = self._evaluate_and_maybe_submit_auto_next_trade(payload=payload, sync_result=sync_result)
         self._last_auto_trade_result = dict(auto_trade_result)
         self._last_cycle_executor_result = dict(auto_trade_result)

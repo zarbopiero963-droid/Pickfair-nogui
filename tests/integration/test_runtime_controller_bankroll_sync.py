@@ -498,6 +498,42 @@ def test_recovery_failclosed_breach_while_stopped_persists_and_refuses_start():
 
 
 @pytest.mark.integration
+def test_durable_breach_marker_persisted_before_bankroll_sync():
+    """Codex round-9 P1: il breach va persistito DUREVOLMENTE su db PRIMA dell'I/O
+    di rete del bankroll-sync (il pending-stop e' solo in-memory): un crash durante
+    un get_account_funds lento perderebbe l'hard-stop al riavvio. Lo spy verifica
+    che il marker durevole (active=True) sia scritto PRIMA del sync, e che alla fine
+    l'emergency_stop completo sia comunque scattato."""
+    rc, _ = _make_controller(responses=[{"available": 85.0}] * 4)
+    rc.config.max_daily_loss = 10.0
+    rc.risk_desk.sync_bankroll(100.0)
+
+    order: list = []
+    orig_marker = rc._persist_db_emergency_marker
+    orig_sync = rc._sync_bankroll_post_settlement
+
+    def _marker_spy(*, active, reason=""):
+        order.append(("marker", active))
+        return orig_marker(active=active, reason=reason)
+
+    def _sync_spy(payload):
+        order.append(("sync", None))
+        return orig_sync(payload)
+
+    rc._persist_db_emergency_marker = _marker_spy
+    rc._sync_bankroll_post_settlement = _sync_spy
+
+    rc._on_close_position(dict(_BREACHING_SETTLEMENT))
+
+    # il marker durevole (active=True) precede l'I/O di rete del sync
+    assert ("marker", True) in order
+    assert order.index(("marker", True)) < order.index(("sync", None))
+    # e a fine ciclo l'emergency_stop definitivo e' scattato (marker non ripulito)
+    assert rc._emergency_stopped is True
+    assert ("marker", False) not in order
+
+
+@pytest.mark.integration
 def test_pending_daily_loss_stop_blocks_live_choke_point():
     """Codex round-7 P1: il pending-stop sincrono deve essere riflesso nel choke
     point `is_live_allowed()` (quello che il TradingEngine interroga prima di
