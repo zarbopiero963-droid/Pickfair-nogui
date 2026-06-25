@@ -40,6 +40,14 @@ REGOLE NON NEGOZIABILI (valgono sempre):
 - AUTO_MERGE_ENABLED=false sempre: il merge è manuale dell'owner.
 - DeepSource è advisory di default: patcha solo se è required
   failing current-head o dimostra bug reale/safety/fail-open.
+- A ogni check-in della PR leggi e fai triage dei thread inline
+  attivi, non-outdated e non-risolti (review comments e review threads,
+  inclusi i bot: CodeRabbit, Sourcery, Gitar, DeepSource, Codacy):
+  classifica ogni rilievo (PATCH_REQUIRED / EVIDENCE_RESOLVE / SKIP /
+  NEEDS_MANUAL) e NON dichiarare il lavoro completo finché restano
+  rilievi bloccanti irrisolti. Risolvere un thread è azione gated:
+  serve AUTO_RESOLVE_ENABLED o il mandato esplicito dell'owner, più
+  current-head e validation/evidence (vedi auto_pr_flow_spec §11/§13).
 - A ogni check-in della PR leggi **anche** i corpi delle review e i
   commenti di conversazione, non solo i thread inline: i rilievi
   "outside diff range" (es. CodeRabbit) vivono solo nel corpo della
