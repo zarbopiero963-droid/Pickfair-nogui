@@ -463,11 +463,13 @@ def test_projected_daily_loss_breach_honors_day_rollover():
 
 @pytest.mark.integration
 def test_recovery_failclosed_breach_while_stopped_persists_and_refuses_start():
-    """Codex round-6 P1: un settlement live che sfonda il limite ma esce dal ramo
-    recovery fail-closed mentre il runtime e' STOPPED non viene fermato (gate
-    ACTIVE/PAUSED) e il PnL non e' applicato; deve pero' PERSISTERE il breach nello
-    stato del monitor cosi' un successivo start(LIVE) lo rifiuta invece di riprendere
-    a fare trading dopo la perdita giornaliera gia' sfondata."""
+    """Codex round-6 P1 + round-8 P1: un settlement live che sfonda il limite ma
+    esce dal ramo recovery fail-closed mentre il runtime e' STOPPED (enforce
+    no-op fuori ACTIVE/PAUSED, PnL non applicato) deve persistere il breach nello
+    stato del monitor (in-memory) E fare un emergency_stop DUREVOLE (persist su
+    db, ricaricato fail-closed al riavvio): senza la persistenza durevole, un
+    riavvio prima di start()/resume() perderebbe il breach e LIVE potrebbe
+    ripartire dopo aver sfondato max_daily_loss."""
     rc, bus = _make_controller(responses=[{"available": 85.0}] * 6)
     cfg = RoserpinaConfig()
     cfg.anti_duplication_enabled = False
@@ -479,8 +481,8 @@ def test_recovery_failclosed_breach_while_stopped_persists_and_refuses_start():
 
     rc._on_close_position(dict(_BREACHING_SETTLEMENT, net_pnl=-50.0, gross_pnl=-50.0))
 
-    # STOPPED: nessun emergency stop, ma breach persistito nello stato del monitor
-    assert rc._emergency_stopped is False
+    # round-8: emergency_stop DUREVOLE (oltre allo stato monitor in-memory)
+    assert rc._emergency_stopped is True
     assert rc._daily_loss_monitor_state.get("breached") is True
     # Codex round-7 P2: il ramo recovery EMETTE il primo TRIGGERED (monitor saltato),
     # cosi' i subscriber di monitoraggio non lo perdono.
@@ -540,6 +542,16 @@ def test_monitor_state_write_serialized_breach_survives_contention():
     rc.config.max_daily_loss = 10.0
     projected = {"breached": True, "daily_loss_amount": 50.0}  # realized resta 0
 
+    # Worker definiti FUORI dal loop (barrier passato come arg, non catturato in
+    # closure di loop) per evitare l'antipattern cell-var-in-loop.
+    def _record(barrier):
+        barrier.wait()
+        rc._record_pending_daily_loss_breach(projected)
+
+    def _mon(barrier):
+        barrier.wait()
+        rc._monitor_daily_loss_breach(source="CONTENTION")
+
     for _ in range(50):
         reset_state = dict(rc._daily_loss_monitor_state)
         reset_state["breached"] = False
@@ -547,15 +559,10 @@ def test_monitor_state_write_serialized_breach_survives_contention():
         rc._daily_loss_monitor_state = reset_state
         barrier = threading.Barrier(2)
 
-        def _record():
-            barrier.wait()
-            rc._record_pending_daily_loss_breach(projected)
-
-        def _mon():
-            barrier.wait()
-            rc._monitor_daily_loss_breach(source="CONTENTION")
-
-        threads = [threading.Thread(target=_record), threading.Thread(target=_mon)]
+        threads = [
+            threading.Thread(target=_record, args=(barrier,)),
+            threading.Thread(target=_mon, args=(barrier,)),
+        ]
         for t in threads:
             t.start()
         for t in threads:

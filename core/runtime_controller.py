@@ -1834,6 +1834,16 @@ class RuntimeController:
         # d'ingresso e' una-tantum, ma un settlement perdente concorrente puo'
         # aver armato pending/emergency mentre questo segnale era in validazione.
         if self._daily_loss_entry_blocked():
+            # Rilascia le risorse gia' acquisite (duplication guard + tavolo
+            # attivato): nessun CMD_QUICK_BET parte, quindi nessun evento
+            # terminale chiamera' _release_if_terminal a liberarle, e resterebbero
+            # bloccate dopo un reset, impedendo segnali validi successivi.
+            if self.config.anti_duplication_enabled:
+                self.duplication_guard.release(event_key)
+            try:
+                self.table_manager.force_unlock(int(decision.table_id))
+            except Exception:
+                logger.exception("Errore force_unlock table_id=%s", decision.table_id)
             self._reject_signal(signal, "emergency_stop_active:pre_submit_recheck")
             return
         self.bus.publish("CMD_QUICK_BET", payload)
@@ -1956,13 +1966,21 @@ class RuntimeController:
             # (proiezione read-only). Un eventuale falso positivo da duplicato e'
             # piu' sicuro di un kill-switch mancato.
             projected_recovery = self._projected_daily_loss_breach(pnl)
-            self._enforce_daily_loss_hard_stop(projected_recovery)
+            stopped = self._enforce_daily_loss_hard_stop(projected_recovery)
             if projected_recovery.get("breached"):
-                # Se il runtime e' STOPPED l'enforce non ferma (gate ACTIVE/PAUSED)
-                # e questo ramo ritorna senza applicare il PnL: persisti il breach
-                # nello stato del monitor cosi' un successivo start()/resume() in
-                # LIVE lo rifiuta invece di riprendere dopo la perdita giornaliera.
+                # Persisti il breach nello stato del monitor (in-memory) cosi' un
+                # successivo start()/resume() in LIVE lo rifiuta ed emette il
+                # primo TRIGGERED.
                 self._record_pending_daily_loss_breach(projected_recovery)
+                if not stopped and not self._emergency_stopped:
+                    # Se il runtime e' STOPPED l'enforce non ferma (gate
+                    # ACTIVE/PAUSED) e il solo stato monitor in-memory andrebbe
+                    # perso a un riavvio prima di start()/resume(), riaprendo il
+                    # restart LIVE dopo aver sfondato max_daily_loss. Questo e' un
+                    # breach REALE settlement-driven: emergency_stop DUREVOLE
+                    # (persist su db, ricaricato fail-closed al riavvio).
+                    amount = float(projected_recovery.get("daily_loss_amount", 0.0) or 0.0)
+                    self.emergency_stop(reason=f"DAILY_LOSS_BREACH_RECOVERY_FAILCLOSED:{amount}")
             fail_result = self._build_fail_closed_recovery_result(payload=payload, probe=recovery_probe)
             sync_result = {
                 "correlation_id": str(payload.get("correlation_id") or payload.get("event_key") or ""),
@@ -2681,11 +2699,31 @@ class RuntimeController:
         # _risk_allows_auto_trade e' stato valutato sopra, ma un settlement
         # perdente concorrente puo' aver armato pending/emergency nel frattempo.
         if self._daily_loss_entry_blocked():
+            # Sblocca il tavolo attivato sopra: nessun CMD_QUICK_BET parte, quindi
+            # nessun evento terminale lo libererebbe (tavolo/esposizione fantasma).
+            if table_id is not None:
+                try:
+                    self.table_manager.force_unlock(int(table_id))
+                except Exception:
+                    logger.exception("Errore force_unlock table_id=%s", table_id)
             result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_RISK_REJECTED"
             result["cycle_executor_status"] = "CYCLE_SKIPPED_RISK_REJECTED"
             result["recovery_status"] = "RECOVERY_SKIPPED_RISK_REJECTED" if has_checkpoint else result["recovery_status"]
             result["risk_status"] = "RISK_REJECTED"
             result["reason"] = "emergency_stop_active:pre_submit_recheck"
+            # Sovrascrivi il checkpoint ATTEMPTED con uno BLOCCATO/NOT_ATTEMPTED:
+            # senza, il reader di recovery leggerebbe ATTEMPTED-senza-SUBMITTED
+            # come ambiguo e fail-closerebbe questo settlement dopo un riavvio,
+            # pur non essendo partito alcun ordine.
+            self._persist_cycle_checkpoint(
+                settlement_key=settlement_key,
+                payload=payload,
+                checkpoint_stage="CYCLE_BLOCKED",
+                bankroll_sync_status=result["bankroll_sync_status"],
+                next_trade_submission_status="NOT_ATTEMPTED",
+                reason=result["reason"],
+                recovery_status=result["recovery_status"],
+            )
             if settlement_key:
                 self._processed_auto_trade_keys.add(settlement_key)
             return result
