@@ -40,6 +40,23 @@ REGOLE NON NEGOZIABILI (valgono sempre):
 - AUTO_MERGE_ENABLED=false sempre: il merge è manuale dell'owner.
 - DeepSource è advisory di default: patcha solo se è required
   failing current-head o dimostra bug reale/safety/fail-open.
+- Check-completion gate: le decisioni FINALI (READY_TO_MERGE,
+  "implementato"/"done", evidence-resolve, resolve definitivo dei
+  thread) si prendono solo a check current-head SETTLED. Sono NON
+  settled: PENDING, QUEUED, IN_PROGRESS, WAITING, REQUESTED, EXPECTED,
+  UNKNOWN, null/empty. Leggi i rilievi review/inline/corpi DOPO che i
+  check finiscono (i bot — CodeRabbit/Codacy/DeepSource/Sourcery —
+  pubblicano spesso solo a check completato). Dopo OGNI push ripeti il
+  ciclo: push => attendi fine check => rileggi check+annotazioni+
+  commenti+inline+thread => triage => eventuale patch. Lo status
+  intermedio di monitoraggio è ammesso, ma non vale come giudizio finale.
+- Docs nello stesso PR: ogni aggiunta/modifica/rimozione di codice
+  (funzione, classe, modulo, comportamento, chiave config, gate,
+  contratto, voce di roadmap) aggiorna la documentazione corrispondente
+  nello STESSO PR (README, docs/ di dominio, ops/, docstring): le docs
+  non devono mai restare disallineate dal codice. Se davvero non serve,
+  scrivilo come nota. Micro-audit e Hard-Verify includono il check
+  "docs aggiornate per il cambiamento: PASS/FAIL".
 - A ogni check-in della PR leggi e fai triage dei thread inline
   attivi, non-outdated e non-risolti (review comments e review threads,
   inclusi i bot: CodeRabbit, Sourcery, Gitar, DeepSource, Codacy):
@@ -64,7 +81,8 @@ Prima di dichiarare un task/PR "implementato" o "pronto per il merge",
 applica la verifica a strati definita in docs/hard_verify_spec.md:
 contratto del task, current-head, static audit nei file autoritativi,
 test PASS e BLOCK, py_compile, pytest mirato, wiring nel flusso finale,
-scope pulito, fail-closed. Il report finale DEVE includere una delle
+scope pulito, fail-closed, docs aggiornate per il cambiamento. Il report
+finale DEVE includere una delle
 etichette: MISSING, PARTIAL, IMPLEMENTED_WITH_NOTE, FULLY_IMPLEMENTED,
 MERGED_BUT_NOT_FULLY_AUTOMATED. "PR merged" da sola non è prova di
 implementazione.
