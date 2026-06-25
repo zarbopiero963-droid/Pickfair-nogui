@@ -346,6 +346,18 @@ Per fare push servono:
 - nessun file vietato
 - task consente commit/push
 
+Apertura di una PR new-task — registrazione task key OBBLIGATORIA:
+prima/insieme all'apertura, la task key va registrata in
+`.guardrails/allowed_scope.json` (oggetto `tasks`: `{ "<key>": { "files":
+[...], "max_files": N, "allow_tests": bool } }`) nello STESSO PR. Il
+check `guard` (`scripts/guardrail_check.py`) valida che il marker
+`[TASK: <key>]` (da titolo/body/commit) sia una chiave REGISTRATA: se il
+marker è presente ma la chiave non è nel registro, fallisce con
+"Unknown TASK tag ... must be one of configured task keys". Il file
+`.guardrails/allowed_scope.json` non è critico, quindi la PR può
+includerlo nei propri `files` e auto-registrarsi: il guard legge il
+registro dal merge-ref e passa sullo stesso head.
+
 Se AUTO_PUSH_ENABLED=false:
 
 ```
@@ -498,6 +510,10 @@ può rispondere e risolvere solo se:
 - AUTO_RESOLVE_ENABLED=true
 - current head combacia
 - validation passata
+- TUTTI i check current-head SETTLED (non solo Codacy): nessun check in
+  PENDING/QUEUED/IN_PROGRESS/WAITING/REQUESTED/EXPECTED/UNKNOWN/null —
+  i bot pubblicano rilievi solo a check completato, quindi il resolve
+  definitivo aspetta l'intero rollup (vedi CLAUDE.md check-completion gate)
 - Codacy success
 - annotations_count=0
 - test/evidence coprono il commento

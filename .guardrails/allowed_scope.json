@@ -63,6 +63,16 @@
         "database.py"
       ],
       "max_files": 12
+    },
+    "docs_governance_pr_rules": {
+      "allow_tests": false,
+      "files": [
+        "CLAUDE.md",
+        "docs/auto_pr_flow_spec.md",
+        "docs/hard_verify_spec.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 8
     }
   }
 }

@@ -15,6 +15,7 @@ IMPLEMENTED = codice presente
             + current-head corretto
             + nessuno scope vietato
             + integrazione reale nel flusso
+            + docs allineate al cambiamento (§12-bis)
 ```
 
 Se manca uno di questi, NON è fully implemented.
@@ -236,6 +237,36 @@ Non basta che "funzioni quando tutto è bello". Deve bloccare quando manca evide
 
 Se una feature "passa" anche quando l'evidenza manca, è pericolosa
 e non fully implemented.
+
+---
+
+## 12-bis. Verifica docs allineate al cambiamento
+
+Ogni aggiunta/modifica/rimozione di codice (funzione, classe, modulo,
+comportamento, chiave config, gate, contratto, voce di roadmap) deve
+avere la documentazione corrispondente aggiornata nello STESSO PR
+(README, docs/ di dominio, ops/, docstring). Il report finale DEVE
+includere il campo:
+
+```
+docs aggiornate per il cambiamento: PASS / FAIL / N/A
+```
+
+Regole di classificazione:
+
+- **PASS**: le docs pertinenti al cambiamento sono aggiornate entro lo
+  scope della PR.
+- **N/A**: cambiamento interno senza impatto su comportamento/API/contratto
+  documentato — vale solo se scritto come nota esplicita.
+- **FAIL**: codice cambiato, doc pertinente esistente e dentro
+  files_allowed NON aggiornata => la PR è al più `PARTIAL` o
+  `IMPLEMENTED_WITH_NOTE`, mai `FULLY_IMPLEMENTED`.
+
+Vincolo di scope (coerente con §11 e con files_allowed): se la doc da
+aggiornare è FUORI da files_allowed, NON allargare lo scope. In quel
+caso il campo è `FAIL` con causa "doc fuori allowlist" e lo stato è
+`NEEDS_MANUAL` (serve estensione esplicita dell'allowlist), non un commit
+fuori scope. La doc-update obbligatoria vale solo entro files_allowed.
 
 ---
 
