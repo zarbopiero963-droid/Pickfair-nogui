@@ -73,7 +73,7 @@ class BetfairService:
         """True if session is known-expired and live operations must be blocked."""
         return self._session_invalid
 
-    def handle_session_expiry(self, reason: str = "SESSION_EXPIRED") -> dict:
+    def handle_session_expiry(self, reason: str = "SESSION_EXPIRED", abort_if=None) -> dict:
         """
         Called when a SESSION_EXPIRED or INVALID_SESSION signal is detected.
 
@@ -82,11 +82,24 @@ class BetfairService:
         un altro thread ha gia' completato un re-auth mentre attendevamo il lock
         e la sessione e' ora valida, non ri-autentichiamo di nuovo.
 
+        abort_if: guard opzionale RI-VALUTATO SOTTO _reauth_lock (atomico con la
+        decisione di reconnect). Il keepalive lo usa per abortire il re-auth se,
+        tra il rilevamento dell'expiry e l'acquisizione del lock, e' avvenuto un
+        disconnect/switch-SIMULATION (un tick stale non deve ricreare una
+        sessione LIVE dopo uno stop voluto).
+
         FAIL-CLOSED: if re-auth fails or is not possible, the service remains
         blocked and the caller must not proceed with live orders.
         """
         epoch_before = self._reauth_epoch
         with self._reauth_lock:
+            if abort_if is not None and abort_if():
+                return {
+                    "recovered": False,
+                    "reason": reason,
+                    "reauth_attempted": False,
+                    "aborted_stale": True,
+                }
             if (
                 self._reauth_epoch != epoch_before
                 and self.connected
@@ -343,10 +356,14 @@ class BetfairService:
         except Exception as exc:
             if generation is not None and generation != self._keepalive_generation:
                 return False  # stale: niente metriche/re-auth sulla nuova sessione
-            return self._route_keepalive_failure(client, str(exc), stop_event)
+            return self._route_keepalive_failure(client, str(exc), stop_event, generation)
 
     def _route_keepalive_failure(
-        self, client: Any, message: str, stop_event: Optional[threading.Event]
+        self,
+        client: Any,
+        message: str,
+        stop_event: Optional[threading.Event],
+        generation: Optional[int] = None,
     ) -> bool:
         """Classifica un fallimento di keep_alive. Ritorna True (loop continua)
         per errori generici (soft); False (loop esce) per session-expiry."""
@@ -356,19 +373,26 @@ class BetfairService:
         logger.warning("betfair session keep_alive failed: %s", message)
         if not self._is_session_expiry_error(message):
             return True  # errore generico: soft, il loop continua
-        # Session-expiry da un tick in volo: NON ri-autenticare se nel frattempo
-        # lo stato e' cambiato — shutdown in corso (stop settato), switch a
-        # SIMULATION, oppure il client live corrente NON e' piu' quello che
-        # stavamo mantenendo (disconnect/re-auth gia' avvenuti). Altrimenti un
-        # tick stale ricreerebbe una sessione LIVE dopo uno stop/switch voluto.
-        if (
-            (stop_event is not None and stop_event.is_set())
-            or self.simulation_mode
-            or self.client is not client
-        ):
+
+        def _stale() -> bool:
+            # Stato cambiato dopo che questo tick ha catturato il client: shutdown
+            # (stop settato), switch a SIMULATION, client live diverso, o
+            # generation avanzata (disconnect/reconnect). Un tick stale non deve
+            # ricreare una sessione LIVE dopo uno stop/switch voluto.
+            return bool(
+                (stop_event is not None and stop_event.is_set())
+                or self.simulation_mode
+                or self.client is not client
+                or (generation is not None and generation != self._keepalive_generation)
+            )
+
+        # Fast-path: se gia' stale, esci senza nemmeno entrare nel re-auth.
+        if _stale():
             return False
         try:
-            self.handle_session_expiry(reason="KEEPALIVE_SESSION_EXPIRED")
+            # _stale ri-valutato DENTRO _reauth_lock (atomico con la decisione di
+            # reconnect): se un disconnect/switch si infila qui, il re-auth aborta.
+            self.handle_session_expiry(reason="KEEPALIVE_SESSION_EXPIRED", abort_if=_stale)
         except Exception:
             logger.exception("betfair keepalive: handle_session_expiry raised")
         return False

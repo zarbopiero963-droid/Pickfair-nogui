@@ -103,7 +103,7 @@ def test_tick_generic_error_is_soft_and_continues():
     svc.client = _KAClient(keep_alive_raises="BOOM_NETWORK")
 
     called = []
-    svc.handle_session_expiry = lambda reason="": called.append(reason)
+    svc.handle_session_expiry = lambda reason="", abort_if=None:called.append(reason)
 
     assert svc._keepalive_tick() is True  # continua il loop
     assert svc.keepalive_status()["failure_count"] == 1
@@ -118,7 +118,7 @@ def test_tick_session_expired_routes_reauth_and_exits():
     svc.client = _KAClient(keep_alive_raises="SESSION_EXPIRED")
 
     called = []
-    svc.handle_session_expiry = lambda reason="": called.append(reason) or {"recovered": False}
+    svc.handle_session_expiry = lambda reason="", abort_if=None:called.append(reason) or {"recovered": False}
 
     assert svc._keepalive_tick() is False  # esce dal loop
     assert called == ["KEEPALIVE_SESSION_EXPIRED"]
@@ -134,7 +134,7 @@ def test_tick_session_expired_during_shutdown_no_reauth():
     svc.simulation_mode = False
     svc.client = _KAClient(keep_alive_raises="SESSION_EXPIRED")
     called = []
-    svc.handle_session_expiry = lambda reason="": called.append(reason)
+    svc.handle_session_expiry = lambda reason="", abort_if=None:called.append(reason)
 
     ev = threading.Event()
     ev.set()
@@ -158,7 +158,7 @@ def test_tick_session_expired_when_client_swapped_no_reauth():
     stale.keep_alive = _swap_then_raise
     svc.client = stale
     called = []
-    svc.handle_session_expiry = lambda reason="": called.append(reason)
+    svc.handle_session_expiry = lambda reason="", abort_if=None:called.append(reason)
 
     assert svc._keepalive_tick() is False
     assert called == []  # client cambiato: nessun re-auth
@@ -172,7 +172,7 @@ def test_spaced_session_error_routes_reauth():
     svc.simulation_mode = False
     svc.client = _KAClient(keep_alive_raises="API_ERROR: SESSION EXPIRED")
     called = []
-    svc.handle_session_expiry = lambda reason="": called.append(reason) or {}
+    svc.handle_session_expiry = lambda reason="", abort_if=None:called.append(reason) or {}
 
     assert svc._keepalive_tick() is False
     assert called == ["KEEPALIVE_SESSION_EXPIRED"]
@@ -206,7 +206,7 @@ def test_keepalive_tick_stale_generation_is_noop():
     svc.simulation_mode = False
     svc.client = _KAClient(keep_alive_raises="SESSION_EXPIRED")
     reauth = []
-    svc.handle_session_expiry = lambda reason="": reauth.append(reason)
+    svc.handle_session_expiry = lambda reason="", abort_if=None:reauth.append(reason)
     svc._keepalive_generation = 7
     before = svc.keepalive_status()["failure_count"]
 
@@ -225,7 +225,7 @@ def test_keepalive_tick_goes_stale_during_blocking_call_is_noop():
     svc = _make_service()
     svc.simulation_mode = False
     reauth = []
-    svc.handle_session_expiry = lambda reason="": reauth.append(reason)
+    svc.handle_session_expiry = lambda reason="", abort_if=None:reauth.append(reason)
 
     class _StaleDuringCall:
         def keep_alive(self_inner):
@@ -269,6 +269,32 @@ def test_handle_session_expiry_dedup_when_recovered_while_waiting():
     out = svc.handle_session_expiry("X")
     assert out.get("already_recovered") is True
     assert inner == []  # niente re-auth ridondante
+
+
+@pytest.mark.unit
+def test_handle_session_expiry_aborts_when_stale_guard_true():
+    """Codex round-2 P1: il guard stale (abort_if) e' valutato SOTTO _reauth_lock,
+    atomico con la decisione di reconnect: se tra il rilevamento dell'expiry e
+    l'acquisizione del lock e' avvenuto un disconnect/switch, il re-auth aborta
+    invece di ricreare una sessione LIVE."""
+    svc = _make_service()
+    inner = []
+    svc._do_handle_session_expiry = lambda reason: inner.append(reason)
+
+    out = svc.handle_session_expiry("X", abort_if=lambda: True)
+    assert out.get("aborted_stale") is True
+    assert inner == []  # nessun re-auth: stato stale rilevato sotto lock
+
+
+@pytest.mark.unit
+def test_handle_session_expiry_runs_reauth_when_guard_false():
+    svc = _make_service()
+    inner = []
+    svc._do_handle_session_expiry = lambda reason: inner.append(reason) or {"recovered": True}
+
+    out = svc.handle_session_expiry("X", abort_if=lambda: False)
+    assert inner == ["X"]
+    assert out == {"recovered": True}
 
 
 @pytest.mark.unit
@@ -346,7 +372,7 @@ def test_running_keepalive_reauth_from_loop_does_not_deadlock():
 
     done = threading.Event()
 
-    def _fake_expiry(reason=""):
+    def _fake_expiry(reason="", abort_if=None):
         svc._stop_session_keepalive()  # dal thread di keepalive: no self-join
         done.set()
         return {"recovered": False}
