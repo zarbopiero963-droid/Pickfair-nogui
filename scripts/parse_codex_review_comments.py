@@ -113,33 +113,42 @@ def _flatten_thread(thread: Dict[str, Any]) -> List[Dict[str, Any]]:
     return rows
 
 
+def _graphql_review_threads_page(
+    owner: str, name: str, pr_number: int, after: Optional[str]
+) -> Dict[str, Any]:
+    """Fetch one page of reviewThreads, raising on partial/error responses.
+
+    GraphQL-over-HTTP can return 200 with `errors` and partial/omitted data;
+    raising (instead of silently treating it as empty) lets the REST fallback
+    run, so a transient resolver/permission/schema issue never makes the gate
+    see zero findings.
+    """
+    cmd = [
+        "gh", "api", "graphql",
+        "-f", f"owner={owner}",
+        "-f", f"name={name}",
+        "-F", f"number={pr_number}",
+        "-f", f"query={_REVIEW_THREADS_QUERY}",
+    ]
+    if after:
+        cmd.extend(["-f", f"after={after}"])
+    data = json.loads(_run(cmd))
+    if data.get("errors"):
+        raise RuntimeError(f"GraphQL returned errors: {data.get('errors')}")
+    threads = (
+        ((data.get("data") or {}).get("repository") or {}).get("pullRequest") or {}
+    ).get("reviewThreads")
+    if not isinstance(threads, dict):
+        raise RuntimeError("GraphQL response missing reviewThreads (partial/empty)")
+    return threads
+
+
 def _fetch_review_comments_graphql(repo: str, pr_number: int) -> List[Dict[str, Any]]:
     owner, name = str(repo).split("/", 1)
     comments: List[Dict[str, Any]] = []
     after: Optional[str] = None
     while True:
-        cmd = [
-            "gh", "api", "graphql",
-            "-f", f"owner={owner}",
-            "-f", f"name={name}",
-            "-F", f"number={pr_number}",
-            "-f", f"query={_REVIEW_THREADS_QUERY}",
-        ]
-        if after:
-            cmd.extend(["-f", f"after={after}"])
-        data = json.loads(_run(cmd))
-        # GraphQL-over-HTTP can return 200 with `errors` and partial/omitted
-        # data. Raising here (instead of silently returning the comments
-        # collected so far) lets the REST fallback run, so a transient
-        # resolver/permission/schema issue never makes the gate see zero
-        # findings.
-        if data.get("errors"):
-            raise RuntimeError(f"GraphQL returned errors: {data.get('errors')}")
-        threads = (
-            ((data.get("data") or {}).get("repository") or {}).get("pullRequest") or {}
-        ).get("reviewThreads")
-        if not isinstance(threads, dict):
-            raise RuntimeError("GraphQL response missing reviewThreads (partial/empty)")
+        threads = _graphql_review_threads_page(owner, name, pr_number, after)
         for node in threads.get("nodes") or []:
             if not isinstance(node, dict):
                 continue
