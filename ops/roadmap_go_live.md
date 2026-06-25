@@ -171,6 +171,12 @@ Ordine sicuro (PR piccole, solo test, zero modifiche alle autorità):
    valore/rischio CI (non mappato dal routing dinamico → blast contenuto)
 2. **EventBus** (`core/event_bus.py`): drain vs lossy shutdown, isolamento
    subscriber avvelenato, metriche di pressione sotto carico
+   - ✅ **FATTA (PR proof_eventbus)** — `tests/unit/test_event_bus_operational_proofs.py`
+     (5 proof deterministiche netto-nuove, dedup su 35 test esistenti):
+     ordering FIFO single-worker, re-entrancy/cascade senza deadlock,
+     consistenza contatori `delivered+errori == enqueued == dequeued` dopo
+     drain (anti-perdita-silenziosa), unsubscribe idempotente, identità del
+     payload. Solo test, nessuna modifica a `core/event_bus.py`.
 3. **BetfairService session gate**: re-auth bounded, fail-closed su sessione
    invalida (integra i 17 test di `test_session_expiry_recovery.py`)
 4. **RuntimeController control-path** (solo dopo 1-3): start/stop/pause/
