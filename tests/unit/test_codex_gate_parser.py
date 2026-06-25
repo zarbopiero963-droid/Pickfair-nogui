@@ -101,17 +101,30 @@ def test_flatten_thread_includes_replies():
 
 
 @pytest.mark.unit
-def test_graphql_raises_when_thread_comments_overflow(monkeypatch):
+def test_graphql_paginates_long_thread_without_rest_fallback(monkeypatch):
+    # A thread whose comments span >1 page must be completed via GraphQL node
+    # pagination (NOT a whole-PR REST fallback, which would lose resolved state).
     import json as _json
-    payload = {"data": {"repository": {"pullRequest": {"reviewThreads": {
-        "nodes": [{"isOutdated": False, "isResolved": False, "comments": {
-            "nodes": [{"databaseId": 1, "author": {"login": "chatgpt-codex-connector"},
-                       "path": "x.py", "body": "f", "url": "u"}],
-            "pageInfo": {"hasNextPage": True}}}],
-        "pageInfo": {"hasNextPage": False}}}}}}
-    monkeypatch.setattr(parser, "_run", lambda cmd: _json.dumps(payload))
-    with pytest.raises(RuntimeError, match="exceeds comment page size"):
-        parser._fetch_review_comments_graphql("o/r", 1)
+
+    main = {"data": {"repository": {"pullRequest": {"reviewThreads": {
+        "nodes": [{"id": "T1", "isOutdated": False, "isResolved": False, "comments": {
+            "nodes": [{"databaseId": 1, "author": {"login": "deepsource-io"},
+                       "path": "x.py", "body": "opener", "url": "u1"}],
+            "pageInfo": {"hasNextPage": True, "endCursor": "C1"}}}],
+        "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}
+    page2 = {"data": {"node": {"comments": {
+        "nodes": [{"databaseId": 2, "author": {"login": "chatgpt-codex-connector"},
+                   "path": "x.py", "body": "reply finding on page 2", "url": "u2"}],
+        "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}
+
+    def _fake_run(cmd):
+        joined = " ".join(cmd)
+        return _json.dumps(page2 if "id=T1" in joined else main)
+
+    monkeypatch.setattr(parser, "_run", _fake_run)
+    out = parser._fetch_review_comments_graphql("o/r", 1)
+    assert [c["id"] for c in out] == [1, 2]
+    assert out[1]["user"]["login"] == "chatgpt-codex-connector"
 
 
 @pytest.mark.unit

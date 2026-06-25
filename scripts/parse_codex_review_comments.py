@@ -70,17 +70,63 @@ def _get_repo_and_pr(event: Dict[str, Any]) -> tuple[str, int]:
 
 # We read every comment in a thread (a Codex finding can be a reply, not only
 # the thread opener), inheriting the thread-level outdated/resolved status.
-# Threads are paginated; on the rare thread that exceeds the inner comment page
-# we fall back to REST (which paginates the full flat comment list).
+# Both the threads list AND each thread's inner comments are paginated — we
+# never abandon GraphQL for REST mid-PR (the REST fallback has no resolved-state
+# signal, so doing so would lose `isResolved` for every other thread).
 _REVIEW_THREADS_QUERY = (
     "query($owner:String!,$name:String!,$number:Int!,$after:String){"
     " repository(owner:$owner,name:$name){ pullRequest(number:$number){"
     " reviewThreads(first:100,after:$after){"
-    " nodes{ isResolved isOutdated"
+    " nodes{ id isResolved isOutdated"
     " comments(first:100){ nodes{ databaseId author{login} path line originalLine body url }"
-    " pageInfo{ hasNextPage } } }"
+    " pageInfo{ hasNextPage endCursor } } }"
     " pageInfo{ hasNextPage endCursor } } } } }"
 )
+
+# Paginate a single thread's comments beyond the first page (rare).
+_THREAD_COMMENTS_QUERY = (
+    "query($id:ID!,$after:String){ node(id:$id){"
+    " ... on PullRequestReviewThread {"
+    " comments(first:100,after:$after){"
+    " nodes{ databaseId author{login} path line originalLine body url }"
+    " pageInfo{ hasNextPage endCursor } } } } }"
+)
+
+
+def _comment_to_row(comment: Dict[str, Any], not_live: bool) -> Dict[str, Any]:
+    return {
+        "id": comment.get("databaseId"),
+        "user": {"login": ((comment.get("author") or {}).get("login") or "")},
+        "path": comment.get("path") or "",
+        "line": comment.get("line"),
+        "original_line": comment.get("originalLine"),
+        "body": comment.get("body") or "",
+        "html_url": comment.get("url") or "",
+        # Authoritative signal the rest of the parser consumes.
+        "outdated": not_live,
+    }
+
+
+def _remaining_thread_comments(thread_id: str, after: str) -> List[Dict[str, Any]]:
+    """Fetch a thread's comments past the first page (GraphQL node pagination)."""
+    nodes: List[Dict[str, Any]] = []
+    cursor: Optional[str] = after
+    while cursor:
+        data = json.loads(_run([
+            "gh", "api", "graphql",
+            "-f", f"id={thread_id}",
+            "-f", f"after={cursor}",
+            "-f", f"query={_THREAD_COMMENTS_QUERY}",
+        ]))
+        if data.get("errors"):
+            raise RuntimeError(f"GraphQL returned errors: {data.get('errors')}")
+        conn = ((data.get("data") or {}).get("node") or {}).get("comments")
+        if not isinstance(conn, dict):
+            raise RuntimeError("GraphQL thread-comments response malformed")
+        nodes.extend(n for n in (conn.get("nodes") or []) if isinstance(n, dict))
+        page = conn.get("pageInfo") or {}
+        cursor = page["endCursor"] if (page.get("hasNextPage") and page.get("endCursor")) else None
+    return nodes
 
 
 def _flatten_thread(thread: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -88,29 +134,16 @@ def _flatten_thread(thread: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     Each comment inherits the thread-level outdated/resolved status: a comment
     whose thread is outdated (code changed) or resolved is not a live finding,
-    so the gate must not count it. Only the opening comment (the finding) is
-    read per thread.
+    so the gate must not count it. All comments in the thread are read,
+    paginating the inner connection when needed.
     """
     not_live = bool(thread.get("isOutdated")) or bool(thread.get("isResolved"))
-    comments = ((thread.get("comments") or {}).get("nodes")) or []
-    rows: List[Dict[str, Any]] = []
-    for c in comments:
-        if not isinstance(c, dict):
-            continue
-        rows.append(
-            {
-                "id": c.get("databaseId"),
-                "user": {"login": ((c.get("author") or {}).get("login") or "")},
-                "path": c.get("path") or "",
-                "line": c.get("line"),
-                "original_line": c.get("originalLine"),
-                "body": c.get("body") or "",
-                "html_url": c.get("url") or "",
-                # Authoritative signal the rest of the parser consumes.
-                "outdated": not_live,
-            }
-        )
-    return rows
+    conn = thread.get("comments") or {}
+    comments = list(conn.get("nodes") or [])
+    page = conn.get("pageInfo") or {}
+    if page.get("hasNextPage") and page.get("endCursor") and thread.get("id"):
+        comments.extend(_remaining_thread_comments(thread["id"], page["endCursor"]))
+    return [_comment_to_row(c, not_live) for c in comments if isinstance(c, dict)]
 
 
 def _graphql_review_threads_page(
@@ -152,11 +185,9 @@ def _fetch_review_comments_graphql(repo: str, pr_number: int) -> List[Dict[str, 
         for node in threads.get("nodes") or []:
             if not isinstance(node, dict):
                 continue
-            # A thread with more comments than one page would truncate replies;
-            # raise so the REST fallback fetches the complete flat list.
-            inner_page = ((node.get("comments") or {}).get("pageInfo")) or {}
-            if inner_page.get("hasNextPage"):
-                raise RuntimeError("review thread exceeds comment page size")
+            # _flatten_thread paginates the inner comments connection itself, so
+            # a long thread never forces a whole-PR REST fallback (which would
+            # lose the GraphQL resolved/outdated state for the other threads).
             comments.extend(_flatten_thread(node))
         page = threads.get("pageInfo") or {}
         if page.get("hasNextPage") and page.get("endCursor"):
