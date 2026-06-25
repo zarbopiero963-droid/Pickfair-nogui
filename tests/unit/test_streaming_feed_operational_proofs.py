@@ -108,11 +108,11 @@ def test_heartbeat_timeout_has_one_second_floor(monkeypatch):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.unit
-def test_503_degradation_persists_until_reconnect():
+def test_503_degradation_persists_across_normal_traffic():
     """Un 503 mette il feed in degraded (healthy=False) SENZA disconnettere, e
-    il flag PERSISTE anche se riprende il traffico normale: si azzera solo alla
-    riconnessione. Caratterizza il confine di osservabilita' (ops vede
-    'degraded' finche' non riconnette)."""
+    il flag PERSISTE anche se riprende il traffico normale: un messaggio valido
+    NON lo ripulisce (solo la riconnessione lo fa, vedi test sotto). Caratterizza
+    il confine di osservabilita' (ops vede 'degraded' finche' non riconnette)."""
     feed = _make_feed()
     feed._connected = True
     assert feed.healthy is True
@@ -123,10 +123,71 @@ def test_503_degradation_persists_until_reconnect():
     assert feed.status()["connected"] is True
     assert feed.healthy is False
 
-    # Traffico normale successivo: NON ripristina il flag (solo il reconnect lo fa).
+    # Traffico normale successivo: NON ripristina il flag.
     feed._process_message({"clk": "abc", "mc": []})
     assert feed.status()["degraded_503"] is True
     assert feed.healthy is False
+
+
+# Stub minimi per pilotare UN ciclo di _connect_and_consume in modo
+# deterministico (no thread, no sleep). I metodi senza self sono @staticmethod
+# per non introdurre antipattern.
+class _StubListener:
+    """Listener finto: espone solo l'output_queue richiesta dal feed."""
+
+    def __init__(self, *, output_queue):
+        self.output_queue = output_queue
+
+
+class _StubStream:
+    """Stream finto: la subscribe e' un no-op."""
+
+    def __init__(self, output_queue):
+        self.output_queue = output_queue
+
+    @staticmethod
+    def subscribe_to_markets(**_kwargs):
+        return None
+
+
+class _StubStreaming:
+    """API streaming finta: crea uno _StubStream sulla coda del listener."""
+
+    @staticmethod
+    def create_stream(listener):
+        return _StubStream(listener.output_queue)
+
+
+class _StubClient:
+    """Client finto con l'interfaccia .streaming attesa da _connect_and_consume."""
+
+    streaming = _StubStreaming()
+
+
+@pytest.mark.integration
+def test_503_flag_is_reset_on_reconnect(monkeypatch):
+    """Controprova del confine: una riconnessione AZZERA `degraded_503` e
+    ripristina healthy=True. Pilotiamo un singolo ciclo di _connect_and_consume
+    in modo deterministico (reader/keepalive resi no-op, stop_event impostato
+    cosi' il loop esce subito dopo il reset sincrono)."""
+    feed = _make_feed(market_ids=["1.1"])
+    feed.client_getter = _StubClient
+    feed.listener_factory = _StubListener
+
+    # Niente thread: rende il test deterministico.
+    monkeypatch.setattr(feed, "_start_stream_reader", _ignore)
+    monkeypatch.setattr(feed, "_start_keepalive_loop", _ignore)
+
+    # Stato pre-riconnessione: degradato e disconnesso.
+    feed._degraded_503 = True
+    feed._connected = False
+    feed._stop_event.set()
+
+    feed._connect_and_consume()
+
+    assert feed.status()["degraded_503"] is False
+    assert feed.status()["connected"] is True
+    assert feed.healthy is True
 
 
 # ---------------------------------------------------------------------------
