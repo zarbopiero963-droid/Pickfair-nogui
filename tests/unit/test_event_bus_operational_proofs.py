@@ -88,11 +88,17 @@ def test_reentrant_publish_from_handler_delivers_child_without_deadlock():
 
     bus.publish("PARENT", 1)
     delivered = child_done.wait(timeout=5.0)  # niente deadlock
-    res = bus.stop()
-
-    assert delivered is True, "cascade child non consegnato (possibile deadlock)"
-    assert order == [("parent", 1), ("child", 101)]
-    assert res["drain"] is True
+    try:
+        # Asserire PRIMA dello shutdown: se una regressione lasciasse il worker
+        # appeso nella callback (publish re-entrante che non ritorna), falliamo
+        # qui in modo pulito invece di bloccarci.
+        assert delivered is True, "cascade child non consegnato (possibile deadlock)"
+        assert order == [("parent", 1), ("child", 101)]
+    finally:
+        # stop_lossy con timeout: join dei worker limitato, niente Queue.join()
+        # che resterebbe appeso per sempre se un worker e' bloccato in callback
+        # (il drenante stop() trasformerebbe il fallimento in un hang di CI).
+        bus.stop_lossy(timeout=2.0)
 
 
 # ---------------------------------------------------------------------------
