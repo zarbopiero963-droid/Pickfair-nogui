@@ -169,6 +169,14 @@ Ordine sicuro (PR piccole, solo test, zero modifiche alle autorità):
    + soak chaos) ma mancano: equivalenza storm di riconnessione, stale su
    tempo simulato lungo, budget degradazione auth — miglior rapporto
    valore/rischio CI (non mappato dal routing dinamico → blast contenuto)
+   - ✅ **FATTA (PR proof_streaming_feed)** — `tests/unit/test_streaming_feed_operational_proofs.py`
+     (5 proof deterministiche netto-nuove a funzione pura, dedup sui ~19
+     esistenti): heartbeat-dead (no-message non morto, confine == timeout,
+     floor 1.0s su clock finto); degradazione 503 con `healthy=False` e flag
+     persistente fino al reconnect; subscribe kwargs che OMETTONO clk vuoto e
+     lo includono dopo cattura; isolamento dell'eccezione nella callback
+     on_disconnect (connected=False, no propagazione). Solo test, nessuna
+     modifica a `services/streaming_feed.py`.
 2. **EventBus** (`core/event_bus.py`): drain vs lossy shutdown, isolamento
    subscriber avvelenato, metriche di pressione sotto carico
    - ✅ **FATTA (PR proof_eventbus)** — `tests/unit/test_event_bus_operational_proofs.py`
