@@ -29,6 +29,16 @@ REGOLE NON NEGOZIABILI (valgono sempre):
   .github/workflows/*, core/*, services/*, secrets, runtime
   trading, Betfair, Telegram live — SALVO che il task spec li
   includa esplicitamente in files_allowed. Violazione => FAILED.
+- Apertura PR new-task: registra SEMPRE la task key in
+  `.guardrails/allowed_scope.json` (oggetto `tasks`, con i suoi
+  `files` allowed e `max_files`) NELLO STESSO PR. Il marker
+  `[TASK: <key>]` deve combaciare con una chiave registrata: il check
+  `guard` valida presenza E registrazione — marker presente ma chiave
+  NON registrata => "Unknown TASK tag" => guard FAILED. La PR può
+  includere `.guardrails/allowed_scope.json` tra i propri `files`
+  (non è file critico): si auto-registra e il guard passa sullo stesso
+  head, perché il guard legge il registro dal merge-ref della PR. Vale
+  per ogni nuova PR, inclusi i task ad-hoc dell'owner.
 - Micro-audit post-fix obbligatorio PRIMA di test/commit/push.
 - NESSUN push, resolve, rerun o merge di default. Ogni azione
   esterna richiede la flag esplicita (AUTO_PUSH_ENABLED,
