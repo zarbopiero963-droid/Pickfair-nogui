@@ -344,6 +344,40 @@ class RuntimeController:
             return None
         return parsed
 
+    def _projected_daily_loss_breach(self, additional_pnl: float = 0.0) -> dict:
+        """Stato di breach PROIETTATO includendo additional_pnl nel realized,
+        READ-ONLY (non muta lo stato ne' pubblica eventi). Serve ai rami di
+        early-return (es. recovery fail-closed) che ritornano PRIMA di applicare
+        il PnL e chiamare il monitor: se un settlement accettato sfonderebbe il
+        limite, si fail-closa comunque (un eventuale falso positivo da duplicato
+        e' piu' sicuro di un breach mancato)."""
+        threshold = self._safe_daily_loss_threshold()
+        if threshold is None:
+            return {"breached": False, "daily_loss_amount": 0.0}
+        state = self._daily_loss_monitor_state or {}
+        baseline_raw = state.get("realized_pnl_day_baseline")
+        realized = float(self.risk_desk.realized_pnl) + float(additional_pnl or 0.0)
+        baseline = float(realized if baseline_raw is None else baseline_raw)
+        daily_loss = max(0.0, -(realized - baseline))
+        return {"breached": daily_loss >= threshold, "daily_loss_amount": daily_loss}
+
+    def _safe_status_snapshot(self) -> dict:
+        """Snapshot di stato che NON dipende dall'I/O broker: prova get_status()
+        ma, se solleva (es. get_account_funds in outage), ricade su stato locale
+        cached. Usato nei rami di rifiuto fail-closed (start/resume) cosi' che il
+        rifiuto resti indipendente dalla connettivita' del broker."""
+        try:
+            return self.get_status()
+        except Exception:
+            logger.warning("status snapshot failed; using local cached state", exc_info=True)
+            return {
+                "mode": self.mode.value,
+                "execution_mode": str(self.execution_mode),
+                "live_enabled": bool(self.live_enabled),
+                "is_emergency_stopped": bool(self._emergency_stopped),
+                "status_snapshot_degraded": True,
+            }
+
     def _monitor_daily_loss_breach(self, *, source: str, payload: Optional[dict] = None) -> dict[str, Any]:
         now = datetime.utcnow()
         today_utc = now.date().isoformat()
@@ -1268,7 +1302,14 @@ class RuntimeController:
         if requested_execution_mode == "LIVE":
             daily_loss_start = self._monitor_daily_loss_breach(source="RUNTIME_START")
             if daily_loss_start.get("breached"):
-                status = self.get_status()
+                # Sincronizza lo stato a SIMULATION: stop() flippa solo `mode`,
+                # quindi senza questo il controller resterebbe live-capable
+                # (execution_mode=LIVE/live_enabled=True) dopo il rifiuto.
+                self.execution_mode = "SIMULATION"
+                self.live_enabled = False
+                self.live_readiness_ok = False
+                self.set_simulation_mode(True)
+                status = self._safe_status_snapshot()
                 self.bus.publish(
                     "LIVE_EXECUTION_REFUSED",
                     {
@@ -1436,7 +1477,7 @@ class RuntimeController:
             return {
                 "resumed": False,
                 "reason": "daily_loss_breached",
-                "status": self.get_status(),
+                "status": self._safe_status_snapshot(),
             }
 
         self.mode = RuntimeMode.ACTIVE
@@ -1772,6 +1813,12 @@ class RuntimeController:
         settlement_key = self._build_bankroll_sync_key(payload)
         recovery_probe = self._read_cycle_recovery_state(settlement_key)
         if self._should_fail_closed_on_recovery(recovery_probe):
+            # Fail-closed daily-loss: qui il PnL NON viene applicato (recovery
+            # state ambiguo/duplicato), ma se questo settlement accettato
+            # sfonderebbe comunque il limite giornaliero si hard-stoppa lo stesso
+            # (proiezione read-only). Un eventuale falso positivo da duplicato e'
+            # piu' sicuro di un kill-switch mancato.
+            self._enforce_daily_loss_hard_stop(self._projected_daily_loss_breach(pnl))
             fail_result = self._build_fail_closed_recovery_result(payload=payload, probe=recovery_probe)
             sync_result = {
                 "correlation_id": str(payload.get("correlation_id") or payload.get("event_key") or ""),

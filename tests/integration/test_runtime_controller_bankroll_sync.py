@@ -451,23 +451,49 @@ def test_resume_refused_after_daily_loss_breach():
 
 
 @pytest.mark.integration
-def test_daily_loss_enforced_even_on_early_return_branch():
-    """Codex P1: se la perdita realized e' GIA' oltre il limite, anche un
-    settlement che esce da un ramo di early-return (rejected / recovery
-    ambiguo) viene comunque hard-stoppato dal precheck — nessun percorso salta
-    l'enforcement."""
+def test_daily_loss_precheck_enforced_on_rejected_settlement_branch():
+    """Codex P1: con la perdita realized GIA' oltre il limite, anche un
+    settlement che esce dal ramo REJECTED (early-return) viene hard-stoppato
+    dal precheck a inizio _on_close_position. Il payload usa il campo legacy
+    `pnl` (niente contratto canonico) cosi' _extract_settlement_contract lo
+    classifica DAVVERO come rejected_non_canonical_settlement."""
     rc, _ = _make_controller(responses=[{"available": 85.0}] * 4)
     rc.mode = RuntimeMode.ACTIVE
     rc.config.max_daily_loss = 10.0
     rc.risk_desk.apply_closed_pnl(-50.0)
-    # stato monitor gia' breached (come l'avrebbe lasciato un settlement prima),
-    # ma non ancora fermato (corner di breached-but-not-stopped)
+    # monitor gia' breached (come l'avrebbe lasciato un settlement precedente),
+    # ma non ancora fermato (corner breached-but-not-stopped)
     rc._daily_loss_monitor_state = dict(rc._monitor_daily_loss_breach(source="PRIME"))
     rc._emergency_stopped = False
     rc.mode = RuntimeMode.ACTIVE
 
-    rejected = {**_BREACHING_SETTLEMENT, "settlement_validation": "rejected_bad"}
-    rc._on_close_position(rejected)
+    rejected_legacy = {
+        "event_key": "evt-rejected-legacy",
+        "table_id": 1,
+        "batch_id": "batch-rejected-legacy",
+        "correlation_id": "corr-rejected-legacy",
+        "pnl": -15.0,  # legacy/non-canonico -> ramo rejected reale
+    }
+    rc._on_close_position(rejected_legacy)
+
+    assert rc._emergency_stopped is True
+    assert rc.mode == RuntimeMode.LOCKDOWN
+
+
+@pytest.mark.integration
+def test_daily_loss_enforced_on_recovery_ambiguous_self_crossing_settlement():
+    """Codex P1 (round-5): un settlement ACCETTATO che da solo sfonda il limite,
+    ma che esce dal ramo recovery fail-closed (recovery-store ambiguo, PnL NON
+    applicato), viene comunque hard-stoppato grazie alla PROIEZIONE del PnL nel
+    check del ramo recovery (fail-closed: meglio un falso stop da duplicato che
+    un kill-switch mancato)."""
+    rc, _ = _make_controller(responses=[{"available": 85.0}] * 4)
+    rc.mode = RuntimeMode.ACTIVE
+    rc.config.max_daily_loss = 10.0
+    # nessuna perdita pregressa: e' QUESTO settlement (-50) che sfonda
+    rc._read_cycle_recovery_state = lambda _key: {"status": "RECOVERY_STATE_AMBIGUOUS"}
+
+    rc._on_close_position(dict(_BREACHING_SETTLEMENT, net_pnl=-50.0, gross_pnl=-50.0))
 
     assert rc._emergency_stopped is True
     assert rc.mode == RuntimeMode.LOCKDOWN
@@ -493,10 +519,45 @@ def test_start_refuses_live_when_daily_loss_breached_same_day():
     assert out["ok"] is False
     assert out["reason"] == "daily_loss_breached"
     assert rc.mode != RuntimeMode.ACTIVE
+    # CodeRabbit: lo stato deve essere sincronizzato a SIMULATION, non lasciare
+    # il controller live-capable dopo il rifiuto.
+    assert rc.execution_mode == "SIMULATION"
+    assert rc.live_enabled is False
+    assert rc.get_effective_execution_mode() == "SIMULATION"
     assert any(
         topic == "LIVE_EXECUTION_REFUSED" and payload.get("reason_code") == "DAILY_LOSS_BREACHED"
         for topic, payload in bus.events
     )
+
+
+@pytest.mark.integration
+def test_breach_refusal_survives_broker_outage_on_start_and_resume():
+    """CodeRabbit: i rami di rifiuto fail-closed (start/resume) NON devono
+    dipendere dall'I/O broker. Con get_account_funds() che solleva (outage),
+    start(LIVE) e resume() devono comunque RITORNARE il rifiuto daily_loss
+    invece di propagare l'eccezione (status snapshot degrada su stato locale)."""
+    outage = RuntimeError("BROKER_OUTAGE")
+
+    rc, _ = _make_controller(responses=[outage, outage, outage, outage])
+    cfg = RoserpinaConfig()
+    cfg.anti_duplication_enabled = False
+    cfg.max_daily_loss = 10.0
+    rc.settings_service.load_roserpina_config = lambda: cfg
+    rc.mode = RuntimeMode.STOPPED
+    rc.risk_desk.apply_closed_pnl(-50.0)
+
+    out_start = rc.start(execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)
+    assert out_start["ok"] is False
+    assert out_start["reason"] == "daily_loss_breached"
+
+    rc2, _ = _make_controller(responses=[outage, outage, outage, outage])
+    rc2.config.max_daily_loss = 10.0
+    rc2.mode = RuntimeMode.PAUSED
+    rc2.risk_desk.apply_closed_pnl(-50.0)
+
+    out_resume = rc2.resume()
+    assert out_resume["resumed"] is False
+    assert out_resume["reason"] == "daily_loss_breached"
 
 
 @pytest.mark.integration
