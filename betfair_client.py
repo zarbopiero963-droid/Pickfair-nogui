@@ -726,31 +726,61 @@ class BetfairClient:
     # =========================================================
     # ORDERS – CURRENT (ghost-order detection)
     # =========================================================
+    # listCurrentOrders is paginated: Betfair caps a single response at
+    # CURRENT_ORDERS_PAGE_SIZE records and sets ``moreAvailable=True`` when the
+    # result is truncated. We MUST walk every page — a truncated list would let
+    # the reconciliation engine treat absent remote orders as reconciled
+    # (fail-open ghost detection). The page cap is a runaway guard: exceeding it
+    # raises (fail-closed) rather than returning a partial set.
+    CURRENT_ORDERS_PAGE_SIZE = 1000
+    CURRENT_ORDERS_MAX_PAGES = 20
+
     def get_current_orders(
         self,
         market_ids: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        """Fetch current (unmatched/active) orders via listCurrentOrders.
+        """Fetch ALL current (unmatched/active) orders via listCurrentOrders.
 
-        Returns the raw ``currentOrders`` list from Betfair (a list of order
-        dicts), filtered to ``market_ids`` when provided. Used by the
-        reconciliation engine to detect ghost orders (B3 / UFA-005): any
-        API/session/network failure PROPAGATES to the caller (no silent empty
-        list) so a fetch failure is never mistaken for "no remote orders".
+        Walks every page (``moreAvailable``) and returns the concatenated
+        ``currentOrders`` list of order dicts, filtered to ``market_ids`` when
+        provided. Used by the reconciliation engine to detect ghost orders
+        (B3 / UFA-005), so the contract is fail-closed: any API/session/network
+        failure PROPAGATES (no silent empty list), a truncated response is
+        never silently returned (pagination), and an unterminated pagination
+        (cap exceeded) RAISES rather than returning a partial set — a fetch
+        problem must never be mistaken for "no remote orders".
         """
-        params: Dict[str, Any] = {}
+        base_params: Dict[str, Any] = {}
         wanted = [str(m).strip() for m in (market_ids or []) if str(m).strip()]
         if wanted:
-            params["marketIds"] = wanted
+            base_params["marketIds"] = wanted
 
-        result = self._post_jsonrpc(
-            self.BETTING_URL,
-            "SportsAPING/v1.0/listCurrentOrders",
-            params,
-        )
+        all_orders: List[Dict[str, Any]] = []
+        from_record = 0
+        for _page in range(self.CURRENT_ORDERS_MAX_PAGES):
+            params = dict(base_params)
+            params["fromRecord"] = from_record
+            params["recordCount"] = self.CURRENT_ORDERS_PAGE_SIZE
 
-        orders = result.get("currentOrders")
-        return list(orders) if orders else []
+            result = self._post_jsonrpc(
+                self.BETTING_URL,
+                "SportsAPING/v1.0/listCurrentOrders",
+                params,
+            )
+
+            page_orders = result.get("currentOrders") or []
+            all_orders.extend(page_orders)
+
+            # Stop when Betfair signals no more records. An empty page also
+            # terminates the walk (defends against a stuck moreAvailable flag
+            # that would otherwise loop without advancing).
+            if not result.get("moreAvailable") or not page_orders:
+                return all_orders
+
+            from_record += len(page_orders)
+
+        # Cap exceeded with moreAvailable still set: fail closed.
+        raise RuntimeError("CURRENT_ORDERS_TRUNCATED: pagination cap exceeded")
 
     # =========================================================
     # STATUS

@@ -244,8 +244,53 @@ def test_get_current_orders_returns_list_and_sends_market_filter(client):
     assert isinstance(out, list)
     assert out[0]["betId"] == "1"
     assert captured["url"] == client.BETTING_URL
+    params = captured["body"][0]["params"]
     assert captured["body"][0]["method"] == "SportsAPING/v1.0/listCurrentOrders"
-    assert captured["body"][0]["params"]["marketIds"] == ["1.100"]
+    assert params["marketIds"] == ["1.100"]
+    # Pagination params are always sent.
+    assert params["fromRecord"] == 0
+    assert params["recordCount"] == client.CURRENT_ORDERS_PAGE_SIZE
+
+
+@pytest.mark.unit
+def test_get_current_orders_walks_all_pages_when_more_available(client):
+    # moreAvailable=True must drive a follow-up page; both pages concatenate and
+    # fromRecord advances. A truncated single page would fail-open ghost detect.
+    import json as _json
+
+    pages = [
+        {"currentOrders": [{"betId": "1"}], "moreAvailable": True},
+        {"currentOrders": [{"betId": "2"}], "moreAvailable": False},
+    ]
+    seen_from = []
+
+    def _post(url, headers=None, data=None, timeout=None, **kw):
+        body = _json.loads(data)
+        seen_from.append(body[0]["params"]["fromRecord"])
+        page = pages[len(seen_from) - 1]
+        return _RPCResp([{"jsonrpc": "2.0", "id": 1, "result": page}])
+
+    client.session.post = _post
+    client.session_token = "TOK"
+
+    out = client.get_current_orders()
+
+    assert [o["betId"] for o in out] == ["1", "2"]
+    assert seen_from == [0, 1]
+
+
+@pytest.mark.unit
+def test_get_current_orders_raises_when_pagination_never_terminates(client):
+    # Fail-closed: a response that keeps signalling moreAvailable must raise once
+    # the page cap is hit, never return a partial (silently truncated) set.
+    client.session_token = "TOK"
+    client.session.post = lambda *a, **k: _RPCResp(
+        [{"jsonrpc": "2.0", "id": 1, "result": {
+            "currentOrders": [{"betId": "x"}], "moreAvailable": True}}]
+    )
+
+    with pytest.raises(RuntimeError, match="CURRENT_ORDERS_TRUNCATED"):
+        client.get_current_orders()
 
 
 @pytest.mark.unit

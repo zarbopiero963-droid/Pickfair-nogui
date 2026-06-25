@@ -154,6 +154,23 @@ def test_simulation_broker_get_current_orders_is_a_filtered_dict_list():
 
 
 @pytest.mark.unit
+def test_simulation_broker_get_current_orders_excludes_cancelled():
+    # Live listCurrentOrders never returns cancelled orders; the sim wrapper
+    # must match, or a cancelled order would be mis-detected as a remote ghost.
+    broker = SimulationBroker()
+    broker.place_bet(market_id="1.100", selection_id=7, side="BACK", price=2.0, size=5.0)
+    broker.place_bet(market_id="1.100", selection_id=8, side="BACK", price=3.0, size=5.0)
+
+    # list_current_orders still exposes every order (cancelled included)...
+    broker.cancel_orders(market_id="1.100")
+    assert broker.list_current_orders(["1.100"])["currentOrders"]  # not empty
+
+    # ...but get_current_orders drops the now-terminal (cancelled) orders.
+    current = broker.get_current_orders(["1.100"])
+    assert all(o.get("status") != "CANCELLED" for o in current)
+
+
+@pytest.mark.unit
 def test_live_generic_error_reraises_without_recovery():
     svc = _make_service()
     svc.simulation_mode = False

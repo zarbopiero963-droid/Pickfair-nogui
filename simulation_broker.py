@@ -582,16 +582,30 @@ class SimulationBroker:
             "simulated": True,
         }
 
+    # Statuses that are no longer live on the exchange. Betfair's
+    # listCurrentOrders never returns these, so the simulation wrapper must
+    # exclude them too — otherwise a cancelled simulated order would be reported
+    # as a still-present remote order and mis-detected as a ghost.
+    _TERMINAL_ORDER_STATUSES = frozenset({"CANCELLED", "LAPSED", "VOIDED", "EXPIRED"})
+
     def get_current_orders(
         self, market_ids: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
-        """Return current orders as a plain list of order dicts.
+        """Return *current* orders as a plain list of order dicts.
 
         Mirrors ``BetfairClient.get_current_orders`` so the reconciliation
-        engine sees the same list-of-dicts contract in simulation mode.
-        Reuses ``list_current_orders`` for the order-shape mapping.
+        engine sees the same list-of-dicts contract in simulation mode. Reuses
+        ``list_current_orders`` for the order-shape mapping but drops terminal
+        (cancelled/lapsed/voided/expired) orders, which the live
+        ``listCurrentOrders`` RPC would not return — keeping SIM/LIVE ghost
+        detection consistent.
         """
-        return list(self.list_current_orders(market_ids).get("currentOrders") or [])
+        orders = self.list_current_orders(market_ids).get("currentOrders") or []
+        return [
+            o
+            for o in orders
+            if str(o.get("status") or "").upper() not in self._TERMINAL_ORDER_STATUSES
+        ]
 
     def cancel_orders(
         self,
