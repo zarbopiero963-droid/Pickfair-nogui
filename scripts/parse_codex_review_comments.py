@@ -128,14 +128,18 @@ def _fetch_review_comments_graphql(repo: str, pr_number: int) -> List[Dict[str, 
         if after:
             cmd.extend(["-f", f"after={after}"])
         data = json.loads(_run(cmd))
+        # GraphQL-over-HTTP can return 200 with `errors` and partial/omitted
+        # data. Raising here (instead of silently returning the comments
+        # collected so far) lets the REST fallback run, so a transient
+        # resolver/permission/schema issue never makes the gate see zero
+        # findings.
+        if data.get("errors"):
+            raise RuntimeError(f"GraphQL returned errors: {data.get('errors')}")
         threads = (
-            data.get("data", {})
-            .get("repository", {})
-            .get("pullRequest", {})
-            .get("reviewThreads", {})
-        )
+            ((data.get("data") or {}).get("repository") or {}).get("pullRequest") or {}
+        ).get("reviewThreads")
         if not isinstance(threads, dict):
-            break
+            raise RuntimeError("GraphQL response missing reviewThreads (partial/empty)")
         for node in threads.get("nodes") or []:
             if isinstance(node, dict):
                 comments.extend(_flatten_thread(node))
@@ -149,17 +153,26 @@ def _fetch_review_comments_graphql(repo: str, pr_number: int) -> List[Dict[str, 
 
 def _fetch_review_comments_rest(repo: str, pr_number: int) -> List[Dict[str, Any]]:
     # --paginate follows every page so the fallback is not capped at 100
-    # comments (otherwise a finding past the first page would be dropped).
+    # comments. Without --slurp each page is emitted as a separate JSON array
+    # (so json.loads would fail on >1 page); --slurp wraps the pages into a
+    # single array of page-arrays which we then flatten.
     cmd = [
         "gh",
         "api",
         "--paginate",
+        "--slurp",
         f"/repos/{repo}/pulls/{pr_number}/comments?per_page=100",
     ]
     data = json.loads(_run(cmd))
     if not isinstance(data, list):
         raise RuntimeError("Unexpected GitHub API response for review comments")
-    return data
+    comments: List[Dict[str, Any]] = []
+    for item in data:
+        if isinstance(item, list):  # a page (array of comments)
+            comments.extend(c for c in item if isinstance(c, dict))
+        elif isinstance(item, dict):  # already a flat comment
+            comments.append(item)
+    return comments
 
 
 def _fetch_review_comments(repo: str, pr_number: int) -> List[Dict[str, Any]]:
