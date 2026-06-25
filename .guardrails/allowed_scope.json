@@ -108,6 +108,15 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 8
+    },
+    "test_suite_proof_session_gate": {
+      "allow_tests": true,
+      "files": [
+        "tests/unit/test_session_gate_fail_closed_proofs.py",
+        "ops/roadmap_go_live.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 8
     }
   }
 }

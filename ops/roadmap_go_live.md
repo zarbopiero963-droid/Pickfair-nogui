@@ -179,6 +179,13 @@ Ordine sicuro (PR piccole, solo test, zero modifiche alle autorità):
      payload. Solo test, nessuna modifica a `core/event_bus.py`.
 3. **BetfairService session gate**: re-auth bounded, fail-closed su sessione
    invalida (integra i 17 test di `test_session_expiry_recovery.py`)
+   - ✅ **FATTA (PR proof_session_gate)** — `tests/unit/test_session_gate_fail_closed_proofs.py`
+     (6 proof fail-closed netto-nuove, dedup sui 17 esistenti): load_password
+     che solleva (no crash/no fail-open) e che ritorna None; confine password
+     whitespace (passata, non "mancante"); ritorno sim<->live con live ancora
+     rifiutato; place_order su invalid che NON re-invoca il recovery; ramo
+     eccezione di place_order (SESSION_EXPIRED sollevato -> recovery + re-raise).
+     Solo test, nessuna modifica a `services/betfair_service.py`.
 4. **RuntimeController control-path** (solo dopo 1-3): start/stop/pause/
    emergency non bloccanti — alta autorità, va toccato per ultimo
 
