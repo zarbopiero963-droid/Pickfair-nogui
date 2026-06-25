@@ -25,7 +25,7 @@ from core.duplication_guard import DuplicationGuard
 def test_ttl_expiry_allows_new_order_only_after_deadline(monkeypatch):
     """La chiave si libera SOLO oltre il TTL: prima e' duplicato."""
     fake_now = {"t": 1_000_000.0}
-    monkeypatch.setattr("core.duplication_guard.time.time", lambda: fake_now["t"])
+    monkeypatch.setattr("core.duplication_guard.time.monotonic", lambda: fake_now["t"])
 
     guard = DuplicationGuard(ttl_seconds=120)
     key = "1.234:5678:BACK:telegram"
@@ -49,7 +49,7 @@ def test_ttl_expiry_allows_new_order_only_after_deadline(monkeypatch):
 @pytest.mark.concurrency
 def test_release_frees_key_before_ttl(monkeypatch):
     fake_now = {"t": 2_000_000.0}
-    monkeypatch.setattr("core.duplication_guard.time.time", lambda: fake_now["t"])
+    monkeypatch.setattr("core.duplication_guard.time.monotonic", lambda: fake_now["t"])
 
     guard = DuplicationGuard(ttl_seconds=3600)
     key = "1.234:5678:LAY:copy"
@@ -152,7 +152,7 @@ def test_startup_seed_expires_with_ttl_like_any_key(monkeypatch):
     """Il seed non e' eterno: oltre il TTL la chiave si libera (l'ordine
     vivo nel frattempo e' gestito dalla reconciliation, non dal guard)."""
     fake_now = {"t": 3_000_000.0}
-    monkeypatch.setattr("core.duplication_guard.time.time", lambda: fake_now["t"])
+    monkeypatch.setattr("core.duplication_guard.time.monotonic", lambda: fake_now["t"])
 
     guard = DuplicationGuard(ttl_seconds=60)
     assert guard.register_startup_order({"market_id": "1.1", "selection_id": 2}) is True

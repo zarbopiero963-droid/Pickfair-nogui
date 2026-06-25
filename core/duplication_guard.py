@@ -11,7 +11,11 @@ class DuplicationGuard:
     Duplication Guard PRO
 
     - check + register atomico
-    - TTL automatico
+    - TTL automatico su clock MONOTONICO (time.monotonic): immune ai salti
+      del wall-clock (correzioni NTP, sleep/resume del VPS, set manuale).
+      Un salto del wall-clock NON deve far scadere prematuramente una
+      chiave di dedup -> altrimenti un duplicato passerebbe = doppia bet.
+      Il timestamp leggibile in _registered_at resta wall-clock (audit).
     - evita memory leak
     - supporta strategie diverse
     """
@@ -71,7 +75,7 @@ class DuplicationGuard:
         if not key:
             return False
 
-        now = time.time()
+        now = time.monotonic()
 
         with self._lock:
             self._cleanup_locked(now)
@@ -116,7 +120,7 @@ class DuplicationGuard:
         if not key:
             return False
 
-        now = time.time()
+        now = time.monotonic()
         with self._lock:
             self._cleanup_locked(now)
             return key in self._active
@@ -133,7 +137,7 @@ class DuplicationGuard:
         if not key:
             return
 
-        now = time.time()
+        now = time.monotonic()
         with self._lock:
             self._active[key] = now
             self._registered_at[key] = datetime.utcnow().isoformat()
@@ -170,7 +174,7 @@ class DuplicationGuard:
     # SNAPSHOT
     # =========================================================
     def snapshot(self) -> Dict[str, Any]:
-        now = time.time()
+        now = time.monotonic()
 
         with self._lock:
             self._cleanup_locked(now)
