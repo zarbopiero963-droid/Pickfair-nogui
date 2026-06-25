@@ -47,7 +47,7 @@ def test_single_worker_preserves_publish_order_per_event_type():
     nell'ordine esatto di pubblicazione, senza riordino."""
     bus = EventBus(workers=1)
     seen: list[int] = []
-    bus.subscribe("ORDER_FLOW", lambda d: seen.append(d))
+    bus.subscribe("ORDER_FLOW", seen.append)
     try:
         for i in range(25):
             bus.publish("ORDER_FLOW", i)
@@ -176,7 +176,7 @@ def test_payload_object_identity_is_preserved_through_dispatch():
     received: list[object] = []
     payload = {"id": 1, "legs": []}
 
-    bus.subscribe("P", lambda d: received.append(d))
+    bus.subscribe("P", received.append)
     bus.publish("P", payload)
     bus.stop()
 
