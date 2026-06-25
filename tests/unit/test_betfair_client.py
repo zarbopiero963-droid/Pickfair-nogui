@@ -430,3 +430,26 @@ def test_cancel_order_raises_when_cancel_fails(client):
 
     with pytest.raises(RuntimeError, match="CANCEL_ORDER_FAILED"):
         client.cancel_order(bet_id="B1")
+
+
+@pytest.mark.unit
+def test_cancel_order_raises_when_cancel_unconfirmed(client):
+    # Top-level SUCCESS but a per-instruction TIMEOUT means the exchange did NOT
+    # confirm the cancel: the ghost may still be live → must raise (fail-closed),
+    # not be recorded as cancelled.
+    def _post(url, headers=None, data=None, timeout=None, **kw):
+        import json as _json
+        method = _json.loads(data)[0]["method"]
+        if method.endswith("listCurrentOrders"):
+            return _RPCResp([{"jsonrpc": "2.0", "id": 1, "result": {
+                "currentOrders": [{"betId": "B1", "marketId": "1.9"}],
+                "moreAvailable": False}}])
+        return _RPCResp([{"jsonrpc": "2.0", "id": 1, "result": {
+            "status": "SUCCESS",
+            "instructionReports": [{"status": "TIMEOUT", "errorCode": "ERROR_IN_ORDER"}]}}])
+
+    client.session.post = _post
+    client.session_token = "TOK"
+
+    with pytest.raises(RuntimeError, match="CANCEL_ORDER_UNCONFIRMED"):
+        client.cancel_order(bet_id="B1")

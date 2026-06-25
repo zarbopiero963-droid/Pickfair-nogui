@@ -839,6 +839,27 @@ class BetfairClient:
             raise RuntimeError(
                 f"CANCEL_ORDER_FAILED: {result.get('error') or 'UNKNOWN'}"
             )
+
+        # cancel_orders only flags a top-level FAILURE as ok=False; an ok=True
+        # envelope can still hide PROCESSED_WITH_ERRORS/TIMEOUT or a
+        # per-instruction FAILURE/TIMEOUT, i.e. the exchange did NOT confirm the
+        # cancellation. For a single-bet ghost cancel, require explicit
+        # confirmation (fail-closed) so a still-live ghost is never recorded as
+        # cancelled.
+        raw = result.get("result") if isinstance(result, dict) else None
+        reports = (raw or {}).get("instructionReports") or []
+        report_statuses = {
+            str(r.get("status") or "").upper()
+            for r in reports
+            if isinstance(r, dict)
+        }
+        top_status = str((result or {}).get("status") or "").upper()
+        if top_status != "SUCCESS" or report_statuses != {"SUCCESS"}:
+            raise RuntimeError(
+                "CANCEL_ORDER_UNCONFIRMED: "
+                f"status={top_status or 'UNKNOWN'} "
+                f"reports={sorted(report_statuses) or []}"
+            )
         return result
 
 
