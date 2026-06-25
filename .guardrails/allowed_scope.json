@@ -94,6 +94,7 @@
     "test_suite_top30_math": {
       "allow_tests": true,
       "files": [
+        "tests/unit/test_top30_math_gaps.py",
         "ops/roadmap_go_live.md",
         ".guardrails/allowed_scope.json"
       ],

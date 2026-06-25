@@ -24,6 +24,7 @@ richiedono le fixture del simulation_broker.
 """
 from __future__ import annotations
 
+import itertools
 import math
 
 import pytest
@@ -35,6 +36,26 @@ from dutching import (
     dynamic_cashout_single,
 )
 
+# Confini di rounding misurati empiricamente sull'implementazione reale
+# (probe Phase 0), usati come costanti per evitare numeri magici sparsi e
+# rendere esplicito cosa garantisce davvero il dutching:
+#   - il budget e' preservato in modo ESATTO (drift misurato 0.0) -> tolleranza
+#     a un solo centesimo, che e' anche la precisione dichiarata in roadmap;
+#   - il residuo di rounding per-quota e' al massimo un centesimo;
+#   - lo spread equal-profit cresce sub-linearmente con N (misurato
+#     0.03/0.05/0.09 per N=20/50/100): il bound lascia ~2x di margine senza
+#     diventare lasco (una regressione materiale, >0.15-0.5, fallisce).
+ONE_CENT = 0.01
+STAKE_RESIDUAL_TOL = 0.011          # 1 cent + epsilon float
+ORDER_INDEP_NET_SPREAD = 0.05       # spread misurato esatto a N=4
+
+
+def _net_spread_tol(n: int) -> float:
+    """Bound dello spread equal-profit per N esiti: appena sopra il
+    comportamento reale misurato, abbastanza stretto da catturare una
+    regressione (net-profit materialmente diseguali)."""
+    return max(0.05, n * 0.0015)
+
 # ---------------------------------------------------------------------------
 # 1. ORDER INDEPENDENCE
 # ---------------------------------------------------------------------------
@@ -45,9 +66,11 @@ def test_dutching_stakes_are_order_independent_up_to_one_cent_residual():
     """Comportamento REALE caratterizzato (probe Phase 0): lo stake per
     quota e' order-independent **a meno del residuo di rounding di 1
     centesimo**, la cui assegnazione puo' dipendere dalla posizione in
-    lista. Invarianti forti che DEVONO valere a prescindere dall'ordine:
-    (a) budget totale identico al centesimo; (b) stake per-quota uguale
-    entro 1 cent; (c) net-profit equalizzati (equal-profit) preservati.
+    lista. Invarianti forti che DEVONO valere a prescindere dall'ordine,
+    verificate su TUTTE le permutazioni delle quote (non solo due campioni):
+    (a) budget totale preservato al centesimo (misurato: drift esatto 0.0);
+    (b) stake per-quota uguale entro 1 cent; (c) net-profit equalizzati
+    (equal-profit) preservati.
 
     NOTA: non e' un bug che perde soldi (budget e equal-profit
     preservati, deterministico per-ordine — vedi stability test 2000x);
@@ -61,18 +84,19 @@ def test_dutching_stakes_are_order_independent_up_to_one_cent_residual():
     base_map = dict(zip([float(o) for o in odds], [float(s) for s in base["stakes"]]))
     base_total = sum(float(s) for s in base["stakes"])
 
-    for perm in ([6.0, 1.8, 2.2, 3.5], list(reversed(odds))):
-        res = calculate_dutching_stakes(odds=perm, total_stake=total, commission=4.5)
+    # Copertura esaustiva: ogni riordino degli esiti, non due campioni.
+    for perm in itertools.permutations(odds):
+        res = calculate_dutching_stakes(odds=list(perm), total_stake=total, commission=4.5)
         assert not res.get("error")
         perm_map = dict(zip([float(o) for o in perm], [float(s) for s in res["stakes"]]))
-        # (a) budget totale identico al centesimo, qualunque sia l'ordine
-        assert sum(float(s) for s in res["stakes"]) == pytest.approx(base_total, abs=0.011)
+        # (a) budget totale preservato al centesimo, qualunque sia l'ordine
+        assert sum(float(s) for s in res["stakes"]) == pytest.approx(base_total, abs=ONE_CENT)
         # (b) stake per-quota entro un centesimo (residuo di rounding)
         for odd, stake in base_map.items():
-            assert perm_map[odd] == pytest.approx(stake, abs=0.011), f"quota {odd}"
+            assert perm_map[odd] == pytest.approx(stake, abs=STAKE_RESIDUAL_TOL), f"quota {odd}"
         # (c) equal-profit preservato: spread net-profit limitato
         net = [float(p) for p in res["net_profits"]]
-        assert max(net) - min(net) <= 0.05
+        assert max(net) - min(net) <= ORDER_INDEP_NET_SPREAD
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +107,10 @@ def test_dutching_stakes_are_order_independent_up_to_one_cent_residual():
 @pytest.mark.parametrize("n", [20, 50, 100])
 def test_dutching_stress_large_n_is_finite_bounded_and_equal_profit(n):
     """Oltre N=8 (max dell'audit): stake finiti, non negativi, budget
-    preservato e net-profit equalizzati entro la tolleranza di rounding."""
+    preservato e net-profit equalizzati entro la tolleranza di rounding.
+    I bound sono tarati sul comportamento reale misurato (budget esatto;
+    spread 0.03/0.05/0.09 per N=20/50/100), non laschi: una regressione
+    materiale viene catturata."""
     odds = [round(1.5 + i * 0.1, 2) for i in range(n)]  # quote distinte
     total = 1000.0
     res = calculate_dutching_stakes(odds=odds, total_stake=total, commission=4.5)
@@ -93,10 +120,11 @@ def test_dutching_stress_large_n_is_finite_bounded_and_equal_profit(n):
     assert len(stakes) == n
     assert all(math.isfinite(s) and s >= 0.0 for s in stakes)
     assert all(math.isfinite(p) for p in net)
-    # budget preservato entro il rounding ai centesimi accumulato su N
-    assert sum(stakes) == pytest.approx(total, abs=max(0.5, n * 0.01))
-    # equal-profit: spread dei net-profit limitato (post-rounding)
-    assert max(net) - min(net) <= max(0.5, n * 0.02)
+    # budget preservato al centesimo (misurato: drift esatto 0.0 su tutti gli N)
+    assert sum(stakes) == pytest.approx(total, abs=ONE_CENT)
+    # equal-profit: spread dei net-profit limitato (post-rounding), bound
+    # sub-lineare appena sopra il misurato
+    assert max(net) - min(net) <= _net_spread_tol(n)
 
 
 # ---------------------------------------------------------------------------
@@ -121,8 +149,8 @@ def test_cashout_break_even_has_single_sign_crossing(side):
     longer = dynamic_cashout_single(
         matched_stake=ms, matched_price=mp, current_price=6.0, side=side, commission=4.5
     )["green_up"]
-    # segni opposti => un solo crossing, e lo zero (break-even) sta in mezzo
-    assert shorter * longer < 0
+    # segni opposti ai due lati => un solo attraversamento, con lo zero
+    # (break-even) in mezzo: un'unica asserzione lo cattura senza ridondanza
     assert min(shorter, longer) < 0.0 < max(shorter, longer)
 
 
