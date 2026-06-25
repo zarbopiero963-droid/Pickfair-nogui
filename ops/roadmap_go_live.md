@@ -244,6 +244,22 @@ questa PR copre: i numeri 1-8 (cashout exact math, casa naturale
 mancanti dell'audit matematico (sezione sopra). Vietato inventare un
 cashout engine finto: usare le superfici reali.
 
+PARTE 1 FATTA (`tests/unit/test_top30_math_gaps.py`, test-only su
+`dutching.py`). Phase 0 dedup: math STRONG (85-90% già coperto: equal-profit
+2/3/N, budget, no stake negativi, invalid odds fail-closed, cache, rounding
+bounded, PnL finite, weighted-average multi-fill, liability LAY floor,
+commissione per-market). Coperti i 4 gap a **funzione pura**: order-independence,
+stress N grande (20/50/100, prima max N=8), break-even senza flip di segno
+(green-up cashout, BACK+LAY), caratterizzazione tick-ladder (stake ai centesimi,
+preview-only, no snap a tick Betfair). **FINDING caratterizzato (non bug che
+perde soldi)**: il dutching è order-independent solo a meno di un residuo di
+rounding di 1 centesimo, la cui assegnazione dipende dalla posizione in lista;
+budget ed equal-profit sono comunque preservati e deterministici per-ordine. Il
+test blocca peggioramenti (residuo > 1 cent); renderlo strettamente
+order-independent toccherebbe `dutching.py` (critico) → rimandato. RESIDUI (gap
+di integrazione, follow-up con fixture simulation_broker): refund commissione
+esatto +X/−X, idempotenza settlement retry, parity settlement LAY dedicata.
+
 ## Backlog (non bloccante)
 
 ### Selezione "quant" a basso costo (valutazione owner, giugno 2026)

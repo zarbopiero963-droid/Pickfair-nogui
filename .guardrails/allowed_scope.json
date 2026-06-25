@@ -90,6 +90,14 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 8
+    },
+    "test_suite_top30_math": {
+      "allow_tests": true,
+      "files": [
+        "ops/roadmap_go_live.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 8
     }
   }
 }
