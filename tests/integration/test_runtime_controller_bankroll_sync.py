@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from core.event_bus import EventBus
 from core.runtime_controller import RuntimeController
 from core.system_state import RoserpinaConfig, RuntimeMode
 
@@ -81,8 +82,8 @@ class _Telegram:
         return {"connected": True}
 
 
-def _make_controller(*, responses):
-    bus = _Bus()
+def _make_controller(*, responses, bus=None):
+    bus = bus if bus is not None else _Bus()
     rc = RuntimeController(
         bus=bus,
         db=_DB(),
@@ -229,9 +230,18 @@ def test_runtime_controller_status_exposes_last_bankroll_sync_result():
 
 
 @pytest.mark.integration
-def test_runtime_controller_daily_loss_breach_is_alerted_and_does_not_force_stop():
-    rc, bus = _make_controller(responses=[{"available": 85.0}, {"available": 85.0}])
-    rc.mode = RuntimeMode.ACTIVE
+def test_runtime_controller_daily_loss_breach_triggers_emergency_stop():
+    """Fase 1.4 (comportamento cambiato): un breach reale di perdita giornaliera
+    propagato dal vero EventBus async scatena l'emergency stop (fail-closed) —
+    mode=LOCKDOWN e _emergency_stopped — non piu' solo alert. Il drain del bus
+    fa da barriera deterministica (l'handler async esegue lo stop)."""
+    bus = EventBus(workers=1)
+    triggered: list = []
+    bus.subscribe("DAILY_LOSS_BREACH_TRIGGERED", triggered.append)
+
+    rc, _ = _make_controller(
+        responses=[{"available": 85.0}, {"available": 85.0}], bus=bus
+    )
     rc.config.max_daily_loss = 10.0
     rc.risk_desk.sync_bankroll(100.0)
 
@@ -250,16 +260,38 @@ def test_runtime_controller_daily_loss_breach_is_alerted_and_does_not_force_stop
             "settlement_basis": "market_net_realized",
         }
     )
+    bus.stop()  # drain: l'handler async esegue l'emergency stop
 
+    # il monitor ha pubblicato il breach UNA volta (async: niente doppio trigger)
+    assert len(triggered) == 1
+    # l'emergency stop e' scattato: fail-closed
+    assert rc._emergency_stopped is True
+    assert rc.mode == RuntimeMode.LOCKDOWN
+    # lo stato del monitor resta breached e coerente
     status = rc.get_status()
-    assert rc.mode == RuntimeMode.ACTIVE
-    assert not any(topic == "RUNTIME_LOCKDOWN" for topic, _ in bus.events)
-    breach_events = [payload for topic, payload in bus.events if topic == "DAILY_LOSS_BREACH_TRIGGERED"]
-    assert len(breach_events) == 1
     assert status["daily_loss_monitor"]["breached"] is True
-    assert status["daily_loss_monitor"]["last_status"] == "DAILY_LOSS_BREACHED"
     assert status["daily_loss_monitor"]["threshold"] == 10.0
     assert status["daily_loss_monitor"]["daily_loss_amount"] >= 15.0
+
+
+@pytest.mark.integration
+def test_on_daily_loss_breach_handler_emergency_stops_and_is_idempotent():
+    """Handler diretto: un DAILY_LOSS_BREACH_TRIGGERED esegue l'emergency stop
+    completo (LOCKDOWN + evento EMERGENCY_STOP_TRIGGERED) ed e' idempotente: un
+    secondo evento (gia' in emergenza) NON ri-esegue lo stop."""
+    rc, bus = _make_controller(responses=[{"available": 85.0}])
+    rc.mode = RuntimeMode.ACTIVE
+
+    rc._on_daily_loss_breach_triggered({"daily_loss_amount": 15.0})
+
+    assert rc._emergency_stopped is True
+    assert rc.mode == RuntimeMode.LOCKDOWN
+    estop_count = sum(1 for topic, _ in bus.events if topic == "EMERGENCY_STOP_TRIGGERED")
+    assert estop_count == 1
+
+    # idempotente: il guard _emergency_stopped impedisce un secondo stop
+    rc._on_daily_loss_breach_triggered({"daily_loss_amount": 99.0})
+    assert sum(1 for topic, _ in bus.events if topic == "EMERGENCY_STOP_TRIGGERED") == estop_count
 
 
 @pytest.mark.integration

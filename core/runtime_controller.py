@@ -432,6 +432,7 @@ class RuntimeController:
         self.bus.subscribe("QUICK_BET_SUCCESS", self._on_quick_bet_success)
         self.bus.subscribe("QUICK_BET_AMBIGUOUS", self._on_quick_bet_ambiguous)
         self.bus.subscribe("RUNTIME_CLOSE_POSITION", self._on_close_position)
+        self.bus.subscribe("DAILY_LOSS_BREACH_TRIGGERED", self._on_daily_loss_breach_triggered)
 
     # =========================================================
     # CONFIG / MODE
@@ -1167,6 +1168,24 @@ class RuntimeController:
         persist_error = self._persist_emergency_state()
         self.bus.publish("EMERGENCY_STOP_RESET", {"reset_at": datetime.utcnow().isoformat()})
         return {"emergency_reset": True, "persist_error": persist_error}
+
+    def _on_daily_loss_breach_triggered(self, payload: Optional[dict] = None) -> None:
+        """Daily-loss hard stop: a DAILY_LOSS_BREACH_TRIGGERED event triggers a
+        full emergency stop (cancel-all + persist + lockdown, fail-closed).
+
+        max_daily_loss e' obbligatorio in LIVE (readiness gate), quindi il
+        breach e' incondizionatamente un evento di stop. L'evento TRIGGERED e'
+        pubblicato solo al primo breach (i successivi sono _ACTIVE, non
+        sottoscritti); il guard _emergency_stopped rende l'handler idempotente
+        e impedisce ri-stop su eventuali duplicati."""
+        if self._emergency_stopped:
+            return
+        amount = (payload or {}).get("daily_loss_amount", 0.0)
+        logger.critical(
+            "DAILY_LOSS_BREACH_TRIGGERED -> emergency_stop (daily_loss_amount=%s)",
+            amount,
+        )
+        self.emergency_stop(reason=f"DAILY_LOSS_BREACH:{amount}")
 
     # =========================================================
     # LIFECYCLE

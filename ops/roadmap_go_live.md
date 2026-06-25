@@ -62,7 +62,7 @@
 | 1.1 ✅ | **Listener Telethon reale**: runtime in thread dedicato con event loop proprio, handler NewMessage sui `monitored_chats`, `last_successful_message_ts` su ogni messaggio, fail-closed su telethon/sessione mancante o non autorizzata, disconnessione inattesa → FAILED (autoheal decide); client factory iniettabile per i test; fix keyword: le righe statistiche (📈🥅🎯📊/Possesso) sono escluse dal match parola chiave | Lo snapshot runtime ora riporta gli handler Telethon (0/1) come richiesto dall'invariant guard; i callback restano in `status()` |
 | 1.2 | **Keepalive sessione betting**: loop ~10 min (`keepAlive`/`get_account_funds`), re-auth fail-closed già esistente | B2 |
 | 1.3 | **`get_current_orders` + RPC `listCurrentOrders`** nel client live + interfaccia `BetfairService.list_current_orders` senza fallback silenzioso in LIVE | Abilita rilevamento ghost orders (B3, UFA-005) |
-| 1.4 | **Daily-loss breach → kill switch**: collegare `DAILY_LOSS_BREACH_TRIGGERED` all'emergency stop | Piccolo: monitoring ed eventi esistono già (B4) |
+| 1.4 ✅ | **Daily-loss breach → kill switch**: `RuntimeController._subscribe_bus` iscrive `DAILY_LOSS_BREACH_TRIGGERED` → nuovo handler `_on_daily_loss_breach_triggered` che chiama `emergency_stop` (cancel-all + persist + lockdown, fail-closed). Idempotente via guard `_emergency_stopped`; incondizionato (max_daily_loss è già obbligatorio in LIVE). Test E2E col vero EventBus async + test handler diretto; aggiornato il test che asseriva "alert-only" | B4 risolto |
 | 1.5 | **`replace_orders`** nel client live | Risolve la chiamata orfana di `order_manager.py:842` (B8) |
 
 ## FASE 2 — Copy/mirror trading completo (2–3 giorni)

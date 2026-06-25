@@ -135,6 +135,16 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 8
+    },
+    "runtime_daily_loss_killswitch": {
+      "allow_tests": true,
+      "files": [
+        "core/runtime_controller.py",
+        "tests/integration/test_runtime_controller_bankroll_sync.py",
+        "ops/roadmap_go_live.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 8
     }
   }
 }
