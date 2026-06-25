@@ -179,6 +179,16 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 6
+    },
+    "windows_exe_packaging": {
+      "allow_tests": false,
+      "files": [
+        ".github/workflows/build-windows-exe.yml",
+        "pickfair.spec",
+        "ops/windows_exe.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
     }
   }
 }
