@@ -35,6 +35,15 @@ def test_is_outdated_rest_position_fallback():
 
 
 @pytest.mark.unit
+def test_is_outdated_fail_closed_keeps_live_findings():
+    # Null position alone must NOT mark a live finding outdated (fail-closed):
+    # file-level comments and comments with a current line/side are still live.
+    assert parser._is_outdated({"position": None, "subject_type": "file"}) is False
+    assert parser._is_outdated({"position": None, "line": 10}) is False
+    assert parser._is_outdated({"position": None, "side": "RIGHT"}) is False
+
+
+@pytest.mark.unit
 def test_is_outdated_defaults_false_without_signal():
     assert parser._is_outdated({}) is False
 

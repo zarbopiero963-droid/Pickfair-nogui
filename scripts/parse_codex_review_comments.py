@@ -68,12 +68,17 @@ def _get_repo_and_pr(event: Dict[str, Any]) -> tuple[str, int]:
 # Fetch — GraphQL (authoritative isOutdated/isResolved) with REST fallback
 # ---------------------------------------------------------------------------
 
+# A review THREAD corresponds to a single finding location: its opening
+# (first) comment IS the Codex finding; later comments are replies/discussion,
+# never new findings. We therefore read only the first comment per thread —
+# this also makes inner-comment pagination unnecessary (no finding can be
+# truncated past a comment page) while paginating the threads themselves.
 _REVIEW_THREADS_QUERY = (
     "query($owner:String!,$name:String!,$number:Int!,$after:String){"
     " repository(owner:$owner,name:$name){ pullRequest(number:$number){"
     " reviewThreads(first:100,after:$after){"
     " nodes{ isResolved isOutdated"
-    " comments(first:100){ nodes{ databaseId author{login} path line originalLine body url } } }"
+    " comments(first:1){ nodes{ databaseId author{login} path line originalLine body url } } }"
     " pageInfo{ hasNextPage endCursor } } } } }"
 )
 
@@ -81,9 +86,10 @@ _REVIEW_THREADS_QUERY = (
 def _flatten_thread(thread: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Turn a GraphQL review thread into REST-shaped comment dicts.
 
-    Every comment inherits the thread-level outdated/resolved status: a comment
+    Each comment inherits the thread-level outdated/resolved status: a comment
     whose thread is outdated (code changed) or resolved is not a live finding,
-    so the gate must not count it.
+    so the gate must not count it. Only the opening comment (the finding) is
+    read per thread.
     """
     not_live = bool(thread.get("isOutdated")) or bool(thread.get("isResolved"))
     comments = ((thread.get("comments") or {}).get("nodes")) or []
@@ -142,9 +148,12 @@ def _fetch_review_comments_graphql(repo: str, pr_number: int) -> List[Dict[str, 
 
 
 def _fetch_review_comments_rest(repo: str, pr_number: int) -> List[Dict[str, Any]]:
+    # --paginate follows every page so the fallback is not capped at 100
+    # comments (otherwise a finding past the first page would be dropped).
     cmd = [
         "gh",
         "api",
+        "--paginate",
         f"/repos/{repo}/pulls/{pr_number}/comments?per_page=100",
     ]
     data = json.loads(_run(cmd))
@@ -157,7 +166,7 @@ def _fetch_review_comments(repo: str, pr_number: int) -> List[Dict[str, Any]]:
     """Authoritative GraphQL fetch, degrading to REST if GraphQL is unavailable."""
     try:
         return _fetch_review_comments_graphql(repo, pr_number)
-    except Exception as exc:  # pragma: no cover - network/credential dependent
+    except (RuntimeError, json.JSONDecodeError, OSError) as exc:  # pragma: no cover - network/credential dependent
         print(
             f"GraphQL review-thread fetch failed ({exc}); falling back to REST",
             file=sys.stderr,
@@ -174,17 +183,28 @@ def _is_codex_comment(comment: Dict[str, Any]) -> bool:
 def _is_outdated(comment: Dict[str, Any]) -> bool:
     """Whether a comment is outdated/resolved (i.e. NOT a live finding).
 
-    Honours an explicit boolean from the GraphQL path; otherwise falls back to
-    the REST signal where `position` is null for comments that no longer map to
-    the current diff.
+    Honours an explicit boolean from the GraphQL path. The REST fallback infers
+    it from a null `position` (GitHub nulls it when a comment no longer maps to
+    the current diff), but FAIL-CLOSED: a null position alone is not enough —
+    file-level comments (`subject_type == "file"`) and comments still carrying a
+    current `line`/`side` anchor are live despite a null position. Treating a
+    live finding as outdated would let the gate drop a real unresolved bug, so
+    when in doubt we keep it live.
     """
     for key in ("outdated", "isOutdated", "is_outdated"):
         value = comment.get(key)
         if isinstance(value, bool):
             return value
-    if "position" in comment:
-        return comment.get("position") is None
-    return False
+    if "position" not in comment:
+        return False
+    if comment.get("position") is not None:
+        return False
+    # Null position — only outdated if it is a genuinely stale line comment.
+    if comment.get("subject_type") == "file":
+        return False
+    if comment.get("line") is not None or comment.get("side"):
+        return False
+    return True
 
 
 def _normalize_whitespace(s: str) -> str:
