@@ -107,6 +107,14 @@ class RuntimeController:
         # concorrente (dispatch multi-worker) non piazza un ordine nella finestra
         # tra apply-PnL e emergency_stop. Bridge: superato da _emergency_stopped.
         self._daily_loss_pending_stop: bool = False
+        # Serializza il read-modify-write su _daily_loss_monitor_state tra
+        # _monitor_daily_loss_breach e _record_pending_daily_loss_breach (chiamati
+        # da worker EventBus + status-poll concorrenti): senza, un update
+        # concorrente potrebbe sovrascrivere il breach persistito e riaprire il
+        # restart LIVE in giornata. Lock SEPARATO da _daily_loss_stop_lock per
+        # evitare inversioni d'ordine (l'enforce tiene lo stop-lock e poi, via
+        # emergency_stop->get_status, ricalcola il monitor).
+        self._daily_loss_state_lock = threading.Lock()
         self._io_observations: dict[str, Any] = {
             "last_operation": "",
             "last_status": "UNKNOWN",
@@ -390,24 +398,56 @@ class RuntimeController:
         fail-closed con runtime STOPPED). Senza questo un settlement live che
         sfonda il limite ma esce dal ramo recovery verrebbe dimenticato e un
         `start(LIVE)` successivo riprenderebbe a fare trading dopo la perdita
-        giornaliera gia' sfondata."""
+        giornaliera gia' sfondata.
+
+        Poiche' in questo ramo il monitor e' SALTATO, qui e' l'unico punto che
+        registra il breach: emette il `DAILY_LOSS_BREACH_TRIGGERED` (una sola
+        volta, fuori dal lock) e incrementa `alert_count`, altrimenti i
+        subscriber di monitoraggio non vedrebbero mai il primo trigger del
+        daily-loss per i settlement recovery ambigui (un successivo monitor
+        userebbe il ramo persistente, che non riemette il trigger)."""
         now_iso = datetime.utcnow().isoformat()
         today_utc = datetime.utcnow().date().isoformat()
-        prev = dict(self._daily_loss_monitor_state or {})
         amount = float(projected.get("daily_loss_amount", 0.0) or 0.0)
-        prev_amount = float(prev.get("daily_loss_amount", 0.0) or 0.0)
-        state = dict(prev)
-        state.update({
-            "day_utc": today_utc,
-            "breached": True,
-            "daily_loss_amount": max(amount, prev_amount),
-            "breached_at": str(prev.get("breached_at") or now_iso),
-            "last_status": "DAILY_LOSS_BREACHED",
-            "reason": "daily_loss_breach_projected_recovery_failclosed",
-            "last_alert_event": str(prev.get("last_alert_event") or "DAILY_LOSS_BREACH_TRIGGERED"),
-            "last_checked_at": now_iso,
-        })
-        self._daily_loss_monitor_state = state
+        alert_payload: Optional[dict] = None
+        with self._daily_loss_state_lock:
+            prev = dict(self._daily_loss_monitor_state or {})
+            already_breached_today = bool(prev.get("breached")) and str(prev.get("day_utc") or "") == today_utc
+            prev_amount = float(prev.get("daily_loss_amount", 0.0) or 0.0)
+            effective_amount = max(amount, prev_amount)
+            alert_count = int(prev.get("alert_count", 0) or 0)
+            if not already_breached_today:
+                alert_count += 1
+            state = dict(prev)
+            state.update({
+                "day_utc": today_utc,
+                "breached": True,
+                "daily_loss_amount": effective_amount,
+                "breached_at": str(prev.get("breached_at") or now_iso),
+                "last_status": "DAILY_LOSS_BREACHED",
+                "reason": "daily_loss_breach_projected_recovery_failclosed",
+                "last_alert_event": "DAILY_LOSS_BREACH_TRIGGERED",
+                "alert_count": alert_count,
+                "last_checked_at": now_iso,
+            })
+            self._daily_loss_monitor_state = state
+            if not already_breached_today:
+                alert_payload = {
+                    "source": "RUNTIME_RECOVERY_FAILCLOSED",
+                    "day_utc": today_utc,
+                    "breached": True,
+                    "threshold": float(self._safe_daily_loss_threshold() or 0.0),
+                    "daily_loss_amount": float(effective_amount),
+                    "realized_pnl": float(self.risk_desk.realized_pnl),
+                    "breached_at": str(state["breached_at"]),
+                    "alert_count": int(alert_count),
+                    "runtime_mode": str(self.mode.value),
+                    "execution_mode": str(self.execution_mode),
+                    "payload_correlation_id": "",
+                }
+        if alert_payload is not None:
+            logger.critical("DAILY LOSS BREACH TRIGGERED (recovery fail-closed): %s", alert_payload)
+            self.bus.publish("DAILY_LOSS_BREACH_TRIGGERED", dict(alert_payload))
 
     def _safe_status_snapshot(self) -> dict:
         """Snapshot di stato che NON dipende dall'I/O broker: prova get_status()
@@ -430,83 +470,98 @@ class RuntimeController:
         now = datetime.utcnow()
         today_utc = now.date().isoformat()
         threshold = self._safe_daily_loss_threshold()
-        previous = dict(self._daily_loss_monitor_state or {})
-        previous_day = str(previous.get("day_utc") or "")
-        previous_breached = bool(previous.get("breached", False))
-        day_rollover = bool(previous_day and previous_day != today_utc)
+        # Read-modify-write atomico sotto _daily_loss_state_lock: il publish/log
+        # avviene FUORI dal lock (la bus.publish potrebbe bloccare su una coda
+        # piena mentre un worker che la drena attende il lock -> deadlock).
+        pending_publish: Optional[tuple[str, dict]] = None
+        pending_log: Optional[tuple[str, dict]] = None
+        with self._daily_loss_state_lock:
+            previous = dict(self._daily_loss_monitor_state or {})
+            previous_day = str(previous.get("day_utc") or "")
+            previous_breached = bool(previous.get("breached", False))
+            day_rollover = bool(previous_day and previous_day != today_utc)
 
-        realized_pnl = float(self.risk_desk.realized_pnl)
-        previous_realized_raw = previous.get("realized_pnl", realized_pnl)
-        previous_realized = float(realized_pnl if previous_realized_raw is None else previous_realized_raw)
-        if day_rollover:
-            realized_pnl_day_baseline = previous_realized
-        else:
-            baseline_raw = previous.get("realized_pnl_day_baseline", realized_pnl)
-            realized_pnl_day_baseline = float(realized_pnl if baseline_raw is None else baseline_raw)
-        intraday_realized_pnl = float(realized_pnl - realized_pnl_day_baseline)
-        daily_loss_amount = max(0.0, -intraday_realized_pnl)
-        breached = bool(threshold is not None and daily_loss_amount >= threshold)
-        status = "DAILY_LOSS_MONITOR_OK"
-        reason = "daily_loss_within_threshold"
-        if threshold is None:
-            status = "DAILY_LOSS_NOT_CONFIGURED"
-            reason = "max_daily_loss_not_configured_or_invalid"
-        elif breached:
-            status = "DAILY_LOSS_BREACHED"
-            reason = "daily_loss_threshold_exceeded"
-
-        state = {
-            "day_utc": today_utc,
-            "threshold": threshold,
-            "realized_pnl_day_baseline": realized_pnl_day_baseline,
-            "realized_pnl": realized_pnl,
-            "intraday_realized_pnl": intraday_realized_pnl,
-            "daily_loss_amount": daily_loss_amount,
-            "breached": breached,
-            "breached_at": "",
-            "last_status": status,
-            "reason": reason,
-            "alert_count": int(previous.get("alert_count", 0) or 0),
-            "last_alert_event": str(previous.get("last_alert_event") or ""),
-            "last_checked_at": now.isoformat(),
-        }
-
-        if breached:
-            breach_at = str(previous.get("breached_at") or "") if (previous_breached and not day_rollover) else now.isoformat()
-            state["breached_at"] = breach_at
-            alert_payload = {
-                "source": str(source),
-                "day_utc": today_utc,
-                "breached": True,
-                "threshold": float(threshold or 0.0),
-                "daily_loss_amount": float(daily_loss_amount),
-                "realized_pnl": float(realized_pnl),
-                "breached_at": breach_at,
-                "alert_count": int(state["alert_count"]) + 1,
-                "runtime_mode": str(self.mode.value),
-                "execution_mode": str(self.execution_mode),
-                "payload_correlation_id": str((payload or {}).get("correlation_id") or (payload or {}).get("event_key") or ""),
-            }
-            if not previous_breached or day_rollover:
-                state["last_alert_event"] = "DAILY_LOSS_BREACH_TRIGGERED"
-                self.bus.publish("DAILY_LOSS_BREACH_TRIGGERED", dict(alert_payload))
-                logger.critical("DAILY LOSS BREACH TRIGGERED: %s", alert_payload)
+            realized_pnl = float(self.risk_desk.realized_pnl)
+            previous_realized_raw = previous.get("realized_pnl", realized_pnl)
+            previous_realized = float(realized_pnl if previous_realized_raw is None else previous_realized_raw)
+            if day_rollover:
+                realized_pnl_day_baseline = previous_realized
             else:
-                state["last_alert_event"] = "DAILY_LOSS_BREACH_ACTIVE"
-                self.bus.publish("DAILY_LOSS_BREACH_ACTIVE", dict(alert_payload))
-                logger.error("DAILY LOSS BREACH ACTIVE: %s", alert_payload)
-            state["alert_count"] = int(alert_payload["alert_count"])
-        elif previous_breached and not day_rollover:
-            state["breached"] = True
-            state["breached_at"] = str(previous.get("breached_at") or now.isoformat())
-            state["last_status"] = "DAILY_LOSS_BREACHED"
-            state["reason"] = "daily_loss_breach_persistent_until_day_rollover"
-            state["daily_loss_amount"] = max(daily_loss_amount, float(previous.get("daily_loss_amount", 0.0) or 0.0))
-            state["alert_count"] = int(previous.get("alert_count", 0) or 0)
-            state["last_alert_event"] = str(previous.get("last_alert_event") or "DAILY_LOSS_BREACH_TRIGGERED")
+                baseline_raw = previous.get("realized_pnl_day_baseline", realized_pnl)
+                realized_pnl_day_baseline = float(realized_pnl if baseline_raw is None else baseline_raw)
+            intraday_realized_pnl = float(realized_pnl - realized_pnl_day_baseline)
+            daily_loss_amount = max(0.0, -intraday_realized_pnl)
+            breached = bool(threshold is not None and daily_loss_amount >= threshold)
+            status = "DAILY_LOSS_MONITOR_OK"
+            reason = "daily_loss_within_threshold"
+            if threshold is None:
+                status = "DAILY_LOSS_NOT_CONFIGURED"
+                reason = "max_daily_loss_not_configured_or_invalid"
+            elif breached:
+                status = "DAILY_LOSS_BREACHED"
+                reason = "daily_loss_threshold_exceeded"
 
-        self._daily_loss_monitor_state = state
-        return dict(state)
+            state = {
+                "day_utc": today_utc,
+                "threshold": threshold,
+                "realized_pnl_day_baseline": realized_pnl_day_baseline,
+                "realized_pnl": realized_pnl,
+                "intraday_realized_pnl": intraday_realized_pnl,
+                "daily_loss_amount": daily_loss_amount,
+                "breached": breached,
+                "breached_at": "",
+                "last_status": status,
+                "reason": reason,
+                "alert_count": int(previous.get("alert_count", 0) or 0),
+                "last_alert_event": str(previous.get("last_alert_event") or ""),
+                "last_checked_at": now.isoformat(),
+            }
+
+            if breached:
+                breach_at = str(previous.get("breached_at") or "") if (previous_breached and not day_rollover) else now.isoformat()
+                state["breached_at"] = breach_at
+                alert_payload = {
+                    "source": str(source),
+                    "day_utc": today_utc,
+                    "breached": True,
+                    "threshold": float(threshold or 0.0),
+                    "daily_loss_amount": float(daily_loss_amount),
+                    "realized_pnl": float(realized_pnl),
+                    "breached_at": breach_at,
+                    "alert_count": int(state["alert_count"]) + 1,
+                    "runtime_mode": str(self.mode.value),
+                    "execution_mode": str(self.execution_mode),
+                    "payload_correlation_id": str((payload or {}).get("correlation_id") or (payload or {}).get("event_key") or ""),
+                }
+                if not previous_breached or day_rollover:
+                    state["last_alert_event"] = "DAILY_LOSS_BREACH_TRIGGERED"
+                    pending_publish = ("DAILY_LOSS_BREACH_TRIGGERED", dict(alert_payload))
+                    pending_log = ("critical", dict(alert_payload))
+                else:
+                    state["last_alert_event"] = "DAILY_LOSS_BREACH_ACTIVE"
+                    pending_publish = ("DAILY_LOSS_BREACH_ACTIVE", dict(alert_payload))
+                    pending_log = ("error", dict(alert_payload))
+                state["alert_count"] = int(alert_payload["alert_count"])
+            elif previous_breached and not day_rollover:
+                state["breached"] = True
+                state["breached_at"] = str(previous.get("breached_at") or now.isoformat())
+                state["last_status"] = "DAILY_LOSS_BREACHED"
+                state["reason"] = "daily_loss_breach_persistent_until_day_rollover"
+                state["daily_loss_amount"] = max(daily_loss_amount, float(previous.get("daily_loss_amount", 0.0) or 0.0))
+                state["alert_count"] = int(previous.get("alert_count", 0) or 0)
+                state["last_alert_event"] = str(previous.get("last_alert_event") or "DAILY_LOSS_BREACH_TRIGGERED")
+
+            self._daily_loss_monitor_state = state
+            result = dict(state)
+
+        if pending_log is not None:
+            if pending_log[0] == "critical":
+                logger.critical("DAILY LOSS BREACH TRIGGERED: %s", pending_log[1])
+            else:
+                logger.error("DAILY LOSS BREACH ACTIVE: %s", pending_log[1])
+        if pending_publish is not None:
+            self.bus.publish(pending_publish[0], pending_publish[1])
+        return result
 
     def _subscribe_bus(self) -> None:
         self.bus.subscribe("SIGNAL_RECEIVED", self._on_signal_received)
@@ -965,6 +1020,15 @@ class RuntimeController:
         if self._emergency_stopped:
             return False
 
+        # Pending-stop sincrono da daily-loss: questo e' il choke point che il
+        # TradingEngine interroga (is_live_allowed()) prima di eseguire un
+        # CMD_QUICK_BET gia' in coda; includere il pending qui blocca anche gli
+        # ordini accodati appena prima che il settlement perdente armi lo stop,
+        # nella finestra tra apply-PnL ed emergency_stop (non solo i nuovi segnali
+        # in ingresso a _on_signal_received).
+        if self._daily_loss_pending_stop:
+            return False
+
         if self._is_kill_switch_active():
             return False
 
@@ -1033,6 +1097,16 @@ class RuntimeController:
     @property
     def is_emergency_stopped(self) -> bool:
         return self._emergency_stopped
+
+    def _daily_loss_entry_blocked(self) -> bool:
+        """True se l'order-entry va bloccato dal kill-switch daily-loss: emergency
+        definitivo gia' attivo OPPURE pending-stop sincrono armato. Usato come
+        RECHECK immediatamente prima di pubblicare `CMD_QUICK_BET`, per un segnale
+        che ha gia' superato il gate d'ingresso ed e' arrivato alla submission
+        mentre un settlement perdente concorrente armava lo stop (la finestra che
+        il solo gate d'ingresso una-tantum non copre)."""
+        with self._daily_loss_stop_lock:
+            return bool(self._emergency_stopped or self._daily_loss_pending_stop)
 
     def _reload_persisted_emergency_state(self) -> None:
         """Ripristina lo stato di emergenza persistito (fail-closed al riavvio).
@@ -1756,6 +1830,12 @@ class RuntimeController:
                 },
             },
         )
+        # Recheck kill-switch daily-loss subito prima della submission: il gate
+        # d'ingresso e' una-tantum, ma un settlement perdente concorrente puo'
+        # aver armato pending/emergency mentre questo segnale era in validazione.
+        if self._daily_loss_entry_blocked():
+            self._reject_signal(signal, "emergency_stop_active:pre_submit_recheck")
+            return
         self.bus.publish("CMD_QUICK_BET", payload)
 
     # =========================================================
@@ -2596,6 +2676,19 @@ class RuntimeController:
                     "auto_trade_source": submit_payload.get("auto_trade_source") or "",
                 },
             )
+
+        # Recheck kill-switch daily-loss subito prima della submission auto-trade:
+        # _risk_allows_auto_trade e' stato valutato sopra, ma un settlement
+        # perdente concorrente puo' aver armato pending/emergency nel frattempo.
+        if self._daily_loss_entry_blocked():
+            result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_RISK_REJECTED"
+            result["cycle_executor_status"] = "CYCLE_SKIPPED_RISK_REJECTED"
+            result["recovery_status"] = "RECOVERY_SKIPPED_RISK_REJECTED" if has_checkpoint else result["recovery_status"]
+            result["risk_status"] = "RISK_REJECTED"
+            result["reason"] = "emergency_stop_active:pre_submit_recheck"
+            if settlement_key:
+                self._processed_auto_trade_keys.add(settlement_key)
+            return result
 
         self.bus.publish("CMD_QUICK_BET", submit_payload)
         result["auto_trade_status"] = "AUTO_TRADE_SUBMITTED"

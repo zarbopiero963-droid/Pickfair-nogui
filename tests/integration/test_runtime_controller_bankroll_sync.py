@@ -468,7 +468,7 @@ def test_recovery_failclosed_breach_while_stopped_persists_and_refuses_start():
     ACTIVE/PAUSED) e il PnL non e' applicato; deve pero' PERSISTERE il breach nello
     stato del monitor cosi' un successivo start(LIVE) lo rifiuta invece di riprendere
     a fare trading dopo la perdita giornaliera gia' sfondata."""
-    rc, _ = _make_controller(responses=[{"available": 85.0}] * 6)
+    rc, bus = _make_controller(responses=[{"available": 85.0}] * 6)
     cfg = RoserpinaConfig()
     cfg.anti_duplication_enabled = False
     cfg.max_daily_loss = 10.0
@@ -482,12 +482,86 @@ def test_recovery_failclosed_breach_while_stopped_persists_and_refuses_start():
     # STOPPED: nessun emergency stop, ma breach persistito nello stato del monitor
     assert rc._emergency_stopped is False
     assert rc._daily_loss_monitor_state.get("breached") is True
+    # Codex round-7 P2: il ramo recovery EMETTE il primo TRIGGERED (monitor saltato),
+    # cosi' i subscriber di monitoraggio non lo perdono.
+    triggered = [p for t, p in bus.events if t == "DAILY_LOSS_BREACH_TRIGGERED"]
+    assert len(triggered) == 1
+    assert triggered[0]["source"] == "RUNTIME_RECOVERY_FAILCLOSED"
 
     # un start(LIVE) lo stesso giorno deve rifiutare invece di riprendere
     out = rc.start(execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)
     assert out["ok"] is False
     assert out["reason"] == "daily_loss_breached"
     assert rc.execution_mode == "SIMULATION"
+
+
+@pytest.mark.integration
+def test_pending_daily_loss_stop_blocks_live_choke_point():
+    """Codex round-7 P1: il pending-stop sincrono deve essere riflesso nel choke
+    point `is_live_allowed()` (quello che il TradingEngine interroga prima di
+    eseguire un CMD_QUICK_BET gia' in coda), non solo nel gate d'ingresso di
+    _on_signal_received: altrimenti un ordine accodato appena prima del breach
+    parte nella finestra di sync. `_daily_loss_entry_blocked()` aggrega
+    emergency+pending per il recheck pre-submit."""
+    rc, _ = _make_controller(responses=[{"available": 85.0}] * 4)
+    # baseline: is_live_allowed() True (live abilitato, deploy gate ready)
+    rc._emergency_stopped = False
+    rc._daily_loss_pending_stop = False
+    rc._is_kill_switch_active = lambda: False
+    rc.execution_mode = "LIVE"
+    rc.live_enabled = True
+    rc.live_readiness_ok = True
+    rc.get_deploy_gate_status = lambda **_kw: {"allowed": True, "readiness": "READY"}
+    assert rc.is_live_allowed() is True
+    assert rc._daily_loss_entry_blocked() is False
+
+    # pending armato -> il choke point live e il recheck pre-submit bloccano
+    rc._daily_loss_pending_stop = True
+    assert rc.is_live_allowed() is False
+    assert rc._daily_loss_entry_blocked() is True
+
+    # anche il solo emergency definitivo blocca il recheck
+    rc._daily_loss_pending_stop = False
+    rc._emergency_stopped = True
+    assert rc._daily_loss_entry_blocked() is True
+
+
+@pytest.mark.integration
+def test_monitor_state_write_serialized_breach_survives_contention():
+    """CodeRabbit round-7 (Major): il read-modify-write su
+    _daily_loss_monitor_state e' serializzato sotto _daily_loss_state_lock. Con
+    _record_pending (scrive breached=True per un breach proiettato, PnL non
+    applicato) e _monitor (ricalcola da realized_pnl=0 -> niente breach) in
+    contesa su piu' round, il breach persistito NON deve essere sovrascritto: un
+    monitor finale lo vede sempre breached=True (ramo persistente). Senza il lock
+    l'interleaving del RMW potrebbe perdere breached=True e riaprire il restart
+    LIVE in giornata."""
+    rc, _ = _make_controller(responses=[{"available": 85.0}] * 4)
+    rc.config.max_daily_loss = 10.0
+    projected = {"breached": True, "daily_loss_amount": 50.0}  # realized resta 0
+
+    for _ in range(50):
+        reset_state = dict(rc._daily_loss_monitor_state)
+        reset_state["breached"] = False
+        reset_state["day_utc"] = datetime.utcnow().date().isoformat()
+        rc._daily_loss_monitor_state = reset_state
+        barrier = threading.Barrier(2)
+
+        def _record():
+            barrier.wait()
+            rc._record_pending_daily_loss_breach(projected)
+
+        def _mon():
+            barrier.wait()
+            rc._monitor_daily_loss_breach(source="CONTENTION")
+
+        threads = [threading.Thread(target=_record), threading.Thread(target=_mon)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert rc._monitor_daily_loss_breach(source="FINAL")["breached"] is True
 
 
 @pytest.mark.integration
