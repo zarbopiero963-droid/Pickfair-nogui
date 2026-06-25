@@ -164,7 +164,7 @@ class _StubClient:
     streaming = _StubStreaming()
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 def test_503_flag_is_reset_on_reconnect(monkeypatch):
     """Controprova del confine: una riconnessione AZZERA `degraded_503` e
     ripristina healthy=True. Pilotiamo un singolo ciclo di _connect_and_consume
