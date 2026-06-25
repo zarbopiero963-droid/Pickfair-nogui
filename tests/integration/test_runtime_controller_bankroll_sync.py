@@ -394,12 +394,15 @@ def test_emergency_stop_cancel_all_survives_status_snapshot_failure():
 
 
 @pytest.mark.integration
-def test_daily_loss_enforced_before_bankroll_sync_network_window():
-    """Codex P1: l'enforcement avviene PRIMA del bankroll sync (rete). Lo spy
-    registra che, quando _sync_bankroll_post_settlement viene chiamato,
-    l'emergenza e' GIA' attiva — cosi' nella finestra di rete del sync nessun
-    SIGNAL_RECEIVED concorrente puo' piazzare un ordine dopo il breach."""
-    rc, _ = _make_controller(responses=[{"available": 85.0}] * 4)
+def test_pending_stop_blocks_concurrent_signal_during_sync_window():
+    """Codex round-6 P1/P2: il bankroll sync gira PRIMA dell'emergency_stop (per
+    interrogare il client LIVE, non il simulato in cui lo stop flippa il service),
+    ma l'order-entry resta bloccato nella finestra di rete del sync dal pending-stop
+    sincrono armato prima dell'apply del PnL. Lo spy verifica che durante il sync:
+    (a) _emergency_stopped non e' ancora attivo (sync prima del flip a SIMULATION),
+    (b) il pending-stop E' armato, (c) un SIGNAL_RECEIVED concorrente viene
+    RIFIUTATO. A fine ciclo l'emergency stop definitivo e' scattato."""
+    rc, bus = _make_controller(responses=[{"available": 85.0}] * 4)
     rc.config.max_daily_loss = 10.0
     rc.risk_desk.sync_bankroll(100.0)
 
@@ -408,14 +411,83 @@ def test_daily_loss_enforced_before_bankroll_sync_network_window():
 
     def _spy(payload):
         seen["emergency_at_sync"] = rc._emergency_stopped
+        seen["pending_at_sync"] = rc._daily_loss_pending_stop
+        rc._on_signal_received({"event_key": "evt-concurrent", "stake": 5.0})
         return original(payload)
 
     rc._sync_bankroll_post_settlement = _spy
 
     rc._on_close_position(dict(_BREACHING_SETTLEMENT))
 
-    assert seen["emergency_at_sync"] is True
+    # durante la finestra di sync: emergenza definitiva non ancora attiva
+    # (sync interrogato sul client live prima del flip), ma orders gia' bloccati
+    assert seen["emergency_at_sync"] is False
+    assert seen["pending_at_sync"] is True
+    # il segnale concorrente nella finestra e' stato rifiutato dal pending-stop
+    rejected = [p for t, p in bus.events if t == "SIGNAL_REJECTED"]
+    assert any("emergency_stop_active" in str(p.get("reason")) for p in rejected)
+    # a fine ciclo l'emergency stop definitivo e' scattato
+    assert rc._emergency_stopped is True
     assert rc.mode == RuntimeMode.LOCKDOWN
+    # pending-stop resta coperto da _emergency_stopped (entrambi bloccano l'entry)
+    assert rc._daily_loss_pending_stop is True
+
+
+@pytest.mark.integration
+def test_projected_daily_loss_breach_honors_day_rollover():
+    """Codex round-6 P2: la proiezione deve ribasare la baseline al rollover di
+    giornata come _monitor_daily_loss_breach. Con lo stato in cache di IERI
+    (chiuso a -50, baseline 0) e realized che porta -50, il primo settlement di
+    OGGI di -1 NON deve proiettare un breach (la perdita di oggi e' 1, non 51);
+    un settlement che oggi sfonda davvero (-15) deve invece proiettare breach."""
+    rc, _ = _make_controller(responses=[{"available": 85.0}] * 4)
+    rc.config.max_daily_loss = 10.0
+    rc.risk_desk.apply_closed_pnl(-50.0)  # realized_pnl = -50 (carry da ieri)
+    yesterday = (datetime.utcnow().date() - timedelta(days=1)).isoformat()
+    rc._daily_loss_monitor_state = {
+        "day_utc": yesterday,
+        "realized_pnl_day_baseline": 0.0,
+        "realized_pnl": -50.0,
+        "breached": True,
+        "daily_loss_amount": 50.0,
+    }
+
+    small = rc._projected_daily_loss_breach(-1.0)
+    assert small["breached"] is False
+    assert small["daily_loss_amount"] == pytest.approx(1.0)
+
+    big = rc._projected_daily_loss_breach(-15.0)
+    assert big["breached"] is True
+    assert big["daily_loss_amount"] == pytest.approx(15.0)
+
+
+@pytest.mark.integration
+def test_recovery_failclosed_breach_while_stopped_persists_and_refuses_start():
+    """Codex round-6 P1: un settlement live che sfonda il limite ma esce dal ramo
+    recovery fail-closed mentre il runtime e' STOPPED non viene fermato (gate
+    ACTIVE/PAUSED) e il PnL non e' applicato; deve pero' PERSISTERE il breach nello
+    stato del monitor cosi' un successivo start(LIVE) lo rifiuta invece di riprendere
+    a fare trading dopo la perdita giornaliera gia' sfondata."""
+    rc, _ = _make_controller(responses=[{"available": 85.0}] * 6)
+    cfg = RoserpinaConfig()
+    cfg.anti_duplication_enabled = False
+    cfg.max_daily_loss = 10.0
+    rc.settings_service.load_roserpina_config = lambda: cfg
+    rc.config.max_daily_loss = 10.0
+    rc.mode = RuntimeMode.STOPPED
+    rc._read_cycle_recovery_state = lambda _key: {"status": "RECOVERY_STATE_AMBIGUOUS"}
+
+    rc._on_close_position(dict(_BREACHING_SETTLEMENT, net_pnl=-50.0, gross_pnl=-50.0))
+
+    # STOPPED: nessun emergency stop, ma breach persistito nello stato del monitor
+    assert rc._emergency_stopped is False
+    assert rc._daily_loss_monitor_state.get("breached") is True
+
+    # un start(LIVE) lo stesso giorno deve rifiutare invece di riprendere
+    out = rc.start(execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)
+    assert out["ok"] is False
+    assert out["reason"] == "daily_loss_breached"
+    assert rc.execution_mode == "SIMULATION"
 
 
 @pytest.mark.integration

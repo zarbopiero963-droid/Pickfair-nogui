@@ -102,6 +102,11 @@ class RuntimeController:
         # Serializza il trigger della kill-switch da daily-loss: rende atomico
         # il check-and-stop dell'handler sotto dispatch EventBus concorrente.
         self._daily_loss_stop_lock = threading.Lock()
+        # Pending-stop sincrono: armato sotto lock PRIMA di applicare il PnL del
+        # settlement che sfonderebbe il limite, cosi' un SIGNAL_RECEIVED
+        # concorrente (dispatch multi-worker) non piazza un ordine nella finestra
+        # tra apply-PnL e emergency_stop. Bridge: superato da _emergency_stopped.
+        self._daily_loss_pending_stop: bool = False
         self._io_observations: dict[str, Any] = {
             "last_operation": "",
             "last_status": "UNKNOWN",
@@ -350,16 +355,59 @@ class RuntimeController:
         early-return (es. recovery fail-closed) che ritornano PRIMA di applicare
         il PnL e chiamare il monitor: se un settlement accettato sfonderebbe il
         limite, si fail-closa comunque (un eventuale falso positivo da duplicato
-        e' piu' sicuro di un breach mancato)."""
+        e' piu' sicuro di un breach mancato).
+
+        Onora il rollover di giornata come `_monitor_daily_loss_breach`: se lo
+        stato in cache e' di un giorno precedente, la baseline si ribasa sul
+        realized di fine giornata precedente. Senza questo la perdita di ieri
+        verrebbe conteggiata come perdita di oggi (baseline stantia) e
+        produrrebbe un falso breach/emergency-stop al primo settlement del
+        nuovo giorno."""
         threshold = self._safe_daily_loss_threshold()
         if threshold is None:
             return {"breached": False, "daily_loss_amount": 0.0}
+        today_utc = datetime.utcnow().date().isoformat()
         state = self._daily_loss_monitor_state or {}
-        baseline_raw = state.get("realized_pnl_day_baseline")
+        previous_day = str(state.get("day_utc") or "")
+        day_rollover = bool(previous_day and previous_day != today_utc)
         realized = float(self.risk_desk.realized_pnl) + float(additional_pnl or 0.0)
-        baseline = float(realized if baseline_raw is None else baseline_raw)
+        if day_rollover:
+            prev_realized_raw = state.get("realized_pnl")
+            baseline = float(
+                self.risk_desk.realized_pnl if prev_realized_raw is None else prev_realized_raw
+            )
+        else:
+            baseline_raw = state.get("realized_pnl_day_baseline")
+            baseline = float(realized if baseline_raw is None else baseline_raw)
         daily_loss = max(0.0, -(realized - baseline))
         return {"breached": daily_loss >= threshold, "daily_loss_amount": daily_loss}
+
+    def _record_pending_daily_loss_breach(self, projected: dict) -> None:
+        """Persiste IN-MEMORY un breach PROIETTATO in `_daily_loss_monitor_state`
+        cosi' che `_monitor_daily_loss_breach` (invocato da start()/resume()) lo
+        mantenga breached fino al rollover di giornata, ANCHE quando il PnL non
+        e' stato applicato e l'emergency_stop non e' scattato (ramo recovery
+        fail-closed con runtime STOPPED). Senza questo un settlement live che
+        sfonda il limite ma esce dal ramo recovery verrebbe dimenticato e un
+        `start(LIVE)` successivo riprenderebbe a fare trading dopo la perdita
+        giornaliera gia' sfondata."""
+        now_iso = datetime.utcnow().isoformat()
+        today_utc = datetime.utcnow().date().isoformat()
+        prev = dict(self._daily_loss_monitor_state or {})
+        amount = float(projected.get("daily_loss_amount", 0.0) or 0.0)
+        prev_amount = float(prev.get("daily_loss_amount", 0.0) or 0.0)
+        state = dict(prev)
+        state.update({
+            "day_utc": today_utc,
+            "breached": True,
+            "daily_loss_amount": max(amount, prev_amount),
+            "breached_at": str(prev.get("breached_at") or now_iso),
+            "last_status": "DAILY_LOSS_BREACHED",
+            "reason": "daily_loss_breach_projected_recovery_failclosed",
+            "last_alert_event": str(prev.get("last_alert_event") or "DAILY_LOSS_BREACH_TRIGGERED"),
+            "last_checked_at": now_iso,
+        })
+        self._daily_loss_monitor_state = state
 
     def _safe_status_snapshot(self) -> dict:
         """Snapshot di stato che NON dipende dall'I/O broker: prova get_status()
@@ -1213,6 +1261,8 @@ class RuntimeController:
         self._emergency_stopped = False
         self._emergency_stopped_at = ""
         self._emergency_reason = ""
+        with self._daily_loss_stop_lock:
+            self._daily_loss_pending_stop = False
         persist_error = self._persist_emergency_state()
         self.bus.publish("EMERGENCY_STOP_RESET", {"reset_at": datetime.utcnow().isoformat()})
         return {"emergency_reset": True, "persist_error": persist_error}
@@ -1538,11 +1588,18 @@ class RuntimeController:
         signal = dict(signal or {})
         self.last_signal_at = datetime.utcnow().isoformat()
 
-        # Emergency stop hard gate — refuses ALL live order entry
-        if self._emergency_stopped:
+        # Emergency stop hard gate — refuses ALL live order entry. Include anche
+        # il pending-stop sincrono da daily-loss: armato sotto lock PRIMA di
+        # applicare il PnL del settlement che sfonda il limite, chiude la
+        # finestra in cui un SIGNAL_RECEIVED concorrente (dispatch multi-worker)
+        # vedrebbe _emergency_stopped ancora False e piazzerebbe un ordine.
+        with self._daily_loss_stop_lock:
+            stop_active = self._emergency_stopped or self._daily_loss_pending_stop
+            stop_triggered_at = self._emergency_stopped_at
+        if stop_active:
             self._reject_signal(
                 signal,
-                f"emergency_stop_active:triggered_at={self._emergency_stopped_at}",
+                f"emergency_stop_active:triggered_at={stop_triggered_at}",
             )
             return
 
@@ -1818,7 +1875,14 @@ class RuntimeController:
             # sfonderebbe comunque il limite giornaliero si hard-stoppa lo stesso
             # (proiezione read-only). Un eventuale falso positivo da duplicato e'
             # piu' sicuro di un kill-switch mancato.
-            self._enforce_daily_loss_hard_stop(self._projected_daily_loss_breach(pnl))
+            projected_recovery = self._projected_daily_loss_breach(pnl)
+            self._enforce_daily_loss_hard_stop(projected_recovery)
+            if projected_recovery.get("breached"):
+                # Se il runtime e' STOPPED l'enforce non ferma (gate ACTIVE/PAUSED)
+                # e questo ramo ritorna senza applicare il PnL: persisti il breach
+                # nello stato del monitor cosi' un successivo start()/resume() in
+                # LIVE lo rifiuta invece di riprendere dopo la perdita giornaliera.
+                self._record_pending_daily_loss_breach(projected_recovery)
             fail_result = self._build_fail_closed_recovery_result(payload=payload, probe=recovery_probe)
             sync_result = {
                 "correlation_id": str(payload.get("correlation_id") or payload.get("event_key") or ""),
@@ -1844,20 +1908,44 @@ class RuntimeController:
             reason="settlement_detected",
             recovery_status=recovery_probe.get("status", "RECOVERY_NO_STATE"),
         )
-        if settlement_key and settlement_key not in self._processed_realized_pnl_keys:
-            self._apply_realized_pnl_without_mutating_bankroll(pnl)
-            self._processed_realized_pnl_keys.add(settlement_key)
-        # Daily-loss hard stop SUBITO dopo l'applicazione del PnL e PRIMA del
-        # bankroll sync (rete) e dell'auto-trade: se questo settlement sfonda il
-        # limite fermiamo SINCRONO (persist + cancel-all + lockdown) prima che la
-        # finestra del sync lasci il runtime ACTIVE — cosi' nemmeno un
-        # SIGNAL_RECEIVED concorrente puo' piazzare un ordine dopo il breach, e
-        # l'auto-trade sotto e' bloccato da _risk_allows_auto_trade.
-        daily_loss_state = self._monitor_daily_loss_breach(source="RUNTIME_CLOSE_POSITION", payload=payload)
-        self._enforce_daily_loss_hard_stop(daily_loss_state)
-        sync_result = self._sync_bankroll_post_settlement(payload)
-        self._last_bankroll_sync_result = dict(sync_result)
-        self.bus.publish("BANKROLL_SYNC_RESULT", dict(sync_result))
+        # Pending-stop sincrono: se questo settlement sfonderebbe il limite,
+        # arma il flag SOTTO LOCK *prima* di applicare il PnL. Da questo istante
+        # ogni SIGNAL_RECEIVED concorrente (dispatch multi-worker) e' rifiutato,
+        # chiudendo la finestra tra apply-PnL e emergency_stop in cui altrimenti
+        # vedrebbe _emergency_stopped ancora False e piazzerebbe un ordine.
+        projected_close = self._projected_daily_loss_breach(pnl)
+        arm_pending = bool(projected_close.get("breached")) and self.mode in (
+            RuntimeMode.ACTIVE,
+            RuntimeMode.PAUSED,
+        )
+        if arm_pending:
+            with self._daily_loss_stop_lock:
+                self._daily_loss_pending_stop = True
+        try:
+            if settlement_key and settlement_key not in self._processed_realized_pnl_keys:
+                self._apply_realized_pnl_without_mutating_bankroll(pnl)
+                self._processed_realized_pnl_keys.add(settlement_key)
+            # Bankroll sync PRIMA dell'enforce: emergency_stop flippa il service a
+            # SIMULATION e get_account_funds sceglie il client dal mode, quindi
+            # sincronizzare dopo lo stop interrogherebbe il client simulato/zero
+            # invece del conto live che sta settlando. L'order-entry resta gia'
+            # bloccato dal pending-stop armato sopra, quindi anticipare il sync
+            # non riapre la finestra di piazzamento ordini.
+            sync_result = self._sync_bankroll_post_settlement(payload)
+            self._last_bankroll_sync_result = dict(sync_result)
+            self.bus.publish("BANKROLL_SYNC_RESULT", dict(sync_result))
+            # Daily-loss hard stop SINCRONO (persist + cancel-all + lockdown) dopo
+            # il sync ma PRIMA dell'auto-trade: l'auto-trade sotto e' bloccato da
+            # _risk_allows_auto_trade e nessun ordine parte dopo il breach.
+            daily_loss_state = self._monitor_daily_loss_breach(source="RUNTIME_CLOSE_POSITION", payload=payload)
+            self._enforce_daily_loss_hard_stop(daily_loss_state)
+        finally:
+            # Disarma il bridge se NON e' subentrato l'emergency_stop definitivo
+            # (es. il breach non si e' materializzato): evita un pending-stop
+            # appiccicato che bloccherebbe i segnali leciti fino al reset.
+            if arm_pending and not self._emergency_stopped:
+                with self._daily_loss_stop_lock:
+                    self._daily_loss_pending_stop = False
         auto_trade_result = self._evaluate_and_maybe_submit_auto_next_trade(payload=payload, sync_result=sync_result)
         self._last_auto_trade_result = dict(auto_trade_result)
         self._last_cycle_executor_result = dict(auto_trade_result)
