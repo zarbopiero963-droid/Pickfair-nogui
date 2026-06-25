@@ -1,4 +1,20 @@
 #!/usr/bin/env python3
+"""Parse Codex review comments into the structured findings the bug gate scores.
+
+OUTDATED DETECTION (fix): the gate treats `outdated` comments as NOISE
+(`codex_bug_gate.py: _classify` / `_should_fail`), but the REST endpoint
+`/pulls/{pr}/comments` does NOT return a boolean `outdated` field — so the
+previous `comment.get("outdated", False)` was ALWAYS False and the gate counted
+already-fixed (outdated) comments as REAL_BUG, producing false-red gates on
+every iteration of a PR.
+
+We now resolve the outdated/resolved status authoritatively via the GraphQL
+`reviewThreads { isOutdated isResolved }` API (a comment whose thread is
+outdated — its code changed — or resolved is not a live finding). If GraphQL is
+unavailable we fall back to the REST comments endpoint and infer outdated from a
+null `position` (GitHub nulls `position` once a comment no longer maps to the
+current diff).
+"""
 from __future__ import annotations
 
 import json
@@ -7,7 +23,6 @@ import re
 import subprocess
 import sys
 from typing import Any, Dict, List, Optional
-
 
 CODEX_AUTHORS = {
     "chatgpt-codex-connector[bot]",
@@ -49,23 +64,127 @@ def _get_repo_and_pr(event: Dict[str, Any]) -> tuple[str, int]:
     raise RuntimeError("Could not determine PR number from event payload")
 
 
-def _fetch_review_comments(repo: str, pr_number: int) -> List[Dict[str, Any]]:
+# ---------------------------------------------------------------------------
+# Fetch — GraphQL (authoritative isOutdated/isResolved) with REST fallback
+# ---------------------------------------------------------------------------
+
+_REVIEW_THREADS_QUERY = (
+    "query($owner:String!,$name:String!,$number:Int!,$after:String){"
+    " repository(owner:$owner,name:$name){ pullRequest(number:$number){"
+    " reviewThreads(first:100,after:$after){"
+    " nodes{ isResolved isOutdated"
+    " comments(first:100){ nodes{ databaseId author{login} path line originalLine body url } } }"
+    " pageInfo{ hasNextPage endCursor } } } } }"
+)
+
+
+def _flatten_thread(thread: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Turn a GraphQL review thread into REST-shaped comment dicts.
+
+    Every comment inherits the thread-level outdated/resolved status: a comment
+    whose thread is outdated (code changed) or resolved is not a live finding,
+    so the gate must not count it.
+    """
+    not_live = bool(thread.get("isOutdated")) or bool(thread.get("isResolved"))
+    comments = ((thread.get("comments") or {}).get("nodes")) or []
+    rows: List[Dict[str, Any]] = []
+    for c in comments:
+        if not isinstance(c, dict):
+            continue
+        rows.append(
+            {
+                "id": c.get("databaseId"),
+                "user": {"login": ((c.get("author") or {}).get("login") or "")},
+                "path": c.get("path") or "",
+                "line": c.get("line"),
+                "original_line": c.get("originalLine"),
+                "body": c.get("body") or "",
+                "html_url": c.get("url") or "",
+                # Authoritative signal the rest of the parser consumes.
+                "outdated": not_live,
+            }
+        )
+    return rows
+
+
+def _fetch_review_comments_graphql(repo: str, pr_number: int) -> List[Dict[str, Any]]:
+    owner, name = str(repo).split("/", 1)
+    comments: List[Dict[str, Any]] = []
+    after: Optional[str] = None
+    while True:
+        cmd = [
+            "gh", "api", "graphql",
+            "-f", f"owner={owner}",
+            "-f", f"name={name}",
+            "-F", f"number={pr_number}",
+            "-f", f"query={_REVIEW_THREADS_QUERY}",
+        ]
+        if after:
+            cmd.extend(["-f", f"after={after}"])
+        data = json.loads(_run(cmd))
+        threads = (
+            data.get("data", {})
+            .get("repository", {})
+            .get("pullRequest", {})
+            .get("reviewThreads", {})
+        )
+        if not isinstance(threads, dict):
+            break
+        for node in threads.get("nodes") or []:
+            if isinstance(node, dict):
+                comments.extend(_flatten_thread(node))
+        page = threads.get("pageInfo") or {}
+        if page.get("hasNextPage") and page.get("endCursor"):
+            after = page["endCursor"]
+        else:
+            break
+    return comments
+
+
+def _fetch_review_comments_rest(repo: str, pr_number: int) -> List[Dict[str, Any]]:
     cmd = [
         "gh",
         "api",
         f"/repos/{repo}/pulls/{pr_number}/comments?per_page=100",
     ]
-    raw = _run(cmd)
-    data = json.loads(raw)
+    data = json.loads(_run(cmd))
     if not isinstance(data, list):
         raise RuntimeError("Unexpected GitHub API response for review comments")
     return data
+
+
+def _fetch_review_comments(repo: str, pr_number: int) -> List[Dict[str, Any]]:
+    """Authoritative GraphQL fetch, degrading to REST if GraphQL is unavailable."""
+    try:
+        return _fetch_review_comments_graphql(repo, pr_number)
+    except Exception as exc:  # pragma: no cover - network/credential dependent
+        print(
+            f"GraphQL review-thread fetch failed ({exc}); falling back to REST",
+            file=sys.stderr,
+        )
+        return _fetch_review_comments_rest(repo, pr_number)
 
 
 def _is_codex_comment(comment: Dict[str, Any]) -> bool:
     user = comment.get("user") or {}
     login = (user.get("login") or "").strip()
     return login in CODEX_AUTHORS or "codex" in login.lower()
+
+
+def _is_outdated(comment: Dict[str, Any]) -> bool:
+    """Whether a comment is outdated/resolved (i.e. NOT a live finding).
+
+    Honours an explicit boolean from the GraphQL path; otherwise falls back to
+    the REST signal where `position` is null for comments that no longer map to
+    the current diff.
+    """
+    for key in ("outdated", "isOutdated", "is_outdated"):
+        value = comment.get(key)
+        if isinstance(value, bool):
+            return value
+    if "position" in comment:
+        return comment.get("position") is None
+    return False
 
 
 def _normalize_whitespace(s: str) -> str:
@@ -132,7 +251,7 @@ def _make_finding(comment: Dict[str, Any]) -> Dict[str, Any]:
         "path": comment.get("path") or "",
         "line": _find_line(comment),
         "side": comment.get("side"),
-        "outdated": bool(comment.get("outdated", False)),
+        "outdated": _is_outdated(comment),
         "url": comment.get("html_url") or "",
         "title": _extract_title(body),
         "claim": _extract_claim(body),
