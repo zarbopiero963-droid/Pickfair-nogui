@@ -602,20 +602,32 @@ class TelegramListener:
 
                 event_name = self._extract_event_name(text)
 
-                # 2.1-C: un copy-pattern con action CASHOUT/CASHOUT_ALL non
-                # costruisce una bet, ma emette lo STESSO signal_type del cashout
-                # nativo => confluisce nel medesimo routing (2.1-B), un solo
-                # percorso d'esecuzione. Gli stessi filtri pre-match/live del
-                # pattern (minuto/score/live_only) sono già stati applicati sopra.
+                # 2.1-C: un copy-pattern con action cashout non costruisce una bet.
                 action = str(cp.get("action") or "QUICK_BET").strip().upper()
-                if action in ("CASHOUT", "CASHOUT_ALL"):
+                if action == "CASHOUT_ALL":
+                    # CASHOUT_ALL chiude TUTTE le posizioni dell'evento: semantica
+                    # non ambigua → emette lo stesso signal_type del cashout nativo
+                    # e confluisce nel medesimo routing (2.1-B), un solo percorso.
                     return {
-                        "signal_type": action,
+                        "signal_type": "CASHOUT_ALL",
                         "event_name": event_name,
                         "raw_text": text,
                         "pattern_id": cp.get("id"),
                         "pattern_label": cp.get("label") or cp.get("name") or "",
                     }
+                if action == "CASHOUT":
+                    # Fail-closed (scelta owner): un CASHOUT SINGOLO da copy-pattern
+                    # confluirebbe nel routing nativo event-level, che chiude TUTTE
+                    # le posizioni della partita — non la selezione/market
+                    # configurati nel pattern. Vietato finché il CashoutRouter non
+                    # supporta il targeting per-selezione (follow-up). Skip visibile:
+                    # nessun segnale cashout emesso, nessun side-effect broker.
+                    logger.warning(
+                        "[TelegramListener] copy-pattern CASHOUT singolo ignorato "
+                        "(pattern_id=%s): copy_pattern_cashout_single_requires_targeting",
+                        cp.get("id"),
+                    )
+                    continue
 
                 market_type = str(cp.get("market_type") or "MATCH_ODDS").strip()
                 bet_side = str(cp.get("bet_side") or "BACK").strip().upper()

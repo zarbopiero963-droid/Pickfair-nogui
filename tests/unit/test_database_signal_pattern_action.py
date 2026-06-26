@@ -39,6 +39,14 @@ def test_update_action(db):
     assert db.get_signal_patterns()[0]["action"] == "CASHOUT"
 
 
+def test_column_action_overrides_extra_json_action(db):
+    # La colonna è autoritativa: una chiave "action" legacy in extra_json NON
+    # deve sovrascrivere la colonna (settata dopo item.update(extra)).
+    db.save_signal_pattern(pattern="x", label="L", action="CASHOUT_ALL",
+                           extra={"action": "QUICK_BET"})
+    assert db.get_signal_patterns()[0]["action"] == "CASHOUT_ALL"
+
+
 def test_migration_adds_action_column_to_legacy_db():
     # DB legacy: signal_patterns SENZA colonna action.
     conn = sqlite3.connect(":memory:")

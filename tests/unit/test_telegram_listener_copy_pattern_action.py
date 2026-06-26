@@ -23,13 +23,25 @@ def _pat(**over):
     return p
 
 
-def test_cashout_action_emits_cashout_signal_type():
+def test_single_cashout_action_is_skipped_failclosed():
+    # Fail-closed (scelta owner): un CASHOUT singolo da copy-pattern NON deve
+    # confluire nel routing event-level (chiuderebbe tutta la partita). Skip
+    # visibile: nessun segnale emesso (qui è l'unico pattern → None).
     lst = _listener([_pat(action="CASHOUT", pattern="CASHOUT NOW")])
     out = lst._parse_custom_patterns("CASHOUT NOW 🆚 Team A v Team B")
+    assert out is None
+
+
+def test_single_cashout_pattern_does_not_block_other_patterns():
+    # Lo skip del CASHOUT singolo non deve impedire ad altri pattern di matchare.
+    lst = _listener([
+        _pat(id=1, action="CASHOUT", pattern="CASHOUT NOW"),
+        _pat(id=2, action="QUICK_BET", pattern="CASHOUT NOW"),
+    ])
+    out = lst._parse_custom_patterns("CASHOUT NOW Team A")
     assert out is not None
-    assert out["signal_type"] == "CASHOUT"
-    assert out["event_name"]  # restringe il cashout alla partita
-    assert "bet_type" not in out  # non è un descrittore di bet
+    assert "signal_type" not in out  # il secondo pattern (bet) ha vinto
+    assert out["pattern_id"] == 2
 
 
 def test_cashout_all_action_emits_cashout_all():
