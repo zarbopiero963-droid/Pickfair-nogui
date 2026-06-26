@@ -463,14 +463,20 @@ class HeadlessApp:
         self.cashout_request_bridge.wire()
 
         svc = self.betfair_service
+        # Accessori risolti lazy (lambda): l'adapter legge is_simulation/broker
+        # solo a cancel-time (su un CASHOUT_FAILED UNMATCHED), mai durante build().
+        # Così un betfair_service incompleto non fa crashare il boot, e la scelta
+        # sim/live resta valutata al momento del cancel reale.
         residual_cancel = CashoutCancelAdapter(
-            is_simulation=svc.is_simulation_mode,
+            is_simulation=lambda: svc.is_simulation_mode(),
             live_cancel=lambda **kw: svc.get_live_client().cancel_orders(**kw),
             sim_cancel=lambda **kw: svc.get_simulation_broker().cancel_orders(**kw),
         )
         self.cashout_residual_handler = CashoutResidualHandler(
             cancel=residual_cancel.cancel,
-            persist=self.db.insert_audit_event,
+            # Lazy: il record è scritto solo a CASHOUT_FAILED-time, mai a build();
+            # _safe_persist nel handler assorbe eventuali errori di scrittura.
+            persist=lambda record: self.db.insert_audit_event(record),
             notify=self._notify_cashout_residual,
         )
         self.cashout_residual_handler.wire(self.bus)

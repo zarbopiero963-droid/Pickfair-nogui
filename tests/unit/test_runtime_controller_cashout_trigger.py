@@ -5,7 +5,6 @@ si testano solo il gating del cashout e ``_route_cashout_signal``.
 """
 
 import threading
-from collections import defaultdict
 
 from core.runtime_controller import RuntimeController
 
