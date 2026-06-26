@@ -24,16 +24,21 @@ Fail-closed real-money:
   riportato per non lasciare l'ordine orfano);
 - solo ``placed and matched>0`` ⇒ ``CASHOUT_SUCCESS`` con ``green_up``.
 
-NOTA (Fase 2.1-B): ``CASHOUT_FAILED`` non ha ancora un consumer (solo
-``CASHOUT_SUCCESS`` è consumato da ``telegram_sender``) e ``RiskMiddleware``
-pubblica una *stringa* sullo stesso topic mentre qui si pubblica un *dict*. La
-2.1-B deve (a) aggiungere il consumer di ``CASHOUT_FAILED`` con notifica
-operatore per AMBIGUOUS/UNMATCHED/ERROR, e (b) uniformare lo shape di
-``CASHOUT_FAILED`` (dict) anche in ``RiskMiddleware``.
+NOTA (Fase 2.1-B, requisiti di attivazione sicura): finché 2.1-A è dormiente
+nessun ordine reale parte, ma prima di attivare il routing la 2.1-B deve:
+(a) aggiungere il consumer di ``CASHOUT_FAILED`` con notifica operatore per
+AMBIGUOUS/UNMATCHED/ERROR (oggi solo ``CASHOUT_SUCCESS`` è consumato da
+``telegram_sender``); (b) uniformare lo shape di ``CASHOUT_FAILED`` (dict) anche
+in ``RiskMiddleware`` (oggi pubblica una stringa); (c) gestire il **lifecycle
+dell'ordine non abbinato/ambiguo**: un LIMIT accettato ma non subito abbinato
+resta vivo e può abbinarsi *dopo* l'UNMATCHED (hedge non tracciato) — va
+cancellato oppure persistito/accodato per la riconciliazione (il ``bet_id`` è
+già nel payload ``CASHOUT_FAILED``).
 """
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -73,6 +78,15 @@ class CashoutExecutor:
                 self._intrinsic_validate(payload)
         except Exception as exc:  # noqa: BLE001 - fail-closed intenzionale
             self._fail(f"validation:{exc}", status="REJECTED", payload=payload)
+            return
+
+        # Finiteness SEMPRE (anche col SafetyLayer, che non la controlla): NaN
+        # passa i confronti `<=` e Inf li supera, ma verrebbero serializzati in
+        # una richiesta Betfair reale o creerebbero ordini sim corrotti. Cfr. #292
+        # (parità sim su prezzo non-finito).
+        if not (math.isfinite(self._as_float(payload.get("price")))
+                and math.isfinite(self._as_float(payload.get("stake")))):
+            self._fail("non_finite_price_or_stake", status="REJECTED", payload=payload)
             return
 
         try:

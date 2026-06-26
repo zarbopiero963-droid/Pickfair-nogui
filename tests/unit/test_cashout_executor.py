@@ -188,6 +188,39 @@ def test_missing_side_rejected_not_defaulted_to_lay():
     assert bus.last(CASHOUT_FAILED)["status"] == "REJECTED"
 
 
+def test_non_finite_price_or_stake_rejected_without_placement():
+    # Codex P2: NaN/Inf passano i confronti <= (sia nel floor sia in SafetyLayer)
+    # ma corromperebbero la richiesta Betfair/sim => rigetto, mai piazzamento.
+    for bad in (float("nan"), float("inf")):
+        bus = _FakeBus()
+        router = _FakeRouter(_ok_result())
+        CashoutExecutor(bus, router).on_cmd_execute_cashout(_cmd_payload(price=bad))
+        assert router.calls == []
+        assert bus.last(CASHOUT_FAILED)["status"] == "REJECTED"
+
+        bus = _FakeBus()
+        router = _FakeRouter(_ok_result())
+        CashoutExecutor(bus, router).on_cmd_execute_cashout(_cmd_payload(stake=bad))
+        assert router.calls == []
+        assert bus.last(CASHOUT_FAILED)["status"] == "REJECTED"
+
+
+def test_non_finite_rejected_even_with_permissive_safety_layer():
+    # Anche se un SafetyLayer permissivo non controlla la finitezza, l'executor
+    # deve comunque rigettare (la guardia gira sempre).
+    class _PermissiveSafety:
+        def validate_cashout_request(self, payload):
+            return True
+
+    bus = _FakeBus()
+    router = _FakeRouter(_ok_result())
+    CashoutExecutor(bus, router, safety_layer=_PermissiveSafety()).on_cmd_execute_cashout(
+        _cmd_payload(price=float("nan"))
+    )
+    assert router.calls == []
+    assert bus.last(CASHOUT_FAILED)["status"] == "REJECTED"
+
+
 def test_non_dict_payload_rejected():
     bus = _FakeBus()
     router = _FakeRouter(_ok_result())
