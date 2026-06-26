@@ -67,11 +67,14 @@ def test_live_saga_event_name_from_payload(db):
     assert out == [{"bet_id": "L1", "market_id": "1.2", "event_name": "Roma vs Lazio"}]
 
 
-def test_live_saga_event_name_falls_back_to_event_key(db):
-    _place_live_saga(db, ref="C2", market_id="1.3", event_key="napoli vs juve",
+def test_live_saga_without_payload_event_name_is_empty_not_event_key(db):
+    # Greptile P1: event_key è uno slug interno di deduplica, NON il nome della
+    # partita. Senza event_name nel payload si ritorna '' (fail-closed: il router
+    # salta il CASHOUT singolo per quel mercato), MAI lo slug event_key.
+    _place_live_saga(db, ref="C2", market_id="1.3", event_key="evt::1.3::7::slug",
                      event_name=None, bet_id="L2")
     out = db.get_bot_active_orders()
-    assert out == [{"bet_id": "L2", "market_id": "1.3", "event_name": "napoli vs juve"}]
+    assert out == [{"bet_id": "L2", "market_id": "1.3", "event_name": ""}]
 
 
 def test_live_saga_without_bet_id_is_excluded(db):

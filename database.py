@@ -1271,7 +1271,8 @@ class Database:
 
         - **SIM** ``simulation_bets`` (``event_name`` è una colonna);
         - **LIVE** ``order_saga`` con ``bet_id`` valorizzato dopo il piazzamento
-          (``event_name`` dal ``payload_json``, fallback ``event_key``).
+          (``event_name`` SOLO dal ``payload_json``; ``''`` se assente — vedi
+          ``_saga_event_name``, niente fallback su ``event_key`` slug).
 
         È la **sorgente d'identità I1**: il ``customerOrderRef`` NON è inviato a
         Betfair sul piazzamento, quindi il bot si riconosce dai propri ``bet_id``
@@ -1284,15 +1285,14 @@ class Database:
         giudizio finale di apertura. Eventuali bet_id stale sono innocui (non
         compaiono tra gli ordini correnti live e i bet_id Betfair sono univoci).
         """
-        sim_active = ("EXECUTABLE", "EXECUTION_COMPLETE")
-        saga_active = ("PENDING", "SUBMITTED", "PLACED", "PARTIAL", "ROLLBACK_PENDING")
         out: List[Dict[str, str]] = []
 
+        # Stati "vivi" come letterali costanti nell'SQL: nessun dato esterno entra
+        # nella query (niente costruzione dinamica/format), quindi nessun rischio
+        # di SQL injection.
         sim_rows = self._execute(
             "SELECT bet_id, market_id, event_name FROM simulation_bets "
-            "WHERE bet_id != '' AND status IN ({})".format(
-                ", ".join("?" * len(sim_active))),
-            sim_active,
+            "WHERE bet_id != '' AND status IN ('EXECUTABLE', 'EXECUTION_COMPLETE')",
             fetch=True,
             commit=False,
         )
@@ -1305,26 +1305,38 @@ class Database:
             })
 
         saga_rows = self._execute(
-            "SELECT bet_id, market_id, event_key, payload_json FROM order_saga "
-            "WHERE bet_id != '' AND status IN ({})".format(
-                ", ".join("?" * len(saga_active))),
-            saga_active,
+            "SELECT bet_id, market_id, payload_json FROM order_saga "
+            "WHERE bet_id != '' AND status IN "
+            "('PENDING', 'SUBMITTED', 'PLACED', 'PARTIAL', 'ROLLBACK_PENDING')",
             fetch=True,
             commit=False,
         )
         for row in saga_rows or []:
             item = dict(row)
-            payload = self._safe_json_loads(item.get("payload_json"), {})
-            event_name = str(payload.get("event_name") or "") if isinstance(payload, dict) else ""
-            if not event_name:
-                event_name = str(item.get("event_key") or "")
             out.append({
                 "bet_id": str(item.get("bet_id") or ""),
                 "market_id": str(item.get("market_id") or ""),
-                "event_name": event_name,
+                "event_name": self._saga_event_name(item),
             })
 
         return [o for o in out if o["bet_id"] and o["market_id"]]
+
+    def _saga_event_name(self, saga_row: Dict[str, Any]) -> str:
+        """``event_name`` leggibile di un ``order_saga``, dal solo ``payload_json``.
+
+        NON ripiega su ``event_key``: è una chiave interna di deduplica (slug),
+        non il nome leggibile della partita che il segnale di cashout confronta.
+        Usarla come ``event_name`` farebbe fallire il match del CASHOUT singolo
+        (saltando una posizione valida del bot). Se il payload non porta
+        ``event_name`` si ritorna ``''`` (fail-closed: il router salta il CASHOUT
+        singolo per quel mercato). Il wiring (B2.4) deve garantire ``event_name``
+        nel payload del saga perché il CASHOUT singolo **live** possa restringere
+        alla partita.
+        """
+        payload = self._safe_json_loads(saga_row.get("payload_json"), {})
+        if isinstance(payload, dict):
+            return str(payload.get("event_name") or "")
+        return ""
 
     def save_observability_snapshot(self, payload):
         sql = """
