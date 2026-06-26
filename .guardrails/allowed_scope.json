@@ -190,6 +190,18 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 9
+    },
+    "betfair_replace_orders": {
+      "allow_tests": true,
+      "files": [
+        "betfair_client.py",
+        "simulation_broker.py",
+        "tests/unit/test_betfair_client.py",
+        "tests/unit/test_simulation_broker_replace_orders.py",
+        "ops/roadmap_go_live.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 8
     }
   }
 }

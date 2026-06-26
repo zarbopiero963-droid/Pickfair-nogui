@@ -453,3 +453,68 @@ def test_cancel_order_raises_when_cancel_unconfirmed(client):
 
     with pytest.raises(RuntimeError, match="CANCEL_ORDER_UNCONFIRMED"):
         client.cancel_order(bet_id="B1")
+
+
+@pytest.mark.unit
+def test_replace_orders_sends_rpc_and_lifts_new_bet_id(client):
+    import json as _json
+
+    captured = {}
+
+    def _post(url, headers=None, data=None, timeout=None, **kw):
+        captured["url"] = url
+        captured["body"] = _json.loads(data) if data else None
+        return _RPCResp([{"jsonrpc": "2.0", "id": 1, "result": {
+            "status": "SUCCESS",
+            "instructionReports": [{
+                "status": "SUCCESS",
+                # Betfair puts the OLD cancelled order id at the report top level;
+                # the lift must OVERWRITE it with the replacement id.
+                "betId": "OLD-BET",
+                "cancelInstructionReport": {"status": "SUCCESS", "sizeCancelled": 2.0},
+                "placeInstructionReport": {"status": "SUCCESS", "betId": "NEW-BET"},
+            }],
+        }}])
+
+    client.session.post = _post
+    client.session_token = "TOK"
+
+    out = client.replace_orders(market_id="1.100", bet_id="OLD-BET", new_price=3.4)
+
+    params = captured["body"][0]["params"]
+    assert captured["body"][0]["method"] == "SportsAPING/v1.0/replaceOrders"
+    assert params["marketId"] == "1.100"
+    assert params["instructions"] == [{"betId": "OLD-BET", "newPrice": 3.4}]
+    # The replacement bet id (placeInstructionReport.betId) OVERWRITES the
+    # top-level OLD id, so order_manager tracks the new live order.
+    assert out["instructionReports"][0]["betId"] == "NEW-BET"
+    assert out["instructionReports"][0]["status"] == "SUCCESS"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "kwargs,match",
+    [
+        ({"market_id": "", "bet_id": "B", "new_price": 2.0}, "INVALID_MARKET_ID"),
+        ({"market_id": "1.1", "bet_id": "", "new_price": 2.0}, "INVALID_BET_ID"),
+        ({"market_id": "1.1", "bet_id": "B", "new_price": 1.0}, "INVALID_PRICE"),
+        ({"market_id": "1.1", "bet_id": "B", "new_price": "x"}, "INVALID_PRICE"),
+        ({"market_id": "1.1", "bet_id": "B", "new_price": float("nan")}, "INVALID_PRICE"),
+        ({"market_id": "1.1", "bet_id": "B", "new_price": float("inf")}, "INVALID_PRICE"),
+    ],
+)
+def test_replace_orders_validates_inputs(client, kwargs, match):
+    with pytest.raises(RuntimeError, match=match):
+        client.replace_orders(**kwargs)
+
+
+@pytest.mark.unit
+def test_replace_orders_propagates_session_expired(client):
+    # Fail-closed: a session error propagates → order_manager maps to REJECTED.
+    client.session_token = "TOK"
+    client.session.post = lambda *a, **k: _RPCResp(
+        [{"jsonrpc": "2.0", "id": 1, "error": {"code": -32099,
+          "message": "INVALID_SESSION_INFORMATION"}}]
+    )
+    with pytest.raises(RuntimeError, match="SESSION_EXPIRED"):
+        client.replace_orders(market_id="1.1", bet_id="B", new_price=2.0)
