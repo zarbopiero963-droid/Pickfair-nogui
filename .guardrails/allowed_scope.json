@@ -262,6 +262,16 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 6
+    },
+    "cashout_event_name": {
+      "allow_tests": true,
+      "files": [
+        "telegram_listener.py",
+        "tests/unit/test_telegram_listener_cashout_event.py",
+        "ops/roadmap_go_live.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
     }
   }
 }
