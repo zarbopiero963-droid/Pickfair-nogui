@@ -37,34 +37,63 @@ logger = logging.getLogger(__name__)
 _OK_STATUSES = ("SUCCESS", "OK")
 
 
-def response_confirms_cancel(result: Any) -> bool:
-    """``True`` se la risposta del broker non porta ALCUN segnale di fallimento.
+def _inspect_container(container: Dict[str, Any]):
+    """Esamina UN container (top o annidato ``result``) della risposta broker.
 
-    Ispeziona ``ok``, ``status`` e ``instructionReports`` sia al livello top sia
-    **annidati** sotto ``result`` (il wrapper live di ``BetfairClient`` ritorna
-    ``ok``/``status`` SUCCESS al top e annida la risposta grezza — coi report
-    per-istruzione — sotto ``result``). Un valore truthy non-dict (es. ``True`` o
-    la lista dei bet_id cancellati) è considerato conferma.
+    - ``False`` = fallimento o shape ambigua: ``ok is False``, ``status`` non-OK,
+      ``instructionReports`` non-lista/vuoti, un report non-dict o con ``status``
+      mancante/non-OK;
+    - ``True``  = conferma esplicita: una lista non vuota di ``instructionReports``
+      tutti OK (l'unica prova positiva per-istruzione che il cancel ha agito);
+    - ``None``  = neutro: nessun ``instructionReports`` in questo container.
     """
-    if not result:
+    if container.get("ok") is False:
         return False
+    status = str(container.get("status") or "").strip().upper()
+    if status and status not in _OK_STATUSES:
+        return False
+    reports = container.get("instructionReports")
+    if reports is None:
+        return None
+    # Report presenti: una conferma reale richiede una lista NON vuota di dict
+    # tutti OK. Lista vuota/malformata o report senza status => ambiguo => fail.
+    if not isinstance(reports, list) or not reports:
+        return False
+    for report in reports:
+        if not isinstance(report, dict):
+            return False
+        report_status = str(report.get("status") or "").strip().upper()
+        if report_status not in _OK_STATUSES:  # mancante/None/non-OK => fail
+            return False
+    return True
+
+
+def response_confirms_cancel(result: Any) -> bool:
+    """``True`` SOLO con conferma esplicita di successo (allowlist, fail-closed).
+
+    Inverte la logica denylist: invece di "confermo a meno di un fallimento", si
+    **richiede una prova positiva per-istruzione** (``instructionReports`` non
+    vuoti e tutti OK) e si tratta ogni esito ambiguo o di shape inattesa come
+    **non confermato** — meglio saltare la posizione che chiudere lasciando il
+    resting potenzialmente vivo. Un envelope ``ok``/``status`` di successo **senza**
+    report (es. live troncata, ``cancelled_count == 0``) NON basta. Ispeziona il
+    top-level e il container **annidato** sotto ``result`` (il wrapper live di
+    ``BetfairClient`` annida lì i report grezzi; il SIM li mette al top).
+    """
     if not isinstance(result, dict):
-        return True
+        return False  # shape inattesa (non-dict) => non confermato (fail-closed)
     if result.get("ok") is False:
         return False
     nested = result.get("result")
-    for container in (result, nested if isinstance(nested, dict) else None):
-        if not isinstance(container, dict):
-            continue
-        status = str(container.get("status") or "").strip().upper()
-        if status and status not in _OK_STATUSES:
+    containers = [result] + ([nested] if isinstance(nested, dict) else [])
+    saw_confirmation = False
+    for container in containers:
+        verdict = _inspect_container(container)
+        if verdict is False:
             return False
-        for report in container.get("instructionReports") or []:
-            if isinstance(report, dict):
-                report_status = str(report.get("status") or "").strip().upper()
-                if report_status and report_status not in _OK_STATUSES:
-                    return False
-    return True
+        if verdict is True:
+            saw_confirmation = True
+    return saw_confirmation
 
 
 class CashoutCancelAdapter:

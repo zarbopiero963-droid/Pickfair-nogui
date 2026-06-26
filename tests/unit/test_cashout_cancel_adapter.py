@@ -31,15 +31,41 @@ def _adapter(sim, live_broker, sim_broker):
 # ---------------------------------------------------------------------------
 
 
-def test_confirm_truthy_non_dict():
-    assert response_confirms_cancel(True) is True
-    assert response_confirms_cancel(["B1"]) is True
+def test_confirm_non_dict_is_unconfirmed_fail_closed():
+    # Shape inattesa (non-dict) => non confermato (fail-closed). Greptile P2.
+    assert response_confirms_cancel(True) is False
+    assert response_confirms_cancel(["B1"]) is False
+    assert response_confirms_cancel("ok") is False
 
 
 def test_confirm_falsy_is_unconfirmed():
     assert response_confirms_cancel(None) is False
     assert response_confirms_cancel({}) is False
     assert response_confirms_cancel(False) is False
+
+
+def test_confirm_success_envelope_without_reports_is_unconfirmed():
+    # Codex P2: ok/status SUCCESS ma SENZA instructionReports = ambiguo (es. live
+    # troncata, cancelled_count==0) => fail-closed.
+    assert response_confirms_cancel({"ok": True, "status": "SUCCESS"}) is False
+    assert response_confirms_cancel({"error": "timeout"}) is False        # Greptile P1
+    assert response_confirms_cancel({"result": {}}) is False               # Greptile P1
+
+
+def test_confirm_report_missing_status_is_unconfirmed():
+    # Greptile P1: un report con status mancante/None è ambiguo => non confermato.
+    assert response_confirms_cancel(
+        {"status": "SUCCESS", "instructionReports": [{}]}) is False
+    assert response_confirms_cancel(
+        {"status": "SUCCESS", "instructionReports": [{"status": None}]}) is False
+
+
+def test_confirm_empty_or_nondict_reports_is_unconfirmed():
+    # Codacy: lista report vuota o con un elemento non-dict => fail-closed.
+    assert response_confirms_cancel(
+        {"status": "SUCCESS", "instructionReports": []}) is False
+    assert response_confirms_cancel(
+        {"status": "SUCCESS", "instructionReports": [{"status": "SUCCESS"}, "bad"]}) is False
 
 
 def test_confirm_live_ok_false_is_unconfirmed():
@@ -79,7 +105,8 @@ def test_confirm_sim_all_success():
 
 
 def test_live_routing_uses_bet_ids_keyword():
-    live = _Broker({"ok": True, "status": "SUCCESS"})
+    live = _Broker({"ok": True, "status": "SUCCESS",
+                    "result": {"status": "SUCCESS", "instructionReports": [{"status": "SUCCESS"}]}})
     sim = _Broker()
     ok = _adapter(False, live, sim).cancel("1.1", ["B1", "B2"])
     assert ok is True
