@@ -10,9 +10,11 @@ Il componente è **dormiente** finché qualcuno non emette
 oppure la UI). Da solo non innesca alcun bet autonomo.
 
 Fail-closed real-money:
-- la validazione NON è mai saltabile (anche senza ``SafetyLayer`` iniettato:
-  c'è un floor intrinseco con price>1, stake>0, side∈{BACK,LAY}, id presenti);
-  payload invalido ⇒ ``CASHOUT_FAILED`` ``REJECTED``, nessun piazzamento;
+- le invarianti real-money hard girano SEMPRE (anche col ``SafetyLayer``, che
+  non copre side allow-list, finitezza NaN/Inf né presenza di ``green_up``):
+  campi richiesti (incl. ``green_up``), ``side∈{BACK,LAY}``, ``price>1`` finito,
+  ``stake>0`` finito; payload invalido ⇒ ``CASHOUT_FAILED`` ``REJECTED``,
+  nessun piazzamento;
 - il lato (``side``) è quello calcolato a monte dalla matematica di green-up e
   **non viene mai defaultato**: un side mancante ⇒ rigetto (defaultare a LAY
   potrebbe piazzare un ordine reale che *aumenta* l'esposizione);
@@ -68,25 +70,18 @@ class CashoutExecutor:
             self._fail("payload_non_dict", status="REJECTED", payload={})
             return
 
-        # Fail-closed: la validazione NON è mai saltabile. Il broad ``except`` è
-        # voluto — qualunque errore di validazione diventa un REJECTED loggato e
-        # pubblicato, mai un'eccezione propagata che crasherebbe l'handler del bus.
+        # Fail-closed: le invarianti real-money hard girano SEMPRE (anche col
+        # SafetyLayer iniettato, che NON copre side allow-list, finitezza
+        # NaN/Inf né presenza di green_up). Se c'è il SafetyLayer si aggiunge
+        # il suo schema. Il broad ``except`` è voluto: qualunque errore di
+        # validazione diventa un REJECTED loggato e pubblicato, mai propagato a
+        # crashare l'handler del bus.
         try:
+            self._enforce_hard_invariants(payload)
             if self.safety_layer is not None:
                 self.safety_layer.validate_cashout_request(payload)
-            else:
-                self._intrinsic_validate(payload)
         except Exception as exc:  # noqa: BLE001 - fail-closed intenzionale
             self._fail(f"validation:{exc}", status="REJECTED", payload=payload)
-            return
-
-        # Finiteness SEMPRE (anche col SafetyLayer, che non la controlla): NaN
-        # passa i confronti `<=` e Inf li supera, ma verrebbero serializzati in
-        # una richiesta Betfair reale o creerebbero ordini sim corrotti. Cfr. #292
-        # (parità sim su prezzo non-finito).
-        if not (math.isfinite(self._as_float(payload.get("price")))
-                and math.isfinite(self._as_float(payload.get("stake")))):
-            self._fail("non_finite_price_or_stake", status="REJECTED", payload=payload)
             return
 
         try:
@@ -104,16 +99,29 @@ class CashoutExecutor:
         self._handle_result(result if isinstance(result, dict) else {}, payload)
 
     @classmethod
-    def _intrinsic_validate(cls, payload: Dict[str, Any]) -> None:
-        """Floor fail-closed quando non c'è un SafetyLayer iniettato."""
-        for field in ("market_id", "selection_id", "side", "price", "stake"):
+    def _enforce_hard_invariants(cls, payload: Dict[str, Any]) -> None:
+        """Invarianti real-money applicate SEMPRE, anche col SafetyLayer.
+
+        Lo schema del SafetyLayer verifica i bound price/stake e i tipi, ma NON
+        la side allow-list (un ``side`` arbitrario verrebbe coerciato dal client
+        live), NON la finitezza (NaN/Inf passano i confronti ``<=``) e NON è
+        garantita la presenza di ``green_up`` (un cashout senza green_up
+        riporterebbe un P&L falso). Difesa in profondità, indipendente
+        dall'injection.
+        """
+        for field in ("market_id", "selection_id", "side", "price", "stake", "green_up"):
             if payload.get(field) in (None, ""):
                 raise ValueError(f"campo_mancante:{field}")
         if str(payload.get("side", "")).upper() not in cls._VALID_SIDES:
             raise ValueError("side_invalido")
-        if cls._as_float(payload.get("price")) <= 1.0:
+        price = cls._as_float(payload.get("price"))
+        stake = cls._as_float(payload.get("stake"))
+        green_up = cls._as_float(payload.get("green_up"))
+        if not (math.isfinite(price) and math.isfinite(stake) and math.isfinite(green_up)):
+            raise ValueError("valore_non_finito")
+        if price <= 1.0:
             raise ValueError("price<=1")
-        if cls._as_float(payload.get("stake")) <= 0.0:
+        if stake <= 0.0:
             raise ValueError("stake<=0")
 
     @staticmethod

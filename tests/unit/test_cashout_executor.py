@@ -221,6 +221,38 @@ def test_non_finite_rejected_even_with_permissive_safety_layer():
     assert bus.last(CASHOUT_FAILED)["status"] == "REJECTED"
 
 
+def test_invalid_side_rejected_even_with_safety_layer():
+    # Codex P2: il SafetyLayer verifica solo che side sia stringa, non la
+    # allow-list. side='NOPE' verrebbe coerciato a BACK dal client live =>
+    # l'invariante hard (sempre attiva) deve rigettarlo.
+    class _PermissiveSafety:
+        def validate_cashout_request(self, payload):
+            return True
+
+    bus = _FakeBus()
+    router = _FakeRouter(_ok_result())
+    CashoutExecutor(bus, router, safety_layer=_PermissiveSafety()).on_cmd_execute_cashout(
+        _cmd_payload(side="NOPE")
+    )
+    assert router.calls == []
+    assert CASHOUT_SUCCESS not in bus.topics()
+    assert bus.last(CASHOUT_FAILED)["status"] == "REJECTED"
+
+
+def test_missing_green_up_rejected_before_placement():
+    # Codex P2: senza green_up l'hedge verrebbe piazzato e CASHOUT_SUCCESS
+    # riporterebbe green_up=0.0 (P&L falso). green_up è richiesto sempre.
+    bus = _FakeBus()
+    router = _FakeRouter(_ok_result())
+    payload = _cmd_payload()
+    del payload["green_up"]
+    CashoutExecutor(bus, router).on_cmd_execute_cashout(payload)
+
+    assert router.calls == []
+    assert CASHOUT_SUCCESS not in bus.topics()
+    assert bus.last(CASHOUT_FAILED)["status"] == "REJECTED"
+
+
 def test_non_dict_payload_rejected():
     bus = _FakeBus()
     router = _FakeRouter(_ok_result())
