@@ -92,13 +92,19 @@ class CashoutExecutor:
             self._fail(f"campo_mancante:{exc}", status="REJECTED", payload=payload)
             return
 
+        # Cattura il mode SIM/LIVE PRIMA del place: l'OrderRouter sceglie il
+        # broker via get_client() all'inizio di place(), quindi catturarlo qui
+        # (nessun I/O tra questa riga e get_client) riflette il broker effettivo.
+        # Rileggerlo dopo place() esporrebbe a uno switch SIM/LIVE in volo (la
+        # finestra della chiamata di rete) → flag sim errato (Codex P2).
+        sim = self._is_simulation()
         try:
             result = self.order_router.place(place_payload)
         except Exception as exc:  # noqa: BLE001 - esito ignoto => fail-closed
             self._fail(f"place_exception:{exc}", status="ERROR", payload=payload)
             return
 
-        self._handle_result(result if isinstance(result, dict) else {}, payload)
+        self._handle_result(result if isinstance(result, dict) else {}, payload, sim)
 
     @classmethod
     def _enforce_hard_invariants(cls, payload: Dict[str, Any]) -> None:
@@ -146,8 +152,13 @@ class CashoutExecutor:
             "runner_name": str(payload.get("runner_name", "")),
         }
 
-    def _handle_result(self, result: Dict[str, Any], payload: Dict[str, Any]) -> None:
-        """Interpreta l'esito normalizzato del router e pubblica success/failed."""
+    def _handle_result(self, result: Dict[str, Any], payload: Dict[str, Any],
+                       sim: bool = False) -> None:
+        """Interpreta l'esito normalizzato del router e pubblica success/failed.
+
+        ``sim`` è il mode catturato al momento del piazzamento (non rieletto qui),
+        usato per il sim-broadcast guard del ``CASHOUT_SUCCESS``.
+        """
         bet_id = result.get("bet_id")
         matched = self._as_float(result.get("matched"))
 
@@ -176,9 +187,9 @@ class CashoutExecutor:
             "selection_id": payload.get("selection_id"),
             # Flag per il sim-broadcast guard: un cashout eseguito in simulazione
             # NON deve fare broadcast del MASTER_CASHOUT ai follower reali
-            # (telegram_sender._on_cashout_success lo filtra). Derivato dal broker
-            # attivo via OrderRouter; difensivo (default False = live).
-            "sim": self._is_simulation(),
+            # (telegram_sender._on_cashout_success lo filtra). Catturato al
+            # piazzamento (non rieletto qui) per evitare uno switch in volo.
+            "sim": bool(sim),
         }
         logger.info("[CashoutExecutor] CASHOUT_SUCCESS matched=%s bet_id=%s", matched, bet_id)
         self.bus.publish(CASHOUT_SUCCESS, success)
