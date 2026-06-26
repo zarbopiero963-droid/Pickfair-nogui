@@ -724,6 +724,64 @@ class BetfairClient:
             }
 
     # =========================================================
+    # ORDERS – REPLACE (change price of an unmatched order)
+    # =========================================================
+    def replace_orders(
+        self,
+        *,
+        market_id: Any,
+        bet_id: Any,
+        new_price: Any,
+    ) -> Dict[str, Any]:
+        """Replace an unmatched order's price via the replaceOrders API.
+
+        Betfair's replaceOrders cancels the (unmatched) order and re-places it
+        at ``new_price``, yielding a NEW bet id (in the report's
+        ``placeInstructionReport``). Returns the raw Betfair response with that
+        new bet id lifted to the report top level, so the order_manager saga can
+        read ``instructionReports[0]['betId']`` directly. API/session/network
+        failures PROPAGATE — order_manager wraps the call and maps them to
+        REPLACE_REJECTED.
+        """
+        market_id_s = str(market_id or "").strip()
+        if not market_id_s:
+            raise RuntimeError("INVALID_MARKET_ID")
+
+        bet_id_s = str(bet_id or "").strip()
+        if not bet_id_s:
+            raise RuntimeError("INVALID_BET_ID")
+
+        try:
+            new_price_f = float(new_price)
+        except Exception as exc:
+            raise RuntimeError("INVALID_PRICE") from exc
+        if new_price_f <= 1.0:
+            raise RuntimeError("INVALID_PRICE")
+
+        result = self._post_jsonrpc(
+            self.BETTING_URL,
+            "SportsAPING/v1.0/replaceOrders",
+            {
+                "marketId": market_id_s,
+                "instructions": [{"betId": bet_id_s, "newPrice": new_price_f}],
+            },
+            # replaceOrders is NOT idempotent (cancel + re-place) and carries no
+            # customerRef: a retry after a timeout could replace twice. Never
+            # re-send — an uncertain outcome is for reconciliation, not retry.
+            single_shot=True,
+        )
+
+        # The replacement order's id lives in placeInstructionReport.betId; lift
+        # it to the report top level so the caller reads the new bet id.
+        for report in result.get("instructionReports") or []:
+            if isinstance(report, dict) and not report.get("betId"):
+                new_bid = (report.get("placeInstructionReport") or {}).get("betId")
+                if new_bid:
+                    report["betId"] = new_bid
+
+        return result
+
+    # =========================================================
     # ORDERS – CURRENT (ghost-order detection)
     # =========================================================
     # listCurrentOrders is paginated: Betfair caps a single response at

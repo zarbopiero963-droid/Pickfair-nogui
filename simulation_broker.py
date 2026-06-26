@@ -689,6 +689,77 @@ class SimulationBroker:
             "simulated": True,
         }
 
+    def replace_orders(
+        self,
+        *,
+        market_id: Optional[str] = None,
+        bet_id: Optional[str] = None,
+        new_price: Optional[float] = None,
+        customer_ref: str = "",
+    ) -> Dict[str, Any]:
+        """Replace an unmatched simulated order's price (SIM/LIVE parity).
+
+        Mirrors Betfair semantics: cancel the old unmatched order and place a
+        new one at ``new_price`` with a fresh bet id (the matched portion stays
+        on the cancelled order). Returns the same response shape as the live
+        client — ``instructionReports[0]`` carries ``status`` and the new
+        ``betId``. A missing/non-executable order yields a FAILURE report.
+        """
+        _ = customer_ref
+        bid = str(bet_id or "").strip()
+        try:
+            price_f = float(new_price)
+        except (TypeError, ValueError):
+            price_f = 0.0
+
+        with self._lock:
+            old = self.state.orders.get(bid)
+            if old is None or old.status != "EXECUTABLE" or price_f <= 1.0:
+                return {
+                    "status": "SUCCESS",
+                    "marketId": str(market_id or (old.market_id if old else "")),
+                    "instructionReports": [{"status": "FAILURE", "betId": bid}],
+                    "simulated": True,
+                }
+
+            remaining = max(0.0, old.size - old.matched_size)
+            old.status = "CANCELLED"
+            old.updated_at = datetime.utcnow().isoformat()
+
+            new_order = SimOrder(
+                bet_id="SIMBET-" + uuid.uuid4().hex[:14],
+                market_id=old.market_id,
+                selection_id=old.selection_id,
+                side=old.side,
+                price=price_f,
+                size=remaining,
+                customer_ref=old.customer_ref,
+                event_key=old.event_key,
+                table_id=old.table_id,
+                batch_id=old.batch_id,
+                event_name=old.event_name,
+                market_name=old.market_name,
+                runner_name=old.runner_name,
+            )
+            self._match_order(new_order)
+            self.state.orders[new_order.bet_id] = new_order
+
+        self._persist_order(new_order)
+
+        return {
+            "status": "SUCCESS",
+            "marketId": new_order.market_id,
+            "instructionReports": [
+                {
+                    "status": "SUCCESS",
+                    "betId": new_order.bet_id,
+                    "sizeMatched": new_order.matched_size,
+                    "averagePriceMatched": new_order.avg_price_matched,
+                }
+            ],
+            "simulated": True,
+        }
+
     # =========================================================
     # MATCHING
     # =========================================================
