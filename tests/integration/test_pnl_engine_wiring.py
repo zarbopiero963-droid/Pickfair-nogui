@@ -24,8 +24,8 @@ class _Bus:
         self.events.append((event_name, payload))
 
 
-def _fill(event_key="E1", market="1.100", sel=7, side="BACK", price=2.0, size=5.0):
-    return {
+def _fill(event_key="E1", market="1.100", sel=7, side="BACK", price=2.0, size=5.0, bet_id=None):
+    f = {
         "event_key": event_key,
         "market_id": market,
         "selection_id": sel,
@@ -33,6 +33,10 @@ def _fill(event_key="E1", market="1.100", sel=7, side="BACK", price=2.0, size=5.
         "avg_price_matched": price,
         "matched_size": size,
     }
+    if bet_id is not None:
+        # fill_id distinto: il PositionLedger deduplica per fill_id.
+        f["bet_id"] = bet_id
+    return f
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +83,42 @@ def test_snapshot_tracks_filled_position():
     assert pos["side"] == "BACK"
     assert pos["price"] == 2.0
     assert pos["stake"] == 5.0
+
+
+def test_flat_position_is_pruned_not_kept_at_zero_stake():
+    # In tracking-only una posizione azzerata da un fill opposto va POTATA: senza
+    # _on_market non c'è altro a rimuoverla, e snapshot() non deve esporre
+    # posizioni a stake 0 (il routing cashout proverebbe a chiuderle).
+    pe = PnLEngine(bus=None, auto_close=False)
+    pe._on_filled(_fill(event_key="E1", side="BACK", price=2.0, size=5.0, bet_id="B1"))
+    assert pe.snapshot()["open_positions"] == 1
+
+    # bet_id distinto: senza, il ledger deduplica il secondo fill.
+    pe._on_filled(_fill(event_key="E1", side="LAY", price=2.0, size=5.0, bet_id="B2"))
+    assert pe.snapshot()["open_positions"] == 0
+
+
+def test_auto_close_closes_profitable_position_and_publishes():
+    # Verifica che il close-path (refactor publish-fuori-dal-lock) funzioni:
+    # posizione profittevole => RUNTIME_CLOSE_POSITION pubblicato + posizione rimossa.
+    bus = _Bus()
+    pe = PnLEngine(bus=bus, auto_close=True)
+    pe._on_filled(_fill(event_key="E1", market="1.100", sel=7, side="BACK", price=2.0, size=10.0))
+    assert pe.snapshot()["open_positions"] == 1
+
+    book = {
+        "marketId": "1.100",
+        "runners": [
+            {"selectionId": 7, "ex": {
+                "availableToBack": [{"price": 1.1}],
+                "availableToLay": [{"price": 1.1}],
+            }},
+        ],
+    }
+    pe._on_market(book)
+
+    assert pe.snapshot()["open_positions"] == 0
+    assert any(name == "RUNTIME_CLOSE_POSITION" for name, _ in bus.events)
 
 
 def test_tracking_only_never_publishes_close():

@@ -68,7 +68,10 @@ class RuntimeController:
         # Fase 2.1-B). auto_close=False: SOLO tracking dei fill via snapshot(),
         # nessuna chiusura automatica MTM (che pubblicherebbe RUNTIME_CLOSE_POSITION).
         # Iniettabile per i test; istanziato una sola volta (no doppia subscribe).
-        self.pnl_engine = pnl_engine or PnLEngine(bus=self.bus, auto_close=False)
+        # `is not None` (non `or`): un tracker iniettato ma "falsy" (es. doppio
+        # di test con __bool__=False) non deve essere scartato a favore di una
+        # PnLEngine reale che si sottoscriverebbe al bus.
+        self.pnl_engine = pnl_engine if pnl_engine is not None else PnLEngine(bus=self.bus, auto_close=False)
         self.table_manager = TableManager(table_count=self.config.table_count)
         self.duplication_guard = DuplicationGuard()
         self.risk_desk = RiskDesk()

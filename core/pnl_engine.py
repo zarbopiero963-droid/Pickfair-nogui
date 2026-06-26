@@ -103,7 +103,17 @@ class PnLEngine:
         event_key = str(payload.get("event_key") or "")
         if not event_key:
             return
+        # Prezzo d'ingresso = prezzo medio REALMENTE abbinato, non il limit. Il
+        # broker lo riporta come averagePriceMatched; order_manager promuove
+        # matched_size ma non il prezzo medio (porta però la response grezza).
+        # Si usa il limit `price` solo come ultima spiaggia.
         matched_price = payload.get("avg_price_matched")
+        if matched_price is None:
+            matched_price = payload.get("averagePriceMatched")
+        if matched_price is None:
+            reports = (payload.get("response") or {}).get("instructionReports") or []
+            if reports and isinstance(reports[0], dict):
+                matched_price = reports[0].get("averagePriceMatched")
         if matched_price is None:
             matched_price = payload.get("matched_price")
         if matched_price is None:
@@ -141,16 +151,26 @@ class PnLEngine:
                 size=size,
             )
             snap = applied["snapshot"]
-            self._positions[event_key] = {
-                "event_key": event_key,
-                "market_id": market_id,
-                "selection_id": selection_id,
-                "side": str(snap.open_side or side),
-                "price": float(snap.avg_entry_price or price),
-                "stake": float(snap.open_size or 0.0),
-                "table_id": payload.get("table_id"),
-                "batch_id": payload.get("batch_id"),
-            }
+            open_size = float(snap.open_size or 0.0)
+            if open_size <= 0.0:
+                # Posizione azzerata (chiusa/compensata da un fill opposto): va
+                # POTATA, non lasciata a stake=0. In tracking-only (auto_close=
+                # False) non c'è _on_market a rimuoverla, quindi senza questo
+                # _positions crescerebbe all'infinito e snapshot() esporrebbe
+                # posizioni a stake 0 che il routing cashout proverebbe a chiudere.
+                self._positions.pop(event_key, None)
+                self._position_ledgers.pop(event_key, None)
+            else:
+                self._positions[event_key] = {
+                    "event_key": event_key,
+                    "market_id": market_id,
+                    "selection_id": selection_id,
+                    "side": str(snap.open_side or side),
+                    "price": float(snap.avg_entry_price or price),
+                    "stake": open_size,
+                    "table_id": payload.get("table_id"),
+                    "batch_id": payload.get("batch_id"),
+                }
 
     # =========================================================
     # MARKET UPDATE
@@ -158,6 +178,10 @@ class PnLEngine:
     def _on_market(self, market_book):
         market_id = str(market_book.get("marketId") or "")
 
+        # Raccoglie sotto lock le posizioni da chiudere, poi chiama _close FUORI
+        # dal lock: _close pubblica RUNTIME_CLOSE_POSITION e tenere il lock
+        # durante la publish rischierebbe un deadlock coi subscriber.
+        to_close = []
         with self._lock:
             for pos in list(self._positions.values()):
                 if pos["market_id"] != market_id:
@@ -166,9 +190,14 @@ class PnLEngine:
                 settlement = self._calc_settlement(pos, market_book)
                 pnl = float(settlement["net_pnl"])
 
-                # 🎯 LOGICA USCITA
-                if pnl >= pos["stake"] * 0.03 or pnl <= -pos["stake"] * 0.05:
-                    self._close(pos, settlement)
+                # 🎯 LOGICA USCITA — solo posizioni con stake>0 (0>=0 chiuderebbe
+                # una posizione piatta).
+                stake = float(pos.get("stake") or 0.0)
+                if stake > 0.0 and (pnl >= stake * 0.03 or pnl <= -stake * 0.05):
+                    to_close.append((pos, settlement))
+
+        for pos, settlement in to_close:
+            self._close(pos, settlement)
 
     # =========================================================
     # PNL CALC
@@ -266,19 +295,25 @@ class PnLEngine:
         event_key = str(pos.get("event_key") or "")
         market_id = str(pos.get("market_id") or "").strip()
         gross_pnl = float(settlement.get("gross_pnl", settlement.get("net_pnl", 0.0)) or 0.0)
-        ledger = self._position_ledgers.get(event_key)
         close_price = float(settlement.get("close_price") or 0.0)
-        if ledger is not None:
-            snap = ledger.snapshot()
-            if snap.open_side in {"BACK", "LAY"} and snap.open_size > 0.0 and close_price > 1.0:
-                close_side = "LAY" if snap.open_side == "BACK" else "BACK"
-                close_fill = ledger.apply_fill(
-                    fill_id=f"close:{event_key}",
-                    side=close_side,
-                    price=close_price,
-                    size=float(snap.open_size),
-                )
-                gross_pnl = float(close_fill.get("realized_delta") or gross_pnl)
+        with self._lock:
+            ledger = self._position_ledgers.get(event_key)
+            if ledger is not None:
+                snap = ledger.snapshot()
+                if snap.open_side in {"BACK", "LAY"} and snap.open_size > 0.0 and close_price > 1.0:
+                    close_side = "LAY" if snap.open_side == "BACK" else "BACK"
+                    close_fill = ledger.apply_fill(
+                        fill_id=f"close:{event_key}",
+                        side=close_side,
+                        price=close_price,
+                        size=float(snap.open_size),
+                    )
+                    gross_pnl = float(close_fill.get("realized_delta") or gross_pnl)
+            # Stato rimosso sotto lock; la publish (sotto) avviene FUORI dal lock
+            # per non rischiare deadlock coi subscriber di RUNTIME_CLOSE_POSITION.
+            self._positions.pop(event_key, None)
+            self._position_ledgers.pop(event_key, None)
+
         realized = self._apply_realized_market_net_commission(market_id=market_id, gross_pnl=gross_pnl)
         net_pnl = float(realized["net_pnl"])
         commission_amount = float(realized["commission_amount"])
@@ -311,9 +346,6 @@ class PnLEngine:
 
         if self.bus:
             self.bus.publish("RUNTIME_CLOSE_POSITION", payload)
-
-        self._positions.pop(event_key, None)
-        self._position_ledgers.pop(event_key, None)
 
     # =========================================================
     # STATUS
