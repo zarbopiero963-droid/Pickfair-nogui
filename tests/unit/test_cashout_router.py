@@ -412,6 +412,34 @@ def test_pure_resting_flatten_restricted_to_event_for_single_cashout():
     assert all(m != "1.2" for m, _ in h.cancelled)   # NON l'altra partita
 
 
+def test_pure_resting_sharing_market_is_not_double_cancelled():
+    # Greptile P2: un ordine puro che condivide market+selection con una posizione
+    # è già cancellato dal close per-posizione => il flatten NON lo ricancella.
+    h = _Harness(
+        current=[_curr("B1", "1.1", 7, "BACK", matched=6.0, remaining=4.0),
+                 _curr("B2", "1.1", 7, "BACK", matched=0.0, remaining=5.0)],
+        bot=[_bot("B1", "1.1", 7), _bot("B2", "1.1", 7)],
+        books={"1.1": _book("1.1", 7)},
+    )
+    out = h.router().route({"signal_type": "CASHOUT_ALL"})
+    assert out["published"] == 1
+    assert h.cancelled == [("1.1", ["B1", "B2"])]   # un solo cancel, niente doppione
+
+
+def test_pure_resting_snake_case_keys_are_flattened():
+    # Le chiavi size_matched/size_remaining (snake_case) sono gestite come le
+    # camelCase: l'ordine puro viene comunque flattato.
+    snake = {"bet_id": "B2", "market_id": "1.2", "selection_id": 9, "side": "BACK",
+             "size_matched": 0.0, "size_remaining": 5.0}
+    h = _Harness(
+        current=[_curr("B1", "1.1", 7, "BACK", matched=10.0), snake],
+        bot=[_bot("B1", "1.1", 7), _bot("B2", "1.2", 9)],
+        books={"1.1": _book("1.1", 7), "1.2": _book("1.2", 9)},
+    )
+    h.router().route({"signal_type": "CASHOUT_ALL"})
+    assert ("1.2", ["B2"]) in h.cancelled
+
+
 def test_non_cashout_signal_is_ignored():
     h = _Harness(current=[], bot=[], books={})
     out = h.router().route({"signal_type": "QUICK_BET"})

@@ -89,19 +89,59 @@ def _closing_price(book: Dict[str, Any], selection_id: Any, side: str) -> Option
         except (TypeError, ValueError):
             continue
         ladder = runner.get(ladder_key) or (runner.get("ex") or {}).get(ladder_key) or []
-        for level in ladder:
-            if not isinstance(level, dict):
-                continue
+        best = _best_executable_level(ladder)
+        if best is not None:
+            return best
+    return None
+
+
+def _best_executable_level(ladder: Any) -> Optional[Tuple[float, float]]:
+    """``(prezzo, size)`` del primo livello marketable (``prezzo > 1.0``) del ladder."""
+    for level in ladder or []:
+        if not isinstance(level, dict):
+            continue
+        try:
+            price_f = float(level.get("price"))
+        except (TypeError, ValueError):
+            continue
+        if price_f > 1.0:
             try:
-                price_f = float(level.get("price"))
+                size_f = float(level.get("size") or 0.0)
             except (TypeError, ValueError):
-                continue
-            if price_f > 1.0:
-                try:
-                    size_f = float(level.get("size") or 0.0)
-                except (TypeError, ValueError):
-                    size_f = 0.0
-                return price_f, size_f
+                size_f = 0.0
+            return price_f, size_f
+    return None
+
+
+def _pure_resting_target(row: Any, is_bot_order, in_scope: Optional[Set[str]],
+                         exclude: Set[str]) -> Optional[Tuple[str, str]]:
+    """``(market_id, bet_id)`` se ``row`` è un ordine bot **del tutto** non abbinato.
+
+    Ordine bot ``sizeMatched==0`` e ``sizeRemaining>0``, su un mercato in scope e
+    con ``bet_id`` non già gestito (``exclude``); altrimenti ``None``. Accetta chiavi
+    camelCase (LIVE Betfair) **e** snake_case (SIM/interno).
+    """
+    if not isinstance(row, dict) or not is_bot_order(row):
+        return None
+    market_id = str(row.get("marketId") or row.get("market_id") or "")
+    if not market_id or (in_scope is not None and market_id not in in_scope):
+        return None
+    bid = _bet_id(row)
+    if not bid or bid in exclude:
+        return None
+    matched_raw = row.get("sizeMatched")
+    if matched_raw is None:
+        matched_raw = row.get("size_matched")
+    remaining_raw = row.get("sizeRemaining")
+    if remaining_raw is None:
+        remaining_raw = row.get("size_remaining")
+    try:
+        matched = float(matched_raw or 0.0)
+        remaining = float(remaining_raw or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if matched <= 0.0 < remaining:
+        return market_id, bid
     return None
 
 
@@ -161,12 +201,14 @@ class CashoutRouter:
             if positions is None:  # senza event_name non si chiude nulla (fail-closed).
                 return self._summary(0, 0, reason="no_event_name")
 
-        published, skipped = self._close_positions(positions, current_orders, _is_bot_order)
+        published, skipped, cancelled = self._close_positions(positions, current_orders, _is_bot_order)
         # L147: dopo le posizioni, cancella anche il resting "puro" del bot (ordini
         # del tutto non abbinati che non formano una posizione) sui mercati in scope,
         # così non si abbina dopo il cashout del master riaprendo esposizione.
+        # ``cancelled`` esclude i bet_id già cancellati dal close per-posizione (no
+        # doppio cancel / falso warning quando un ordine puro condivide market+sel).
         in_scope = self._in_scope_markets(signal_type, signal, market_event)
-        self._flatten_pure_resting(current_orders, _is_bot_order, in_scope)
+        self._flatten_pure_resting(current_orders, _is_bot_order, in_scope, exclude=cancelled)
         return self._summary(published, skipped)
 
     # ------------------------------------------------------------------
@@ -246,30 +288,23 @@ class CashoutRouter:
         return {m for m, ev in market_event.items() if ev == target}
 
     def _flatten_pure_resting(self, current_orders, is_bot_order,
-                              in_scope: Optional[Set[str]]) -> None:
-        """L147: cancella gli ordini bot **del tutto** non abbinati
-        (``sizeMatched==0`` e ``sizeRemaining>0``) sui mercati in scope.
+                              in_scope: Optional[Set[str]],
+                              exclude: Optional[Set[str]] = None) -> None:
+        """L147: cancella gli ordini bot **del tutto** non abbinati.
 
-        Non formano una posizione (il resolver li ignora), quindi il close
-        per-posizione non li tocca: lasciati vivi si abbinerebbero **dopo** il
-        cashout del master, riaprendo esposizione. Raggruppati per mercato e
-        cancellati best-effort (con conferma); un fallimento è loggato e non aborta
-        il resto.
+        Un ordine ``sizeMatched==0`` e ``sizeRemaining>0`` non forma una posizione
+        (il resolver lo ignora), quindi il close per-posizione non lo tocca:
+        lasciato vivo si abbinerebbe **dopo** il cashout del master, riaprendo
+        esposizione. Raggruppati per mercato e cancellati best-effort (con
+        conferma); ``exclude`` salta i bet_id già cancellati dal close per-posizione
+        (no doppio cancel/falso warning); un fallimento è loggato e non aborta.
         """
+        skip = exclude or set()
         by_market: Dict[str, List[str]] = {}
         for row in current_orders or []:
-            if not isinstance(row, dict) or not is_bot_order(row):
-                continue
-            market_id = str(row.get("marketId") or row.get("market_id") or "")
-            if not market_id or (in_scope is not None and market_id not in in_scope):
-                continue
-            try:
-                matched = float(row.get("sizeMatched") or 0.0)
-                remaining = float(row.get("sizeRemaining") or 0.0)
-            except (TypeError, ValueError):
-                continue
-            bid = _bet_id(row)
-            if matched <= 0.0 and remaining > 0.0 and bid:
+            hit = _pure_resting_target(row, is_bot_order, in_scope, skip)
+            if hit is not None:
+                market_id, bid = hit
                 by_market.setdefault(market_id, []).append(bid)
         for market_id, bet_ids in by_market.items():
             if not self._cancel_confirmed(market_id, bet_ids):
@@ -280,12 +315,17 @@ class CashoutRouter:
     def _close_positions(self, positions, current_orders, is_bot_order):
         """Chiude ogni posizione in modo best-effort: un'eccezione su UNA
         posizione (es. ``fetch_market_book`` che solleva) viene assorbita e la
-        posizione saltata, senza abortire il batch (contratto best-effort)."""
+        posizione saltata, senza abortire il batch (contratto best-effort).
+
+        Ritorna ``(published, skipped, cancelled)`` dove ``cancelled`` è il set dei
+        bet_id di resting già cancellati (per escluderli dal flatten a valle).
+        """
         published = 0
         skipped = 0
+        cancelled: Set[str] = set()
         for pos in positions:
             try:
-                closed = self._close_position(pos, current_orders, is_bot_order)
+                closed = self._close_position(pos, current_orders, is_bot_order, cancelled)
             except Exception as exc:  # noqa: BLE001 - best-effort: un errore su una posizione non aborta il batch
                 logger.warning("[cashout_router] chiusura posizione %s fallita, skip best-effort: %s",
                                pos.get("market_id"), exc)
@@ -294,9 +334,10 @@ class CashoutRouter:
                 published += 1
             else:
                 skipped += 1
-        return published, skipped
+        return published, skipped, cancelled
 
-    def _close_position(self, pos: Dict[str, Any], current_orders, is_bot_order) -> bool:
+    def _close_position(self, pos: Dict[str, Any], current_orders, is_bot_order,
+                        cancelled: Set[str]) -> bool:
         """Chiude una singola posizione (best-effort: ritorna False senza
         abortire il batch se non chiudibile)."""
         market_id = str(pos.get("market_id") or "")
@@ -318,8 +359,10 @@ class CashoutRouter:
         # se si abbinasse dopo, riaprirebbe la posizione appena chiusa.
         if float(pos.get("resting_remainder") or 0.0) > 0.0:
             resting_ids = self._resting_bet_ids(current_orders, is_bot_order, market_id, pos.get("selection_id"))
-            if resting_ids and not self._cancel_confirmed(market_id, resting_ids):
-                return False
+            if resting_ids:
+                cancelled.update(resting_ids)  # registra l'attempt: il flatten li salta
+                if not self._cancel_confirmed(market_id, resting_ids):
+                    return False
 
         req = build_cashout_request(
             pos, current_price=price, commission=self.commission_pct, source=self.source
