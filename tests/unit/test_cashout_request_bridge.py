@@ -95,6 +95,7 @@ def test_metadata_passthrough_for_audit():
         event_key="ek", event_name="Team A v Team B",
         market_name="Match Odds", runner_name="Team A"))
     cmd = bus.last(CMD_EXECUTE_CASHOUT)
+    assert cmd is not None
     assert cmd["event_key"] == "ek"
     assert cmd["event_name"] == "Team A v Team B"
     assert cmd["market_name"] == "Match Odds"
@@ -186,6 +187,53 @@ def test_missing_green_up_rejected():
     _assert_structured_reject(bus, market_id="1.222", selection_id=55)
 
 
+def test_non_integral_selection_id_rejected():
+    # int(55.9) -> 55 cambierebbe il runner: un float non-integrale e' reject.
+    bus = _SyncBus()
+    CashoutRequestBridge(bus).wire()
+    bus.publish(REQ_EXECUTE_CASHOUT, _req(selection_id=55.9))
+    assert CMD_EXECUTE_CASHOUT not in bus.topics()
+    assert bus.last(CASHOUT_FAILED)["reason"] == "selection_id_non_intero"
+
+
+def test_bool_selection_id_rejected():
+    # int(True) -> 1: un bool non e' un selection_id valido.
+    bus = _SyncBus()
+    CashoutRequestBridge(bus).wire()
+    bus.publish(REQ_EXECUTE_CASHOUT, _req(selection_id=True))
+    assert CMD_EXECUTE_CASHOUT not in bus.topics()
+    assert bus.last(CASHOUT_FAILED)["reason"] == "selection_id_non_intero"
+
+
+def test_integral_float_selection_id_accepted():
+    # 55.0 e' un intero esatto: ammesso e normalizzato a int.
+    bus = _SyncBus()
+    CashoutRequestBridge(bus).wire()
+    bus.publish(REQ_EXECUTE_CASHOUT, _req(selection_id=55.0))
+    cmd = bus.last(CMD_EXECUTE_CASHOUT)
+    assert cmd is not None
+    assert cmd["selection_id"] == 55 and isinstance(cmd["selection_id"], int)
+
+
+def test_none_market_id_rejected_before_stringify():
+    # str(None) -> 'None' supererebbe il check vuoto: None e' reject.
+    bus = _SyncBus()
+    CashoutRequestBridge(bus).wire()
+    bus.publish(REQ_EXECUTE_CASHOUT, _req(market_id=None))
+    assert CMD_EXECUTE_CASHOUT not in bus.topics()
+    failed = bus.last(CASHOUT_FAILED)
+    assert failed["reason"] == "market_id_mancante"
+    assert failed["market_id"] == ""  # None non e' echo-ato come 'None'
+
+
+def test_bool_market_id_rejected():
+    bus = _SyncBus()
+    CashoutRequestBridge(bus).wire()
+    bus.publish(REQ_EXECUTE_CASHOUT, _req(market_id=True))
+    assert CMD_EXECUTE_CASHOUT not in bus.topics()
+    assert bus.last(CASHOUT_FAILED)["reason"] == "market_id_mancante"
+
+
 # =========================================================
 # DEDUP
 # =========================================================
@@ -198,11 +246,43 @@ def test_duplicate_within_window_is_dropped():
     assert len(cmds) == 1
 
 
-def test_distinct_payloads_not_deduped():
+def test_distinct_positions_not_deduped():
     bus = _SyncBus()
     CashoutRequestBridge(bus, duplicate_window_sec=60.0).wire()
     bus.publish(REQ_EXECUTE_CASHOUT, _req(selection_id=55))
     bus.publish(REQ_EXECUTE_CASHOUT, _req(selection_id=66))
+    cmds = [t for t in bus.topics() if t == CMD_EXECUTE_CASHOUT]
+    assert len(cmds) == 2
+
+
+def test_same_position_different_metadata_is_deduped():
+    # Dedup su identita' posizione (market_id, selection_id, side): metadata e
+    # source diversi NON devono generare un secondo hedge per la stessa posizione.
+    bus = _SyncBus()
+    CashoutRequestBridge(bus, duplicate_window_sec=60.0).wire()
+    bus.publish(REQ_EXECUTE_CASHOUT, _req(source="TELEGRAM", event_name="A v B"))
+    bus.publish(REQ_EXECUTE_CASHOUT, _req(source="COPY", event_name="Other"))
+    cmds = [t for t in bus.topics() if t == CMD_EXECUTE_CASHOUT]
+    assert len(cmds) == 1
+
+
+def test_same_position_price_drift_is_deduped():
+    # Anche un price-drift tra due emissioni della stessa posizione e' un doppio
+    # hedge da sopprimere: la chiave non include il prezzo.
+    bus = _SyncBus()
+    CashoutRequestBridge(bus, duplicate_window_sec=60.0).wire()
+    bus.publish(REQ_EXECUTE_CASHOUT, _req(price=1.8))
+    bus.publish(REQ_EXECUTE_CASHOUT, _req(price=1.9))
+    cmds = [t for t in bus.topics() if t == CMD_EXECUTE_CASHOUT]
+    assert len(cmds) == 1
+
+
+def test_opposite_side_same_selection_not_deduped():
+    # Stesso market/selection ma side opposto = posizioni distinte (BACK vs LAY).
+    bus = _SyncBus()
+    CashoutRequestBridge(bus, duplicate_window_sec=60.0).wire()
+    bus.publish(REQ_EXECUTE_CASHOUT, _req(side="LAY"))
+    bus.publish(REQ_EXECUTE_CASHOUT, _req(side="BACK"))
     cmds = [t for t in bus.topics() if t == CMD_EXECUTE_CASHOUT]
     assert len(cmds) == 2
 
