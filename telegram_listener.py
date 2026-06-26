@@ -789,11 +789,16 @@ class TelegramListener:
         }
 
     def _parse_cashout_signal(self, text: str) -> Optional[Dict[str, Any]]:
+        # event_name serve al routing del CASHOUT singolo per restringere la
+        # chiusura alla partita (il CASHOUT_ALL lo ignora). Stringa vuota se non
+        # estraibile: il router fa fail-closed (salta il singolo per quel mercato).
         p = self._default_patterns()
         if re.search(p["cashout_all"], text, flags=re.IGNORECASE):
-            return {"signal_type": "CASHOUT_ALL", "raw_text": text}
+            return {"signal_type": "CASHOUT_ALL", "raw_text": text,
+                    "event_name": self._extract_event_name(text)}
         if re.search(p["cashout"], text, flags=re.IGNORECASE):
-            return {"signal_type": "CASHOUT", "raw_text": text}
+            return {"signal_type": "CASHOUT", "raw_text": text,
+                    "event_name": self._extract_event_name(text)}
         return None
 
     # =========================================================
