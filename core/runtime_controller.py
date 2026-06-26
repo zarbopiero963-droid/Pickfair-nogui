@@ -1686,10 +1686,17 @@ class RuntimeController:
         """
         svc = self.betfair_service
         try:
+            # is_simulation è un CALLABLE: l'adapter fa ``if self.is_simulation():``
+            # (lo chiama). get_live_client/get_simulation_broker possono essere
+            # Optional => guard None esplicito (cancel non confermato, mai
+            # AttributeError). commission_pct: None-check esplicito per non
+            # mascherare uno 0 configurato col fallback ``or``.
+            cp = getattr(self.config, "commission_pct", None)
+            commission = float(cp) if cp is not None else 4.5
             adapter = CashoutCancelAdapter(
                 is_simulation=svc.is_simulation_mode,
-                live_cancel=lambda **kw: svc.get_live_client().cancel_orders(**kw),
-                sim_cancel=lambda **kw: svc.get_simulation_broker().cancel_orders(**kw),
+                live_cancel=lambda **kw: (c.cancel_orders(**kw) if (c := svc.get_live_client()) is not None else False),
+                sim_cancel=lambda **kw: (b.cancel_orders(**kw) if (b := svc.get_simulation_broker()) is not None else False),
             )
             router = CashoutRouter(
                 fetch_current_orders=svc.list_current_orders,
@@ -1697,7 +1704,7 @@ class RuntimeController:
                 fetch_market_book=svc.get_market_book_snapshot,
                 cancel_orders=adapter.cancel,
                 publish=self.bus.publish,
-                commission_pct=float(getattr(self.config, "commission_pct", 4.5) or 4.5),
+                commission_pct=commission,
                 source="TELEGRAM",
             )
             result = router.route(signal)

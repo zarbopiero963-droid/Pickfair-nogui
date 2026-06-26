@@ -158,6 +158,30 @@ def test_runtime_inactive_blocks_cashout_upstream():
     assert rc._rejected and "runtime_non_attivo" in rc._rejected[0][0]
 
 
+def test_none_broker_guard_cancel_returns_false():
+    # I lambda live/sim cancel del wiring devono ritornare False (non crashare)
+    # se get_live_client/get_simulation_broker tornano None.
+    from cashout_cancel_adapter import CashoutCancelAdapter
+
+    class _NoneSvc:
+        def is_simulation_mode(self):
+            return False  # LIVE => usa live_cancel
+
+        def get_live_client(self):
+            return None
+
+        def get_simulation_broker(self):
+            return None
+
+    svc = _NoneSvc()
+    adapter = CashoutCancelAdapter(
+        is_simulation=svc.is_simulation_mode,
+        live_cancel=lambda **kw: (c.cancel_orders(**kw) if (c := svc.get_live_client()) is not None else False),
+        sim_cancel=lambda **kw: (b.cancel_orders(**kw) if (b := svc.get_simulation_broker()) is not None else False),
+    )
+    assert adapter.cancel("1.2", ["B1"]) is False  # nessun crash, cancel non confermato
+
+
 def test_non_cashout_signal_not_routed_as_cashout():
     # Un segnale normale non deve finire nel branch cashout.
     bus = _SyncBus()

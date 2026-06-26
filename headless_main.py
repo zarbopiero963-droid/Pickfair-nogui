@@ -469,8 +469,8 @@ class HeadlessApp:
         # sim/live resta valutata al momento del cancel reale.
         residual_cancel = CashoutCancelAdapter(
             is_simulation=lambda: svc.is_simulation_mode(),
-            live_cancel=lambda **kw: svc.get_live_client().cancel_orders(**kw),
-            sim_cancel=lambda **kw: svc.get_simulation_broker().cancel_orders(**kw),
+            live_cancel=lambda **kw: (c.cancel_orders(**kw) if (c := svc.get_live_client()) is not None else False),
+            sim_cancel=lambda **kw: (b.cancel_orders(**kw) if (b := svc.get_simulation_broker()) is not None else False),
         )
         self.cashout_residual_handler = CashoutResidualHandler(
             cancel=residual_cancel.cancel,
