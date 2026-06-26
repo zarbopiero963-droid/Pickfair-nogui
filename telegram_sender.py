@@ -594,6 +594,11 @@ class TelegramSender:
         self.queue_default_message(text, message_type="MASTER_SIGNAL_DUTCHING")
 
     def _on_cashout_success(self, data: Dict):
+        # Sim-broadcast guard: un cashout eseguito in simulazione non deve fare
+        # broadcast del MASTER_CASHOUT ai follower reali (parità con
+        # _on_quick_bet_success / _on_dutching_success).
+        if data.get("sim", False):
+            return
         if not self.default_chat_id:
             return
 

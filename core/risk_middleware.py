@@ -222,9 +222,12 @@ class RiskMiddleware:
             return
 
         try:
+            selection_id = int(payload.get("selection_id"))
+            if selection_id <= 0:
+                raise ValueError("selection_id<=0")
             normalized = {
                 "market_id": str(payload.get("market_id", "")),
-                "selection_id": int(payload.get("selection_id")),
+                "selection_id": selection_id,
                 "side": str(payload.get("side", "LAY")).upper(),
                 "stake": float(payload.get("stake", 0.0)),
                 "price": float(payload.get("price", 0.0)),
@@ -236,11 +239,27 @@ class RiskMiddleware:
             logger.error(
                 f"[RiskMiddleware] Payload CASHOUT invalido: {e} | payload={payload}"
             )
-            self.bus.publish("CASHOUT_FAILED", f"Payload CASHOUT invalido: {e}")
+            # Shape strutturato (dict), uniforme a CashoutRequestBridge/Executor:
+            # il consumer (CashoutResidualHandler) legge status/reason/market_id/
+            # selection_id in modo coerente (residuo 2.1-A).
+            self.bus.publish("CASHOUT_FAILED", self._cashout_failed_payload(payload, e))
             return
 
         logger.info("[RiskMiddleware] Forward REQ_EXECUTE_CASHOUT -> CMD_EXECUTE_CASHOUT")
         self.bus.publish("CMD_EXECUTE_CASHOUT", normalized)
+
+    @staticmethod
+    def _cashout_failed_payload(payload: Any, exc: Any) -> Dict[str, Any]:
+        """Shape strutturato di ``CASHOUT_FAILED`` (dict), come bridge/executor."""
+        safe = payload if isinstance(payload, dict) else {}
+        return {
+            "reason": f"Payload CASHOUT invalido: {exc}",
+            "status": "REJECTED",
+            "bet_id": None,
+            "matched": 0.0,
+            "market_id": str(safe.get("market_id", "")),
+            "selection_id": safe.get("selection_id"),
+        }
 
     def _handle_cancel_order(self, payload: Dict[str, Any]) -> None:
         if self._is_duplicate(payload):

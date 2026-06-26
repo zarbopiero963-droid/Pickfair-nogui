@@ -174,6 +174,11 @@ class CashoutExecutor:
             "bet_id": bet_id,
             "market_id": str(payload.get("market_id", "")),
             "selection_id": payload.get("selection_id"),
+            # Flag per il sim-broadcast guard: un cashout eseguito in simulazione
+            # NON deve fare broadcast del MASTER_CASHOUT ai follower reali
+            # (telegram_sender._on_cashout_success lo filtra). Derivato dal broker
+            # attivo via OrderRouter; difensivo (default False = live).
+            "sim": self._is_simulation(),
         }
         logger.info("[CashoutExecutor] CASHOUT_SUCCESS matched=%s bet_id=%s", matched, bet_id)
         self.bus.publish(CASHOUT_SUCCESS, success)
@@ -189,6 +194,19 @@ class CashoutExecutor:
             "market_id": str(payload.get("market_id", "")) if isinstance(payload, dict) else "",
             "selection_id": payload.get("selection_id") if isinstance(payload, dict) else None,
         })
+
+    def _is_simulation(self) -> bool:
+        """True se il broker attivo è la simulazione (via ``OrderRouter.service``).
+
+        Difensivo: se non determinabile ⇒ False (trattato come live). Usato solo
+        per il flag ``sim`` del ``CASHOUT_SUCCESS`` (sim-broadcast guard).
+        """
+        try:
+            svc = getattr(self.order_router, "service", None)
+            fn = getattr(svc, "is_simulation_mode", None)
+            return bool(fn()) if callable(fn) else False
+        except Exception:  # noqa: BLE001 - best-effort, mai crash sul publish
+            return False
 
     @staticmethod
     def _as_float(value: Any) -> float:
