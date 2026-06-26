@@ -272,6 +272,17 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 6
+    },
+    "cashout_request_bridge": {
+      "allow_tests": true,
+      "files": [
+        "cashout_request_bridge.py",
+        "headless_main.py",
+        "tests/unit/test_cashout_request_bridge.py",
+        "ops/roadmap_go_live.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 8
     }
   }
 }

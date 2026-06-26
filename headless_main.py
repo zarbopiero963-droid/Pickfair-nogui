@@ -19,6 +19,9 @@ from services.telegram_service import TelegramService
 
 from core.trading_engine import TradingEngine
 from core.runtime_controller import RuntimeController
+from core.order_router import OrderRouter
+from cashout_executor import CashoutExecutor
+from cashout_request_bridge import CashoutRequestBridge
 from observability import (
     AlertsManager,
     DiagnosticsService,
@@ -73,6 +76,9 @@ class HeadlessApp:
 
         self.trading_engine: Optional[TradingEngine] = None
         self.runtime: Optional[RuntimeController] = None
+        self.order_router: Optional[OrderRouter] = None
+        self.cashout_executor: Optional[CashoutExecutor] = None
+        self.cashout_request_bridge: Optional[CashoutRequestBridge] = None
         self.health_registry: Optional[HealthRegistry] = None
         self.metrics_registry: Optional[MetricsRegistry] = None
         self.alerts_manager: Optional[AlertsManager] = None
@@ -105,6 +111,9 @@ class HeadlessApp:
 
         self.trading_engine = None
         self.runtime = None
+        self.order_router = None
+        self.cashout_executor = None
+        self.cashout_request_bridge = None
         self.health_registry = None
         self.metrics_registry = None
         self.alerts_manager = None
@@ -241,6 +250,8 @@ class HeadlessApp:
             self.trading_engine.runtime_controller = self.runtime
             self.trading_engine.simulation_broker = getattr(self, "simulation_broker", None)
             self.trading_engine.betfair_client = self.betfair_service.get_client()
+
+            self._wire_cashout_execution_chain()
 
             self.health_registry = HealthRegistry()
             self.metrics_registry = MetricsRegistry()
@@ -411,6 +422,44 @@ class HeadlessApp:
             logger.exception("Errore durante build headless")
             self._cleanup_partial_build()
             raise
+
+    def _wire_cashout_execution_chain(self) -> None:
+        """Cabla la catena di ESECUZIONE del cashout — dormiente (Fase 2.1-B2.4b-1).
+
+        Costruisce e sottoscrive al bus la catena ``REQ_EXECUTE_CASHOUT`` →
+        ``CMD_EXECUTE_CASHOUT`` → piazzamento green-up:
+
+        - ``OrderRouter``: seam unico di piazzamento sim/live (sceglie il broker
+          attivo via ``betfair_service.get_client()``, quindi è mode-aware senza
+          ramo dedicato qui);
+        - ``CashoutExecutor``: consuma ``CMD_EXECUTE_CASHOUT``, applica le
+          invarianti real-money hard e piazza l'hedge tramite l'``OrderRouter``;
+        - ``CashoutRequestBridge``: bridge cashout-only che consuma
+          ``REQ_EXECUTE_CASHOUT`` (dedup + normalizzazione + ``CASHOUT_FAILED``
+          strutturato) e pubblica ``CMD_EXECUTE_CASHOUT``.
+
+        DORMIENTE by-design: nessun componente qui **emette**
+        ``REQ_EXECUTE_CASHOUT``. Finché il trigger runtime (Fase 2.1-B2.4b-2,
+        ``RuntimeController`` sui segnali CASHOUT/CASHOUT_ALL) non lo pubblica,
+        la catena è inerte e nessun ordine reale parte. Il wiring degli altri
+        order type (QUICK_BET, DUTCHING, CANCEL, REPLACE) NON è toccato: il
+        bridge è cashout-only.
+        """
+        if self.bus is None or self.betfair_service is None:
+            raise RuntimeError("Bus/BetfairService non inizializzati per il wiring cashout")
+
+        self.order_router = OrderRouter(self.betfair_service)
+        self.cashout_executor = CashoutExecutor(self.bus, self.order_router)
+        self.cashout_executor.wire()
+
+        self.cashout_request_bridge = CashoutRequestBridge(self.bus)
+        self.cashout_request_bridge.wire()
+
+        logger.info(
+            "Catena cashout cablata (dormiente): "
+            "CashoutRequestBridge[REQ_EXECUTE_CASHOUT] -> "
+            "CashoutExecutor[CMD_EXECUTE_CASHOUT] -> OrderRouter"
+        )
 
     def _register_shutdown_hooks(self) -> None:
         if not self.shutdown:
