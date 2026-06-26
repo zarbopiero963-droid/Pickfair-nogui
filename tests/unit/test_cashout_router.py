@@ -249,6 +249,52 @@ def test_empty_event_name_does_not_overwrite_valid_mapping():
     assert h.reqs()[0]["market_id"] == "1.1"
 
 
+def test_cancel_nested_instruction_failure_skips_position():
+    # Codex P1: il wrapper live di BetfairClient ritorna ok/status SUCCESS al top
+    # e annida i report grezzi sotto result["result"]["instructionReports"]; un
+    # report annidato non-SUCCESS (es. TIMEOUT) deve comunque bloccare il cashout.
+    h = _Harness(
+        current=[_curr("B1", "1.1", 7, "BACK", matched=6.0, remaining=4.0, avg=2.0)],
+        bot=[_bot("B1", "1.1", 7)],
+        books={"1.1": _book("1.1", 7, back=2.0, lay=2.1)},
+        cancel_result={"ok": True, "status": "SUCCESS",
+                       "result": {"status": "SUCCESS",
+                                  "instructionReports": [{"status": "TIMEOUT"}]}},
+    )
+    out = h.router().route({"signal_type": "CASHOUT_ALL"})
+    assert out["published"] == 0
+    assert h.reqs() == []
+
+
+def test_back_position_prices_hedge_from_available_to_back():
+    # Codex P1: l'hedge LAY di una posizione BACK matcha (nel motore del repo)
+    # contro availableToBack; su spread normale (back<lay) prezzare da
+    # availableToLay lo lascerebbe non abbinato.
+    h = _Harness(
+        current=[_curr("B1", "1.1", 7, "BACK", 10.0, avg=2.0)],
+        bot=[_bot("B1", "1.1", 7)],
+        books={"1.1": _book("1.1", 7, back=2.0, lay=2.1)},
+    )
+    out = h.router().route({"signal_type": "CASHOUT_ALL"})
+    assert out["published"] == 1
+    req = h.reqs()[0]
+    assert req["side"] == "LAY"
+    assert req["price"] == 2.0  # availableToBack[0], non 2.1
+
+
+def test_lay_position_prices_hedge_from_available_to_lay():
+    h = _Harness(
+        current=[_curr("B1", "1.1", 7, "LAY", 10.0, avg=2.1)],
+        bot=[_bot("B1", "1.1", 7)],
+        books={"1.1": _book("1.1", 7, back=2.0, lay=2.1)},
+    )
+    out = h.router().route({"signal_type": "CASHOUT_ALL"})
+    assert out["published"] == 1
+    req = h.reqs()[0]
+    assert req["side"] == "BACK"
+    assert req["price"] == 2.1  # availableToLay[0], non 2.0
+
+
 def test_bot_orders_db_error_publishes_failure_fail_closed():
     # Codex P2: se la lettura DB degli ordini bot solleva, si pubblica
     # CASHOUT_FAILED e si aborta (nessuna chiusura alla cieca).

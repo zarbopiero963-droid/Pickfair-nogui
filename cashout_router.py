@@ -57,13 +57,27 @@ def _market_is_open(book: Dict[str, Any]) -> bool:
 
 
 def _closing_price(book: Dict[str, Any], selection_id: Any, side: str) -> Optional[float]:
-    """Miglior prezzo al lato di CHIUSURA: una posizione BACK si chiude LAYando
-    (``availableToLay``), una LAY backando (``availableToBack``)."""
+    """Prezzo ESEGUIBILE per l'hedge di chiusura della posizione ``side``.
+
+    L'hedge ha lato opposto alla posizione e, nel motore di matching del repo
+    (``SimulationOrderBook.get_opposite_ladder`` e ``simulation_broker``), un
+    ordine matcha contro il ladder opposto: un BACK matcha su ``availableToLay``,
+    un LAY su ``availableToBack`` (con condizione di marketability
+    ``lay.price <= bestBack`` / ``back.price >= bestLay``). Quindi:
+
+    - posizione BACK => hedge LAY => prezzo da ``availableToBack`` (dove il LAY
+      matcha); usando ``availableToLay`` su spread normale (best back < best lay)
+      il LAY resterebbe NON abbinato e la posizione non si chiuderebbe;
+    - posizione LAY => hedge BACK => prezzo da ``availableToLay``.
+
+    Il prezzo restituito e' anche quello a cui l'hedge si abbina, quindi corretto
+    per il calcolo del green-up.
+    """
     try:
         sel = int(selection_id)
     except (TypeError, ValueError):
         return None
-    ladder_key = "availableToLay" if str(side).upper() == "BACK" else "availableToBack"
+    ladder_key = "availableToBack" if str(side).upper() == "BACK" else "availableToLay"
     for runner in book.get("runners") or []:
         try:
             if int(runner.get("selectionId")) != sel:
@@ -294,17 +308,25 @@ class CashoutRouter:
           istruzione => un report non-SUCCESS = non confermato.
 
         Un valore truthy non-dict (es. ``True`` o la lista dei bet_id cancellati)
-        e' considerato conferma.
+        e' considerato conferma. ``status`` e ``instructionReports`` sono
+        ispezionati sia al livello top sia ANNIDATI sotto ``result`` (il wrapper
+        live di ``BetfairClient`` ritorna ``ok=True``/``status=SUCCESS`` al top e
+        annida la risposta grezza — coi report per-istruzione — sotto ``result``).
         """
         if not result:
             return False
-        if isinstance(result, dict):
-            if result.get("ok") is False:
-                return False
-            status = str(result.get("status") or "").strip().upper()
+        if not isinstance(result, dict):
+            return True
+        if result.get("ok") is False:
+            return False
+        nested = result.get("result")
+        for container in (result, nested if isinstance(nested, dict) else None):
+            if not isinstance(container, dict):
+                continue
+            status = str(container.get("status") or "").strip().upper()
             if status and status not in ("SUCCESS", "OK"):
                 return False
-            for report in result.get("instructionReports") or []:
+            for report in container.get("instructionReports") or []:
                 if isinstance(report, dict):
                     report_status = str(report.get("status") or "").strip().upper()
                     if report_status and report_status not in ("SUCCESS", "OK"):
