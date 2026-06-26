@@ -5,6 +5,7 @@ si testano solo il gating del cashout e ``_route_cashout_signal``.
 """
 
 import threading
+from collections import defaultdict
 
 from core.runtime_controller import RuntimeController
 
@@ -12,12 +13,19 @@ from core.runtime_controller import RuntimeController
 class _SyncBus:
     def __init__(self):
         self.published = []
+        self._subscribers = defaultdict(list)
+
+    def subscribe(self, topic, handler):
+        self._subscribers[topic].append(handler)
 
     def publish(self, topic, payload=None):
         self.published.append((topic, payload))
 
     def topics(self):
         return [t for t, _ in self.published]
+
+    def stats(self):
+        return {"subscribers": {k: len(v) for k, v in self._subscribers.items()}}
 
 
 class _Cfg:
@@ -59,12 +67,18 @@ class _DB:
         return list(self._bot_orders)
 
 
-def _bare_controller(bus, svc, db):
+def _bare_controller(bus, svc, db, *, chain_wired=True):
     rc = object.__new__(RuntimeController)
     rc.bus = bus
     rc.betfair_service = svc
     rc.db = db
     rc.config = _Cfg()
+    rc._rejected = []
+    rc._reject_signal = lambda sig, reason: rc._rejected.append((reason, sig))
+    if chain_wired:
+        # Simula la catena d'esecuzione cablata (HeadlessApp): un subscriber su
+        # REQ_EXECUTE_CASHOUT. Senza, il guard rifiuta (path mini_gui/dev).
+        bus.subscribe("REQ_EXECUTE_CASHOUT", lambda payload: None)
     return rc
 
 
@@ -94,6 +108,32 @@ def test_route_never_emits_cmd_directly():
     rc = _bare_controller(bus, _Svc(), _DB(bot_orders=[]))
     rc._route_cashout_signal({"signal_type": "CASHOUT", "event_name": "A v B"})
     assert "CMD_EXECUTE_CASHOUT" not in bus.topics()
+    assert rc._rejected == []  # chain cablata: nessun rifiuto cashout_chain_not_wired
+
+
+# =========================================================
+# Guard anti-silent-drop: catena NON cablata (mini_gui/dev) => SIGNAL_REJECTED
+# =========================================================
+def test_route_without_chain_rejects_visibly_no_publish():
+    bus = _SyncBus()
+    rc = _bare_controller(bus, _Svc(), _DB(bot_orders=[]), chain_wired=False)
+    rc._route_cashout_signal({"signal_type": "CASHOUT_ALL", "event_name": ""})
+    # Rifiuto visibile, nessun REQ/CMD/CASHOUT_FAILED pubblicato, niente broker.
+    assert rc._rejected and rc._rejected[0][0] == "cashout_chain_not_wired"
+    assert "REQ_EXECUTE_CASHOUT" not in bus.topics()
+    assert "CMD_EXECUTE_CASHOUT" not in bus.topics()
+
+
+def test_chain_wired_detects_subscriber():
+    bus = _SyncBus()
+    rc = _bare_controller(bus, _Svc(), _DB(), chain_wired=True)
+    assert rc._cashout_chain_wired() is True
+
+
+def test_chain_not_wired_when_no_subscriber():
+    bus = _SyncBus()
+    rc = _bare_controller(bus, _Svc(), _DB(), chain_wired=False)
+    assert rc._cashout_chain_wired() is False
 
 
 # =========================================================

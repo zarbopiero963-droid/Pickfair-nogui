@@ -16,7 +16,7 @@ from core.risk_desk import RiskDesk
 from core.safety_layer import assert_live_gate_or_refuse
 from core.system_state import DeskMode, RuntimeMode
 from core.table_manager import TableManager
-from core.trading_constants import CASHOUT_FAILED
+from core.trading_constants import CASHOUT_FAILED, REQ_EXECUTE_CASHOUT
 from core.type_helpers import safe_bool
 from cashout_cancel_adapter import CashoutCancelAdapter
 from cashout_router import CashoutRouter
@@ -1673,6 +1673,29 @@ class RuntimeController:
             return 0.0
         return float(table.current_exposure or 0.0)
 
+    def _cashout_chain_wired(self) -> bool:
+        """True se esiste almeno un subscriber per ``REQ_EXECUTE_CASHOUT``.
+
+        Fail-closed: se non si riesce a determinarlo (bus senza introspezione),
+        ritorna False (non cablato) => il trigger rifiuta invece di pubblicare un
+        REQ che cadrebbe nel vuoto. Nessun side-effect.
+        """
+        bus = self.bus
+        if bus is None:
+            return False
+        try:
+            stats = bus.stats() if hasattr(bus, "stats") else None
+            if isinstance(stats, dict):
+                subs = stats.get("subscribers") or {}
+                if REQ_EXECUTE_CASHOUT in subs:
+                    return int(subs.get(REQ_EXECUTE_CASHOUT) or 0) > 0
+        except Exception:
+            pass
+        internal = getattr(bus, "_subscribers", None)
+        if isinstance(internal, dict):
+            return bool(internal.get(REQ_EXECUTE_CASHOUT))
+        return False
+
     def _route_cashout_signal(self, signal: dict) -> None:
         """Instrada un segnale CASHOUT/CASHOUT_ALL al ``CashoutRouter`` (Fase 2.1-B2.4b-2).
 
@@ -1684,6 +1707,15 @@ class RuntimeController:
         monte in ``_on_signal_received``. Fail-closed: un errore di costruzione o
         routing pubblica un ``CASHOUT_FAILED`` strutturato, non scarta in silenzio.
         """
+        # Guard anti-silent-drop: la catena d'esecuzione cashout è cablata solo
+        # in HeadlessApp (path di go-live). In un entrypoint dove non è cablata
+        # (es. mini_gui), pubblicare REQ_EXECUTE_CASHOUT lo farebbe cadere senza
+        # subscriber => l'operatore non vedrebbe nulla. Qui si rifiuta in modo
+        # VISIBILE (SIGNAL_REJECTED) senza pubblicare nulla né toccare il broker.
+        if not self._cashout_chain_wired():
+            self._reject_signal(signal, "cashout_chain_not_wired")
+            return
+
         svc = self.betfair_service
         try:
             # is_simulation è un CALLABLE: l'adapter fa ``if self.is_simulation():``
