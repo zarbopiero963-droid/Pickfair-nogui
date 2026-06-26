@@ -222,7 +222,12 @@ class RiskMiddleware:
             return
 
         try:
-            selection_id = int(payload.get("selection_id"))
+            sid_raw = payload.get("selection_id")
+            # Rifiuta i bool PRIMA del coerce: int(True)=1 forwarderebbe un CMD
+            # per il runner 1 (parità col CashoutRequestBridge, Greptile P1).
+            if isinstance(sid_raw, bool):
+                raise ValueError("selection_id_non_intero")
+            selection_id = int(sid_raw)
             if selection_id <= 0:
                 raise ValueError("selection_id<=0")
             normalized = {
@@ -252,12 +257,20 @@ class RiskMiddleware:
     def _cashout_failed_payload(payload: Any, exc: Any) -> Dict[str, Any]:
         """Shape strutturato di ``CASHOUT_FAILED`` (dict), come bridge/executor."""
         safe = payload if isinstance(payload, dict) else {}
+        # market_id None/bool/non-scalare => "" (non il letterale "None"): il
+        # record residuo non deve memorizzare un contesto market finto (Greptile P2).
+        raw_market = safe.get("market_id")
+        market_id = (
+            str(raw_market)
+            if isinstance(raw_market, (str, int, float)) and not isinstance(raw_market, bool)
+            else ""
+        )
         return {
             "reason": f"Payload CASHOUT invalido: {exc}",
             "status": "REJECTED",
             "bet_id": None,
             "matched": 0.0,
-            "market_id": str(safe.get("market_id", "")),
+            "market_id": market_id,
             "selection_id": safe.get("selection_id"),
         }
 

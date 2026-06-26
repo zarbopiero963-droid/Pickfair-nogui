@@ -66,3 +66,18 @@ def test_negative_selection_id_rejected():
     bus = _Bus()
     RiskMiddleware(bus)._handle_cashout(_payload(selection_id=-5))
     _assert_structured_failed(bus)
+
+
+def test_bool_selection_id_rejected():
+    # int(True)=1 forwarderebbe un CMD per il runner 1: bool => reject.
+    bus = _Bus()
+    RiskMiddleware(bus)._handle_cashout(_payload(selection_id=True))
+    _assert_structured_failed(bus)
+
+
+def test_none_market_id_not_echoed_as_literal_none():
+    bus = _Bus()
+    RiskMiddleware(bus)._handle_cashout(_payload(market_id=None, selection_id="abc"))
+    failed = bus.last("CASHOUT_FAILED")
+    assert isinstance(failed, dict)
+    assert failed["market_id"] == ""  # non il letterale "None"
