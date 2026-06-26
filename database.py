@@ -1270,14 +1270,15 @@ class Database:
         ``{"bet_id", "market_id", "event_name"}`` unendo i due ledger del bot:
 
         - **SIM** ``simulation_bets`` (``event_name`` è una colonna);
-        - **LIVE** ``order_saga`` con ``bet_id`` valorizzato dopo il piazzamento
-          (``event_name`` SOLO dal ``payload_json``; ``''`` se assente — vedi
-          ``_saga_event_name``, niente fallback su ``event_key`` slug).
+        - **LIVE** tabella ``orders`` — store autoritativo del percorso headless
+          (che costruisce ``TradingEngine`` **senza** ``OrderManager``, quindi NON
+          scrive ``order_saga``): ``betId`` dal ``response_json``,
+          ``market_id``/``event_name`` dal ``payload_json``.
 
         È la **sorgente d'identità I1**: il ``customerOrderRef`` NON è inviato a
         Betfair sul piazzamento, quindi il bot si riconosce dai propri ``bet_id``
-        registrati. Solo righe con ``bet_id`` non vuoto (un ordine senza bet_id
-        non è abbinabile agli ordini correnti live). **Read-only.**
+        registrati. Risultato **deduplicato** per ``bet_id`` (univoco su Betfair).
+        Solo righe con ``bet_id`` e ``market_id`` valorizzati. **Read-only.**
 
         La liveness effettiva è ri-verificata a valle dal ``CashoutRouter`` contro
         ``list_current_orders``: questa lista è l'allowlist di identità del bot
@@ -1285,57 +1286,82 @@ class Database:
         giudizio finale di apertura. Eventuali bet_id stale sono innocui (non
         compaiono tra gli ordini correnti live e i bet_id Betfair sono univoci).
         """
+        seen: set = set()
         out: List[Dict[str, str]] = []
+        for order in self._sim_bot_orders() + self._live_bot_orders():
+            bet_id = order["bet_id"]
+            if bet_id and order["market_id"] and bet_id not in seen:
+                seen.add(bet_id)
+                out.append(order)
+        return out
 
-        # Stati "vivi" come letterali costanti nell'SQL: nessun dato esterno entra
-        # nella query (niente costruzione dinamica/format), quindi nessun rischio
-        # di SQL injection.
-        sim_rows = self._execute(
+    def _sim_bot_orders(self) -> List[Dict[str, str]]:
+        """Ordini bot dal ledger SIM (``simulation_bets``). Stati letterali costanti
+        nell'SQL: nessun dato esterno nella query (no SQL injection)."""
+        rows = self._execute(
             "SELECT bet_id, market_id, event_name FROM simulation_bets "
             "WHERE bet_id != '' AND status IN ('EXECUTABLE', 'EXECUTION_COMPLETE')",
             fetch=True,
             commit=False,
         )
-        for row in sim_rows or []:
+        out: List[Dict[str, str]] = []
+        for row in rows or []:
             item = dict(row)
             out.append({
                 "bet_id": str(item.get("bet_id") or ""),
                 "market_id": str(item.get("market_id") or ""),
                 "event_name": str(item.get("event_name") or ""),
             })
+        return out
 
-        saga_rows = self._execute(
-            "SELECT bet_id, market_id, payload_json FROM order_saga "
-            "WHERE bet_id != '' AND status IN "
-            "('PENDING', 'SUBMITTED', 'PLACED', 'PARTIAL', 'ROLLBACK_PENDING')",
+    def _live_bot_orders(self) -> List[Dict[str, str]]:
+        """Ordini bot dal ledger LIVE autoritativo (tabella ``orders``).
+
+        ``betId`` dal ``response_json`` (output di ``OrderRouter``/broker),
+        ``market_id``/``event_name`` dal ``payload_json`` (la request, valorizzata
+        da ``risk_middleware``). Stati piazzati/abbinati (``INFLIGHT`` è
+        pre-piazzamento, senza betId, quindi escluso).
+        """
+        rows = self._execute(
+            "SELECT payload_json, response_json FROM orders "
+            "WHERE status IN "
+            "('SUBMITTED', 'PLACED', 'MATCHED', 'PARTIALLY_MATCHED', 'EXECUTION_COMPLETE')",
             fetch=True,
             commit=False,
         )
-        for row in saga_rows or []:
+        out: List[Dict[str, str]] = []
+        for row in rows or []:
             item = dict(row)
+            payload = self._safe_json_loads(item.get("payload_json"), {})
+            response = self._safe_json_loads(item.get("response_json"), {})
+            if not isinstance(payload, dict):
+                payload = {}
             out.append({
-                "bet_id": str(item.get("bet_id") or ""),
-                "market_id": str(item.get("market_id") or ""),
-                "event_name": self._saga_event_name(item),
+                "bet_id": self._order_bet_id(response),
+                "market_id": str(payload.get("market_id") or payload.get("marketId") or ""),
+                "event_name": str(payload.get("event_name") or ""),
             })
+        return out
 
-        return [o for o in out if o["bet_id"] and o["market_id"]]
+    @staticmethod
+    def _order_bet_id(response: Any) -> str:
+        """``betId`` dal ``response_json`` di un ordine live (output ``OrderRouter``).
 
-    def _saga_event_name(self, saga_row: Dict[str, Any]) -> str:
-        """``event_name`` leggibile di un ``order_saga``, dal solo ``payload_json``.
-
-        NON ripiega su ``event_key``: è una chiave interna di deduplica (slug),
-        non il nome leggibile della partita che il segnale di cashout confronta.
-        Usarla come ``event_name`` farebbe fallire il match del CASHOUT singolo
-        (saltando una posizione valida del bot). Se il payload non porta
-        ``event_name`` si ritorna ``''`` (fail-closed: il router salta il CASHOUT
-        singolo per quel mercato). Il wiring (B2.4) deve garantire ``event_name``
-        nel payload del saga perché il CASHOUT singolo **live** possa restringere
-        alla partita.
+        Prova la chiave normalizzata ``bet_id``/``betId``, poi ripiega sui
+        ``instructionReports`` grezzi (``raw``). ``''`` se non determinabile.
         """
-        payload = self._safe_json_loads(saga_row.get("payload_json"), {})
-        if isinstance(payload, dict):
-            return str(payload.get("event_name") or "")
+        if not isinstance(response, dict):
+            return ""
+        bet_id = response.get("bet_id") or response.get("betId")
+        if bet_id:
+            return str(bet_id)
+        raw = response.get("raw")
+        if isinstance(raw, dict):
+            for report in raw.get("instructionReports") or []:
+                if isinstance(report, dict):
+                    rid = report.get("betId") or report.get("bet_id")
+                    if rid:
+                        return str(rid)
         return ""
 
     def save_observability_snapshot(self, payload):
