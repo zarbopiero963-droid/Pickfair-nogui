@@ -392,3 +392,44 @@ def test_headless_wires_cashout_chain():
     # Il wiring di per sé non emette nulla (nessun REQ/CMD pubblicato).
     assert REQ_EXECUTE_CASHOUT not in app.bus.topics()
     assert CMD_EXECUTE_CASHOUT not in app.bus.topics()
+
+
+class _RecordingSender:
+    def __init__(self):
+        self.sent = []
+
+    def queue_default_message(self, text, message_type=None):
+        self.sent.append((message_type, text))
+
+
+def test_notify_residual_uses_telegram_service_sender():
+    import headless_main
+
+    app = headless_main.HeadlessApp()
+    sender = _RecordingSender()
+
+    class _TgSvc:
+        def get_sender(self):
+            return sender
+
+    app.telegram_service = _TgSvc()
+    app._notify_cashout_residual("residuo X", severity="CRITICAL")
+
+    assert sender.sent and sender.sent[0][0] == "CASHOUT_RESIDUAL"
+    assert "[CRITICAL]" in sender.sent[0][1] and "residuo X" in sender.sent[0][1]
+
+
+def test_notify_residual_falls_back_to_log_without_sender():
+    import headless_main
+
+    app = headless_main.HeadlessApp()
+
+    class _TgSvc:
+        sender = None
+
+        def get_sender(self):
+            return None
+
+    app.telegram_service = _TgSvc()
+    # Nessun sender disponibile: non deve sollevare (degrada a log).
+    app._notify_cashout_residual("residuo Y", severity="HIGH")

@@ -488,21 +488,57 @@ class HeadlessApp:
             "CashoutResidualHandler[CASHOUT_FAILED]"
         )
 
+    def _resolve_telegram_sender(self) -> Any:
+        """Risolve il sender Telegram dal ``telegram_service`` (come telegram_alerts).
+
+        Il global ``get_telegram_sender()`` è inizializzato solo se costruito con
+        un client (in headless non lo è), quindi NON ci si affida a quello: si usa
+        il sender del ``telegram_service`` (lo stesso che consuma CASHOUT_SUCCESS),
+        con fallback al global per percorsi alternativi.
+        """
+        sender = None
+        try:
+            svc = self.telegram_service
+            if svc is not None:
+                getter = getattr(svc, "get_sender", None)
+                if callable(getter):
+                    sender = getter()
+                if sender is None:
+                    sender = getattr(svc, "sender", None)
+        except Exception:
+            sender = None
+        if sender is None:
+            try:
+                sender = get_telegram_sender()
+            except Exception:
+                sender = None
+        return sender
+
     def _notify_cashout_residual(self, text: str, *, severity: str = "HIGH") -> None:
         """Notifica operatore del residuo cashout (best-effort, mai solleva).
 
-        Usa il ``TelegramSender`` globale se inizializzato; altrimenti logga. Il
+        Prova i metodi del sender in ordine (``queue_default_message`` → invio
+        diretto); se nessuno è disponibile o l'invio fallisce, logga. Il
         ``message_type`` dedicato distingue queste notifiche dagli altri invii.
         """
-        try:
-            sender = get_telegram_sender()
-            if sender is not None and hasattr(sender, "queue_default_message"):
-                sender.queue_default_message(
-                    f"[{severity}] {text}", message_type="CASHOUT_RESIDUAL"
-                )
-                return
-        except Exception:
-            logger.exception("Notifica residuo cashout fallita")
+        msg = f"[{severity}] {text}"
+        sender = self._resolve_telegram_sender()
+        if sender is not None:
+            q = getattr(sender, "queue_default_message", None)
+            if callable(q):
+                try:
+                    q(msg, message_type="CASHOUT_RESIDUAL")
+                    return
+                except Exception:
+                    logger.exception("Notifica residuo via queue_default_message fallita")
+            for name in ("send_message", "enqueue_message", "send"):
+                fn = getattr(sender, name, None)
+                if callable(fn):
+                    try:
+                        fn(msg)
+                        return
+                    except Exception:
+                        logger.exception("Notifica residuo via %s fallita", name)
         logger.warning("[CASHOUT_RESIDUAL][%s] %s", severity, text)
 
     def _register_shutdown_hooks(self) -> None:
