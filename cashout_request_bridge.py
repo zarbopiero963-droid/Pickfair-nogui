@@ -151,8 +151,13 @@ class CashoutRequestBridge:
         presenza: un ``market_id`` nullo finirebbe a piazzare un ordine sotto il
         market letterale ``'None'``. Solo stringhe/numeri non-bool sono ammessi.
         """
-        if value is None or isinstance(value, bool) or isinstance(value, (dict, list, tuple, set)):
+        if value is None or isinstance(value, (bool, dict, list, tuple, set)):
             raise _RejectCashout("market_id_mancante")
+        # float non-finito (NaN/Inf): ``str()`` darebbe ``'nan'``/``'inf'``, non
+        # vuoti, che supererebbero il check e finirebbero a piazzare sotto un
+        # market id sintetico (il JSON parser di Python accetta ``NaN``).
+        if isinstance(value, float) and not math.isfinite(value):
+            raise _RejectCashout("market_id_non_finito")
         market_id = str(value).strip()
         if not market_id:
             raise _RejectCashout("market_id_mancante")

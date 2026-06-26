@@ -234,6 +234,27 @@ def test_bool_market_id_rejected():
     assert bus.last(CASHOUT_FAILED)["reason"] == "market_id_mancante"
 
 
+def test_non_finite_float_market_id_rejected():
+    # str(float('nan'))='nan' / str(float('inf'))='inf' supererebbero il check
+    # vuoto e finirebbero sotto un market id sintetico: reject prima dello stringify.
+    for bad in (float("nan"), float("inf")):
+        bus = _SyncBus()
+        CashoutRequestBridge(bus).wire()
+        bus.publish(REQ_EXECUTE_CASHOUT, _req(market_id=bad))
+        assert CMD_EXECUTE_CASHOUT not in bus.topics()
+        assert bus.last(CASHOUT_FAILED)["reason"] == "market_id_non_finito"
+
+
+def test_finite_float_market_id_accepted():
+    # Un market id numerico finito resta ammesso (stringify deterministico).
+    bus = _SyncBus()
+    CashoutRequestBridge(bus).wire()
+    bus.publish(REQ_EXECUTE_CASHOUT, _req(market_id=1.222))
+    cmd = bus.last(CMD_EXECUTE_CASHOUT)
+    assert cmd is not None
+    assert cmd["market_id"] == "1.222"
+
+
 # =========================================================
 # DEDUP
 # =========================================================
