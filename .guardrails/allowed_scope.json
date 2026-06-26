@@ -322,12 +322,13 @@
         "database.py",
         "database_schema.py",
         "telegram_listener.py",
+        "guardrails/public_api_snapshot.json",
         "tests/unit/test_database_signal_pattern_action.py",
         "tests/unit/test_telegram_listener_copy_pattern_action.py",
         "ops/roadmap_go_live.md",
         ".guardrails/allowed_scope.json"
       ],
-      "max_files": 9
+      "max_files": 10
     }
   }
 }

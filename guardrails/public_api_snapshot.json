@@ -25,6 +25,7 @@
             "pattern",
             "label",
             "enabled",
+            "action",
             "bet_side",
             "market_type",
             "selection_template",
@@ -50,6 +51,7 @@
             "max_score",
             "live_only",
             "priority",
+            "action",
             "extra"
           ],
           "delete_signal_pattern": ["pattern_id"],
