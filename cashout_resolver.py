@@ -20,9 +20,12 @@ lato opposto riducono solo la size netta). Per il caso comune del copy-mirror
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+import logging
+from typing import Any, Dict, List, Optional, Tuple
 
 from dutching import dynamic_cashout_single
+
+logger = logging.getLogger(__name__)
 
 _VALID_SIDES = {"BACK", "LAY"}
 
@@ -35,24 +38,20 @@ def _to_float(value: Any, default: float = 0.0) -> float:
 
 
 def _row_matched_price(order: Dict[str, Any]) -> float:
-    """Prezzo medio abbinato del row: averagePriceMatched (LIVE) o, in mancanza,
-    priceSize.price (SIM, proxy d'ingresso)."""
-    price = order.get("averagePriceMatched")
-    if price in (None, ""):
-        price = (order.get("priceSize") or {}).get("price")
-    return _to_float(price)
+    """Prezzo medio abbinato del row: averagePriceMatched (LIVE) o, se mancante o
+    non valido (None/""/0.0/<=1), priceSize.price (SIM, proxy d'ingresso). Il
+    check su >1 evita di tenere uno 0.0 presente e scartare un ordine valido."""
+    price = _to_float(order.get("averagePriceMatched"))
+    if price <= 1.0:
+        price = _to_float((order.get("priceSize") or {}).get("price"))
+    return price
 
 
-def reconstruct_open_positions(current_orders: Any) -> List[Dict[str, Any]]:
-    """Aggrega gli ordini correnti in posizioni NETTE per ``(market_id, selection_id)``.
-
-    Ritorna una lista di ``{market_id, selection_id, side, stake, price}`` dove
-    ``side`` è il lato netto (BACK se il matched BACK supera il LAY, viceversa),
-    ``stake`` = ``|back_matched - lay_matched|`` e ``price`` = prezzo medio pesato
-    del lato dominante. Selezioni piatte (netto ~0), senza matched o con prezzo
-    non valido vengono escluse.
-    """
-    groups: Dict[tuple, Dict[str, float]] = {}
+def _aggregate_orders(current_orders: Any) -> Dict[Tuple[str, int], Dict[str, float]]:
+    """Somma per ``(market_id, selection_id)`` le size abbinate e i nozionali per
+    lato (BACK/LAY), filtrando i row invalidi. Estratto da
+    ``reconstruct_open_positions`` per separare parsing/filtraggio dal netting."""
+    groups: Dict[Tuple[str, int], Dict[str, float]] = {}
     for order in current_orders or []:
         if not isinstance(order, dict):
             continue
@@ -78,9 +77,20 @@ def reconstruct_open_positions(current_orders: Any) -> List[Dict[str, Any]]:
         else:
             grp["lay_size"] += matched
             grp["lay_notional"] += matched * price
+    return groups
 
+
+def reconstruct_open_positions(current_orders: Any) -> List[Dict[str, Any]]:
+    """Aggrega gli ordini correnti in posizioni NETTE per ``(market_id, selection_id)``.
+
+    Ritorna una lista di ``{market_id, selection_id, side, stake, price}`` dove
+    ``side`` è il lato netto (BACK se il matched BACK supera il LAY, viceversa),
+    ``stake`` = ``|back_matched - lay_matched|`` e ``price`` = prezzo medio pesato
+    del lato dominante. Selezioni piatte (netto ~0), senza matched o con prezzo
+    non valido vengono escluse.
+    """
     positions: List[Dict[str, Any]] = []
-    for (market_id, selection_id), grp in groups.items():
+    for (market_id, selection_id), grp in _aggregate_orders(current_orders).items():
         net = grp["back_size"] - grp["lay_size"]
         if abs(net) <= 1e-9:
             continue  # perfettamente coperta => nessuna esposizione da chiudere
@@ -133,9 +143,11 @@ def build_cashout_request(
             commission=commission,
             side=side,
         )
-    except Exception:
+    except Exception as exc:
         # Math non calcolabile (es. violazione policy commissione): fail-closed,
-        # si salta questa posizione invece di far crashare il routing.
+        # si salta questa posizione invece di far crashare il routing. Loggato
+        # (non mascherato) per diagnosi.
+        logger.warning("[cashout_resolver] green-up non calcolabile, posizione saltata: %s", exc)
         return None
     if not isinstance(calc, dict):
         return None
@@ -144,11 +156,17 @@ def build_cashout_request(
     if cashout_stake <= 0.0 or side_to_place not in _VALID_SIDES:
         return None
 
+    # round PRIMA del check: uno stake positivo ma sub-cent arrotonda a 0.0, che
+    # l'executor rifiuterebbe — meglio saltare la posizione qui (fail-closed).
+    rounded_stake = round(cashout_stake, 2)
+    if rounded_stake <= 0.0:
+        return None
+
     return {
         "market_id": str(position.get("market_id") or ""),
         "selection_id": int(_to_float(position.get("selection_id"))),
         "side": side_to_place,
-        "stake": round(cashout_stake, 2),
+        "stake": rounded_stake,
         "price": cur,
         "green_up": round(_to_float(calc.get("green_up")), 2),
         "original_pos": {"side": side, "stake": stake, "price": entry},

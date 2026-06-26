@@ -80,6 +80,14 @@ def test_sim_proxy_price_when_no_average_matched():
     assert pos[0]["price"] == 2.2
 
 
+def test_zero_average_price_falls_back_to_proxy():
+    # averagePriceMatched=0.0 (presente ma non valido) NON deve scartare il row:
+    # si ripiega su priceSize.price.
+    pos = reconstruct_open_positions([_order(side="BACK", matched=5.0, avg=0.0, price_size=2.3)])
+    assert len(pos) == 1
+    assert pos[0]["price"] == 2.3
+
+
 def test_skips_zero_matched_and_invalid_rows():
     rows = [
         _order(side="BACK", matched=0.0, avg=2.0),          # niente matched
@@ -143,6 +151,13 @@ def test_build_fail_closed_on_policy_violating_commission():
     # None (fail-closed), non propagare l'eccezione nel routing.
     pos = {"market_id": "1.1", "selection_id": 7, "side": "BACK", "stake": 10.0, "price": 2.0}
     assert build_cashout_request(pos, current_price=1.5, commission=2.0) is None
+
+
+def test_build_rejects_when_stake_rounds_to_zero():
+    # Stake di cashout sub-cent (arrotonda a 0.0): l'executor lo rifiuterebbe,
+    # quindi build deve ritornare None (Greptile P2).
+    pos = {"market_id": "1.1", "selection_id": 7, "side": "BACK", "stake": 0.01, "price": 1.01}
+    assert build_cashout_request(pos, current_price=900.0) is None
 
 
 def test_build_rejects_invalid_position():
