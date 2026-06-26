@@ -222,6 +222,17 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 6
+    },
+    "cashout_pnl_wiring": {
+      "allow_tests": true,
+      "files": [
+        "core/pnl_engine.py",
+        "core/runtime_controller.py",
+        "tests/integration/test_pnl_engine_wiring.py",
+        "ops/roadmap_go_live.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
     }
   }
 }

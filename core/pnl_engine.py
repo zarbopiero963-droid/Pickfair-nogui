@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any, Dict
 
-from trading_config import enforce_betfair_italy_commission_pct
 from core.position_ledger import PositionLedger
+from trading_config import enforce_betfair_italy_commission_pct
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +69,13 @@ class PnLEngine:
     - publish RUNTIME_CLOSE_POSITION
     """
 
-    def __init__(self, bus=None, commission_pct: float = 4.5):
+    def __init__(self, bus=None, commission_pct: float = 4.5, auto_close: bool = True):
         self.bus = bus
+        self.auto_close = bool(auto_close)
+        # RLock: con auto_close, _on_market tiene il lock e chiama _close che lo
+        # ri-acquisisce. Serializza letture (snapshot) e scritture (_on_filled)
+        # di _positions per l'enumerazione concorrente.
+        self._lock = threading.RLock()
         self._positions: Dict[str, Dict[str, Any]] = {}
         self._position_ledgers: Dict[str, PositionLedger] = {}
         self.commission = float(commission_pct) / 100.0
@@ -81,7 +87,14 @@ class PnLEngine:
         if self.bus:
             self.bus.subscribe("QUICK_BET_FILLED", self._on_filled)
             self.bus.subscribe("QUICK_BET_PARTIAL", self._on_filled)
-            self.bus.subscribe("MARKET_BOOK_UPDATE", self._on_market)
+            # L'auto-chiusura MTM (publish RUNTIME_CLOSE_POSITION quando il
+            # profitto >= +3% o la perdita <= -5%) è una STRATEGIA, non semplice
+            # tracking. Chi usa la PnLEngine come sola sorgente posizioni (es.
+            # cashout sizing) passa auto_close=False: niente sottoscrizione a
+            # MARKET_BOOK_UPDATE => nessuna chiusura automatica, nessuna
+            # emissione sul bus, solo tracking dei fill per snapshot().
+            if self.auto_close:
+                self.bus.subscribe("MARKET_BOOK_UPDATE", self._on_market)
 
     # =========================================================
     # POSITION TRACKING
@@ -108,11 +121,6 @@ class PnLEngine:
         if not market_id or selection_id < 0 or price <= 1.0 or size <= 0.0:
             return
 
-        ledger = self._position_ledgers.get(event_key)
-        if ledger is None:
-            ledger = PositionLedger(market_id=market_id, runner_id=selection_id)
-            self._position_ledgers[event_key] = ledger
-
         fill_id = str(
             payload.get("fill_id")
             or payload.get("match_id")
@@ -120,23 +128,29 @@ class PnLEngine:
             or payload.get("customer_ref")
             or event_key
         )
-        applied = ledger.apply_fill(
-            fill_id=fill_id,
-            side=side,
-            price=price,
-            size=size,
-        )
-        snap = applied["snapshot"]
-        self._positions[event_key] = {
-            "event_key": event_key,
-            "market_id": market_id,
-            "selection_id": selection_id,
-            "side": str(snap.open_side or side),
-            "price": float(snap.avg_entry_price or price),
-            "stake": float(snap.open_size or 0.0),
-            "table_id": payload.get("table_id"),
-            "batch_id": payload.get("batch_id"),
-        }
+        with self._lock:
+            ledger = self._position_ledgers.get(event_key)
+            if ledger is None:
+                ledger = PositionLedger(market_id=market_id, runner_id=selection_id)
+                self._position_ledgers[event_key] = ledger
+
+            applied = ledger.apply_fill(
+                fill_id=fill_id,
+                side=side,
+                price=price,
+                size=size,
+            )
+            snap = applied["snapshot"]
+            self._positions[event_key] = {
+                "event_key": event_key,
+                "market_id": market_id,
+                "selection_id": selection_id,
+                "side": str(snap.open_side or side),
+                "price": float(snap.avg_entry_price or price),
+                "stake": float(snap.open_size or 0.0),
+                "table_id": payload.get("table_id"),
+                "batch_id": payload.get("batch_id"),
+            }
 
     # =========================================================
     # MARKET UPDATE
@@ -144,16 +158,17 @@ class PnLEngine:
     def _on_market(self, market_book):
         market_id = str(market_book.get("marketId") or "")
 
-        for pos in list(self._positions.values()):
-            if pos["market_id"] != market_id:
-                continue
+        with self._lock:
+            for pos in list(self._positions.values()):
+                if pos["market_id"] != market_id:
+                    continue
 
-            settlement = self._calc_settlement(pos, market_book)
-            pnl = float(settlement["net_pnl"])
+                settlement = self._calc_settlement(pos, market_book)
+                pnl = float(settlement["net_pnl"])
 
-            # 🎯 LOGICA USCITA
-            if pnl >= pos["stake"] * 0.03 or pnl <= -pos["stake"] * 0.05:
-                self._close(pos, settlement)
+                # 🎯 LOGICA USCITA
+                if pnl >= pos["stake"] * 0.03 or pnl <= -pos["stake"] * 0.05:
+                    self._close(pos, settlement)
 
     # =========================================================
     # PNL CALC
@@ -304,15 +319,18 @@ class PnLEngine:
     # STATUS
     # =========================================================
     def snapshot(self):
-        return {
-            "open_positions": len(self._positions),
-            "positions": [
-                {
-                    **dict(position),
-                    "ledger": self._position_ledgers[key].snapshot().__dict__
-                    if key in self._position_ledgers
-                    else {},
-                }
-                for key, position in self._positions.items()
-            ],
-        }
+        # Lock: copia coerente di _positions anche se un fill concorrente sta
+        # scrivendo (evita "dict changed size during iteration").
+        with self._lock:
+            return {
+                "open_positions": len(self._positions),
+                "positions": [
+                    {
+                        **dict(position),
+                        "ledger": self._position_ledgers[key].snapshot().__dict__
+                        if key in self._position_ledgers
+                        else {},
+                    }
+                    for key, position in self._positions.items()
+                ],
+            }

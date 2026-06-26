@@ -11,6 +11,7 @@ from core.duplication_guard import DuplicationGuard
 from core.dutching_batch_manager import DutchingBatchManager
 from core.market_tracker import MarketTracker
 from core.money_management import RoserpinaMoneyManagement
+from core.pnl_engine import PnLEngine
 from core.reconciliation_engine import ReconciliationEngine
 from core.risk_desk import RiskDesk
 from core.safety_layer import assert_live_gate_or_refuse
@@ -51,6 +52,7 @@ class RuntimeController:
         trading_engine=None,
         executor=None,
         safe_mode=None,
+        pnl_engine=None,
     ):
         self.bus = bus
         self.db = db
@@ -62,6 +64,11 @@ class RuntimeController:
         self.safe_mode = safe_mode
 
         self.config = self.settings_service.load_roserpina_config()
+        # Tracker posizioni aperte (sorgente per il sizing del cashout mirror,
+        # Fase 2.1-B). auto_close=False: SOLO tracking dei fill via snapshot(),
+        # nessuna chiusura automatica MTM (che pubblicherebbe RUNTIME_CLOSE_POSITION).
+        # Iniettabile per i test; istanziato una sola volta (no doppia subscribe).
+        self.pnl_engine = pnl_engine or PnLEngine(bus=self.bus, auto_close=False)
         self.table_manager = TableManager(table_count=self.config.table_count)
         self.duplication_guard = DuplicationGuard()
         self.risk_desk = RiskDesk()
