@@ -301,6 +301,20 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 14
+    },
+    "cashout_residui_2_1a": {
+      "allow_tests": true,
+      "files": [
+        "core/risk_middleware.py",
+        "cashout_executor.py",
+        "telegram_sender.py",
+        "tests/unit/test_risk_middleware_cashout.py",
+        "tests/unit/test_telegram_sender_cashout_success.py",
+        "tests/unit/test_cashout_executor.py",
+        "ops/roadmap_go_live.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 10
     }
   }
 }

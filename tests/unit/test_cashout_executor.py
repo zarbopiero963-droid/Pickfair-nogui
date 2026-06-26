@@ -284,3 +284,52 @@ def test_success_payload_satisfies_cashout_success_schema():
 
     out = bus.last(CASHOUT_SUCCESS)
     assert SafetyLayer().validate_cashout_success(out) is True
+
+
+def test_success_sim_flag_true_from_simulation_broker():
+    # Sim-broadcast guard (B2.5): il flag sim deriva dal broker attivo via
+    # OrderRouter.service.is_simulation_mode().
+    bus = _FakeBus()
+    router = _FakeRouter(_ok_result(matched=4.0))
+
+    class _Svc:
+        def is_simulation_mode(self):
+            return True
+
+    router.service = _Svc()
+    CashoutExecutor(bus, router).on_cmd_execute_cashout(_cmd_payload())
+    assert bus.last(CASHOUT_SUCCESS)["sim"] is True
+
+
+def test_success_sim_flag_false_when_service_absent():
+    bus = _FakeBus()
+    router = _FakeRouter(_ok_result(matched=4.0))  # nessun .service
+    CashoutExecutor(bus, router).on_cmd_execute_cashout(_cmd_payload())
+    assert bus.last(CASHOUT_SUCCESS)["sim"] is False
+
+
+def test_sim_flag_captured_before_place_not_after():
+    # Codex P2: il mode va catturato al piazzamento, non rieletto dopo place().
+    # Qui il broker passa SIM->LIVE DURANTE place(): il flag deve restare il mode
+    # pre-place (True), non quello post-place (False).
+    bus = _FakeBus()
+
+    class _Svc:
+        def __init__(self):
+            self.mode = True
+
+        def is_simulation_mode(self):
+            return self.mode
+
+    svc = _Svc()
+
+    class _RouterFlips:
+        def __init__(self):
+            self.service = svc
+
+        def place(self, payload):
+            svc.mode = False  # switch SIM->LIVE in volo
+            return _ok_result(matched=4.0)
+
+    CashoutExecutor(bus, _RouterFlips()).on_cmd_execute_cashout(_cmd_payload())
+    assert bus.last(CASHOUT_SUCCESS)["sim"] is True
