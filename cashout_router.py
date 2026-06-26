@@ -11,13 +11,15 @@ Orchestra la chiusura delle posizioni del bot quando arriva un segnale
 2. legge gli ordini correnti live (``list_current_orders``) per lo stato abbinato;
 3. ricostruisce le posizioni (``cashout_resolver`` — solo bot, lato singolo,
    miste saltate);
-4. per ogni posizione da chiudere: gate tradabilità OPEN, prezzo live al lato di
-   chiusura, **cancella il resting** non abbinato, costruisce e pubblica un
-   ``REQ_EXECUTE_CASHOUT``.
+4. per ogni posizione da chiudere: gate tradabilità OPEN (solo OPEN esplicito),
+   prezzo live al lato di chiusura, **cancella il resting** non abbinato e ne
+   verifica la conferma, costruisce e pubblica un ``REQ_EXECUTE_CASHOUT``.
 
-**Best-effort / fail-closed**: l'errore (o un mercato SUSPENDED, o un prezzo
-mancante) su UNA posizione non aborta il batch; gli I/O sono iniettati così il
-router è testabile senza broker e **non tocca file forbidden**.
+**Best-effort / fail-closed**: l'errore (o un mercato non OPEN, o un prezzo
+mancante, o un cancel non confermato) su UNA posizione non aborta il batch; un
+errore di lettura (DB ordini bot o ordini correnti) pubblica ``CASHOUT_FAILED`` e
+aborta senza chiudere alla cieca. Gli I/O sono iniettati così il router è
+testabile senza broker e **non tocca file forbidden**.
 """
 from __future__ import annotations
 
@@ -42,13 +44,16 @@ def _bet_id(row: Dict[str, Any]) -> str:
 
 
 def _market_is_open(book: Dict[str, Any]) -> bool:
-    """OPEN (o stato assente) = tradabile; SUSPENDED/altri = no. Inline per non
-    dipendere dall'istanza di TelegramBetResolver."""
+    """Tradabile solo se lo stato del mercato e' esplicitamente OPEN.
+
+    Stato assente o diverso da OPEN => non tradabile (skip fail-closed): un book
+    parziale o malformato non deve passare il gate e pubblicare un cashout.
+    """
     status = str(book.get("status") or "").strip().upper()
     if not status:
         market_def = book.get("marketDefinition") or {}
         status = str(market_def.get("status") or "").strip().upper()
-    return status in ("", _TRADABLE_STATUS)
+    return status == _TRADABLE_STATUS
 
 
 def _closing_price(book: Dict[str, Any], selection_id: Any, side: str) -> Optional[float]:
@@ -105,29 +110,21 @@ class CashoutRouter:
         signal = dict(signal or {})
         signal_type = str(signal.get("signal_type") or "").strip().upper()
         if signal_type not in {"CASHOUT", "CASHOUT_ALL"}:
-            return {"published": 0, "positions": 0, "skipped": 0, "reason": "not_cashout"}
+            return self._summary(0, 0, reason="not_cashout")
 
         # 1. Ordini del bot dal DB (identità I1) → set bet_id + mappa market→event.
-        bot_orders = list(self.fetch_bot_orders() or [])
-        bot_bet_ids = {_bet_id(o) for o in bot_orders if _bet_id(o)}
-        market_event = {
-            str(o.get("market_id") or o.get("marketId") or ""): _norm(o.get("event_name"))
-            for o in bot_orders
-            if (o.get("market_id") or o.get("marketId"))
-        }
-
+        bot = self._load_bot_orders()
+        if bot is None:  # lettura DB fallita: CASHOUT_FAILED già pubblicato (fail-closed).
+            return self._summary(0, 0, reason="bot_orders_error")
+        bot_bet_ids, market_event = bot
         if not bot_bet_ids:
             logger.info("[cashout_router] nessun ordine del bot: niente da chiudere")
-            return {"published": 0, "positions": 0, "skipped": 0, "reason": "no_bot_orders"}
+            return self._summary(0, 0, reason="no_bot_orders")
 
         # 2. Ordini correnti live (fail-closed: in LIVE solleva su sessione invalida).
-        try:
-            current_orders = list(self.fetch_current_orders() or [])
-        except Exception as exc:  # noqa: BLE001 - fail-closed: non si chiude alla cieca
-            logger.warning("[cashout_router] list_current_orders fallita, abort: %s", exc)
-            self.publish(CASHOUT_FAILED, {"reason": f"list_current_orders:{exc}",
-                                          "status": "ERROR", "source": self.source})
-            return {"published": 0, "positions": 0, "skipped": 0, "reason": "current_orders_error"}
+        current_orders = self._load_current_orders()
+        if current_orders is None:  # CASHOUT_FAILED già pubblicato.
+            return self._summary(0, 0, reason="current_orders_error")
 
         def _is_bot_order(row: Dict[str, Any]) -> bool:
             return _bet_id(row) in bot_bet_ids
@@ -135,18 +132,70 @@ class CashoutRouter:
         # 3. Posizioni nette del bot (solo lato singolo; miste saltate dal resolver).
         positions = reconstruct_open_positions(current_orders, is_bot_order=_is_bot_order)
 
-        # 4. CASHOUT singolo → ristretto alla partita (event_name). Senza event_name
-        #    NON si chiude nulla (fail-closed: meglio niente che la partita sbagliata).
+        # 4. CASHOUT singolo → ristretto alla sua partita (event_name).
         if signal_type == "CASHOUT":
-            target = _norm(signal.get("event_name"))
-            if not target:
-                logger.warning("[cashout_router] CASHOUT singolo senza event_name: skip (fail-closed)")
-                return {"published": 0, "positions": len(positions), "skipped": len(positions),
-                        "reason": "no_event_name"}
-            positions = [p for p in positions if market_event.get(str(p["market_id"])) == target]
+            positions = self._restrict_to_event(signal, positions, market_event)
+            if positions is None:  # senza event_name non si chiude nulla (fail-closed).
+                return self._summary(0, 0, reason="no_event_name")
 
         published, skipped = self._close_positions(positions, current_orders, _is_bot_order)
-        return {"published": published, "positions": published + skipped, "skipped": skipped}
+        return self._summary(published, skipped)
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _summary(published: int, skipped: int, reason: Optional[str] = None) -> Dict[str, Any]:
+        """Sommario uniforme per log/test: ``{published, positions, skipped, reason?}``."""
+        out = {"published": published, "positions": published + skipped, "skipped": skipped}
+        if reason:
+            out["reason"] = reason
+        return out
+
+    def _load_bot_orders(self):
+        """``(bot_bet_ids, market_event)`` dal DB del bot, o ``None`` se la lettura
+        fallisce.
+
+        Fail-closed: una lettura DB che solleva (es. SQLite lockato) pubblica
+        ``CASHOUT_FAILED`` e aborta, così l'operatore riceve la notifica invece di
+        un'eccezione non gestita nel bus.
+        """
+        try:
+            bot_orders = list(self.fetch_bot_orders() or [])
+        except Exception as exc:  # noqa: BLE001 - fail-closed: non si chiude alla cieca
+            logger.warning("[cashout_router] lettura ordini bot fallita, abort: %s", exc)
+            self.publish(CASHOUT_FAILED, {"reason": f"fetch_bot_orders:{exc}",
+                                          "status": "ERROR", "source": self.source})
+            return None
+        bot_bet_ids = {_bet_id(o) for o in bot_orders if _bet_id(o)}
+        market_event = {
+            str(o.get("market_id") or o.get("marketId") or ""): _norm(o.get("event_name"))
+            for o in bot_orders
+            if (o.get("market_id") or o.get("marketId"))
+        }
+        return bot_bet_ids, market_event
+
+    def _load_current_orders(self):
+        """Ordini correnti live, o ``None`` se la fetch fallisce (pubblica
+        ``CASHOUT_FAILED``, fail-closed)."""
+        try:
+            return list(self.fetch_current_orders() or [])
+        except Exception as exc:  # noqa: BLE001 - fail-closed: non si chiude alla cieca
+            logger.warning("[cashout_router] list_current_orders fallita, abort: %s", exc)
+            self.publish(CASHOUT_FAILED, {"reason": f"list_current_orders:{exc}",
+                                          "status": "ERROR", "source": self.source})
+            return None
+
+    @staticmethod
+    def _restrict_to_event(signal, positions, market_event):
+        """Filtra le posizioni alla partita del segnale (``event_name``).
+
+        Ritorna ``None`` se manca ``event_name`` (fail-closed: meglio niente che la
+        partita sbagliata).
+        """
+        target = _norm(signal.get("event_name"))
+        if not target:
+            logger.warning("[cashout_router] CASHOUT singolo senza event_name: skip (fail-closed)")
+            return None
+        return [p for p in positions if market_event.get(str(p["market_id"])) == target]
 
     # ------------------------------------------------------------------
     def _close_positions(self, positions, current_orders, is_bot_order):
@@ -189,15 +238,8 @@ class CashoutRouter:
         # se si abbinasse dopo, riaprirebbe la posizione appena chiusa.
         if float(pos.get("resting_remainder") or 0.0) > 0.0:
             resting_ids = self._resting_bet_ids(current_orders, is_bot_order, market_id, pos.get("selection_id"))
-            if resting_ids:
-                try:
-                    self.cancel_orders(market_id, resting_ids)
-                except Exception as exc:  # noqa: BLE001 - cancel fallito => NON si chiude (fail-closed)
-                    # Se il resting resta vivo e si abbina dopo l'hedge, riaprirebbe o
-                    # sovra-copre la posizione: meglio saltare che chiudere alla cieca.
-                    logger.warning("[cashout_router] cancel resting fallito su %s: skip posizione (fail-closed): %s",
-                                   market_id, exc)
-                    return False
+            if resting_ids and not self._cancel_confirmed(market_id, resting_ids):
+                return False
 
         req = build_cashout_request(
             pos, current_price=price, commission=self.commission_pct, source=self.source
@@ -207,6 +249,29 @@ class CashoutRouter:
                            market_id, pos.get("selection_id"))
             return False
         self.publish(REQ_EXECUTE_CASHOUT, req)
+        return True
+
+    def _cancel_confirmed(self, market_id: str, resting_ids: List[str]) -> bool:
+        """``True`` solo se il cancel del resting e' CONFERMATO.
+
+        Il callable iniettato ``cancel_orders`` deve ritornare un valore truthy a
+        conferma (es. ``True`` o la lista dei bet_id cancellati) e falsy/raise in
+        caso di rifiuto o errore. Un resting non cancellato che si abbina DOPO
+        l'hedge riaprirebbe o sovra-copre la posizione appena chiusa: meglio
+        saltare (fail-closed) che chiudere alla cieca. Nota: ``BetfairClient`` e
+        ``SimulationBroker`` riportano il fallimento del cancel nel dict di
+        risultato (non solo via eccezione), quindi non basta intercettare il raise.
+        """
+        try:
+            result = self.cancel_orders(market_id, resting_ids)
+        except Exception as exc:  # noqa: BLE001 - cancel fallito => non si chiude (fail-closed)
+            logger.warning("[cashout_router] cancel resting fallito su %s: skip (fail-closed): %s",
+                           market_id, exc)
+            return False
+        if not result:
+            logger.warning("[cashout_router] cancel resting NON confermato su %s (%r): skip (fail-closed)",
+                           market_id, result)
+            return False
         return True
 
     @staticmethod

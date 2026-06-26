@@ -27,7 +27,8 @@ def _book(market="1.1", sel=7, status="OPEN", back=2.6, lay=1.5):
 
 class _Harness:
     def __init__(self, current, bot, books, raise_current=False,
-                 raise_book_for=None, raise_cancel=False):
+                 raise_book_for=None, raise_cancel=False, cancel_result=True,
+                 raise_bot=False):
         self.published = []
         self.cancelled = []
         self._current = current
@@ -36,11 +37,18 @@ class _Harness:
         self._raise = raise_current
         self._raise_book_for = set(raise_book_for or ())
         self._raise_cancel = raise_cancel
+        self._cancel_result = cancel_result
+        self._raise_bot = raise_bot
 
     def _fetch_current(self):
         if self._raise:
             raise RuntimeError("LIVE_BLOCKED_SESSION_INVALID")
         return self._current
+
+    def _fetch_bot(self):
+        if self._raise_bot:
+            raise RuntimeError("DB_LOCKED")
+        return self._bot
 
     def _fetch_book(self, market):
         if market in self._raise_book_for:
@@ -51,11 +59,12 @@ class _Harness:
         if self._raise_cancel:
             raise RuntimeError("CANCEL_FAILED")
         self.cancelled.append((market, ids))
+        return self._cancel_result
 
     def router(self):
         return CashoutRouter(
             fetch_current_orders=self._fetch_current,
-            fetch_bot_orders=lambda: self._bot,
+            fetch_bot_orders=self._fetch_bot,
             fetch_market_book=self._fetch_book,
             cancel_orders=self._cancel,
             publish=lambda t, p: self.published.append((t, p)),
@@ -133,6 +142,19 @@ def test_suspended_market_is_skipped_best_effort():
     assert h.reqs()[0]["market_id"] == "1.2"
 
 
+def test_missing_status_book_is_skipped_fail_closed():
+    # CodeRabbit/Codacy: un book senza status (parziale/malformato) NON e'
+    # tradabile => fail-closed, niente cashout pubblicato.
+    h = _Harness(
+        current=[_curr("B1", "1.1", 7, "BACK", 10.0)],
+        bot=[_bot("B1", "1.1", 7)],
+        books={"1.1": _book("1.1", 7, status="")},
+    )
+    out = h.router().route({"signal_type": "CASHOUT_ALL"})
+    assert out["published"] == 0
+    assert h.reqs() == []
+
+
 def test_missing_book_is_skipped():
     h = _Harness(
         current=[_curr("B1", "1.1", 7, "BACK", 10.0)],
@@ -154,6 +176,29 @@ def test_resting_is_cancelled_before_publishing():
     out = h.router().route({"signal_type": "CASHOUT_ALL"})
     assert out["published"] == 1
     assert h.cancelled == [("1.1", ["B1"])]
+
+
+def test_unconfirmed_cancel_skips_position_fail_closed():
+    # Codex P1: cancel_orders che ritorna un esito NON confermato (falsy) senza
+    # sollevare => niente cashout (il resting vivo potrebbe abbinarsi dopo l'hedge).
+    h = _Harness(
+        current=[_curr("B1", "1.1", 7, "BACK", matched=6.0, remaining=4.0)],
+        bot=[_bot("B1", "1.1", 7)],
+        books={"1.1": _book("1.1", 7)},
+        cancel_result=False,
+    )
+    out = h.router().route({"signal_type": "CASHOUT_ALL"})
+    assert out["published"] == 0
+    assert h.reqs() == []
+
+
+def test_bot_orders_db_error_publishes_failure_fail_closed():
+    # Codex P2: se la lettura DB degli ordini bot solleva, si pubblica
+    # CASHOUT_FAILED e si aborta (nessuna chiusura alla cieca).
+    h = _Harness(current=[], bot=[], books={}, raise_bot=True)
+    out = h.router().route({"signal_type": "CASHOUT_ALL"})
+    assert out["published"] == 0
+    assert any(t == CASHOUT_FAILED for t, _ in h.published)
 
 
 def test_current_orders_error_aborts_fail_closed():
