@@ -192,6 +192,63 @@ def test_unconfirmed_cancel_skips_position_fail_closed():
     assert h.reqs() == []
 
 
+def test_cancel_live_failure_dict_skips_position():
+    # Codex P1: BetfairClient ritorna {"ok": False} su errore SENZA sollevare;
+    # un dict non vuoto e' truthy, quindi serve ispezionarne l'esito => skip.
+    h = _Harness(
+        current=[_curr("B1", "1.1", 7, "BACK", matched=6.0, remaining=4.0)],
+        bot=[_bot("B1", "1.1", 7)],
+        books={"1.1": _book("1.1", 7)},
+        cancel_result={"ok": False, "error": "CANCEL_FAILED: X"},
+    )
+    out = h.router().route({"signal_type": "CASHOUT_ALL"})
+    assert out["published"] == 0
+    assert h.reqs() == []
+
+
+def test_cancel_sim_per_instruction_failure_skips_position():
+    # Codex P1: SimulationBroker ritorna status top-level SUCCESS ma con un report
+    # per-istruzione FAILURE => non confermato, skip (fail-closed).
+    h = _Harness(
+        current=[_curr("B1", "1.1", 7, "BACK", matched=6.0, remaining=4.0)],
+        bot=[_bot("B1", "1.1", 7)],
+        books={"1.1": _book("1.1", 7)},
+        cancel_result={"status": "SUCCESS",
+                       "instructionReports": [{"status": "FAILURE"}], "simulated": True},
+    )
+    out = h.router().route({"signal_type": "CASHOUT_ALL"})
+    assert out["published"] == 0
+    assert h.reqs() == []
+
+
+def test_cancel_confirmed_success_dict_publishes():
+    # Esito confermato (report SUCCESS) => si procede al cashout.
+    h = _Harness(
+        current=[_curr("B1", "1.1", 7, "BACK", matched=6.0, remaining=4.0)],
+        bot=[_bot("B1", "1.1", 7)],
+        books={"1.1": _book("1.1", 7)},
+        cancel_result={"status": "SUCCESS",
+                       "instructionReports": [{"status": "SUCCESS"}], "simulated": True},
+    )
+    out = h.router().route({"signal_type": "CASHOUT_ALL"})
+    assert out["published"] == 1
+    assert h.cancelled == [("1.1", ["B1"])]
+
+
+def test_empty_event_name_does_not_overwrite_valid_mapping():
+    # Codex P2: una riga DB successiva con event_name vuoto NON deve cancellare la
+    # mappa market->event valida di una riga precedente (stessa partita).
+    h = _Harness(
+        current=[_curr("B1", "1.1", 7, "BACK", 10.0)],
+        bot=[_bot("B1", "1.1", 7, "Inter vs Milan"),
+             _bot("B2", "1.1", 7, "")],  # stesso mercato, event_name vuoto
+        books={"1.1": _book("1.1", 7)},
+    )
+    out = h.router().route({"signal_type": "CASHOUT", "event_name": "inter vs milan"})
+    assert out["published"] == 1
+    assert h.reqs()[0]["market_id"] == "1.1"
+
+
 def test_bot_orders_db_error_publishes_failure_fail_closed():
     # Codex P2: se la lettura DB degli ordini bot solleva, si pubblica
     # CASHOUT_FAILED e si aborta (nessuna chiusura alla cieca).

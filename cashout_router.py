@@ -145,7 +145,7 @@ class CashoutRouter:
     @staticmethod
     def _summary(published: int, skipped: int, reason: Optional[str] = None) -> Dict[str, Any]:
         """Sommario uniforme per log/test: ``{published, positions, skipped, reason?}``."""
-        out = {"published": published, "positions": published + skipped, "skipped": skipped}
+        out: Dict[str, Any] = {"published": published, "positions": published + skipped, "skipped": skipped}
         if reason:
             out["reason"] = reason
         return out
@@ -166,11 +166,18 @@ class CashoutRouter:
                                           "status": "ERROR", "source": self.source})
             return None
         bot_bet_ids = {_bet_id(o) for o in bot_orders if _bet_id(o)}
-        market_event = {
-            str(o.get("market_id") or o.get("marketId") or ""): _norm(o.get("event_name"))
-            for o in bot_orders
-            if (o.get("market_id") or o.get("marketId"))
-        }
+        # Mappa market→event: tieni il PRIMO event_name non vuoto per mercato. Una
+        # riga successiva con event_name mancante (il DB lo default a '') NON deve
+        # sovrascrivere una mappatura valida, altrimenti un CASHOUT singolo non
+        # troverebbe più la partita e non chiuderebbe nulla (Codex P2).
+        market_event: Dict[str, str] = {}
+        for o in bot_orders:
+            market_id = str(o.get("market_id") or o.get("marketId") or "")
+            if not market_id:
+                continue
+            event = _norm(o.get("event_name"))
+            if event and not market_event.get(market_id):
+                market_event[market_id] = event
         return bot_bet_ids, market_event
 
     def _load_current_orders(self):
@@ -252,15 +259,13 @@ class CashoutRouter:
         return True
 
     def _cancel_confirmed(self, market_id: str, resting_ids: List[str]) -> bool:
-        """``True`` solo se il cancel del resting e' CONFERMATO.
+        """``True`` solo se il cancel del resting e' CONFERMATO con successo.
 
-        Il callable iniettato ``cancel_orders`` deve ritornare un valore truthy a
-        conferma (es. ``True`` o la lista dei bet_id cancellati) e falsy/raise in
-        caso di rifiuto o errore. Un resting non cancellato che si abbina DOPO
-        l'hedge riaprirebbe o sovra-copre la posizione appena chiusa: meglio
-        saltare (fail-closed) che chiudere alla cieca. Nota: ``BetfairClient`` e
-        ``SimulationBroker`` riportano il fallimento del cancel nel dict di
-        risultato (non solo via eccezione), quindi non basta intercettare il raise.
+        Un resting non cancellato che si abbina DOPO l'hedge riaprirebbe o
+        sovra-copre la posizione appena chiusa: meglio saltare (fail-closed) che
+        chiudere alla cieca. I broker NON segnalano il fallimento solo via
+        eccezione — lo riportano nel dict di risultato — quindi si ispeziona la
+        risposta (vedi ``_cancel_succeeded``).
         """
         try:
             result = self.cancel_orders(market_id, resting_ids)
@@ -268,10 +273,42 @@ class CashoutRouter:
             logger.warning("[cashout_router] cancel resting fallito su %s: skip (fail-closed): %s",
                            market_id, exc)
             return False
-        if not result:
+        if not self._cancel_succeeded(result):
             logger.warning("[cashout_router] cancel resting NON confermato su %s (%r): skip (fail-closed)",
                            market_id, result)
             return False
+        return True
+
+    @staticmethod
+    def _cancel_succeeded(result: Any) -> bool:
+        """Interpreta la risposta di ``cancel_orders`` dei broker noti.
+
+        Conferma SOLO in assenza di qualsiasi segnale di fallimento:
+
+        - falsy (``None``/``{}``/``[]``/``False``) => non confermato;
+        - ``BetfairClient`` ritorna ``{"ok": False, ...}`` su errore (non solleva)
+          => ``ok is False`` = non confermato;
+        - uno ``status`` top-level diverso da SUCCESS/OK => non confermato;
+        - ``SimulationBroker`` ritorna ``status`` top-level SUCCESS ma con
+          ``instructionReports`` che possono avere ``status`` FAILURE per singola
+          istruzione => un report non-SUCCESS = non confermato.
+
+        Un valore truthy non-dict (es. ``True`` o la lista dei bet_id cancellati)
+        e' considerato conferma.
+        """
+        if not result:
+            return False
+        if isinstance(result, dict):
+            if result.get("ok") is False:
+                return False
+            status = str(result.get("status") or "").strip().upper()
+            if status and status not in ("SUCCESS", "OK"):
+                return False
+            for report in result.get("instructionReports") or []:
+                if isinstance(report, dict):
+                    report_status = str(report.get("status") or "").strip().upper()
+                    if report_status and report_status not in ("SUCCESS", "OK"):
+                        return False
         return True
 
     @staticmethod
