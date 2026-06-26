@@ -232,6 +232,16 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 6
+    },
+    "cashout_router": {
+      "allow_tests": true,
+      "files": [
+        "cashout_router.py",
+        "tests/unit/test_cashout_router.py",
+        "ops/roadmap_go_live.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
     }
   }
 }
