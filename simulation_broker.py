@@ -707,6 +707,7 @@ class SimulationBroker:
         """
         _ = customer_ref
         bid = str(bet_id or "").strip()
+        market_id_s = str(market_id or "").strip()
         try:
             price_f = float(new_price) if new_price is not None else 0.0
         except (TypeError, ValueError):
@@ -714,15 +715,18 @@ class SimulationBroker:
 
         with self._lock:
             old = self.state.orders.get(bid)
-            # Fail-closed parity with cancel_orders and the live API: a missing
-            # / non-executable order, an invalid price, or a market_id that does
-            # not match the order's market all yield a FAILURE report (never
-            # replace an order found by id in a different market).
+            # Fail-closed parity with the live BetfairClient (which raises
+            # INVALID_MARKET_ID/INVALID_PRICE) and the sim cancel path: reject a
+            # missing/non-executable order, a missing market id, a non-finite
+            # (NaN/Inf) or <= 1.0 price, or a market that does not match the
+            # order's market — all yield a FAILURE report and leave state intact.
             if (
                 old is None
                 or old.status != "EXECUTABLE"
+                or not market_id_s
+                or not math.isfinite(price_f)
                 or price_f <= 1.0
-                or (market_id and str(old.market_id) != str(market_id))
+                or str(old.market_id) != market_id_s
             ):
                 return {
                     "status": "SUCCESS",

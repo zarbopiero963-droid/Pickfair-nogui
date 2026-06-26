@@ -75,3 +75,25 @@ def test_replace_market_mismatch_returns_failure_and_leaves_order():
     out = b.replace_orders(market_id="9.999", bet_id="OLD", new_price=3.0)
     assert out["instructionReports"][0]["status"] == "FAILURE"
     assert b.state.orders["OLD"].status == "EXECUTABLE"
+
+
+@pytest.mark.unit
+def test_replace_nan_or_inf_price_returns_failure_and_leaves_order():
+    # NaN slips past `price <= 1.0` (NaN comparisons are False); the live client
+    # rejects it as INVALID_PRICE, so the sim must too (fail-closed parity).
+    b = SimulationBroker()
+    b.state.orders["OLD"] = _executable_order()
+    for bad in (float("nan"), float("inf")):
+        out = b.replace_orders(market_id="1.100", bet_id="OLD", new_price=bad)
+        assert out["instructionReports"][0]["status"] == "FAILURE"
+    assert b.state.orders["OLD"].status == "EXECUTABLE"
+
+
+@pytest.mark.unit
+def test_replace_empty_market_returns_failure_and_leaves_order():
+    # Live raises INVALID_MARKET_ID on an empty market; the sim returns FAILURE.
+    b = SimulationBroker()
+    b.state.orders["OLD"] = _executable_order()
+    out = b.replace_orders(market_id="", bet_id="OLD", new_price=3.0)
+    assert out["instructionReports"][0]["status"] == "FAILURE"
+    assert b.state.orders["OLD"].status == "EXECUTABLE"
