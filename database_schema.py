@@ -65,6 +65,7 @@ SCHEMA_DDL: tuple[str, ...] = (
         label TEXT NOT NULL DEFAULT '',
         pattern TEXT NOT NULL DEFAULT '',
         enabled INTEGER NOT NULL DEFAULT 1,
+        action TEXT NOT NULL DEFAULT 'QUICK_BET',
         bet_side TEXT DEFAULT '',
         market_type TEXT DEFAULT 'MATCH_ODDS',
         selection_template TEXT DEFAULT '',
