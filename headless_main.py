@@ -22,6 +22,9 @@ from core.runtime_controller import RuntimeController
 from core.order_router import OrderRouter
 from cashout_executor import CashoutExecutor
 from cashout_request_bridge import CashoutRequestBridge
+from cashout_cancel_adapter import CashoutCancelAdapter
+from cashout_residual_handler import CashoutResidualHandler
+from telegram_sender import get_telegram_sender
 from observability import (
     AlertsManager,
     DiagnosticsService,
@@ -79,6 +82,7 @@ class HeadlessApp:
         self.order_router: Optional[OrderRouter] = None
         self.cashout_executor: Optional[CashoutExecutor] = None
         self.cashout_request_bridge: Optional[CashoutRequestBridge] = None
+        self.cashout_residual_handler: Optional[CashoutResidualHandler] = None
         self.health_registry: Optional[HealthRegistry] = None
         self.metrics_registry: Optional[MetricsRegistry] = None
         self.alerts_manager: Optional[AlertsManager] = None
@@ -114,6 +118,7 @@ class HeadlessApp:
         self.order_router = None
         self.cashout_executor = None
         self.cashout_request_bridge = None
+        self.cashout_residual_handler = None
         self.health_registry = None
         self.metrics_registry = None
         self.alerts_manager = None
@@ -424,26 +429,28 @@ class HeadlessApp:
             raise
 
     def _wire_cashout_execution_chain(self) -> None:
-        """Cabla la catena di ESECUZIONE del cashout — dormiente (Fase 2.1-B2.4b-1).
+        """Cabla la catena di ESECUZIONE + residuo del cashout (Fase 2.1-B2.4b-1/-2).
 
-        Costruisce e sottoscrive al bus la catena ``REQ_EXECUTE_CASHOUT`` →
-        ``CMD_EXECUTE_CASHOUT`` → piazzamento green-up:
+        Sottoscrive al bus la catena ``REQ_EXECUTE_CASHOUT`` →
+        ``CMD_EXECUTE_CASHOUT`` → piazzamento green-up → gestione del residuo:
 
         - ``OrderRouter``: seam unico di piazzamento sim/live (sceglie il broker
-          attivo via ``betfair_service.get_client()``, quindi è mode-aware senza
-          ramo dedicato qui);
+          attivo via ``betfair_service.get_client()``, mode-aware);
         - ``CashoutExecutor``: consuma ``CMD_EXECUTE_CASHOUT``, applica le
           invarianti real-money hard e piazza l'hedge tramite l'``OrderRouter``;
         - ``CashoutRequestBridge``: bridge cashout-only che consuma
           ``REQ_EXECUTE_CASHOUT`` (dedup + normalizzazione + ``CASHOUT_FAILED``
-          strutturato) e pubblica ``CMD_EXECUTE_CASHOUT``.
+          strutturato) e pubblica ``CMD_EXECUTE_CASHOUT``;
+        - ``CashoutResidualHandler``: consuma ``CASHOUT_FAILED`` e gestisce il
+          residuo (UNMATCHED ⇒ un solo cancel sicuro del resting + persist +
+          notify; AMBIGUOUS ⇒ no-cancel + reconciliation + notify alta; altri ⇒
+          notify + persist diagnostico). ``cancel`` via ``CashoutCancelAdapter``
+          (cashout-only), ``persist`` su ``audit_events``, ``notify`` su Telegram.
 
-        DORMIENTE by-design: nessun componente qui **emette**
-        ``REQ_EXECUTE_CASHOUT``. Finché il trigger runtime (Fase 2.1-B2.4b-2,
-        ``RuntimeController`` sui segnali CASHOUT/CASHOUT_ALL) non lo pubblica,
-        la catena è inerte e nessun ordine reale parte. Il wiring degli altri
-        order type (QUICK_BET, DUTCHING, CANCEL, REPLACE) NON è toccato: il
-        bridge è cashout-only.
+        ATTIVA da B2.4b-2: il trigger runtime (``RuntimeController`` sui segnali
+        CASHOUT/CASHOUT_ALL) emette ``REQ_EXECUTE_CASHOUT``. Il wiring degli altri
+        order type (QUICK_BET, DUTCHING, CANCEL, REPLACE) NON è toccato: bridge e
+        residual handler sono cashout-only (sottoscrivono solo eventi cashout).
         """
         if self.bus is None or self.betfair_service is None:
             raise RuntimeError("Bus/BetfairService non inizializzati per il wiring cashout")
@@ -455,11 +462,42 @@ class HeadlessApp:
         self.cashout_request_bridge = CashoutRequestBridge(self.bus)
         self.cashout_request_bridge.wire()
 
-        logger.info(
-            "Catena cashout cablata (dormiente): "
-            "CashoutRequestBridge[REQ_EXECUTE_CASHOUT] -> "
-            "CashoutExecutor[CMD_EXECUTE_CASHOUT] -> OrderRouter"
+        svc = self.betfair_service
+        residual_cancel = CashoutCancelAdapter(
+            is_simulation=svc.is_simulation_mode,
+            live_cancel=lambda **kw: svc.get_live_client().cancel_orders(**kw),
+            sim_cancel=lambda **kw: svc.get_simulation_broker().cancel_orders(**kw),
         )
+        self.cashout_residual_handler = CashoutResidualHandler(
+            cancel=residual_cancel.cancel,
+            persist=self.db.insert_audit_event,
+            notify=self._notify_cashout_residual,
+        )
+        self.cashout_residual_handler.wire(self.bus)
+
+        logger.info(
+            "Catena cashout cablata: "
+            "CashoutRequestBridge[REQ_EXECUTE_CASHOUT] -> "
+            "CashoutExecutor[CMD_EXECUTE_CASHOUT] -> OrderRouter; "
+            "CashoutResidualHandler[CASHOUT_FAILED]"
+        )
+
+    def _notify_cashout_residual(self, text: str, *, severity: str = "HIGH") -> None:
+        """Notifica operatore del residuo cashout (best-effort, mai solleva).
+
+        Usa il ``TelegramSender`` globale se inizializzato; altrimenti logga. Il
+        ``message_type`` dedicato distingue queste notifiche dagli altri invii.
+        """
+        try:
+            sender = get_telegram_sender()
+            if sender is not None and hasattr(sender, "queue_default_message"):
+                sender.queue_default_message(
+                    f"[{severity}] {text}", message_type="CASHOUT_RESIDUAL"
+                )
+                return
+        except Exception:
+            logger.exception("Notifica residuo cashout fallita")
+        logger.warning("[CASHOUT_RESIDUAL][%s] %s", severity, text)
 
     def _register_shutdown_hooks(self) -> None:
         if not self.shutdown:

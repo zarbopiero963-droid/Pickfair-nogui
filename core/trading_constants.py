@@ -16,6 +16,15 @@ from typing import Dict, Optional, Set, Tuple
 REQ_QUICK_BET = "REQ_QUICK_BET"
 CMD_QUICK_BET = "CMD_QUICK_BET"
 
+# ── CASHOUT (Fase 2.1, B5) ──
+# Vocabolario unico del cashout: il bridge pubblica CMD su REQ, l'executor
+# consuma CMD e pubblica SUCCESS/FAILED, il residual handler consuma FAILED.
+# Definite qui per evitare drift fra i moduli cashout (tutti importano da qui).
+REQ_EXECUTE_CASHOUT = "REQ_EXECUTE_CASHOUT"
+CMD_EXECUTE_CASHOUT = "CMD_EXECUTE_CASHOUT"
+CASHOUT_SUCCESS = "CASHOUT_SUCCESS"
+CASHOUT_FAILED = "CASHOUT_FAILED"
+
 # ── ORDER STATES ──
 STATUS_INFLIGHT = "INFLIGHT"
 STATUS_SUBMITTED = "SUBMITTED"

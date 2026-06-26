@@ -16,7 +16,10 @@ from core.risk_desk import RiskDesk
 from core.safety_layer import assert_live_gate_or_refuse
 from core.system_state import DeskMode, RuntimeMode
 from core.table_manager import TableManager
+from core.trading_constants import CASHOUT_FAILED
 from core.type_helpers import safe_bool
+from cashout_cancel_adapter import CashoutCancelAdapter
+from cashout_router import CashoutRouter
 from order_manager import TERMINAL_LIFECYCLE_EVENTS
 from services.streaming_feed import StreamingConfigError, StreamingFeed
 from trading_config import STRICT_LIVE_KEY_SOURCE_REQUIRED, enforce_betfair_italy_commission_pct
@@ -1670,6 +1673,49 @@ class RuntimeController:
             return 0.0
         return float(table.current_exposure or 0.0)
 
+    def _route_cashout_signal(self, signal: dict) -> None:
+        """Instrada un segnale CASHOUT/CASHOUT_ALL al ``CashoutRouter`` (Fase 2.1-B2.4b-2).
+
+        Il runtime pubblica **solo** ``REQ_EXECUTE_CASHOUT`` (via il router), **mai**
+        ``CMD_EXECUTE_CASHOUT`` diretto. Router e cancel adapter sono costruiti coi
+        servizi reali; la scelta sim/live passa da ``betfair_service`` (stessa
+        sorgente di ``list_current_orders``/``get_market_book_snapshot``). I gate
+        live (emergency-stop, session, deploy, runtime-active) sono già passati a
+        monte in ``_on_signal_received``. Fail-closed: un errore di costruzione o
+        routing pubblica un ``CASHOUT_FAILED`` strutturato, non scarta in silenzio.
+        """
+        svc = self.betfair_service
+        try:
+            adapter = CashoutCancelAdapter(
+                is_simulation=svc.is_simulation_mode,
+                live_cancel=lambda **kw: svc.get_live_client().cancel_orders(**kw),
+                sim_cancel=lambda **kw: svc.get_simulation_broker().cancel_orders(**kw),
+            )
+            router = CashoutRouter(
+                fetch_current_orders=svc.list_current_orders,
+                fetch_bot_orders=self.db.get_bot_active_orders,
+                fetch_market_book=svc.get_market_book_snapshot,
+                cancel_orders=adapter.cancel,
+                publish=self.bus.publish,
+                commission_pct=float(getattr(self.config, "commission_pct", 4.5) or 4.5),
+                source="TELEGRAM",
+            )
+            result = router.route(signal)
+            logger.info(
+                "[RuntimeController] cashout instradato: type=%s result=%s",
+                signal.get("signal_type"), result,
+            )
+        except Exception as exc:  # noqa: BLE001 - fail-closed: niente scarto silenzioso
+            logger.exception("[RuntimeController] errore routing cashout")
+            self.bus.publish(CASHOUT_FAILED, {
+                "reason": f"cashout_route_error:{exc}",
+                "status": "ERROR",
+                "bet_id": None,
+                "matched": 0.0,
+                "market_id": "",
+                "selection_id": None,
+            })
+
     def _on_signal_received(self, signal: dict) -> None:
         """
         Runtime signal gate for Telegram/UI-driven order intents.
@@ -1728,6 +1774,16 @@ class RuntimeController:
 
         if not self._runtime_active():
             self._reject_signal(signal, f"runtime_non_attivo:{self.mode.value}")
+            return
+
+        # Cashout routing — gate cashout PRIMA del required-check market_id/
+        # selection_id (un CASHOUT_ALL non li ha e verrebbe scartato come
+        # campi_mancanti). Tutti i gate live (emergency-stop incl. daily-loss
+        # pending, session-guard, deploy-gate, runtime-active) sono a monte:
+        # un cashout passa di qui solo se l'order entry live è consentito (E1).
+        signal_type = str(signal.get("signal_type") or "").strip().upper()
+        if signal_type in {"CASHOUT", "CASHOUT_ALL"}:
+            self._route_cashout_signal(signal)
             return
 
         required = ["market_id", "selection_id"]

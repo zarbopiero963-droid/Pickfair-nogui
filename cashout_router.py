@@ -28,11 +28,10 @@ import math
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from cashout_resolver import build_cashout_request, reconstruct_open_positions
+from core.trading_constants import CASHOUT_FAILED, REQ_EXECUTE_CASHOUT
 
 logger = logging.getLogger(__name__)
 
-REQ_EXECUTE_CASHOUT = "REQ_EXECUTE_CASHOUT"
-CASHOUT_FAILED = "CASHOUT_FAILED"
 _TRADABLE_STATUS = "OPEN"
 
 

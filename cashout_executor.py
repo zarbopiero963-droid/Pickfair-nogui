@@ -43,11 +43,13 @@ import logging
 import math
 from typing import Any, Dict, Optional
 
-logger = logging.getLogger(__name__)
+from core.trading_constants import (
+    CASHOUT_FAILED,
+    CASHOUT_SUCCESS,
+    CMD_EXECUTE_CASHOUT,
+)
 
-CMD_EXECUTE_CASHOUT = "CMD_EXECUTE_CASHOUT"
-CASHOUT_SUCCESS = "CASHOUT_SUCCESS"
-CASHOUT_FAILED = "CASHOUT_FAILED"
+logger = logging.getLogger(__name__)
 
 
 class CashoutExecutor:

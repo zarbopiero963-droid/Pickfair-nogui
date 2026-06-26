@@ -338,7 +338,7 @@ def test_other_order_types_are_not_handled():
 
 
 # =========================================================
-# WIRING DORMIENTE in headless_main
+# WIRING in headless_main (catena esecuzione + residuo)
 # =========================================================
 class _FakeClient:
     def place_bet(self, **kwargs):
@@ -349,26 +349,46 @@ class _FakeBetfairService:
     def get_client(self):
         return _FakeClient()
 
+    def is_simulation_mode(self):
+        return True
 
-def test_headless_wires_dormant_cashout_chain():
+    def get_live_client(self):
+        return _FakeClient()
+
+    def get_simulation_broker(self):
+        return _FakeClient()
+
+
+class _FakeDB:
+    def __init__(self):
+        self.audit = []
+
+    def insert_audit_event(self, record):
+        self.audit.append(record)
+
+
+def test_headless_wires_cashout_chain():
     import headless_main
 
     app = headless_main.HeadlessApp()
     app.bus = _SyncBus()
     app.betfair_service = _FakeBetfairService()
+    app.db = _FakeDB()
 
     app._wire_cashout_execution_chain()
 
-    # Catena costruita...
+    # Catena costruita: esecuzione + residuo.
     assert app.order_router is not None
     assert app.cashout_executor is not None
     assert app.cashout_request_bridge is not None
+    assert app.cashout_residual_handler is not None
 
-    # ...e sottoscritta: bridge su REQ_EXECUTE_CASHOUT, executor su CMD_EXECUTE_CASHOUT.
+    # Sottoscrizioni: bridge su REQ, executor su CMD, residual handler su CASHOUT_FAILED.
     subs = dict(app.bus.subscriptions)
     assert REQ_EXECUTE_CASHOUT in subs
     assert CMD_EXECUTE_CASHOUT in subs
+    assert CASHOUT_FAILED in subs
 
-    # Dormiente: nessun REQ_EXECUTE_CASHOUT è stato emesso dal wiring.
+    # Il wiring di per sé non emette nulla (nessun REQ/CMD pubblicato).
     assert REQ_EXECUTE_CASHOUT not in app.bus.topics()
     assert CMD_EXECUTE_CASHOUT not in app.bus.topics()
