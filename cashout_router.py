@@ -24,7 +24,7 @@ testabile senza broker e **non tocca file forbidden**.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from cashout_resolver import build_cashout_request, reconstruct_open_positions
 
@@ -56,8 +56,12 @@ def _market_is_open(book: Dict[str, Any]) -> bool:
     return status == _TRADABLE_STATUS
 
 
-def _closing_price(book: Dict[str, Any], selection_id: Any, side: str) -> Optional[float]:
-    """Prezzo ESEGUIBILE per l'hedge di chiusura della posizione ``side``.
+def _closing_price(book: Dict[str, Any], selection_id: Any, side: str) -> Optional[Tuple[float, float]]:
+    """``(prezzo, size)`` ESEGUIBILE per l'hedge di chiusura della posizione ``side``.
+
+    Ritorna anche la **size disponibile** al miglior livello eseguibile, usata dal
+    gate depth/partial-fill (L95): se lo stake dell'hedge la supera, il cashout è
+    rifiutato (R1 fail-closed) invece di abbinarsi solo in parte.
 
     L'hedge ha lato opposto alla posizione e, nel motore di matching del repo
     (``SimulationOrderBook.get_opposite_ladder`` e ``simulation_broker``), un
@@ -86,13 +90,18 @@ def _closing_price(book: Dict[str, Any], selection_id: Any, side: str) -> Option
             continue
         ladder = runner.get(ladder_key) or (runner.get("ex") or {}).get(ladder_key) or []
         for level in ladder:
-            price = level.get("price") if isinstance(level, dict) else None
+            if not isinstance(level, dict):
+                continue
             try:
-                price_f = float(price)
+                price_f = float(level.get("price"))
             except (TypeError, ValueError):
                 continue
             if price_f > 1.0:
-                return price_f
+                try:
+                    size_f = float(level.get("size") or 0.0)
+                except (TypeError, ValueError):
+                    size_f = 0.0
+                return price_f, size_f
     return None
 
 
@@ -153,6 +162,11 @@ class CashoutRouter:
                 return self._summary(0, 0, reason="no_event_name")
 
         published, skipped = self._close_positions(positions, current_orders, _is_bot_order)
+        # L147: dopo le posizioni, cancella anche il resting "puro" del bot (ordini
+        # del tutto non abbinati che non formano una posizione) sui mercati in scope,
+        # così non si abbina dopo il cashout del master riaprendo esposizione.
+        in_scope = self._in_scope_markets(signal_type, signal, market_event)
+        self._flatten_pure_resting(current_orders, _is_bot_order, in_scope)
         return self._summary(published, skipped)
 
     # ------------------------------------------------------------------
@@ -218,6 +232,50 @@ class CashoutRouter:
             return None
         return [p for p in positions if market_event.get(str(p["market_id"])) == target]
 
+    @staticmethod
+    def _in_scope_markets(signal_type: str, signal: Dict[str, Any],
+                          market_event: Dict[str, str]) -> Optional[Set[str]]:
+        """Mercati su cui flattare il resting puro: ``None`` = tutti i mercati bot
+        (``CASHOUT_ALL``); per il ``CASHOUT`` singolo solo i mercati della partita
+        (``event_name``), set vuoto se l'event_name manca (niente flatten)."""
+        if signal_type == "CASHOUT_ALL":
+            return None
+        target = _norm(signal.get("event_name"))
+        if not target:
+            return set()
+        return {m for m, ev in market_event.items() if ev == target}
+
+    def _flatten_pure_resting(self, current_orders, is_bot_order,
+                              in_scope: Optional[Set[str]]) -> None:
+        """L147: cancella gli ordini bot **del tutto** non abbinati
+        (``sizeMatched==0`` e ``sizeRemaining>0``) sui mercati in scope.
+
+        Non formano una posizione (il resolver li ignora), quindi il close
+        per-posizione non li tocca: lasciati vivi si abbinerebbero **dopo** il
+        cashout del master, riaprendo esposizione. Raggruppati per mercato e
+        cancellati best-effort (con conferma); un fallimento è loggato e non aborta
+        il resto.
+        """
+        by_market: Dict[str, List[str]] = {}
+        for row in current_orders or []:
+            if not isinstance(row, dict) or not is_bot_order(row):
+                continue
+            market_id = str(row.get("marketId") or row.get("market_id") or "")
+            if not market_id or (in_scope is not None and market_id not in in_scope):
+                continue
+            try:
+                matched = float(row.get("sizeMatched") or 0.0)
+                remaining = float(row.get("sizeRemaining") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            bid = _bet_id(row)
+            if matched <= 0.0 and remaining > 0.0 and bid:
+                by_market.setdefault(market_id, []).append(bid)
+        for market_id, bet_ids in by_market.items():
+            if not self._cancel_confirmed(market_id, bet_ids):
+                logger.warning("[cashout_router] flatten resting puro NON confermato su %s: %s",
+                               market_id, bet_ids)
+
     # ------------------------------------------------------------------
     def _close_positions(self, positions, current_orders, is_bot_order):
         """Chiude ogni posizione in modo best-effort: un'eccezione su UNA
@@ -249,11 +307,12 @@ class CashoutRouter:
         if not _market_is_open(book):
             logger.warning("[cashout_router] mercato %s non OPEN (SUSPENDED?): skip best-effort", market_id)
             return False
-        price = _closing_price(book, pos.get("selection_id"), str(pos.get("side") or ""))
-        if price is None:
+        priced = _closing_price(book, pos.get("selection_id"), str(pos.get("side") or ""))
+        if priced is None:
             logger.warning("[cashout_router] prezzo di chiusura assente per %s/%s: skip",
                            market_id, pos.get("selection_id"))
             return False
+        price, available_size = priced
 
         # Cancella il resting non abbinato del bot sulla selezione PRIMA di chiudere:
         # se si abbinasse dopo, riaprirebbe la posizione appena chiusa.
@@ -268,6 +327,17 @@ class CashoutRouter:
         if req is None:
             logger.warning("[cashout_router] green-up non calcolabile per %s/%s: skip",
                            market_id, pos.get("selection_id"))
+            return False
+
+        # L95 (policy owner R1): se lo stake dell'hedge supera la profondità
+        # disponibile al prezzo eseguibile, NON pubblicare. Meglio non chiudere che
+        # abbinarsi solo in parte lasciando esposizione residua (fail-closed). Una
+        # ``size`` 0/ignota = nessuna profondità confermata => reject.
+        stake = float(req.get("stake") or 0.0)
+        if stake > available_size + 1e-9:
+            logger.warning("[cashout_router] profondità insufficiente per %s/%s "
+                           "(stake %.4f > size %.4f): skip cashout (R1 fail-closed)",
+                           market_id, pos.get("selection_id"), stake, available_size)
             return False
         self.publish(REQ_EXECUTE_CASHOUT, req)
         return True

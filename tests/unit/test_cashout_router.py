@@ -14,13 +14,13 @@ def _bot(bet_id="B1", market="1.1", sel=7, event="inter vs milan"):
     return {"bet_id": bet_id, "market_id": market, "selection_id": sel, "event_name": event}
 
 
-def _book(market="1.1", sel=7, status="OPEN", back=2.6, lay=1.5):
+def _book(market="1.1", sel=7, status="OPEN", back=2.6, lay=1.5, size=100.0):
     return {
         "marketId": market, "status": status,
         "runners": [{
             "selectionId": sel,
-            "availableToBack": [{"price": back, "size": 100.0}],
-            "availableToLay": [{"price": lay, "size": 100.0}],
+            "availableToBack": [{"price": back, "size": size}],
+            "availableToLay": [{"price": lay, "size": size}],
         }],
     }
 
@@ -359,6 +359,57 @@ def test_failed_cancel_skips_position_fail_closed():
     assert out["published"] == 0
     assert out["skipped"] == 1
     assert h.reqs() == []
+
+
+def test_insufficient_depth_rejects_cashout():
+    # L95 (R1): lo stake dell'hedge supera la size disponibile al prezzo
+    # eseguibile => skip (meglio non chiudere che chiudere a metà).
+    h = _Harness(
+        current=[_curr("B1", "1.1", 7, "BACK", matched=100.0, avg=2.0)],
+        bot=[_bot("B1", "1.1", 7)],
+        books={"1.1": _book("1.1", 7, back=2.0, lay=2.1, size=1.0)},
+    )
+    out = h.router().route({"signal_type": "CASHOUT_ALL"})
+    assert out["published"] == 0
+    assert h.reqs() == []
+
+
+def test_sufficient_depth_publishes_cashout():
+    h = _Harness(
+        current=[_curr("B1", "1.1", 7, "BACK", matched=10.0, avg=2.0)],
+        bot=[_bot("B1", "1.1", 7)],
+        books={"1.1": _book("1.1", 7, back=2.0, lay=2.1, size=1000.0)},
+    )
+    out = h.router().route({"signal_type": "CASHOUT_ALL"})
+    assert out["published"] == 1
+
+
+def test_pure_resting_is_flattened_on_cashout_all():
+    # L147: un ordine bot del tutto NON abbinato (matched 0, remaining 5) non forma
+    # una posizione ma va cancellato, altrimenti si abbinerebbe dopo il cashout.
+    h = _Harness(
+        current=[_curr("B1", "1.1", 7, "BACK", matched=10.0, remaining=0.0),
+                 _curr("B2", "1.2", 9, "BACK", matched=0.0, remaining=5.0)],
+        bot=[_bot("B1", "1.1", 7), _bot("B2", "1.2", 9)],
+        books={"1.1": _book("1.1", 7), "1.2": _book("1.2", 9)},
+    )
+    out = h.router().route({"signal_type": "CASHOUT_ALL"})
+    assert out["published"] == 1                 # solo la posizione su 1.1
+    assert ("1.2", ["B2"]) in h.cancelled        # il pure-resting su 1.2 è flattato
+
+
+def test_pure_resting_flatten_restricted_to_event_for_single_cashout():
+    # Il flatten del singolo CASHOUT è ristretto ai mercati della partita.
+    h = _Harness(
+        current=[_curr("B1", "1.1", 7, "BACK", matched=0.0, remaining=5.0),
+                 _curr("B2", "1.2", 9, "BACK", matched=0.0, remaining=5.0)],
+        bot=[_bot("B1", "1.1", 7, "Inter vs Milan"),
+             _bot("B2", "1.2", 9, "Roma vs Lazio")],
+        books={"1.1": _book("1.1", 7), "1.2": _book("1.2", 9)},
+    )
+    h.router().route({"signal_type": "CASHOUT", "event_name": "inter vs milan"})
+    assert ("1.1", ["B1"]) in h.cancelled            # partita target
+    assert all(m != "1.2" for m, _ in h.cancelled)   # NON l'altra partita
 
 
 def test_non_cashout_signal_is_ignored():
