@@ -24,6 +24,7 @@ testabile senza broker e **non tocca file forbidden**.
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from cashout_resolver import build_cashout_request, reconstruct_open_positions
@@ -104,11 +105,13 @@ def _best_executable_level(ladder: Any) -> Optional[Tuple[float, float]]:
             price_f = float(level.get("price"))
         except (TypeError, ValueError):
             continue
-        if price_f > 1.0:
+        if price_f > 1.0 and math.isfinite(price_f):
             try:
                 size_f = float(level.get("size") or 0.0)
             except (TypeError, ValueError):
                 size_f = 0.0
+            if not math.isfinite(size_f):
+                size_f = 0.0  # size NaN/Inf = profondità IGNOTA => 0 (reject a valle, L95)
             return price_f, size_f
     return None
 
@@ -118,8 +121,10 @@ def _pure_resting_target(row: Any, is_bot_order, in_scope: Optional[Set[str]],
     """``(market_id, bet_id)`` se ``row`` è un ordine bot **del tutto** non abbinato.
 
     Ordine bot ``sizeMatched==0`` e ``sizeRemaining>0``, su un mercato in scope e
-    con ``bet_id`` non già gestito (``exclude``); altrimenti ``None``. Accetta chiavi
-    camelCase (LIVE Betfair) **e** snake_case (SIM/interno).
+    con ``bet_id`` non già gestito (``exclude``); altrimenti ``None``. Chiavi
+    **camelCase** come il resto del modulo (``reconstruct_open_positions`` e
+    ``_resting_bet_ids`` leggono ``sizeMatched``/``sizeRemaining``): coerenza sul
+    feed degli ordini correnti (Betfair LIVE e SIM).
     """
     if not isinstance(row, dict) or not is_bot_order(row):
         return None
@@ -129,15 +134,9 @@ def _pure_resting_target(row: Any, is_bot_order, in_scope: Optional[Set[str]],
     bid = _bet_id(row)
     if not bid or bid in exclude:
         return None
-    matched_raw = row.get("sizeMatched")
-    if matched_raw is None:
-        matched_raw = row.get("size_matched")
-    remaining_raw = row.get("sizeRemaining")
-    if remaining_raw is None:
-        remaining_raw = row.get("size_remaining")
     try:
-        matched = float(matched_raw or 0.0)
-        remaining = float(remaining_raw or 0.0)
+        matched = float(row.get("sizeMatched") or 0.0)
+        remaining = float(row.get("sizeRemaining") or 0.0)
     except (TypeError, ValueError):
         return None
     if matched <= 0.0 < remaining:
@@ -367,12 +366,17 @@ class CashoutRouter:
                 cancelled.update(resting_ids)
                 # P1: il cancel ha rimosso liquidità del bot dal book; rileggi prezzo e
                 # profondità così un hedge coperto SOLO da quella liquidità appena
-                # cancellata non passa il gate L95 (fail-closed).
+                # cancellata non passa il gate L95 (fail-closed). Si **ri-gatta** anche
+                # OPEN: il mercato potrebbe essere passato a SUSPENDED tra il primo
+                # check e il cancel (un book stale non deve far pubblicare).
                 book = self.fetch_market_book(market_id)
-                repriced = _closing_price(book, pos.get("selection_id"),
-                                          str(pos.get("side") or "")) if book else None
+                if not book or not _market_is_open(book):
+                    logger.warning("[cashout_router] book post-cancel assente/non OPEN per %s: skip (fail-closed)",
+                                   market_id)
+                    return False
+                repriced = _closing_price(book, pos.get("selection_id"), str(pos.get("side") or ""))
                 if repriced is None:
-                    logger.warning("[cashout_router] book/prezzo post-cancel assente per %s: skip", market_id)
+                    logger.warning("[cashout_router] prezzo post-cancel assente per %s: skip", market_id)
                     return False
                 price, available_size = repriced
 

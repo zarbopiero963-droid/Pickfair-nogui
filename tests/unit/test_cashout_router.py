@@ -462,18 +462,31 @@ def test_unconfirmed_position_cancel_lets_flatten_retry_pure_resting():
     assert ("1.1", ["B2"]) in h.cancelled   # il flatten riprova il puro B2
 
 
-def test_pure_resting_snake_case_keys_are_flattened():
-    # Le chiavi size_matched/size_remaining (snake_case) sono gestite come le
-    # camelCase: l'ordine puro viene comunque flattato.
-    snake = {"bet_id": "B2", "market_id": "1.2", "selection_id": 9, "side": "BACK",
-             "size_matched": 0.0, "size_remaining": 5.0}
+def test_non_finite_book_depth_rejects_cashout():
+    # Codex P2: una size NaN/Inf = profondità IGNOTA => trattata come 0 => reject
+    # (no bypass del gate L95).
     h = _Harness(
-        current=[_curr("B1", "1.1", 7, "BACK", matched=10.0), snake],
-        bot=[_bot("B1", "1.1", 7), _bot("B2", "1.2", 9)],
-        books={"1.1": _book("1.1", 7), "1.2": _book("1.2", 9)},
+        current=[_curr("B1", "1.1", 7, "BACK", matched=10.0, avg=2.0)],
+        bot=[_bot("B1", "1.1", 7)],
+        books={"1.1": _book("1.1", 7, back=2.0, lay=2.1, size=float("inf"))},
     )
-    h.router().route({"signal_type": "CASHOUT_ALL"})
-    assert ("1.2", ["B2"]) in h.cancelled
+    out = h.router().route({"signal_type": "CASHOUT_ALL"})
+    assert out["published"] == 0
+    assert h.reqs() == []
+
+
+def test_market_suspended_after_cancel_skips_publish():
+    # Codex P2: se il mercato passa a SUSPENDED tra il check iniziale e il cancel,
+    # il book post-cancel non OPEN => skip (no bypass del gate OPEN-only).
+    h = _Harness(
+        current=[_curr("B1", "1.1", 7, "BACK", matched=10.0, remaining=4.0)],
+        bot=[_bot("B1", "1.1", 7)],
+        books={"1.1": _book("1.1", 7)},
+        books_after_cancel={"1.1": _book("1.1", 7, status="SUSPENDED")},
+    )
+    out = h.router().route({"signal_type": "CASHOUT_ALL"})
+    assert out["published"] == 0
+    assert h.reqs() == []
 
 
 def test_non_cashout_signal_is_ignored():
