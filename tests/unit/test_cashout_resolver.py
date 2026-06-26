@@ -3,12 +3,15 @@
 from cashout_resolver import build_cashout_request, reconstruct_open_positions
 
 
-def _order(market="1.100", sel=7, side="BACK", matched=10.0, avg=2.0, price_size=None):
+def _order(market="1.100", sel=7, side="BACK", matched=10.0, avg=2.0,
+           price_size=None, remaining=0.0, ref="BOT-1"):
     o = {
         "marketId": market,
         "selectionId": sel,
         "side": side,
         "sizeMatched": matched,
+        "sizeRemaining": remaining,
+        "customerOrderRef": ref,
     }
     if avg is not None:
         o["averagePriceMatched"] = avg
@@ -17,65 +20,88 @@ def _order(market="1.100", sel=7, side="BACK", matched=10.0, avg=2.0, price_size
     return o
 
 
+def _all(_o):
+    """Predicate bot-order che accetta tutto (per i test non-filtro)."""
+    return True
+
+
 # ---------------------------------------------------------------------------
 # reconstruct_open_positions
 # ---------------------------------------------------------------------------
 
 
 def test_single_back_order_becomes_back_position():
-    pos = reconstruct_open_positions([_order(side="BACK", matched=10.0, avg=2.0)])
+    pos = reconstruct_open_positions([_order(side="BACK", matched=10.0, avg=2.0)], is_bot_order=_all)
     assert len(pos) == 1
     assert pos[0]["market_id"] == "1.100"
     assert pos[0]["selection_id"] == 7
     assert pos[0]["side"] == "BACK"
     assert pos[0]["stake"] == 10.0
     assert pos[0]["price"] == 2.0
+    assert pos[0]["resting_remainder"] == 0.0
 
 
-def test_back_and_lay_net_to_back():
-    # BACK 10 @2.0 + LAY 4 @1.8 sulla stessa selezione => netto BACK 6 @2.0.
-    pos = reconstruct_open_positions([
-        _order(side="BACK", matched=10.0, avg=2.0),
-        _order(side="LAY", matched=4.0, avg=1.8),
-    ])
-    assert len(pos) == 1
-    assert pos[0]["side"] == "BACK"
-    assert pos[0]["stake"] == 6.0
-    assert pos[0]["price"] == 2.0
-
-
-def test_lay_dominant_nets_to_lay():
-    pos = reconstruct_open_positions([
-        _order(side="BACK", matched=3.0, avg=2.0),
-        _order(side="LAY", matched=8.0, avg=1.9),
-    ])
+def test_single_lay_order_becomes_lay_position():
+    pos = reconstruct_open_positions([_order(side="LAY", matched=8.0, avg=1.9)], is_bot_order=_all)
     assert len(pos) == 1
     assert pos[0]["side"] == "LAY"
-    assert pos[0]["stake"] == 5.0
+    assert pos[0]["stake"] == 8.0
     assert pos[0]["price"] == 1.9
 
 
-def test_perfectly_hedged_selection_is_excluded():
-    pos = reconstruct_open_positions([
+def test_mixed_back_and_lay_selection_is_skipped_fail_closed():
+    # N2: una selezione con matched su ENTRAMBI i lati viene SALTATA (mai un
+    # hedge potenzialmente opposto). Vale anche se "coperta" o sbilanciata.
+    assert reconstruct_open_positions([
+        _order(side="BACK", matched=10.0, avg=2.0),
+        _order(side="LAY", matched=4.0, avg=1.8),
+    ], is_bot_order=_all) == []
+    assert reconstruct_open_positions([
         _order(side="BACK", matched=5.0, avg=2.0),
         _order(side="LAY", matched=5.0, avg=2.0),
-    ])
-    assert pos == []
+    ], is_bot_order=_all) == []
 
 
 def test_weighted_average_price_across_back_fills():
-    # BACK 10@2.0 + BACK 10@3.0 => 20 @2.5.
+    # BACK 10@2.0 + BACK 10@3.0 (stesso lato) => 20 @2.5.
     pos = reconstruct_open_positions([
         _order(side="BACK", matched=10.0, avg=2.0),
         _order(side="BACK", matched=10.0, avg=3.0),
-    ])
+    ], is_bot_order=_all)
     assert pos[0]["stake"] == 20.0
     assert pos[0]["price"] == 2.5
 
 
+def test_only_bot_orders_are_aggregated():
+    # Il feed è account-level: un ordine non-bot (ref diverso) sullo stesso conto
+    # NON deve diventare una posizione da chiudere.
+    def is_bot(o):
+        return str(o.get("customerOrderRef") or "").startswith("BOT-")
+
+    pos = reconstruct_open_positions([
+        _order(market="1.1", sel=7, side="BACK", matched=10.0, avg=2.0, ref="BOT-1"),
+        _order(market="1.2", sel=9, side="LAY", matched=8.0, avg=1.5, ref="MANUAL-x"),
+    ], is_bot_order=is_bot)
+    assert len(pos) == 1
+    assert pos[0]["market_id"] == "1.1"
+
+
+def test_resting_remainder_is_exposed():
+    # Ordine parzialmente abbinato: matched + sizeRemaining resting => la posizione
+    # espone resting_remainder per il cancel a monte del routing.
+    pos = reconstruct_open_positions(
+        [_order(side="BACK", matched=6.0, avg=2.0, remaining=4.0)], is_bot_order=_all
+    )
+    assert len(pos) == 1
+    assert pos[0]["stake"] == 6.0
+    assert pos[0]["resting_remainder"] == 4.0
+
+
 def test_sim_proxy_price_when_no_average_matched():
     # In SIM manca averagePriceMatched: si usa priceSize.price come proxy.
-    pos = reconstruct_open_positions([_order(side="BACK", matched=5.0, avg=None, price_size=2.2)])
+    pos = reconstruct_open_positions(
+        [_order(side="BACK", matched=5.0, avg=None, price_size=2.2)], is_bot_order=_all
+    )
     assert len(pos) == 1
     assert pos[0]["price"] == 2.2
 
@@ -83,7 +109,9 @@ def test_sim_proxy_price_when_no_average_matched():
 def test_zero_average_price_falls_back_to_proxy():
     # averagePriceMatched=0.0 (presente ma non valido) NON deve scartare il row:
     # si ripiega su priceSize.price.
-    pos = reconstruct_open_positions([_order(side="BACK", matched=5.0, avg=0.0, price_size=2.3)])
+    pos = reconstruct_open_positions(
+        [_order(side="BACK", matched=5.0, avg=0.0, price_size=2.3)], is_bot_order=_all
+    )
     assert len(pos) == 1
     assert pos[0]["price"] == 2.3
 
@@ -96,14 +124,14 @@ def test_skips_zero_matched_and_invalid_rows():
         _order(side="BACK", matched=5.0, avg=1.0),           # prezzo <= 1
         "not-a-dict",
     ]
-    assert reconstruct_open_positions(rows) == []
+    assert reconstruct_open_positions(rows, is_bot_order=_all) == []
 
 
 def test_multiple_markets_and_selections():
     pos = reconstruct_open_positions([
         _order(market="1.1", sel=7, side="BACK", matched=10.0, avg=2.0),
         _order(market="1.2", sel=9, side="LAY", matched=8.0, avg=1.5),
-    ])
+    ], is_bot_order=_all)
     assert len(pos) == 2
     by_market = {p["market_id"]: p for p in pos}
     assert by_market["1.1"]["side"] == "BACK"

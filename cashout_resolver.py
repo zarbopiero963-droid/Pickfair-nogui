@@ -13,15 +13,20 @@ Gap noto SIM/LIVE: il prezzo d'ingresso usa ``averagePriceMatched`` (presente
 nei row LIVE di Betfair); in SIM quel campo non c'è e si ripiega su
 ``priceSize.price`` (prezzo limite d'ingresso) come proxy.
 
-Approssimazione del netting: per una selezione con fill su entrambi i lati, la
-posizione netta usa il prezzo medio pesato del **lato dominante** (i fill del
-lato opposto riducono solo la size netta). Per il caso comune del copy-mirror
-(posizione a lato singolo) il prezzo è esatto.
+Strategia N2 (scelta owner), fail-closed:
+- ``is_bot_order`` (obbligatorio) filtra il feed account-level ai soli ordini
+  del bot — non si chiudono bet manuali o di altre strategie sullo stesso conto;
+- si gestiscono solo posizioni a **lato singolo** (BACK *oppure* LAY); una
+  selezione con matched su **entrambi** i lati (mista, es. dopo un cashout
+  parziale) viene **saltata** invece di rischiare un hedge sul lato sbagliato —
+  il netting P&L-based delle miste è un follow-up;
+- ogni posizione espone ``resting_remainder`` (``sizeRemaining``) perché il
+  routing cancelli l'eventuale ordine non abbinato prima/insieme al cashout.
 """
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from dutching import dynamic_cashout_single
 
@@ -47,30 +52,41 @@ def _row_matched_price(order: Dict[str, Any]) -> float:
     return price
 
 
-def _aggregate_orders(current_orders: Any) -> Dict[Tuple[str, int], Dict[str, float]]:
+def _aggregate_orders(
+    current_orders: Any, is_bot_order: Callable[[Dict[str, Any]], bool]
+) -> Dict[Tuple[str, int], Dict[str, float]]:
     """Somma per ``(market_id, selection_id)`` le size abbinate e i nozionali per
-    lato (BACK/LAY), filtrando i row invalidi. Estratto da
-    ``reconstruct_open_positions`` per separare parsing/filtraggio dal netting."""
+    lato (BACK/LAY) **dei soli ordini del bot** (``is_bot_order``), più il
+    ``resting`` (``sizeRemaining`` non abbinato). Il feed ``list_current_orders``
+    è account-level: senza il filtro si aggregherebbero bet manuali o di altre
+    strategie e si chiuderebbero posizioni non aperte dal bot."""
     groups: Dict[Tuple[str, int], Dict[str, float]] = {}
     for order in current_orders or []:
         if not isinstance(order, dict):
+            continue
+        if not is_bot_order(order):
             continue
         market_id = str(order.get("marketId") or order.get("market_id") or "").strip()
         selection_raw = order.get("selectionId", order.get("selection_id"))
         side = str(order.get("side") or "").upper().strip()
         if not market_id or selection_raw in (None, "") or side not in _VALID_SIDES:
             continue
+
+        key = (market_id, int(_to_float(selection_raw)))
+        grp = groups.setdefault(
+            key,
+            {"back_size": 0.0, "back_notional": 0.0, "lay_size": 0.0, "lay_notional": 0.0, "resting": 0.0},
+        )
+        # Il resting va contato sempre (anche su un ordine non ancora abbinato):
+        # se si abbina dopo, riaprirebbe l'esposizione sulla selezione chiusa.
+        grp["resting"] += max(0.0, _to_float(order.get("sizeRemaining")))
+
         matched = _to_float(order.get("sizeMatched"))
         if matched <= 0.0:
             continue
         price = _row_matched_price(order)
         if price <= 1.0:
             continue
-
-        key = (market_id, int(_to_float(selection_raw)))
-        grp = groups.setdefault(
-            key, {"back_size": 0.0, "back_notional": 0.0, "lay_size": 0.0, "lay_notional": 0.0}
-        )
         if side == "BACK":
             grp["back_size"] += matched
             grp["back_notional"] += matched * price
@@ -80,28 +96,40 @@ def _aggregate_orders(current_orders: Any) -> Dict[Tuple[str, int], Dict[str, fl
     return groups
 
 
-def reconstruct_open_positions(current_orders: Any) -> List[Dict[str, Any]]:
-    """Aggrega gli ordini correnti in posizioni NETTE per ``(market_id, selection_id)``.
+def reconstruct_open_positions(
+    current_orders: Any, *, is_bot_order: Callable[[Dict[str, Any]], bool]
+) -> List[Dict[str, Any]]:
+    """Ricostruisce le posizioni aperte **del bot** dagli ordini correnti.
 
-    Ritorna una lista di ``{market_id, selection_id, side, stake, price}`` dove
-    ``side`` è il lato netto (BACK se il matched BACK supera il LAY, viceversa),
-    ``stake`` = ``|back_matched - lay_matched|`` e ``price`` = prezzo medio pesato
-    del lato dominante. Selezioni piatte (netto ~0), senza matched o con prezzo
-    non valido vengono escluse.
+    ``is_bot_order`` (obbligatorio) decide quali row sono del bot: il feed è
+    account-level e include bet manuali / altre strategie che NON vanno chiuse.
+
+    Strategia N2 (fail-closed): si gestiscono solo posizioni a **lato singolo**
+    (BACK *oppure* LAY su una selezione — il caso del copy-mirror). Una selezione
+    con matched su **entrambi** i lati (posizione MISTA, es. dopo un cashout
+    parziale) viene **SALTATA**: il netting per sola size potrebbe scegliere il
+    lato residuo sbagliato e piazzare un hedge OPPOSTO che aumenta l'esposizione.
+    Il netting P&L-based delle miste è un follow-up.
+
+    Ogni posizione espone ``resting_remainder`` (``sizeRemaining`` non abbinato sulla
+    selezione): il routing deve cancellarlo prima/insieme al cashout, altrimenti un
+    abbinamento successivo riaprirebbe la posizione.
     """
     positions: List[Dict[str, Any]] = []
-    for (market_id, selection_id), grp in _aggregate_orders(current_orders).items():
-        net = grp["back_size"] - grp["lay_size"]
-        if abs(net) <= 1e-9:
-            continue  # perfettamente coperta => nessuna esposizione da chiudere
-        if net > 0:
-            side = "BACK"
-            stake = net
-            price = grp["back_notional"] / grp["back_size"] if grp["back_size"] > 0 else 0.0
+    for (market_id, selection_id), grp in _aggregate_orders(current_orders, is_bot_order).items():
+        back, lay = grp["back_size"], grp["lay_size"]
+        if back > 0.0 and lay > 0.0:
+            logger.warning(
+                "[cashout_resolver] selezione MISTA saltata (fail-closed): %s/%s back=%.2f lay=%.2f",
+                market_id, selection_id, back, lay,
+            )
+            continue
+        if back > 0.0:
+            side, stake, price = "BACK", back, grp["back_notional"] / back
+        elif lay > 0.0:
+            side, stake, price = "LAY", lay, grp["lay_notional"] / lay
         else:
-            side = "LAY"
-            stake = -net
-            price = grp["lay_notional"] / grp["lay_size"] if grp["lay_size"] > 0 else 0.0
+            continue  # nessun matched sulla selezione
         if stake <= 0.0 or price <= 1.0:
             continue
         positions.append({
@@ -110,6 +138,7 @@ def reconstruct_open_positions(current_orders: Any) -> List[Dict[str, Any]]:
             "side": side,
             "stake": stake,
             "price": price,
+            "resting_remainder": round(grp["resting"], 2),
         })
     return positions
 
