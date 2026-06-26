@@ -360,9 +360,21 @@ class CashoutRouter:
         if float(pos.get("resting_remainder") or 0.0) > 0.0:
             resting_ids = self._resting_bet_ids(current_orders, is_bot_order, market_id, pos.get("selection_id"))
             if resting_ids:
-                cancelled.update(resting_ids)  # registra l'attempt: il flatten li salta
                 if not self._cancel_confirmed(market_id, resting_ids):
                     return False
+                # P2: escludi dal flatten SOLO dopo conferma — se il cancel fallisce
+                # la posizione è saltata e il flatten deve poter riprovare il puro.
+                cancelled.update(resting_ids)
+                # P1: il cancel ha rimosso liquidità del bot dal book; rileggi prezzo e
+                # profondità così un hedge coperto SOLO da quella liquidità appena
+                # cancellata non passa il gate L95 (fail-closed).
+                book = self.fetch_market_book(market_id)
+                repriced = _closing_price(book, pos.get("selection_id"),
+                                          str(pos.get("side") or "")) if book else None
+                if repriced is None:
+                    logger.warning("[cashout_router] book/prezzo post-cancel assente per %s: skip", market_id)
+                    return False
+                price, available_size = repriced
 
         req = build_cashout_request(
             pos, current_price=price, commission=self.commission_pct, source=self.source

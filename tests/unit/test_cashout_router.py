@@ -28,7 +28,7 @@ def _book(market="1.1", sel=7, status="OPEN", back=2.6, lay=1.5, size=100.0):
 class _Harness:
     def __init__(self, current, bot, books, raise_current=False,
                  raise_book_for=None, raise_cancel=False, cancel_result=True,
-                 raise_bot=False):
+                 raise_bot=False, books_after_cancel=None):
         self.published = []
         self.cancelled = []
         self._current = current
@@ -39,6 +39,10 @@ class _Harness:
         self._raise_cancel = raise_cancel
         self._cancel_result = cancel_result
         self._raise_bot = raise_bot
+        # Book "post-cancel" per mercato: dopo un cancel su quel mercato, _fetch_book
+        # lo restituisce (simula la liquidità del bot rimossa dal book).
+        self._books_after_cancel = dict(books_after_cancel or {})
+        self._cancelled_markets: set = set()
 
     def _fetch_current(self):
         if self._raise:
@@ -53,12 +57,16 @@ class _Harness:
     def _fetch_book(self, market):
         if market in self._raise_book_for:
             raise RuntimeError("BOOK_SNAPSHOT_FAILED")
+        if market in self._cancelled_markets and market in self._books_after_cancel:
+            return self._books_after_cancel[market]
         return self._books.get(market)
 
     def _cancel(self, market, ids):
         if self._raise_cancel:
             raise RuntimeError("CANCEL_FAILED")
         self.cancelled.append((market, ids))
+        if self._cancel_result:
+            self._cancelled_markets.add(market)
         return self._cancel_result
 
     def router(self):
@@ -424,6 +432,34 @@ def test_pure_resting_sharing_market_is_not_double_cancelled():
     out = h.router().route({"signal_type": "CASHOUT_ALL"})
     assert out["published"] == 1
     assert h.cancelled == [("1.1", ["B1", "B2"])]   # un solo cancel, niente doppione
+
+
+def test_depth_rechecked_after_cancel_rejects_when_own_liquidity_removed():
+    # Codex P1: la profondità è riletta DOPO il cancel del resting del bot — un
+    # hedge coperto solo dalla liquidità del bot appena cancellata non deve passare.
+    h = _Harness(
+        current=[_curr("B1", "1.1", 7, "BACK", matched=10.0, remaining=4.0)],
+        bot=[_bot("B1", "1.1", 7)],
+        books={"1.1": _book("1.1", 7, back=2.0, lay=2.1, size=1000.0)},
+        books_after_cancel={"1.1": _book("1.1", 7, back=2.0, lay=2.1, size=0.5)},
+    )
+    out = h.router().route({"signal_type": "CASHOUT_ALL"})
+    assert out["published"] == 0          # rifiutato sulla profondità POST-cancel
+    assert h.reqs() == []
+
+
+def test_unconfirmed_position_cancel_lets_flatten_retry_pure_resting():
+    # Codex P2: se il cancel del resting della posizione NON è confermato gli id
+    # non vanno esclusi — il flatten deve poter riprovare il resting puro condiviso.
+    h = _Harness(
+        current=[_curr("B1", "1.1", 7, "BACK", matched=6.0, remaining=4.0),
+                 _curr("B2", "1.1", 7, "BACK", matched=0.0, remaining=5.0)],
+        bot=[_bot("B1", "1.1", 7), _bot("B2", "1.1", 7)],
+        books={"1.1": _book("1.1", 7)},
+        cancel_result=False,
+    )
+    h.router().route({"signal_type": "CASHOUT_ALL"})
+    assert ("1.1", ["B2"]) in h.cancelled   # il flatten riprova il puro B2
 
 
 def test_pure_resting_snake_case_keys_are_flattened():
