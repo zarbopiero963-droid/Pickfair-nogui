@@ -26,25 +26,38 @@ def _book(market="1.1", sel=7, status="OPEN", back=2.6, lay=1.5):
 
 
 class _Harness:
-    def __init__(self, current, bot, books, raise_current=False):
+    def __init__(self, current, bot, books, raise_current=False,
+                 raise_book_for=None, raise_cancel=False):
         self.published = []
         self.cancelled = []
         self._current = current
         self._bot = bot
         self._books = books
         self._raise = raise_current
+        self._raise_book_for = set(raise_book_for or ())
+        self._raise_cancel = raise_cancel
 
     def _fetch_current(self):
         if self._raise:
             raise RuntimeError("LIVE_BLOCKED_SESSION_INVALID")
         return self._current
 
+    def _fetch_book(self, market):
+        if market in self._raise_book_for:
+            raise RuntimeError("BOOK_SNAPSHOT_FAILED")
+        return self._books.get(market)
+
+    def _cancel(self, market, ids):
+        if self._raise_cancel:
+            raise RuntimeError("CANCEL_FAILED")
+        self.cancelled.append((market, ids))
+
     def router(self):
         return CashoutRouter(
             fetch_current_orders=self._fetch_current,
             fetch_bot_orders=lambda: self._bot,
-            fetch_market_book=lambda m: self._books.get(m),
-            cancel_orders=lambda m, ids: self.cancelled.append((m, ids)),
+            fetch_market_book=self._fetch_book,
+            cancel_orders=self._cancel,
             publish=lambda t, p: self.published.append((t, p)),
             commission_pct=4.5,
         )
@@ -167,6 +180,37 @@ def test_mixed_position_is_skipped_by_resolver():
     )
     out = h.router().route({"signal_type": "CASHOUT_ALL"})
     assert out["published"] == 0
+
+
+def test_book_fetch_error_on_one_market_does_not_abort_batch():
+    # Greptile P1: se fetch_market_book solleva per UN mercato, le altre
+    # posizioni OPEN del batch CASHOUT_ALL devono comunque essere chiuse.
+    h = _Harness(
+        current=[_curr("B1", "1.1", 7, "BACK", 10.0),
+                 _curr("B2", "1.2", 9, "BACK", 10.0)],
+        bot=[_bot("B1", "1.1", 7), _bot("B2", "1.2", 9)],
+        books={"1.1": _book("1.1", 7), "1.2": _book("1.2", 9)},
+        raise_book_for={"1.1"},  # il book di 1.1 solleva
+    )
+    out = h.router().route({"signal_type": "CASHOUT_ALL"})
+    assert out["published"] == 1          # 1.2 chiuso nonostante l'errore su 1.1
+    assert out["skipped"] == 1
+    assert h.reqs()[0]["market_id"] == "1.2"
+
+
+def test_failed_cancel_skips_position_fail_closed():
+    # Greptile P1 / Codacy HIGH: se il cancel del resting fallisce, NON si
+    # pubblica il cashout (il resting vivo potrebbe abbinarsi dopo l'hedge).
+    h = _Harness(
+        current=[_curr("B1", "1.1", 7, "BACK", matched=6.0, remaining=4.0)],
+        bot=[_bot("B1", "1.1", 7)],
+        books={"1.1": _book("1.1", 7)},
+        raise_cancel=True,
+    )
+    out = h.router().route({"signal_type": "CASHOUT_ALL"})
+    assert out["published"] == 0
+    assert out["skipped"] == 1
+    assert h.reqs() == []
 
 
 def test_non_cashout_signal_is_ignored():

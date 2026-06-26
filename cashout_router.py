@@ -145,16 +145,29 @@ class CashoutRouter:
                         "reason": "no_event_name"}
             positions = [p for p in positions if market_event.get(str(p["market_id"])) == target]
 
-        published = 0
-        skipped = 0
-        for pos in positions:
-            if self._close_position(pos, current_orders, _is_bot_order):
-                published += 1
-            else:
-                skipped += 1
+        published, skipped = self._close_positions(positions, current_orders, _is_bot_order)
         return {"published": published, "positions": published + skipped, "skipped": skipped}
 
     # ------------------------------------------------------------------
+    def _close_positions(self, positions, current_orders, is_bot_order):
+        """Chiude ogni posizione in modo best-effort: un'eccezione su UNA
+        posizione (es. ``fetch_market_book`` che solleva) viene assorbita e la
+        posizione saltata, senza abortire il batch (contratto best-effort)."""
+        published = 0
+        skipped = 0
+        for pos in positions:
+            try:
+                closed = self._close_position(pos, current_orders, is_bot_order)
+            except Exception as exc:  # noqa: BLE001 - best-effort: un errore su una posizione non aborta il batch
+                logger.warning("[cashout_router] chiusura posizione %s fallita, skip best-effort: %s",
+                               pos.get("market_id"), exc)
+                closed = False
+            if closed:
+                published += 1
+            else:
+                skipped += 1
+        return published, skipped
+
     def _close_position(self, pos: Dict[str, Any], current_orders, is_bot_order) -> bool:
         """Chiude una singola posizione (best-effort: ritorna False senza
         abortire il batch se non chiudibile)."""
@@ -179,8 +192,12 @@ class CashoutRouter:
             if resting_ids:
                 try:
                     self.cancel_orders(market_id, resting_ids)
-                except Exception as exc:  # noqa: BLE001 - cancel best-effort
-                    logger.warning("[cashout_router] cancel resting fallito su %s: %s", market_id, exc)
+                except Exception as exc:  # noqa: BLE001 - cancel fallito => NON si chiude (fail-closed)
+                    # Se il resting resta vivo e si abbina dopo l'hedge, riaprirebbe o
+                    # sovra-copre la posizione: meglio saltare che chiudere alla cieca.
+                    logger.warning("[cashout_router] cancel resting fallito su %s: skip posizione (fail-closed): %s",
+                                   market_id, exc)
+                    return False
 
         req = build_cashout_request(
             pos, current_price=price, commission=self.commission_pct, source=self.source
