@@ -153,6 +153,41 @@ def test_invalid_payload_rejected_without_placement():
     assert bus.last(CASHOUT_FAILED)["status"] == "REJECTED"
 
 
+def test_no_safety_layer_still_validates_floor():
+    # Greptile P1: senza SafetyLayer la validazione NON deve essere saltata.
+    # Un price<=1 deve essere rigettato al confine dell'executor, mai piazzato.
+    bus = _FakeBus()
+    router = _FakeRouter(_ok_result())
+    CashoutExecutor(bus, router).on_cmd_execute_cashout(_cmd_payload(price=1.0))
+
+    assert router.calls == []
+    assert CASHOUT_SUCCESS not in bus.topics()
+    assert bus.last(CASHOUT_FAILED)["status"] == "REJECTED"
+
+
+def test_no_safety_layer_valid_payload_places():
+    bus = _FakeBus()
+    router = _FakeRouter(_ok_result(matched=4.0))
+    CashoutExecutor(bus, router).on_cmd_execute_cashout(_cmd_payload())
+
+    assert len(router.calls) == 1
+    assert bus.last(CASHOUT_SUCCESS)["matched"] == 4.0
+
+
+def test_missing_side_rejected_not_defaulted_to_lay():
+    # Greptile P1 (security): un side mancante NON deve diventare LAY (che
+    # piazzerebbe un ordine reale aumentando l'esposizione) => rigetto.
+    bus = _FakeBus()
+    router = _FakeRouter(_ok_result())
+    payload = _cmd_payload()
+    del payload["side"]
+    CashoutExecutor(bus, router).on_cmd_execute_cashout(payload)
+
+    assert router.calls == []
+    assert CASHOUT_SUCCESS not in bus.topics()
+    assert bus.last(CASHOUT_FAILED)["status"] == "REJECTED"
+
+
 def test_non_dict_payload_rejected():
     bus = _FakeBus()
     router = _FakeRouter(_ok_result())
