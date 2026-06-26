@@ -121,6 +121,36 @@ def test_duplicate_bet_id_is_deduplicated(db):
     assert [o["bet_id"] for o in out] == ["D1"]
 
 
+def test_sim_partial_is_included(db):
+    # Codex P2: PARTIAL è una posizione aperta in simulazione (simulation_state)
+    # => deve essere nell'allowlist d'identità.
+    db.save_simulation_bet({
+        "bet_id": "SP", "market_id": "1.9", "selection_id": "7",
+        "status": "PARTIAL", "event_name": "Genoa vs Empoli",
+    })
+    assert db.get_bot_active_orders() == [
+        {"bet_id": "SP", "market_id": "1.9", "event_name": "Genoa vs Empoli"}]
+
+
+def test_live_completed_order_is_included(db):
+    # Codex P2: una lifecycle COMPLETED può avere l'ordine ancora vivo sul book
+    # finché non è cashato/settled => incluso (denylist: solo INFLIGHT escluso).
+    _place_live_order(db, ref="CC", market_id="1.8", event_name="Lecce vs Parma",
+                      bet_id="LC", status="COMPLETED")
+    assert db.get_bot_active_orders() == [
+        {"bet_id": "LC", "market_id": "1.8", "event_name": "Lecce vs Parma"}]
+
+
+def test_live_betid_from_result_instruction_reports(db):
+    # Codex P1: il broker BetfairClient.place_bet ritorna
+    # {"ok": True, "result": {"instructionReports": [{"betId": ...}]}}.
+    _place_live_order(db, ref="CR", market_id="1.7", event_name="Como vs Verona",
+                      bet_id="", status="MATCHED",
+                      response={"ok": True, "result": {"instructionReports": [{"betId": "RES7"}]}})
+    assert db.get_bot_active_orders() == [
+        {"bet_id": "RES7", "market_id": "1.7", "event_name": "Como vs Verona"}]
+
+
 def test_empty_market_id_row_is_excluded(db):
     # Invariante su cui il router fa affidamento per la mappa market->event:
     # una riga senza market_id viene scartata, ma quelle valide restano.

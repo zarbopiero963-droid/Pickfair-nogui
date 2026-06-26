@@ -1296,11 +1296,18 @@ class Database:
         return out
 
     def _sim_bot_orders(self) -> List[Dict[str, str]]:
-        """Ordini bot dal ledger SIM (``simulation_bets``). Stati letterali costanti
-        nell'SQL: nessun dato esterno nella query (no SQL injection)."""
+        """Ordini bot dal ledger SIM (``simulation_bets``).
+
+        **Denylist** anziché allowlist di stati: si includono tutte le righe con
+        ``bet_id`` tranne quelle terminali-chiuse (``CANCELLED``). Così non si
+        omette nessuno stato "aperto" (es. ``EXECUTABLE``/``EXECUTION_COMPLETE``/
+        ``PARTIAL``) — la liveness reale è comunque ri-verificata dal router contro
+        ``list_current_orders``, quindi una riga stale è innocua. Stati letterali
+        costanti nell'SQL: nessun dato esterno nella query (no SQL injection).
+        """
         rows = self._execute(
             "SELECT bet_id, market_id, event_name FROM simulation_bets "
-            "WHERE bet_id != '' AND status IN ('EXECUTABLE', 'EXECUTION_COMPLETE')",
+            "WHERE bet_id != '' AND status NOT IN ('CANCELLED')",
             fetch=True,
             commit=False,
         )
@@ -1317,15 +1324,17 @@ class Database:
     def _live_bot_orders(self) -> List[Dict[str, str]]:
         """Ordini bot dal ledger LIVE autoritativo (tabella ``orders``).
 
-        ``betId`` dal ``response_json`` (output di ``OrderRouter``/broker),
-        ``market_id``/``event_name`` dal ``payload_json`` (la request, valorizzata
-        da ``risk_middleware``). Stati piazzati/abbinati (``INFLIGHT`` è
-        pre-piazzamento, senza betId, quindi escluso).
+        ``betId`` dal ``response_json`` (output ``OrderRouter`` **o** broker
+        ``place_bet``), ``market_id``/``event_name`` dal ``payload_json`` (la
+        request, valorizzata da ``risk_middleware``). **Denylist**: si esclude solo
+        ``INFLIGHT`` (pre-piazzamento, senza betId); ogni altro stato è candidato e
+        l'identità reale è il ``betId`` estratto (presente solo se piazzato). Niente
+        allowlist di stati da mantenere (``MATCHED``/``PARTIALLY_MATCHED``/
+        ``COMPLETED``/… inclusi automaticamente); le righe terminali stale sono
+        filtrate a valle dal cross-check su ``list_current_orders``.
         """
         rows = self._execute(
-            "SELECT payload_json, response_json FROM orders "
-            "WHERE status IN "
-            "('SUBMITTED', 'PLACED', 'MATCHED', 'PARTIALLY_MATCHED', 'EXECUTION_COMPLETE')",
+            "SELECT payload_json, response_json FROM orders WHERE status != 'INFLIGHT'",
             fetch=True,
             commit=False,
         )
@@ -1345,23 +1354,26 @@ class Database:
 
     @staticmethod
     def _order_bet_id(response: Any) -> str:
-        """``betId`` dal ``response_json`` di un ordine live (output ``OrderRouter``).
+        """``betId`` dal ``response_json`` di un ordine live.
 
-        Prova la chiave normalizzata ``bet_id``/``betId``, poi ripiega sui
-        ``instructionReports`` grezzi (``raw``). ``''`` se non determinabile.
+        Copre le shape note: chiave normalizzata ``bet_id``/``betId`` (``OrderRouter``),
+        e i ``instructionReports`` annidati sia sotto ``result`` (broker
+        ``BetfairClient.place_bet`` ``{"ok": True, "result": {...}}``) sia sotto
+        ``raw``. ``''`` se non determinabile.
         """
         if not isinstance(response, dict):
             return ""
         bet_id = response.get("bet_id") or response.get("betId")
         if bet_id:
             return str(bet_id)
-        raw = response.get("raw")
-        if isinstance(raw, dict):
-            for report in raw.get("instructionReports") or []:
-                if isinstance(report, dict):
-                    rid = report.get("betId") or report.get("bet_id")
-                    if rid:
-                        return str(rid)
+        for container_key in ("result", "raw"):
+            container = response.get(container_key)
+            if isinstance(container, dict):
+                for report in container.get("instructionReports") or []:
+                    if isinstance(report, dict):
+                        rid = report.get("betId") or report.get("bet_id")
+                        if rid:
+                            return str(rid)
         return ""
 
     def save_observability_snapshot(self, payload):
