@@ -1263,6 +1263,119 @@ class Database:
             out.append(item)
         return out
 
+    def get_bot_active_orders(self) -> List[Dict[str, str]]:
+        """Identità degli ordini ATTIVI del bot per il routing del cashout (I1).
+
+        Ritorna, per ogni bet **del bot** ancora viva, un dict
+        ``{"bet_id", "market_id", "event_name"}`` unendo i due ledger del bot:
+
+        - **SIM** ``simulation_bets`` (``event_name`` è una colonna);
+        - **LIVE** tabella ``orders`` — store autoritativo del percorso headless
+          (che costruisce ``TradingEngine`` **senza** ``OrderManager``, quindi NON
+          scrive ``order_saga``): ``betId`` dal ``response_json``,
+          ``market_id``/``event_name`` dal ``payload_json``.
+
+        È la **sorgente d'identità I1**: il ``customerOrderRef`` NON è inviato a
+        Betfair sul piazzamento, quindi il bot si riconosce dai propri ``bet_id``
+        registrati. Risultato **deduplicato** per ``bet_id`` (univoco su Betfair).
+        Solo righe con ``bet_id`` e ``market_id`` valorizzati. **Read-only.**
+
+        La liveness effettiva è ri-verificata a valle dal ``CashoutRouter`` contro
+        ``list_current_orders``: questa lista è l'allowlist di identità del bot
+        (+ la mappa market→event per restringere il CASHOUT singolo), non il
+        giudizio finale di apertura. Eventuali bet_id stale sono innocui (non
+        compaiono tra gli ordini correnti live e i bet_id Betfair sono univoci).
+        """
+        seen: set = set()
+        out: List[Dict[str, str]] = []
+        for order in self._sim_bot_orders() + self._live_bot_orders():
+            bet_id = order["bet_id"]
+            if bet_id and order["market_id"] and bet_id not in seen:
+                seen.add(bet_id)
+                out.append(order)
+        return out
+
+    def _sim_bot_orders(self) -> List[Dict[str, str]]:
+        """Ordini bot dal ledger SIM (``simulation_bets``).
+
+        **Denylist** anziché allowlist di stati: si includono tutte le righe con
+        ``bet_id`` tranne quelle terminali-chiuse (``CANCELLED``). Così non si
+        omette nessuno stato "aperto" (es. ``EXECUTABLE``/``EXECUTION_COMPLETE``/
+        ``PARTIAL``) — la liveness reale è comunque ri-verificata dal router contro
+        ``list_current_orders``, quindi una riga stale è innocua. Stati letterali
+        costanti nell'SQL: nessun dato esterno nella query (no SQL injection).
+        """
+        rows = self._execute(
+            "SELECT bet_id, market_id, event_name FROM simulation_bets "
+            "WHERE bet_id != '' AND status NOT IN ('CANCELLED')",
+            fetch=True,
+            commit=False,
+        )
+        out: List[Dict[str, str]] = []
+        for row in rows or []:
+            item = dict(row)
+            out.append({
+                "bet_id": str(item.get("bet_id") or ""),
+                "market_id": str(item.get("market_id") or ""),
+                "event_name": str(item.get("event_name") or ""),
+            })
+        return out
+
+    def _live_bot_orders(self) -> List[Dict[str, str]]:
+        """Ordini bot dal ledger LIVE autoritativo (tabella ``orders``).
+
+        ``betId`` dal ``response_json`` (output ``OrderRouter`` **o** broker
+        ``place_bet``), ``market_id``/``event_name`` dal ``payload_json`` (la
+        request, valorizzata da ``risk_middleware``). **Denylist**: si esclude solo
+        ``INFLIGHT`` (pre-piazzamento, senza betId); ogni altro stato è candidato e
+        l'identità reale è il ``betId`` estratto (presente solo se piazzato). Niente
+        allowlist di stati da mantenere (``MATCHED``/``PARTIALLY_MATCHED``/
+        ``COMPLETED``/… inclusi automaticamente); le righe terminali stale sono
+        filtrate a valle dal cross-check su ``list_current_orders``.
+        """
+        rows = self._execute(
+            "SELECT payload_json, response_json FROM orders WHERE status != 'INFLIGHT'",
+            fetch=True,
+            commit=False,
+        )
+        out: List[Dict[str, str]] = []
+        for row in rows or []:
+            item = dict(row)
+            payload = self._safe_json_loads(item.get("payload_json"), {})
+            response = self._safe_json_loads(item.get("response_json"), {})
+            if not isinstance(payload, dict):
+                payload = {}
+            out.append({
+                "bet_id": self._order_bet_id(response),
+                "market_id": str(payload.get("market_id") or payload.get("marketId") or ""),
+                "event_name": str(payload.get("event_name") or ""),
+            })
+        return out
+
+    @staticmethod
+    def _order_bet_id(response: Any) -> str:
+        """``betId`` dal ``response_json`` di un ordine live.
+
+        Copre le shape note: chiave normalizzata ``bet_id``/``betId`` (``OrderRouter``),
+        e i ``instructionReports`` annidati sia sotto ``result`` (broker
+        ``BetfairClient.place_bet`` ``{"ok": True, "result": {...}}``) sia sotto
+        ``raw``. ``''`` se non determinabile.
+        """
+        if not isinstance(response, dict):
+            return ""
+        bet_id = response.get("bet_id") or response.get("betId")
+        if bet_id:
+            return str(bet_id)
+        for container_key in ("result", "raw"):
+            container = response.get(container_key)
+            if isinstance(container, dict):
+                for report in container.get("instructionReports") or []:
+                    if isinstance(report, dict):
+                        rid = report.get("betId") or report.get("bet_id")
+                        if rid:
+                            return str(rid)
+        return ""
+
     def save_observability_snapshot(self, payload):
         sql = """
         INSERT INTO observability_snapshots (created_at, payload_json)

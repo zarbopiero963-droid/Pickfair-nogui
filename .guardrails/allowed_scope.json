@@ -252,6 +252,16 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 6
+    },
+    "cashout_bot_active_orders": {
+      "allow_tests": true,
+      "files": [
+        "database.py",
+        "tests/unit/test_database_bot_active_orders.py",
+        "ops/roadmap_go_live.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
     }
   }
 }
