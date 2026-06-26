@@ -202,6 +202,26 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 8
+    },
+    "order_router_normalize": {
+      "allow_tests": true,
+      "files": [
+        "core/order_router.py",
+        "tests/core/test_order_router.py",
+        "ops/roadmap_go_live.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
+    },
+    "cashout_executor": {
+      "allow_tests": true,
+      "files": [
+        "cashout_executor.py",
+        "tests/unit/test_cashout_executor.py",
+        "ops/roadmap_go_live.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
     }
   }
 }
