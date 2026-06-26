@@ -242,6 +242,16 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 6
+    },
+    "cashout_cancel_adapter": {
+      "allow_tests": true,
+      "files": [
+        "cashout_cancel_adapter.py",
+        "tests/unit/test_cashout_cancel_adapter.py",
+        "ops/roadmap_go_live.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
     }
   }
 }
