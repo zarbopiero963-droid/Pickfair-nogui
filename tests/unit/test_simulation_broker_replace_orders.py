@@ -61,6 +61,17 @@ def test_replace_response_shape_matches_live_contract():
     b = SimulationBroker()
     b.state.orders["OLD"] = _executable_order()
     out = b.replace_orders(market_id="1.100", bet_id="OLD", new_price=3.0)
-    assert set(["status", "instructionReports"]).issubset(out)
+    assert {"status", "instructionReports"}.issubset(out)
     assert "status" in out["instructionReports"][0]
     assert "betId" in out["instructionReports"][0]
+
+
+@pytest.mark.unit
+def test_replace_market_mismatch_returns_failure_and_leaves_order():
+    # A valid bet id with the WRONG market must not replace the order (parity
+    # with the live API and the sim cancel path).
+    b = SimulationBroker()
+    b.state.orders["OLD"] = _executable_order(market="1.100")
+    out = b.replace_orders(market_id="9.999", bet_id="OLD", new_price=3.0)
+    assert out["instructionReports"][0]["status"] == "FAILURE"
+    assert b.state.orders["OLD"].status == "EXECUTABLE"

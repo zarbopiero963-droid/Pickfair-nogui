@@ -708,13 +708,22 @@ class SimulationBroker:
         _ = customer_ref
         bid = str(bet_id or "").strip()
         try:
-            price_f = float(new_price)
+            price_f = float(new_price) if new_price is not None else 0.0
         except (TypeError, ValueError):
             price_f = 0.0
 
         with self._lock:
             old = self.state.orders.get(bid)
-            if old is None or old.status != "EXECUTABLE" or price_f <= 1.0:
+            # Fail-closed parity with cancel_orders and the live API: a missing
+            # / non-executable order, an invalid price, or a market_id that does
+            # not match the order's market all yield a FAILURE report (never
+            # replace an order found by id in a different market).
+            if (
+                old is None
+                or old.status != "EXECUTABLE"
+                or price_f <= 1.0
+                or (market_id and str(old.market_id) != str(market_id))
+            ):
                 return {
                     "status": "SUCCESS",
                     "marketId": str(market_id or (old.market_id if old else "")),
@@ -744,6 +753,10 @@ class SimulationBroker:
             self._match_order(new_order)
             self.state.orders[new_order.bet_id] = new_order
 
+        # Persist BOTH: the old order's cancellation must be durable, otherwise a
+        # reload could resurrect it as EXECUTABLE and double-count the remaining
+        # size alongside the replacement.
+        self._persist_order(old)
         self._persist_order(new_order)
 
         return {

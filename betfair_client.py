@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import ssl
 import stat
@@ -726,6 +727,39 @@ class BetfairClient:
     # =========================================================
     # ORDERS – REPLACE (change price of an unmatched order)
     # =========================================================
+    @staticmethod
+    def _validate_replace_params(
+        market_id: Any, bet_id: Any, new_price: Any
+    ) -> tuple[str, str, float]:
+        market_id_s = str(market_id or "").strip()
+        if not market_id_s:
+            raise RuntimeError("INVALID_MARKET_ID")
+        bet_id_s = str(bet_id or "").strip()
+        if not bet_id_s:
+            raise RuntimeError("INVALID_BET_ID")
+        try:
+            new_price_f = float(new_price)
+        except Exception as exc:
+            raise RuntimeError("INVALID_PRICE") from exc
+        # Reject NaN/Inf: float() accepts them and `nan <= 1.0` is False, so a
+        # non-finite price would otherwise be serialized into the live request.
+        if not math.isfinite(new_price_f) or new_price_f <= 1.0:
+            raise RuntimeError("INVALID_PRICE")
+        return market_id_s, bet_id_s, new_price_f
+
+    @staticmethod
+    def _lift_replacement_bet_ids(result: Dict[str, Any]) -> Dict[str, Any]:
+        # A replaceOrders report's top-level betId (when present) is the OLD,
+        # now-cancelled order; the replacement id is in placeInstructionReport.
+        # ALWAYS overwrite the top-level betId with the replacement so the caller
+        # tracks the new live order, never the cancelled one.
+        for report in result.get("instructionReports") or []:
+            if isinstance(report, dict):
+                new_bid = (report.get("placeInstructionReport") or {}).get("betId")
+                if new_bid:
+                    report["betId"] = new_bid
+        return result
+
     def replace_orders(
         self,
         *,
@@ -743,21 +777,9 @@ class BetfairClient:
         failures PROPAGATE — order_manager wraps the call and maps them to
         REPLACE_REJECTED.
         """
-        market_id_s = str(market_id or "").strip()
-        if not market_id_s:
-            raise RuntimeError("INVALID_MARKET_ID")
-
-        bet_id_s = str(bet_id or "").strip()
-        if not bet_id_s:
-            raise RuntimeError("INVALID_BET_ID")
-
-        try:
-            new_price_f = float(new_price)
-        except Exception as exc:
-            raise RuntimeError("INVALID_PRICE") from exc
-        if new_price_f <= 1.0:
-            raise RuntimeError("INVALID_PRICE")
-
+        market_id_s, bet_id_s, new_price_f = self._validate_replace_params(
+            market_id, bet_id, new_price
+        )
         result = self._post_jsonrpc(
             self.BETTING_URL,
             "SportsAPING/v1.0/replaceOrders",
@@ -770,16 +792,7 @@ class BetfairClient:
             # re-send — an uncertain outcome is for reconciliation, not retry.
             single_shot=True,
         )
-
-        # The replacement order's id lives in placeInstructionReport.betId; lift
-        # it to the report top level so the caller reads the new bet id.
-        for report in result.get("instructionReports") or []:
-            if isinstance(report, dict) and not report.get("betId"):
-                new_bid = (report.get("placeInstructionReport") or {}).get("betId")
-                if new_bid:
-                    report["betId"] = new_bid
-
-        return result
+        return self._lift_replacement_bet_ids(result)
 
     # =========================================================
     # ORDERS – CURRENT (ghost-order detection)

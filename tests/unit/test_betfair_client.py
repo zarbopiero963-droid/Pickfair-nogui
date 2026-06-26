@@ -468,6 +468,9 @@ def test_replace_orders_sends_rpc_and_lifts_new_bet_id(client):
             "status": "SUCCESS",
             "instructionReports": [{
                 "status": "SUCCESS",
+                # Betfair puts the OLD cancelled order id at the report top level;
+                # the lift must OVERWRITE it with the replacement id.
+                "betId": "OLD-BET",
                 "cancelInstructionReport": {"status": "SUCCESS", "sizeCancelled": 2.0},
                 "placeInstructionReport": {"status": "SUCCESS", "betId": "NEW-BET"},
             }],
@@ -482,7 +485,8 @@ def test_replace_orders_sends_rpc_and_lifts_new_bet_id(client):
     assert captured["body"][0]["method"] == "SportsAPING/v1.0/replaceOrders"
     assert params["marketId"] == "1.100"
     assert params["instructions"] == [{"betId": "OLD-BET", "newPrice": 3.4}]
-    # The new bet id (from placeInstructionReport) is lifted to report top-level.
+    # The replacement bet id (placeInstructionReport.betId) OVERWRITES the
+    # top-level OLD id, so order_manager tracks the new live order.
     assert out["instructionReports"][0]["betId"] == "NEW-BET"
     assert out["instructionReports"][0]["status"] == "SUCCESS"
 
@@ -495,6 +499,8 @@ def test_replace_orders_sends_rpc_and_lifts_new_bet_id(client):
         ({"market_id": "1.1", "bet_id": "", "new_price": 2.0}, "INVALID_BET_ID"),
         ({"market_id": "1.1", "bet_id": "B", "new_price": 1.0}, "INVALID_PRICE"),
         ({"market_id": "1.1", "bet_id": "B", "new_price": "x"}, "INVALID_PRICE"),
+        ({"market_id": "1.1", "bet_id": "B", "new_price": float("nan")}, "INVALID_PRICE"),
+        ({"market_id": "1.1", "bet_id": "B", "new_price": float("inf")}, "INVALID_PRICE"),
     ],
 )
 def test_replace_orders_validates_inputs(client, kwargs, match):
