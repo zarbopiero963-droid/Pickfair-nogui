@@ -1263,6 +1263,69 @@ class Database:
             out.append(item)
         return out
 
+    def get_bot_active_orders(self) -> List[Dict[str, str]]:
+        """Identità degli ordini ATTIVI del bot per il routing del cashout (I1).
+
+        Ritorna, per ogni bet **del bot** ancora viva, un dict
+        ``{"bet_id", "market_id", "event_name"}`` unendo i due ledger del bot:
+
+        - **SIM** ``simulation_bets`` (``event_name`` è una colonna);
+        - **LIVE** ``order_saga`` con ``bet_id`` valorizzato dopo il piazzamento
+          (``event_name`` dal ``payload_json``, fallback ``event_key``).
+
+        È la **sorgente d'identità I1**: il ``customerOrderRef`` NON è inviato a
+        Betfair sul piazzamento, quindi il bot si riconosce dai propri ``bet_id``
+        registrati. Solo righe con ``bet_id`` non vuoto (un ordine senza bet_id
+        non è abbinabile agli ordini correnti live). **Read-only.**
+
+        La liveness effettiva è ri-verificata a valle dal ``CashoutRouter`` contro
+        ``list_current_orders``: questa lista è l'allowlist di identità del bot
+        (+ la mappa market→event per restringere il CASHOUT singolo), non il
+        giudizio finale di apertura. Eventuali bet_id stale sono innocui (non
+        compaiono tra gli ordini correnti live e i bet_id Betfair sono univoci).
+        """
+        sim_active = ("EXECUTABLE", "EXECUTION_COMPLETE")
+        saga_active = ("PENDING", "SUBMITTED", "PLACED", "PARTIAL", "ROLLBACK_PENDING")
+        out: List[Dict[str, str]] = []
+
+        sim_rows = self._execute(
+            "SELECT bet_id, market_id, event_name FROM simulation_bets "
+            "WHERE bet_id != '' AND status IN ({})".format(
+                ", ".join("?" * len(sim_active))),
+            sim_active,
+            fetch=True,
+            commit=False,
+        )
+        for row in sim_rows or []:
+            item = dict(row)
+            out.append({
+                "bet_id": str(item.get("bet_id") or ""),
+                "market_id": str(item.get("market_id") or ""),
+                "event_name": str(item.get("event_name") or ""),
+            })
+
+        saga_rows = self._execute(
+            "SELECT bet_id, market_id, event_key, payload_json FROM order_saga "
+            "WHERE bet_id != '' AND status IN ({})".format(
+                ", ".join("?" * len(saga_active))),
+            saga_active,
+            fetch=True,
+            commit=False,
+        )
+        for row in saga_rows or []:
+            item = dict(row)
+            payload = self._safe_json_loads(item.get("payload_json"), {})
+            event_name = str(payload.get("event_name") or "") if isinstance(payload, dict) else ""
+            if not event_name:
+                event_name = str(item.get("event_key") or "")
+            out.append({
+                "bet_id": str(item.get("bet_id") or ""),
+                "market_id": str(item.get("market_id") or ""),
+                "event_name": event_name,
+            })
+
+        return [o for o in out if o["bet_id"] and o["market_id"]]
+
     def save_observability_snapshot(self, payload):
         sql = """
         INSERT INTO observability_snapshots (created_at, payload_json)
