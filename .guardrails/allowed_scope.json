@@ -283,6 +283,24 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 8
+    },
+    "cashout_runtime_trigger": {
+      "allow_tests": true,
+      "files": [
+        "core/runtime_controller.py",
+        "core/trading_constants.py",
+        "headless_main.py",
+        "cashout_residual_handler.py",
+        "cashout_router.py",
+        "cashout_executor.py",
+        "cashout_request_bridge.py",
+        "tests/unit/test_cashout_residual_handler.py",
+        "tests/unit/test_runtime_controller_cashout_trigger.py",
+        "tests/unit/test_cashout_request_bridge.py",
+        "ops/roadmap_go_live.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 14
     }
   }
 }

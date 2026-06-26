@@ -48,11 +48,13 @@ import threading
 import time
 from typing import Any, Dict
 
-logger = logging.getLogger(__name__)
+from core.trading_constants import (
+    CASHOUT_FAILED,
+    CMD_EXECUTE_CASHOUT,
+    REQ_EXECUTE_CASHOUT,
+)
 
-REQ_EXECUTE_CASHOUT = "REQ_EXECUTE_CASHOUT"
-CMD_EXECUTE_CASHOUT = "CMD_EXECUTE_CASHOUT"
-CASHOUT_FAILED = "CASHOUT_FAILED"
+logger = logging.getLogger(__name__)
 
 _VALID_SIDES = {"BACK", "LAY"}
 
