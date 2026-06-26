@@ -121,6 +121,20 @@ def test_duplicate_bet_id_is_deduplicated(db):
     assert [o["bet_id"] for o in out] == ["D1"]
 
 
+def test_empty_market_id_row_is_excluded(db):
+    # Invariante su cui il router fa affidamento per la mappa market->event:
+    # una riga senza market_id viene scartata, ma quelle valide restano.
+    db.save_simulation_bet({
+        "bet_id": "S1", "market_id": "1.1", "selection_id": "7",
+        "status": "EXECUTABLE", "event_name": "e",
+    })
+    db.save_simulation_bet({
+        "bet_id": "S2", "market_id": "", "selection_id": "7",
+        "status": "EXECUTABLE", "event_name": "e",
+    })
+    assert [o["bet_id"] for o in db.get_bot_active_orders()] == ["S1"]
+
+
 def test_keys_match_router_contract(db):
     db.save_simulation_bet({
         "bet_id": "S1", "market_id": "1.1", "selection_id": "7",
