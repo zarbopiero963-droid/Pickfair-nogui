@@ -244,7 +244,7 @@ def test_disconnect_callback_exception_is_isolated():
 def _quiet_loop(feed, monkeypatch):
     """Rende `_run_loop` un no-op che attende solo lo stop: il thread parte ed
     esce subito quando stop() imposta l'evento (niente loop/rete/sleep reali)."""
-    monkeypatch.setattr(feed, "_run_loop", lambda: feed._stop_event.wait())
+    monkeypatch.setattr(feed, "_run_loop", feed._stop_event.wait)
 
 
 @pytest.mark.unit
@@ -289,8 +289,13 @@ def test_rapid_start_stop_cleans_up_and_allows_restart(monkeypatch):
     assert feed.status()["running"] is False
     assert feed.status()["connected"] is False
 
-    feed.start()                                   # restart dopo stop
+    old_thread = feed._run_thread
+    restarted = feed.start()                       # restart dopo stop
     try:
+        # Restart VERO: nuovo start (non already_running) e thread NUOVO — prova
+        # che lo stop precedente ha pulito davvero, non si asserisce sul vecchio.
+        assert restarted == {"started": True}
+        assert feed._run_thread is not old_thread
         assert feed.status()["running"] is True
     finally:
         feed.stop()
