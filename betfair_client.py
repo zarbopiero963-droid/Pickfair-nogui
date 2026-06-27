@@ -545,11 +545,20 @@ class BetfairClient:
     # =========================================================
     # MARKET BOOK
     # =========================================================
-    def get_market_book(self, market_id: str) -> Optional[Dict[str, Any]]:
+    def get_market_book(
+        self, market_id: str, *, include_prices: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        # ``include_prices`` opt-in (default False = invariato per i chiamanti
+        # esistenti): con True chiede le ladder EX_BEST_OFFERS, necessarie al
+        # best-price DIRECT (B6.2 attivazione). Senza priceProjection Betfair NON
+        # popola le ladder e l'estrattore difensivo cadrebbe sempre sul master.
+        params: Dict[str, Any] = {"marketIds": [market_id]}
+        if include_prices:
+            params["priceProjection"] = {"priceData": ["EX_BEST_OFFERS"]}
         result = self._post_jsonrpc(
             self.BETTING_URL,
             "SportsAPING/v1.0/listMarketBook",
-            {"marketIds": [market_id]},
+            params,
         )
 
         if not result:

@@ -2022,7 +2022,11 @@ class RuntimeController:
             market_id = str(payload.get("market_id") or "").strip()
             book = None
             if market_id and self.betfair_service is not None:
-                book = self.betfair_service.get_market_book_snapshot(market_id)
+                # include_prices=True: il best-price DIRECT richiede le ladder
+                # EX_BEST_OFFERS, che il client popola solo con priceProjection.
+                book = self.betfair_service.get_market_book_snapshot(
+                    market_id, include_prices=True
+                )
             tolerance = getattr(self.config, "best_price_max_deviation_pct", 2.0)
             result = resolve_direct_best_price(
                 market_book=book,
