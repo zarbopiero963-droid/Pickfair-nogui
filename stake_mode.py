@@ -14,7 +14,11 @@ candidati (master/fixed/MM), **fail-closed** verso il comportamento odierno:
   ⇒ ``0.0`` (nessun bet);
 - ``cap`` opzionale (es. il max-single di Roserpina): per MASTER/FIXED lo stake
   scelto viene **clampato** al cap, così i limiti di sicurezza del follower non
-  vengono mai superati. MM non viene capato (è già entro i limiti).
+  vengono mai superati. MM non viene capato (è già entro i limiti). Un ``cap``
+  finito ``>= 0`` è un limite **reale** (``cap == 0`` ⇒ stake ``0.0`` = nessun
+  bet); ``cap is None`` significa "nessun limite passato"; un ``cap`` malformato
+  (negativo / non finito / non numerico) ⇒ **fail-closed a MM** (mai ignorare un
+  limite di sicurezza che non si riesce a interpretare).
 
 Zero dipendenze da broker/bus/runtime: solo dati in input → stake scelto. Il
 wiring sul percorso copy (broadcast master B7.2, applicazione follower B7.3) è
@@ -34,7 +38,7 @@ _VALID_MODES = (MODE_MM, MODE_MASTER, MODE_FIXED)
 
 def resolve_stake(
     *,
-    mode: Any,
+    mode: Any = None,
     master_stake: Any = None,
     fixed_stake: Any = None,
     mm_stake: Any = None,
@@ -47,7 +51,8 @@ def resolve_stake(
     - ``mode``: la modalità **effettiva** applicata (``MM`` se è scattato un
       fallback);
     - ``reason``: ``ok`` | ``capped`` | ``invalid_mode`` |
-      ``invalid_master_stake`` | ``invalid_fixed_stake`` | ``invalid_mm_stake``;
+      ``invalid_master_stake`` | ``invalid_fixed_stake`` | ``invalid_cap`` |
+      ``invalid_mm_stake``;
     - ``requested_mode``: la modalità richiesta in input (normalizzata).
     """
     requested = str(mode or "").strip().upper()
@@ -77,8 +82,15 @@ def resolve_stake(
     if candidate is None:
         return use_mm(invalid_reason)
 
+    # cap: None = nessun limite; finito >= 0 = limite reale (0 => nessun bet);
+    # malformato (neg / non finito / non numerico) => fail-closed a MM.
+    cap_val: Optional[float] = None
+    if cap is not None:
+        cap_val = _nonneg_float(cap)
+        if cap_val is None:
+            return use_mm("invalid_cap")
+
     reason = "ok"
-    cap_val = _positive_float(cap)
     if cap_val is not None and candidate > cap_val:
         candidate = cap_val   # clamp ai limiti di sicurezza del follower
         reason = "capped"
@@ -100,5 +112,23 @@ def _positive_float(value: Any) -> Optional[float]:
     except (TypeError, ValueError, OverflowError):
         return None
     if not math.isfinite(out) or out <= 0.0:
+        return None
+    return out
+
+
+def _nonneg_float(value: Any) -> Optional[float]:
+    """``float`` finito e ``>= 0`` (cap), altrimenti ``None`` (bool rifiutato).
+
+    Usato per il ``cap``: a differenza di :func:`_positive_float`, ``0.0`` è un
+    valore **valido** (limite a zero ⇒ nessun bet), mentre negativi / non finiti
+    / non numerici restano malformati (``None`` ⇒ il chiamante fa fail-closed).
+    """
+    if isinstance(value, bool):
+        return None
+    try:
+        out = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(out) or out < 0.0:
         return None
     return out

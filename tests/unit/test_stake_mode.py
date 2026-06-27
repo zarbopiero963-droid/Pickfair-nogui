@@ -32,6 +32,13 @@ def test_empty_mode_falls_back_to_mm():
     assert _r(mode=None, mm_stake=3.0)["mode"] == MODE_MM
 
 
+def test_omitted_mode_falls_back_to_mm():
+    # mode non passato affatto (config assente) => MM, niente TypeError.
+    r = _r(mm_stake=3.0)
+    assert r["stake"] == 3.0
+    assert r["mode"] == MODE_MM
+
+
 # =========================================================
 # MASTER
 # =========================================================
@@ -63,11 +70,37 @@ def test_master_under_cap_not_clamped():
     assert r["reason"] == "ok"
 
 
-def test_invalid_cap_ignored():
-    # cap non valido (0/neg/NaN) => nessun clamp.
-    for bad_cap in (0.0, -1.0, float("nan"), None, "x"):
+def test_cap_none_means_no_limit():
+    # cap assente (None) => nessun clamp, candidato pieno.
+    r = _r(mode="MASTER", master_stake=30.0, mm_stake=10.0, cap=None)
+    assert r["stake"] == 30.0
+    assert r["reason"] == "ok"
+
+
+def test_cap_zero_clamps_to_zero():
+    # cap == 0 e' un limite REALE (max-single esaurito) => stake 0.0 (nessun bet),
+    # mai il candidato pieno (sarebbe fail-open).
+    r = _r(mode="MASTER", master_stake=30.0, mm_stake=10.0, cap=0.0)
+    assert r["stake"] == 0.0
+    assert r["mode"] == MODE_MASTER
+    assert r["reason"] == "capped"
+
+
+def test_malformed_cap_fails_closed_to_mm():
+    # cap negativo / non finito / non numerico => non interpretabile =>
+    # fail-closed a MM (mai ignorare il limite di sicurezza).
+    for bad_cap in (-1.0, float("nan"), float("inf"), "x", True):
         r = _r(mode="MASTER", master_stake=30.0, mm_stake=10.0, cap=bad_cap)
-        assert r["stake"] == 30.0
+        assert r["stake"] == 10.0
+        assert r["mode"] == MODE_MM
+        assert r["reason"] == "invalid_cap"
+
+
+def test_malformed_cap_with_invalid_mm_returns_zero():
+    # cap malformato + mm non valido => fail-closed estremo a 0.0 (nessun bet).
+    r = _r(mode="MASTER", master_stake=30.0, mm_stake=None, cap=-1.0)
+    assert r["stake"] == 0.0
+    assert r["reason"] == "invalid_mm_stake"
 
 
 # =========================================================
