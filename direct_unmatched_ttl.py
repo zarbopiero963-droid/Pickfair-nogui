@@ -67,7 +67,26 @@ def select_expired_unmatched(
 def _expired_unmatched_row(
     row: Any, *, now: float, ttl: float, scope: Optional[set]
 ) -> Optional[Dict[str, str]]:
-    """``{"market_id","bet_id"}`` se la riga è un ordine non abbinato scaduto."""
+    """``{"market_id","bet_id"}`` se la riga è un ordine non abbinato scaduto.
+
+    Decomposto in predicati per chiarezza: identità in scope → completamente
+    non abbinato → età oltre TTL. Ogni gate è fail-closed.
+    """
+    ids = _order_ids(row, scope=scope)
+    if ids is None:
+        return None
+    if not _is_fully_unmatched(row):
+        return None
+    placed = _placed_epoch(row)
+    if placed is None or (now - placed) <= ttl:
+        # età non determinabile o non oltre TTL ⇒ non cancellare.
+        return None
+    market_id, bet_id = ids
+    return {"market_id": market_id, "bet_id": bet_id}
+
+
+def _order_ids(row: Any, *, scope: Optional[set]) -> Optional[tuple]:
+    """``(market_id, bet_id)`` validi e in scope, altrimenti ``None``."""
     if not isinstance(row, dict):
         return None
     market_id = str(row.get("marketId") or row.get("market_id") or "").strip()
@@ -76,21 +95,17 @@ def _expired_unmatched_row(
         return None
     if scope is not None and market_id not in scope:
         return None
+    return market_id, bet_id
 
+
+def _is_fully_unmatched(row: Dict[str, Any]) -> bool:
+    """``True`` se l'ordine è resting mai eseguito (``sizeMatched==0`` e
+    ``sizeRemaining>0``). Dati malformati ⇒ ``False`` (fail-closed)."""
     matched = _to_float(row.get("sizeMatched"))
     remaining = _to_float(row.get("sizeRemaining"))
-    # Non abbinato (conservativo): nulla di matched, qualcosa di resting.
     if matched is None or remaining is None:
-        return None
-    if matched != 0.0 or remaining <= 0.0:
-        return None
-
-    placed = _placed_epoch(row)
-    if placed is None:
-        return None  # età non determinabile ⇒ fail-closed (non cancellare)
-    if (now - placed) <= ttl:
-        return None
-    return {"market_id": market_id, "bet_id": bet_id}
+        return False
+    return matched == 0.0 and remaining > 0.0
 
 
 def _placed_epoch(row: Dict[str, Any]) -> Optional[float]:
