@@ -393,6 +393,16 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 6
+    },
+    "direct_ttl_registry_b6_3_2a": {
+      "allow_tests": true,
+      "files": [
+        "core/runtime_controller.py",
+        "tests/unit/test_runtime_controller_direct_registry.py",
+        "ops/roadmap_go_live.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
     }
   }
 }

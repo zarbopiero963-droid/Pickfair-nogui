@@ -27,6 +27,13 @@ from trading_config import STRICT_LIVE_KEY_SOURCE_REQUIRED, enforce_betfair_ital
 
 logger = logging.getLogger(__name__)
 
+# B6.3.2a — eventi quick-bet che popolano/puliscono il registry DIRECT (TTL).
+_DIRECT_TTL_ACK_EVENTS = frozenset({"QUICK_BET_ACCEPTED", "QUICK_BET_PARTIAL"})
+_DIRECT_TTL_TERMINAL_EVENTS = frozenset({
+    "QUICK_BET_FILLED", "QUICK_BET_FAILED", "QUICK_BET_AMBIGUOUS",
+    "QUICK_BET_ROLLBACK_DONE", "QUICK_BET_SUCCESS",
+})
+
 
 class RuntimeController:
     """
@@ -81,6 +88,9 @@ class RuntimeController:
         self.streaming_feed: Optional[StreamingFeed] = None
         self._market_data_cfg: dict[str, Any] = {}
         self._last_fallback_snapshot_at: float = 0.0
+        # Registry DIRECT (B6.3.2a): customer_ref → bet_id degli ordini DIRECT
+        # vivi. In-memory, riparte vuoto al restart (fail-safe).
+        self._direct_order_bet_ids: dict[str, str] = {}
 
         self.mode = RuntimeMode.STOPPED
         self.last_error = ""
@@ -2085,25 +2095,79 @@ class RuntimeController:
                 logger.exception("Errore force_unlock table_id=%s", table_id)
 
     def _on_quick_bet_failed(self, payload: dict) -> None:
+        self._track_direct_order(payload, event_name="QUICK_BET_FAILED")
         self._release_if_terminal(payload, event_name="QUICK_BET_FAILED")
 
     def _on_quick_bet_accepted(self, payload: dict) -> None:
+        self._track_direct_order(payload, event_name="QUICK_BET_ACCEPTED")
         self._release_if_terminal(payload, event_name="QUICK_BET_ACCEPTED")
 
     def _on_quick_bet_partial(self, payload: dict) -> None:
+        self._track_direct_order(payload, event_name="QUICK_BET_PARTIAL")
         self._release_if_terminal(payload, event_name="QUICK_BET_PARTIAL")
 
     def _on_quick_bet_filled(self, payload: dict) -> None:
+        self._track_direct_order(payload, event_name="QUICK_BET_FILLED")
         self._release_if_terminal(payload, event_name="QUICK_BET_FILLED")
 
     def _on_quick_bet_success(self, payload: dict) -> None:
+        self._track_direct_order(payload, event_name="QUICK_BET_SUCCESS")
         self._release_if_terminal(payload, event_name="QUICK_BET_SUCCESS")
 
     def _on_quick_bet_ambiguous(self, payload: dict) -> None:
+        self._track_direct_order(payload, event_name="QUICK_BET_AMBIGUOUS")
         self._release_if_terminal(payload, event_name="QUICK_BET_AMBIGUOUS")
 
     def _on_quick_bet_rollback_done(self, payload: dict) -> None:
+        self._track_direct_order(payload, event_name="QUICK_BET_ROLLBACK_DONE")
         self._release_if_terminal(payload, event_name="QUICK_BET_ROLLBACK_DONE")
+
+    # =========================================================
+    # DIRECT order registry (B6.3.2a) — identità per il futuro TTL/cancel
+    # =========================================================
+    def _track_direct_order(self, payload: dict, *, event_name: str) -> None:
+        """Registry in-memory ``customer_ref → bet_id`` degli ordini DIRECT.
+
+        Identità certa dal runtime, **niente DB / niente deduzione fragile**:
+        - **popola** solo su ack (``ACCEPTED``/``PARTIAL``) di un ordine che porta
+          ``best_price_source`` (settato solo dal percorso best-price DIRECT) +
+          ``bet_id`` + ``customer_ref``;
+        - **pulisce** su evento terminale/cancel (``FILLED``/``FAILED``/
+          ``AMBIGUOUS``/``ROLLBACK_DONE``/``SUCCESS``), per ``customer_ref``
+          (univoco e presente in tutti gli eventi, anche ``ROLLBACK_DONE`` che
+          non porta il ``bet_id``).
+
+        Fail-safe: il registry è in-memory e riparte **vuoto** al restart ⇒ un
+        bet_id senza identità certa non finirà mai nell'allowlist del poller
+        (B6.3.2b). Nessun side-effect broker qui: solo tracking.
+        """
+        payload = payload or {}
+        customer_ref = str(payload.get("customer_ref") or "").strip()
+        if not customer_ref:
+            return
+        if event_name in _DIRECT_TTL_TERMINAL_EVENTS:
+            if self._direct_order_bet_ids.pop(customer_ref, None) is not None:
+                logger.debug(
+                    "direct_ttl_registry: drop customer_ref=%s su %s (size=%d)",
+                    customer_ref, event_name, len(self._direct_order_bet_ids),
+                )
+            return
+        if event_name in _DIRECT_TTL_ACK_EVENTS:
+            if not payload.get("best_price_source"):
+                return  # non un ordine DIRECT (flag OFF / percorso non best-price)
+            bet_id = str(payload.get("bet_id") or "").strip()
+            if not bet_id:
+                return
+            self._direct_order_bet_ids[customer_ref] = bet_id
+            logger.debug(
+                "direct_ttl_registry: track customer_ref=%s bet_id=%s su %s (size=%d)",
+                customer_ref, bet_id, event_name, len(self._direct_order_bet_ids),
+            )
+
+    @property
+    def direct_unmatched_bet_ids(self) -> set:
+        """Allowlist dei ``bet_id`` DIRECT noti (per il poller B6.3.2b)."""
+        return set(self._direct_order_bet_ids.values())
 
     # =========================================================
     # MANUAL/EXTERNAL CLOSE POSITION
