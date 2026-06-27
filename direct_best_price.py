@@ -66,8 +66,11 @@ def resolve_direct_best_price(
         return fallback("invalid_master_price")
     if side_u not in ("BACK", "LAY"):
         return fallback("invalid_side")
-    tol = _to_float(max_deviation_pct)
-    if not math.isfinite(tol) or tol < 0.0:
+    # `_to_float` mappa i parse-failure a 0.0, indistinguibile da una tolleranza
+    # 0.0 legittima: per la tolleranza serve un parser che distingua il fallimento
+    # (None / stringa non numerica ⇒ invalid_tolerance, mai 0.0 silenzioso).
+    tol = _to_float_or_none(max_deviation_pct)
+    if tol is None or not math.isfinite(tol) or tol < 0.0:
         return fallback("invalid_tolerance")
 
     # Estrazione book→best del SOLO lato richiesto (difensiva, fail-closed).
@@ -122,8 +125,11 @@ def _active_runner(market_book: Any, selection_id: Any):
     runner = _find_runner(runners if isinstance(runners, list) else [], sid)
     if runner is None:
         return None, "runner_missing"
+    # Strict fail-closed: il runner dev'essere ESPLICITAMENTE ACTIVE — uno status
+    # assente non è confermabile (book parziale/stale) ⇒ fallback. Coerente con
+    # il market status, che pretende un OPEN esplicito.
     runner_status = str(runner.get("status") or "").strip().upper()
-    if runner_status and runner_status != "ACTIVE":
+    if runner_status != "ACTIVE":
         return None, "runner_not_active"
     return runner, "ok"
 
@@ -173,9 +179,23 @@ def _to_float(value: Any) -> float:
         return 0.0
 
 
+def _to_float_or_none(value: Any) -> Optional[float]:
+    """Come ``_to_float`` ma ``None`` sul parse-failure (distingue 0.0 valido)."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _to_int(value: Any) -> Optional[int]:
     if isinstance(value, bool):   # i bool non sono selection_id validi
         return None
+    if isinstance(value, float):
+        # un selection_id frazionario (es. 55.9) è malformato: `int()` lo
+        # troncherebbe a 55 → match spurio. Accetta solo float interi finiti.
+        if not math.isfinite(value) or value != int(value):
+            return None
+        return int(value)
     try:
         return int(value)
     except (TypeError, ValueError):

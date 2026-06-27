@@ -161,6 +161,19 @@ def test_runner_not_active_falls_back():
     assert r["price"] == 2.50
 
 
+def test_runner_missing_status_is_fail_closed():
+    # Status del runner assente = stato attivo non confermabile (book parziale)
+    # => fallback, coerente con la severità del market status.
+    book = {
+        "status": "OPEN",
+        "runners": [{"selectionId": 55,   # nessun campo 'status'
+                     "ex": {"availableToBack": [{"price": 2.52, "size": 10}]}}],
+    }
+    r = _resolve(book, side="BACK")
+    assert r["reason"] == "runner_not_active"
+    assert r["price"] == 2.50
+
+
 def test_invalid_book_price_falls_back():
     book = _book(backs=[{"price": 1.0}])             # <= 1.0 non valido
     r = _resolve(book, side="BACK")
@@ -207,6 +220,18 @@ def test_invalid_tolerance_falls_back():
         assert r["price"] == 2.50
 
 
+def test_malformed_tolerance_is_not_silent_zero():
+    # None / stringa non numerica NON devono diventare tolleranza 0.0 silenziosa:
+    # best == master (deviation 0) smaschererebbe il guard mancante (0>0 = False).
+    book = _book(backs=[{"price": 2.50}])
+    for bad in (None, "abc", object()):
+        r = resolve_direct_best_price(market_book=book, selection_id=55,
+                                      side="BACK", master_price=2.50,
+                                      max_deviation_pct=bad)
+        assert r["reason"] == "invalid_tolerance"
+        assert r["price"] == 2.50
+
+
 # =========================================================
 # Input invalidi => master
 # =========================================================
@@ -228,3 +253,36 @@ def test_bool_selection_id_rejected():
     r = resolve_direct_best_price(market_book=book, selection_id=True,
                                   side="BACK", master_price=2.50)
     assert r["reason"] == "invalid_selection_id"
+
+
+def test_fractional_selection_id_rejected():
+    # 55.9 NON deve essere troncato a 55: id frazionario = payload malformato.
+    book = _book(backs=[{"price": 2.52}])
+    r = resolve_direct_best_price(market_book=book, selection_id=55.9,
+                                  side="BACK", master_price=2.50)
+    assert r["reason"] == "invalid_selection_id"
+    assert r["price"] == 2.50
+
+
+def test_fractional_runner_selection_id_not_matched():
+    # Anche un selectionId frazionario nel book non deve combaciare col target.
+    book = {
+        "status": "OPEN",
+        "runners": [{"selectionId": 55.9, "status": "ACTIVE",
+                     "ex": {"availableToBack": [{"price": 2.52, "size": 10}]}}],
+    }
+    r = _resolve(book, side="BACK", sel=55)
+    assert r["reason"] == "runner_missing"
+    assert r["price"] == 2.50
+
+
+def test_integral_float_selection_id_still_matches():
+    # 55.0 è un intero valido: deve continuare a combaciare (no falsi negativi).
+    book = {
+        "status": "OPEN",
+        "runners": [{"selectionId": 55.0, "status": "ACTIVE",
+                     "ex": {"availableToBack": [{"price": 2.52, "size": 10}]}}],
+    }
+    r = _resolve(book, side="BACK", sel=55)
+    assert r["price"] == 2.52
+    assert r["source"] == SOURCE_LIVE_BOOK
