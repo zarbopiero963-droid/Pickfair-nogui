@@ -21,6 +21,7 @@ from core.type_helpers import safe_bool
 from cashout_cancel_adapter import CashoutCancelAdapter
 from cashout_router import CashoutRouter
 from direct_best_price import SOURCE_FALLBACK_MASTER, resolve_direct_best_price
+from direct_unmatched_ttl import select_expired_unmatched
 from order_manager import TERMINAL_LIFECYCLE_EVENTS
 from services.streaming_feed import StreamingConfigError, StreamingFeed
 from trading_config import STRICT_LIVE_KEY_SOURCE_REQUIRED, enforce_betfair_italy_commission_pct
@@ -96,6 +97,8 @@ class RuntimeController:
         # Registry DIRECT (B6.3.2a): customer_ref → bet_id degli ordini DIRECT
         # vivi. In-memory, riparte vuoto al restart (fail-safe).
         self._direct_order_bet_ids: dict[str, str] = {}
+        # Gate del poller TTL DIRECT (B6.3.2b), su time.monotonic.
+        self._last_direct_ttl_poll_at: float = 0.0
 
         self.mode = RuntimeMode.STOPPED
         self.last_error = ""
@@ -288,6 +291,7 @@ class RuntimeController:
 
     def _stream_market_book_callback(self, market_book: dict) -> None:
         self.market_tracker.on_market_book(dict(market_book or {}))
+        self._poll_direct_unmatched_ttl()  # B6.3.2b — no-op se flag OFF / non scaduto
 
     def _stream_disconnect_callback(self, payload: dict) -> None:
         logger.warning("Streaming disconnected -> fallback snapshot payload=%s", payload)
@@ -349,6 +353,7 @@ class RuntimeController:
                 "stream_payload": dict(payload or {}),
             },
         )
+        self._poll_direct_unmatched_ttl()  # B6.3.2b — copre il path REST fallback
 
     def runtime_io_snapshot(self) -> dict:
         return dict(self._io_observations)
@@ -2178,6 +2183,103 @@ class RuntimeController:
     def direct_unmatched_bet_ids(self) -> set[str]:
         """Allowlist dei ``bet_id`` DIRECT noti (per il poller B6.3.2b)."""
         return set(self._direct_order_bet_ids.values())
+
+    # =========================================================
+    # DIRECT unmatched TTL poller (B6.3.2b) — cancel reale, default-OFF
+    # =========================================================
+    def _poll_direct_unmatched_ttl(self) -> None:
+        """Cancella gli ordini DIRECT non abbinati scaduti oltre il TTL.
+
+        **Dormiente di default**: gira solo se ``config.direct_unmatched_ttl_enabled``
+        è truthy (letto via ``getattr``, niente edit della config class). Gated
+        sull'intervallo ``direct_unmatched_ttl_poll_sec``.
+
+        Sicurezza:
+        - **solo ordini DIRECT noti**: l'allowlist è il registry B6.3.2a; un
+          ``bet_id`` non noto (cashout/green-up/copy/ignoto) non è MAI candidato;
+        - **allowlist vuota ⇒ nessun cancel**;
+        - **NO RETRY**: un solo tentativo per ordine, poi il ``bet_id`` esce dal
+          registry (esito notificato sul bus); un cancel fallito NON viene
+          ri-tentato automaticamente (intervento manuale via notifica);
+        - **fail-closed**: un errore nel fetch ordini correnti aborta il giro
+          (niente cancel su dati assenti/stale); ogni eccezione è catturata.
+        """
+        if not bool(getattr(self.config, "direct_unmatched_ttl_enabled", False)):
+            return
+        now_mono = time.monotonic()
+        interval = max(1.0, float(
+            getattr(self.config, "direct_unmatched_ttl_poll_sec", 30.0) or 30.0))
+        if (now_mono - self._last_direct_ttl_poll_at) < interval:
+            return
+        self._last_direct_ttl_poll_at = now_mono
+
+        allow = self.direct_unmatched_bet_ids
+        if not allow:
+            return  # nessun ordine DIRECT noto ⇒ niente da cancellare
+
+        try:
+            orders = self.betfair_service.list_current_orders()
+        except Exception as exc:
+            # Fail-closed: non cancellare su dati assenti/stale.
+            logger.warning("direct_ttl_poll: list_current_orders fallita, abort: %s", exc)
+            return
+
+        to_cancel = select_expired_unmatched(
+            current_orders=orders,
+            now_epoch=time.time(),
+            ttl_seconds=getattr(self.config, "direct_unmatched_ttl_sec", 120.0),
+            direct_bet_ids=allow,
+        )
+        if not to_cancel:
+            return
+
+        client = self._direct_ttl_cancel_client()
+        for item in to_cancel:
+            self._cancel_direct_unmatched(client, item)
+
+    def _direct_ttl_cancel_client(self):
+        """Broker per il cancel: simulation broker in SIM, live client in LIVE."""
+        try:
+            if self.simulation_mode:
+                return self.betfair_service.get_simulation_broker()
+            return self.betfair_service.get_live_client()
+        except Exception as exc:
+            logger.warning("direct_ttl_poll: cancel client non disponibile: %s", exc)
+            return None
+
+    def _cancel_direct_unmatched(self, client, item: dict) -> None:
+        """Un singolo cancel NO-RETRY + notifica esito + cleanup registry."""
+        market_id = str(item.get("market_id") or "").strip()
+        bet_id = str(item.get("bet_id") or "").strip()
+        # NO RETRY: rimuovi dal registry PRIMA del tentativo — successo o
+        # fallimento, l'ordine non sarà ri-cancellato automaticamente.
+        self._discard_direct_bet_id(bet_id)
+
+        if client is None:
+            self.bus.publish("DIRECT_UNMATCHED_CANCEL_FAILED", {
+                "market_id": market_id, "bet_id": bet_id, "reason": "no_cancel_client"})
+            logger.warning("direct_ttl_poll: nessun client, skip cancel bet_id=%s", bet_id)
+            return
+        try:
+            resp = client.cancel_orders(market_id=market_id, bet_ids=[bet_id])
+            ok = bool(resp.get("ok")) if isinstance(resp, dict) else bool(resp)
+        except Exception as exc:
+            self.bus.publish("DIRECT_UNMATCHED_CANCEL_FAILED", {
+                "market_id": market_id, "bet_id": bet_id, "reason": str(exc)})
+            logger.warning("direct_ttl_poll: cancel sollevato bet_id=%s: %s", bet_id, exc)
+            return
+        event = "DIRECT_UNMATCHED_CANCELLED" if ok else "DIRECT_UNMATCHED_CANCEL_FAILED"
+        self.bus.publish(event, {
+            "market_id": market_id, "bet_id": bet_id, "ok": ok, "response": resp})
+        logger.info("direct_ttl_poll: cancel bet_id=%s market=%s ok=%s", bet_id, market_id, ok)
+
+    def _discard_direct_bet_id(self, bet_id: str) -> None:
+        """Rimuove dal registry tutte le voci con questo ``bet_id``."""
+        bid = str(bet_id or "").strip()
+        if not bid:
+            return
+        for cref in [c for c, b in self._direct_order_bet_ids.items() if b == bid]:
+            self._direct_order_bet_ids.pop(cref, None)
 
     # =========================================================
     # MANUAL/EXTERNAL CLOSE POSITION
