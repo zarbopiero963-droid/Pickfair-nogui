@@ -372,6 +372,17 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 9
+    },
+    "best_price_audit_propagation": {
+      "allow_tests": true,
+      "files": [
+        "core/trading_constants.py",
+        "core/trading_engine.py",
+        "tests/unit/test_trading_engine_best_price_passthrough.py",
+        "ops/roadmap_go_live.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
     }
   }
 }

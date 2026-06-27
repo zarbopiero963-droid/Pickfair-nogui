@@ -81,6 +81,10 @@ _PASSTHROUGH_KEYS: Tuple[str, ...] = (
     "order_origin",
     "copy_meta",
     "pattern_meta",
+    # Provenienza best-price DIRECT (B6.2 attivazione): override LIVE_BOOK_DIRECT
+    # vs FALLBACK_MASTER. Propagata nei record di esecuzione/audit (Greptile P2).
+    "best_price_source",
+    "best_price_reason",
 )
 
 _ACK_STATES: Set[str] = {STATUS_SUBMITTED}

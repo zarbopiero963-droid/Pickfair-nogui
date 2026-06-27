@@ -434,6 +434,22 @@ class TradingEngine:
                 merged[key] = source[key]
         return merged
 
+    @staticmethod
+    def _copy_best_price_meta(
+        target: Dict[str, Any],
+        source: Optional[Dict[str, Any]],
+    ) -> None:
+        """Copia la provenienza best-price (source/reason) nei record/audit.
+
+        Greptile P2: senza questo, ``best_price_source``/``best_price_reason``
+        restano solo nel log e non entrano nei record di lifecycle.
+        """
+        if not source:
+            return
+        for key in ("best_price_source", "best_price_reason"):
+            if key in source:
+                target[key] = source[key]
+
     # ==================================================================
     # [P0] TERMINAL METADATA BUILDER
     # ==================================================================
@@ -462,6 +478,7 @@ class TradingEngine:
                 meta["pattern_meta"] = extra_fields["pattern_meta"]
             if "order_origin" in extra_fields:
                 meta["order_origin"] = extra_fields["order_origin"]
+            self._copy_best_price_meta(meta, extra_fields)
         if response is not None:
             meta["response"] = response
         return meta
@@ -712,6 +729,7 @@ class TradingEngine:
 
         audit = self._new_audit(ctx)
         audit["order_origin"] = normalized.get("order_origin", ORIGIN_NORMAL)
+        self._copy_best_price_meta(audit, extra_fields)
 
         order_id: Optional[Any] = None
 
@@ -1407,6 +1425,7 @@ class TradingEngine:
                     meta["pattern_meta"] = extra_fields["pattern_meta"]
                 if "order_origin" in extra_fields:
                     meta["order_origin"] = extra_fields["order_origin"]
+                self._copy_best_price_meta(meta, extra_fields)
 
             enqueue(**meta)
             self._emit(ctx, audit, "RECONCILE_ENQUEUED",
