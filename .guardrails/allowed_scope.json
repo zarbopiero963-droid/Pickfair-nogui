@@ -383,6 +383,16 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 6
+    },
+    "direct_unmatched_ttl_b6_3_1": {
+      "allow_tests": true,
+      "files": [
+        "direct_unmatched_ttl.py",
+        "tests/unit/test_direct_unmatched_ttl.py",
+        "ops/roadmap_go_live.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
     }
   }
 }
