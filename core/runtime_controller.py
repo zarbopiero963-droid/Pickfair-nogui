@@ -20,7 +20,7 @@ from core.trading_constants import CASHOUT_FAILED, REQ_EXECUTE_CASHOUT
 from core.type_helpers import safe_bool
 from cashout_cancel_adapter import CashoutCancelAdapter
 from cashout_router import CashoutRouter
-from direct_best_price import resolve_direct_best_price
+from direct_best_price import SOURCE_FALLBACK_MASTER, resolve_direct_best_price
 from order_manager import TERMINAL_LIFECYCLE_EVENTS
 from services.streaming_feed import StreamingConfigError, StreamingFeed
 from trading_config import STRICT_LIVE_KEY_SOURCE_REQUIRED, enforce_betfair_italy_commission_pct
@@ -2002,11 +2002,25 @@ class RuntimeController:
             payload["price"] = result["price"]
             payload["best_price_source"] = result["source"]
             payload["best_price_reason"] = result["reason"]
-            logger.info(
-                "best_price_direct: source=%s reason=%s price=%s market_id=%s selection_id=%s",
-                result["source"], result["reason"], result["price"],
-                market_id, payload.get("selection_id"),
-            )
+            # Audit del best-price nei log strutturati. NB: il consumer downstream
+            # (`trading_engine._normalize_quick_bet`) copia solo chiavi note, quindi
+            # best_price_source/reason NON entrano nei record di lifecycle: il log
+            # qui e' l'unico canale d'audit dell'override finche' la propagazione
+            # nei record non viene cablata (follow-up dell'attivazione, richiede
+            # estendere l'allowlist in core/trading_engine.py, fuori scope B6.2).
+            # Override reale (prezzo cambiato vs master) => INFO; fallback al master
+            # (nessun cambio prezzo, identico a oggi) => DEBUG, per non fare rumore.
+            if result["source"] != SOURCE_FALLBACK_MASTER:
+                logger.info(
+                    "best_price_direct: override source=%s reason=%s price=%s market_id=%s selection_id=%s",
+                    result["source"], result["reason"], result["price"],
+                    market_id, payload.get("selection_id"),
+                )
+            else:
+                logger.debug(
+                    "best_price_direct: fallback master reason=%s price=%s market_id=%s selection_id=%s",
+                    result["reason"], result["price"], market_id, payload.get("selection_id"),
+                )
         except Exception:
             # Fail-closed: lascia il master price gia' presente nel payload.
             logger.exception("best_price_direct: override fallito, mantengo master price")
