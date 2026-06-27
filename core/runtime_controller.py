@@ -20,6 +20,7 @@ from core.trading_constants import CASHOUT_FAILED, REQ_EXECUTE_CASHOUT
 from core.type_helpers import safe_bool
 from cashout_cancel_adapter import CashoutCancelAdapter
 from cashout_router import CashoutRouter
+from direct_best_price import SOURCE_FALLBACK_MASTER, resolve_direct_best_price
 from order_manager import TERMINAL_LIFECYCLE_EVENTS
 from services.streaming_feed import StreamingConfigError, StreamingFeed
 from trading_config import STRICT_LIVE_KEY_SOURCE_REQUIRED, enforce_betfair_italy_commission_pct
@@ -1933,24 +1934,39 @@ class RuntimeController:
                 "simulation_mode": payload["simulation_mode"],
             },
         )
-        # Recheck kill-switch daily-loss PRIMA di pubblicare SIGNAL_APPROVED: il
-        # gate d'ingresso e' una-tantum, ma un settlement perdente concorrente
-        # puo' aver armato pending/emergency mentre questo segnale era in
-        # validazione. Va PRIMA dell'approvazione perche' l'audit consuma sia
-        # SIGNAL_APPROVED sia SIGNAL_REJECTED: approvare-poi-rifiutare
-        # registrerebbe un ordine saltato come "approvato".
+        # B6.2 — best price DIRECT (flag globale default-OFF). Lo snapshot e' un
+        # fetch lento che in LIVE puo' invalidare la sessione: va eseguito PRIMA
+        # dei gate finali pre-submit, cosi' che session-guard e recheck
+        # daily-loss/emergency qui sotto coprano anche la finestra dello snapshot
+        # (niente approved-without-submit). Con flag OFF e' un no-op totale e
+        # ritorna False => i gate sotto restano identici a oggi.
+        best_price_attempted = self._apply_direct_best_price(payload)
+
+        # Gate finali pre-submit, RIESEGUITI dopo lo snapshot. Vanno PRIMA di
+        # SIGNAL_APPROVED perche' l'audit consuma sia SIGNAL_APPROVED sia
+        # SIGNAL_REJECTED: approvare-poi-rifiutare registrerebbe un ordine
+        # saltato come "approvato".
+        #
+        # (a) Session guard LIVE — solo se lo snapshot ha girato (flag ON): il
+        #     fetch puo' aver intercettato SESSION_EXPIRED/INVALID_SESSION e
+        #     marcato la sessione invalida. Con flag OFF nessun fetch => nessun
+        #     gate nuovo rispetto a oggi.
+        if best_price_attempted and str(self.execution_mode).upper() == "LIVE":
+            _svc = self.betfair_service
+            if _svc is not None and getattr(_svc, "_session_invalid", False):
+                self._release_acquired_and_reject(
+                    signal, event_key=event_key, table_id=decision.table_id,
+                    reason="session_invalid_live_blocked:pre_submit_recheck",
+                )
+                return
+        # (b) Recheck kill-switch daily-loss / emergency pending: il gate
+        #     d'ingresso e' una-tantum, ma un settlement perdente concorrente (o
+        #     lo snapshot lento) puo' aver armato pending/emergency nel frattempo.
         if self._daily_loss_entry_blocked():
-            # Rilascia le risorse gia' acquisite (duplication guard + tavolo
-            # attivato): nessun CMD_QUICK_BET parte, quindi nessun evento
-            # terminale chiamera' _release_if_terminal a liberarle, e resterebbero
-            # bloccate dopo un reset, impedendo segnali validi successivi.
-            if self.config.anti_duplication_enabled:
-                self.duplication_guard.release(event_key)
-            try:
-                self.table_manager.force_unlock(int(decision.table_id))
-            except Exception:
-                logger.exception("Errore force_unlock table_id=%s", decision.table_id)
-            self._reject_signal(signal, "emergency_stop_active:pre_submit_recheck")
+            self._release_acquired_and_reject(
+                signal, event_key=event_key, table_id=decision.table_id,
+                reason="emergency_stop_active:pre_submit_recheck",
+            )
             return
         self.bus.publish(
             "SIGNAL_APPROVED",
@@ -1966,6 +1982,84 @@ class RuntimeController:
             },
         )
         self.bus.publish("CMD_QUICK_BET", payload)
+
+    def _release_acquired_and_reject(self, signal: dict, *, event_key: str,
+                                     table_id: Any, reason: str) -> None:
+        """Rilascia le risorse gia' acquisite (duplication guard + tavolo) e
+        rifiuta il segnale, per i gate pre-submit. Nessun CMD_QUICK_BET parte,
+        quindi nessun evento terminale chiamera' _release_if_terminal a
+        liberarle: senza questo resterebbero bloccate dopo un reset, impedendo
+        segnali validi successivi.
+        """
+        if self.config.anti_duplication_enabled:
+            self.duplication_guard.release(event_key)
+        try:
+            self.table_manager.force_unlock(int(table_id))
+        except Exception:
+            logger.exception("Errore force_unlock table_id=%s", table_id)
+        self._reject_signal(signal, reason)
+
+    def _apply_direct_best_price(self, payload: dict) -> bool:
+        """Sovrascrive ``payload['price']`` col best price DIRECT difensivo (B6.2).
+
+        Ritorna ``True`` se la flag e' attiva (snapshot tentato) — il chiamante
+        DEVE rieseguire i gate pre-submit (session + daily-loss) perche' il fetch
+        puo' aver consumato tempo o invalidato la sessione; ``False`` se no-op
+        (flag OFF) => nessun fetch, nessuna mutazione del payload, comportamento
+        byte-identico a oggi.
+
+        Dormiente di default: gira solo se ``config.use_best_price_direct`` e'
+        esplicitamente truthy (letto via ``getattr``, niente edit della config
+        class). Fail-closed: su book assente, mercato non-OPEN, runner non
+        attivo, lato senza liquidita', prezzo invalido o deviazione oltre
+        tolleranza, l'estrattore puro ritorna il master price => il payload resta
+        sul prezzo master. Qualunque errore di fetch/override e' catturato e
+        lascia il master price invariato (mai un crash sul percorso d'ordine).
+        """
+        if not getattr(self.config, "use_best_price_direct", False):
+            return False
+        try:
+            market_id = str(payload.get("market_id") or "").strip()
+            book = None
+            if market_id and self.betfair_service is not None:
+                book = self.betfair_service.get_market_book_snapshot(market_id)
+            tolerance = getattr(self.config, "best_price_max_deviation_pct", 2.0)
+            result = resolve_direct_best_price(
+                market_book=book,
+                selection_id=payload.get("selection_id"),
+                side=payload.get("bet_type"),
+                master_price=payload.get("price"),
+                max_deviation_pct=tolerance,
+            )
+            payload["price"] = result["price"]
+            payload["best_price_source"] = result["source"]
+            payload["best_price_reason"] = result["reason"]
+            # Audit del best-price nei log strutturati. NB: il consumer downstream
+            # (`trading_engine._normalize_quick_bet`) copia solo chiavi note, quindi
+            # best_price_source/reason NON entrano nei record di lifecycle: il log
+            # qui e' l'unico canale d'audit dell'override finche' la propagazione
+            # nei record non viene cablata (follow-up dell'attivazione, richiede
+            # estendere l'allowlist in core/trading_engine.py, fuori scope B6.2).
+            # Override reale (prezzo cambiato vs master) => INFO; fallback al master
+            # (nessun cambio prezzo, identico a oggi) => DEBUG, per non fare rumore.
+            if result["source"] != SOURCE_FALLBACK_MASTER:
+                logger.info(
+                    "best_price_direct: override source=%s reason=%s price=%s market_id=%s selection_id=%s",
+                    result["source"], result["reason"], result["price"],
+                    market_id, payload.get("selection_id"),
+                )
+            else:
+                logger.debug(
+                    "best_price_direct: fallback master reason=%s price=%s market_id=%s selection_id=%s",
+                    result["reason"], result["price"], market_id, payload.get("selection_id"),
+                )
+        except Exception:
+            # Fail-closed: lascia il master price gia' presente nel payload.
+            logger.exception("best_price_direct: override fallito, mantengo master price")
+        # Snapshot tentato (flag ON): il chiamante DEVE rieseguire i gate
+        # pre-submit anche se l'override e' fallito (il fetch puo' aver
+        # invalidato la sessione prima di sollevare).
+        return True
 
     # =========================================================
     # BET LIFECYCLE
