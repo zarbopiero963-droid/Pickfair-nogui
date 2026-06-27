@@ -95,6 +95,7 @@
       "allow_tests": true,
       "files": [
         "tests/unit/test_top30_math_gaps.py",
+        "tests/integration/test_top30_math_gaps_part2.py",
         "ops/roadmap_go_live.md",
         ".guardrails/allowed_scope.json"
       ],

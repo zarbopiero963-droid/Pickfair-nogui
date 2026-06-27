@@ -299,9 +299,22 @@ perde soldi)**: il dutching è order-independent solo a meno di un residuo di
 rounding di 1 centesimo, la cui assegnazione dipende dalla posizione in lista;
 budget ed equal-profit sono comunque preservati e deterministici per-ordine. Il
 test blocca peggioramenti (residuo > 1 cent); renderlo strettamente
-order-independent toccherebbe `dutching.py` (critico) → rimandato. RESIDUI (gap
-di integrazione, follow-up con fixture simulation_broker): refund commissione
-esatto +X/−X, idempotenza settlement retry, parity settlement LAY dedicata.
+order-independent toccherebbe `dutching.py` (critico) → rimandato.
+
+**PARTE 2 FATTA** (`tests/integration/test_top30_math_gaps_part2.py`, test-only su
+superfici reali — `MarketNetRealizedSettlementAggregator`/`SimulationBroker`/
+`PnLEngine`/`SimulationState`/`dutching`). Copre i residui di integrazione: **parity
+settlement LAY** dedicata (la parity esistente era BACK-only), **parity commissione
+live (aggregator) vs sim (broker)** multi-leg, **commissione market-net
+path-independent** (split vs combinata → stesso totale, no doppia per-leg), **refund
+±X** (+100/−100 → commissione totale 0) + **precisione Decimal estrema** (0.001…1e6),
+**segregazione ledger per market_id** (no crosstalk), **worst-case liability LAY**
+(mai sottostimata, monotona, BACK capped allo stake), **idempotenza equalize** (2× →
+nessun drift), **contratto settlement-basis** (`market_net_realized`). 15 test.
+**Nota onesta**: l'idempotenza "retry settlement" è riformulata come commissione
+path-independent — l'aggregator/broker **accumulano** (no dedup per-correlation: la
+dedup vive nel runtime `_processed_realized_pnl_keys`), quindi non si finge
+un'idempotenza che il broker non ha.
 
 ## Backlog (non bloccante)
 
