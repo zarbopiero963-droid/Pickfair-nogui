@@ -29,9 +29,14 @@ logger = logging.getLogger(__name__)
 
 # B6.3.2a — eventi quick-bet che popolano/puliscono il registry DIRECT (TTL).
 _DIRECT_TTL_ACK_EVENTS = frozenset({"QUICK_BET_ACCEPTED", "QUICK_BET_PARTIAL"})
+# Pulizia SOLO quando l'ordine NON è più un resting vivo: FILLED (abbinato),
+# FAILED (non piazzato), ROLLBACK_DONE (annullato). NON includere SUCCESS né
+# AMBIGUOUS: un place riuscito (o esito incerto) può lasciare un ordine non
+# abbinato vivo su Betfair — rimuoverlo lo toglierebbe dall'allowlist del poller
+# TTL, che quindi non lo cancellerebbe più (Greptile P2). Fail-safe: resta
+# tracciato finché un terminale certo lo rimuove o il poller lo cancella.
 _DIRECT_TTL_TERMINAL_EVENTS = frozenset({
-    "QUICK_BET_FILLED", "QUICK_BET_FAILED", "QUICK_BET_AMBIGUOUS",
-    "QUICK_BET_ROLLBACK_DONE", "QUICK_BET_SUCCESS",
+    "QUICK_BET_FILLED", "QUICK_BET_FAILED", "QUICK_BET_ROLLBACK_DONE",
 })
 
 
@@ -2132,13 +2137,18 @@ class RuntimeController:
         - **popola** solo su ack (``ACCEPTED``/``PARTIAL``) di un ordine che porta
           ``best_price_source`` (settato solo dal percorso best-price DIRECT) +
           ``bet_id`` + ``customer_ref``;
-        - **pulisce** su evento terminale/cancel (``FILLED``/``FAILED``/
-          ``AMBIGUOUS``/``ROLLBACK_DONE``/``SUCCESS``), per ``customer_ref``
-          (univoco e presente in tutti gli eventi, anche ``ROLLBACK_DONE`` che
-          non porta il ``bet_id``).
+        - **pulisce** solo quando l'ordine NON è più un resting vivo:
+          ``FILLED`` (abbinato), ``FAILED`` (non piazzato), ``ROLLBACK_DONE``
+          (annullato), per ``customer_ref`` (presente in tutti gli eventi, anche
+          ``ROLLBACK_DONE`` che non porta il ``bet_id``). ``SUCCESS``/
+          ``AMBIGUOUS`` **non** puliscono: un place riuscito/incerto può lasciare
+          un ordine non abbinato vivo (Greptile P2).
 
-        Fail-safe: il registry è in-memory e riparte **vuoto** al restart ⇒ un
-        bet_id senza identità certa non finirà mai nell'allowlist del poller
+        ``customer_ref`` è la chiave d'idempotenza dell'engine (univoca per
+        ordine vivo), quindi l'``[customer_ref]=bet_id`` non perde ordini
+        distinti; un'eventuale collisione sotto-traccia (manca un cancel), mai
+        sovra-cancella. Fail-safe: registry in-memory, **vuoto** al restart ⇒ un
+        bet_id senza identità certa non finisce mai nell'allowlist del poller
         (B6.3.2b). Nessun side-effect broker qui: solo tracking.
         """
         payload = payload or {}
@@ -2165,7 +2175,7 @@ class RuntimeController:
             )
 
     @property
-    def direct_unmatched_bet_ids(self) -> set:
+    def direct_unmatched_bet_ids(self) -> set[str]:
         """Allowlist dei ``bet_id`` DIRECT noti (per il poller B6.3.2b)."""
         return set(self._direct_order_bet_ids.values())
 

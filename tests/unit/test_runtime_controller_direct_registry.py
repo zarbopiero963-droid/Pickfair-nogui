@@ -157,8 +157,7 @@ def test_ack_without_customer_ref_not_tracked():
 # Pulizia su eventi terminali / cancel (per customer_ref)
 # =========================================================
 @pytest.mark.parametrize("handler", [
-    "_on_quick_bet_filled", "_on_quick_bet_failed", "_on_quick_bet_ambiguous",
-    "_on_quick_bet_success",
+    "_on_quick_bet_filled", "_on_quick_bet_failed",
 ])
 def test_terminal_event_clears_registry(handler):
     rc = _make_rc()
@@ -166,6 +165,18 @@ def test_terminal_event_clears_registry(handler):
     assert rc.direct_unmatched_bet_ids == {"B1"}
     getattr(rc, handler)({"customer_ref": "C1", "bet_id": "B1"})
     assert rc.direct_unmatched_bet_ids == set()
+
+
+@pytest.mark.parametrize("handler", [
+    "_on_quick_bet_success", "_on_quick_bet_ambiguous",
+])
+def test_success_or_ambiguous_keeps_live_order_tracked(handler):
+    # Greptile P2: un place riuscito/incerto può lasciare un ordine non abbinato
+    # vivo => NON deve togliere il bet_id dall'allowlist del poller TTL.
+    rc = _make_rc()
+    rc._on_quick_bet_accepted(_ack(customer_ref="C1", bet_id="B1"))
+    getattr(rc, handler)({"customer_ref": "C1", "bet_id": "B1"})
+    assert rc.direct_unmatched_bet_ids == {"B1"}
 
 
 def test_rollback_without_bet_id_still_clears_by_customer_ref():
