@@ -184,13 +184,21 @@ Ordine sicuro (PR piccole, solo test, zero modifiche alle autorità):
    tempo simulato lungo, budget degradazione auth — miglior rapporto
    valore/rischio CI (non mappato dal routing dinamico → blast contenuto)
    - ✅ **FATTA (PR proof_streaming_feed)** — `tests/unit/test_streaming_feed_operational_proofs.py`
-     (5 proof deterministiche netto-nuove a funzione pura, dedup sui ~19
+     (proof deterministiche netto-nuove a funzione pura, dedup sui ~19
      esistenti): heartbeat-dead (no-message non morto, confine == timeout,
      floor 1.0s su clock finto); degradazione 503 con `healthy=False` e flag
      persistente fino al reconnect; subscribe kwargs che OMETTONO clk vuoto e
      lo includono dopo cattura; isolamento dell'eccezione nella callback
      on_disconnect (connected=False, no propagazione). Solo test, nessuna
      modifica a `services/streaming_feed.py`.
+   - ✅ **ESTESA** (idempotenza + stale lungo, scelta owner anti-padding): doppio
+     `start()` non crea un secondo thread (`already_running`, stesso thread);
+     `stop()` idempotente e safe anche senza start; start→stop rapido pulisce e
+     consente il restart; **stale su tempo simulato lungo** — jump di +100s su
+     clock finto rende il feed morto, un messaggio fresco ripristina la freschezza
+     (`_run_loop` reso no-op che attende lo stop → niente thread in loop/sleep
+     reali). I gap flaky (recovery parziale del counter auth) restano coperti dal
+     chaos soak, non duplicati.
 2. **EventBus** (`core/event_bus.py`): drain vs lossy shutdown, isolamento
    subscriber avvelenato, metriche di pressione sotto carico
    - ✅ **FATTA (PR proof_eventbus)** — `tests/unit/test_event_bus_operational_proofs.py`

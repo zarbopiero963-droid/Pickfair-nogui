@@ -235,3 +235,86 @@ def test_disconnect_callback_exception_is_isolated():
 
     assert received, "la callback deve comunque essere invocata"
     assert feed.status()["connected"] is False
+
+
+# ---------------------------------------------------------------------------
+# 5. IDEMPOTENZA start()/stop(): niente doppi thread, stop safe, restart pulito
+# ---------------------------------------------------------------------------
+
+def _quiet_loop(feed, monkeypatch):
+    """Rende `_run_loop` un no-op che attende solo lo stop: il thread parte ed
+    esce subito quando stop() imposta l'evento (niente loop/rete/sleep reali)."""
+    monkeypatch.setattr(feed, "_run_loop", lambda: feed._stop_event.wait())
+
+
+@pytest.mark.unit
+def test_double_start_does_not_spawn_second_thread(monkeypatch):
+    """Due `start()` rapidi NON creano un secondo thread/handler: il secondo
+    ritorna `already_running` e il thread resta lo stesso."""
+    feed = _make_feed(market_ids=["1.1"])
+    _quiet_loop(feed, monkeypatch)
+    try:
+        first = feed.start()
+        thread = feed._run_thread
+        second = feed.start()
+        assert first == {"started": True}
+        assert second.get("reason") == "already_running"
+        assert feed._run_thread is thread          # stesso thread, non un secondo
+        assert feed.status()["running"] is True
+    finally:
+        feed.stop()
+    assert feed.status()["running"] is False
+
+
+@pytest.mark.unit
+def test_double_stop_is_idempotent_and_safe():
+    """`stop()` e' idempotente e sicuro: anche senza start, e ripetuto, non
+    solleva e lascia il feed fermo/disconnesso."""
+    feed = _make_feed(market_ids=["1.1"])
+    assert feed.stop() == {"stopped": True}        # stop senza start: no-op safe
+    assert feed.stop() == {"stopped": True}        # ripetuto: idempotente
+    assert feed.status()["running"] is False
+    assert feed.status()["connected"] is False
+
+
+@pytest.mark.unit
+def test_rapid_start_stop_cleans_up_and_allows_restart(monkeypatch):
+    """Un ciclo start->stop rapido pulisce il thread (running=False), e un
+    successivo start riparte correttamente (stop_event ripulito da start)."""
+    feed = _make_feed(market_ids=["1.1"])
+    _quiet_loop(feed, monkeypatch)
+
+    feed.start()
+    feed.stop()
+    assert feed.status()["running"] is False
+    assert feed.status()["connected"] is False
+
+    feed.start()                                   # restart dopo stop
+    try:
+        assert feed.status()["running"] is True
+    finally:
+        feed.stop()
+    assert feed.status()["running"] is False
+
+
+# ---------------------------------------------------------------------------
+# 6. STALENESS con jump-tempo-lungo simulato (no sleep reali)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+def test_heartbeat_dead_after_long_simulated_time_jump(monkeypatch):
+    """Un lungo salto temporale simulato (clock finto, niente sleep) oltre il
+    timeout rende il feed stale; un nuovo messaggio ripristina la freschezza."""
+    clock = {"t": 1000.0}
+    monkeypatch.setattr("services.streaming_feed.time.monotonic", lambda: clock["t"])
+
+    feed = _make_feed(heartbeat_timeout_sec=2)
+    feed._last_message_at = 1000.0
+    assert feed._is_heartbeat_dead() is False
+
+    clock["t"] = 1000.0 + 100.0                    # +100s simulati
+    assert feed._is_heartbeat_dead() is True
+
+    # Un messaggio fresco aggiorna last_message_at => non piu' stale.
+    feed._process_message({"clk": "x", "mc": []})
+    assert feed._is_heartbeat_dead() is False
