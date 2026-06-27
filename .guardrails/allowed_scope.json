@@ -413,6 +413,16 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 6
+    },
+    "stake_mode_b7_1": {
+      "allow_tests": true,
+      "files": [
+        "stake_mode.py",
+        "tests/unit/test_stake_mode.py",
+        "ops/roadmap_go_live.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
     }
   }
 }
