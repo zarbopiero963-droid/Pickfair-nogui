@@ -37,31 +37,40 @@ def select_expired_unmatched(
     (``now_epoch - placed_epoch``) supera ``ttl_seconds``. Lista vuota se il TTL
     non è valido o nessun ordine qualifica. Deduplica per ``bet_id``.
     """
-    now = _to_float(now_epoch)
-    ttl = _to_float(ttl_seconds)
-    # Fail-closed: TTL non finito/<=0 o now non finito ⇒ niente cancellazioni.
-    if ttl is None or now is None or not math.isfinite(ttl) or ttl <= 0.0:
-        return []
-    if not math.isfinite(now):
-        return []
-
-    scope = None
-    if scope_market_ids is not None:
-        scope = {str(m).strip() for m in scope_market_ids if str(m).strip()}
+    params = _validated_params(now_epoch, ttl_seconds, scope_market_ids)
+    if params is None:
+        return []  # TTL/now non utilizzabili ⇒ fail-closed, niente cancellazioni.
+    now, ttl, scope = params
 
     rows = current_orders if isinstance(current_orders, list) else []
     selected: List[Dict[str, str]] = []
     seen: set[str] = set()
     for row in rows:
         picked = _expired_unmatched_row(row, now=now, ttl=ttl, scope=scope)
-        if picked is None:
+        if picked is None or picked["bet_id"] in seen:
             continue
-        bet_id = picked["bet_id"]
-        if bet_id in seen:
-            continue
-        seen.add(bet_id)
+        seen.add(picked["bet_id"])
         selected.append(picked)
     return selected
+
+
+def _validated_params(
+    now_epoch: Any, ttl_seconds: Any, scope_market_ids: Optional[Iterable[str]]
+) -> Optional[tuple]:
+    """``(now, ttl, scope)`` validati, o ``None`` se TTL/now non sono usabili.
+
+    Fail-closed: TTL non finito o ``<= 0`` e ``now`` non finito ⇒ ``None`` ⇒ il
+    chiamante non cancella nulla. ``scope`` è un set di market_id o ``None``.
+    """
+    now = _to_float(now_epoch)
+    ttl = _to_float(ttl_seconds)
+    if (now is None or ttl is None
+            or not math.isfinite(now) or not math.isfinite(ttl) or ttl <= 0.0):
+        return None
+    scope = None
+    if scope_market_ids is not None:
+        scope = {str(m).strip() for m in scope_market_ids if str(m).strip()}
+    return now, ttl, scope
 
 
 def _expired_unmatched_row(
