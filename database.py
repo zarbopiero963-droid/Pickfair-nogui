@@ -238,6 +238,7 @@ class Database:
         with self.transaction() as conn:
             for stmt in SCHEMA_DDL:
                 conn.execute(stmt)
+            self._migrate_signal_pattern_action(conn)
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS cycle_recovery_checkpoints (
@@ -529,6 +530,31 @@ class Database:
     # =========================================================
     # SIGNAL PATTERNS
     # =========================================================
+    @staticmethod
+    def _migrate_signal_pattern_action(conn) -> None:
+        """Migrazione idempotente: aggiunge ``signal_patterns.action`` ai DB esistenti.
+
+        ``CREATE TABLE IF NOT EXISTS`` non aggiunge la colonna a una tabella già
+        presente, quindi i DB creati prima di 2.1-C non l'avrebbero e un
+        ``row["action"]`` fallirebbe. ALTER ADD COLUMN solo se mancante (controllo
+        ``PRAGMA table_info``); default ``'QUICK_BET'`` = comportamento storico.
+        """
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(signal_patterns)").fetchall()}
+        if "action" not in cols:
+            conn.execute(
+                "ALTER TABLE signal_patterns ADD COLUMN action TEXT NOT NULL DEFAULT 'QUICK_BET'"
+            )
+
+    @staticmethod
+    def _normalize_pattern_action(value: Any) -> str:
+        """Normalizza l'azione del pattern a ``{QUICK_BET, CASHOUT, CASHOUT_ALL}``.
+
+        Valore ignoto/assente ⇒ ``QUICK_BET`` (default storico, fail-safe: un
+        pattern malformato resta una quick bet, non innesca un cashout).
+        """
+        v = str(value or "QUICK_BET").strip().upper()
+        return v if v in {"QUICK_BET", "CASHOUT", "CASHOUT_ALL"} else "QUICK_BET"
+
     def get_signal_patterns(self, enabled_only: bool = False) -> List[Dict[str, Any]]:
         sql = "SELECT * FROM signal_patterns"
         if enabled_only:
@@ -559,6 +585,10 @@ class Database:
             }
             if isinstance(extra, dict):
                 item.update(extra)
+            # La colonna è autoritativa: settata DOPO l'update di extra_json così
+            # un'eventuale chiave "action" legacy in extra non la sovrascrive.
+            action_raw = row["action"] if "action" in row.keys() else "QUICK_BET"
+            item["action"] = self._normalize_pattern_action(action_raw)
             out.append(item)
         return out
 
@@ -568,6 +598,7 @@ class Database:
         pattern: str,
         label: str,
         enabled: bool = True,
+        action: str = "QUICK_BET",
         bet_side: str = "",
         market_type: str = "MATCH_ODDS",
         selection_template: str = "",
@@ -584,17 +615,18 @@ class Database:
         cur = self._execute(
             """
             INSERT INTO signal_patterns(
-                label, pattern, enabled, bet_side, market_type,
+                label, pattern, enabled, action, bet_side, market_type,
                 selection_template, min_minute, max_minute,
                 min_score, max_score, live_only, priority,
                 extra_json, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(label or ""),
                 str(pattern or ""),
                 int(bool(enabled)),
+                self._normalize_pattern_action(action),
                 str(bet_side or ""),
                 str(market_type or "MATCH_ODDS"),
                 str(selection_template or ""),
@@ -627,6 +659,7 @@ class Database:
         max_score: Any = None,
         live_only: Optional[bool] = None,
         priority: Optional[int] = None,
+        action: Optional[str] = None,
         extra: Optional[Dict[str, Any]] = None,
     ) -> None:
         current = self._execute(
@@ -649,6 +682,7 @@ class Database:
             SET label = ?,
                 pattern = ?,
                 enabled = ?,
+                action = ?,
                 bet_side = ?,
                 market_type = ?,
                 selection_template = ?,
@@ -666,6 +700,10 @@ class Database:
                 str(current["label"] if label is None else label),
                 str(current["pattern"] if pattern is None else pattern),
                 int(current["enabled"] if enabled is None else bool(enabled)),
+                self._normalize_pattern_action(
+                    (current["action"] if "action" in current.keys() else "QUICK_BET")
+                    if action is None else action
+                ),
                 str(current["bet_side"] if bet_side is None else bet_side),
                 str(current["market_type"] if market_type is None else market_type),
                 str(current["selection_template"] if selection_template is None else selection_template),
