@@ -128,16 +128,15 @@ class _Telegram:
 
 
 def _make_rc(*, orders=None, orders_raises=False, cancel_client=None, enabled=True):
-    bus = _Bus()
     bf = _Betfair(orders=orders, orders_raises=orders_raises, cancel_client=cancel_client)
     rc = RuntimeController(
-        bus=bus, db=_Db(), settings_service=_Settings(),
+        bus=_Bus(), db=_Db(), settings_service=_Settings(),
         betfair_service=bf, telegram_service=_Telegram(),
     )
     rc.simulation_mode = True
     rc.config.direct_unmatched_ttl_enabled = enabled
     rc._last_direct_ttl_poll_at = 0.0
-    return rc, bus, bf
+    return rc  # bus/betfair accessibili via rc.bus / rc.betfair_service
 
 
 def _order(bet_id, *, market_id="1.1", matched=0.0, remaining=5.0, age=1000.0):
@@ -161,7 +160,7 @@ def _events(bus, name):
 # =========================================================
 def test_flag_off_is_total_noop():
     cc = _CancelClient()
-    rc, bus, bf = _make_rc(orders=[_order("B1")], cancel_client=cc, enabled=False)
+    rc = _make_rc(orders=[_order("B1")], cancel_client=cc, enabled=False)
     _track(rc, "C1", "B1")
     rc._poll_direct_unmatched_ttl()
     assert cc.calls == []
@@ -173,11 +172,11 @@ def test_flag_off_is_total_noop():
 # =========================================================
 def test_expired_direct_order_is_cancelled_and_cleaned():
     cc = _CancelClient(ok=True)
-    rc, bus, bf = _make_rc(orders=[_order("B1", market_id="1.5")], cancel_client=cc)
+    rc = _make_rc(orders=[_order("B1", market_id="1.5")], cancel_client=cc)
     _track(rc, "C1", "B1")
     rc._poll_direct_unmatched_ttl()
     assert cc.calls == [("1.5", ("B1",))]
-    assert _events(bus, "DIRECT_UNMATCHED_CANCELLED")
+    assert _events(rc.bus, "DIRECT_UNMATCHED_CANCELLED")
     # NO RETRY: bet_id rimosso dal registry.
     assert rc.direct_unmatched_bet_ids == set()
 
@@ -189,7 +188,7 @@ def test_never_cancels_orders_outside_registry():
     cc = _CancelClient()
     # B1 DIRECT (nel registry), CASHOUT9 non DIRECT (non nel registry): entrambi
     # scaduti e non abbinati, ma solo B1 deve essere cancellato.
-    rc, bus, bf = _make_rc(
+    rc = _make_rc(
         orders=[_order("B1"), _order("CASHOUT9", market_id="1.9")], cancel_client=cc)
     _track(rc, "C1", "B1")
     rc._poll_direct_unmatched_ttl()
@@ -198,7 +197,7 @@ def test_never_cancels_orders_outside_registry():
 
 def test_empty_registry_cancels_nothing():
     cc = _CancelClient()
-    rc, bus, bf = _make_rc(orders=[_order("B1")], cancel_client=cc)
+    rc = _make_rc(orders=[_order("B1")], cancel_client=cc)
     # nessun _track => allowlist vuota
     rc._poll_direct_unmatched_ttl()
     assert cc.calls == []
@@ -206,7 +205,7 @@ def test_empty_registry_cancels_nothing():
 
 def test_not_yet_expired_not_cancelled():
     cc = _CancelClient()
-    rc, bus, bf = _make_rc(orders=[_order("B1", age=10.0)], cancel_client=cc)  # 10s < ttl 120
+    rc = _make_rc(orders=[_order("B1", age=10.0)], cancel_client=cc)  # 10s < ttl 120
     _track(rc, "C1", "B1")
     rc._poll_direct_unmatched_ttl()
     assert cc.calls == []
@@ -215,7 +214,7 @@ def test_not_yet_expired_not_cancelled():
 
 def test_matched_order_not_cancelled():
     cc = _CancelClient()
-    rc, bus, bf = _make_rc(orders=[_order("B1", matched=5.0, remaining=0.0)], cancel_client=cc)
+    rc = _make_rc(orders=[_order("B1", matched=5.0, remaining=0.0)], cancel_client=cc)
     _track(rc, "C1", "B1")
     rc._poll_direct_unmatched_ttl()
     assert cc.calls == []
@@ -226,7 +225,7 @@ def test_matched_order_not_cancelled():
 # =========================================================
 def test_list_current_orders_failure_aborts_without_cancel():
     cc = _CancelClient()
-    rc, bus, bf = _make_rc(orders_raises=True, cancel_client=cc)
+    rc = _make_rc(orders_raises=True, cancel_client=cc)
     _track(rc, "C1", "B1")
     rc._poll_direct_unmatched_ttl()  # non deve sollevare
     assert cc.calls == []
@@ -235,27 +234,27 @@ def test_list_current_orders_failure_aborts_without_cancel():
 
 def test_cancel_exception_notifies_and_removes_no_crash():
     cc = _CancelClient(raises=True)
-    rc, bus, bf = _make_rc(orders=[_order("B1")], cancel_client=cc)
+    rc = _make_rc(orders=[_order("B1")], cancel_client=cc)
     _track(rc, "C1", "B1")
     rc._poll_direct_unmatched_ttl()
-    assert _events(bus, "DIRECT_UNMATCHED_CANCEL_FAILED")
+    assert _events(rc.bus, "DIRECT_UNMATCHED_CANCEL_FAILED")
     assert rc.direct_unmatched_bet_ids == set()  # NO RETRY anche su errore
 
 
 def test_cancel_ok_false_notifies_failed_and_removes():
     cc = _CancelClient(ok=False)
-    rc, bus, bf = _make_rc(orders=[_order("B1")], cancel_client=cc)
+    rc = _make_rc(orders=[_order("B1")], cancel_client=cc)
     _track(rc, "C1", "B1")
     rc._poll_direct_unmatched_ttl()
-    assert _events(bus, "DIRECT_UNMATCHED_CANCEL_FAILED")
+    assert _events(rc.bus, "DIRECT_UNMATCHED_CANCEL_FAILED")
     assert rc.direct_unmatched_bet_ids == set()
 
 
 def test_no_cancel_client_notifies_and_removes():
-    rc, bus, bf = _make_rc(orders=[_order("B1")], cancel_client=None)
+    rc = _make_rc(orders=[_order("B1")], cancel_client=None)
     _track(rc, "C1", "B1")
     rc._poll_direct_unmatched_ttl()
-    failed = _events(bus, "DIRECT_UNMATCHED_CANCEL_FAILED")
+    failed = _events(rc.bus, "DIRECT_UNMATCHED_CANCEL_FAILED")
     assert failed and failed[0]["reason"] == "no_cancel_client"
     assert rc.direct_unmatched_bet_ids == set()
 
@@ -265,7 +264,7 @@ def test_no_cancel_client_notifies_and_removes():
 # =========================================================
 def test_no_auto_retry_after_one_attempt():
     cc = _CancelClient(ok=False)  # cancel fallisce
-    rc, bus, bf = _make_rc(orders=[_order("B1")], cancel_client=cc)
+    rc = _make_rc(orders=[_order("B1")], cancel_client=cc)
     _track(rc, "C1", "B1")
     rc._poll_direct_unmatched_ttl()
     rc._last_direct_ttl_poll_at = 0.0  # bypassa il gate per un secondo giro
@@ -275,7 +274,7 @@ def test_no_auto_retry_after_one_attempt():
 
 def test_interval_gate_blocks_rapid_second_poll():
     cc = _CancelClient()
-    rc, bus, bf = _make_rc(orders=[_order("B1"), _order("B2", market_id="1.2")],
+    rc = _make_rc(orders=[_order("B1"), _order("B2", market_id="1.2")],
                            cancel_client=cc)
     _track(rc, "C1", "B1")
     _track(rc, "C2", "B2")
