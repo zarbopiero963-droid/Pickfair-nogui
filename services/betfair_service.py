@@ -900,7 +900,13 @@ class BetfairService:
                 "error": str(exc),
             }
 
-    def get_market_book_snapshot(self, market_id: str) -> Optional[Dict[str, Any]]:
+    def get_market_book_snapshot(
+        self, market_id: str, *, include_prices: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        # ``include_prices`` opt-in (default False = invariato): inoltrato al
+        # client LIVE per chiedere le ladder EX_BEST_OFFERS (best-price DIRECT).
+        # In SIMULATION il broker restituisce gia' un book completo: il flag e'
+        # ininfluente e non viene propagato.
         if self.simulation_mode:
             if not self.simulation_broker:
                 return None
@@ -914,7 +920,9 @@ class BetfairService:
             return None
 
         try:
-            return self.client.get_market_book(str(market_id)) or None
+            return self.client.get_market_book(
+                str(market_id), include_prices=include_prices
+            ) or None
         except Exception as exc:
             error_text = str(exc)
             if "SESSION_EXPIRED" in error_text.upper() or "INVALID_SESSION" in error_text.upper():

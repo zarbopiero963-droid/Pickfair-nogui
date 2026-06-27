@@ -35,6 +35,35 @@ def test_logout_is_idempotent_and_clears_state(client):
 
 
 @pytest.mark.unit
+def test_get_market_book_default_omits_price_projection(client):
+    # Default (chiamanti esistenti): nessun priceProjection => invariato.
+    captured = {}
+
+    def fake_post(_url, _method, params):
+        captured["params"] = params
+        return [{"runners": [{"ex": {"availableToBack": [], "availableToLay": []}}]}]
+
+    client._post_jsonrpc = fake_post
+    client.get_market_book("1.234")
+    assert captured["params"]["marketIds"] == ["1.234"]
+    assert "priceProjection" not in captured["params"]
+
+
+@pytest.mark.unit
+def test_get_market_book_include_prices_requests_best_offers(client):
+    # include_prices=True => chiede le ladder EX_BEST_OFFERS (best-price DIRECT).
+    captured = {}
+
+    def fake_post(_url, _method, params):
+        captured["params"] = params
+        return [{"runners": []}]
+
+    client._post_jsonrpc = fake_post
+    client.get_market_book("1.234", include_prices=True)
+    assert captured["params"]["priceProjection"] == {"priceData": ["EX_BEST_OFFERS"]}
+
+
+@pytest.mark.unit
 def test_safe_side_normalizes_values(client):
     assert client._safe_side("back") == "BACK"
     assert client._safe_side("lay") == "LAY"

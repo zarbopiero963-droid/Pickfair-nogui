@@ -80,10 +80,12 @@ class _Betfair:
         self._book = book
         self._raises = raises
         self.snapshot_calls = []
+        self.snapshot_include_prices = []
         self._session_invalid = False
 
-    def get_market_book_snapshot(self, market_id):
+    def get_market_book_snapshot(self, market_id, *, include_prices=False):
         self.snapshot_calls.append(market_id)
+        self.snapshot_include_prices.append(include_prices)
         if self._raises:
             raise RuntimeError("snapshot boom")
         return self._book
@@ -187,6 +189,8 @@ def test_flag_on_overrides_with_live_best_within_tolerance():
     # Ritorna True => snapshot tentato, il chiamante DEVE rieseguire i gate.
     assert rc._apply_direct_best_price(payload) is True
     assert bf.snapshot_calls == ["1.234"]
+    # Il best-price DIRECT deve chiedere le ladder EX_BEST_OFFERS.
+    assert bf.snapshot_include_prices == [True]
     assert payload["price"] == 2.52
     assert payload["best_price_source"] == "LIVE_BOOK_DIRECT"
     assert payload["best_price_reason"] == "ok"
@@ -334,7 +338,7 @@ def test_seam_daily_loss_armed_during_snapshot_blocks_submit():
     # snapshot) deve bloccare SIA SIGNAL_APPROVED SIA CMD_QUICK_BET.
     rc_holder = {}
 
-    def snap(_mid):
+    def snap(_mid, *, include_prices=False):
         rc_holder["rc"]._daily_loss_entry_blocked = lambda: True
         return _book(backs=[{"price": 2.52}])
 
@@ -353,7 +357,7 @@ def test_seam_daily_loss_armed_during_snapshot_blocks_submit():
 def test_seam_session_invalidated_during_snapshot_blocks_submit_live():
     # LIVE: lo snapshot intercetta SESSION_EXPIRED e marca la sessione invalida.
     # Il session re-guard (ora DOPO lo snapshot) deve bloccare il submit.
-    def snap(_mid):
+    def snap(_mid, *, include_prices=False):
         bf._session_invalid = True   # come get_market_book_snapshot dopo recovery
         return None
 
