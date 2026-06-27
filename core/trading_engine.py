@@ -719,6 +719,11 @@ class TradingEngine:
                 "correlation_id": str(raw.get("correlation_id") or uuid.uuid4()),
                 **origin_fields,
             }
+            # Preserva la provenienza best-price anche sul percorso di
+            # normalizzazione fallita: senza questo, audit/result/terminal
+            # perderebbero best_price_source/reason di un raw che li aveva
+            # (CodeRabbit P-Major). `_extract_origin_fields_best_effort` non li copia.
+            self._copy_best_price_meta(normalized, raw)
 
         # [D1] Use factory for ALL context creation
         ctx = self._new_execution_context(normalized)

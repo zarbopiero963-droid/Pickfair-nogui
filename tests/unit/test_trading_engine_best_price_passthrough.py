@@ -144,6 +144,17 @@ def test_best_price_provenance_in_audit_records():
     assert "FALLBACK_MASTER" in blob
 
 
+def test_best_price_provenance_preserved_on_normalization_failure():
+    # Percorso di normalizzazione fallita (copy_meta non-dict): la provenienza
+    # best-price del raw deve sopravvivere comunque (CodeRabbit P-Major).
+    engine = _make_engine()
+    engine.order_manager = _ExplodingOrderManager()
+    result = engine.submit_quick_bet(_payload(copy_meta="NON_DICT"))
+    assert result["ok"] is False
+    assert result["best_price_source"] == "LIVE_BOOK_DIRECT"
+    assert result["best_price_reason"] == "ok"
+
+
 def test_no_best_price_keys_when_absent():
     # Flag OFF / percorso normale: le chiavi best_price NON sono nel payload e i
     # record non le inventano. Il caso reale "assente" e' l'omissione delle chiavi.
