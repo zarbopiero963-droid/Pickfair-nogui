@@ -28,7 +28,8 @@ class FakeDB:
         self.audit_events = []
         self.seq = 0
 
-    def is_ready(self):
+    @staticmethod
+    def is_ready():
         return True
 
     def insert_order(self, payload):
@@ -44,26 +45,32 @@ class FakeDB:
     def insert_audit_event(self, event):
         self.audit_events.append(event)
 
-    def order_exists_inflight(self, *, customer_ref, correlation_id):
+    @staticmethod
+    def order_exists_inflight(*, customer_ref, correlation_id):
         return False
 
-    def load_pending_customer_refs(self):
+    @staticmethod
+    def load_pending_customer_refs():
         return []
 
-    def load_pending_correlation_ids(self):
+    @staticmethod
+    def load_pending_correlation_ids():
         return []
 
 
 class InlineExecutor:
-    def is_ready(self):
+    @staticmethod
+    def is_ready():
         return True
 
-    def submit(self, _name, fn):
+    @staticmethod
+    def submit(_name, fn):
         return fn()
 
 
 class _ExplodingOrderManager:
-    def submit(self, payload):
+    @staticmethod
+    def submit(payload):
         raise RuntimeError("BROKER_SUBMIT_FAILED")
 
 
@@ -138,18 +145,13 @@ def test_best_price_provenance_in_audit_records():
 
 
 def test_no_best_price_keys_when_absent():
-    # Senza i campi nel payload (flag OFF / percorso normale) i record non li
-    # inventano: nessuna chiave best_price spuria.
-    engine = _make_engine()
-    engine.order_manager = _ExplodingOrderManager()
-    result = engine.submit_quick_bet(_payload(best_price_source=None, best_price_reason=None))
-    # I valori None passano comunque come passthrough espliciti; il caso reale
-    # "assente" e' l'omissione: rimuoviamo le chiavi.
+    # Flag OFF / percorso normale: le chiavi best_price NON sono nel payload e i
+    # record non le inventano. Il caso reale "assente" e' l'omissione delle chiavi.
     payload = _payload()
     payload.pop("best_price_source")
     payload.pop("best_price_reason")
-    engine2 = _make_engine()
-    engine2.order_manager = _ExplodingOrderManager()
-    r2 = engine2.submit_quick_bet(payload)
-    assert "best_price_source" not in r2
-    assert "best_price_reason" not in r2
+    engine = _make_engine()
+    engine.order_manager = _ExplodingOrderManager()
+    result = engine.submit_quick_bet(payload)
+    assert "best_price_source" not in result
+    assert "best_price_reason" not in result
