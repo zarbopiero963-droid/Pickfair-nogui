@@ -22,6 +22,10 @@ from dutching import calculate_dutching_stakes
 from pnl_engine import PnLEngine
 from simulation_broker import SimulationBroker
 
+# Il job CI "Integration Tests" gira `pytest tests/integration -m "integration"`:
+# senza questo marker i test sarebbero deselezionati dalla lane integrazione.
+pytestmark = pytest.mark.integration
+
 COMM = 4.5
 
 
@@ -151,13 +155,18 @@ def test_back_liability_is_capped_at_stake():
 # =========================================================
 # #6 — idempotenza equalize (equalize 2× → nessun drift)
 # =========================================================
-def test_equalize_is_idempotent_no_drift():
+def test_equalize_is_deterministic_and_reaches_equal_profit_fixed_point():
     kw = dict(commission=COMM, equalize=True, commission_aware=True)
     r1 = calculate_dutching_stakes([3.0, 4.0, 6.0], 100.0, **kw)
     r2 = calculate_dutching_stakes([3.0, 4.0, 6.0], 100.0, **kw)
+    # (a) Deterministico: nessun drift fra due equalizzazioni.
     assert r1["stakes"] == r2["stakes"]
     assert r1["net_profits"] == r2["net_profits"]
-    # budget preservato.
+    # (b) Punto fisso equal-profit: l'equalize ha reso i net profit uniformi
+    #     (entro il residuo di rounding) — non si limita a ripetersi.
+    net = r1["net_profits"]
+    assert max(net) - min(net) <= 0.05
+    # (c) budget preservato.
     assert sum(r1["stakes"]) == pytest.approx(100.0, abs=0.01)
 
 
