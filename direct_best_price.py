@@ -65,35 +65,11 @@ def resolve_direct_best_price(
         return fallback("invalid_master_price")
     if side_u not in ("BACK", "LAY"):
         return fallback("invalid_side")
-    if not isinstance(market_book, dict) or not market_book:
-        return fallback("no_book")
 
-    status = str(market_book.get("status") or "").strip().upper()
-    if status and status != "OPEN":
-        return fallback("market_not_open")   # SUSPENDED / CLOSED / INACTIVE
-
-    sid = _to_int(selection_id)
-    if sid is None:
-        return fallback("invalid_selection_id")
-
-    runner = _find_runner(market_book.get("runners") or [], sid)
-    if runner is None:
-        return fallback("runner_missing")
-
-    runner_status = str(runner.get("status") or "").strip().upper()
-    if runner_status and runner_status != "ACTIVE":
-        return fallback("runner_not_active")
-
-    ex = runner.get("ex") or {}
-    # Difensivo: SOLO il lato richiesto, mai cross-spread.
-    levels = ex.get("availableToBack") if side_u == "BACK" else ex.get("availableToLay")
-    levels = levels if isinstance(levels, list) else []
-    if not levels:
-        return fallback("no_side_liquidity")
-
-    best = _to_float((levels[0] or {}).get("price"))
-    if best <= 1.0:
-        return fallback("invalid_book_price")
+    # Estrazione book→best del SOLO lato richiesto (difensiva, fail-closed).
+    best, reason = _best_side_price(market_book, selection_id, side_u)
+    if best is None:
+        return fallback(reason)
 
     deviation_pct = abs(best - master) / master * 100.0
     if deviation_pct > float(max_deviation_pct):
@@ -107,6 +83,38 @@ def resolve_direct_best_price(
         "best_price": best,
         "deviation_pct": deviation_pct,
     }
+
+
+def _best_side_price(market_book: Any, selection_id: Any, side_u: str):
+    """Best price del SOLO lato richiesto, fail-closed.
+
+    Ritorna ``(best_price, "ok")`` se ricavabile, altrimenti ``(None, reason)``.
+    Difensivo: ``BACK`` → ``availableToBack``, ``LAY`` → ``availableToLay``;
+    mai cross-spread.
+    """
+    if not isinstance(market_book, dict) or not market_book:
+        return None, "no_book"
+    status = str(market_book.get("status") or "").strip().upper()
+    if status and status != "OPEN":
+        return None, "market_not_open"   # SUSPENDED / CLOSED / INACTIVE
+    sid = _to_int(selection_id)
+    if sid is None:
+        return None, "invalid_selection_id"
+    runner = _find_runner(market_book.get("runners") or [], sid)
+    if runner is None:
+        return None, "runner_missing"
+    runner_status = str(runner.get("status") or "").strip().upper()
+    if runner_status and runner_status != "ACTIVE":
+        return None, "runner_not_active"
+    ex = runner.get("ex") or {}
+    levels = ex.get("availableToBack") if side_u == "BACK" else ex.get("availableToLay")
+    levels = levels if isinstance(levels, list) else []
+    if not levels:
+        return None, "no_side_liquidity"
+    best = _to_float((levels[0] or {}).get("price"))
+    if best <= 1.0:
+        return None, "invalid_book_price"
+    return best, "ok"
 
 
 def _find_runner(runners: List[Any], selection_id: int) -> Optional[Dict[str, Any]]:
