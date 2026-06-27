@@ -19,6 +19,7 @@ from __future__ import annotations
 import pytest
 
 from core.runtime_controller import RuntimeController
+from core.system_state import DeskMode, RuntimeMode
 
 # Il job CI "unit" gira `-m unit`: senza marker questi test verrebbero deselezionati.
 pytestmark = pytest.mark.unit
@@ -166,7 +167,8 @@ def test_flag_off_is_total_noop():
     bf = _Betfair(book=_book(backs=[{"price": 2.52}]))
     rc, _ = _make_rc(bf)
     payload = _payload(price=2.50)
-    rc._apply_direct_best_price(payload)
+    # Ritorna False => il chiamante NON riesegue i gate pre-submit (no-op).
+    assert rc._apply_direct_best_price(payload) is False
     # Nessun fetch del book, payload immutato, nessun campo audit aggiunto.
     assert bf.snapshot_calls == []
     assert payload == _payload(price=2.50)
@@ -182,7 +184,8 @@ def test_flag_on_overrides_with_live_best_within_tolerance():
     rc, _ = _make_rc(bf)
     rc.config.use_best_price_direct = True
     payload = _payload(price=2.50, bet_type="BACK")
-    rc._apply_direct_best_price(payload)
+    # Ritorna True => snapshot tentato, il chiamante DEVE rieseguire i gate.
+    assert rc._apply_direct_best_price(payload) is True
     assert bf.snapshot_calls == ["1.234"]
     assert payload["price"] == 2.52
     assert payload["best_price_source"] == "LIVE_BOOK_DIRECT"
@@ -245,7 +248,121 @@ def test_flag_on_snapshot_raises_keeps_master_no_crash():
     rc, _ = _make_rc(bf)
     rc.config.use_best_price_direct = True
     payload = _payload(price=2.50)
-    rc._apply_direct_best_price(payload)   # non deve sollevare
+    # Anche su eccezione ritorna True: lo snapshot e' stato tentato => il
+    # chiamante DEVE rieseguire i gate (il fetch puo' aver invalidato la sessione).
+    assert rc._apply_direct_best_price(payload) is True
     assert payload["price"] == 2.50
     # L'override non e' avvenuto: nessun campo audit (eccezione prima dello stamp).
     assert "best_price_source" not in payload
+
+
+# =========================================================
+# Seam in _on_signal_received: lo snapshot va PRIMA dei gate finali
+# pre-submit, che vengono RIESEGUITI dopo di esso (Codex P2 #1/#3).
+# =========================================================
+class _Decision:
+    approved = True
+    table_id = 1
+    recommended_stake = 10.0
+    desk_mode = DeskMode.NORMAL
+    reason = "ok"
+    metadata = {}
+
+
+def _make_active_rc(betfair=None, *, live=False):
+    """rc ACTIVE con allocazione/MM upstream bypassate: isola il seam pre-submit."""
+    rc, bus = _make_rc(betfair)
+    rc.mode = RuntimeMode.ACTIVE
+    rc._emergency_stopped = False
+    rc.execution_mode = "LIVE" if live else "SIMULATION"
+    if live:
+        rc.live_enabled = True
+        rc.live_readiness_ok = True
+        rc.enforce_deploy_gate = lambda **_k: {"allowed": True, "reason": "ok", "reasons": []}
+    # Bypassa i gate upstream (MM/tavolo): vogliamo testare SOLO il seam finale.
+    rc.mm.calculate = lambda **_k: _Decision()
+    rc.table_manager.allocate = lambda **_k: object()
+    rc.table_manager.activate = lambda **_k: None
+    rc.table_manager.total_exposure = lambda: 0.0
+    rc.table_manager.force_unlock = lambda *_a, **_k: None
+    rc._event_current_exposure = lambda _ek: 0.0
+    rc._daily_loss_entry_blocked = lambda: False
+    return rc, bus
+
+
+def _signal(price=2.50, market_id="1.234", selection_id=55, bet_type="BACK"):
+    return {
+        "market_id": market_id,
+        "selection_id": selection_id,
+        "bet_type": bet_type,
+        "price": price,
+        "stake": 10.0,
+    }
+
+
+def _events(bus, name):
+    return [p for e, p in bus.published if e == name]
+
+
+def test_seam_flag_off_publishes_master_unchanged():
+    # Flag OFF: nessuno snapshot, nessun re-gate nuovo => CMD_QUICK_BET col master.
+    bf = _Betfair(book=_book(backs=[{"price": 2.52}]))
+    rc, bus = _make_active_rc(bf)
+    rc._on_signal_received(_signal(price=2.50))
+    cmds = _events(bus, "CMD_QUICK_BET")
+    assert len(cmds) == 1
+    assert cmds[0]["price"] == 2.50
+    assert "best_price_source" not in cmds[0]
+    assert bf.snapshot_calls == []
+    assert _events(bus, "SIGNAL_APPROVED")
+
+
+def test_seam_flag_on_happy_publishes_override_after_gates():
+    bf = _Betfair(book=_book(backs=[{"price": 2.52}]))
+    rc, bus = _make_active_rc(bf)
+    rc.config.use_best_price_direct = True
+    rc._on_signal_received(_signal(price=2.50, bet_type="BACK"))
+    cmds = _events(bus, "CMD_QUICK_BET")
+    assert len(cmds) == 1
+    assert cmds[0]["price"] == 2.52
+    assert cmds[0]["best_price_source"] == "LIVE_BOOK_DIRECT"
+    assert _events(bus, "SIGNAL_APPROVED")
+
+
+def test_seam_daily_loss_armed_during_snapshot_blocks_submit():
+    # Il daily-loss si arma DURANTE lo snapshot: il recheck (ora DOPO lo
+    # snapshot) deve bloccare SIA SIGNAL_APPROVED SIA CMD_QUICK_BET.
+    rc_holder = {}
+
+    def snap(_mid):
+        rc_holder["rc"]._daily_loss_entry_blocked = lambda: True
+        return _book(backs=[{"price": 2.52}])
+
+    bf = _Betfair()
+    bf.get_market_book_snapshot = snap
+    rc, bus = _make_active_rc(bf)
+    rc_holder["rc"] = rc
+    rc.config.use_best_price_direct = True
+    rc._on_signal_received(_signal(price=2.50))
+    assert _events(bus, "CMD_QUICK_BET") == []
+    assert _events(bus, "SIGNAL_APPROVED") == []
+    reasons = [p.get("reason") for p in _events(bus, "SIGNAL_REJECTED")]
+    assert "emergency_stop_active:pre_submit_recheck" in reasons
+
+
+def test_seam_session_invalidated_during_snapshot_blocks_submit_live():
+    # LIVE: lo snapshot intercetta SESSION_EXPIRED e marca la sessione invalida.
+    # Il session re-guard (ora DOPO lo snapshot) deve bloccare il submit.
+    def snap(_mid):
+        bf._session_invalid = True   # come get_market_book_snapshot dopo recovery
+        return None
+
+    bf = _Betfair()
+    bf.get_market_book_snapshot = snap
+    rc, bus = _make_active_rc(bf, live=True)
+    rc.config.use_best_price_direct = True
+    rc._on_signal_received(_signal(price=2.50))
+    assert _events(bus, "CMD_QUICK_BET") == []
+    assert _events(bus, "SIGNAL_APPROVED") == []
+    reasons = [p.get("reason") for p in _events(bus, "SIGNAL_REJECTED")]
+    assert "session_invalid_live_blocked:pre_submit_recheck" in reasons
