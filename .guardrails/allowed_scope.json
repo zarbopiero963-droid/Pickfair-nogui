@@ -329,6 +329,14 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 10
+    },
+    "cashout_overview_docs": {
+      "allow_tests": true,
+      "files": [
+        "docs/cashout_overview.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 3
     }
   }
 }
