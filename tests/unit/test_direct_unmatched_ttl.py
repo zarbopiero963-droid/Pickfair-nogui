@@ -19,10 +19,23 @@ def _order(*, bet_id="1", market_id="1.1", matched=0.0, remaining=5.0,
     return row
 
 
-def _select(orders, *, now=2000.0, ttl=300.0, scope=None):
+_ALL = object()
+
+
+def _bet_ids(orders):
+    if not isinstance(orders, list):
+        return {"1"}  # non-list: allowlist non vuota per non corto-circuitare
+    return {str(o.get("betId") or o.get("bet_id"))
+            for o in orders if isinstance(o, dict)} or {"1"}
+
+
+def _select(orders, *, now=2000.0, ttl=300.0, scope=None, direct=_ALL):
+    # Default: tutti i bet_id presenti sono trattati come DIRECT (i test
+    # esistenti verificano la restante logica); i test dedicati passano `direct`.
+    direct_ids = _bet_ids(orders) if direct is _ALL else direct
     return select_expired_unmatched(
         current_orders=orders, now_epoch=now, ttl_seconds=ttl,
-        scope_market_ids=scope,
+        direct_bet_ids=direct_ids, scope_market_ids=scope,
     )
 
 
@@ -92,14 +105,16 @@ def test_invalid_ttl_selects_nothing():
     order = _order()
     for bad in (0.0, -1.0, float("nan"), float("inf"), None, "x"):
         assert select_expired_unmatched(
-            current_orders=[order], now_epoch=2000.0, ttl_seconds=bad) == []
+            current_orders=[order], now_epoch=2000.0, ttl_seconds=bad,
+            direct_bet_ids={"1"}) == []
 
 
 def test_invalid_now_selects_nothing():
     order = _order()
     for bad in (float("nan"), None, "x"):
         assert select_expired_unmatched(
-            current_orders=[order], now_epoch=bad, ttl_seconds=300.0) == []
+            current_orders=[order], now_epoch=bad, ttl_seconds=300.0,
+            direct_bet_ids={"1"}) == []
 
 
 # =========================================================
@@ -137,3 +152,58 @@ def test_snake_case_field_aliases():
     row = {"bet_id": "B", "market_id": "1.3", "sizeMatched": 0.0,
            "sizeRemaining": 2.0, "placed_epoch": 1000.0}
     assert _select([row]) == [{"market_id": "1.3", "bet_id": "B"}]
+
+
+# =========================================================
+# Scope DIRECT obbligatorio (Greptile P1)
+# =========================================================
+def test_only_direct_bet_ids_are_candidates():
+    # Lista mista: solo i bet_id in direct_bet_ids vengono cancellati.
+    orders = [_order(bet_id="DIRECT1", market_id="1.1"),
+              _order(bet_id="CASHOUT9", market_id="1.1")]
+    r = _select(orders, direct={"DIRECT1"})
+    assert r == [{"market_id": "1.1", "bet_id": "DIRECT1"}]
+
+
+def test_empty_or_missing_direct_allowlist_selects_nothing():
+    orders = [_order(bet_id="X")]
+    assert _select(orders, direct=set()) == []
+    assert _select(orders, direct=None) == []
+
+
+# =========================================================
+# Fail-closed numerico (Codex P2)
+# =========================================================
+def test_bool_ttl_rejected():
+    # ttl_seconds=True non deve diventare 1.0.
+    assert _select([_order()], ttl=True) == []
+
+
+def test_non_finite_remaining_not_selected():
+    for bad in (float("nan"), float("inf")):
+        assert _select([_order(remaining=bad)]) == []
+
+
+def test_non_finite_matched_not_selected():
+    assert _select([_order(matched=float("nan"), remaining=5.0)]) == []
+
+
+def test_oversized_int_does_not_raise():
+    # int gigante (OverflowError in float()) => skip, no raise.
+    huge = 10 ** 400
+    assert _select([_order(remaining=huge)]) == []
+    assert _select([_order()], ttl=huge) == []  # ttl overflow => vuoto, no raise
+
+
+# =========================================================
+# placed_epoch malformato => fallback a placedDate (Greptile P2)
+# =========================================================
+def test_invalid_placed_epoch_falls_back_to_placed_date():
+    import datetime as _dt
+    placed = _dt.datetime(2026, 6, 27, tzinfo=_dt.timezone.utc)
+    row = {"betId": "B", "marketId": "1.1", "sizeMatched": 0.0,
+           "sizeRemaining": 1.0,
+           "placed_epoch": float("nan"),            # malformato
+           "placedDate": "2026-06-27T00:00:00Z"}    # valido => usato
+    assert _select([row], now=placed.timestamp() + 1000, ttl=300.0) == [
+        {"market_id": "1.1", "bet_id": "B"}]
