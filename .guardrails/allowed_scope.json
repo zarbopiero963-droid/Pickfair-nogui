@@ -348,6 +348,16 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 6
+    },
+    "best_price_direct_b6_2": {
+      "allow_tests": true,
+      "files": [
+        "core/runtime_controller.py",
+        "tests/unit/test_runtime_controller_best_price_direct.py",
+        "ops/roadmap_go_live.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
     }
   }
 }

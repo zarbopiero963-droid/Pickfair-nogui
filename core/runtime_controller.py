@@ -20,6 +20,7 @@ from core.trading_constants import CASHOUT_FAILED, REQ_EXECUTE_CASHOUT
 from core.type_helpers import safe_bool
 from cashout_cancel_adapter import CashoutCancelAdapter
 from cashout_router import CashoutRouter
+from direct_best_price import resolve_direct_best_price
 from order_manager import TERMINAL_LIFECYCLE_EVENTS
 from services.streaming_feed import StreamingConfigError, StreamingFeed
 from trading_config import STRICT_LIVE_KEY_SOURCE_REQUIRED, enforce_betfair_italy_commission_pct
@@ -1965,7 +1966,50 @@ class RuntimeController:
                 },
             },
         )
+        # B6.2 — best price DIRECT dietro flag globale default-OFF. Seam: DOPO
+        # il recheck daily-loss e tutti i gate d'ingresso, PRIMA del place. Con
+        # flag assente/False e' un no-op totale (nessun fetch, nessuna mutazione
+        # del payload) => comportamento byte-identico a oggi.
+        self._apply_direct_best_price(payload)
         self.bus.publish("CMD_QUICK_BET", payload)
+
+    def _apply_direct_best_price(self, payload: dict) -> None:
+        """Sovrascrive ``payload['price']`` col best price DIRECT difensivo (B6.2).
+
+        Dormiente di default: gira solo se ``config.use_best_price_direct`` e'
+        esplicitamente truthy (letto via ``getattr``, niente edit della config
+        class). Fail-closed: su flag OFF, book assente, mercato non-OPEN, runner
+        non attivo, lato senza liquidita', prezzo invalido o deviazione oltre
+        tolleranza, l'estrattore puro ritorna il master price => il payload resta
+        sul prezzo master. Qualunque errore di fetch/override e' catturato e
+        lascia il master price invariato (mai un crash sul percorso d'ordine).
+        """
+        if not getattr(self.config, "use_best_price_direct", False):
+            return
+        try:
+            market_id = str(payload.get("market_id") or "").strip()
+            book = None
+            if market_id and self.betfair_service is not None:
+                book = self.betfair_service.get_market_book_snapshot(market_id)
+            tolerance = getattr(self.config, "best_price_max_deviation_pct", 2.0)
+            result = resolve_direct_best_price(
+                market_book=book,
+                selection_id=payload.get("selection_id"),
+                side=payload.get("bet_type"),
+                master_price=payload.get("price"),
+                max_deviation_pct=tolerance,
+            )
+            payload["price"] = result["price"]
+            payload["best_price_source"] = result["source"]
+            payload["best_price_reason"] = result["reason"]
+            logger.info(
+                "best_price_direct: source=%s reason=%s price=%s market_id=%s selection_id=%s",
+                result["source"], result["reason"], result["price"],
+                market_id, payload.get("selection_id"),
+            )
+        except Exception:
+            # Fail-closed: lascia il master price gia' presente nel payload.
+            logger.exception("best_price_direct: override fallito, mantengo master price")
 
     # =========================================================
     # BET LIFECYCLE
