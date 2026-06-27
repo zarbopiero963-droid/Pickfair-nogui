@@ -338,6 +338,16 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 3
+    },
+    "direct_best_price_b6_1": {
+      "allow_tests": true,
+      "files": [
+        "direct_best_price.py",
+        "tests/unit/test_direct_best_price.py",
+        "ops/roadmap_go_live.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
     }
   }
 }
