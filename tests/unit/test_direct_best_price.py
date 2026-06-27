@@ -1,19 +1,34 @@
 """Unit test per direct_best_price.resolve_direct_best_price (Fase 2.2 / B6.1)."""
 
+import pytest
+
 from direct_best_price import (
     SOURCE_FALLBACK_MASTER,
     SOURCE_LIVE_BOOK,
     resolve_direct_best_price,
 )
 
+# Il job CI "unit" gira `-m unit`: senza marker questi test verrebbero deselezionati.
+pytestmark = pytest.mark.unit
+
+
+def _with_size(levels):
+    """Inietta una size eseguibile di default sui livelli che non la specificano."""
+    out = []
+    for lv in levels or []:
+        lv = dict(lv)
+        lv.setdefault("size", 100.0)
+        out.append(lv)
+    return out
+
 
 def _book(*, status="OPEN", selection_id=55, runner_status="ACTIVE",
           backs=None, lays=None):
     ex = {}
     if backs is not None:
-        ex["availableToBack"] = backs
+        ex["availableToBack"] = _with_size(backs)
     if lays is not None:
-        ex["availableToLay"] = lays
+        ex["availableToLay"] = _with_size(lays)
     return {
         "status": status,
         "runners": [
@@ -106,6 +121,32 @@ def test_market_suspended_falls_back():
     assert r["price"] == 2.50
 
 
+def test_nested_market_definition_suspended_falls_back():
+    # Formato streaming: lo status sospeso vive sotto marketDefinition, niente top-level.
+    book = {
+        "marketDefinition": {"status": "SUSPENDED"},
+        "runners": [{"selectionId": 55, "status": "ACTIVE",
+                     "ex": {"availableToBack": [{"price": 2.52}]}}],
+    }
+    r = _resolve(book, side="BACK")
+    assert r["reason"] == "market_not_open"
+    assert r["price"] == 2.50
+
+
+def test_malformed_schema_falls_back_not_raises():
+    # Tipi inattesi (runners non-lista, ex non-dict, ladder feed-internal [[p,s]])
+    # NON devono sollevare: fail-closed al master.
+    for book in (
+        {"status": "OPEN", "runners": 5},
+        {"status": "OPEN", "runners": [{"selectionId": 55, "status": "ACTIVE", "ex": [1, 2]}]},
+        {"status": "OPEN", "runners": [{"selectionId": 55, "status": "ACTIVE",
+                                        "ex": {"availableToBack": [[2.5, 100]]}}]},
+    ):
+        r = _resolve(book, side="BACK")
+        assert r["source"] == SOURCE_FALLBACK_MASTER
+        assert r["price"] == 2.50
+
+
 def test_runner_missing_falls_back():
     book = _book(selection_id=999, backs=[{"price": 2.52}])
     r = _resolve(book, side="BACK", sel=55)          # cerco 55, c'è 999
@@ -125,6 +166,45 @@ def test_invalid_book_price_falls_back():
     r = _resolve(book, side="BACK")
     assert r["reason"] == "invalid_book_price"
     assert r["price"] == 2.50
+
+
+def test_zero_size_level_is_no_liquidity():
+    # Livello presente ma con size 0 = nessuna liquidità eseguibile => fallback.
+    book = {
+        "status": "OPEN",
+        "runners": [{"selectionId": 55, "status": "ACTIVE",
+                     "ex": {"availableToBack": [{"price": 2.52, "size": 0}]}}],
+    }
+    r = _resolve(book, side="BACK")
+    assert r["reason"] == "no_side_liquidity"
+    assert r["price"] == 2.50
+
+
+def test_non_finite_book_price_falls_back():
+    book = _book(backs=[{"price": float("nan")}])
+    r = _resolve(book, side="BACK")
+    assert r["source"] == SOURCE_FALLBACK_MASTER
+    assert r["price"] == 2.50
+    assert r["reason"] == "invalid_book_price"
+
+
+def test_missing_status_is_fail_closed():
+    # Nessuno status (né top-level né marketDefinition) => non confermabile OPEN.
+    book = {"runners": [{"selectionId": 55, "status": "ACTIVE",
+                         "ex": {"availableToBack": [{"price": 2.52, "size": 10}]}}]}
+    r = _resolve(book, side="BACK")
+    assert r["reason"] == "market_not_open"
+    assert r["price"] == 2.50
+
+
+def test_invalid_tolerance_falls_back():
+    book = _book(backs=[{"price": 2.52}])
+    for bad in (float("nan"), float("inf"), -1.0):
+        r = resolve_direct_best_price(market_book=book, selection_id=55,
+                                      side="BACK", master_price=2.50,
+                                      max_deviation_pct=bad)
+        assert r["reason"] == "invalid_tolerance"
+        assert r["price"] == 2.50
 
 
 # =========================================================

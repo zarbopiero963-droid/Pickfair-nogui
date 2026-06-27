@@ -18,6 +18,7 @@ non abbinati (TTL/cancel) è B6.3.
 """
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, List, Optional
 
 #: ``price`` usato dal master (fallback) — il best price live non è applicato.
@@ -61,10 +62,13 @@ def resolve_direct_best_price(
             "deviation_pct": deviation,
         }
 
-    if master <= 1.0:
+    if not math.isfinite(master) or master <= 1.0:
         return fallback("invalid_master_price")
     if side_u not in ("BACK", "LAY"):
         return fallback("invalid_side")
+    tol = _to_float(max_deviation_pct)
+    if not math.isfinite(tol) or tol < 0.0:
+        return fallback("invalid_tolerance")
 
     # Estrazione book→best del SOLO lato richiesto (difensiva, fail-closed).
     best, reason = _best_side_price(market_book, selection_id, side_u)
@@ -72,7 +76,7 @@ def resolve_direct_best_price(
         return fallback(reason)
 
     deviation_pct = abs(best - master) / master * 100.0
-    if deviation_pct > float(max_deviation_pct):
+    if deviation_pct > tol:
         return fallback("out_of_tolerance", best=best, deviation=deviation_pct)
 
     return {
@@ -90,30 +94,64 @@ def _best_side_price(market_book: Any, selection_id: Any, side_u: str):
 
     Ritorna ``(best_price, "ok")`` se ricavabile, altrimenti ``(None, reason)``.
     Difensivo: ``BACK`` → ``availableToBack``, ``LAY`` → ``availableToLay``;
-    mai cross-spread.
+    mai cross-spread. Qualunque schema malformato (tipi inattesi) ⇒
+    ``(None, "malformed_book")`` — fail-closed, mai un'eccezione propagata.
     """
+    try:
+        runner, reason = _active_runner(market_book, selection_id)
+        if runner is None:
+            return None, reason
+        return _best_level_price(runner, side_u)
+    except Exception:  # noqa: BLE001 - schema inatteso => fail-closed al master
+        return None, "malformed_book"
+
+
+def _active_runner(market_book: Any, selection_id: Any):
+    """Runner ATTIVO su un mercato esplicitamente OPEN, o ``(None, reason)``."""
     if not isinstance(market_book, dict) or not market_book:
         return None, "no_book"
-    status = str(market_book.get("status") or "").strip().upper()
-    if status and status != "OPEN":
-        return None, "market_not_open"   # SUSPENDED / CLOSED / INACTIVE
+    # Strict fail-closed: il mercato deve essere ESPLICITAMENTE OPEN (uno status
+    # assente non è confermabile → fallback). Status top-level o, nel formato
+    # streaming, sotto marketDefinition.
+    if _market_status(market_book) != "OPEN":
+        return None, "market_not_open"
     sid = _to_int(selection_id)
     if sid is None:
         return None, "invalid_selection_id"
-    runner = _find_runner(market_book.get("runners") or [], sid)
+    runners = market_book.get("runners")
+    runner = _find_runner(runners if isinstance(runners, list) else [], sid)
     if runner is None:
         return None, "runner_missing"
     runner_status = str(runner.get("status") or "").strip().upper()
     if runner_status and runner_status != "ACTIVE":
         return None, "runner_not_active"
-    ex = runner.get("ex") or {}
-    levels = ex.get("availableToBack") if side_u == "BACK" else ex.get("availableToLay")
-    levels = levels if isinstance(levels, list) else []
+    return runner, "ok"
+
+
+def _market_status(market_book: Dict[str, Any]) -> str:
+    status = str(market_book.get("status") or "").strip().upper()
+    if not status:
+        market_definition = market_book.get("marketDefinition")
+        if isinstance(market_definition, dict):
+            status = str(market_definition.get("status") or "").strip().upper()
+    return status
+
+
+def _best_level_price(runner: Dict[str, Any], side_u: str):
+    """Best price del SOLO lato richiesto: finito, > 1.0, con liquidità (size>0)."""
+    ex = runner.get("ex")
+    ex = ex if isinstance(ex, dict) else {}
+    raw_levels = ex.get("availableToBack") if side_u == "BACK" else ex.get("availableToLay")
+    levels = raw_levels if isinstance(raw_levels, list) else []
     if not levels:
         return None, "no_side_liquidity"
-    best = _to_float((levels[0] or {}).get("price"))
-    if best <= 1.0:
+    top = levels[0] if isinstance(levels[0], dict) else {}
+    best = _to_float(top.get("price"))
+    if not math.isfinite(best) or best <= 1.0:
         return None, "invalid_book_price"
+    size = _to_float(top.get("size"))
+    if not math.isfinite(size) or size <= 0.0:
+        return None, "no_side_liquidity"   # livello presente ma senza liquidità eseguibile
     return best, "ok"
 
 
