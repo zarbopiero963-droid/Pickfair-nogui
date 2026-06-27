@@ -61,16 +61,23 @@ class _Db:
 
 
 class _CancelClient:
+    """Mock broker che accetta ENTRAMBE le firme: LIVE (``bet_ids``) e SIM
+    (``instructions``), e ritorna una risposta normalizzabile dall'adapter."""
+
     def __init__(self, *, ok=True, raises=False):
         self.calls = []
         self._ok = ok
         self._raises = raises
 
-    def cancel_orders(self, *, market_id, bet_ids=None):
-        self.calls.append((market_id, tuple(bet_ids or ())))
+    def cancel_orders(self, *, market_id, bet_ids=None, instructions=None, customer_ref=""):
+        ids = ([str(b) for b in (bet_ids or [])]
+               or [str(i.get("betId")) for i in (instructions or [])])
+        self.calls.append((market_id, tuple(ids)))
         if self._raises:
             raise RuntimeError("cancel boom")
-        return {"ok": self._ok, "cancelled_count": len(bet_ids or ())}
+        status = "SUCCESS" if self._ok else "FAILURE"
+        return {"status": "SUCCESS",
+                "instructionReports": [{"status": status} for _ in ids]}
 
 
 class _Betfair:
@@ -184,6 +191,18 @@ def test_expired_direct_order_is_cancelled_and_cleaned():
 # =========================================================
 # SICUREZZA: mai cancellare ordini fuori da direct_bet_ids
 # =========================================================
+def test_live_mode_cancel_uses_adapter_and_confirms():
+    # LIVE: l'adapter usa la firma bet_ids; il mock conferma => CANCELLED.
+    cc = _CancelClient(ok=True)
+    rc = _make_rc(orders=[_order("B1", market_id="1.7")], cancel_client=cc)
+    rc.simulation_mode = False
+    _track(rc, "C1", "B1")
+    rc._poll_direct_unmatched_ttl()
+    assert cc.calls == [("1.7", ("B1",))]
+    assert _events(rc.bus, "DIRECT_UNMATCHED_CANCELLED")
+    assert rc.direct_unmatched_bet_ids == set()
+
+
 def test_never_cancels_orders_outside_registry():
     cc = _CancelClient()
     # B1 DIRECT (nel registry), CASHOUT9 non DIRECT (non nel registry): entrambi
@@ -250,13 +269,15 @@ def test_cancel_ok_false_notifies_failed_and_removes():
     assert rc.direct_unmatched_bet_ids == set()
 
 
-def test_no_cancel_client_notifies_and_removes():
+def test_no_cancel_client_skips_without_discard():
+    # Nessun client (transitorio): salta SENZA scartare => l'ordine resta
+    # candidato al prossimo giro (non e' un cancel fallito).
     rc = _make_rc(orders=[_order("B1")], cancel_client=None)
     _track(rc, "C1", "B1")
     rc._poll_direct_unmatched_ttl()
-    failed = _events(rc.bus, "DIRECT_UNMATCHED_CANCEL_FAILED")
-    assert failed and failed[0]["reason"] == "no_cancel_client"
-    assert rc.direct_unmatched_bet_ids == set()
+    assert rc.direct_unmatched_bet_ids == {"B1"}        # NON scartato
+    assert _events(rc.bus, "DIRECT_UNMATCHED_CANCELLED") == []
+    assert _events(rc.bus, "DIRECT_UNMATCHED_CANCEL_FAILED") == []
 
 
 # =========================================================

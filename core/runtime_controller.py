@@ -2233,12 +2233,18 @@ class RuntimeController:
         if not to_cancel:
             return
 
-        client = self._direct_ttl_cancel_client()
+        # Pre-check: nessun client cancel disponibile (transitorio) ⇒ salta SENZA
+        # scartare dal registry, così l'ordine resta candidato al prossimo giro
+        # (non è un cancel fallito, è impossibilità di tentare).
+        if self._direct_ttl_cancel_client() is None:
+            logger.warning("direct_ttl_poll: cancel client assente, ritento al prossimo giro")
+            return
+        adapter = self._direct_ttl_cancel_adapter()
         for item in to_cancel:
-            self._cancel_direct_unmatched(client, item)
+            self._cancel_direct_unmatched(adapter, item)
 
     def _direct_ttl_cancel_client(self):
-        """Broker per il cancel: simulation broker in SIM, live client in LIVE."""
+        """Il broker di cancel disponibile (sim/live), o ``None`` (pre-check)."""
         try:
             if self.simulation_mode:
                 return self.betfair_service.get_simulation_broker()
@@ -2247,31 +2253,42 @@ class RuntimeController:
             logger.warning("direct_ttl_poll: cancel client non disponibile: %s", exc)
             return None
 
-    def _cancel_direct_unmatched(self, client, item: dict) -> None:
-        """Un singolo cancel NO-RETRY + notifica esito + cleanup registry."""
+    def _direct_ttl_cancel_adapter(self) -> CashoutCancelAdapter:
+        """Adapter che normalizza firma+risposta del cancel tra LIVE e SIM.
+
+        Riusa `CashoutCancelAdapter` (B2.1): **LIVE** usa `bet_ids`, **SIM** usa
+        `instructions`; la risposta eterogenea dei broker è normalizzata a un
+        bool "confermato", fail-closed (False) su eccezioni/shape ambigue.
+        """
+        svc = self.betfair_service
+        return CashoutCancelAdapter(
+            is_simulation=lambda: bool(self.simulation_mode),
+            live_cancel=lambda **kw: (
+                c.cancel_orders(**kw) if (c := svc.get_live_client()) is not None else False),
+            sim_cancel=lambda **kw: (
+                b.cancel_orders(**kw) if (b := svc.get_simulation_broker()) is not None else False),
+        )
+
+    def _cancel_direct_unmatched(self, adapter: CashoutCancelAdapter, item: dict) -> None:
+        """Un singolo cancel NO-RETRY + notifica esito + cleanup registry.
+
+        L'adapter gestisce firma/risposta sim-vs-live ed è già fail-closed.
+        """
         market_id = str(item.get("market_id") or "").strip()
         bet_id = str(item.get("bet_id") or "").strip()
-        # NO RETRY: rimuovi dal registry PRIMA del tentativo — successo o
-        # fallimento, l'ordine non sarà ri-cancellato automaticamente.
+        # NO RETRY: fuori dal registry dopo UN tentativo (successo o fallimento).
         self._discard_direct_bet_id(bet_id)
-
-        if client is None:
-            self.bus.publish("DIRECT_UNMATCHED_CANCEL_FAILED", {
-                "market_id": market_id, "bet_id": bet_id, "reason": "no_cancel_client"})
-            logger.warning("direct_ttl_poll: nessun client, skip cancel bet_id=%s", bet_id)
-            return
         try:
-            resp = client.cancel_orders(market_id=market_id, bet_ids=[bet_id])
-            ok = bool(resp.get("ok")) if isinstance(resp, dict) else bool(resp)
-        except Exception as exc:
+            confirmed = bool(adapter.cancel(market_id, [bet_id]))
+        except Exception as exc:  # belt-and-suspenders: l'adapter è già fail-closed
             self.bus.publish("DIRECT_UNMATCHED_CANCEL_FAILED", {
                 "market_id": market_id, "bet_id": bet_id, "reason": str(exc)})
             logger.warning("direct_ttl_poll: cancel sollevato bet_id=%s: %s", bet_id, exc)
             return
-        event = "DIRECT_UNMATCHED_CANCELLED" if ok else "DIRECT_UNMATCHED_CANCEL_FAILED"
-        self.bus.publish(event, {
-            "market_id": market_id, "bet_id": bet_id, "ok": ok, "response": resp})
-        logger.info("direct_ttl_poll: cancel bet_id=%s market=%s ok=%s", bet_id, market_id, ok)
+        event = "DIRECT_UNMATCHED_CANCELLED" if confirmed else "DIRECT_UNMATCHED_CANCEL_FAILED"
+        self.bus.publish(event, {"market_id": market_id, "bet_id": bet_id, "ok": confirmed})
+        logger.info("direct_ttl_poll: cancel bet_id=%s market=%s ok=%s",
+                    bet_id, market_id, confirmed)
 
     def _discard_direct_bet_id(self, bet_id: str) -> None:
         """Rimuove dal registry tutte le voci con questo ``bet_id``."""
