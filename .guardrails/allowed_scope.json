@@ -423,6 +423,20 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 6
+    },
+    "custom_parser_core_p1": {
+      "allow_tests": true,
+      "files": [
+        "services/custom_parser/__init__.py",
+        "services/custom_parser/model.py",
+        "services/custom_parser/engine.py",
+        "services/custom_parser/transforms.py",
+        "services/custom_parser/value_maps.py",
+        "tests/unit/test_custom_parser.py",
+        "ops/roadmap_go_live.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 10
     }
   }
 }
