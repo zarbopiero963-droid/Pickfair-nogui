@@ -97,9 +97,15 @@ class RoserpinaMoneyManagement:
         *,
         bankroll_current: float,
         equity_peak: float,
+        daily_loss: float = 0.0,
     ) -> DeskMode:
         bankroll_current = self._safe_float(bankroll_current, 0.0)
         equity_peak = self._safe_float(equity_peak, 0.0)
+        daily_loss = self._safe_float(daily_loss, 0.0)
+
+        # Hard Kill Switch: Perdita Giornaliera Massima (#285, #284)
+        if self.config.max_daily_loss is not None and daily_loss >= self.config.max_daily_loss:
+            return DeskMode.LOCKDOWN
 
         if equity_peak <= 0.0:
             return DeskMode.NORMAL
@@ -116,11 +122,10 @@ class RoserpinaMoneyManagement:
 
         growth_pct = 0.0
         if bankroll_current > 0 and equity_peak > 0 and bankroll_current >= equity_peak:
-            base = max(bankroll_current, self._safe_float(self.config.min_stake, 0.10))
-            # espansione quando siamo sopra il bankroll iniziale/peak e non in drawdown
-            growth_pct = ((equity_peak - bankroll_current) / base) * -100.0 if bankroll_current > equity_peak else 0.0
+            # Fix bug EXPANSION (#320): calcolo corretto della crescita
+            growth_pct = ((bankroll_current - equity_peak) / equity_peak) * 100.0 if equity_peak > 0 else 0.0
 
-        if bankroll_current >= equity_peak and self._safe_float(self.config.expansion_profit_pct, 5.0) <= max(0.0, growth_pct):
+        if growth_pct >= self._safe_float(self.config.expansion_profit_pct, 5.0):
             return DeskMode.EXPANSION
 
         return DeskMode.NORMAL
@@ -263,9 +268,11 @@ class RoserpinaMoneyManagement:
                 metadata={"price": price},
             )
 
+        daily_loss = signal.get("daily_loss_snapshot", 0.0)
         desk_mode = self.determine_desk_mode(
             bankroll_current=bankroll_current,
             equity_peak=equity_peak,
+            daily_loss=daily_loss,
         )
 
         if desk_mode == DeskMode.LOCKDOWN:

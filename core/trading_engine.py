@@ -631,6 +631,15 @@ class TradingEngine:
     # PUBLIC ENTRYPOINTS
     # ==================================================================
     def submit_quick_bet(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        # Hard Block Kill Switch (#284)
+        if self.safe_mode and hasattr(self.safe_mode, "is_lockdown") and self.safe_mode.is_lockdown():
+            logger.warning("TRADING_ENGINE_HARD_BLOCK: System in LOCKDOWN mode. Rejecting order.")
+            return {
+                "status": STATUS_DENIED,
+                "outcome": LIFECYCLE_CONTRACT["FAILED"]["outcome"],
+                "reason": "system_lockdown",
+                "correlation_id": payload.get("correlation_id"),
+            }
         return self._submit_via_engine(payload)
 
     # ==================================================================

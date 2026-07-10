@@ -144,6 +144,33 @@ class TelegramSignalProcessor:
           "normalized_signal": dict,
         }
         """
+        # Integrazione Custom Parser Engine (#290, #305)
+        raw_text = ""
+        if isinstance(signal, dict):
+            raw_text = signal.get("raw_text") or signal.get("message") or signal.get("text") or ""
+        elif isinstance(signal, str):
+            raw_text = signal
+            signal = {"text": raw_text}
+
+        if raw_text:
+            try:
+                from core.custom_parser_engine import CustomParserEngine
+                engine = CustomParserEngine()
+                parsed = engine.parse(raw_text)
+                if parsed and parsed.get("match"):
+                    # Arricchisce il segnale con i dati del parser custom
+                    signal.update(parsed)
+                    signal["event_name"] = parsed.get("match")
+                    signal["market_name"] = parsed.get("market")
+                    signal["selection"] = parsed.get("selection")
+                    signal["price"] = parsed.get("odds")
+                    signal["action"] = parsed.get("action", "BACK")
+            except ImportError:
+                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"CustomParserEngine error: {e}")
+
         if not isinstance(signal, dict):
             return {
                 "ok": False,
