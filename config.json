@@ -26,6 +26,6 @@
     "risk_profile": "BALANCED",
     "allow_recovery": true
   },
-  "active_parser": "P.Bet",
+  "active_parser": "x",
   "parser_by_chat": {}
 }
