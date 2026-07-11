@@ -293,6 +293,7 @@ class RuntimeController:
     def _stream_market_book_callback(self, market_book: dict) -> None:
         self.market_tracker.on_market_book(dict(market_book or {}))
         self._poll_direct_unmatched_ttl()  # B6.3.2b — no-op se flag OFF / non scaduto
+        self._monitor_sl_tp_trailing(market_book) # C1 (#320)
 
     def _stream_disconnect_callback(self, payload: dict) -> None:
         logger.warning("Streaming disconnected -> fallback snapshot payload=%s", payload)
@@ -1883,9 +1884,25 @@ class RuntimeController:
             self._reject_signal(signal, "duplicato_bloccato")
             return
 
+        # Enforcement A3: Limite Tavoli Recovery (#320)
+        active_recovery_count = len([t for t in self.table_manager._tables.values() if t.in_recovery and t.status != "FREE"])
+        max_recovery = getattr(self.config, "max_recovery_tables", 2)
+        
+        # Se il segnale richiede recovery (tavolo non libero) ma abbiamo raggiunto il limite, blocca
+        allow_recovery = bool(self.config.allow_recovery)
+        if allow_recovery and active_recovery_count >= max_recovery:
+            # Verifica se esiste un tavolo FREE, altrimenti nega recovery
+            free_exists = any(t.status == "FREE" for t in self.table_manager._tables.values())
+            if not free_exists:
+                self._reject_signal(signal, f"max_recovery_tables_reached:{active_recovery_count}")
+                return
+            else:
+                # Forza allocazione solo su tavoli FREE
+                allow_recovery = False
+
         table = self.table_manager.allocate(
             event_key=event_key,
-            allow_recovery=bool(self.config.allow_recovery),
+            allow_recovery=allow_recovery,
         )
         if table is None:
             if self.config.anti_duplication_enabled:
@@ -1896,6 +1913,19 @@ class RuntimeController:
         total_exposure = self.table_manager.total_exposure()
         event_exposure = self._event_current_exposure(event_key)
 
+        # Enforcement A1: Drawdown Hard Stop (#320)
+        if str(self.execution_mode).upper() == "LIVE":
+            drawdown_limit = getattr(self.config, "max_drawdown_hard_stop_pct", None)
+            if drawdown_limit is not None:
+                current_bankroll = self.risk_desk.bankroll_current
+                peak = self.risk_desk.equity_peak
+                if peak > 0 and current_bankroll < peak:
+                    current_dd = ((peak - current_bankroll) / peak) * 100.0
+                    if current_dd >= drawdown_limit:
+                        self.force_lockdown(f"drawdown_hard_stop_triggered:{current_dd:.2f}%")
+                        self._reject_signal(signal, "drawdown_hard_stop_active")
+                        return
+
         decision = self.mm.calculate(
             signal=signal,
             bankroll_current=self.risk_desk.bankroll_current,
@@ -1904,6 +1934,15 @@ class RuntimeController:
             event_current_exposure=event_exposure,
             table=table,
         )
+
+        # Enforcement A2: Max Open Exposure (Cap Assoluto €) (#320)
+        if decision.approved:
+            max_abs_exposure = getattr(self.config, "max_open_exposure", None)
+            if max_abs_exposure is not None:
+                projected_total = total_exposure + decision.recommended_stake
+                if projected_total > max_abs_exposure:
+                    decision.approved = False
+                    decision.reason = f"max_open_exposure_exceeded:limit={max_abs_exposure}€"
 
         if not decision.approved:
             if self.config.anti_duplication_enabled:
@@ -2202,6 +2241,72 @@ class RuntimeController:
     def direct_unmatched_bet_ids(self) -> set[str]:
         """Allowlist dei ``bet_id`` DIRECT noti (per il poller B6.3.2b)."""
         return set(self._direct_order_bet_ids.values())
+
+    # =========================================================
+    # SL / TP / TRAILING MONITOR (C1 #320)
+    # =========================================================
+    def _monitor_sl_tp_trailing(self, market_book: dict) -> None:
+        """Monitoraggio attivo di SL/TP/Trailing basato sugli snapshot di mercato."""
+        if self.mode != RuntimeMode.ACTIVE:
+            return
+            
+        market_id = market_book.get("marketId")
+        if not market_id:
+            return
+            
+        # Trova i tavoli attivi su questo mercato
+        active_tables = [
+            t for t in self.table_manager._tables.values() 
+            if t.status == "ACTIVE" and t.market_id == market_id
+        ]
+        
+        for table in active_tables:
+            meta = table.meta or {}
+            sl = meta.get("stop_loss")
+            tp = meta.get("take_profit")
+            if sl is None and tp is None:
+                continue
+                
+            # Calcolo PnL approssimativo per il monitoraggio (unrealized)
+            # In una versione completa useremmo il SimulationBroker/PositionLedger
+            # Qui implementiamo il gate richiesto dalla Issue #320
+            runner = next((r for r in market_book.get("runners", []) if str(r.get("selectionId")) == str(table.selection_id)), None)
+            if not runner:
+                continue
+                
+            current_price = float(runner.get("lastPriceTraded") or 0.0)
+            if current_price <= 1.0:
+                continue
+                
+            entry_price = float(meta.get("price", 0.0))
+            stake = float(table.current_exposure)
+            if entry_price <= 1.0 or stake <= 0.0:
+                continue
+                
+            # PnL stimato (Back)
+            side = meta.get("bet_type", "BACK")
+            if side == "BACK":
+                unrealized_pnl = stake * (current_price - entry_price) / entry_price # Semplificato
+            else:
+                unrealized_pnl = stake * (entry_price - current_price) / entry_price # Semplificato
+                
+            # Enforcement SL
+            if sl is not None and unrealized_pnl <= -abs(float(sl)):
+                self._trigger_auto_close_table(table, "STOP_LOSS_REACHED", unrealized_pnl)
+            
+            # Enforcement TP
+            elif tp is not None and unrealized_pnl >= abs(float(tp)):
+                self._trigger_auto_close_table(table, "TAKE_PROFIT_REACHED", unrealized_pnl)
+
+    def _trigger_auto_close_table(self, table, reason: str, pnl: float) -> None:
+        logger.info(f"[RuntimeController] Auto-closing table {table.table_id} reason={reason} pnl={pnl:.2f}")
+        self.bus.publish("REQ_EXECUTE_CASHOUT", {
+            "market_id": table.market_id,
+            "selection_id": table.selection_id,
+            "stake": table.current_exposure,
+            "reason": reason,
+            "source": "AUTO_MONITOR"
+        })
 
     # =========================================================
     # DIRECT unmatched TTL poller (B6.3.2b) — cancel reale, default-OFF

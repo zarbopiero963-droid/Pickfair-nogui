@@ -3,9 +3,10 @@ from __future__ import annotations
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, List, Sequence
 
-from trading_config import enforce_betfair_italy_commission_pct
+from trading_config import enforce_betfair_italy_commission_pct, MIN_STAKE
 
 TWOPLACES = Decimal("0.01")
+MIN_STAKE_D = Decimal(str(MIN_STAKE))
 EPS = Decimal("0.0000001")
 _NON_AUTHORITATIVE_SETTLEMENT_KEYS = ("settlement_source", "settlement_kind", "settlement_basis")
 
@@ -190,7 +191,7 @@ def _initial_dutching_stakes(
     inv_sum: Decimal,
 ) -> List[Decimal]:
     stakes = [
-        _round_step(total_stake_d * ((Decimal("1") / odd) / inv_sum))
+        max(MIN_STAKE_D, _round_step(total_stake_d * ((Decimal("1") / odd) / inv_sum)))
         for odd in odds_d
     ]
 

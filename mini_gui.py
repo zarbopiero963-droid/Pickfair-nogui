@@ -71,6 +71,13 @@ except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
         BooleanVar=_DummyVar,
         IntVar=_DummyVar,
         END="end",
+        BOTH="both",
+        X="x",
+        Y="y",
+        LEFT="left",
+        RIGHT="right",
+        TOP="top",
+        BOTTOM="bottom",
     )
     ttk = types.SimpleNamespace(Combobox=_DummyWidget)
 
@@ -317,6 +324,9 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._runtime_commands_inflight: set[str] = set()
         self._runtime_command_rejected_total = 0
 
+        self._refresh_coordinators = {}
+        self._wire_refresh_coordinators()
+
         if not self._test_mode:
             self._start_polling()
 
@@ -449,29 +459,18 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                     pass
 
     def _apply_simulation_mode_to_runtime(self):
-        self.simulation_mode = bool(self.simulation_mode_var.get())
-
-        if hasattr(self.betfair_service, "set_simulation_mode"):
-            try:
-                self.betfair_service.set_simulation_mode(self.simulation_mode)
-            except Exception:
-                pass
-
         if hasattr(self.runtime, "set_simulation_mode"):
-            try:
-                self.runtime.set_simulation_mode(self.simulation_mode)
-            except Exception:
-                pass
+            self.runtime.set_simulation_mode(bool(self.simulation_mode_var.get()))
 
     # =========================================================
-    # VARS
+    # VARIABLES
     # =========================================================
-    def _make_string_var(self, value: str = ""):
+    def _make_string_var(self, value=""):
         if self._test_mode:
             return _HeadlessStringVar(value)
         return tk.StringVar(value=value)
 
-    def _make_bool_var(self, value: bool = False):
+    def _make_bool_var(self, value=False):
         if self._test_mode:
             return _HeadlessBoolVar(value)
         return tk.BooleanVar(value=value)
@@ -483,18 +482,18 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.bf_cert_var = self._make_string_var()
         self.bf_key_var = self._make_string_var()
 
-        self.rs_target_var = self._make_string_var("3.0")
-        self.rs_max_single_var = self._make_string_var("18.0")
-        self.rs_max_total_var = self._make_string_var("35.0")
-        self.rs_max_event_var = self._make_string_var("18.0")
-        self.rs_auto_reset_var = self._make_string_var("15.0")
-        self.rs_defense_var = self._make_string_var("7.5")
-        self.rs_lockdown_var = self._make_string_var("20.0")
-        self.rs_expansion_profit_var = self._make_string_var("5.0")
-        self.rs_expansion_mult_var = self._make_string_var("1.10")
-        self.rs_defense_mult_var = self._make_string_var("0.80")
-        self.rs_table_count_var = self._make_string_var("5")
-        self.rs_recovery_tables_var = self._make_string_var("2")
+        self.rs_target_var = self._make_string_var("5.0")
+        self.rs_max_single_var = self._make_string_var("1.0")
+        self.rs_max_total_var = self._make_string_var("10.0")
+        self.rs_max_event_var = self._make_string_var("2.5")
+        self.rs_auto_reset_var = self._make_string_var("5.0")
+        self.rs_defense_var = self._make_string_var("15.0")
+        self.rs_lockdown_var = self._make_string_var("25.0")
+        self.rs_expansion_profit_var = self._make_string_var("10.0")
+        self.rs_expansion_mult_var = self._make_string_var("1.2")
+        self.rs_defense_mult_var = self._make_string_var("0.8")
+        self.rs_table_count_var = self._make_string_var("4")
+        self.rs_recovery_tables_var = self._make_string_var("1")
         self.rs_commission_var = self._make_string_var("4.5")
         self.rs_min_stake_var = self._make_string_var("0.10")
         self.rs_max_abs_var = self._make_string_var("10000.0")
@@ -535,7 +534,9 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self.tab_dashboard = object()
             self.tab_settings = object()
             self.tab_telegram = object()
+            self.tab_bet_history = object()
             self.tab_roserpina = object()
+            self.tab_risk_history = object()
             self.tab_risk = object()
             self.tab_log = object()
 
@@ -543,8 +544,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self._build_dashboard_tab()
             self._build_settings_tab()
             self._build_telegram_tab()
+            self._build_bet_history_tab()
             self._build_roserpina_tab()
             self._build_risk_tab()
+            self._build_risk_desk_history_tab()
             self._build_log_tab()
             return
 
@@ -559,15 +562,19 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.tab_dashboard = self.tabs.add("Dashboard")
         self.tab_settings = self.tabs.add("Impostazioni")
         self.tab_telegram = self.tabs.add("Telegram")
+        self.tab_bet_history = self.tabs.add("Storico Bet")
         self.tab_roserpina = self.tabs.add("Roserpina")
+        self.tab_risk_history = self.tabs.add("Storico Risk Desk")
         self.tab_risk = self.tabs.add("Risk Desk")
         self.tab_log = self.tabs.add("Log")
 
         self._build_dashboard_tab()
         self._build_settings_tab()
         self._build_telegram_tab()
+        self._build_bet_history_tab()
         self._build_roserpina_tab()
         self._build_risk_tab()
+        self._build_risk_desk_history_tab()
         self._build_log_tab()
 
     def _build_topbar(self):
@@ -642,181 +649,149 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
         self.live_gate_switch = ctk.CTkSwitch(
             control,
-            text="Live Gate",
+            text="LIVE Gate",
             variable=self.live_enabled_var,
-            onvalue=True,
-            offvalue=False,
             command=self._on_live_gate_toggled,
         )
         self.live_gate_switch.grid(row=0, column=4, sticky="w", padx=(0, 12))
 
-        self.kill_switch_toggle = ctk.CTkSwitch(
+        self.kill_switch_switch = ctk.CTkSwitch(
             control,
-            text="Kill Switch",
+            text="KILL Switch",
             variable=self.kill_switch_var,
-            onvalue=True,
-            offvalue=False,
             command=self._on_kill_switch_toggled,
+            progress_color="#d9534f",
         )
-        self.kill_switch_toggle.grid(row=0, column=5, sticky="w", padx=(0, 12))
+        self.kill_switch_switch.grid(row=0, column=5, sticky="w", padx=(0, 12))
+
+        self.btn_apply_control_plane = ctk.CTkButton(
+            control,
+            text="Applica Cambiamenti",
+            command=self._apply_execution_control_changes,
+            width=160,
+        )
+        self.btn_apply_control_plane.grid(row=0, column=6, sticky="w", padx=(0, 12))
 
         self.btn_refresh_control_plane = ctk.CTkButton(
             control,
-            text="Refresh Status",
+            text="Refresh",
             command=self._refresh_runtime_status,
-            width=110,
+            width=80,
         )
-        self.btn_refresh_control_plane.grid(row=0, column=6, sticky="w", padx=(0, 8))
-        self.btn_apply_control_plane = ctk.CTkButton(
-            control,
-            text="Apply",
-            command=self._apply_execution_control_changes,
-            width=90,
-        )
-        self.btn_apply_control_plane.grid(row=0, column=7, sticky="w")
-
-        ctk.CTkLabel(
-            control,
-            text="Readiness:",
-            font=("Segoe UI", 12, "bold"),
-        ).grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(6, 0))
-        self.live_readiness_label = ctk.CTkLabel(
-            control,
-            textvariable=self.live_readiness_level_var,
-            font=("Segoe UI", 12, "bold"),
-        )
-        self.live_readiness_label.grid(row=1, column=1, sticky="w", pady=(6, 0))
-
-        ctk.CTkLabel(
-            control,
-            text="Effective:",
-            font=("Segoe UI", 12, "bold"),
-        ).grid(row=1, column=2, sticky="w", padx=(0, 6), pady=(6, 0))
-        self.live_effective_status_label = ctk.CTkLabel(
-            control,
-            textvariable=self.live_effective_status_var,
-            font=("Segoe UI", 12, "bold"),
-        )
-        self.live_effective_status_label.grid(row=1, column=3, sticky="w", pady=(6, 0))
-
-        self.live_control_state_label = ctk.CTkLabel(
-            control,
-            textvariable=self.live_control_state_var,
-            font=("Segoe UI", 11),
-        )
-        self.live_control_state_label.grid(row=1, column=4, columnspan=4, sticky="w", pady=(6, 0))
-
-        self.live_readiness_blockers_label = ctk.CTkLabel(
-            control,
-            textvariable=self.live_readiness_blockers_var,
-            anchor="w",
-            justify="left",
-            wraplength=880,
-        )
-        self.live_readiness_blockers_label.grid(row=2, column=0, columnspan=8, sticky="w", pady=(6, 0))
-
-        self.live_last_decision_label = ctk.CTkLabel(
-            control,
-            textvariable=self.live_last_decision_var,
-            font=("Segoe UI", 11, "bold"),
-        )
-        self.live_last_decision_label.grid(row=3, column=0, sticky="w", pady=(6, 0))
-        self.live_last_reason_label = ctk.CTkLabel(
-            control,
-            textvariable=self.live_last_reason_var,
-            font=("Segoe UI", 11),
-        )
-        self.live_last_reason_label.grid(row=3, column=1, columnspan=7, sticky="w", pady=(6, 0))
+        self.btn_refresh_control_plane.grid(row=0, column=8, sticky="e")
 
     def _build_dashboard_tab(self):
         if self._test_mode:
             self.btn_start = _DummyButton(self._runtime_start)
+            self.btn_stop = _DummyButton(self._runtime_stop)
             self.btn_pause = _DummyButton(self._runtime_pause)
             self.btn_resume = _DummyButton(self._runtime_resume)
-            self.btn_stop = _DummyButton(self._runtime_stop)
             self.btn_reset = _DummyButton(self._runtime_reset)
-            self.btn_refresh = _DummyButton(self._refresh_runtime_status)
-            self.btn_emergency_stop = _DummyButton(self._runtime_emergency_stop)
+            self.btn_emergency = _DummyButton(self._runtime_emergency_stop)
             return
 
         frame = self.tab_dashboard
-        try:
-            frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
-        except Exception:
-            pass
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_columnconfigure(1, weight=1)
 
-        cards = [
-            ("Runtime", self.status_mode_var),
-            ("Broker", self.status_broker_var),
-            ("Betfair", self.status_betfair_var),
-            ("Telegram", self.status_telegram_var),
-            ("Bankroll", self.status_bankroll_var),
-            ("Drawdown %", self.status_drawdown_var),
-            ("Exposure", self.status_exposure_var),
-            ("Tavoli Attivi", self.status_tables_var),
-            ("Ultimo Segnale", self.status_last_signal_var),
+        left = ctk.CTkFrame(frame)
+        left.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+
+        ctk.CTkLabel(left, text="Runtime Controls", font=("Segoe UI", 16, "bold")).pack(pady=12)
+
+        self.btn_start = ctk.CTkButton(left, text="AVVIA BOT", command=self._runtime_start, height=40, fg_color="#2fa26b")
+        self.btn_start.pack(fill=tk.X, padx=20, pady=8)
+
+        self.btn_stop = ctk.CTkButton(left, text="STOP BOT", command=self._runtime_stop, height=40, fg_color="#d9534f")
+        self.btn_stop.pack(fill=tk.X, padx=20, pady=8)
+
+        self.btn_pause = ctk.CTkButton(left, text="PAUSA", command=self._runtime_pause, height=40)
+        self.btn_pause.pack(fill=tk.X, padx=20, pady=8)
+
+        self.btn_resume = ctk.CTkButton(left, text="RIPRENDI", command=self._runtime_resume, height=40)
+        self.btn_resume.pack(fill=tk.X, padx=20, pady=8)
+
+        self.btn_reset = ctk.CTkButton(left, text="RESET CICLO", command=self._runtime_reset, height=40)
+        self.btn_reset.pack(fill=tk.X, padx=20, pady=8)
+
+        self.btn_emergency = ctk.CTkButton(
+            left,
+            text="EMERGENCY STOP",
+            command=self._runtime_emergency_stop,
+            height=50,
+            fg_color="#000000",
+            hover_color="#333333",
+            text_color="#ff0000",
+            font=("Segoe UI", 14, "bold"),
+        )
+        self.btn_emergency.pack(fill=tk.X, padx=20, pady=(20, 8))
+
+        right = ctk.CTkFrame(frame)
+        right.grid(row=0, column=1, sticky="nsew", padx=12, pady=12)
+
+        ctk.CTkLabel(right, text="System Status", font=("Segoe UI", 16, "bold")).pack(pady=12)
+
+        status_grid = ctk.CTkFrame(right, fg_color="transparent")
+        status_grid.pack(fill=tk.BOTH, expand=True, padx=20)
+
+        labels = [
+            ("Status:", self.status_mode_var),
+            ("Broker:", self.status_broker_var),
+            ("Betfair:", self.status_betfair_var),
+            ("Telegram:", self.status_telegram_var),
+            ("Bankroll:", self.status_bankroll_var),
+            ("Drawdown:", self.status_drawdown_var),
+            ("Exposure:", self.status_exposure_var),
+            ("Active Tables:", self.status_tables_var),
+            ("Last Signal:", self.status_last_signal_var),
         ]
 
-        for idx, (label, var) in enumerate(cards):
-            r = idx // 4
-            c = idx % 4
-            card = ctk.CTkFrame(frame)
-            card.grid(row=r, column=c, sticky="nsew", padx=8, pady=8)
-            ctk.CTkLabel(card, text=label, font=("Segoe UI", 12)).pack(anchor="w", padx=12, pady=(10, 4))
-            ctk.CTkLabel(card, textvariable=var, font=("Segoe UI", 16, "bold")).pack(anchor="w", padx=12, pady=(0, 10))
+        for i, (txt, var) in enumerate(labels):
+            ctk.CTkLabel(status_grid, text=txt, anchor="w").grid(row=i, column=0, sticky="w", pady=4)
+            ctk.CTkLabel(status_grid, textvariable=var, font=("Segoe UI", 12, "bold"), anchor="e").grid(row=i, column=1, sticky="e", pady=4)
 
-        controls = ctk.CTkFrame(frame)
-        controls.grid(row=3, column=0, columnspan=4, sticky="ew", padx=8, pady=8)
+        cp = ctk.CTkFrame(right, fg_color="transparent", border_width=1, border_color="#555")
+        cp.pack(fill=tk.X, padx=20, pady=12)
+        ctk.CTkLabel(cp, text="Live Control Plane", font=("Segoe UI", 12, "bold")).pack(pady=4)
 
-        self.btn_start = ctk.CTkButton(controls, text="Avvia", command=self._runtime_start)
-        self.btn_pause = ctk.CTkButton(controls, text="Pausa", command=self._runtime_pause)
-        self.btn_resume = ctk.CTkButton(controls, text="Resume", command=self._runtime_resume)
-        self.btn_stop = ctk.CTkButton(controls, text="Stop", command=self._runtime_stop)
-        self.btn_reset = ctk.CTkButton(controls, text="Reset Ciclo", command=self._runtime_reset)
-        self.btn_refresh = ctk.CTkButton(controls, text="Refresh", command=self._refresh_runtime_status)
-        self.btn_emergency_stop = ctk.CTkButton(
-            controls, text="EMERGENCY STOP",
-            command=self._runtime_emergency_stop,
-            fg_color="#c0392b", hover_color="#96281b",
-        )
+        self.live_readiness_label = ctk.CTkLabel(cp, textvariable=self.live_readiness_level_var, font=("Segoe UI", 14, "bold"))
+        self.live_readiness_label.pack()
+        ctk.CTkLabel(cp, textvariable=self.live_readiness_blockers_var, wraplength=300).pack(pady=2)
 
-        for btn in [self.btn_start, self.btn_pause, self.btn_resume, self.btn_stop, self.btn_reset, self.btn_refresh]:
-            btn.pack(side=tk.LEFT, padx=6, pady=10)
-        self.btn_emergency_stop.pack(side=tk.RIGHT, padx=6, pady=10)
+        self.live_effective_status_label = ctk.CTkLabel(cp, textvariable=self.live_effective_status_var, font=("Segoe UI", 16, "bold"))
+        self.live_effective_status_label.pack(pady=6)
 
-        err = ctk.CTkFrame(frame)
-        err.grid(row=4, column=0, columnspan=4, sticky="ew", padx=8, pady=8)
-        ctk.CTkLabel(err, text="Ultimo Errore", font=("Segoe UI", 12)).pack(anchor="w", padx=12, pady=(10, 4))
-        ctk.CTkLabel(err, textvariable=self.status_last_error_var, wraplength=1200).pack(anchor="w", padx=12, pady=(0, 10))
+        ctk.CTkLabel(cp, textvariable=self.live_control_state_var).pack()
+        ctk.CTkLabel(cp, textvariable=self.live_last_decision_var, font=("Segoe UI", 10)).pack()
+        ctk.CTkLabel(cp, textvariable=self.live_last_reason_var, font=("Segoe UI", 10)).pack()
+
+        err_frame = ctk.CTkFrame(right, fg_color="transparent")
+        err_frame.pack(fill=tk.X, padx=20, pady=(10, 0))
+        ctk.CTkLabel(err_frame, text="Last Error/Info:").pack(anchor="w")
+        ctk.CTkLabel(err_frame, textvariable=self.status_last_error_var, text_color="#d9534f", wraplength=350).pack(anchor="w")
 
     def _build_settings_tab(self):
         if self._test_mode:
-            self.btn_save_betfair = _DummyButton(self._save_betfair_settings)
+            self.btn_save_bf = _DummyButton(self._save_betfair_settings)
             return
 
         frame = self.tab_settings
-        box = ctk.CTkFrame(frame)
-        box.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+        scroll = ctk.CTkScrollableFrame(frame)
+        scroll.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
 
-        self._labeled_entry(box, "Username Betfair", self.bf_username_var)
-        self._labeled_entry(box, "Password Betfair", self.bf_password_var, show="*")
-        self._labeled_entry(box, "App Key", self.bf_app_key_var)
-        self._labeled_entry(box, "Certificato", self.bf_cert_var, width=700)
-        self._labeled_entry(box, "Private Key", self.bf_key_var, width=700)
+        ctk.CTkLabel(scroll, text="Betfair Credentials", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=12, pady=8)
 
-        btns = ctk.CTkFrame(box, fg_color="transparent")
-        btns.pack(fill=tk.X, padx=12, pady=12)
-        self.btn_save_betfair = ctk.CTkButton(
-            btns,
-            text="Salva Impostazioni Betfair",
-            command=self._save_betfair_settings,
-        )
-        self.btn_save_betfair.pack(side=tk.LEFT, padx=6)
+        self._labeled_entry(scroll, "Username", self.bf_username_var)
+        self._labeled_entry(scroll, "Password", self.bf_password_var, show="*")
+        self._labeled_entry(scroll, "App Key", self.bf_app_key_var)
+        self._labeled_entry(scroll, "Certificate Path", self.bf_cert_var)
+        self._labeled_entry(scroll, "Key Path", self.bf_key_var)
+
+        self.btn_save_bf = ctk.CTkButton(scroll, text="Salva Betfair", command=self._save_betfair_settings)
+        self.btn_save_bf.pack(anchor="w", padx=12, pady=12)
 
     def _build_telegram_tab(self):
-        if self._test_mode:
-            return
-        TelegramTabUI(self.tab_telegram, self)
+        self.telegram_ui = TelegramTabUI(self.tab_telegram, self)
 
     def _build_roserpina_tab(self):
         if self._test_mode:
@@ -827,17 +802,19 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         outer = ctk.CTkScrollableFrame(frame)
         outer.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
 
-        self._labeled_entry(outer, "Target Profitto Ciclo %", self.rs_target_var)
-        self._labeled_entry(outer, "Max Stake Singola %", self.rs_max_single_var)
-        self._labeled_entry(outer, "Max Capitale Esposto %", self.rs_max_total_var)
-        self._labeled_entry(outer, "Max Esposizione Evento %", self.rs_max_event_var)
+        ctk.CTkLabel(outer, text="Roserpina Cycle Configuration", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=12, pady=8)
+
+        self._labeled_entry(outer, "Target Profit Cycle %", self.rs_target_var)
+        self._labeled_entry(outer, "Max Single Bet %", self.rs_max_single_var)
+        self._labeled_entry(outer, "Max Total Exposure %", self.rs_max_total_var)
+        self._labeled_entry(outer, "Max Event Exposure %", self.rs_max_event_var)
         self._labeled_entry(outer, "Auto Reset Drawdown %", self.rs_auto_reset_var)
         self._labeled_entry(outer, "Defense Drawdown %", self.rs_defense_var)
         self._labeled_entry(outer, "Lockdown Drawdown %", self.rs_lockdown_var)
         self._labeled_entry(outer, "Expansion Profit %", self.rs_expansion_profit_var)
         self._labeled_entry(outer, "Expansion Multiplier", self.rs_expansion_mult_var)
         self._labeled_entry(outer, "Defense Multiplier", self.rs_defense_mult_var)
-        self._labeled_entry(outer, "Numero Tavoli", self.rs_table_count_var)
+        self._labeled_entry(outer, "Table Count", self.rs_table_count_var)
         self._labeled_entry(outer, "Max Recovery Tables", self.rs_recovery_tables_var)
         self._labeled_entry(outer, "Commission %", self.rs_commission_var)
         self._labeled_entry(outer, "Min Stake", self.rs_min_stake_var)
@@ -901,10 +878,96 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         btns.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 12))
         self.btn_refresh_risk = ctk.CTkButton(
             btns,
-            text="Refresh Risk Desk",
-            command=self._refresh_runtime_status,
+            text="Forza refresh Risk Desk",
+            command=lambda: self._on_refresh_event("risk_desk", {}),
         )
         self.btn_refresh_risk.pack(side=tk.LEFT, padx=6)
+
+    def _build_bet_history_tab(self):
+        if self._test_mode:
+            self.bet_history_tree = _DummyTree()
+            self.btn_refresh_bet_history = _DummyButton(self._refresh_bet_history_data)
+            return
+
+        frame = self.tab_bet_history
+        try:
+            frame.grid_rowconfigure(0, weight=1)
+            frame.grid_columnconfigure(0, weight=1)
+        except Exception:
+            pass
+
+        self.bet_history_tree = ttk.Treeview(
+            frame,
+            columns=("id", "event", "market", "selection", "stake", "price", "status", "outcome", "profit", "timestamp"),
+            show="headings",
+            height=18,
+        )
+        for col, text, width in [
+            ("id", "ID Bet", 100),
+            ("event", "Evento", 200),
+            ("market", "Mercato", 150),
+            ("selection", "Selezione", 150),
+            ("stake", "Stake", 80),
+            ("price", "Quota", 80),
+            ("status", "Stato", 100),
+            ("outcome", "Esito", 100),
+            ("profit", "Profitto", 100),
+            ("timestamp", "Data/Ora", 150),
+        ]:
+            self.bet_history_tree.heading(col, text=text)
+            self.bet_history_tree.column(col, width=width, anchor="w")
+        self.bet_history_tree.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+
+        btns = ctk.CTkFrame(frame, fg_color="transparent")
+        btns.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 12))
+        self.btn_refresh_bet_history = ctk.CTkButton(
+            btns,
+            text="Forza refresh Storico Bet",
+            command=lambda: self._on_refresh_event("bet_history", {}),
+        )
+        self.btn_refresh_bet_history.pack(side=tk.LEFT, padx=6)
+
+    def _build_risk_desk_history_tab(self):
+        if self._test_mode:
+            self.risk_desk_history_tree = _DummyTree()
+            self.btn_refresh_risk_desk_history = _DummyButton(self._refresh_risk_desk_history_data)
+            return
+
+        frame = self.tab_risk_history
+        try:
+            frame.grid_rowconfigure(0, weight=1)
+            frame.grid_columnconfigure(0, weight=1)
+        except Exception:
+            pass
+
+        self.risk_desk_history_tree = ttk.Treeview(
+            frame,
+            columns=("id", "timestamp", "status", "loss", "exposure", "event", "market", "selection"),
+            show="headings",
+            height=18,
+        )
+        for col, text, width in [
+            ("id", "ID", 70),
+            ("timestamp", "Data/Ora", 150),
+            ("status", "Stato", 120),
+            ("loss", "Loss", 100),
+            ("exposure", "Exposure", 100),
+            ("event", "Evento", 200),
+            ("market", "Mercato", 150),
+            ("selection", "Selezione", 150),
+        ]:
+            self.risk_desk_history_tree.heading(col, text=text)
+            self.risk_desk_history_tree.column(col, width=width, anchor="w")
+        self.risk_desk_history_tree.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+
+        btns = ctk.CTkFrame(frame, fg_color="transparent")
+        btns.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 12))
+        self.btn_refresh_risk_desk_history = ctk.CTkButton(
+            btns,
+            text="Forza refresh Storico Risk Desk",
+            command=lambda: self._on_refresh_event("risk_desk_history", {}),
+        )
+        self.btn_refresh_risk_desk_history.pack(side=tk.LEFT, padx=6)
 
     def _build_log_tab(self):
         if self._test_mode:
@@ -1197,17 +1260,6 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._run_runtime_command_async("RESET", self.runtime.reset_cycle)
 
     def _runtime_emergency_stop(self):
-        """Operator-triggered emergency stop.
-
-        Calls runtime.emergency_stop() which:
-        1. Sets the emergency flag — all subsequent live order entry is refused.
-        2. Forces live_enabled=False and execution_mode=SIMULATION.
-        3. Attempts cancel-all unmatched orders on every open market.
-        4. Stays blocked until reset_emergency() is explicitly called.
-
-        Partial downstream cancel failures do NOT silently resume trading.
-        To resume after an emergency stop: call Reset Ciclo, then Avvia.
-        """
         self._run_runtime_command_async(
             "EMERGENCY STOP",
             lambda: self.runtime.emergency_stop(reason="operator_gui_button"),
@@ -1226,6 +1278,154 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.bus.subscribe("RUNTIME_RESUMED", lambda payload: self.uiq.post(self._refresh_runtime_status))
         self.bus.subscribe("RUNTIME_STOPPED", lambda payload: self.uiq.post(self._refresh_runtime_status))
         self.bus.subscribe("RUNTIME_LOCKDOWN", lambda payload: self.uiq.post(self._refresh_runtime_status))
+
+    def _wire_refresh_coordinators(self):
+        self._refresh_coordinators["risk_desk"] = {
+            "events": [
+                "QUICK_BET_ACCEPTED",
+                "QUICK_BET_FILLED",
+                "QUICK_BET_PARTIAL",
+                "QUICK_BET_SUCCESS",
+                "QUICK_BET_AMBIGUOUS",
+                "QUICK_BET_FAILED",
+                "RUNTIME_CLOSE_POSITION",
+            ],
+            "handler": self._refresh_risk_desk_data,
+            "inflight": False,
+            "pending": False,
+        }
+        self._refresh_coordinators["bet_history"] = {
+            "events": [
+                "QUICK_BET_ACCEPTED",
+                "QUICK_BET_FILLED",
+                "QUICK_BET_PARTIAL",
+                "QUICK_BET_SUCCESS",
+                "QUICK_BET_AMBIGUOUS",
+                "QUICK_BET_FAILED",
+                "RUNTIME_CLOSE_POSITION",
+            ],
+            "handler": self._refresh_bet_history_data,
+            "inflight": False,
+            "pending": False,
+        }
+        self._refresh_coordinators["risk_desk_history"] = {
+            "events": [
+                "RUNTIME_CLOSE_POSITION",
+                "RUNTIME_DAILY_LOSS_BREACH",
+            ],
+            "handler": self._refresh_risk_desk_history_data,
+            "inflight": False,
+            "pending": False,
+        }
+
+        for coordinator_name, coordinator_config in self._refresh_coordinators.items():
+            for event_name in coordinator_config["events"]:
+                self.bus.subscribe(event_name, lambda payload, cn=coordinator_name: self._on_refresh_event(cn, payload))
+
+    def _on_refresh_event(self, coordinator_name: str, payload: dict):
+        coordinator = self._refresh_coordinators.get(coordinator_name)
+        if not coordinator:
+            return
+
+        self.uiq.post(self._log, f"Refresh event for {coordinator_name} -> {payload}")
+
+        if coordinator["inflight"]:
+            coordinator["pending"] = True
+            return
+
+        submit_fn = getattr(getattr(self, "executor", None), "submit", None)
+        if not callable(submit_fn):
+            coordinator["handler"]()
+            return
+
+        coordinator["inflight"] = True
+        coordinator["pending"] = False
+
+        try:
+            future = submit_fn(f"gui_refresh_{coordinator_name}", coordinator["handler"])
+        except Exception as exc:
+            coordinator["inflight"] = False
+            self.uiq.post(self._log, f"Error submitting refresh for {coordinator_name}: {exc}")
+            return
+
+        if not hasattr(future, "add_done_callback"):
+            coordinator["inflight"] = False
+            coordinator["handler"]()
+            return
+
+        def _done(fut):
+            try:
+                fut.result()
+            except Exception as exc:
+                self.uiq.post(self._log, f"Error in refresh handler for {coordinator_name}: {exc}")
+
+            def _apply():
+                coordinator["inflight"] = False
+                if coordinator["pending"]:
+                    self._on_refresh_event(coordinator_name, {})
+
+            self.uiq.post(_apply)
+
+        future.add_done_callback(_done)
+
+    def _refresh_risk_desk_data(self):
+        self.uiq.post(self._refresh_runtime_status)
+
+    def _refresh_bet_history_data(self):
+        self.uiq.post(self._log, "Refreshing Bet History data...")
+        try:
+            bets = self.db.get_recent_simulation_bets(limit=100)
+            def _update_ui():
+                if not hasattr(self, "bet_history_tree"): return
+                for item in self.bet_history_tree.get_children():
+                    self.bet_history_tree.delete(item)
+                for bet in bets:
+                    self.bet_history_tree.insert(
+                        "",
+                        "end",
+                        values=(
+                            bet.get("bet_id", "-"),
+                            bet.get("event_name", "-"),
+                            bet.get("market_name", "-"),
+                            bet.get("runner_name", "-"),
+                            f"{bet.get('size', 0.0):.2f}",
+                            f"{bet.get('price', 0.0):.2f}",
+                            bet.get("status", "-"),
+                            "-", # Outcome non diretto in simulation_bets
+                            "0.00", # Profit non diretto in simulation_bets
+                            bet.get("created_at", "-"),
+                        ),
+                    )
+            self.uiq.post(_update_ui)
+        except Exception as e:
+            self.uiq.post(self._log, f"Error refreshing bet history: {e}")
+
+    def _refresh_risk_desk_history_data(self):
+        self.uiq.post(self._log, "Refreshing Risk Desk History data...")
+        try:
+            history_entries = self.db.get_risk_position_history(limit=100)
+            def _update_ui():
+                if not hasattr(self, "risk_desk_history_tree"): return
+                for item in self.risk_desk_history_tree.get_children():
+                    self.risk_desk_history_tree.delete(item)
+                for entry in history_entries:
+                    self.risk_desk_history_tree.insert(
+                        "",
+                        "end",
+                        values=(
+                            entry.get("id", "-"),
+                            entry.get("closed_at", entry.get("created_at", "-")),
+                            entry.get("outcome", "-"),
+                            f"{entry.get('net_pnl', 0.0):.2f}",
+                            f"{entry.get('stake', 0.0):.2f}",
+                            entry.get("event_key", "-"),
+                            entry.get("market_id", "-"),
+                            entry.get("selection_id", "-"),
+                        ),
+                    )
+            self.uiq.post(_update_ui)
+        except Exception as e:
+            self.uiq.post(self._log, f"Error refreshing risk desk history: {e}")
 
     def _on_telegram_status(self, payload):
         payload = payload or {}
@@ -1492,7 +1692,12 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
     def _start_polling(self):
         self._refresh_runtime_status()
-        self.after(2000, self._start_polling)
+        self.uiq.post(self._refresh_runtime_status)
+        self.after(1000, self._refresh_runtime_status_poller)
+
+    def _refresh_runtime_status_poller(self):
+        self.uiq.post(self._refresh_runtime_status)
+        self.after(1000, self._refresh_runtime_status_poller)
 
     def _on_close(self):
         try:
@@ -1500,17 +1705,6 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 self.shutdown.shutdown()
             elif hasattr(self.shutdown, "run"):
                 self.shutdown.run()
-        finally:
-            try:
-                self.destroy()
-            except Exception:
-                pass
-
-
-def main():
-    app = MiniPickfairGUI()
-    app.mainloop()
-
-
-if __name__ == "__main__":
-    main()
+        except Exception:
+            pass
+        self.destroy()

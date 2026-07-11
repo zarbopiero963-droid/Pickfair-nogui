@@ -10,7 +10,7 @@ BOOK_WARNING = 105.0  # Warning (arancione) - tipico per calcio
 BOOK_BLOCK = 110.0  # Blocco submit (rosso)
 
 # Stake limits (Betfair Italia)
-MIN_STAKE = 2.0  # Minimo €2 per ordine
+MIN_STAKE = 0.10  # Floor software 0.10 (Betfair Italia rifiuterà < €2 in live)
 MAX_WIN = 10000.0  # Vincita massima €10.000
 
 # Commission
