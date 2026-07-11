@@ -298,16 +298,32 @@ class RoserpinaMoneyManagement:
                 metadata={"in_recovery": in_recovery},
             )
 
-        base_stake = self._calculate_base_stake(
-            price=price,
-            bankroll_current=bankroll_current,
-            table_loss=table_loss,
-        )
-
-        risk_mult = self._risk_profile_multiplier()
-        desk_mult = self._desk_mode_multiplier(desk_mode)
-
-        recommended = base_stake * risk_mult * desk_mult
+        # Supporto Stake Fisso dal segnale/parser (#CP-04)
+        fixed_stake_raw = signal.get("stake")
+        if fixed_stake_raw:
+            try:
+                recommended = float(fixed_stake_raw)
+                base_stake = recommended # Per i metadati
+                risk_mult = 1.0
+                desk_mult = 1.0
+            except (ValueError, TypeError):
+                base_stake = self._calculate_base_stake(
+                    price=price,
+                    bankroll_current=bankroll_current,
+                    table_loss=table_loss,
+                )
+                risk_mult = self._risk_profile_multiplier()
+                desk_mult = self._desk_mode_multiplier(desk_mode)
+                recommended = base_stake * risk_mult * desk_mult
+        else:
+            base_stake = self._calculate_base_stake(
+                price=price,
+                bankroll_current=bankroll_current,
+                table_loss=table_loss,
+            )
+            risk_mult = self._risk_profile_multiplier()
+            desk_mult = self._desk_mode_multiplier(desk_mode)
+            recommended = base_stake * risk_mult * desk_mult
 
         min_stake = self._safe_float(self.config.min_stake, 0.10)
         max_single = self._max_single_stake_abs(bankroll_current)
