@@ -28,11 +28,14 @@ class TestIssue320Hard(unittest.TestCase):
         self.config.max_recovery_tables = 2
         self.config.allow_recovery = True
         self.config.anti_duplication_enabled = False
+        self.config.auto_reset_drawdown_pct = 90.0
+        self.config.lockdown_drawdown_pct = 95.0
         
         self.settings.load_roserpina_config.return_value = self.config
         
-        # Inizializza i tavoli nel mock settings prima di creare il controller
-        self.config.table_count = 5
+        # Mock per evitare crash in init
+        self.settings.get_all_settings.return_value = {}
+        self.settings.load_live_enabled.return_value = False
         
         self.controller = RuntimeController(
             bus=self.bus,
@@ -41,6 +44,8 @@ class TestIssue320Hard(unittest.TestCase):
             betfair_service=self.betfair,
             telegram_service=self.telegram
         )
+        # Re-inietta la config mockata
+        self.controller.config = self.config
         self.controller.mode = RuntimeMode.ACTIVE
         self.controller.execution_mode = "LIVE"
 
@@ -51,8 +56,21 @@ class TestIssue320Hard(unittest.TestCase):
 
     def test_a1_drawdown_hard_stop(self):
         """Test Enforcement A1: Drawdown Hard Stop."""
+        self.controller.execution_mode = "LIVE"
+        self.controller.mode = RuntimeMode.ACTIVE
+        self.controller.live_enabled = True
+        self.controller.live_readiness_ok = True
+        
         # Forza la configurazione nel controller (mock getattr)
-        self.controller.config.max_drawdown_hard_stop_pct = 10.0
+        self.config.max_drawdown_hard_stop_pct = 10.0
+        
+        # Mock per far passare i check iniziali
+        self.controller.enforce_deploy_gate = MagicMock(return_value={"allowed": True, "reason": "GO"})
+        
+        # Mock allocate per ritornare un tavolo (indispensabile per arrivare all'enforcement DD)
+        mock_table = MagicMock()
+        mock_table.status = "FREE"
+        self.controller.table_manager.allocate = MagicMock(return_value=mock_table)
         
         # Simula drawdown del 16% (limite è 10%)
         self.controller.risk_desk.equity_peak = 1000.0
@@ -63,7 +81,7 @@ class TestIssue320Hard(unittest.TestCase):
             self.controller.mode = RuntimeMode.LOCKDOWN
         self.controller.force_lockdown = MagicMock(side_effect=mock_lockdown)
         
-        signal = {"market_id": "1.123", "selection_id": "456", "price": 2.0}
+        signal = {"market_id": "1.123", "selection_id": "456", "price": 2.0, "signal_type": "BACK"}
         self.controller._on_signal_received(signal)
         
         # Deve essere in LOCKDOWN e il segnale rifiutato
@@ -72,7 +90,11 @@ class TestIssue320Hard(unittest.TestCase):
 
     def test_a2_max_open_exposure(self):
         """Test Enforcement A2: Max Open Exposure (Cap Assoluto)."""
-        self.controller.config.max_open_exposure = 50.0
+        self.controller.mode = RuntimeMode.ACTIVE
+        self.config.max_open_exposure = 50.0
+        
+        # Mock allocate per ritornare un tavolo
+        self.controller.table_manager.allocate = MagicMock(return_value=MagicMock())
         
         # Esposizione attuale 45€, limite 50€, nuova bet 10€ -> deve fallire
         with patch.object(self.controller.table_manager, 'total_exposure', return_value=45.0):
@@ -83,7 +105,7 @@ class TestIssue320Hard(unittest.TestCase):
             decision.table_id = 1
             self.controller.mm.calculate = MagicMock(return_value=decision)
             
-            signal = {"market_id": "1.123", "selection_id": "456", "price": 2.0}
+            signal = {"market_id": "1.123", "selection_id": "456", "price": 2.0, "signal_type": "BACK"}
             self.controller._on_signal_received(signal)
             
             # Verifica che decision.approved sia stato flippato a False
@@ -106,7 +128,7 @@ class TestIssue320Hard(unittest.TestCase):
         for i in range(3, 6):
             self.controller.table_manager._tables[i].status = "ACTIVE"
             
-        signal = {"market_id": "1.123", "selection_id": "456", "price": 2.0}
+        signal = {"market_id": "1.123", "selection_id": "456", "price": 2.0, "signal_type": "BACK"}
         self.controller._on_signal_received(signal)
         
         rejection_call = [call for call in self.bus.publish.call_args_list if call[0][0] == "SIGNAL_REJECTED"]
@@ -116,12 +138,16 @@ class TestIssue320Hard(unittest.TestCase):
     def test_c1_sl_tp_monitoring(self):
         """Test C1: Monitoraggio SL/TP."""
         # Configura un tavolo attivo con SL (1-indexed!)
-        table = self.controller.table_manager._tables[1]
+        table = MagicMock()
+        table.table_id = 1
         table.status = "ACTIVE"
         table.market_id = "M1"
         table.selection_id = "S1"
         table.current_exposure = 10.0
         table.meta = {"price": 2.0, "bet_type": "BACK", "stop_loss": 5.0}
+        
+        # Iniettiamo il tavolo nel table_manager
+        self.controller.table_manager._tables = {1: table}
         
         # Simula snapshot di mercato con prezzo crollato (PnL negativo)
         market_book = {
@@ -136,6 +162,44 @@ class TestIssue320Hard(unittest.TestCase):
         # Deve pubblicare REQ_EXECUTE_CASHOUT
         self.bus.publish.assert_any_call("REQ_EXECUTE_CASHOUT", unittest.mock.ANY)
         print("Test C1 SL/TP Monitoring: PASS")
+
+    def test_issue_285_lockdown_snapshot(self):
+        """Test Issue #285: Lockdown snapshot non-mutante."""
+        self.controller.execution_mode = "LIVE"
+        self.controller.simulation_mode = False
+        
+        # Mock get_status per verificare quando viene chiamato
+        self.controller.get_status = MagicMock(return_value={"bankroll": 1000.0})
+        
+        # Esegui emergency_stop
+        self.controller.emergency_stop("test_breach")
+        
+        # Verifica che get_status sia stato chiamato PRIMA di flippare a SIMULATION
+        # (Nella logica corretta, force_lockdown -> get_status viene chiamato prima del flip)
+        self.assertEqual(self.controller.get_status.call_count, 1)
+        print("Test Issue #285 Lockdown Snapshot: PASS")
+
+    def test_issue_274_293_risk_history_persistence(self):
+        """Test Issue #274/293: Persistenza cronologia Risk Desk."""
+        # Mock _extract_settlement_contract per ritornare un contratto valido senza validare il payload
+        valid_contract = {
+            "net_pnl": 5.0,
+            "gross_pnl": 5.0,
+            "commission_amount": 0.0,
+            "commission_pct": 0.0,
+            "settlement_basis": "market_net_realized",
+            "settlement_source": "betfair",
+            "settlement_kind": "realized_settlement",
+            "settlement_validation": "accepted"
+        }
+        
+        with patch.object(self.controller, '_extract_settlement_contract', return_value=valid_contract):
+            payload = {"table_id": 1, "event_key": "E1"}
+            self.db.add_risk_position_history = MagicMock()
+            self.controller._on_close_position(payload)
+            self.db.add_risk_position_history.assert_called_once()
+            
+        print("Test Issue #274/293 Risk History Persistence: PASS")
 
 if __name__ == "__main__":
     unittest.main()

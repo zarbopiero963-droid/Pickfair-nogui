@@ -274,39 +274,43 @@ class Database:
             for stmt in SCHEMA_DDL:
                 conn.execute(stmt)
             self._migrate_signal_pattern_action(conn)
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS cycle_recovery_checkpoints (
-                    settlement_key TEXT PRIMARY KEY,
-                    settlement_correlation_id TEXT NOT NULL DEFAULT '',
-                    cycle_id TEXT NOT NULL DEFAULT '',
-                    table_id INTEGER,
-                    strategy_context_json TEXT NOT NULL DEFAULT '{}',
-                    checkpoint_stage TEXT NOT NULL DEFAULT 'SETTLEMENT_DETECTED',
-                    bankroll_sync_status TEXT NOT NULL DEFAULT 'NOT_SETTLED',
-                    money_management_status TEXT NOT NULL DEFAULT 'MM_STOP_CONTEXT_MISSING',
-                    cycle_active INTEGER NOT NULL DEFAULT 0,
-                    progression_allowed INTEGER NOT NULL DEFAULT 0,
-                    next_stake REAL NOT NULL DEFAULT 0.0,
-                    step_index INTEGER NOT NULL DEFAULT 0,
-                    round_index INTEGER NOT NULL DEFAULT 0,
-                    next_trade_submission_status TEXT NOT NULL DEFAULT 'NOT_ATTEMPTED',
-                    idempotency_key TEXT NOT NULL DEFAULT '',
-                    reason TEXT NOT NULL DEFAULT '',
-                    is_ambiguous INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-                """
+            self._migrate_cycle_recovery_checkpoints(conn)
+
+    @staticmethod
+    def _migrate_cycle_recovery_checkpoints(conn) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cycle_recovery_checkpoints (
+                settlement_key TEXT PRIMARY KEY,
+                settlement_correlation_id TEXT NOT NULL DEFAULT '',
+                cycle_id TEXT NOT NULL DEFAULT '',
+                table_id INTEGER,
+                strategy_context_json TEXT NOT NULL DEFAULT '{}',
+                checkpoint_stage TEXT NOT NULL DEFAULT 'SETTLEMENT_DETECTED',
+                bankroll_sync_status TEXT NOT NULL DEFAULT 'NOT_SETTLED',
+                money_management_status TEXT NOT NULL DEFAULT 'MM_STOP_CONTEXT_MISSING',
+                cycle_active INTEGER NOT NULL DEFAULT 0,
+                progression_allowed INTEGER NOT NULL DEFAULT 0,
+                next_stake REAL NOT NULL DEFAULT 0.0,
+                step_index INTEGER NOT NULL DEFAULT 0,
+                round_index INTEGER NOT NULL DEFAULT 0,
+                next_trade_submission_status TEXT NOT NULL DEFAULT 'NOT_ATTEMPTED',
+                idempotency_key TEXT NOT NULL DEFAULT '',
+                reason TEXT NOT NULL DEFAULT '',
+                is_ambiguous INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_cycle_checkpoint_corr_id "
-                "ON cycle_recovery_checkpoints(settlement_correlation_id)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_cycle_checkpoint_stage "
-                "ON cycle_recovery_checkpoints(checkpoint_stage)"
-            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cycle_checkpoint_corr_id "
+            "ON cycle_recovery_checkpoints(settlement_correlation_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cycle_checkpoint_stage "
+            "ON cycle_recovery_checkpoints(checkpoint_stage)"
+        )
 
         # =========================================================
     # SETTINGS / CREDENTIALS
@@ -832,6 +836,147 @@ class Database:
             (int(new_state), self._utc_now(), int(pattern_id)),
         )
         return new_state
+
+    # =========================================================
+    # (A) CATALOGO CACHE
+    # =========================================================
+    def upsert_bf_event(self, event_id: str, name: str, competition_id: str, competition_name: str, event_type_id: str, open_date: str, sync_id: str):
+        self._execute(
+            """
+            INSERT INTO bf_events(event_id, name, competition_id, competition_name, event_type_id, open_date, last_seen)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(event_id) DO UPDATE SET
+                name = excluded.name,
+                competition_id = excluded.competition_id,
+                competition_name = excluded.competition_name,
+                last_seen = excluded.last_seen
+            """,
+            (event_id, name, competition_id, competition_name, event_type_id, open_date, sync_id)
+        )
+
+    def upsert_bf_market(self, market_id: str, event_id: str, market_name: str, market_type: str, total_matched: float, open_date: str, sync_id: str):
+        self._execute(
+            """
+            INSERT INTO bf_markets(market_id, event_id, market_name, market_type, total_matched, open_date, last_seen)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(market_id) DO UPDATE SET
+                total_matched = excluded.total_matched,
+                last_seen = excluded.last_seen
+            """,
+            (market_id, event_id, market_name, market_type, total_matched, open_date, sync_id)
+        )
+
+    def upsert_bf_runner(self, market_id: str, selection_id: str, runner_name: str, handicap: float, sort_priority: int, sync_id: str):
+        self._execute(
+            """
+            INSERT INTO bf_runners(market_id, selection_id, runner_name, handicap, sort_priority, last_seen)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(market_id, selection_id) DO UPDATE SET
+                runner_name = excluded.runner_name,
+                last_seen = excluded.last_seen
+            """,
+            (market_id, selection_id, runner_name, handicap, sort_priority, sync_id)
+        )
+
+    def cleanup_stale_bf_data(self, sync_id: str):
+        self._execute("DELETE FROM bf_events WHERE last_seen <> ?", (sync_id,))
+
+    def get_sync_meta(self) -> Optional[Dict[str, Any]]:
+        row = self._execute("SELECT * FROM sync_meta WHERE id = 1", fetchone=True, commit=False)
+        return dict(row) if row else None
+
+    def update_sync_meta(self, last_sync_at: str, last_sync_id: str, events: int, markets: int, runners: int):
+        self._execute(
+            """
+            INSERT INTO sync_meta(id, last_sync_at, last_sync_id, events_count, markets_count, runners_count)
+            VALUES (1, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                last_sync_at = excluded.last_sync_at,
+                last_sync_id = excluded.last_sync_id,
+                events_count = excluded.events_count,
+                markets_count = excluded.markets_count,
+                runners_count = excluded.runners_count
+            """,
+            (last_sync_at, last_sync_id, events, markets, runners)
+        )
+
+    # =========================================================
+    # (B) PROVIDERS & ALIASES
+    # =========================================================
+    def get_providers(self) -> List[Dict[str, Any]]:
+        rows = self._execute("SELECT * FROM providers ORDER BY name ASC", fetch=True, commit=False)
+        return [dict(r) for r in rows or []]
+
+    def save_provider(self, name: str) -> int:
+        cur = self._execute("INSERT INTO providers(name) VALUES (?)", (name,))
+        return int(cur.lastrowid)
+
+    def delete_provider(self, provider_id: int):
+        self._execute("DELETE FROM providers WHERE id = ?", (int(provider_id),))
+
+    def get_name_aliases(self, provider_id: int) -> List[Dict[str, Any]]:
+        rows = self._execute("SELECT * FROM name_aliases WHERE provider_id = ?", (int(provider_id),), fetch=True, commit=False)
+        return [dict(r) for r in rows or []]
+
+    def save_name_alias(self, provider_id: int, betfair_name: str, alias_norm: str, country: str = ""):
+        self._execute(
+            """
+            INSERT INTO name_aliases(provider_id, country, betfair_name, alias_norm)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(provider_id, alias_norm) DO UPDATE SET
+                betfair_name = excluded.betfair_name,
+                country = excluded.country
+            """,
+            (int(provider_id), country, betfair_name, alias_norm)
+        )
+
+    def get_market_aliases(self, provider_id: int) -> List[Dict[str, Any]]:
+        rows = self._execute("SELECT * FROM market_aliases WHERE provider_id = ?", (int(provider_id),), fetch=True, commit=False)
+        return [dict(r) for r in rows or []]
+
+    def save_market_alias(self, provider_id: int, phrase_norm: str, market_type: str, market_name: str = "", selection_name: str = "", start_after: str = "", end_before: str = ""):
+        self._execute(
+            """
+            INSERT INTO market_aliases(provider_id, start_after, end_before, phrase_norm, market_type, market_name, selection_name)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (int(provider_id), start_after, end_before, phrase_norm, market_type, market_name, selection_name)
+        )
+
+    # =========================================================
+    # (V2) PARSERS
+    # =========================================================
+    def get_parsers(self) -> List[Dict[str, Any]]:
+        rows = self._execute("SELECT * FROM parsers ORDER BY name ASC", fetch=True, commit=False)
+        return [dict(r) for r in rows or []]
+
+    def save_parser(self, name: str, provider_id: Optional[int], definition: str, enabled: bool = True):
+        self._execute(
+            "INSERT INTO parsers(name, provider_id, definition, enabled) VALUES (?, ?, ?, ?)",
+            (name, provider_id, definition, int(enabled))
+        )
+
+    def update_parser(self, parser_id: int, definition: str):
+        self._execute("UPDATE parsers SET definition = ? WHERE id = ?", (definition, int(parser_id)))
+
+    def set_parser_for_chat(self, chat_id: str, parser_id: int):
+        self._execute(
+            "INSERT INTO parser_by_chat(chat_id, parser_id) VALUES (?, ?) ON CONFLICT(chat_id) DO UPDATE SET parser_id = excluded.parser_id",
+            (chat_id, int(parser_id))
+        )
+
+    def get_parser_for_chat(self, chat_id: str) -> Optional[Dict[str, Any]]:
+        row = self._execute(
+            """
+            SELECT p.* FROM parsers p
+            JOIN parser_by_chat pc ON p.id = pc.parser_id
+            WHERE pc.chat_id = ? AND p.enabled = 1
+            """,
+            (chat_id,),
+            fetchone=True,
+            commit=False
+        )
+        return dict(row) if row else None
 
     # =========================================================
     # SIMULATION STATE / BETS
@@ -1606,6 +1751,59 @@ class Database:
                 except Exception:
                     continue
         return []
+
+    # ── Feature 1: Storico Bet (SIM) ──────────────────────────────────
+    def get_recent_simulation_bets(self, limit=200, offset=0) -> List[Dict[str, Any]]:
+        rows = self._execute(
+            """
+            SELECT * FROM simulation_bets
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (int(limit), int(offset)),
+            fetch=True,
+            commit=False,
+        ) or []
+        return [dict(row) for row in rows]
+
+    # ── Feature 2: Risk History ───────────────────────────────────────
+    def add_risk_position_history(self, payload: Dict[str, Any]) -> None:
+        now = self._utc_now()
+        self._execute(
+            """
+            INSERT INTO risk_position_history (
+                event_key, market_id, selection_id, side, stake, net_pnl, 
+                outcome, table_id, payload_json, closed_at, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(payload.get("event_key") or ""),
+                str(payload.get("market_id") or ""),
+                str(payload.get("selection_id") or ""),
+                str(payload.get("side") or ""),
+                float(payload.get("stake") or 0.0),
+                float(payload.get("net_pnl") or 0.0),
+                str(payload.get("outcome") or ""),
+                self._safe_int(payload.get("table_id"), 0),
+                self._safe_json_dumps(payload),
+                str(payload.get("closed_at") or now),
+                now
+            )
+        )
+
+    def get_risk_position_history(self, limit=200, offset=0) -> List[Dict[str, Any]]:
+        rows = self._execute(
+            """
+            SELECT * FROM risk_position_history
+            ORDER BY closed_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (int(limit), int(offset)),
+            fetch=True,
+            commit=False,
+        ) or []
+        return [dict(row) for row in rows]
 
     def delete_old_observability_snapshots(self, cutoff_ts):
         execute = getattr(self, "execute", None)

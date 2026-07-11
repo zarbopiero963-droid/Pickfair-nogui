@@ -566,6 +566,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.tab_roserpina = self.tabs.add("Roserpina")
         self.tab_risk_history = self.tabs.add("Storico Risk Desk")
         self.tab_risk = self.tabs.add("Risk Desk")
+        self.tab_provider = self.tabs.add("Provider")
         self.tab_log = self.tabs.add("Log")
 
         self._build_dashboard_tab()
@@ -575,6 +576,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._build_roserpina_tab()
         self._build_risk_tab()
         self._build_risk_desk_history_tab()
+        self._build_provider_tab()
         self._build_log_tab()
 
     def _build_topbar(self):
@@ -1524,6 +1526,86 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                     )
                 except Exception:
                     continue
+
+    def _build_provider_tab(self):
+        if self._test_mode: return
+        
+        container = ctk.CTkFrame(self.tab_provider, fg_color="transparent")
+        container.pack(fill="both", expand=True, padx=12, pady=12)
+        
+        # 1. Top Bar: Sync Catalog
+        top = ctk.CTkFrame(container, fg_color="transparent")
+        top.pack(fill="x", pady=(0, 12))
+        
+        btn_sync = ctk.CTkButton(top, text="Sincronizza Catalogo Betfair", command=self._on_sync_catalog)
+        btn_sync.pack(side="left")
+        
+        self.lbl_sync_status = ctk.CTkLabel(top, text="Ultimo Sync: -")
+        self.lbl_sync_status.pack(side="left", padx=12)
+        
+        # 2. Main Area: Providers & Aliases
+        panes = ctk.CTkFrame(container, fg_color="transparent")
+        panes.pack(fill="both", expand=True)
+        
+        # Left: Providers List
+        left = ctk.CTkFrame(panes, width=200)
+        left.pack(side="left", fill="y", padx=(0, 12))
+        
+        ctk.CTkLabel(left, text="Provider", font=("", 14, "bold")).pack(pady=6)
+        
+        self.provider_list = tk.Listbox(left, bg="#2b2b2b", fg="white", borderwidth=0, highlightthickness=0)
+        self.provider_list.pack(fill="both", expand=True, padx=6, pady=6)
+        
+        # Right: Aliases (Tabs)
+        right = ctk.CTkFrame(panes)
+        right.pack(side="left", fill="both", expand=True)
+        
+        self.alias_tabs = ctk.CTkTabview(right)
+        self.alias_tabs.pack(fill="both", expand=True)
+        
+        self.tab_names = self.alias_tabs.add("Nomi Eventi")
+        self.tab_markets = self.alias_tabs.add("Mercati")
+        self.tab_parsers = self.alias_tabs.add("Parser Avanzati")
+        
+        self._build_provider_names_tab()
+        self._build_provider_markets_tab()
+        self._build_provider_parsers_tab()
+
+    def _build_provider_names_tab(self):
+        # Treeview per alias nomi eventi
+        cols = ("Alias", "Betfair Name", "Country")
+        self.name_alias_tree = ttk.Treeview(self.tab_names, columns=cols, show="headings")
+        for c in cols: self.name_alias_tree.heading(c, text=c)
+        self.name_alias_tree.pack(fill="both", expand=True)
+
+    def _build_provider_markets_tab(self):
+        # Treeview per alias mercati
+        cols = ("Frase", "Tipo Mercato", "Betfair Name", "Selezione")
+        self.market_alias_tree = ttk.Treeview(self.tab_markets, columns=cols, show="headings")
+        for c in cols: self.market_alias_tree.heading(c, text=c)
+        self.market_alias_tree.pack(fill="both", expand=True)
+
+    def _build_provider_parsers_tab(self):
+        # Treeview per parser avanzati
+        cols = ("Nome", "Stato", "Tipo")
+        self.adv_parser_tree = ttk.Treeview(self.tab_parsers, columns=cols, show="headings")
+        for c in cols: self.adv_parser_tree.heading(c, text=c)
+        self.adv_parser_tree.pack(fill="both", expand=True)
+
+    def _on_sync_catalog(self):
+        from services.catalog_sync_service import CatalogSyncService
+        sync_svc = CatalogSyncService(self.db, self.betfair_service.get_client())
+        
+        def _work():
+            sync_svc.run_sync(force=True)
+            return self.db.get_sync_meta()
+            
+        def _done(meta):
+            if meta:
+                self.lbl_sync_status.configure(text=f"Ultimo Sync: {meta['last_sync_at']} ({meta['events_count']} ev)")
+            self._log("Sincronizzazione catalogo completata.")
+
+        self._run_runtime_command_async("SYNC_CATALOG", _work, on_success=_done)
 
     def _refresh_runtime_status(self):
         if self._status_refresh_inflight:

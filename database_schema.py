@@ -58,7 +58,105 @@ SCHEMA_DDL: tuple[str, ...] = (
     )
     """,
 
-    # ── signal pattern rules ───────────────────────────────────────────
+    # ── (A) CATALOGO CACHE — volatile, rinfrescato ogni giorno ──────────
+    """
+    CREATE TABLE IF NOT EXISTS bf_events (
+        event_id          TEXT PRIMARY KEY,
+        name              TEXT NOT NULL,
+        competition_id    TEXT,
+        competition_name  TEXT,
+        event_type_id     TEXT NOT NULL,
+        open_date         TEXT,
+        last_seen         TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_bf_events_name ON bf_events(name)",
+    "CREATE INDEX IF NOT EXISTS ix_bf_events_open ON bf_events(open_date)",
+    """
+    CREATE TABLE IF NOT EXISTS bf_markets (
+        market_id         TEXT PRIMARY KEY,
+        event_id          TEXT NOT NULL REFERENCES bf_events(event_id) ON DELETE CASCADE,
+        market_name       TEXT,
+        market_type       TEXT,
+        total_matched     REAL,
+        open_date         TEXT,
+        last_seen         TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_bf_markets_event ON bf_markets(event_id)",
+    "CREATE INDEX IF NOT EXISTS ix_bf_markets_type  ON bf_markets(market_type)",
+    """
+    CREATE TABLE IF NOT EXISTS bf_runners (
+        market_id         TEXT NOT NULL REFERENCES bf_markets(market_id) ON DELETE CASCADE,
+        selection_id      TEXT NOT NULL,
+        runner_name       TEXT,
+        handicap          REAL DEFAULT 0,
+        sort_priority     INTEGER,
+        last_seen         TEXT NOT NULL,
+        PRIMARY KEY (market_id, selection_id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_bf_runners_name ON bf_runners(market_id, runner_name)",
+    """
+    CREATE TABLE IF NOT EXISTS sync_meta (
+        id                INTEGER PRIMARY KEY CHECK (id = 1),
+        last_sync_at      TEXT,
+        last_sync_id      TEXT,
+        events_count      INTEGER DEFAULT 0,
+        markets_count     INTEGER DEFAULT 0,
+        runners_count     INTEGER DEFAULT 0
+    )
+    """,
+
+    # ── (B) MAPPE DUREVOLI — tenute per sempre ─────────────────────────
+    """
+    CREATE TABLE IF NOT EXISTS providers (
+        id    INTEGER PRIMARY KEY AUTOINCREMENT,
+        name  TEXT NOT NULL UNIQUE
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS name_aliases (
+        provider_id   INTEGER NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+        country       TEXT,
+        betfair_name  TEXT NOT NULL,
+        alias_norm    TEXT NOT NULL,
+        PRIMARY KEY (provider_id, alias_norm)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_name_aliases_betfair ON name_aliases(provider_id, betfair_name)",
+    """
+    CREATE TABLE IF NOT EXISTS market_aliases (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider_id     INTEGER NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+        start_after     TEXT,
+        end_before      TEXT,
+        phrase_norm     TEXT NOT NULL,
+        market_type     TEXT NOT NULL,
+        market_name     TEXT,
+        selection_name  TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_market_aliases_provider ON market_aliases(provider_id)",
+
+    # ── Parser personalizzati (v2) ─────────────────────────────────────
+    """
+    CREATE TABLE IF NOT EXISTS parsers (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        name          TEXT NOT NULL UNIQUE,
+        provider_id   INTEGER REFERENCES providers(id) ON DELETE SET NULL,
+        definition    TEXT NOT NULL,
+        enabled       INTEGER NOT NULL DEFAULT 1
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS parser_by_chat (
+        chat_id    TEXT PRIMARY KEY,
+        parser_id  INTEGER NOT NULL REFERENCES parsers(id) ON DELETE CASCADE
+    )
+    """,
+
+    # ── signal pattern rules (Legacy / Simple) ─────────────────────────
     """
     CREATE TABLE IF NOT EXISTS signal_patterns (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -211,6 +309,25 @@ SCHEMA_DDL: tuple[str, ...] = (
         UNIQUE(batch_id, leg_index)
     )
     """,
+
+    # ── risk history ───────────────────────────────────────────────────
+    """
+    CREATE TABLE IF NOT EXISTS risk_position_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_key TEXT DEFAULT '',
+        market_id TEXT DEFAULT '',
+        selection_id TEXT DEFAULT '',
+        side TEXT DEFAULT '',
+        stake REAL NOT NULL DEFAULT 0.0,
+        net_pnl REAL NOT NULL DEFAULT 0.0,
+        outcome TEXT DEFAULT '',
+        table_id INTEGER,
+        payload_json TEXT NOT NULL DEFAULT '{}',
+        closed_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_risk_position_history_closed_at ON risk_position_history(closed_at DESC)",
 
     # ── observability ──────────────────────────────────────────────────
     """
