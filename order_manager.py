@@ -128,6 +128,7 @@ VALID_TRANSITIONS: Dict[OrderStatus, FrozenSet[OrderStatus]] = {
         OrderStatus.PARTIALLY_MATCHED,
         OrderStatus.MATCHED,
         OrderStatus.FAILED,
+        OrderStatus.AMBIGUOUS,
     }),
     OrderStatus.ROLLBACK_PENDING: frozenset({
         OrderStatus.ROLLED_BACK,
@@ -871,7 +872,7 @@ class OrderManager:
             return {"ok": False, "status": OrderStatus.FAILED.value,
                     "reason_code": ReasonCode.BROKER_UNAVAILABLE.value}
 
-                try:
+        try:
             response = client.replace_orders(
                 market_id=market_id,
                 bet_id=bet_id,

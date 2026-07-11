@@ -1275,6 +1275,7 @@ class Database:
         stake: float,
         payload: Dict[str, Any],
         status: str = "PENDING",
+        logical_key: str = "",
     ) -> None:
         now = self._utc_now()
         self._execute(
@@ -1282,9 +1283,9 @@ class Database:
             INSERT INTO order_saga(
                 customer_ref, batch_id, event_key, table_id,
                 market_id, selection_id, bet_type, price, stake,
-                status, payload_json, created_at, updated_at
+                status, payload_json, logical_key, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(customer_ref) DO UPDATE SET
                 batch_id = excluded.batch_id,
                 event_key = excluded.event_key,
@@ -1296,6 +1297,7 @@ class Database:
                 stake = excluded.stake,
                 status = excluded.status,
                 payload_json = excluded.payload_json,
+                logical_key = excluded.logical_key,
                 updated_at = excluded.updated_at
             """,
             (
@@ -1310,6 +1312,7 @@ class Database:
                 float(stake or 0.0),
                 str(status),
                 self._safe_json_dumps(payload or {}),
+                str(logical_key or ""),
                 now,
                 now,
             ),
@@ -1322,17 +1325,26 @@ class Database:
         status: str,
         bet_id: str = "",
         error_text: str = "",
+        reason_code: str = "",
+        outcome: str = "",
+        matched_size: float = 0.0,
+        avg_price_matched: float = 0.0,
     ) -> None:
         self._execute(
             """
             UPDATE order_saga
-            SET status = ?, bet_id = ?, error_text = ?, updated_at = ?
+            SET status = ?, bet_id = ?, error_text = ?, reason_code = ?, outcome = ?, 
+                matched_size = ?, avg_price_matched = ?, updated_at = ?
             WHERE customer_ref = ?
             """,
             (
                 str(status),
                 str(bet_id or ""),
                 str(error_text or ""),
+                str(reason_code or ""),
+                str(outcome or ""),
+                float(matched_size or 0.0),
+                float(avg_price_matched or 0.0),
                 self._utc_now(),
                 str(customer_ref),
             ),

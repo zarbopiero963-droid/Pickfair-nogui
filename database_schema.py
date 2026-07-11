@@ -129,6 +129,11 @@ SCHEMA_DDL: tuple[str, ...] = (
         bet_id TEXT DEFAULT '',
         error_text TEXT DEFAULT '',
         payload_json TEXT DEFAULT '{}',
+        logical_key TEXT DEFAULT '',
+        reason_code TEXT DEFAULT '',
+        outcome TEXT DEFAULT '',
+        matched_size REAL DEFAULT 0.0,
+        avg_price_matched REAL DEFAULT 0.0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     )

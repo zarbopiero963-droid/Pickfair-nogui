@@ -779,7 +779,7 @@ class SimulationBroker:
         # un restart non resusciti il vecchio ordine dallo snapshot simulation_state.
         if self.db and hasattr(self.db, "save_simulation_state"):
             try:
-                self.db.save_simulation_state(self.state.to_dict())
+                self.db.save_simulation_state("default", self.state.to_dict())
             except Exception:
                 logger.exception("Errore save_simulation_state durante replace_orders")
 
