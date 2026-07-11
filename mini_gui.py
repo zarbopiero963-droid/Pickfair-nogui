@@ -1690,6 +1690,156 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             except Exception:
                 pass
 
+    # =========================================================
+    # SIGNAL PATTERNS MANAGEMENT (CRUD)
+    # =========================================================
+    def _refresh_rules_tree(self):
+        self.uiq.post(self._log, "Refreshing signal patterns...")
+        try:
+            patterns = self.db.get_signal_patterns()
+            def _update():
+                if not hasattr(self, "rules_tree"): return
+                for item in self.rules_tree.get_children():
+                    self.rules_tree.delete(item)
+                for p in patterns:
+                    self.rules_tree.insert(
+                        "",
+                        "end",
+                        values=(
+                            "✅" if p.get("enabled") else "❌",
+                            p.get("label", "-"),
+                            p.get("market_type", "MATCH_ODDS"),
+                            p.get("bet_side", "BACK"),
+                            p.get("selection_template", ""),
+                            f"{p.get('min_minute', '')}-{p.get('max_minute', '')}",
+                            f"{p.get('min_score', '')}-{p.get('max_score', '')}",
+                            "YES" if p.get("live_only") else "NO",
+                            p.get("priority", 100),
+                            p.get("pattern", ""),
+                        ),
+                        tags=(str(p.get("id")),)
+                    )
+            self.uiq.post(_update)
+        except Exception as e:
+            self.uiq.post(self._log, f"Error refreshing rules: {e}")
+
+    def _add_signal_pattern(self):
+        self._edit_signal_pattern_dialog(None)
+
+    def _edit_signal_pattern(self):
+        selected = self.rules_tree.selection()
+        if not selected:
+            messagebox.showwarning("Attenzione", "Seleziona una regola da modificare")
+            return
+        pattern_id = int(self.rules_tree.item(selected[0])["tags"][0])
+        patterns = self.db.get_signal_patterns()
+        pattern = next((p for p in patterns if p["id"] == pattern_id), None)
+        if pattern:
+            self._edit_signal_pattern_dialog(pattern)
+
+    def _delete_signal_pattern(self):
+        selected = self.rules_tree.selection()
+        if not selected:
+            messagebox.showwarning("Attenzione", "Seleziona una regola da eliminare")
+            return
+        if not messagebox.askyesno("Conferma", "Vuoi davvero eliminare questa regola?"):
+            return
+        pattern_id = int(self.rules_tree.item(selected[0])["tags"][0])
+        try:
+            self.db.delete_signal_pattern(pattern_id)
+            self._refresh_rules_tree()
+        except Exception as e:
+            messagebox.showerror("Errore", f"Impossibile eliminare la regola: {e}")
+
+    def _toggle_signal_pattern(self):
+        selected = self.rules_tree.selection()
+        if not selected:
+            messagebox.showwarning("Attenzione", "Seleziona una regola")
+            return
+        pattern_id = int(self.rules_tree.item(selected[0])["tags"][0])
+        patterns = self.db.get_signal_patterns()
+        pattern = next((p for p in patterns if p["id"] == pattern_id), None)
+        if pattern:
+            try:
+                self.db.toggle_signal_pattern(pattern_id, not pattern["enabled"])
+                self._refresh_rules_tree()
+            except Exception as e:
+                messagebox.showerror("Errore", f"Impossibile attivare/disattivare la regola: {e}")
+
+    def _edit_signal_pattern_dialog(self, pattern=None):
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Modifica Regola Parser" if pattern else "Nuova Regola Parser")
+        dialog.geometry("600x700")
+        dialog.grab_set()
+
+        scroll = ctk.CTkScrollableFrame(dialog)
+        scroll.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        vars = {
+            "label": tk.StringVar(value=pattern["label"] if pattern else ""),
+            "pattern": tk.StringVar(value=pattern["pattern"] if pattern else ""),
+            "market_type": tk.StringVar(value=pattern["market_type"] if pattern else "MATCH_ODDS"),
+            "bet_side": tk.StringVar(value=pattern["bet_side"] if pattern else "BACK"),
+            "selection_template": tk.StringVar(value=pattern["selection_template"] if pattern else ""),
+            "min_minute": tk.StringVar(value=str(pattern["min_minute"]) if pattern and pattern["min_minute"] is not None else ""),
+            "max_minute": tk.StringVar(value=str(pattern["max_minute"]) if pattern and pattern["max_minute"] is not None else ""),
+            "min_score": tk.StringVar(value=str(pattern["min_score"]) if pattern and pattern["min_score"] is not None else ""),
+            "max_score": tk.StringVar(value=str(pattern["max_score"]) if pattern and pattern["max_score"] is not None else ""),
+            "live_only": tk.BooleanVar(value=bool(pattern["live_only"]) if pattern else True),
+            "priority": tk.StringVar(value=str(pattern["priority"]) if pattern else "100"),
+        }
+
+        self._labeled_entry(scroll, "Nome Regola", vars["label"])
+        self._labeled_entry(scroll, "Regex Pattern", vars["pattern"])
+        
+        m_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+        m_frame.pack(fill=tk.X, padx=12, pady=6)
+        ctk.CTkLabel(m_frame, text="Mercato", width=220, anchor="w").pack(side=tk.LEFT, padx=8)
+        ctk.CTkComboBox(m_frame, variable=vars["market_type"], values=["MATCH_ODDS", "OVER_UNDER", "BOTH_TEAMS_TO_SCORE"], width=320).pack(side=tk.LEFT, padx=8)
+
+        s_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+        s_frame.pack(fill=tk.X, padx=12, pady=6)
+        ctk.CTkLabel(s_frame, text="Side", width=220, anchor="w").pack(side=tk.LEFT, padx=8)
+        ctk.CTkComboBox(s_frame, variable=vars["bet_side"], values=["BACK", "LAY"], width=320).pack(side=tk.LEFT, padx=8)
+
+        self._labeled_entry(scroll, "Selection Template", vars["selection_template"])
+        self._labeled_entry(scroll, "Min Minuto", vars["min_minute"])
+        self._labeled_entry(scroll, "Max Minuto", vars["max_minute"])
+        self._labeled_entry(scroll, "Min Score (Totale)", vars["min_score"])
+        self._labeled_entry(scroll, "Max Score (Totale)", vars["max_score"])
+        
+        l_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+        l_frame.pack(fill=tk.X, padx=12, pady=6)
+        ctk.CTkCheckBox(l_frame, text="Solo Live", variable=vars["live_only"]).pack(side=tk.LEFT, padx=228)
+
+        self._labeled_entry(scroll, "Priorità", vars["priority"])
+
+        def _save():
+            data = {
+                "label": vars["label"].get(),
+                "pattern": vars["pattern"].get(),
+                "market_type": vars["market_type"].get(),
+                "bet_side": vars["bet_side"].get(),
+                "selection_template": vars["selection_template"].get(),
+                "min_minute": int(vars["min_minute"].get()) if vars["min_minute"].get() else None,
+                "max_minute": int(vars["max_minute"].get()) if vars["max_minute"].get() else None,
+                "min_score": int(vars["min_score"].get()) if vars["min_score"].get() else None,
+                "max_score": int(vars["max_score"].get()) if vars["max_score"].get() else None,
+                "live_only": 1 if vars["live_only"].get() else 0,
+                "priority": int(vars["priority"].get()) if vars["priority"].get() else 100,
+            }
+            try:
+                if pattern:
+                    self.db.update_signal_pattern(pattern["id"], **data)
+                else:
+                    self.db.save_signal_pattern(**data)
+                self._refresh_rules_tree()
+                dialog.destroy()
+            except Exception as e:
+                messagebox.showerror("Errore", f"Salvataggio fallito: {e}")
+
+        ctk.CTkButton(scroll, text="Salva Regola", command=_save, fg_color=COLORS.get("button_success", "#2fa26b")).pack(pady=20)
+
     def _start_polling(self):
         self._refresh_runtime_status()
         self.uiq.post(self._refresh_runtime_status)
