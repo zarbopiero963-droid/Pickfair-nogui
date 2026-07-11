@@ -1,0 +1,38 @@
+{
+  "name": "P.Bet",
+  "description": "Parser per il servizio P.Bet GOL SECONDO TEMPO LIVE",
+  "version": 1,
+  "mode": "NAME_ONLY",
+  "sport": "Soccer",
+  "rules": [
+    {
+      "target": "EventName",
+      "start_after": "🆚",
+      "end_before": "⚽",
+      "required": true
+    },
+    {
+      "target": "CurrentScore",
+      "start_after": "⚽",
+      "end_before": "⌚",
+      "required": true
+    },
+    {
+      "target": "MarketName",
+      "fixed_value": "Next Goal",
+      "required": true
+    },
+    {
+      "target": "BetType",
+      "fixed_value": "BACK",
+      "required": true
+    }
+  ],
+  "conditions": [
+    {
+      "text": "P.Bet. GOL SECONDO TEMPO LIVE",
+      "negate": false
+    }
+  ],
+  "conditions_mode": "all"
+}

@@ -1,0 +1,31 @@
+{
+  "betfair": {
+    "username": "heroin93",
+    "password": "camastra11@",
+    "app_key": "",
+    "certificate": "",
+    "private_key": ""
+  },
+  "telegram": {
+    "api_id": 0,
+    "api_hash": "",
+    "session_string": "",
+    "enabled": true,
+    "auto_bet": true,
+    "require_confirmation": false,
+    "auto_stake": 1.0,
+    "monitored_chat_ids": []
+  },
+  "roserpina": {
+    "target_profit_cycle_pct": 3.0,
+    "max_single_bet_pct": 18.0,
+    "max_total_exposure_pct": 35.0,
+    "max_event_exposure_pct": 18.0,
+    "max_daily_loss": 50.0,
+    "min_stake": 0.10,
+    "risk_profile": "BALANCED",
+    "allow_recovery": true
+  },
+  "active_parser": "P.Bet",
+  "parser_by_chat": {}
+}
