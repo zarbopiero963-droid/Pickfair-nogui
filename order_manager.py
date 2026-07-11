@@ -871,25 +871,46 @@ class OrderManager:
             return {"ok": False, "status": OrderStatus.FAILED.value,
                     "reason_code": ReasonCode.BROKER_UNAVAILABLE.value}
 
-        try:
+                try:
             response = client.replace_orders(
                 market_id=market_id,
                 bet_id=bet_id,
                 new_price=new_price,
             )
         except Exception as exc:
+            reason = self._reason_from_exc(exc)
+            ec = classify_error(reason, exc)
+
+            if ec == ErrorClass.AMBIGUOUS:
+                rc = ReasonCode.AMBIGUOUS_OUTCOME
+                saga_status = OrderStatus.AMBIGUOUS
+            else:
+                rc = ReasonCode.REPLACE_REJECTED
+                saga_status = OrderStatus.FAILED
+
             self._transition_saga(
                 customer_ref=customer_ref,
-                new_status=OrderStatus.FAILED,
+                new_status=saga_status,
                 error_text=str(exc),
-                reason_code=ReasonCode.REPLACE_REJECTED,
+                reason_code=rc,
             )
-            self._publish("QUICK_BET_REPLACE_FAILED", {
+            exc_event = (
+                "QUICK_BET_AMBIGUOUS"
+                if saga_status == OrderStatus.AMBIGUOUS
+                else "QUICK_BET_REPLACE_FAILED"
+            )
+            self._publish(exc_event, {
                 "customer_ref": customer_ref, "error": str(exc),
+                "error_class": ec.value, "reason_code": rc.value,
             })
-            return {"ok": False, "status": OrderStatus.FAILED.value,
-                    "error": str(exc),
-                    "reason_code": ReasonCode.REPLACE_REJECTED.value}
+            return {
+                "ok": False,
+                "status": saga_status.value,
+                "customer_ref": customer_ref,
+                "error": str(exc),
+                "error_class": ec.value,
+                "reason_code": rc.value,
+            }
 
         instruction_report = self._extract_instruction_report(response)
         rep_status = str(instruction_report.get("status") or "").upper()

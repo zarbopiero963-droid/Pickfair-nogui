@@ -720,6 +720,17 @@ class SimulationBroker:
             # missing/non-executable order, a missing market id, a non-finite
             # (NaN/Inf) or <= 1.0 price, or a market that does not match the
             # order's market — all yield a FAILURE report and leave state intact.
+            # Codex P2: no-op su prezzo invariato.
+            # Se il prezzo non cambia, Betfair restituisce FAILURE (REJECTED_BY_EXCHANGE).
+            # Rispecchiamo questo comportamento per garantire parità SIM/LIVE.
+            if old and old.price == price_f:
+                return {
+                    "status": "SUCCESS",
+                    "marketId": market_id_s,
+                    "instructionReports": [{"status": "FAILURE", "betId": bid, "errorCode": "REJECTED_BY_EXCHANGE"}],
+                    "simulated": True,
+                }
+
             if (
                 old is None
                 or old.status != "EXECUTABLE"
@@ -762,6 +773,15 @@ class SimulationBroker:
         # size alongside the replacement.
         self._persist_order(old)
         self._persist_order(new_order)
+
+        # Codex P2: durabilità sul reload-source.
+        # Forza il salvataggio dello snapshot dello stato globale per garantire che
+        # un restart non resusciti il vecchio ordine dallo snapshot simulation_state.
+        if self.db and hasattr(self.db, "save_simulation_state"):
+            try:
+                self.db.save_simulation_state(self.state.to_dict())
+            except Exception:
+                logger.exception("Errore save_simulation_state durante replace_orders")
 
         return {
             "status": "SUCCESS",
