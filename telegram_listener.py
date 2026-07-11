@@ -525,7 +525,7 @@ class TelegramListener:
         if parsed:
             return parsed
 
-        return self._parse_legacy_signal(text)
+        return None
 
     # =========================================================
     # CUSTOM PATTERNS
@@ -713,90 +713,26 @@ class TelegramListener:
     # LEGACY PATTERNS
     # =========================================================
     def _default_patterns(self) -> Dict[str, Any]:
+        """
+        Pattern di base neutri. Non contengono logica di tipster specifica.
+        Vengono usati solo per l'estrazione strutturale dei dati.
+        """
         return {
             "event_icon": r"🆚\s*(.+?)(?:\n|$)",
-            "league": r"🏆\s*(.+?)(?:\n|$)",
             "score": r"(\d+)\s*[-–]\s*(\d+)",
             "time": r"(\d+)m",
             "odds": r"@\s*(\d+[.,]\d+)",
             "stake": r"(?:stake|puntata|€)\s*(\d+(?:[.,]\d+)?)",
-            "back": r"\b(back|punta|P\.Exc\.)\b",
-            "lay": r"\b(lay|banca|B\.Exc\.)\b",
-            "over": r"\b(over|sopra)\s*(\d+[.,]?\d*)",
-            "under": r"\b(under|sotto)\s*(\d+[.,]?\d*)",
-            "next_goal": r"NEXT\s*GOL|PROSSIMO\s*GOL",
             "cashout": r"\b(COPY\s*CASHOUT|cashout|CASHOUT)\b",
             "cashout_all": r"\b(CASHOUT\s*ALL|CASHOUT\s*TUTTO|CHIUDI\s*TUTTO)\b",
-            "ignore_patterns": [r"📈Quota\s*\d+[.,]?\d*", r"📊\d+[.,]?\d+%"],
+            "ignore_patterns": [],
         }
 
     def _parse_legacy_signal(self, text: str) -> Optional[Dict[str, Any]]:
-        p = self._default_patterns()
-        upper = text.upper()
-
-        for ign in p["ignore_patterns"]:
-            if re.search(ign, text, flags=re.IGNORECASE):
-                return None
-
-        event_name = self._extract_event_name(text)
-        odds = self._extract_odds(text) or 2.0
-        stake = self._extract_stake(text) or 1.0
-        minute = self._extract_minute(text)
-        home_score, away_score = self._extract_score(text)
-
-        bet_type = "BACK"
-        if re.search(p["lay"], text, flags=re.IGNORECASE):
-            bet_type = "LAY"
-        elif re.search(p["back"], text, flags=re.IGNORECASE):
-            bet_type = "BACK"
-
-        over_match = re.search(p["over"], text, flags=re.IGNORECASE)
-        if over_match:
-            line = over_match.group(2).replace(",", ".")
-            return {
-                "event_name": event_name,
-                "selection": f"Over {line}",
-                "market_type": "OVER_UNDER",
-                "bet_type": bet_type,
-                "price": odds,
-                "stake": stake,
-                "minute": minute,
-                "home_score": home_score,
-                "away_score": away_score,
-                "raw_text": text,
-            }
-
-        under_match = re.search(p["under"], text, flags=re.IGNORECASE)
-        if under_match:
-            line = under_match.group(2).replace(",", ".")
-            return {
-                "event_name": event_name,
-                "selection": f"Under {line}",
-                "market_type": "OVER_UNDER",
-                "bet_type": bet_type,
-                "price": odds,
-                "stake": stake,
-                "minute": minute,
-                "home_score": home_score,
-                "away_score": away_score,
-                "raw_text": text,
-            }
-
-        if re.search(p["next_goal"], upper, flags=re.IGNORECASE):
-            total_goals = home_score + away_score
-            return {
-                "event_name": event_name,
-                "selection": f"Over {total_goals + 0.5}",
-                "market_type": "OVER_UNDER",
-                "bet_type": "BACK",
-                "price": odds,
-                "stake": stake,
-                "minute": minute,
-                "home_score": home_score,
-                "away_score": away_score,
-                "raw_text": text,
-            }
-
+        """
+        Il motore neutro non supporta più il parsing 'legacy' hardcoded.
+        Tutto il parsing deve passare dai Custom Patterns salvati nel DB dell'utente.
+        """
         return None
 
     # =========================================================
