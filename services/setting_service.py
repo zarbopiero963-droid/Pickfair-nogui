@@ -115,7 +115,7 @@ class SettingsService:
         for item in chats or []:
             try:
                 if bool(item.get("is_active", True)):
-                    chat_ids.append(int(item.get("chat_id")))
+                    chat_ids.append(item.get("chat_id"))
             except Exception:
                 continue
 
@@ -123,6 +123,7 @@ class SettingsService:
             api_id=int(row.get("api_id") or 0),
             api_hash=str(row.get("api_hash", "") or ""),
             session_string=str(row.get("session_string", "") or ""),
+            bot_token=str(row.get("bot_token", "") or ""),
             phone_number=str(row.get("phone_number", "") or ""),
             enabled=bool(row.get("enabled", False)),
             auto_bet=bool(row.get("auto_bet", False)),
@@ -140,6 +141,7 @@ class SettingsService:
                 "api_id": str(config.api_id or ""),
                 "api_hash": config.api_hash,
                 "session_string": config.session_string,
+                "bot_token": config.bot_token,
                 "phone_number": config.phone_number,
                 "enabled": int(bool(config.enabled)),
                 "auto_bet": int(bool(config.auto_bet)),
@@ -162,6 +164,7 @@ class SettingsService:
             "api_id": int(row.get("api_id") or 0),
             "api_hash": str(row.get("api_hash", "") or ""),
             "session_string": str(row.get("session_string", "") or ""),
+            "bot_token": str(row.get("bot_token", "") or ""),
             "phone_number": str(row.get("phone_number", "") or ""),
             "enabled": bool(row.get("enabled", False)),
             "auto_bet": bool(row.get("auto_bet", False)),

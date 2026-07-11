@@ -186,6 +186,7 @@ class TelegramService:
                 api_id=int(cfg.api_id),
                 api_hash=cfg.api_hash,
                 session_string=cfg.session_string or None,
+                bot_token=getattr(cfg, "bot_token", None),
                 client_factory=self._client_factory,
                 connect_timeout=self._connect_timeout,
             )

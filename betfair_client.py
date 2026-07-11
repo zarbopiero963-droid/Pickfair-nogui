@@ -51,6 +51,32 @@ class BetfairClient:
         self.max_retries = max(0, int(max_retries))
 
         self.session = session or requests.Session()
+        
+        # Carica proxy da config.json se presente
+        try:
+            import json
+            import os
+            config_path = "/home/ubuntu/Pickfair-nogui/config.json"
+            if os.path.exists(config_path):
+                with open(config_path, "r") as f:
+                    config = json.load(f)
+                    proxy_cfg = config.get("proxy", {})
+                    if proxy_cfg.get("enabled"):
+                        p_type = proxy_cfg.get("type", "socks5")
+                        p_host = proxy_cfg.get("host")
+                        p_port = proxy_cfg.get("port")
+                        p_user = proxy_cfg.get("username")
+                        p_pass = proxy_cfg.get("password")
+                        
+                        if p_host and p_port:
+                            proxy_url = f"{p_type}://{p_user}:{p_pass}@{p_host}:{p_port}"
+                            self.session.proxies = {
+                                "http": proxy_url,
+                                "https": proxy_url
+                            }
+                            logger.info(f"BetfairClient: Proxy {p_type} configurato su {p_host}:{p_port}")
+        except Exception as e:
+            logger.error(f"BetfairClient: Errore caricamento proxy: {e}")
 
         self.session_token = ""
         self.session_expiry = ""

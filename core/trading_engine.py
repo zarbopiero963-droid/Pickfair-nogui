@@ -1331,8 +1331,17 @@ class TradingEngine:
         # demotion a SIMULATION non basta: senza sim broker configurato il
         # ramo SIMULATION cadrebbe su order_manager/client_getter (live).
         # `is True` per evitare falsi positivi con MagicMock nei test.
-        if runtime is not None and getattr(runtime, "is_emergency_stopped", False) is True:
-            raise RuntimeError("EMERGENCY_STOP_ACTIVE")
+        if runtime is not None:
+            # Hard block d'emergenza: solleva se emergency definitivo attivo
+            # OPPURE se pending-stop sincrono (finestra settlement concorrente) armato.
+            # Il recheck e' atomico sotto lock nel runtime_controller.
+            entry_blocked_fn = getattr(runtime, "_daily_loss_entry_blocked", None)
+            if callable(entry_blocked_fn):
+                if bool(entry_blocked_fn()):
+                    raise RuntimeError("EMERGENCY_STOP_ACTIVE")
+            elif getattr(runtime, "is_emergency_stopped", False) is True:
+                raise RuntimeError("EMERGENCY_STOP_ACTIVE")
+
         if runtime is not None and callable(getattr(runtime, "get_effective_execution_mode", None)):
             mode = str(runtime.get_effective_execution_mode() or "SIMULATION").upper()
             if mode == "SIMULATION":

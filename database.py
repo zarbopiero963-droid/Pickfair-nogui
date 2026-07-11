@@ -120,6 +120,41 @@ class Database:
         mode = str(row[0] if row else "").strip().lower()
         return mode == "wal"
 
+    def begin_transaction(self) -> None:
+        conn = self._get_connection()
+        with self._write_lock:
+            depth = self._get_tx_depth()
+            if depth == 0:
+                conn.execute("BEGIN")
+            else:
+                conn.execute(f"SAVEPOINT sp_{depth}")
+            self._set_tx_depth(depth + 1)
+
+    def commit_transaction(self) -> None:
+        conn = self._get_connection()
+        with self._write_lock:
+            depth = self._get_tx_depth()
+            if depth <= 0:
+                return
+            if depth == 1:
+                conn.commit()
+            else:
+                conn.execute(f"RELEASE SAVEPOINT sp_{depth-1}")
+            self._set_tx_depth(depth - 1)
+
+    def rollback_transaction(self) -> None:
+        conn = self._get_connection()
+        with self._write_lock:
+            depth = self._get_tx_depth()
+            if depth <= 0:
+                return
+            if depth == 1:
+                conn.rollback()
+            else:
+                conn.execute(f"ROLLBACK TO SAVEPOINT sp_{depth-1}")
+                conn.execute(f"RELEASE SAVEPOINT sp_{depth-1}")
+            self._set_tx_depth(depth - 1)
+
     def _get_tx_depth(self) -> int:
         return int(getattr(self._local, "tx_depth", 0) or 0)
 
@@ -368,6 +403,7 @@ class Database:
             "api_id": settings.get("telegram.api_id", settings.get("api_id", "")),
             "api_hash": settings.get("telegram.api_hash", settings.get("api_hash", "")),
             "session_string": settings.get("telegram.session_string", settings.get("session_string", "")),
+            "bot_token": settings.get("telegram.bot_token", ""),
             "phone_number": settings.get("telegram.phone_number", settings.get("phone_number", "")),
             "enabled": str(settings.get("telegram.enabled", "0")).lower() in {"1", "true", "yes", "on"},
             "auto_bet": str(settings.get("telegram.auto_bet", "0")).lower() in {"1", "true", "yes", "on"},
@@ -390,6 +426,7 @@ class Database:
                 "telegram.api_id": payload.get("api_id", ""),
                 "telegram.api_hash": payload.get("api_hash", ""),
                 "telegram.session_string": payload.get("session_string", ""),
+                "telegram.bot_token": payload.get("bot_token", ""),
                 "telegram.phone_number": payload.get("phone_number", ""),
                 "telegram.enabled": self._safe_bool_int(payload.get("enabled", False)),
                 "telegram.auto_bet": self._safe_bool_int(payload.get("auto_bet", False)),
@@ -403,6 +440,56 @@ class Database:
                 "telegram.alert_dedup_enabled": self._safe_bool_int(payload.get("alert_dedup_enabled", False)),
                 "telegram.alert_format_rich": self._safe_bool_int(payload.get("alert_format_rich", False)),
             }
+        )
+
+    # =========================================================
+    # RECONCILIATION / OUTBOX / STARTUP ORDERS
+    # =========================================================
+    def write_outbox(self, entry: Dict[str, Any]) -> None:
+        self._execute(
+            """
+            INSERT INTO outbox (batch_id, event_name, payload, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                entry.get("batch_id"),
+                entry.get("event_name"),
+                self._safe_json_dumps(entry.get("payload")),
+                entry.get("timestamp") or self._utc_now(),
+            ),
+        )
+
+    def startup_order_exists(self, order: Dict[str, Any]) -> bool:
+        order_id = str(order.get("order_id") or order.get("bet_id") or "")
+        if not order_id:
+            return False
+        row = self._execute(
+            "SELECT 1 FROM startup_orders WHERE order_id = ?",
+            (order_id,),
+            fetchone=True,
+            commit=False,
+        )
+        return bool(row)
+
+    def load_startup_orders(self) -> List[Dict[str, Any]]:
+        rows = self._execute(
+            "SELECT payload FROM startup_orders",
+            fetch=True,
+            commit=False,
+        )
+        return [self._safe_json_loads(row["payload"], {}) for row in rows or []]
+
+    def upsert_startup_order(self, order: Dict[str, Any]) -> None:
+        order_id = str(order.get("order_id") or order.get("bet_id") or "")
+        if not order_id:
+            return
+        self._execute(
+            """
+            INSERT INTO startup_orders (order_id, payload, created_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(order_id) DO UPDATE SET payload = excluded.payload
+            """,
+            (order_id, self._safe_json_dumps(order), self._utc_now()),
         )
 
     def get_telegram_chats(self) -> List[Dict[str, Any]]:

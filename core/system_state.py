@@ -38,6 +38,7 @@ class TelegramRuntimeConfig:
     api_id: int = 0
     api_hash: str = ""
     session_string: str = ""
+    bot_token: str = ""
     phone_number: str = ""
     enabled: bool = False
     auto_bet: bool = False

@@ -52,6 +52,7 @@ class TelegramListener:
         api_id: int,
         api_hash: str,
         session_string: str | None = None,
+        bot_token: str | None = None,
         db=None,
         client_factory=None,
         connect_timeout: float = 10.0,
@@ -61,6 +62,7 @@ class TelegramListener:
         self.api_id = int(api_id)
         self.api_hash = str(api_hash)
         self.session_string = session_string
+        self.bot_token = bot_token
         self.db = db
         self._client_factory = client_factory
         self._connect_timeout = float(connect_timeout)
@@ -84,7 +86,7 @@ class TelegramListener:
         self.runtime_handlers_registered = 0
 
         self.running = False
-        self.monitored_chats: List[int] = []
+        self.monitored_chats: List[Any] = []
         self.state = "CREATED"
         self.last_error = ""
         self.intentional_stop = False
@@ -113,8 +115,14 @@ class TelegramListener:
     def set_database(self, db) -> None:
         self.db = db
 
-    def set_monitored_chats(self, chats: List[int]) -> None:
-        self.monitored_chats = [int(c) for c in (chats or [])]
+    def set_monitored_chats(self, chats: List[Any]) -> None:
+        processed_chats = []
+        for c in (chats or []):
+            try:
+                processed_chats.append(int(c))
+            except (ValueError, TypeError):
+                processed_chats.append(str(c))
+        self.monitored_chats = processed_chats
 
     def set_callbacks(self, on_signal=None, on_message=None, on_status=None) -> None:
         self._callbacks["on_signal"] = on_signal
@@ -125,7 +133,7 @@ class TelegramListener:
     # =========================================================
     # LIFECYCLE
     # =========================================================
-    def start(self, monitored_chats: Optional[List[int]] = None):
+    def start(self, monitored_chats: Optional[List[Any]] = None):
         if self.running:
             return {"started": True, "reason": "already_running", "chat_count": len(self.monitored_chats)}
 
@@ -142,8 +150,8 @@ class TelegramListener:
         if TelegramClient is None or events is None:
             self.mark_failed("telethon_not_available")
             return {"started": False, "state": self.state, "error": self.last_error}
-        if self._client_factory is None and not self.session_string:
-            self.mark_failed("missing_session_string")
+        if self._client_factory is None and not self.session_string and not self.bot_token:
+            self.mark_failed("missing_session_string_or_bot_token")
             return {"started": False, "state": self.state, "error": self.last_error}
         # Fail-closed: senza chat monitorate Telethon ascolterebbe TUTTI i
         # dialoghi dell'account (chats=None = nessun filtro). Mai di default.
@@ -224,6 +232,14 @@ class TelegramListener:
     def _create_client(self):
         if self._client_factory is not None:
             return self._client_factory(self.api_id, self.api_hash, self.session_string)
+        
+        # Priorità al Bot Token se presente
+        if self.bot_token:
+            logger.info("[TelegramListener] Inizializzazione client tramite Bot Token")
+            return TelegramClient(
+                None, self.api_id, self.api_hash
+            )
+            
         return TelegramClient(
             StringSession(self.session_string), self.api_id, self.api_hash
         )
@@ -253,17 +269,19 @@ class TelegramListener:
         client = self._create_client()
         self._client = client
         try:
-            await client.connect()
-            # Abort PRIMA di altre chiamate Telethon: se nel frattempo la
-            # startup e' fallita (connect_timeout) o e' arrivato stop(), una
-            # is_user_authorized lenta terrebbe vivo il thread inutilmente.
-            if self.intentional_stop or self.state == "FAILED":
-                return
-            authorized = await client.is_user_authorized()
-            if not authorized:
-                self.mark_failed("session_not_authorized")
-                self._runtime_ready.set()
-                return
+            # Avvio tramite Bot Token o Sessione
+            if self.bot_token:
+                await client.start(bot_token=self.bot_token)
+            else:
+                await client.connect()
+                # Abort PRIMA di altre chiamate Telethon
+                if self.intentional_stop or self.state == "FAILED":
+                    return
+                authorized = await client.is_user_authorized()
+                if not authorized:
+                    self.mark_failed("session_not_authorized")
+                    self._runtime_ready.set()
+                    return
 
             # stop() o il timeout di start() possono arrivare mentre connect()
             # è ancora in corso: in quel caso NON va registrato alcun handler
