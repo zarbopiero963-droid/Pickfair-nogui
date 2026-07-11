@@ -1533,15 +1533,15 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         container = ctk.CTkFrame(self.tab_provider, fg_color="transparent")
         container.pack(fill="both", expand=True, padx=12, pady=12)
         
-        # 1. Top Bar: Sync Catalog
+        # 1. Top Bar: Catalog Status (Auto-managed)
         top = ctk.CTkFrame(container, fg_color="transparent")
         top.pack(fill="x", pady=(0, 12))
         
-        btn_sync = ctk.CTkButton(top, text="Sincronizza Catalogo Betfair", command=self._on_sync_catalog)
-        btn_sync.pack(side="left")
+        self.lbl_sync_status = ctk.CTkLabel(top, text="Catalogo Betfair: Sincronizzazione Automatica Attiva", font=("", 12, "italic"))
+        self.lbl_sync_status.pack(side="left")
         
-        self.lbl_sync_status = ctk.CTkLabel(top, text="Ultimo Sync: -")
-        self.lbl_sync_status.pack(side="left", padx=12)
+        self.lbl_sync_info = ctk.CTkLabel(top, text="-")
+        self.lbl_sync_info.pack(side="left", padx=12)
         
         # 2. Main Area: Providers & Aliases
         panes = ctk.CTkFrame(container, fg_color="transparent")
@@ -1602,7 +1602,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             
         def _done(meta):
             if meta:
-                self.lbl_sync_status.configure(text=f"Ultimo Sync: {meta['last_sync_at']} ({meta['events_count']} ev)")
+                self.lbl_sync_info.configure(text=f"Ultimo Sync: {meta['last_sync_at']} ({meta['events_count']} ev)")
             self._log("Sincronizzazione catalogo completata.")
 
         self._run_runtime_command_async("SYNC_CATALOG", _work, on_success=_done)

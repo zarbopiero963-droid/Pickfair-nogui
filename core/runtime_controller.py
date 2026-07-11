@@ -19,6 +19,7 @@ from core.system_state import DeskMode, RuntimeMode
 from core.table_manager import TableManager
 from core.trading_constants import CASHOUT_FAILED, REQ_EXECUTE_CASHOUT
 from core.type_helpers import safe_bool
+from services.catalog_sync_service import CatalogSyncService
 from cashout_cancel_adapter import CashoutCancelAdapter
 from cashout_router import CashoutRouter
 from direct_best_price import SOURCE_FALLBACK_MASTER, resolve_direct_best_price
@@ -92,6 +93,8 @@ class RuntimeController:
             bus=self.bus,
             betfair_service=self.betfair_service,
         )
+        self.catalog_sync = CatalogSyncService(db, betfair_service.get_client())
+        self._last_catalog_sync_at: float = 0.0
         self.streaming_feed: Optional[StreamingFeed] = None
         self._market_data_cfg: dict[str, Any] = {}
         self._last_fallback_snapshot_at: float = 0.0
@@ -333,6 +336,15 @@ class RuntimeController:
             return
 
         now = time.monotonic()
+        
+        # Fase A1: Auto-Update Catalogo (ogni 12 ore)
+        if now - self._last_catalog_sync_at > 43200: # 12 ore
+            self._last_catalog_sync_at = now
+            if self.executor:
+                self.executor.submit("background_catalog_sync", self.catalog_sync.run_sync, force=True)
+            else:
+                threading.Thread(target=self.catalog_sync.run_sync, kwargs={"force": True}, daemon=True).start()
+
         min_interval = max(1.0, float(cfg.get("snapshot_fallback_interval_sec", 5) or 5))
         if (now - self._last_fallback_snapshot_at) < min_interval:
             return
@@ -1618,6 +1630,13 @@ class RuntimeController:
 
         self.mode = RuntimeMode.ACTIVE
         self.last_error = ""
+        
+        # Fase A1: Auto-Sync al boot (background)
+        if self.executor:
+            self.executor.submit("boot_catalog_sync", self.catalog_sync.run_sync, force=False)
+        else:
+            threading.Thread(target=self.catalog_sync.run_sync, kwargs={"force": False}, daemon=True).start()
+
         status = self.get_status()
         self.bus.publish("RUNTIME_STARTED", status)
 

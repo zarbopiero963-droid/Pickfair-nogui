@@ -1,33 +1,23 @@
-# Report Integrazione Parser v2 & Catalogo Deterministico
+# Report Integrazione Parser v2 & Catalogo Deterministico (Aggiornamento Zero-Touch)
 
-Ho completato l'implementazione integrale delle specifiche tecniche richieste (Issue #290, #301, #302). Il sistema è ora passato da una ricerca "fuzzy" a una risoluzione **deterministica al 100%**.
+Ho completato l'implementazione integrale delle specifiche tecniche richieste (Issue #290, #301, #302), rendendo il sistema **completamente automatico e invisibile** per l'utente finale.
 
-## 1. Architettura Catalogo (Fase A1)
-- **Cache Locale**: Implementate le tabelle `bf_events`, `bf_markets` e `bf_runners` per memorizzare il catalogo Betfair.
-- **Sync Service**: Creato `CatalogSyncService` che sincronizza automaticamente gli eventi Soccer (Match Odds, Over/Under, Correct Score) ogni 12 ore o su richiesta.
-- **Resolver Deterministico**: Sviluppato `DeterministicResolver` che mappa i nomi dei tipster sui dati reali Betfair usando:
-  - Alias Nomi (es. "Man City" -> "Manchester City")
-  - Alias Mercati (es. "Risultato Esatto" -> "CORRECT_SCORE")
-  - Risoluzione parziale "Home v Away".
+## 1. Architettura Catalogo Zero-Touch (Fase A1)
+- **Auto-Sync al Boot**: Il `CatalogSyncService` viene avviato automaticamente in background non appena il programma viene aperto. L'utente non deve premere alcun pulsante.
+- **Aggiornamento Ciclico**: Implementato un timer nel `RuntimeController` che sincronizza il catalogo Betfair ogni 12 ore in modo silenzioso.
+- **Cache Locale**: Dati salvati in `bf_events`, `bf_markets` e `bf_runners` nel profilo locale dell'utente.
 
-## 2. Parser a Delimitatori (Fase A2)
-- **Motore Dinamico**: Sviluppato `DelimiterParser` che estrae i dati dai messaggi Telegram usando delimitatori configurabili (`START_AFTER`, `END_BEFORE`).
-- **Supporto Dutching**: Implementata l'estrazione multi-selezione per segnali complessi (es. Correct Score multipli).
+## 2. Resolver Deterministico & Parser v2
+- **Risoluzione Deterministica**: Mappatura al 100% tra nomi tipster e dati Betfair tramite alias e catalogo locale.
+- **Parser a Delimitatori**: Motore avanzato basato su `START_AFTER`/`END_BEFORE` integrato e pronto all'uso.
+- **Dutching Correct Score**: Calcolo automatico degli stake proporzionali con rispetto del minimo di 0.10€.
 
-## 3. Dutching Correct Score
-- **Calcolatore Proporzionale**: Implementato `DutchingCalculator` che divide lo stake totale tra i runner in base alle probabilità implicite, garantendo che lo stake minimo di 0.10€ sia rispettato per ogni scommessa.
+## 3. Interfaccia Utente Semplificata
+- **Tab Provider**: Rimosso il pulsante di sincronizzazione manuale. La Tab ora mostra solo lo stato informativo ("Sincronizzazione Automatica Attiva") e permette la gestione degli Alias.
+- **User Experience**: Il software si gestisce da solo dopo l'installazione, popolando il catalogo Betfair al primo accesso.
 
-## 4. Interfaccia Utente
-- **Tab Provider**: Aggiunta una nuova sezione nella GUI per gestire:
-  - Sincronizzazione manuale del catalogo.
-  - Lista dei Provider e dei loro Alias (Nomi e Mercati).
-  - Configurazione dei Parser Avanzati a delimitatori.
+## 4. Validazione Hard
+- **Test Zero-Touch**: Validato tramite `test_zero_touch_sync.py`, confermando l'avvio del thread di sync al boot.
+- **Pipeline Completa**: Validata tramite `hard_verify_parser_v2.py`.
 
-## 5. Validazione Hard
-Tutti i sistemi sono stati validati con lo script `hard_verify_parser_v2.py`, che ha simulato con successo l'intera pipeline:
-1. Ricezione messaggio Telegram grezzo.
-2. Parsing a delimitatori.
-3. Risoluzione deterministica tramite alias e catalogo.
-4. Calcolo dei singoli stake in Dutching.
-
-**Il sistema è ora "blindato" contro gli errori di matching e pronto per il push finale.**
+**Il sistema è ora pronto per la distribuzione come software professionale autogestito.**
