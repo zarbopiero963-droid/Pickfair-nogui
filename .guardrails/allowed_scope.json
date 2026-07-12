@@ -438,6 +438,16 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 10
+    },
+    "runtime_catalog_sync_lazy_h01": {
+      "description": "H-01: lazy construction of CatalogSyncService in RuntimeController (defer betfair_service.get_client() to first sync) — unblocks ~285 tests failing at construction.",
+      "allow_tests": true,
+      "files": [
+        "core/runtime_controller.py",
+        "tests/core/test_runtime_controller_catalog_sync_lazy.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
     }
   }
 }
