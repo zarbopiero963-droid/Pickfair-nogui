@@ -66,11 +66,13 @@ def is_conflict_marker(stripped: str) -> bool:
 
 
 def _get_markers_in_file(path: Path, root: Path) -> list[tuple[Path, int, str]]:
-    """Marker di conflitto in un singolo file (path relativo a `root`)."""
-    try:
-        text = path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        return []
+    """Marker di conflitto in un singolo file (path relativo a `root`).
+
+    Decodifica con `errors="replace"`: un file di testo non-UTF-8 (es. Latin-1)
+    che contiene marker ASCII (`=======`, `<<<<<<<`) deve comunque essere
+    rilevato, non saltato silenziosamente (CodeRabbit).
+    """
+    text = path.read_text(encoding="utf-8", errors="replace")
     markers: list[tuple[Path, int, str]] = []
     for lineno, line in enumerate(text.splitlines(), start=1):
         stripped = line.strip()

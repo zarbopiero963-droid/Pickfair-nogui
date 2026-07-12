@@ -66,6 +66,15 @@ class CheckMergeMarkersTests(unittest.TestCase):
             # Il file decorativo non deve comparire tra i flag.
             self.assertTrue(all(path.name == "conflitto.txt" for path, _, _ in found))
 
+    def test_non_utf8_file_with_marker_is_detected(self) -> None:
+        # Un file di testo non-UTF-8 (Latin-1) con un marker ASCII deve essere
+        # rilevato, non saltato silenziosamente (CodeRabbit).
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "latin1.txt").write_bytes("caffè\n=======\nràgù\n".encode("latin-1"))
+            found = CHECKER.scan_for_markers(root)
+            self.assertIn("=======", {line for _, _, line in found})
+
     def test_main_status_codes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

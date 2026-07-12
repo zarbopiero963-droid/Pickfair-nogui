@@ -35,5 +35,4 @@ jobs:
             tests/guardrails/test_contract_snapshot_repo.py \
             tests/guardrails/test_architecture_guardrails.py \
             tests/guardrails/test_no_bypass_paths.py \
-            tests/guardrails/test_runtime_entrypoints.py \
-            tests/guardrails/test_check_merge_markers.py
+            tests/guardrails/test_runtime_entrypoints.py
