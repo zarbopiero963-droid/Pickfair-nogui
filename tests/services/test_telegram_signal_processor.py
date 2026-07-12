@@ -66,11 +66,44 @@ def test_normalize_ingestion_signal_rejects_non_dict_and_ambiguous_meta_fail_clo
     # restano None e il runtime la rifiuta al gate campi-obbligatori
     # (core/runtime_controller.py:1932, required=[market_id, selection_id]
     # => SIGNAL_REJECTED campi_mancanti). Nessun ordine puo' nascere da
-    # una stringa spazzatura.
+    # una stringa spazzatura. Il rifiuto end-to-end e' provato dal test
+    # test_unmatched_string_signal_rejected_by_runtime_mandatory_gate.
     unmatched = p.normalize_ingestion_signal("stringa non parsabile qualsiasi")
     assert unmatched["ok"] is True
     assert unmatched["normalized_signal"]["market_id"] is None
     assert unmatched["normalized_signal"]["selection_id"] is None
+
+
+def test_unmatched_string_signal_rejected_by_runtime_mandatory_gate():
+    # End-to-end del fail-closed Telegram->denaro (GLM/Fugu, PR #352): il
+    # segnale normalizzato da una stringa non parsabile (market_id e
+    # selection_id None) DEVE essere RIFIUTATO dal gate campi-obbligatori di
+    # RuntimeController._on_signal_received, mai inoltrato all'order path.
+    # Harness bare (object.__new__) come tests/unit/test_runtime_controller_
+    # cashout_trigger.py: si esercita il gate reale, non un mock del gate.
+    import threading
+
+    from core.runtime_controller import RuntimeController
+
+    p = TelegramSignalProcessor()
+    normalized = p.normalize_ingestion_signal("stringa non parsabile qualsiasi")[
+        "normalized_signal"
+    ]
+    assert normalized["market_id"] is None  # precondizione del percorso
+
+    rc = object.__new__(RuntimeController)
+    rc._daily_loss_stop_lock = threading.Lock()
+    rc._emergency_stopped = False
+    rc._daily_loss_pending_stop = False
+    rc._emergency_stopped_at = ""
+    rc.execution_mode = "SIMULATION"
+    rc._runtime_active = lambda: True  # runtime attivo: si arriva al gate
+    rejected = []
+    rc._reject_signal = lambda sig, reason: rejected.append(reason)
+
+    rc._on_signal_received(normalized)
+
+    assert rejected == ["campi_mancanti:market_id,selection_id"]
 
     both = p.normalize_ingestion_signal(
         {"event_name": "Roma v Milan", "copy_meta": {"master_id": "M1"}, "pattern_meta": {"pattern_id": "P1"}}
