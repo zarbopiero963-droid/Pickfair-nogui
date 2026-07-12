@@ -137,6 +137,17 @@ nuovo evento `labeled` se la label è già presente). Falle partire UNA volta, a
 head stabile, dopo che: il lavoro è completo, i check locali sono stati
 tentati, il branch è pushato, la PR non è draft.
 
+**Timing: i gate forti sono l'ULTIMO passo pre-merge.** Fai scattare le due
+label SOLO quando la PR è stabile e in teoria pronta al merge: i reviewer
+per-push (GPT-5.5, GLM 5.2) e CodeRabbit hanno COMPLETATO, tutti i loro rilievi
+reali sono stati trattati (patch o evidenza in-thread), non arrivano più
+risposte e non c'è più nulla da fare. NON prima: così Fugu Ultra e Fable 5
+revisionano un head STABILE e non si sprecano su versioni che cambieranno ancora
+per i fix dei reviewer economici (ogni push ai forti costa). Sequenza:
+lavoro completo → push → GPT/GLM + CodeRabbit finiti e finding trattati → head
+stabile → SOLO ORA fai partire `final-fugu-review` + `final-fable-review` →
+attendi il loro esito → merge secondo la sezione AUTO-MERGE.
+
 **L'agente non vede mai le API key**: aggiunge solo la label; i secret restano
 nei GitHub Secrets e Actions resta read-only sul codice (diff-only, niente
 checkout né esecuzione del codice PR, redazione segreti).

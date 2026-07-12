@@ -263,6 +263,17 @@ if a label is already present). Fire them ONCE, on a stable head, after: the
 work is complete, local checks were attempted, the branch is pushed, the PR is
 not draft.
 
+**Timing: the strong gates are the LAST pre-merge step.** Fire the two labels
+ONLY when the PR is stable and in theory ready to merge: the per-push reviewers
+(GPT-5.5, GLM 5.2) and CodeRabbit have COMPLETED, all their real findings are
+handled (patched or answered in-thread with evidence), no more responses are
+coming and there is nothing left to do. NOT before: this way Fugu Ultra and
+Fable 5 review a STABLE head and are not wasted on versions that will still
+change from the cheap reviewers' fixes (each push to the strong reviewers
+costs). Sequence: work complete → push → GPT/GLM + CodeRabbit done and findings
+handled → stable head → ONLY NOW fire `final-fugu-review` + `final-fable-review`
+→ wait for their outcome → merge per the "Auto-merge" section.
+
 **The agent never sees the API keys**: it only adds the label; secrets stay in
 GitHub Secrets and Actions stays read-only on the code (diff-only, no checkout
 and no execution of PR code, secret redaction).
