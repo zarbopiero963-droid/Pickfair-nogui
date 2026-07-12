@@ -218,7 +218,14 @@ def test_missing_session_fails_closed_without_factory():
     result = listener.start()
     assert result["started"] is False
     assert listener.state == "FAILED"
-    assert listener.last_error in {"missing_session_string", "telethon_not_available"}
+    # La label credenziali si e' evoluta: telegram_listener.py ora supporta anche
+    # il bot-token, quindi in assenza di session_string AND bot_token AND factory
+    # emette 'missing_session_string_or_bot_token' (non piu' 'missing_session_string').
+    # Il set resta per robustezza d'ambiente: se telethon non e' importabile il
+    # preflight fallisce prima con 'telethon_not_available' (telegram_listener.py:150,
+    # che precede il check credenziali a :153). Il contratto fail-closed sopra
+    # (started=False, state=FAILED) e' invariato ed e' il BLOCK-proof reale.
+    assert listener.last_error in {"missing_session_string_or_bot_token", "telethon_not_available"}
 
 
 @pytest.mark.unit

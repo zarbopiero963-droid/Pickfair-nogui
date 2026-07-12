@@ -530,6 +530,15 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 4
+    },
+    "telegram_listener_missing_credential_label_test": {
+      "description": "Cluster telegram unit (FASE 3): test_missing_session_fails_closed_without_factory asseriva le etichette d'errore vecchie {missing_session_string, telethon_not_available}, ma telegram_listener.py:154 oggi supporta anche il bot-token e in assenza di session_string AND bot_token AND factory emette la label piu' accurata 'missing_session_string_or_bot_token'. Il contratto fail-closed (started=False, state=FAILED) e' invariato e resta verificato. Fix SOLO nel test: allineare l'asserzione alla label corrente, mantenendo gli assert fail-closed come BLOCK-proof. Nessuna modifica a codice runtime/core.",
+      "allow_tests": true,
+      "files": [
+        "tests/unit/test_telegram_listener_runtime.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 4
     }
   }
 }
