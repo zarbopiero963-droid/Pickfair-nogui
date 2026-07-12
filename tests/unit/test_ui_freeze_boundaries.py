@@ -9,6 +9,26 @@ from observability.watchdog_service import WatchdogService
 from telegram_module import TelegramModule
 
 
+class _HeadlessTelegramTabUI:
+    """Stub headless della tab Telegram.
+
+    In test_mode la GUI non crea un root Tk reale; quando customtkinter e'
+    assente (CI), i widget di fallback `_Fallback*` ereditano dai veri
+    `tk.Frame`/`tk.Label` e la costruzione della TelegramTabUI reale
+    (`CTkFrame(parent)`) richiede un master Tk valido -> AttributeError
+    ('object' has no attribute 'tk'). Mockando la tab (come gia' fa
+    tests/failure/test_mini_gui_failures.py) la GUI si costruisce headless.
+    """
+
+    def __init__(self, parent, app):
+        _ = parent, app
+
+
+class _HeadlessTelegramController:
+    def __init__(self, app):
+        _ = app
+
+
 class _DoneExecutor:
     def __init__(self, *args, **kwargs):
         _ = args, kwargs
@@ -267,6 +287,10 @@ def test_mini_gui_runtime_actions_are_delegated_to_executor(monkeypatch):
     monkeypatch.setattr(mini_gui, "TelegramService", _FakeTelegramService)
     monkeypatch.setattr(mini_gui, "TradingEngine", _FakeTradingEngine)
     monkeypatch.setattr(mini_gui, "RuntimeController", _FakeRuntime)
+    # Headless: evita la costruzione dei widget Tk reali della tab Telegram
+    # (senza root Tk in test_mode fallisce con "'object' has no attribute 'tk'").
+    monkeypatch.setattr(mini_gui, "TelegramController", _HeadlessTelegramController)
+    monkeypatch.setattr(mini_gui, "TelegramTabUI", _HeadlessTelegramTabUI)
 
     gui = mini_gui.MiniPickfairGUI(test_mode=True)
     try:
@@ -377,6 +401,10 @@ def test_risk_tree_row_payload_matches_defined_columns(monkeypatch):
     monkeypatch.setattr(mini_gui, "TelegramService", _FakeTelegramService)
     monkeypatch.setattr(mini_gui, "TradingEngine", _FakeTradingEngine)
     monkeypatch.setattr(mini_gui, "RuntimeController", _FakeRuntime)
+    # Headless: evita la costruzione dei widget Tk reali della tab Telegram
+    # (senza root Tk in test_mode fallisce con "'object' has no attribute 'tk'").
+    monkeypatch.setattr(mini_gui, "TelegramController", _HeadlessTelegramController)
+    monkeypatch.setattr(mini_gui, "TelegramTabUI", _HeadlessTelegramTabUI)
 
     gui = mini_gui.MiniPickfairGUI(test_mode=True)
     try:
@@ -481,6 +509,10 @@ def test_runtime_command_coalescing_prevents_unbounded_executor_stacking(monkeyp
     monkeypatch.setattr(mini_gui, "TelegramService", _FakeTelegramService)
     monkeypatch.setattr(mini_gui, "TradingEngine", _FakeTradingEngine)
     monkeypatch.setattr(mini_gui, "RuntimeController", _FakeRuntime)
+    # Headless: evita la costruzione dei widget Tk reali della tab Telegram
+    # (senza root Tk in test_mode fallisce con "'object' has no attribute 'tk'").
+    monkeypatch.setattr(mini_gui, "TelegramController", _HeadlessTelegramController)
+    monkeypatch.setattr(mini_gui, "TelegramTabUI", _HeadlessTelegramTabUI)
 
     gui = mini_gui.MiniPickfairGUI(test_mode=True)
     try:

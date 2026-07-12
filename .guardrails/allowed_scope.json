@@ -539,6 +539,15 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 4
+    },
+    "mini_gui_headless_ui_freeze_tests": {
+      "description": "Cluster GUI headless (FASE 3): 3 test di test_ui_freeze_boundaries costruivano la GUI reale in test_mode senza mockare TelegramTabUI/TelegramController. Con customtkinter assente (CI) i widget di fallback _Fallback* di mini_gui.py ereditano dai veri tk.Frame e pretendono un master Tk valido -> AttributeError 'object has no attribute tk'. NON e' un problema di display (xvfb NON risolve: verificato, il master e' un object() non-widget). Fix SOLO nel test: mockare TelegramTabUI/TelegramController come gia' fa tests/failure/test_mini_gui_failures.py. Nessuna modifica a codice prod/workflow. Verificato in locale con tkinter presente + senza display (condizione CI): 809/809 unit PASS.",
+      "allow_tests": true,
+      "files": [
+        "tests/unit/test_ui_freeze_boundaries.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 4
     }
   }
 }
