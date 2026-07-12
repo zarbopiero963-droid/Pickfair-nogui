@@ -49,7 +49,7 @@ jobs:
         github.event.label.name == 'final-fugu-review' )
 
     env:
-      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_PICKFAIR }}
       OPENROUTER_MODEL: sakana/fugu-ultra
 
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

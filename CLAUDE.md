@@ -20,6 +20,14 @@ REGOLE NON NEGOZIABILI (valgono sempre):
 
 - Fail-closed: evidence mancante, ambigua o contraddittoria
   => AUTO_PR_FLOW_STATUS=NEEDS_MANUAL. Non inventare, non forzare.
+- UNA SOLA PR aperta / UN SOLO task attivo alla volta (allineato ad
+  AGENTS.md «Core rules»: "Only one active task/one open pull request
+  is allowed at a time"). Se esiste già una PR aperta: lavoro NON
+  correlato => fermati (BLOCKED), non aprire una seconda PR; lavoro di
+  fix sulla PR aperta => continua sullo STESSO branch. Mai lavorare
+  direttamente su `main`, mai task in parallelo. Nuova PR (e nuovo
+  branch) SOLO dopo che la precedente è merged/closed: per follow-up si
+  ristabilisce il branch designato dal `main` aggiornato.
 - Lavora SOLO sul current head della PR. Head mismatch => NEEDS_MANUAL.
 - Matrix Phase 0 obbligatoria prima di ogni patch safety-critical.
   Phase 0 assente o NEEDS_MANUAL => non patchare.
