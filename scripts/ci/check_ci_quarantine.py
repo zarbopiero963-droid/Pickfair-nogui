@@ -20,11 +20,19 @@ QUARANTINED_WORKFLOWS: tuple[str, ...] = (
 
 
 def _dispatch_patterns(workflow_name: str) -> tuple[re.Pattern[str], ...]:
-    escaped = re.escape(workflow_name)
+    # Robustezza del guard di sicurezza (fail-closed):
+    # - GitHub Actions esegue sia `.yml` sia `.yaml`, e `gh workflow run` accetta
+    #   anche il nome SENZA estensione: l'estensione va resa opzionale, altrimenti
+    #   la variante `.yaml`/senza-estensione sfuggirebbe (Greptile P1, Codacy).
+    # - `gh workflow run` può avere FLAG prima del nome (es. `--ref main`): non
+    #   devono far evadere il controllo (Qodo). Si consente qualsiasi testo sulla
+    #   stessa riga tra `run` e il nome del workflow.
+    stem = re.escape(Path(workflow_name).stem)
+    ext = r"(?:\.ya?ml)?"
     return (
-        re.compile(rf"\bgh\s+workflow\s+run\s+['\"]?{escaped}(?:['\"\s\\]|$)"),
-        re.compile(rf"/actions/workflows/{escaped}/dispatches\b"),
-        re.compile(rf"\buses:\s*\.?/?\.github/workflows/{escaped}(?:@|\s|$)"),
+        re.compile(rf"\bgh\s+workflow\s+run\b[^\n]*?['\"]?{stem}{ext}(?:['\"\s\\]|$)"),
+        re.compile(rf"/actions/workflows/{stem}{ext}/dispatches\b"),
+        re.compile(rf"\buses:\s*\.?/?\.github/workflows/{stem}{ext}(?:@|\s|$)"),
     )
 
 
@@ -36,10 +44,15 @@ def check_repository(repository_root: Path) -> list[str]:
     errors: list[str] = []
 
     for workflow_name in QUARANTINED_WORKFLOWS:
-        active_path = active_dir / workflow_name
+        stem = Path(workflow_name).stem
         archived_path = quarantine_dir / f"{workflow_name}.disabled"
-        if active_path.exists():
-            errors.append(f"workflow privilegiato nuovamente attivo: {active_path}")
+        # GitHub Actions esegue sia `.yml` sia `.yaml`: un workflow quarantinato
+        # riattivato con l'estensione alternativa sarebbe eseguibile ma sfuggirebbe
+        # al controllo di sola esistenza `.yml` (Greptile P1). Controlla entrambe.
+        for extension in (".yml", ".yaml"):
+            active_path = active_dir / f"{stem}{extension}"
+            if active_path.exists():
+                errors.append(f"workflow privilegiato nuovamente attivo: {active_path}")
         if not archived_path.is_file():
             errors.append(f"copia di quarantena mancante: {archived_path}")
 

@@ -1,20 +1,14 @@
 name: CI Quarantine Guard
 
 on:
+  # Nessun filtro `paths:` di proposito: è un guard di sicurezza fail-closed e
+  # deve girare su OGNI PR e push su main, non solo quando cambiano i file dei
+  # workflow. Così una riattivazione/dispatch introdotta altrove non può saltare
+  # il controllo per via del path filtering (Qodo). Il job è read-only e breve.
   pull_request:
-    paths:
-      - ".github/workflows/**"
-      - ".github/quarantined-workflows/**"
-      - "scripts/ci/check_ci_quarantine.py"
-      - "tests/guardrails/test_ci_quarantine.py"
   push:
     branches:
       - main
-    paths:
-      - ".github/workflows/**"
-      - ".github/quarantined-workflows/**"
-      - "scripts/ci/check_ci_quarantine.py"
-      - "tests/guardrails/test_ci_quarantine.py"
   workflow_dispatch:
 
 permissions:

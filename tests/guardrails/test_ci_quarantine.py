@@ -122,6 +122,65 @@ class CIQuarantineGuardTests(unittest.TestCase):
                         errors,
                     )
 
+    def test_rejects_reactivated_workflow_yaml_extension(self) -> None:
+        # GitHub Actions esegue anche i workflow `.yaml`: la riattivazione con
+        # l'estensione alternativa NON deve sfuggire al guard (Greptile P1).
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._make_repository(root)
+            stem = Path(GUARD.QUARANTINED_WORKFLOWS[0]).stem
+            (root / ".github" / "workflows" / f"{stem}.yaml").write_text(
+                "name: Reactivated via yaml\n",
+                encoding="utf-8",
+            )
+
+            errors = GUARD.check_repository(root)
+
+            self.assertTrue(
+                any("nuovamente attivo" in error for error in errors),
+                errors,
+            )
+
+    def test_rejects_dispatch_with_flags_or_alt_extension(self) -> None:
+        # Il dispatch verso un workflow quarantinato non deve evadere il controllo
+        # con flag prima del nome (`--ref main`), con estensione `.yaml`, o senza
+        # estensione (Qodo).
+        workflow_name = GUARD.QUARANTINED_WORKFLOWS[0]
+        stem = Path(workflow_name).stem
+        dispatch_snippets = (
+            f"      - run: gh workflow run --ref main {workflow_name}\n",
+            f"      - run: gh workflow run -R owner/repo {stem}.yaml\n",
+            f"      - run: gh workflow run {stem}\n",
+            f"      - run: curl /actions/workflows/{stem}.yaml/dispatches\n",
+            f"    uses: ./.github/workflows/{stem}.yaml\n",
+        )
+
+        for dispatch_snippet in dispatch_snippets:
+            with self.subTest(dispatch_snippet=dispatch_snippet):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    root = Path(temp_dir)
+                    self._make_repository(root)
+                    (root / ".github" / "workflows" / "dispatcher.yml").write_text(
+                        "name: Dispatcher\n"
+                        "on: workflow_dispatch\n"
+                        "jobs:\n"
+                        "  dispatch:\n"
+                        "    runs-on: ubuntu-latest\n"
+                        "    steps:\n"
+                        f"{dispatch_snippet}",
+                        encoding="utf-8",
+                    )
+
+                    errors = GUARD.check_repository(root)
+
+                    self.assertTrue(
+                        any(
+                            "dispatch verso workflow quarantinato" in error
+                            for error in errors
+                        ),
+                        errors,
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()
