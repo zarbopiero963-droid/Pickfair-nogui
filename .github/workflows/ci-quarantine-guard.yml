@@ -42,9 +42,15 @@ jobs:
           path: _pr
 
       - name: Verify quarantine state (trusted checker vs target tree)
+        env:
+          # github.event_name passato via env (non `${{ }}` inline nel run:) per
+          # non far scattare lo scanner template-injection di zizmor: il valore è
+          # un enum fisso e non attacker-controllable, ma su un workflow
+          # pull_request_target privilegiato usiamo il pattern raccomandato.
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "pull_request_target" ]; then
+          if [ "${EVENT_NAME}" = "pull_request_target" ]; then
             target="_pr"
           else
             target="_base"
