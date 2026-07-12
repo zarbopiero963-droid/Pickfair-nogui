@@ -11,7 +11,7 @@ name: PR Review Claude Fable 5
 # della PR. Redige i possibili segreti (inclusi nomi file e OUTPUT del modello)
 # prima dell'invio/pubblicazione e marca le aree sensibili. Reviewer OPZIONALE:
 # se il secret non è configurato il job esce con successo (skip). Vedi
-# docs/ai_audit_workflows.md.
+# docs/ai_audit_workflows.md (in questo repo).
 
 on:
   pull_request:
@@ -155,8 +155,8 @@ jobs:
               r"(^|/)requirements[^/]*\.(txt|in|lock)$",
               r"(^|/)pyproject\.toml$",
               r"(^|/)poetry\.lock$",
-              r"(?i)license|licence|activation|payment|supabase|telegram|betfair|csv|parser",
-              r"(?i)secret|credential|token|auth|encrypt|decrypt|keyring|updater|auto.?update|config|settings",
+              r"(?i)telegram|betfair|parser|roserpina|dutching|money|safety|reconcil|runtime|order_manager|catalog",
+              r"(?i)secret|credential|token|auth|encrypt|decrypt|certlogin|app_?key|config|settings",
               # dotenv e file-segreto: una PR che aggiunge/rinomina .env o una
               # chiave privata va marcata manual-review anche se il file è binario/
               # oversized/senza patch e il modello non può ispezionarlo (Codex P2).
