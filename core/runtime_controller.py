@@ -93,7 +93,14 @@ class RuntimeController:
             bus=self.bus,
             betfair_service=self.betfair_service,
         )
-        self.catalog_sync = CatalogSyncService(db, betfair_service.get_client())
+        # H-01: costruzione LAZY del CatalogSyncService. In __init__ la sessione
+        # Betfair può non essere ancora connessa (e i fake nei test possono non
+        # esporre get_client): NON chiamiamo betfair_service.get_client() qui —
+        # lo faremmo cachando un client None/stale e romperemmo la costruzione
+        # del controller. Il client viene risolto alla PRIMA esecuzione del sync
+        # tramite la property `catalog_sync` (double-checked lock).
+        self._catalog_sync: Optional[CatalogSyncService] = None
+        self._catalog_sync_lock = threading.Lock()
         self._last_catalog_sync_at: float = 0.0
         self.streaming_feed: Optional[StreamingFeed] = None
         self._market_data_cfg: dict[str, Any] = {}
@@ -223,6 +230,26 @@ class RuntimeController:
         # a costruzione COMPLETATA: ripristina l'intera postura (lockdown
         # incluso), non solo il flag.
         self._reload_persisted_emergency_state()
+
+    @property
+    def catalog_sync(self) -> CatalogSyncService:
+        """CatalogSyncService costruito in modo lazy (H-01).
+
+        Il client Betfair viene risolto solo qui, alla prima esecuzione del
+        sync, non in __init__: così la costruzione del RuntimeController non
+        dipende da una sessione Betfair già connessa né da `get_client()` sul
+        servizio (che alcuni fake/test non espongono). Double-checked lock per
+        garantire una sola istanza anche se il primo accesso avviene da thread
+        diversi (i due call-site di run_sync risolvono la property nel thread
+        chiamante prima di sottomettere il metodo all'executor/Thread).
+        """
+        if self._catalog_sync is None:
+            with self._catalog_sync_lock:
+                if self._catalog_sync is None:
+                    self._catalog_sync = CatalogSyncService(
+                        self.db, self.betfair_service.get_client()
+                    )
+        return self._catalog_sync
 
     def _record_runtime_io(self, *, operation: str, started_at: float, ok: bool, error: str = "") -> None:
         elapsed_ms = max(0.0, (time.monotonic() - started_at) * 1000.0)
