@@ -182,6 +182,59 @@ class CIQuarantineGuardTests(unittest.TestCase):
                     )
 
 
+    def test_rejects_fully_qualified_reusable_workflow_dispatch(self) -> None:
+        # `uses: owner/repo/.github/workflows/<wf>@ref` (forma same-repo pienamente
+        # qualificata accettata da Actions) non deve evadere il controllo (CodeRabbit).
+        workflow_name = GUARD.QUARANTINED_WORKFLOWS[0]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._make_repository(root)
+            (root / ".github" / "workflows" / "reuser.yml").write_text(
+                "name: Reuser\n"
+                "on: push\n"
+                "jobs:\n"
+                "  call:\n"
+                f"    uses: zarbopiero963-droid/Pickfair-nogui/.github/workflows/{workflow_name}@main\n",
+                encoding="utf-8",
+            )
+
+            errors = GUARD.check_repository(root)
+
+            self.assertTrue(
+                any("dispatch verso workflow quarantinato" in error for error in errors),
+                errors,
+            )
+
+    def test_rejects_symlinked_active_workflow(self) -> None:
+        # Un workflow attivo che è un symlink (possibile puntatore fuori dalla root
+        # in una PR ostile) è una violazione fail-closed (Fable).
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._make_repository(root)
+            target = root / "elsewhere.yml"
+            target.write_text("name: outside\n", encoding="utf-8")
+            link = root / ".github" / "workflows" / "sneaky.yml"
+            try:
+                link.symlink_to(target)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlink non supportati su questo filesystem")
+
+            errors = GUARD.check_repository(root)
+
+            self.assertTrue(
+                any("symlink" in error for error in errors),
+                errors,
+            )
+
+    def test_missing_root_fails_closed(self) -> None:
+        # Root inesistente → violazione esplicita (non un PASS per assenza di file).
+        missing = Path(tempfile.gettempdir()) / "pickfair-nonexistent-guard-root-xyz"
+        errors = GUARD.check_repository(missing)
+        self.assertTrue(
+            any("root da ispezionare inesistente" in error for error in errors),
+            errors,
+        )
+
     def test_main_inspects_arbitrary_target_root(self) -> None:
         # Fail-closed (Fugu): il checker deve poter ispezionare una root ARBITRARIA
         # passata come argomento (l'albero della PR), non solo il proprio repo —
