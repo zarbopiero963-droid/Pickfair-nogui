@@ -314,6 +314,12 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 pass
 
         self.simulation_mode = True
+        # Fail-closed SIM/LIVE (#350, policy owner "2+guardia"): la sync di
+        # modalita' e' NON confermata finche' il runtime non la accetta; su
+        # fallimento il toggle si reverte allo stato confermato e l'avvio
+        # LIVE resta bloccato finche' una sync non riesce.
+        self._mode_sync_failed = False
+        self._live_start_refused_total = 0
         self.telegram_status = "STOPPED"
 
         self._build_core()
@@ -463,25 +469,39 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
     def _apply_simulation_mode_to_runtime(self):
         desired = bool(self.simulation_mode_var.get())
-        # Stato locale della GUI = intento utente (SIM/LIVE), aggiornato SEMPRE,
-        # indipendentemente dall'esito della sync al runtime. NB di sicurezza:
-        # questo flag NON e' l'autorita' live/sim — runtime_controller.start usa
-        # execution_mode (che _runtime_start passa sempre) come autoritativo e
-        # ignora simulation_mode quando execution_mode e' presente, quindi
-        # allinearlo qui NON abilita il live.
-        self.simulation_mode = desired
         if not hasattr(self.runtime, "set_simulation_mode"):
+            # Runtime senza sync di modalita': nessuna conferma possibile ne'
+            # necessaria; lo stato locale segue l'intento utente.
+            self.simulation_mode = desired
             return
         try:
             self.runtime.set_simulation_mode(desired)
-        except Exception as exc:
-            # Fail-safe GUI: un runtime che fallisce la sync di modalita' non deve
-            # far crashare la GUI (costruzione/toggle). NON ingoiamo in silenzio:
-            # rendiamo l'errore visibile (log tab + logger). L'autorita' su SIM/LIVE
-            # resta il runtime, che fallisce-sicuro per conto suo: qui NON forziamo
-            # uno stato di modalita' che non possiamo confermare.
-            self._log(f"SYNC MODALITA' FALLITA -> {exc}")
-            _LOGGER.warning("set_simulation_mode sync failed: %s", exc)
+        except Exception:
+            # Policy owner #350 ("2+guardia", concorde con GPT/Fable/GLM/Codacy):
+            # un intento NON confermato dal runtime non deve MAI persistere, ne'
+            # nel flag ne' nelle var/label GUI -> rollback all'ultimo stato
+            # CONFERMATO (evita split-brain GUI-SIM/runtime-LIVE) e blocco
+            # dell'avvio LIVE finche' una sync non riesce (_mode_sync_failed).
+            # `except Exception` e' voluto: e' il boundary fail-safe della GUI
+            # (niente crash in __init__/toggle); l'errore resta VISIBILE qui
+            # sotto (log tab + logger con traceback), mai ingoiato.
+            confirmed = bool(getattr(self, "simulation_mode", True))
+            self._mode_sync_failed = True
+            self.simulation_mode_var.set(confirmed)
+            if hasattr(self, "execution_mode_var"):
+                self.execution_mode_var.set("SIMULATION" if confirmed else "LIVE")
+            self._log(
+                "SYNC MODALITA' FALLITA -> rollback allo stato confermato "
+                f"({'SIMULATION' if confirmed else 'LIVE'}); avvio LIVE bloccato"
+            )
+            _LOGGER.exception(
+                "set_simulation_mode sync failed; rolled back to confirmed=%s",
+                "SIMULATION" if confirmed else "LIVE",
+            )
+            return
+        # Sync CONFERMATA dal runtime: solo ora lo stato locale avanza.
+        self.simulation_mode = desired
+        self._mode_sync_failed = False
 
     # =========================================================
     # VARIABLES
@@ -1101,6 +1121,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         is_simulation = execution_mode != "LIVE"
         self.simulation_mode_var.set(is_simulation)
         self._apply_simulation_mode_to_runtime()
+        # Rileggi la var DOPO la sync: su fallimento _apply fa rollback allo
+        # stato confermato (#350) e le label devono mostrare quello, mai un
+        # intento non confermato.
+        is_simulation = bool(self.simulation_mode_var.get())
         self.sim_label_var.set("SIMULAZIONE" if is_simulation else "LIVE")
         self.status_broker_var.set("SIMULATION" if is_simulation else "LIVE")
 
@@ -1255,6 +1279,19 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         execution_mode = str(self.execution_mode_var.get() or "SIMULATION").strip().upper()
         if execution_mode not in {"SIMULATION", "LIVE"}:
             execution_mode = "SIMULATION"
+
+        # Guardia fail-closed (#350, rinforzo GPT): MAI avviare in LIVE se
+        # l'ultima sync di modalita' col runtime NON e' confermata — lo stato
+        # reale del runtime e' incerto. Si sblocca solo con una sync riuscita.
+        if execution_mode == "LIVE" and getattr(self, "_mode_sync_failed", False):
+            self._live_start_refused_total += 1
+            self._log("START LIVE RIFIUTATO -> sync modalita' non confermata dal runtime")
+            self._safe_show_error(
+                "Avvio LIVE bloccato",
+                "La sincronizzazione della modalita' col runtime e' fallita: "
+                "ripeti il toggle SIM/LIVE con successo prima di avviare in LIVE.",
+            )
+            return
 
         live_enabled = bool(self.live_enabled_var.get())
         live_readiness_ok = False

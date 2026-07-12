@@ -550,14 +550,15 @@
       "max_files": 4
     },
     "mini_gui_runtime_sync_resilience": {
-      "description": "Cluster mini_gui resilience (FASE 3, autorizzato dall'owner - tocca SIM/LIVE): i test failure test_mini_gui_failures andavano in errore gia' al setup perche' _apply_simulation_mode_to_runtime propagava l'eccezione del runtime durante __init__ -> GUI crashava. Fix di prodotto in mini_gui.py: la chiamata a set_simulation_mode e' avvolta in try/except fail-safe (log tab + logger, errore VISIBILE non ingoiato); self.simulation_mode ora riflette l'intento utente (stato locale) - SICUREZZA: runtime_controller.start usa execution_mode (sempre passato da _runtime_start) come autoritativo e ignora simulation_mode quando execution_mode e' presente, quindi allinearlo NON abilita il live. Aggiunto lo smoke fix: FakeBus vuoto dello smoke test ora espone subscribe/publish no-op (_wire_refresh_coordinators non era stubbato). BLOCK provata. Nessuna regressione (unit+failure+smoke 941 PASS).",
+      "description": "Cluster mini_gui resilience (FASE 3, autorizzato dall'owner - tocca SIM/LIVE). v2 dopo blocco unanime GPT/Fable/GLM/Codacy sul primo tentativo (set incondizionato di self.simulation_mode = fail-open): policy owner '2+guardia'. _apply_simulation_mode_to_runtime ora e' fail-closed: lo stato locale (flag+var+label) avanza SOLO dopo sync CONFERMATA dal runtime; su eccezione rollback all'ultimo stato confermato, errore visibile (log tab + logger.exception con traceback), _mode_sync_failed=True. Guardia in _runtime_start: con sync non confermata l'avvio LIVE e' RIFIUTATO (contatore _live_start_refused_total) finche' una sync non riesce. Test hard aggiornati: toggle fallito => resta stato confermato; nuovo BLOCK sulla guardia (FlakyModeRuntime: LIVE confermato -> sync rotta -> start LIVE rifiutato, runtime.start mai chiamato). Smoke fix: FakeBus espone subscribe/publish no-op (staticmethod+docstring per DeepSource/Codacy).",
       "allow_tests": true,
       "files": [
         "mini_gui.py",
         "tests/smoke/test_mini_gui_smoke.py",
+        "tests/failure/test_mini_gui_failures.py",
         ".guardrails/allowed_scope.json"
       ],
-      "max_files": 5
+      "max_files": 6
     }
   }
 }

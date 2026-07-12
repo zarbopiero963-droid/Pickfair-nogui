@@ -166,7 +166,14 @@ def test_refresh_with_failures_does_not_crash(gui):
 def test_toggle_simulation_with_save_failure_does_not_crash(gui):
     gui.simulation_mode_var.set(False)
     gui._toggle_simulation_mode()
-    assert gui.simulation_mode is False
+    # Fail-closed #350 (policy owner "2+guardia", concorde GPT/Fable/GLM):
+    # la sync col runtime e' FALLITA, quindi l'intento LIVE NON persiste —
+    # rollback allo stato confermato (SIM) su flag, var e label, fallimento
+    # marcato. Mai split-brain GUI-SIM/runtime-LIVE.
+    assert gui.simulation_mode is True
+    assert bool(gui.simulation_mode_var.get()) is True
+    assert gui._mode_sync_failed is True
+    assert gui.sim_label_var.get() == "SIMULAZIONE"
 
 
 @pytest.mark.failure
@@ -178,3 +185,69 @@ def test_runtime_buttons_do_not_crash_on_failures(gui):
     gui._runtime_reset()
 
     assert True
+
+
+class FlakyModeRuntime:
+    """Runtime la cui sync di modalita' e' pilotabile: OK finche' `fail_sync`
+    e' False, poi fallisce. Serve a portare la GUI in LIVE CONFERMATO e poi
+    a rompere la sync per provare la guardia sullo start LIVE (#350)."""
+
+    def __init__(self, **_kwargs):
+        self.fail_sync = False
+        self.start_calls = 0
+
+    def set_simulation_mode(self, _value):
+        if self.fail_sync:
+            raise RuntimeError("mode sync broken")
+
+    def start(self, **_kwargs):
+        self.start_calls += 1
+        return {"started": True}
+
+    def get_status(self):
+        return {"mode": "STOPPED", "tables": []}
+
+
+@pytest.mark.failure
+def test_start_live_refused_when_mode_sync_unconfirmed(monkeypatch):
+    # BLOCK guardia #350: con l'ultima sync di modalita' NON confermata,
+    # _runtime_start in LIVE deve RIFIUTARE l'avvio (mai runtime.start).
+    import mini_gui
+
+    monkeypatch.setattr(mini_gui, "Database", FakeDB)
+    monkeypatch.setattr(mini_gui, "EventBus", FakeBus)
+    monkeypatch.setattr(mini_gui, "ExecutorManager", FakeExecutor)
+    monkeypatch.setattr(mini_gui, "ShutdownManager", FakeShutdown)
+    monkeypatch.setattr(mini_gui, "SettingsService", FakeSettingsService)
+    monkeypatch.setattr(mini_gui, "BetfairService", FakeBetfairService)
+    monkeypatch.setattr(mini_gui, "TelegramService", FakeTelegramService)
+    monkeypatch.setattr(mini_gui, "TradingEngine", FakeTradingEngine)
+    monkeypatch.setattr(mini_gui, "RuntimeController", FlakyModeRuntime)
+    monkeypatch.setattr(mini_gui, "TelegramController", FakeTelegramController)
+    monkeypatch.setattr(mini_gui, "TelegramTabUI", FakeTelegramTabUI)
+
+    app = mini_gui.MiniPickfairGUI(test_mode=True)
+    try:
+        # 1) toggle a LIVE con sync OK => LIVE CONFERMATO
+        app.simulation_mode_var.set(False)
+        app._toggle_simulation_mode()
+        assert app.simulation_mode is False
+        assert app._mode_sync_failed is False
+
+        # 2) la sync si rompe; toggle a SIM fallisce => rollback a LIVE
+        #    confermato + _mode_sync_failed (stato runtime incerto)
+        app.runtime.fail_sync = True
+        app.simulation_mode_var.set(True)
+        app._toggle_simulation_mode()
+        assert app.simulation_mode is False  # resta l'ultimo confermato
+        assert app._mode_sync_failed is True
+
+        # 3) start in LIVE con sync non confermata => RIFIUTATO fail-closed
+        app._runtime_start()
+        assert app._live_start_refused_total == 1
+        assert app.runtime.start_calls == 0
+    finally:
+        try:
+            app.destroy()
+        except Exception:
+            pass
