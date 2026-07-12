@@ -238,17 +238,29 @@ class RuntimeController:
         Il client Betfair viene risolto solo qui, alla prima esecuzione del
         sync, non in __init__: così la costruzione del RuntimeController non
         dipende da una sessione Betfair già connessa né da `get_client()` sul
-        servizio (che alcuni fake/test non espongono). Double-checked lock per
-        garantire una sola istanza anche se il primo accesso avviene da thread
+        servizio. Risoluzione fail-safe: se il servizio non espone `get_client`
+        (fake minimali) o il client non è ancora disponibile (`None`, sessione
+        non connessa) NON si solleva `AttributeError` e NON si cacha uno stato
+        invalido — si ritorna un'istanza transitoria e si riprova al prossimo
+        accesso, così dopo la connessione il sync usa un client valido. Questo
+        vale anche per `start()`, che legge `self.catalog_sync` per schedulare
+        il boot sync (non solo la costruzione). Double-checked lock per garantire
+        una sola istanza cachata anche se il primo accesso avviene da thread
         diversi (i due call-site di run_sync risolvono la property nel thread
         chiamante prima di sottomettere il metodo all'executor/Thread).
         """
-        if self._catalog_sync is None:
-            with self._catalog_sync_lock:
-                if self._catalog_sync is None:
-                    self._catalog_sync = CatalogSyncService(
-                        self.db, self.betfair_service.get_client()
-                    )
+        if self._catalog_sync is not None:
+            return self._catalog_sync
+        with self._catalog_sync_lock:
+            if self._catalog_sync is None:
+                getter = getattr(self.betfair_service, "get_client", None)
+                client = getter() if callable(getter) else None
+                service = CatalogSyncService(self.db, client)
+                if client is None:
+                    # Stato invalido (get_client assente o client non ancora
+                    # connesso): non cachare, riprova al prossimo accesso.
+                    return service
+                self._catalog_sync = service
         return self._catalog_sync
 
     def _record_runtime_io(self, *, operation: str, started_at: float, ok: bool, error: str = "") -> None:
