@@ -336,11 +336,13 @@ La sync di modalita' GUI→runtime (`_apply_simulation_mode_to_runtime`) e'
 - **Guardia su OGNI avvio**: con sync non confermata `_runtime_start` rifiuta
   sia LIVE sia SIMULATION (`_start_refused_mode_unconfirmed_total`); la sync a
   inizio start la ritenta — runtime guarito ⇒ si sblocca da solo.
-- **Kill-switch su LIVE incerto (single-fire)**: se lo stato confermato era
-  LIVE, la PRIMA transizione a sync-fallita spara
+- **Kill-switch su LIVE incerto (retry-fino-a-successo, poi single-fire)**:
+  se lo stato confermato era LIVE, la sync fallita spara
   `emergency_stop(reason="mode_sync_failed_fail_closed")` (LOCKDOWN +
   cancel-all; riapre solo `reset_emergency()` — provato che `start()` NON
-  riapre il lockdown); i retry non ri-sparano il kill (no cancel-all ripetuti).
+  riapre il lockdown). Un kill fallito transitoriamente viene RITENTATO al
+  fallimento successivo (`_mode_sync_kill_done`); dopo il successo non si
+  ripete (no cancel-all a raffica sui retry) e si ri-arma su sync riuscita.
   Con SIM confermato il kill non parte (nessun trading live autorizzato).
 - **Mai skip silenzioso**: runtime senza `emergency_stop` (ramo difensivo:
   il RuntimeController reale lo espone SEMPRE, invariante testata) ⇒ log
