@@ -17,7 +17,19 @@ def test_mini_gui_build_enforces_probe_gate_and_uses_settings_service_contract(m
             return None
 
     class FakeBus:
-        pass
+        # _wire_refresh_coordinators() sottoscrive gli eventi di refresh sul bus;
+        # il bus reale (EventBus) espone subscribe/publish. Lo smoke test non
+        # stubba _wire_refresh_coordinators, quindi il fake deve offrire un
+        # subscribe no-op per non far fallire la costruzione headless.
+        @staticmethod
+        def subscribe(*_args, **_kwargs):
+            """No-op: registra nulla, serve solo a soddisfare il wiring."""
+            return None
+
+        @staticmethod
+        def publish(*_args, **_kwargs):
+            """No-op: nessun evento reale viene propagato nello smoke."""
+            return None
 
     class FakeExecutor:
         def shutdown(self, **_kwargs):

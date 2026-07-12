@@ -324,6 +324,34 @@ path-independent — l'aggregator/broker **accumulano** (no dedup per-correlatio
 dedup vive nel runtime `_processed_realized_pnl_keys`), quindi non si finge
 un'idempotenza che il broker non ha.
 
+## Hardening mini_gui SIM/LIVE — sync fail-closed (PR #350, luglio 2026)
+
+La sync di modalita' GUI→runtime (`_apply_simulation_mode_to_runtime`) e'
+**fail-closed** (policy owner "2+guardia" + estensioni "applica entrambe"):
+
+- **Rollback al confermato**: lo stato locale (flag `simulation_mode`, var,
+  label) avanza SOLO dopo sync confermata dal runtime; su eccezione, rollback
+  all'ultimo stato confermato (mai split-brain GUI-SIM/runtime-LIVE), errore
+  visibile (log tab + `logger.exception`), `_mode_sync_failed=True`.
+- **Guardia su OGNI avvio**: con sync non confermata `_runtime_start` rifiuta
+  sia LIVE sia SIMULATION (`_start_refused_mode_unconfirmed_total`); la sync a
+  inizio start la ritenta — runtime guarito ⇒ si sblocca da solo.
+- **Kill-switch su LIVE incerto (retry-fino-a-successo, poi single-fire)**:
+  se lo stato confermato era LIVE, la sync fallita spara
+  `emergency_stop(reason="mode_sync_failed_fail_closed")` (LOCKDOWN +
+  cancel-all; riapre solo `reset_emergency()` — provato che `start()` NON
+  riapre il lockdown). Un kill fallito transitoriamente viene RITENTATO al
+  fallimento successivo (`_mode_sync_kill_done`); dopo il successo non si
+  ripete (no cancel-all a raffica sui retry) e si ri-arma su sync riuscita.
+  Con SIM confermato il kill non parte (nessun trading live autorizzato).
+- **Mai skip silenzioso**: runtime senza `emergency_stop` (ramo difensivo:
+  il RuntimeController reale lo espone SEMPRE, invariante testata) ⇒ log
+  CRITICAL + allarme operatore + best-effort `stop()` ordinario.
+
+Test hard PASS+BLOCK in `tests/failure/test_mini_gui_failures.py` e
+`tests/failure/test_live_switch_fail_closed.py` (incl. autorita' di
+`execution_mode` su `simulation_mode` in `RuntimeController.start`).
+
 ## Backlog (non bloccante)
 
 ### Selezione "quant" a basso costo (valutazione owner, giugno 2026)
