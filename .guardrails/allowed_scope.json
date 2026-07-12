@@ -556,6 +556,7 @@
         "mini_gui.py",
         "tests/smoke/test_mini_gui_smoke.py",
         "tests/failure/test_mini_gui_failures.py",
+        "tests/failure/test_live_switch_fail_closed.py",
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 6

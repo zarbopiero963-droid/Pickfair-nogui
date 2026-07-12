@@ -204,7 +204,8 @@ class FlakyModeRuntime:
         self.start_calls += 1
         return {"started": True}
 
-    def get_status(self):
+    @staticmethod
+    def get_status():
         return {"mode": "STOPPED", "tables": []}
 
 

@@ -106,6 +106,31 @@ def test_missing_setting_service_value_fails_closed():
     assert rc.betfair_service.connect_calls == 0
 
 
+def test_execution_mode_authoritative_over_simulation_mode_flag():
+    # Prova lato controller (richiesta Fable, PR #350): `execution_mode` e'
+    # AUTORITATIVO in RuntimeController.start. Un `simulation_mode`
+    # conflittuale (False = intento LIVE) NON deve portare il runtime in
+    # LIVE quando execution_mode dice SIMULATION: il fallback su
+    # simulation_mode si applica SOLO con execution_mode assente (None).
+    class _SettingsReady(_SettingsPartial):
+        def load_live_enabled(self):
+            return True
+
+        def load_live_readiness_ok(self):
+            return True
+
+    rc = _runtime(_SettingsReady())
+
+    result = rc.start(
+        execution_mode="SIMULATION",
+        simulation_mode=False,
+        live_enabled=True,
+    )
+
+    assert result["started"] is True
+    assert rc.execution_mode == "SIMULATION"
+
+
 @pytest.mark.parametrize("malformed_mode", ["", "prod", "LiVe!", 123])
 def test_malformed_execution_mode_fails_closed(malformed_mode):
     class _SettingsReady(_SettingsPartial):
