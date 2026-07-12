@@ -41,6 +41,13 @@ class _Config:
     # una dataclass senza catch-all, dove `getattr(cfg, ..., 2.0)` rende 2.0.
     best_price_max_deviation_pct = 2.0
 
+    # Cap esposizione assoluto (#320 A2): in produzione e' Optional[float]=None
+    # (disabilitato di default). Va definito ESPLICITO qui perche' il catch-all
+    # sotto ritornerebbe 0, e il gate A2 interpreta 0 come "cap a 0€ = blocca
+    # tutto" (getattr(cfg, "max_open_exposure", None) => 0, non None), rifiutando
+    # ogni segnale con `max_open_exposure_exceeded:limit=0€` prima del seam.
+    max_open_exposure = None
+
     def __getattr__(self, _name):
         return 0
 
