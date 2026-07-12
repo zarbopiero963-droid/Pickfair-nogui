@@ -233,6 +233,52 @@ def test_keep_alive_non_success_status_raises_with_error_code(client):
         client.keep_alive()
 
 
+@pytest.mark.unit
+def test_login_posts_to_cert_host_certlogin_endpoint(client):
+    # BLOCK #336: il login non-interattivo (mutual-TLS) DEVE colpire l'host
+    # DEDICATO `identitysso-cert.betfair.it/api/certlogin` (con `-cert`). Con il
+    # vecchio host `identitysso.betfair.it` Betfair rifiuta il certlogin (403).
+    # Questo test fallisce se qualcuno reintroduce l'host senza `-cert`.
+    captured = {}
+
+    def _post(url, headers=None, data=None, cert=None, timeout=None, **kw):
+        captured["url"] = url
+        captured["cert"] = cert
+        return _KAResp(
+            {
+                "loginStatus": "SUCCESS",
+                "sessionToken": "TOK",
+                "sessionExpiryTime": "2026-01-01",
+            }
+        )
+
+    # Isoliamo l'endpoint dal filesystem: _cert_tuple() verifica l'esistenza
+    # fisica dei PEM (non pertinente a QUALE host viene colpito).
+    client._cert_tuple = lambda: ("cert.pem", "key.pem")
+    client.session.post = _post
+
+    out = client.login("pwd")
+
+    assert out["connected"] is True
+    assert captured["url"] == client.IDENTITY_URL
+    assert captured["url"] == "https://identitysso-cert.betfair.it/api/certlogin"
+    assert "identitysso-cert.betfair.it" in captured["url"]
+    # mutual-TLS: login() deve inviare ESATTAMENTE la tupla di _cert_tuple()
+    # (fallisce se login smette di usare _cert_tuple o invia un cert diverso).
+    assert captured["cert"] == ("cert.pem", "key.pem")
+
+
+@pytest.mark.unit
+def test_identity_url_uses_cert_host_and_keepalive_does_not(client):
+    # BLOCK #336: separazione host certlogin (`-cert`) vs keepAlive (standard).
+    identity_host = client.IDENTITY_URL.split("//", 1)[1].split("/", 1)[0]
+    keepalive_host = client.KEEPALIVE_URL.split("//", 1)[1].split("/", 1)[0]
+    assert client.IDENTITY_URL == "https://identitysso-cert.betfair.it/api/certlogin"
+    assert client.KEEPALIVE_URL == "https://identitysso.betfair.it/api/keepAlive"
+    assert "-cert" in identity_host
+    assert "-cert" not in keepalive_host
+
+
 class _RPCResp:
     """Minimal JSON-RPC response stub for _post_jsonrpc (list payload)."""
 

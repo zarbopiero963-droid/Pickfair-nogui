@@ -491,6 +491,16 @@
         "tests/guardrails/test_ci_quarantine.py"
       ],
       "max_files": 30
+    },
+    "betfair_certlogin_endpoint_336": {
+      "description": "Betfair #336: fix certlogin endpoint host to the dedicated mutual-TLS host identitysso-cert.betfair.it (was identitysso.betfair.it, causing 403). keepAlive/logout host unchanged. BLOCK tests. Confirmed by Betfair support (IT exchange).",
+      "allow_tests": true,
+      "files": [
+        "betfair_client.py",
+        "tests/unit/test_betfair_client.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 5
     }
   }
 }
