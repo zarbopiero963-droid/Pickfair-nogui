@@ -561,6 +561,15 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 8
+    },
+    "integration_main_buttons_stale_refresh": {
+      "description": "Cluster integration (FASE 3, ultimo dei 6): test_main_buttons_are_wired falliva con AttributeError 'NoneType' object has no attribute 'btn_refresh' — il bottone generico btn_refresh e' stato rimosso dal rework GUI #320/#297 (commit 39e72db) in favore dei refresh mirati (btn_refresh_control_plane/risk/bet_history/...), ma il test asseriva ancora il nome vecchio; in test_mode __getattr__ delega a self.tk=None da cui l'AttributeError. Fix SOLO nel test: asserire il wiring dell'equivalente semantico btn_refresh_control_plane (stesso _refresh_runtime_status; in test_mode _DummyButton con cget('command') funzionante). BLOCK: l'asserzione vecchia fallisce su main (e' il rosso CI riprodotto). Nessuna modifica a codice prod. Nota: il presunto rosso 'telegram-e2e' era un artefatto del venv locale senza pytest-asyncio — in CI test_telegram_live_e2e passa.",
+      "allow_tests": true,
+      "files": [
+        "tests/integration/test_mini_gui_integration.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 4
     }
   }
 }
