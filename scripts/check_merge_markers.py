@@ -1,3 +1,11 @@
+"""Guardrail CI: verifica che il repository non contenga marker di conflitto git.
+
+Distingue i veri marker di conflitto (7 caratteri esatti come `=======`, o 7
+caratteri seguiti da spazio + etichetta come `<<<<<<< branch`) dalle righe
+decorative più lunghe (es. `====...` in un docstring), che NON sono marker.
+Supporta i marker della modalità `diff3`/`zdiff3` (`|||||||`).
+"""
+
 from __future__ import annotations
 
 import sys
@@ -31,7 +39,8 @@ EXCLUDED_SUFFIXES = {
     ".pyo",
 }
 
-MARKERS = ("<<<<<<<", "=======", ">>>>>>>")
+# Marker di conflitto git: apertura, base (diff3/zdiff3), separatore, chiusura.
+MARKERS = ("<<<<<<<", "|||||||", "=======", ">>>>>>>")
 
 
 def is_excluded(path: Path) -> bool:
@@ -42,29 +51,62 @@ def is_excluded(path: Path) -> bool:
     return False
 
 
-def main() -> int:
-    root = Path(".").resolve()
-    found = []
+def is_conflict_marker(stripped: str) -> bool:
+    """True se la riga (già `strip()`-ata) è un vero marker di conflitto git.
 
+    Un marker git è ESATTAMENTE 7 caratteri (`=======`, `|||||||`) oppure 7
+    caratteri seguiti da spazio + etichetta (`<<<<<<< branch`, `>>>>>>> branch`).
+    Le righe decorative più lunghe (es. `====...` da 52 char in un docstring) NON
+    sono marker: usare `startswith(marker)` darebbe falsi positivi.
+    """
+    return any(
+        stripped == marker or stripped.startswith(marker + " ")
+        for marker in MARKERS
+    )
+
+
+def _get_markers_in_file(path: Path, root: Path) -> list[tuple[Path, int, str]]:
+    """Marker di conflitto in un singolo file (path relativo a `root`).
+
+    - Salta i file BINARI (contengono byte NUL): sequenze di byte casuali come
+      `=======` non sono marker e darebbero falsi positivi bloccanti (Fugu/Fable).
+    - Sui file di TESTO decodifica con `errors="replace"`, così un file non-UTF-8
+      (es. Latin-1) con marker ASCII resta rilevato, non saltato (CodeRabbit).
+    - Errori di I/O (permessi, file lockati) => salta il file invece di crashare.
+    """
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return []
+    if b"\x00" in raw:  # euristica binario: nessun marker di testo da cercare
+        return []
+    text = raw.decode("utf-8", errors="replace")
+    markers: list[tuple[Path, int, str]] = []
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if is_conflict_marker(stripped):
+            markers.append((path.relative_to(root), lineno, stripped))
+    return markers
+
+
+def scan_for_markers(root: Path) -> list[tuple[Path, int, str]]:
+    """Restituisce i marker di conflitto trovati sotto `root` (ricorsivo)."""
+    found: list[tuple[Path, int, str]] = []
     for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-        if is_excluded(path):
-            continue
+        if path.is_file() and not is_excluded(path):
+            found.extend(_get_markers_in_file(path, root))
+    return found
 
-        try:
-            text = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            continue
 
-        lines = text.splitlines()
+def main(argv: list[str] | None = None) -> int:
+    """Scansiona la root (arg posizionale o cwd) e ritorna 1 se trova marker.
 
-        for lineno, line in enumerate(lines, start=1):
-            stripped = line.strip()
-
-            # 🔥 FIX: match SOLO se la riga INIZIA con il marker
-            if any(stripped.startswith(marker) for marker in MARKERS):
-                found.append((path.relative_to(root), lineno, stripped))
+    La root è parametrizzabile (primo argomento posizionale) per testabilità;
+    senza argomento ricade su cwd (uso CI `python3 scripts/check_merge_markers.py`).
+    """
+    args = sys.argv[1:] if argv is None else list(argv)
+    root = Path(args[0]).resolve() if args else Path(".").resolve()
+    found = scan_for_markers(root)
 
     if found:
         print("Merge conflict markers found:", file=sys.stderr)
