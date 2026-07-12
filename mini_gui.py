@@ -505,13 +505,45 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             # immediato. emergency_stop e' fail-closed by-design (runtime_controller
             # :1285): LOCKDOWN + cancel-all, resta LOCKED anche se il cancel
             # fallisce, riprende solo con reset_emergency() esplicito.
-            if not confirmed and hasattr(self.runtime, "emergency_stop"):
-                try:
-                    self.runtime.emergency_stop(reason="mode_sync_failed_fail_closed")
-                    self._log("EMERGENCY STOP inviato: trading LIVE fermato (modalita' incerta)")
-                except Exception:
-                    _LOGGER.exception("emergency_stop dopo sync fallita anch'esso fallito")
-                    self._log("EMERGENCY STOP FALLITO dopo sync fallita -> INTERVENTO MANUALE RICHIESTO")
+            if not confirmed:
+                if hasattr(self.runtime, "emergency_stop"):
+                    try:
+                        self.runtime.emergency_stop(reason="mode_sync_failed_fail_closed")
+                        self._log("EMERGENCY STOP inviato: trading LIVE fermato (modalita' incerta)")
+                        self._safe_show_error(
+                            "EMERGENCY STOP",
+                            "Sync modalita' fallita con LIVE attivo: trading fermato "
+                            "(LOCKDOWN). Per riprendere serve reset_emergency.",
+                        )
+                    except Exception:
+                        # Anche se questa chiamata fallisce, il runtime di
+                        # produzione si LOCKA come PRIMA azione di emergency_stop
+                        # (_emergency_stopped=True prima di persist/cancel) e
+                        # is_live_allowed() blocca ogni submission live al choke
+                        # point. Qui resta l'allarme operatore, mai silenzioso.
+                        _LOGGER.exception("emergency_stop dopo sync fallita anch'esso fallito")
+                        self._log("EMERGENCY STOP FALLITO dopo sync fallita -> INTERVENTO MANUALE RICHIESTO")
+                        self._safe_show_error(
+                            "EMERGENCY STOP FALLITO",
+                            "Il runtime potrebbe operare in LIVE con modalita' incerta: "
+                            "FERMARE MANUALMENTE il trading (kill switch / chiusura processo).",
+                        )
+                else:
+                    # Fable/Fugu (#350): MAI skip silenzioso sul percorso denaro
+                    # reale — runtime senza emergency_stop con LIVE confermato e
+                    # sync incerta e' un'anomalia critica da urlare all'operatore.
+                    _LOGGER.critical(
+                        "runtime privo di emergency_stop con LIVE confermato e sync incerta"
+                    )
+                    self._log(
+                        "ATTENZIONE: runtime senza emergency_stop -> kill automatico "
+                        "IMPOSSIBILE, INTERVENTO MANUALE RICHIESTO"
+                    )
+                    self._safe_show_error(
+                        "KILL-SWITCH NON DISPONIBILE",
+                        "Il runtime non espone emergency_stop e la modalita' e' incerta "
+                        "con LIVE confermato: FERMARE MANUALMENTE il trading.",
+                    )
             return
         # Sync CONFERMATA dal runtime: solo ora lo stato locale avanza.
         self.simulation_mode = desired

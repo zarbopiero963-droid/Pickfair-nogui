@@ -131,6 +131,36 @@ def test_execution_mode_authoritative_over_simulation_mode_flag():
     assert rc.execution_mode == "SIMULATION"
 
 
+def test_lockdown_survives_start_until_reset_emergency():
+    # Prova lato controller (Fable, PR #350): dopo emergency_stop il runtime
+    # e' in LOCKDOWN e un successivo start NON lo riapre — il choke point
+    # is_live_allowed() e l'entry-gate del TradingEngine
+    # (_daily_loss_entry_blocked) restano chiusi. Riapre SOLO reset_emergency().
+    class _SettingsReady(_SettingsPartial):
+        def load_live_enabled(self):
+            return True
+
+        def load_live_readiness_ok(self):
+            return True
+
+    rc = _runtime(_SettingsReady())
+
+    rc.emergency_stop(reason="mode_sync_failed_fail_closed")
+    assert rc.is_emergency_stopped is True
+    assert rc._daily_loss_entry_blocked() is True
+    assert rc.is_live_allowed() is False
+
+    # tentare start (anche LIVE esplicito) NON deve riaprire il lockdown
+    rc.start(execution_mode="LIVE", live_enabled=True)
+    assert rc.is_emergency_stopped is True
+    assert rc._daily_loss_entry_blocked() is True
+    assert rc.is_live_allowed() is False
+
+    # unica via di recovery: reset_emergency esplicito
+    rc.reset_emergency()
+    assert rc.is_emergency_stopped is False
+
+
 @pytest.mark.parametrize("malformed_mode", ["", "prod", "LiVe!", 123])
 def test_malformed_execution_mode_fails_closed(malformed_mode):
     class _SettingsReady(_SettingsPartial):

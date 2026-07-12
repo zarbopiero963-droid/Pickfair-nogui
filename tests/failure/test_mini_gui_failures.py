@@ -318,6 +318,68 @@ def test_emergency_stop_fired_when_live_confirmed_and_sync_fails(monkeypatch):
             pass
 
 
+class FlakyModeRuntimeNoKill:
+    """Come FlakyModeRuntime ma SENZA emergency_stop: prova il percorso
+    'kill-switch non disponibile' (Fable/Fugu #350) — mai skip silenzioso."""
+
+    def __init__(self, **_kwargs):
+        self.fail_sync = False
+        self.start_calls = 0
+
+    def set_simulation_mode(self, _value):
+        if self.fail_sync:
+            raise RuntimeError("mode sync broken")
+
+    def start(self, **_kwargs):
+        self.start_calls += 1
+        return {"started": True}
+
+    @staticmethod
+    def get_status():
+        return {"mode": "STOPPED", "tables": []}
+
+
+@pytest.mark.failure
+def test_missing_emergency_stop_alerts_operator_not_silent(monkeypatch, caplog):
+    # BLOCK Fable/Fugu (#350): runtime SENZA emergency_stop + LIVE confermato
+    # + sync incerta => l'assenza del kill-switch NON deve essere uno skip
+    # silenzioso: log CRITICAL + allarme operatore.
+    import logging
+    import mini_gui
+
+    monkeypatch.setattr(mini_gui, "Database", FakeDB)
+    monkeypatch.setattr(mini_gui, "EventBus", FakeBus)
+    monkeypatch.setattr(mini_gui, "ExecutorManager", FakeExecutor)
+    monkeypatch.setattr(mini_gui, "ShutdownManager", FakeShutdown)
+    monkeypatch.setattr(mini_gui, "SettingsService", FakeSettingsService)
+    monkeypatch.setattr(mini_gui, "BetfairService", FakeBetfairService)
+    monkeypatch.setattr(mini_gui, "TelegramService", FakeTelegramService)
+    monkeypatch.setattr(mini_gui, "TradingEngine", FakeTradingEngine)
+    monkeypatch.setattr(mini_gui, "RuntimeController", FlakyModeRuntimeNoKill)
+    monkeypatch.setattr(mini_gui, "TelegramController", FakeTelegramController)
+    monkeypatch.setattr(mini_gui, "TelegramTabUI", FakeTelegramTabUI)
+
+    app = mini_gui.MiniPickfairGUI(test_mode=True)
+    try:
+        # LIVE confermato con sync OK
+        app.simulation_mode_var.set(False)
+        app._toggle_simulation_mode()
+        assert app.simulation_mode is False
+
+        # sync rotta: toggle a SIM fallisce, niente emergency_stop disponibile
+        app.runtime.fail_sync = True
+        app.simulation_mode_var.set(True)
+        with caplog.at_level(logging.CRITICAL, logger="mini_gui"):
+            app._toggle_simulation_mode()
+        assert app._mode_sync_failed is True
+        assert "emergency_stop" in caplog.text  # allarme critico, mai silenzioso
+    finally:
+        try:
+            app.destroy()
+        except Exception:
+            pass
+
+
 @pytest.mark.failure
 def test_emergency_stop_not_fired_when_sim_confirmed(monkeypatch):
     # Contro-prova punto A: con stato confermato SIM (nessun trading live
