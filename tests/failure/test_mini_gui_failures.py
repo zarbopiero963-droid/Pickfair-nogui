@@ -253,10 +253,13 @@ def test_start_live_refused_when_mode_sync_unconfirmed(monkeypatch):
         assert app.simulation_mode is False  # resta l'ultimo confermato
         assert app._mode_sync_failed is True
 
-        # 3) start in LIVE con sync non confermata => RIFIUTATO fail-closed
+        # 3) start in LIVE con sync non confermata => RIFIUTATO fail-closed;
+        #    il retry di sync dentro _runtime_start NON deve ri-sparare il
+        #    kill-switch (single-fire sulla transizione, CodeRabbit #350)
         app._runtime_start()
         assert app._start_refused_mode_unconfirmed_total == 1
         assert app.runtime.start_calls == 0
+        assert app.runtime.emergency_stop_calls == 1
     finally:
         try:
             app.destroy()
@@ -311,6 +314,14 @@ def test_emergency_stop_fired_when_live_confirmed_and_sync_fails(monkeypatch):
         assert app._mode_sync_failed is True
         assert app.runtime.emergency_stop_calls == 1
         assert app.runtime.emergency_stop_reasons == ["mode_sync_failed_fail_closed"]
+
+        # retry con sync ANCORA rotta: il kill-switch e' single-fire sulla
+        # transizione (CodeRabbit #350) — niente cancel-all ripetuti a ogni
+        # tentativo dell'operatore
+        app.simulation_mode_var.set(True)
+        app._toggle_simulation_mode()
+        assert app._mode_sync_failed is True
+        assert app.runtime.emergency_stop_calls == 1
     finally:
         try:
             app.destroy()
@@ -320,11 +331,13 @@ def test_emergency_stop_fired_when_live_confirmed_and_sync_fails(monkeypatch):
 
 class FlakyModeRuntimeNoKill:
     """Come FlakyModeRuntime ma SENZA emergency_stop: prova il percorso
-    'kill-switch non disponibile' (Fable/Fugu #350) — mai skip silenzioso."""
+    'kill-switch non disponibile' (Fable/Fugu/GPT #350) — mai skip silenzioso,
+    con fallback allo stop() ordinario."""
 
     def __init__(self, **_kwargs):
         self.fail_sync = False
         self.start_calls = 0
+        self.stop_calls = 0
 
     def set_simulation_mode(self, _value):
         if self.fail_sync:
@@ -333,6 +346,10 @@ class FlakyModeRuntimeNoKill:
     def start(self, **_kwargs):
         self.start_calls += 1
         return {"started": True}
+
+    def stop(self):
+        self.stop_calls += 1
+        return {"stopped": True}
 
     @staticmethod
     def get_status():
@@ -373,6 +390,9 @@ def test_missing_emergency_stop_alerts_operator_not_silent(monkeypatch, caplog):
             app._toggle_simulation_mode()
         assert app._mode_sync_failed is True
         assert "emergency_stop" in caplog.text  # allarme critico, mai silenzioso
+        # GPT (#350): senza kill-switch parte comunque il best-effort stop()
+        # ordinario — mai "solo log" sul percorso denaro reale
+        assert app.runtime.stop_calls == 1
     finally:
         try:
             app.destroy()

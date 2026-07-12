@@ -131,6 +131,15 @@ def test_execution_mode_authoritative_over_simulation_mode_flag():
     assert rc.execution_mode == "SIMULATION"
 
 
+def test_production_runtime_always_exposes_kill_switch():
+    # Invariante di contratto (#350/GPT): il RuntimeController di produzione
+    # DEVE esporre emergency_stop e reset_emergency. Il ramo GUI "kill-switch
+    # non disponibile" e' puramente difensivo e irraggiungibile col runtime
+    # reale; questa invariante lo garantisce a livello di classe.
+    assert callable(getattr(RuntimeController, "emergency_stop", None))
+    assert callable(getattr(RuntimeController, "reset_emergency", None))
+
+
 def test_lockdown_survives_start_until_reset_emergency():
     # Prova lato controller (Fable, PR #350): dopo emergency_stop il runtime
     # e' in LOCKDOWN e un successivo start NON lo riapre — il choke point

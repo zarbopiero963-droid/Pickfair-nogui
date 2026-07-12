@@ -475,6 +475,11 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             # necessaria; lo stato locale segue l'intento utente.
             self.simulation_mode = desired
             return
+        # Snapshot PRIMA del tentativo: kill-switch/allarmi solo sulla
+        # TRANSIZIONE verso lo stato failed (CodeRabbit #350) — i retry con
+        # sync ancora rotta (es. click ripetuti su AVVIA) non devono
+        # ri-sparare emergency_stop/cancel-all ad ogni giro.
+        already_unconfirmed = bool(getattr(self, "_mode_sync_failed", False))
         try:
             self.runtime.set_simulation_mode(desired)
         except Exception:
@@ -505,7 +510,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             # immediato. emergency_stop e' fail-closed by-design (runtime_controller
             # :1285): LOCKDOWN + cancel-all, resta LOCKED anche se il cancel
             # fallisce, riprende solo con reset_emergency() esplicito.
-            if not confirmed:
+            if not confirmed and not already_unconfirmed:
                 if hasattr(self.runtime, "emergency_stop"):
                     try:
                         self.runtime.emergency_stop(reason="mode_sync_failed_fail_closed")
@@ -529,9 +534,13 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                             "FERMARE MANUALMENTE il trading (kill switch / chiusura processo).",
                         )
                 else:
-                    # Fable/Fugu (#350): MAI skip silenzioso sul percorso denaro
-                    # reale — runtime senza emergency_stop con LIVE confermato e
-                    # sync incerta e' un'anomalia critica da urlare all'operatore.
+                    # Fable/Fugu/GPT (#350): MAI skip silenzioso sul percorso
+                    # denaro reale. Ramo puramente DIFENSIVO: il RuntimeController
+                    # di produzione espone SEMPRE emergency_stop (invariante
+                    # testata in test_live_switch_fail_closed). Se un runtime
+                    # alternativo ne fosse privo: allarme critico + best-effort
+                    # stop() ordinario — meglio un halt parziale che nessuna
+                    # interruzione delle submission.
                     _LOGGER.critical(
                         "runtime privo di emergency_stop con LIVE confermato e sync incerta"
                     )
@@ -539,6 +548,14 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                         "ATTENZIONE: runtime senza emergency_stop -> kill automatico "
                         "IMPOSSIBILE, INTERVENTO MANUALE RICHIESTO"
                     )
+                    stop_fn = getattr(self.runtime, "stop", None)
+                    if callable(stop_fn):
+                        try:
+                            stop_fn()
+                            self._log("STOP ordinario inviato (fallback senza emergency_stop)")
+                        except Exception:
+                            _LOGGER.exception("stop() di fallback fallito dopo sync incerta")
+                            self._log("STOP di fallback FALLITO -> fermare il processo manualmente")
                     self._safe_show_error(
                         "KILL-SWITCH NON DISPONIBILE",
                         "Il runtime non espone emergency_stop e la modalita' e' incerta "

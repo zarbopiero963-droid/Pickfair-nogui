@@ -550,16 +550,17 @@
       "max_files": 4
     },
     "mini_gui_runtime_sync_resilience": {
-      "description": "Cluster mini_gui resilience (FASE 3, SIM/LIVE, autorizzato dall'owner). v3 = decisione owner 'applica entrambe' (escalation Fugu, annotata in PR #350): oltre alla policy '2+guardia' (rollback allo stato confermato su sync fallita, errore visibile log+logger.exception, _mode_sync_failed), ora (A) se lo stato CONFERMATO era LIVE la sync fallita spara runtime.emergency_stop(reason=mode_sync_failed_fail_closed) — kill-switch fail-closed by-design (LOCKDOWN+cancel-all, riprende solo con reset_emergency) — mentre con SIM confermato non parte (contro-prova testata); (B) la guardia in _runtime_start rifiuta OGNI avvio (LIVE e SIMULATION, contatore _start_refused_mode_unconfirmed_total) finche' una sync non riesce (la sync a inizio _runtime_start la ritenta: runtime guarito => si sblocca da solo). Test hard PASS+BLOCK per rollback, guardia LIVE, guardia SIM (B), kill-switch (A) e contro-prova SIM; test lato controller sull'autorita' di execution_mode. Regressione unit+failure+smoke 946 PASS.",
+      "description": "Cluster mini_gui resilience (FASE 3, SIM/LIVE, autorizzato dall'owner). v3 = decisione owner 'applica entrambe' (escalation Fugu, annotata in PR #350): oltre alla policy '2+guardia' (rollback allo stato confermato su sync fallita, errore visibile log+logger.exception, _mode_sync_failed), ora (A) se lo stato CONFERMATO era LIVE la sync fallita spara runtime.emergency_stop(reason=mode_sync_failed_fail_closed) — kill-switch fail-closed by-design (LOCKDOWN+cancel-all, riprende solo con reset_emergency) — mentre con SIM confermato non parte (contro-prova testata); (B) la guardia in _runtime_start rifiuta OGNI avvio (LIVE e SIMULATION, contatore _start_refused_mode_unconfirmed_total) finche' una sync non riesce (la sync a inizio _runtime_start la ritenta: runtime guarito => si sblocca da solo). Test hard PASS+BLOCK per rollback, guardia LIVE, guardia SIM (B), kill-switch (A) e contro-prova SIM; test lato controller sull'autorita' di execution_mode. Regressione unit+failure+smoke 946 PASS. v4 (CodeRabbit): kill-switch single-fire sulla transizione not-failed->failed (retry non ri-sparano cancel-all); fallback best-effort stop() nel ramo senza emergency_stop + invariante di contratto che RuntimeController espone sempre emergency_stop/reset_emergency; docs nello stesso PR (ops/roadmap_go_live.md, sezione 'Hardening mini_gui SIM/LIVE').",
       "allow_tests": true,
       "files": [
         "mini_gui.py",
         "tests/smoke/test_mini_gui_smoke.py",
         "tests/failure/test_mini_gui_failures.py",
         "tests/failure/test_live_switch_fail_closed.py",
+        "ops/roadmap_go_live.md",
         ".guardrails/allowed_scope.json"
       ],
-      "max_files": 6
+      "max_files": 8
     }
   }
 }
