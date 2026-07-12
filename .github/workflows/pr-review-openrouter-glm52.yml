@@ -50,9 +50,11 @@ jobs:
 
       MAX_PATCH_PER_FILE_CHARS: "5000"
       MAX_TOTAL_PATCH_CHARS: "18000"
-      # 700: il più economico, gira a ogni push. Prompt severo → review corta che
-      # sta nel budget.
-      MAX_OUTPUT_TOKENS: "700"
+      # Tetto ALTO anti-troncamento: è un CEILING, non il costo (si pagano solo i
+      # token generati). Il prompt MIRATO (150 parole, 2 sezioni) tiene l'output
+      # reale a ~200-300 token, quindi 2000 dà ampio margine e NON tronca mai, a
+      # costo ~invariato. reasoning disabilitato → tutti i token vanno all'output.
+      MAX_OUTPUT_TOKENS: "2000"
 
       PRICE_INPUT_PER_MILLION: "0.93"
       PRICE_OUTPUT_PER_MILLION: "3.00"
@@ -543,14 +545,17 @@ jobs:
           Non approvare merge.
           Non suggerire mai di stampare token, password, API key, certificati o segreti nei log.
           Concentrati su bug reali, sicurezza, regressioni, money management e dutching, Telegram parser, Betfair, Windows, CI e test.
+          Sii concreto: cita file/area/motivo. Evita frasi generiche.
 
           Vincolo costo/output (RISPETTALO alla lettera):
-          - Non scrivere una review lunga: MASSIMO 400 parole.
-          - MASSIMO 10 finding totali; ogni finding max 3 righe.
-          - Non ripetere il diff; niente teoria, niente tutorial, niente blocchi di codice lunghi.
-          - Priorità SOLO a: bug bloccanti, regressioni, sicurezza, segreti, contratto money management, Betfair, race condition, Windows.
-          - Miglioramenti opzionali: massimo 3 bullet.
-          - Se non ci sono bloccanti reali, scrivi: "Nessun bloccante evidente".
+          - Review MIRATA e CORTA: MASSIMO 150 parole totali.
+          - SOLO due sezioni: "## Bloccanti" e "## Verdetto finale". Nessun'altra sezione.
+          - In "Bloccanti" elenca SOLO problemi BLOCCANTI reali — bug, regressioni,
+            sicurezza, segreti, money management/dutching, Betfair, race condition,
+            Windows — ognuno max 2 righe. Se non ce ne sono, scrivi esattamente
+            "Nessun bloccante evidente".
+          - Niente ripetizione del diff, niente teoria/tutorial/blocchi di codice,
+            niente rischi minori, niente miglioramenti opzionali, niente sezioni extra.
           """
 
           user_prompt = f"""
@@ -561,14 +566,10 @@ jobs:
           Commits nel range: {commit_count}
           Modello: {MODEL_LABEL} ({OPENROUTER_MODEL})
 
-          Produci Markdown, MASSIMO 400 parole, non superare 10 finding totali:
+          Produci Markdown, MASSIMO 150 parole, SOLO queste due sezioni (i rischi di
+          sicurezza / Betfair / dutching / segreti vanno dentro "Bloccanti", non in sezioni a parte):
 
-          ## Esito
           ## Bloccanti
-          ## Rischi manuali
-          ## Sicurezza
-          ## Betfair / Dutching / Parser
-          ## Test minimi
           ## Verdetto finale
 
           Diff del range appena pushato:
