@@ -340,7 +340,7 @@ jobs:
                       # content può essere null (JSON null → None) o lista di blocchi.
                       # Normalizza None a "" PRIMA di str(): altrimenti str(None)="None"
                       # verrebbe pubblicato come testo e il ramo di troncamento (not text)
-                      # non scatterebbe nemmeno con finish_reason=length (review GPT-5.5).
+                      # non scatterebbe nemmeno con finish_reason=length (review GPT-5.6 Terra).
                       content = msg.get("content") or ""
                       if isinstance(content, list):
                           # str(... or ""): un blocco con "text": null darebbe None e

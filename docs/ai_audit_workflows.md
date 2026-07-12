@@ -9,7 +9,7 @@ controllo umano** e **non approvano né mergiano** nulla.
 
 | Workflow | Modello | Provider | Quando chiama il modello (costo) |
 |---|---|---|---|
-| `pr-review-gpt55.yml` | GPT-5.5 | OpenAI Responses API | ogni push della PR |
+| `pr-review-openai-gpt56-terra.yml` | GPT-5.6 Terra | OpenAI Responses API | ogni push della PR |
 | `pr-review-openrouter-glm52.yml` | GLM 5.2 | OpenRouter | ogni push della PR |
 | `pr-review-openrouter-fugu-ultra.yml` | Sakana Fugu Ultra | OpenRouter | solo su push che tocca file **core** oppure con label `final-fugu-review` |
 | `pr-review-claude-fable5.yml` | Claude Fable 5 | Anthropic Messages API | solo su push che tocca file **core** oppure con label `final-fable-review` |
@@ -58,7 +58,7 @@ Configurare in *Settings → Secrets and variables → Actions*:
 
 | Secret | Usato da |
 |---|---|
-| `OPENAI_API_KEY` | GPT-5.5 |
+| `OPENAI_API_KEY` | GPT-5.6 Terra |
 | `OPENROUTER_API_KEY` | GLM 5.2, Fugu Ultra |
 | `ANTHROPIC_API_KEY` | Claude Fable 5 |
 

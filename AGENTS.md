@@ -241,7 +241,7 @@ Every PR is covered by four AI review workflows (GitHub Actions driven by API
 keys in the repo Secrets) plus CodeRabbit. Operational detail and security
 posture live in `docs/ai_audit_workflows.md`.
 
-- **GPT-5.5** and **GLM 5.2** run on every push. Output is TARGETED and short
+- **GPT-5.6 Terra** and **GLM 5.2** run on every push. Output is TARGETED and short
   (only `## Bloccanti` + `## Verdetto finale`); output ceilings are high so
   they never truncate — only generated tokens are billed.
 - **Fugu Ultra** and **Claude Fable 5** (strong, costly reviewers) fire on
@@ -252,7 +252,7 @@ posture live in `docs/ai_audit_workflows.md`.
   workflows, config/secrets, or the safety areas (money management, dutching,
   safety_layer, reconciliation, runtime, catalog) — OR when the final label is
   added. On pushes touching only docs/tests both jobs start but exit without
-  calling the model (zero cost); those are still covered by GPT-5.5/GLM.
+  calling the model (zero cost); those are still covered by GPT-5.6 Terra/GLM.
 
 **Final label gate (mandatory pre-merge).** Even if a PR touched no core files
 (so the strong reviewers never fired on their own), before declaring it ready
@@ -265,7 +265,7 @@ not draft.
 
 **Timing: the strong gates are the LAST pre-merge step.** Fire the two labels
 ONLY when the PR is stable and in theory ready to merge: the per-push reviewers
-(GPT-5.5, GLM 5.2) and CodeRabbit have COMPLETED, all their real findings are
+(GPT-5.6 Terra, GLM 5.2) and CodeRabbit have COMPLETED, all their real findings are
 handled (patched or answered in-thread with evidence), no more responses are
 coming and there is nothing left to do. NOT before: this way Fugu Ultra and
 Fable 5 review a STABLE head and are not wasted on versions that will still
@@ -286,7 +286,7 @@ blockers, auto-merge is forbidden (fail-closed); otherwise auto-merge follows
 the gated policy in "Auto-merge (owner-authorized, gated)" below.
 
 **Who to wait for / not wait for.** Default coverage on every PR is the four API
-workflows (GPT-5.5, GLM 5.2, Fugu Ultra, Fable 5) plus CodeRabbit. Codex and
+workflows (GPT-5.6 Terra, GLM 5.2, Fugu Ultra, Fable 5) plus CodeRabbit. Codex and
 Sourcery are NOT a gate: if they post usage-limit/rate-limit messages, treat
 them as ABSENT (not pending) — do not wait, do not count them in the
 check-completion gate, do not block DONE on them.
@@ -321,7 +321,7 @@ treat it as ABSENT and proceed (note that it did not review).
 - **Sourcery**: rate-limit => absent, skipped.
 - **CodeRabbit**: if it stays waiting / rate-limited BEYOND the ~15-min cap from
   the last push => skip it and defer to post-merge tracking; do not stall.
-- **The 4 API workflows** (GPT-5.5, GLM 5.2, Fugu Ultra, Fable 5): if a round
+- **The 4 API workflows** (GPT-5.6 Terra, GLM 5.2, Fugu Ultra, Fable 5): if a round
   reports provider usage-quota / rate-limit, that reviewer is absent for that
   push => do not wait for it, do not count it in the check-completion gate, do
   not block DONE on it.
@@ -360,7 +360,7 @@ them, merge stays manual and owner-only.
 
 **Conditions to auto-merge (ALL required, fail-closed):**
 1. All current-head checks SETTLED and green (check-completion gate passed).
-2. Zero blockers from the 4 AI reviewers (GPT-5.5, GLM 5.2, Fugu Ultra, Fable 5)
+2. Zero blockers from the 4 AI reviewers (GPT-5.6 Terra, GLM 5.2, Fugu Ultra, Fable 5)
    and from CodeRabbit; CodeRabbit COMPLETED (or the ~15-min cap elapsed).
 3. No `manual-review-required` label, no unresolved blocking thread, no open
    `PATCH_REQUIRED` / `NEEDS_MANUAL` finding.

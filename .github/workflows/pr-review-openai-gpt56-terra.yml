@@ -1,6 +1,6 @@
-name: PR Review GPT-5.5
+name: PR Review OpenAI GPT-5.6 Terra
 
-# Review AI automatica di ogni push sulla PR con GPT-5.5 (OpenAI Responses API,
+# Review AI automatica di ogni push sulla PR con GPT-5.6 Terra (OpenAI Responses API,
 # store: false). Analizza SOLO il range appena pushato (before...after via
 # GitHub Compare API), non l'intero diff cumulativo della PR. Diff-only: niente
 # checkout, niente esecuzione del codice della PR. Redige i possibili segreti
@@ -19,12 +19,12 @@ permissions:
   issues: write
 
 concurrency:
-  group: pr-review-gpt55-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+  group: pr-review-gpt56terra-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
   cancel-in-progress: false
 
 jobs:
   review:
-    name: GPT-5.5 push-range review
+    name: GPT-5.6 Terra push-range review
     runs-on: ubuntu-latest
     timeout-minutes: 12
 
@@ -34,7 +34,7 @@ jobs:
 
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      OPENAI_MODEL: gpt-5.5
+      OPENAI_MODEL: openai/gpt-5.6-terra
 
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       REPO: ${{ github.repository }}
@@ -45,12 +45,12 @@ jobs:
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
 
-      REVIEW_ID: gpt55
-      MODEL_LABEL: GPT-5.5
+      REVIEW_ID: gpt56terra
+      MODEL_LABEL: GPT-5.6 Terra
 
       MAX_PATCH_PER_FILE_CHARS: "7000"
       MAX_TOTAL_PATCH_CHARS: "24000"
-      # gpt-5.5 è reasoning: i token di reasoning contano nel budget di output.
+      # openai/gpt-5.6-terra: se è un modello reasoning i token di reasoning contano nel budget: i token di reasoning contano nel budget di output.
       # Tetto ALTO anti-troncamento (CEILING, non costo): con reasoning effort
       # "low" + prompt MIRATO (150 parole, 2 sezioni) l'output reale resta corto,
       # ma 2500 lascia spazio a reasoning+testo così NON tronca mai. Si pagano
@@ -63,14 +63,14 @@ jobs:
       MANUAL_REVIEW_LABEL: manual-review-required
 
     steps:
-      - name: Review pushed commit range with GPT-5.5
+      - name: Review pushed commit range with GPT-5.6 Terra
         shell: bash
         run: |
           set -euo pipefail
 
           # Reviewer OPZIONALE: senza secret il job non deve far fallire la PR.
           if [ -z "${OPENAI_API_KEY:-}" ]; then
-            echo "::notice::OPENAI_API_KEY non configurato: reviewer GPT-5.5 saltato (nessun check rosso)."
+            echo "::notice::OPENAI_API_KEY non configurato: reviewer GPT-5.6 Terra saltato (nessun check rosso)."
             exit 0
           fi
 
@@ -97,8 +97,8 @@ jobs:
           # .strip(): un segreto incollato con newline/spazio finale renderebbe
           # invalido l'header Authorization (Bearer ...\n) -> request fallita.
           OPENAI_API_KEY = os.environ["OPENAI_API_KEY"].strip()
-          OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.5")
-          REVIEW_ID = os.environ.get("REVIEW_ID", "gpt55")
+          OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "openai/gpt-5.6-terra")
+          REVIEW_ID = os.environ.get("REVIEW_ID", "gpt56terra")
           MODEL_LABEL = os.environ.get("MODEL_LABEL", OPENAI_MODEL)
 
           MAX_PATCH_PER_FILE_CHARS = int(os.environ.get("MAX_PATCH_PER_FILE_CHARS", "7000"))
@@ -300,7 +300,7 @@ jobs:
                       {"role": "user", "content": user_prompt},
                   ],
                   "store": False,
-                  # gpt-5.5 è reasoning: i token di reasoning contano in
+                  # openai/gpt-5.6-terra: se è un modello reasoning i token di reasoning contano nel budget: i token di reasoning contano in
                   # max_output_tokens. Con budget basso (1000) il reasoning "medium"
                   # di default esauriva tutto prima del testo (review troncata a 0).
                   # effort "low" lascia spazio alla review breve dentro il budget.
@@ -516,7 +516,7 @@ jobs:
 
           if not diff_text.strip():
               upsert_comment(marker, f"""{marker}
-          # GPT-5.5 PR Review
+          # GPT-5.6 Terra PR Review
 
           Nessun patch testuale analizzabile trovato.
 
@@ -574,7 +574,7 @@ jobs:
               review, usage = call_model(system_prompt, user_prompt)
           except Exception as exc:
               review = (
-                  "## Review GPT-5.5 non completata\n\n"
+                  "## Review GPT-5.6 Terra non completata\n\n"
                   f"Errore sintetico:\n\n```text\n{redact(str(exc))[:3000]}\n```"
               )
               usage = {}
@@ -591,12 +591,12 @@ jobs:
           review_complete = not review.lstrip().startswith((
               "Output troncato",
               "Il modello non ha restituito testo",
-              "## Review GPT-5.5 non completata",
+              "## Review GPT-5.6 Terra non completata",
           ))
           done_line = done_marker if review_complete else ""
 
           body = f"""{marker}{done_line}
-          # GPT-5.5 PR Review
+          # GPT-5.6 Terra PR Review
 
           **Modalità:** push-range diff via GitHub Compare API
           **Scope:** `{range_scope}`
