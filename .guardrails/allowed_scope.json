@@ -423,6 +423,21 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 6
+    },
+    "ci_ai_pr_review_workflows": {
+      "description": "Owner-authorized: integrate the 4 AI PR-review workflows (adapted to Pickfair) + reviewer/auto-merge governance in CLAUDE.md/AGENTS.md + docs.",
+      "allow_tests": false,
+      "files": [
+        ".github/workflows/pr-review-openai-gpt56-terra.yml",
+        ".github/workflows/pr-review-openrouter-glm52.yml",
+        ".github/workflows/pr-review-openrouter-fugu-ultra.yml",
+        ".github/workflows/pr-review-claude-fable5.yml",
+        "docs/ai_audit_workflows.md",
+        "CLAUDE.md",
+        "AGENTS.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 10
     }
   }
 }
