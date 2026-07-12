@@ -269,9 +269,10 @@ and no execution of PR code, secret redaction).
 
 **If a review reports blockers** (bugs, security, Betfair/dutching/money-
 management risks, secret handling, workflow risks, or `manual-review-required`):
-do NOT declare the PR ready and do NOT propose auto-merge. Leave the PR open and
-write: `AUTO-MERGE DISABILITATO: questa PR richiede merge manuale dell'owner`.
-Auto-merge stays disabled; merge is always manual and owner-only.
+do NOT declare the PR ready and do NOT auto-merge. Leave the PR open and write:
+`AUTO-MERGE DISABILITATO: questa PR richiede merge manuale dell'owner`. With
+blockers, auto-merge is forbidden (fail-closed); otherwise auto-merge follows
+the gated policy in "Auto-merge (owner-authorized, gated)" below.
 
 **Who to wait for / not wait for.** Default coverage on every PR is the four API
 workflows (GPT-5.5, GLM 5.2, Fugu Ultra, Fable 5) plus CodeRabbit. Codex and
@@ -336,6 +337,50 @@ GitHub thread `Fatto in commit <SHA>` with evidence (test command: PASS,
 file:line changed). For skipped findings: `Skipped / already covered` with the
 reason (outdated / duplicate / cosmetic / out of scope) and evidence. Marking a
 thread "resolved" is gated: current-head + all checks settled + evidence.
+
+---
+
+## Auto-merge (owner-authorized, gated)
+
+The owner has authorized the agent to auto-merge the PR under work, but ONLY in
+a gated way. This UPDATES/SUPERSEDES the earlier "never merge / auto-merge
+disabled" statements: under the conditions below the agent MAY merge; outside
+them, merge stays manual and owner-only.
+
+**Conditions to auto-merge (ALL required, fail-closed):**
+1. All current-head checks SETTLED and green (check-completion gate passed).
+2. Zero blockers from the 4 AI reviewers (GPT-5.5, GLM 5.2, Fugu Ultra, Fable 5)
+   and from CodeRabbit; CodeRabbit COMPLETED (or the ~15-min cap elapsed).
+3. No `manual-review-required` label, no unresolved blocking thread, no open
+   `PATCH_REQUIRED` / `NEEDS_MANUAL` finding.
+4. The PR is "able to merge" on GitHub (mergeable, no conflicts, branch
+   protection satisfied, not draft).
+5. Hard verify PASS for the change; hard PASS+BLOCK tests actually run.
+
+If ALL conditions hold AND the PR is NOT safety-critical, the agent merges and
+reports the merge SHA.
+
+**Safety-critical PRs => MANUAL owner merge (auto-merge FORBIDDEN).** A PR is
+safety-critical if it touches: `core/`, safety areas of `services/`, money
+management, `betfair_client`/`betfair_market_api`, `dutching*`, `order_manager`,
+`safety_layer`, `reconciliation`, `runtime_controller`, `.github/workflows/*`,
+config/secrets. For these the agent prepares everything green and able-to-merge,
+then writes `AUTO-MERGE DISABILITATO: PR safety-critical => merge manuale
+dell'owner` and leaves the merge to the owner.
+
+**Need-manual => STOP + ASK + RECORD + WAIT.** If a condition is not met, or an
+owner decision is required (ambiguity, risk, product choice, a blocker not
+fixable with a narrow patch), the agent does NOT merge and:
+1. STOPS (fail-closed: no forcing, no guessing, no bypass);
+2. puts the question to the owner as an explicit QUESTION, with the options;
+3. RECORDS in the task's dedicated issue the question AND the owner's answer
+   when it arrives — owner decisions are the tracked source of truth for the
+   next steps;
+4. WAITS for the decision before proceeding.
+
+This applies across the whole roadmap: while developing the PRs, every
+need-manual goes through this cycle (stop → ask → record in the dedicated issue
+→ wait for the owner's decision → proceed).
 
 ---
 

@@ -47,7 +47,10 @@ REGOLE NON NEGOZIABILI (valgono sempre):
   handoff, riparazione della PR corrente) vale come autorizzazione
   al push/resolve sulla PR in lavorazione; le flag restano
   obbligatorie per l'automazione non presidiata.
-- AUTO_MERGE_ENABLED=false sempre: il merge è manuale dell'owner.
+- AUTO-MERGE: l'owner ha autorizzato l'auto-merge GATED dell'agente (vedi
+  sezione AUTO-MERGE). Consentito SOLO a verde totale + able-to-merge + zero
+  bloccanti + nessun need-manual, ed ESCLUSE le PR safety-critical (che restano
+  merge manuale dell'owner). Fuori da queste condizioni il merge resta manuale.
 - DeepSource è advisory di default: patcha solo se è required
   failing current-head o dimostra bug reale/safety/fail-open.
 - Check-completion gate: le decisioni FINALI (READY_TO_MERGE,
@@ -140,9 +143,10 @@ checkout né esecuzione del codice PR, redazione segreti).
 
 **Se una review segnala bloccanti** (bug, security, rischi Betfair/dutching/
 money management, gestione segreti, rischi workflow o `manual-review-required`):
-NON dichiarare la PR pronta e NON proporre auto-merge. Lascia la PR aperta e
-scrivi: `AUTO-MERGE DISABILITATO: questa PR richiede merge manuale dell'owner`.
-`AUTO_MERGE_ENABLED=false` sempre (coerente con le REGOLE NON NEGOZIABILI).
+NON dichiarare la PR pronta e NON auto-mergiare. Lascia la PR aperta e scrivi:
+`AUTO-MERGE DISABILITATO: questa PR richiede merge manuale dell'owner`. In
+presenza di bloccanti l'auto-merge è VIETATO (fail-closed): si auto-mergia solo
+a verde totale senza bloccanti e nei limiti della sezione AUTO-MERGE.
 
 **Reviewer da aspettare / non aspettare.** La copertura di default su OGNI PR è:
 i 4 workflow API (GPT-5.5, GLM 5.2, Fugu Ultra, Fable 5) + CodeRabbit. Codex e
@@ -209,3 +213,46 @@ modificato). Per i rilievi saltati: `Skipped / già coperto` col motivo (outdate
 / duplicato / cosmetico / fuori scope) e evidenza. Marcare il thread "resolved" è
 azione gated: current-head + tutti i check settled + evidenza (vedi
 auto_pr_flow_spec §11/§13).
+
+## AUTO-MERGE (autorizzato dall'owner — GATED)
+
+L'owner ha autorizzato l'agente a eseguire il merge automatico della PR in
+lavorazione, ma SOLO in modo gated. Questo AGGIORNA/SUPERA i precedenti
+"AUTO_MERGE_ENABLED=false sempre" e i generici "non mergiare": alle condizioni
+qui sotto l'agente PUÒ mergiare; fuori da esse il merge resta manuale dell'owner.
+
+**Condizioni per auto-mergiare (TUTTE obbligatorie, fail-closed):**
+1. Tutti i check current-head SETTLED e verdi (check-completion gate passato).
+2. Zero bloccanti dai 4 reviewer AI (GPT-5.5, GLM 5.2, Fugu Ultra, Fable 5) e da
+   CodeRabbit; CodeRabbit COMPLETATO (o cap ~15 min scaduto).
+3. Nessuna label `manual-review-required`, nessun thread bloccante irrisolto,
+   nessun rilievo `PATCH_REQUIRED`/`NEEDS_MANUAL` aperto.
+4. La PR è "able to merge" su GitHub (mergeable, nessun conflitto, branch
+   protection soddisfatta, non draft).
+5. Hard verify PASS per il cambiamento; test hard PASS+BLOCK realmente eseguiti.
+
+Se TUTTE le condizioni valgono E la PR NON è safety-critical, l'agente mergia e
+riporta l'esito (SHA di merge).
+
+**PR safety-critical => merge MANUALE dell'owner (auto-merge VIETATO).** Una PR è
+safety-critical se tocca: `core/`, aree safety di `services/`, money management,
+`betfair_client`/`betfair_market_api`, `dutching*`, `order_manager`,
+`safety_layer`, `reconciliation`, `runtime_controller`, `.github/workflows/*`,
+config/segreti. Per queste l'agente prepara tutto verde e able-to-merge, poi
+scrive `AUTO-MERGE DISABILITATO: PR safety-critical => merge manuale dell'owner`
+e lascia il merge all'owner.
+
+**Need-manual => STOP + DOMANDA + ANNOTA + ATTENDI.** Se una condizione non è
+soddisfatta, o emerge una decisione che spetta all'owner (ambiguità, rischio,
+scelta di prodotto, bloccante non risolvibile con patch stretta), l'agente NON
+mergia e:
+1. si FERMA (fail-closed: non forza, non inventa, non aggira);
+2. pone la questione all'owner come DOMANDA esplicita, con le opzioni;
+3. ANNOTA nella issue dedicata del task la domanda E la risposta dell'owner
+   quando arriva — le decisioni owner sono la fonte di verità tracciata per i
+   passi successivi;
+4. ATTENDE la decisione prima di procedere.
+
+Vale per tutta la roadmap: durante lo sviluppo delle PR, ogni need-manual passa
+da questo ciclo (stop → domanda → annotazione nella issue dedicata → attesa
+della decisione owner → prosegui).
