@@ -398,6 +398,24 @@ This applies across the whole roadmap: while developing the PRs, every
 need-manual goes through this cycle (stop → ask → record in the dedicated issue
 → wait for the owner's decision → proceed).
 
+**Label-gated strong reviewers in usage-quota => AUTO-MERGE BLOCKED (wait for
+owner) — IMPORTANT.** The two label-gated strong reviewers — Fugu Ultra and
+Fable 5 — ARE the final pre-merge gate. If, after firing the labels, one or both
+cannot review because they are in usage-quota / out of credits (the workflow
+starts but the model does not answer), auto-merge is BLOCKED: the required final
+strong review did not happen. In that case the agent:
+1. does NOT auto-merge, even if everything else is green and able-to-merge, and
+   even with the safety-critical override active;
+2. STOPS and WAITS for the owner's explicit authorization to continue;
+3. RECORDS in the dedicated issue that Fugu/Fable did not review due to quota
+   and that auto-merge is awaiting the owner's decision.
+
+This rule PREVAILS over the general "skip on unavailability" rule: that skip lets
+the agent avoid stalling in the REPORT (it notes the reviewer as absent), but it
+does NOT authorize auto-merge without the final strong gates. To auto-merge,
+Fugu Ultra and Fable 5 must have actually run with no blockers; if they are in
+quota, the merge is the owner's decision, never the agent's.
+
 ---
 
 ## Failure handling

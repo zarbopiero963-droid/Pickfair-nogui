@@ -272,3 +272,21 @@ mergia e:
 Vale per tutta la roadmap: durante lo sviluppo delle PR, ogni need-manual passa
 da questo ciclo (stop → domanda → annotazione nella issue dedicata → attesa
 della decisione owner → prosegui).
+
+**Gate forti a label in usage-quota => AUTO-MERGE BLOCCATO (attesa owner) —
+IMPORTANTE.** I due reviewer forti a label — Fugu Ultra e Fable 5 — sono il gate
+finale pre-merge. Se, dopo aver fatto partire le label, uno o entrambi NON
+possono revisionare perché in usage-quota / crediti esauriti (il workflow parte
+ma il modello non risponde), l'auto-merge è BLOCCATO: la review forte finale
+richiesta non è avvenuta. In questo caso l'agente:
+1. NON auto-mergia, nemmeno se tutto il resto è verde e able-to-merge, e nemmeno
+   con l'override safety-critical attivo;
+2. si FERMA e ATTENDE l'autorizzazione esplicita dell'owner a continuare;
+3. ANNOTA nella issue dedicata che Fugu/Fable non hanno revisionato per quota e
+   che l'auto-merge è in attesa della decisione owner.
+
+Questa regola PREVALE sulla regola generale "skip per indisponibilità": quel
+salto consente all'agente di non restare in stallo nel REPORT (annota il
+reviewer come assente), ma NON autorizza l'auto-merge senza i gate forti finali.
+Per MERGIARE in automatico servono Fugu Ultra e Fable 5 effettivamente eseguiti
+e senza bloccanti; se sono in quota, il merge lo decide l'owner, mai l'agente.
