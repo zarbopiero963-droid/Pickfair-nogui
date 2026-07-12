@@ -512,6 +512,16 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 6
+    },
+    "runtime_circuit_breaker_emergency_gate": {
+      "description": "Cluster circuit-breaker (FASE 3): core/trading_engine.py:1340 usava bool(entry_blocked_fn()) invece di entry_blocked_fn() is True al chokepoint di submission. In produzione _daily_loss_entry_blocked() ritorna un bool stretto (comportamento del blocco emergenza identico), ma un MagicMock nei test generava un falso positivo EMERGENCY_STOP_ACTIVE che rompeva 6 test di test_circuit_breaker_wiring. Allineato a is True come il commento e i check gemelli (is_emergency_stopped, _session_invalid).",
+      "allow_tests": true,
+      "files": [
+        "core/trading_engine.py",
+        "tests/unit/test_circuit_breaker_wiring.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 5
     }
   }
 }

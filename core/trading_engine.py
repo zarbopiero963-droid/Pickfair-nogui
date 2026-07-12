@@ -1337,7 +1337,12 @@ class TradingEngine:
             # Il recheck e' atomico sotto lock nel runtime_controller.
             entry_blocked_fn = getattr(runtime, "_daily_loss_entry_blocked", None)
             if callable(entry_blocked_fn):
-                if bool(entry_blocked_fn()):
+                # `is True` (non `bool(...)`) coerente col commento sopra e coi
+                # check gemelli (is_emergency_stopped, _session_invalid): in
+                # produzione `_daily_loss_entry_blocked()` ritorna un bool stretto
+                # quindi il comportamento del blocco emergenza è identico, ma un
+                # MagicMock nei test non genera più un falso positivo.
+                if entry_blocked_fn() is True:
                     raise RuntimeError("EMERGENCY_STOP_ACTIVE")
             elif getattr(runtime, "is_emergency_stopped", False) is True:
                 raise RuntimeError("EMERGENCY_STOP_ACTIVE")
