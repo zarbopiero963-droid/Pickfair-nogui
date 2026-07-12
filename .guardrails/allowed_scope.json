@@ -448,6 +448,20 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 6
+    },
+    "ci_reviewer_secret_names_and_one_pr_rule": {
+      "description": "CI: point the 4 AI-review workflows at the owner's actual secret names (PICKFAIR_OPENAI / OPENROUTER_PICKFAIR / CLAUDE_PICKFAIR); align docs; add the 'one open PR / one active task at a time' rule to CLAUDE.md (parity with AGENTS.md).",
+      "allow_tests": false,
+      "files": [
+        ".github/workflows/pr-review-openai-gpt56-terra.yml",
+        ".github/workflows/pr-review-openrouter-glm52.yml",
+        ".github/workflows/pr-review-openrouter-fugu-ultra.yml",
+        ".github/workflows/pr-review-claude-fable5.yml",
+        "docs/ai_audit_workflows.md",
+        "CLAUDE.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 10
     }
   }
 }

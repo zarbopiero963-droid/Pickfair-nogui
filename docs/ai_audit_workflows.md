@@ -71,11 +71,17 @@ sull'intera PR). Su push che toccano solo workflow/docs/test il job parte ma
 
 Configurare in *Settings → Secrets and variables → Actions*:
 
-| Secret | Usato da |
-|---|---|
-| `OPENAI_API_KEY` | GPT-5.6 Terra |
-| `OPENROUTER_API_KEY` | GLM 5.2, Fugu Ultra |
-| `ANTHROPIC_API_KEY` | Claude Fable 5 |
+| Secret (nome nel repo) | Provider | Usato da |
+|---|---|---|
+| `PICKFAIR_OPENAI` | OpenAI API | GPT-5.6 Terra |
+| `OPENROUTER_PICKFAIR` | OpenRouter | GLM 5.2, Fugu Ultra |
+| `CLAUDE_PICKFAIR` | Anthropic API | Claude Fable 5 |
+
+> I workflow leggono il segreto tramite questi nomi (`secrets.PICKFAIR_OPENAI`,
+> `secrets.OPENROUTER_PICKFAIR`, `secrets.CLAUDE_PICKFAIR`) e lo espongono allo
+> script con una env var interna (`OPENAI_API_KEY` / `OPENROUTER_API_KEY` /
+> `ANTHROPIC_API_KEY`): il nome del segreto e quello della env interna sono
+> volutamente distinti.
 
 `GITHUB_TOKEN` è fornito automaticamente da Actions. Per far pubblicare i
 commenti al bot serve *Settings → Actions → General → Workflow permissions →
