@@ -512,6 +512,15 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 6
+    },
+    "runtime_circuit_breaker_emergency_gate": {
+      "description": "Cluster circuit-breaker (FASE 3): 6 test di test_circuit_breaker_wiring fallivano perché usavano un MagicMock nudo come runtime; _daily_loss_entry_blocked() ritornava un Mock truthy → falso positivo EMERGENCY_STOP_ACTIVE al gate emergenza di core/trading_engine.py. Fix SOLO nei test (rt._daily_loss_entry_blocked.return_value = False): la produzione resta bool(...) fail-closed intatta (4 reviewer forti hanno bloccato la variante 'is True' come regressione fail-open su un chokepoint money-management). Nessuna modifica a core/.",
+      "allow_tests": true,
+      "files": [
+        "tests/unit/test_circuit_breaker_wiring.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 4
     }
   }
 }

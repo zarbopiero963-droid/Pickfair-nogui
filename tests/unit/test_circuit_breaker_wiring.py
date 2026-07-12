@@ -172,6 +172,10 @@ def test_trading_engine_breaker_open_blocks_live_order():
 
     # Set up a fake runtime that allows LIVE
     rt = MagicMock()
+    # Il gate emergenza daily-loss (fail-closed con bool(...) in produzione) va
+    # OFF per testare il circuit breaker: un MagicMock nudo ritornerebbe un Mock
+    # truthy → falso positivo EMERGENCY_STOP_ACTIVE. Contratto reale: ritorna bool.
+    rt._daily_loss_entry_blocked.return_value = False
     rt.get_effective_execution_mode.return_value = "LIVE"
     rt.is_live_allowed.return_value = True
     engine.runtime_controller = rt
@@ -191,10 +195,40 @@ def test_trading_engine_breaker_open_blocks_live_order():
 
 
 @pytest.mark.unit
+def test_emergency_gate_fail_closed_on_truthy_non_bool_daily_loss():
+    # Contratto FAIL-CLOSED del gate emergenza al chokepoint di submission.
+    # Il gate deve bloccare su QUALSIASI valore truthy di _daily_loss_entry_blocked(),
+    # non solo su `True` stretto: si usa un truthy NON-bool (1) proprio per blindare
+    # la semantica bool(...) contro una regressione fail-open (es. `is True`, che
+    # con `1 is True`==False lascerebbe passare l'ordine oltre il daily-loss).
+    # La submission DEVE sollevare EMERGENCY_STOP_ACTIVE e NON chiamare place_order.
+    engine = _make_engine()
+    rt = MagicMock()
+    rt._daily_loss_entry_blocked.return_value = 1  # truthy non-bool
+    rt.get_effective_execution_mode.return_value = "LIVE"
+    rt.is_live_allowed.return_value = True
+    engine.runtime_controller = rt
+
+    fake_client = MagicMock()
+    engine.betfair_client = fake_client
+
+    with pytest.raises(RuntimeError, match="EMERGENCY_STOP_ACTIVE"):
+        engine._submit_to_order_path(
+            _make_ctx(engine),
+            {"market_id": "1.1", "selection_id": 123, "side": "BACK", "price": 2.0, "size": 10.0},
+        )
+    fake_client.place_order.assert_not_called()
+
+
+@pytest.mark.unit
 def test_trading_engine_order_failures_trip_breaker():
     engine = _make_engine()
 
     rt = MagicMock()
+    # Il gate emergenza daily-loss (fail-closed con bool(...) in produzione) va
+    # OFF per testare il circuit breaker: un MagicMock nudo ritornerebbe un Mock
+    # truthy → falso positivo EMERGENCY_STOP_ACTIVE. Contratto reale: ritorna bool.
+    rt._daily_loss_entry_blocked.return_value = False
     rt.get_effective_execution_mode.return_value = "LIVE"
     rt.is_live_allowed.return_value = True
     engine.runtime_controller = rt
@@ -220,6 +254,10 @@ def test_trading_engine_successful_order_resets_breaker_failures():
     engine = _make_engine()
 
     rt = MagicMock()
+    # Il gate emergenza daily-loss (fail-closed con bool(...) in produzione) va
+    # OFF per testare il circuit breaker: un MagicMock nudo ritornerebbe un Mock
+    # truthy → falso positivo EMERGENCY_STOP_ACTIVE. Contratto reale: ritorna bool.
+    rt._daily_loss_entry_blocked.return_value = False
     rt.get_effective_execution_mode.return_value = "LIVE"
     rt.is_live_allowed.return_value = True
     engine.runtime_controller = rt
@@ -247,6 +285,10 @@ def test_trading_engine_ok_false_non_session_trips_breaker():
     engine = _make_engine()
 
     rt = MagicMock()
+    # Il gate emergenza daily-loss (fail-closed con bool(...) in produzione) va
+    # OFF per testare il circuit breaker: un MagicMock nudo ritornerebbe un Mock
+    # truthy → falso positivo EMERGENCY_STOP_ACTIVE. Contratto reale: ritorna bool.
+    rt._daily_loss_entry_blocked.return_value = False
     rt.get_effective_execution_mode.return_value = "LIVE"
     rt.is_live_allowed.return_value = True
     engine.runtime_controller = rt
@@ -278,6 +320,10 @@ def test_trading_engine_ok_false_non_session_returns_result_to_caller():
     engine = _make_engine()
 
     rt = MagicMock()
+    # Il gate emergenza daily-loss (fail-closed con bool(...) in produzione) va
+    # OFF per testare il circuit breaker: un MagicMock nudo ritornerebbe un Mock
+    # truthy → falso positivo EMERGENCY_STOP_ACTIVE. Contratto reale: ritorna bool.
+    rt._daily_loss_entry_blocked.return_value = False
     rt.get_effective_execution_mode.return_value = "LIVE"
     rt.is_live_allowed.return_value = True
     engine.runtime_controller = rt
@@ -299,6 +345,10 @@ def test_trading_engine_ok_true_still_records_success():
     engine = _make_engine()
 
     rt = MagicMock()
+    # Il gate emergenza daily-loss (fail-closed con bool(...) in produzione) va
+    # OFF per testare il circuit breaker: un MagicMock nudo ritornerebbe un Mock
+    # truthy → falso positivo EMERGENCY_STOP_ACTIVE. Contratto reale: ritorna bool.
+    rt._daily_loss_entry_blocked.return_value = False
     rt.get_effective_execution_mode.return_value = "LIVE"
     rt.is_live_allowed.return_value = True
     engine.runtime_controller = rt
