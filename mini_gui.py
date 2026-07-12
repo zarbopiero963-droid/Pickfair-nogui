@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 import types
+
+_LOGGER = logging.getLogger(__name__)
 try:
     import tkinter as tk
     from tkinter import ttk, messagebox
@@ -459,8 +462,26 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                     pass
 
     def _apply_simulation_mode_to_runtime(self):
-        if hasattr(self.runtime, "set_simulation_mode"):
-            self.runtime.set_simulation_mode(bool(self.simulation_mode_var.get()))
+        desired = bool(self.simulation_mode_var.get())
+        # Stato locale della GUI = intento utente (SIM/LIVE), aggiornato SEMPRE,
+        # indipendentemente dall'esito della sync al runtime. NB di sicurezza:
+        # questo flag NON e' l'autorita' live/sim — runtime_controller.start usa
+        # execution_mode (che _runtime_start passa sempre) come autoritativo e
+        # ignora simulation_mode quando execution_mode e' presente, quindi
+        # allinearlo qui NON abilita il live.
+        self.simulation_mode = desired
+        if not hasattr(self.runtime, "set_simulation_mode"):
+            return
+        try:
+            self.runtime.set_simulation_mode(desired)
+        except Exception as exc:
+            # Fail-safe GUI: un runtime che fallisce la sync di modalita' non deve
+            # far crashare la GUI (costruzione/toggle). NON ingoiamo in silenzio:
+            # rendiamo l'errore visibile (log tab + logger). L'autorita' su SIM/LIVE
+            # resta il runtime, che fallisce-sicuro per conto suo: qui NON forziamo
+            # uno stato di modalita' che non possiamo confermare.
+            self._log(f"SYNC MODALITA' FALLITA -> {exc}")
+            _LOGGER.warning("set_simulation_mode sync failed: %s", exc)
 
     # =========================================================
     # VARIABLES
