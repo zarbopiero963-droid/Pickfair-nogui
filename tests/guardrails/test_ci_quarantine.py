@@ -182,5 +182,23 @@ class CIQuarantineGuardTests(unittest.TestCase):
                     )
 
 
+    def test_main_inspects_arbitrary_target_root(self) -> None:
+        # Fail-closed (Fugu): il checker deve poter ispezionare una root ARBITRARIA
+        # passata come argomento (l'albero della PR), non solo il proprio repo —
+        # così il guard CI esegue lo script FIDATO del branch base contro l'albero
+        # della PR, senza mai eseguire il codice (potenzialmente manomesso) della PR.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._make_repository(root)
+            self.assertEqual(GUARD.main([str(root)]), 0)
+
+            stem = Path(GUARD.QUARANTINED_WORKFLOWS[0]).stem
+            (root / ".github" / "workflows" / f"{stem}.yaml").write_text(
+                "name: sneaky reactivation\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(GUARD.main([str(root)]), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

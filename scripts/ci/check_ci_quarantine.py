@@ -77,8 +77,17 @@ def check_repository(repository_root: Path) -> list[str]:
     return errors
 
 
-def main() -> int:
-    repository_root = Path(__file__).resolve().parents[2]
+def main(argv: list[str] | None = None) -> int:
+    # La root da ispezionare è parametrizzabile (primo argomento posizionale):
+    # così il guard CI può eseguire QUESTO checker FIDATO (dal branch base) contro
+    # l'albero-file di una PR non fidata, senza mai eseguire codice della PR
+    # (fail-closed). Senza argomento ricade sulla root del proprio repository
+    # (uso locale / self-check / push su main).
+    args = sys.argv[1:] if argv is None else list(argv)
+    if args:
+        repository_root = Path(args[0]).resolve()
+    else:
+        repository_root = Path(__file__).resolve().parents[2]
     errors = check_repository(repository_root)
     if errors:
         print("CI quarantine guard: FAIL", file=sys.stderr)

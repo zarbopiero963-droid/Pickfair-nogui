@@ -1,11 +1,14 @@
 name: CI Quarantine Guard
 
 on:
-  # Nessun filtro `paths:` di proposito: è un guard di sicurezza fail-closed e
-  # deve girare su OGNI PR e push su main, non solo quando cambiano i file dei
-  # workflow. Così una riattivazione/dispatch introdotta altrove non può saltare
-  # il controllo per via del path filtering (Qodo). Il job è read-only e breve.
-  pull_request:
+  # pull_request_target: il workflow ESEGUITO proviene dal branch base (fidato).
+  # Il guard esegue il checker e i test del BASE (NON modificabili dalla PR) e
+  # ispeziona l'albero-file della PR SOLO come dati — nessun checkout eseguibile
+  # del codice PR. Così una PR ostile che manomette `check_ci_quarantine.py` non
+  # può neutralizzare il guard (fail-closed, Fugu). Nessun `paths:` filter: gira
+  # su OGNI PR e push su main. Nessun secret + permessi read-only → sicuro anche
+  # per PR da fork (non si esegue codice della PR).
+  pull_request_target:
   push:
     branches:
       - main
@@ -24,13 +27,31 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Checkout repository
+      - name: Checkout base (trusted checker + tests)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+          path: _base
 
-      - name: Verify quarantine state
-        run: python3 scripts/ci/check_ci_quarantine.py
+      - name: Checkout PR head (inspected only, never executed)
+        if: ${{ github.event_name == 'pull_request_target' }}
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          path: _pr
 
-      - name: Run quarantine regression tests
-        run: python3 tests/guardrails/test_ci_quarantine.py
+      - name: Verify quarantine state (trusted checker vs target tree)
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request_target" ]; then
+            target="_pr"
+          else
+            target="_base"
+          fi
+          # Script del BASE (fidato) contro l'albero scelto: su PR ispeziona il
+          # tree della PR senza eseguirne il codice.
+          python3 _base/scripts/ci/check_ci_quarantine.py "$target"
+
+      - name: Run quarantine regression tests (trusted, from base)
+        run: python3 _base/tests/guardrails/test_ci_quarantine.py
