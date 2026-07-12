@@ -73,6 +73,13 @@ def test_normalize_ingestion_signal_rejects_non_dict_and_ambiguous_meta_fail_clo
     assert unmatched["normalized_signal"]["market_id"] is None
     assert unmatched["normalized_signal"]["selection_id"] is None
 
+    both = p.normalize_ingestion_signal(
+        {"event_name": "Roma v Milan", "copy_meta": {"master_id": "M1"}, "pattern_meta": {"pattern_id": "P1"}}
+    )
+    assert both["ok"] is False
+    assert both["error_code"] == "COPY_PATTERN_MUTUALLY_EXCLUSIVE"
+    assert both["normalized_signal"] == {}
+
 
 def test_unmatched_string_signal_rejected_by_runtime_mandatory_gate():
     # End-to-end del fail-closed Telegram->denaro (GLM/Fugu, PR #352): il
@@ -104,13 +111,6 @@ def test_unmatched_string_signal_rejected_by_runtime_mandatory_gate():
     rc._on_signal_received(normalized)
 
     assert rejected == ["campi_mancanti:market_id,selection_id"]
-
-    both = p.normalize_ingestion_signal(
-        {"event_name": "Roma v Milan", "copy_meta": {"master_id": "M1"}, "pattern_meta": {"pattern_id": "P1"}}
-    )
-    assert both["ok"] is False
-    assert both["error_code"] == "COPY_PATTERN_MUTUALLY_EXCLUSIVE"
-    assert both["normalized_signal"] == {}
 
 
 @pytest.mark.parametrize(
