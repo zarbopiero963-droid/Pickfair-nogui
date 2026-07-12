@@ -235,6 +235,75 @@ When a handoff file is provided and no PR exists:
 
 ---
 
+## AI PR review — reviewers and final label gate
+
+Every PR is covered by four AI review workflows (GitHub Actions driven by API
+keys in the repo Secrets) plus CodeRabbit. Operational detail and security
+posture live in `docs/ai_audit_workflows.md`.
+
+- **GPT-5.5** and **GLM 5.2** run on every push. Output is TARGETED and short
+  (only `## Bloccanti` + `## Verdetto finale`); output ceilings are high so
+  they never truncate — only generated tokens are billed.
+- **Fugu Ultra** and **Claude Fable 5** (strong, costly reviewers) fire on
+  their own ONLY when a push touches **core or critical** Pickfair files —
+  `core/`, `services/`, `controllers/`, the root modules (`headless_main`,
+  `mini_gui`, `betfair_client`, `betfair_market_api`, `order_manager`,
+  `dutching`, `database`, `database_schema`, `trading_config`), dependencies,
+  workflows, config/secrets, or the safety areas (money management, dutching,
+  safety_layer, reconciliation, runtime, catalog) — OR when the final label is
+  added. On pushes touching only docs/tests both jobs start but exit without
+  calling the model (zero cost); those are still covered by GPT-5.5/GLM.
+
+**Final label gate (mandatory pre-merge).** Even if a PR touched no core files
+(so the strong reviewers never fired on their own), before declaring it ready
+the agent MUST trigger the final reviews via label: `final-fugu-review` and
+`final-fable-review` (already created by the owner). With the GitHub MCP tools:
+remove and re-add the two labels on the PR (GitHub emits no new `labeled` event
+if a label is already present). Fire them ONCE, on a stable head, after: the
+work is complete, local checks were attempted, the branch is pushed, the PR is
+not draft.
+
+**The agent never sees the API keys**: it only adds the label; secrets stay in
+GitHub Secrets and Actions stays read-only on the code (diff-only, no checkout
+and no execution of PR code, secret redaction).
+
+**If a review reports blockers** (bugs, security, Betfair/dutching/money-
+management risks, secret handling, workflow risks, or `manual-review-required`):
+do NOT declare the PR ready and do NOT propose auto-merge. Leave the PR open and
+write: `AUTO-MERGE DISABILITATO: questa PR richiede merge manuale dell'owner`.
+Auto-merge stays disabled; merge is always manual and owner-only.
+
+**Who to wait for / not wait for.** Default coverage on every PR is the four API
+workflows (GPT-5.5, GLM 5.2, Fugu Ultra, Fable 5) plus CodeRabbit. Codex and
+Sourcery are NOT a gate: if they post usage-limit/rate-limit messages, treat
+them as ABSENT (not pending) — do not wait, do not count them in the
+check-completion gate, do not block DONE on them.
+
+**Event-driven review window (no fixed timer).** The four synchronous reviewers
+answer in ~1 min; then wait for **CodeRabbit to COMPLETE** its review (actionable
+inline comments, or the "No actionable comments" summary), because it posts
+P1/Major findings minutes after the fast four. The wait is event-driven with an
+anti-stall **cap of ~15 min** from the last push to the PR head; past the cap,
+treat CodeRabbit as absent and defer to post-merge tracking. This gate governs
+when the AGENT declares ready — it does NOT block the owner, who may merge
+manually at any time.
+
+**Be frugal with pushes (API + CI cost).** Every push that updates the head pays
+the models (GPT/GLM always; Fugu/Fable on core/critical pushes). Batch review
+fixes into ONE push per round; never push for cosmetic cleanups or to chase
+per-push-range false positives — answer those in-thread with evidence, not a
+commit.
+
+**Post-merge tracking + last-5 PR sweep.** Because there is no timed window, bot
+comments can land after the merge: if a review event hits a closed PR, re-read
+it and for each real/actionable finding open an Issue (PR number, head SHA,
+file:line, bot, severity, comment link) and a dedicated fix PR branched from
+the latest main (Phase 0 + micro-audit + hard PASS/BLOCK tests; never reuse or
+stack on the merged PR). In Phase 0 of every task, sweep the last 5 merged PRs
+for AI findings never addressed, de-duplicating against existing Issues.
+
+---
+
 ## Failure handling
 
 If tests fail:

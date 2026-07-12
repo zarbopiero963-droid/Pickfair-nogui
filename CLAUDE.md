@@ -106,3 +106,70 @@ scope pulito, fail-closed, docs aggiornate per il cambiamento
 etichette: MISSING, PARTIAL, IMPLEMENTED_WITH_NOTE, FULLY_IMPLEMENTED,
 MERGED_BUT_NOT_FULLY_AUTOMATED. "PR merged" da sola non è prova di
 implementazione.
+
+## AI PR REVIEW — 4 REVIEWER + GATE LABEL (OBBLIGATORIO)
+
+Ogni PR è coperta da quattro workflow di review AI (GitHub Actions con API
+key nei Secret del repo) più CodeRabbit. Dettaglio operativo e postura di
+sicurezza in `docs/ai_audit_workflows.md`.
+
+- **GPT-5.5** e **GLM 5.2**: girano a OGNI push della PR. Review MIRATA e
+  corta: solo `## Bloccanti` + `## Verdetto finale` (tetti di output alti →
+  non troncano; si pagano solo i token generati).
+- **Fugu Ultra** e **Claude Fable 5** (reviewer forti, costosi): partono da
+  soli SOLO su push che tocca file **core o critici** di Pickfair — `core/`,
+  `services/`, `controllers/`, i moduli root (`headless_main`, `mini_gui`,
+  `betfair_client`, `betfair_market_api`, `order_manager`, `dutching`,
+  `database`, `database_schema`, `trading_config`), dipendenze, workflow,
+  config/segreti, o le aree safety (money management, dutching, safety_layer,
+  reconciliation, runtime, catalog) — OPPURE con la label finale. Su push di
+  soli docs/test i due job partono ma NON spendono (costo zero).
+
+**Gate finale a label (obbligatorio pre-merge).** Anche se una PR non ha
+toccato file core/critici (quindi i forti non sono partiti da soli), PRIMA di
+dichiararla pronta l'agente DEVE far partire le review finali via label:
+`final-fugu-review` e `final-fable-review` (già create dall'owner). Con i tool
+MCP GitHub: rimuovi e riaggiungi le due label alla PR (GitHub non emette un
+nuovo evento `labeled` se la label è già presente). Falle partire UNA volta, a
+head stabile, dopo che: il lavoro è completo, i check locali sono stati
+tentati, il branch è pushato, la PR non è draft.
+
+**L'agente non vede mai le API key**: aggiunge solo la label; i secret restano
+nei GitHub Secrets e Actions resta read-only sul codice (diff-only, niente
+checkout né esecuzione del codice PR, redazione segreti).
+
+**Se una review segnala bloccanti** (bug, security, rischi Betfair/dutching/
+money management, gestione segreti, rischi workflow o `manual-review-required`):
+NON dichiarare la PR pronta e NON proporre auto-merge. Lascia la PR aperta e
+scrivi: `AUTO-MERGE DISABILITATO: questa PR richiede merge manuale dell'owner`.
+`AUTO_MERGE_ENABLED=false` sempre (coerente con le REGOLE NON NEGOZIABILI).
+
+**Reviewer da aspettare / non aspettare.** La copertura di default su OGNI PR è:
+i 4 workflow API (GPT-5.5, GLM 5.2, Fugu Ultra, Fable 5) + CodeRabbit. Codex e
+Sourcery NON sono un gate: se pubblicano usage-limit/rate-limit, trattali come
+ASSENTI (non pending) — non aspettarli, non contarli nel check-completion gate,
+non bloccare il DONE su di loro; annota solo che non hanno revisionato.
+
+**Finestra review event-driven (non a timer).** I quattro reviewer sincroni
+rispondono in ~1 min; poi aspetta che **CodeRabbit COMPLETI** la sua review
+(commenti inline azionabili oppure riepilogo "No actionable comments"), perché
+posta i P1/Major minuti dopo i quattro veloci. Attesa event-driven, con **cap
+anti-stallo ~15 min** dall'ultimo push sul head PR: oltre il cap, trattalo come
+assente e demanda al tracciamento post-merge. Il gate vale per l'AGENTE (quando
+dichiara pronto / dà il verdetto), NON blocca l'owner: può mergiare a mano in
+qualsiasi momento.
+
+**Parsimonia push (costo API + minuti CI).** Ogni push che aggiorna il head
+paga i modelli (GPT/GLM sempre; Fugu/Fable su push core/critici). Accorpa i fix
+di review in UN push per giro; non pushare per cleanup cosmetici o per
+rincorrere falsi positivi da diff-per-push (rispondi in-thread con evidenza,
+mai con un commit).
+
+**Tracciamento post-merge + sweep ultime 5 PR.** Poiché non si aspetta una
+finestra a timer, i commenti-bot possono arrivare dopo il merge: se un evento
+review atterra su una PR chiusa, rileggila e per ogni finding reale/azionabile
+apri una Issue (numero PR, head SHA, file:riga, bot, severità P1/P2/nitpick,
+link al commento) e una fix PR dedicata dal main aggiornato (Phase 0 +
+micro-audit + test hard PASS/BLOCK; niente riuso/stack della PR mergiata). In
+Phase 0 di ogni task ispeziona le ultime 5 PR mergiate per finding AI mai
+indirizzati, deduplicando su Issue esistenti (aperte e chiuse).
