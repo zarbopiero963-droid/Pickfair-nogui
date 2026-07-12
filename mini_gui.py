@@ -314,12 +314,13 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 pass
 
         self.simulation_mode = True
-        # Fail-closed SIM/LIVE (#350, policy owner "2+guardia"): la sync di
-        # modalita' e' NON confermata finche' il runtime non la accetta; su
-        # fallimento il toggle si reverte allo stato confermato e l'avvio
-        # LIVE resta bloccato finche' una sync non riesce.
+        # Fail-closed SIM/LIVE (#350, decisione owner "applica entrambe"):
+        # la sync di modalita' e' NON confermata finche' il runtime non la
+        # accetta; su fallimento il toggle si reverte allo stato confermato,
+        # OGNI avvio resta bloccato finche' una sync non riesce e, se lo
+        # stato confermato era LIVE, parte l'emergency stop del trading.
         self._mode_sync_failed = False
-        self._live_start_refused_total = 0
+        self._start_refused_mode_unconfirmed_total = 0
         self.telegram_status = "STOPPED"
 
         self._build_core()
@@ -492,12 +493,25 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 self.execution_mode_var.set("SIMULATION" if confirmed else "LIVE")
             self._log(
                 "SYNC MODALITA' FALLITA -> rollback allo stato confermato "
-                f"({'SIMULATION' if confirmed else 'LIVE'}); avvio LIVE bloccato"
+                f"({'SIMULATION' if confirmed else 'LIVE'}); ogni avvio bloccato"
             )
             _LOGGER.exception(
                 "set_simulation_mode sync failed; rolled back to confirmed=%s",
                 "SIMULATION" if confirmed else "LIVE",
             )
+            # Decisione owner #350 ("applica entrambe", punto A/Fugu): se
+            # l'ultimo stato CONFERMATO e' LIVE, il runtime puo' stare
+            # operando denaro reale con modalita' ormai incerta -> kill-switch
+            # immediato. emergency_stop e' fail-closed by-design (runtime_controller
+            # :1285): LOCKDOWN + cancel-all, resta LOCKED anche se il cancel
+            # fallisce, riprende solo con reset_emergency() esplicito.
+            if not confirmed and hasattr(self.runtime, "emergency_stop"):
+                try:
+                    self.runtime.emergency_stop(reason="mode_sync_failed_fail_closed")
+                    self._log("EMERGENCY STOP inviato: trading LIVE fermato (modalita' incerta)")
+                except Exception:
+                    _LOGGER.exception("emergency_stop dopo sync fallita anch'esso fallito")
+                    self._log("EMERGENCY STOP FALLITO dopo sync fallita -> INTERVENTO MANUALE RICHIESTO")
             return
         # Sync CONFERMATA dal runtime: solo ora lo stato locale avanza.
         self.simulation_mode = desired
@@ -1280,16 +1294,19 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         if execution_mode not in {"SIMULATION", "LIVE"}:
             execution_mode = "SIMULATION"
 
-        # Guardia fail-closed (#350, rinforzo GPT): MAI avviare in LIVE se
-        # l'ultima sync di modalita' col runtime NON e' confermata — lo stato
-        # reale del runtime e' incerto. Si sblocca solo con una sync riuscita.
-        if execution_mode == "LIVE" and getattr(self, "_mode_sync_failed", False):
-            self._live_start_refused_total += 1
-            self._log("START LIVE RIFIUTATO -> sync modalita' non confermata dal runtime")
+        # Guardia fail-closed (#350, decisione owner "applica entrambe" —
+        # punto B/Fugu): con l'ultima sync di modalita' NON confermata lo
+        # stato reale del runtime e' incerto -> NESSUN avvio (ne' LIVE ne'
+        # SIMULATION). Si sblocca solo con una sync riuscita (la
+        # _sync_execution_controls_to_runtime a inizio metodo la ritenta:
+        # se il runtime e' guarito, _mode_sync_failed si azzera e si parte).
+        if getattr(self, "_mode_sync_failed", False):
+            self._start_refused_mode_unconfirmed_total += 1
+            self._log(f"START {execution_mode} RIFIUTATO -> sync modalita' non confermata dal runtime")
             self._safe_show_error(
-                "Avvio LIVE bloccato",
+                "Avvio bloccato",
                 "La sincronizzazione della modalita' col runtime e' fallita: "
-                "ripeti il toggle SIM/LIVE con successo prima di avviare in LIVE.",
+                "ripeti il toggle SIM/LIVE con successo prima di avviare.",
             )
             return
 

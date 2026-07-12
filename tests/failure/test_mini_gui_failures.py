@@ -189,12 +189,14 @@ def test_runtime_buttons_do_not_crash_on_failures(gui):
 
 class FlakyModeRuntime:
     """Runtime la cui sync di modalita' e' pilotabile: OK finche' `fail_sync`
-    e' False, poi fallisce. Serve a portare la GUI in LIVE CONFERMATO e poi
-    a rompere la sync per provare la guardia sullo start LIVE (#350)."""
+    e' False, poi fallisce. Serve a portare la GUI in uno stato CONFERMATO e
+    poi a rompere la sync per provare guardia start + emergency stop (#350)."""
 
     def __init__(self, **_kwargs):
         self.fail_sync = False
         self.start_calls = 0
+        self.emergency_stop_calls = 0
+        self.emergency_stop_reasons = []
 
     def set_simulation_mode(self, _value):
         if self.fail_sync:
@@ -204,15 +206,17 @@ class FlakyModeRuntime:
         self.start_calls += 1
         return {"started": True}
 
+    def emergency_stop(self, reason=""):
+        self.emergency_stop_calls += 1
+        self.emergency_stop_reasons.append(str(reason))
+        return {"stopped": True}
+
     @staticmethod
     def get_status():
         return {"mode": "STOPPED", "tables": []}
 
 
-@pytest.mark.failure
-def test_start_live_refused_when_mode_sync_unconfirmed(monkeypatch):
-    # BLOCK guardia #350: con l'ultima sync di modalita' NON confermata,
-    # _runtime_start in LIVE deve RIFIUTARE l'avvio (mai runtime.start).
+def _make_flaky_gui(monkeypatch):
     import mini_gui
 
     monkeypatch.setattr(mini_gui, "Database", FakeDB)
@@ -226,8 +230,14 @@ def test_start_live_refused_when_mode_sync_unconfirmed(monkeypatch):
     monkeypatch.setattr(mini_gui, "RuntimeController", FlakyModeRuntime)
     monkeypatch.setattr(mini_gui, "TelegramController", FakeTelegramController)
     monkeypatch.setattr(mini_gui, "TelegramTabUI", FakeTelegramTabUI)
+    return mini_gui.MiniPickfairGUI(test_mode=True)
 
-    app = mini_gui.MiniPickfairGUI(test_mode=True)
+
+@pytest.mark.failure
+def test_start_live_refused_when_mode_sync_unconfirmed(monkeypatch):
+    # BLOCK guardia #350: con l'ultima sync di modalita' NON confermata,
+    # _runtime_start in LIVE deve RIFIUTARE l'avvio (mai runtime.start).
+    app = _make_flaky_gui(monkeypatch)
     try:
         # 1) toggle a LIVE con sync OK => LIVE CONFERMATO
         app.simulation_mode_var.set(False)
@@ -245,8 +255,82 @@ def test_start_live_refused_when_mode_sync_unconfirmed(monkeypatch):
 
         # 3) start in LIVE con sync non confermata => RIFIUTATO fail-closed
         app._runtime_start()
-        assert app._live_start_refused_total == 1
+        assert app._start_refused_mode_unconfirmed_total == 1
         assert app.runtime.start_calls == 0
+    finally:
+        try:
+            app.destroy()
+        except Exception:
+            pass
+
+
+@pytest.mark.failure
+def test_start_sim_also_refused_when_mode_sync_unconfirmed(monkeypatch):
+    # BLOCK punto B (decisione owner #350 "applica entrambe"): con sync NON
+    # confermata anche lo start in SIMULATION e' rifiutato — nessun avvio con
+    # stato runtime incerto. Recovery: solo una sync riuscita sblocca.
+    app = _make_flaky_gui(monkeypatch)
+    try:
+        # stato confermato SIM (init con sync OK); poi la sync si rompe e il
+        # toggle a LIVE fallisce => rollback a SIM confermato, sync incerta
+        assert app.simulation_mode is True
+        app.runtime.fail_sync = True
+        app.simulation_mode_var.set(False)
+        app._toggle_simulation_mode()
+        assert app.simulation_mode is True  # rollback al confermato SIM
+        assert app._mode_sync_failed is True
+
+        # start in SIMULATION con sync non confermata => RIFIUTATO
+        app._runtime_start()
+        assert app._start_refused_mode_unconfirmed_total == 1
+        assert app.runtime.start_calls == 0
+    finally:
+        try:
+            app.destroy()
+        except Exception:
+            pass
+
+
+@pytest.mark.failure
+def test_emergency_stop_fired_when_live_confirmed_and_sync_fails(monkeypatch):
+    # BLOCK punto A (decisione owner #350 "applica entrambe"): se lo stato
+    # CONFERMATO e' LIVE e la sync fallisce, il trading live potenzialmente
+    # attivo va fermato SUBITO: emergency_stop(reason=mode_sync_failed_fail_closed).
+    app = _make_flaky_gui(monkeypatch)
+    try:
+        # LIVE confermato con sync OK
+        app.simulation_mode_var.set(False)
+        app._toggle_simulation_mode()
+        assert app.simulation_mode is False
+        assert app.runtime.emergency_stop_calls == 0
+
+        # sync rotta: toggle a SIM fallisce => rollback a LIVE + KILL-SWITCH
+        app.runtime.fail_sync = True
+        app.simulation_mode_var.set(True)
+        app._toggle_simulation_mode()
+        assert app._mode_sync_failed is True
+        assert app.runtime.emergency_stop_calls == 1
+        assert app.runtime.emergency_stop_reasons == ["mode_sync_failed_fail_closed"]
+    finally:
+        try:
+            app.destroy()
+        except Exception:
+            pass
+
+
+@pytest.mark.failure
+def test_emergency_stop_not_fired_when_sim_confirmed(monkeypatch):
+    # Contro-prova punto A: con stato confermato SIM (nessun trading live
+    # possibile autorizzato dalla GUI) la sync fallita NON spara l'emergency
+    # stop — rollback + blocco avvii bastano, niente lockdown superfluo.
+    app = _make_flaky_gui(monkeypatch)
+    try:
+        assert app.simulation_mode is True  # SIM confermato dall'init
+        app.runtime.fail_sync = True
+        app.simulation_mode_var.set(False)
+        app._toggle_simulation_mode()  # tentativo LIVE fallisce
+        assert app._mode_sync_failed is True
+        assert app.runtime.emergency_stop_calls == 0
     finally:
         try:
             app.destroy()
