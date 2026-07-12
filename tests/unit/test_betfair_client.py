@@ -263,7 +263,9 @@ def test_login_posts_to_cert_host_certlogin_endpoint(client):
     assert captured["url"] == client.IDENTITY_URL
     assert captured["url"] == "https://identitysso-cert.betfair.it/api/certlogin"
     assert "identitysso-cert.betfair.it" in captured["url"]
-    assert captured["cert"] is not None  # mutual-TLS: certificato client inviato
+    # mutual-TLS: login() deve inviare ESATTAMENTE la tupla di _cert_tuple()
+    # (fallisce se login smette di usare _cert_tuple o invia un cert diverso).
+    assert captured["cert"] == ("cert.pem", "key.pem")
 
 
 @pytest.mark.unit

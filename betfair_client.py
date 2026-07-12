@@ -23,8 +23,9 @@ logger = logging.getLogger(__name__)
 class BetfairClient:
     # certlogin (login non-interattivo mutual-TLS): host DEDICATO con `-cert`
     # (identitysso-cert), richiesto da Betfair per l'autenticazione via
-    # certificato client. keepAlive/logout usano invece l'host standard SENZA
-    # `-cert`. Confermato dal supporto Betfair per l'exchange Italia (.it).
+    # certificato client. keepAlive usa invece l'host standard SENZA `-cert`;
+    # logout() è local-only (nessuna richiesta HTTP). Confermato dal supporto
+    # Betfair per l'exchange Italia (.it).
     IDENTITY_URL = "https://identitysso-cert.betfair.it/api/certlogin"
     KEEPALIVE_URL = "https://identitysso.betfair.it/api/keepAlive"
     BETTING_URL = "https://api.betfair.com/exchange/betting/json-rpc/v1"
