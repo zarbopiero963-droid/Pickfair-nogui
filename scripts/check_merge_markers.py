@@ -68,11 +68,19 @@ def is_conflict_marker(stripped: str) -> bool:
 def _get_markers_in_file(path: Path, root: Path) -> list[tuple[Path, int, str]]:
     """Marker di conflitto in un singolo file (path relativo a `root`).
 
-    Decodifica con `errors="replace"`: un file di testo non-UTF-8 (es. Latin-1)
-    che contiene marker ASCII (`=======`, `<<<<<<<`) deve comunque essere
-    rilevato, non saltato silenziosamente (CodeRabbit).
+    - Salta i file BINARI (contengono byte NUL): sequenze di byte casuali come
+      `=======` non sono marker e darebbero falsi positivi bloccanti (Fugu/Fable).
+    - Sui file di TESTO decodifica con `errors="replace"`, così un file non-UTF-8
+      (es. Latin-1) con marker ASCII resta rilevato, non saltato (CodeRabbit).
+    - Errori di I/O (permessi, file lockati) => salta il file invece di crashare.
     """
-    text = path.read_text(encoding="utf-8", errors="replace")
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return []
+    if b"\x00" in raw:  # euristica binario: nessun marker di testo da cercare
+        return []
+    text = raw.decode("utf-8", errors="replace")
     markers: list[tuple[Path, int, str]] = []
     for lineno, line in enumerate(text.splitlines(), start=1):
         stripped = line.strip()

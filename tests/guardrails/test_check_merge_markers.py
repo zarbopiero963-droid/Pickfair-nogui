@@ -75,6 +75,14 @@ class CheckMergeMarkersTests(unittest.TestCase):
             found = CHECKER.scan_for_markers(root)
             self.assertIn("=======", {line for _, _, line in found})
 
+    def test_binary_file_with_marker_bytes_is_skipped(self) -> None:
+        # Un file binario (byte NUL) con byte '=======' NON deve essere flaggato:
+        # evita falsi positivi bloccanti su blob binari (Fugu/Fable).
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "blob.bin").write_bytes(b"\x00\x01=======\x00\xff<<<<<<<\x00")
+            self.assertEqual(CHECKER.scan_for_markers(root), [])
+
     def test_main_status_codes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
