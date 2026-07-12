@@ -521,6 +521,15 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 4
+    },
+    "runtime_best_price_seam_exposure_test_config": {
+      "description": "Cluster best-price seam (FASE 3): 4 test di test_runtime_controller_best_price_direct fallivano con max_open_exposure_exceeded:limit=0€ perché il _Config di test ha un catch-all __getattr__ che ritorna 0; il gate A2 esposizione (#320) fa getattr(config, 'max_open_exposure', None) e legge 0 (non None) → cap a 0€ = blocca tutto, prima del seam. In produzione max_open_exposure è Optional[float]=None (disabilitato, gate skippato). Fix SOLO nel test: definire max_open_exposure=None esplicito nel _Config. Nessuna modifica a core/.",
+      "allow_tests": true,
+      "files": [
+        "tests/unit/test_runtime_controller_best_price_direct.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 4
     }
   }
 }
