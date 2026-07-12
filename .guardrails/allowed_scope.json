@@ -462,6 +462,35 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 10
+    },
+    "ci_quarantine_privileged_workflows": {
+      "description": "Security: quarantine 8 privileged autofix workflows (moved to .github/quarantined-workflows/*.disabled), add fail-closed guard (script+workflow+tests) hardened against .yml/.yaml/extensionless reactivation and flag-bearing dispatch, fix vps-runner-health. Refs #333.",
+      "allow_tests": true,
+      "files": [
+        ".github/quarantined-workflows/README.md",
+        ".github/quarantined-workflows/auto-pr-codex-fix.yml.disabled",
+        ".github/quarantined-workflows/auto-pr-codex-supervisor.yml.disabled",
+        ".github/quarantined-workflows/auto-pr-e2e-autofix.yml.disabled",
+        ".github/quarantined-workflows/new-task-codex-pr.yml.disabled",
+        ".github/quarantined-workflows/pr-autofix-safe-supervisor.yml.disabled",
+        ".github/quarantined-workflows/pr-autofix-selfhosted.yml.disabled",
+        ".github/quarantined-workflows/pr-automation-controller-v2.yml.disabled",
+        ".github/quarantined-workflows/pr-automation-controller.yml.disabled",
+        ".github/workflows/auto-pr-codex-fix.yml",
+        ".github/workflows/auto-pr-codex-supervisor.yml",
+        ".github/workflows/auto-pr-e2e-autofix.yml",
+        ".github/workflows/ci-quarantine-guard.yml",
+        ".github/workflows/new-task-codex-pr.yml",
+        ".github/workflows/pr-autofix-safe-supervisor.yml",
+        ".github/workflows/pr-autofix-selfhosted.yml",
+        ".github/workflows/pr-automation-controller-v2.yml",
+        ".github/workflows/pr-automation-controller.yml",
+        ".github/workflows/vps-runner-health.yml",
+        ".guardrails/allowed_scope.json",
+        "scripts/ci/check_ci_quarantine.py",
+        "tests/guardrails/test_ci_quarantine.py"
+      ],
+      "max_files": 30
     }
   }
 }
