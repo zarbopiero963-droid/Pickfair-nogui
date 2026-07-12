@@ -173,3 +173,39 @@ link al commento) e una fix PR dedicata dal main aggiornato (Phase 0 +
 micro-audit + test hard PASS/BLOCK; niente riuso/stack della PR mergiata). In
 Phase 0 di ogni task ispeziona le ultime 5 PR mergiate per finding AI mai
 indirizzati, deduplicando su Issue esistenti (aperte e chiuse).
+
+**Skip per indisponibilità (usage-quota / rate-limit) — vale per TUTTI i
+reviewer.** Un reviewer che non può revisionare NON è un gate e NON è "pending":
+trattalo come ASSENTE e prosegui (annota che non ha revisionato).
+- **Codex**: usage-limit => assente, saltato.
+- **Sourcery**: rate-limit => assente, saltato.
+- **CodeRabbit**: se resta in attesa / rate-limit OLTRE il cap ~15 min dall'ultimo
+  push => saltalo e demanda al tracciamento post-merge; non restare in stallo.
+- **I 4 workflow API** (GPT-5.5, GLM 5.2, Fugu Ultra, Fable 5): se un giro
+  riporta usage-quota / rate-limit del provider, quel reviewer è assente per quel
+  push => non aspettarlo, non contarlo nel check-completion gate, non bloccare il
+  DONE su di lui.
+
+**Lettura obbligatoria dei rilievi.** A ogni check-in leggi SIA i commenti inline
+(review comments su file:riga) SIA i corpi delle review (review bodies) SIA i
+commenti di conversazione della PR — i rilievi "outside diff range" vivono solo
+nel corpo della review. Non fermarti ai soli nomi/stato dei check.
+
+**Cosa patchare: SOLO bug logici reali.** Patcha solo bug logici/comportamentali
+reali, regressioni e rischi safety (Betfair, dutching, money management, gestione
+segreti, race/idempotenza, fail-open). NON inseguire rilievi estetici/cosmetici
+(stile, naming, formattazione, preferenze) né falsi positivi da diff-per-push: a
+quelli rispondi in-thread con evidenza, MAI con un commit.
+
+**Ogni fix verificato con test hard.** Un fix che nasce da un rilievo review deve
+avere un test hard che lo copre: scrivi PRIMA il test che riproduce il bug
+(fallisce sul vecchio codice), poi la patch che lo fa passare (PASS + BLOCK).
+`py_compile` + `pytest` mirato eseguiti davvero, esito osservato. Niente DONE se
+il fix non è coperto.
+
+**Rispondi nel thread ("risolti").** Per ogni rilievo indirizzato commenta nel
+thread GitHub `Fatto in commit <SHA>` con evidenza (comando test: PASS, file:riga
+modificato). Per i rilievi saltati: `Skipped / già coperto` col motivo (outdated
+/ duplicato / cosmetico / fuori scope) e evidenza. Marcare il thread "resolved" è
+azione gated: current-head + tutti i check settled + evidenza (vedi
+auto_pr_flow_spec §11/§13).

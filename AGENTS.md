@@ -302,6 +302,41 @@ the latest main (Phase 0 + micro-audit + hard PASS/BLOCK tests; never reuse or
 stack on the merged PR). In Phase 0 of every task, sweep the last 5 merged PRs
 for AI findings never addressed, de-duplicating against existing Issues.
 
+**Skip on unavailability (usage-quota / rate-limit) — applies to ALL
+reviewers.** A reviewer that cannot review is NOT a gate and is NOT "pending":
+treat it as ABSENT and proceed (note that it did not review).
+- **Codex**: usage-limit => absent, skipped.
+- **Sourcery**: rate-limit => absent, skipped.
+- **CodeRabbit**: if it stays waiting / rate-limited BEYOND the ~15-min cap from
+  the last push => skip it and defer to post-merge tracking; do not stall.
+- **The 4 API workflows** (GPT-5.5, GLM 5.2, Fugu Ultra, Fable 5): if a round
+  reports provider usage-quota / rate-limit, that reviewer is absent for that
+  push => do not wait for it, do not count it in the check-completion gate, do
+  not block DONE on it.
+
+**Reading findings is mandatory.** On every check-in read BOTH the inline
+comments (review comments on file:line) AND the review bodies AND the PR
+conversation comments — "outside diff range" findings live only in the review
+body. Do not stop at check names/status.
+
+**What to patch: real logic bugs ONLY.** Patch only real logic/behavioral bugs,
+regressions and safety risks (Betfair, dutching, money management, secret
+handling, race/idempotency, fail-open). Do NOT chase cosmetic findings (style,
+naming, formatting, preferences) or per-push-range false positives — answer
+those in-thread with evidence, never with a commit.
+
+**Every fix verified with a hard test.** A fix that comes from a review finding
+must have a hard test covering it: write the test that reproduces the bug FIRST
+(it fails on the old code), then the patch that makes it pass (PASS + BLOCK).
+`py_compile` + targeted `pytest` actually run, exit observed. No DONE if the fix
+is uncovered.
+
+**Reply in the thread ("resolved").** For each addressed finding, comment in the
+GitHub thread `Fatto in commit <SHA>` with evidence (test command: PASS,
+file:line changed). For skipped findings: `Skipped / already covered` with the
+reason (outdated / duplicate / cosmetic / out of scope) and evidence. Marking a
+thread "resolved" is gated: current-head + all checks settled + evidence.
+
 ---
 
 ## Failure handling
