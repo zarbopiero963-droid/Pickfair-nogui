@@ -71,9 +71,10 @@
             "price",
             "stake",
             "payload",
-            "status"
+            "status",
+            "logical_key"
           ],
-          "update_order_saga": ["customer_ref", "status", "bet_id", "error_text"],
+          "update_order_saga": ["customer_ref", "status", "bet_id", "error_text", "reason_code", "outcome", "matched_size", "avg_price_matched"],
           "get_order_saga": ["customer_ref"],
           "get_pending_sagas": [],
           "get_batch_sagas": ["batch_id"]

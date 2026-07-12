@@ -501,6 +501,17 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 5
+    },
+    "ci_affidabile_guard_snapshot": {
+      "description": "CI affidabile: fix due falsi positivi che sporcano ogni PR — (1) check_merge_markers.py usava startswith e flaggava la riga decorativa '====' di betfair_market_api.py:3 come merge-marker (ora exact-match, root parametrizzabile + test); (2) snapshot public_api_snapshot.json stale su create_order_saga (aggiunto logical_key, parametro legittimo esistente).",
+      "allow_tests": true,
+      "files": [
+        "scripts/check_merge_markers.py",
+        "guardrails/public_api_snapshot.json",
+        "tests/guardrails/test_check_merge_markers.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
     }
   }
 }
