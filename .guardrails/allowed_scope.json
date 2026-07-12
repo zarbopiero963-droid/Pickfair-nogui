@@ -503,12 +503,13 @@
       "max_files": 5
     },
     "ci_affidabile_guard_snapshot": {
-      "description": "CI affidabile: fix due falsi positivi che sporcano ogni PR — (1) check_merge_markers.py usava startswith e flaggava la riga decorativa '====' di betfair_market_api.py:3 come merge-marker (ora exact-match, root parametrizzabile + test); (2) snapshot public_api_snapshot.json stale su create_order_saga (aggiunto logical_key, parametro legittimo esistente).",
+      "description": "CI affidabile: fix falsi positivi che sporcano ogni PR — (1) check_merge_markers.py usava startswith e flaggava la riga decorativa '====' di betfair_market_api.py:3 (ora exact-match, +diff3 |||||||, root parametrizzabile, refactor _get_markers_in_file, test); (2) snapshot public_api_snapshot.json stale su create_order_saga/update_order_saga (param legittimi esistenti); (3) wiring del nuovo test in repo-guardrails.yml (owner-autorizzato l'estensione a .github/workflows/) perché il test altrimenti non gira in CI.",
       "allow_tests": true,
       "files": [
         "scripts/check_merge_markers.py",
         "guardrails/public_api_snapshot.json",
         "tests/guardrails/test_check_merge_markers.py",
+        ".github/workflows/repo-guardrails.yml",
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 6

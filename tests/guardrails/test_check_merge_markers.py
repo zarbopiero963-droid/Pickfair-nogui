@@ -23,6 +23,8 @@ CHECKER = _load_checker()
 
 
 class CheckMergeMarkersTests(unittest.TestCase):
+    """Test unitari del rilevatore di marker di conflitto git."""
+
     def test_decorative_equals_line_is_not_a_marker(self) -> None:
         # BLOCK: una riga decorativa di soli `=` (più lunga di 7) NON è un
         # marker di conflitto — falso positivo storico su betfair_market_api.py:3.
@@ -30,6 +32,7 @@ class CheckMergeMarkersTests(unittest.TestCase):
         self.assertFalse(CHECKER.is_conflict_marker("=" * 8))
         self.assertFalse(CHECKER.is_conflict_marker("<" * 20))
         self.assertFalse(CHECKER.is_conflict_marker(">" * 20))
+        self.assertFalse(CHECKER.is_conflict_marker("|" * 20))
 
     def test_real_conflict_markers_are_detected(self) -> None:
         # I veri marker git (7 char esatti, o 7 + spazio + etichetta) restano rilevati.
@@ -38,6 +41,9 @@ class CheckMergeMarkersTests(unittest.TestCase):
         self.assertTrue(CHECKER.is_conflict_marker(">>>>>>>"))
         self.assertTrue(CHECKER.is_conflict_marker("<<<<<<< HEAD"))
         self.assertTrue(CHECKER.is_conflict_marker(">>>>>>> feature/x"))
+        # Marker della modalità diff3/zdiff3 (base comune).
+        self.assertTrue(CHECKER.is_conflict_marker("|||||||"))
+        self.assertTrue(CHECKER.is_conflict_marker("||||||| merged common ancestors"))
 
     def test_scan_ignores_decorative_line_but_flags_real_marker(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -60,7 +66,7 @@ class CheckMergeMarkersTests(unittest.TestCase):
             # Il file decorativo non deve comparire tra i flag.
             self.assertTrue(all(path.name == "conflitto.txt" for path, _, _ in found))
 
-    def test_main_returns_zero_on_clean_tree_and_one_on_conflict(self) -> None:
+    def test_main_status_codes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "ok.py").write_text("x = 1\n" + ("=" * 30) + "\n", encoding="utf-8")
