@@ -458,9 +458,14 @@ jobs:
           try:
               range_base, range_head, range_scope, compared = resolve_range()
           except Exception as exc:
-              # Errore infra GitHub (Compare/commit API): reviewer opzionale,
-              # non deve bloccare la PR.
-              print(f"::warning::{REVIEW_ID}: impossibile risolvere il range (errore GitHub API), PR non bloccata: {redact(str(exc))[:500]}")
+              # Errore infra GitHub (Compare/commit API). Sul gate finale a LABEL
+              # deve essere FAIL-CLOSED: la review forte richiesta non è avvenuta,
+              # il check NON deve risultare verde (Qodo). Sui push automatici resta
+              # fail-open: reviewer opzionale che non blocca la PR.
+              print(f"::warning::{REVIEW_ID}: impossibile risolvere il range (errore GitHub API): {redact(str(exc))[:500]}")
+              if EVENT_ACTION == "labeled":
+                  print("::error::Gate finale a label: range non risolvibile (errore GitHub API) → job fallito (il gate non deve risultare verde).")
+                  sys.exit(1)
               sys.exit(0)
           files = compared.get("files") or []
           commit_count = len(compared.get("commits") or [])

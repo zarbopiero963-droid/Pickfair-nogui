@@ -11,20 +11,25 @@ controllo umano** e **non approvano né mergiano** nulla.
 |---|---|---|---|
 | `pr-review-openai-gpt56-terra.yml` | GPT-5.6 Terra | OpenAI Responses API | ogni push della PR |
 | `pr-review-openrouter-glm52.yml` | GLM 5.2 | OpenRouter | ogni push della PR |
-| `pr-review-openrouter-fugu-ultra.yml` | Sakana Fugu Ultra | OpenRouter | solo su push che tocca file **core** oppure con label `final-fugu-review` |
-| `pr-review-claude-fable5.yml` | Claude Fable 5 | Anthropic Messages API | solo su push che tocca file **core** oppure con label `final-fable-review` |
+| `pr-review-openrouter-fugu-ultra.yml` | Sakana Fugu Ultra | OpenRouter | solo su push che tocca file **core o critici** oppure con label `final-fugu-review` |
+| `pr-review-claude-fable5.yml` | Claude Fable 5 | Anthropic Messages API | solo su push che tocca file **core o critici** oppure con label `final-fable-review` |
 
 I due reviewer "forti" (Fugu Ultra, Fable 5) sono più costosi: il gate di costo
-nello script chiama il modello **solo** quando il push tocca i file core del
-progetto, oppure quando si aggiunge la label finale (gate pre-merge sull'intera
-PR). Su push che toccano solo workflow/docs/test il job parte ma **non spende**.
+nello script chiama il modello **solo** quando il push tocca i file **core o
+critici** del progetto, oppure quando si aggiunge la label finale (gate pre-merge
+sull'intera PR). Su push che toccano solo workflow/docs/test il job parte ma
+**non spende**.
 
-### File "core" che attivano i reviewer forti
-`core/`, `services/`, `controllers/` e i moduli di root
-(`headless_main.py`, `mini_gui.py`, `betfair_client.py`,
-`betfair_market_api.py`, `order_manager.py`, `dutching.py`, `database.py`,
-`database_schema.py`, `trading_config.py`), più `requirements*.txt/.in/.lock`
-e `pyproject.toml`.
+### File "core o critici" che attivano i reviewer forti
+- **Core** (`CORE_TRIGGER_PATTERNS`): `core/`, `services/`, `controllers/` e i
+  moduli di root (`headless_main.py`, `mini_gui.py`, `betfair_client.py`,
+  `betfair_market_api.py`, `order_manager.py`, `dutching.py`, `database.py`,
+  `database_schema.py`, `trading_config.py`), più `requirements*.txt/.in/.lock`
+  e `pyproject.toml`.
+- **Critici** (`CRITICAL_PATTERNS`): `.github/workflows/`, dipendenze,
+  betfair/telegram/parser, money management, dutching, safety, reconciliation,
+  runtime, order_manager, catalog, e i pattern segreti/credenziali
+  (secret/token/auth/certlogin/app_key/config/`.env`/chiavi private).
 
 ## Postura di sicurezza (comune a tutti e 4)
 
@@ -82,5 +87,11 @@ Read and write permissions*.
 - `manual-review-required`: applicata automaticamente quando il diff tocca aree
   sensibili o la Compare API è troncata.
 
-> Nota: questi reviewer sono un filtro tecnico avanzato. Il merge resta
-> **manuale** e umano; nessun workflow qui esegue auto-merge o auto-approve.
+> Nota: questi reviewer sono un filtro tecnico avanzato. **Nessuno di questi
+> workflow esegue auto-merge o auto-approve** — si limitano a commentare e a
+> marcare `manual-review-required`. Il merge NON è deciso qui: l'automazione
+> dell'agente può eseguire un **auto-merge gated** solo dopo che tutti i gate
+> documentati sono passati (vedi la sezione «AUTO-MERGE» in `CLAUDE.md` /
+> `AGENTS.md`), con esclusione delle PR safety-critical (che restano merge
+> manuale dell'owner, salvo override esplicito nella issue) e blocco se i gate
+> forti sono in usage-quota.

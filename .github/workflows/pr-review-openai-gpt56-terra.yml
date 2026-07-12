@@ -34,7 +34,7 @@ jobs:
 
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      OPENAI_MODEL: openai/gpt-5.6-terra
+      OPENAI_MODEL: gpt-5.6-terra
 
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       REPO: ${{ github.repository }}
@@ -50,7 +50,7 @@ jobs:
 
       MAX_PATCH_PER_FILE_CHARS: "7000"
       MAX_TOTAL_PATCH_CHARS: "24000"
-      # openai/gpt-5.6-terra: se è un modello reasoning i token di reasoning contano nel budget: i token di reasoning contano nel budget di output.
+      # openai/gpt-5.6-terra: se è un modello reasoning, i token di reasoning contano nel budget di output.
       # Tetto ALTO anti-troncamento (CEILING, non costo): con reasoning effort
       # "low" + prompt MIRATO (150 parole, 2 sezioni) l'output reale resta corto,
       # ma 2500 lascia spazio a reasoning+testo così NON tronca mai. Si pagano
@@ -97,7 +97,7 @@ jobs:
           # .strip(): un segreto incollato con newline/spazio finale renderebbe
           # invalido l'header Authorization (Bearer ...\n) -> request fallita.
           OPENAI_API_KEY = os.environ["OPENAI_API_KEY"].strip()
-          OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "openai/gpt-5.6-terra")
+          OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.6-terra")
           REVIEW_ID = os.environ.get("REVIEW_ID", "gpt56terra")
           MODEL_LABEL = os.environ.get("MODEL_LABEL", OPENAI_MODEL)
 
@@ -300,7 +300,7 @@ jobs:
                       {"role": "user", "content": user_prompt},
                   ],
                   "store": False,
-                  # openai/gpt-5.6-terra: se è un modello reasoning i token di reasoning contano nel budget: i token di reasoning contano in
+                  # openai/gpt-5.6-terra: se è un modello reasoning, i token di reasoning contano in
                   # max_output_tokens. Con budget basso (1000) il reasoning "medium"
                   # di default esauriva tutto prima del testo (review troncata a 0).
                   # effort "low" lascia spazio alla review breve dentro il budget.
