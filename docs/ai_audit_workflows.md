@@ -34,10 +34,20 @@ sull'intera PR). Su push che toccano solo workflow/docs/test il job parte ma
 ## Postura di sicurezza (comune a tutti e 4)
 
 - **Diff-only**: niente `checkout` del codice della PR, niente esecuzione di
-  codice della PR. Il diff è recuperato via GitHub Compare API.
-- **Solo PR interne**: guard `head.repo.full_name == github.repository`. Su
-  `pull_request` (non `pull_request_target`) le PR da fork non ricevono i
-  secret.
+  codice della PR. Il diff è recuperato via GitHub Compare API (range
+  `base...head` della PR).
+- **`pull_request_target` + guard PR interne**: i workflow girano su
+  `pull_request_target`, quindi il file `.yml` **eseguito proviene dal branch
+  base** (fidato): una PR interna che modifica il workflow **non** può
+  esfiltrare i secret (una PR su `pull_request` avrebbe eseguito la versione
+  dell'head, con i secret). Le PR da **fork** sono escluse dal guard di job
+  `if: head.repo.full_name == github.repository`, così **non ricevono mai** i
+  secret nonostante `pull_request_target`. Essendo diff-only (nessun checkout
+  del codice PR), `pull_request_target` qui non introduce il rischio classico di
+  esecuzione di codice non fidato.
+  > Nota: poiché la versione eseguita è quella del branch base, un workflow
+  > **nuovo** inizia a girare solo dopo che è stato **merge-ato** sul base; sulla
+  > PR che lo introduce non parte da solo.
 - **Redazione segreti**: chiavi private, API key (OpenAI/OpenRouter/GitHub/AWS),
   token Telegram e coppie `key=value` sensibili vengono redatte **prima**
   dell'invio al modello e **prima** della pubblicazione del commento — inclusi i

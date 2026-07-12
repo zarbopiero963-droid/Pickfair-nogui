@@ -14,7 +14,12 @@ name: PR Review OpenRouter Fugu Ultra
 # docs/ai_audit_workflows.md (in questo repo).
 
 on:
-  pull_request:
+  # pull_request_target: il workflow ESEGUITO proviene dal branch base (fidato),
+  # non dall'head della PR. Così una PR interna che modifica questo file .yml NON
+  # può esfiltrare i secret (Qodo). Le PR da fork sono escluse dal guard `if:`
+  # (head.repo.full_name == github.repository), quindi non ricevono mai i secret.
+  # Resta diff-only: nessun checkout né esecuzione del codice della PR.
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review, labeled]
 
 permissions:
@@ -464,6 +469,18 @@ jobs:
               print(f"::warning::{REVIEW_ID}: impossibile risolvere il range (errore GitHub API): {redact(str(exc))[:500]}")
               if EVENT_ACTION == "labeled":
                   print("::error::Gate finale a label: range non risolvibile (errore GitHub API) → job fallito (il gate non deve risultare verde).")
+                  # Osservabilità (CodeRabbit): rendi visibile in-PR il motivo del
+                  # gate fallito, così l'owner non deve aprire i log Actions. Marker
+                  # fisso (non legato al range) per idempotenza.
+                  upsert_comment(
+                      f"<!-- {REVIEW_ID}-pr-review-range-error -->",
+                      f"<!-- {REVIEW_ID}-pr-review-range-error -->\n"
+                      f"# {MODEL_LABEL} PR Review — gate fallito\n\n"
+                      f"Impossibile risolvere il range da revisionare (errore GitHub API): "
+                      f"`{redact(str(exc))[:500]}`.\n"
+                      "Il gate finale a label è FALLITO di proposito (fail-closed): "
+                      "riprova il job o triagia l'errore GitHub prima del merge.",
+                  )
                   sys.exit(1)
               sys.exit(0)
           files = compared.get("files") or []

@@ -1,8 +1,8 @@
 name: PR Review OpenRouter GLM 5.2
 
 # Review AI automatica di ogni push sulla PR con GLM 5.2 via OpenRouter
-# (endpoint chat/completions stile OpenAI). Analizza SOLO il range appena
-# pushato (before...after via GitHub Compare API). Diff-only: niente checkout,
+# (endpoint chat/completions stile OpenAI). Analizza il range `base...head` della
+# PR via GitHub Compare API (un done_marker per range evita di ripagare). Diff-only: niente checkout,
 # niente esecuzione del codice della PR. Redige i possibili segreti (inclusi
 # nomi file) prima dell'invio, pubblica/aggiorna un commento per range e marca
 # le aree sensibili. Reviewer OPZIONALE: se il secret non è configurato il job
@@ -10,7 +10,12 @@ name: PR Review OpenRouter GLM 5.2
 # docs/ai_audit_workflows.md (in questo repo).
 
 on:
-  pull_request:
+  # pull_request_target: il workflow ESEGUITO proviene dal branch base (fidato),
+  # non dall'head della PR. Così una PR interna che modifica questo file .yml NON
+  # può esfiltrare i secret (Qodo). Le PR da fork sono escluse dal guard `if:`
+  # (head.repo.full_name == github.repository), quindi non ricevono mai i secret.
+  # Resta diff-only: nessun checkout né esecuzione del codice della PR.
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
