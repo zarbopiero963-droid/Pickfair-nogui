@@ -48,13 +48,29 @@ def test_normalize_ingestion_signal_valid_payload_is_deterministic_and_preserves
 def test_normalize_ingestion_signal_rejects_non_dict_and_ambiguous_meta_fail_closed():
     p = TelegramSignalProcessor()
 
-    not_dict = p.normalize_ingestion_signal("not-a-dict")
-    assert not_dict == {
-        "ok": False,
-        "error_code": "SIGNAL_NOT_DICT",
-        "error_reason": "telegram signal must be a dict payload",
-        "normalized_signal": {},
-    }
+    # Dal Custom Parser Engine (#290/#305, commit 311f1b8) le STRINGHE sono
+    # un tipo di ingresso SUPPORTATO (raw text da parsare), non piu' un
+    # "non-dict" da rifiutare: il caso SIGNAL_NOT_DICT copre i tipi
+    # genuinamente non supportati.
+    for payload in (12345, None, ["not", "a", "dict"]):
+        not_dict = p.normalize_ingestion_signal(payload)
+        assert not_dict == {
+            "ok": False,
+            "error_code": "SIGNAL_NOT_DICT",
+            "error_reason": "telegram signal must be a dict payload",
+            "normalized_signal": {},
+        }
+
+    # Una stringa NON matchata dal parser viene normalizzata (nuovo
+    # contratto) ma il fail-closed regge A VALLE: market_id/selection_id
+    # restano None e il runtime la rifiuta al gate campi-obbligatori
+    # (core/runtime_controller.py:1932, required=[market_id, selection_id]
+    # => SIGNAL_REJECTED campi_mancanti). Nessun ordine puo' nascere da
+    # una stringa spazzatura.
+    unmatched = p.normalize_ingestion_signal("stringa non parsabile qualsiasi")
+    assert unmatched["ok"] is True
+    assert unmatched["normalized_signal"]["market_id"] is None
+    assert unmatched["normalized_signal"]["selection_id"] is None
 
     both = p.normalize_ingestion_signal(
         {"event_name": "Roma v Milan", "copy_meta": {"master_id": "M1"}, "pattern_meta": {"pattern_id": "P1"}}

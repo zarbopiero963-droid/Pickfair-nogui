@@ -563,13 +563,14 @@
       "max_files": 8
     },
     "integration_main_buttons_stale_refresh": {
-      "description": "Cluster integration (FASE 3, ultimo dei 6): test_main_buttons_are_wired falliva con AttributeError 'NoneType' object has no attribute 'btn_refresh' — il bottone generico btn_refresh e' stato rimosso dal rework GUI #320/#297 (commit 39e72db) in favore dei refresh mirati (btn_refresh_control_plane/risk/bet_history/...), ma il test asseriva ancora il nome vecchio; in test_mode __getattr__ delega a self.tk=None da cui l'AttributeError. Fix SOLO nel test: asserire il wiring dell'equivalente semantico btn_refresh_control_plane (stesso _refresh_runtime_status; in test_mode _DummyButton con cget('command') funzionante). BLOCK: l'asserzione vecchia fallisce su main (e' il rosso CI riprodotto). Nessuna modifica a codice prod. Nota: il presunto rosso 'telegram-e2e' era un artefatto del venv locale senza pytest-asyncio — in CI test_telegram_live_e2e passa.",
+      "description": "Cluster integration (FASE 3, ultimo dei 6): test_main_buttons_are_wired falliva con AttributeError 'NoneType' object has no attribute 'btn_refresh' — il bottone generico btn_refresh e' stato rimosso dal rework GUI #320/#297 (commit 39e72db) in favore dei refresh mirati (btn_refresh_control_plane/risk/bet_history/...), ma il test asseriva ancora il nome vecchio; in test_mode __getattr__ delega a self.tk=None da cui l'AttributeError. Fix SOLO nel test: asserire il wiring dell'equivalente semantico btn_refresh_control_plane (stesso _refresh_runtime_status; in test_mode _DummyButton con cget('command') funzionante). BLOCK: l'asserzione vecchia fallisce su main (e' il rosso CI riprodotto). Nessuna modifica a codice prod. Nota: il presunto rosso 'telegram-e2e' era un artefatto del venv locale senza pytest-asyncio — in CI test_telegram_live_e2e passa. v2: (a) rafforzato l'assert del bottone su richiesta CodeRabbit (verifica anche il TARGET del comando: __self__ is gui e __func__ is _refresh_runtime_status, non solo callable); (b) il simulate-merge (suite completa) ha rivelato un SECONDO test stale: test_telegram_signal_processor::rejects_non_dict usava una STRINGA come caso non-dict, ma dal Custom Parser Engine (#290/#305, commit 311f1b8) le stringhe sono un tipo di ingresso supportato (raw text da parsare). Fix test-only: SIGNAL_NOT_DICT provato su int/None/list (tipi genuinamente non supportati) + nuovo assert che una stringa non matchata normalizza con market_id/selection_id None => rifiutata a valle dal gate campi-obbligatori (runtime_controller.py:1932). Fail-closed sul percorso denaro VERIFICATO intatto.",
       "allow_tests": true,
       "files": [
         "tests/integration/test_mini_gui_integration.py",
+        "tests/services/test_telegram_signal_processor.py",
         ".guardrails/allowed_scope.json"
       ],
-      "max_files": 4
+      "max_files": 5
     }
   }
 }

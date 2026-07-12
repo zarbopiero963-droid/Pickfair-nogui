@@ -223,8 +223,13 @@ def test_main_buttons_are_wired(gui):
     # Il vecchio bottone generico `btn_refresh` e' stato rimosso col rework
     # GUI di #320/#297 (commit 39e72db) in favore dei refresh mirati; il suo
     # equivalente semantico (stesso wiring su _refresh_runtime_status) e' il
-    # refresh del control-plane.
-    assert callable(gui.btn_refresh_control_plane.cget("command"))
+    # refresh del control-plane. Asseriamo anche il TARGET del comando
+    # (CodeRabbit): callable non basterebbe se fosse cablato al metodo
+    # sbagliato.
+    command = gui.btn_refresh_control_plane.cget("command")
+    assert callable(command)
+    assert command.__self__ is gui
+    assert command.__func__ is type(gui)._refresh_runtime_status
 
 
 @pytest.mark.integration
