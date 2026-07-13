@@ -19,10 +19,15 @@ indebolito.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import logging
+import math
+from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, Optional
 
 import trading_config
+
+logger = logging.getLogger(__name__)
 
 
 # Rimedio per ogni blocker LIVE. Fonte unica allineata a
@@ -109,9 +114,6 @@ _LIVE_PREREQUISITES: tuple[tuple[str, str, str], ...] = (
 )
 
 
-# Chiavi il cui valore e' un segreto: mai esposto in chiaro (solo presenza).
-_SECRET_KEYS = frozenset({"app_key", "certificate", "private_key", "password"})
-
 # Placeholder mascheramento.
 _MASK_SET = "(impostato)"
 _MASK_UNSET = "(non impostato)"
@@ -169,11 +171,23 @@ def readiness_report(
     )
     blockers = set(res.get("blockers") or [])
     items: list[ReadinessItem] = []
+    mapped_codes = {code for _, _, code in _LIVE_PREREQUISITES}
     for key, label, code in _LIVE_PREREQUISITES:
         ok = code not in blockers
         remedy = "" if ok else BLOCKER_REMEDIATION.get(code, ("", ""))[1]
         items.append(
             ReadinessItem(key=key, label=label, ok=ok, blocker="" if ok else code, remedy=remedy)
+        )
+    # Fail-closed: ogni blocker emesso dal gate ma NON mappato tra i prerequisiti
+    # noti diventa comunque un item ❌ esplicito. Senza questo, un blocker nuovo
+    # introdotto dal gate darebbe una checklist tutta ✅ pur con ready=False
+    # (fail-open nella presentazione: la GUI/headless mostrerebbe "tutto ok").
+    for code in sorted(blockers - mapped_codes):
+        desc, remedy = BLOCKER_REMEDIATION.get(
+            code, (code, "Blocker non catalogato: consulta il deploy gate/log.")
+        )
+        items.append(
+            ReadinessItem(key=f"blocker.{code}", label=desc or code, ok=False, blocker=code, remedy=remedy)
         )
     return {
         "ready": bool(res.get("ready", False)),
@@ -228,49 +242,87 @@ class ConfigRegistry:
 
     # -- Enumerazione per dominio -----------------------------------------
 
-    def _call(self, name: str, default: Any = None) -> Any:
-        """Invoca un loader del settings service in modo difensivo."""
+    def _read(self, name: str, default: Any = None) -> tuple[Any, bool]:
+        """(valore, letto_ok). `letto_ok=False` se il loader manca o SOLLEVA.
+
+        L'errore di lettura NON viene mascherato da un default plausibile e viene
+        loggato: cosi' i campi safety-critical possono marcarsi non-validi invece
+        di mostrare un valore falso (es. "SIMULATION valido" mentre il DB e' giu'
+        e il sistema e' in LIVE). Rilievo Fable 5 / Codacy.
+        """
         loader = getattr(self._settings, name, None)
         if not callable(loader):
-            return default
+            return default, False
         try:
-            return loader()
+            return loader(), True
         except Exception:
-            return default
+            logger.warning("ConfigRegistry: lettura di '%s' fallita", name, exc_info=True)
+            return default, False
+
+    def _call(self, name: str, default: Any = None) -> Any:
+        """Come `_read` ma ritorna solo il valore (per campi non safety-critical,
+        dove un errore di lettura si riflette gia' in value/valid)."""
+        value, _ok = self._read(name, default)
+        return value
+
+    _READ_ERROR_VALUE = "(errore lettura)"
+    _READ_ERROR_REMEDY = "Errore di lettura della configurazione: verifica il DB/settings service."
 
     def _execution_entries(self) -> list[ConfigEntry]:
-        execution_mode = str(self._call("load_execution_mode", "SIMULATION") or "SIMULATION")
-        live_enabled = bool(self._call("load_live_enabled", False))
-        live_readiness_ok = bool(self._call("load_live_readiness_ok", False))
+        # Campi safety-critical: un errore di lettura NON deve apparire come
+        # valore reale valido (rilievo Fable/Codacy). Se `_read` fallisce, la
+        # entry e' non-valida con rimedio dedicato.
+        mode_raw, mode_ok = self._read("load_execution_mode", "SIMULATION")
+        le_raw, le_ok = self._read("load_live_enabled", False)
+        lro_raw, lro_ok = self._read("load_live_readiness_ok", False)
         level = str(self._call("load_live_readiness_level", "UNKNOWN") or "UNKNOWN")
-        kill_switch = bool(self._call("load_kill_switch", False))
+        ks_raw, ks_ok = self._read("load_kill_switch", False)
+
+        mode = str(mode_raw or "SIMULATION")
+        mode_valid = mode_ok and mode in {"SIMULATION", "LIVE"}
+        live_enabled = bool(le_raw)
+        live_readiness_ok = bool(lro_raw)
+        kill_switch = bool(ks_raw)
+
         return [
             ConfigEntry(
                 key="execution_mode",
                 label="Modalita' di esecuzione",
-                value=execution_mode,
-                valid=execution_mode in {"SIMULATION", "LIVE"},
+                value=mode if mode_ok else self._READ_ERROR_VALUE,
+                valid=mode_valid,
                 required_for_live=True,
                 source="DB",
-                remedy="" if execution_mode in {"SIMULATION", "LIVE"} else BLOCKER_REMEDIATION["INVALID_EXECUTION_MODE"][1],
+                remedy=(
+                    ""
+                    if mode_valid
+                    else (self._READ_ERROR_REMEDY if not mode_ok else BLOCKER_REMEDIATION["INVALID_EXECUTION_MODE"][1])
+                ),
             ),
             ConfigEntry(
                 key="live_enabled",
                 label="Live abilitato",
-                value=live_enabled,
-                valid=True,
+                value=live_enabled if le_ok else self._READ_ERROR_VALUE,
+                valid=le_ok,
                 required_for_live=True,
                 source="DB",
-                remedy="" if live_enabled else BLOCKER_REMEDIATION["LIVE_NOT_ENABLED"][1],
+                remedy=(
+                    ""
+                    if (le_ok and live_enabled)
+                    else (self._READ_ERROR_REMEDY if not le_ok else BLOCKER_REMEDIATION["LIVE_NOT_ENABLED"][1])
+                ),
             ),
             ConfigEntry(
                 key="live_readiness_ok",
                 label="Readiness LIVE confermata",
-                value=live_readiness_ok,
-                valid=True,
+                value=live_readiness_ok if lro_ok else self._READ_ERROR_VALUE,
+                valid=lro_ok,
                 required_for_live=True,
                 source="DB",
-                remedy="" if live_readiness_ok else BLOCKER_REMEDIATION["LIVE_READINESS_FLAG_NOT_OK"][1],
+                remedy=(
+                    ""
+                    if (lro_ok and live_readiness_ok)
+                    else (self._READ_ERROR_REMEDY if not lro_ok else BLOCKER_REMEDIATION["LIVE_READINESS_FLAG_NOT_OK"][1])
+                ),
             ),
             ConfigEntry(
                 key="live_readiness_level",
@@ -283,16 +335,22 @@ class ConfigRegistry:
             ConfigEntry(
                 key="kill_switch",
                 label="Kill switch",
-                value=kill_switch,
-                valid=not kill_switch,
+                value=kill_switch if ks_ok else self._READ_ERROR_VALUE,
+                valid=ks_ok and not kill_switch,
                 required_for_live=True,
                 source="DB",
-                remedy="" if not kill_switch else BLOCKER_REMEDIATION["KILL_SWITCH_ACTIVE"][1],
+                remedy=(
+                    ""
+                    if (ks_ok and not kill_switch)
+                    else (self._READ_ERROR_REMEDY if not ks_ok else BLOCKER_REMEDIATION["KILL_SWITCH_ACTIVE"][1])
+                ),
             ),
         ]
 
     def _betfair_entries(self) -> list[ConfigEntry]:
-        cfg = self._call("load_betfair_config")
+        # None-safe: se il loader manca/fallisce, un namespace vuoto evita
+        # AttributeError e le entry risultano "(non impostato)" (rilievo Codacy).
+        cfg = self._call("load_betfair_config") or SimpleNamespace()
         password = self._call("load_password", "")
         entries: list[ConfigEntry] = []
         username = str(getattr(cfg, "username", "") or "")
@@ -359,7 +417,12 @@ class ConfigRegistry:
                     source="code",
                 )
             )
-        # Hard-stop giornaliero: campi su runtime.config (validati dal gate).
+        # Hard-stop giornaliero: campi su runtime.config. La validazione DEVE
+        # combaciare con `_validate_live_hard_stop_config` del gate (rilievo
+        # Greptile/Codacy): numerico, finito, > 0, e per la % drawdown <= 100.
+        # Altrimenti il registry direbbe "valido" mentre il gate blocca LIVE.
+        # Rimedio: MISSING se il campo e' assente, INVALID se presente ma non
+        # valido.
         cfg = getattr(self._runtime, "config", None)
         for attr, label in (
             ("max_daily_loss", "Hard-stop: perdita giornaliera max"),
@@ -367,11 +430,20 @@ class ConfigRegistry:
             ("max_open_exposure", "Hard-stop: esposizione aperta max"),
         ):
             raw = getattr(cfg, attr, None) if cfg is not None else None
-            valid = False
-            try:
-                valid = raw is not None and float(raw) > 0.0
-            except (TypeError, ValueError):
+            if raw is None:
                 valid = False
+                remedy = BLOCKER_REMEDIATION["LIVE_HARD_STOP_CONFIG_MISSING"][1]
+            else:
+                try:
+                    parsed = float(raw)
+                    valid = (
+                        math.isfinite(parsed)
+                        and parsed > 0.0
+                        and not (attr == "max_drawdown_hard_stop_pct" and parsed > 100.0)
+                    )
+                except (TypeError, ValueError):
+                    valid = False
+                remedy = "" if valid else BLOCKER_REMEDIATION["LIVE_HARD_STOP_CONFIG_INVALID"][1]
             entries.append(
                 ConfigEntry(
                     key=f"hard_stop.{attr}",
@@ -380,7 +452,7 @@ class ConfigRegistry:
                     valid=valid,
                     required_for_live=True,
                     source="runtime",
-                    remedy="" if valid else BLOCKER_REMEDIATION["LIVE_HARD_STOP_CONFIG_MISSING"][1],
+                    remedy=remedy,
                 )
             )
         return entries

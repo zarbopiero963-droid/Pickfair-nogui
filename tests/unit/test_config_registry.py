@@ -12,6 +12,13 @@ import pytest
 from config_registry import ConfigRegistry, readiness_report
 
 
+def _by_key(entries, key):
+    for entry in entries:
+        if entry.key == key:
+            return entry
+    raise AssertionError(f"entry mancante: {key}")
+
+
 class _FakeSettings:
     """Settings service minimale con i loader usati dal registry."""
 
@@ -152,14 +159,14 @@ def test_secrets_never_appear_in_plaintext():
         assert secret not in blob
 
     # La presenza resta rilevata: segreto impostato -> valid True.
-    app = next(e for e in entries if e.key == "betfair.app_key")
+    app = _by_key(entries, "betfair.app_key")
     assert app.valid is True and app.is_secret is True
 
 
 @pytest.mark.unit
 def test_missing_secret_marked_unset_and_invalid():
     reg = ConfigRegistry(_FakeSettings(app_key=""))
-    app = next(e for e in reg.entries() if e.key == "betfair.app_key")
+    app = _by_key(reg.entries(), "betfair.app_key")
     assert app.value == "(non impostato)"
     assert app.valid is False
     assert app.remedy  # rimedio presente
@@ -214,3 +221,62 @@ def test_readiness_requires_runtime():
     reg = ConfigRegistry(_FakeSettings(), runtime=None)
     with pytest.raises(ValueError):
         reg.readiness(execution_mode="LIVE")
+
+
+# ---- fail-closed: blocker sconosciuto, errore lettura, hard-stop cap ---------
+
+
+@pytest.mark.unit
+def test_readiness_report_unknown_blocker_becomes_failed_item():
+    # BLOCK fail-open: un blocker emesso dal gate ma NON in _LIVE_PREREQUISITES
+    # deve comunque comparire come item ❌ (altrimenti checklist tutta verde con
+    # ready=False -> l'operatore crede di poter andare LIVE). Rilievo GPT/Greptile.
+    rt = _FakeRuntime(blockers=["FUTURE_UNKNOWN_BLOCKER"], ready=False)
+    rep = readiness_report(rt, execution_mode="LIVE")
+
+    assert rep["ready"] is False
+    unknown = [it for it in rep["items"] if it.blocker == "FUTURE_UNKNOWN_BLOCKER"]
+    assert unknown, "il blocker sconosciuto deve generare un item ❌"
+    assert unknown[0].ok is False
+    assert unknown[0].remedy  # anche generico
+
+
+class _RaisingSettings(_FakeSettings):
+    def load_execution_mode(self):
+        raise RuntimeError("settings backend down")
+
+
+@pytest.mark.unit
+def test_execution_read_error_marks_invalid_not_false_value():
+    # BLOCK: un errore di lettura su un campo safety-critical NON deve apparire
+    # come valore reale valido (rilievo Fable/Codacy). Deve risultare non-valido
+    # con marcatore esplicito.
+    reg = ConfigRegistry(_RaisingSettings())
+    em = _by_key(reg.entries(), "execution_mode")
+    assert em.valid is False
+    assert em.value == "(errore lettura)"
+    assert em.remedy
+
+
+@pytest.mark.unit
+def test_hard_stop_drawdown_pct_over_100_is_invalid():
+    # BLOCK: la validazione hard-stop deve combaciare col gate, che rifiuta
+    # max_drawdown_hard_stop_pct > 100 (rilievo Greptile/CodeRabbit). Senza il
+    # cap, il registry direbbe "valido" mentre il gate blocca LIVE.
+    over = SimpleNamespace(max_daily_loss=50.0, max_drawdown_hard_stop_pct=150.0, max_open_exposure=100.0)
+    reg = ConfigRegistry(_FakeSettings(), runtime=_FakeRuntime(blockers=[], ready=True, config=over))
+    entries = {e.key: e for e in reg.entries()}
+    assert entries["hard_stop.max_drawdown_hard_stop_pct"].valid is False
+    assert entries["hard_stop.max_daily_loss"].valid is True
+
+    # None -> rimedio MISSING; presente-non-valido -> rimedio INVALID.
+    from config_registry import BLOCKER_REMEDIATION
+
+    missing_cfg = SimpleNamespace(max_daily_loss=50.0, max_open_exposure=100.0)  # drawdown assente
+    reg2 = ConfigRegistry(_FakeSettings(), runtime=_FakeRuntime(blockers=[], ready=True, config=missing_cfg))
+    e2 = {e.key: e for e in reg2.entries()}
+    dd = e2["hard_stop.max_drawdown_hard_stop_pct"]
+    assert dd.valid is False
+    assert dd.remedy == BLOCKER_REMEDIATION["LIVE_HARD_STOP_CONFIG_MISSING"][1]
+    over_dd = entries["hard_stop.max_drawdown_hard_stop_pct"]
+    assert over_dd.remedy == BLOCKER_REMEDIATION["LIVE_HARD_STOP_CONFIG_INVALID"][1]
