@@ -62,16 +62,36 @@ class CatalogSyncService:
             #    (rilievo Greptile/Codacy/GLM/Fable): listMarketCatalogue accetta
             #    piu' eventIds e riporta event + competition in ogni market
             #    (marketProjection). Chunk per non superare maxResults.
+            #    maxResults=200 (NON 1000): con marketProjection MARKET_DESCRIPTION
+            #    Betfair applica un limite di peso dati (maxResults x weight) e 1000
+            #    genera APINGException TOO_MUCH_DATA in LIVE (rilievo Fable/Fugu) --
+            #    stessa classe d'errore gia' corretta su listEvents. Un chunk da 20
+            #    eventi x ~5 tipi mercato ~= 100 mercati << 200: 200 basta e avanza.
             markets_by_event: Dict[str, list] = {}
             chunk_size = 20
+            max_results = 200
+            truncated = False
             for i in range(0, len(event_ids), chunk_size):
                 chunk = event_ids[i:i + chunk_size]
-                for mk in self.client.list_market_catalogue(
+                chunk_markets = self.client.list_market_catalogue(
                     [SOCCER_EVENT_TYPE_ID],
                     event_ids=chunk,
                     market_type_codes=market_types,
-                    max_results=1000,
-                ):
+                    max_results=max_results,
+                )
+                # Completeness guard (rilievo GPT-5.6 Terra): se un batch raggiunge
+                # maxResults la risposta di listMarketCatalogue puo' essere troncata
+                # silenziosamente -> alcuni mercati non entrano in markets_by_event.
+                # In quel caso il sync e' INCOMPLETO: NON eseguiamo cleanup/meta piu'
+                # sotto, cosi' non cancelliamo dal DB mercati/runner ancora validi.
+                if len(chunk_markets) >= max_results:
+                    truncated = True
+                    logger.warning(
+                        "[CatalogSync] Batch al limite maxResults=%d (%d eventi): possibile "
+                        "troncamento -> cleanup saltato per preservare il catalogo.",
+                        max_results, len(chunk),
+                    )
+                for mk in chunk_markets:
                     mk_event_id = (mk.get('event') or {}).get('id')
                     if mk_event_id:
                         markets_by_event.setdefault(mk_event_id, []).append(mk)
@@ -135,10 +155,12 @@ class CatalogSyncService:
                         )
                         runner_count += 1
 
-            # 4. Pulizia + meta SOLO se abbiamo popolato eventi: fail-safe che
-            #    impedisce di cancellare il catalogo su un sync a 0 eventi
-            #    (rilievo GPT/GLM/Fable).
-            if event_count > 0:
+            # 4. Pulizia + meta SOLO se abbiamo popolato eventi E il sync NON e'
+            #    troncato: fail-safe che impedisce di cancellare il catalogo su un
+            #    sync a 0 eventi o incompleto (rilievo GPT/GLM/Fugu/Fable). Un
+            #    cleanup su catalogo parziale rimuoverebbe mercati/runner ancora
+            #    validi -> rischio blocco/errore nel trading LIVE.
+            if event_count > 0 and not truncated:
                 self.db.cleanup_stale_bf_data(sync_id)
                 self.db.update_sync_meta(
                     last_sync_at=sync_id,
@@ -148,6 +170,12 @@ class CatalogSyncService:
                     runners=runner_count
                 )
                 logger.info("[CatalogSync] Sync completato: %d eventi, %d mercati, %d runner.", event_count, market_count, runner_count)
+            elif truncated:
+                logger.warning(
+                    "[CatalogSync] Sync INCOMPLETO (batch troncato): catalogo esistente "
+                    "preservato, cleanup e meta saltati. Eventi visti: %d, mercati: %d.",
+                    event_count, market_count,
+                )
             else:
                 logger.info("[CatalogSync] 0 eventi validi: catalogo esistente preservato (skip cleanup).")
 

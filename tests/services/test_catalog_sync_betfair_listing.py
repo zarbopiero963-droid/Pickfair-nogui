@@ -46,8 +46,10 @@ class _RecordingClient:
         self.calls.append(("list_events", list(event_type_ids), in_play_only))
         return self._events
 
-    def list_market_catalogue(self, event_type_ids, event_ids=None, *, market_type_codes=None, max_results=1000):
-        self.calls.append(("list_market_catalogue", list(event_type_ids), list(event_ids or []), market_type_codes))
+    def list_market_catalogue(self, event_type_ids, event_ids=None, *, market_type_codes=None, max_results=200):
+        self.calls.append(
+            ("list_market_catalogue", list(event_type_ids), list(event_ids or []), market_type_codes, max_results)
+        )
         return self._markets
 
 
@@ -119,6 +121,46 @@ def test_catalog_sync_batches_market_catalogue():
     assert len(mc_calls) == 1
     assert set(mc_calls[0][2]) == {"30000", "30001", "30002"}
     assert "MATCH_ODDS" in mc_calls[0][3]
+
+
+def test_catalog_sync_batches_multiple_chunks():
+    # BLOCK N+1/paginazione (GLM): >20 eventi -> piu' batch (chunk_size=20),
+    # ognuno con i propri eventIds, nessun evento perso, max 20/batch.
+    events = [{"event": {"id": str(30000 + i), "name": f"E{i}", "openDate": "x"}} for i in range(45)]
+    client = _RecordingClient(events, [])
+    CatalogSyncService(_FakeDB(), client).run_sync(force=True)
+
+    mc_calls = [c for c in client.calls if c[0] == "list_market_catalogue"]
+    assert len(mc_calls) == 3  # 45 / 20 -> chunk da 20, 20, 5
+    assert all(len(c[2]) <= 20 for c in mc_calls)
+    covered = set()
+    for c in mc_calls:
+        covered.update(c[2])
+    assert len(covered) == 45  # unione eventIds = tutti gli eventi
+
+
+def test_catalog_sync_uses_weight_safe_max_results():
+    # BLOCK (Fable/Fugu): il sync NON deve chiedere maxResults > 200 su
+    # listMarketCatalogue (peso MARKET_DESCRIPTION -> TOO_MUCH_DATA in LIVE).
+    client = _RecordingClient(BF_EVENTS, BF_MARKETS)
+    CatalogSyncService(_FakeDB(), client).run_sync(force=True)
+    mc = [c for c in client.calls if c[0] == "list_market_catalogue"][0]
+    assert mc[4] <= 200  # indice 4 = max_results
+
+
+def test_catalog_sync_truncated_batch_skips_cleanup():
+    # BLOCK troncamento (GPT/Fugu/Fable): se un batch raggiunge maxResults la
+    # risposta puo' essere troncata -> sync INCOMPLETO. NON eseguire
+    # cleanup/meta, altrimenti si cancellano mercati/runner ancora validi.
+    markets = [
+        {"marketId": f"1.{i}", "marketName": "MO", "event": {"id": "30000"}, "runners": []}
+        for i in range(200)
+    ]
+    db = _FakeDB()
+    CatalogSyncService(db, _RecordingClient(BF_EVENTS, markets)).run_sync(force=True)
+    assert len(db.events) == 1          # eventi upsertati
+    assert db.cleanup_called is False   # ma cleanup SALTATO (sync troncato)
+    assert db.meta_updated is False
 
 
 def test_catalog_sync_empty_events_preserves_catalog():
@@ -202,6 +244,40 @@ def test_betfair_client_market_catalogue_filter():
     assert f["eventTypeIds"] == ["1"]
     assert f["eventIds"] == ["30000"]
     assert f["marketTypeCodes"] == ["MATCH_ODDS", "CORRECT_SCORE"]
+
+
+def test_betfair_client_market_catalogue_requests_event_projection():
+    # BLOCK (Fugu/Fable): il raggruppamento batch usa mk['event']['id']; il
+    # client DEVE chiedere EVENT (e COMPETITION) in marketProjection, altrimenti
+    # i mercati arrivano senza event/competition e vengono scartati/incompleti.
+    c = _client()
+    captured = {}
+
+    def fake(url, method, params, **kw):
+        captured["params"] = params
+        return []
+
+    c._post_jsonrpc = fake
+    c.list_market_catalogue(["1"], event_ids=["30000"], market_type_codes=["MATCH_ODDS"])
+
+    proj = captured["params"]["marketProjection"]
+    assert "EVENT" in proj
+    assert "COMPETITION" in proj
+
+
+def test_betfair_client_market_catalogue_max_results_weight_safe():
+    # BLOCK (Fable): default maxResults deve restare entro il limite di peso
+    # dati Betfair (<=200 con MARKET_DESCRIPTION) per non causare TOO_MUCH_DATA.
+    c = _client()
+    captured = {}
+
+    def fake(url, method, params, **kw):
+        captured["params"] = params
+        return []
+
+    c._post_jsonrpc = fake
+    c.list_market_catalogue(["1"], event_ids=["30000"])
+    assert captured["params"]["maxResults"] <= 200
 
 
 def test_betfair_client_list_events_non_list_result():

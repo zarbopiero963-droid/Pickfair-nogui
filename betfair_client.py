@@ -640,11 +640,16 @@ class BetfairClient:
         event_ids: Optional[List[str]] = None,
         *,
         market_type_codes: Optional[List[str]] = None,
-        max_results: int = 1000,
+        max_results: int = 200,
     ) -> List[Dict[str, Any]]:
         """Catalogo mercati (Betfair SportsAPING/listMarketCatalogue) con runner,
         competition e orario. `market_type_codes` filtra per tipo mercato
         (es. ["MATCH_ODDS","CORRECT_SCORE"]) via `marketTypeCodes` nel filter.
+
+        NB: la marketProjection include `MARKET_DESCRIPTION`, che ha peso dati:
+        Betfair limita la richiesta e un `maxResults` troppo alto (es. 1000)
+        genera APINGException TOO_MUCH_DATA in LIVE. Default prudente 200:
+        il chiamante deve paginare/chunkare gli eventi per stare nel limite.
         """
         filter_: Dict[str, Any] = {"eventTypeIds": [str(e) for e in event_type_ids]}
         if event_ids:
