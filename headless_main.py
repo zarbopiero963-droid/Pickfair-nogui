@@ -1022,6 +1022,21 @@ class HeadlessApp:
         lines.append("=" * 64)
         return "\n".join(lines), 2
 
+    def _emit_live_nogo_diagnostics(self, deploy_gate, execution_mode, live_enabled, live_readiness_ok) -> None:
+        """#358: rende VISIBILE a schermo il motivo del NO-GO del deploy gate
+        all'avvio LIVE (blocker + rimedio), non solo sepolto nel log.
+
+        Riusa la stessa checklist del preflight (`_format_preflight_report`):
+        cosi' un avvio `--live` senza i prerequisiti (es. senza `--live-enabled`)
+        stampa esplicitamente cosa manca invece di ripiegare in silenzio. E'
+        puramente diagnostico: NON tocca la logica del gate ne' l'esito di
+        `start()` (l'enforcement resta in `RuntimeController.start`)."""
+        report, _ = self._format_preflight_report(
+            deploy_gate, execution_mode, live_enabled, live_readiness_ok
+        )
+        print(report)
+        logger.info("[DEPLOY GATE] Diagnostica NO-GO LIVE:\n%s", report)
+
     # =========================================================
     # RUN
     # =========================================================
@@ -1092,6 +1107,12 @@ class HeadlessApp:
                     logger.warning(
                         "[DEPLOY GATE] NO-GO: reason=%s",
                         ",".join(deploy_gate.get("reasons") or [str(deploy_gate.get("reason") or "")]),
+                    )
+                    # #358: motivo del NO-GO visibile a schermo (blocker+rimedio),
+                    # non solo nel log. Es. `--live` senza `--live-enabled` ->
+                    # stampa LIVE_NOT_ENABLED + "Avvia con --live-enabled".
+                    self._emit_live_nogo_diagnostics(
+                        deploy_gate, execution_mode, live_enabled, live_readiness_ok
                     )
 
             result = self.runtime.start(

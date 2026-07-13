@@ -217,3 +217,56 @@ def test_preflight_reasons_fallback_when_no_granular_blockers(monkeypatch):
 
     assert code == 2
     assert "DEPLOY_BLOCKED_NOT_READY" in report
+
+
+# ---- #358: diagnostica NO-GO all'avvio LIVE (motivo visibile a schermo) ----
+
+
+class _FakeRuntimeLiveBlocked:
+    """Rifiuta il deploy gate LIVE (enforce_deploy_gate not allowed) e
+    interrompe start() subito dopo, per testare la diagnostica #358 senza il
+    loop di run."""
+
+    def __init__(self, **kwargs):
+        self.enforce_calls = []
+
+    def enforce_deploy_gate(self, *, execution_mode=None, live_enabled=None, live_readiness_ok=None, boot=False):
+        self.enforce_calls.append((execution_mode, live_enabled, live_readiness_ok, boot))
+        return _status(False, ["LIVE_NOT_ENABLED"])
+
+    def start(self, **kwargs):
+        raise RuntimeError("stop-after-diagnostics")
+
+
+@pytest.mark.unit
+def test_emit_live_nogo_diagnostics_prints_blocker_and_remedy(monkeypatch, capsys):
+    # #358: il metodo stampa a schermo blocker + rimedio (riusa la checklist
+    # del preflight), rendendo visibile cosa manca per LIVE.
+    app = _make_app(monkeypatch, _FakeRuntimeReady(), ["--live"])
+    status = _status(False, ["LIVE_NOT_ENABLED"])
+
+    app._emit_live_nogo_diagnostics(status, "LIVE", False, True)
+
+    out = capsys.readouterr().out
+    assert "NON PRONTO" in out
+    assert "LIVE_NOT_ENABLED" in out
+    assert "--live-enabled" in out
+
+
+@pytest.mark.unit
+def test_start_live_nogo_emits_diagnostics_to_screen(monkeypatch, capsys):
+    # #358 (BLOCK): all'avvio `--live` senza prerequisiti, il NO-GO del deploy
+    # gate DEVE essere stampato a schermo (non solo nel log). Senza il wiring
+    # in start(), stdout non conterrebbe la checklist -> questo test fallisce.
+    app = _make_app(monkeypatch, _FakeRuntimeLiveBlocked(), ["--live"])
+    monkeypatch.setattr(app, "build", lambda **kwargs: None)
+    monkeypatch.setattr(app, "_run_boot_recovery", lambda: None)
+    monkeypatch.setattr(app, "stop", lambda: None)
+
+    rc = app.start()
+
+    out = capsys.readouterr().out
+    assert "NON PRONTO" in out
+    assert "LIVE_NOT_ENABLED" in out
+    assert "--live-enabled" in out
+    assert rc == 1  # runtime.start del fake interrotto DOPO la diagnostica
