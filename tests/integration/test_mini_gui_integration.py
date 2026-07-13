@@ -232,7 +232,12 @@ def test_force_simulation_startup_overrides_persisted_live(gui):
     gui.execution_mode_var.set("LIVE")
     gui.live_enabled_var.set(True)
     gui._sync_execution_controls_to_runtime()
-    assert gui.simulation_mode is False  # precondizione: siamo davvero in LIVE
+    # Guida ANCHE gli status derivati del control-plane in stato LIVE, cosi' il
+    # "prima" non e' gia' SIMULATION-safe (CodeRabbit): senza questo, asserire
+    # SIMULATION dopo la forzatura non proverebbe il reset del control-plane.
+    gui._refresh_live_control_plane_status({})
+    assert gui.simulation_mode is False              # precondizione: davvero LIVE
+    assert gui.live_requested_mode_var.get() == "LIVE"  # control-plane in LIVE
 
     gui.force_simulation_startup()
 
@@ -241,6 +246,9 @@ def test_force_simulation_startup_overrides_persisted_live(gui):
     assert gui.simulation_mode is True
     assert gui.sim_label_var.get() == "SIMULAZIONE"
     assert gui.status_broker_var.get() == "SIMULATION"
+    # Lo status derivato del control-plane e' tornato SIMULATION-safe (prova che
+    # force_simulation_startup -> _refresh_live_control_plane_status lo resetta).
+    assert gui.live_requested_mode_var.get() == "SIMULATION"
 
 
 @pytest.mark.integration

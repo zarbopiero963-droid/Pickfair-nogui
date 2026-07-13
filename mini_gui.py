@@ -1172,38 +1172,44 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         live_enabled = bool(settings.get("live_enabled", False))
         kill_switch = bool(settings.get("kill_switch", False))
 
-        # #355 fail-closed from construction: se richiesto, sovrascrivi lo stato
-        # persistito PRIMA di applicarlo al runtime. Cosi' un `execution_mode=LIVE`
+        self.kill_switch_var.set(kill_switch)
+        # #355 fail-closed from construction: se richiesto, forza SIMULATION
+        # PRIMA di applicare lo stato persistito. Cosi' un `execution_mode=LIVE`
         # salvato non viene mai sincronizzato (nessuna finestra LIVE transitoria
-        # in `__init__`, prima che l'entry point possa forzare SIMULATION).
+        # in `__init__`, prima che l'entry point possa forzare SIMULATION). Il
+        # kill_switch persistito resta invariato (forzare SIM non lo azzera).
         if force_simulation:
-            execution_mode = "SIMULATION"
-            live_enabled = False
+            self._force_simulation_state()
+            return
 
         self.execution_mode_var.set(execution_mode)
         self.live_enabled_var.set(live_enabled)
-        self.kill_switch_var.set(kill_switch)
+        self._sync_execution_controls_to_runtime()
+        self._refresh_live_control_plane_status({})
+
+    def _force_simulation_state(self) -> None:
+        """Porta la sessione a SIMULATION / live-disabled e riallinea sia il
+        runtime sia gli status derivati del control-plane (il pannello non deve
+        mostrare uno stato LIVE residuo). Direzione sempre verso SIMULATION,
+        quindi fail-closed by construction; NON persiste (le preferenze salvate
+        su disco restano intatte). Sorgente unica condivisa dal ramo `force`
+        del load e da `force_simulation_startup` (no duplicazione/drift)."""
+        self.execution_mode_var.set("SIMULATION")
+        self.live_enabled_var.set(False)
         self._sync_execution_controls_to_runtime()
         self._refresh_live_control_plane_status({})
 
     def force_simulation_startup(self) -> None:
-        """Forza l'avvio in SIMULATION a prescindere dallo stato persistito.
+        """Forza a SIMULATION a runtime a prescindere dallo stato corrente.
 
-        Usato dall'entry point GUI (`main()`): un avvio via `python main.py`
-        (o `run_gui()`) NON deve mai partire in LIVE, anche se l'ultima sessione
-        aveva salvato `execution_mode=LIVE`/`live_enabled=True`. Sovrascrive
-        SOLO lo stato di questa sessione (non persiste: le preferenze salvate su
-        disco restano intatte). La direzione e' sempre verso SIMULATION, quindi
-        e' fail-closed by construction; il gate #350 resta la difesa runtime
-        primaria per ogni successiva transizione a LIVE decisa dall'utente.
+        Un avvio via `python main.py` (o `run_gui()`) NON deve mai partire in
+        LIVE: l'entry point lo garantisce gia' costruendo con
+        `force_simulation=True` (fail-closed dalla costruzione). Questo metodo
+        resta come forzatura runtime esplicita, con la stessa semantica: agisce
+        SOLO sulla sessione (non persiste), sempre verso SIMULATION; il gate
+        #350 resta la difesa runtime per ogni successiva transizione a LIVE.
         """
-        self.execution_mode_var.set("SIMULATION")
-        self.live_enabled_var.set(False)
-        self._sync_execution_controls_to_runtime()
-        # Riallinea anche gli status derivati del control-plane (parita' con
-        # _load_execution_control_settings): il pannello non deve mostrare uno
-        # stato LIVE residuo dopo la forzatura.
-        self._refresh_live_control_plane_status({})
+        self._force_simulation_state()
 
     def _save_execution_control_settings(self):
         if not hasattr(self.settings_service, "save_execution_settings"):
