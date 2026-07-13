@@ -646,10 +646,18 @@ class BetfairClient:
         competition e orario. `market_type_codes` filtra per tipo mercato
         (es. ["MATCH_ODDS","CORRECT_SCORE"]) via `marketTypeCodes` nel filter.
 
-        NB: la marketProjection include `MARKET_DESCRIPTION`, che ha peso dati:
-        Betfair limita la richiesta e un `maxResults` troppo alto (es. 1000)
-        genera APINGException TOO_MUCH_DATA in LIVE. Default prudente 200:
-        il chiamante deve paginare/chunkare gli eventi per stare nel limite.
+        NB peso dati: Betfair accetta `maxResults` 1-1000, ma applica un limite
+        di dati pesati (Σ peso projection × N mercati ≤ 200 punti; pesano solo
+        `MARKET_DESCRIPTION`/`RUNNER_METADATA`). Qui la projection include
+        `MARKET_DESCRIPTION` (peso 1), quindi un `maxResults` alto (es. 1000)
+        genera APINGException TOO_MUCH_DATA in LIVE. 200 è un cap prudente: il
+        chiamante deve paginare/chunkare gli eventi per stare nel limite.
+
+        Su risposta MALFORMATA (non-lista) solleva `RuntimeError` invece di
+        degradare a `[]`: un catalogo mercati "finto vuoto" da errore upstream
+        farebbe girare il cleanup e cancellerebbe mercati/runner validi
+        (fail-open money-path). Una lista vuota GENUINA (nessun mercato per il
+        filtro) viene restituita normalmente.
         """
         filter_: Dict[str, Any] = {"eventTypeIds": [str(e) for e in event_type_ids]}
         if event_ids:
@@ -672,7 +680,13 @@ class BetfairClient:
                 "maxResults": int(max_results),
             },
         )
-        return result if isinstance(result, list) else []
+        if not isinstance(result, list):
+            raise RuntimeError(
+                "listMarketCatalogue: risposta non-lista (%s) -> possibile errore "
+                "upstream; non degrado a [] per non innescare un cleanup distruttivo."
+                % type(result).__name__
+            )
+        return result
 
     # =========================================================
     # ORDERS

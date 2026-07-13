@@ -7,6 +7,8 @@ evitare rate-limit, con guard fail-safe che non cancella il catalogo su sync
 vuoto. La verifica end-to-end con l'API Betfair reale resta sul VPS.
 """
 
+import pytest
+
 from betfair_client import BetfairClient
 from simulation_broker import SimulationBroker
 from services.catalog_sync_service import CatalogSyncService
@@ -163,6 +165,25 @@ def test_catalog_sync_truncated_batch_skips_cleanup():
     assert db.meta_updated is False
 
 
+def test_catalog_sync_mixed_batch_failing_chunk_skips_cleanup():
+    # BLOCK batch misto (CodeRabbit #369): se UN chunk fallisce (il client
+    # solleva su risposta malformata) mentre altri popolano, il sync si
+    # interrompe PRIMA del cleanup -> catalogo preservato, niente cancellazione
+    # di mercati/runner validi del chunk mancante.
+    class _FailSecondChunk(_RecordingClient):
+        def list_market_catalogue(self, *a, **k):
+            super().list_market_catalogue(*a, **k)  # registra la call
+            if len([c for c in self.calls if c[0] == "list_market_catalogue"]) >= 2:
+                raise RuntimeError("chunk market-catalogue malformato")
+            return self._markets
+
+    events = [{"event": {"id": str(30000 + i), "name": f"E{i}", "openDate": "x"}} for i in range(25)]
+    db = _FakeDB()
+    CatalogSyncService(db, _FailSecondChunk(events, BF_MARKETS)).run_sync(force=True)
+    assert db.cleanup_called is False   # cleanup SALTATO (chunk fallito)
+    assert db.meta_updated is False
+
+
 def test_catalog_sync_events_but_zero_markets_skips_cleanup():
     # BLOCK fail-open (CodeRabbit Major): eventi presenti ma 0 mercati (es. una
     # risposta market-catalogue anomala degradata a [] dal client) NON deve
@@ -273,8 +294,13 @@ def test_betfair_client_market_catalogue_requests_event_projection():
     c.list_market_catalogue(["1"], event_ids=["30000"], market_type_codes=["MATCH_ODDS"])
 
     proj = captured["params"]["marketProjection"]
+    # Il servizio dipende dal contratto completo: EVENT/COMPETITION per il
+    # raggruppamento, MARKET_DESCRIPTION per description.marketType, e
+    # RUNNER_DESCRIPTION per i runner (selectionId/runnerName).
     assert "EVENT" in proj
     assert "COMPETITION" in proj
+    assert "MARKET_DESCRIPTION" in proj
+    assert "RUNNER_DESCRIPTION" in proj
 
 
 def test_betfair_client_market_catalogue_max_results_weight_safe():
@@ -298,13 +324,30 @@ def test_betfair_client_list_events_non_list_result():
     assert c.list_events(["1"]) == []
 
 
+def test_betfair_client_market_catalogue_raises_on_non_list():
+    # BLOCK fail-open (CodeRabbit #369): una risposta MALFORMATA (non-lista) NON
+    # deve degradare a [] -- degradare farebbe scambiare un errore upstream per
+    # "0 mercati" e innescherebbe il cleanup distruttivo. Deve sollevare.
+    c = _client()
+    c._post_jsonrpc = lambda *a, **k: {"error": "boom"}
+    with pytest.raises(RuntimeError):
+        c.list_market_catalogue(["1"], event_ids=["30000"])
+    # La lista vuota GENUINA resta valida (nessun mercato, nessun errore).
+    c._post_jsonrpc = lambda *a, **k: []
+    assert c.list_market_catalogue(["1"], event_ids=["30000"]) == []
+
+
 # ---- SimulationBroker: parita' d'interfaccia (no crash in SIM) --------------
 
 
 def test_simulation_broker_catalog_methods_return_empty():
+    # Passa gli STESSI kwargs di produzione (in_play_only=False, max_results=200)
+    # per intercettare eventuali mismatch di firma con BetfairClient.
     b = SimulationBroker(starting_balance=1000.0)
-    assert b.list_events(["1"]) == []
-    assert b.list_market_catalogue(["1"], event_ids=["x"], market_type_codes=["MATCH_ODDS"]) == []
+    assert b.list_events(["1"], in_play_only=False) == []
+    assert b.list_market_catalogue(
+        ["1"], event_ids=["x"], market_type_codes=["MATCH_ODDS"], max_results=200
+    ) == []
 
 
 def test_catalog_sync_in_simulation_preserves_catalog():
