@@ -787,6 +787,128 @@ class HeadlessApp:
             raise RuntimeError("Runtime non disponibile dopo start")
 
     # =========================================================
+    # GO-LIVE PREFLIGHT (read-only)
+    # =========================================================
+    # Mappa blocker-code -> (cosa significa, come si rimedia). I codici sono
+    # quelli prodotti da RuntimeController.evaluate_live_readiness (fonte
+    # autorevole dei prerequisiti LIVE): il preflight li rende leggibili a
+    # schermo invece di lasciarli sepolti nel log.
+    _BLOCKER_REMEDIATION = {
+        "LIVE_NOT_ENABLED": (
+            "live_enabled e' False",
+            "Avvia con --live-enabled oppure imposta live_enabled=True nel DB.",
+        ),
+        "LIVE_READINESS_FLAG_NOT_OK": (
+            "Il flag live_readiness_ok non e' confermato",
+            "Conferma la readiness LIVE (live_readiness_ok=True nel DB) dopo la checklist go-live.",
+        ),
+        "LIVE_KEY_SOURCE_UNSAFE": (
+            "La chiave segreta non proviene da una sorgente sicura",
+            "Usa PICKFAIR_SECRET_KEY (env) o un file chiave valido (~/.pickfair/db.key).",
+        ),
+        "LIVE_HARD_STOP_CONFIG_MISSING": (
+            "Config hard-stop giornaliero mancante",
+            "Imposta i campi hard-stop (perdita giornaliera max) nella config LIVE.",
+        ),
+        "LIVE_HARD_STOP_CONFIG_INVALID": (
+            "Config hard-stop giornaliero non valida",
+            "Correggi i valori hard-stop (numerici e coerenti) nella config LIVE.",
+        ),
+        "KILL_SWITCH_ACTIVE": (
+            "Kill switch attivo",
+            "Disattiva il kill switch (--kill-switch-off o flag DB).",
+        ),
+        "SAFE_MODE_BLOCKING": (
+            "Safe mode sta bloccando il LIVE",
+            "Rimuovi la condizione di safe mode (kill switch / emergenza).",
+        ),
+        "LIVE_DEPENDENCY_MISSING": (
+            "Dipendenza LIVE assente o degradata (es. betfair_service disconnesso)",
+            "Verifica che betfair_service sia presente e connettibile (credenziali/cert).",
+        ),
+        "INVALID_EXECUTION_MODE": (
+            "execution_mode non valido",
+            "Usa SIMULATION o LIVE.",
+        ),
+        "CONTRADICTORY_STATE": (
+            "Stato contraddittorio (LIVE ma simulation_mode/live_enabled incoerenti)",
+            "Allinea execution_mode / live_enabled / simulation_mode.",
+        ),
+        "RUNTIME_NOT_INITIALIZED": (
+            "Runtime non inizializzato",
+            "Verifica il build del runtime (config/table_manager/...).",
+        ),
+        "RUNTIME_HALF_STARTED": (
+            "Runtime avviato a meta' (servizi non connessi)",
+            "Riavvia e verifica la connessione betfair/telegram.",
+        ),
+        "STARTUP_FAILED": (
+            "Errore di startup registrato",
+            "Consulta last_error/log e risolvi l'errore di avvio.",
+        ),
+        "READINESS_SIGNAL_UNKNOWN": (
+            "Segnale di readiness sconosciuto",
+            "Verifica lo stato del runtime (mode).",
+        ),
+    }
+
+    def _preflight_requested(self) -> bool:
+        return "--preflight" in [str(a).strip().lower() for a in sys.argv[1:]]
+
+    def _run_preflight(self) -> int:
+        """[GO-LIVE PREFLIGHT] Valuta i prerequisiti LIVE e stampa una checklist
+        leggibile (stdout + log) SENZA connettersi a Betfair ne' avviare il
+        trading. Read-only: riusa RuntimeController.evaluate_live_readiness
+        (fonte autorevole). Exit code: 0 se pronto per LIVE, 2 altrimenti.
+        """
+        args = self._parse_args()
+        execution_mode = str(args.get("execution_mode") or "SIMULATION")
+        live_enabled = bool(args.get("live_enabled", False))
+        live_readiness_ok = bool(args.get("live_readiness_ok", False))
+
+        if self.runtime is None:
+            msg = "[PREFLIGHT] Runtime non disponibile dopo build"
+            logger.error(msg)
+            print(msg)
+            return 2
+
+        readiness = self.runtime.evaluate_live_readiness(
+            execution_mode=execution_mode,
+            live_enabled=live_enabled,
+            live_readiness_ok=live_readiness_ok,
+        )
+        ready = bool(readiness.get("ready", False))
+        level = str(readiness.get("level") or "NOT_READY")
+        blockers = [str(b) for b in (readiness.get("blockers") or [])]
+
+        lines = [
+            "=" * 64,
+            "PICKFAIR — GO-LIVE PREFLIGHT",
+            "=" * 64,
+            f"execution_mode richiesto : {execution_mode}",
+            f"live_enabled             : {live_enabled}",
+            f"live_readiness_ok        : {live_readiness_ok}",
+            f"readiness level          : {level}",
+            "-" * 64,
+        ]
+        if not blockers:
+            lines.append("PRONTO PER LIVE — nessun blocker.")
+        else:
+            lines.append(f"NON PRONTO — {len(blockers)} blocker:")
+            for code in blockers:
+                desc, remedy = self._BLOCKER_REMEDIATION.get(
+                    code, ("(blocker non catalogato)", "Verifica lo stato runtime/log.")
+                )
+                lines.append(f"  [X] {code}")
+                lines.append(f"        cosa   : {desc}")
+                lines.append(f"        rimedio: {remedy}")
+        lines.append("=" * 64)
+        report = "\n".join(lines)
+        print(report)
+        logger.info("GO-LIVE PREFLIGHT\n%s", report)
+        return 0 if ready else 2
+
+    # =========================================================
     # RUN
     # =========================================================
     def start(self) -> int:
@@ -796,6 +918,10 @@ class HeadlessApp:
 
         try:
             self.build()
+            # Preflight read-only: valuta e stampa i prerequisiti LIVE, poi esce.
+            # NON esegue boot recovery ne' avvia il trading.
+            if self._preflight_requested():
+                return self._run_preflight()
             self._run_boot_recovery()
         except Exception as exc:
             logger.exception("Errore bootstrap headless: %s", exc)
