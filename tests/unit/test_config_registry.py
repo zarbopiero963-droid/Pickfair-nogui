@@ -158,6 +158,15 @@ def test_secrets_never_appear_in_plaintext():
     for secret in ("SUPER_SECRET_APP", "PRIVKEY123", "CERTDATA", "PWD_XYZ"):
         assert secret not in blob
 
+    # Copertura esplicita: TUTTI i segreti sono enumerati e mascherati.
+    secret_keys = {e.key for e in secret_entries}
+    assert secret_keys == {
+        "betfair.app_key",
+        "betfair.certificate",
+        "betfair.private_key",
+        "betfair.password",
+    }
+
     # La presenza resta rilevata: segreto impostato -> valid True.
     app = _by_key(entries, "betfair.app_key")
     assert app.valid is True and app.is_secret is True
@@ -242,8 +251,10 @@ def test_readiness_report_unknown_blocker_becomes_failed_item():
 
 
 class _RaisingSettings(_FakeSettings):
+    # Il messaggio simula un traceback che contiene materiale sensibile:
+    # il logging del registry NON deve rigirarlo.
     def load_execution_mode(self):
-        raise RuntimeError("settings backend down")
+        raise RuntimeError("decrypt failed for secret token abc123xyz")
 
 
 @pytest.mark.unit
@@ -256,6 +267,24 @@ def test_execution_read_error_marks_invalid_not_false_value():
     assert em.valid is False
     assert em.value == "(errore lettura)"
     assert em.remedy
+
+
+@pytest.mark.unit
+def test_read_error_log_does_not_leak_exception_message(caplog):
+    # BLOCK sicurezza: il log su errore di lettura segnala nome loader + tipo
+    # eccezione, ma MAI il messaggio/traceback, che per i loader dei segreti
+    # (betfair/password) potrebbe contenere credenziali (rilievo GPT-5.6 Terra).
+    import logging
+
+    reg = ConfigRegistry(_RaisingSettings())
+    with caplog.at_level(logging.WARNING, logger="config_registry"):
+        reg.entries()
+
+    assert "load_execution_mode" in caplog.text
+    assert "RuntimeError" in caplog.text
+    # il messaggio sensibile dell'eccezione NON deve comparire
+    assert "abc123xyz" not in caplog.text
+    assert "decrypt failed" not in caplog.text
 
 
 @pytest.mark.unit

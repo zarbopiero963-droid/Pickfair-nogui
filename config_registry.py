@@ -255,8 +255,13 @@ class ConfigRegistry:
             return default, False
         try:
             return loader(), True
-        except Exception:
-            logger.warning("ConfigRegistry: lettura di '%s' fallita", name, exc_info=True)
+        except Exception as exc:
+            # Sicurezza: NON loggare traceback (exc_info) ne' il messaggio
+            # dell'eccezione. I loader dei segreti (betfair_config, password)
+            # potrebbero includere credenziali o materiale di decrittazione nel
+            # messaggio/traceback. Si logga solo nome loader + tipo eccezione,
+            # sufficiente per la diagnosi senza rischio di leak. Rilievo GPT-5.6 Terra.
+            logger.warning("ConfigRegistry: lettura di '%s' fallita (%s)", name, type(exc).__name__)
             return default, False
 
     def _call(self, name: str, default: Any = None) -> Any:
@@ -268,82 +273,69 @@ class ConfigRegistry:
     _READ_ERROR_VALUE = "(errore lettura)"
     _READ_ERROR_REMEDY = "Errore di lettura della configurazione: verifica il DB/settings service."
 
+    def _safety_entry(self, key: str, label: str, value: Any, read_ok: bool, *, valid: bool, remedy: str) -> ConfigEntry:
+        """ConfigEntry per un campo safety-critical (required_for_live).
+
+        Su errore di lettura (`read_ok=False`) forza il fail-closed: valore
+        "(errore lettura)", non valido, con rimedio dedicato — cosi' un backend
+        rotto non appare mai come un valore reale valido (rilievo Fable/Codacy).
+        """
+        if not read_ok:
+            return ConfigEntry(
+                key=key,
+                label=label,
+                value=self._READ_ERROR_VALUE,
+                valid=False,
+                required_for_live=True,
+                source="DB",
+                remedy=self._READ_ERROR_REMEDY,
+            )
+        return ConfigEntry(
+            key=key, label=label, value=value, valid=valid, required_for_live=True, source="DB", remedy=remedy
+        )
+
     def _execution_entries(self) -> list[ConfigEntry]:
-        # Campi safety-critical: un errore di lettura NON deve apparire come
-        # valore reale valido (rilievo Fable/Codacy). Se `_read` fallisce, la
-        # entry e' non-valida con rimedio dedicato.
         mode_raw, mode_ok = self._read("load_execution_mode", "SIMULATION")
         le_raw, le_ok = self._read("load_live_enabled", False)
         lro_raw, lro_ok = self._read("load_live_readiness_ok", False)
-        level = str(self._call("load_live_readiness_level", "UNKNOWN") or "UNKNOWN")
+        level_raw, level_ok = self._read("load_live_readiness_level", "UNKNOWN")
+        level = str(level_raw or "UNKNOWN") if level_ok else self._READ_ERROR_VALUE
         ks_raw, ks_ok = self._read("load_kill_switch", False)
 
         mode = str(mode_raw or "SIMULATION")
-        mode_valid = mode_ok and mode in {"SIMULATION", "LIVE"}
+        mode_valid = mode in {"SIMULATION", "LIVE"}
         live_enabled = bool(le_raw)
         live_readiness_ok = bool(lro_raw)
         kill_switch = bool(ks_raw)
 
         return [
-            ConfigEntry(
-                key="execution_mode",
-                label="Modalita' di esecuzione",
-                value=mode if mode_ok else self._READ_ERROR_VALUE,
+            self._safety_entry(
+                "execution_mode", "Modalita' di esecuzione", mode, mode_ok,
                 valid=mode_valid,
-                required_for_live=True,
-                source="DB",
-                remedy=(
-                    ""
-                    if mode_valid
-                    else (self._READ_ERROR_REMEDY if not mode_ok else BLOCKER_REMEDIATION["INVALID_EXECUTION_MODE"][1])
-                ),
+                remedy="" if mode_valid else BLOCKER_REMEDIATION["INVALID_EXECUTION_MODE"][1],
             ),
-            ConfigEntry(
-                key="live_enabled",
-                label="Live abilitato",
-                value=live_enabled if le_ok else self._READ_ERROR_VALUE,
-                valid=le_ok,
-                required_for_live=True,
-                source="DB",
-                remedy=(
-                    ""
-                    if (le_ok and live_enabled)
-                    else (self._READ_ERROR_REMEDY if not le_ok else BLOCKER_REMEDIATION["LIVE_NOT_ENABLED"][1])
-                ),
+            self._safety_entry(
+                "live_enabled", "Live abilitato", live_enabled, le_ok,
+                valid=True,
+                remedy="" if live_enabled else BLOCKER_REMEDIATION["LIVE_NOT_ENABLED"][1],
             ),
-            ConfigEntry(
-                key="live_readiness_ok",
-                label="Readiness LIVE confermata",
-                value=live_readiness_ok if lro_ok else self._READ_ERROR_VALUE,
-                valid=lro_ok,
-                required_for_live=True,
-                source="DB",
-                remedy=(
-                    ""
-                    if (lro_ok and live_readiness_ok)
-                    else (self._READ_ERROR_REMEDY if not lro_ok else BLOCKER_REMEDIATION["LIVE_READINESS_FLAG_NOT_OK"][1])
-                ),
+            self._safety_entry(
+                "live_readiness_ok", "Readiness LIVE confermata", live_readiness_ok, lro_ok,
+                valid=True,
+                remedy="" if live_readiness_ok else BLOCKER_REMEDIATION["LIVE_READINESS_FLAG_NOT_OK"][1],
             ),
             ConfigEntry(
                 key="live_readiness_level",
                 label="Livello readiness",
                 value=level,
-                valid=True,
+                valid=level_ok,
                 required_for_live=False,
                 source="DB",
             ),
-            ConfigEntry(
-                key="kill_switch",
-                label="Kill switch",
-                value=kill_switch if ks_ok else self._READ_ERROR_VALUE,
-                valid=ks_ok and not kill_switch,
-                required_for_live=True,
-                source="DB",
-                remedy=(
-                    ""
-                    if (ks_ok and not kill_switch)
-                    else (self._READ_ERROR_REMEDY if not ks_ok else BLOCKER_REMEDIATION["KILL_SWITCH_ACTIVE"][1])
-                ),
+            self._safety_entry(
+                "kill_switch", "Kill switch", kill_switch, ks_ok,
+                valid=not kill_switch,
+                remedy="" if not kill_switch else BLOCKER_REMEDIATION["KILL_SWITCH_ACTIVE"][1],
             ),
         ]
 
