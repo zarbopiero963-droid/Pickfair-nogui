@@ -378,3 +378,25 @@ def test_run_telegram_login_does_not_persist_on_failed_login(monkeypatch):
     rc = app._run_telegram_login()
     assert rc == 2
     assert db.saved is None, "login fallito NON deve persistere/sovrascrivere le creds"
+
+
+def test_run_telegram_login_missing_api_id_returns_2(monkeypatch):
+    # Fable #2: api_id assente (no CLI/env/DB) => errore chiaro + return 2, senza
+    # costruire il listener con api_id=0 né avviare il flow di login.
+    db = _login_db({"api_id": "", "api_hash": "", "session_string": ""})
+    app = HeadlessApp.__new__(HeadlessApp)
+    app.db = db
+    monkeypatch.setattr(sys, "argv", ["headless_main.py", "--telegram-login"])
+    monkeypatch.delenv("TELEGRAM_API_ID", raising=False)
+    monkeypatch.setenv("TELEGRAM_API_HASH", "HH")  # hash presente => niente prompt
+    flow_called = {"v": False}
+
+    def _flow(*a, **k):
+        flow_called["v"] = True
+        return (0, "S")
+
+    monkeypatch.setattr(HeadlessApp, "_telegram_login_flow", staticmethod(_flow))
+    rc = app._run_telegram_login()
+    assert rc == 2
+    assert flow_called["v"] is False, "il guard api_id deve precedere il flow"
+    assert db.saved is None

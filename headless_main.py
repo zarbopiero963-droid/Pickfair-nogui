@@ -1022,6 +1022,12 @@ class HeadlessApp:
         api_id, api_hash, from_external = self._resolve_telegram_credentials(
             sys.argv[1:], os.environ, settings
         )
+        # api_id mancante: errore chiaro invece di istanziare il listener con 0
+        # (che fallirebbe solo lato Telegram con un messaggio opaco).
+        if not api_id:
+            print("❌ api_id mancante: passalo con --api-id, con l'env TELEGRAM_API_ID, "
+                  "oppure configuralo nel DB (via GUI).")
+            return 2
         # api_hash è un segreto: se non è già in env/DB, chiedilo con input
         # NASCOSTO (getpass) — mai da CLI (sarebbe visibile in `ps`/shell history).
         # La persistenza avviene SOLO dopo un login riuscito (vedi sotto): così
@@ -1031,6 +1037,10 @@ class HeadlessApp:
             if entered:
                 api_hash = entered
                 from_external = True
+        if not api_hash:
+            print("❌ api_hash mancante: forniscilo con l'env TELEGRAM_API_HASH, "
+                  "dal DB, o all'input nascosto.")
+            return 2
         try:
             listener = TelegramListener(int(api_id or 0), api_hash, db=db)
         except Exception as exc:
