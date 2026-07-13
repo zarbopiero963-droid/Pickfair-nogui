@@ -170,13 +170,16 @@ class ShutdownManager:
             }
 
     def is_ready(self) -> bool:
-        """Segnale di readiness per il probe LIVE.
+        """
+        Segnale di readiness per il probe LIVE (#363).
 
         True finché lo shutdown NON è iniziato/completato. Una volta partito
         (``_has_run``) il sistema sta chiudendo: non-ready => il deploy gate a
-        runtime NON deve permettere nuovi ordini LIVE. Prima ShutdownManager
-        era ``no-checker`` e non poteva bloccare LIVE durante lo spegnimento
-        (#363).
+        runtime NON deve permettere nuovi ordini LIVE.
+
+        Lettura **lock-free** di un flag booleano (atomico sotto il GIL): non
+        acquisisce ``self._lock``, così non può mai contendere/andare in
+        deadlock con ``shutdown()`` o con un hook che, durante lo spegnimento,
+        interroghi il probe/gate.
         """
-        with self._lock:
-            return not self._has_run
+        return not self._has_run

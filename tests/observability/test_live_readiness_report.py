@@ -590,10 +590,8 @@ def test_enforce_deploy_gate_accepts_and_propagates_boot():
     assert _probe_ok(runtime_status) is False
 
 
-def test_real_db_and_shutdown_manager_expose_is_ready_and_block_when_unhealthy():
-    # #363 (chiude la superficie fail-open GPT/Fugu): Database e ShutdownManager
-    # reali ora espongono is_ready -> NON sono piu' 'no-checker'. Sani -> READY;
-    # uno shutdown in corso -> DEGRADED che blocca LIVE ANCHE al boot.
+def _real_components_probe():
+    # #363: Database e ShutdownManager REALI esposti al probe.
     from database import Database
     from shutdown_manager import ShutdownManager
 
@@ -607,20 +605,31 @@ def test_real_db_and_shutdown_manager_expose_is_ready_and_block_when_unhealthy()
         safe_mode=_SafeModeInactive(),
         shutdown_manager=sm,
     )
+    return probe, sm
+
+
+def test_real_db_and_shutdown_manager_are_not_no_checker_when_healthy():
+    # #363: sani -> READY e NON piu' tra i componenti 'no-checker' (unknown).
+    probe, _sm = _real_components_probe()
 
     healthy = probe.get_live_readiness_report()
+
     assert healthy["ready"] is True
     assert healthy["level"] == "READY"
-    # non compaiono piu' tra i componenti 'no-checker' (unknown)
     assert "database" not in healthy["details"]["unknown_components"]
     assert "shutdown_manager" not in healthy["details"]["unknown_components"]
 
-    # shutdown in corso -> is_ready False -> DEGRADED -> blocca anche al boot.
-    # BLOCK: senza is_ready il manager sarebbe 'no-checker' -> B-1 -> READY
-    # (fail-open). Col checker resta DEGRADED e il gate blocca.
+
+def test_shutting_down_manager_blocks_live_even_at_boot():
+    # #363 (BLOCK, chiude la superficie fail-open GPT/Fugu): uno shutdown in
+    # corso -> is_ready False -> DEGRADED -> blocca LIVE ANCHE al boot. Senza il
+    # checker il manager sarebbe 'no-checker' -> B-1 -> READY (fail-open).
+    probe, sm = _real_components_probe()
+
     sm.register("noop", lambda: None)
     sm.shutdown()
     blocked_boot = probe.get_live_readiness_report(tolerate_pending_connection=True)
+
     assert blocked_boot["ready"] is False
     assert blocked_boot["level"] == "DEGRADED"
     assert any(d["name"] == "shutdown_manager" for d in blocked_boot["details"]["degraded"])

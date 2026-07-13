@@ -45,6 +45,11 @@ _DB_DURABILITY_PROFILES: Dict[str, Dict[str, str]] = {
 
 _DB_DURABILITY_PROFILE_ENV = "PICKFAIR_DB_DURABILITY_PROFILE"
 
+# Tabelle critiche del money path: il probe di readiness LIVE (is_ready) richiede
+# che siano presenti nello schema, altrimenti il DB non e' utilizzabile per la
+# persistenza di ordini/saga e non deve risultare pronto (#363).
+_READINESS_CRITICAL_TABLES: tuple = ("settings", "order_saga")
+
 # SQLite savepoints are stack-scoped by name; repeated `sp_nested_tx` targets the innermost one.
 _NESTED_SAVEPOINT_SQL = "SAVEPOINT sp_nested_tx"
 _RELEASE_NESTED_SAVEPOINT_SQL = "RELEASE SAVEPOINT sp_nested_tx"
@@ -246,21 +251,49 @@ class Database:
         self._get_connection()
 
     def is_ready(self) -> bool:
-        """Health-check leggero e non distruttivo per il probe di readiness LIVE.
+        """Health-check non distruttivo per il probe di readiness LIVE (#363).
 
-        Esegue una query banale (``SELECT 1``): True se la connessione DB
-        risponde, False (fail-closed) su qualsiasi errore. NON modifica stato.
-        Espone al deploy gate un segnale di salute REALE del DB: prima il
-        Database era ``no-checker`` e non poteva bloccare LIVE a runtime
-        (#363), lasciando scoperta la persistenza del money path.
+        Verifica in **sola lettura** che il DB sia utilizzabile per la
+        persistenza del money path: che il file esista e che le **tabelle
+        critiche** (`_READINESS_CRITICAL_TABLES`) siano presenti. Non basta il
+        motore (`SELECT 1`): un DB vuoto/ricreato senza schema non deve
+        risultare pronto. Fail-closed (False) su qualsiasi errore o schema
+        incompleto.
+
+        Nessun side-effect sulla connessione persistente: su DB su file usa una
+        connessione **temporanea** chiusa subito, senza toccare
+        ``self._local.conn`` (niente riapertura/resurrezione durante lo
+        shutdown, nessuna affinità di thread). Su file assente ritorna False
+        senza **crearlo**. Il caso ``:memory:`` (solo test, single-thread) usa
+        la connessione persistente perché un DB in-memory vive solo lì.
         """
+        conn = None
+        close_after = False
         try:
-            conn = self._get_connection()
-            conn.execute("SELECT 1").fetchone()
-            return True
+            if self.db_path == ":memory:":
+                conn = self._get_connection()
+            else:
+                if not os.path.exists(self.db_path):
+                    return False
+                conn = sqlite3.connect(self.db_path, timeout=5.0)
+                close_after = True
+
+            placeholders = ",".join("?" for _ in _READINESS_CRITICAL_TABLES)
+            row = conn.execute(
+                "SELECT count(*) FROM sqlite_master "
+                f"WHERE type='table' AND name IN ({placeholders})",
+                _READINESS_CRITICAL_TABLES,
+            ).fetchone()
+            return bool(row) and int(row[0]) >= len(_READINESS_CRITICAL_TABLES)
         except Exception:
-            logger.exception("Database.is_ready: health-check DB fallito")
+            logger.warning("Database.is_ready: health-check DB fallito", exc_info=False)
             return False
+        finally:
+            if close_after and conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    logger.warning("Database.is_ready: chiusura conn temporanea fallita", exc_info=False)
 
     # =========================================================
     # SAFE HELPERS

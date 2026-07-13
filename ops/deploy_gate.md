@@ -78,12 +78,19 @@ salute è verificata altrove o che non hanno stato sanitario proprio. Per
 stato di salute reale (DB raggiungibile? shutdown in corso?) che il gate a
 runtime non poteva vedere. #363 li dota di `is_ready` reali:
 
-- **`Database.is_ready()`** — health-check leggero e non distruttivo
-  (`SELECT 1`), fail-closed su eccezione. Un DB compromesso ora è `DEGRADED`
-  (`unhealthy`) e **blocca LIVE** in ogni fase (anche al boot).
-- **`ShutdownManager.is_ready()`** — `not _has_run`: durante/dopo lo shutdown
-  il sistema sta chiudendo, quindi `DEGRADED` → il gate a runtime **non**
-  permette nuovi ordini LIVE.
+- **`Database.is_ready()`** — health-check **non distruttivo** e in sola
+  lettura: verifica che il file DB esista e che le **tabelle critiche** del
+  money path (`_READINESS_CRITICAL_TABLES`: `settings`, `order_saga`) siano
+  presenti. Non basta il motore (`SELECT 1`): un DB vuoto/ricreato senza schema
+  non deve risultare pronto. Usa una connessione **temporanea** (chiusa subito,
+  senza toccare la connessione persistente `self._local.conn`: nessuna
+  riapertura/resurrezione durante lo shutdown, nessuna affinità di thread) e
+  **non crea** il file se manca. Fail-closed su errore o schema incompleto. Un
+  DB compromesso → `DEGRADED` (`unhealthy`) → **blocca LIVE** in ogni fase.
+- **`ShutdownManager.is_ready()`** — `not _has_run`, lettura **lock-free**
+  (flag atomico, nessun `self._lock`: niente contesa/deadlock con `shutdown()`
+  o con gli hook). Durante/dopo lo shutdown → `DEGRADED` → il gate a runtime
+  **non** permette nuovi ordini LIVE.
 
 Con questi checker i due componenti **non** rientrano più in B-1: sono valutati
 a piena severità. `RuntimeController` resta invece volutamente `no-checker`: la
