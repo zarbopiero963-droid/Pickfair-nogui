@@ -214,6 +214,25 @@ def test_toggle_simulation_live(gui):
 
 
 @pytest.mark.integration
+def test_force_simulation_startup_overrides_persisted_live(gui):
+    # #355: un `execution_mode=LIVE` gia' attivo (come se caricato dalle
+    # impostazioni persistite) deve tornare a SIMULATION quando l'entry point
+    # chiama force_simulation_startup(). BLOCK: senza il metodo, resterebbe LIVE.
+    gui.execution_mode_var.set("LIVE")
+    gui.live_enabled_var.set(True)
+    gui._sync_execution_controls_to_runtime()
+    assert gui.simulation_mode is False  # precondizione: siamo davvero in LIVE
+
+    gui.force_simulation_startup()
+
+    assert gui.execution_mode_var.get() == "SIMULATION"
+    assert bool(gui.live_enabled_var.get()) is False
+    assert gui.simulation_mode is True
+    assert gui.sim_label_var.get() == "SIMULAZIONE"
+    assert gui.status_broker_var.get() == "SIMULATION"
+
+
+@pytest.mark.integration
 def test_main_buttons_are_wired(gui):
     assert callable(gui.btn_start.cget("command"))
     assert callable(gui.btn_pause.cget("command"))

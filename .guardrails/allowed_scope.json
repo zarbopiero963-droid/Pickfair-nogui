@@ -4,6 +4,18 @@
     "max_files": 8
   },
   "tasks": {
+    "gui_entrypoint_failclosed_hardening": {
+      "description": "Follow-up di #353 (Issue #354 + #355). (#354) main.py:run_gui() scartava il return code di mini_gui.main() e ritornava sempre 0, vanificando il fail-closed (Exception=1, KeyboardInterrupt=130): ora propaga `return int(gui_main() or 0)`. (#355) hardening: mini_gui.main() forza esplicitamente SIMULATION/live-disabled all'avvio (nuovo metodo force_simulation_startup) sovrascrivendo il execution_mode/live_enabled persistiti — l'entry point NON parte mai in LIVE, anche se l'ultima sessione aveva salvato LIVE. Non persiste la forzatura (non tocca il file salvato): agisce solo sulla sessione; il gate fail-closed #350 resta la difesa runtime primaria. Test hard PASS+BLOCK.",
+      "allow_tests": true,
+      "files": [
+        "main.py",
+        "mini_gui.py",
+        "tests/unit/test_gui_main_entrypoint.py",
+        "tests/integration/test_mini_gui_integration.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
+    },
     "claude_bug_pr3_simulation_broker_runtime": {
       "allow_tests": true,
       "files": [

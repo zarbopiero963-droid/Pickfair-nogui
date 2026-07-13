@@ -1173,6 +1173,21 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._sync_execution_controls_to_runtime()
         self._refresh_live_control_plane_status({})
 
+    def force_simulation_startup(self) -> None:
+        """Forza l'avvio in SIMULATION a prescindere dallo stato persistito.
+
+        Usato dall'entry point GUI (`main()`): un avvio via `python main.py`
+        (o `run_gui()`) NON deve mai partire in LIVE, anche se l'ultima sessione
+        aveva salvato `execution_mode=LIVE`/`live_enabled=True`. Sovrascrive
+        SOLO lo stato di questa sessione (non persiste: le preferenze salvate su
+        disco restano intatte). La direzione e' sempre verso SIMULATION, quindi
+        e' fail-closed by construction; il gate #350 resta la difesa runtime
+        primaria per ogni successiva transizione a LIVE decisa dall'utente.
+        """
+        self.execution_mode_var.set("SIMULATION")
+        self.live_enabled_var.set(False)
+        self._sync_execution_controls_to_runtime()
+
     def _save_execution_control_settings(self):
         if not hasattr(self.settings_service, "save_execution_settings"):
             return
@@ -2087,15 +2102,17 @@ def main() -> int:
     `ImportError: cannot import name 'main' from 'mini_gui'`.
 
     Costruisce `MiniPickfairGUI` (test_mode=False => finestra Tk reale) e avvia
-    il mainloop. La GUI parte in SIMULATION per default (fail-closed #350):
-    questo entry point NON abilita il trading LIVE. Richiede un display grafico
-    (X11): su un host headless senza $DISPLAY, Tk non puo' aprire la finestra ed
-    emette l'errore Tcl standard "no display name and no $DISPLAY environment
-    variable" — in quel caso va usata la modalita' `--headless`.
+    il mainloop. Forza SIMULATION all'avvio (`force_simulation_startup`): questo
+    entry point NON parte mai in LIVE, anche se l'ultima sessione aveva salvato
+    LIVE — il gate fail-closed #350 resta la difesa runtime. Richiede un display
+    grafico (X11): su un host headless senza $DISPLAY, Tk non puo' aprire la
+    finestra ed emette l'errore Tcl standard "no display name and no $DISPLAY
+    environment variable" — in quel caso va usata la modalita' `--headless`.
     """
     app = None
     try:
         app = MiniPickfairGUI()
+        app.force_simulation_startup()
         app.mainloop()
         return 0
     except KeyboardInterrupt:
