@@ -24,36 +24,46 @@ autenticarsi. Questo comando colma quel buco.
 
 ## Uso sul VPS: `--telegram-login`
 
-`api_id`/`api_hash` (da <https://my.telegram.org> → *API development tools*)
-si passano con i flag CLI **oppure** via env, e vengono **salvati nel DB
-(cifrati) al primo uso** — così i login successivi non li richiedono. Precedenza:
-**flag CLI → env → DB**.
+`api_id`/`api_hash` si prendono da <https://my.telegram.org> → *API development
+tools*. Precedenza di risoluzione:
+
+- **`api_id`** (non è un segreto): flag `--api-id` → env `TELEGRAM_API_ID` → DB.
+- **`api_hash`** (è un **segreto**): env `TELEGRAM_API_HASH` → DB → altrimenti
+  **chiesto con input nascosto** (`getpass`). **Non** si passa da riga di comando:
+  un `--api-hash` sarebbe visibile in `ps`/`/proc` e nella shell history.
+
+Le credenziali fornite da CLI/env sono **persistite nel DB (cifrate) solo dopo un
+login riuscito** (così credenziali errate non sovrascrivono quelle valide). Il
+salvataggio è **best-effort**: se emette un warning di persistenza, i login
+successivi potrebbero richiedere di nuovo le credenziali.
 
 ```bash
-# opzione A — flag CLI (li salva nel DB cifrati per le volte successive)
-python headless_main.py --telegram-login --api-id 1234567 --api-hash abcdef0123...
+# api_id via flag, api_hash chiesto con input nascosto (consigliato)
+python headless_main.py --telegram-login --api-id 1234567
 
-# opzione B — variabili d'ambiente
+# api_id + api_hash via env (evita la shell history salvandoli in un file/systemd)
 TELEGRAM_API_ID=1234567 TELEGRAM_API_HASH=abcdef0123... python headless_main.py --telegram-login
 
-# opzione C — se già nel DB (via GUI o da un login precedente)
+# credenziali già nel DB (da GUI o da un login precedente)
 python headless_main.py --telegram-login
 ```
 
 > Il comando **non** legge `config.json` (per non incoraggiare segreti in un file
-> committato): usa i flag/env o il DB.
+> committato): usa flag/env/DB o l'input nascosto.
 
 ### ⚠️ Dove arriva il codice + chiave di cifratura
+
 - Il codice di verifica arriva **in-app** nella chat di servizio **"Telegram"
   (contatto ufficiale, id 777000)**, **non** via SMS, se hai già una sessione
   Telegram attiva (app sul telefono / Telegram Web). Guarda lì.
-- `api_id`/`api_hash`/`session_string` sono **cifrati at-rest**
-  (`database.py` `_ENCRYPTED_KEYS`) con una chiave derivata da
-  `PICKFAIR_SECRET_KEY` o da `~/.pickfair/db.key`. **Salva e fai il login con lo
-  stesso utente e dalla stessa directory** (il `pickfair.db` è relativo alla cwd),
-  **senza `sudo`** (cambia `HOME` → chiave diversa → decifratura fallita → campi
-  "vuoti"). In alternativa fissa la stessa `PICKFAIR_SECRET_KEY` per entrambi.
-  Nei log un mismatch appare come `secret_cipher: decrypt failed`.
+- `telegram.api_id`/`api_hash`/`session_string` sono **cifrati at-rest**
+  (elenco `_SECRET_FIELDS` in `database.py`). La chiave è **caricata** (non
+  derivata) da `PICKFAIR_SECRET_KEY` o dal file `~/.pickfair/db.key`
+  (`SecretCipher`). **Salva e fai il login con lo stesso utente e dalla stessa
+  directory** (il `pickfair.db` è relativo alla cwd), **senza `sudo`** (cambia
+  `HOME` → chiave diversa → decifratura fallita → campi "vuoti"). In alternativa
+  fissa la stessa `PICKFAIR_SECRET_KEY` per entrambi i passaggi. Nei log un
+  mismatch appare come `secret_cipher: decrypt failed`.
 - Usa il numero in **formato internazionale** (`+39...`). Richieste ripetute
   troppo ravvicinate → `FloodWaitError`: attendi i secondi indicati e riprova una
   sola volta.

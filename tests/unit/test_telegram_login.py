@@ -284,16 +284,27 @@ def test_run_telegram_login_settings_read_error_returns_2():
 _resolve = HeadlessApp._resolve_telegram_credentials
 
 
-def test_resolve_creds_cli_flag_overrides_env_and_db():
-    # BLOCK: prima non esisteva canale headless per api_id/api_hash — venivano
-    # SOLO dal DB. Ora il flag CLI vince su env e DB, e from_external=True
-    # (=> il comando li persiste nel DB per i login futuri).
+def test_resolve_creds_api_id_cli_wins_api_hash_from_env():
+    # api_id: flag CLI vince su env/DB. api_hash: da env (MAI da CLI).
     api_id, api_hash, ext = _resolve(
-        ["--telegram-login", "--api-id", "111", "--api-hash", "H1"],
+        ["--telegram-login", "--api-id", "111"],
         {"TELEGRAM_API_ID": "222", "TELEGRAM_API_HASH": "H2"},
         {"api_id": "999", "api_hash": "DBHASH"},
     )
-    assert (api_id, api_hash, ext) == ("111", "H1", True)
+    assert (api_id, api_hash, ext) == ("111", "H2", True)
+
+
+def test_resolve_creds_api_hash_never_read_from_cli():
+    # SECURITY (GPT/Fugu/Fable): --api-hash sulla CLI NON deve essere letto
+    # (esporrebbe il segreto in ps/history). Qui è passato in argv ma va IGNORATO:
+    # api_hash arriva dal DB, e non marca from_external.
+    api_id, api_hash, ext = _resolve(
+        ["--telegram-login", "--api-hash", "SECRET_ON_CLI"],
+        {},
+        {"api_id": "55", "api_hash": "DBH"},
+    )
+    assert api_hash == "DBH"
+    assert ext is False
 
 
 def test_resolve_creds_env_fallback_when_no_cli():
@@ -306,46 +317,64 @@ def test_resolve_creds_env_fallback_when_no_cli():
 
 
 def test_resolve_creds_db_when_no_external_is_not_flagged():
-    # Nessun CLI/env => usa il DB e from_external=False (nessuna ri-persistenza).
     api_id, api_hash, ext = _resolve(
         ["--telegram-login"], {}, {"api_id": "55", "api_hash": "DBH"}
     )
     assert (api_id, api_hash, ext) == ("55", "DBH", False)
 
 
-def test_resolve_creds_equals_form_and_missing_value_safe():
-    api_id, api_hash, ext = _resolve(["--api-id=333", "--api-hash=H3"], {}, {})
-    assert (api_id, api_hash, ext) == ("333", "H3", True)
-    # flag senza valore (ultimo token) non deve crashare: vuoto => fallback al DB,
-    # e NON marca from_external (non si persiste garbage).
-    api_id2, _h, ext2 = _resolve(["--api-id"], {}, {"api_id": "z"})
-    assert api_id2 == "z" and ext2 is False
+def test_resolve_creds_flag_does_not_swallow_next_option():
+    # BLOCK (CodeRabbit/Fable/Codacy): `--api-id --api-hash` NON deve prendere
+    # `--api-hash` come valore di api_id. Il valore è '' => fallback al DB.
+    api_id, _h, ext = _resolve(["--api-id", "--api-hash"], {}, {"api_id": "DBID"})
+    assert api_id == "DBID"
+    assert ext is False
+    # forma con '=' funziona
+    api_id2, _h2, ext2 = _resolve(["--api-id=333"], {}, {})
+    assert (api_id2, ext2) == ("333", True)
 
 
-def test_run_telegram_login_persists_external_credentials(monkeypatch):
-    # BLOCK: api_id/api_hash passati da CLI su un DB VUOTO devono essere SALVATI
-    # nel DB (cifrati) prima del login. Prima del fix venivano ignorati (letti
-    # solo dal DB) -> nessun save, login impossibile sul VPS headless.
+def _login_db(settings=None):
     class _DB:
         def __init__(self):
             self.saved = None
 
         def get_telegram_settings(self):
-            return {"api_id": "", "api_hash": "", "session_string": ""}
+            return dict(settings or {"api_id": "", "api_hash": "", "session_string": ""})
 
         def save_telegram_settings(self, payload):
             self.saved = dict(payload)
 
+    return _DB()
+
+
+def test_run_telegram_login_persists_only_after_success(monkeypatch):
+    # BLOCK (Fable/Fugu/GLM): le credenziali CLI/env su un login RIUSCITO vengono
+    # salvate nel DB, complete di session_string. api_id da CLI, api_hash da env.
+    db = _login_db()
     app = HeadlessApp.__new__(HeadlessApp)
-    app.db = _DB()
-    monkeypatch.setattr(
-        sys, "argv",
-        ["headless_main.py", "--telegram-login", "--api-id", "12345", "--api-hash", "HH"],
-    )
-    # evita il flusso interattivo (input/getpass): il login vero non è il punto qui
+    app.db = db
+    monkeypatch.setattr(sys, "argv", ["headless_main.py", "--telegram-login", "--api-id", "12345"])
+    monkeypatch.setenv("TELEGRAM_API_HASH", "HH")
+    monkeypatch.setattr(HeadlessApp, "_telegram_login_flow", staticmethod(lambda *a, **k: (0, "SESS")))
+    rc = app._run_telegram_login()
+    assert rc == 0
+    assert db.saved is not None
+    assert db.saved.get("api_id") == "12345"
+    assert db.saved.get("api_hash") == "HH"
+    assert db.saved.get("session_string") == "SESS"
+
+
+def test_run_telegram_login_does_not_persist_on_failed_login(monkeypatch):
+    # BLOCK (persistenza pre-verifica): credenziali CLI/env ERRATE non devono
+    # sovrascrivere il DB se il login FALLISCE. Prima del fix la persistenza era
+    # pre-login => saved veniva scritto anche a login fallito.
+    db = _login_db({"api_id": "OLD", "api_hash": "OLDH", "session_string": "OLDS"})
+    app = HeadlessApp.__new__(HeadlessApp)
+    app.db = db
+    monkeypatch.setattr(sys, "argv", ["headless_main.py", "--telegram-login", "--api-id", "BAD"])
+    monkeypatch.setenv("TELEGRAM_API_HASH", "BADH")
     monkeypatch.setattr(HeadlessApp, "_telegram_login_flow", staticmethod(lambda *a, **k: (2, None)))
     rc = app._run_telegram_login()
-    assert rc == 2  # login non completato (flow stubbato), ma...
-    assert app.db.saved is not None, "le credenziali CLI devono essere persistite"
-    assert app.db.saved.get("api_id") == "12345"
-    assert app.db.saved.get("api_hash") == "HH"
+    assert rc == 2
+    assert db.saved is None, "login fallito NON deve persistere/sovrascrivere le creds"
