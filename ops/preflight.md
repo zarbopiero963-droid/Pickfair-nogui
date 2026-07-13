@@ -98,3 +98,28 @@ checklist non tace mai un blocker.
   non modifica la logica dei gate. Espone soltanto lo stato di readiness.
 - La logica dei prerequisiti resta in `RuntimeController` (deploy gate #350 /
   go-live FASE 3.2): il preflight la **mostra**, non la duplica né la indebolisce.
+
+## Diagnostica NO-GO all'avvio (#358)
+
+Anche **fuori** dal preflight, un avvio normale in LIVE (`--live`) il cui deploy
+gate risulta NO-GO **stampa a schermo** la stessa checklist (blocker + rimedio),
+non solo un warning sepolto nel log. Così, ad esempio, avviare con `--live` ma
+**senza** `--live-enabled` mostra esplicitamente:
+
+```text
+NON PRONTO:
+  [X] LIVE_NOT_ENABLED
+        cosa   : live_enabled e' False
+        rimedio: Avvia con --live-enabled oppure imposta live_enabled=True nel DB.
+```
+
+È **puramente diagnostico** (`HeadlessApp._emit_live_nogo_diagnostics`, che riusa
+`_format_preflight_report`): non modifica la logica del gate né l'esito di
+`start()` — l'enforcement fail-closed resta in `RuntimeController.start`. Serve a
+rendere subito visibile *cosa manca per andare LIVE* invece di lasciare il motivo
+nel log.
+
+> Contesto #358: la Phase 0 ha stabilito che `--live` **non** connette in
+> SIMULATION (con i prerequisiti mancanti il gate **rifiuta** LIVE, fail-closed);
+> il sintomo osservato era codice *stale* sul VPS. Questa PR non cambia la
+> sicurezza: rende solo evidente il motivo del NO-GO.

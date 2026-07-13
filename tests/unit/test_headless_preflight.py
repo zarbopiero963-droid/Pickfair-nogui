@@ -217,3 +217,83 @@ def test_preflight_reasons_fallback_when_no_granular_blockers(monkeypatch):
 
     assert code == 2
     assert "DEPLOY_BLOCKED_NOT_READY" in report
+
+
+# ---- #358: diagnostica NO-GO all'avvio LIVE (motivo visibile a schermo) ----
+
+
+class _FakeRuntimeLiveBlocked:
+    """Rifiuta il deploy gate LIVE (enforce_deploy_gate not allowed) e
+    interrompe start() subito dopo, per testare la diagnostica #358 senza il
+    loop di run."""
+
+    def __init__(self, **kwargs):
+        self.enforce_calls = []
+
+    def enforce_deploy_gate(self, *, execution_mode=None, live_enabled=None, live_readiness_ok=None, boot=False):
+        self.enforce_calls.append((execution_mode, live_enabled, live_readiness_ok, boot))
+        return _status(False, ["LIVE_NOT_ENABLED"])
+
+    @staticmethod
+    def start(**_kwargs):
+        # Interrompe start() subito DOPO la diagnostica (che il gate reale
+        # rifiuterebbe comunque): al test basta osservare lo stdout emesso.
+        raise RuntimeError("stop-after-diagnostics")
+
+
+@pytest.mark.unit
+def test_emit_live_nogo_diagnostics_prints_blocker_and_remedy(monkeypatch, capsys, caplog):
+    # #358: il metodo stampa a schermo blocker + rimedio (riusa la checklist
+    # del preflight), rendendo visibile cosa manca per LIVE.
+    import logging
+
+    app = _make_app(monkeypatch, _FakeRuntimeReady(), ["--live"])
+    status = _status(False, ["LIVE_NOT_ENABLED"])
+
+    with caplog.at_level(logging.WARNING, logger="headless_main"):
+        app._emit_live_nogo_diagnostics(status, "LIVE", False, True)
+
+    out = capsys.readouterr().out
+    assert "NON PRONTO" in out
+    assert "LIVE_NOT_ENABLED" in out
+    assert "--live-enabled" in out
+    # Contratto di logging: la diagnostica DEVE restare a WARNING (non INFO),
+    # cosi' i rimedi sopravvivono in produzione con filtro WARNING+. Se qualcuno
+    # la riportasse a logger.info, questo assert fallisce.
+    assert any(
+        r.levelno == logging.WARNING and "[DEPLOY GATE] Diagnostica NO-GO LIVE" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+@pytest.mark.unit
+def test_start_live_nogo_emits_diagnostics_to_screen(monkeypatch, capsys):
+    # #358 (BLOCK): all'avvio `--live` senza prerequisiti, il NO-GO del deploy
+    # gate DEVE essere stampato a schermo (non solo nel log). Senza il wiring
+    # in start(), stdout non conterrebbe la checklist -> questo test fallisce.
+    # Riferimento diretto al fake (tipo concreto): app.runtime e' tipato
+    # Optional[RuntimeController], su cui Pyright non vede enforce_calls.
+    fake_runtime = _FakeRuntimeLiveBlocked()
+    app = _make_app(monkeypatch, fake_runtime, ["--live"])
+    monkeypatch.setattr(app, "build", lambda **kwargs: None)
+    monkeypatch.setattr(app, "_run_boot_recovery", lambda: None)
+    monkeypatch.setattr(app, "stop", lambda: None)
+
+    rc = app.start()
+
+    out = capsys.readouterr().out
+    assert "NON PRONTO" in out
+    assert "LIVE_NOT_ENABLED" in out
+    assert "--live-enabled" in out
+    assert rc == 1  # runtime.start del fake interrotto DOPO la diagnostica
+    # Propagazione CLI->deploy gate (obiettivo #358): `--live` senza
+    # `--live-enabled` deve raggiungere il gate come execution_mode=LIVE,
+    # live_enabled=False, live_readiness_ok=False, e boot=True (check
+    # pre-connessione). Senza questo assert il test passerebbe anche se start()
+    # inoltrasse valori errati (il fake risponde NO-GO a qualsiasi input).
+    assert fake_runtime.enforce_calls, "enforce_deploy_gate non e' stato invocato"
+    exec_mode, live_enabled, live_readiness_ok, boot = fake_runtime.enforce_calls[-1]
+    assert exec_mode == "LIVE"
+    assert live_enabled is False
+    assert live_readiness_ok is False
+    assert boot is True

@@ -4,6 +4,17 @@
     "max_files": 8
   },
   "tasks": {
+    "headless_live_nogo_diagnostics_358": {
+      "description": "#358: la Phase 0 (safety-critical) ha stabilito che NON e' un bug di codice - con --live senza --live-enabled il deploy gate RIFIUTA LIVE (fail-closed, LIVE_NOT_ENABLED), non connette in SIMULATION; il sintomo osservato era codice stale sul VPS. Converte #358 in diagnostica UX: all'avvio headless in LIVE, se il deploy gate rifiuta, stampa a schermo la checklist blocker+rimedio (riusa HeadlessApp._format_preflight_report / _BLOCKER_REMEDIATION di #360) invece di lasciare il reason_code sepolto nel warning di log. Es. --live senza --live-enabled -> stampa LIVE_NOT_ENABLED + 'Avvia con --live-enabled'. Puramente diagnostico (_emit_live_nogo_diagnostics): NON tocca la logica del gate ne' l'esito di start() (l'enforcement fail-closed resta in RuntimeController.start). Nessuna modifica a core/services/gate. Test hard PASS+BLOCK (metodo diretto + wiring in start(): senza la chiamata la checklist non compare a schermo).",
+      "allow_tests": true,
+      "files": [
+        "headless_main.py",
+        "tests/unit/test_headless_preflight.py",
+        "ops/preflight.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
+    },
     "probe_component_is_ready_checkers_363": {
       "description": "#363 (follow-up di #361/#362, autorizzato dall'owner). Chiude la superficie fail-open segnalata da GPT-5.6 Terra e Fugu Ultra sul rilassamento B-1 (no-checker->READY): database e shutdown_manager erano strutturalmente 'no-checker' (nessun is_ready) e evaluate_live_readiness non ne verifica la salute, quindi a runtime un DB compromesso o uno shutdown in corso risultavano READY al gate LIVE. Aggiunge is_ready() reali: Database.is_ready() = health-check leggero non distruttivo (SELECT 1), fail-closed su eccezione; ShutdownManager.is_ready() = not _has_run (thread-safe). Con i checker questi componenti smettono di essere 'no-checker' -> il probe li valuta (READY/DEGRADED) e il gate a runtime torna a piena severita' su di loro (un DB rotto o uno shutdown in corso bloccano LIVE anche al boot). RuntimeController resta senza is_ready di proposito: la sua readiness e' gia' coperta da evaluate_live_readiness (runtime_initialized/mode/half_started). Nessuna modifica a runtime_probe.py (il probe gia' consuma is_ready via _probe_ready_component). Test hard PASS+BLOCK a livello unita' (Database/ShutdownManager) e integrazione (unhealthy DB/shutdown bloccano LIVE anche con tolerate_pending_connection=True).",
       "allow_tests": true,
