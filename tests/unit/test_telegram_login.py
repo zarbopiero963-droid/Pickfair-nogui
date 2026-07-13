@@ -298,7 +298,7 @@ def test_resolve_creds_api_hash_never_read_from_cli():
     # SECURITY (GPT/Fugu/Fable): --api-hash sulla CLI NON deve essere letto
     # (esporrebbe il segreto in ps/history). Qui è passato in argv ma va IGNORATO:
     # api_hash arriva dal DB, e non marca from_external.
-    api_id, api_hash, ext = _resolve(
+    _api_id, api_hash, ext = _resolve(
         ["--telegram-login", "--api-hash", "SECRET_ON_CLI"],
         {},
         {"api_id": "55", "api_hash": "DBH"},
@@ -399,4 +399,26 @@ def test_run_telegram_login_missing_api_id_returns_2(monkeypatch):
     rc = app._run_telegram_login()
     assert rc == 2
     assert flow_called["v"] is False, "il guard api_id deve precedere il flow"
+    assert db.saved is None
+
+
+def test_run_telegram_login_missing_api_hash_returns_2(monkeypatch):
+    # Simmetrico (GLM/Fable): api_id presente ma api_hash assente (env/DB vuoti) e
+    # input nascosto vuoto => return 2, senza avviare il flow né persistere.
+    db = _login_db({"api_id": "123", "api_hash": "", "session_string": ""})
+    app = HeadlessApp.__new__(HeadlessApp)
+    app.db = db
+    monkeypatch.setattr(sys, "argv", ["headless_main.py", "--telegram-login"])
+    monkeypatch.delenv("TELEGRAM_API_HASH", raising=False)
+    monkeypatch.setattr("getpass.getpass", lambda *a, **k: "")  # getpass vuoto
+    flow_called = {"v": False}
+
+    def _flow(*a, **k):
+        flow_called["v"] = True
+        return (0, "S")
+
+    monkeypatch.setattr(HeadlessApp, "_telegram_login_flow", staticmethod(_flow))
+    rc = app._run_telegram_login()
+    assert rc == 2
+    assert flow_called["v"] is False
     assert db.saved is None

@@ -960,12 +960,12 @@ class HeadlessApp:
         valore (che poi fallirebbe la conversione a int).
         """
         prefix = name + "="
-        tokens = [str(x) for x in (argv or [])]
-        for i, token in enumerate(tokens):
-            if token.startswith(prefix):
-                return token[len(prefix):].strip()
-            if token == name:
-                nxt = tokens[i + 1] if i + 1 < len(tokens) else ""
+        args = [str(x) for x in (argv or [])]
+        for i, arg in enumerate(args):
+            if arg.startswith(prefix):
+                return arg[len(prefix):].strip()
+            if arg == name:
+                nxt = args[i + 1] if i + 1 < len(args) else ""
                 return "" if nxt.startswith("--") else nxt.strip()
         return ""
 
