@@ -155,12 +155,22 @@ class CatalogSyncService:
                         )
                         runner_count += 1
 
-            # 4. Pulizia + meta SOLO se abbiamo popolato eventi E il sync NON e'
-            #    troncato: fail-safe che impedisce di cancellare il catalogo su un
-            #    sync a 0 eventi o incompleto (rilievo GPT/GLM/Fugu/Fable). Un
+            # 4. Pulizia + meta SOLO se il sync e' COMPLETO: eventi popolati,
+            #    almeno un mercato, e nessun batch troncato. Fail-safe che
+            #    impedisce di cancellare il catalogo su sync a 0 eventi, troncato
+            #    o senza mercati (rilievo GPT/GLM/Fugu/Fable/CodeRabbit). Un
             #    cleanup su catalogo parziale rimuoverebbe mercati/runner ancora
             #    validi -> rischio blocco/errore nel trading LIVE.
-            if event_count > 0 and not truncated:
+            if event_count > 0 and market_count == 0:
+                # Eventi presenti ma ZERO mercati su tutti: quasi sempre indica un
+                # market-fetch fallito/anomalo (una risposta non-lista degradata a
+                # [], o un errore upstream), non un catalogo realmente vuoto. Non
+                # eseguiamo cleanup: preserviamo i mercati/runner esistenti.
+                logger.warning(
+                    "[CatalogSync] %d eventi ma 0 mercati: market-fetch sospetto incompleto, "
+                    "catalogo esistente preservato (skip cleanup).", event_count,
+                )
+            elif event_count > 0 and not truncated:
                 self.db.cleanup_stale_bf_data(sync_id)
                 self.db.update_sync_meta(
                     last_sync_at=sync_id,

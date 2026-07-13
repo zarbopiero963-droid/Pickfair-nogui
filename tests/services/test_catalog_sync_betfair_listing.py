@@ -163,6 +163,18 @@ def test_catalog_sync_truncated_batch_skips_cleanup():
     assert db.meta_updated is False
 
 
+def test_catalog_sync_events_but_zero_markets_skips_cleanup():
+    # BLOCK fail-open (CodeRabbit Major): eventi presenti ma 0 mercati (es. una
+    # risposta market-catalogue anomala degradata a [] dal client) NON deve
+    # eseguire cleanup, altrimenti cancella mercati/runner ancora validi.
+    events = [{"event": {"id": "30000", "name": "E", "openDate": "x"}}]
+    db = _FakeDB()
+    CatalogSyncService(db, _RecordingClient(events, [])).run_sync(force=True)
+    assert len(db.events) == 1          # eventi upsertati
+    assert db.cleanup_called is False   # ma cleanup SALTATO (0 mercati sospetto)
+    assert db.meta_updated is False
+
+
 def test_catalog_sync_empty_events_preserves_catalog():
     # BLOCK regressione (GPT/GLM/Fable): 0 eventi -> NON cancellare il catalogo.
     db = _FakeDB()
