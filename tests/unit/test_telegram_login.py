@@ -482,3 +482,28 @@ def test_run_telegram_login_getpass_exception_returns_2(monkeypatch):
     assert rc == 2, "getpass che solleva => exit 2 (non propagata)"
     assert flow_called["v"] is False, "senza api_hash il flow non parte"
     assert db.saved is None
+
+
+def test_cli_flags_do_not_break_dispatch(monkeypatch):
+    # BLOCK (Fable final review): il comando documentato
+    #   python headless_main.py --telegram-login --api-id 123 --api-hash H
+    # DEVE dispatchare a _run_telegram_login. Il parser NON è argparse strict
+    # (scansione manuale `in sys.argv` che ignora i flag sconosciuti), quindi
+    # --api-id/--api-hash non fanno fallire né il dispatch né _parse_args.
+    # Se qualcuno introducesse un argparse strict, questo test fallirebbe
+    # (regressione del comando sul VPS, non coperta dai test che chiamano
+    # _run_telegram_login direttamente).
+    app = HeadlessApp.__new__(HeadlessApp)
+    app.settings_service = None
+    monkeypatch.setattr(
+        sys, "argv",
+        ["headless_main.py", "--telegram-login", "--api-id", "123", "--api-hash", "H"],
+    )
+    # dispatch: --telegram-login riconosciuto nonostante i flag extra
+    assert app._telegram_login_requested() is True
+    assert app._preflight_requested() is False
+    # _parse_args ignora i flag sconosciuti e ritorna un dict valido (no raise,
+    # no SystemExit da un eventuale argparse strict)
+    parsed = app._parse_args()
+    assert isinstance(parsed, dict)
+    assert "simulation_mode" in parsed and "execution_mode" in parsed
