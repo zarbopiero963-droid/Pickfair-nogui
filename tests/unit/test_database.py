@@ -46,6 +46,76 @@ class DatabaseUnitTests(unittest.TestCase):  # noqa: D203,D211
             self.assertIn("order_saga", names)
             self.assertIn("simulation_bets", names)
 
+    def test_is_ready_true_on_healthy_db(self) -> None:
+        """#363: DB sano con schema completo -> is_ready True."""
+        database = self._build_db()
+        self.assertTrue(database.is_ready())
+
+    def test_is_ready_failclosed_on_error(self) -> None:
+        """#363 (BLOCK): un DB non sano -> is_ready False, NON propaga.
+
+        Se il try/except venisse rimosso, is_ready propagherebbe l'eccezione
+        invece di segnalare non-ready: questo test lo blocca.
+        """
+        database = self._build_db()
+
+        def _boom() -> sqlite3.Connection:
+            raise sqlite3.OperationalError("db unavailable")
+
+        setattr(database, "_get_connection", _boom)
+        self.assertFalse(database.is_ready())
+
+    def test_is_ready_true_on_wal_db_with_active_writer(self) -> None:
+        """#364 (WAL reale): col writer persistente attivo (-shm presente, come
+        nel flusso reale) la connessione read-only mode=ro legge senza falsi
+        negativi -> is_ready True su DB WAL sano.
+        """
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "wal.sqlite"
+            database = Database(str(db_path))  # apre WAL e tiene la conn (writer attivo)
+            self.assertTrue(database.is_wal_mode())
+            self.assertTrue(database.is_ready())
+
+    def test_is_ready_false_when_critical_table_missing(self) -> None:
+        """#363 (BLOCK, GPT/Fugu/Greptile): schema incompleto -> non pronto.
+
+        Un DB il cui motore risponde ma a cui manca una tabella critica del
+        money path NON deve risultare pronto (SELECT 1 mascherava il danno).
+        """
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "schema.sqlite"
+            database = Database(str(db_path))
+            self.assertTrue(database.is_ready())
+            # Rilascia la connessione persistente, poi rimuove una tabella
+            # critica: il check (connessione temporanea) deve vedere lo schema
+            # incompleto e restituire False.
+            database.close_all_connections()
+            side_conn = sqlite3.connect(str(db_path))
+            try:
+                side_conn.execute("DROP TABLE order_saga")
+                side_conn.commit()
+            finally:
+                side_conn.close()
+            self.assertFalse(database.is_ready())
+
+    def test_is_ready_false_when_db_file_missing(self) -> None:
+        """#363 (BLOCK): file DB assente -> False, senza ricrearlo.
+
+        Un DB mancante non deve essere ricreato vuoto e dichiarato pronto
+        (fail-closed): dopo la rimozione del file, is_ready() è False e il file
+        NON viene ricreato dal check.
+        """
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "gone.sqlite"
+            database = Database(str(db_path))
+            database.close_all_connections()
+            for extra in ("", "-wal", "-shm"):
+                candidate = Path(str(db_path) + extra)
+                if candidate.exists():
+                    candidate.unlink()
+            self.assertFalse(database.is_ready())
+            self.assertFalse(db_path.exists())
+
     def test_settings_crud(self) -> None:
         """Settings are persisted and returned through CRUD methods."""
         with tempfile.TemporaryDirectory() as temp_dir:

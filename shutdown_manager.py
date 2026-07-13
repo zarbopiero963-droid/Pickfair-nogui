@@ -168,3 +168,23 @@ class ShutdownManager:
                 "has_run": bool(self._has_run),
                 "hooks": self.snapshot(),
             }
+
+    def is_ready(self) -> bool:
+        """
+        Segnale di readiness per il probe LIVE (#363).
+
+        True finché lo shutdown NON è iniziato/completato. Una volta partito
+        (``_has_run``) il sistema sta chiudendo: non-ready => il deploy gate a
+        runtime NON deve permettere nuovi ordini LIVE.
+
+        Legge ``_has_run`` **sotto ``self._lock``**: la transizione di shutdown
+        (``shutdown()`` imposta il flag dentro lo stesso lock, prima di eseguire
+        gli hook) è così atomica rispetto alla readiness/gate — nessuna lettura
+        stale né race. Non può causare deadlock: ``shutdown()`` **rilascia** il
+        lock prima di eseguire gli hook (che sono la parte lunga), e ``_lock``
+        è un ``RLock`` rientrante, quindi un hook che interroghi il gate sullo
+        stesso thread non si auto-blocca; la contesa è limitata alla brevissima
+        sezione critica (copia della lista hook / set del flag).
+        """
+        with self._lock:
+            return not self._has_run

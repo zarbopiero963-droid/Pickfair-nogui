@@ -588,3 +588,48 @@ def test_enforce_deploy_gate_accepts_and_propagates_boot():
     assert probe.calls == [True, False]
     assert _probe_ok(boot_status) is True
     assert _probe_ok(runtime_status) is False
+
+
+def _real_components_probe():
+    # #363: Database e ShutdownManager REALI esposti al probe.
+    from database import Database
+    from shutdown_manager import ShutdownManager
+
+    db = Database(":memory:")
+    sm = ShutdownManager()
+    probe = RuntimeProbe(
+        db=db,
+        trading_engine=_TradingReady(),
+        runtime_controller=_Ready(),
+        betfair_service=_BetfairConnected(),
+        safe_mode=_SafeModeInactive(),
+        shutdown_manager=sm,
+    )
+    return probe, sm
+
+
+def test_real_db_and_shutdown_manager_are_not_no_checker_when_healthy():
+    # #363: sani -> READY e NON piu' tra i componenti 'no-checker' (unknown).
+    probe, _sm = _real_components_probe()
+
+    healthy = probe.get_live_readiness_report()
+
+    assert healthy["ready"] is True
+    assert healthy["level"] == "READY"
+    assert "database" not in healthy["details"]["unknown_components"]
+    assert "shutdown_manager" not in healthy["details"]["unknown_components"]
+
+
+def test_shutting_down_manager_blocks_live_even_at_boot():
+    # #363 (BLOCK, chiude la superficie fail-open GPT/Fugu): uno shutdown in
+    # corso -> is_ready False -> DEGRADED -> blocca LIVE ANCHE al boot. Senza il
+    # checker il manager sarebbe 'no-checker' -> B-1 -> READY (fail-open).
+    probe, sm = _real_components_probe()
+
+    sm.register("noop", lambda: None)
+    sm.shutdown()
+    blocked_boot = probe.get_live_readiness_report(tolerate_pending_connection=True)
+
+    assert blocked_boot["ready"] is False
+    assert blocked_boot["level"] == "DEGRADED"
+    assert any(d["name"] == "shutdown_manager" for d in blocked_boot["details"]["degraded"])

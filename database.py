@@ -45,6 +45,11 @@ _DB_DURABILITY_PROFILES: Dict[str, Dict[str, str]] = {
 
 _DB_DURABILITY_PROFILE_ENV = "PICKFAIR_DB_DURABILITY_PROFILE"
 
+# Tabelle critiche del money path: il probe di readiness LIVE (is_ready) richiede
+# che siano presenti nello schema, altrimenti il DB non e' utilizzabile per la
+# persistenza di ordini/saga e non deve risultare pronto (#363).
+_READINESS_CRITICAL_TABLES: tuple = ("settings", "order_saga")
+
 # SQLite savepoints are stack-scoped by name; repeated `sp_nested_tx` targets the innermost one.
 _NESTED_SAVEPOINT_SQL = "SAVEPOINT sp_nested_tx"
 _RELEASE_NESTED_SAVEPOINT_SQL = "RELEASE SAVEPOINT sp_nested_tx"
@@ -244,6 +249,65 @@ class Database:
     def reopen(self) -> None:
         self.close_all_connections()
         self._get_connection()
+
+    def is_ready(self) -> bool:
+        """Health-check non distruttivo per il probe di readiness LIVE (#363).
+
+        Verifica in **sola lettura** che il DB sia utilizzabile per la
+        persistenza del money path: che il file esista e che le **tabelle
+        critiche** (`_READINESS_CRITICAL_TABLES`) siano presenti. Non basta il
+        motore (`SELECT 1`): un DB vuoto/ricreato senza schema non deve
+        risultare pronto. Fail-closed (False) su qualsiasi errore o schema
+        incompleto.
+
+        Nessun side-effect sulla connessione persistente: su DB su file usa una
+        connessione **temporanea** chiusa subito, senza toccare
+        ``self._local.conn`` (niente riapertura/resurrezione durante lo
+        shutdown, nessuna affinità di thread). Su file assente ritorna False
+        senza **crearlo**. Il caso ``:memory:`` (solo test, single-thread) usa
+        la connessione persistente perché un DB in-memory vive solo lì.
+        """
+        conn = None
+        close_after = False
+        try:
+            if self.db_path == ":memory:":
+                # Solo test (single-thread): un DB in-memory vive esclusivamente
+                # nella connessione persistente, non e' apribile via URI file.
+                conn = self._get_connection()
+            else:
+                # Connessione READ-ONLY via URI: se il file manca `connect`
+                # solleva (fail-closed) e NON lo crea -> nessun TOCTOU di
+                # ricreazione (elimina il check os.path.exists). Non scrive
+                # nulla. Il DB e' sempre in journal_mode WAL (durability
+                # profile), quindi la lettura e' concorrente col writer del
+                # money path senza contendere il lock.
+                # `Path.as_uri()` fa il percent-encoding sicuro del path
+                # (spazi, '#', '?', drive letter/backslash Windows), evitando
+                # URI malformate che darebbero falsi negativi.
+                ro_uri = f"{Path(self.db_path).resolve().as_uri()}?mode=ro"
+                conn = sqlite3.connect(ro_uri, uri=True, timeout=5.0)
+                close_after = True
+
+            # Query parametrizzata FISSA per tabella (nessuna costruzione di SQL
+            # via stringa): il DB e' pronto solo se TUTTE le tabelle critiche
+            # del money path esistono.
+            for table in _READINESS_CRITICAL_TABLES:
+                row = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+                    (table,),
+                ).fetchone()
+                if row is None:
+                    return False
+            return True
+        except Exception:
+            logger.warning("Database.is_ready: health-check DB fallito", exc_info=False)
+            return False
+        finally:
+            if close_after and conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    logger.warning("Database.is_ready: chiusura conn temporanea fallita", exc_info=False)
 
     # =========================================================
     # SAFE HELPERS

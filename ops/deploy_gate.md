@@ -70,6 +70,40 @@ degrado reale, e la presenza/connettibilità dei componenti è già verificata d
 > reale a runtime (ordini verso un servizio down), quindi è tollerata **solo** al
 > boot. Il `no-checker` (B-1) non è un degrado, quindi è tollerato **sempre**.
 
+### Checker reali per database e shutdown_manager (#363)
+
+Il rilassamento `no-checker` (B-1) è sicuro **solo** per componenti la cui
+salute è verificata altrove o che non hanno stato sanitario proprio. Per
+`database` e `shutdown_manager` non era così: erano `no-checker` ma con uno
+stato di salute reale (DB raggiungibile? shutdown in corso?) che il gate a
+runtime non poteva vedere. #363 li dota di `is_ready` reali:
+
+- **`Database.is_ready()`** — health-check **non distruttivo** e in sola
+  lettura: verifica che le **tabelle critiche** del money path
+  (`_READINESS_CRITICAL_TABLES`: `settings`, `order_saga`) siano presenti. Non
+  basta il motore (`SELECT 1`): un DB vuoto/ricreato senza schema non deve
+  risultare pronto. Apre una connessione **read-only** via URI
+  (`file:…?mode=ro`): se il file manca `connect` solleva (fail-closed) e **non
+  lo crea** → nessun TOCTOU di ricreazione; non scrive nulla e non tocca la
+  connessione persistente `self._local.conn` (nessuna riapertura/resurrezione
+  durante lo shutdown, nessuna affinità di thread). Il DB è sempre in
+  `journal_mode=WAL` (durability profile), quindi la lettura è concorrente col
+  writer senza contendere il lock. Fail-closed su errore o schema incompleto →
+  un DB compromesso è `DEGRADED` (`unhealthy`) e **blocca LIVE** in ogni fase.
+  Il ramo `:memory:` (solo test, single-thread) usa la connessione persistente
+  perché un DB in-memory non è apribile via URI file.
+- **`ShutdownManager.is_ready()`** — `not _has_run`, lettura **lock-free**
+  (flag atomico, nessun `self._lock`: niente contesa/deadlock con `shutdown()`
+  o con gli hook). Durante/dopo lo shutdown → `DEGRADED` → il gate a runtime
+  **non** permette nuovi ordini LIVE.
+
+Con questi checker i due componenti **non** rientrano più in B-1: sono valutati
+a piena severità. `RuntimeController` resta invece volutamente `no-checker`: la
+sua prontezza è già coperta da `evaluate_live_readiness`
+(`runtime_initialized`/`mode`/`half_started`), quindi B-1 su di esso non lascia
+scoperto nulla. Il probe non cambia (`_probe_ready_component` consuma già
+`is_ready`).
+
 ## Postura di sicurezza
 
 Il gate resta significativo: verifica prerequisiti strutturali, kill switch,
