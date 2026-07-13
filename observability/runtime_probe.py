@@ -765,19 +765,26 @@ class RuntimeProbe:
         return True
 
     def _normalize_component_status(self, name: str, component: Dict[str, Any], *, tolerate_pending_connection: bool) -> str:
-        """Status normalizzato del componente. I rilassamenti phase-aware si
-        applicano SOLO al boot (tolerate_pending_connection=True); a runtime
-        (default False) la severita' e' piena."""
+        """Status normalizzato del componente.
+
+        Due rilassamenti, con severita' diversa:
+        - B-1 (no-checker): SEMPRE (boot e runtime). Un componente
+          strutturalmente senza `is_ready` (reason 'no-checker') non espone un
+          segnale di salute: non e' un blocker. NON e' phase-aware perche'
+          renderlo bloccante a runtime disabiliterebbe LIVE in modo permanente
+          (non diventera' mai 'ready', manca l'interfaccia). Questo NON e' un
+          fail-open: l'assenza di checker non e' un degrado reale, e la
+          presenza/connettibilita' e' verificata altrove (evaluate_live_readiness).
+        - B-2 (disconnected): SOLO al boot (tolerate_pending_connection=True).
+          A runtime la disconnessione e' un degrado reale e resta bloccante
+          (fail-closed): e' il fix del fail-open sul percorso ordini LIVE.
+        """
         status = component.get("status", "UNKNOWN")
         normalized = str(status).upper() if status is not None else "UNKNOWN"
-        if not tolerate_pending_connection:
-            return normalized
-
         reason_norm = str(component.get("reason") or "").strip().lower()
         details = component.get("details") or {}
 
-        # B-1 (boot): componente STRUTTURALMENTE senza checker (reason
-        # 'no-checker') che si dichiara fallback READY. Ristretto a 'no-checker'
+        # B-1 (SEMPRE): no-checker con fallback READY. Ristretto a 'no-checker'
         # + fallback_status: altri UNKNOWN (es. trading_engine
         # 'ready_without_health') restano fail-closed.
         if (
@@ -787,7 +794,10 @@ class RuntimeProbe:
         ):
             return "READY"
 
-        # B-2 (boot): SOLO i componenti attesi-pending-connection (allowlist,
+        if not tolerate_pending_connection:
+            return normalized
+
+        # B-2 (SOLO boot): SOLO i componenti attesi-pending-connection (allowlist,
         # es. betfair), DEGRADED solo perche' 'disconnected' e senza altri degradi.
         if normalized == "DEGRADED" and self._boot_tolerable_disconnected(name, component):
             return "READY"

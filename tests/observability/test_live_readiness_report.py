@@ -280,12 +280,11 @@ def test_runtime_controller_readiness_surfaces_non_finite_hard_stop_invalid_stat
     assert "LIVE_HARD_STOP_CONFIG_INVALID" in readiness["blockers"]
 
 
-def test_no_checker_components_do_not_block_live_readiness_at_boot():
-    # #361 B-1 (boot-only): db/runtime_controller/shutdown_manager senza
-    # is_ready -> 'no-checker' UNKNOWN. Sono presenti ma non espongono
-    # readiness: al BOOT non devono bloccare (erano blocker spuri -> deadlock
-    # LIVE al boot). A RUNTIME (default) restano fail-closed (vedi test sotto).
-    probe = RuntimeProbe(
+def _no_checker_probe():
+    # db/runtime_controller/shutdown_manager senza is_ready -> 'no-checker'
+    # UNKNOWN (con fallback_status=READY). Sono presenti ma non espongono
+    # un'interfaccia di readiness.
+    return RuntimeProbe(
         db=object(),
         trading_engine=_TradingReady(),
         runtime_controller=object(),
@@ -294,31 +293,52 @@ def test_no_checker_components_do_not_block_live_readiness_at_boot():
         shutdown_manager=object(),
     )
 
-    report = probe.get_live_readiness_report(tolerate_pending_connection=True)
+
+def test_no_checker_components_do_not_block_live_readiness_at_boot():
+    # #361 B-1: al boot i componenti 'no-checker' non devono bloccare (erano
+    # blocker spuri -> deadlock LIVE al boot).
+    report = _no_checker_probe().get_live_readiness_report(tolerate_pending_connection=True)
 
     assert report["ready"] is True
     assert report["level"] == "READY"
     assert report["blockers"] == []
 
 
-def test_no_checker_components_still_fail_closed_at_runtime():
-    # #361 B-1 (BLOCK): il rilassamento 'no-checker' e' boot-only. A runtime
-    # (default, watchdog/is_live_allowed/_on_signal_received) i componenti
-    # UNKNOWN senza checker DEVONO restare bloccanti -> fail-closed.
+def test_no_checker_components_do_not_block_live_readiness_at_runtime():
+    # #361 B-1 (GPT-5.6 Terra + Fable 5, BLOCK): il rilassamento 'no-checker'
+    # NON e' phase-aware. A runtime (default: watchdog / is_live_allowed /
+    # _on_signal_received) i componenti strutturalmente senza checker
+    # (database/runtime_controller/shutdown_manager, che non hanno is_ready)
+    # NON devono bloccare: renderli UNKNOWN=blocker disabiliterebbe LIVE in
+    # modo permanente dopo un avvio riuscito. Differiscono da 'disconnected'
+    # (B-2), che invece a runtime resta bloccante (vedi test sotto).
+    report = _no_checker_probe().get_live_readiness_report()
+
+    assert report["ready"] is True
+    assert report["level"] == "READY"
+    assert report["blockers"] == []
+
+
+def test_ready_without_health_still_fails_closed_in_both_phases():
+    # #361 B-1 (BLOCK): il rilassamento e' ristretto a reason 'no-checker'.
+    # Un UNKNOWN diverso (trading_engine 'ready_without_health') resta
+    # fail-closed sia al boot sia a runtime.
     probe = RuntimeProbe(
-        db=object(),
-        trading_engine=_TradingReady(),
-        runtime_controller=object(),
+        db=_Ready(),
+        trading_engine=_TradingUnknown(),
+        runtime_controller=_Ready(),
         betfair_service=_BetfairConnected(),
         safe_mode=_SafeModeInactive(),
-        shutdown_manager=object(),
+        shutdown_manager=_Ready(),
     )
 
-    report = probe.get_live_readiness_report()
-
-    assert report["ready"] is False
-    assert report["level"] == "NOT_READY"
-    assert any(item["status"] == "UNKNOWN" for item in report["blockers"])
+    for report in (
+        probe.get_live_readiness_report(),
+        probe.get_live_readiness_report(tolerate_pending_connection=True),
+    ):
+        assert report["ready"] is False
+        assert report["level"] == "NOT_READY"
+        assert "trading_engine" in report["details"]["unknown_components"]
 
 
 def test_boot_gate_tolerates_disconnected_but_runtime_does_not():
@@ -453,7 +473,8 @@ class _ProbeBootAware:
 class _ProbeNoKwarg:
     """Getter privo del kwarg: il boot NON deve passarlo (niente TypeError)."""
 
-    def get_live_readiness_report(self):
+    @staticmethod
+    def get_live_readiness_report():
         return {"ready": True, "level": "READY", "blockers": []}
 
 
@@ -481,7 +502,7 @@ def test_controller_boot_flag_threads_probe_tolerance():
     rc.runtime_probe = probe
 
     ok_boot, _reason_boot, _r1 = rc._get_probe_live_readiness_report(boot=True)
-    ok_runtime, reason_runtime, _r2 = rc._get_probe_live_readiness_report(boot=False)
+    ok_runtime, _reason_runtime, _r2 = rc._get_probe_live_readiness_report(boot=False)
 
     assert ok_boot is True
     assert ok_runtime is False  # runtime NON tollera la disconnessione: fail-closed
@@ -522,3 +543,48 @@ def test_controller_internal_typeerror_is_not_masked_as_strict():
     assert ok is False
     assert reason == "probe_report_exception"
     assert probe.plain_called is False  # non ha ritentato in strict silenziosamente
+
+
+def _probe_ok(status):
+    payload = (status.get("details") or {}).get("readiness_payload") or {}
+    return bool(payload.get("probe_ok"))
+
+
+def test_get_deploy_gate_status_propagates_boot_to_probe():
+    # #361 (Fugu Ultra BLOCK): il flag boot deve propagarsi da
+    # get_deploy_gate_status fino al probe. boot=True -> tolerate=True (GO);
+    # default -> strict (NO-GO). Prova la catena, non solo l'helper interno.
+    rc = _make_gate_rc()
+    probe = _ProbeBootAware()
+    rc.runtime_probe = probe
+
+    boot_status = rc.get_deploy_gate_status(
+        execution_mode="LIVE", live_enabled=True, live_readiness_ok=True, boot=True
+    )
+    runtime_status = rc.get_deploy_gate_status(
+        execution_mode="LIVE", live_enabled=True, live_readiness_ok=True
+    )
+
+    assert probe.calls == [True, False]
+    assert _probe_ok(boot_status) is True       # boot: pending-connection tollerato
+    assert _probe_ok(runtime_status) is False   # runtime: strict, fail-closed
+
+
+def test_enforce_deploy_gate_accepts_and_propagates_boot():
+    # #361 (Fugu Ultra BLOCK): enforce_deploy_gate (la variante con side effect,
+    # usata da start() e dall'headless) deve ACCETTARE boot (niente TypeError)
+    # e propagarlo a get_deploy_gate_status -> probe.
+    rc = _make_gate_rc()
+    probe = _ProbeBootAware()
+    rc.runtime_probe = probe
+
+    boot_status = rc.enforce_deploy_gate(
+        execution_mode="LIVE", live_enabled=True, live_readiness_ok=True, boot=True
+    )
+    runtime_status = rc.enforce_deploy_gate(
+        execution_mode="LIVE", live_enabled=True, live_readiness_ok=True
+    )
+
+    assert probe.calls == [True, False]
+    assert _probe_ok(boot_status) is True
+    assert _probe_ok(runtime_status) is False

@@ -54,12 +54,21 @@ disconnessione torna a essere segnalata.
 
 Un componente presente ma **senza metodo `is_ready`** viene marcato dal probe
 come `UNKNOWN` con reason `no-checker` (`_probe_ready_component` →
-`_unknown_probe`, che imposta `fallback_status=READY`). **Solo al boot** questi
-componenti — presenti e sani ma senza interfaccia di readiness — non contano come
-blocker (prima erano blocker spuri che contribuivano al deadlock LIVE al boot). Il
-rilassamento è ristretto a reason `no-checker` con `fallback_status=READY`: altri
-`UNKNOWN` (es. trading_engine `ready_without_health`) **restano fail-closed**. A
-runtime (default) anche i `no-checker` tornano bloccanti: piena severità.
+`_unknown_probe`, che imposta `fallback_status=READY`). Questi componenti —
+presenti ma privi di un'interfaccia di readiness — **non** contano come blocker,
+**né al boot né a runtime** (rilassamento *non* phase-aware). Il motivo: un
+componente `no-checker` non diventerà **mai** `ready` (non espone il segnale),
+quindi renderlo bloccante a runtime disabiliterebbe LIVE in modo **permanente**
+dopo un avvio riuscito (`is_live_allowed`/`_on_signal_received`/watchdog
+rifiuterebbero ogni segnale). Non è un fail-open: l'assenza di checker non è un
+degrado reale, e la presenza/connettibilità dei componenti è già verificata da
+`evaluate_live_readiness`. Il rilassamento è ristretto a reason `no-checker` con
+`fallback_status=READY`: altri `UNKNOWN` (es. trading_engine
+`ready_without_health`) **restano fail-closed** in ogni fase.
+
+> Differenza chiave con `disconnected` (B-2): la disconnessione **è** un degrado
+> reale a runtime (ordini verso un servizio down), quindi è tollerata **solo** al
+> boot. Il `no-checker` (B-1) non è un degrado, quindi è tollerato **sempre**.
 
 ## Postura di sicurezza
 

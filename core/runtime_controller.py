@@ -807,9 +807,13 @@ class RuntimeController:
         # _on_signal_received) resta piena severita': una disconnessione
         # durante il trading DEVE far fallire il gate (fail-closed).
         tolerate_pending_connection = bool(boot)
-        # Passa il kwarg SOLO se il getter lo accetta davvero. Non usare
-        # try/except TypeError: mascherebbe un TypeError sollevato *dentro*
-        # get_live_readiness_report, degradando silenziosamente a strict.
+        # Passa il kwarg SOLO se il getter dichiara ESPLICITAMENTE il parametro
+        # 'tolerate_pending_connection'. Non usare try/except TypeError:
+        # mascherebbe un TypeError sollevato *dentro* get_live_readiness_report,
+        # degradando silenziosamente a strict. Non basarsi su **kwargs: un getter
+        # con **kwargs che NON gestisce il parametro lo ignorerebbe in silenzio,
+        # girando strict al boot (falso NO-GO / deadlock) senza che ce ne
+        # accorgiamo — match sul nome esplicito, cosi' il comportamento e' certo.
         pass_kwarg = False
         if tolerate_pending_connection:
             try:
@@ -817,11 +821,7 @@ class RuntimeController:
             except (TypeError, ValueError):
                 sig = None
             if sig is not None:
-                params = sig.parameters.values()
-                pass_kwarg = (
-                    "tolerate_pending_connection" in sig.parameters
-                    or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params)
-                )
+                pass_kwarg = "tolerate_pending_connection" in sig.parameters
         try:
             if pass_kwarg:
                 report = getter(tolerate_pending_connection=True)
