@@ -147,9 +147,6 @@ class TelegramListener:
         if self.running:
             return {"started": True, "reason": "already_running", "chat_count": len(self.monitored_chats)}
 
-        # Un eventuale login interattivo pendente non deve convivere col runtime.
-        self._cleanup_login()
-
         if monitored_chats is not None:
             self.set_monitored_chats(monitored_chats)
 
@@ -522,6 +519,7 @@ class TelegramListener:
     def _cleanup_login(self) -> None:
         client = self._login_client
         loop = self._login_loop
+        thread = self._login_thread
         self._login_client = None
         self._login_phone = None
         self._login_code_hash = None
@@ -535,6 +533,15 @@ class TelegramListener:
                 logger.debug("[TelegramListener] disconnect login client fallito", exc_info=True)
         if loop is not None and loop.is_running():
             loop.call_soon_threadsafe(loop.stop)
+        # Join del thread e chiusura del loop: evita proliferazione di thread su
+        # request_code ripetuti e libera le risorse (rilievo Greptile/Codacy).
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=self._stop_timeout)
+        if loop is not None and not loop.is_closed() and not loop.is_running():
+            try:
+                loop.close()
+            except Exception:
+                logger.debug("[TelegramListener] close login loop fallito", exc_info=True)
         self._login_loop = None
         self._login_thread = None
 
@@ -553,6 +560,12 @@ class TelegramListener:
         try:
             self._ensure_login_loop()
             client = self._create_login_client()
+            # Assegna il client PRIMA di eseguire il coroutine (rilievo CodeRabbit
+            # Major): se connect()/send_code_request() falliscono, _cleanup_login
+            # nell'except deve poter disconnettere il client gia' creato/connesso.
+            self._login_client = client
+            self._login_phone = phone
+            self._login_awaiting_password = False
 
             async def _do():
                 await client.connect()
@@ -560,16 +573,15 @@ class TelegramListener:
                 return getattr(sent, "phone_code_hash", None)
 
             code_hash = self._run_login_coro(_do(), self._connect_timeout + 30.0)
-            self._login_client = client
-            self._login_phone = phone
             self._login_code_hash = code_hash
-            self._login_awaiting_password = False
             self._emit_status("CODE_SENT", f"Codice inviato a {phone}")
             return {"ok": True}
         except Exception as exc:
             self._cleanup_login()
-            self._emit_status("FAILED", f"Invio codice fallito: {exc}")
-            return {"ok": False, "error": str(exc)}
+            # str(TimeoutError()) e' vuoto: fallback sul nome classe (rilievo Codacy).
+            msg = str(exc) or type(exc).__name__
+            self._emit_status("FAILED", f"Invio codice fallito: {msg}")
+            return {"ok": False, "error": msg}
 
     def sign_in(self, code: str, password_2fa: str | None = None):
         """Login userbot step 2: verifica il codice (e la 2FA se richiesta) e,
@@ -635,8 +647,10 @@ class TelegramListener:
             result = self._run_login_coro(_do(), self._connect_timeout + 45.0)
         except Exception as exc:
             self._cleanup_login()
-            self._emit_status("FAILED", f"Login fallito: {exc}")
-            return {"ok": False, "error": str(exc)}
+            # str(TimeoutError()) e' vuoto: fallback sul nome classe (rilievo Codacy).
+            msg = str(exc) or type(exc).__name__
+            self._emit_status("FAILED", f"Login fallito: {msg}")
+            return {"ok": False, "error": msg}
 
         if result.get("ok"):
             session_string = result["session_string"]

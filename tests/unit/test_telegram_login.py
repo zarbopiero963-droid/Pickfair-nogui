@@ -42,22 +42,27 @@ class _FakeSession:
 class _FakeClient:
     """Client Telethon fittizio (metodi async) per pilotare il login."""
 
-    def __init__(self, *, behavior="ok", session="SESS", code_hash="HASH", password_ok=True):
+    def __init__(self, *, behavior="ok", session="SESS", code_hash="HASH", password_ok=True, fail_on=None):
         self.behavior = behavior  # ok | 2fa | invalid_code | expired_code
         self.session = _FakeSession(session)
         self.code_hash = code_hash
         self.password_ok = password_ok
+        self.fail_on = fail_on  # None | "connect" | "send_code"
         self.calls = []
         self._authorized = False
 
     async def connect(self):
         self.calls.append(("connect",))
+        if self.fail_on == "connect":
+            raise RuntimeError("connect boom")
 
     async def disconnect(self):
         self.calls.append(("disconnect",))
 
     async def send_code_request(self, phone):
         self.calls.append(("send_code_request", phone))
+        if self.fail_on == "send_code":
+            raise RuntimeError("send_code boom")
         return SimpleNamespace(phone_code_hash=self.code_hash)
 
     async def is_user_authorized(self):
@@ -148,6 +153,28 @@ def test_sign_in_invalid_code():
 def test_request_code_missing_phone():
     res = _listener(_FakeClient()).request_code("   ")
     assert res == {"ok": False, "error": "missing_phone"}
+
+
+def test_sign_in_expired_code_cleans_up():
+    # expired_code è terminale: sign_in ritorna l'errore e chiude il login.
+    fake = _FakeClient(behavior="expired_code")
+    lis = _listener(fake)
+    lis.request_code("+39")
+    res = lis.sign_in("999")
+    assert res == {"ok": False, "error": "expired_code"}
+    assert lis._login_client is None
+
+
+def test_request_code_send_code_failure_cleans_up_client():
+    # BLOCK (CodeRabbit Major): se send_code_request fallisce DOPO connect(), il
+    # client (già connesso) dev'essere disconnesso da _cleanup_login. Prima del
+    # fix il client era assegnato solo a esito positivo -> connessione orfana.
+    fake = _FakeClient(fail_on="send_code")
+    lis = _listener(fake)
+    res = lis.request_code("+39")
+    assert res["ok"] is False
+    assert ("disconnect",) in fake.calls
+    assert lis._login_client is None
 
 
 def test_stop_cleans_up_abandoned_login():

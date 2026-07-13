@@ -977,22 +977,27 @@ class HeadlessApp:
             print(f"❌ Config Telegram non valida (api_id/api_hash): {exc}")
             return 2
 
-        exit_code, session_string = self._telegram_login_flow(
-            listener, api_id, api_hash,
-            prompt=input, prompt_secret=_getpass.getpass, out=print,
-        )
-        if exit_code == 0 and session_string:
-            merged = dict(settings)
-            merged["session_string"] = session_string
-            merged["enabled"] = True
-            try:
-                db.save_telegram_settings(merged)
-                print("💾 session_string salvata nella configurazione. Riavvia in modalità normale.")
-            except Exception as exc:
-                logger.exception("Persistenza session_string fallita: %s", exc)
-                print(f"⚠️  Login riuscito ma salvataggio fallito: {exc}")
-                return 2
-        return exit_code
+        try:
+            exit_code, session_string = self._telegram_login_flow(
+                listener, api_id, api_hash,
+                prompt=input, prompt_secret=_getpass.getpass, out=print,
+            )
+            if exit_code == 0 and session_string:
+                merged = dict(settings)
+                merged["session_string"] = session_string
+                merged["enabled"] = True
+                try:
+                    db.save_telegram_settings(merged)
+                    print("💾 session_string salvata nella configurazione. Riavvia in modalità normale.")
+                except Exception as exc:
+                    logger.exception("Persistenza session_string fallita: %s", exc)
+                    print(f"⚠️  Login riuscito ma salvataggio fallito: {exc}")
+                    return 2
+            return exit_code
+        finally:
+            # Chiudi sempre il client/loop di login, anche sui path di fallimento
+            # (es. 2FA errata) dove il listener resta in attesa (rilievo Greptile).
+            listener._cleanup_login()
 
     def _run_preflight(self) -> int:
         """Valuta i prerequisiti LIVE e stampa una checklist leggibile.
