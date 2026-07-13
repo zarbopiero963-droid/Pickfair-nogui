@@ -990,20 +990,8 @@ class HeadlessApp:
         from_external = bool(cli_id or env_id or env_hash)
         return api_id, api_hash, from_external
 
-    def _run_telegram_login(self) -> int:
-        """Comando `--telegram-login`: autentica un userbot Telegram dal VPS
-        (telefono+codice+2FA), genera la session_string e la salva nel DB.
-
-        api_id: da `--api-id` o env `TELEGRAM_API_ID`, altrimenti dal DB.
-        api_hash (segreto): da env `TELEGRAM_API_HASH` o dal DB; se manca viene
-        chiesto con input nascosto (mai da CLI). Le credenziali fornite da CLI/env
-        sono salvate nel DB (cifrate) SOLO dopo un login riuscito.
-
-        NON avvia il runtime/trading. Exit code: 0 login ok, 2 fallito.
-        """
-        import getpass as _getpass
-        from telegram_listener import TelegramListener
-
+    def _telegram_login_db(self):
+        """Ritorna il DB per `--telegram-login` (init se serve), o None su errore."""
         db = self.db
         if db is None:
             try:
@@ -1011,7 +999,18 @@ class HeadlessApp:
             except Exception as exc:
                 logger.exception("Errore init DB per --telegram-login: %s", exc)
                 print(f"❌ Errore inizializzazione DB: {exc}")
-                return 2
+                return None
+        return db
+
+    def _telegram_prepare_login(self, db, prompt_secret):
+        """Legge i settings, risolve/valida le credenziali e costruisce il listener.
+
+        Ritorna la tupla ``(listener, api_id, api_hash, from_external, settings)``
+        al successo, oppure l'``int`` 2 (exit code) se una credenziale manca o è
+        invalida. api_hash è un SEGRETO: se non è in env/DB viene chiesto con input
+        nascosto (`prompt_secret`) — mai da CLI (sarebbe visibile in `ps`/history).
+        """
+        from telegram_listener import TelegramListener
 
         try:
             settings = db.get_telegram_settings()
@@ -1028,12 +1027,10 @@ class HeadlessApp:
             print("❌ api_id mancante: passalo con --api-id, con l'env TELEGRAM_API_ID, "
                   "oppure configuralo nel DB (via GUI).")
             return 2
-        # api_hash è un segreto: se non è già in env/DB, chiedilo con input
-        # NASCOSTO (getpass) — mai da CLI (sarebbe visibile in `ps`/shell history).
-        # La persistenza avviene SOLO dopo un login riuscito (vedi sotto): così
-        # credenziali errate non sovrascrivono quelle valide già nel DB.
+        # api_hash mancante: chiedilo con input NASCOSTO. La persistenza avviene
+        # SOLO dopo un login riuscito, così creds errate non sovrascrivono il DB.
         if not api_hash:
-            entered = _getpass.getpass("Telegram api_hash (input nascosto): ").strip()
+            entered = prompt_secret("Telegram api_hash (input nascosto): ").strip()
             if entered:
                 api_hash = entered
                 from_external = True
@@ -1046,29 +1043,63 @@ class HeadlessApp:
         except Exception as exc:
             print(f"❌ Config Telegram non valida (api_id/api_hash): {exc}")
             return 2
+        return listener, api_id, api_hash, from_external, settings
+
+    @staticmethod
+    def _telegram_persist_login(db, settings, api_id, api_hash, from_external, session_string):
+        """Salva `session_string` (+ eventuali api_id/api_hash esterni) dopo login ok.
+
+        Persiste api_id/api_hash forniti da CLI/env SOLO ora (evita di sovrascrivere
+        il DB con creds errate). Best-effort: ritorna True se salvato, False se la
+        persistenza fallisce (il chiamante mappa False su exit code 2).
+        """
+        merged = dict(settings)
+        merged["session_string"] = session_string
+        merged["enabled"] = True
+        if from_external and api_id and api_hash:
+            merged["api_id"] = api_id
+            merged["api_hash"] = api_hash
+        try:
+            db.save_telegram_settings(merged)
+        except Exception as exc:
+            logger.exception("Persistenza configurazione Telegram fallita: %s", exc)
+            print(f"⚠️  Login riuscito ma salvataggio fallito: {exc}")
+            return False
+        extra = " + api_id/api_hash" if from_external else ""
+        print(f"💾 Configurazione salvata (session_string{extra}, cifrate). Riavvia in modalità normale.")
+        return True
+
+    def _run_telegram_login(self) -> int:
+        """Comando `--telegram-login`: autentica un userbot Telegram dal VPS
+        (telefono+codice+2FA), genera la session_string e la salva nel DB.
+
+        api_id: da `--api-id` o env `TELEGRAM_API_ID`, altrimenti dal DB.
+        api_hash (segreto): da env `TELEGRAM_API_HASH` o dal DB; se manca viene
+        chiesto con input nascosto (mai da CLI). Le credenziali fornite da CLI/env
+        sono salvate nel DB (cifrate) SOLO dopo un login riuscito.
+
+        NON avvia il runtime/trading. Exit code: 0 login ok (e salvataggio ok),
+        2 login fallito, credenziali mancanti, o persistenza post-login fallita.
+        """
+        import getpass as _getpass
+
+        db = self._telegram_login_db()
+        if db is None:
+            return 2
+        prepared = self._telegram_prepare_login(db, _getpass.getpass)
+        if isinstance(prepared, int):
+            return prepared  # exit code: credenziale mancante/invalida
+        listener, api_id, api_hash, from_external, settings = prepared
 
         try:
             exit_code, session_string = self._telegram_login_flow(
                 listener, api_id, api_hash,
                 prompt=input, prompt_secret=_getpass.getpass, out=print,
             )
-            if exit_code == 0 and session_string:
-                merged = dict(settings)
-                merged["session_string"] = session_string
-                merged["enabled"] = True
-                # Persisti api_id/api_hash forniti da CLI/env SOLO ora, dopo un
-                # login riuscito (evita di sovrascrivere il DB con creds errate).
-                if from_external and api_id and api_hash:
-                    merged["api_id"] = api_id
-                    merged["api_hash"] = api_hash
-                try:
-                    db.save_telegram_settings(merged)
-                    extra = " + api_id/api_hash" if from_external else ""
-                    print(f"💾 Configurazione salvata (session_string{extra}, cifrate). Riavvia in modalità normale.")
-                except Exception as exc:
-                    logger.exception("Persistenza configurazione Telegram fallita: %s", exc)
-                    print(f"⚠️  Login riuscito ma salvataggio fallito: {exc}")
-                    return 2
+            if exit_code == 0 and session_string and not self._telegram_persist_login(
+                db, settings, api_id, api_hash, from_external, session_string
+            ):
+                return 2
             return exit_code
         finally:
             # Chiudi sempre il client/loop di login, anche sui path di fallimento
