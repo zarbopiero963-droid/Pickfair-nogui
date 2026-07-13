@@ -79,14 +79,19 @@ stato di salute reale (DB raggiungibile? shutdown in corso?) che il gate a
 runtime non poteva vedere. #363 li dota di `is_ready` reali:
 
 - **`Database.is_ready()`** — health-check **non distruttivo** e in sola
-  lettura: verifica che il file DB esista e che le **tabelle critiche** del
-  money path (`_READINESS_CRITICAL_TABLES`: `settings`, `order_saga`) siano
-  presenti. Non basta il motore (`SELECT 1`): un DB vuoto/ricreato senza schema
-  non deve risultare pronto. Usa una connessione **temporanea** (chiusa subito,
-  senza toccare la connessione persistente `self._local.conn`: nessuna
-  riapertura/resurrezione durante lo shutdown, nessuna affinità di thread) e
-  **non crea** il file se manca. Fail-closed su errore o schema incompleto. Un
-  DB compromesso → `DEGRADED` (`unhealthy`) → **blocca LIVE** in ogni fase.
+  lettura: verifica che le **tabelle critiche** del money path
+  (`_READINESS_CRITICAL_TABLES`: `settings`, `order_saga`) siano presenti. Non
+  basta il motore (`SELECT 1`): un DB vuoto/ricreato senza schema non deve
+  risultare pronto. Apre una connessione **read-only** via URI
+  (`file:…?mode=ro`): se il file manca `connect` solleva (fail-closed) e **non
+  lo crea** → nessun TOCTOU di ricreazione; non scrive nulla e non tocca la
+  connessione persistente `self._local.conn` (nessuna riapertura/resurrezione
+  durante lo shutdown, nessuna affinità di thread). Il DB è sempre in
+  `journal_mode=WAL` (durability profile), quindi la lettura è concorrente col
+  writer senza contendere il lock. Fail-closed su errore o schema incompleto →
+  un DB compromesso è `DEGRADED` (`unhealthy`) e **blocca LIVE** in ogni fase.
+  Il ramo `:memory:` (solo test, single-thread) usa la connessione persistente
+  perché un DB in-memory non è apribile via URI file.
 - **`ShutdownManager.is_ready()`** — `not _has_run`, lettura **lock-free**
   (flag atomico, nessun `self._lock`: niente contesa/deadlock con `shutdown()`
   o con gli hook). Durante/dopo lo shutdown → `DEGRADED` → il gate a runtime

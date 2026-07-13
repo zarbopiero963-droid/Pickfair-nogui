@@ -177,9 +177,14 @@ class ShutdownManager:
         (``_has_run``) il sistema sta chiudendo: non-ready => il deploy gate a
         runtime NON deve permettere nuovi ordini LIVE.
 
-        Lettura **lock-free** di un flag booleano (atomico sotto il GIL): non
-        acquisisce ``self._lock``, così non può mai contendere/andare in
-        deadlock con ``shutdown()`` o con un hook che, durante lo spegnimento,
-        interroghi il probe/gate.
+        Legge ``_has_run`` **sotto ``self._lock``**: la transizione di shutdown
+        (``shutdown()`` imposta il flag dentro lo stesso lock, prima di eseguire
+        gli hook) è così atomica rispetto alla readiness/gate — nessuna lettura
+        stale né race. Non può causare deadlock: ``shutdown()`` **rilascia** il
+        lock prima di eseguire gli hook (che sono la parte lunga), e ``_lock``
+        è un ``RLock`` rientrante, quindi un hook che interroghi il gate sullo
+        stesso thread non si auto-blocca; la contesa è limitata alla brevissima
+        sezione critica (copia della lista hook / set del flag).
         """
-        return not self._has_run
+        with self._lock:
+            return not self._has_run

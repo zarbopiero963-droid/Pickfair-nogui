@@ -271,20 +271,30 @@ class Database:
         close_after = False
         try:
             if self.db_path == ":memory:":
+                # Solo test (single-thread): un DB in-memory vive esclusivamente
+                # nella connessione persistente, non e' apribile via URI file.
                 conn = self._get_connection()
             else:
-                if not os.path.exists(self.db_path):
-                    return False
-                conn = sqlite3.connect(self.db_path, timeout=5.0)
+                # Connessione READ-ONLY via URI: se il file manca `connect`
+                # solleva (fail-closed) e NON lo crea -> nessun TOCTOU di
+                # ricreazione (elimina il check os.path.exists). Non scrive
+                # nulla. Il DB e' sempre in journal_mode WAL (durability
+                # profile), quindi la lettura e' concorrente col writer del
+                # money path senza contendere il lock.
+                conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True, timeout=5.0)
                 close_after = True
 
-            placeholders = ",".join("?" for _ in _READINESS_CRITICAL_TABLES)
-            row = conn.execute(
-                "SELECT count(*) FROM sqlite_master "
-                f"WHERE type='table' AND name IN ({placeholders})",
-                _READINESS_CRITICAL_TABLES,
-            ).fetchone()
-            return bool(row) and int(row[0]) >= len(_READINESS_CRITICAL_TABLES)
+            # Query parametrizzata FISSA per tabella (nessuna costruzione di SQL
+            # via stringa): il DB e' pronto solo se TUTTE le tabelle critiche
+            # del money path esistono.
+            for table in _READINESS_CRITICAL_TABLES:
+                row = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+                    (table,),
+                ).fetchone()
+                if row is None:
+                    return False
+            return True
         except Exception:
             logger.warning("Database.is_ready: health-check DB fallito", exc_info=False)
             return False
