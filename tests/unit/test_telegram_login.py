@@ -205,14 +205,15 @@ def _seq(*values):
 
 
 class _ScriptListener:
-    def __init__(self, request_ok=True, sign_in_results=None):
+    def __init__(self, request_ok=True, sign_in_results=None, request_error="boom"):
         self.request_ok = request_ok
+        self.request_error = request_error
         self.sign_in_results = list(sign_in_results or [])
         self.sign_in_calls = []
 
     def request_code(self, phone):
         self.phone = phone
-        return {"ok": True} if self.request_ok else {"ok": False, "error": "boom"}
+        return {"ok": True} if self.request_ok else {"ok": False, "error": self.request_error}
 
     def sign_in(self, code, password_2fa=None):
         self.sign_in_calls.append((code, password_2fa))
@@ -284,7 +285,7 @@ def test_login_flow_sanitizes_pasted_code():
     code, ss = HeadlessApp._telegram_login_flow(
         lis, "1", "h",
         prompt=_seq("+39", "Login code: 12345"),
-        prompt_secret=lambda p: "",
+        prompt_secret=_seq(""),
         out=lambda *_: None,
     )
     assert code == 0 and ss == "SS"
@@ -301,20 +302,15 @@ def test_request_code_error_message_floodwait():
 
 def test_login_flow_floodwait_shows_wait_message():
     # BLOCK: request_code fallito per FloodWait => l'utente vede il messaggio di
-    # attesa (non un errore opaco) e il flow ritorna (2, None).
-    class _FloodListener:
-        def request_code(self, phone):
-            return {"ok": False, "error": "A wait of 42 seconds is required"}
-
-        def sign_in(self, code, password_2fa=None):  # pragma: no cover - non raggiunto
-            raise AssertionError("sign_in non deve partire dopo un FloodWait")
-
+    # attesa (non un errore opaco), il flow ritorna (2, None) e sign_in NON parte.
+    lis = _ScriptListener(request_ok=False, request_error="A wait of 42 seconds is required")
     seen = []
     code, ss = HeadlessApp._telegram_login_flow(
-        _FloodListener(), "1", "h",
-        prompt=_seq("+39"), prompt_secret=lambda p: "", out=seen.append,
+        lis, "1", "h",
+        prompt=_seq("+39"), prompt_secret=_seq(""), out=seen.append,
     )
     assert code == 2 and ss is None
+    assert lis.sign_in_calls == [], "dopo un FloodWait il sign_in non deve partire"
     assert any("NON rilanciare" in str(m) and "42" in str(m) for m in seen)
 
 
@@ -470,6 +466,29 @@ def test_run_telegram_login_missing_api_id_returns_2(monkeypatch):
     assert rc == 2
     assert flow_called["v"] is False, "il guard api_id deve precedere il flow"
     assert db.saved is None
+
+
+def test_run_telegram_login_rejects_nonpositive_api_id(monkeypatch):
+    # BLOCK (CodeRabbit): api_id "0" o negativo è config invalida (Telethon
+    # fallirebbe dopo con errore opaco). Deve dare return 2 SENZA avviare il flow
+    # né persistere. Prima del fix `int(api_id or 0)` accettava 0/-1.
+    for bad in ("0", "-1", "abc"):
+        db = _login_db({"api_id": "OLD", "api_hash": "OLDH", "session_string": "OLDS"})
+        app = HeadlessApp.__new__(HeadlessApp)
+        app.db = db
+        monkeypatch.setattr(sys, "argv", ["headless_main.py", "--telegram-login", "--api-id", bad])
+        monkeypatch.setenv("TELEGRAM_API_HASH", "HH")  # hash presente => niente prompt
+        flow_called = {"v": False}
+
+        def _flow(*a, **k):
+            flow_called["v"] = True
+            return (0, "S")
+
+        monkeypatch.setattr(HeadlessApp, "_telegram_login_flow", staticmethod(_flow))
+        rc = app._run_telegram_login()
+        assert rc == 2, f"api_id={bad!r} deve dare exit 2"
+        assert flow_called["v"] is False, f"api_id={bad!r}: il flow non deve partire"
+        assert db.saved is None, f"api_id={bad!r}: niente persistenza"
 
 
 def test_run_telegram_login_missing_api_hash_returns_2(monkeypatch):

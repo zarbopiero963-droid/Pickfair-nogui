@@ -1069,11 +1069,17 @@ class HeadlessApp:
         api_id, api_hash, from_external = self._resolve_telegram_credentials(
             sys.argv[1:], os.environ, settings
         )
-        # api_id mancante: errore chiaro invece di istanziare il listener con 0
-        # (che fallirebbe solo lato Telegram con un messaggio opaco).
-        if not api_id:
-            print("❌ api_id mancante: passalo con --api-id, con l'env TELEGRAM_API_ID, "
-                  "oppure configuralo nel DB (via GUI).")
+        # api_id dev'essere un intero POSITIVO: mancante, "0", negativo o non
+        # numerico è config invalida (Telethon fallirebbe dopo con un errore
+        # opaco). Errore chiaro invece di istanziare il listener con 0/negativo.
+        try:
+            api_id_num = int(str(api_id or "").strip() or 0)
+        except ValueError:
+            api_id_num = 0
+        if api_id_num <= 0:
+            print("❌ api_id mancante o non valido (dev'essere un intero positivo): "
+                  "passalo con --api-id, con l'env TELEGRAM_API_ID, oppure "
+                  "configuralo nel DB (via GUI).")
             return fail
         # api_hash mancante: chiedilo con input NASCOSTO. La persistenza avviene
         # SOLO dopo un login riuscito, così creds errate non sovrascrivono il DB.
@@ -1095,7 +1101,7 @@ class HeadlessApp:
                   "dal DB, o all'input nascosto.")
             return fail
         try:
-            listener = TelegramListener(int(api_id or 0), api_hash, db=db)
+            listener = TelegramListener(api_id_num, api_hash, db=db)
         except Exception as exc:
             print(f"❌ Config Telegram non valida (api_id/api_hash): {exc}")
             return fail

@@ -85,8 +85,10 @@ Flusso interattivo (`HeadlessApp._telegram_login_flow`):
 2. Chiede il **codice di verifica** ricevuto su Telegram (**solo le cifre**;
    incollare `Login code: 12345` è tollerato → tiene `12345`).
 3. Se l'account ha la **2FA**, chiede la **password** (input nascosto).
-4. Al successo **salva la `session_string`** nel DB (`save_telegram_settings`,
-   merge sui settings esistenti, `enabled=True`) ed esce con codice `0`.
+4. Al successo il flusso **ritorna la `session_string`**; è il comando
+   (`_run_telegram_login`, via `_telegram_persist_login`) a **salvarla nel DB**
+   (`save_telegram_settings`, merge sui settings esistenti, `enabled=True`) e a
+   uscire con codice `0`.
 
 Exit code: `0` login ok **e** configurazione salvata; `2` login fallito,
 credenziali mancanti/non valide, **oppure login riuscito ma persistenza fallita**
