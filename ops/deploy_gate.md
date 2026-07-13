@@ -70,6 +70,28 @@ degrado reale, e la presenza/connettibilità dei componenti è già verificata d
 > reale a runtime (ordini verso un servizio down), quindi è tollerata **solo** al
 > boot. Il `no-checker` (B-1) non è un degrado, quindi è tollerato **sempre**.
 
+### Checker reali per database e shutdown_manager (#363)
+
+Il rilassamento `no-checker` (B-1) è sicuro **solo** per componenti la cui
+salute è verificata altrove o che non hanno stato sanitario proprio. Per
+`database` e `shutdown_manager` non era così: erano `no-checker` ma con uno
+stato di salute reale (DB raggiungibile? shutdown in corso?) che il gate a
+runtime non poteva vedere. #363 li dota di `is_ready` reali:
+
+- **`Database.is_ready()`** — health-check leggero e non distruttivo
+  (`SELECT 1`), fail-closed su eccezione. Un DB compromesso ora è `DEGRADED`
+  (`unhealthy`) e **blocca LIVE** in ogni fase (anche al boot).
+- **`ShutdownManager.is_ready()`** — `not _has_run`: durante/dopo lo shutdown
+  il sistema sta chiudendo, quindi `DEGRADED` → il gate a runtime **non**
+  permette nuovi ordini LIVE.
+
+Con questi checker i due componenti **non** rientrano più in B-1: sono valutati
+a piena severità. `RuntimeController` resta invece volutamente `no-checker`: la
+sua prontezza è già coperta da `evaluate_live_readiness`
+(`runtime_initialized`/`mode`/`half_started`), quindi B-1 su di esso non lascia
+scoperto nulla. Il probe non cambia (`_probe_ready_component` consuma già
+`is_ready`).
+
 ## Postura di sicurezza
 
 Il gate resta significativo: verifica prerequisiti strutturali, kill switch,

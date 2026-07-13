@@ -46,6 +46,25 @@ class DatabaseUnitTests(unittest.TestCase):  # noqa: D203,D211
             self.assertIn("order_saga", names)
             self.assertIn("simulation_bets", names)
 
+    def test_is_ready_true_on_healthy_db(self) -> None:
+        """#363: DB sano -> is_ready True (segnale reale per il probe LIVE)."""
+        db = self._build_db()
+        self.assertTrue(db.is_ready())
+
+    def test_is_ready_failclosed_on_error(self) -> None:
+        """#363 (BLOCK): un DB non sano -> is_ready False, NON propaga.
+
+        Se il try/except venisse rimosso, is_ready propagherebbe l'eccezione
+        invece di segnalare non-ready: questo test lo blocca.
+        """
+        db = self._build_db()
+
+        def _boom() -> sqlite3.Connection:
+            raise sqlite3.OperationalError("db unavailable")
+
+        setattr(db, "_get_connection", _boom)
+        self.assertFalse(db.is_ready())
+
     def test_settings_crud(self) -> None:
         """Settings are persisted and returned through CRUD methods."""
         with tempfile.TemporaryDirectory() as temp_dir:

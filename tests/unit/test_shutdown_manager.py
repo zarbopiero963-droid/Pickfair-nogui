@@ -134,3 +134,22 @@ def test_clear_resets_has_run_and_allows_fresh_shutdown_without_cross_instance_l
     assert [row["name"] for row in a_second] == ["a2"]
     assert calls_b == ["b"]
     assert [row["name"] for row in b_first] == ["b"]
+
+
+@pytest.mark.unit
+def test_is_ready_true_before_shutdown():
+    # #363: prima dello shutdown il manager e' pronto -> is_ready True.
+    manager = ShutdownManager()
+    assert manager.is_ready() is True
+
+
+@pytest.mark.unit
+def test_is_ready_false_after_shutdown():
+    # #363 (BLOCK): una volta partito lo shutdown il sistema sta chiudendo ->
+    # is_ready False, cosi' il deploy gate a runtime NON permette nuovi ordini
+    # LIVE durante lo spegnimento. Senza questo checker il componente sarebbe
+    # 'no-checker' e risulterebbe READY (fail-open).
+    manager = ShutdownManager()
+    manager.register("noop", lambda: None)
+    manager.shutdown()
+    assert manager.is_ready() is False

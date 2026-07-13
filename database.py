@@ -245,6 +245,23 @@ class Database:
         self.close_all_connections()
         self._get_connection()
 
+    def is_ready(self) -> bool:
+        """Health-check leggero e non distruttivo per il probe di readiness LIVE.
+
+        Esegue una query banale (``SELECT 1``): True se la connessione DB
+        risponde, False (fail-closed) su qualsiasi errore. NON modifica stato.
+        Espone al deploy gate un segnale di salute REALE del DB: prima il
+        Database era ``no-checker`` e non poteva bloccare LIVE a runtime
+        (#363), lasciando scoperta la persistenza del money path.
+        """
+        try:
+            conn = self._get_connection()
+            conn.execute("SELECT 1").fetchone()
+            return True
+        except Exception:
+            logger.exception("Database.is_ready: health-check DB fallito")
+            return False
+
     # =========================================================
     # SAFE HELPERS
     # =========================================================
