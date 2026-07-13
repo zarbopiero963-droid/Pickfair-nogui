@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import signal
 import sys
+import threading
 import time
 from typing import Any, Optional
 
@@ -99,6 +100,7 @@ class HeadlessApp:
         self._running = False
         self._built = False
         self._services_started = False
+        self._services_lock = threading.Lock()
         self._signal_handlers_installed = False
 
     # =========================================================
@@ -214,12 +216,14 @@ class HeadlessApp:
         """Avvia (idempotente) i thread di osservabilita' watchdog/cleanup.
         Separato da build() cosi' "componenti costruiti" e "servizi avviati"
         sono stati distinti: il preflight costruisce senza avviare, un avvio
-        reale successivo puo' avviarli."""
-        if self._services_started:
-            return
-        self.watchdog_service.start()
-        self.cleanup_service.start()
-        self._services_started = True
+        reale successivo puo' avviarli. Guard atomica (lock) per evitare un
+        doppio start in caso di build() concorrenti (rilievo Fugu/Fable)."""
+        with self._services_lock:
+            if self._services_started:
+                return
+            self.watchdog_service.start()
+            self.cleanup_service.start()
+            self._services_started = True
 
     def build(self, start_services: bool = True) -> None:
         """
