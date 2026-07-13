@@ -28,19 +28,20 @@ raggruppamento per evento usa `mk['event']['id']`, quindi il client **deve**
 richiedere `EVENT` (e `COMPETITION`) nella `marketProjection` — garantito da
 `BetfairClient.list_market_catalogue` e coperto da test di contratto.
 
-`maxResults` è fissato a **200** (è anche il default documentato di Betfair per
-`listMarketCatalogue`), non 1000: la regola di peso dati Betfair è
-`somma(peso projection) × numero mercati ≤ 200 punti` e **solo**
+`maxResults` è fissato a **200**. Betfair accetta `maxResults` tra **1 e 1000**
+(200 **non** è un default imposto dall'API: è il cap **adottato da questa
+integrazione**). Il vincolo reale non è il conteggio ma il **limite di dati
+pesati**: `somma(peso projection) × numero mercati ≤ 200 punti`, e **solo**
 `MARKET_DESCRIPTION`/`RUNNER_METADATA` pesano. La projection qui usata include
 `MARKET_DESCRIPTION` (peso 1) ma **non** `RUNNER_METADATA`; `RUNNER_DESCRIPTION`
-non pesa. Un `maxResults` troppo alto (es. 1000) genera `APINGException
-TOO_MUCH_DATA` in LIVE (stessa classe d'errore già rimossa da `listEvents`, che
-non accetta `maxResults`).
+non pesa → peso totale 1. `TOO_MUCH_DATA` (`APINGException`) scatta quando quel
+prodotto pesato supera 200 punti: con peso 1, un `maxResults` alto (es. 1000)
+può superarlo in LIVE. 200 tiene il prodotto entro il limite.
 
 Il chunk da 20 eventi è una **euristica** per tenere basso il volume per
 richiesta (20 eventi × ~5 tipi mercato ≈ 100 mercati, ben sotto 200): NON è una
-garanzia formale, perché il numero reale di mercati dipende dal catalogo. La
-**guard anti-troncamento** resta l'autorità sul completamento del sync.
+garanzia formale, perché il numero reale di mercati dipende dal catalogo. Le
+**guard** sotto restano l'autorità sul completamento del sync.
 
 **Guard anti-troncamento e anti-fetch-parziale (fail-safe money-path)**: il
 servizio **salta `cleanup_stale_bf_data` e `update_sync_meta`** — preservando il
@@ -48,9 +49,13 @@ catalogo esistente — in tutti i casi di sync non completo:
 - **0 eventi** (SIM, o risposta vuota/anomala in LIVE);
 - **batch troncato**: un batch ritorna un numero di mercati ≥ `maxResults`
   (risposta potenzialmente troncata → mercati mancanti);
-- **eventi presenti ma 0 mercati** su tutti: quasi sempre un market-fetch
-  fallito/anomalo (es. risposta non-lista degradata a `[]`), non un catalogo
-  realmente vuoto.
+- **eventi presenti ma 0 mercati** su tutti: guard aggregato per market-fetch
+  interamente vuoto/anomalo, non un catalogo realmente vuoto;
+- **chunk market-catalogue malformato** (risposta non-lista da errore upstream):
+  `BetfairClient.list_market_catalogue` **solleva** invece di degradare a `[]`,
+  quindi anche un fallimento su **un solo chunk** di un batch misto interrompe il
+  sync prima del cleanup. Una lista vuota **genuina** (eventi senza mercati) è
+  invece lecita e non blocca il cleanup.
 Saltare il cleanup evita di cancellare mercati/runner ancora validi (che
 bloccherebbero/altererebbero il trading LIVE).
 

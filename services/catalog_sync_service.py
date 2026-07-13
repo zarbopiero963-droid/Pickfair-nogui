@@ -73,6 +73,12 @@ class CatalogSyncService:
             truncated = False
             for i in range(0, len(event_ids), chunk_size):
                 chunk = event_ids[i:i + chunk_size]
+                # Batch misto (rilievo CodeRabbit Major): se un chunk fallisce a
+                # meta' loop, list_market_catalogue SOLLEVA (errore upstream o
+                # risposta non-lista) -> l'eccezione risale al try/except di
+                # run_sync e il cleanup NON viene eseguito, preservando il
+                # catalogo. Un chunk che ritorna una lista vuota GENUINA (eventi
+                # senza mercati) e' invece lecito e non blocca il cleanup.
                 chunk_markets = self.client.list_market_catalogue(
                     [SOCCER_EVENT_TYPE_ID],
                     event_ids=chunk,
@@ -190,6 +196,12 @@ class CatalogSyncService:
                 logger.info("[CatalogSync] 0 eventi validi: catalogo esistente preservato (skip cleanup).")
 
         except Exception as e:
-            logger.error("[CatalogSync] Errore durante la sincronizzazione: %s", e)
+            # Qualsiasi errore (incl. un chunk market-catalogue malformato che
+            # solleva) interrompe il sync PRIMA del cleanup: il catalogo esistente
+            # resta intatto (fail-safe money-path, nessuna cancellazione).
+            logger.error(
+                "[CatalogSync] Errore durante la sincronizzazione: %s "
+                "(cleanup non eseguito, catalogo esistente preservato).", e,
+            )
         finally:
             self.is_syncing = False

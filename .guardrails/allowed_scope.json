@@ -17,6 +17,18 @@
       ],
       "max_files": 8
     },
+    "catalog_sync_completeness_369": {
+      "description": "#369 (follow-up di #367/#368, rilievi CodeRabbit post-merge). (1) Major batch misto: BetfairClient.list_market_catalogue ora SOLLEVA RuntimeError su risposta MALFORMATA (non-lista) invece di degradare a [] — cosi' un errore upstream su UN chunk di un batch misto interrompe run_sync prima del cleanup (l'except preserva il catalogo), mentre una lista vuota GENUINA resta lecita e non blocca il cleanup. (2) Doc ops/catalog_sync.md: chiarito che maxResults=200 e' il cap adottato da questa integrazione (Betfair accetta 1-1000, non impone 200) e che TOO_MUCH_DATA deriva dal limite di dati pesati (Σpeso×N ≤ 200; pesano solo MARKET_DESCRIPTION/RUNNER_METADATA). (3) Test hardening: assert MARKET_DESCRIPTION/RUNNER_DESCRIPTION nella projection, kwargs di produzione (in_play_only/max_results) nel test SIM, test raise-on-non-list e regressione batch-misto (chunk fallito => cleanup saltato). NON tocca gate/ordini/money-management: solo discovery read-only + fail-safe. Test hard PASS+BLOCK. Verifica end-to-end sul VPS.",
+      "allow_tests": true,
+      "files": [
+        "betfair_client.py",
+        "services/catalog_sync_service.py",
+        "tests/services/test_catalog_sync_betfair_listing.py",
+        "ops/catalog_sync.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
+    },
     "config_registry_pr_a_359": {
       "description": "Epic #359 (Config & Go-Live Console) PR-A: nuovo modulo config_registry.py, FONTE-DATO UNICA di sola lettura per GUI e headless. ConfigRegistry.entries() enumera i parametri configurabili (esecuzione/safety, Betfair, trading & money-management, Telegram, simulazione) come ConfigEntry{key,label,value,valid,required_for_live,source,remedy,is_secret}; i segreti (app_key/certificate/private_key/password) sono MASCHERATI (mai in chiaro). readiness_report() produce la checklist ✅/❌ dei prerequisiti LIVE RIUSANDO RuntimeController.evaluate_live_readiness (#350) - non reimplementa ne' indebolisce la logica del gate, la espone soltanto. NESSUNA UI, NESSUNA scrittura, NESSUNA modifica a core/services/gate. Test hard PASS+BLOCK (mascheramento segreti load-bearing, mappatura blocker->checklist, metadati). Docs ops/config_console.md.",
       "allow_tests": true,
