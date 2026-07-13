@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import signal
 import sys
+import threading
 import time
 from typing import Any, Optional
 
@@ -98,6 +99,8 @@ class HeadlessApp:
 
         self._running = False
         self._built = False
+        self._services_started = False
+        self._services_lock = threading.Lock()
         self._signal_handlers_installed = False
 
     # =========================================================
@@ -133,6 +136,7 @@ class HeadlessApp:
         self.safe_mode = None
 
         self._built = False
+        self._services_started = False
         self._running = False
 
     def _cleanup_partial_build(self) -> None:
@@ -208,12 +212,35 @@ class HeadlessApp:
     # =========================================================
     # BOOTSTRAP
     # =========================================================
-    def build(self) -> None:
+    def _start_background_services(self) -> None:
+        """Avvia (idempotente) i thread di osservabilita' watchdog/cleanup.
+        Separato da build() cosi' "componenti costruiti" e "servizi avviati"
+        sono stati distinti: il preflight costruisce senza avviare, un avvio
+        reale successivo puo' avviarli. Guard atomica (lock) per evitare un
+        doppio start in caso di build() concorrenti (rilievo Fugu/Fable)."""
+        with self._services_lock:
+            if self._services_started:
+                return
+            self.watchdog_service.start()
+            self.cleanup_service.start()
+            self._services_started = True
+
+    def build(self, start_services: bool = True) -> None:
         """
         Costruzione completa dei componenti.
         Safe anche dopo uno stop o un build fallito.
+
+        Con ``start_services=False`` costruisce il runtime SENZA avviare i
+        thread di osservabilita' (watchdog/cleanup): usato dal preflight
+        read-only, che deve valutare la readiness senza avviare nulla.
         """
         if self._built:
+            # Gia' costruito: avvia i servizi ORA se richiesto e non ancora
+            # avviati. Copre il caso "preflight (start_services=False) seguito da
+            # un avvio reale sullo stesso HeadlessApp": senza questo, watchdog e
+            # cleanup resterebbero permanentemente inattivi (rilievo GPT-5.6).
+            if start_services:
+                self._start_background_services()
             return
 
         self._reset_runtime_refs()
@@ -414,8 +441,8 @@ class HeadlessApp:
             except Exception:
                 pass
 
-            self.watchdog_service.start()
-            self.cleanup_service.start()
+            if start_services:
+                self._start_background_services()
 
             self._wire_bus()
             self._register_shutdown_hooks()
@@ -787,6 +814,207 @@ class HeadlessApp:
             raise RuntimeError("Runtime non disponibile dopo start")
 
     # =========================================================
+    # GO-LIVE PREFLIGHT (read-only)
+    # =========================================================
+    # Mappa blocker-code -> (cosa significa, come si rimedia). I codici sono
+    # quelli prodotti da RuntimeController.evaluate_live_readiness (fonte
+    # autorevole dei prerequisiti LIVE): il preflight li rende leggibili a
+    # schermo invece di lasciarli sepolti nel log.
+    _BLOCKER_REMEDIATION = {
+        "LIVE_NOT_ENABLED": (
+            "live_enabled e' False",
+            "Avvia con --live-enabled oppure imposta live_enabled=True nel DB.",
+        ),
+        "LIVE_READINESS_FLAG_NOT_OK": (
+            "Il flag live_readiness_ok non e' confermato",
+            "Conferma la readiness LIVE (live_readiness_ok=True nel DB) dopo la checklist go-live.",
+        ),
+        "LIVE_KEY_SOURCE_UNSAFE": (
+            "La chiave segreta non proviene da una sorgente sicura",
+            "Usa PICKFAIR_SECRET_KEY (env) o un file chiave valido (~/.pickfair/db.key).",
+        ),
+        "LIVE_HARD_STOP_CONFIG_MISSING": (
+            "Config hard-stop giornaliero mancante",
+            "Imposta i campi hard-stop (perdita giornaliera max) nella config LIVE.",
+        ),
+        "LIVE_HARD_STOP_CONFIG_INVALID": (
+            "Config hard-stop giornaliero non valida",
+            "Correggi i valori hard-stop (numerici e coerenti) nella config LIVE.",
+        ),
+        "KILL_SWITCH_ACTIVE": (
+            "Kill switch attivo",
+            "Disattiva il kill switch (--kill-switch-off o flag DB).",
+        ),
+        "SAFE_MODE_BLOCKING": (
+            "Safe mode sta bloccando il LIVE",
+            "Rimuovi la condizione di safe mode (kill switch / emergenza).",
+        ),
+        "LIVE_DEPENDENCY_MISSING": (
+            "Dipendenza LIVE assente o degradata (es. betfair_service disconnesso)",
+            "Verifica che betfair_service sia presente e connettibile (credenziali/cert).",
+        ),
+        "INVALID_EXECUTION_MODE": (
+            "execution_mode non valido",
+            "Usa SIMULATION o LIVE.",
+        ),
+        "CONTRADICTORY_STATE": (
+            "Stato contraddittorio (LIVE ma simulation_mode/live_enabled incoerenti)",
+            "Allinea execution_mode / live_enabled / simulation_mode.",
+        ),
+        "RUNTIME_NOT_INITIALIZED": (
+            "Runtime non inizializzato",
+            "Verifica il build del runtime (config/table_manager/...).",
+        ),
+        "RUNTIME_HALF_STARTED": (
+            "Runtime avviato a meta' (servizi non connessi)",
+            "Riavvia e verifica la connessione betfair/telegram.",
+        ),
+        "STARTUP_FAILED": (
+            "Errore di startup registrato",
+            "Consulta last_error/log e risolvi l'errore di avvio.",
+        ),
+        "READINESS_SIGNAL_UNKNOWN": (
+            "Segnale di readiness sconosciuto",
+            "Verifica lo stato del runtime (mode).",
+        ),
+        "RUNTIME_LOCKDOWN": (
+            "Runtime in lockdown",
+            "Rimuovi la condizione di lockdown (emergenza / riconciliazione).",
+        ),
+        # Reason di alto livello del deploy gate (fallback quando non ci sono
+        # blocker granulari, es. probe LIVE non OK).
+        "DEPLOY_BLOCKED_NOT_READY": (
+            "Deploy gate: readiness LIVE non pronta",
+            "Risolvi i blocker di readiness elencati o conferma live_readiness_ok.",
+        ),
+        "DEPLOY_BLOCKED_KILL_SWITCH": (
+            "Deploy gate: kill switch attivo",
+            "Disattiva il kill switch (--kill-switch-off o flag DB).",
+        ),
+        "DEPLOY_BLOCKED_BLOCKERS_PRESENT": (
+            "Deploy gate: blocker di readiness presenti",
+            "Risolvi i blocker elencati sopra.",
+        ),
+        "DEPLOY_BLOCKED_INVALID_STATE": (
+            "Deploy gate: stato non valido",
+            "Verifica execution_mode / live_enabled / readiness.",
+        ),
+        "LIVE_PROBE_NOT_READY": (
+            "Probe di readiness LIVE non OK (streaming/bankroll/reconciliation)",
+            "Verifica la salute di streaming, bankroll sync e reconciliation.",
+        ),
+    }
+
+    def _preflight_requested(self) -> bool:
+        # Check su argv (non su _parse_args) DELIBERATO: la decisione va presa
+        # PRIMA di build()/settings_service, per costruire in modalita'
+        # read-only (start_services=False). `--preflight` e' un flag "bare":
+        # gli unici argomenti con valore usano la forma inline `--opt=val`
+        # (es. --password=...), quindi lo scan e' sicuro.
+        return "--preflight" in [str(a).strip().lower() for a in sys.argv[1:]]
+
+    def _run_preflight(self) -> int:
+        """Valuta i prerequisiti LIVE e stampa una checklist leggibile.
+
+        [GO-LIVE PREFLIGHT] Read-only: usa lo STESSO gate di start()
+        (RuntimeController.get_deploy_gate_status, variante read-only di
+        enforce_deploy_gate: nessun side effect di log/attr), cosi' il verdicto
+        riflette esattamente cio' che start() deciderebbe. NON si connette a
+        Betfair ne' avvia il trading. Exit code: 0 pronto per LIVE, 2 non
+        pronto, 3 se non e' stato richiesto LIVE (nulla da valutare), 1 se il
+        runtime non e' stato costruito.
+        """
+        args = self._parse_args()
+        execution_mode = str(args.get("execution_mode") or "SIMULATION")
+        live_enabled = bool(args.get("live_enabled", False))
+        live_readiness_ok = bool(args.get("live_readiness_ok", False))
+
+        if self.runtime is None:
+            msg = "[PREFLIGHT] Runtime non disponibile dopo build"
+            logger.error(msg)
+            print(msg)
+            return 1  # errore di bootstrap/build (coerente con ops/preflight.md)
+
+        status = self.runtime.get_deploy_gate_status(
+            execution_mode=execution_mode,
+            live_enabled=live_enabled,
+            live_readiness_ok=live_readiness_ok,
+        )
+        report, exit_code = self._format_preflight_report(
+            status, execution_mode, live_enabled, live_readiness_ok
+        )
+        print(report)
+        logger.info("GO-LIVE PREFLIGHT\n%s", report)
+        return exit_code
+
+    def _append_blocker(self, lines, code, desc, remedy):
+        lines.append(f"  [X] {code}")
+        lines.append(f"        cosa   : {desc}")
+        lines.append(f"        rimedio: {remedy}")
+
+    def _format_preflight_report(self, status, execution_mode, live_enabled, live_readiness_ok):
+        """Costruisce (report_testuale, exit_code) dal deploy-gate status. Il
+        messaggio "PRONTO" e l'exit sono guidati da `allowed`, mai dalla sola
+        assenza di blocker. Exit: 0 GO, 2 NO-GO, 3 non-LIVE (nulla da valutare
+        -> fail-closed per l'uso come gate CI/script)."""
+        allowed = bool(status.get("allowed", False))
+        payload = (status.get("details") or {}).get("readiness_payload") or {}
+        level = str(payload.get("level") or status.get("readiness") or "NOT_READY")
+        blockers = [str(b) for b in (payload.get("blockers") or [])]
+        probe = (payload.get("details") or {}).get("probe") or {}
+        # Fail-closed nel display: probe assente -> NON assumere sano (rilievo Fugu).
+        probe_ok = bool(probe.get("ok", False))
+
+        lines = [
+            "=" * 64,
+            "PICKFAIR — GO-LIVE PREFLIGHT",
+            "=" * 64,
+            f"execution_mode richiesto : {execution_mode}",
+            f"live_enabled             : {live_enabled}",
+            f"live_readiness_ok        : {live_readiness_ok}",
+            f"readiness level          : {level}",
+            "-" * 64,
+        ]
+
+        # Non-LIVE: preflight LIVE non applicabile. Exit 3 (non 0): usato come
+        # gate CI/script senza --live NON deve passare "verde" (fail-closed).
+        if execution_mode.strip().upper() != "LIVE":
+            lines.append(
+                "execution_mode richiesto NON e' LIVE: preflight LIVE non "
+                "applicabile. Rilancia con --live --live-enabled per valutare la "
+                "readiness LIVE reale."
+            )
+            lines.append("=" * 64)
+            return "\n".join(lines), 3
+
+        if allowed:
+            lines.append("PRONTO PER LIVE — nessun blocker.")
+            lines.append("=" * 64)
+            return "\n".join(lines), 0
+
+        lines.append("NON PRONTO:")
+        shown = False
+        for code in blockers:
+            desc, remedy = self._BLOCKER_REMEDIATION.get(
+                code, ("(blocker non catalogato)", "Verifica lo stato runtime/log.")
+            )
+            self._append_blocker(lines, code, desc, remedy)
+            shown = True
+        if not probe_ok:
+            desc, remedy = self._BLOCKER_REMEDIATION["LIVE_PROBE_NOT_READY"]
+            self._append_blocker(lines, "LIVE_PROBE_NOT_READY", probe.get("reason") or desc, remedy)
+            shown = True
+        if not shown:
+            # Nessun blocker granulare: mostra le reason di alto livello del gate.
+            for reason in (status.get("reasons") or [status.get("reason") or "DEPLOY_BLOCKED_INVALID_STATE"]):
+                desc, remedy = self._BLOCKER_REMEDIATION.get(
+                    str(reason), ("Deploy gate NO-GO", "Consulta il deploy gate/log per il dettaglio.")
+                )
+                self._append_blocker(lines, reason, desc, remedy)
+        lines.append("=" * 64)
+        return "\n".join(lines), 2
+
+    # =========================================================
     # RUN
     # =========================================================
     def start(self) -> int:
@@ -794,8 +1022,17 @@ class HeadlessApp:
             logger.warning("HeadlessApp già in esecuzione")
             return 0
 
+        # --preflight va deciso PRIMA di build(): e' read-only e non deve avviare
+        # i servizi (watchdog/cleanup). Il check e' su argv perche' avviene prima
+        # che settings_service esista.
+        preflight = self._preflight_requested()
+
         try:
-            self.build()
+            self.build(start_services=not preflight)
+            if preflight:
+                # Read-only: valuta e stampa i prerequisiti LIVE, poi esce.
+                # NON esegue boot recovery ne' avvia il trading.
+                return self._run_preflight()
             self._run_boot_recovery()
         except Exception as exc:
             logger.exception("Errore bootstrap headless: %s", exc)
