@@ -53,6 +53,17 @@
       ],
       "max_files": 6
     },
+    "telegram_login_headless_credentials_371": {
+      "description": "Follow-up F-1 di #371 (emerso dal test VPS dell'owner: il codice di login non arrivava). Il comando `--telegram-login` leggeva api_id/api_hash SOLO dal DB (cifrati at-rest, database.py _ENCRYPTED_KEYS), ma sul VPS headless non c'e' la GUI per inserirli => credenziali vuote => nessun codice. Fix: `_run_telegram_login` ora risolve api_id/api_hash con precedenza flag CLI `--api-id`/`--api-hash` > env `TELEGRAM_API_ID`/`TELEGRAM_API_HASH` > DB, tramite l'helper puro statico `_resolve_telegram_credentials(argv, env, settings)`; se forniti da CLI/env vengono PERSISTITI nel DB (cifrati, via save_telegram_settings merge) per i login successivi. NON legge config.json di proposito (evita di incoraggiare segreti in un file committato, vedi F-2). Docs ops/telegram_login.md: flag/env + nota 'codice in-app (777000) non SMS' + nota chiave di cifratura (stesso utente/dir, no sudo, o PICKFAIR_SECRET_KEY fissa). Nessuna modifica a runtime/trading/gate/Betfair. Test hard PASS+BLOCK: resolver (CLI>env>DB, equals-form, flag-vuoto=>fallback DB, from_external) + persistenza end-to-end (creds CLI su DB vuoto salvate; BLOCK: pre-fix ignorate). La verifica reale con Telegram resta sul VPS.",
+      "allow_tests": true,
+      "files": [
+        "headless_main.py",
+        "tests/unit/test_telegram_login.py",
+        "ops/telegram_login.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 5
+    },
     "config_registry_pr_a_359": {
       "description": "Epic #359 (Config & Go-Live Console) PR-A: nuovo modulo config_registry.py, FONTE-DATO UNICA di sola lettura per GUI e headless. ConfigRegistry.entries() enumera i parametri configurabili (esecuzione/safety, Betfair, trading & money-management, Telegram, simulazione) come ConfigEntry{key,label,value,valid,required_for_live,source,remedy,is_secret}; i segreti (app_key/certificate/private_key/password) sono MASCHERATI (mai in chiaro). readiness_report() produce la checklist ✅/❌ dei prerequisiti LIVE RIUSANDO RuntimeController.evaluate_live_readiness (#350) - non reimplementa ne' indebolisce la logica del gate, la espone soltanto. NESSUNA UI, NESSUNA scrittura, NESSUNA modifica a core/services/gate. Test hard PASS+BLOCK (mascheramento segreti load-bearing, mappatura blocker->checklist, metadati). Docs ops/config_console.md.",
       "allow_tests": true,

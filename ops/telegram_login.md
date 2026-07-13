@@ -24,12 +24,39 @@ autenticarsi. Questo comando colma quel buco.
 
 ## Uso sul VPS: `--telegram-login`
 
-Prerequisito: `telegram.api_id` e `telegram.api_hash` già configurati nel DB
-(via GUI o direttamente nei settings).
+`api_id`/`api_hash` (da <https://my.telegram.org> → *API development tools*)
+si passano con i flag CLI **oppure** via env, e vengono **salvati nel DB
+(cifrati) al primo uso** — così i login successivi non li richiedono. Precedenza:
+**flag CLI → env → DB**.
 
 ```bash
+# opzione A — flag CLI (li salva nel DB cifrati per le volte successive)
+python headless_main.py --telegram-login --api-id 1234567 --api-hash abcdef0123...
+
+# opzione B — variabili d'ambiente
+TELEGRAM_API_ID=1234567 TELEGRAM_API_HASH=abcdef0123... python headless_main.py --telegram-login
+
+# opzione C — se già nel DB (via GUI o da un login precedente)
 python headless_main.py --telegram-login
 ```
+
+> Il comando **non** legge `config.json` (per non incoraggiare segreti in un file
+> committato): usa i flag/env o il DB.
+
+### ⚠️ Dove arriva il codice + chiave di cifratura
+- Il codice di verifica arriva **in-app** nella chat di servizio **"Telegram"
+  (contatto ufficiale, id 777000)**, **non** via SMS, se hai già una sessione
+  Telegram attiva (app sul telefono / Telegram Web). Guarda lì.
+- `api_id`/`api_hash`/`session_string` sono **cifrati at-rest**
+  (`database.py` `_ENCRYPTED_KEYS`) con una chiave derivata da
+  `PICKFAIR_SECRET_KEY` o da `~/.pickfair/db.key`. **Salva e fai il login con lo
+  stesso utente e dalla stessa directory** (il `pickfair.db` è relativo alla cwd),
+  **senza `sudo`** (cambia `HOME` → chiave diversa → decifratura fallita → campi
+  "vuoti"). In alternativa fissa la stessa `PICKFAIR_SECRET_KEY` per entrambi.
+  Nei log un mismatch appare come `secret_cipher: decrypt failed`.
+- Usa il numero in **formato internazionale** (`+39...`). Richieste ripetute
+  troppo ravvicinate → `FloodWaitError`: attendi i secondi indicati e riprova una
+  sola volta.
 
 Flusso interattivo (`HeadlessApp._telegram_login_flow`):
 

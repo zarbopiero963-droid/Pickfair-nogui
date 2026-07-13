@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import signal
+import os
 import sys
 import threading
 import time
@@ -950,9 +951,47 @@ class HeadlessApp:
         out(f"❌ Login non riuscito: {res.get('error')}")
         return 2, None
 
+    @staticmethod
+    def _resolve_telegram_credentials(argv, env, settings):
+        """Risolve api_id/api_hash per --telegram-login con precedenza:
+        flag CLI `--api-id`/`--api-hash` > env `TELEGRAM_API_ID`/`TELEGRAM_API_HASH`
+        > DB settings. Ritorna `(api_id, api_hash, from_external)`: `from_external`
+        e' True se almeno uno dei due proviene da CLI o env (=> va persistito nel
+        DB, cifrato, per i login futuri). Sul VPS headless non c'e' la GUI per
+        inserire le credenziali: questi due canali colmano il buco.
+
+        NON legge da `config.json` di proposito: eviterebbe di incoraggiare
+        segreti in un file committato (vedi hygiene config.json / follow-up F-2).
+        """
+        def _flag(name):
+            # supporta sia "--x VALUE" sia "--x=VALUE"
+            prefix = name + "="
+            tokens = list(argv or [])
+            for i, tok in enumerate(tokens):
+                t = str(tok)
+                if t == name:
+                    return str(tokens[i + 1]).strip() if i + 1 < len(tokens) else ""
+                if t.startswith(prefix):
+                    return t[len(prefix):].strip()
+            return ""
+
+        env = env or {}
+        cli_id = _flag("--api-id")
+        cli_hash = _flag("--api-hash")
+        env_id = str(env.get("TELEGRAM_API_ID") or "").strip()
+        env_hash = str(env.get("TELEGRAM_API_HASH") or "").strip()
+        api_id = (cli_id or env_id or str((settings or {}).get("api_id") or "")).strip()
+        api_hash = (cli_hash or env_hash or str((settings or {}).get("api_hash") or "")).strip()
+        from_external = bool(cli_id or cli_hash or env_id or env_hash)
+        return api_id, api_hash, from_external
+
     def _run_telegram_login(self) -> int:
         """Comando `--telegram-login`: autentica un userbot Telegram dal VPS
         (telefono+codice+2FA), genera la session_string e la salva nel DB.
+
+        api_id/api_hash: presi da `--api-id`/`--api-hash` (o env
+        `TELEGRAM_API_ID`/`TELEGRAM_API_HASH`), altrimenti dal DB; se forniti da
+        CLI/env vengono salvati nel DB (cifrati) per i login successivi.
 
         NON avvia il runtime/trading. Exit code: 0 login ok, 2 fallito.
         """
@@ -974,8 +1013,20 @@ class HeadlessApp:
             logger.exception("Lettura settings Telegram per --telegram-login fallita: %s", exc)
             print(f"❌ Errore lettura configurazione Telegram: {exc}")
             return 2
-        api_id = str(settings.get("api_id") or "").strip()
-        api_hash = str(settings.get("api_hash") or "").strip()
+        api_id, api_hash, from_external = self._resolve_telegram_credentials(
+            sys.argv[1:], os.environ, settings
+        )
+        # Se api_id/api_hash arrivano da CLI/env (setup headless), persistili nel
+        # DB (cifrati) cosi' i login futuri non richiedono di ripassarli.
+        if from_external and api_id and api_hash:
+            merged = dict(settings)
+            merged["api_id"] = api_id
+            merged["api_hash"] = api_hash
+            try:
+                db.save_telegram_settings(merged)
+                print("💾 api_id/api_hash salvati nel DB (cifrati) per i prossimi login.")
+            except Exception as exc:
+                logger.warning("Persistenza api_id/api_hash fallita: %s", exc)
         try:
             listener = TelegramListener(int(api_id or 0), api_hash, db=db)
         except Exception as exc:
