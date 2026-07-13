@@ -234,7 +234,10 @@ class _FakeRuntimeLiveBlocked:
         self.enforce_calls.append((execution_mode, live_enabled, live_readiness_ok, boot))
         return _status(False, ["LIVE_NOT_ENABLED"])
 
-    def start(self, **kwargs):
+    @staticmethod
+    def start(**_kwargs):
+        # Interrompe start() subito DOPO la diagnostica (che il gate reale
+        # rifiuterebbe comunque): al test basta osservare lo stdout emesso.
         raise RuntimeError("stop-after-diagnostics")
 
 

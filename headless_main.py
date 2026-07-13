@@ -1023,19 +1023,24 @@ class HeadlessApp:
         return "\n".join(lines), 2
 
     def _emit_live_nogo_diagnostics(self, deploy_gate, execution_mode, live_enabled, live_readiness_ok) -> None:
-        """#358: rende VISIBILE a schermo il motivo del NO-GO del deploy gate
-        all'avvio LIVE (blocker + rimedio), non solo sepolto nel log.
+        """Stampa a schermo la checklist NO-GO del deploy gate all'avvio LIVE.
 
-        Riusa la stessa checklist del preflight (`_format_preflight_report`):
-        cosi' un avvio `--live` senza i prerequisiti (es. senza `--live-enabled`)
-        stampa esplicitamente cosa manca invece di ripiegare in silenzio. E'
-        puramente diagnostico: NON tocca la logica del gate ne' l'esito di
-        `start()` (l'enforcement resta in `RuntimeController.start`)."""
+        #358: rende VISIBILE il motivo del NO-GO (blocker + rimedio) invece di
+        lasciarlo sepolto nel log. Riusa la stessa checklist del preflight
+        (`_format_preflight_report`): cosi' un avvio `--live` senza i
+        prerequisiti (es. senza `--live-enabled`) stampa esplicitamente cosa
+        manca invece di ripiegare in silenzio. E' puramente diagnostico: NON
+        tocca la logica del gate ne' l'esito di `start()` (l'enforcement resta
+        in `RuntimeController.start`).
+        """
         report, _ = self._format_preflight_report(
             deploy_gate, execution_mode, live_enabled, live_readiness_ok
         )
         print(report)
-        logger.info("[DEPLOY GATE] Diagnostica NO-GO LIVE:\n%s", report)
+        # WARNING (non INFO): la diagnostica va preservata nei log anche in
+        # produzione dove il livello e' filtrato a WARNING+, coerente col
+        # warning "[DEPLOY GATE] NO-GO" che la precede.
+        logger.warning("[DEPLOY GATE] Diagnostica NO-GO LIVE:\n%s", report)
 
     # =========================================================
     # RUN
