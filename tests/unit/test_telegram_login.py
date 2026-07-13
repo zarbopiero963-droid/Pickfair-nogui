@@ -178,15 +178,20 @@ def test_request_code_send_code_failure_cleans_up_client():
 
 
 def test_stop_cleans_up_abandoned_login():
-    # BLOCK (Fugu #371): request_code senza sign_in NON deve lasciare il client
-    # di login orfano; stop() lo chiude (disconnect + loop fermato).
+    # BLOCK (Fugu/CodeRabbit #371): request_code senza sign_in NON deve lasciare
+    # il client di login orfano; stop() lo chiude DAVVERO (disconnect + loop
+    # chiuso + thread terminato), non solo azzerando i riferimenti.
     fake = _FakeClient(behavior="ok")
     lis = _listener(fake)
-    lis.request_code("+39")
+    assert lis.request_code("+39")["ok"] is True
+    loop = lis._login_loop
+    thread = lis._login_thread
     assert lis._login_client is not None
     lis.stop()
     assert lis._login_client is None
     assert ("disconnect",) in fake.calls
+    assert loop.is_closed()
+    assert not thread.is_alive()
 
 
 # ---- headless --telegram-login: flusso interattivo --------------------------

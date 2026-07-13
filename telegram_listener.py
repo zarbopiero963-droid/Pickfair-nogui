@@ -144,17 +144,18 @@ class TelegramListener:
     # LIFECYCLE
     # =========================================================
     def start(self, monitored_chats: Optional[List[Any]] = None):
-        if self.running:
-            return {"started": True, "reason": "already_running", "chat_count": len(self.monitored_chats)}
-
-        # Mutua esclusione login/runtime (rilievo Fugu/GPT/GLM): un login
-        # interattivo pendente/abbandonato non deve convivere col runtime.
+        # Mutua esclusione login/runtime (rilievo Fugu/GPT/GLM/CodeRabbit): un
+        # login interattivo pendente/abbandonato non deve convivere col runtime.
+        # Cleanup PRIMA del guard already_running, cosi' vale su OGNI chiamata.
         # Nessuna race col login: request_code gira solo nel comando standalone
         # `--telegram-login` (il processo esce prima di start()) e la GUI usa
         # TelegramController, quindi request_code e start() non sono mai
         # concorrenti sulla stessa istanza; _cleanup_login e' comunque difensivo
         # (gestisce lo stato None, join/close idempotenti).
         self._cleanup_login()
+
+        if self.running:
+            return {"started": True, "reason": "already_running", "chat_count": len(self.monitored_chats)}
 
         if monitored_chats is not None:
             self.set_monitored_chats(monitored_chats)
@@ -215,16 +216,16 @@ class TelegramListener:
         }
 
     def stop(self):
+        # Un login interattivo abbandonato (request_code senza sign_in) lascerebbe
+        # il client/loop di login vivi (connessione Telethon orfana): chiudili su
+        # OGNI stop, anche se il runtime era gia' STOPPED (rilievo Fugu/CodeRabbit).
+        self._cleanup_login()
+
         if self.state == "STOPPED" and not self.running:
             return {"stopped": True, "reason": "already_stopped", "state": self.state}
 
         self.intentional_stop = True
         self.reconnect_in_progress = False
-
-        # Un login interattivo abbandonato (request_code senza sign_in) lascerebbe
-        # il client/loop di login vivi (connessione Telethon orfana): chiudili
-        # quando il listener si ferma (rilievo Fugu #371).
-        self._cleanup_login()
 
         loop, client = self._runtime_loop, self._client
         if loop is not None and client is not None and not loop.is_closed():
@@ -517,7 +518,13 @@ class TelegramListener:
         if loop is None:
             raise RuntimeError("login loop non inizializzato")
         fut = asyncio.run_coroutine_threadsafe(coro, loop)
-        return fut.result(timeout=timeout)
+        try:
+            return fut.result(timeout=timeout)
+        except Exception:
+            # Su timeout/errore cancella la coroutine: non lasciarla pendente sul
+            # loop di login che _cleanup_login sta per fermare/chiudere (Fugu/CR).
+            fut.cancel()
+            raise
 
     def _create_login_client(self):
         # Sessione VUOTA: il login serve a GENERARE una nuova session_string.
