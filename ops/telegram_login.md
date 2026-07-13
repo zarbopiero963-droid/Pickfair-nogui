@@ -32,17 +32,22 @@ tools*. Precedenza di risoluzione:
   **chiesto con input nascosto** (`getpass`). **Non** si passa da riga di comando:
   un `--api-hash` sarebbe visibile in `ps`/`/proc` e nella shell history.
 
-Le credenziali fornite da CLI/env sono **persistite nel DB (cifrate) solo dopo un
-login riuscito** (così credenziali errate non sovrascrivono quelle valide). Il
-salvataggio è **best-effort**: se emette un warning di persistenza, i login
-successivi potrebbero richiedere di nuovo le credenziali.
+Le credenziali fornite da CLI/env — **incluso l'`api_hash` digitato all'input
+nascosto** — sono **persistite nel DB (cifrate) solo dopo un login riuscito**
+(così credenziali errate non sovrascrivono quelle valide). Il salvataggio **non**
+è silenzioso: se fallisce il login è comunque avvenuto ma il comando esce con
+codice `2` (vedi «Exit code» sotto), così lo script chiamante se ne accorge; i
+login successivi potrebbero richiedere di nuovo le credenziali.
 
 ```bash
 # api_id via flag, api_hash chiesto con input nascosto (consigliato)
 python headless_main.py --telegram-login --api-id 1234567
 
-# api_id + api_hash via env (evita la shell history salvandoli in un file/systemd)
-TELEGRAM_API_ID=1234567 TELEGRAM_API_HASH=abcdef0123... python headless_main.py --telegram-login
+# api_id + api_hash via env — leggi il segreto SENZA scriverlo (niente shell history)
+export TELEGRAM_API_ID=1234567
+read -rs TELEGRAM_API_HASH; export TELEGRAM_API_HASH   # incolla l'hash: non viene mostrato
+python headless_main.py --telegram-login
+# in alternativa: un file d'ambiente a permessi ristretti (systemd EnvironmentFile / `set -a; . ./tg.env`)
 
 # credenziali già nel DB (da GUI o da un login precedente)
 python headless_main.py --telegram-login
@@ -76,8 +81,11 @@ Flusso interattivo (`HeadlessApp._telegram_login_flow`):
 4. Al successo **salva la `session_string`** nel DB (`save_telegram_settings`,
    merge sui settings esistenti, `enabled=True`) ed esce con codice `0`.
 
-Exit code: `0` login ok, `2` login fallito o credenziali mancanti. Il comando
-**non** avvia il runtime/trading: costruisce solo il DB e fa il login.
+Exit code: `0` login ok **e** configurazione salvata; `2` login fallito,
+credenziali mancanti/non valide, **oppure login riuscito ma persistenza fallita**
+(in quest'ultimo caso l'autenticazione è avvenuta ma la `session_string` non è
+stata scritta: rifai il login o salva da GUI). Il comando **non** avvia il
+runtime/trading: costruisce solo il DB e fa il login.
 
 Dopo il login, riavvia in modalità normale: il listener userà la
 `session_string` salvata (in `_runtime_async`, `is_user_authorized()` sarà True).

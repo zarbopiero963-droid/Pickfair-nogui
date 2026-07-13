@@ -372,11 +372,21 @@ def test_run_telegram_login_does_not_persist_on_failed_login(monkeypatch):
     db = _login_db({"api_id": "OLD", "api_hash": "OLDH", "session_string": "OLDS"})
     app = HeadlessApp.__new__(HeadlessApp)
     app.db = db
-    monkeypatch.setattr(sys, "argv", ["headless_main.py", "--telegram-login", "--api-id", "BAD"])
+    # api_id numerico VALIDO (CodeRabbit): con "BAD" `int()` solleverebbe prima del
+    # flow, facendo passare il test per il motivo sbagliato. Con "999" il flow
+    # viene davvero raggiunto e ritorna (2, None) = login fallito -> nessun save.
+    monkeypatch.setattr(sys, "argv", ["headless_main.py", "--telegram-login", "--api-id", "999"])
     monkeypatch.setenv("TELEGRAM_API_HASH", "BADH")
-    monkeypatch.setattr(HeadlessApp, "_telegram_login_flow", staticmethod(lambda *a, **k: (2, None)))
+    flow_called = {"v": False}
+
+    def _flow(*a, **k):
+        flow_called["v"] = True
+        return (2, None)
+
+    monkeypatch.setattr(HeadlessApp, "_telegram_login_flow", staticmethod(_flow))
     rc = app._run_telegram_login()
     assert rc == 2
+    assert flow_called["v"] is True, "il flow di login deve essere davvero eseguito"
     assert db.saved is None, "login fallito NON deve persistere/sovrascrivere le creds"
 
 
