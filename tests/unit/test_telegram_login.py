@@ -262,3 +262,17 @@ def test_login_flow_request_code_failure():
     )
     assert code == 2
     assert ss is None
+
+
+def test_run_telegram_login_settings_read_error_returns_2():
+    # BLOCK (CodeRabbit Major): se db.get_telegram_settings() solleva, il comando
+    # --telegram-login deve rispettare il contratto 0/2 (return 2) e NON propagare
+    # un traceback. Prima del fix la lettura dei settings era fuori da try/except,
+    # quindi l'eccezione risaliva e il comando terminava con stacktrace (≠ 2).
+    class _RaisingDB:
+        def get_telegram_settings(self):
+            raise RuntimeError("db boom")
+
+    app = HeadlessApp.__new__(HeadlessApp)
+    app.db = _RaisingDB()
+    assert app._run_telegram_login() == 2

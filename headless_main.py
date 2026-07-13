@@ -968,7 +968,12 @@ class HeadlessApp:
                 print(f"❌ Errore inizializzazione DB: {exc}")
                 return 2
 
-        settings = db.get_telegram_settings()
+        try:
+            settings = db.get_telegram_settings()
+        except Exception as exc:
+            logger.exception("Lettura settings Telegram per --telegram-login fallita: %s", exc)
+            print(f"❌ Errore lettura configurazione Telegram: {exc}")
+            return 2
         api_id = str(settings.get("api_id") or "").strip()
         api_hash = str(settings.get("api_hash") or "").strip()
         try:
