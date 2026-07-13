@@ -4,6 +4,20 @@
     "max_files": 8
   },
   "tasks": {
+    "deploy_gate_probe_boot_readiness_361": {
+      "description": "#361 (opzione B owner). Fix deadlock del deploy gate LIVE al boot: il probe (observability/runtime_probe.py::get_live_readiness_report) bloccava LIVE perche' (a) i componenti senza checker (database/runtime_controller/shutdown_manager) risultavano UNKNOWN=blocker pur avendo gia' fallback_status=READY, e (b) betfair_service era DEGRADED 'disconnected' al boot (la connessione avviene in start(), DOPO il gate) -> deadlock. Due rilassamenti con severita' DIVERSA (GPT-5.6 Terra + Fable 5): B-1 (no-checker) e' SEMPRE (boot e runtime) perche' un componente strutturalmente senza is_ready non diventera' mai 'ready' e renderlo bloccante a runtime disabiliterebbe LIVE in modo permanente (is_live_allowed/_on_signal_received/watchdog rifiuterebbero ogni segnale); ristretto a reason 'no-checker' + fallback_status READY, altri UNKNOWN (es. trading_engine 'ready_without_health') restano fail-closed. B-2 (disconnected) e' SOLO al boot: rilassa i DEGRADED 'disconnected' solo per betfair_service (allowlist _BOOT_PENDING_CONNECTION_COMPONENTS) e solo senza degrado reale di IO/streaming; a runtime la disconnessione resta bloccante (fix del fail-open sul percorso ordini LIVE). B-2 e' cablato via flag esplicito boot: get_deploy_gate_status(boot=...) -> _get_probe_live_readiness_report(boot=...) -> get_live_readiness_report(tolerate_pending_connection=boot). boot=True SOLO nel deploy gate di start() e nei check pre-connessione headless (preflight + pre-start LIVE gate). I gate a RUNTIME restano STRICT (default False). Il kwarg e' passato SOLO se il getter dichiara esplicitamente il parametro (inspect.signature; niente try/except TypeError che mascherebbe TypeError interni, niente **kwargs che verrebbe ignorato in silenzio). Test hard PASS+BLOCK a livello probe E controller (no-checker boot+runtime, disconnected boot-only, mixed-degradation, propagazione enforce_deploy_gate/get_deploy_gate_status(boot), inspect internal-TypeError).",
+      "allow_tests": true,
+      "files": [
+        "observability/runtime_probe.py",
+        "core/runtime_controller.py",
+        "headless_main.py",
+        "tests/observability/test_live_readiness_report.py",
+        "tests/unit/test_headless_preflight.py",
+        "ops/deploy_gate.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 8
+    },
     "config_golive_preflight_headless": {
       "description": "#359 PR-B (Config & Go-Live Console). Aggiunge il comando headless `--preflight`: valuta i prerequisiti LIVE via RuntimeController.evaluate_live_readiness (fonte autorevole) e stampa una checklist leggibile a schermo (stdout + log) con blocker + rimedio, invece di lasciare il motivo del NO-GO sepolto nel log. Read-only: NON si connette a Betfair, NON avvia il trading, NON modifica la logica dei gate di sicurezza. Exit code 0 se pronto per LIVE, 2 altrimenti. Test hard PASS+BLOCK.",
       "allow_tests": true,

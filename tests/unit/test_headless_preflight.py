@@ -35,18 +35,22 @@ def _status(allowed, blockers, *, ready=None, level=None, probe_ok=True, probe_r
 class _FakeRuntimeReady:
     def __init__(self, **kwargs):
         self.calls = []
+        self.boot_flags = []
 
-    def get_deploy_gate_status(self, *, execution_mode=None, live_enabled=None, live_readiness_ok=None):
+    def get_deploy_gate_status(self, *, execution_mode=None, live_enabled=None, live_readiness_ok=None, boot=False):
         self.calls.append((execution_mode, live_enabled, live_readiness_ok))
+        self.boot_flags.append(boot)
         return _status(True, [])
 
 
 class _FakeRuntimeBlocked:
     def __init__(self, **kwargs):
         self.calls = []
+        self.boot_flags = []
 
-    def get_deploy_gate_status(self, *, execution_mode=None, live_enabled=None, live_readiness_ok=None):
+    def get_deploy_gate_status(self, *, execution_mode=None, live_enabled=None, live_readiness_ok=None, boot=False):
         self.calls.append((execution_mode, live_enabled, live_readiness_ok))
+        self.boot_flags.append(boot)
         return _status(False, ["LIVE_READINESS_FLAG_NOT_OK", "LIVE_HARD_STOP_CONFIG_MISSING"])
 
 
@@ -86,6 +90,9 @@ def test_preflight_blocked_prints_checklist_and_returns_2(monkeypatch, capsys):
     assert "hard-stop" in out
     # Ha interrogato il gate reale con i flag passati (--live)
     assert runtime.calls and runtime.calls[0][0] == "LIVE"
+    # #361/#362: il preflight e' un check pre-connessione e usa il gate di boot
+    # (boot=True), cosi' riflette esattamente cio' che start() deciderebbe.
+    assert runtime.boot_flags == [True]
 
 
 @pytest.mark.unit

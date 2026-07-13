@@ -935,10 +935,18 @@ class HeadlessApp:
             print(msg)
             return 1  # errore di bootstrap/build (coerente con ops/preflight.md)
 
+        # boot=True: il preflight e' un check PRE-connessione (build con
+        # start_services=False, nessun connect a Betfair) e deve riflettere
+        # esattamente cio' che start() deciderebbe al boot. start() usa il
+        # gate in fase boot (tollera i soli componenti 'pending connection',
+        # es. betfair disconnesso perche' si connette dopo il gate); senza
+        # boot=True il preflight sarebbe piu' severo di start() e segnalerebbe
+        # un falso blocker per betfair disconnesso.
         status = self.runtime.get_deploy_gate_status(
             execution_mode=execution_mode,
             live_enabled=live_enabled,
             live_readiness_ok=live_readiness_ok,
+            boot=True,
         )
         report, exit_code = self._format_preflight_report(
             status, execution_mode, live_enabled, live_readiness_ok
@@ -1068,10 +1076,17 @@ class HeadlessApp:
 
         try:
             if execution_mode == "LIVE":
+                # boot=True: questo check gira PRIMA di runtime.start() (dove
+                # Betfair si connette), quindi e' una valutazione di boot,
+                # pre-connessione. Deve riflettere cio' che start() deciderebbe:
+                # senza boot=True loggerebbe un falso "[DEPLOY GATE] NO-GO" per
+                # la disconnessione attesa di Betfair. L'enforcement reale resta
+                # dentro start() (anch'esso boot=True).
                 deploy_gate = self.runtime.enforce_deploy_gate(
                     execution_mode=execution_mode,
                     live_enabled=live_enabled,
                     live_readiness_ok=live_readiness_ok,
+                    boot=True,
                 )
                 if not deploy_gate.get("allowed", False):
                     logger.warning(

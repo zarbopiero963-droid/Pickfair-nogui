@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import logging
 import math
 import threading
@@ -786,7 +787,7 @@ class RuntimeController:
             "valid": not missing_fields and not invalid_fields,
         }
 
-    def _get_probe_live_readiness_report(self) -> tuple[bool, str, dict]:
+    def _get_probe_live_readiness_report(self, *, boot: bool = False) -> tuple[bool, str, dict]:
         probe = getattr(self, "runtime_probe", None)
         probe_required = bool(getattr(self, "enforce_probe_readiness_gate", False))
         if probe is None:
@@ -800,8 +801,32 @@ class RuntimeController:
                 return False, "probe_report_getter_missing", {}
             return True, "probe_optional_getter_missing", {}
 
+        # SOLO al boot (pre-connessione, dentro start()) si tollerano i
+        # componenti 'pending connection' (betfair si connette in start(),
+        # dopo il gate). A runtime (watchdog / is_live_allowed /
+        # _on_signal_received) resta piena severita': una disconnessione
+        # durante il trading DEVE far fallire il gate (fail-closed).
+        tolerate_pending_connection = bool(boot)
+        # Passa il kwarg SOLO se il getter dichiara ESPLICITAMENTE il parametro
+        # 'tolerate_pending_connection'. Non usare try/except TypeError:
+        # mascherebbe un TypeError sollevato *dentro* get_live_readiness_report,
+        # degradando silenziosamente a strict. Non basarsi su **kwargs: un getter
+        # con **kwargs che NON gestisce il parametro lo ignorerebbe in silenzio,
+        # girando strict al boot (falso NO-GO / deadlock) senza che ce ne
+        # accorgiamo — match sul nome esplicito, cosi' il comportamento e' certo.
+        pass_kwarg = False
+        if tolerate_pending_connection:
+            try:
+                sig = inspect.signature(getter)
+            except (TypeError, ValueError):
+                sig = None
+            if sig is not None:
+                pass_kwarg = "tolerate_pending_connection" in sig.parameters
         try:
-            report = getter()
+            if pass_kwarg:
+                report = getter(tolerate_pending_connection=True)
+            else:
+                report = getter()
         except Exception:
             logger.exception("Errore lettura runtime probe live readiness report")
             return False, "probe_report_exception", {}
@@ -888,6 +913,7 @@ class RuntimeController:
         execution_mode: Optional[str] = None,
         live_enabled: Optional[bool] = None,
         live_readiness_ok: Optional[bool] = None,
+        boot: bool = False,
     ) -> dict:
         mode = str(execution_mode if execution_mode is not None else self.execution_mode or "SIMULATION").strip().upper()
         mode = mode if mode in {"SIMULATION", "LIVE"} else "SIMULATION"
@@ -902,7 +928,7 @@ class RuntimeController:
         probe_report = {}
 
         if mode == "LIVE":
-            probe_ok, probe_reason, probe_report = self._get_probe_live_readiness_report()
+            probe_ok, probe_reason, probe_report = self._get_probe_live_readiness_report(boot=boot)
             if not probe_ok:
                 readiness["ready"] = False
 
@@ -1562,10 +1588,15 @@ class RuntimeController:
                     "status": status,
                 }
 
+        # boot=True: gate di bootstrap, PRE-connessione. Tollera SOLO i
+        # componenti 'pending connection' (betfair si connette piu' sotto in
+        # start(), dopo il gate). I gate a runtime (is_live_allowed,
+        # _on_signal_received, watchdog) restano strict => fail-closed.
         deploy_gate = self.enforce_deploy_gate(
             execution_mode=requested_execution_mode,
             live_enabled=requested_live_enabled,
             live_readiness_ok=live_readiness_ok,
+            boot=True,
         )
         readiness = dict((deploy_gate.get("details") or {}).get("readiness_payload") or {})
 

@@ -734,7 +734,87 @@ class RuntimeProbe:
             "readiness": readiness,
             "deploy_gate": deploy_gate,
         }
-    def get_live_readiness_report(self) -> Dict[str, Any]:
+    # Reason codes emessi dai probe dei componenti (evita literal ripetuti).
+    _REASON_NO_CHECKER = "no-checker"
+    _REASON_DISCONNECTED = "disconnected"
+    # Componenti la cui *disconnessione* al boot e' attesa (la connessione
+    # avviene in start(), DOPO il deploy gate). Allowlist esplicita: nessun
+    # altro componente 'disconnected' viene tollerato.
+    _BOOT_PENDING_CONNECTION_COMPONENTS = frozenset({"betfair_service"})
+
+    def _boot_tolerable_disconnected(self, name: str, component: Dict[str, Any]) -> bool:
+        """True se il componente e' un DEGRADED tollerabile SOLO al boot: nella
+        allowlist pending-connection, reason 'disconnected', e SENZA altri
+        degradi reali nei details (external_io / streaming_feed). Un DEGRADED
+        misto (disconnected + io/stream degradato) NON viene promosso."""
+        if name not in self._BOOT_PENDING_CONNECTION_COMPONENTS:
+            return False
+        if str(component.get("reason") or "").strip().lower() != self._REASON_DISCONNECTED:
+            return False
+        details = component.get("details") or {}
+        io = details.get("external_io") or {}
+        if str(io.get("last_status") or "").strip().upper() in {"DEGRADED", "UNAVAILABLE", "SLOW"}:
+            return False
+        stream = details.get("streaming_feed") or {}
+        if (
+            bool(stream.get("auth_degraded"))
+            or int(stream.get("keepalive_failure_count", 0) or 0) > 0
+            or bool(stream.get("degraded_503"))
+        ):
+            return False
+        return True
+
+    def _normalize_component_status(self, name: str, component: Dict[str, Any], *, tolerate_pending_connection: bool) -> str:
+        """Status normalizzato del componente.
+
+        Due rilassamenti, con severita' diversa:
+        - B-1 (no-checker): SEMPRE (boot e runtime). Un componente
+          strutturalmente senza `is_ready` (reason 'no-checker') non espone un
+          segnale di salute: non e' un blocker. NON e' phase-aware perche'
+          renderlo bloccante a runtime disabiliterebbe LIVE in modo permanente
+          (non diventera' mai 'ready', manca l'interfaccia). Questo NON e' un
+          fail-open: l'assenza di checker non e' un degrado reale, e la
+          presenza/connettibilita' e' verificata altrove (evaluate_live_readiness).
+        - B-2 (disconnected): SOLO al boot (tolerate_pending_connection=True).
+          A runtime la disconnessione e' un degrado reale e resta bloccante
+          (fail-closed): e' il fix del fail-open sul percorso ordini LIVE.
+        """
+        status = component.get("status", "UNKNOWN")
+        normalized = str(status).upper() if status is not None else "UNKNOWN"
+        reason_norm = str(component.get("reason") or "").strip().lower()
+        details = component.get("details") or {}
+
+        # B-1 (SEMPRE): no-checker con fallback READY. Ristretto a 'no-checker'
+        # + fallback_status: altri UNKNOWN (es. trading_engine
+        # 'ready_without_health') restano fail-closed.
+        if (
+            normalized == "UNKNOWN"
+            and reason_norm == self._REASON_NO_CHECKER
+            and str(details.get("fallback_status") or "").strip().upper() == "READY"
+        ):
+            return "READY"
+
+        if not tolerate_pending_connection:
+            return normalized
+
+        # B-2 (SOLO boot): SOLO i componenti attesi-pending-connection (allowlist,
+        # es. betfair), DEGRADED solo perche' 'disconnected' e senza altri degradi.
+        if normalized == "DEGRADED" and self._boot_tolerable_disconnected(name, component):
+            return "READY"
+
+        return normalized
+
+    def get_live_readiness_report(self, *, tolerate_pending_connection: bool = False) -> Dict[str, Any]:
+        """Report di readiness LIVE aggregato dai componenti.
+
+        ``tolerate_pending_connection`` va passato True SOLO dal deploy gate di
+        **boot** (pre-connessione): rilassa i componenti attesi-pending
+        (betfair 'disconnected') e quelli strutturalmente senza checker, perche'
+        al boot la connessione non e' ancora avvenuta (parte in ``start()``).
+        Ogni chiamante di **runtime** (watchdog, is_live_allowed, _on_signal_received)
+        usa il default False e mantiene la piena severita': una disconnessione
+        DURANTE il trading resta rilevata (fail-closed).
+        """
         health = self.collect_health()
 
         blockers = []
@@ -742,9 +822,11 @@ class RuntimeProbe:
         unknown = []
 
         for name, component in health.items():
-            status = component.get("status", "UNKNOWN")
             reason = component.get("reason")
-            normalized = str(status).upper() if status is not None else "UNKNOWN"
+            normalized = self._normalize_component_status(
+                name, component, tolerate_pending_connection=tolerate_pending_connection
+            )
+
             blocker_code = self._blocker_code_for_component(
                 component_name=name,
                 status=normalized,

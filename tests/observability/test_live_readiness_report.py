@@ -278,3 +278,313 @@ def test_runtime_controller_readiness_surfaces_non_finite_hard_stop_invalid_stat
 
     assert "max_daily_loss" in state["invalid_fields"]
     assert "LIVE_HARD_STOP_CONFIG_INVALID" in readiness["blockers"]
+
+
+def _no_checker_probe():
+    # db/runtime_controller/shutdown_manager senza is_ready -> 'no-checker'
+    # UNKNOWN (con fallback_status=READY). Sono presenti ma non espongono
+    # un'interfaccia di readiness.
+    return RuntimeProbe(
+        db=object(),
+        trading_engine=_TradingReady(),
+        runtime_controller=object(),
+        betfair_service=_BetfairConnected(),
+        safe_mode=_SafeModeInactive(),
+        shutdown_manager=object(),
+    )
+
+
+def test_no_checker_components_do_not_block_live_readiness_at_boot():
+    # #361 B-1: al boot i componenti 'no-checker' non devono bloccare (erano
+    # blocker spuri -> deadlock LIVE al boot).
+    report = _no_checker_probe().get_live_readiness_report(tolerate_pending_connection=True)
+
+    assert report["ready"] is True
+    assert report["level"] == "READY"
+    assert report["blockers"] == []
+
+
+def test_no_checker_components_do_not_block_live_readiness_at_runtime():
+    # #361 B-1 (GPT-5.6 Terra + Fable 5, BLOCK): il rilassamento 'no-checker'
+    # NON e' phase-aware. A runtime (default: watchdog / is_live_allowed /
+    # _on_signal_received) i componenti strutturalmente senza checker
+    # (database/runtime_controller/shutdown_manager, che non hanno is_ready)
+    # NON devono bloccare: renderli UNKNOWN=blocker disabiliterebbe LIVE in
+    # modo permanente dopo un avvio riuscito. Differiscono da 'disconnected'
+    # (B-2), che invece a runtime resta bloccante (vedi test sotto).
+    report = _no_checker_probe().get_live_readiness_report()
+
+    assert report["ready"] is True
+    assert report["level"] == "READY"
+    assert report["blockers"] == []
+
+
+def test_ready_without_health_still_fails_closed_in_both_phases():
+    # #361 B-1 (BLOCK): il rilassamento e' ristretto a reason 'no-checker'.
+    # Un UNKNOWN diverso (trading_engine 'ready_without_health') resta
+    # fail-closed sia al boot sia a runtime.
+    probe = RuntimeProbe(
+        db=_Ready(),
+        trading_engine=_TradingUnknown(),
+        runtime_controller=_Ready(),
+        betfair_service=_BetfairConnected(),
+        safe_mode=_SafeModeInactive(),
+        shutdown_manager=_Ready(),
+    )
+
+    for report in (
+        probe.get_live_readiness_report(),
+        probe.get_live_readiness_report(tolerate_pending_connection=True),
+    ):
+        assert report["ready"] is False
+        assert report["level"] == "NOT_READY"
+        assert "trading_engine" in report["details"]["unknown_components"]
+
+
+def test_boot_gate_tolerates_disconnected_but_runtime_does_not():
+    # #361 B-2: al boot betfair 'disconnected' e' atteso (connette in start());
+    # a runtime (default) la disconnessione resta DEGRADED (monitoraggio intatto).
+    probe = RuntimeProbe(
+        db=_Ready(),
+        trading_engine=_TradingReady(),
+        runtime_controller=_Ready(),
+        betfair_service=_BetfairDisconnected(),
+        safe_mode=_SafeModeInactive(),
+        shutdown_manager=_Ready(),
+    )
+
+    # Default (watchdog/runtime): BLOCK -> disconnessione ancora segnalata.
+    assert probe.get_live_readiness_report()["level"] == "DEGRADED"
+
+    # Boot gate: tollera la connessione pendente -> READY.
+    boot = probe.get_live_readiness_report(tolerate_pending_connection=True)
+    assert boot["ready"] is True
+    assert boot["level"] == "READY"
+
+
+def test_boot_gate_does_not_tolerate_real_degraded():
+    # #361: il rilassamento vale SOLO per 'disconnected'. Un DEGRADED reale
+    # (is_ready False -> 'unhealthy') resta bloccante anche al boot.
+    probe = RuntimeProbe(
+        db=_Ready(),
+        trading_engine=_TradingReady(),
+        runtime_controller=_Ready(),
+        betfair_service=_BetfairConnected(),
+        safe_mode=_SafeModeInactive(),
+        shutdown_manager=_NotReady(),
+    )
+
+    boot = probe.get_live_readiness_report(tolerate_pending_connection=True)
+
+    assert boot["ready"] is False
+    assert boot["level"] == "DEGRADED"
+
+
+def test_boot_does_not_promote_mixed_degradation_or_non_allowlisted():
+    # #361 (CodeRabbit Major): il rilassamento 'disconnected' vale SOLO per la
+    # allowlist pending-connection (betfair) e SOLO senza altri degradi reali.
+    probe = RuntimeProbe(
+        db=_Ready(),
+        trading_engine=_TradingReady(),
+        runtime_controller=_Ready(),
+        betfair_service=_BetfairConnected(),
+        safe_mode=_SafeModeInactive(),
+        shutdown_manager=_Ready(),
+    )
+
+    # betfair 'disconnected' MA con streaming auth degradato -> NON promosso.
+    mixed = {
+        "status": "DEGRADED",
+        "reason": "disconnected",
+        "details": {"streaming_feed": {"auth_degraded": True}},
+    }
+    assert (
+        probe._normalize_component_status(
+            "betfair_service", mixed, tolerate_pending_connection=True
+        )
+        == "DEGRADED"
+    )
+
+    # betfair 'disconnected' MA con external_io degradato -> NON promosso.
+    io_bad = {
+        "status": "DEGRADED",
+        "reason": "disconnected",
+        "details": {"external_io": {"last_status": "UNAVAILABLE"}},
+    }
+    assert (
+        probe._normalize_component_status(
+            "betfair_service", io_bad, tolerate_pending_connection=True
+        )
+        == "DEGRADED"
+    )
+
+    # pura disconnessione di betfair -> promossa a READY (solo al boot).
+    clean = {"status": "DEGRADED", "reason": "disconnected", "details": {}}
+    assert (
+        probe._normalize_component_status(
+            "betfair_service", clean, tolerate_pending_connection=True
+        )
+        == "READY"
+    )
+
+    # componente FUORI allowlist (es. database) 'disconnected' -> mai promosso.
+    other = {"status": "DEGRADED", "reason": "disconnected", "details": {}}
+    assert (
+        probe._normalize_component_status(
+            "database", other, tolerate_pending_connection=True
+        )
+        == "DEGRADED"
+    )
+
+
+# --- Regressione a livello controller: split boot vs runtime del deploy gate ---
+
+
+def _make_gate_rc():
+    return RuntimeController(
+        bus=_GateBus(),
+        db=_GateDb(key_source="env"),
+        settings_service=_GateSettings(),
+        betfair_service=_GateBetfair(),
+        telegram_service=_GateTelegram(),
+        safe_mode=_SafeModeInactive(),
+    )
+
+
+class _ProbeBootAware:
+    """Ritorna READY solo se invocata col kwarg tolerate_pending_connection=True;
+    a strict (runtime) segnala NOT_READY (fail-closed)."""
+
+    def __init__(self):
+        self.calls = []
+
+    def get_live_readiness_report(self, *, tolerate_pending_connection=False):
+        self.calls.append(tolerate_pending_connection)
+        if tolerate_pending_connection:
+            return {"ready": True, "level": "READY", "blockers": []}
+        return {
+            "ready": False,
+            "level": "NOT_READY",
+            "blockers": [{"name": "betfair_service", "status": "NOT_READY",
+                          "reason": "disconnected", "code": "LIVE_PROBE_NOT_READY"}],
+        }
+
+
+class _ProbeNoKwarg:
+    """Getter privo del kwarg: il boot NON deve passarlo (niente TypeError)."""
+
+    @staticmethod
+    def get_live_readiness_report():
+        return {"ready": True, "level": "READY", "blockers": []}
+
+
+class _ProbeInternalTypeError:
+    """Solleva TypeError DENTRO l'implementazione quando invocata col kwarg
+    (boot). Il vecchio codice (except TypeError -> retry senza kwarg) lo
+    mascherava degradando a strict e restituendo READY: fail-open. Il fix con
+    inspect.signature NON deve mascherarlo -> probe_report_exception."""
+
+    def __init__(self):
+        self.plain_called = False
+
+    def get_live_readiness_report(self, *, tolerate_pending_connection=False):
+        if tolerate_pending_connection:
+            raise TypeError("internal boom (non e' un mismatch di firma)")
+        self.plain_called = True
+        return {"ready": True, "level": "READY", "blockers": []}
+
+
+def test_controller_boot_flag_threads_probe_tolerance():
+    # #361 (CodeRabbit CRITICAL): boot=True tollera pending-connection; boot
+    # assente (runtime: is_live_allowed / _on_signal_received) resta strict.
+    rc = _make_gate_rc()
+    probe = _ProbeBootAware()
+    rc.runtime_probe = probe
+
+    ok_boot, _reason_boot, _r1 = rc._get_probe_live_readiness_report(boot=True)
+    ok_runtime, _reason_runtime, _r2 = rc._get_probe_live_readiness_report(boot=False)
+
+    assert ok_boot is True
+    assert ok_runtime is False  # runtime NON tollera la disconnessione: fail-closed
+    assert probe.calls == [True, False]
+
+
+def test_controller_runtime_default_is_strict():
+    # BLOCK: il default di _get_probe_live_readiness_report NON deve tollerare.
+    rc = _make_gate_rc()
+    rc.runtime_probe = _ProbeBootAware()
+
+    ok_default, _reason, _r = rc._get_probe_live_readiness_report()
+
+    assert ok_default is False
+
+
+def test_controller_boot_does_not_pass_kwarg_to_getter_without_it():
+    # #361: se il getter non accetta il kwarg, boot=True non deve passarlo
+    # (inspect.signature) -> nessun TypeError spurio, probe letto correttamente.
+    rc = _make_gate_rc()
+    rc.runtime_probe = _ProbeNoKwarg()
+
+    ok, _reason, _r = rc._get_probe_live_readiness_report(boot=True)
+
+    assert ok is True
+
+
+def test_controller_internal_typeerror_is_not_masked_as_strict():
+    # #361 (Fugu/Fable/CodeRabbit/Sourcery BLOCK): un TypeError sollevato DENTRO
+    # il getter col kwarg NON deve essere degradato a una chiamata strict (che
+    # nel vecchio codice restituiva READY = fail-open). Deve fallire fail-closed.
+    rc = _make_gate_rc()
+    probe = _ProbeInternalTypeError()
+    rc.runtime_probe = probe
+
+    ok, reason, _r = rc._get_probe_live_readiness_report(boot=True)
+
+    assert ok is False
+    assert reason == "probe_report_exception"
+    assert probe.plain_called is False  # non ha ritentato in strict silenziosamente
+
+
+def _probe_ok(status):
+    payload = (status.get("details") or {}).get("readiness_payload") or {}
+    return bool(payload.get("probe_ok"))
+
+
+def test_get_deploy_gate_status_propagates_boot_to_probe():
+    # #361 (Fugu Ultra BLOCK): il flag boot deve propagarsi da
+    # get_deploy_gate_status fino al probe. boot=True -> tolerate=True (GO);
+    # default -> strict (NO-GO). Prova la catena, non solo l'helper interno.
+    rc = _make_gate_rc()
+    probe = _ProbeBootAware()
+    rc.runtime_probe = probe
+
+    boot_status = rc.get_deploy_gate_status(
+        execution_mode="LIVE", live_enabled=True, live_readiness_ok=True, boot=True
+    )
+    runtime_status = rc.get_deploy_gate_status(
+        execution_mode="LIVE", live_enabled=True, live_readiness_ok=True
+    )
+
+    assert probe.calls == [True, False]
+    assert _probe_ok(boot_status) is True       # boot: pending-connection tollerato
+    assert _probe_ok(runtime_status) is False   # runtime: strict, fail-closed
+
+
+def test_enforce_deploy_gate_accepts_and_propagates_boot():
+    # #361 (Fugu Ultra BLOCK): enforce_deploy_gate (la variante con side effect,
+    # usata da start() e dall'headless) deve ACCETTARE boot (niente TypeError)
+    # e propagarlo a get_deploy_gate_status -> probe.
+    rc = _make_gate_rc()
+    probe = _ProbeBootAware()
+    rc.runtime_probe = probe
+
+    boot_status = rc.enforce_deploy_gate(
+        execution_mode="LIVE", live_enabled=True, live_readiness_ok=True, boot=True
+    )
+    runtime_status = rc.enforce_deploy_gate(
+        execution_mode="LIVE", live_enabled=True, live_readiness_ok=True
+    )
+
+    assert probe.calls == [True, False]
+    assert _probe_ok(boot_status) is True
+    assert _probe_ok(runtime_status) is False
