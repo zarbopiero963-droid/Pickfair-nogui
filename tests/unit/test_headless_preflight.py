@@ -100,16 +100,48 @@ def test_preflight_ready_returns_0(monkeypatch, capsys):
 
 @pytest.mark.unit
 def test_preflight_non_live_does_not_claim_ready(monkeypatch, capsys):
-    # CodeRabbit: senza --live (SIMULATION) NON deve stampare "PRONTO PER LIVE"
-    # (sarebbe fuorviante). Mostra la nota non-LIVE ed esce 0 (nulla da bloccare).
+    # CodeRabbit: senza --live (SIMULATION) NON deve stampare "PRONTO PER LIVE".
+    # Fugu: exit dedicato 3 (non 0) cosi' un uso come gate CI/script senza --live
+    # NON passa "verde" (fail-closed).
     app = _make_app(monkeypatch, _FakeRuntimeReady(), ["--preflight"])
 
     rc = app._run_preflight()
 
     out = capsys.readouterr().out
-    assert rc == 0
+    assert rc == 3
     assert "PRONTO PER LIVE" not in out
     assert "NON e' LIVE" in out
+
+
+@pytest.mark.unit
+def test_build_after_preflight_starts_services(monkeypatch):
+    # Rilievo GPT-5.6: build(start_services=False) del preflight NON deve
+    # impedire a un avvio reale successivo di avviare watchdog/cleanup.
+    import headless_main
+
+    app = headless_main.HeadlessApp()
+    started = {"watchdog": 0, "cleanup": 0}
+
+    class _Svc:
+        def __init__(self, key):
+            self.key = key
+
+        def start(self):
+            started[self.key] += 1
+
+    app.watchdog_service = _Svc("watchdog")
+    app.cleanup_service = _Svc("cleanup")
+
+    # Stato dopo un preflight: costruito ma servizi NON avviati.
+    app._built = True
+    app._services_started = False
+
+    app.build(start_services=True)  # avvio reale successivo
+    assert started == {"watchdog": 1, "cleanup": 1}
+    assert app._services_started is True
+
+    app.build(start_services=True)  # idempotente: non li riavvia
+    assert started == {"watchdog": 1, "cleanup": 1}
 
 
 @pytest.mark.unit

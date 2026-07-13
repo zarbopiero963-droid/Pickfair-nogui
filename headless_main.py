@@ -98,6 +98,7 @@ class HeadlessApp:
 
         self._running = False
         self._built = False
+        self._services_started = False
         self._signal_handlers_installed = False
 
     # =========================================================
@@ -133,6 +134,7 @@ class HeadlessApp:
         self.safe_mode = None
 
         self._built = False
+        self._services_started = False
         self._running = False
 
     def _cleanup_partial_build(self) -> None:
@@ -208,6 +210,17 @@ class HeadlessApp:
     # =========================================================
     # BOOTSTRAP
     # =========================================================
+    def _start_background_services(self) -> None:
+        """Avvia (idempotente) i thread di osservabilita' watchdog/cleanup.
+        Separato da build() cosi' "componenti costruiti" e "servizi avviati"
+        sono stati distinti: il preflight costruisce senza avviare, un avvio
+        reale successivo puo' avviarli."""
+        if self._services_started:
+            return
+        self.watchdog_service.start()
+        self.cleanup_service.start()
+        self._services_started = True
+
     def build(self, start_services: bool = True) -> None:
         """
         Costruzione completa dei componenti.
@@ -218,6 +231,12 @@ class HeadlessApp:
         read-only, che deve valutare la readiness senza avviare nulla.
         """
         if self._built:
+            # Gia' costruito: avvia i servizi ORA se richiesto e non ancora
+            # avviati. Copre il caso "preflight (start_services=False) seguito da
+            # un avvio reale sullo stesso HeadlessApp": senza questo, watchdog e
+            # cleanup resterebbero permanentemente inattivi (rilievo GPT-5.6).
+            if start_services:
+                self._start_background_services()
             return
 
         self._reset_runtime_refs()
@@ -419,8 +438,7 @@ class HeadlessApp:
                 pass
 
             if start_services:
-                self.watchdog_service.start()
-                self.cleanup_service.start()
+                self._start_background_services()
 
             self._wire_bus()
             self._register_shutdown_hooks()
@@ -899,7 +917,8 @@ class HeadlessApp:
         enforce_deploy_gate: nessun side effect di log/attr), cosi' il verdicto
         riflette esattamente cio' che start() deciderebbe. NON si connette a
         Betfair ne' avvia il trading. Exit code: 0 pronto per LIVE, 2 non
-        pronto, 1 se il runtime non e' stato costruito.
+        pronto, 3 se non e' stato richiesto LIVE (nulla da valutare), 1 se il
+        runtime non e' stato costruito.
         """
         args = self._parse_args()
         execution_mode = str(args.get("execution_mode") or "SIMULATION")
@@ -917,23 +936,30 @@ class HeadlessApp:
             live_enabled=live_enabled,
             live_readiness_ok=live_readiness_ok,
         )
-        report, allowed = self._format_preflight_report(
+        report, exit_code = self._format_preflight_report(
             status, execution_mode, live_enabled, live_readiness_ok
         )
         print(report)
         logger.info("GO-LIVE PREFLIGHT\n%s", report)
-        return 0 if allowed else 2
+        return exit_code
+
+    def _append_blocker(self, lines, code, desc, remedy):
+        lines.append(f"  [X] {code}")
+        lines.append(f"        cosa   : {desc}")
+        lines.append(f"        rimedio: {remedy}")
 
     def _format_preflight_report(self, status, execution_mode, live_enabled, live_readiness_ok):
-        """Costruisce (report_testuale, allowed) dal deploy-gate status. Il
-        messaggio "PRONTO" e l'exit code sono ENTRAMBI guidati da `allowed`, mai
-        dalla sola assenza di blocker (evita il "PRONTO" con exit 2)."""
+        """Costruisce (report_testuale, exit_code) dal deploy-gate status. Il
+        messaggio "PRONTO" e l'exit sono guidati da `allowed`, mai dalla sola
+        assenza di blocker. Exit: 0 GO, 2 NO-GO, 3 non-LIVE (nulla da valutare
+        -> fail-closed per l'uso come gate CI/script)."""
         allowed = bool(status.get("allowed", False))
         payload = (status.get("details") or {}).get("readiness_payload") or {}
         level = str(payload.get("level") or status.get("readiness") or "NOT_READY")
         blockers = [str(b) for b in (payload.get("blockers") or [])]
         probe = (payload.get("details") or {}).get("probe") or {}
-        probe_ok = bool(probe.get("ok", True))
+        # Fail-closed nel display: probe assente -> NON assumere sano (rilievo Fugu).
+        probe_ok = bool(probe.get("ok", False))
 
         lines = [
             "=" * 64,
@@ -946,8 +972,8 @@ class HeadlessApp:
             "-" * 64,
         ]
 
-        # Non-LIVE: il preflight LIVE non e' applicabile. Non stampare mai
-        # "PRONTO PER LIVE" qui (sarebbe fuorviante). Exit 0 = nulla da bloccare.
+        # Non-LIVE: preflight LIVE non applicabile. Exit 3 (non 0): usato come
+        # gate CI/script senza --live NON deve passare "verde" (fail-closed).
         if execution_mode.strip().upper() != "LIVE":
             lines.append(
                 "execution_mode richiesto NON e' LIVE: preflight LIVE non "
@@ -955,12 +981,12 @@ class HeadlessApp:
                 "readiness LIVE reale."
             )
             lines.append("=" * 64)
-            return "\n".join(lines), True
+            return "\n".join(lines), 3
 
         if allowed:
             lines.append("PRONTO PER LIVE — nessun blocker.")
             lines.append("=" * 64)
-            return "\n".join(lines), True
+            return "\n".join(lines), 0
 
         lines.append("NON PRONTO:")
         shown = False
@@ -968,15 +994,11 @@ class HeadlessApp:
             desc, remedy = self._BLOCKER_REMEDIATION.get(
                 code, ("(blocker non catalogato)", "Verifica lo stato runtime/log.")
             )
-            lines.append(f"  [X] {code}")
-            lines.append(f"        cosa   : {desc}")
-            lines.append(f"        rimedio: {remedy}")
+            self._append_blocker(lines, code, desc, remedy)
             shown = True
         if not probe_ok:
             desc, remedy = self._BLOCKER_REMEDIATION["LIVE_PROBE_NOT_READY"]
-            lines.append("  [X] LIVE_PROBE_NOT_READY")
-            lines.append(f"        cosa   : {probe.get('reason') or desc}")
-            lines.append(f"        rimedio: {remedy}")
+            self._append_blocker(lines, "LIVE_PROBE_NOT_READY", probe.get("reason") or desc, remedy)
             shown = True
         if not shown:
             # Nessun blocker granulare: mostra le reason di alto livello del gate.
@@ -984,11 +1006,9 @@ class HeadlessApp:
                 desc, remedy = self._BLOCKER_REMEDIATION.get(
                     str(reason), ("Deploy gate NO-GO", "Consulta il deploy gate/log per il dettaglio.")
                 )
-                lines.append(f"  [X] {reason}")
-                lines.append(f"        cosa   : {desc}")
-                lines.append(f"        rimedio: {remedy}")
+                self._append_blocker(lines, reason, desc, remedy)
         lines.append("=" * 64)
-        return "\n".join(lines), allowed
+        return "\n".join(lines), 2
 
     # =========================================================
     # RUN

@@ -29,7 +29,9 @@ riflette **esattamente** ciò che `start()` deciderebbe, inclusi i probe LIVE
 (streaming/bankroll/reconciliation).
 
 Se lo esegui **senza `--live`** (quindi in SIMULATION), il preflight LIVE non è
-applicabile: stampa una nota esplicita e non dichiara mai «pronto per LIVE».
+applicabile: stampa una nota esplicita, non dichiara mai «pronto per LIVE» ed
+esce con codice **3** (non 0), così un uso come gate CI/script senza i flag LIVE
+**non passa "verde"** (fail-closed).
 
 ## Read-only garantito
 
@@ -68,8 +70,9 @@ NON PRONTO:
 
 | Code | Significato |
 |------|-------------|
-| `0`  | Pronto per LIVE (gate GO), oppure preflight eseguito in modalità non-LIVE (nulla da valutare) |
+| `0`  | Pronto per LIVE (gate GO) |
 | `2`  | Non pronto (uno o più blocker) — vedi checklist |
+| `3`  | Preflight eseguito senza `--live` (LIVE non valutato) — usa `--live --live-enabled` |
 | `1`  | Errore di bootstrap/build (il runtime non è stato costruito) |
 
 L'exit code `2` rende il preflight utilizzabile come **gate in uno script o nel
