@@ -132,8 +132,12 @@ class FakeTradingEngine:
 class FakeRuntimeController:
     def __init__(self, **kwargs):
         self.mode = None
+        # Registra OGNI chiamata a set_simulation_mode (True=SIM, False=LIVE)
+        # per provare che in costruzione fail-closed il runtime non vede mai LIVE.
+        self.sim_mode_calls = []
 
     def set_simulation_mode(self, value):
+        self.sim_mode_calls.append(bool(value))
         self.mode = bool(value)
 
     def get_status(self):
@@ -264,6 +268,12 @@ def test_force_simulation_construction_never_applies_persisted_live(monkeypatch)
         assert bool(app.live_enabled_var.get()) is False
         assert app.simulation_mode is True
         assert app.status_broker_var.get() == "SIMULATION"
+        # Hard-assert sull'invariante di sicurezza (CodeRabbit): il runtime e'
+        # stato sincronizzato ma NON ha MAI ricevuto set_simulation_mode(False)
+        # in costruzione — nemmeno transitoriamente. Lo stato finale da solo non
+        # lo proverebbe (passerebbe anche con LIVE->reset a SIM).
+        assert app.runtime.sim_mode_calls, "il runtime dev'essere sincronizzato"
+        assert False not in app.runtime.sim_mode_calls  # mai LIVE, nemmeno transitorio
     finally:
         try:
             app.destroy()
@@ -281,6 +291,10 @@ def test_persisted_live_applies_without_force_simulation(monkeypatch):
     try:
         assert app.execution_mode_var.get() == "LIVE"
         assert app.simulation_mode is False
+        # Contrappunto all'hard-assert sopra: senza il flag il runtime riceve
+        # DAVVERO set_simulation_mode(False) in costruzione (LIVE applicato) —
+        # prova che l'instrumentazione rileva il LIVE e che e' il flag a evitarlo.
+        assert False in app.runtime.sim_mode_calls
     finally:
         try:
             app.destroy()
