@@ -41,6 +41,18 @@
       ],
       "max_files": 6
     },
+    "anomaly_reviewer_default_on_367": {
+      "description": "#367 (warning 'Anomaly Reviewer DISABLED' del LIVE health check, oltre a CatalogSync #368/#370 e Telegram #371). Decisione owner: rendere l'anomaly reviewer default-ON in headless/LIVE come headless_main.py gia' DICHIARA di voler fare (default-on) ma non faceva. Root cause: services/settings_service.load_anomaly_enabled ritornava sempre un bool concreto (False quando la chiave manca), quindi le guardie 'None => usa default' in headless_main.py e in WatchdogService._load_toggle erano DEAD CODE e il reviewer restava DISABLED su sistema non configurato, loggando il WARNING a ogni tick (5s). Fix: load_anomaly_enabled -> Optional[bool] che ritorna None quando 'anomaly_enabled' non e' configurato (=> default-ON a monte) e il bool esplicito quando presente (anomaly_enabled=False disabilita davvero). alerts/actions restano default-OFF (conservativi): il reviewer e' sola RILEVAZIONE (non tocca ordini/money-management). Aggiunto throttle del log 'reviewer DISABLED' in watchdog_service.py: una sola volta per streak (flag _anomaly_disabled_warned, reset alla riabilitazione), l'alert/incident restano per-tick idempotenti (upsert/open) quindi la copertura fail-closed e' intatta. Test hard PASS+BLOCK (loader None non configurato, default-ON end-to-end via watchdog, esplicito False rispettato, throttle 1-log-per-streak) + aggiornati i 2 test che codificavano il vecchio default-off (test_anomaly_gui_toggle, test_anomaly_escalation_toggle: 'all toggles off' reso esplicito con save_anomaly_enabled(False)). NON tocca core/, gate, ordini, money-management, Betfair, Telegram live.",
+      "allow_tests": true,
+      "files": [
+        "services/settings_service.py",
+        "observability/watchdog_service.py",
+        "tests/integration/test_anomaly_gui_toggle.py",
+        "tests/integration/test_anomaly_escalation_toggle.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
+    },
     "config_registry_pr_a_359": {
       "description": "Epic #359 (Config & Go-Live Console) PR-A: nuovo modulo config_registry.py, FONTE-DATO UNICA di sola lettura per GUI e headless. ConfigRegistry.entries() enumera i parametri configurabili (esecuzione/safety, Betfair, trading & money-management, Telegram, simulazione) come ConfigEntry{key,label,value,valid,required_for_live,source,remedy,is_secret}; i segreti (app_key/certificate/private_key/password) sono MASCHERATI (mai in chiaro). readiness_report() produce la checklist ✅/❌ dei prerequisiti LIVE RIUSANDO RuntimeController.evaluate_live_readiness (#350) - non reimplementa ne' indebolisce la logica del gate, la espone soltanto. NESSUNA UI, NESSUNA scrittura, NESSUNA modifica a core/services/gate. Test hard PASS+BLOCK (mascheramento segreti load-bearing, mappatura blocker->checklist, metadati). Docs ops/config_console.md.",
       "allow_tests": true,

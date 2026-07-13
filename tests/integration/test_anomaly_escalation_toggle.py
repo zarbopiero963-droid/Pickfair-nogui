@@ -73,6 +73,9 @@ def _make_watchdog(*, settings, anomaly_engine, alert_service=None, hook=None, p
 def test_escalation_level_0_all_toggles_off():
     db = _InMemorySettingsDb()
     settings = SettingsService(db)
+    # Con il default-ON del reviewer, "tutti i toggle off" va reso ESPLICITO:
+    # anomaly_enabled=False disabilita davvero la scansione (non piu' implicito).
+    settings.save_anomaly_enabled(False)
     engine = _EngineStub([{"code": "A1", "severity": "warning", "description": "d"}])
     alerts = _AlertSpy()
     hook_calls = []
@@ -156,7 +159,7 @@ def test_escalation_level_3_detection_alerts_actions_non_destructive():
     assert probe.runtime_state["trading_state"] == trading_state_before
 
 
-def test_persisted_toggle_reload_and_missing_fallback_false():
+def test_persisted_toggle_reload_and_missing_anomaly_is_none():
     db = _InMemorySettingsDb()
     first = SettingsService(db)
     first.save_anomaly_enabled(True)
@@ -168,7 +171,9 @@ def test_persisted_toggle_reload_and_missing_fallback_false():
     assert reloaded.load_anomaly_alerts_enabled() is True
     assert reloaded.load_anomaly_actions_enabled() is True
 
+    # Non configurato: anomaly_enabled => None (default-ON a monte); alerts/actions
+    # restano False esplicito di default.
     fresh = SettingsService(_InMemorySettingsDb())
-    assert fresh.load_anomaly_enabled() is False
+    assert fresh.load_anomaly_enabled() is None
     assert fresh.load_anomaly_alerts_enabled() is False
     assert fresh.load_anomaly_actions_enabled() is False
