@@ -72,7 +72,7 @@ NON PRONTO:
 |------|-------------|
 | `0`  | Pronto per LIVE (gate GO) |
 | `2`  | Non pronto (uno o più blocker) — vedi checklist |
-| `3`  | Preflight eseguito senza `--live` (LIVE non valutato) — usa `--live --live-enabled` |
+| `3`  | Preflight eseguito senza `--live` (LIVE non valutato) |
 | `1`  | Errore di bootstrap/build (il runtime non è stato costruito) |
 
 L'exit code `2` rende il preflight utilizzabile come **gate in uno script o nel

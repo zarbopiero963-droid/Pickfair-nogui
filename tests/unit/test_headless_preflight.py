@@ -4,7 +4,8 @@ Il preflight e' read-only: valuta i prerequisiti LIVE con lo STESSO gate che
 usa start() (RuntimeController.get_deploy_gate_status) e stampa una checklist
 leggibile (stdout + log), senza connettersi a Betfair, senza avviare il trading
 e senza avviare i servizi di osservabilita' (build start_services=False).
-Exit code: 0 pronto per LIVE, 2 non pronto, 1 se il runtime non e' costruito.
+Exit code: 0 pronto per LIVE, 2 non pronto, 3 se execution_mode richiesto non e'
+LIVE (nulla da valutare), 1 se il runtime non e' costruito.
 """
 
 import pytest
@@ -180,3 +181,32 @@ def test_start_preflight_intercepts_before_services_and_recovery(monkeypatch):
     assert calls["build_start_services"] is False  # preflight NON avvia i servizi
     assert calls["boot_recovery"] is False          # niente recovery / trading
     assert rc == 2                                   # runtime bloccato -> non pronto
+
+
+@pytest.mark.unit
+def test_preflight_uncatalogued_blocker_still_shown(monkeypatch, capsys):
+    # Garanzia documentata (ops/preflight.md): un codice NON catalogato in
+    # _BLOCKER_REMEDIATION viene comunque mostrato (checklist non tace mai).
+    import headless_main
+
+    app = headless_main.HeadlessApp()
+    status = _status(False, ["SOME_UNKNOWN_BLOCKER"])
+    report, code = app._format_preflight_report(status, "LIVE", True, True)
+
+    assert code == 2
+    assert "SOME_UNKNOWN_BLOCKER" in report
+    assert "(blocker non catalogato)" in report
+
+
+@pytest.mark.unit
+def test_preflight_reasons_fallback_when_no_granular_blockers(monkeypatch):
+    # Ramo fallback: NO-GO senza blocker granulari e probe OK -> mostra le
+    # reason di alto livello del deploy gate (DEPLOY_BLOCKED_*).
+    import headless_main
+
+    app = headless_main.HeadlessApp()
+    status = _status(False, [], probe_ok=True, reasons=["DEPLOY_BLOCKED_NOT_READY"])
+    report, code = app._format_preflight_report(status, "LIVE", True, True)
+
+    assert code == 2
+    assert "DEPLOY_BLOCKED_NOT_READY" in report
