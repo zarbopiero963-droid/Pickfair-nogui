@@ -281,7 +281,11 @@ class Database:
                 # nulla. Il DB e' sempre in journal_mode WAL (durability
                 # profile), quindi la lettura e' concorrente col writer del
                 # money path senza contendere il lock.
-                conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True, timeout=5.0)
+                # `Path.as_uri()` fa il percent-encoding sicuro del path
+                # (spazi, '#', '?', drive letter/backslash Windows), evitando
+                # URI malformate che darebbero falsi negativi.
+                ro_uri = f"{Path(self.db_path).resolve().as_uri()}?mode=ro"
+                conn = sqlite3.connect(ro_uri, uri=True, timeout=5.0)
                 close_after = True
 
             # Query parametrizzata FISSA per tabella (nessuna costruzione di SQL

@@ -65,6 +65,17 @@ class DatabaseUnitTests(unittest.TestCase):  # noqa: D203,D211
         setattr(database, "_get_connection", _boom)
         self.assertFalse(database.is_ready())
 
+    def test_is_ready_true_on_wal_db_with_active_writer(self) -> None:
+        """#364 (WAL reale): col writer persistente attivo (-shm presente, come
+        nel flusso reale) la connessione read-only mode=ro legge senza falsi
+        negativi -> is_ready True su DB WAL sano.
+        """
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "wal.sqlite"
+            database = Database(str(db_path))  # apre WAL e tiene la conn (writer attivo)
+            self.assertTrue(database.is_wal_mode())
+            self.assertTrue(database.is_ready())
+
     def test_is_ready_false_when_critical_table_missing(self) -> None:
         """#363 (BLOCK, GPT/Fugu/Greptile): schema incompleto -> non pronto.
 
