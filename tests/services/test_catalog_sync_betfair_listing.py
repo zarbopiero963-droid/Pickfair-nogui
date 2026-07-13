@@ -2,19 +2,18 @@
 
 Il CatalogSync chiamava `list_soccer_events()`/`list_market_catalogue(market_types=...)`
 inesistenti sul client Betfair -> AttributeError, 0 eventi sincronizzati. Ora usa
-`list_events`/`list_market_catalogue` reali (Betfair SportsAPING) e mappa il
-formato nativo. Questi test coprono il mapping e le firme; la verifica end-to-end
-con l'API Betfair reale resta sul VPS.
+`list_events`/`list_market_catalogue` reali (Betfair SportsAPING), in BATCH per
+evitare rate-limit, con guard fail-safe che non cancella il catalogo su sync
+vuoto. La verifica end-to-end con l'API Betfair reale resta sul VPS.
 """
-
-import pytest
 
 from betfair_client import BetfairClient
 from simulation_broker import SimulationBroker
 from services.catalog_sync_service import CatalogSyncService
 
 
-# Formato Betfair NATIVO (come lo ritorna SportsAPING).
+# Formato Betfair NATIVO. Ogni market include "event" (marketProjection EVENT):
+# serve a raggruppare i mercati per evento nel sync in batch.
 BF_EVENTS = [
     {"event": {"id": "30000", "name": "Team A v Team B", "openDate": "2026-07-13T18:00:00.000Z"}, "marketCount": 3}
 ]
@@ -26,6 +25,7 @@ BF_MARKETS = [
         "marketStartTime": "2026-07-13T18:00:00.000Z",
         "description": {"marketType": "MATCH_ODDS"},
         "competition": {"id": "55", "name": "Serie A"},
+        "event": {"id": "30000"},
         "runners": [
             {"selectionId": 47972, "runnerName": "Team A", "handicap": 0.0, "sortPriority": 1},
             {"selectionId": 47973, "runnerName": "Team B", "handicap": 0.0, "sortPriority": 2},
@@ -35,23 +35,19 @@ BF_MARKETS = [
 
 
 class _RecordingClient:
-    """Client con SOLO i metodi REALI (list_events/list_market_catalogue).
-
-    Non ha `list_soccer_events`: se il servizio chiamasse ancora il vecchio
-    metodo inesistente, `run_sync` cadrebbe nel except e non popolerebbe nulla.
-    """
+    """Client con SOLO i metodi REALI (list_events/list_market_catalogue)."""
 
     def __init__(self, events, markets):
         self._events = events
         self._markets = markets
         self.calls = []
 
-    def list_events(self, event_type_ids, *, in_play_only=False, max_results=1000):
+    def list_events(self, event_type_ids, *, in_play_only=False):
         self.calls.append(("list_events", list(event_type_ids), in_play_only))
         return self._events
 
     def list_market_catalogue(self, event_type_ids, event_ids=None, *, market_type_codes=None, max_results=1000):
-        self.calls.append(("list_market_catalogue", list(event_type_ids), event_ids, market_type_codes))
+        self.calls.append(("list_market_catalogue", list(event_type_ids), list(event_ids or []), market_type_codes))
         return self._markets
 
 
@@ -60,6 +56,8 @@ class _FakeDB:
         self.events = []
         self.markets = []
         self.runners = []
+        self.cleanup_called = False
+        self.meta_updated = False
 
     def get_sync_meta(self):
         return None
@@ -74,10 +72,10 @@ class _FakeDB:
         self.runners.append(kw)
 
     def cleanup_stale_bf_data(self, sync_id):
-        pass
+        self.cleanup_called = True
 
     def update_sync_meta(self, **kw):
-        pass
+        self.meta_updated = True
 
 
 def _client():
@@ -88,39 +86,77 @@ def _client():
 
 
 def test_catalog_sync_maps_betfair_format_to_db():
-    # BLOCK: il servizio usa list_events/list_market_catalogue reali; con un
-    # client che espone SOLO quei metodi il sync deve popolare il DB (prima
-    # crashava con AttributeError su list_soccer_events -> 0 eventi).
+    # BLOCK: con un client che espone SOLO i metodi reali il sync popola il DB
+    # (prima crashava su list_soccer_events -> 0 eventi).
     db = _FakeDB()
-    client = _RecordingClient(BF_EVENTS, BF_MARKETS)
-    CatalogSyncService(db, client).run_sync(force=True)
+    CatalogSyncService(db, _RecordingClient(BF_EVENTS, BF_MARKETS)).run_sync(force=True)
 
     assert len(db.events) == 1
     ev = db.events[0]
     assert ev["event_id"] == "30000"
     assert ev["name"] == "Team A v Team B"
-    assert ev["competition_id"] == "55"  # presa dal market catalogue
+    assert ev["competition_id"] == "55"
     assert ev["competition_name"] == "Serie A"
     assert ev["open_date"] == "2026-07-13T18:00:00.000Z"
 
     assert len(db.markets) == 1
-    mk = db.markets[0]
-    assert mk["market_id"] == "1.234"
-    assert mk["market_type"] == "MATCH_ODDS"
-    assert mk["total_matched"] == 1500.0
+    assert db.markets[0]["market_type"] == "MATCH_ODDS"
+    assert db.markets[0]["total_matched"] == 1500.0
 
     assert len(db.runners) == 2
     assert db.runners[0]["selection_id"] == "47972"
-    assert db.runners[0]["runner_name"] == "Team A"
+    assert db.cleanup_called is True  # catalogo popolato -> cleanup consentito
 
-    # market catalogue chiesto con event_ids e marketTypeCodes corretti
-    mc = [c for c in client.calls if c[0] == "list_market_catalogue"][0]
-    assert mc[2] == ["30000"]
-    assert "MATCH_ODDS" in mc[3]
+
+def test_catalog_sync_batches_market_catalogue():
+    # BLOCK N+1: con piu' eventi il market catalogue e' chiamato in UN batch
+    # (eventIds multipli), non una volta per evento -> niente rate-limit 429.
+    events = [{"event": {"id": str(30000 + i), "name": f"E{i}", "openDate": "x"}} for i in range(3)]
+    client = _RecordingClient(events, [])
+    CatalogSyncService(_FakeDB(), client).run_sync(force=True)
+
+    mc_calls = [c for c in client.calls if c[0] == "list_market_catalogue"]
+    assert len(mc_calls) == 1
+    assert set(mc_calls[0][2]) == {"30000", "30001", "30002"}
+    assert "MATCH_ODDS" in mc_calls[0][3]
+
+
+def test_catalog_sync_empty_events_preserves_catalog():
+    # BLOCK regressione (GPT/GLM/Fable): 0 eventi -> NON cancellare il catalogo.
+    db = _FakeDB()
+    CatalogSyncService(db, _RecordingClient([], [])).run_sync(force=True)
+    assert db.cleanup_called is False
+    assert db.meta_updated is False
+    assert db.events == []
+
+
+def test_catalog_sync_competition_from_first_market_with_one():
+    # Il primo mercato NON ha competition -> va presa dal successivo che ce l'ha.
+    markets = [
+        {"marketId": "1.1", "marketName": "Over/Under", "event": {"id": "30000"}, "runners": []},
+        {"marketId": "1.2", "marketName": "Match Odds", "event": {"id": "30000"},
+         "competition": {"id": "55", "name": "Serie A"}, "runners": []},
+    ]
+    db = _FakeDB()
+    CatalogSyncService(db, _RecordingClient(BF_EVENTS, markets)).run_sync(force=True)
+    assert db.events[0]["competition_id"] == "55"
+
+
+def test_catalog_sync_skips_runner_without_selection_id():
+    markets = [{
+        "marketId": "1.1", "marketName": "MO", "event": {"id": "30000"},
+        "runners": [
+            {"selectionId": 1, "runnerName": "A"},
+            {"runnerName": "NoId"},  # senza selectionId -> skip (no chiave "")
+        ],
+    }]
+    db = _FakeDB()
+    CatalogSyncService(db, _RecordingClient(BF_EVENTS, markets)).run_sync(force=True)
+    assert len(db.runners) == 1
+    assert db.runners[0]["selection_id"] == "1"
 
 
 def test_catalog_sync_does_not_use_list_soccer_events():
-    # Regressione esplicita: il vecchio metodo inesistente non va piu' chiamato.
     class _NoSoccer(_RecordingClient):
         def list_soccer_events(self, *a, **k):
             raise AssertionError("list_soccer_events non deve essere chiamato")
@@ -130,31 +166,25 @@ def test_catalog_sync_does_not_use_list_soccer_events():
     assert len(db.events) == 1
 
 
-def test_catalog_sync_skips_events_without_id():
-    db = _FakeDB()
-    client = _RecordingClient([{"event": {}}, {"marketCount": 1}], [])
-    CatalogSyncService(db, client).run_sync(force=True)
-    assert db.events == []  # nessun event_id -> nessun upsert, nessun crash
+# ---- BetfairClient: costruzione filtro ------------------------------------
 
 
-# ---- BetfairClient: costruzione filtro (BLOCK marketTypeCodes) --------------
-
-
-def test_betfair_client_list_events_filter():
+def test_betfair_client_list_events_no_max_results():
+    # BLOCK: listEvents NON deve inviare maxResults (Betfair non lo accetta ->
+    # APINGException in LIVE).
     c = _client()
     captured = {}
 
     def fake(url, method, params, **kw):
-        captured.update(url=url, method=method, params=params)
-        return [{"event": {"id": "1"}}]
+        captured["params"] = params
+        return []
 
     c._post_jsonrpc = fake
-    out = c.list_events(["1"], in_play_only=True)
+    c.list_events(["1"], in_play_only=True)
 
-    assert captured["method"] == "SportsAPING/v1.0/listEvents"
+    assert "maxResults" not in captured["params"]
     assert captured["params"]["filter"]["eventTypeIds"] == ["1"]
     assert captured["params"]["filter"]["inPlayOnly"] is True
-    assert out == [{"event": {"id": "1"}}]
 
 
 def test_betfair_client_market_catalogue_filter():
@@ -171,13 +201,12 @@ def test_betfair_client_market_catalogue_filter():
     f = captured["params"]["filter"]
     assert f["eventTypeIds"] == ["1"]
     assert f["eventIds"] == ["30000"]
-    # BLOCK: il filtro per tipo mercato deve arrivare a Betfair come marketTypeCodes.
     assert f["marketTypeCodes"] == ["MATCH_ODDS", "CORRECT_SCORE"]
 
 
 def test_betfair_client_list_events_non_list_result():
     c = _client()
-    c._post_jsonrpc = lambda *a, **k: {}  # risultato non-lista -> []
+    c._post_jsonrpc = lambda *a, **k: {}
     assert c.list_events(["1"]) == []
 
 
@@ -190,9 +219,10 @@ def test_simulation_broker_catalog_methods_return_empty():
     assert b.list_market_catalogue(["1"], event_ids=["x"], market_type_codes=["MATCH_ODDS"]) == []
 
 
-def test_catalog_sync_in_simulation_completes_without_error():
-    # In SIM il broker non ha catalogo via API: il sync completa con 0 eventi,
-    # senza AttributeError (era il secondo sintomo del report #367).
+def test_catalog_sync_in_simulation_preserves_catalog():
+    # In SIM il broker non ha catalogo via API: sync a 0 eventi, catalogo
+    # (popolato dai feed) preservato, nessun AttributeError.
     db = _FakeDB()
     CatalogSyncService(db, SimulationBroker(starting_balance=1000.0)).run_sync(force=True)
     assert db.events == []
+    assert db.cleanup_called is False

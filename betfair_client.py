@@ -616,12 +616,13 @@ class BetfairClient:
         event_type_ids: List[str],
         *,
         in_play_only: bool = False,
-        max_results: int = 1000,
     ) -> List[Dict[str, Any]]:
         """Eventi per i tipi di sport richiesti (Betfair SportsAPING/listEvents).
 
         Ritorna la lista grezza Betfair: ogni elemento e' `{"event": {...},
         "marketCount": N}`. Riusa `_post_jsonrpc` (auth/breaker/retry gia' gestiti).
+        NB: `listEvents` NON accetta `maxResults` (ritorna tutti gli eventi che
+        matchano il filter); inviarlo puo' causare APINGException in LIVE.
         """
         filter_: Dict[str, Any] = {"eventTypeIds": [str(e) for e in event_type_ids]}
         if in_play_only:
@@ -629,7 +630,7 @@ class BetfairClient:
         result = self._post_jsonrpc(
             self.BETTING_URL,
             "SportsAPING/v1.0/listEvents",
-            {"filter": filter_, "maxResults": int(max_results)},
+            {"filter": filter_},
         )
         return result if isinstance(result, list) else []
 
