@@ -14,8 +14,10 @@ logger = logging.getLogger(__name__)
 def run_gui() -> int:
     from mini_gui import main as gui_main
 
-    gui_main()
-    return 0
+    # Propaga il codice di uscita fail-closed di mini_gui.main()
+    # (Exception=1, KeyboardInterrupt=130): scartarlo e ritornare 0 faceva
+    # uscire `python main.py` con successo anche su crash/interrupt della GUI.
+    return int(gui_main() or 0)
 
 
 def run_headless() -> int:

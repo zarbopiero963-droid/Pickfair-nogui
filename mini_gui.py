@@ -286,8 +286,13 @@ class SimpleUIQueue:
 
 
 class MiniPickfairGUI(ctk.CTk, TelegramModule):
-    def __init__(self, test_mode: bool = False):
+    def __init__(self, test_mode: bool = False, force_simulation: bool = False):
         self._test_mode = bool(test_mode)
+        # Fail-closed from construction (#355): quando True, lo stato persistito
+        # execution_mode/live_enabled NON viene mai applicato al runtime — la
+        # forzatura a SIMULATION avviene PRIMA della prima sync, cosi' non esiste
+        # nemmeno una finestra transitoria in cui il costruttore osservi LIVE.
+        self._force_simulation_startup = bool(force_simulation)
 
         # FIX CRITICO: non creare Tk in ambiente headless di test
         if not self._test_mode:
@@ -1145,9 +1150,9 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         except Exception:
             pass
 
-        self._load_execution_control_settings()
+        self._load_execution_control_settings(force_simulation=self._force_simulation_startup)
 
-    def _load_execution_control_settings(self):
+    def _load_execution_control_settings(self, force_simulation: bool = False):
         settings = {
             "execution_mode": "SIMULATION",
             "live_enabled": False,
@@ -1167,11 +1172,44 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         live_enabled = bool(settings.get("live_enabled", False))
         kill_switch = bool(settings.get("kill_switch", False))
 
+        self.kill_switch_var.set(kill_switch)
+        # #355 fail-closed from construction: se richiesto, forza SIMULATION
+        # PRIMA di applicare lo stato persistito. Cosi' un `execution_mode=LIVE`
+        # salvato non viene mai sincronizzato (nessuna finestra LIVE transitoria
+        # in `__init__`, prima che l'entry point possa forzare SIMULATION). Il
+        # kill_switch persistito resta invariato (forzare SIM non lo azzera).
+        if force_simulation:
+            self._force_simulation_state()
+            return
+
         self.execution_mode_var.set(execution_mode)
         self.live_enabled_var.set(live_enabled)
-        self.kill_switch_var.set(kill_switch)
         self._sync_execution_controls_to_runtime()
         self._refresh_live_control_plane_status({})
+
+    def _force_simulation_state(self) -> None:
+        """Porta la sessione a SIMULATION / live-disabled e riallinea sia il
+        runtime sia gli status derivati del control-plane (il pannello non deve
+        mostrare uno stato LIVE residuo). Direzione sempre verso SIMULATION,
+        quindi fail-closed by construction; NON persiste (le preferenze salvate
+        su disco restano intatte). Sorgente unica condivisa dal ramo `force`
+        del load e da `force_simulation_startup` (no duplicazione/drift)."""
+        self.execution_mode_var.set("SIMULATION")
+        self.live_enabled_var.set(False)
+        self._sync_execution_controls_to_runtime()
+        self._refresh_live_control_plane_status({})
+
+    def force_simulation_startup(self) -> None:
+        """Forza a SIMULATION a runtime a prescindere dallo stato corrente.
+
+        Un avvio via `python main.py` (o `run_gui()`) NON deve mai partire in
+        LIVE: l'entry point lo garantisce gia' costruendo con
+        `force_simulation=True` (fail-closed dalla costruzione). Questo metodo
+        resta come forzatura runtime esplicita, con la stessa semantica: agisce
+        SOLO sulla sessione (non persiste), sempre verso SIMULATION; il gate
+        #350 resta la difesa runtime per ogni successiva transizione a LIVE.
+        """
+        self._force_simulation_state()
 
     def _save_execution_control_settings(self):
         if not hasattr(self.settings_service, "save_execution_settings"):
@@ -2086,16 +2124,20 @@ def main() -> int:
     la sua assenza rompeva l'avvio GUI con
     `ImportError: cannot import name 'main' from 'mini_gui'`.
 
-    Costruisce `MiniPickfairGUI` (test_mode=False => finestra Tk reale) e avvia
-    il mainloop. La GUI parte in SIMULATION per default (fail-closed #350):
-    questo entry point NON abilita il trading LIVE. Richiede un display grafico
+    Costruisce `MiniPickfairGUI(force_simulation=True)` (test_mode=False =>
+    finestra Tk reale) e avvia il mainloop. `force_simulation=True` garantisce
+    il fail-closed **fin dalla costruzione**: lo stato persistito LIVE non viene
+    mai sincronizzato al runtime, quindi non esiste nemmeno una finestra LIVE
+    transitoria in `__init__`. Questo entry point NON parte mai in LIVE, anche
+    se l'ultima sessione aveva salvato LIVE — il gate #350 resta la difesa
+    runtime per ogni transizione a LIVE successiva. Richiede un display grafico
     (X11): su un host headless senza $DISPLAY, Tk non puo' aprire la finestra ed
     emette l'errore Tcl standard "no display name and no $DISPLAY environment
     variable" — in quel caso va usata la modalita' `--headless`.
     """
     app = None
     try:
-        app = MiniPickfairGUI()
+        app = MiniPickfairGUI(force_simulation=True)
         app.mainloop()
         return 0
     except KeyboardInterrupt:
