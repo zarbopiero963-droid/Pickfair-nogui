@@ -424,6 +424,35 @@ class SimulationBroker:
             )
         return out
 
+    def list_events(
+        self,
+        event_type_ids: List[str],
+        *,
+        in_play_only: bool = False,
+        max_results: int = 1000,
+    ) -> List[Dict[str, Any]]:
+        """Parita' d'interfaccia col client LIVE per il CatalogSync.
+
+        In simulazione NON esiste un catalogo Betfair via API: gli eventi/mercati
+        arrivano dai feed streaming (`update_market_book`), non da listEvents.
+        Ritorna quindi lista vuota (fail-safe): il CatalogSync completa con 0
+        eventi invece di sollevare AttributeError.
+        """
+        return []
+
+    def list_market_catalogue(
+        self,
+        event_type_ids: List[str],
+        event_ids: Optional[List[str]] = None,
+        *,
+        market_type_codes: Optional[List[str]] = None,
+        max_results: int = 1000,
+    ) -> List[Dict[str, Any]]:
+        """Parita' d'interfaccia col client LIVE per il CatalogSync (vedi
+        `list_events`): in simulazione non c'e' catalogo via API, ritorna [].
+        """
+        return []
+
     def list_event_markets(self, event_id: Any) -> List[Dict[str, Any]]:
         event = self.state.event_index.get(str(event_id))
         if not event:

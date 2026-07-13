@@ -31,72 +31,163 @@ class CatalogSyncService:
         sync_id = datetime.utcnow().isoformat()
         logger.info("[CatalogSync] Avvio sincronizzazione catalogo (ID: %s)...", sync_id)
         
+        # Tipi mercato d'interesse per il soccer.
+        SOCCER_EVENT_TYPE_ID = "1"
+        market_types = ['MATCH_ODDS', 'OVER_UNDER_05', 'OVER_UNDER_15', 'OVER_UNDER_25', 'CORRECT_SCORE']
+
         try:
-            # 1. Recupero Eventi Soccer Live/Prossimi
-            events = self.client.list_soccer_events(live_only=False)
+            # 1. Recupero Eventi Soccer (Betfair listEvents; formato nativo:
+            #    ogni elemento e' {"event": {...}, "marketCount": N}).
+            events = self.client.list_events([SOCCER_EVENT_TYPE_ID], in_play_only=False)
+
+            # Fail-safe (rilievo GPT/GLM): un sync che non recupera NESSUN evento
+            # non deve toccare il catalogo esistente. Succede in SIM (il catalogo
+            # arriva dai feed streaming, non via API) o in LIVE su risposta
+            # vuota/anomala. Senza questo guard, cleanup_stale_bf_data cancella
+            # tutto il catalogo -> trading bloccato. Skip: preserva l'esistente.
+            if not events:
+                logger.info("[CatalogSync] Nessun evento restituito: catalogo esistente preservato (skip cleanup).")
+                return
+
+            # Metadati evento indicizzati per id (name/openDate da listEvents).
+            event_meta: Dict[str, Dict[str, Any]] = {}
+            for ev in events:
+                e = ev.get('event') or {}
+                eid = e.get('id')
+                if eid:
+                    event_meta[eid] = e
+            event_ids = list(event_meta.keys())
+
+            # 2. Mercati in BATCH per evitare N+1 / rate-limit 429 in LIVE
+            #    (rilievo Greptile/Codacy/GLM/Fable): listMarketCatalogue accetta
+            #    piu' eventIds e riporta event + competition in ogni market
+            #    (marketProjection). Chunk per non superare maxResults.
+            #    maxResults=200 (NON 1000): con marketProjection MARKET_DESCRIPTION
+            #    Betfair applica un limite di peso dati (maxResults x weight) e 1000
+            #    genera APINGException TOO_MUCH_DATA in LIVE (rilievo Fable/Fugu) --
+            #    stessa classe d'errore gia' corretta su listEvents. Un chunk da 20
+            #    eventi x ~5 tipi mercato ~= 100 mercati << 200: 200 basta e avanza.
+            markets_by_event: Dict[str, list] = {}
+            chunk_size = 20
+            max_results = 200
+            truncated = False
+            for i in range(0, len(event_ids), chunk_size):
+                chunk = event_ids[i:i + chunk_size]
+                chunk_markets = self.client.list_market_catalogue(
+                    [SOCCER_EVENT_TYPE_ID],
+                    event_ids=chunk,
+                    market_type_codes=market_types,
+                    max_results=max_results,
+                )
+                # Completeness guard (rilievo GPT-5.6 Terra): se un batch raggiunge
+                # maxResults la risposta di listMarketCatalogue puo' essere troncata
+                # silenziosamente -> alcuni mercati non entrano in markets_by_event.
+                # In quel caso il sync e' INCOMPLETO: NON eseguiamo cleanup/meta piu'
+                # sotto, cosi' non cancelliamo dal DB mercati/runner ancora validi.
+                if len(chunk_markets) >= max_results:
+                    truncated = True
+                    logger.warning(
+                        "[CatalogSync] Batch al limite maxResults=%d (%d eventi): possibile "
+                        "troncamento -> cleanup saltato per preservare il catalogo.",
+                        max_results, len(chunk),
+                    )
+                for mk in chunk_markets:
+                    mk_event_id = (mk.get('event') or {}).get('id')
+                    if mk_event_id:
+                        markets_by_event.setdefault(mk_event_id, []).append(mk)
+
             event_count = 0
             market_count = 0
             runner_count = 0
 
-            for ev in events:
-                event_id = ev['event_id']
+            # 3. Upsert per evento
+            for event_id, event in event_meta.items():
+                ev_markets = markets_by_event.get(event_id, [])
+
+                # Competition dal primo mercato CHE ne ha una (rilievo GLM):
+                # non tutti i tipi mercato la riportano.
+                competition: Dict[str, Any] = {}
+                for mk in ev_markets:
+                    comp = mk.get('competition') or {}
+                    if comp.get('id') or comp.get('name'):
+                        competition = comp
+                        break
+
                 self.db.upsert_bf_event(
                     event_id=event_id,
-                    name=ev['name'],
-                    competition_id=ev.get('competition_id', ''),
-                    competition_name=ev.get('competition_name', ''),
-                    event_type_id="1", # Soccer
-                    open_date=ev.get('open_date', ''),
+                    name=event.get('name', ''),
+                    competition_id=str(competition.get('id', '')),
+                    competition_name=competition.get('name', ''),
+                    event_type_id=SOCCER_EVENT_TYPE_ID,
+                    open_date=event.get('openDate', ''),
                     sync_id=sync_id
                 )
                 event_count += 1
 
-                # 2. Recupero Mercati per l'evento (Match Odds, Over/Under, Correct Score)
-                market_types = ['MATCH_ODDS', 'OVER_UNDER_05', 'OVER_UNDER_15', 'OVER_UNDER_25', 'CORRECT_SCORE']
-                markets = self.client.list_market_catalogue(
-                    event_ids=[event_id],
-                    market_types=market_types,
-                    max_results=50
-                )
-
-                for mk in markets:
-                    market_id = mk['marketId']
+                for mk in ev_markets:
+                    market_id = mk.get('marketId')
+                    if not market_id:
+                        continue
                     self.db.upsert_bf_market(
                         market_id=market_id,
                         event_id=event_id,
-                        market_name=mk['marketName'],
-                        market_type=mk.get('description', {}).get('marketType', ''),
+                        market_name=mk.get('marketName', ''),
+                        market_type=(mk.get('description') or {}).get('marketType', ''),
                         total_matched=mk.get('totalMatched', 0.0),
                         open_date=mk.get('marketStartTime', ''),
                         sync_id=sync_id
                     )
                     market_count += 1
 
-                    # 3. Recupero Runner
-                    runners = mk.get('runners', [])
-                    for rn in runners:
+                    # 3b. Runner: skip se privo di selectionId (rilievo
+                    #     Greptile/Fable) per non violare vincoli DB con chiave "".
+                    for rn in (mk.get('runners') or []):
+                        selection_id = str(rn.get('selectionId', '') or '')
+                        if not selection_id:
+                            continue
                         self.db.upsert_bf_runner(
                             market_id=market_id,
-                            selection_id=str(rn['selectionId']),
-                            runner_name=rn['runnerName'],
+                            selection_id=selection_id,
+                            runner_name=rn.get('runnerName', ''),
                             handicap=rn.get('handicap', 0.0),
                             sort_priority=rn.get('sortPriority', 0),
                             sync_id=sync_id
                         )
                         runner_count += 1
 
-            # 4. Pulizia dati obsoleti
-            self.db.cleanup_stale_bf_data(sync_id)
-            
-            # 5. Aggiornamento Meta
-            self.db.update_sync_meta(
-                last_sync_at=sync_id,
-                last_sync_id=sync_id,
-                events=event_count,
-                markets=market_count,
-                runners=runner_count
-            )
-            logger.info("[CatalogSync] Sync completato: %d eventi, %d mercati, %d runner.", event_count, market_count, runner_count)
+            # 4. Pulizia + meta SOLO se il sync e' COMPLETO: eventi popolati,
+            #    almeno un mercato, e nessun batch troncato. Fail-safe che
+            #    impedisce di cancellare il catalogo su sync a 0 eventi, troncato
+            #    o senza mercati (rilievo GPT/GLM/Fugu/Fable/CodeRabbit). Un
+            #    cleanup su catalogo parziale rimuoverebbe mercati/runner ancora
+            #    validi -> rischio blocco/errore nel trading LIVE.
+            if event_count > 0 and market_count == 0:
+                # Eventi presenti ma ZERO mercati su tutti: quasi sempre indica un
+                # market-fetch fallito/anomalo (una risposta non-lista degradata a
+                # [], o un errore upstream), non un catalogo realmente vuoto. Non
+                # eseguiamo cleanup: preserviamo i mercati/runner esistenti.
+                logger.warning(
+                    "[CatalogSync] %d eventi ma 0 mercati: market-fetch sospetto incompleto, "
+                    "catalogo esistente preservato (skip cleanup).", event_count,
+                )
+            elif event_count > 0 and not truncated:
+                self.db.cleanup_stale_bf_data(sync_id)
+                self.db.update_sync_meta(
+                    last_sync_at=sync_id,
+                    last_sync_id=sync_id,
+                    events=event_count,
+                    markets=market_count,
+                    runners=runner_count
+                )
+                logger.info("[CatalogSync] Sync completato: %d eventi, %d mercati, %d runner.", event_count, market_count, runner_count)
+            elif truncated:
+                logger.warning(
+                    "[CatalogSync] Sync INCOMPLETO (batch troncato): catalogo esistente "
+                    "preservato, cleanup e meta saltati. Eventi visti: %d, mercati: %d.",
+                    event_count, market_count,
+                )
+            else:
+                logger.info("[CatalogSync] 0 eventi validi: catalogo esistente preservato (skip cleanup).")
 
         except Exception as e:
             logger.error("[CatalogSync] Errore durante la sincronizzazione: %s", e)

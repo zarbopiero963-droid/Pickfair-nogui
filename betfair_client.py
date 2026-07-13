@@ -609,6 +609,72 @@ class BetfairClient:
         return book
 
     # =========================================================
+    # CATALOGO (discovery eventi / mercati)
+    # =========================================================
+    def list_events(
+        self,
+        event_type_ids: List[str],
+        *,
+        in_play_only: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Eventi per i tipi di sport richiesti (Betfair SportsAPING/listEvents).
+
+        Ritorna la lista grezza Betfair: ogni elemento e' `{"event": {...},
+        "marketCount": N}`. Riusa `_post_jsonrpc` (auth/breaker/retry gia' gestiti).
+        NB: `listEvents` NON accetta `maxResults` (ritorna tutti gli eventi che
+        matchano il filter); inviarlo puo' causare APINGException in LIVE.
+        """
+        filter_: Dict[str, Any] = {"eventTypeIds": [str(e) for e in event_type_ids]}
+        if in_play_only:
+            filter_["inPlayOnly"] = True
+        result = self._post_jsonrpc(
+            self.BETTING_URL,
+            "SportsAPING/v1.0/listEvents",
+            {"filter": filter_},
+        )
+        return result if isinstance(result, list) else []
+
+    def list_market_catalogue(
+        self,
+        event_type_ids: List[str],
+        event_ids: Optional[List[str]] = None,
+        *,
+        market_type_codes: Optional[List[str]] = None,
+        max_results: int = 200,
+    ) -> List[Dict[str, Any]]:
+        """Catalogo mercati (Betfair SportsAPING/listMarketCatalogue) con runner,
+        competition e orario. `market_type_codes` filtra per tipo mercato
+        (es. ["MATCH_ODDS","CORRECT_SCORE"]) via `marketTypeCodes` nel filter.
+
+        NB: la marketProjection include `MARKET_DESCRIPTION`, che ha peso dati:
+        Betfair limita la richiesta e un `maxResults` troppo alto (es. 1000)
+        genera APINGException TOO_MUCH_DATA in LIVE. Default prudente 200:
+        il chiamante deve paginare/chunkare gli eventi per stare nel limite.
+        """
+        filter_: Dict[str, Any] = {"eventTypeIds": [str(e) for e in event_type_ids]}
+        if event_ids:
+            filter_["eventIds"] = [str(e) for e in event_ids]
+        if market_type_codes:
+            filter_["marketTypeCodes"] = [str(m) for m in market_type_codes]
+        result = self._post_jsonrpc(
+            self.BETTING_URL,
+            "SportsAPING/v1.0/listMarketCatalogue",
+            {
+                "filter": filter_,
+                "marketProjection": [
+                    "EVENT",
+                    "COMPETITION",
+                    "MARKET_START_TIME",
+                    "RUNNER_DESCRIPTION",
+                    "MARKET_DESCRIPTION",
+                ],
+                "sort": "FIRST_TO_START",
+                "maxResults": int(max_results),
+            },
+        )
+        return result if isinstance(result, list) else []
+
+    # =========================================================
     # ORDERS
     # =========================================================
     def place_bet(

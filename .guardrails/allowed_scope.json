@@ -4,6 +4,19 @@
     "max_files": 8
   },
   "tasks": {
+    "catalog_sync_betfair_listing_367": {
+      "description": "#367 (blocco critico dal test LIVE VPS): CatalogSync chiamava list_soccer_events()/list_market_catalogue(market_types=...) inesistenti sul client Betfair (BetfairClient e SimulationBroker) -> AttributeError, 0 eventi/mercati/runner sincronizzati, trading bloccato in LIVE e SIM. Fix (approccio A, autorizzato dall'owner): esposti list_events e list_market_catalogue (con filtro marketTypeCodes) su BetfairClient riusando il pattern _post_jsonrpc esistente (stesso di get_market_book), e su SimulationBroker come no-op fail-safe (in SIM il catalogo arriva dai feed streaming, non via API). Riscritto services/catalog_sync_service.py sulle firme/formati Betfair reali (mapping event.id->event_id, marketId->market_id, runners[].selectionId, competition dal market catalogue). NON tocca la logica dei gate/ordini/money-management: solo discovery read-only del catalogo. Test hard PASS+BLOCK (mapping formato Betfair, filtro marketTypeCodes, regressione list_soccer_events non piu' usato, SIM no-crash). La verifica end-to-end con API Betfair reale resta sul VPS (owner/Manus) prima di chiudere #367.",
+      "allow_tests": true,
+      "files": [
+        "betfair_client.py",
+        "simulation_broker.py",
+        "services/catalog_sync_service.py",
+        "tests/services/test_catalog_sync_betfair_listing.py",
+        "ops/catalog_sync.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 8
+    },
     "config_registry_pr_a_359": {
       "description": "Epic #359 (Config & Go-Live Console) PR-A: nuovo modulo config_registry.py, FONTE-DATO UNICA di sola lettura per GUI e headless. ConfigRegistry.entries() enumera i parametri configurabili (esecuzione/safety, Betfair, trading & money-management, Telegram, simulazione) come ConfigEntry{key,label,value,valid,required_for_live,source,remedy,is_secret}; i segreti (app_key/certificate/private_key/password) sono MASCHERATI (mai in chiaro). readiness_report() produce la checklist ✅/❌ dei prerequisiti LIVE RIUSANDO RuntimeController.evaluate_live_readiness (#350) - non reimplementa ne' indebolisce la logica del gate, la espone soltanto. NESSUNA UI, NESSUNA scrittura, NESSUNA modifica a core/services/gate. Test hard PASS+BLOCK (mascheramento segreti load-bearing, mappatura blocker->checklist, metadati). Docs ops/config_console.md.",
       "allow_tests": true,
