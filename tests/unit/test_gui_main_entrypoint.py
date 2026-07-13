@@ -18,24 +18,23 @@ import pytest
 
 
 class _FakeGUI:
-    """Registra il ciclo di vita costruzione -> force_sim -> mainloop -> destroy."""
+    """Registra il ciclo di vita costruzione -> mainloop -> destroy.
+
+    Cattura anche il kwarg `force_simulation` passato al costruttore: il
+    fail-closed #355 e' garantito **alla costruzione** (non con una chiamata
+    successiva), quindi il contratto dell'entry point e' che la GUI venga
+    costruita con `force_simulation=True`.
+    """
 
     instances = []
 
-    def __init__(self):
+    def __init__(self, force_simulation=False):
         self.mainloop_calls = 0
         self.destroy_calls = 0
-        self.force_sim_calls = 0
-        # True se SIMULATION e' stata forzata PRIMA che il mainloop partisse.
-        self.forced_sim_before_mainloop = None
+        self.force_simulation = bool(force_simulation)
         type(self).instances.append(self)
 
-    def force_simulation_startup(self):
-        self.force_sim_calls += 1
-
     def mainloop(self):
-        # Cattura l'ordine: il fail-closed richiede SIM forzata prima del loop.
-        self.forced_sim_before_mainloop = self.force_sim_calls >= 1
         self.mainloop_calls += 1
 
     def destroy(self):
@@ -81,8 +80,7 @@ def test_main_builds_gui_and_runs_mainloop(monkeypatch):
     app = _FakeGUI.instances[0]
     assert app.mainloop_calls == 1  # la GUI e' stata effettivamente avviata
     assert app.destroy_calls == 1   # cleanup nel finally
-    assert app.force_sim_calls == 1           # SIMULATION forzata all'avvio (#355)
-    assert app.forced_sim_before_mainloop is True  # prima del mainloop
+    assert app.force_simulation is True  # costruita fail-closed SIMULATION (#355)
 
 
 def test_main_returns_error_code_on_gui_failure(monkeypatch):
@@ -112,11 +110,14 @@ def test_main_returns_130_on_keyboard_interrupt(monkeypatch):
     assert _FakeGUI.instances[0].destroy_calls == 1
 
 
-def test_main_forces_simulation_before_starting_gui(monkeypatch):
-    # #355 hardening: l'entry point forza SIMULATION PRIMA del mainloop, cosi'
-    # un `execution_mode=LIVE` persistito non parte mai da `python main.py`.
-    # BLOCK: senza `app.force_simulation_startup()` in main(), force_sim_calls
-    # resta 0 e forced_sim_before_mainloop None => il test fallisce.
+def test_main_constructs_gui_forced_simulation(monkeypatch):
+    """#355 hardening: l'entry point costruisce la GUI con force_simulation=True.
+
+    Il fail-closed vale dalla COSTRUZIONE (non dopo): un `execution_mode=LIVE`
+    persistito non viene mai sincronizzato al runtime, quindi non c'e' finestra
+    LIVE transitoria in `__init__`. BLOCK: con `MiniPickfairGUI()` senza il kwarg
+    (vecchio codice), `force_simulation` resta False => il test fallisce.
+    """
     import mini_gui
 
     monkeypatch.setattr(mini_gui, "MiniPickfairGUI", _FakeGUI)
@@ -124,15 +125,15 @@ def test_main_forces_simulation_before_starting_gui(monkeypatch):
     rc = mini_gui.main()
 
     assert rc == 0
-    app = _FakeGUI.instances[0]
-    assert app.force_sim_calls == 1
-    assert app.forced_sim_before_mainloop is True
+    assert _FakeGUI.instances[0].force_simulation is True
 
 
 def test_run_gui_propagates_gui_failure_exit_code(monkeypatch):
-    # #354: main.run_gui() deve PROPAGARE il codice fail-closed di
-    # mini_gui.main(), non scartarlo ritornando 0.
-    # BLOCK: col vecchio `gui_main(); return 0`, rc sarebbe 0 e il test fallisce.
+    """#354: main.run_gui() PROPAGA il codice fail-closed di mini_gui.main().
+
+    Un crash del mainloop deve uscire con codice 1, non essere mascherato da 0.
+    BLOCK: col vecchio `gui_main(); return 0`, rc sarebbe 0 e il test fallisce.
+    """
     import mini_gui
 
     monkeypatch.setattr(mini_gui, "MiniPickfairGUI", _RaisingGUI)
@@ -146,7 +147,7 @@ def test_run_gui_propagates_gui_failure_exit_code(monkeypatch):
 
 
 def test_run_gui_propagates_keyboard_interrupt_exit_code(monkeypatch):
-    # #354: anche il codice 130 (KeyboardInterrupt) deve arrivare al chiamante.
+    """#354: anche il codice 130 (KeyboardInterrupt/Ctrl-C) arriva al chiamante."""
     import mini_gui
 
     monkeypatch.setattr(mini_gui, "MiniPickfairGUI", _InterruptGUI)

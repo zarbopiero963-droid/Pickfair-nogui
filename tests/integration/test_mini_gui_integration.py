@@ -169,22 +169,33 @@ class FakeTelegramTabUI:
         self.app = app
 
 
-@pytest.fixture
-def gui(monkeypatch):
+class LiveSettingsService(FakeSettingsService):
+    """Impostazioni persistite che restituiscono LIVE (per il test fail-closed)."""
+
+    def load_execution_settings(self):
+        return {"execution_mode": "LIVE", "live_enabled": True, "kill_switch": False}
+
+
+def _install_mini_gui_fakes(monkeypatch, settings_service=FakeSettingsService):
     import mini_gui
 
     monkeypatch.setattr(mini_gui, "Database", FakeDB)
     monkeypatch.setattr(mini_gui, "EventBus", FakeBus)
     monkeypatch.setattr(mini_gui, "ExecutorManager", FakeExecutor)
     monkeypatch.setattr(mini_gui, "ShutdownManager", FakeShutdown)
-    monkeypatch.setattr(mini_gui, "SettingsService", FakeSettingsService)
+    monkeypatch.setattr(mini_gui, "SettingsService", settings_service)
     monkeypatch.setattr(mini_gui, "BetfairService", FakeBetfairService)
     monkeypatch.setattr(mini_gui, "TelegramService", FakeTelegramService)
     monkeypatch.setattr(mini_gui, "TradingEngine", FakeTradingEngine)
     monkeypatch.setattr(mini_gui, "RuntimeController", FakeRuntimeController)
     monkeypatch.setattr(mini_gui, "TelegramController", FakeTelegramController)
     monkeypatch.setattr(mini_gui, "TelegramTabUI", FakeTelegramTabUI)
+    return mini_gui
 
+
+@pytest.fixture
+def gui(monkeypatch):
+    mini_gui = _install_mini_gui_fakes(monkeypatch)
     app = mini_gui.MiniPickfairGUI(test_mode=True)
     yield app
     try:
@@ -230,6 +241,43 @@ def test_force_simulation_startup_overrides_persisted_live(gui):
     assert gui.simulation_mode is True
     assert gui.sim_label_var.get() == "SIMULAZIONE"
     assert gui.status_broker_var.get() == "SIMULATION"
+
+
+@pytest.mark.integration
+def test_force_simulation_construction_never_applies_persisted_live(monkeypatch):
+    # #355 fail-closed FROM CONSTRUCTION (rilievo GPT-5.6/Fugu/greptile/Codacy):
+    # con impostazioni persistite LIVE, costruire con force_simulation=True non
+    # deve MAI sincronizzare LIVE al runtime (nessuna finestra LIVE transitoria
+    # in __init__).
+    mini_gui = _install_mini_gui_fakes(monkeypatch, settings_service=LiveSettingsService)
+    app = mini_gui.MiniPickfairGUI(test_mode=True, force_simulation=True)
+    try:
+        assert app.execution_mode_var.get() == "SIMULATION"
+        assert bool(app.live_enabled_var.get()) is False
+        assert app.simulation_mode is True
+        assert app.status_broker_var.get() == "SIMULATION"
+    finally:
+        try:
+            app.destroy()
+        except Exception:
+            pass
+
+
+@pytest.mark.integration
+def test_persisted_live_applies_without_force_simulation(monkeypatch):
+    # BLOCK del test sopra: SENZA force_simulation, le stesse impostazioni
+    # persistite LIVE vengono applicate al runtime alla costruzione — prova che
+    # e' il flag (non altro) a garantire il fail-closed.
+    mini_gui = _install_mini_gui_fakes(monkeypatch, settings_service=LiveSettingsService)
+    app = mini_gui.MiniPickfairGUI(test_mode=True)  # force_simulation=False (default)
+    try:
+        assert app.execution_mode_var.get() == "LIVE"
+        assert app.simulation_mode is False
+    finally:
+        try:
+            app.destroy()
+        except Exception:
+            pass
 
 
 @pytest.mark.integration
