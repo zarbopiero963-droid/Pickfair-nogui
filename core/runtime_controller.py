@@ -801,7 +801,13 @@ class RuntimeController:
             return True, "probe_optional_getter_missing", {}
 
         try:
-            report = getter()
+            # Boot gate: pre-connessione, tollera i componenti 'disconnected'
+            # (es. betfair, che si connette in start()). Fallback per probe/fake
+            # che non accettano il kwarg.
+            try:
+                report = getter(tolerate_pending_connection=True)
+            except TypeError:
+                report = getter()
         except Exception:
             logger.exception("Errore lettura runtime probe live readiness report")
             return False, "probe_report_exception", {}

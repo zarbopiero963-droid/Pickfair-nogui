@@ -278,3 +278,62 @@ def test_runtime_controller_readiness_surfaces_non_finite_hard_stop_invalid_stat
 
     assert "max_daily_loss" in state["invalid_fields"]
     assert "LIVE_HARD_STOP_CONFIG_INVALID" in readiness["blockers"]
+
+
+def test_no_checker_components_do_not_block_live_readiness():
+    # #361 B-1: db/runtime_controller/shutdown_manager senza is_ready ->
+    # 'no-checker' UNKNOWN. Sono presenti ma non espongono readiness: NON
+    # devono bloccare (erano blocker spuri -> deadlock LIVE al boot).
+    probe = RuntimeProbe(
+        db=object(),
+        trading_engine=_TradingReady(),
+        runtime_controller=object(),
+        betfair_service=_BetfairConnected(),
+        safe_mode=_SafeModeInactive(),
+        shutdown_manager=object(),
+    )
+
+    report = probe.get_live_readiness_report()
+
+    assert report["ready"] is True
+    assert report["level"] == "READY"
+    assert report["blockers"] == []
+
+
+def test_boot_gate_tolerates_disconnected_but_runtime_does_not():
+    # #361 B-2: al boot betfair 'disconnected' e' atteso (connette in start());
+    # a runtime (default) la disconnessione resta DEGRADED (monitoraggio intatto).
+    probe = RuntimeProbe(
+        db=_Ready(),
+        trading_engine=_TradingReady(),
+        runtime_controller=_Ready(),
+        betfair_service=_BetfairDisconnected(),
+        safe_mode=_SafeModeInactive(),
+        shutdown_manager=_Ready(),
+    )
+
+    # Default (watchdog/runtime): BLOCK -> disconnessione ancora segnalata.
+    assert probe.get_live_readiness_report()["level"] == "DEGRADED"
+
+    # Boot gate: tollera la connessione pendente -> READY.
+    boot = probe.get_live_readiness_report(tolerate_pending_connection=True)
+    assert boot["ready"] is True
+    assert boot["level"] == "READY"
+
+
+def test_boot_gate_does_not_tolerate_real_degraded():
+    # #361: il rilassamento vale SOLO per 'disconnected'. Un DEGRADED reale
+    # (is_ready False -> 'unhealthy') resta bloccante anche al boot.
+    probe = RuntimeProbe(
+        db=_Ready(),
+        trading_engine=_TradingReady(),
+        runtime_controller=_Ready(),
+        betfair_service=_BetfairConnected(),
+        safe_mode=_SafeModeInactive(),
+        shutdown_manager=_NotReady(),
+    )
+
+    boot = probe.get_live_readiness_report(tolerate_pending_connection=True)
+
+    assert boot["ready"] is False
+    assert boot["level"] == "DEGRADED"

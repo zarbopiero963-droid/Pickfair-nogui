@@ -734,7 +734,16 @@ class RuntimeProbe:
             "readiness": readiness,
             "deploy_gate": deploy_gate,
         }
-    def get_live_readiness_report(self) -> Dict[str, Any]:
+    def get_live_readiness_report(self, *, tolerate_pending_connection: bool = False) -> Dict[str, Any]:
+        """Report di readiness LIVE aggregato dai componenti.
+
+        ``tolerate_pending_connection`` (usato SOLO dal deploy gate di boot,
+        pre-connessione) rilassa i componenti DEGRADED perche' semplicemente
+        'disconnected' (es. betfair_service): al boot la connessione non e'
+        ancora avvenuta (parte in ``start()``), quindi non e' un vero blocker.
+        Il monitoraggio a runtime (watchdog) usa il default False e mantiene la
+        piena severita' (una disconnessione DURANTE il trading resta rilevata).
+        """
         health = self.collect_health()
 
         blockers = []
@@ -745,6 +754,25 @@ class RuntimeProbe:
             status = component.get("status", "UNKNOWN")
             reason = component.get("reason")
             normalized = str(status).upper() if status is not None else "UNKNOWN"
+
+            # B-1: componente STRUTTURALMENTE senza checker (`_probe_ready_component`
+            # senza `is_ready` -> reason 'no-checker'): e' presente ma non espone
+            # un'interfaccia di readiness, non e' un vero blocker. Restretto a
+            # `no-checker` di proposito: altri UNKNOWN (es. trading_engine
+            # 'ready_without_health') DEVONO restare fail-closed.
+            if normalized == "UNKNOWN" and str(reason or "").strip().lower() == "no-checker":
+                normalized = "READY"
+
+            # B-2: al boot un DEGRADED solo perche' 'disconnected' e' atteso
+            # (la connessione avviene in start()); la presenza/connettibilita'
+            # e' gia' verificata a monte da evaluate_live_readiness.
+            if (
+                tolerate_pending_connection
+                and normalized == "DEGRADED"
+                and str(reason or "").strip().lower() == "disconnected"
+            ):
+                normalized = "READY"
+
             blocker_code = self._blocker_code_for_component(
                 component_name=name,
                 status=normalized,
