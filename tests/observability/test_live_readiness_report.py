@@ -280,10 +280,31 @@ def test_runtime_controller_readiness_surfaces_non_finite_hard_stop_invalid_stat
     assert "LIVE_HARD_STOP_CONFIG_INVALID" in readiness["blockers"]
 
 
-def test_no_checker_components_do_not_block_live_readiness():
-    # #361 B-1: db/runtime_controller/shutdown_manager senza is_ready ->
-    # 'no-checker' UNKNOWN. Sono presenti ma non espongono readiness: NON
-    # devono bloccare (erano blocker spuri -> deadlock LIVE al boot).
+def test_no_checker_components_do_not_block_live_readiness_at_boot():
+    # #361 B-1 (boot-only): db/runtime_controller/shutdown_manager senza
+    # is_ready -> 'no-checker' UNKNOWN. Sono presenti ma non espongono
+    # readiness: al BOOT non devono bloccare (erano blocker spuri -> deadlock
+    # LIVE al boot). A RUNTIME (default) restano fail-closed (vedi test sotto).
+    probe = RuntimeProbe(
+        db=object(),
+        trading_engine=_TradingReady(),
+        runtime_controller=object(),
+        betfair_service=_BetfairConnected(),
+        safe_mode=_SafeModeInactive(),
+        shutdown_manager=object(),
+    )
+
+    report = probe.get_live_readiness_report(tolerate_pending_connection=True)
+
+    assert report["ready"] is True
+    assert report["level"] == "READY"
+    assert report["blockers"] == []
+
+
+def test_no_checker_components_still_fail_closed_at_runtime():
+    # #361 B-1 (BLOCK): il rilassamento 'no-checker' e' boot-only. A runtime
+    # (default, watchdog/is_live_allowed/_on_signal_received) i componenti
+    # UNKNOWN senza checker DEVONO restare bloccanti -> fail-closed.
     probe = RuntimeProbe(
         db=object(),
         trading_engine=_TradingReady(),
@@ -295,9 +316,9 @@ def test_no_checker_components_do_not_block_live_readiness():
 
     report = probe.get_live_readiness_report()
 
-    assert report["ready"] is True
-    assert report["level"] == "READY"
-    assert report["blockers"] == []
+    assert report["ready"] is False
+    assert report["level"] == "NOT_READY"
+    assert any(item["status"] == "UNKNOWN" for item in report["blockers"])
 
 
 def test_boot_gate_tolerates_disconnected_but_runtime_does_not():
@@ -337,3 +358,167 @@ def test_boot_gate_does_not_tolerate_real_degraded():
 
     assert boot["ready"] is False
     assert boot["level"] == "DEGRADED"
+
+
+def test_boot_does_not_promote_mixed_degradation_or_non_allowlisted():
+    # #361 (CodeRabbit Major): il rilassamento 'disconnected' vale SOLO per la
+    # allowlist pending-connection (betfair) e SOLO senza altri degradi reali.
+    probe = RuntimeProbe(
+        db=_Ready(),
+        trading_engine=_TradingReady(),
+        runtime_controller=_Ready(),
+        betfair_service=_BetfairConnected(),
+        safe_mode=_SafeModeInactive(),
+        shutdown_manager=_Ready(),
+    )
+
+    # betfair 'disconnected' MA con streaming auth degradato -> NON promosso.
+    mixed = {
+        "status": "DEGRADED",
+        "reason": "disconnected",
+        "details": {"streaming_feed": {"auth_degraded": True}},
+    }
+    assert (
+        probe._normalize_component_status(
+            "betfair_service", mixed, tolerate_pending_connection=True
+        )
+        == "DEGRADED"
+    )
+
+    # betfair 'disconnected' MA con external_io degradato -> NON promosso.
+    io_bad = {
+        "status": "DEGRADED",
+        "reason": "disconnected",
+        "details": {"external_io": {"last_status": "UNAVAILABLE"}},
+    }
+    assert (
+        probe._normalize_component_status(
+            "betfair_service", io_bad, tolerate_pending_connection=True
+        )
+        == "DEGRADED"
+    )
+
+    # pura disconnessione di betfair -> promossa a READY (solo al boot).
+    clean = {"status": "DEGRADED", "reason": "disconnected", "details": {}}
+    assert (
+        probe._normalize_component_status(
+            "betfair_service", clean, tolerate_pending_connection=True
+        )
+        == "READY"
+    )
+
+    # componente FUORI allowlist (es. database) 'disconnected' -> mai promosso.
+    other = {"status": "DEGRADED", "reason": "disconnected", "details": {}}
+    assert (
+        probe._normalize_component_status(
+            "database", other, tolerate_pending_connection=True
+        )
+        == "DEGRADED"
+    )
+
+
+# --- Regressione a livello controller: split boot vs runtime del deploy gate ---
+
+
+def _make_gate_rc():
+    return RuntimeController(
+        bus=_GateBus(),
+        db=_GateDb(key_source="env"),
+        settings_service=_GateSettings(),
+        betfair_service=_GateBetfair(),
+        telegram_service=_GateTelegram(),
+        safe_mode=_SafeModeInactive(),
+    )
+
+
+class _ProbeBootAware:
+    """Ritorna READY solo se invocata col kwarg tolerate_pending_connection=True;
+    a strict (runtime) segnala NOT_READY (fail-closed)."""
+
+    def __init__(self):
+        self.calls = []
+
+    def get_live_readiness_report(self, *, tolerate_pending_connection=False):
+        self.calls.append(tolerate_pending_connection)
+        if tolerate_pending_connection:
+            return {"ready": True, "level": "READY", "blockers": []}
+        return {
+            "ready": False,
+            "level": "NOT_READY",
+            "blockers": [{"name": "betfair_service", "status": "NOT_READY",
+                          "reason": "disconnected", "code": "LIVE_PROBE_NOT_READY"}],
+        }
+
+
+class _ProbeNoKwarg:
+    """Getter privo del kwarg: il boot NON deve passarlo (niente TypeError)."""
+
+    def get_live_readiness_report(self):
+        return {"ready": True, "level": "READY", "blockers": []}
+
+
+class _ProbeInternalTypeError:
+    """Solleva TypeError DENTRO l'implementazione quando invocata col kwarg
+    (boot). Il vecchio codice (except TypeError -> retry senza kwarg) lo
+    mascherava degradando a strict e restituendo READY: fail-open. Il fix con
+    inspect.signature NON deve mascherarlo -> probe_report_exception."""
+
+    def __init__(self):
+        self.plain_called = False
+
+    def get_live_readiness_report(self, *, tolerate_pending_connection=False):
+        if tolerate_pending_connection:
+            raise TypeError("internal boom (non e' un mismatch di firma)")
+        self.plain_called = True
+        return {"ready": True, "level": "READY", "blockers": []}
+
+
+def test_controller_boot_flag_threads_probe_tolerance():
+    # #361 (CodeRabbit CRITICAL): boot=True tollera pending-connection; boot
+    # assente (runtime: is_live_allowed / _on_signal_received) resta strict.
+    rc = _make_gate_rc()
+    probe = _ProbeBootAware()
+    rc.runtime_probe = probe
+
+    ok_boot, _reason_boot, _r1 = rc._get_probe_live_readiness_report(boot=True)
+    ok_runtime, reason_runtime, _r2 = rc._get_probe_live_readiness_report(boot=False)
+
+    assert ok_boot is True
+    assert ok_runtime is False  # runtime NON tollera la disconnessione: fail-closed
+    assert probe.calls == [True, False]
+
+
+def test_controller_runtime_default_is_strict():
+    # BLOCK: il default di _get_probe_live_readiness_report NON deve tollerare.
+    rc = _make_gate_rc()
+    rc.runtime_probe = _ProbeBootAware()
+
+    ok_default, _reason, _r = rc._get_probe_live_readiness_report()
+
+    assert ok_default is False
+
+
+def test_controller_boot_does_not_pass_kwarg_to_getter_without_it():
+    # #361: se il getter non accetta il kwarg, boot=True non deve passarlo
+    # (inspect.signature) -> nessun TypeError spurio, probe letto correttamente.
+    rc = _make_gate_rc()
+    rc.runtime_probe = _ProbeNoKwarg()
+
+    ok, _reason, _r = rc._get_probe_live_readiness_report(boot=True)
+
+    assert ok is True
+
+
+def test_controller_internal_typeerror_is_not_masked_as_strict():
+    # #361 (Fugu/Fable/CodeRabbit/Sourcery BLOCK): un TypeError sollevato DENTRO
+    # il getter col kwarg NON deve essere degradato a una chiamata strict (che
+    # nel vecchio codice restituiva READY = fail-open). Deve fallire fail-closed.
+    rc = _make_gate_rc()
+    probe = _ProbeInternalTypeError()
+    rc.runtime_probe = probe
+
+    ok, reason, _r = rc._get_probe_live_readiness_report(boot=True)
+
+    assert ok is False
+    assert reason == "probe_report_exception"
+    assert probe.plain_called is False  # non ha ritentato in strict silenziosamente
