@@ -269,6 +269,42 @@ def test_execution_read_error_marks_invalid_not_false_value():
     assert em.remedy
 
 
+class _AllRaisingSettings(_FakeSettings):
+    def load_execution_mode(self):
+        raise RuntimeError("x")
+
+    def load_live_enabled(self):
+        raise RuntimeError("x")
+
+    def load_live_readiness_ok(self):
+        raise RuntimeError("x")
+
+    def load_live_readiness_level(self):
+        raise RuntimeError("x")
+
+    def load_kill_switch(self):
+        raise RuntimeError("x")
+
+
+@pytest.mark.unit
+def test_all_safety_entries_invalid_on_read_error():
+    # BLOCK fail-closed COMPLETO: se la lettura fallisce, OGNI campo
+    # safety-critical risulta valid=False con "(errore lettura)", non un default
+    # plausibile. Prova che _safety_entry forza il fail-closed su read_ok=False
+    # per tutte le entry, non solo execution_mode (rilievo GLM 5.2).
+    reg = ConfigRegistry(_AllRaisingSettings())
+    entries = {e.key: e for e in reg.entries()}
+    for key in (
+        "execution_mode",
+        "live_enabled",
+        "live_readiness_ok",
+        "live_readiness_level",
+        "kill_switch",
+    ):
+        assert entries[key].valid is False, f"{key} deve essere non valido su errore lettura"
+        assert entries[key].value == "(errore lettura)"
+
+
 @pytest.mark.unit
 def test_read_error_log_does_not_leak_exception_message(caplog):
     # BLOCK sicurezza: il log su errore di lettura segnala nome loader + tipo
