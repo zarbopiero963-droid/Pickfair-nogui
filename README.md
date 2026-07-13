@@ -48,9 +48,27 @@ a key resolved in this order:
 2. `~/.pickfair/db.key` (auto-generated on first run, `chmod 0600`)
 3. Ephemeral in-memory key (logged as WARNING — do not use in production)
 
+A local `config.json` (proxy settings read by `BetfairClient`, plus legacy
+Betfair/Telegram fields) lives next to the code but is **not tracked by git**:
+it contains real credentials. Create it by copying the tracked template:
+
+```bash
+cp config.example.json config.json
+# then edit config.json with your real values
+```
+
+If `config.json` is absent the proxy is simply skipped (fail-safe) — nothing
+crashes. When updating an existing deployment to a revision where the file is
+no longer tracked, back up your local `config.json` before `git pull` and
+restore it afterwards if git removes it.
+
 ## Security notes
 
-- Never commit `*.pem`, `*.key`, or `.env` files — these are covered by `.gitignore`
+- Never commit `*.pem`, `*.key`, `.env`, or `config.json` files — these are
+  covered by `.gitignore` (`config.example.json` is the placeholder template)
+- If a real credential was ever committed, consider it compromised: rotate it
+  (Betfair password/app key, proxy password) — removing the file from the
+  worktree does not purge git history
 - The circuit breaker (`BetfairClient._api_breaker`) opens after 5 consecutive
   API failures and holds for 60 s before probing
 - The order-submission breaker (`TradingEngine._order_submission_breaker`)

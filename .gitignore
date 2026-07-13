@@ -29,6 +29,10 @@ credentials*
 .env
 .env.*
 !.env.example
+# Local runtime config with real credentials (Betfair, proxy): NEVER commit.
+# config.example.json is the tracked placeholder template.
+config.json
+!config.example.json
 
 # =============================================================
 # LOGS / DIAGNOSTIC BUNDLES
