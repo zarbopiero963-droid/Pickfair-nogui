@@ -147,6 +147,15 @@ class TelegramListener:
         if self.running:
             return {"started": True, "reason": "already_running", "chat_count": len(self.monitored_chats)}
 
+        # Mutua esclusione login/runtime (rilievo Fugu/GPT/GLM): un login
+        # interattivo pendente/abbandonato non deve convivere col runtime.
+        # Nessuna race col login: request_code gira solo nel comando standalone
+        # `--telegram-login` (il processo esce prima di start()) e la GUI usa
+        # TelegramController, quindi request_code e start() non sono mai
+        # concorrenti sulla stessa istanza; _cleanup_login e' comunque difensivo
+        # (gestisce lo stato None, join/close idempotenti).
+        self._cleanup_login()
+
         if monitored_chats is not None:
             self.set_monitored_chats(monitored_chats)
 
@@ -535,8 +544,22 @@ class TelegramListener:
             loop.call_soon_threadsafe(loop.stop)
         # Join del thread e chiusura del loop: evita proliferazione di thread su
         # request_code ripetuti e libera le risorse (rilievo Greptile/Codacy).
-        if thread is not None and thread.is_alive():
+        # Guard self-join (rilievo Fugu): mai join sul thread corrente (se
+        # _cleanup_login fosse chiamato dal loop di login -> RuntimeError).
+        if (
+            thread is not None
+            and thread is not threading.current_thread()
+            and thread.is_alive()
+        ):
             thread.join(timeout=self._stop_timeout)
+            if thread.is_alive():
+                # Join scaduto (loop bloccato): non azzerare in silenzio un thread
+                # ancora vivo -> logga il potenziale leak (rilievo Fable).
+                logger.warning(
+                    "[TelegramListener] thread del login loop ancora vivo dopo "
+                    "join (timeout=%ss): possibile risorsa non rilasciata.",
+                    self._stop_timeout,
+                )
         if loop is not None and not loop.is_closed() and not loop.is_running():
             try:
                 loop.close()

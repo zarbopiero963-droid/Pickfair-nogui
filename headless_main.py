@@ -997,7 +997,12 @@ class HeadlessApp:
         finally:
             # Chiudi sempre il client/loop di login, anche sui path di fallimento
             # (es. 2FA errata) dove il listener resta in attesa (rilievo Greptile).
-            listener._cleanup_login()
+            # try/except: un errore nel cleanup non deve mascherare il return
+            # (o l'eccezione) del flusso di login (rilievo Fable).
+            try:
+                listener._cleanup_login()
+            except Exception:
+                logger.debug("Errore in cleanup login (finally)", exc_info=True)
 
     def _run_preflight(self) -> int:
         """Valuta i prerequisiti LIVE e stampa una checklist leggibile.
