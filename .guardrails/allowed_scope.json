@@ -4,6 +4,17 @@
     "max_files": 8
   },
   "tasks": {
+    "config_registry_pr_a_359": {
+      "description": "Epic #359 (Config & Go-Live Console) PR-A: nuovo modulo config_registry.py, FONTE-DATO UNICA di sola lettura per GUI e headless. ConfigRegistry.entries() enumera i parametri configurabili (esecuzione/safety, Betfair, trading & money-management, Telegram, simulazione) come ConfigEntry{key,label,value,valid,required_for_live,source,remedy,is_secret}; i segreti (app_key/certificate/private_key/password) sono MASCHERATI (mai in chiaro). readiness_report() produce la checklist ✅/❌ dei prerequisiti LIVE RIUSANDO RuntimeController.evaluate_live_readiness (#350) - non reimplementa ne' indebolisce la logica del gate, la espone soltanto. NESSUNA UI, NESSUNA scrittura, NESSUNA modifica a core/services/gate. Test hard PASS+BLOCK (mascheramento segreti load-bearing, mappatura blocker->checklist, metadati). Docs ops/config_console.md.",
+      "allow_tests": true,
+      "files": [
+        "config_registry.py",
+        "tests/unit/test_config_registry.py",
+        "ops/config_console.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
+    },
     "headless_live_nogo_diagnostics_358": {
       "description": "#358: la Phase 0 (safety-critical) ha stabilito che NON e' un bug di codice - con --live senza --live-enabled il deploy gate RIFIUTA LIVE (fail-closed, LIVE_NOT_ENABLED), non connette in SIMULATION; il sintomo osservato era codice stale sul VPS. Converte #358 in diagnostica UX: all'avvio headless in LIVE, se il deploy gate rifiuta, stampa a schermo la checklist blocker+rimedio (riusa HeadlessApp._format_preflight_report / _BLOCKER_REMEDIATION di #360) invece di lasciare il reason_code sepolto nel warning di log. Es. --live senza --live-enabled -> stampa LIVE_NOT_ENABLED + 'Avvia con --live-enabled'. Puramente diagnostico (_emit_live_nogo_diagnostics): NON tocca la logica del gate ne' l'esito di start() (l'enforcement fail-closed resta in RuntimeController.start). Nessuna modifica a core/services/gate. Test hard PASS+BLOCK (metodo diretto + wiring in start(): senza la chiamata la checklist non compare a schermo).",
       "allow_tests": true,
