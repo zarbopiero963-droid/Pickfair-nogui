@@ -338,9 +338,10 @@ def _login_db(settings=None):
     class _DB:
         def __init__(self):
             self.saved = None
+            self._settings = dict(settings or {"api_id": "", "api_hash": "", "session_string": ""})
 
         def get_telegram_settings(self):
-            return dict(settings or {"api_id": "", "api_hash": "", "session_string": ""})
+            return dict(self._settings)
 
         def save_telegram_settings(self, payload):
             self.saved = dict(payload)

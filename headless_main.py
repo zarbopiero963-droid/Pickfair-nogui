@@ -1005,19 +1005,23 @@ class HeadlessApp:
     def _telegram_prepare_login(self, db, prompt_secret):
         """Legge i settings, risolve/valida le credenziali e costruisce il listener.
 
-        Ritorna la tupla ``(listener, api_id, api_hash, from_external, settings)``
-        al successo, oppure l'``int`` 2 (exit code) se una credenziale manca o è
-        invalida. api_hash è un SEGRETO: se non è in env/DB viene chiesto con input
-        nascosto (`prompt_secret`) — mai da CLI (sarebbe visibile in `ps`/history).
+        Ritorna sempre una tupla a 6 elementi il cui primo è l'``exit_code``:
+        ``(None, listener, api_id, api_hash, from_external, settings)`` al successo,
+        oppure ``(2, None, None, None, None, None)`` se una credenziale manca o è
+        invalida. Contratto non ambiguo (exit_code ``None`` vs ``int``: niente
+        controllo `isinstance(int)`, che con `bool ⊂ int` sarebbe fragile).
+        api_hash è un SEGRETO: se non è in env/DB viene chiesto con input nascosto
+        (`prompt_secret`) — mai da CLI (sarebbe visibile in `ps`/history).
         """
         from telegram_listener import TelegramListener
 
+        fail = (2, None, None, None, None, None)
         try:
             settings = db.get_telegram_settings()
         except Exception as exc:
             logger.exception("Lettura settings Telegram per --telegram-login fallita: %s", exc)
             print(f"❌ Errore lettura configurazione Telegram: {exc}")
-            return 2
+            return fail
         api_id, api_hash, from_external = self._resolve_telegram_credentials(
             sys.argv[1:], os.environ, settings
         )
@@ -1026,7 +1030,7 @@ class HeadlessApp:
         if not api_id:
             print("❌ api_id mancante: passalo con --api-id, con l'env TELEGRAM_API_ID, "
                   "oppure configuralo nel DB (via GUI).")
-            return 2
+            return fail
         # api_hash mancante: chiedilo con input NASCOSTO. La persistenza avviene
         # SOLO dopo un login riuscito, così creds errate non sovrascrivono il DB.
         if not api_hash:
@@ -1037,13 +1041,13 @@ class HeadlessApp:
         if not api_hash:
             print("❌ api_hash mancante: forniscilo con l'env TELEGRAM_API_HASH, "
                   "dal DB, o all'input nascosto.")
-            return 2
+            return fail
         try:
             listener = TelegramListener(int(api_id or 0), api_hash, db=db)
         except Exception as exc:
             print(f"❌ Config Telegram non valida (api_id/api_hash): {exc}")
-            return 2
-        return listener, api_id, api_hash, from_external, settings
+            return fail
+        return None, listener, api_id, api_hash, from_external, settings
 
     @staticmethod
     def _telegram_persist_login(db, settings, api_id, api_hash, from_external, session_string):
@@ -1086,10 +1090,11 @@ class HeadlessApp:
         db = self._telegram_login_db()
         if db is None:
             return 2
-        prepared = self._telegram_prepare_login(db, _getpass.getpass)
-        if isinstance(prepared, int):
-            return prepared  # exit code: credenziale mancante/invalida
-        listener, api_id, api_hash, from_external, settings = prepared
+        exit_code, listener, api_id, api_hash, from_external, settings = (
+            self._telegram_prepare_login(db, _getpass.getpass)
+        )
+        if exit_code is not None:
+            return exit_code  # credenziale mancante/invalida
 
         try:
             exit_code, session_string = self._telegram_login_flow(
