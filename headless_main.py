@@ -208,10 +208,14 @@ class HeadlessApp:
     # =========================================================
     # BOOTSTRAP
     # =========================================================
-    def build(self) -> None:
+    def build(self, start_services: bool = True) -> None:
         """
         Costruzione completa dei componenti.
         Safe anche dopo uno stop o un build fallito.
+
+        Con ``start_services=False`` costruisce il runtime SENZA avviare i
+        thread di osservabilita' (watchdog/cleanup): usato dal preflight
+        read-only, che deve valutare la readiness senza avviare nulla.
         """
         if self._built:
             return
@@ -414,8 +418,9 @@ class HeadlessApp:
             except Exception:
                 pass
 
-            self.watchdog_service.start()
-            self.cleanup_service.start()
+            if start_services:
+                self.watchdog_service.start()
+                self.cleanup_service.start()
 
             self._wire_bus()
             self._register_shutdown_hooks()
@@ -850,16 +855,51 @@ class HeadlessApp:
             "Segnale di readiness sconosciuto",
             "Verifica lo stato del runtime (mode).",
         ),
+        "RUNTIME_LOCKDOWN": (
+            "Runtime in lockdown",
+            "Rimuovi la condizione di lockdown (emergenza / riconciliazione).",
+        ),
+        # Reason di alto livello del deploy gate (fallback quando non ci sono
+        # blocker granulari, es. probe LIVE non OK).
+        "DEPLOY_BLOCKED_NOT_READY": (
+            "Deploy gate: readiness LIVE non pronta",
+            "Risolvi i blocker di readiness elencati o conferma live_readiness_ok.",
+        ),
+        "DEPLOY_BLOCKED_KILL_SWITCH": (
+            "Deploy gate: kill switch attivo",
+            "Disattiva il kill switch (--kill-switch-off o flag DB).",
+        ),
+        "DEPLOY_BLOCKED_BLOCKERS_PRESENT": (
+            "Deploy gate: blocker di readiness presenti",
+            "Risolvi i blocker elencati sopra.",
+        ),
+        "DEPLOY_BLOCKED_INVALID_STATE": (
+            "Deploy gate: stato non valido",
+            "Verifica execution_mode / live_enabled / readiness.",
+        ),
+        "LIVE_PROBE_NOT_READY": (
+            "Probe di readiness LIVE non OK (streaming/bankroll/reconciliation)",
+            "Verifica la salute di streaming, bankroll sync e reconciliation.",
+        ),
     }
 
     def _preflight_requested(self) -> bool:
+        # Check su argv (non su _parse_args) DELIBERATO: la decisione va presa
+        # PRIMA di build()/settings_service, per costruire in modalita'
+        # read-only (start_services=False). `--preflight` e' un flag "bare":
+        # gli unici argomenti con valore usano la forma inline `--opt=val`
+        # (es. --password=...), quindi lo scan e' sicuro.
         return "--preflight" in [str(a).strip().lower() for a in sys.argv[1:]]
 
     def _run_preflight(self) -> int:
-        """[GO-LIVE PREFLIGHT] Valuta i prerequisiti LIVE e stampa una checklist
-        leggibile (stdout + log) SENZA connettersi a Betfair ne' avviare il
-        trading. Read-only: riusa RuntimeController.evaluate_live_readiness
-        (fonte autorevole). Exit code: 0 se pronto per LIVE, 2 altrimenti.
+        """Valuta i prerequisiti LIVE e stampa una checklist leggibile.
+
+        [GO-LIVE PREFLIGHT] Read-only: usa lo STESSO gate di start()
+        (RuntimeController.get_deploy_gate_status, variante read-only di
+        enforce_deploy_gate: nessun side effect di log/attr), cosi' il verdicto
+        riflette esattamente cio' che start() deciderebbe. NON si connette a
+        Betfair ne' avvia il trading. Exit code: 0 pronto per LIVE, 2 non
+        pronto, 1 se il runtime non e' stato costruito.
         """
         args = self._parse_args()
         execution_mode = str(args.get("execution_mode") or "SIMULATION")
@@ -870,16 +910,30 @@ class HeadlessApp:
             msg = "[PREFLIGHT] Runtime non disponibile dopo build"
             logger.error(msg)
             print(msg)
-            return 2
+            return 1  # errore di bootstrap/build (coerente con ops/preflight.md)
 
-        readiness = self.runtime.evaluate_live_readiness(
+        status = self.runtime.get_deploy_gate_status(
             execution_mode=execution_mode,
             live_enabled=live_enabled,
             live_readiness_ok=live_readiness_ok,
         )
-        ready = bool(readiness.get("ready", False))
-        level = str(readiness.get("level") or "NOT_READY")
-        blockers = [str(b) for b in (readiness.get("blockers") or [])]
+        report, allowed = self._format_preflight_report(
+            status, execution_mode, live_enabled, live_readiness_ok
+        )
+        print(report)
+        logger.info("GO-LIVE PREFLIGHT\n%s", report)
+        return 0 if allowed else 2
+
+    def _format_preflight_report(self, status, execution_mode, live_enabled, live_readiness_ok):
+        """Costruisce (report_testuale, allowed) dal deploy-gate status. Il
+        messaggio "PRONTO" e l'exit code sono ENTRAMBI guidati da `allowed`, mai
+        dalla sola assenza di blocker (evita il "PRONTO" con exit 2)."""
+        allowed = bool(status.get("allowed", False))
+        payload = (status.get("details") or {}).get("readiness_payload") or {}
+        level = str(payload.get("level") or status.get("readiness") or "NOT_READY")
+        blockers = [str(b) for b in (payload.get("blockers") or [])]
+        probe = (payload.get("details") or {}).get("probe") or {}
+        probe_ok = bool(probe.get("ok", True))
 
         lines = [
             "=" * 64,
@@ -891,22 +945,50 @@ class HeadlessApp:
             f"readiness level          : {level}",
             "-" * 64,
         ]
-        if not blockers:
+
+        # Non-LIVE: il preflight LIVE non e' applicabile. Non stampare mai
+        # "PRONTO PER LIVE" qui (sarebbe fuorviante). Exit 0 = nulla da bloccare.
+        if execution_mode.strip().upper() != "LIVE":
+            lines.append(
+                "execution_mode richiesto NON e' LIVE: preflight LIVE non "
+                "applicabile. Rilancia con --live --live-enabled per valutare la "
+                "readiness LIVE reale."
+            )
+            lines.append("=" * 64)
+            return "\n".join(lines), True
+
+        if allowed:
             lines.append("PRONTO PER LIVE — nessun blocker.")
-        else:
-            lines.append(f"NON PRONTO — {len(blockers)} blocker:")
-            for code in blockers:
+            lines.append("=" * 64)
+            return "\n".join(lines), True
+
+        lines.append("NON PRONTO:")
+        shown = False
+        for code in blockers:
+            desc, remedy = self._BLOCKER_REMEDIATION.get(
+                code, ("(blocker non catalogato)", "Verifica lo stato runtime/log.")
+            )
+            lines.append(f"  [X] {code}")
+            lines.append(f"        cosa   : {desc}")
+            lines.append(f"        rimedio: {remedy}")
+            shown = True
+        if not probe_ok:
+            desc, remedy = self._BLOCKER_REMEDIATION["LIVE_PROBE_NOT_READY"]
+            lines.append("  [X] LIVE_PROBE_NOT_READY")
+            lines.append(f"        cosa   : {probe.get('reason') or desc}")
+            lines.append(f"        rimedio: {remedy}")
+            shown = True
+        if not shown:
+            # Nessun blocker granulare: mostra le reason di alto livello del gate.
+            for reason in (status.get("reasons") or [status.get("reason") or "DEPLOY_BLOCKED_INVALID_STATE"]):
                 desc, remedy = self._BLOCKER_REMEDIATION.get(
-                    code, ("(blocker non catalogato)", "Verifica lo stato runtime/log.")
+                    str(reason), ("Deploy gate NO-GO", "Consulta il deploy gate/log per il dettaglio.")
                 )
-                lines.append(f"  [X] {code}")
+                lines.append(f"  [X] {reason}")
                 lines.append(f"        cosa   : {desc}")
                 lines.append(f"        rimedio: {remedy}")
         lines.append("=" * 64)
-        report = "\n".join(lines)
-        print(report)
-        logger.info("GO-LIVE PREFLIGHT\n%s", report)
-        return 0 if ready else 2
+        return "\n".join(lines), allowed
 
     # =========================================================
     # RUN
@@ -916,11 +998,16 @@ class HeadlessApp:
             logger.warning("HeadlessApp già in esecuzione")
             return 0
 
+        # --preflight va deciso PRIMA di build(): e' read-only e non deve avviare
+        # i servizi (watchdog/cleanup). Il check e' su argv perche' avviene prima
+        # che settings_service esista.
+        preflight = self._preflight_requested()
+
         try:
-            self.build()
-            # Preflight read-only: valuta e stampa i prerequisiti LIVE, poi esce.
-            # NON esegue boot recovery ne' avvia il trading.
-            if self._preflight_requested():
+            self.build(start_services=not preflight)
+            if preflight:
+                # Read-only: valuta e stampa i prerequisiti LIVE, poi esce.
+                # NON esegue boot recovery ne' avvia il trading.
                 return self._run_preflight()
             self._run_boot_recovery()
         except Exception as exc:
