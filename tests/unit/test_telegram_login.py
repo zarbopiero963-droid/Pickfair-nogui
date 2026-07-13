@@ -150,6 +150,18 @@ def test_request_code_missing_phone():
     assert res == {"ok": False, "error": "missing_phone"}
 
 
+def test_stop_cleans_up_abandoned_login():
+    # BLOCK (Fugu #371): request_code senza sign_in NON deve lasciare il client
+    # di login orfano; stop() lo chiude (disconnect + loop fermato).
+    fake = _FakeClient(behavior="ok")
+    lis = _listener(fake)
+    lis.request_code("+39")
+    assert lis._login_client is not None
+    lis.stop()
+    assert lis._login_client is None
+    assert ("disconnect",) in fake.calls
+
+
 # ---- headless --telegram-login: flusso interattivo --------------------------
 
 

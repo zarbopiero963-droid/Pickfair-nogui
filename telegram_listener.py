@@ -147,6 +147,9 @@ class TelegramListener:
         if self.running:
             return {"started": True, "reason": "already_running", "chat_count": len(self.monitored_chats)}
 
+        # Un eventuale login interattivo pendente non deve convivere col runtime.
+        self._cleanup_login()
+
         if monitored_chats is not None:
             self.set_monitored_chats(monitored_chats)
 
@@ -211,6 +214,11 @@ class TelegramListener:
 
         self.intentional_stop = True
         self.reconnect_in_progress = False
+
+        # Un login interattivo abbandonato (request_code senza sign_in) lascerebbe
+        # il client/loop di login vivi (connessione Telethon orfana): chiudili
+        # quando il listener si ferma (rilievo Fugu #371).
+        self._cleanup_login()
 
         loop, client = self._runtime_loop, self._client
         if loop is not None and client is not None and not loop.is_closed():

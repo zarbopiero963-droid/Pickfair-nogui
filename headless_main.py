@@ -962,7 +962,6 @@ class HeadlessApp:
         db = self.db
         if db is None:
             try:
-                from database import Database
                 db = Database()
             except Exception as exc:
                 logger.exception("Errore init DB per --telegram-login: %s", exc)
