@@ -71,12 +71,19 @@ python headless_main.py --telegram-login
   mismatch appare come `secret_cipher: decrypt failed`.
 - Usa il numero in **formato internazionale** (`+39...`). Richieste ripetute
   troppo ravvicinate → `FloodWaitError`: attendi i secondi indicati e riprova una
-  sola volta.
+  sola volta. Il comando **riconosce il FloodWait** e stampa un avviso esplicito
+  («aspetta N secondi, NON rilanciare»): rilanciare peggiora il flood **e invalida
+  i codici precedenti** (causa tipica del "codice non valido" dopo molti tentativi).
+- **Digita SOLO le cifre** del codice (es. `12345`). Se incolli l'intero messaggio
+  di servizio (`Login code: 12345`) va bene lo stesso: il comando **estrae solo le
+  cifre**. Usa **sempre l'ULTIMO codice ricevuto** — ogni nuovo invio invalida i
+  precedenti.
 
 Flusso interattivo (`HeadlessApp._telegram_login_flow`):
 
 1. Chiede il **numero di telefono** (es. `+39...`) → invia il codice.
-2. Chiede il **codice di verifica** ricevuto su Telegram.
+2. Chiede il **codice di verifica** ricevuto su Telegram (**solo le cifre**;
+   incollare `Login code: 12345` è tollerato → tiene `12345`).
 3. Se l'account ha la **2FA**, chiede la **password** (input nascosto).
 4. Al successo **salva la `session_string`** nel DB (`save_telegram_settings`,
    merge sui settings esistenti, `enabled=True`) ed esce con codice `0`.

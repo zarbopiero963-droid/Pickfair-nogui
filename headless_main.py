@@ -921,6 +921,50 @@ class HeadlessApp:
         return "--telegram-login" in [str(a).strip().lower() for a in sys.argv[1:]]
 
     @staticmethod
+    def _sanitize_login_code(raw):
+        """Estrae SOLO le cifre dal codice inserito.
+
+        Il messaggio di servizio Telegram (777000) è tipo ``Login code: 12345``:
+        se l'utente incolla tutto, ``sign_in`` darebbe "codice non valido". Qui
+        teniamo solo le cifre (``12345``). Se non ci sono cifre, ritorna il testo
+        originale (strip) così l'errore resta comprensibile.
+        """
+        text = str(raw or "")
+        digits = "".join(ch for ch in text if ch.isdigit())
+        return digits or text.strip()
+
+    @staticmethod
+    def _request_code_error_message(err):
+        """Messaggio per un ``request_code`` fallito.
+
+        Su FloodWait (troppi invii ravvicinati) spiega di ATTENDERE e NON
+        rilanciare: rilanciare peggiora il flood e invalida i codici precedenti
+        (causa tipica del "codice non valido" dopo molti tentativi).
+        """
+        text = str(err or "")
+        low = text.lower()
+        if "wait" in low or "flood" in low:
+            return (
+                f"⏳ Telegram ha imposto un'attesa (troppi tentativi ravvicinati): {text}\n"
+                "   Aspetta i secondi indicati e NON rilanciare il comando finché non scade."
+            )
+        return f"❌ Invio codice fallito: {text}"
+
+    @staticmethod
+    def _signin_error_message(err):
+        """Messaggio per un ``sign_in`` fallito, con guida sul caso più comune.
+
+        "codice non valido" quasi sempre = si è usato un codice di una richiesta
+        precedente (ogni invio invalida i precedenti) o si è incollato testo extra.
+        """
+        if str(err) == "invalid_code":
+            return (
+                "❌ Codice non valido: usa SOLO l'ULTIMO codice ricevuto (ogni nuovo "
+                "invio invalida i precedenti) e digita solo le cifre."
+            )
+        return f"❌ Login non riuscito: {err}"
+
+    @staticmethod
     def _telegram_login_flow(listener, api_id, api_hash, *, prompt, prompt_secret, out):
         """Flusso interattivo di login userbot Telegram (telefono+codice+2FA).
 
@@ -936,10 +980,10 @@ class HeadlessApp:
             return 2, None
         res = listener.request_code(phone)
         if not res.get("ok"):
-            out(f"❌ Invio codice fallito: {res.get('error')}")
+            out(HeadlessApp._request_code_error_message(res.get("error")))
             return 2, None
-        out("📩 Codice inviato. Controlla l'app Telegram.")
-        code = (prompt("Codice di verifica: ") or "").strip()
+        out("📩 Codice inviato. Controlla l'app Telegram (chat \"Telegram\", 777000), non l'SMS.")
+        code = HeadlessApp._sanitize_login_code(prompt("Codice di verifica (solo le cifre): "))
         res = listener.sign_in(code)
         if res.get("requires_password"):
             out("🔐 Autenticazione a due fattori (2FA) attiva.")
@@ -948,7 +992,7 @@ class HeadlessApp:
         if res.get("ok") and res.get("session_string"):
             out("✅ Login Telegram completato: session_string generata.")
             return 0, res.get("session_string")
-        out(f"❌ Login non riuscito: {res.get('error')}")
+        out(HeadlessApp._signin_error_message(res.get("error")))
         return 2, None
 
     @staticmethod

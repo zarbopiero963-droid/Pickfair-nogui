@@ -265,6 +265,65 @@ def test_login_flow_request_code_failure():
     assert ss is None
 
 
+def test_sanitize_login_code_extracts_digits():
+    # BLOCK (login UX, #371): il messaggio 777000 è "Login code: 12345"; incollarlo
+    # tutto dava "codice non valido". Ora si tengono solo le cifre.
+    assert HeadlessApp._sanitize_login_code("Login code: 12345") == "12345"
+    assert HeadlessApp._sanitize_login_code("  12345  ") == "12345"
+    assert HeadlessApp._sanitize_login_code("1 2 3 4 5") == "12345"
+    # nessuna cifra: ritorna il testo strip (errore comprensibile, non crash)
+    assert HeadlessApp._sanitize_login_code("  abc ") == "abc"
+    assert HeadlessApp._sanitize_login_code(None) == ""
+
+
+def test_login_flow_sanitizes_pasted_code():
+    # BLOCK: l'utente incolla l'intero messaggio; sign_in DEVE ricevere solo le
+    # cifre. Sul vecchio flow (nessuna sanitizzazione) sign_in riceveva
+    # "Login code: 12345" => codice non valido.
+    lis = _ScriptListener(sign_in_results=[{"ok": True, "session_string": "SS"}])
+    code, ss = HeadlessApp._telegram_login_flow(
+        lis, "1", "h",
+        prompt=_seq("+39", "Login code: 12345"),
+        prompt_secret=lambda p: "",
+        out=lambda *_: None,
+    )
+    assert code == 0 and ss == "SS"
+    assert lis.sign_in_calls[0] == ("12345", None), "sign_in deve ricevere solo le cifre"
+
+
+def test_request_code_error_message_floodwait():
+    # FloodWait: messaggio esplicito "attesa + NON rilanciare" (evita il loop che
+    # invalida i codici). Errore generico: messaggio normale.
+    flood = HeadlessApp._request_code_error_message("A wait of 3600 seconds is required")
+    assert "NON rilanciare" in flood and "3600" in flood
+    assert "Invio codice fallito" in HeadlessApp._request_code_error_message("boom")
+
+
+def test_login_flow_floodwait_shows_wait_message():
+    # BLOCK: request_code fallito per FloodWait => l'utente vede il messaggio di
+    # attesa (non un errore opaco) e il flow ritorna (2, None).
+    class _FloodListener:
+        def request_code(self, phone):
+            return {"ok": False, "error": "A wait of 42 seconds is required"}
+
+        def sign_in(self, code, password_2fa=None):  # pragma: no cover - non raggiunto
+            raise AssertionError("sign_in non deve partire dopo un FloodWait")
+
+    seen = []
+    code, ss = HeadlessApp._telegram_login_flow(
+        _FloodListener(), "1", "h",
+        prompt=_seq("+39"), prompt_secret=lambda p: "", out=seen.append,
+    )
+    assert code == 2 and ss is None
+    assert any("NON rilanciare" in str(m) and "42" in str(m) for m in seen)
+
+
+def test_signin_error_message_invalid_code_guides_user():
+    msg = HeadlessApp._signin_error_message("invalid_code")
+    assert "ULTIMO codice" in msg and "solo le cifre" in msg
+    assert "Login non riuscito" in HeadlessApp._signin_error_message("not_authorized")
+
+
 def test_run_telegram_login_settings_read_error_returns_2():
     # BLOCK (CodeRabbit Major): se db.get_telegram_settings() solleva, il comando
     # --telegram-login deve rispettare il contratto 0/2 (return 2) e NON propagare
