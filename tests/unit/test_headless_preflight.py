@@ -242,18 +242,28 @@ class _FakeRuntimeLiveBlocked:
 
 
 @pytest.mark.unit
-def test_emit_live_nogo_diagnostics_prints_blocker_and_remedy(monkeypatch, capsys):
+def test_emit_live_nogo_diagnostics_prints_blocker_and_remedy(monkeypatch, capsys, caplog):
     # #358: il metodo stampa a schermo blocker + rimedio (riusa la checklist
     # del preflight), rendendo visibile cosa manca per LIVE.
+    import logging
+
     app = _make_app(monkeypatch, _FakeRuntimeReady(), ["--live"])
     status = _status(False, ["LIVE_NOT_ENABLED"])
 
-    app._emit_live_nogo_diagnostics(status, "LIVE", False, True)
+    with caplog.at_level(logging.WARNING, logger="headless_main"):
+        app._emit_live_nogo_diagnostics(status, "LIVE", False, True)
 
     out = capsys.readouterr().out
     assert "NON PRONTO" in out
     assert "LIVE_NOT_ENABLED" in out
     assert "--live-enabled" in out
+    # Contratto di logging: la diagnostica DEVE restare a WARNING (non INFO),
+    # cosi' i rimedi sopravvivono in produzione con filtro WARNING+. Se qualcuno
+    # la riportasse a logger.info, questo assert fallisce.
+    assert any(
+        r.levelno == logging.WARNING and "[DEPLOY GATE] Diagnostica NO-GO LIVE" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 @pytest.mark.unit
@@ -273,3 +283,14 @@ def test_start_live_nogo_emits_diagnostics_to_screen(monkeypatch, capsys):
     assert "LIVE_NOT_ENABLED" in out
     assert "--live-enabled" in out
     assert rc == 1  # runtime.start del fake interrotto DOPO la diagnostica
+    # Propagazione CLI->deploy gate (obiettivo #358): `--live` senza
+    # `--live-enabled` deve raggiungere il gate come execution_mode=LIVE,
+    # live_enabled=False, live_readiness_ok=False, e boot=True (check
+    # pre-connessione). Senza questo assert il test passerebbe anche se start()
+    # inoltrasse valori errati (il fake risponde NO-GO a qualsiasi input).
+    assert app.runtime.enforce_calls, "enforce_deploy_gate non e' stato invocato"
+    exec_mode, live_enabled, live_readiness_ok, boot = app.runtime.enforce_calls[-1]
+    assert exec_mode == "LIVE"
+    assert live_enabled is False
+    assert live_readiness_ok is False
+    assert boot is True
