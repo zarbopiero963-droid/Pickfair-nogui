@@ -12,6 +12,7 @@ codice reale di `mini_gui.main` / `main.run_gui`.
 """
 
 import importlib
+import sys
 
 import pytest
 
@@ -37,6 +38,12 @@ class _RaisingGUI(_FakeGUI):
     def mainloop(self):
         super().mainloop()
         raise RuntimeError("boom mainloop")
+
+
+class _InterruptGUI(_FakeGUI):
+    def mainloop(self):
+        super().mainloop()
+        raise KeyboardInterrupt
 
 
 @pytest.fixture(autouse=True)
@@ -82,12 +89,29 @@ def test_main_returns_error_code_on_gui_failure(monkeypatch):
     assert _FakeGUI.instances[0].destroy_calls == 1
 
 
+def test_main_returns_130_on_keyboard_interrupt(monkeypatch):
+    # Fail-closed: KeyboardInterrupt (Ctrl-C) => codice 130 e cleanup nel finally.
+    import mini_gui
+
+    monkeypatch.setattr(mini_gui, "MiniPickfairGUI", _InterruptGUI)
+
+    rc = mini_gui.main()
+
+    assert rc == 130
+    assert len(_FakeGUI.instances) == 1
+    assert _FakeGUI.instances[0].destroy_calls == 1
+
+
 def test_main_py_run_gui_wires_to_mini_gui_main(monkeypatch):
     # End-to-end del wiring rotto sul VPS: main.run_gui() deve importare
     # `main` da mini_gui e avviare la GUI senza ImportError.
     import mini_gui
 
     monkeypatch.setattr(mini_gui, "MiniPickfairGUI", _FakeGUI)
+    # Forza un import fresco di `main` cosi' il path `from mini_gui import main`
+    # (che pre-fix sollevava ImportError) viene realmente rieseguito e non
+    # servito dalla cache di un test precedente.
+    sys.modules.pop("main", None)
     main_module = importlib.import_module("main")
 
     rc = main_module.run_gui()
@@ -95,3 +119,4 @@ def test_main_py_run_gui_wires_to_mini_gui_main(monkeypatch):
     assert rc == 0
     assert len(_FakeGUI.instances) == 1
     assert _FakeGUI.instances[0].mainloop_calls == 1
+    assert _FakeGUI.instances[0].destroy_calls == 1  # il finally di main() viene esercitato
