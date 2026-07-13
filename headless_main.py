@@ -913,6 +913,102 @@ class HeadlessApp:
         # (es. --password=...), quindi lo scan e' sicuro.
         return "--preflight" in [str(a).strip().lower() for a in sys.argv[1:]]
 
+    def _telegram_login_requested(self) -> bool:
+        # Come --preflight: check su argv, il login e' un'azione a se' che NON
+        # avvia il runtime/trading (serve solo il DB per api_id/api_hash e per
+        # salvare la session_string generata).
+        return "--telegram-login" in [str(a).strip().lower() for a in sys.argv[1:]]
+
+    @staticmethod
+    def _telegram_login_flow(listener, api_id, api_hash, *, prompt, prompt_secret, out):
+        """Flusso interattivo di login userbot Telegram (telefono+codice+2FA).
+
+        Puro (I/O iniettato via prompt/prompt_secret/out) per testabilita'.
+        Ritorna (exit_code, session_string|None): 0 = login ok, 2 = fallito.
+        """
+        if not api_id or not api_hash:
+            out("❌ api_id/api_hash Telegram non configurati: configurali prima (GUI o DB).")
+            return 2, None
+        phone = (prompt("Numero di telefono (es. +39...): ") or "").strip()
+        if not phone:
+            out("❌ Numero di telefono mancante.")
+            return 2, None
+        res = listener.request_code(phone)
+        if not res.get("ok"):
+            out(f"❌ Invio codice fallito: {res.get('error')}")
+            return 2, None
+        out("📩 Codice inviato. Controlla l'app Telegram.")
+        code = (prompt("Codice di verifica: ") or "").strip()
+        res = listener.sign_in(code)
+        if res.get("requires_password"):
+            out("🔐 Autenticazione a due fattori (2FA) attiva.")
+            pwd = (prompt_secret("Password 2FA: ") or "").strip()
+            res = listener.sign_in(code, password_2fa=pwd)
+        if res.get("ok") and res.get("session_string"):
+            out("✅ Login Telegram completato: session_string generata.")
+            return 0, res.get("session_string")
+        out(f"❌ Login non riuscito: {res.get('error')}")
+        return 2, None
+
+    def _run_telegram_login(self) -> int:
+        """Comando `--telegram-login`: autentica un userbot Telegram dal VPS
+        (telefono+codice+2FA), genera la session_string e la salva nel DB.
+
+        NON avvia il runtime/trading. Exit code: 0 login ok, 2 fallito.
+        """
+        import getpass as _getpass
+        from telegram_listener import TelegramListener
+
+        db = self.db
+        if db is None:
+            try:
+                db = Database()
+            except Exception as exc:
+                logger.exception("Errore init DB per --telegram-login: %s", exc)
+                print(f"❌ Errore inizializzazione DB: {exc}")
+                return 2
+
+        try:
+            settings = db.get_telegram_settings()
+        except Exception as exc:
+            logger.exception("Lettura settings Telegram per --telegram-login fallita: %s", exc)
+            print(f"❌ Errore lettura configurazione Telegram: {exc}")
+            return 2
+        api_id = str(settings.get("api_id") or "").strip()
+        api_hash = str(settings.get("api_hash") or "").strip()
+        try:
+            listener = TelegramListener(int(api_id or 0), api_hash, db=db)
+        except Exception as exc:
+            print(f"❌ Config Telegram non valida (api_id/api_hash): {exc}")
+            return 2
+
+        try:
+            exit_code, session_string = self._telegram_login_flow(
+                listener, api_id, api_hash,
+                prompt=input, prompt_secret=_getpass.getpass, out=print,
+            )
+            if exit_code == 0 and session_string:
+                merged = dict(settings)
+                merged["session_string"] = session_string
+                merged["enabled"] = True
+                try:
+                    db.save_telegram_settings(merged)
+                    print("💾 session_string salvata nella configurazione. Riavvia in modalità normale.")
+                except Exception as exc:
+                    logger.exception("Persistenza session_string fallita: %s", exc)
+                    print(f"⚠️  Login riuscito ma salvataggio fallito: {exc}")
+                    return 2
+            return exit_code
+        finally:
+            # Chiudi sempre il client/loop di login, anche sui path di fallimento
+            # (es. 2FA errata) dove il listener resta in attesa (rilievo Greptile).
+            # try/except: un errore nel cleanup non deve mascherare il return
+            # (o l'eccezione) del flusso di login (rilievo Fable).
+            try:
+                listener._cleanup_login()
+            except Exception:
+                logger.debug("Errore in cleanup login (finally)", exc_info=True)
+
     def _run_preflight(self) -> int:
         """Valuta i prerequisiti LIVE e stampa una checklist leggibile.
 
@@ -1049,6 +1145,12 @@ class HeadlessApp:
         if self._running:
             logger.warning("HeadlessApp già in esecuzione")
             return 0
+
+        # --telegram-login: azione interattiva a se' (login userbot dal VPS).
+        # NON avvia runtime/trading; usa solo il DB per api_id/api_hash e per
+        # salvare la session_string generata. Deciso PRIMA di build().
+        if self._telegram_login_requested():
+            return self._run_telegram_login()
 
         # --preflight va deciso PRIMA di build(): e' read-only e non deve avviare
         # i servizi (watchdog/cleanup). Il check e' su argv perche' avviene prima

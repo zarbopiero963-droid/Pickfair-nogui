@@ -97,6 +97,16 @@ class TelegramListener:
         self.handlers_registered = 0
         self.active_network_resources = 0
 
+        # Login interattivo userbot (request_code -> sign_in): il client Telethon
+        # e la connessione devono restare vivi TRA le due chiamate, quindi
+        # girano su un loop dedicato in un thread separato dal runtime.
+        self._login_loop: asyncio.AbstractEventLoop | None = None
+        self._login_thread: threading.Thread | None = None
+        self._login_client = None
+        self._login_phone: str | None = None
+        self._login_code_hash: str | None = None
+        self._login_awaiting_password = False
+
         self._callbacks = {
             "on_signal": None,
             "on_message": None,
@@ -134,6 +144,16 @@ class TelegramListener:
     # LIFECYCLE
     # =========================================================
     def start(self, monitored_chats: Optional[List[Any]] = None):
+        # Mutua esclusione login/runtime (rilievo Fugu/GPT/GLM/CodeRabbit): un
+        # login interattivo pendente/abbandonato non deve convivere col runtime.
+        # Cleanup PRIMA del guard already_running, cosi' vale su OGNI chiamata.
+        # Nessuna race col login: request_code gira solo nel comando standalone
+        # `--telegram-login` (il processo esce prima di start()) e la GUI usa
+        # TelegramController, quindi request_code e start() non sono mai
+        # concorrenti sulla stessa istanza; _cleanup_login e' comunque difensivo
+        # (gestisce lo stato None, join/close idempotenti).
+        self._cleanup_login()
+
         if self.running:
             return {"started": True, "reason": "already_running", "chat_count": len(self.monitored_chats)}
 
@@ -196,6 +216,11 @@ class TelegramListener:
         }
 
     def stop(self):
+        # Un login interattivo abbandonato (request_code senza sign_in) lascerebbe
+        # il client/loop di login vivi (connessione Telethon orfana): chiudili su
+        # OGNI stop, anche se il runtime era gia' STOPPED (rilievo Fugu/CodeRabbit).
+        self._cleanup_login()
+
         if self.state == "STOPPED" and not self.running:
             return {"stopped": True, "reason": "already_stopped", "state": self.state}
 
@@ -475,14 +500,209 @@ class TelegramListener:
             "last_successful_message_ts": status["last_successful_message_ts"],
         }
 
+    # =========================================================
+    # LOGIN INTERATTIVO USERBOT (telefono + codice + 2FA)
+    # =========================================================
+    def _ensure_login_loop(self) -> None:
+        loop = self._login_loop
+        if loop is not None and loop.is_running():
+            return
+        loop = asyncio.new_event_loop()
+        thread = threading.Thread(target=loop.run_forever, name="tg-login-loop", daemon=True)
+        thread.start()
+        self._login_loop = loop
+        self._login_thread = thread
+
+    def _run_login_coro(self, coro, timeout: float):
+        loop = self._login_loop
+        if loop is None:
+            raise RuntimeError("login loop non inizializzato")
+        fut = asyncio.run_coroutine_threadsafe(coro, loop)
+        try:
+            return fut.result(timeout=timeout)
+        except Exception:
+            # Su timeout/errore cancella la coroutine: non lasciarla pendente sul
+            # loop di login che _cleanup_login sta per fermare/chiudere (Fugu/CR).
+            fut.cancel()
+            raise
+
+    def _create_login_client(self):
+        # Sessione VUOTA: il login serve a GENERARE una nuova session_string.
+        if self._client_factory is not None:
+            return self._client_factory(self.api_id, self.api_hash, None)
+        return TelegramClient(StringSession(), self.api_id, self.api_hash)
+
+    def _cleanup_login(self) -> None:
+        client = self._login_client
+        loop = self._login_loop
+        thread = self._login_thread
+        self._login_client = None
+        self._login_phone = None
+        self._login_code_hash = None
+        self._login_awaiting_password = False
+        if client is not None and loop is not None and loop.is_running():
+            try:
+                asyncio.run_coroutine_threadsafe(client.disconnect(), loop).result(
+                    timeout=self._stop_timeout
+                )
+            except Exception:
+                logger.debug("[TelegramListener] disconnect login client fallito", exc_info=True)
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(loop.stop)
+        # Join del thread e chiusura del loop: evita proliferazione di thread su
+        # request_code ripetuti e libera le risorse (rilievo Greptile/Codacy).
+        # Guard self-join (rilievo Fugu): mai join sul thread corrente (se
+        # _cleanup_login fosse chiamato dal loop di login -> RuntimeError).
+        if (
+            thread is not None
+            and thread is not threading.current_thread()
+            and thread.is_alive()
+        ):
+            thread.join(timeout=self._stop_timeout)
+            if thread.is_alive():
+                # Join scaduto (loop bloccato): non azzerare in silenzio un thread
+                # ancora vivo -> logga il potenziale leak (rilievo Fable).
+                logger.warning(
+                    "[TelegramListener] thread del login loop ancora vivo dopo "
+                    "join (timeout=%ss): possibile risorsa non rilasciata.",
+                    self._stop_timeout,
+                )
+        if loop is not None and not loop.is_closed() and not loop.is_running():
+            try:
+                loop.close()
+            except Exception:
+                logger.debug("[TelegramListener] close login loop fallito", exc_info=True)
+        self._login_loop = None
+        self._login_thread = None
+
     def request_code(self, phone_number: str):
-        self._emit_status("CODE_SENT", f"Codice inviato a {phone_number}")
-        return {"ok": True}
+        """Login userbot step 1: invia il codice di verifica a `phone_number`.
+
+        Tiene vivo il client Telethon su un loop dedicato per il successivo
+        `sign_in`. Ritorna {"ok": True} oppure {"ok": False, "error": ...}.
+        """
+        if TelegramClient is None and self._client_factory is None:
+            return {"ok": False, "error": "telethon_not_available"}
+        phone = str(phone_number or "").strip()
+        if not phone:
+            return {"ok": False, "error": "missing_phone"}
+        self._cleanup_login()  # scarta un eventuale login pendente
+        try:
+            self._ensure_login_loop()
+            client = self._create_login_client()
+            # Assegna il client PRIMA di eseguire il coroutine (rilievo CodeRabbit
+            # Major): se connect()/send_code_request() falliscono, _cleanup_login
+            # nell'except deve poter disconnettere il client gia' creato/connesso.
+            self._login_client = client
+            self._login_phone = phone
+            self._login_awaiting_password = False
+
+            async def _do():
+                await client.connect()
+                sent = await client.send_code_request(phone)
+                return getattr(sent, "phone_code_hash", None)
+
+            code_hash = self._run_login_coro(_do(), self._connect_timeout + 30.0)
+            self._login_code_hash = code_hash
+            self._emit_status("CODE_SENT", f"Codice inviato a {phone}")
+            return {"ok": True}
+        except Exception as exc:
+            self._cleanup_login()
+            # str(TimeoutError()) e' vuoto: fallback sul nome classe (rilievo Codacy).
+            msg = str(exc) or type(exc).__name__
+            self._emit_status("FAILED", f"Invio codice fallito: {msg}")
+            return {"ok": False, "error": msg}
 
     def sign_in(self, code: str, password_2fa: str | None = None):
-        _ = code, password_2fa
-        self._emit_status("AUTHORIZED", "Login completato")
-        return {"ok": True}
+        """Login userbot step 2: verifica il codice (e la 2FA se richiesta) e,
+        al successo, RITORNA la `session_string` riutilizzabile.
+
+        NON è più uno stub: chiama davvero `client.sign_in`. Il chiamante DEVE
+        aver eseguito `request_code` prima. Contratto di ritorno:
+        - {"ok": True, "session_string": "..."}    login riuscito
+        - {"ok": False, "requires_password": True}  serve la password 2FA
+        - {"ok": False, "error": "invalid_code"|"expired_code"|
+                                  "invalid_password"|"not_authorized"|...}
+        """
+        if self._login_client is None or self._login_loop is None:
+            return {"ok": False, "error": "request_code_first"}
+        pwd = str(password_2fa or "").strip() or None
+        verification = str(code or "").strip()
+        awaiting = self._login_awaiting_password
+        if not awaiting and not verification:
+            return {"ok": False, "error": "missing_code"}
+
+        client = self._login_client
+        phone = self._login_phone
+        code_hash = self._login_code_hash
+
+        async def _do():
+            if awaiting:
+                # Il codice è già stato accettato: manca solo la password 2FA.
+                if not pwd:
+                    return {"ok": False, "requires_password": True, "await_pwd": True}
+                try:
+                    await client.sign_in(password=pwd)
+                except Exception as exc:
+                    if type(exc).__name__ == "PasswordHashInvalidError":
+                        return {"ok": False, "error": "invalid_password", "await_pwd": True}
+                    raise
+            else:
+                try:
+                    await client.sign_in(
+                        phone=phone, code=verification, phone_code_hash=code_hash
+                    )
+                except Exception as exc:
+                    name = type(exc).__name__
+                    if name == "SessionPasswordNeededError":
+                        if not pwd:
+                            return {"ok": False, "requires_password": True, "await_pwd": True}
+                        try:
+                            await client.sign_in(password=pwd)
+                        except Exception as exc2:
+                            if type(exc2).__name__ == "PasswordHashInvalidError":
+                                return {"ok": False, "error": "invalid_password", "await_pwd": True}
+                            raise
+                    elif name == "PhoneCodeInvalidError":
+                        return {"ok": False, "error": "invalid_code"}
+                    elif name == "PhoneCodeExpiredError":
+                        return {"ok": False, "error": "expired_code", "terminal": True}
+                    else:
+                        raise
+            if not await client.is_user_authorized():
+                return {"ok": False, "error": "not_authorized"}
+            return {"ok": True, "session_string": client.session.save()}
+
+        try:
+            result = self._run_login_coro(_do(), self._connect_timeout + 45.0)
+        except Exception as exc:
+            self._cleanup_login()
+            # str(TimeoutError()) e' vuoto: fallback sul nome classe (rilievo Codacy).
+            msg = str(exc) or type(exc).__name__
+            self._emit_status("FAILED", f"Login fallito: {msg}")
+            return {"ok": False, "error": msg}
+
+        if result.get("ok"):
+            session_string = result["session_string"]
+            self.session_string = session_string
+            self._emit_status("AUTHORIZED", "Login completato")
+            self._cleanup_login()
+            return {"ok": True, "session_string": session_string}
+
+        if result.get("await_pwd"):
+            # Codice ok ma serve la password (o password errata): il client
+            # resta VIVO per il retry con `sign_in(code, password_2fa=...)`.
+            self._login_awaiting_password = True
+            if result.get("error") == "invalid_password":
+                self._emit_status("FAILED", "Password 2FA non valida")
+                return {"ok": False, "error": "invalid_password", "requires_password": True}
+            self._emit_status("PASSWORD_REQUIRED", "Password 2FA richiesta")
+            return {"ok": False, "requires_password": True}
+
+        # Errore terminale (codice invalido/scaduto/non autorizzato): chiudi il login.
+        self._cleanup_login()
+        self._emit_status("FAILED", f"Login non riuscito: {result.get('error')}")
+        return {"ok": False, "error": result.get("error")}
 
     # =========================================================
     # STATUS / EMIT
