@@ -609,6 +609,66 @@ class BetfairClient:
         return book
 
     # =========================================================
+    # CATALOGO (discovery eventi / mercati)
+    # =========================================================
+    def list_events(
+        self,
+        event_type_ids: List[str],
+        *,
+        in_play_only: bool = False,
+        max_results: int = 1000,
+    ) -> List[Dict[str, Any]]:
+        """Eventi per i tipi di sport richiesti (Betfair SportsAPING/listEvents).
+
+        Ritorna la lista grezza Betfair: ogni elemento e' `{"event": {...},
+        "marketCount": N}`. Riusa `_post_jsonrpc` (auth/breaker/retry gia' gestiti).
+        """
+        filter_: Dict[str, Any] = {"eventTypeIds": [str(e) for e in event_type_ids]}
+        if in_play_only:
+            filter_["inPlayOnly"] = True
+        result = self._post_jsonrpc(
+            self.BETTING_URL,
+            "SportsAPING/v1.0/listEvents",
+            {"filter": filter_, "maxResults": int(max_results)},
+        )
+        return result if isinstance(result, list) else []
+
+    def list_market_catalogue(
+        self,
+        event_type_ids: List[str],
+        event_ids: Optional[List[str]] = None,
+        *,
+        market_type_codes: Optional[List[str]] = None,
+        max_results: int = 1000,
+    ) -> List[Dict[str, Any]]:
+        """Catalogo mercati (Betfair SportsAPING/listMarketCatalogue) con runner,
+        competition e orario. `market_type_codes` filtra per tipo mercato
+        (es. ["MATCH_ODDS","CORRECT_SCORE"]) via `marketTypeCodes` nel filter.
+        """
+        filter_: Dict[str, Any] = {"eventTypeIds": [str(e) for e in event_type_ids]}
+        if event_ids:
+            filter_["eventIds"] = [str(e) for e in event_ids]
+        if market_type_codes:
+            filter_["marketTypeCodes"] = [str(m) for m in market_type_codes]
+        result = self._post_jsonrpc(
+            self.BETTING_URL,
+            "SportsAPING/v1.0/listMarketCatalogue",
+            {
+                "filter": filter_,
+                "marketProjection": [
+                    "EVENT",
+                    "COMPETITION",
+                    "MARKET_START_TIME",
+                    "RUNNER_DESCRIPTION",
+                    "MARKET_DESCRIPTION",
+                ],
+                "sort": "FIRST_TO_START",
+                "maxResults": int(max_results),
+            },
+        )
+        return result if isinstance(result, list) else []
+
+    # =========================================================
     # ORDERS
     # =========================================================
     def place_bet(
