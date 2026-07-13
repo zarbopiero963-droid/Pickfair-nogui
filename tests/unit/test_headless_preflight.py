@@ -271,7 +271,10 @@ def test_start_live_nogo_emits_diagnostics_to_screen(monkeypatch, capsys):
     # #358 (BLOCK): all'avvio `--live` senza prerequisiti, il NO-GO del deploy
     # gate DEVE essere stampato a schermo (non solo nel log). Senza il wiring
     # in start(), stdout non conterrebbe la checklist -> questo test fallisce.
-    app = _make_app(monkeypatch, _FakeRuntimeLiveBlocked(), ["--live"])
+    # Riferimento diretto al fake (tipo concreto): app.runtime e' tipato
+    # Optional[RuntimeController], su cui Pyright non vede enforce_calls.
+    fake_runtime = _FakeRuntimeLiveBlocked()
+    app = _make_app(monkeypatch, fake_runtime, ["--live"])
     monkeypatch.setattr(app, "build", lambda **kwargs: None)
     monkeypatch.setattr(app, "_run_boot_recovery", lambda: None)
     monkeypatch.setattr(app, "stop", lambda: None)
@@ -288,8 +291,8 @@ def test_start_live_nogo_emits_diagnostics_to_screen(monkeypatch, capsys):
     # live_enabled=False, live_readiness_ok=False, e boot=True (check
     # pre-connessione). Senza questo assert il test passerebbe anche se start()
     # inoltrasse valori errati (il fake risponde NO-GO a qualsiasi input).
-    assert app.runtime.enforce_calls, "enforce_deploy_gate non e' stato invocato"
-    exec_mode, live_enabled, live_readiness_ok, boot = app.runtime.enforce_calls[-1]
+    assert fake_runtime.enforce_calls, "enforce_deploy_gate non e' stato invocato"
+    exec_mode, live_enabled, live_readiness_ok, boot = fake_runtime.enforce_calls[-1]
     assert exec_mode == "LIVE"
     assert live_enabled is False
     assert live_readiness_ok is False
