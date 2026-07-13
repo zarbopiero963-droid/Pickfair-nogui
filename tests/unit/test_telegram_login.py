@@ -433,3 +433,52 @@ def test_run_telegram_login_missing_api_hash_returns_2(monkeypatch):
     assert rc == 2
     assert flow_called["v"] is False
     assert db.saved is None
+
+
+def test_run_telegram_login_flow_exception_returns_2(monkeypatch):
+    # BLOCK (CodeRabbit): un'eccezione imprevista nel flusso di login NON deve
+    # propagare a main() (che la appiattirebbe a exit 1): il contratto documentato
+    # è exit 2 per login fallito. Prima del fix l'eccezione usciva da
+    # _run_telegram_login e _run_telegram_login() sollevava invece di ritornare 2.
+    db = _login_db({"api_id": "123", "api_hash": "HH", "session_string": ""})
+    app = HeadlessApp.__new__(HeadlessApp)
+    app.db = db
+    monkeypatch.setattr(sys, "argv", ["headless_main.py", "--telegram-login"])
+    monkeypatch.setenv("TELEGRAM_API_ID", "123")
+    monkeypatch.setenv("TELEGRAM_API_HASH", "HH")
+
+    def _boom(*a, **k):
+        raise RuntimeError("rete giù")
+
+    monkeypatch.setattr(HeadlessApp, "_telegram_login_flow", staticmethod(_boom))
+    rc = app._run_telegram_login()
+    assert rc == 2, "eccezione nel flow => exit 2 (non propagata, non exit 1)"
+    assert db.saved is None, "login fallito NON deve persistere"
+
+
+def test_run_telegram_login_getpass_exception_returns_2(monkeypatch):
+    # BLOCK (CodeRabbit): se getpass solleva (es. stdin chiuso su VPS non
+    # interattivo) mentre si chiede l'api_hash, il comando deve uscire 2, non
+    # propagare l'eccezione (che main() appiattirebbe a exit 1).
+    db = _login_db({"api_id": "123", "api_hash": "", "session_string": ""})
+    app = HeadlessApp.__new__(HeadlessApp)
+    app.db = db
+    monkeypatch.setattr(sys, "argv", ["headless_main.py", "--telegram-login"])
+    monkeypatch.setenv("TELEGRAM_API_ID", "123")
+    monkeypatch.delenv("TELEGRAM_API_HASH", raising=False)
+
+    def _boom(*a, **k):
+        raise EOFError("stdin chiuso")
+
+    monkeypatch.setattr("getpass.getpass", _boom)
+    flow_called = {"v": False}
+
+    def _flow(*a, **k):
+        flow_called["v"] = True
+        return (0, "S")
+
+    monkeypatch.setattr(HeadlessApp, "_telegram_login_flow", staticmethod(_flow))
+    rc = app._run_telegram_login()
+    assert rc == 2, "getpass che solleva => exit 2 (non propagata)"
+    assert flow_called["v"] is False, "senza api_hash il flow non parte"
+    assert db.saved is None

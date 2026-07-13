@@ -1034,7 +1034,15 @@ class HeadlessApp:
         # api_hash mancante: chiedilo con input NASCOSTO. La persistenza avviene
         # SOLO dopo un login riuscito, così creds errate non sovrascrivono il DB.
         if not api_hash:
-            entered = prompt_secret("Telegram api_hash (input nascosto): ").strip()
+            try:
+                entered = prompt_secret("Telegram api_hash (input nascosto): ").strip()
+            except Exception as exc:
+                # getpass può sollevare (EOF/stdin chiuso su VPS non interattivo):
+                # trattalo come login fallito (exit 2), non far propagare a main()
+                # che lo appiattirebbe a exit 1 rompendo il contratto documentato.
+                logger.exception("Lettura api_hash (input nascosto) fallita: %s", exc)
+                print(f"❌ Errore lettura api_hash: {exc}")
+                return fail
             if entered:
                 api_hash = entered
                 from_external = True
@@ -1097,10 +1105,18 @@ class HeadlessApp:
             return exit_code  # credenziale mancante/invalida
 
         try:
-            exit_code, session_string = self._telegram_login_flow(
-                listener, api_id, api_hash,
-                prompt=input, prompt_secret=_getpass.getpass, out=print,
-            )
+            try:
+                exit_code, session_string = self._telegram_login_flow(
+                    listener, api_id, api_hash,
+                    prompt=input, prompt_secret=_getpass.getpass, out=print,
+                )
+            except Exception as exc:
+                # Un'eccezione imprevista nel flusso (rete, Telethon, input) è un
+                # login fallito: exit 2 (contratto documentato), non lasciarla
+                # propagare a main() che la appiattirebbe a exit 1.
+                logger.exception("Flusso di login Telegram fallito: %s", exc)
+                print(f"❌ Login Telegram fallito: {exc}")
+                return 2
             if exit_code == 0 and session_string and not self._telegram_persist_login(
                 db, settings, api_id, api_hash, from_external, session_string
             ):
