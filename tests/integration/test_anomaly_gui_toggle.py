@@ -64,9 +64,13 @@ def _watchdog(settings_service=None, *, anomaly_enabled=False, anomaly_alerts_en
     )
 
 
-def test_missing_setting_defaults_safe_off_and_headless_safe_without_settings():
+def test_missing_anomaly_toggle_is_none_alerts_actions_default_off():
+    # anomaly_enabled NON configurato => None: a monte (headless_main /
+    # _load_toggle) None significa default-ON del reviewer. alerts/actions
+    # restano invece default-OFF (conservativi). Un anomaly_enabled=False
+    # ESPLICITO resta soppresso (last_anomalies == []).
     svc = SettingsService(_InMemorySettingsDb())
-    assert svc.load_anomaly_enabled() is False
+    assert svc.load_anomaly_enabled() is None
     assert svc.load_anomaly_alerts_enabled() is False
     assert svc.load_anomaly_actions_enabled() is False
 
@@ -118,3 +122,43 @@ def test_toggle_persistence_across_service_instances():
     assert second.load_anomaly_enabled() is True
     assert second.load_anomaly_alerts_enabled() is False
     assert second.load_anomaly_actions_enabled() is True
+
+
+def test_unconfigured_anomaly_defaults_on_end_to_end():
+    # BLOCK: con SettingsService REALE non configurato, il reviewer deve girare di
+    # default (default-ON). Prima del fix il loader ritornava False (bool esplicito,
+    # non None), quindi _load_toggle disabilitava il reviewer -> warning ogni tick.
+    svc = SettingsService(_InMemorySettingsDb())
+    watchdog = _watchdog(settings_service=svc, anomaly_enabled=True)
+    assert watchdog._is_anomaly_enabled() is True
+
+    # Un anomaly_enabled=False ESPLICITO resta rispettato (non e' il default).
+    svc.save_anomaly_enabled(False)
+    assert watchdog._is_anomaly_enabled() is False
+
+
+def test_disabled_anomaly_warning_is_throttled(caplog):
+    # BLOCK: il WARNING "reviewer is DISABLED" non deve spammare a ogni tick (5s).
+    # Prima del throttle veniva loggato a ogni _tick(); ora una sola volta per streak.
+    import logging
+
+    svc = SettingsService(_InMemorySettingsDb())
+    svc.save_anomaly_enabled(False)  # OFF esplicito -> ramo disabled
+    watchdog = _watchdog(settings_service=svc, anomaly_enabled=True)
+
+    with caplog.at_level(logging.WARNING, logger="observability.watchdog_service"):
+        watchdog._tick()
+        watchdog._tick()
+        watchdog._tick()
+
+    disabled_logs = [r for r in caplog.records if "anomaly reviewer is DISABLED" in r.getMessage()]
+    assert len(disabled_logs) == 1, f"atteso 1 log throttled, visti {len(disabled_logs)}"
+
+    # Ri-abilitando e ri-disabilitando, il warning puo' ripresentarsi (nuova streak).
+    svc.save_anomaly_enabled(True)
+    watchdog._tick()  # enabled -> reset del flag
+    svc.save_anomaly_enabled(False)
+    with caplog.at_level(logging.WARNING, logger="observability.watchdog_service"):
+        watchdog._tick()
+    refired = [r for r in caplog.records if "anomaly reviewer is DISABLED" in r.getMessage()]
+    assert len(refired) == 2, f"dopo re-disable atteso un nuovo log (tot 2), visti {len(refired)}"

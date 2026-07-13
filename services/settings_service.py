@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from services.setting_service import SettingsService as LegacySettingsService
 
@@ -47,8 +47,19 @@ class SettingsService(LegacySettingsService):
             return level
         return "UNKNOWN"
 
-    def load_anomaly_enabled(self) -> bool:
+    def load_anomaly_enabled(self) -> Optional[bool]:
+        """Toggle dell'anomaly reviewer con semantica a tre stati.
+
+        Ritorna ``None`` quando ``anomaly_enabled`` NON e' configurato: e' questo
+        che permette il **default-on** inteso a monte (``headless_main`` e
+        ``WatchdogService._load_toggle`` trattano ``None`` come "usa il default",
+        che in headless/LIVE e' ON). Un valore esplicito (``0``/``1``) viene invece
+        rispettato: ``False`` disabilita davvero il reviewer. Distinguere
+        "non configurato" da "False esplicito" e' il motivo del tipo Optional.
+        """
         data = self.get_all_settings()
+        if data.get("anomaly_enabled", None) in (None, ""):
+            return None
         return self._b(data, "anomaly_enabled", False)
 
     def save_anomaly_enabled(self, enabled: bool) -> None:

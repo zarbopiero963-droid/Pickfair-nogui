@@ -146,6 +146,10 @@ class WatchdogService:
         self.anomaly_enabled = bool(anomaly_enabled)
         self.anomaly_alerts_enabled = bool(anomaly_alerts_enabled)
         self.anomaly_actions_enabled = bool(anomaly_actions_enabled)
+        # Throttle del log "reviewer DISABLED": logga UNA volta per streak di
+        # disabilitazione, non a ogni tick (5s). L'alert/incident restano
+        # idempotenti per tick (upsert/open); solo la riga di log e' throttled.
+        self._anomaly_disabled_warned = False
         self.anomaly_alert_service = anomaly_alert_service
         self.anomaly_escalation_hook = anomaly_escalation_hook
         self.interval_sec = float(interval_sec)
@@ -232,16 +236,22 @@ class WatchdogService:
                 reason="anomaly_reviewer_reenabled",
                 resolved_by="anomaly_reviewer",
             )
+            self._anomaly_disabled_warned = False
             self._run_anomaly_hook()
         else:
             # Fail-loud + fail-closed: anomaly scanning is explicitly disabled.
             # Emit a structured operational alert and incident so the reviewer-disabled
             # state is surfaced beyond log output — satisfying the fail-closed audit
             # requirement that suppression is an operationally escalated condition.
-            logger.warning(
-                "anomaly reviewer is DISABLED — anomaly scans are suppressed this tick; "
-                "set anomaly_enabled=True or configure load_anomaly_enabled() to re-enable"
-            )
+            # La riga di log e' throttled (una volta per streak): senza throttle
+            # spammava a ogni tick (5s). L'alert/incident sotto restano per-tick
+            # (upsert/open idempotenti), quindi la copertura fail-closed e' intatta.
+            if not self._anomaly_disabled_warned:
+                logger.warning(
+                    "anomaly reviewer is DISABLED — anomaly scans are suppressed each tick; "
+                    "set anomaly_enabled=True or configure load_anomaly_enabled() to re-enable"
+                )
+                self._anomaly_disabled_warned = True
             self.alerts_manager.upsert_alert(
                 _DISABLED_CODE,
                 "warning",
