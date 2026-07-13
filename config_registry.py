@@ -339,55 +339,61 @@ class ConfigRegistry:
             ),
         ]
 
+    def _secret_entry(self, key: str, label: str, raw: Any, read_ok: bool) -> ConfigEntry:
+        """ConfigEntry per un segreto (is_secret): valore mascherato, mai in
+        chiaro. Su errore di lettura (`read_ok=False`) distingue "(errore
+        lettura)" da "(non impostato)", come `_safety_entry` per i campi
+        execution — cosi' un backend rotto non si confonde con "non configurato".
+        """
+        if not read_ok:
+            return ConfigEntry(
+                key=key,
+                label=label,
+                value=self._READ_ERROR_VALUE,
+                valid=False,
+                required_for_live=True,
+                source="DB",
+                remedy=self._READ_ERROR_REMEDY,
+                is_secret=True,
+            )
+        masked, present = _mask_secret(raw)
+        return ConfigEntry(
+            key=key,
+            label=label,
+            value=masked,
+            valid=present,
+            required_for_live=True,
+            source="DB",
+            remedy="" if present else f"Imposta {label.lower()}.",
+            is_secret=True,
+        )
+
     def _betfair_entries(self) -> list[ConfigEntry]:
-        # None-safe: se il loader manca/fallisce, un namespace vuoto evita
-        # AttributeError e le entry risultano "(non impostato)" (rilievo Codacy).
-        cfg = self._call("load_betfair_config") or SimpleNamespace()
-        password = self._call("load_password", "")
-        entries: list[ConfigEntry] = []
+        # `_read` conserva il flag di lettura: un backend rotto rende
+        # "(errore lettura)" (non "(non impostato)"), coerente coi campi execution.
+        cfg_raw, cfg_ok = self._read("load_betfair_config")
+        cfg = cfg_raw or SimpleNamespace()
+        password, pwd_ok = self._read("load_password", "")
+
         username = str(getattr(cfg, "username", "") or "")
-        entries.append(
+        entries: list[ConfigEntry] = [
             ConfigEntry(
                 key="betfair.username",
                 label="Betfair username",
-                value=username or _MASK_UNSET,
-                valid=bool(username),
+                value=(username or _MASK_UNSET) if cfg_ok else self._READ_ERROR_VALUE,
+                valid=bool(username) if cfg_ok else False,
                 required_for_live=True,
                 source="DB",
-                remedy="" if username else "Imposta lo username Betfair.",
+                remedy=("" if username else "Imposta lo username Betfair.") if cfg_ok else self._READ_ERROR_REMEDY,
             )
-        )
+        ]
         for attr, label in (
             ("app_key", "Betfair app key"),
             ("certificate", "Certificato Betfair"),
             ("private_key", "Chiave privata Betfair"),
         ):
-            masked, present = _mask_secret(getattr(cfg, attr, ""))
-            entries.append(
-                ConfigEntry(
-                    key=f"betfair.{attr}",
-                    label=label,
-                    value=masked,
-                    valid=present,
-                    required_for_live=True,
-                    source="DB",
-                    remedy="" if present else f"Imposta {label.lower()}.",
-                    is_secret=True,
-                )
-            )
-        masked_pwd, pwd_present = _mask_secret(password)
-        entries.append(
-            ConfigEntry(
-                key="betfair.password",
-                label="Password Betfair",
-                value=masked_pwd,
-                valid=pwd_present,
-                required_for_live=True,
-                source="DB",
-                remedy="" if pwd_present else "Imposta la password Betfair.",
-                is_secret=True,
-            )
-        )
+            entries.append(self._secret_entry(f"betfair.{attr}", label, getattr(cfg, attr, ""), cfg_ok))
+        entries.append(self._secret_entry("betfair.password", "Password Betfair", password, pwd_ok))
         return entries
 
     def _trading_entries(self) -> list[ConfigEntry]:

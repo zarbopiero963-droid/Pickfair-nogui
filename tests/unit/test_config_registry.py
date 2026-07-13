@@ -305,6 +305,34 @@ def test_all_safety_entries_invalid_on_read_error():
         assert entries[key].value == "(errore lettura)"
 
 
+class _BetfairRaisingSettings(_FakeSettings):
+    def load_betfair_config(self):
+        raise RuntimeError("x")
+
+    def load_password(self):
+        raise RuntimeError("x")
+
+
+@pytest.mark.unit
+def test_betfair_read_error_distinguishes_from_unset():
+    # BLOCK: su errore di lettura le credenziali Betfair (safety-critical)
+    # devono risultare "(errore lettura)" e valid=False, distinguendo "backend
+    # down" da "non configurato" (rilievo CodeRabbit); i segreti restano
+    # mascherati (mai valore reale).
+    reg = ConfigRegistry(_BetfairRaisingSettings())
+    entries = {e.key: e for e in reg.entries()}
+    for key in (
+        "betfair.username",
+        "betfair.app_key",
+        "betfair.certificate",
+        "betfair.private_key",
+        "betfair.password",
+    ):
+        assert entries[key].value == "(errore lettura)", key
+        assert entries[key].valid is False, key
+    assert entries["betfair.app_key"].is_secret is True
+
+
 @pytest.mark.unit
 def test_read_error_log_does_not_leak_exception_message(caplog):
     # BLOCK sicurezza: il log su errore di lettura segnala nome loader + tipo
