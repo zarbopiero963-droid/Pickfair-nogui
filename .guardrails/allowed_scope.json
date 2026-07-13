@@ -571,6 +571,16 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 5
+    },
+    "mini_gui_gui_main_entrypoint": {
+      "description": "Fix bug entry point GUI trovato nel test VPS (issue #351): main.py:run_gui() fa `from mini_gui import main as gui_main` ma mini_gui.py non esponeva alcun main() module-level => ImportError: cannot import name 'main' from 'mini_gui' a ogni `python3 main.py` in modalita' GUI. Fix: aggiunta funzione main() module-level in mini_gui.py che istanzia MiniPickfairGUI() (test_mode=False => finestra Tk reale) e avvia mainloop, con fail-closed (KeyboardInterrupt=130, Exception=1, destroy nel finally) e blocco `if __name__ == __main__`. Non tocca main.py, trading, toggle SIM/LIVE (#350 intatto), runtime, Betfair, segreti, order path: la GUI parte in SIMULATION di default, l'entry point NON abilita LIVE. Nota operativa: su host headless senza $DISPLAY (VPS) Tk non puo' aprire la finestra (errore Tcl 'no display name and no $DISPLAY') => la GUI resta usabile solo con display grafico, sul VPS si usa --headless. Test hard PASS+BLOCK (tests/unit/test_gui_main_entrypoint.py) headless-safe: MiniPickfairGUI sostituita da fake che registra costruzione/mainloop/destroy; verifica callable main (BLOCK ImportError pre-fix), avvio+cleanup, fail-closed codice 1 su errore mainloop, e wiring end-to-end main.run_gui -> mini_gui.main.",
+      "allow_tests": true,
+      "files": [
+        "mini_gui.py",
+        "tests/unit/test_gui_main_entrypoint.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 5
     }
   }
 }

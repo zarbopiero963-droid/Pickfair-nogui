@@ -2077,3 +2077,40 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         except Exception:
             pass
         self.destroy()
+
+
+def main() -> int:
+    """Entry point della Mini GUI (modalita' con display grafico).
+
+    `main.py:run_gui()` importa questa funzione (`from mini_gui import main`):
+    la sua assenza rompeva l'avvio GUI con
+    `ImportError: cannot import name 'main' from 'mini_gui'`.
+
+    Costruisce `MiniPickfairGUI` (test_mode=False => finestra Tk reale) e avvia
+    il mainloop. La GUI parte in SIMULATION per default (fail-closed #350):
+    questo entry point NON abilita il trading LIVE. Richiede un display grafico
+    (X11): su un host headless senza $DISPLAY, Tk non puo' aprire la finestra ed
+    emette l'errore Tcl standard "no display name and no $DISPLAY environment
+    variable" — in quel caso va usata la modalita' `--headless`.
+    """
+    app = None
+    try:
+        app = MiniPickfairGUI()
+        app.mainloop()
+        return 0
+    except KeyboardInterrupt:
+        _LOGGER.info("Arresto Mini GUI richiesto dall'utente")
+        return 130
+    except Exception as exc:  # pragma: no cover - errori runtime GUI reali
+        _LOGGER.exception("Errore fatale nella Mini GUI: %s", exc)
+        return 1
+    finally:
+        if app is not None:
+            try:
+                app.destroy()
+            except Exception:
+                pass
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
