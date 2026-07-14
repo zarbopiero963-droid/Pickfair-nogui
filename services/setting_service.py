@@ -254,6 +254,10 @@ class SettingsService:
             max_stake_abs=self._f(data, "roserpina.max_stake_abs", 10000.0),
             book_warning=self._f(data, "roserpina.book_warning", trading_config.BOOK_WARNING),
             book_block=self._f(data, "roserpina.book_block", trading_config.BOOK_BLOCK),
+            liquidity_guard_enabled=self._b(data, "roserpina.liquidity_guard_enabled", trading_config.LIQUIDITY_GUARD_ENABLED),
+            liquidity_multiplier=self._f(data, "roserpina.liquidity_multiplier", trading_config.LIQUIDITY_MULTIPLIER),
+            min_liquidity_absolute=self._f(data, "roserpina.min_liquidity_absolute", trading_config.MIN_LIQUIDITY_ABSOLUTE),
+            liquidity_warning_only=self._b(data, "roserpina.liquidity_warning_only", trading_config.LIQUIDITY_WARNING_ONLY),
         )
 
     def save_roserpina_config(self, config: RoserpinaConfig) -> None:
@@ -278,6 +282,10 @@ class SettingsService:
             "roserpina.max_stake_abs": config.max_stake_abs,
             "roserpina.book_warning": config.book_warning,
             "roserpina.book_block": config.book_block,
+            "roserpina.liquidity_guard_enabled": int(bool(config.liquidity_guard_enabled)),
+            "roserpina.liquidity_multiplier": config.liquidity_multiplier,
+            "roserpina.min_liquidity_absolute": config.min_liquidity_absolute,
+            "roserpina.liquidity_warning_only": int(bool(config.liquidity_warning_only)),
         }
 
         # Preserve previously persisted hard-stop limits when caller omits these optional fields.

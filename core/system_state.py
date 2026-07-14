@@ -81,3 +81,14 @@ class RoserpinaConfig:
     # fail-safe lato loader/enforcement).
     book_warning: float = 105.0
     book_block: float = 110.0
+
+    # Liquidity guard — editabile da GUI, applicato come gate reale al submit
+    # dutching. Default allineati a trading_config.LIQUIDITY_*. Semantica
+    # (controllers/dutching_controller): guard_enabled=False disattiva il gate;
+    # required = stake * multiplier; blocca se available < max(min_absolute,
+    # required); warning_only=True => avvisa invece di bloccare; FAIL-OPEN se la
+    # liquidita' non e' ottenibile (book assente).
+    liquidity_guard_enabled: bool = True
+    liquidity_multiplier: float = 3.0
+    min_liquidity_absolute: float = 50.0
+    liquidity_warning_only: bool = False

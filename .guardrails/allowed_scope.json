@@ -4,6 +4,20 @@
     "max_files": 8
   },
   "tasks": {
+    "liquidity_guard": {
+      "description": "PR2b del programma GUI-parametri (autorizzata dall'owner, enforce-first; file safety-critical autorizzati). Le costanti LIQUIDITY_GUARD_ENABLED/LIQUIDITY_MULTIPLIER/MIN_LIQUIDITY_ABSOLUTE/LIQUIDITY_WARNING_ONLY erano DEAD. Decisione owner: guard OSSERVAZIONALE (warning-only) in questa PR, BLOCCO reale in follow-up dopo verifica semantica. (1) In controllers/dutching_controller.precheck (dopo il book% gate) calcola la liquidita' ESEGUIBILE per gamba dal market book (lato opposto: BACK->availableToLay, LAY->availableToBack, mirror di simulation_order_book; filtrata per prezzo eseguibile, mirror di _crosses) letta SOLO dalla cache runtime.market_tracker.get_market (NESSUN I/O nel submit); required = stake*multiplier (size matchabile = stake); segnala shortfall come WARNING (liquidity_warning/liquidity_shortfall) SENZA MAI bloccare. FAIL-OPEN su dato mancante. guard_enabled=False disattiva anche l'osservazione. (2) CONFIG editabile: 4 campi RoserpinaConfig + chiavi DB roserpina.liquidity_* in load/save (fallback trading_config; multiplier fail-safe >0, min_absolute fail-safe >=0). (3) GUI: 2 numerici + 2 toggle nel tab Roserpina con validazione (_parse_book_pct per multiplier >0, _parse_min_liquidity per floor >=0). Non tocca safety_logger. Test hard (warna ma non blocca mai, no-warning se sufficiente, fail-open book/selezione mancante, guard-off, filtro prezzo, side-mapping, helper fail-safe, round-trip, wiring+validazione GUI). Doc ops/config_console.md.",
+      "allow_tests": true,
+      "files": [
+        "core/system_state.py",
+        "services/setting_service.py",
+        "controllers/dutching_controller.py",
+        "mini_gui.py",
+        "tests/integration/test_dutching_liquidity_guard.py",
+        "ops/config_console.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 8
+    },
     "book_pct_gate": {
       "description": "PR2a del programma GUI-parametri (autorizzata dall'owner, enforce-first). Le costanti BOOK_WARNING/BOOK_BLOCK erano DEAD (nessun enforcement: il book% veniva calcolato ma mai confrontato). Questa PR (1) CABLA un gate reale al submit dutching: controllers/dutching_controller.precheck blocca il piazzamento se book_pct >= soglia di blocco, eseguito PRIMA di ogni side-effect (duplication acquire); soglia letta da RoserpinaConfig con fallback FAIL-SAFE a trading_config.BOOK_BLOCK (config assente/corrotta non disattiva il gate). Aggiunge anche il flag non-bloccante book_warning_exceeded nel risultato. (2) Rende book_warning/book_block CONFIG-EDITABILI: nuovi campi RoserpinaConfig + chiavi DB roserpina.book_warning/roserpina.book_block in load/save_roserpina_config (fallback a trading_config). (3) Espone i due campi nel tab Roserpina della GUI. Owner ha autorizzato esplicitamente i file safety-critical. Test hard PASS+BLOCK (gate blocca >= soglia; non blocca sotto; config-editabile; fallback fail-safe blocca comunque un book alto con config rotta; round-trip config; wiring GUI). Doc ops/config_console.md nello stesso PR.",
       "allow_tests": true,

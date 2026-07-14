@@ -105,6 +105,46 @@ una config rotta o corrotta **non disattiva il gate** né lo sposta su un valore
 assurdo. Editare `book_block` a un valore alto è una scelta consapevole
 dell'operatore (allenta il gate); il fallback protegge solo i casi invalidi.
 
+## Liquidity guard editabile in GUI (tab Roserpina) — PR2b
+
+Le costanti liquidita' (`LIQUIDITY_GUARD_ENABLED`, `LIQUIDITY_MULTIPLIER`,
+`MIN_LIQUIDITY_ABSOLUTE`, `LIQUIDITY_WARNING_ONLY`) erano *dead*. Ora sono
+editabili dal tab **Roserpina**: 2 campi numerici ("Liquidity avviso:
+Moltiplicatore" / "Liquidity avviso: Floor assoluto €") + 1 toggle "Liquidity
+Guard: avviso liquidita' (no blocco)".
+
+> **`liquidity_warning_only` non e' esposto in GUI in questa fase.** Poiche' il
+> guard e' solo osservazionale (non blocca mai), un toggle "Warning Only" sarebbe
+> un controllo di safety visibile ma **inerte/fuorviante** (un operatore con
+> `warning_only=False` crederebbe di avere un blocco che non esiste). Il campo
+> resta nel config/DB (default `False`) riservato alla PR di follow-up che abilita
+> il blocco; verra' esposto in GUI insieme al blocco reale.
+
+**Modalita' OSSERVAZIONALE (warning-only) — decisione owner.** In questa fase il
+guard **NON blocca** il submit: calcola la liquidita' **eseguibile** per gamba e
+segnala uno shortfall come **warning** (`liquidity_warning`/`liquidity_shortfall`
+nel risultato del `precheck`). Il **BLOCCO** reale — che onorera'
+`liquidity_warning_only=False` — e' rimandato a una **PR di follow-up** dopo aver
+verificato la semantica esatta (direzione ladder sul book reale e unita' di
+misura), per non rischiare di bloccare bet valide o passare quelle da fermare.
+
+**Calcolo** (`controllers/dutching_controller.precheck`, dopo il book% gate):
+per ogni gamba somma la liquidita' del lato OPPOSTO del book (BACK →
+`availableToLay`, LAY → `availableToBack`, mirror del matcher
+`simulation_order_book`), **filtrata per prezzo eseguibile** (mirror di
+`_crosses`: BACK conta i livelli con `book_price <= order_price`, LAY il
+contrario), letta dalla **cache** `runtime.market_tracker.get_market` — **nessun
+I/O di rete** nel path di submit. Richiesta = `stake * multiplier` (size da
+matchare = stake, non la liability). Shortfall se `available < max(min_absolute,
+required)`.
+
+**FAIL-OPEN su dato mancante.** Se il book non e' in cache o la selezione non e'
+nel book, non si emette warning (dato ignoto). **Toggle/fail-safe:**
+`Liquidity Guard Enabled = False` disattiva anche l'osservazione (scelta
+operatore, non dato corrotto); `multiplier` fallback fail-safe `> 0`,
+`min_absolute` `>= 0` (0 = nessun floor). `MIN_LIQUIDITY` (trading_config) resta
+non usata (superata da `min_liquidity_absolute`).
+
 ## Vincoli (safety)
 
 - Non modifica la logica dei gate (deploy gate, fail-closed #350): **espone e
