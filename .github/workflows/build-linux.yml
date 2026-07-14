@@ -39,21 +39,20 @@ jobs:
           pip install customtkinter
           pip install "pyinstaller>=6,<7"
 
+      # Validate the packaging assets (icon reproducible, .desktop fields, bash
+      # syntax, script fail-closed, workflow wiring) right in this workflow, so
+      # a packaging regression is caught here and not only in the full test job.
+      - name: Run packaging guardrail tests
+        run: |
+          python -m pip install pytest
+          python -m pytest tests/packaging -q
+
       - name: Build executables
         run: pyinstaller --noconfirm --clean pickfair.spec
 
-      # Wrap the GUI binary into an AppImage so it installs like a real Linux
-      # desktop app (icon + .desktop + application-menu entry, double-click).
-      # The headless binary stays a plain server/CLI binary (no AppImage). The
-      # packaging logic lives in packaging/build_appimage.sh so it is testable
-      # outside CI. appimagetool runs FUSE-less (APPIMAGE_EXTRACT_AND_RUN=1).
-      - name: Package GUI as AppImage
-        run: |
-          chmod +x packaging/build_appimage.sh packaging/AppRun
-          packaging/build_appimage.sh dist/pickfair Pickfair-x86_64.AppImage
-          test -f Pickfair-x86_64.AppImage
-          ls -lh Pickfair-x86_64.AppImage
-
+      # Upload the plain binaries FIRST so a later AppImage-packaging failure can
+      # never drop the existing headless/GUI binary artifacts (they must not
+      # depend on the new AppImage tooling).
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
@@ -62,6 +61,25 @@ jobs:
             dist/pickfair
             dist/pickfair-headless
           if-no-files-found: error
+
+      # Wrap the GUI binary into an AppImage so it installs like a real Linux
+      # desktop app (icon + .desktop + application-menu entry, double-click).
+      # The headless binary stays a plain server/CLI binary (no AppImage). The
+      # packaging logic lives in packaging/build_appimage.sh so it is testable
+      # outside CI. appimagetool runs FUSE-less (APPIMAGE_EXTRACT_AND_RUN=1) and
+      # its download is integrity-verified against APPIMAGETOOL_SHA256 (pinned,
+      # fail-closed on drift — see ops/linux_appimage.md). The pinned value is
+      # set below once vetted from a green CI run (the script prints the actual
+      # sha256 each run); until pinned, the script prints without enforcing.
+      - name: Package GUI as AppImage
+        env:
+          # Pinnato dopo il primo run CI verde (lo script stampa lo sha reale).
+          APPIMAGETOOL_SHA256: ""
+        run: |
+          chmod +x packaging/build_appimage.sh packaging/AppRun
+          packaging/build_appimage.sh dist/pickfair Pickfair-x86_64.AppImage
+          test -f Pickfair-x86_64.AppImage
+          ls -lh Pickfair-x86_64.AppImage
 
       - name: Upload AppImage
         uses: actions/upload-artifact@v4

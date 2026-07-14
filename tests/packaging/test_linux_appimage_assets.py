@@ -70,7 +70,7 @@ def test_icon_is_reproducible_from_generator(tmp_path):
 def test_shell_scripts_are_valid_bash(script):
     # `bash -n` = parse-only (nessuna esecuzione), cattura errori di sintassi.
     result = subprocess.run(
-        ["bash", "-n", str(PKG / script)], capture_output=True, text=True
+        ["bash", "-n", str(PKG / script)], capture_output=True, text=True, check=False
     )
     assert result.returncode == 0, f"{script} non valido: {result.stderr}"
 
@@ -83,6 +83,7 @@ def test_build_appimage_script_rejects_missing_binary():
         capture_output=True,
         text=True,
         cwd=ROOT,
+        check=False,
     )
     assert result.returncode != 0
 

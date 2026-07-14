@@ -60,6 +60,23 @@ packaging/build_appimage.sh dist/pickfair Pickfair-x86_64.AppImage
 (`APPIMAGE_EXTRACT_AND_RUN=1`). È la **fonte unica** usata sia dalla CI sia in
 locale, così la logica di packaging è verificabile fuori da GitHub Actions.
 
+### Integrità di `appimagetool` (supply-chain)
+
+`appimagetool` viene scaricato dal canale ufficiale `continuous` (upstream **non
+pubblica checksum** per le release stabili, quindi non c'è un tag immutabile con
+hash pubblicato). Per non eseguire in CI un binario non verificato, si pinna un
+hash **nostro vetted**:
+
+- lo script **stampa sempre** lo `sha256` del binario scaricato;
+- se `APPIMAGETOOL_SHA256` è impostato (env, o `APPIMAGETOOL_SHA256` nel workflow),
+  il download viene **verificato** e in caso di mismatch lo script si ferma
+  **fail-closed** (`exit 3`), senza produrre l'AppImage.
+
+Quando upstream aggiorna `continuous`, l'hash cambia e la CI fallisce
+volutamente: si **ri-verifica** il nuovo binario e si aggiorna il valore pinnato
+in `.github/workflows/build-linux.yml` (step *Package GUI as AppImage*, env
+`APPIMAGETOOL_SHA256`). L'URL è sovrascrivibile con `APPIMAGETOOL_URL`.
+
 ## Asset di packaging
 
 | File | Ruolo |

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Genera l'icona placeholder di Pickfair (``pickfair.png``, 256x256).
+"""Genera l'icona placeholder di Pickfair (``pickfair.png``, 256x256 RGBA).
 
 Placeholder pulito e riproducibile (nessuna dipendenza esterna: PNG scritto a
 mano via ``zlib``), da sostituire quando c'e' un logo vero. Disegna una "P"
-bianca su fondo teal arrotondato. Rigenerare con::
+bianca su un quadrato teal ad angoli arrotondati; **fuori** dal raggio il pixel
+e' trasparente (alpha 0), cosi' l'icona resta pulita anche su temi desktop
+scuri. Rigenerare con::
 
     python3 packaging/make_icon.py
 
@@ -21,22 +23,23 @@ FG = (240, 253, 250)     # teal 50 (quasi bianco)
 RADIUS = 44              # raggio angoli arrotondati
 
 
-def _rounded(x: int, y: int) -> bool:
+def _inside_rounded(x: int, y: int) -> bool:
     """True se il pixel (x, y) è dentro il quadrato ad angoli arrotondati."""
     r = RADIUS
-    # angoli: fuori solo se oltre il raggio nell'angolo corrispondente
-    cx = None
-    cy = None
+    # `corner` è None nelle zone non-angolari; l'unpack avviene solo dopo il
+    # guard, così cx/cy sono sempre int (nessuna sottrazione int-None).
+    corner = None
     if x < r and y < r:
-        cx, cy = r, r
+        corner = (r, r)
     elif x >= SIZE - r and y < r:
-        cx, cy = SIZE - 1 - r, r
+        corner = (SIZE - 1 - r, r)
     elif x < r and y >= SIZE - r:
-        cx, cy = r, SIZE - 1 - r
+        corner = (r, SIZE - 1 - r)
     elif x >= SIZE - r and y >= SIZE - r:
-        cx, cy = SIZE - 1 - r, SIZE - 1 - r
-    if cx is None:
+        corner = (SIZE - 1 - r, SIZE - 1 - r)
+    if corner is None:
         return True
+    cx, cy = corner
     return (x - cx) ** 2 + (y - cy) ** 2 <= r * r
 
 
@@ -67,9 +70,10 @@ def _png(pixels: bytes, width: int, height: int) -> bytes:
         )
 
     sig = b"\x89PNG\r\n\x1a\n"
-    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)  # 8-bit RGB
+    # color type 6 = RGBA (8-bit) → supporta la trasparenza fuori dal raggio.
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
     raw = bytearray()
-    stride = width * 3
+    stride = width * 4
     for y in range(height):
         raw.append(0)  # filter type 0
         raw.extend(pixels[y * stride:(y + 1) * stride])
@@ -78,17 +82,17 @@ def _png(pixels: bytes, width: int, height: int) -> bytes:
 
 
 def build() -> bytes:
-    buf = bytearray(SIZE * SIZE * 3)
+    buf = bytearray(SIZE * SIZE * 4)
     for y in range(SIZE):
         for x in range(SIZE):
-            if not _rounded(x, y):
-                color = (255, 255, 255)  # trasparenza non usata: fondo bianco fuori raggio
+            if not _inside_rounded(x, y):
+                color = (0, 0, 0, 0)              # trasparente fuori dal raggio
             elif _is_letter_p(x, y):
-                color = FG
+                color = (FG[0], FG[1], FG[2], 255)
             else:
-                color = BG
-            i = (y * SIZE + x) * 3
-            buf[i], buf[i + 1], buf[i + 2] = color
+                color = (BG[0], BG[1], BG[2], 255)
+            i = (y * SIZE + x) * 4
+            buf[i], buf[i + 1], buf[i + 2], buf[i + 3] = color
     return _png(bytes(buf), SIZE, SIZE)
 
 
@@ -96,7 +100,7 @@ def main() -> int:
     out = sys.argv[1] if len(sys.argv) > 1 else "packaging/pickfair.png"
     with open(out, "wb") as fh:
         fh.write(build())
-    print(f"icona scritta: {out} ({SIZE}x{SIZE})")
+    print(f"icona scritta: {out} ({SIZE}x{SIZE} RGBA)")
     return 0
 
 

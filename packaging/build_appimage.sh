@@ -39,16 +39,29 @@ mkdir -p "${APPDIR}/usr/share/applications" \
 install -m 0644 "${HERE}/pickfair.desktop" "${APPDIR}/usr/share/applications/pickfair.desktop"
 install -m 0644 "${HERE}/pickfair.png" "${APPDIR}/usr/share/icons/hicolor/256x256/apps/pickfair.png"
 
-# appimagetool: usa quello in PATH se presente, altrimenti scaricalo.
+# appimagetool: usa quello in PATH se presente, altrimenti scaricalo dal canale
+# ufficiale. `continuous` è il canale di distribuzione ufficiale (upstream NON
+# pubblica checksum per le release stabili), quindi pinniamo l'integrità con un
+# hash NOSTRO vetted: se APPIMAGETOOL_SHA256 è impostato, il download viene
+# verificato e in caso di mismatch ci si ferma FAIL-CLOSED (drift/compromissione
+# a monte → re-vet cosciente). L'URL è sovrascrivibile con APPIMAGETOOL_URL.
+APPIMAGETOOL_URL="${APPIMAGETOOL_URL:-https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${ARCH}.AppImage}"
+APPIMAGETOOL_SHA256="${APPIMAGETOOL_SHA256:-}"
 TOOL="$(command -v appimagetool || true)"
 if [ -z "${TOOL}" ]; then
   TOOL="$(pwd)/appimagetool-${ARCH}.AppImage"
   if [ ! -x "${TOOL}" ]; then
-    echo ">> Scarico appimagetool"
-    curl -fsSL -o "${TOOL}" \
-      "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${ARCH}.AppImage"
-    chmod +x "${TOOL}"
+    echo ">> Scarico appimagetool da ${APPIMAGETOOL_URL}"
+    curl -fsSL -o "${TOOL}" "${APPIMAGETOOL_URL}"
   fi
+  got="$(sha256sum "${TOOL}" | awk '{print $1}')"
+  echo ">> appimagetool sha256: ${got}"
+  if [ -n "${APPIMAGETOOL_SHA256}" ] && [ "${got}" != "${APPIMAGETOOL_SHA256}" ]; then
+    echo "ERRORE: sha256 appimagetool inatteso (atteso ${APPIMAGETOOL_SHA256}, ottenuto ${got}). Fermo fail-closed." >&2
+    rm -f "${TOOL}"
+    exit 3
+  fi
+  chmod +x "${TOOL}"
 fi
 
 echo ">> Genero ${OUT} con ${TOOL}"
