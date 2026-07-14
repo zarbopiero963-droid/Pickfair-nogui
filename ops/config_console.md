@@ -171,6 +171,29 @@ impostare 1.01 sarebbe identico a 1.02 e fuorviante).
 esplicita dell'operatore). `MIN_LIQUIDITY` resta non usata (superata da
 `min_liquidity_absolute`, PR2b).
 
+## Configurazione Simulazione editabile in GUI (tab Simulazione) — G1
+
+I parametri del **broker simulato** erano configurabili solo via DB. Ora il tab
+**Simulazione** li espone (attivi solo in modalita' SIMULAZIONE):
+
+- **Bankroll iniziale simulazione** (`simulation.starting_balance`, default 1000,
+  validato `> 0`)
+- **Partial fill abilitato** (`simulation.partial_fill_enabled`)
+- **Consuma liquidita' del book** (`simulation.consume_liquidity`)
+- **Persisti stato simulazione** (`simulation.persist_state`)
+
+**Gia' enforced.** Questi valori sono gia' consumati dal `SimulationBroker`
+(`services/betfair_service.py`): la PR e' pura **esposizione + validazione**,
+nessun nuovo enforcement e nessuna modifica al percorso LIVE.
+
+**Campi NON esposti (preservati al salvataggio):**
+- `simulation.commission_pct` e' **policy-locked a 4.5%** (Betfair Italia,
+  fail-closed in `core/simulation_state.py`): esporlo editabile farebbe fallire
+  il settlement PnL se ≠ 4.5. Quindi **non e' in GUI**; il salvataggio ricarica
+  la config corrente e **preserva** il valore persistito.
+- `simulation.enabled` non e' esposto qui (la modalita' SIM/LIVE si governa dalla
+  top-bar): viene anch'esso preservato.
+
 ## Vincoli (safety)
 
 - Non modifica la logica dei gate (deploy gate, fail-closed #350): **espone e

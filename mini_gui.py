@@ -639,6 +639,11 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.rs_liq_warning_only_var = self._make_bool_var(bool(trading_config.LIQUIDITY_WARNING_ONLY))
         # Quota minima di strategia (floor editabile sopra il minimo Betfair 1.01).
         self.rs_min_price_var = self._make_string_var(str(trading_config.MIN_PRICE))
+        # Simulazione: config del broker simulato (gia' enforced in betfair_service).
+        self.sim_starting_balance_var = self._make_string_var("1000.0")
+        self.sim_partial_fill_var = self._make_bool_var(True)
+        self.sim_consume_liq_var = self._make_bool_var(True)
+        self.sim_persist_state_var = self._make_bool_var(True)
         self.rs_allow_recovery_var = self._make_bool_var(True)
         self.rs_anti_dup_var = self._make_bool_var(True)
         self.rs_risk_profile_var = self._make_string_var("BALANCED")
@@ -678,6 +683,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self.tab_telegram = object()
             self.tab_bet_history = object()
             self.tab_roserpina = object()
+            self.tab_simulazione = object()
             self.tab_risk_history = object()
             self.tab_risk = object()
             self.tab_log = object()
@@ -688,6 +694,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self._build_telegram_tab()
             self._build_bet_history_tab()
             self._build_roserpina_tab()
+            self._build_simulation_tab()
             self._build_risk_tab()
             self._build_risk_desk_history_tab()
             self._build_log_tab()
@@ -706,6 +713,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.tab_telegram = self.tabs.add("Telegram")
         self.tab_bet_history = self.tabs.add("Storico Bet")
         self.tab_roserpina = self.tabs.add("Roserpina")
+        self.tab_simulazione = self.tabs.add("Simulazione")
         self.tab_risk_history = self.tabs.add("Storico Risk Desk")
         self.tab_risk = self.tabs.add("Risk Desk")
         self.tab_provider = self.tabs.add("Provider")
@@ -716,6 +724,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._build_telegram_tab()
         self._build_bet_history_tab()
         self._build_roserpina_tab()
+        self._build_simulation_tab()
         self._build_risk_tab()
         self._build_risk_desk_history_tab()
         self._build_provider_tab()
@@ -998,6 +1007,67 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         )
         self.btn_save_roserpina.pack(anchor="w", padx=12, pady=12)
 
+    def _build_simulation_tab(self):
+        if self._test_mode:
+            self.btn_save_simulation = _DummyButton(self._save_simulation_settings)
+            return
+
+        outer = ctk.CTkScrollableFrame(self.tab_simulazione)
+        outer.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+
+        ctk.CTkLabel(outer, text="Configurazione Simulazione", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=12, pady=8)
+        ctk.CTkLabel(
+            outer,
+            text=(
+                "Parametri del broker simulato (attivi solo in modalita' SIMULAZIONE). "
+                "La commissione simulata e' bloccata al 4.5% (policy Betfair Italia) e "
+                "non e' editabile qui."
+            ),
+            wraplength=560,
+            justify="left",
+            anchor="w",
+        ).pack(anchor="w", padx=12, pady=(0, 8))
+
+        self._labeled_entry(outer, "Bankroll iniziale simulazione (€)", self.sim_starting_balance_var)
+
+        cb = ctk.CTkFrame(outer)
+        cb.pack(fill=tk.X, padx=12, pady=6)
+        ctk.CTkCheckBox(cb, text="Partial fill abilitato", variable=self.sim_partial_fill_var).pack(side=tk.LEFT, padx=8, pady=8)
+        ctk.CTkCheckBox(cb, text="Consuma liquidita' del book", variable=self.sim_consume_liq_var).pack(side=tk.LEFT, padx=8, pady=8)
+        ctk.CTkCheckBox(cb, text="Persisti stato simulazione", variable=self.sim_persist_state_var).pack(side=tk.LEFT, padx=8, pady=8)
+
+        self.btn_save_simulation = ctk.CTkButton(
+            outer,
+            text="Salva Simulazione",
+            command=self._save_simulation_settings,
+        )
+        self.btn_save_simulation.pack(anchor="w", padx=12, pady=12)
+
+    def _save_simulation_settings(self):
+        if not hasattr(self.settings_service, "save_simulation_config"):
+            self._safe_show_error("Errore", "Servizio simulazione non disponibile.")
+            return
+        try:
+            balance = self._parse_sim_balance(self.sim_starting_balance_var.get(), "Bankroll iniziale")
+            # Carica la config corrente per PRESERVARE i campi non esposti in GUI
+            # (commission_pct policy-locked a 4.5, simulation.enabled) e sovrascrivi
+            # solo i campi editabili qui.
+            cfg = {}
+            if hasattr(self.settings_service, "load_simulation_config"):
+                try:
+                    cfg = dict(self.settings_service.load_simulation_config() or {})
+                except Exception:
+                    cfg = {}
+            cfg["starting_balance"] = balance
+            cfg["partial_fill_enabled"] = bool(self.sim_partial_fill_var.get())
+            cfg["consume_liquidity"] = bool(self.sim_consume_liq_var.get())
+            cfg["persist_state"] = bool(self.sim_persist_state_var.get())
+            self.settings_service.save_simulation_config(cfg)
+        except Exception as exc:
+            self._safe_show_error("Errore salvataggio Simulazione", str(exc))
+            return
+        self._safe_show_info("OK", "Configurazione simulazione salvata.")
+
     def _build_risk_tab(self):
         if self._test_mode:
             self.risk_tree = _DummyTree()
@@ -1189,6 +1259,16 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 risk_profile = getattr(rs, "risk_profile", None)
                 risk_profile_value = getattr(risk_profile, "value", self.rs_risk_profile_var.get())
                 self.rs_risk_profile_var.set(str(risk_profile_value))
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self.settings_service, "load_simulation_config"):
+                sim = self.settings_service.load_simulation_config() or {}
+                self.sim_starting_balance_var.set(str(sim.get("starting_balance", 1000.0)))
+                self.sim_partial_fill_var.set(bool(sim.get("partial_fill_enabled", True)))
+                self.sim_consume_liq_var.set(bool(sim.get("consume_liquidity", True)))
+                self.sim_persist_state_var.set(bool(sim.get("persist_state", True)))
         except Exception:
             pass
 
@@ -1418,6 +1498,18 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             raise ValueError(f"{label}: inserisci un numero valido.")
         if not math.isfinite(val) or val < 1.02:
             raise ValueError(f"{label}: deve essere un numero finito >= 1.02.")
+        return val
+
+    @staticmethod
+    def _parse_sim_balance(raw, label):
+        """Bankroll simulazione: numerico, finito, > 0."""
+        text = (raw or "").strip()
+        try:
+            val = float(text)
+        except (TypeError, ValueError):
+            raise ValueError(f"{label}: inserisci un numero valido.")
+        if not math.isfinite(val) or val <= 0.0:
+            raise ValueError(f"{label}: deve essere un numero finito maggiore di 0.")
         return val
 
     def _save_roserpina_settings(self):
