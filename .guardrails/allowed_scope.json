@@ -21,6 +21,21 @@
       ],
       "max_files": 11
     },
+    "linux_build_deps_hash_lock": {
+      "description": "PR-B (autorizzata dall'owner, follow-up di linux_appimage_gui_packaging/#377): blinda la supply-chain del build Linux con un lock hash-verificato. Nuovo requirements-build-linux.in (-r requirements-dev.txt + customtkinter + pyinstaller) coperto da requirements-build-linux.lock (pip-compile --generate-hashes: ogni dip, transitive incluse, pinnata a versione+sha256). build-linux.yml installa FAIL-CLOSED con --require-hashes (niente fallback non pinnato: lock mancante => build fallisce) e NON fa 'pip install --upgrade pip' (userebbe un pip non pinnato prima del lock). Nuovo workflow generate-linux-lockfile.yaml genera il lock in CI, lo pubblica nella Job Summary (non lo committa: revisione umana), pinna il resolver (pip==24.3.1/pip-tools==7.4.1), usa --no-annotate + CUSTOM_COMPILE_COMMAND per un lock path-independent riproducibile bit-a-bit, e ha gate anti-stale (diff con la rigenerazione) + anti-deletion (fetch-depth: 0 + fail-closed sul base ref). Inoltre, su richiesta esplicita dell'owner (risparmio CI), i trigger 'pull_request' di ENTRAMBI i workflow di build artefatti (build-linux.yml E build-windows-exe.yml) sono rimossi: la build pesante (PyInstaller/AppImage/EXE) parte SOLO manuale (workflow_dispatch) o su tag v*; la validazione del lock su PR resta nel workflow leggero generate-linux-lockfile.yaml. Solo CI/build: NESSUNA logica trading/gate/ordini/Betfair/Telegram/runtime toccata; il contenuto del build (spec, step, artefatti) e' invariato, cambiano solo i trigger. Test strutturali statici. Docs ops/linux_appimage.md nello stesso PR.",
+      "allow_tests": true,
+      "files": [
+        "requirements-build-linux.in",
+        "requirements-build-linux.lock",
+        ".github/workflows/generate-linux-lockfile.yaml",
+        ".github/workflows/build-linux.yml",
+        ".github/workflows/build-windows-exe.yml",
+        "tests/packaging/test_linux_lockfile.py",
+        "ops/linux_appimage.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 9
+    },
     "catalog_sync_betfair_listing_367": {
       "description": "#367 (blocco critico dal test LIVE VPS): CatalogSync chiamava list_soccer_events()/list_market_catalogue(market_types=...) inesistenti sul client Betfair (BetfairClient e SimulationBroker) -> AttributeError, 0 eventi/mercati/runner sincronizzati, trading bloccato in LIVE e SIM. Fix (approccio A, autorizzato dall'owner): esposti list_events e list_market_catalogue (con filtro marketTypeCodes) su BetfairClient riusando il pattern _post_jsonrpc esistente (stesso di get_market_book), e su SimulationBroker come no-op fail-safe (in SIM il catalogo arriva dai feed streaming, non via API). Riscritto services/catalog_sync_service.py sulle firme/formati Betfair reali (mapping event.id->event_id, marketId->market_id, runners[].selectionId, competition dal market catalogue). NON tocca la logica dei gate/ordini/money-management: solo discovery read-only del catalogo. Test hard PASS+BLOCK (mapping formato Betfair, filtro marketTypeCodes, regressione list_soccer_events non piu' usato, SIM no-crash). La verifica end-to-end con API Betfair reale resta sul VPS (owner/Manus) prima di chiudere #367.",
       "allow_tests": true,

@@ -5,23 +5,13 @@ name: Build Windows EXE
 # demand from the Actions tab ("Run workflow"); on a v* tag the executables are
 # also attached to a GitHub Release.
 on:
+  # Artifacts are built ONLY on explicit request (owner decision: no build on
+  # every push/PR, to save CI): manually from the Actions tab, or automatically
+  # on a release tag v* (a deliberate action).
   workflow_dispatch: {}
   push:
     tags:
       - "v*"
-  # Validate the build when the packaging config OR any packaged source the spec
-  # bundles changes, so a broken build is caught on the PR rather than on demand.
-  pull_request:
-    paths:
-      - ".github/workflows/build-windows-exe.yml"
-      - "pickfair.spec"
-      - "requirements.txt"
-      - "main.py"
-      - "mini_gui.py"
-      - "headless_main.py"
-      - "telegram_tab_ui.py"
-      - "theme.py"
-      - "ui_panels/**"
 
 permissions:
   contents: read

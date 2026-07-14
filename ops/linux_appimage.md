@@ -95,6 +95,65 @@ volutamente: si **ri-verifica** il nuovo binario e si aggiorna il valore pinnato
 in `.github/workflows/build-linux.yml` (step *Package GUI as AppImage*, env
 `APPIMAGETOOL_SHA256`). L'URL è sovrascrivibile con `APPIMAGETOOL_URL`.
 
+## Toolchain di build hash-locked (supply-chain)
+
+Il job `build` di `build-linux.yml` installa la sua toolchain (runtime + test
+runner + `customtkinter` + `pyinstaller`) da un **lock hash-verificato**, così
+un pacchetto sostituito a monte su PyPI non entra silenziosamente nel binario
+distribuito.
+
+- **`requirements-build-linux.in`** — l'input di alto livello: `-r
+  requirements-dev.txt` (runtime + pytest) + `customtkinter` + `pyinstaller`.
+- **`requirements-build-linux.lock`** — il lock generato con
+  `pip-compile --generate-hashes`: ogni dipendenza (transitive incluse) è
+  pinnata a versione **e** hash `sha256`.
+- **consumo (fail-closed)** — `build-linux.yml` installa **solo** con
+  `pip install --require-hashes -r requirements-build-linux.lock`: pip
+  **rifiuta** qualsiasi pacchetto senza hash pinnato. Se il lock manca o viene
+  rimosso, il build **fallisce** — non esiste un fallback non pinnato (che
+  riaprirebbe la supply-chain).
+
+### Riproducibilità del lock
+
+Il lock è **indipendente dalla macchina** che lo genera, per tre motivi
+combinati, così la rigenerazione (in locale o su un altro runner) combacia
+bit-a-bit con quella committata:
+
+- `--generate-hashes` include gli hash di **tutti** i file di distribuzione di
+  ogni versione (wheel di ogni piattaforma + sdist), non solo di quello scaricato
+  dal runner corrente;
+- `--no-annotate` rimuove i commenti `# via -r <file>` — che altrimenti
+  embedderebbero il **path assoluto** del checkout (`/home/runner/...` in CI,
+  diverso in locale), rompendo il confronto anti-stale;
+- `CUSTOM_COMPILE_COMMAND` + resolver pinnato (`pip==24.3.1` / `pip-tools==7.4.1`)
+  + Python 3.11 fissano header e risoluzione.
+
+La generazione **canonica** resta il workflow dedicato (`ubuntu-latest`,
+CPython 3.11), che pubblica il lock nella Job Summary; il gate **anti-stale** è
+comunque la fonte di verità: qualunque lock committato che non combaci con la
+rigenerazione fa fallire la CI.
+
+### Come (ri)generare il lock
+
+1. Apri/aggiorna la PR toccando `requirements-build-linux.in` (o uno dei
+   `requirements*.txt` inclusi transitivamente): il workflow **`Generate Linux
+   Lockfile`** (`.github/workflows/generate-linux-lockfile.yaml`) parte da solo.
+   In alternativa lancialo a mano da *Actions → Generate Linux Lockfile → Run
+   workflow*.
+2. Apri il run → **Summary**: contiene il testo completo del lock (anche nel log
+   del job, fra `-----BEGIN LINUX LOCK-----` / `-----END LINUX LOCK-----`).
+3. Copia quel contenuto **tale e quale** in `requirements-build-linux.lock` alla
+   root del repo e committa nella stessa PR.
+4. Al push successivo il gate **anti-stale** rigenera il lock e lo confronta
+   bit-a-bit con quello committato: se differiscono (dipendenze cambiate senza
+   aggiornare il lock) la CI fallisce → rigenera e ricommitta.
+
+Il workflow fa il checkout con `fetch-depth: 0` (history completa) così la
+guardia **anti-deletion** — che impedisce a una PR di rimuovere un lock già
+adottato — può risolvere il commit base; su checkout shallow sarebbe un no-op
+silenzioso. Il lock NON è committato dal workflow: la consegna via Job Summary è
+voluta, così passa da una revisione umana prima di entrare nel repo.
+
 ## Asset di packaging
 
 | File | Ruolo |
@@ -104,6 +163,8 @@ in `.github/workflows/build-linux.yml` (step *Package GUI as AppImage*, env
 | `packaging/pickfair.desktop` | voce menu applicazioni (Name/Exec/Icon) |
 | `packaging/pickfair.png` | icona 256×256 (**placeholder** — sostituibile) |
 | `packaging/make_icon.py` | rigenera l'icona placeholder |
+| `requirements-build-linux.in` | input dell'hash-lock della toolchain di build |
+| `requirements-build-linux.lock` | lock hash-verificato (generato in CI) |
 
 L'icona è un placeholder generato: per sostituirla con il logo vero, rimpiazza
 `packaging/pickfair.png` (256×256) — o aggiorna `make_icon.py` e rigenera con

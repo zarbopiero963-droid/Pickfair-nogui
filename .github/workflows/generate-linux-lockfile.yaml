@@ -1,0 +1,116 @@
+name: Generate Linux Lockfile
+
+# Genera l'hash-lock della toolchain di build Linux
+# (requirements-build-linux.lock) a partire da requirements-build-linux.in.
+#
+# Il lock NON viene committato da questo workflow: viene pubblicato nella Job
+# Summary (e nel log, tra marcatori) e va copiato a mano nel repo.
+#
+# Riproducibilita': con --no-annotate (niente commenti "# via -r <path>", che
+# altrimenti embeddano il path ASSOLUTO del checkout) + CUSTOM_COMPILE_COMMAND
+# (header senza path) + resolver pinnato (pip/pip-tools) + --generate-hashes
+# (che include gli hash di TUTTI i file di distribuzione, non solo del runner),
+# il lock e' identico byte-a-byte a prescindere dalla macchina. Il gate
+# ANTI-STALE lo verifica: se un lock committato non combacia con la
+# rigenerazione, fallisce (lock stale => rigenera dalla Job Summary).
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - "requirements-build-linux.in"
+      - "requirements-build-linux.lock"
+      - "requirements.txt"
+      - "requirements-dev.txt"
+      - "requirements-test.txt"
+      - ".github/workflows/generate-linux-lockfile.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 = history completa: senza, il checkout e' shallow e
+          # il commit base della PR non e' nell'object store locale, quindi la
+          # guardia anti-deletion (git cat-file sul base) non potrebbe risolvere
+          # il base e passerebbe in silenzio (rilievo Fugu/Fable/Greptile/Codacy).
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Resolver deterministico: pip + pip-tools pinnati, cosi' la stessa .in
+      # produce lo stesso lock (bit-identico) a ogni run.
+      - name: Pin pip + pip-tools
+        run: python -m pip install "pip==24.3.1" "pip-tools==7.4.1"
+
+      # --no-annotate: niente commenti "# via -r ..." (embedderebbero il path
+      # assoluto del checkout, diverso tra runner e locale => lock non
+      # riproducibile). CUSTOM_COMPILE_COMMAND fissa l'header senza path. Insieme
+      # rendono il lock indipendente dalla macchina.
+      - name: Compile lock (hashes)
+        env:
+          CUSTOM_COMPILE_COMMAND: "pip-compile --generate-hashes --allow-unsafe --no-annotate --output-file requirements-build-linux.lock requirements-build-linux.in"
+        run: |
+          pip-compile --generate-hashes --allow-unsafe --no-annotate \
+            --output-file /tmp/fresh-linux.lock \
+            requirements-build-linux.in
+
+      # Pubblica il lock nella Job Summary (da copiare nel repo) e nel log
+      # (stdout, tra marcatori) per una lettura affidabile. printf per un code
+      # fence robusto (tre backtick esatti, niente ambiguita' di rendering).
+      - name: Publish lock to Job Summary
+        run: |
+          {
+            printf '## requirements-build-linux.lock\n\n'
+            printf 'Copia questo contenuto in `requirements-build-linux.lock` alla root del repo e committa.\n\n'
+            printf '```\n'
+            cat /tmp/fresh-linux.lock
+            printf '```\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+          printf -- '-----BEGIN LINUX LOCK-----\n'
+          cat /tmp/fresh-linux.lock
+          printf -- '-----END LINUX LOCK-----\n'
+
+      # ANTI-DELETION (fail-closed): se il lock era presente sul commit base non
+      # deve sparire nella PR (riattiverebbe install non hash-verificati). Con
+      # fetch-depth: 0 il base e' disponibile; se non lo fosse (fetch mancato)
+      # ci si ferma invece di saltare in silenzio.
+      - name: Guard against silent lock deletion
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            echo "::error::commit base ${BASE_SHA} non disponibile (serve fetch-depth: 0): impossibile verificare la cancellazione del lock"
+            exit 1
+          fi
+          if git cat-file -e "${BASE_SHA}:requirements-build-linux.lock" 2>/dev/null; then
+            if [ ! -f requirements-build-linux.lock ]; then
+              echo "::error::requirements-build-linux.lock presente sul base ma rimosso nella PR (install non piu' hash-verificati). Ripristinalo."
+              exit 1
+            fi
+          fi
+
+      # ANTI-STALE: se un lock e' committato deve combaciare bit-a-bit con la
+      # rigenerazione; altrimenti e' stale (dipendenze cambiate senza aggiornare
+      # il lock) => fallisce.
+      - name: Anti-stale (committed lock must match regeneration)
+        run: |
+          if [ -f requirements-build-linux.lock ]; then
+            if ! diff -u requirements-build-linux.lock /tmp/fresh-linux.lock; then
+              echo "::error::requirements-build-linux.lock e' STALE: rigeneralo dalla Job Summary di questo run e ricommittalo."
+              exit 1
+            fi
+            echo "OK: il lock committato combacia con la rigenerazione."
+          else
+            echo "::notice::nessun requirements-build-linux.lock committato: copialo dalla Job Summary e committalo per attivare --require-hashes."
+          fi
