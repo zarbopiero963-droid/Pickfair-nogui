@@ -34,6 +34,10 @@ except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
 
     messagebox = _MessageBoxFallback()
 
+# Helper condiviso col path headless: estrae il codice a sole cifre ASCII
+# (robusto al messaggio 777000 incollato intero). Import sicuro senza telethon.
+from telegram_listener import sanitize_login_code
+
 
 class TelegramController:
     def __init__(self, app):
@@ -182,6 +186,19 @@ class TelegramController:
                 )
 
             except Exception as e:
+                # FloodWait: troppi invii ravvicinati => Telegram impone un'attesa
+                # e invalida i codici precedenti. Messaggio chiaro invece di errore
+                # opaco, così l'utente NON rilancia (peggiorerebbe il flood).
+                if type(e).__name__ == "FloodWaitError":
+                    seconds = getattr(e, "seconds", None)
+                    wait_txt = f"{seconds} secondi" if seconds else "qualche secondo"
+                    msg = f"Troppi tentativi (FloodWait): attendi {wait_txt} e NON rilanciare."
+                    self.app.uiq.post(messagebox.showwarning, "Attendi", msg)
+                    self.app.uiq.post(
+                        self.app.tg_status_label.configure,
+                        text=f"Stato: FloodWait, attendi {wait_txt}",
+                    )
+                    return
                 self.app.uiq.post(
                     messagebox.showerror,
                     "Errore",
@@ -202,11 +219,13 @@ class TelegramController:
         api_id = self.app.tg_api_id_var.get().strip()
         api_hash = self.app.tg_api_hash_var.get().strip()
         phone = self.app.tg_phone_var.get().strip()
-        code = self.app.tg_code_var.get().strip()
+        # Sanitizza a sole cifre (come il path headless): incollare l'intero
+        # messaggio 777000 "Login code: 12345" non deve dare "codice non valido".
+        code = sanitize_login_code(self.app.tg_code_var.get())
         password = self.app.tg_2fa_var.get().strip()
 
         if not code:
-            messagebox.showwarning("Errore", "Inserisci il codice ricevuto.")
+            messagebox.showwarning("Errore", "Inserisci il codice ricevuto (solo cifre).")
             return
 
         self.app.tg_status_label.configure(text="Stato: Verifica in corso...")

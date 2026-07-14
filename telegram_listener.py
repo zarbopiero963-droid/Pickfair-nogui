@@ -37,6 +37,25 @@ def _keyword_searchable_text(text: str) -> str:
     return "\n".join(lines)
 
 
+def sanitize_login_code(raw) -> str:
+    """Estrae il codice di login di Telegram (SOLO cifre ASCII 0-9) dal testo.
+
+    Fonte unica per headless (``TelegramListener.sign_in``) e GUI
+    (``controllers/telegram_controller``). Robusto ai casi reali:
+    - il messaggio di servizio 777000 è tipo ``Login code: 12345`` → ``12345``;
+    - se il testo incollato contiene ALTRE cifre (es. l'id ``777000`` della chat),
+      preferisce le cifre che seguono il marcatore ``code``/``codice`` per non
+      concatenarle (``777000 Login code: 54321`` → ``54321``);
+    - ``str.isdigit()`` NON è affidabile: tiene le cifre non-ASCII (arabo-indiane)
+      che Telegram rifiuta, quindi si filtra esplicitamente su ``0-9``.
+    La password 2FA NON passa mai da qui (non è un codice numerico).
+    """
+    text = str(raw or "")
+    match = re.search(r"cod(?:e|ice)\D*([0-9][0-9\s]*)", text, re.IGNORECASE)
+    segment = match.group(1) if match else text
+    return "".join(ch for ch in segment if ch in "0123456789")
+
+
 class TelegramListener:
     """
     Wrapper listener Telegram.
@@ -579,7 +598,9 @@ class TelegramListener:
         """Login userbot step 1: invia il codice di verifica a `phone_number`.
 
         Tiene vivo il client Telethon su un loop dedicato per il successivo
-        `sign_in`. Ritorna {"ok": True} oppure {"ok": False, "error": ...}.
+        `sign_in`. Ritorna {"ok": True} oppure {"ok": False, "error": ...}. Su
+        `FloodWaitError` include anche `retry_after` (secondi, può essere None):
+        i chiamanti (GUI/headless) lo usano per dire "attendi N s, non rilanciare".
         """
         if TelegramClient is None and self._client_factory is None:
             return {"ok": False, "error": "telethon_not_available"}
@@ -641,10 +662,9 @@ class TelegramListener:
         if self._login_client is None or self._login_loop is None:
             return {"ok": False, "error": "request_code_first"}
         pwd = str(password_2fa or "").strip() or None
-        # Sanitizza il codice a SOLE cifre: il messaggio 777000 è "Login code:
-        # 12345" e incollarlo intero darebbe "codice non valido". Vale per TUTTI
-        # i chiamanti (GUI e headless). La password 2FA NON viene toccata.
-        verification = "".join(ch for ch in str(code or "") if ch.isdigit())
+        # Sanitizza il codice via helper condiviso (sole cifre ASCII, estratte dopo
+        # il marcatore "code" se presente). La password 2FA NON viene toccata.
+        verification = sanitize_login_code(code)
         awaiting = self._login_awaiting_password
         if not awaiting and not verification:
             return {"ok": False, "error": "missing_code"}

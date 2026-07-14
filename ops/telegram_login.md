@@ -79,10 +79,16 @@ python headless_main.py --telegram-login
   estratte. Usa **sempre l'ULTIMO codice ricevuto** — ogni nuovo invio invalida i
   precedenti.
 
-> **Nota (F-1a):** sanitizzazione del codice e riconoscimento del FloodWait sono a
-> livello di `TelegramListener` (`sign_in`/`request_code`): valgono quindi per
-> **tutti** i percorsi di login, headless **e GUI**. Su FloodWait `request_code`
-> ritorna anche `retry_after` (secondi) così l'interfaccia può mostrare l'attesa.
+> **Nota (F-1a):** sanitizzazione del codice e gestione del FloodWait valgono su
+> **entrambi** i percorsi di login, **headless e GUI**. La GUI
+> (`controllers/telegram_controller.py`) usa un proprio client Telethon e **non**
+> passa da `TelegramListener`, quindi l'hardening è applicato in due punti che
+> condividono l'unico helper `telegram_listener.sanitize_login_code`:
+> - **codice → sole cifre ASCII**, estratte dopo il marcatore `code`/`codice` se
+>   presente (così `777000 Login code: 54321` → `54321`; le cifre non-ASCII sono
+>   scartate perché Telegram le rifiuta);
+> - **FloodWait**: headless `request_code` ritorna `retry_after` (secondi);
+>   la GUI `send_code` mostra «attendi N secondi, non rilanciare».
 
 Flusso interattivo (`HeadlessApp._telegram_login_flow`):
 

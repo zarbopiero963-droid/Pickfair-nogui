@@ -10,7 +10,7 @@ salva. La verifica end-to-end con l'API Telegram reale resta sul VPS.
 import sys
 from types import SimpleNamespace
 
-from telegram_listener import TelegramListener
+from telegram_listener import TelegramListener, sanitize_login_code
 from headless_main import HeadlessApp
 
 
@@ -160,6 +160,19 @@ def test_sign_in_invalid_code():
     lis.request_code("+39")
     res = lis.sign_in("000")
     assert res == {"ok": False, "error": "invalid_code"}
+
+
+def test_sanitize_login_code_ascii_and_marker():
+    # BLOCK (Greptile P2 + CodeRabbit): sole cifre ASCII, ed estrazione dopo il
+    # marcatore "code"/"codice" per non concatenare altre cifre nel testo.
+    assert sanitize_login_code("Login code: 12345") == "12345"
+    assert sanitize_login_code("Codice di accesso: 54321") == "54321"
+    assert sanitize_login_code("12345") == "12345"
+    # ALTRE cifre nel testo (id chat 777000) NON devono concatenarsi al codice
+    assert sanitize_login_code("777000 Login code: 54321") == "54321"
+    # cifre non-ASCII (arabo-indiane) NON sono valide per Telegram => scartate
+    assert sanitize_login_code("١٢٣") == ""
+    assert sanitize_login_code(None) == ""
 
 
 def test_sign_in_sanitizes_pasted_code_at_source():
