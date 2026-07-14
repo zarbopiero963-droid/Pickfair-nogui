@@ -145,6 +145,30 @@ operatore, non dato corrotto); `multiplier` fallback fail-safe `> 0`,
 `min_absolute` `>= 0` (0 = nessun floor). `MIN_LIQUIDITY` (trading_config) resta
 non usata (superata da `min_liquidity_absolute`).
 
+## Quota minima / Min Price editabile in GUI (tab Roserpina) — PR2c
+
+`trading_config.MIN_PRICE` (1.02) era *dead*; il floor reale al submit era il
+solo `price <= 1.01` hardcoded. Ora il tab **Roserpina** espone "Quota minima /
+Min Price (>= 1.01)": un **floor di strategia editabile** applicato al submit
+dutching **SOPRA** il minimo Betfair inviolabile 1.01.
+
+**Enforcement** (`controllers/dutching_controller.validate`, quindi anche
+`precheck`/`preview`): oltre al floor **hard** `price <= 1.01` (minimo Betfair,
+**immune-da-config**), rifiuta `price < min_price` (config-driven). Comparatore
+`<`: col default **1.02** il comportamento e' **invariato** rispetto a prima
+(sulla ladder Betfair — step 0.01 in 1.01–2.00 — non esiste un tick tra 1.01 e
+1.02), quindi il floor "morde" solo quando l'operatore lo alza (es. 1.5).
+
+**Fail-safe.** `_min_price` clampa a `max(1.01, trading_config.MIN_PRICE)` se la
+config e' assente / non numerica / non finita / `< 1.01`: una config rotta non
+puo' abbassare il floor sotto il minimo Betfair. Il floor hard 1.01 resta
+comunque un controllo indipendente. La validazione GUI richiede `>= 1.01`.
+
+**Ambito.** Il floor di strategia si applica al **path dutching automatico**;
+`manual_bet()` resta col solo hard-floor 1.01 (una bet manuale e' una scelta
+esplicita dell'operatore). `MIN_LIQUIDITY` resta non usata (superata da
+`min_liquidity_absolute`, PR2b).
+
 ## Vincoli (safety)
 
 - Non modifica la logica dei gate (deploy gate, fail-closed #350): **espone e

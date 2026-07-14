@@ -637,6 +637,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.rs_liq_min_abs_var = self._make_string_var(str(trading_config.MIN_LIQUIDITY_ABSOLUTE))
         self.rs_liq_guard_enabled_var = self._make_bool_var(bool(trading_config.LIQUIDITY_GUARD_ENABLED))
         self.rs_liq_warning_only_var = self._make_bool_var(bool(trading_config.LIQUIDITY_WARNING_ONLY))
+        # Quota minima di strategia (floor editabile sopra il minimo Betfair 1.01).
+        self.rs_min_price_var = self._make_string_var(str(trading_config.MIN_PRICE))
         self.rs_allow_recovery_var = self._make_bool_var(True)
         self.rs_anti_dup_var = self._make_bool_var(True)
         self.rs_risk_profile_var = self._make_string_var("BALANCED")
@@ -968,6 +970,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._labeled_entry(outer, "Book Block % (blocca submit se book >= soglia)", self.rs_book_block_var)
         self._labeled_entry(outer, "Liquidity avviso: Moltiplicatore (richiesta = stake x N)", self.rs_liq_multiplier_var)
         self._labeled_entry(outer, "Liquidity avviso: Floor assoluto € (0 = nessun floor)", self.rs_liq_min_abs_var)
+        self._labeled_entry(outer, "Quota minima / Min Price (>= 1.01)", self.rs_min_price_var)
 
         rp = ctk.CTkFrame(outer)
         rp.pack(fill=tk.X, padx=12, pady=6)
@@ -1180,6 +1183,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 self.rs_liq_min_abs_var.set(str(getattr(rs, "min_liquidity_absolute", trading_config.MIN_LIQUIDITY_ABSOLUTE)))
                 self.rs_liq_guard_enabled_var.set(bool(getattr(rs, "liquidity_guard_enabled", True)))
                 self.rs_liq_warning_only_var.set(bool(getattr(rs, "liquidity_warning_only", False)))
+                self.rs_min_price_var.set(str(getattr(rs, "min_price", trading_config.MIN_PRICE)))
                 self.rs_allow_recovery_var.set(bool(getattr(rs, "allow_recovery", self.rs_allow_recovery_var.get())))
                 self.rs_anti_dup_var.set(bool(getattr(rs, "anti_duplication_enabled", self.rs_anti_dup_var.get())))
                 risk_profile = getattr(rs, "risk_profile", None)
@@ -1398,6 +1402,18 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             raise ValueError(f"{label}: deve essere un numero finito >= 0.")
         return val
 
+    @staticmethod
+    def _parse_min_price(raw, label):
+        """Quota minima: numerica, finita, >= 1.01 (minimo Betfair inviolabile)."""
+        text = (raw or "").strip()
+        try:
+            val = float(text)
+        except (TypeError, ValueError):
+            raise ValueError(f"{label}: inserisci un numero valido.")
+        if not math.isfinite(val) or val < 1.01:
+            raise ValueError(f"{label}: deve essere un numero finito >= 1.01.")
+        return val
+
     def _save_roserpina_settings(self):
         try:
             from core.system_state import RoserpinaConfig, RiskProfile
@@ -1408,6 +1424,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 raise ValueError("Book Warning % non puo' superare Book Block %.")
             liq_multiplier = self._parse_book_pct(self.rs_liq_multiplier_var.get(), "Liquidity Moltiplicatore")
             liq_min_abs = self._parse_min_liquidity(self.rs_liq_min_abs_var.get(), "Liquidity Floor assoluto")
+            min_price = self._parse_min_price(self.rs_min_price_var.get(), "Quota minima")
 
             cfg = RoserpinaConfig(
                 target_profit_cycle_pct=float(self.rs_target_var.get()),
@@ -1437,6 +1454,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 liquidity_multiplier=liq_multiplier,
                 min_liquidity_absolute=liq_min_abs,
                 liquidity_warning_only=bool(self.rs_liq_warning_only_var.get()),
+                min_price=min_price,
             )
             self.settings_service.save_roserpina_config(cfg)
         except Exception as exc:

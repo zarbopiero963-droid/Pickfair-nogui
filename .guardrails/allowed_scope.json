@@ -4,6 +4,20 @@
     "max_files": 8
   },
   "tasks": {
+    "min_price_gate": {
+      "description": "PR2c del programma GUI-parametri (autorizzata dall'owner, enforce-first; file safety-critical autorizzati). trading_config.MIN_PRICE (1.02) era DEAD; il floor reale al submit era hardcoded price<=1.01. Questa PR aggiunge un floor di STRATEGIA editabile (min_price) SOPRA il minimo Betfair inviolabile 1.01: (1) controllers/dutching_controller.validate rifiuta price<min_price (config-driven, comparatore '<' => default 1.02 behavior-preserving: nessun tick Betfair tra 1.01 e 1.02) MANTENENDO il floor hard price<=1.01 immune-da-config; helper _min_price fail-safe clampa a max(1.01, MIN_PRICE) su config assente/non-finita/<1.01. Applicato al path dutching automatico (validate, quindi precheck/preview); manual_bet resta col solo hard-floor 1.01 (bet manuale = discrezione operatore). (2) CONFIG: campo RoserpinaConfig.min_price + chiave DB roserpina.min_price in load/save (fallback trading_config.MIN_PRICE). (3) GUI: campo 'Quota minima / Min Price' nel tab Roserpina con validazione _parse_min_price (>=1.01). MIN_LIQUIDITY lasciata dead (superata da min_liquidity_absolute in PR2b). Test hard (blocca sotto min_price; passa sopra; hard-floor 1.01 indipendente; default behavior-preserving; fail-safe clamp; helper; round-trip; GUI load/save/validazione). Doc ops/config_console.md.",
+      "allow_tests": true,
+      "files": [
+        "core/system_state.py",
+        "services/setting_service.py",
+        "controllers/dutching_controller.py",
+        "mini_gui.py",
+        "tests/integration/test_dutching_min_price_guard.py",
+        "ops/config_console.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 8
+    },
     "liquidity_guard": {
       "description": "PR2b del programma GUI-parametri (autorizzata dall'owner, enforce-first; file safety-critical autorizzati). Le costanti LIQUIDITY_GUARD_ENABLED/LIQUIDITY_MULTIPLIER/MIN_LIQUIDITY_ABSOLUTE/LIQUIDITY_WARNING_ONLY erano DEAD. Decisione owner: guard OSSERVAZIONALE (warning-only) in questa PR, BLOCCO reale in follow-up dopo verifica semantica. (1) In controllers/dutching_controller.precheck (dopo il book% gate) calcola la liquidita' ESEGUIBILE per gamba dal market book (lato opposto: BACK->availableToLay, LAY->availableToBack, mirror di simulation_order_book; filtrata per prezzo eseguibile, mirror di _crosses) letta SOLO dalla cache runtime.market_tracker.get_market (NESSUN I/O nel submit); required = stake*multiplier (size matchabile = stake); segnala shortfall come WARNING (liquidity_warning/liquidity_shortfall) SENZA MAI bloccare. FAIL-OPEN su dato mancante. guard_enabled=False disattiva anche l'osservazione. (2) CONFIG editabile: 4 campi RoserpinaConfig + chiavi DB roserpina.liquidity_* in load/save (fallback trading_config; multiplier fail-safe >0, min_absolute fail-safe >=0). (3) GUI: 2 numerici + 2 toggle nel tab Roserpina con validazione (_parse_book_pct per multiplier >0, _parse_min_liquidity per floor >=0). Non tocca safety_logger. Test hard (warna ma non blocca mai, no-warning se sufficiente, fail-open book/selezione mancante, guard-off, filtro prezzo, side-mapping, helper fail-safe, round-trip, wiring+validazione GUI). Doc ops/config_console.md.",
       "allow_tests": true,
