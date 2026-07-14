@@ -178,6 +178,47 @@ impostare 1.01 sarebbe identico a 1.02 e fuorviante).
 esplicita dell'operatore). `MIN_LIQUIDITY` resta non usata (superata da
 `min_liquidity_absolute`, PR2b).
 
+## Max Win: cap vincita/payout per gamba editabile in GUI (tab Roserpina) — G5
+
+`trading_config.MAX_WIN` (10000.0) era *dead* (solo voce display in
+`config_registry`). Ora il tab **Roserpina** espone il campo "**Max Win €**" +
+la checkbox "**Max Win: solo avviso (⚠ togliere = BLOCCA il submit)**": un **cap
+di sicurezza sulla vincita/payout potenziale per gamba**, applicato sia al submit
+**dutching** sia al **bet manuale**.
+
+**Grandezza.** L'importo potenziale di UNA gamba confrontato col cap e': **BACK**
+→ `stake * price` (payout lordo restituito se la selezione vince); **LAY** →
+`stake * (price - 1)` = **liability**, cioe' la perdita/esposizione reale se la
+selezione vince. **Decisione owner (review Fable 5 + Fugu Ultra su #393):** sul
+LAY il cap protegge dal **rischio** (liability), non dal piccolo backer-stake
+incassato — cosi' un LAY ad alta quota (es. 1000@10, liability 9000) non sfugge
+al cap. Usa il campo `liability` precomputato quando presente (coerente con
+`_compute_order_exposure`). Il cap e' **per-gamba**: gli esiti di un set dutching
+sono mutuamente esclusivi (vince una sola selezione), quindi si valuta l'importo
+**massimo** tra le gambe, **non** la somma. Non si usa `profitIfWins`/`avg_profit`
+(profitto equalizzato netto-del-totale, ordine di grandezza diverso).
+
+**Enforcement** (`controllers/dutching_controller.precheck` e `manual_bet`):
+il gate gira **PRIMA di ogni side-effect** (duplication acquire), accanto ai gate
+book%/liquidity. Se una gamba supera il cap **e** il guard non e' in sola
+osservazione (`max_win_warning_only=False`) => `_fail` (blocco). In modalita'
+avviso espone `max_win_warning`/`max_win_breaches` nel risultato **senza mai
+bloccare**.
+
+**Opt-in (default).** `max_win_warning_only=True` di default (come il liquidity
+guard #383): il cap parte in **AVVISO**; l'owner lo **arma** a blocco reale
+togliendo la spunta in GUI. Cosi' il rilascio non inizia a bloccare a sorpresa.
+
+**Fail-safe.** `_max_win` (riusa `_book_threshold`) ricade su
+`trading_config.MAX_WIN` se la config e' assente / non numerica / non finita /
+`<= 0`: una config rotta **non** puo' disattivare il cap. La validazione GUI
+richiede un numero finito `> 0` (niente drift GUI-vs-enforcement). Persistenza:
+chiavi DB `roserpina.max_win` / `roserpina.max_win_warning_only`.
+
+**Nota vs `max_stake_abs`.** `max_stake_abs` (money-management) e' un cap sullo
+**stake** (sizing); `MAX_WIN` e' un cap sul **payout/vincita** potenziale: assi
+diversi, complementari, nessun doppio-conteggio.
+
 ## Configurazione Simulazione editabile in GUI (tab Simulazione) — G1
 
 I parametri del **broker simulato** erano configurabili solo via DB. Ora il tab

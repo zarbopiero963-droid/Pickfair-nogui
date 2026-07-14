@@ -639,6 +639,9 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.rs_liq_warning_only_var = self._make_bool_var(bool(trading_config.LIQUIDITY_WARNING_ONLY))
         # Quota minima di strategia (floor editabile sopra il minimo Betfair 1.01).
         self.rs_min_price_var = self._make_string_var(str(trading_config.MIN_PRICE))
+        # Max Win: cap vincita/payout per gamba + toggle solo-avviso (opt-in).
+        self.rs_max_win_var = self._make_string_var(str(trading_config.MAX_WIN))
+        self.rs_max_win_warning_only_var = self._make_bool_var(True)
         # Simulazione: config del broker simulato (gia' enforced in betfair_service).
         self.sim_starting_balance_var = self._make_string_var("1000.0")
         self.sim_partial_fill_var = self._make_bool_var(True)
@@ -1003,6 +1006,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._labeled_entry(outer, "Liquidity avviso: Moltiplicatore (richiesta = stake x N)", self.rs_liq_multiplier_var)
         self._labeled_entry(outer, "Liquidity avviso: Floor assoluto € (0 = nessun floor)", self.rs_liq_min_abs_var)
         self._labeled_entry(outer, "Quota minima / Min Price (>= 1.02)", self.rs_min_price_var)
+        self._labeled_entry(outer, "Max Win € (cap vincita/payout per gamba)", self.rs_max_win_var)
 
         rp = ctk.CTkFrame(outer)
         rp.pack(fill=tk.X, padx=12, pady=6)
@@ -1023,6 +1027,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         # insufficiente. "Solo avviso" (default opt-in) lo tiene in osservazione;
         # TOGLIERE la spunta arma il BLOCCO reale (money-management).
         ctk.CTkCheckBox(cb, text="Liquidity: solo avviso (⚠ togliere = BLOCCA il submit)", variable=self.rs_liq_warning_only_var).pack(side=tk.LEFT, padx=8, pady=8)
+        # G5: il cap Max Win puo' BLOCCARE il submit (dutching + bet manuale) se la
+        # vincita/payout potenziale di una gamba supera la soglia. "Solo avviso"
+        # (default opt-in) lo tiene in osservazione; TOGLIERE la spunta arma il BLOCCO.
+        ctk.CTkCheckBox(cb, text="Max Win: solo avviso (⚠ togliere = BLOCCA il submit)", variable=self.rs_max_win_warning_only_var).pack(side=tk.LEFT, padx=8, pady=8)
 
         self.btn_save_roserpina = ctk.CTkButton(
             outer,
@@ -1468,6 +1476,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 self.rs_liq_guard_enabled_var.set(bool(getattr(rs, "liquidity_guard_enabled", True)))
                 self.rs_liq_warning_only_var.set(bool(getattr(rs, "liquidity_warning_only", True)))
                 self.rs_min_price_var.set(str(getattr(rs, "min_price", trading_config.MIN_PRICE)))
+                self.rs_max_win_var.set(str(getattr(rs, "max_win", trading_config.MAX_WIN)))
+                self.rs_max_win_warning_only_var.set(bool(getattr(rs, "max_win_warning_only", True)))
                 self.rs_allow_recovery_var.set(bool(getattr(rs, "allow_recovery", self.rs_allow_recovery_var.get())))
                 self.rs_anti_dup_var.set(bool(getattr(rs, "anti_duplication_enabled", self.rs_anti_dup_var.get())))
                 risk_profile = getattr(rs, "risk_profile", None)
@@ -1742,6 +1752,24 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         return val
 
     @staticmethod
+    def _parse_max_win(raw, label):
+        """Cap Max Win: numerico, finito, > 0 (il cap non e' opzionale, ha default).
+
+        Come `_parse_book_pct`: un valore vuoto / non numerico / nan / inf / <= 0 e'
+        un errore ESPLICITO che interrompe il salvataggio, cosi' non si persiste un
+        cap incoerente col gate (che a runtime lo scarterebbe col fallback fail-safe,
+        mostrando in GUI un valore diverso da quello applicato — drift).
+        """
+        text = (raw or "").strip()
+        try:
+            val = float(text)
+        except (TypeError, ValueError):
+            raise ValueError(f"{label}: inserisci un numero valido.")
+        if not math.isfinite(val) or val <= 0.0:
+            raise ValueError(f"{label}: deve essere un numero finito maggiore di 0.")
+        return val
+
+    @staticmethod
     def _parse_sim_balance(raw, label):
         """Bankroll simulazione: numerico, finito, > 0."""
         text = (raw or "").strip()
@@ -1764,6 +1792,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             liq_multiplier = self._parse_book_pct(self.rs_liq_multiplier_var.get(), "Liquidity Moltiplicatore")
             liq_min_abs = self._parse_min_liquidity(self.rs_liq_min_abs_var.get(), "Liquidity Floor assoluto")
             min_price = self._parse_min_price(self.rs_min_price_var.get(), "Quota minima")
+            max_win = self._parse_max_win(self.rs_max_win_var.get(), "Max Win")
 
             cfg = RoserpinaConfig(
                 target_profit_cycle_pct=float(self.rs_target_var.get()),
@@ -1794,6 +1823,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 min_liquidity_absolute=liq_min_abs,
                 liquidity_warning_only=bool(self.rs_liq_warning_only_var.get()),
                 min_price=min_price,
+                max_win=max_win,
+                max_win_warning_only=bool(self.rs_max_win_warning_only_var.get()),
             )
             self.settings_service.save_roserpina_config(cfg)
         except Exception as exc:

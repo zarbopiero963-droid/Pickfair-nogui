@@ -259,6 +259,8 @@ class SettingsService:
             min_liquidity_absolute=self._f(data, "roserpina.min_liquidity_absolute", trading_config.MIN_LIQUIDITY_ABSOLUTE),
             liquidity_warning_only=self._b(data, "roserpina.liquidity_warning_only", trading_config.LIQUIDITY_WARNING_ONLY),
             min_price=self._f(data, "roserpina.min_price", trading_config.MIN_PRICE),
+            max_win=self._f(data, "roserpina.max_win", trading_config.MAX_WIN),
+            max_win_warning_only=self._b(data, "roserpina.max_win_warning_only", True),
         )
 
     def save_roserpina_config(self, config: RoserpinaConfig) -> None:
@@ -288,6 +290,8 @@ class SettingsService:
             "roserpina.min_liquidity_absolute": config.min_liquidity_absolute,
             "roserpina.liquidity_warning_only": int(bool(config.liquidity_warning_only)),
             "roserpina.min_price": config.min_price,
+            "roserpina.max_win": config.max_win,
+            "roserpina.max_win_warning_only": int(bool(config.max_win_warning_only)),
         }
 
         # Preserve previously persisted hard-stop limits when caller omits these optional fields.

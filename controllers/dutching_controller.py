@@ -233,6 +233,95 @@ class DutchingController:
                 pass
         return max(1.01, float(trading_config.MIN_PRICE))
 
+    # -- Max Win cap (G5) --------------------------------------------------
+    @staticmethod
+    def _max_win(config) -> float:
+        """Cap vincita/payout per gamba dalla config (editabile GUI), fail-safe.
+
+        Riusa `_book_threshold` (numerico finito > 0, fallback FAIL-SAFE): un
+        backend rotto o un valore corrotto NON deve disattivare il cap ne'
+        spostarlo su un valore assurdo. Fallback = trading_config.MAX_WIN.
+        """
+        return DutchingController._book_threshold(config, "max_win", trading_config.MAX_WIN)
+
+    @staticmethod
+    def _max_win_warning_only(config) -> bool:
+        """True => cap in sola OSSERVAZIONE (avviso, mai blocco); False => BLOCCO.
+
+        Default OPT-IN (#383-style): config assente => True, cosi' il rilascio del
+        cap NON inizia a bloccare a sorpresa; l'owner lo arma dalla GUI
+        (warning_only=False). Parsing stringa robusto: "False"/"0"/"" NON valgono
+        True (un blocco armato salvato come stringa deve restare armato).
+        """
+        raw = getattr(config, "max_win_warning_only", None)
+        if raw is None:
+            return True
+        if isinstance(raw, str):
+            return raw.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(raw)
+
+    @staticmethod
+    def _leg_potential_win(item: Dict[str, Any]) -> float:
+        """Importo massimo di UNA gamba confrontato con MAX_WIN.
+
+        BACK: payout lordo = stake * quota (importo restituito se la selezione
+        vince). LAY: LIABILITY = stake * (quota - 1), cioe' la perdita/esposizione
+        reale se la selezione vince (decisione owner: sul LAY il cap protegge dal
+        RISCHIO, non dal piccolo backer-stake incassato). Usa il campo `liability`
+        precomputato se presente (coerente con _compute_order_exposure), altrimenti
+        lo ricalcola. Fail-safe su campi mancanti/non numerici => 0.0 (nessun falso
+        blocco).
+        """
+        side = str(item.get("side", "BACK")).upper()
+        try:
+            stake = float(item.get("stake", 0.0) or 0.0)
+            price = float(item.get("price", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+        if side == "LAY":
+            # Liability = rischio reale del LAY. La baseline e' SEMPRE ricalcolata da
+            # stake/price (stake*(quota-1)); il campo `liability` precomputato si usa
+            # solo se e' un float positivo finito, e comunque si prende il MAX col
+            # ricalcolo. Cosi' un precomputato assente / None / 0 / non-numerico /
+            # non-finito / sottostimato NON puo' mai abbassare il rischio sotto il
+            # valore reale (fail-CLOSED: il gate money-management non si aggira con
+            # una liability stale/corrotta — rilievo GPT-5.6 Terra + Fable 5 su #393).
+            recomputed = max(0.0, stake * max(0.0, price - 1.0))
+            raw_liability = item.get("liability")
+            if raw_liability is not None:
+                try:
+                    liability = float(raw_liability)
+                    if math.isfinite(liability) and liability > 0.0:
+                        return max(recomputed, liability)
+                except (TypeError, ValueError):
+                    pass
+            return recomputed
+        return max(0.0, stake * price)
+
+    @staticmethod
+    def _max_win_breaches(results: List[Dict[str, Any]], max_win: float) -> List[Dict[str, Any]]:
+        """Gambe la cui vincita potenziale supera il cap (per-gamba, non somma).
+
+        FAIL-SAFE: un `selectionId` non numerico NON deve sollevare (romperebbe il
+        gate money-management nel precheck) => degrada a 0 nel report.
+        """
+        breaches: List[Dict[str, Any]] = []
+        for item in results:
+            win = DutchingController._leg_potential_win(item)
+            if win > max_win + 1e-9:
+                try:
+                    sel = int(item.get("selectionId", 0) or 0)
+                except (TypeError, ValueError):
+                    sel = 0
+                breaches.append(
+                    {
+                        "selectionId": sel,
+                        "potential_win": round(win, 2),
+                        "cap": round(max_win, 2),
+                    }
+                )
+        return breaches
+
     def _market_book(self, market_id):
         """Book di mercato dalla CACHE (market_tracker), SENZA I/O.
 
@@ -809,6 +898,23 @@ class DutchingController:
                 liquidity_shortfall=liquidity.get("shortfall", []),
             )
 
+        # MAX_WIN cap (G5) — enforce-first opt-in: blocca il submit se l'importo
+        # potenziale (BACK: payout stake*quota; LAY: liability stake*(quota-1),
+        # cioe' il RISCHIO) di UNA gamba supera il cap configurato, PRIMA di ogni
+        # side-effect (duplication acquire), come il
+        # book%/liquidity gate. Per-gamba (esiti dutching mutuamente esclusivi =>
+        # si valuta la MAX, non la somma). In modalita' avviso (default opt-in) solo
+        # segnalazione (max_win_warning/max_win_breaches nel risultato, sotto).
+        # FAIL-SAFE: config rotta ricade su trading_config.MAX_WIN (cap sempre armato).
+        max_win = self._max_win(config)
+        max_win_breaches = self._max_win_breaches(results, max_win)
+        if max_win_breaches and not self._max_win_warning_only(config):
+            return self._fail(
+                f"Vincita potenziale oltre il cap {max_win:.2f}€ su una o più gambe",
+                max_win=round(max_win, 2),
+                max_win_breaches=max_win_breaches,
+            )
+
         if duplication_guard and bool(getattr(config, "anti_duplication_enabled", True)):
             try:
                 if not duplication_guard.acquire(event_key):
@@ -870,6 +976,9 @@ class DutchingController:
             book_warning_exceeded=bool(float(book_pct) >= self._book_warning_threshold(config)),
             liquidity_warning=bool(liquidity.get("warning")),
             liquidity_shortfall=liquidity.get("shortfall", []),
+            max_win=round(max_win, 2),
+            max_win_warning=bool(max_win_breaches),
+            max_win_breaches=max_win_breaches,
             event_key=event_key,
             batch_id=batch_id,
             batch_exposure=float(batch_exposure),
@@ -1107,6 +1216,32 @@ class DutchingController:
             duplication_guard = self._duplication_guard()
             config = self._config()
 
+            # MAX_WIN cap (G5) anche sul bet manuale (chiude la via non-gated,
+            # anti fat-finger), PRIMA di ogni side-effect. Importo potenziale: BACK
+            # = payout stake*quota; LAY = liability stake*(quota-1) (il RISCHIO reale).
+            # Enforce-first opt-in: in modalita' avviso (default) non blocca.
+            # FAIL-SAFE su trading_config.MAX_WIN.
+            side = str(self._normalize_side(payload.get("bet_type", "BACK"))).upper()
+            potential_win = self._leg_potential_win({"side": side, "stake": stake, "price": price})
+            max_win = self._max_win(config)
+            max_win_exceeded = potential_win > max_win + 1e-9
+            if max_win_exceeded and not self._max_win_warning_only(config):
+                return self._fail(
+                    f"Vincita potenziale {potential_win:.2f}€ oltre il cap {max_win:.2f}€",
+                    max_win=round(max_win, 2),
+                    potential_win=round(potential_win, 2),
+                )
+            if max_win_exceeded:
+                # Modalita' avviso: NON blocca ma rende OSSERVABILE lo sforamento
+                # (log + flag nel risultato _ok, come precheck), cosi' l'operatore
+                # vede il superamento del cap anche prima di armare il blocco.
+                logger.warning(
+                    "MAX_WIN warning (manual_bet): vincita potenziale %.2f€ oltre il cap %.2f€ (sel %s)",
+                    potential_win,
+                    max_win,
+                    selection_id,
+                )
+
             if duplication_guard and bool(getattr(config, "anti_duplication_enabled", True)):
                 if not duplication_guard.acquire(event_key):
                     return self._fail("Duplicato bloccato")
@@ -1150,7 +1285,12 @@ class DutchingController:
                 raise
 
             self._publish_audit("MANUAL_BET_APPROVED", {"order": order})
-            return self._ok(order=order)
+            return self._ok(
+                order=order,
+                max_win=round(max_win, 2),
+                max_win_warning=bool(max_win_exceeded),
+                potential_win=round(potential_win, 2),
+            )
 
         except Exception as exc:
             logger.exception("Errore manual_bet")
