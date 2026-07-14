@@ -1049,15 +1049,17 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             return
         try:
             balance = self._parse_sim_balance(self.sim_starting_balance_var.get(), "Bankroll iniziale")
-            # Carica la config corrente per PRESERVARE i campi non esposti in GUI
-            # (commission_pct policy-locked a 4.5, simulation.enabled) e sovrascrivi
-            # solo i campi editabili qui.
-            cfg = {}
-            if hasattr(self.settings_service, "load_simulation_config"):
-                try:
-                    cfg = dict(self.settings_service.load_simulation_config() or {})
-                except Exception:
-                    cfg = {}
+            # FAIL-CLOSED: per preservare i campi NON esposti (commission_pct
+            # policy-lock 4.5, simulation.enabled) dobbiamo poter rileggere la
+            # config corrente. Se il reload e' assente o fallisce, ABORTIAMO il
+            # salvataggio: mai degradare a {} sovrascrivendo i campi protetti con i
+            # default (un read error transitorio potrebbe rimettere enabled=True).
+            if not hasattr(self.settings_service, "load_simulation_config"):
+                raise RuntimeError(
+                    "Config simulazione non ricaricabile: salvataggio annullato per "
+                    "non sovrascrivere i campi protetti (commission_pct, enabled)."
+                )
+            cfg = dict(self.settings_service.load_simulation_config() or {})
             cfg["starting_balance"] = balance
             cfg["partial_fill_enabled"] = bool(self.sim_partial_fill_var.get())
             cfg["consume_liquidity"] = bool(self.sim_consume_liq_var.get())

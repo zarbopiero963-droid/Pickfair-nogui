@@ -187,6 +187,7 @@ I parametri del **broker simulato** erano configurabili solo via DB. Ora il tab
 nessun nuovo enforcement e nessuna modifica al percorso LIVE.
 
 **Campi NON esposti (preservati al salvataggio):**
+
 - `simulation.commission_pct` e' **policy-locked a 4.5%** (Betfair Italia,
   fail-closed in `core/simulation_state.py`): esporlo editabile farebbe fallire
   il settlement PnL se ≠ 4.5. Quindi **non e' in GUI**; il salvataggio ricarica

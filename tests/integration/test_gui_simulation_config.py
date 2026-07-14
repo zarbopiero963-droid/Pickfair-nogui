@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import os
 import sys
-from types import SimpleNamespace  # noqa: F401
 
 import pytest
 
@@ -35,8 +34,15 @@ class _CapturingService(FakeSettingsService):
             "persist_state": True,
         }
 
-    def save_simulation_config(self, cfg):
-        self.saved_sim = dict(cfg)
+    def save_simulation_config(self, config):
+        self.saved_sim = dict(config)
+
+
+class _LoadFailsService(_CapturingService):
+    """Il reload della config corrente fallisce (es. read error transitorio)."""
+
+    def load_simulation_config(self):
+        raise RuntimeError("read error simulato")
 
 
 def _make_gui(monkeypatch):
@@ -83,6 +89,19 @@ def test_gui_save_blocks_invalid_balance(monkeypatch, bad):
         app.sim_starting_balance_var.set(bad)
         app._save_simulation_settings()
         assert app.settings_service.saved_sim is None, bad
+    finally:
+        app.destroy()
+
+
+def test_gui_save_aborts_when_load_fails(monkeypatch):
+    # FAIL-CLOSED: se load_simulation_config fallisce, il save NON deve procedere
+    # con {} (che sovrascriverebbe i campi protetti con i default). Niente save.
+    mg = _install_mini_gui_fakes(monkeypatch, settings_service=_LoadFailsService)
+    app = mg.MiniPickfairGUI(test_mode=True)
+    try:
+        app.sim_starting_balance_var.set("3000")
+        app._save_simulation_settings()
+        assert app.settings_service.saved_sim is None
     finally:
         app.destroy()
 
