@@ -75,9 +75,14 @@ python headless_main.py --telegram-login
   («aspetta N secondi, NON rilanciare»): rilanciare peggiora il flood **e invalida
   i codici precedenti** (causa tipica del "codice non valido" dopo molti tentativi).
 - **Digita SOLO le cifre** del codice (es. `12345`). Se incolli l'intero messaggio
-  di servizio (`Login code: 12345`) va bene lo stesso: il comando **estrae solo le
-  cifre**. Usa **sempre l'ULTIMO codice ricevuto** — ogni nuovo invio invalida i
+  di servizio (`Login code: 12345`) va bene lo stesso: le **sole cifre** vengono
+  estratte. Usa **sempre l'ULTIMO codice ricevuto** — ogni nuovo invio invalida i
   precedenti.
+
+> **Nota (F-1a):** sanitizzazione del codice e riconoscimento del FloodWait sono a
+> livello di `TelegramListener` (`sign_in`/`request_code`): valgono quindi per
+> **tutti** i percorsi di login, headless **e GUI**. Su FloodWait `request_code`
+> ritorna anche `retry_after` (secondi) così l'interfaccia può mostrare l'attesa.
 
 Flusso interattivo (`HeadlessApp._telegram_login_flow`):
 

@@ -608,8 +608,19 @@ class TelegramListener:
             return {"ok": True}
         except Exception as exc:
             self._cleanup_login()
+            name = type(exc).__name__
+            # FloodWait: troppi invii ravvicinati. Telegram impone un'attesa e
+            # OGNI nuovo invio invalida i codici precedenti (causa tipica del
+            # "codice non valido" dopo molti tentativi). Restituisci un errore
+            # strutturato con `retry_after` così sia GUI sia headless possono
+            # dire all'utente di attendere invece di rilanciare.
+            if name == "FloodWaitError":
+                seconds = getattr(exc, "seconds", None)
+                msg = f"FloodWait: troppi tentativi, attendi {seconds} secondi prima di riprovare (non rilanciare)"
+                self._emit_status("FAILED", msg)
+                return {"ok": False, "error": msg, "retry_after": seconds}
             # str(TimeoutError()) e' vuoto: fallback sul nome classe (rilievo Codacy).
-            msg = str(exc) or type(exc).__name__
+            msg = str(exc) or name
             self._emit_status("FAILED", f"Invio codice fallito: {msg}")
             return {"ok": False, "error": msg}
 
@@ -627,7 +638,10 @@ class TelegramListener:
         if self._login_client is None or self._login_loop is None:
             return {"ok": False, "error": "request_code_first"}
         pwd = str(password_2fa or "").strip() or None
-        verification = str(code or "").strip()
+        # Sanitizza il codice a SOLE cifre: il messaggio 777000 è "Login code:
+        # 12345" e incollarlo intero darebbe "codice non valido". Vale per TUTTI
+        # i chiamanti (GUI e headless). La password 2FA NON viene toccata.
+        verification = "".join(ch for ch in str(code or "") if ch.isdigit())
         awaiting = self._login_awaiting_password
         if not awaiting and not verification:
             return {"ok": False, "error": "missing_code"}
