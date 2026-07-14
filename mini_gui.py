@@ -966,8 +966,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._labeled_entry(outer, "Hard-stop: Drawdown Max % (0-100, vuoto=non impostato)", self.rs_max_drawdown_hard_stop_var)
         self._labeled_entry(outer, "Book Warning % (avviso over-round)", self.rs_book_warning_var)
         self._labeled_entry(outer, "Book Block % (blocca submit se book >= soglia)", self.rs_book_block_var)
-        self._labeled_entry(outer, "Liquidity: Moltiplicatore (richiesta = stake x N)", self.rs_liq_multiplier_var)
-        self._labeled_entry(outer, "Liquidity: Floor assoluto € (0 = nessun floor)", self.rs_liq_min_abs_var)
+        self._labeled_entry(outer, "Liquidity avviso: Moltiplicatore (richiesta = stake x N)", self.rs_liq_multiplier_var)
+        self._labeled_entry(outer, "Liquidity avviso: Floor assoluto € (0 = nessun floor)", self.rs_liq_min_abs_var)
 
         rp = ctk.CTkFrame(outer)
         rp.pack(fill=tk.X, padx=12, pady=6)
@@ -983,8 +983,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         cb.pack(fill=tk.X, padx=12, pady=6)
         ctk.CTkCheckBox(cb, text="Allow Recovery", variable=self.rs_allow_recovery_var).pack(side=tk.LEFT, padx=8, pady=8)
         ctk.CTkCheckBox(cb, text="Anti Duplication Enabled", variable=self.rs_anti_dup_var).pack(side=tk.LEFT, padx=8, pady=8)
-        ctk.CTkCheckBox(cb, text="Liquidity Guard Enabled", variable=self.rs_liq_guard_enabled_var).pack(side=tk.LEFT, padx=8, pady=8)
-        ctk.CTkCheckBox(cb, text="Liquidity Warning Only", variable=self.rs_liq_warning_only_var).pack(side=tk.LEFT, padx=8, pady=8)
+        # Liquidity guard OSSERVAZIONALE: espone solo il toggle avviso on/off. Il
+        # "warning only" NON e' esposto finche' il blocco non e' abilitato nel
+        # follow-up (eviterebbe un toggle di safety visibile ma inefficace).
+        ctk.CTkCheckBox(cb, text="Liquidity Guard: avviso liquidita' (no blocco)", variable=self.rs_liq_guard_enabled_var).pack(side=tk.LEFT, padx=8, pady=8)
 
         self.btn_save_roserpina = ctk.CTkButton(
             outer,

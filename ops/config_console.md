@@ -109,9 +109,16 @@ dell'operatore (allenta il gate); il fallback protegge solo i casi invalidi.
 
 Le costanti liquidita' (`LIQUIDITY_GUARD_ENABLED`, `LIQUIDITY_MULTIPLIER`,
 `MIN_LIQUIDITY_ABSOLUTE`, `LIQUIDITY_WARNING_ONLY`) erano *dead*. Ora sono
-editabili dal tab **Roserpina** (2 campi numerici "Liquidity: Moltiplicatore" /
-"Liquidity: Floor assoluto €" + 2 toggle "Liquidity Guard Enabled" / "Liquidity
-Warning Only").
+editabili dal tab **Roserpina**: 2 campi numerici ("Liquidity avviso:
+Moltiplicatore" / "Liquidity avviso: Floor assoluto €") + 1 toggle "Liquidity
+Guard: avviso liquidita' (no blocco)".
+
+> **`liquidity_warning_only` non e' esposto in GUI in questa fase.** Poiche' il
+> guard e' solo osservazionale (non blocca mai), un toggle "Warning Only" sarebbe
+> un controllo di safety visibile ma **inerte/fuorviante** (un operatore con
+> `warning_only=False` crederebbe di avere un blocco che non esiste). Il campo
+> resta nel config/DB (default `False`) riservato alla PR di follow-up che abilita
+> il blocco; verra' esposto in GUI insieme al blocco reale.
 
 **Modalita' OSSERVAZIONALE (warning-only) — decisione owner.** In questa fase il
 guard **NON blocca** il submit: calcola la liquidita' **eseguibile** per gamba e
