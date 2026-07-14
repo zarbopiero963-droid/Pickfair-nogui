@@ -4,6 +4,17 @@
     "max_files": 8
   },
   "tasks": {
+    "gui_watchdog_config": {
+      "description": "G2 del programma GUI-parametri (autorizzata dall'owner, scope A: esporre tutti e 3 i toggle). Espone in un nuovo tab 'Watchdog' i toggle del watchdog anomalie finora solo-DB: anomaly_enabled (watchdog on/off, default-ON via tri-state None), anomaly_alerts_enabled (notifiche Telegram anomalie), anomaly_actions_enabled (arma il seam azioni automatiche; hook oggi scollegato in produzione). Sono GIA' enforced (observability/watchdog_service.py _is_anomaly_*, rilettura live ad ogni tick; headless_main li carica): pura esposizione + validazione, NESSUNA modifica al backend (il service settings_service.py load/save_anomaly_* e' gia' completo). Le checkbox safety-relevant (watchdog-off, azioni automatiche) hanno label di warning. Semantica tri-state: None (non configurato) => checkbox spuntata (default-ON); salvando si scrive un booleano esplicito (togliere la spunta => False = watchdog disattivato). PR safety-relevant => merge manuale dell'owner. Test hard (load True/False/None->checked, save round-trip dei 3 toggle, disable->False esplicito, servizio privo dei metodi => nessun crash/nessun save). Doc ops/config_console.md.",
+      "allow_tests": true,
+      "files": [
+        "mini_gui.py",
+        "tests/integration/test_gui_watchdog_config.py",
+        "ops/config_console.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 8
+    },
     "gui_simulation_config": {
       "description": "G1 del programma GUI-parametri (autorizzata dall'owner). Espone in un nuovo tab 'Simulazione' i parametri del broker simulato che erano configurabili solo via DB: simulation.starting_balance (validato >0), partial_fill_enabled, consume_liquidity, persist_state. Sono GIA' enforced (services/betfair_service.py -> SimulationBroker): pura esposizione + validazione, nessun nuovo enforcement, nessuna modifica a core/services/controllers/dutching/LIVE (PR NON safety-critical, solo mini_gui + test + doc). commission_pct (policy-lock 4.5% fail-closed) e simulation.enabled NON esposti: il save ricarica la config e li PRESERVA. Riusa il service load/save_simulation_config esistente (services/setting_service.py). Test hard (load, save+preserve dei campi locked, blocco balance invalido, helper _parse_sim_balance). Doc ops/config_console.md.",
       "allow_tests": true,

@@ -195,6 +195,35 @@ nessun nuovo enforcement e nessuna modifica al percorso LIVE.
 - `simulation.enabled` non e' esposto qui (la modalita' SIM/LIVE si governa dalla
   top-bar): viene anch'esso preservato.
 
+## Toggle Watchdog anomalie editabili in GUI (tab Watchdog) — G2
+
+I tre toggle del watchdog anomalie erano configurabili solo via DB. Ora il tab
+**Watchdog** li espone (toggle **LIVE**: il watchdog li rilegge ad ogni tick, si
+applicano entro **~5s senza riavvio**):
+
+- **Watchdog anomalie ATTIVO** (`anomaly_enabled`) — ⚠ guardia di safety:
+  disattivarlo sopprime le scansioni anomalie e registra un incidente fail-loud
+  ad ogni tick.
+- **Notifiche Telegram delle anomalie** (`anomaly_alerts_enabled`).
+- **Azioni automatiche su anomalie** (`anomaly_actions_enabled`) — ⚠ arma il
+  seam delle azioni automatiche (oggi il hook di escalation non e' collegato in
+  produzione: imposta solo il flag di escalation + log).
+
+**Gia' enforced.** Consumati da `observability/watchdog_service.py`
+(`_is_anomaly_*`) e caricati da `headless_main.py`. La PR e' pura **esposizione +
+validazione**: il service (`services/settings_service.py`,
+`load/save_anomaly_*`) e' gia' completo, **nessuna modifica al backend**.
+
+**Semantica tri-state.** `anomaly_enabled` non configurato (chiave assente) =
+**default-ON**: la checkbox parte spuntata. Al primo salvataggio si scrive un
+booleano **esplicito** (`0`/`1`): togliere la spunta persiste `False` = watchdog
+disattivato (True e None restano entrambi = attivo). Non esiste un ritorno allo
+stato "non configurato" via GUI (per il watchdog e' irrilevante: None == attivo).
+
+**Safety.** Espone un off-switch di una guardia di safety e un gate di azioni
+automatiche: le checkbox critiche hanno label di **warning** e il merge di questa
+PR e' **manuale dell'owner** (safety-relevant), pur toccando solo GUI+test+doc.
+
 ## Vincoli (safety)
 
 - Non modifica la logica dei gate (deploy gate, fail-closed #350): **espone e
