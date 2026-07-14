@@ -140,7 +140,7 @@ def test_gui_save_blocks_invalid_severity(monkeypatch):
         app.destroy()
 
 
-@pytest.mark.parametrize("bad", ["-5", "abc", ""])
+@pytest.mark.parametrize("bad", ["-5", "abc", "", "0.5", "1.9", "inf"])
 def test_gui_save_blocks_invalid_cooldown(monkeypatch, bad):
     app = _make(monkeypatch, _CapturingService)
     try:

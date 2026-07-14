@@ -1266,10 +1266,15 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
     @staticmethod
     def _parse_alert_cooldown(raw, label):
-        """Cooldown alert: intero finito >= 0."""
+        """Cooldown alert: intero >= 0.
+
+        Usa int() diretto (NON int(float())): i valori frazionari come "0.5"/"1.9"
+        verrebbero troncati silenziosamente a 0/1, accorciando il cooldown anti-spam
+        mentre il salvataggio riporta successo. Cosi' vengono rifiutati (come "inf").
+        """
         text = (raw or "").strip()
         try:
-            val = int(float(text))
+            val = int(text)
         except (TypeError, ValueError):
             raise ValueError(f"{label}: inserisci un numero intero valido.")
         if val < 0:
