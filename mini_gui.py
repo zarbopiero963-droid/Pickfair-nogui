@@ -1798,6 +1798,12 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             min_price = self._parse_min_price(self.rs_min_price_var.get(), "Quota minima")
             max_win = self._parse_max_win(self.rs_max_win_var.get(), "Max Win")
             max_stake_pct = self._parse_book_pct(self.rs_max_stake_pct_var.get(), "Max Stake %")
+            # Contratto 0-100 (scala percentuale, come gli altri max_*_pct): un valore
+            # > 100 verrebbe convertito a runtime in una frazione > 1 (es. 200 => 2.0 =
+            # 200% del bankroll), soglia irraggiungibile che DISABILITA silenziosamente
+            # l'avviso. Rifiuto esplicito, coerente con l'upper-bound di _parse_hard_stop.
+            if max_stake_pct > 100.0:
+                raise ValueError("Max Stake %: deve essere compreso tra 0 e 100.")
 
             cfg = RoserpinaConfig(
                 target_profit_cycle_pct=float(self.rs_target_var.get()),

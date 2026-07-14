@@ -253,12 +253,26 @@ def test_gui_saves_max_stake_pct(monkeypatch):
         app.destroy()
 
 
-@pytest.mark.parametrize("bad", ["", "0", "-5", "nan", "inf", "abc"])
+@pytest.mark.parametrize("bad", ["", "0", "-5", "nan", "inf", "abc", "200", "150.5", "100.01"])
 def test_gui_save_blocks_invalid_max_stake_pct(monkeypatch, bad):
+    # Include > 100: scala percentuale 0-100 => un valore oltre 100 disabiliterebbe
+    # silenziosamente l'avviso (frazione > 1) => rifiuto esplicito.
     app = _make_gui(monkeypatch)
     try:
         app.rs_max_stake_pct_var.set(bad)
         app._save_roserpina_settings()
         assert app.settings_service.saved_cfg is None, bad
+    finally:
+        app.destroy()
+
+
+def test_gui_saves_max_stake_pct_boundary_100(monkeypatch):
+    # 100 (estremo superiore del contratto 0-100) e' ACCETTATO.
+    app = _make_gui(monkeypatch)
+    try:
+        app.rs_max_stake_pct_var.set("100")
+        app._save_roserpina_settings()
+        assert app.settings_service.saved_cfg is not None
+        assert app.settings_service.saved_cfg.max_stake_pct == 100.0
     finally:
         app.destroy()
