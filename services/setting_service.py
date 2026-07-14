@@ -261,6 +261,8 @@ class SettingsService:
             min_price=self._f(data, "roserpina.min_price", trading_config.MIN_PRICE),
             max_win=self._f(data, "roserpina.max_win", trading_config.MAX_WIN),
             max_win_warning_only=self._b(data, "roserpina.max_win_warning_only", True),
+            # Scala percentuale (0-100): la costante MAX_STAKE_PCT e' frazione => *100.
+            max_stake_pct=self._f(data, "roserpina.max_stake_pct", trading_config.MAX_STAKE_PCT * 100.0),
         )
 
     def save_roserpina_config(self, config: RoserpinaConfig) -> None:
@@ -292,6 +294,7 @@ class SettingsService:
             "roserpina.min_price": config.min_price,
             "roserpina.max_win": config.max_win,
             "roserpina.max_win_warning_only": int(bool(config.max_win_warning_only)),
+            "roserpina.max_stake_pct": config.max_stake_pct,
         }
 
         # Preserve previously persisted hard-stop limits when caller omits these optional fields.

@@ -4,6 +4,20 @@
     "max_files": 8
   },
   "tasks": {
+    "max_stake_pct_warning": {
+      "description": "G5 del programma GUI-parametri (autorizzata dall'owner) - PR 3/5, enforce-first; file safety-relevant (money-management) autorizzati. trading_config.MAX_STAKE_PCT (0.30) era DEAD (solo config_registry display). La CABLA come WARNING NON-BLOCCANTE (mai un blocco) al submit dutching: in controllers/dutching_controller.precheck, se l'esposizione reale di QUESTA operazione (batch_exposure = BACK stake / LAY liability, gia' calcolata) supera bankroll*max_stake_pct (default 30%), espone stake_pct_warning + max_stake_pct + stake_pct_ratio nel risultato _ok, SENZA mai fare _fail. GRANDEZZA (decisione owner-agent, interpretazione stand-alone): batch_exposure della singola operazione, NON total_stake (sottostima i LAY) e NON la somma cumulativa (quella e' il BLOCCO max_total_exposure_pct=35%). Distinto e non contraddittorio coi tre gate bloccanti esistenti (max_single_bet_pct 18%, max_total_exposure_pct 35%, max_event_exposure_pct 18%). FAIL-OPEN su bankroll<=0 (nessun warning). Helper _max_stake_pct: config in scala PERCENTUALE 0-100 (come gli altri max_*_pct) => convertita a frazione; fallback FAIL-SAFE a trading_config.MAX_STAKE_PCT (frazione 0.30) se assente/non-finita/<=0. CONFIG editabile: RoserpinaConfig.max_stake_pct (default 30.0 percentuale) + chiave DB roserpina.max_stake_pct (load default MAX_STAKE_PCT*100, save). GUI tab Roserpina: campo 'Max Stake %' (parser _parse_book_pct, finito >0); NESSUN checkbox 'togliere = blocca' (e' warning-only per definizione, non un gate armabile). NON tocca manual_bet (gia' coperto da max_single_bet 18%). Non tocca dutching.py/order_manager/betfair. Test hard (warna quando batch_exposure>30% bankroll; NON warna sotto; NON blocca MAI anche sopra soglia; scala %->frazione; fail-safe config rotta usa costante; fail-open bankroll 0; round-trip config; GUI load/save/validazione). Doc ops/config_console.md.",
+      "allow_tests": true,
+      "files": [
+        "core/system_state.py",
+        "services/setting_service.py",
+        "controllers/dutching_controller.py",
+        "mini_gui.py",
+        "tests/integration/test_dutching_max_stake_pct_guard.py",
+        "ops/config_console.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 8
+    },
     "reviewer_availability_label_gate_docs": {
       "description": "Governance-docs only (autorizzata dall'owner), NON-safety. Aggiorna CLAUDE.md + AGENTS.md con due regole owner: (1) DECLASSAMENTO UNIFORME reviewer non disponibili: qualunque reviewer in rate-limit/usage-quota - CodeRabbit INCLUSO, ora accanto a Codex/Sourcery - e' ASSENTE da subito, non-gate, nessuna attesa e nessun cap-timer ~15min; il verdetto DONE dell'agente dipende dai check CI settled e dai gate forti a label, non da CodeRabbit. Fail-closed preservato (nota GPT-5.6 Terra): 'processing' = sta revisionando, NON e' 'assente'; i gate VINCOLANTI (check CI settled + Fugu/Fable a label) non si saltano mai, quindi declassare i reviewer ADVISORY non li indebolisce. (2) GATE FORTI A LABEL OBBLIGATORIO E RIPETUTO: far partire final-fugu-review + final-fable-review (remove+riadd) e' obbligatorio pre-merge su ogni PR e va RIPETUTO su ogni head stabile FINCHE' Fugu/Fable non tornano SENZA bloccanti reali; un falso positivo persistente non e' un bloccante (si tratta con evidenza); se in usage-quota vale il carve-out AUTO-MERGE (merge owner). (3) NOTA diff-only/push-range vs full-range (appreso su #393): i reviewer sono diff-only; le review per-push vedono solo l'ultimo commit (falsi positivi su import/coerenza/codice-assente), la review a label gira sull'intera range base..head e li risolve => per il verdetto finale conta la full-range a label. Solo documentazione: nessuna modifica a codice/gate/runtime/test.",
       "allow_tests": false,

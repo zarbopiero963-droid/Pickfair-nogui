@@ -642,6 +642,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         # Max Win: cap vincita/payout per gamba + toggle solo-avviso (opt-in).
         self.rs_max_win_var = self._make_string_var(str(trading_config.MAX_WIN))
         self.rs_max_win_warning_only_var = self._make_bool_var(True)
+        # Max Stake %: soglia di AVVISO (mai blocco) sull'esposizione dell'operazione.
+        self.rs_max_stake_pct_var = self._make_string_var(str(trading_config.MAX_STAKE_PCT * 100))
         # Simulazione: config del broker simulato (gia' enforced in betfair_service).
         self.sim_starting_balance_var = self._make_string_var("1000.0")
         self.sim_partial_fill_var = self._make_bool_var(True)
@@ -1007,6 +1009,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._labeled_entry(outer, "Liquidity avviso: Floor assoluto € (0 = nessun floor)", self.rs_liq_min_abs_var)
         self._labeled_entry(outer, "Quota minima / Min Price (>= 1.02)", self.rs_min_price_var)
         self._labeled_entry(outer, "Max Win € (cap vincita/payout per gamba)", self.rs_max_win_var)
+        self._labeled_entry(outer, "Max Stake % (avviso se esposizione operazione > % balance)", self.rs_max_stake_pct_var)
 
         rp = ctk.CTkFrame(outer)
         rp.pack(fill=tk.X, padx=12, pady=6)
@@ -1478,6 +1481,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 self.rs_min_price_var.set(str(getattr(rs, "min_price", trading_config.MIN_PRICE)))
                 self.rs_max_win_var.set(str(getattr(rs, "max_win", trading_config.MAX_WIN)))
                 self.rs_max_win_warning_only_var.set(bool(getattr(rs, "max_win_warning_only", True)))
+                self.rs_max_stake_pct_var.set(str(getattr(rs, "max_stake_pct", trading_config.MAX_STAKE_PCT * 100)))
                 self.rs_allow_recovery_var.set(bool(getattr(rs, "allow_recovery", self.rs_allow_recovery_var.get())))
                 self.rs_anti_dup_var.set(bool(getattr(rs, "anti_duplication_enabled", self.rs_anti_dup_var.get())))
                 risk_profile = getattr(rs, "risk_profile", None)
@@ -1793,6 +1797,13 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             liq_min_abs = self._parse_min_liquidity(self.rs_liq_min_abs_var.get(), "Liquidity Floor assoluto")
             min_price = self._parse_min_price(self.rs_min_price_var.get(), "Quota minima")
             max_win = self._parse_max_win(self.rs_max_win_var.get(), "Max Win")
+            max_stake_pct = self._parse_book_pct(self.rs_max_stake_pct_var.get(), "Max Stake %")
+            # Contratto 0-100 (scala percentuale, come gli altri max_*_pct): un valore
+            # > 100 verrebbe convertito a runtime in una frazione > 1 (es. 200 => 2.0 =
+            # 200% del bankroll), soglia irraggiungibile che DISABILITA silenziosamente
+            # l'avviso. Rifiuto esplicito, coerente con l'upper-bound di _parse_hard_stop.
+            if max_stake_pct > 100.0:
+                raise ValueError("Max Stake %: deve essere compreso tra 0 e 100.")
 
             cfg = RoserpinaConfig(
                 target_profit_cycle_pct=float(self.rs_target_var.get()),
@@ -1825,6 +1836,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 min_price=min_price,
                 max_win=max_win,
                 max_win_warning_only=bool(self.rs_max_win_warning_only_var.get()),
+                max_stake_pct=max_stake_pct,
             )
             self.settings_service.save_roserpina_config(cfg)
         except Exception as exc:

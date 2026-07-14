@@ -219,6 +219,39 @@ chiavi DB `roserpina.max_win` / `roserpina.max_win_warning_only`.
 **stake** (sizing); `MAX_WIN` e' un cap sul **payout/vincita** potenziale: assi
 diversi, complementari, nessun doppio-conteggio.
 
+## Max Stake %: avviso esposizione operazione in GUI (tab Roserpina) — G5
+
+`trading_config.MAX_STAKE_PCT` (0.30) era *dead* (solo display). Ora il tab
+**Roserpina** espone il campo "**Max Stake %**": una soglia di **AVVISO** (mai un
+blocco) sull'esposizione della **singola operazione** dutching come % del bankroll.
+
+**Semantica.** In `controllers/dutching_controller.precheck`, se l'esposizione
+reale di **questa** operazione — `batch_exposure` = BACK stake / LAY **liability**
+(la stessa grandezza risk-consistent dei gate di esposizione) — supera
+`bankroll * max_stake_pct` (default 30%), il risultato espone `stake_pct_warning`
+(+ `max_stake_pct`, `stake_pct_ratio`) **senza mai bloccare** (`ok` resta True).
+Si valuta la **sola operazione** (stand-alone): non `total_stake` (sottostima i
+LAY), non la somma cumulativa.
+
+**Distinto dai gate bloccanti.** I tre gate di esposizione — `max_single_bet_pct`
+(18%, per-gamba), `max_total_exposure_pct` (35%, **cumulativo**),
+`max_event_exposure_pct` (18%, per-evento) — **bloccano**. `MAX_STAKE_PCT` (30%) e'
+un **warning** distinto sulla singola operazione, che tipicamente scatta prima del
+blocco cumulativo al 35%. **Warning-only per definizione**: nessuna checkbox
+"togliere = blocca", nessun path `_fail`.
+
+**Scala + fail-safe.** Il campo config `max_stake_pct` e' in **scala percentuale**
+0-100 (come gli altri `max_*_pct`, es. 30.0); l'helper `_max_stake_pct` lo
+converte in frazione e ricade su `trading_config.MAX_STAKE_PCT` (frazione 0.30) se
+assente / non numerico / non finito / `<= 0` / **fuori dal contratto `0-100`**.
+L'upper-bound `<= 100` e' applicato **sia in GUI sia a runtime**: un valore `> 100`
+(es. da edit diretto del DB o config legacy) diventerebbe una frazione `> 1` (200
+=> 200% del bankroll), soglia irraggiungibile che disabiliterebbe silenziosamente
+l'avviso => trattato come invalido (FAIL-SAFE costante). Chiave DB
+`roserpina.max_stake_pct` (default `MAX_STAKE_PCT*100`). Validazione GUI: numero
+finito `> 0` e `<= 100`. **FAIL-OPEN** su `bankroll <= 0` (nessun avviso). Non
+tocca `manual_bet` (gia' coperto da `max_single_bet` 18%).
+
 ## Configurazione Simulazione editabile in GUI (tab Simulazione) — G1
 
 I parametri del **broker simulato** erano configurabili solo via DB. Ora il tab
