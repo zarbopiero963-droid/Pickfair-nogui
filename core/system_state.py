@@ -109,3 +109,11 @@ class RoserpinaConfig:
     # config assente/corrotta ricade su trading_config.MAX_WIN (mai disattiva il cap).
     max_win: float = 10000.0
     max_win_warning_only: bool = True
+
+    # Soglia WARNING (non blocca mai) sull'esposizione della singola operazione
+    # dutching come % del bankroll (G5). Scala PERCENTUALE 0-100 (come gli altri
+    # max_*_pct); default 30.0 = trading_config.MAX_STAKE_PCT (0.30). Semantica
+    # (controllers/dutching_controller.precheck): se batch_exposure > bankroll*30%
+    # => stake_pct_warning nel risultato, MAI un blocco. Distinto dal blocco
+    # cumulativo max_total_exposure_pct (35%). FAIL-OPEN su bankroll<=0.
+    max_stake_pct: float = 30.0

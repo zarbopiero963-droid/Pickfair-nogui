@@ -322,6 +322,26 @@ class DutchingController:
                 )
         return breaches
 
+    # -- Max Stake % warning (G5) -----------------------------------------
+    @staticmethod
+    def _max_stake_pct(config) -> float:
+        """Soglia WARNING stake come FRAZIONE del bankroll (0.30 = 30%).
+
+        Il campo config `max_stake_pct` e' in scala PERCENTUALE (0-100, come gli
+        altri `max_*_pct`); qui lo si converte in frazione. Fallback FAIL-SAFE a
+        trading_config.MAX_STAKE_PCT (gia' una frazione, 0.30) se assente / non
+        numerico / non finito / <= 0. Warning-only: questa soglia NON blocca mai.
+        """
+        raw = getattr(config, "max_stake_pct", None)
+        if raw is not None:
+            try:
+                pct = float(raw)
+                if math.isfinite(pct) and pct > 0.0:
+                    return pct / 100.0
+            except (TypeError, ValueError):
+                pass
+        return float(trading_config.MAX_STAKE_PCT)
+
     def _market_book(self, market_id):
         """Book di mercato dalla CACHE (market_tracker), SENZA I/O.
 
@@ -922,6 +942,17 @@ class DutchingController:
             except Exception:
                 logger.exception("Errore duplication_guard.acquire")
 
+        # MAX_STAKE_PCT (G5) — WARNING opt-in NON-bloccante: segnala se l'esposizione
+        # reale di QUESTA operazione (batch_exposure = BACK stake / LAY liability)
+        # supera una frazione del bankroll (default 30%). Distinto dai gate cumulativi
+        # (max_total_exposure e' il BLOCCO cumulativo al 35%): qui si misura la sola
+        # operazione, e non si BLOCCA mai. FAIL-OPEN: bankroll <= 0 => nessun warning.
+        max_stake_pct = self._max_stake_pct(config)
+        stake_pct_ratio = (batch_exposure / bankroll) if bankroll > 0 else 0.0
+        stake_pct_warning = bool(
+            bankroll > 0 and batch_exposure > bankroll * max_stake_pct + 1e-9
+        )
+
         if bankroll > 0 and config is not None:
             max_total_exposure = bankroll * (
                 float(getattr(config, "max_total_exposure_pct", 35.0)) / 100.0
@@ -979,6 +1010,9 @@ class DutchingController:
             max_win=round(max_win, 2),
             max_win_warning=bool(max_win_breaches),
             max_win_breaches=max_win_breaches,
+            max_stake_pct=round(max_stake_pct, 4),
+            stake_pct_warning=stake_pct_warning,
+            stake_pct_ratio=round(stake_pct_ratio, 4),
             event_key=event_key,
             batch_id=batch_id,
             batch_exposure=float(batch_exposure),
