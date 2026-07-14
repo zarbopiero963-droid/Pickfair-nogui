@@ -1,0 +1,6 @@
+#!/bin/sh
+# AppRun: entrypoint dell'AppImage. Lancia il binario PyInstaller onefile della
+# GUI (`usr/bin/pickfair`) passando gli argomenti. `readlink -f` risolve il
+# path reale anche quando l'AppImage è montato in una dir temporanea.
+HERE="$(dirname "$(readlink -f "${0}")")"
+exec "${HERE}/usr/bin/pickfair" "$@"
