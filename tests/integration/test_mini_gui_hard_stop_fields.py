@@ -7,18 +7,30 @@ Espone `max_daily_loss` / `max_open_exposure` / `max_drawdown_hard_stop_pct`
 - valore presente => numerico finito > 0 (per la % anche <= 100), coerente con
   `_validate_live_hard_stop_config`; altrimenti errore, nessun valore fasullo.
 
-Due livelli:
+Tre livelli:
 1. logica pura di parsing/validazione (`_parse_hard_stop`/`_hard_stop_to_str`)
    — non richiede GUI (staticmethod);
-2. wiring end-to-end nel salvataggio Roserpina via GUI in test_mode.
+2. preserve sul SERVIZIO REALE (`SettingsService` + DB in-memory): un campo
+   vuoto (=> None) NON azzera un hard-stop gia' persistito;
+3. wiring end-to-end nel salvataggio Roserpina via GUI in test_mode.
 """
 from __future__ import annotations
 
+import os
+import sys
 from types import SimpleNamespace
 
 import pytest
 
 import mini_gui
+from core.system_state import RoserpinaConfig
+from services.settings_service import SettingsService
+
+# La dir dei test (senza __init__) e' su sys.path in prepend-mode; l'inserimento
+# esplicito rende l'import del harness sibling robusto anche con importmode
+# diversi in CI, cosi' la BLOCK-proof safety-critical non fallisce in collection.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from test_mini_gui_integration import _install_mini_gui_fakes, FakeSettingsService  # noqa: E402
 
 pytestmark = pytest.mark.integration
 
@@ -63,13 +75,57 @@ def test_hard_stop_to_str_none_is_empty():
 
 
 # --------------------------------------------------------------------------
-# 2) Wiring end-to-end nel salvataggio Roserpina (GUI test_mode).
+# 2) Preserve sul SERVIZIO REALE (no fake) — risponde ai rilievi forti:
+#    un campo vuoto (=> None) NON deve azzerare un hard-stop persistito.
 # --------------------------------------------------------------------------
-# Riusa il fixture-harness dell'integrazione mini_gui (stessa dir tests, quindi
-# importabile in prepend-mode).
-from test_mini_gui_integration import _install_mini_gui_fakes, FakeSettingsService
+class _InMemoryDB:
+    """DB minimale compatibile con SettingsService (get/save settings)."""
+
+    def __init__(self, initial=None):
+        self._settings = dict(initial or {})
+
+    def get_settings(self):
+        return dict(self._settings)
+
+    def save_settings(self, payload):
+        self._settings.update(dict(payload or {}))
 
 
+def test_empty_field_does_not_overwrite_persisted_hard_stop_real_service():
+    # Percorso REALE (SettingsService vero, niente fake): l'output della GUI per
+    # un campo vuoto e' None (_parse_hard_stop("") is None) e il save reale deve
+    # PRESERVARE gli hard-stop gia' persistiti, non azzerarli.
+    assert _P("", "Esposizione aperta max") is None  # cio' che la GUI produce
+
+    db = _InMemoryDB(
+        {
+            "roserpina.max_daily_loss": 125.0,
+            "roserpina.max_open_exposure": 300.0,
+            "roserpina.max_drawdown_hard_stop_pct": 20.0,
+        }
+    )
+    svc = SettingsService(db)
+
+    # Save "GUI-like": solo max_daily_loss modificato (campo pieno); gli altri due
+    # lasciati vuoti => None (come li produce _parse_hard_stop per il campo vuoto).
+    svc.save_roserpina_config(
+        RoserpinaConfig(
+            table_count=3,
+            max_daily_loss=_P("150", "x"),                        # campo pieno
+            max_open_exposure=_P("", "x"),                        # vuoto => None
+            max_drawdown_hard_stop_pct=_P("", "x", is_pct=True),  # vuoto => None
+        )
+    )
+
+    reloaded = SettingsService(db).load_roserpina_config()
+    assert reloaded.max_daily_loss == 150.0             # aggiornato
+    assert reloaded.max_open_exposure == 300.0          # PRESERVATO (non azzerato)
+    assert reloaded.max_drawdown_hard_stop_pct == 20.0  # PRESERVATO (non azzerato)
+
+
+# --------------------------------------------------------------------------
+# 3) Wiring end-to-end nel salvataggio Roserpina (GUI test_mode).
+# --------------------------------------------------------------------------
 class _CapturingService(FakeSettingsService):
     """Cattura il RoserpinaConfig salvato e restituisce hard-stop noti al load."""
 

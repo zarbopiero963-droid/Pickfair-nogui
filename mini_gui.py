@@ -1368,9 +1368,30 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self.settings_service.save_roserpina_config(cfg)
             if hasattr(self.runtime, "reload_config"):
                 self.runtime.reload_config()
+            # Riallinea i campi hard-stop al valore REALMENTE persistito: un campo
+            # lasciato vuoto (semantica preserve) torna a mostrare il limite
+            # conservato, evitando una divergenza UI/stato (un limite attivo ma
+            # invisibile). Refresh mirato ai soli hard-stop, per non toccare gli
+            # altri tab ne' la logica force-simulation di _load_initial_settings.
+            self._refresh_hard_stop_vars()
             self._safe_show_info("OK", "Configurazione Roserpina salvata.")
         except Exception as exc:
             self._safe_show_error("Errore salvataggio Roserpina", str(exc))
+
+    def _refresh_hard_stop_vars(self):
+        """Rilegge gli hard-stop persistiti e riallinea i campi GUI (post-save).
+
+        Serve a evitare che un campo lasciato vuoto (preserve) mostri "" mentre
+        il limite persistito e' ancora attivo: dopo il salvataggio i campi
+        riflettono il valore reale letto da `load_roserpina_config`.
+        """
+        try:
+            rs = self.settings_service.load_roserpina_config()
+        except Exception:
+            return
+        self.rs_max_daily_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_daily_loss", None)))
+        self.rs_max_open_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_open_exposure", None)))
+        self.rs_max_drawdown_hard_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_hard_stop_pct", None)))
 
     # =========================================================
     # LIVE / SIM
