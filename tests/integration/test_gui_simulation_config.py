@@ -45,6 +45,13 @@ class _LoadFailsService(_CapturingService):
         raise RuntimeError("read error simulato")
 
 
+class _LoadReturnsNoneService(_CapturingService):
+    """Il reload ritorna None (config assente/corrotta) senza sollevare."""
+
+    def load_simulation_config(self):
+        return None
+
+
 def _make_gui(monkeypatch):
     mg = _install_mini_gui_fakes(monkeypatch, settings_service=_CapturingService)
     return mg.MiniPickfairGUI(test_mode=True)
@@ -97,6 +104,18 @@ def test_gui_save_aborts_when_load_fails(monkeypatch):
     # FAIL-CLOSED: se load_simulation_config fallisce, il save NON deve procedere
     # con {} (che sovrascriverebbe i campi protetti con i default). Niente save.
     mg = _install_mini_gui_fakes(monkeypatch, settings_service=_LoadFailsService)
+    app = mg.MiniPickfairGUI(test_mode=True)
+    try:
+        app.sim_starting_balance_var.set("3000")
+        app._save_simulation_settings()
+        assert app.settings_service.saved_sim is None
+    finally:
+        app.destroy()
+
+
+def test_gui_save_aborts_when_load_returns_none(monkeypatch):
+    # FAIL-CLOSED anche su reload FALSY (None/config assente): niente save.
+    mg = _install_mini_gui_fakes(monkeypatch, settings_service=_LoadReturnsNoneService)
     app = mg.MiniPickfairGUI(test_mode=True)
     try:
         app.sim_starting_balance_var.set("3000")

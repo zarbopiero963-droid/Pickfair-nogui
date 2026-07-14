@@ -1059,7 +1059,16 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                     "Config simulazione non ricaricabile: salvataggio annullato per "
                     "non sovrascrivere i campi protetti (commission_pct, enabled)."
                 )
-            cfg = dict(self.settings_service.load_simulation_config() or {})
+            loaded = self.settings_service.load_simulation_config()
+            # Anche un reload che ritorna None / non-dict / dict vuoto e' un FAIL:
+            # non potendo preservare i campi protetti, si ABORTA (mai degradare a {}).
+            if not isinstance(loaded, dict) or not loaded:
+                raise RuntimeError(
+                    "Config simulazione corrente vuota o non valida: salvataggio "
+                    "annullato per non sovrascrivere i campi protetti "
+                    "(commission_pct, enabled)."
+                )
+            cfg = dict(loaded)
             cfg["starting_balance"] = balance
             cfg["partial_fill_enabled"] = bool(self.sim_partial_fill_var.get())
             cfg["consume_liquidity"] = bool(self.sim_consume_liq_var.get())
