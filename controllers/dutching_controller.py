@@ -208,6 +208,10 @@ class DutchingController:
         raw = getattr(config, "liquidity_warning_only", None)
         if raw is None:
             return bool(trading_config.LIQUIDITY_WARNING_ONLY)
+        if isinstance(raw, str):
+            # Parsing robusto: "False"/"0"/"" NON devono valere True (bool("0") e'
+            # True). Un blocco armato salvato come stringa deve restare armato.
+            return raw.strip().lower() in {"1", "true", "yes", "on"}
         return bool(raw)
 
     @staticmethod

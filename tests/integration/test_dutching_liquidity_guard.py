@@ -313,6 +313,15 @@ def test_min_liquidity_absolute_fail_safe(raw, expected):
         (None, bool(trading_config.LIQUIDITY_WARNING_ONLY)),  # default OPT-IN (True)
         (True, True),
         (False, False),
+        (1, True),
+        (0, False),
+        # Parsing robusto delle stringhe: un blocco armato ("False"/"0") NON deve
+        # ricadere in avviso per colpa di bool("0")==True.
+        ("False", False),
+        ("0", False),
+        ("", False),
+        ("True", True),
+        ("1", True),
     ],
 )
 def test_liquidity_warning_only_default(raw, expected):
