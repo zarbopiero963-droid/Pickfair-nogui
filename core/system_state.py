@@ -91,7 +91,9 @@ class RoserpinaConfig:
     liquidity_guard_enabled: bool = True
     liquidity_multiplier: float = 3.0
     min_liquidity_absolute: float = 50.0
-    liquidity_warning_only: bool = False
+    # Default OPT-IN (#383): il blocco liquidita' parte in AVVISO; l'owner lo arma
+    # a blocco reale mettendo False dalla GUI.
+    liquidity_warning_only: bool = True
 
     # Quota minima di strategia (floor editabile) applicata al submit dutching,
     # SOPRA il minimo Betfair inviolabile 1.01. Default = trading_config.MIN_PRICE.

@@ -46,8 +46,10 @@ LIQUIDITY_MULTIPLIER = 3.0
 # Soglia minima assoluta (evita mercati morti)
 MIN_LIQUIDITY_ABSOLUTE = 50.0  # €
 
-# Se True → warning, se False → blocco
-LIQUIDITY_WARNING_ONLY = False
+# Se True → solo avviso, se False → blocco reale del submit.
+# Default OPT-IN (#383): il blocco liquidita' e' rilasciato ma parte in AVVISO;
+# l'owner lo arma a blocco reale (False) dalla GUI quando e' sicuro della semantica.
+LIQUIDITY_WARNING_ONLY = True
 
 # Live readiness safety gates
 # Default OFF: enables strict key-source enforcement for LIVE readiness only

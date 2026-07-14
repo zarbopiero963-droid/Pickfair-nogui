@@ -1018,10 +1018,11 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         cb.pack(fill=tk.X, padx=12, pady=6)
         ctk.CTkCheckBox(cb, text="Allow Recovery", variable=self.rs_allow_recovery_var).pack(side=tk.LEFT, padx=8, pady=8)
         ctk.CTkCheckBox(cb, text="Anti Duplication Enabled", variable=self.rs_anti_dup_var).pack(side=tk.LEFT, padx=8, pady=8)
-        # Liquidity guard OSSERVAZIONALE: espone solo il toggle avviso on/off. Il
-        # "warning only" NON e' esposto finche' il blocco non e' abilitato nel
-        # follow-up (eviterebbe un toggle di safety visibile ma inefficace).
-        ctk.CTkCheckBox(cb, text="Liquidity Guard: avviso liquidita' (no blocco)", variable=self.rs_liq_guard_enabled_var).pack(side=tk.LEFT, padx=8, pady=8)
+        ctk.CTkCheckBox(cb, text="Liquidity Guard attivo", variable=self.rs_liq_guard_enabled_var).pack(side=tk.LEFT, padx=8, pady=8)
+        # #383: il guard puo' BLOCCARE il submit se la liquidita' eseguibile e'
+        # insufficiente. "Solo avviso" (default opt-in) lo tiene in osservazione;
+        # TOGLIERE la spunta arma il BLOCCO reale (money-management).
+        ctk.CTkCheckBox(cb, text="Liquidity: solo avviso (⚠ togliere = BLOCCA il submit)", variable=self.rs_liq_warning_only_var).pack(side=tk.LEFT, padx=8, pady=8)
 
         self.btn_save_roserpina = ctk.CTkButton(
             outer,
@@ -1465,7 +1466,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 self.rs_liq_multiplier_var.set(str(getattr(rs, "liquidity_multiplier", trading_config.LIQUIDITY_MULTIPLIER)))
                 self.rs_liq_min_abs_var.set(str(getattr(rs, "min_liquidity_absolute", trading_config.MIN_LIQUIDITY_ABSOLUTE)))
                 self.rs_liq_guard_enabled_var.set(bool(getattr(rs, "liquidity_guard_enabled", True)))
-                self.rs_liq_warning_only_var.set(bool(getattr(rs, "liquidity_warning_only", False)))
+                self.rs_liq_warning_only_var.set(bool(getattr(rs, "liquidity_warning_only", True)))
                 self.rs_min_price_var.set(str(getattr(rs, "min_price", trading_config.MIN_PRICE)))
                 self.rs_allow_recovery_var.set(bool(getattr(rs, "allow_recovery", self.rs_allow_recovery_var.get())))
                 self.rs_anti_dup_var.set(bool(getattr(rs, "anti_duplication_enabled", self.rs_anti_dup_var.get())))

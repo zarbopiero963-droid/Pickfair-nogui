@@ -198,6 +198,23 @@ class DutchingController:
         return float(trading_config.MIN_LIQUIDITY_ABSOLUTE)
 
     @staticmethod
+    def _liquidity_warning_only(config) -> bool:
+        """True => guard in sola OSSERVAZIONE (avviso, mai blocco); False => BLOCCO.
+
+        Default OPT-IN (#383): config assente ricade su
+        trading_config.LIQUIDITY_WARNING_ONLY (True), cosi' il rilascio del blocco
+        NON inizia a bloccare a sorpresa; l'owner lo arma dalla GUI (warning_only=False).
+        """
+        raw = getattr(config, "liquidity_warning_only", None)
+        if raw is None:
+            return bool(trading_config.LIQUIDITY_WARNING_ONLY)
+        if isinstance(raw, str):
+            # Parsing robusto: "False"/"0"/"" NON devono valere True (bool("0") e'
+            # True). Un blocco armato salvato come stringa deve restare armato.
+            return raw.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(raw)
+
+    @staticmethod
     def _min_price(config) -> float:
         """Quota minima di strategia (floor editabile) con fallback FAIL-SAFE.
 
@@ -235,16 +252,18 @@ class DutchingController:
 
     @staticmethod
     def _liquidity_crosses(side, order_price, book_price) -> bool:
-        """Un livello del book e' eseguibile alla quota dell'ordine.
+        """Un livello del book e' eseguibile alla quota dell'ordine (book REALE Betfair).
 
-        Mirror di core/simulation_matching_engine._crosses (matcher autoritativo):
-        BACK matcha i livelli con book_price <= order_price, LAY con book_price >=
-        order_price. Cosi' si considera solo la liquidita' davvero eseguibile al
-        prezzo della gamba (niente livelli lontani che gonfiano il totale).
+        Sul book reale un BACK a order_price viene riempito dai livelli di
+        availableToBack a quota >= order_price (quote uguali o migliori per il
+        backer) => eseguibile se book_price >= order_price. Un LAY a order_price dai
+        livelli di availableToLay a quota <= order_price => eseguibile se book_price
+        <= order_price. NB: direzione INVERTITA rispetto al mirror del matcher
+        interno del simulatore (#383): il market_tracker usa i campi Betfair-standard.
         """
         if str(side).upper() == "BACK":
-            return order_price >= book_price
-        return order_price <= book_price
+            return book_price >= order_price
+        return book_price <= order_price
 
     @classmethod
     def _sum_executable_liquidity(cls, ladder, side, order_price) -> float:
@@ -264,13 +283,15 @@ class DutchingController:
 
     @classmethod
     def _available_liquidity(cls, book, selection_id, side, price):
-        """Liquidita' ESEGUIBILE per una gamba dal book GIA' recuperato.
+        """Liquidita' ESEGUIBILE per una gamba dal book REALE gia' recuperato.
 
-        Lato opposto coerente col matcher del codice (core/simulation_order_book
-        get_opposite_ladder: BACK -> availableToLay, LAY -> availableToBack),
-        filtrata per prezzo eseguibile. Ritorna None se book/selezione/ladder non
-        disponibili (osservazione ignota). NOTA: direzione ladder sul book reale e
-        unita' saranno riconfermate nella PR di follow-up che abilita il BLOCCO.
+        Lato ladder Betfair-standard (#383, deciso dall'owner): un BACK consuma
+        availableToBack, un LAY consuma availableToLay (e' la liquidita' che l'ordine
+        matcha davvero sul mercato reale; coerente con direct_best_price/
+        betfair_client). Filtrata per prezzo eseguibile (_liquidity_crosses). Le
+        `size` del book sono backer-stake, omogenee con lo `stake` della gamba (per
+        il LAY lo stake e' backer-stake, la liability e' un campo separato). Ritorna
+        None se book/selezione/ladder non disponibili (osservazione ignota).
         """
         if not isinstance(book, dict):
             return None
@@ -282,7 +303,7 @@ class DutchingController:
             order_price = float(price)
         except (TypeError, ValueError):
             return None
-        ladder_key = "availableToLay" if str(side).upper() == "BACK" else "availableToBack"
+        ladder_key = "availableToBack" if str(side).upper() == "BACK" else "availableToLay"
         for runner in runners:
             if not isinstance(runner, dict):
                 continue
@@ -332,15 +353,16 @@ class DutchingController:
         return None
 
     def _evaluate_liquidity_guard(self, config, payload, results) -> Dict[str, Any]:
-        """Liquidity guard OSSERVAZIONALE (warning-only in questa PR).
+        """Calcola lo shortfall di liquidita' eseguibile per gamba sul book REALE.
 
-        Calcola la liquidita' eseguibile per gamba e segnala uno shortfall come
-        WARNING (flag `liquidity_warning`/`liquidity_shortfall` nel risultato del
-        precheck) SENZA MAI bloccare il submit. Il BLOCCO reale (che onorera'
-        `liquidity_warning_only=False`) e' rimandato a una PR dedicata, dopo aver
-        verificato la semantica esatta (direzione ladder sul book reale, unita').
-        `guard_enabled=False` esplicito disattiva anche l'osservazione. Il book e'
-        recuperato UNA sola volta (solo cache, nessun I/O) e riusato per le gambe.
+        Ritorna {"warning": bool, "shortfall": [...]}. Il precheck usa lo shortfall
+        per BLOCCARE (se `liquidity_warning_only=False`) oppure solo segnalare (flag
+        `liquidity_warning`/`liquidity_shortfall`) in modalita' avviso. Lato ladder
+        Betfair-standard (#383): BACK -> availableToBack, LAY -> availableToLay,
+        filtrato per prezzo eseguibile. `guard_enabled=False` esplicito disattiva
+        del tutto (nessuna osservazione ne' blocco). Il book e' recuperato UNA sola
+        volta (solo cache, nessun I/O) e riusato per le gambe; book assente =>
+        fail-open (nessuno shortfall, quindi nessun blocco).
         """
         out: Dict[str, Any] = {"warning": False, "shortfall": []}
         if not bool(getattr(config, "liquidity_guard_enabled", True)):
@@ -768,12 +790,24 @@ class DutchingController:
                 book_block=round(book_block, 2),
             )
 
-        # Liquidity guard (PR2b) — OSSERVAZIONALE (warning-only): calcola lo
-        # shortfall di liquidita' eseguibile e lo segnala nel risultato del
-        # precheck (liquidity_warning/liquidity_shortfall) SENZA bloccare il
-        # submit. Il BLOCCO reale e' rimandato a una PR di follow-up dopo la
-        # verifica della semantica esatta. FAIL-OPEN su dato mancante.
+        # Liquidity guard (#383) — BLOCCO reale (opt-in): calcola lo shortfall di
+        # liquidita' eseguibile sul book REALE (lato Betfair-standard: BACK ->
+        # availableToBack, LAY -> availableToLay) e, se il guard NON e' in sola
+        # osservazione (liquidity_warning_only=False), BLOCCA il submit PRIMA di
+        # ogni side-effect (duplication acquire), come il book% gate. In modalita'
+        # avviso (default opt-in) segnala soltanto (liquidity_warning/shortfall nel
+        # risultato). FAIL-OPEN su dato mancante (cache fredda => nessun blocco).
         liquidity = self._evaluate_liquidity_guard(config, payload, results)
+        if liquidity.get("shortfall") and not self._liquidity_warning_only(config):
+            # Segnale di blocco AUTOREVOLE: ok=False. NON si aggiunge
+            # liquidity_warning (che nel path _ok indica la sola-osservazione):
+            # metterlo su un fail e' ambiguo per i consumer money-management
+            # (potrebbero leggerlo come "avviso procedibile"). Il blocco espone lo
+            # shortfall per diagnostica; ok=False prevale sempre.
+            return self._fail(
+                "Liquidità insufficiente sul book per una o più gambe",
+                liquidity_shortfall=liquidity.get("shortfall", []),
+            )
 
         if duplication_guard and bool(getattr(config, "anti_duplication_enabled", True)):
             try:
