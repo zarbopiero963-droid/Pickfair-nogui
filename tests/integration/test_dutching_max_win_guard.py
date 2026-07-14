@@ -5,14 +5,15 @@
    la vincita potenziale di UNA gamba supera il cap configurato, PRIMA di ogni
    side-effect (duplication acquire). Enforce-first OPT-IN: default warning_only
    => solo avviso (max_win_warning/max_win_breaches), l'owner arma il blocco.
-2. GRANDEZZA: BACK => stake*price (payout lordo); LAY => stake (backer-stake
-   incassato). Per-gamba (esiti mutuamente esclusivi => MAX, non somma).
+2. GRANDEZZA: BACK => payout stake*price; LAY => liability stake*(price-1) (il
+   RISCHIO reale, decisione owner #393). Per-gamba (esiti mutuamente esclusivi
+   => MAX, non somma).
 3. FAIL-SAFE: config assente/corrotta ricade su trading_config.MAX_WIN.
 4. CONFIG: RoserpinaConfig.max_win/max_win_warning_only round-trip sul servizio.
 5. GUI: campo "Max Win" + checkbox "solo avviso" caricati/salvati/validati.
 
 Test PASS (blocca quando armato e sopra cap) + BLOCK (non blocca in avviso / sotto
-cap / LAY sotto stake; il fallback fail-safe non disattiva il cap).
+cap / LAY liability sotto cap; il fallback fail-safe non disattiva il cap).
 """
 from __future__ import annotations
 
@@ -174,11 +175,22 @@ def test_max_win_is_config_editable(monkeypatch):
     assert _controller(_runtime_with(max_win=500.0, warning_only=False)).precheck(_payload())["ok"] is True
 
 
-def test_lay_uses_backer_stake_not_payout(monkeypatch):
-    # LAY stake 200 @ price 5: se usasse stake*price (=1000) sforerebbe cap 500;
-    # ma la vincita LAY = backer-stake (200) < 500 => NON blocca (semantica corretta).
+def test_lay_uses_liability_not_backer_stake(monkeypatch):
+    # LAY stake 200 @ price 5: liability = 200*(5-1) = 800. Il cap confronta la
+    # LIABILITY (rischio), non il backer-stake (200). Cap 500: backer-stake 200 <
+    # 500 NON bloccherebbe, ma liability 800 > 500 => BLOCCA (armato). Prova che la
+    # semantica LAY e' liability (decisione owner #393).
     _patch_results(monkeypatch, [{"selectionId": 7, "price": 5.0, "stake": 200.0, "side": "LAY"}])
     res = _controller(_runtime_with(max_win=500.0, warning_only=False)).precheck(_payload())
+    assert res["ok"] is False
+    assert "oltre il cap" in res["error"]
+    assert res["max_win_breaches"][0]["potential_win"] == 800.0
+
+
+def test_lay_liability_under_cap_passes(monkeypatch):
+    # liability 800 < cap 1000 => passa (nessun blocco, nessun avviso).
+    _patch_results(monkeypatch, [{"selectionId": 7, "price": 5.0, "stake": 200.0, "side": "LAY"}])
+    res = _controller(_runtime_with(max_win=1000.0, warning_only=False)).precheck(_payload())
     assert res["ok"] is True, res
     assert res["max_win_warning"] is False
 
@@ -246,8 +258,10 @@ def test_leg_potential_win_semantics():
 
     back = {"side": "BACK", "stake": 40.0, "price": 2.5}
     lay = {"side": "LAY", "stake": 40.0, "price": 2.5}
-    assert DutchingController._leg_potential_win(back) == 100.0   # stake*price
-    assert DutchingController._leg_potential_win(lay) == 40.0     # backer-stake
+    lay_precomputed = {"side": "LAY", "stake": 40.0, "price": 2.5, "liability": 55.0}
+    assert DutchingController._leg_potential_win(back) == 100.0   # payout stake*price
+    assert DutchingController._leg_potential_win(lay) == 60.0     # liability stake*(price-1)
+    assert DutchingController._leg_potential_win(lay_precomputed) == 55.0  # usa campo liability
     assert DutchingController._leg_potential_win({"side": "BACK"}) == 0.0  # fail-safe
 
 
@@ -304,13 +318,24 @@ def test_manual_bet_no_warning_when_under_cap():
     assert res["max_win_warning"] is False
 
 
-def test_manual_bet_lay_uses_backer_stake():
-    # LAY 100 @ 5: payout-style 500 > cap 200, ma vincita LAY = stake 100 < 200 =>
-    # NON blocca anche se armato.
+def test_manual_bet_lay_uses_liability():
+    # LAY 100 @ 5: liability = 100*(5-1) = 400 > cap 200 => BLOCCA (armato). Prova
+    # che il buco liability sul LAY manuale e' chiuso (decisione owner #393): il
+    # backer-stake 100 < 200 non basterebbe a bloccare.
     bus = _Bus()
     ctrl = _controller(_runtime_with(max_win=200.0, warning_only=False), bus=bus)
     res = ctrl.manual_bet(_manual_payload(5.0, 100.0, bet_type="LAY"))
+    assert res["ok"] is False and "oltre il cap" in res["error"]
+    assert bus.published == []
+
+
+def test_manual_bet_lay_liability_under_cap_passes():
+    # LAY 100 @ 5: liability 400 < cap 1000 => passa (order pubblicato).
+    bus = _Bus()
+    ctrl = _controller(_runtime_with(max_win=1000.0, warning_only=False), bus=bus)
+    res = ctrl.manual_bet(_manual_payload(5.0, 100.0, bet_type="LAY"))
     assert res["ok"] is True, res
+    assert any(topic == "CMD_QUICK_BET" for topic, _ in bus.published)
 
 
 # ==========================================================================

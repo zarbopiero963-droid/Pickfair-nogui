@@ -99,10 +99,11 @@ class RoserpinaConfig:
     # SOPRA il minimo Betfair inviolabile 1.01. Default = trading_config.MIN_PRICE.
     min_price: float = 1.02
 
-    # Cap vincita/payout potenziale PER GAMBA (G5), editabile da GUI, applicato al
-    # submit dutching e al bet manuale. Default = trading_config.MAX_WIN. Semantica
-    # (controllers/dutching_controller): vincita per gamba = stake*price (BACK) /
-    # stake (LAY); si valuta la MAX sulle gambe (esiti mutuamente esclusivi).
+    # Cap importo potenziale PER GAMBA (G5), editabile da GUI, applicato al submit
+    # dutching e al bet manuale. Default = trading_config.MAX_WIN. Semantica
+    # (controllers/dutching_controller): BACK = payout stake*price; LAY = liability
+    # stake*(price-1) (il RISCHIO, decisione owner su #393); si valuta la MAX sulle
+    # gambe (esiti mutuamente esclusivi).
     # Default OPT-IN (#383-style): max_win_warning_only=True => il cap parte in
     # AVVISO; l'owner lo arma a BLOCCO reale mettendo False dalla GUI. FAIL-SAFE:
     # config assente/corrotta ricade su trading_config.MAX_WIN (mai disattiva il cap).

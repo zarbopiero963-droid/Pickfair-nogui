@@ -186,14 +186,17 @@ la checkbox "**Max Win: solo avviso (⚠ togliere = BLOCCA il submit)**": un **c
 di sicurezza sulla vincita/payout potenziale per gamba**, applicato sia al submit
 **dutching** sia al **bet manuale**.
 
-**Grandezza.** La vincita potenziale di UNA gamba e': **BACK** → `stake * price`
-(payout lordo restituito se la selezione vince); **LAY** → `stake` (backer-stake
-incassato se la selezione perde; il rischio LAY e' la *liability*, grandezza
-diversa non confrontata col cap). Il cap e' **per-gamba**: gli esiti di un set
-dutching sono mutuamente esclusivi (vince una sola selezione), quindi si valuta
-la vincita **massima** tra le gambe, **non** la somma. Non si usa
-`profitIfWins`/`avg_profit` (profitto equalizzato netto-del-totale, ordine di
-grandezza diverso).
+**Grandezza.** L'importo potenziale di UNA gamba confrontato col cap e': **BACK**
+→ `stake * price` (payout lordo restituito se la selezione vince); **LAY** →
+`stake * (price - 1)` = **liability**, cioe' la perdita/esposizione reale se la
+selezione vince. **Decisione owner (review Fable 5 + Fugu Ultra su #393):** sul
+LAY il cap protegge dal **rischio** (liability), non dal piccolo backer-stake
+incassato — cosi' un LAY ad alta quota (es. 1000@10, liability 9000) non sfugge
+al cap. Usa il campo `liability` precomputato quando presente (coerente con
+`_compute_order_exposure`). Il cap e' **per-gamba**: gli esiti di un set dutching
+sono mutuamente esclusivi (vince una sola selezione), quindi si valuta l'importo
+**massimo** tra le gambe, **non** la somma. Non si usa `profitIfWins`/`avg_profit`
+(profitto equalizzato netto-del-totale, ordine di grandezza diverso).
 
 **Enforcement** (`controllers/dutching_controller.precheck` e `manual_bet`):
 il gate gira **PRIMA di ogni side-effect** (duplication acquire), accanto ai gate

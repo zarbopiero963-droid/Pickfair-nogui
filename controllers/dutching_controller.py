@@ -262,12 +262,15 @@ class DutchingController:
 
     @staticmethod
     def _leg_potential_win(item: Dict[str, Any]) -> float:
-        """Vincita/payout potenziale di UNA gamba, confrontabile con MAX_WIN.
+        """Importo massimo di UNA gamba confrontato con MAX_WIN.
 
         BACK: payout lordo = stake * quota (importo restituito se la selezione
-        vince). LAY: vincita = backer-stake incassato (`stake`) se la selezione
-        perde (il rischio e' la liability, grandezza diversa). Fail-safe su campi
-        mancanti/non numerici => 0.0 (nessun falso blocco).
+        vince). LAY: LIABILITY = stake * (quota - 1), cioe' la perdita/esposizione
+        reale se la selezione vince (decisione owner: sul LAY il cap protegge dal
+        RISCHIO, non dal piccolo backer-stake incassato). Usa il campo `liability`
+        precomputato se presente (coerente con _compute_order_exposure), altrimenti
+        lo ricalcola. Fail-safe su campi mancanti/non numerici => 0.0 (nessun falso
+        blocco).
         """
         side = str(item.get("side", "BACK")).upper()
         try:
@@ -276,7 +279,12 @@ class DutchingController:
         except (TypeError, ValueError):
             return 0.0
         if side == "LAY":
-            return max(0.0, stake)
+            if "liability" in item:
+                try:
+                    return max(0.0, float(item.get("liability", 0.0) or 0.0))
+                except (TypeError, ValueError):
+                    return 0.0
+            return max(0.0, stake * max(0.0, price - 1.0))
         return max(0.0, stake * price)
 
     @staticmethod
@@ -879,9 +887,10 @@ class DutchingController:
                 liquidity_shortfall=liquidity.get("shortfall", []),
             )
 
-        # MAX_WIN cap (G5) — enforce-first opt-in: blocca il submit se la vincita
-        # potenziale (BACK: stake*quota; LAY: backer-stake) di UNA gamba supera il
-        # cap configurato, PRIMA di ogni side-effect (duplication acquire), come il
+        # MAX_WIN cap (G5) — enforce-first opt-in: blocca il submit se l'importo
+        # potenziale (BACK: payout stake*quota; LAY: liability stake*(quota-1),
+        # cioe' il RISCHIO) di UNA gamba supera il cap configurato, PRIMA di ogni
+        # side-effect (duplication acquire), come il
         # book%/liquidity gate. Per-gamba (esiti dutching mutuamente esclusivi =>
         # si valuta la MAX, non la somma). In modalita' avviso (default opt-in) solo
         # segnalazione (max_win_warning/max_win_breaches nel risultato, sotto).
@@ -1197,9 +1206,10 @@ class DutchingController:
             config = self._config()
 
             # MAX_WIN cap (G5) anche sul bet manuale (chiude la via non-gated,
-            # anti fat-finger), PRIMA di ogni side-effect. Payout potenziale: BACK
-            # = stake*quota; LAY = backer-stake (`stake`). Enforce-first opt-in: in
-            # modalita' avviso (default) non blocca. FAIL-SAFE su trading_config.MAX_WIN.
+            # anti fat-finger), PRIMA di ogni side-effect. Importo potenziale: BACK
+            # = payout stake*quota; LAY = liability stake*(quota-1) (il RISCHIO reale).
+            # Enforce-first opt-in: in modalita' avviso (default) non blocca.
+            # FAIL-SAFE su trading_config.MAX_WIN.
             side = str(self._normalize_side(payload.get("bet_type", "BACK"))).upper()
             potential_win = self._leg_potential_win({"side": side, "stake": stake, "price": price})
             max_win = self._max_win(config)
