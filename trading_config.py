@@ -14,15 +14,12 @@ MIN_STAKE = 0.10  # Floor software 0.10 (Betfair Italia rifiuterà < €2 in liv
 MAX_WIN = 10000.0  # Vincita massima €10.000
 
 # Commission
-DEFAULT_COMMISSION = 4.5  # 4.5% Betfair Italia
+# NB: la commissione operativa reale e' sourced da `commission_pct`
+# (config/DB) con default 4.5 e invariante `BETFAIR_ITALY_COMMISSION_PCT`
+# enforced da `enforce_betfair_italy_commission_pct`. Non esiste piu' una
+# costante `DEFAULT_COMMISSION` separata (era duplicato morto, letto da nessuno).
 BETFAIR_ITALY_COMMISSION_PCT = 4.5
 BETFAIR_ITALY_COMMISSION_TOLERANCE = 1e-9
-
-# Session
-SESSION_TIMEOUT_MIN = 20  # Timeout sessione 20 minuti
-
-# Simulation defaults
-SIM_INITIAL_BALANCE = 10000.0  # Bilancio iniziale simulazione
 
 # AI Mixed Dutching
 PROFIT_EPSILON = 0.50  # Tolleranza max €0.50 varianza profitto tra scenari
@@ -32,7 +29,6 @@ AUTO_GREEN_DELAY_SEC = 2.5  # Grace period prima di attivare auto-green
 
 # Preflight Check thresholds
 MIN_LIQUIDITY = 50.0  # Liquidità minima €50 per runner
-MAX_SPREAD_TICKS = 5  # Spread massimo 5 tick tra BACK/LAY
 MAX_STAKE_PCT = 0.30  # Max 30% del balance (warning se superato)
 MIN_PRICE = 1.02  # Quota minima accettabile (1.01 è troppo bassa)
 
