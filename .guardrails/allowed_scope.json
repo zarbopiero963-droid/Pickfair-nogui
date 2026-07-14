@@ -4,6 +4,17 @@
     "max_files": 8
   },
   "tasks": {
+    "gui_simulation_config": {
+      "description": "G1 del programma GUI-parametri (autorizzata dall'owner). Espone in un nuovo tab 'Simulazione' i parametri del broker simulato che erano configurabili solo via DB: simulation.starting_balance (validato >0), partial_fill_enabled, consume_liquidity, persist_state. Sono GIA' enforced (services/betfair_service.py -> SimulationBroker): pura esposizione + validazione, nessun nuovo enforcement, nessuna modifica a core/services/controllers/dutching/LIVE (PR NON safety-critical, solo mini_gui + test + doc). commission_pct (policy-lock 4.5% fail-closed) e simulation.enabled NON esposti: il save ricarica la config e li PRESERVA. Riusa il service load/save_simulation_config esistente (services/setting_service.py). Test hard (load, save+preserve dei campi locked, blocco balance invalido, helper _parse_sim_balance). Doc ops/config_console.md.",
+      "allow_tests": true,
+      "files": [
+        "mini_gui.py",
+        "tests/integration/test_gui_simulation_config.py",
+        "ops/config_console.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 8
+    },
     "min_price_gate": {
       "description": "PR2c del programma GUI-parametri (autorizzata dall'owner, enforce-first; file safety-critical autorizzati). trading_config.MIN_PRICE (1.02) era DEAD; il floor reale al submit era hardcoded price<=1.01. Questa PR aggiunge un floor di STRATEGIA editabile (min_price) SOPRA il minimo Betfair inviolabile 1.01: (1) controllers/dutching_controller.validate rifiuta price<min_price (config-driven, comparatore '<' => default 1.02 behavior-preserving: nessun tick Betfair tra 1.01 e 1.02) MANTENENDO il floor hard price<=1.01 immune-da-config; helper _min_price fail-safe clampa a max(1.01, MIN_PRICE) su config assente/non-finita/<1.01. Applicato al path dutching automatico (validate, quindi precheck/preview); manual_bet resta col solo hard-floor 1.01 (bet manuale = discrezione operatore). (2) CONFIG: campo RoserpinaConfig.min_price + chiave DB roserpina.min_price in load/save (fallback trading_config.MIN_PRICE). (3) GUI: campo 'Quota minima / Min Price' nel tab Roserpina con validazione _parse_min_price (>=1.01). MIN_LIQUIDITY lasciata dead (superata da min_liquidity_absolute in PR2b). Test hard (blocca sotto min_price; passa sopra; hard-floor 1.01 indipendente; default behavior-preserving; fail-safe clamp; helper; round-trip; GUI load/save/validazione). Doc ops/config_console.md.",
       "allow_tests": true,
