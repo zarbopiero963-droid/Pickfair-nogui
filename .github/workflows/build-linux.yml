@@ -9,6 +9,7 @@ on:
     paths:
       - ".github/workflows/build-linux.yml"
       - "pickfair.spec"
+      - "pyproject.toml"
       - "requirements.txt"
       - "main.py"
       - "mini_gui.py"
@@ -39,6 +40,12 @@ jobs:
           pip install customtkinter
           pip install "pyinstaller>=6,<7"
 
+      # Fail-closed: la GUI usa tkinter/customtkinter; se il Python che compila
+      # NON vede Tk (python3-tk mancante), l'eseguibile partirebbe senza
+      # interfaccia. Meglio fallire QUI che produrre un binario rotto.
+      - name: Verify Tk available (fail-closed)
+        run: python -c "import tkinter; print('Tk', tkinter.TkVersion)"
+
       # Validate the packaging assets (icon reproducible, .desktop fields, bash
       # syntax, script fail-closed, workflow wiring) right in this workflow, so
       # a packaging regression is caught here and not only in the full test job.
@@ -47,30 +54,44 @@ jobs:
           python -m pip install pytest
           python -m pytest tests/packaging -q
 
+      # Nome artifact versionato+datato (dalla version di pyproject.toml), così i
+      # download sono identificabili senza aprire il file.
+      - name: Artifact metadata (version + date)
+        id: meta
+        run: |
+          ver=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          [ -n "$ver" ] || { echo "::error::version mancante in pyproject.toml"; exit 1; }
+          stamp=$(date -u +%Y%m%d)
+          echo "bintar=Pickfair-Linux-bin-v${ver}-${stamp}" >> "$GITHUB_OUTPUT"
+          echo "appimage=Pickfair-v${ver}-x86_64.AppImage" >> "$GITHUB_OUTPUT"
+
       - name: Build executables
         run: pyinstaller --noconfirm --clean pickfair.spec
 
-      # Upload the plain binaries FIRST so a later AppImage-packaging failure can
-      # never drop the existing headless/GUI binary artifacts (they must not
-      # depend on the new AppImage tooling).
+      # Impacchetta i binari nudi in tar.gz: actions/upload-artifact ZIPpa e NON
+      # conserva i permessi POSIX → caricando il binario grezzo, al download il
+      # bit +x va perso (mode 644). Un tar preserva mode 755 → scarica, estrai,
+      # esegui. Caricati PRIMA dell'AppImage così un fallimento di packaging non
+      # può togliere i binari esistenti (upload binari non dipende dall'AppImage).
+      - name: Package binaries (tar.gz preserves +x)
+        run: |
+          chmod +x dist/pickfair dist/pickfair-headless
+          tar -czf "${{ steps.meta.outputs.bintar }}.tar.gz" -C dist pickfair pickfair-headless
+
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
           name: pickfair-linux-binary
-          path: |
-            dist/pickfair
-            dist/pickfair-headless
+          path: ${{ steps.meta.outputs.bintar }}.tar.gz
           if-no-files-found: error
 
       # Wrap the GUI binary into an AppImage so it installs like a real Linux
       # desktop app (icon + .desktop + application-menu entry, double-click).
-      # The headless binary stays a plain server/CLI binary (no AppImage). The
+      # The headless binary stays a plain server/CLI binary (tar.gz above). The
       # packaging logic lives in packaging/build_appimage.sh so it is testable
       # outside CI. appimagetool runs FUSE-less (APPIMAGE_EXTRACT_AND_RUN=1) and
       # its download is integrity-verified against APPIMAGETOOL_SHA256 (pinned,
-      # fail-closed on drift — see ops/linux_appimage.md). The pinned value is
-      # set below once vetted from a green CI run (the script prints the actual
-      # sha256 each run); until pinned, the script prints without enforcing.
+      # fail-closed on drift — see ops/linux_appimage.md).
       - name: Package GUI as AppImage
         env:
           # sha256 VETTED del binario `appimagetool` (canale ufficiale
@@ -81,15 +102,15 @@ jobs:
           APPIMAGETOOL_SHA256: "a6d71e2b6cd66f8e8d16c37ad164658985e0cf5fcaa950c90a482890cb9d13e0"
         run: |
           chmod +x packaging/build_appimage.sh packaging/AppRun
-          packaging/build_appimage.sh dist/pickfair Pickfair-x86_64.AppImage
-          test -f Pickfair-x86_64.AppImage
-          ls -lh Pickfair-x86_64.AppImage
+          packaging/build_appimage.sh dist/pickfair "${{ steps.meta.outputs.appimage }}"
+          test -f "${{ steps.meta.outputs.appimage }}"
+          ls -lh "${{ steps.meta.outputs.appimage }}"
 
       - name: Upload AppImage
         uses: actions/upload-artifact@v4
         with:
           name: pickfair-linux-appimage
-          path: Pickfair-x86_64.AppImage
+          path: ${{ steps.meta.outputs.appimage }}
           if-no-files-found: error
 
   release:
@@ -99,11 +120,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Download built binaries
+      - name: Download binaries tarball
         uses: actions/download-artifact@v4
         with:
           name: pickfair-linux-binary
-          path: dist
+          path: .
 
       - name: Download AppImage
         uses: actions/download-artifact@v4
@@ -111,13 +132,14 @@ jobs:
           name: pickfair-linux-appimage
           path: .
 
+      # Glob sui nomi versionati (non hardcodati) così il release job non si
+      # rompe quando la version cambia.
       - name: Attach to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            dist/pickfair dist/pickfair-headless Pickfair-x86_64.AppImage \
+          assets=(Pickfair-Linux-bin-*.tar.gz Pickfair-*-x86_64.AppImage)
+          gh release create "${GITHUB_REF_NAME}" "${assets[@]}" \
             --repo "${GITHUB_REPOSITORY}" --generate-notes \
-          || gh release upload "${GITHUB_REF_NAME}" \
-            dist/pickfair dist/pickfair-headless Pickfair-x86_64.AppImage \
+          || gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" \
             --repo "${GITHUB_REPOSITORY}" --clobber

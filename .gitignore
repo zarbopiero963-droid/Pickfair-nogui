@@ -66,10 +66,11 @@ virtualenv/
 # =============================================================
 build/
 dist/
-# AppImage packaging (build-linux.yml / packaging/build_appimage.sh)
+# AppImage / Linux packaging (build-linux.yml / packaging/build_appimage.sh)
 *.AppImage
 *.AppDir/
 appimagetool-*.AppImage
+Pickfair-Linux-bin-*.tar.gz
 *.egg-info/
 *.egg
 MANIFEST

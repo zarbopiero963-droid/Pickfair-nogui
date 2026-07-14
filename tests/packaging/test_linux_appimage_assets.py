@@ -92,5 +92,17 @@ def test_workflow_wires_appimage():
     wf = _read(ROOT / ".github" / "workflows" / "build-linux.yml")
     assert "packaging/build_appimage.sh" in wf, "il workflow non chiama lo script"
     assert "pickfair-linux-appimage" in wf, "manca l'upload dell'artifact AppImage"
+    assert "APPIMAGETOOL_SHA256" in wf, "manca il pin integrità appimagetool"
     # il job Windows non deve essere toccato da questo file
     assert "windows" not in wf.lower()
+
+
+def test_workflow_has_build_rigor():
+    # BLOCK: gli elementi di robustezza del build Linux devono restare cablati.
+    wf = _read(ROOT / ".github" / "workflows" / "build-linux.yml")
+    # Tk fail-closed: la GUI usa tkinter; senza Tk l'eseguibile è rotto.
+    assert "import tkinter" in wf, "manca il check Tk fail-closed"
+    # tar.gz: upload-artifact perde il bit +x sui binari nudi → tar lo preserva.
+    assert "tar -czf" in wf, "i binari nudi vanno impacchettati in tar.gz (+x)"
+    # nome artifact versionato dalla version di pyproject.toml.
+    assert "pyproject.toml" in wf, "il nome artifact deve derivare dalla version"

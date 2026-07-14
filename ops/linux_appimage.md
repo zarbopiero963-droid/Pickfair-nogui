@@ -19,11 +19,19 @@ headless su VPS Linux vedi la relativa doc di servizio (systemd).
 
 Il workflow `.github/workflows/build-linux.yml` (runner `ubuntu-latest`):
 
-1. builda i binari con `pyinstaller pickfair.spec` (`dist/pickfair` +
+1. verifica **fail-closed** che Tk sia disponibile (`import tkinter`) — senza Tk
+   la GUI sarebbe rotta, meglio fallire prima del build;
+2. builda i binari con `pyinstaller pickfair.spec` (`dist/pickfair` +
    `dist/pickfair-headless`);
-2. impacchetta la GUI in AppImage con `packaging/build_appimage.sh`;
-3. carica due artifact: `pickfair-linux-binary` (binari nudi) e
-   `pickfair-linux-appimage` (`Pickfair-x86_64.AppImage`).
+3. impacchetta i **binari nudi in `.tar.gz`** (`pickfair` + `pickfair-headless`)
+   — `upload-artifact` ZIPpa e **perde il bit `+x`** sui file grezzi, mentre il
+   tar preserva mode `755`;
+4. impacchetta la GUI in **AppImage** con `packaging/build_appimage.sh`;
+5. carica due artifact con **nome versionato+datato** (dalla version di
+   `pyproject.toml`): `pickfair-linux-binary`
+   (`Pickfair-Linux-bin-v<ver>-<AAAAMMGG>.tar.gz`) e `pickfair-linux-appimage`
+   (`Pickfair-v<ver>-x86_64.AppImage`). I binari sono caricati **prima**
+   dell'AppImage, così un fallimento di packaging non li tocca.
 
 Si lancia:
 
@@ -33,9 +41,19 @@ Si lancia:
 
 ## Come si usa (utente finale)
 
+**GUI (AppImage):**
+
 ```bash
-chmod +x Pickfair-x86_64.AppImage
-./Pickfair-x86_64.AppImage            # doppio click nel file manager equivale
+chmod +x Pickfair-v*-x86_64.AppImage
+./Pickfair-v*-x86_64.AppImage         # doppio click nel file manager equivale
+```
+
+**Binari (GUI + headless) dal `.tar.gz`** — l'archivio preserva il bit `+x`:
+
+```bash
+tar -xzf Pickfair-Linux-bin-v*.tar.gz     # estrae pickfair + pickfair-headless (già eseguibili)
+./pickfair                                 # GUI
+./pickfair-headless --telegram-login       # headless (VPS)
 ```
 
 Per l'integrazione nel menu applicazioni (icona + voce), usa uno strumento come
