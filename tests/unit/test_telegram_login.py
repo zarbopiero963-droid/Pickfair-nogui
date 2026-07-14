@@ -10,7 +10,11 @@ salva. La verifica end-to-end con l'API Telegram reale resta sul VPS.
 import sys
 from types import SimpleNamespace
 
-from telegram_listener import TelegramListener, sanitize_login_code
+from telegram_listener import (
+    TelegramListener,
+    format_floodwait_wait_text,
+    sanitize_login_code,
+)
 from headless_main import HeadlessApp
 
 
@@ -174,9 +178,25 @@ def test_sanitize_login_code_ascii_and_marker():
     # devono concatenarsi (prima: "54321777000"; ora solo la sequenza contigua).
     assert sanitize_login_code("Login code: 54321\n777000") == "54321"
     assert sanitize_login_code("code 54321 poi 999") == "54321"
+    # BLOCK (CodeRabbit): il marcatore "code"/"codice" richiede un word boundary
+    # a sinistra: NON deve agganciarsi al suffisso di "Barcode"/"encode"/"Unicode".
+    # Prima del `\b`, "Barcode 999 codice 12345" tornava "999" (il "code" di
+    # "Barcode" seguito da 999) invece del vero "12345".
+    assert sanitize_login_code("Barcode 999 codice 12345") == "12345"
+    assert sanitize_login_code("encode 999 code 12345") == "12345"
     # cifre non-ASCII (arabo-indiane) NON sono valide per Telegram => scartate
     assert sanitize_login_code("١٢٣") == ""
     assert sanitize_login_code(None) == ""
+
+
+def test_format_floodwait_wait_text_none_vs_zero():
+    # BLOCK (CodeRabbit): il testo d'attesa FloodWait è condiviso GUI/headless e
+    # distingue None (seconds mancante) da 0 via `is None`, non per falsyness.
+    assert format_floodwait_wait_text(42) == "42 secondi"
+    assert format_floodwait_wait_text(None) == "qualche secondo"
+    # seconds == 0 ("riprova subito") NON deve essere inghiottito come None:
+    # con `if seconds else` (falsy) diventerebbe erroneamente "qualche secondo".
+    assert format_floodwait_wait_text(0) == "0 secondi"
 
 
 def test_sign_in_sanitizes_pasted_code_at_source():

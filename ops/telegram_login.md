@@ -87,8 +87,13 @@ python headless_main.py --telegram-login
 > - **codice → sole cifre ASCII**, estratte dopo il marcatore `code`/`codice` se
 >   presente (così `777000 Login code: 54321` → `54321`; le cifre non-ASCII sono
 >   scartate perché Telegram le rifiuta);
-> - **FloodWait**: headless `request_code` ritorna `retry_after` (secondi);
->   la GUI `send_code` mostra «attendi N secondi, non rilanciare».
+> - **FloodWait**: headless `request_code` ritorna `retry_after` (secondi, **può
+>   essere `None`** se Telethon non lo popola); la GUI (`send_code` **e**
+>   `verify_code`) mostra «attendi N secondi, non rilanciare» — o «qualche
+>   secondo» quando i secondi non sono noti. Il testo d'attesa è generato
+>   dall'unico helper `telegram_listener.format_floodwait_wait_text` (distingue
+>   `None` da `0` con `is None`). Su FloodWait il client Telethon locale della
+>   GUI viene comunque disconnesso (nessun socket orfano).
 
 Flusso interattivo (`HeadlessApp._telegram_login_flow`):
 

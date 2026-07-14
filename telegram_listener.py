@@ -54,9 +54,26 @@ def sanitize_login_code(raw) -> str:
     # Cattura SOLO la prima sequenza CONTIGUA di cifre dopo il marcatore: niente
     # `\s` nel gruppo, altrimenti "Login code: 54321\n777000" concatenerebbe le
     # cifre successive in "54321777000" (rilievo Fugu, regressione parser).
-    match = re.search(r"cod(?:e|ice)\D*([0-9]+)", text, re.IGNORECASE)
+    # `\b` a sinistra del marcatore: "code"/"codice" deve essere una parola a sé,
+    # non il suffisso di "Unicode"/"Barcode" (rilievo CodeRabbit): senza il word
+    # boundary "Barcode 999 codice 12345" aggancerebbe il "code" di "Barcode" e
+    # tornerebbe "999" invece di "12345".
+    match = re.search(r"\bcod(?:e|ice)\D*([0-9]+)", text, re.IGNORECASE)
     segment = match.group(1) if match else text
     return "".join(ch for ch in segment if ch in "0123456789")
+
+
+def format_floodwait_wait_text(seconds) -> str:
+    """Testo d'attesa FloodWait leggibile, fonte unica per headless e GUI.
+
+    Telethon a volte NON popola ``seconds`` (None): in quel caso torna un
+    messaggio generico invece di ``"None secondi"``. Il controllo è ``is None``
+    (non la falsyness): ``seconds == 0`` significa "riprova subito" e resta
+    ``"0 secondi"``, non viene inghiottito come se mancasse (rilievo CodeRabbit).
+    """
+    if seconds is None:
+        return "qualche secondo"
+    return f"{seconds} secondi"
 
 
 class TelegramListener:
@@ -642,7 +659,8 @@ class TelegramListener:
                 seconds = getattr(exc, "seconds", None)
                 # seconds mancante/None: messaggio generico invece di "attendi None
                 # secondi" (rilievo Fable). `retry_after` resta il valore grezzo.
-                wait_txt = f"{seconds} secondi" if seconds else "qualche secondo"
+                # Helper condiviso con la GUI (unica fonte, gestisce None/0).
+                wait_txt = format_floodwait_wait_text(seconds)
                 msg = f"FloodWait: troppi tentativi, attendi {wait_txt} prima di riprovare (non rilanciare)"
                 self._emit_status("FAILED", msg)
                 return {"ok": False, "error": msg, "retry_after": seconds}

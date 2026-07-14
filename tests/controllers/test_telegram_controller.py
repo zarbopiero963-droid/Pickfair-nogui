@@ -197,7 +197,9 @@ def test_load_dialogs_uses_asyncio_run_and_keeps_public_behavior(monkeypatch):
 # ---- F-1a: hardening login GUI (sanitize codice + FloodWait) -----------------
 
 
-def _install_capturing_telethon(monkeypatch, captured, *, authorized=False, flood_seconds=None):
+def _install_capturing_telethon(
+    monkeypatch, captured, *, authorized=False, flood_seconds=None, signin_flood_seconds=None
+):
     class FloodWaitError(Exception):
         # Il nome DEVE combaciare: il controller riconosce il flood via
         # type(exc).__name__ == "FloodWaitError".
@@ -208,6 +210,7 @@ def _install_capturing_telethon(monkeypatch, captured, *, authorized=False, floo
     class _Client:
         def __init__(self, *_args, **_kwargs):
             self.session = types.SimpleNamespace(save=lambda: "sess")
+            self.disconnected = 0
 
         async def connect(self):
             return None
@@ -216,6 +219,8 @@ def _install_capturing_telethon(monkeypatch, captured, *, authorized=False, floo
             return authorized
 
         async def disconnect(self):
+            self.disconnected += 1
+            captured["disconnected"] = self.disconnected
             return None
 
         async def send_code_request(self, _phone):
@@ -225,6 +230,8 @@ def _install_capturing_telethon(monkeypatch, captured, *, authorized=False, floo
 
         async def sign_in(self, **kwargs):
             captured.update(kwargs)
+            if signin_flood_seconds is not None:
+                raise FloodWaitError(seconds=signin_flood_seconds)
             return None
 
     telethon_mod = types.SimpleNamespace(TelegramClient=_Client)
@@ -265,3 +272,26 @@ def test_send_code_floodwait_shows_wait_message(monkeypatch):
     assert app.tg_status_label.last is not None
     assert "FloodWait" in app.tg_status_label.last["text"]
     assert "30" in app.tg_status_label.last["text"]
+    # BLOCK (Fugu/Fable): il client Telethon locale dev'essere disconnesso anche
+    # quando send_code_request solleva FloodWait (try/finally in run()): nessun
+    # socket orfano. Prima del fix il disconnect era dopo la send => saltato.
+    assert captured.get("disconnected", 0) >= 1, "il client va disconnesso anche su FloodWait"
+
+
+def test_verify_code_floodwait_shows_wait_message(monkeypatch):
+    # BLOCK (CodeRabbit): un FloodWait durante sign_in (verifica) deve mostrare
+    # un messaggio d'attesa chiaro, non "Verifica fallita: ..." opaco.
+    app = _App()
+    app.tg_code_var = _Var("12345")
+    controller = TelegramController(app)
+    captured = {}
+    _install_capturing_telethon(monkeypatch, captured, signin_flood_seconds=45)
+    _silence_messageboxes(monkeypatch)
+
+    _run_with_closed_current_loop(monkeypatch, controller.verify_code)
+
+    assert app.tg_status_label.last is not None
+    assert "FloodWait" in app.tg_status_label.last["text"]
+    assert "45" in app.tg_status_label.last["text"]
+    # anche qui: disconnect garantito dal try/finally in run().
+    assert captured.get("disconnected", 0) >= 1, "il client va disconnesso anche su FloodWait in verify"

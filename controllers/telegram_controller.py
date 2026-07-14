@@ -34,9 +34,10 @@ except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
 
     messagebox = _MessageBoxFallback()
 
-# Helper condiviso col path headless: estrae il codice a sole cifre ASCII
-# (robusto al messaggio 777000 incollato intero). Import sicuro senza telethon.
-from telegram_listener import sanitize_login_code
+# Helper condivisi col path headless: estrazione codice a sole cifre ASCII
+# (robusto al messaggio 777000 incollato intero) e testo d'attesa FloodWait
+# (unica fonte, gestisce seconds None/0). Import sicuro senza telethon.
+from telegram_listener import format_floodwait_wait_text, sanitize_login_code
 
 
 class TelegramController:
@@ -150,14 +151,20 @@ class TelegramController:
 
                     await client.connect()
 
-                    if await client.is_user_authorized():
-                        new_session_string = client.session.save()
-                        await client.disconnect()
-                        return True, new_session_string, "Già autenticato. Nessun codice necessario."
+                    # try/finally: se send_code_request solleva (es. FloodWait)
+                    # il client resta connesso e l'handler esterno non può più
+                    # raggiungerlo (variabile locale a run()) => socket perso su
+                    # Windows (rilievo Fugu/Fable). Il disconnect nel finally
+                    # garantisce il cleanup su OGNI uscita, eccezioni incluse.
+                    try:
+                        if await client.is_user_authorized():
+                            new_session_string = client.session.save()
+                            return True, new_session_string, "Già autenticato. Nessun codice necessario."
 
-                    await client.send_code_request(phone)
-                    await client.disconnect()
-                    return False, "", "Codice inviato. Inseriscilo e clicca Verifica."
+                        await client.send_code_request(phone)
+                        return False, "", "Codice inviato. Inseriscilo e clicca Verifica."
+                    finally:
+                        await client.disconnect()
 
                 authorized, session_string, msg = self._run_coroutine_sync(run())
 
@@ -191,7 +198,7 @@ class TelegramController:
                 # opaco, così l'utente NON rilancia (peggiorerebbe il flood).
                 if type(e).__name__ == "FloodWaitError":
                     seconds = getattr(e, "seconds", None)
-                    wait_txt = f"{seconds} secondi" if seconds else "qualche secondo"
+                    wait_txt = format_floodwait_wait_text(seconds)
                     msg = f"Troppi tentativi (FloodWait): attendi {wait_txt} e NON rilanciare."
                     self.app.uiq.post(messagebox.showwarning, "Attendi", msg)
                     self.app.uiq.post(
@@ -253,17 +260,21 @@ class TelegramController:
 
                     await client.connect()
 
+                    # try/finally esterno: garantisce il disconnect anche se
+                    # sign_in solleva (FloodWait, codice/2FA invalidi) => nessun
+                    # client Telethon lasciato connesso (rilievo Fugu/Fable).
                     try:
-                        await client.sign_in(phone=phone, code=code)
-                    except SessionPasswordNeededError:
-                        if not password:
-                            await client.disconnect()
-                            return False, "Password 2FA richiesta. Inseriscila e riprova."
-                        await client.sign_in(password=password)
+                        try:
+                            await client.sign_in(phone=phone, code=code)
+                        except SessionPasswordNeededError:
+                            if not password:
+                                return False, "Password 2FA richiesta. Inseriscila e riprova."
+                            await client.sign_in(password=password)
 
-                    session_string = client.session.save()
-                    await client.disconnect()
-                    return True, session_string
+                        session_string = client.session.save()
+                        return True, session_string
+                    finally:
+                        await client.disconnect()
 
                 success, result = self._run_coroutine_sync(run())
 
@@ -308,6 +319,22 @@ class TelegramController:
                     )
 
             except Exception as e:
+                # FloodWait anche in verifica: sign_in può sbattere sul flood se
+                # arriva dopo troppi tentativi. Messaggio d'attesa chiaro (stesso
+                # helper del send_code) invece di "Verifica fallita: ..." opaco.
+                if type(e).__name__ == "FloodWaitError":
+                    seconds = getattr(e, "seconds", None)
+                    wait_txt = format_floodwait_wait_text(seconds)
+                    self.app.uiq.post(
+                        self.app.tg_status_label.configure,
+                        text=f"Stato: FloodWait, attendi {wait_txt}",
+                    )
+                    self.app.uiq.post(
+                        messagebox.showwarning,
+                        "Attendi",
+                        f"Troppi tentativi (FloodWait): attendi {wait_txt} e NON rilanciare.",
+                    )
+                    return
                 self.app.uiq.post(
                     self.app.tg_status_label.configure,
                     text="Stato: Errore Verifica",
