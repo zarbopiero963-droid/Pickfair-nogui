@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Pickfair
+GenericName=Pickfair Trading
+Comment=Pickfair trading desktop (GUI)
+Exec=pickfair
+Icon=pickfair
+Terminal=false
+Categories=Office;Finance;
+StartupWMClass=pickfair

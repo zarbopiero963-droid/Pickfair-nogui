@@ -4,6 +4,23 @@
     "max_files": 8
   },
   "tasks": {
+    "linux_appimage_gui_packaging": {
+      "description": "PR-1 (autorizzata dall'owner): impacchetta la GUI Linux (dist/pickfair, gia' prodotto da build-linux.yml) come AppImage 'vero programma Linux' (icona + .desktop + AppRun + integrazione menu applicazioni). Solo CI/packaging additivo: build-linux.yml aggiunge uno step che assembla l'AppDir e chiama appimagetool (APPIMAGE_EXTRACT_AND_RUN=1, no FUSE) tramite packaging/build_appimage.sh; nuovi asset in packaging/ (icona placeholder generata + generatore, .desktop, AppRun, script di build). Job Windows e binari headless INVARIATI. NESSUNA logica di trading/gate/ordini/betfair/telegram toccata. Test reale locale: PyInstaller onefile builda ed esegue, l'AppDir assemblato lancia il binario (== AppImage montato); il wrap finale appimagetool gira in CI (egress github bloccato in sandbox). Doc ops/linux_appimage.md nello stesso PR.",
+      "allow_tests": true,
+      "files": [
+        "packaging/make_icon.py",
+        "packaging/pickfair.png",
+        "packaging/pickfair.desktop",
+        "packaging/AppRun",
+        "packaging/build_appimage.sh",
+        ".github/workflows/build-linux.yml",
+        "ops/linux_appimage.md",
+        ".gitignore",
+        "tests/packaging/test_linux_appimage_assets.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 11
+    },
     "catalog_sync_betfair_listing_367": {
       "description": "#367 (blocco critico dal test LIVE VPS): CatalogSync chiamava list_soccer_events()/list_market_catalogue(market_types=...) inesistenti sul client Betfair (BetfairClient e SimulationBroker) -> AttributeError, 0 eventi/mercati/runner sincronizzati, trading bloccato in LIVE e SIM. Fix (approccio A, autorizzato dall'owner): esposti list_events e list_market_catalogue (con filtro marketTypeCodes) su BetfairClient riusando il pattern _post_jsonrpc esistente (stesso di get_market_book), e su SimulationBroker come no-op fail-safe (in SIM il catalogo arriva dai feed streaming, non via API). Riscritto services/catalog_sync_service.py sulle firme/formati Betfair reali (mapping event.id->event_id, marketId->market_id, runners[].selectionId, competition dal market catalogue). NON tocca la logica dei gate/ordini/money-management: solo discovery read-only del catalogo. Test hard PASS+BLOCK (mapping formato Betfair, filtro marketTypeCodes, regressione list_soccer_events non piu' usato, SIM no-crash). La verifica end-to-end con API Betfair reale resta sul VPS (owner/Manus) prima di chiudere #367.",
       "allow_tests": true,

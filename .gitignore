@@ -66,6 +66,10 @@ virtualenv/
 # =============================================================
 build/
 dist/
+# AppImage packaging (build-linux.yml / packaging/build_appimage.sh)
+*.AppImage
+*.AppDir/
+appimagetool-*.AppImage
 *.egg-info/
 *.egg
 MANIFEST
