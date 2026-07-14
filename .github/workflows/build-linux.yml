@@ -1,21 +1,15 @@
 name: Build Linux Binary
 
 on:
+  # Gli artefatti si costruiscono SOLO su richiesta esplicita (decisione owner:
+  # niente build a ogni push/PR, per non consumare CI): a mano dalla tab Actions
+  # oppure automaticamente su un tag di release v* (azione deliberata). La
+  # validazione della config del lock resta su PR nel workflow leggero
+  # generate-linux-lockfile.yaml (anti-stale), che NON fa il build pesante.
   workflow_dispatch: {}
   push:
     tags:
       - "v*"
-  pull_request:
-    paths:
-      - ".github/workflows/build-linux.yml"
-      - "pickfair.spec"
-      - "pyproject.toml"
-      - "requirements.txt"
-      - "requirements-build-linux.in"
-      - "requirements-build-linux.lock"
-      - "main.py"
-      - "mini_gui.py"
-      - "packaging/**"
 
 permissions:
   contents: read

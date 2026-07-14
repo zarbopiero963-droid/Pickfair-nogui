@@ -82,8 +82,16 @@ def test_build_workflow_consumes_lock_fail_closed():
     # pinnato (che riaprirebbe la supply-chain). Rilievo Fugu Ultra / GPT.
     assert "[ ! -f requirements-build-linux.lock ]" in wf, "il build non e' fail-closed sull'assenza del lock"
     assert 'pip install "pyinstaller>=6,<7"' not in wf, "non deve esserci un fallback legacy non pinnato"
-    # il build deve ri-triggerare quando il lock/.in cambia
-    assert "requirements-build-linux.in" in wf
+
+
+def test_build_workflow_is_manual_or_tag_only():
+    # Decisione owner: gli artefatti si costruiscono SOLO a mano o su tag v*,
+    # mai a ogni push/PR (risparmio CI). L'anti-stale del lock resta comunque
+    # validato su PR dal workflow leggero generate-linux-lockfile.yaml.
+    wf = _read(BUILD_WF)
+    assert "workflow_dispatch" in wf, "manca il trigger manuale"
+    assert 'tags:' in wf and '"v*"' in wf, "manca il trigger su tag di release v*"
+    assert "pull_request" not in wf, "il build pesante non deve partire su PR (solo manuale/tag)"
 
 
 def test_lock_is_hash_pinned_and_path_independent():
