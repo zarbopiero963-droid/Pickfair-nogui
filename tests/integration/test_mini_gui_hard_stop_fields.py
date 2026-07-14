@@ -199,8 +199,37 @@ def test_reload_failure_after_save_is_not_reported_as_save_failure(monkeypatch):
         assert app.settings_service.saved_cfg.max_daily_loss == 300.0
         # NON e' stato mostrato l'errore generico di "salvataggio fallito".
         assert not any("Errore salvataggio Roserpina" in a[0] for a in errors), errors
-        # E' stato segnalato il reload fallito (con save ok), non un save-error.
-        assert any("reload runtime fallito" in a[0] for a in errors), errors
+        # Il messaggio rende ESPLICITO che i nuovi limiti NON sono attivi a runtime
+        # (il bot opera ancora con i limiti PRECEDENTI) — non un rassicurante "ok".
+        joined = [" ".join(str(x) for x in a) for a in errors]
+        assert any("PRECEDENTI" in j for j in joined), errors
+    finally:
+        app.destroy()
+
+
+def test_refresh_failure_after_save_does_not_propagate_or_mask_save(monkeypatch):
+    # BLOCK (rilievo Fugu/Fable): un errore nel refresh post-save NON deve
+    # propagare nel callback GUI ne' mascherare l'esito del salvataggio riuscito.
+    app = _make_gui(monkeypatch)
+    try:
+        def _boom():
+            raise RuntimeError("load boom")
+
+        # Il refresh rilegge load_roserpina_config: lo facciamo fallire.
+        app.settings_service.load_roserpina_config = _boom
+
+        infos, errors = [], []
+        app._safe_show_info = lambda *a, **k: infos.append(a)
+        app._safe_show_error = lambda *a, **k: errors.append(a)
+
+        app.rs_max_daily_loss_var.set("300")
+        app._save_roserpina_settings()  # NON deve sollevare
+
+        # Save persistito; il refresh fallito e' silenzioso e non maschera l'OK.
+        assert app.settings_service.saved_cfg is not None
+        assert app.settings_service.saved_cfg.max_daily_loss == 300.0
+        assert infos, "atteso messaggio OK di salvataggio (refresh fallito silenzioso)"
+        assert not errors, errors
     finally:
         app.destroy()
 

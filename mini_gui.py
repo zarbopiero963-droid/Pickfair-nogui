@@ -1391,10 +1391,17 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         # altri tab ne' la logica force-simulation di _load_initial_settings.
         self._refresh_hard_stop_vars()
         if reload_error is not None:
+            # Divergenza safety-critical: la config e' su DB ma il runtime NON e'
+            # stato riallineato. Il messaggio DEVE essere esplicito che i nuovi
+            # limiti (hard-stop/drawdown/esposizione) NON sono attivi a runtime —
+            # il bot opera ancora con i limiti PRECEDENTI — cosi' l'operatore non
+            # crede erroneamente che i nuovi limiti siano gia' in vigore.
             self._safe_show_error(
-                "Roserpina salvata (reload runtime fallito)",
-                f"Config salvata su DB, ma il reload a runtime e' fallito: {reload_error}. "
-                "Sara' applicata al prossimo reload/riavvio.",
+                "Reload runtime FALLITO — nuovi limiti NON attivi",
+                "La configurazione e' stata SALVATA su DB, ma il reload a runtime e' "
+                f"fallito ({reload_error}): il bot sta ancora operando con i limiti "
+                "PRECEDENTI, non con quelli appena salvati. Riavvia il bot (o ripeti "
+                "il salvataggio) per applicare i nuovi limiti prima di operare in LIVE.",
             )
         else:
             self._safe_show_info("OK", "Configurazione Roserpina salvata.")
@@ -1406,13 +1413,16 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         il limite persistito e' ancora attivo: dopo il salvataggio i campi
         riflettono il valore reale letto da `load_roserpina_config`.
         """
+        # Best-effort e COMPLETAMENTE isolato: qualsiasi errore (load DB o .set
+        # Tk) non deve propagare nel callback di salvataggio ne' mascherare
+        # l'esito del save gia' avvenuto (rilievo Fugu Ultra / Fable 5).
         try:
             rs = self.settings_service.load_roserpina_config()
+            self.rs_max_daily_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_daily_loss", None)))
+            self.rs_max_open_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_open_exposure", None)))
+            self.rs_max_drawdown_hard_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_hard_stop_pct", None)))
         except Exception:
             return
-        self.rs_max_daily_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_daily_loss", None)))
-        self.rs_max_open_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_open_exposure", None)))
-        self.rs_max_drawdown_hard_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_hard_stop_pct", None)))
 
     # =========================================================
     # LIVE / SIM
