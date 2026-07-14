@@ -84,14 +84,20 @@ def test_build_workflow_consumes_lock_fail_closed():
     assert 'pip install "pyinstaller>=6,<7"' not in wf, "non deve esserci un fallback legacy non pinnato"
 
 
-def test_build_workflow_is_manual_or_tag_only():
-    # Decisione owner: gli artefatti si costruiscono SOLO a mano o su tag v*,
-    # mai a ogni push/PR (risparmio CI). L'anti-stale del lock resta comunque
-    # validato su PR dal workflow leggero generate-linux-lockfile.yaml.
-    wf = _read(BUILD_WF)
-    assert "workflow_dispatch" in wf, "manca il trigger manuale"
-    assert 'tags:' in wf and '"v*"' in wf, "manca il trigger su tag di release v*"
-    assert "pull_request" not in wf, "il build pesante non deve partire su PR (solo manuale/tag)"
+@pytest.mark.parametrize("wf_name", ["build-linux.yml", "build-windows-exe.yml"])
+def test_build_workflows_are_manual_or_tag_only(wf_name):
+    # Decisione owner: ENTRAMBI i build pesanti (Linux + Windows) si costruiscono
+    # SOLO a mano o su tag v*, mai a ogni push/PR (risparmio CI). L'anti-stale
+    # del lock resta validato su PR dal workflow leggero generate-linux-lockfile.
+    wf = _read(ROOT / ".github" / "workflows" / wf_name)
+    assert "workflow_dispatch" in wf, f"{wf_name}: manca il trigger manuale"
+    assert re.search(r"^\s*tags:", wf, re.M) and '"v*"' in wf, f"{wf_name}: manca il trigger su tag v*"
+    # Robusto ai commenti (rilievo Fable 5): cerca `pull_request:` come CHIAVE a
+    # inizio riga, non come sottostringa — un commento che cita "pull_request"
+    # non deve far fallire il test.
+    assert not re.search(r"^\s*pull_request:", wf, re.M), (
+        f"{wf_name}: il build pesante non deve partire su PR (solo manuale/tag)"
+    )
 
 
 def test_lock_is_hash_pinned_and_path_independent():
