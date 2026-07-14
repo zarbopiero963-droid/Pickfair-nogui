@@ -644,6 +644,12 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.sim_partial_fill_var = self._make_bool_var(True)
         self.sim_consume_liq_var = self._make_bool_var(True)
         self.sim_persist_state_var = self._make_bool_var(True)
+        # Watchdog anomalie: toggle live (gia' enforced in watchdog_service). Il
+        # watchdog e' default-ON: la checkbox parte spuntata (None/non-configurato
+        # => ON).
+        self.anomaly_enabled_var = self._make_bool_var(True)
+        self.anomaly_alerts_enabled_var = self._make_bool_var(False)
+        self.anomaly_actions_enabled_var = self._make_bool_var(False)
         self.rs_allow_recovery_var = self._make_bool_var(True)
         self.rs_anti_dup_var = self._make_bool_var(True)
         self.rs_risk_profile_var = self._make_string_var("BALANCED")
@@ -684,6 +690,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self.tab_bet_history = object()
             self.tab_roserpina = object()
             self.tab_simulazione = object()
+            self.tab_watchdog = object()
             self.tab_risk_history = object()
             self.tab_risk = object()
             self.tab_log = object()
@@ -695,6 +702,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self._build_bet_history_tab()
             self._build_roserpina_tab()
             self._build_simulation_tab()
+            self._build_watchdog_tab()
             self._build_risk_tab()
             self._build_risk_desk_history_tab()
             self._build_log_tab()
@@ -714,6 +722,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.tab_bet_history = self.tabs.add("Storico Bet")
         self.tab_roserpina = self.tabs.add("Roserpina")
         self.tab_simulazione = self.tabs.add("Simulazione")
+        self.tab_watchdog = self.tabs.add("Watchdog")
         self.tab_risk_history = self.tabs.add("Storico Risk Desk")
         self.tab_risk = self.tabs.add("Risk Desk")
         self.tab_provider = self.tabs.add("Provider")
@@ -725,6 +734,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._build_bet_history_tab()
         self._build_roserpina_tab()
         self._build_simulation_tab()
+        self._build_watchdog_tab()
         self._build_risk_tab()
         self._build_risk_desk_history_tab()
         self._build_provider_tab()
@@ -1083,6 +1093,76 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             return
         self._safe_show_info("OK", "Configurazione simulazione salvata.")
 
+    def _build_watchdog_tab(self):
+        if self._test_mode:
+            self.btn_save_watchdog = _DummyButton(self._save_watchdog_settings)
+            return
+
+        outer = ctk.CTkScrollableFrame(self.tab_watchdog)
+        outer.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+
+        ctk.CTkLabel(outer, text="Watchdog Anomalie", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=12, pady=8)
+        ctk.CTkLabel(
+            outer,
+            text=(
+                "Toggle LIVE del watchdog anomalie: l'effetto si applica entro ~5s "
+                "al tick successivo, senza riavvio. Il watchdog e' ATTIVO di default; "
+                "disattivarlo spegne una guardia di safety (viene registrato un "
+                "incidente ad ogni tick)."
+            ),
+            wraplength=560,
+            justify="left",
+            anchor="w",
+        ).pack(anchor="w", padx=12, pady=(0, 8))
+
+        cb = ctk.CTkFrame(outer)
+        cb.pack(fill=tk.X, padx=12, pady=6)
+        ctk.CTkCheckBox(
+            cb,
+            text="Watchdog anomalie ATTIVO  (⚠ disattivarlo spegne una guardia di safety)",
+            variable=self.anomaly_enabled_var,
+        ).pack(anchor="w", padx=8, pady=6)
+        ctk.CTkCheckBox(
+            cb,
+            text="Notifiche Telegram delle anomalie",
+            variable=self.anomaly_alerts_enabled_var,
+        ).pack(anchor="w", padx=8, pady=6)
+        ctk.CTkCheckBox(
+            cb,
+            text="Azioni automatiche su anomalie  (⚠ consente al bot azioni automatiche)",
+            variable=self.anomaly_actions_enabled_var,
+        ).pack(anchor="w", padx=8, pady=6)
+
+        self.btn_save_watchdog = ctk.CTkButton(
+            outer,
+            text="Salva Watchdog",
+            command=self._save_watchdog_settings,
+        )
+        self.btn_save_watchdog.pack(anchor="w", padx=12, pady=12)
+
+    def _save_watchdog_settings(self):
+        svc = self.settings_service
+        if not hasattr(svc, "save_settings"):
+            self._safe_show_error("Errore", "Servizio watchdog non disponibile.")
+            return
+        try:
+            # Scrittura ATOMICA dei tre toggle in UN solo save_settings: evita stati
+            # parziali del watchdog (GUI vs DB) se una scrittura fallisse a meta'.
+            # La coercizione int(bool(...)) rispecchia i metodi save_anomaly_* del
+            # service e le chiavi lette da load_anomaly_*. NB: salvando
+            # anomaly_enabled si scrive un booleano ESPLICITO, che chiude lo stato
+            # tri-state "non configurato = default-ON" (True e None restano entrambi
+            # = watchdog attivo; solo togliere la spunta => disattiva).
+            svc.save_settings({
+                "anomaly_enabled": int(bool(self.anomaly_enabled_var.get())),
+                "anomaly_alerts_enabled": int(bool(self.anomaly_alerts_enabled_var.get())),
+                "anomaly_actions_enabled": int(bool(self.anomaly_actions_enabled_var.get())),
+            })
+        except Exception as exc:
+            self._safe_show_error("Errore salvataggio Watchdog", str(exc))
+            return
+        self._safe_show_info("OK", "Configurazione watchdog salvata (effetto entro ~5s).")
+
     def _build_risk_tab(self):
         if self._test_mode:
             self.risk_tree = _DummyTree()
@@ -1284,6 +1364,19 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 self.sim_partial_fill_var.set(bool(sim.get("partial_fill_enabled", True)))
                 self.sim_consume_liq_var.set(bool(sim.get("consume_liquidity", True)))
                 self.sim_persist_state_var.set(bool(sim.get("persist_state", True)))
+        except Exception:
+            pass
+
+        try:
+            svc = self.settings_service
+            if hasattr(svc, "load_anomaly_enabled"):
+                # None (non configurato) => watchdog default-ON => checkbox spuntata.
+                val = svc.load_anomaly_enabled()
+                self.anomaly_enabled_var.set(val is None or bool(val))
+            if hasattr(svc, "load_anomaly_alerts_enabled"):
+                self.anomaly_alerts_enabled_var.set(bool(svc.load_anomaly_alerts_enabled()))
+            if hasattr(svc, "load_anomaly_actions_enabled"):
+                self.anomaly_actions_enabled_var.set(bool(svc.load_anomaly_actions_enabled()))
         except Exception:
             pass
 
