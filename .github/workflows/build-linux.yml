@@ -141,13 +141,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # nullglob: senza, un pattern che non matcha resterebbe letterale e
-          # verrebbe passato a `gh` (errore criptico). Con nullglob l'array è
-          # vuoto e ci fermiamo FAIL-CLOSED con un messaggio chiaro.
+          # verrebbe passato a `gh` (errore criptico). Validiamo i DUE gruppi
+          # SEPARATAMENTE (rilievo Fugu): se manca UNO SOLO dei due asset
+          # (tar.gz binari OPPURE AppImage) ci fermiamo FAIL-CLOSED, così non si
+          # pubblica mai una release incompleta in silenzio.
           shopt -s nullglob
-          assets=(Pickfair-Linux-bin-*.tar.gz Pickfair-*-x86_64.AppImage)
-          if [ ${#assets[@]} -eq 0 ]; then
-            echo "::error::nessun asset da allegare (glob non ha combaciato con gli artifact scaricati)"; exit 1
+          bins=(Pickfair-Linux-bin-*.tar.gz)
+          appimages=(Pickfair-*-x86_64.AppImage)
+          if [ ${#bins[@]} -eq 0 ] || [ ${#appimages[@]} -eq 0 ]; then
+            echo "::error::asset mancante (tar.gz binari: ${#bins[@]}, AppImage: ${#appimages[@]}) — release non pubblicata"; exit 1
           fi
+          assets=("${bins[@]}" "${appimages[@]}")
           gh release create "${GITHUB_REF_NAME}" "${assets[@]}" \
             --repo "${GITHUB_REPOSITORY}" --generate-notes \
           || gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" \
