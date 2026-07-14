@@ -650,6 +650,15 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.anomaly_enabled_var = self._make_bool_var(True)
         self.anomaly_alerts_enabled_var = self._make_bool_var(False)
         self.anomaly_actions_enabled_var = self._make_bool_var(False)
+        # Alert Telegram: routing/soglie notifiche (gia' enforced live in
+        # telegram_alerts_service). Il saver dedicato read-merge preserva le credenziali.
+        self.alert_enabled_var = self._make_bool_var(False)
+        self.alert_chat_id_var = self._make_string_var("")
+        self.alert_chat_name_var = self._make_string_var("")
+        self.alert_min_severity_var = self._make_string_var("WARNING")
+        self.alert_cooldown_var = self._make_string_var("300")
+        self.alert_dedup_var = self._make_bool_var(True)
+        self.alert_format_rich_var = self._make_bool_var(True)
         self.rs_allow_recovery_var = self._make_bool_var(True)
         self.rs_anti_dup_var = self._make_bool_var(True)
         self.rs_risk_profile_var = self._make_string_var("BALANCED")
@@ -691,6 +700,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self.tab_roserpina = object()
             self.tab_simulazione = object()
             self.tab_watchdog = object()
+            self.tab_alert = object()
             self.tab_risk_history = object()
             self.tab_risk = object()
             self.tab_log = object()
@@ -703,6 +713,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self._build_roserpina_tab()
             self._build_simulation_tab()
             self._build_watchdog_tab()
+            self._build_alert_tab()
             self._build_risk_tab()
             self._build_risk_desk_history_tab()
             self._build_log_tab()
@@ -723,6 +734,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.tab_roserpina = self.tabs.add("Roserpina")
         self.tab_simulazione = self.tabs.add("Simulazione")
         self.tab_watchdog = self.tabs.add("Watchdog")
+        self.tab_alert = self.tabs.add("Alert")
         self.tab_risk_history = self.tabs.add("Storico Risk Desk")
         self.tab_risk = self.tabs.add("Risk Desk")
         self.tab_provider = self.tabs.add("Provider")
@@ -735,6 +747,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._build_roserpina_tab()
         self._build_simulation_tab()
         self._build_watchdog_tab()
+        self._build_alert_tab()
         self._build_risk_tab()
         self._build_risk_desk_history_tab()
         self._build_provider_tab()
@@ -1163,6 +1176,111 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             return
         self._safe_show_info("OK", "Configurazione watchdog salvata (effetto entro ~5s).")
 
+    _ALERT_SEVERITIES = ("INFO", "WARNING", "ERROR", "HIGH", "CRITICAL")
+
+    def _build_alert_tab(self):
+        if self._test_mode:
+            self.btn_save_alert = _DummyButton(self._save_alert_settings)
+            return
+
+        outer = ctk.CTkScrollableFrame(self.tab_alert)
+        outer.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+
+        ctk.CTkLabel(outer, text="Alert Telegram", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=12, pady=8)
+        ctk.CTkLabel(
+            outer,
+            text=(
+                "Routing e soglie delle notifiche di alert su Telegram (distinte "
+                "dalle credenziali di sessione nel tab Telegram). Effetto LIVE, "
+                "senza riavvio. Disattivarli sopprime anche gli alert di anomalia/"
+                "incidente su cui l'operatore fa affidamento."
+            ),
+            wraplength=560,
+            justify="left",
+            anchor="w",
+        ).pack(anchor="w", padx=12, pady=(0, 8))
+
+        cb = ctk.CTkFrame(outer)
+        cb.pack(fill=tk.X, padx=12, pady=6)
+        ctk.CTkCheckBox(
+            cb,
+            text="Alert Telegram ATTIVI  (⚠ disattivarli sopprime le notifiche di safety)",
+            variable=self.alert_enabled_var,
+        ).pack(anchor="w", padx=8, pady=6)
+        ctk.CTkCheckBox(cb, text="Deduplica alert ripetuti", variable=self.alert_dedup_var).pack(anchor="w", padx=8, pady=6)
+        ctk.CTkCheckBox(cb, text="Formato ricco (dettagli renderizzati)", variable=self.alert_format_rich_var).pack(anchor="w", padx=8, pady=6)
+
+        self._labeled_entry(outer, "Chat ID destinazione (obbligatorio se alert attivi)", self.alert_chat_id_var)
+        self._labeled_entry(outer, "Nome chat (facoltativo)", self.alert_chat_name_var)
+        self._labeled_entry(outer, "Cooldown anti-spam (secondi, >= 0)", self.alert_cooldown_var)
+
+        sev = ctk.CTkFrame(outer)
+        sev.pack(fill=tk.X, padx=12, pady=6)
+        ctk.CTkLabel(sev, text="Severita' minima", width=220, anchor="w").pack(side=tk.LEFT, padx=8, pady=8)
+        ctk.CTkComboBox(
+            sev,
+            variable=self.alert_min_severity_var,
+            values=list(self._ALERT_SEVERITIES),
+            width=220,
+        ).pack(side=tk.LEFT, padx=8, pady=8)
+
+        self.btn_save_alert = ctk.CTkButton(
+            outer,
+            text="Salva Alert",
+            command=self._save_alert_settings,
+        )
+        self.btn_save_alert.pack(anchor="w", padx=12, pady=12)
+
+    def _save_alert_settings(self):
+        svc = self.settings_service
+        if not hasattr(svc, "save_telegram_alert_settings"):
+            self._safe_show_error("Errore", "Servizio alert non disponibile.")
+            return
+        try:
+            enabled = bool(self.alert_enabled_var.get())
+            severity = str(self.alert_min_severity_var.get() or "").strip().upper()
+            if severity not in self._ALERT_SEVERITIES:
+                raise ValueError(
+                    "Severita' minima non valida: usare uno tra "
+                    + ", ".join(self._ALERT_SEVERITIES) + "."
+                )
+            cooldown = self._parse_alert_cooldown(self.alert_cooldown_var.get(), "Cooldown")
+            chat_id = str(self.alert_chat_id_var.get() or "").strip()
+            # Fail-closed operativo: alert attivi senza destinazione => il service
+            # farebbe no-op silenzioso (alerts_chat_id_missing). Blocchiamo il save.
+            if enabled and not chat_id:
+                raise ValueError("Chat ID obbligatorio quando gli alert sono attivi.")
+            svc.save_telegram_alert_settings(
+                alerts_enabled=enabled,
+                alerts_chat_id=chat_id,
+                alerts_chat_name=str(self.alert_chat_name_var.get() or "").strip(),
+                min_alert_severity=severity,
+                alert_cooldown_sec=cooldown,
+                alert_dedup_enabled=bool(self.alert_dedup_var.get()),
+                alert_format_rich=bool(self.alert_format_rich_var.get()),
+            )
+        except Exception as exc:
+            self._safe_show_error("Errore salvataggio Alert", str(exc))
+            return
+        self._safe_show_info("OK", "Configurazione alert salvata (effetto immediato).")
+
+    @staticmethod
+    def _parse_alert_cooldown(raw, label):
+        """Cooldown alert: intero >= 0.
+
+        Usa int() diretto (NON int(float())): i valori frazionari come "0.5"/"1.9"
+        verrebbero troncati silenziosamente a 0/1, accorciando il cooldown anti-spam
+        mentre il salvataggio riporta successo. Cosi' vengono rifiutati (come "inf").
+        """
+        text = (raw or "").strip()
+        try:
+            val = int(text)
+        except (TypeError, ValueError):
+            raise ValueError(f"{label}: inserisci un numero intero valido.")
+        if val < 0:
+            raise ValueError(f"{label}: deve essere >= 0.")
+        return val
+
     def _build_risk_tab(self):
         if self._test_mode:
             self.risk_tree = _DummyTree()
@@ -1377,6 +1495,20 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 self.anomaly_alerts_enabled_var.set(bool(svc.load_anomaly_alerts_enabled()))
             if hasattr(svc, "load_anomaly_actions_enabled"):
                 self.anomaly_actions_enabled_var.set(bool(svc.load_anomaly_actions_enabled()))
+        except Exception:
+            pass
+
+        try:
+            svc = self.settings_service
+            if hasattr(svc, "load_telegram_config_row"):
+                row = svc.load_telegram_config_row() or {}
+                self.alert_enabled_var.set(bool(row.get("alerts_enabled", False)))
+                self.alert_chat_id_var.set(str(row.get("alerts_chat_id") or ""))
+                self.alert_chat_name_var.set(str(row.get("alerts_chat_name", "") or ""))
+                self.alert_min_severity_var.set(str(row.get("min_alert_severity", "WARNING") or "WARNING").upper())
+                self.alert_cooldown_var.set(str(row.get("alert_cooldown_sec", 300)))
+                self.alert_dedup_var.set(bool(row.get("alert_dedup_enabled", True)))
+                self.alert_format_rich_var.set(bool(row.get("alert_format_rich", True)))
         except Exception:
             pass
 
