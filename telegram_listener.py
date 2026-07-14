@@ -37,6 +37,52 @@ def _keyword_searchable_text(text: str) -> str:
     return "\n".join(lines)
 
 
+def sanitize_login_code(raw) -> str:
+    """Estrae il codice di login di Telegram (SOLO cifre ASCII 0-9) dal testo.
+
+    Fonte unica per headless (``TelegramListener.sign_in``) e GUI
+    (``controllers/telegram_controller``). Robusto ai casi reali:
+    - il messaggio di servizio 777000 è tipo ``Login code: 12345`` → ``12345``;
+    - se il testo incollato contiene ALTRE cifre (es. l'id ``777000`` della chat),
+      preferisce le cifre che seguono il marcatore ``code``/``codice`` per non
+      concatenarle (``777000 Login code: 54321`` → ``54321``);
+    - ``str.isdigit()`` NON è affidabile: tiene le cifre non-ASCII (arabo-indiane)
+      che Telegram rifiuta, quindi si filtra esplicitamente su ``0-9``.
+    La password 2FA NON passa mai da qui (non è un codice numerico).
+    """
+    text = str(raw or "")
+    # Cattura SOLO la prima sequenza CONTIGUA di cifre dopo il marcatore: niente
+    # `\s` nel gruppo, altrimenti "Login code: 54321\n777000" concatenerebbe le
+    # cifre successive in "54321777000" (rilievo Fugu, regressione parser).
+    # Marcatore "code"/"codice" delimitato: `\b` a SINISTRA (esclude il suffisso
+    # "Barcode"/"encode") e lookahead negativo `(?![a-z_])` a DESTRA (esclude il
+    # PREFISSO che continua il token — "codebase"/"codeword" con una lettera,
+    # "code_foo" con un underscore: entrambi `\w` ma NON un vero marcatore). Il
+    # `\b` iniziale da solo tornerebbe "999" su "codebase 999 codice 12345"
+    # (rilievo CodeRabbit) e su "code_foo 999 codice12345" (rilievo GPT). NON si
+    # usa `\b` a destra: fallirebbe col marcatore ATTACCATO alle cifre
+    # ("code12345"), perché tra "e" e "1" (entrambi `\w`) non c'è word boundary →
+    # nessun match → il fallback concatenerebbe TUTTE le cifre ("id 999
+    # code12345" → "99912345", rilievo Fugu). Il lookahead accetta cifra/":"/
+    # spazio dopo il marcatore ma rifiuta lettera/underscore, coprendo i casi.
+    match = re.search(r"\bcod(?:e|ice)(?![a-z_])\D*([0-9]+)", text, re.IGNORECASE)
+    segment = match.group(1) if match else text
+    return "".join(ch for ch in segment if ch in "0123456789")
+
+
+def format_floodwait_wait_text(seconds) -> str:
+    """Testo d'attesa FloodWait leggibile, fonte unica per headless e GUI.
+
+    Telethon a volte NON popola ``seconds`` (None): in quel caso torna un
+    messaggio generico invece di ``"None secondi"``. Il controllo è ``is None``
+    (non la falsyness): ``seconds == 0`` significa "riprova subito" e resta
+    ``"0 secondi"``, non viene inghiottito come se mancasse (rilievo CodeRabbit).
+    """
+    if seconds is None:
+        return "qualche secondo"
+    return f"{seconds} secondi"
+
+
 class TelegramListener:
     """
     Wrapper listener Telegram.
@@ -579,7 +625,9 @@ class TelegramListener:
         """Login userbot step 1: invia il codice di verifica a `phone_number`.
 
         Tiene vivo il client Telethon su un loop dedicato per il successivo
-        `sign_in`. Ritorna {"ok": True} oppure {"ok": False, "error": ...}.
+        `sign_in`. Ritorna {"ok": True} oppure {"ok": False, "error": ...}. Su
+        `FloodWaitError` include anche `retry_after` (secondi, può essere None):
+        i chiamanti (GUI/headless) lo usano per dire "attendi N s, non rilanciare".
         """
         if TelegramClient is None and self._client_factory is None:
             return {"ok": False, "error": "telethon_not_available"}
@@ -608,8 +656,23 @@ class TelegramListener:
             return {"ok": True}
         except Exception as exc:
             self._cleanup_login()
+            name = type(exc).__name__
+            # FloodWait: troppi invii ravvicinati. Telegram impone un'attesa e
+            # OGNI nuovo invio invalida i codici precedenti (causa tipica del
+            # "codice non valido" dopo molti tentativi). Restituisci un errore
+            # strutturato con `retry_after` così sia GUI sia headless possono
+            # dire all'utente di attendere invece di rilanciare.
+            if name == "FloodWaitError":
+                seconds = getattr(exc, "seconds", None)
+                # seconds mancante/None: messaggio generico invece di "attendi None
+                # secondi" (rilievo Fable). `retry_after` resta il valore grezzo.
+                # Helper condiviso con la GUI (unica fonte, gestisce None/0).
+                wait_txt = format_floodwait_wait_text(seconds)
+                msg = f"FloodWait: troppi tentativi, attendi {wait_txt} prima di riprovare (non rilanciare)"
+                self._emit_status("FAILED", msg)
+                return {"ok": False, "error": msg, "retry_after": seconds}
             # str(TimeoutError()) e' vuoto: fallback sul nome classe (rilievo Codacy).
-            msg = str(exc) or type(exc).__name__
+            msg = str(exc) or name
             self._emit_status("FAILED", f"Invio codice fallito: {msg}")
             return {"ok": False, "error": msg}
 
@@ -627,7 +690,9 @@ class TelegramListener:
         if self._login_client is None or self._login_loop is None:
             return {"ok": False, "error": "request_code_first"}
         pwd = str(password_2fa or "").strip() or None
-        verification = str(code or "").strip()
+        # Sanitizza il codice via helper condiviso (sole cifre ASCII, estratte dopo
+        # il marcatore "code" se presente). La password 2FA NON viene toccata.
+        verification = sanitize_login_code(code)
         awaiting = self._login_awaiting_password
         if not awaiting and not verification:
             return {"ok": False, "error": "missing_code"}

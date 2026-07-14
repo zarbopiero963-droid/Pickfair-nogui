@@ -10,7 +10,11 @@ salva. La verifica end-to-end con l'API Telegram reale resta sul VPS.
 import sys
 from types import SimpleNamespace
 
-from telegram_listener import TelegramListener
+from telegram_listener import (
+    TelegramListener,
+    format_floodwait_wait_text,
+    sanitize_login_code,
+)
 from headless_main import HeadlessApp
 
 
@@ -32,6 +36,14 @@ class PasswordHashInvalidError(Exception):
     pass
 
 
+class FloodWaitError(Exception):
+    # Il nome classe DEVE combaciare con quello reale di Telethon: request_code
+    # riconosce il FloodWait via type(exc).__name__ ed espone `retry_after`.
+    def __init__(self, seconds=None):
+        super().__init__(f"A wait of {seconds} seconds is required")
+        self.seconds = seconds
+
+
 class _FakeSession:
     def __init__(self, s):
         self._s = s
@@ -43,12 +55,13 @@ class _FakeSession:
 class _FakeClient:
     """Client Telethon fittizio (metodi async) per pilotare il login."""
 
-    def __init__(self, *, behavior="ok", session="SESS", code_hash="HASH", password_ok=True, fail_on=None):
+    def __init__(self, *, behavior="ok", session="SESS", code_hash="HASH", password_ok=True, fail_on=None, flood_seconds=42):
         self.behavior = behavior  # ok | 2fa | invalid_code | expired_code
         self.session = _FakeSession(session)
         self.code_hash = code_hash
         self.password_ok = password_ok
-        self.fail_on = fail_on  # None | "connect" | "send_code"
+        self.fail_on = fail_on  # None | "connect" | "send_code" | "flood"
+        self.flood_seconds = flood_seconds
         self.calls = []
         self._authorized = False
 
@@ -64,6 +77,8 @@ class _FakeClient:
         self.calls.append(("send_code_request", phone))
         if self.fail_on == "send_code":
             raise RuntimeError("send_code boom")
+        if self.fail_on == "flood":
+            raise FloodWaitError(seconds=self.flood_seconds)
         return SimpleNamespace(phone_code_hash=self.code_hash)
 
     async def is_user_authorized(self):
@@ -149,6 +164,88 @@ def test_sign_in_invalid_code():
     lis.request_code("+39")
     res = lis.sign_in("000")
     assert res == {"ok": False, "error": "invalid_code"}
+
+
+def test_sanitize_login_code_ascii_and_marker():
+    # BLOCK (Greptile P2 + CodeRabbit): sole cifre ASCII, ed estrazione dopo il
+    # marcatore "code"/"codice" per non concatenare altre cifre nel testo.
+    assert sanitize_login_code("Login code: 12345") == "12345"
+    assert sanitize_login_code("Codice di accesso: 54321") == "54321"
+    assert sanitize_login_code("12345") == "12345"
+    # ALTRE cifre nel testo (id chat 777000) NON devono concatenarsi al codice
+    assert sanitize_login_code("777000 Login code: 54321") == "54321"
+    # BLOCK (Fugu): cifre DOPO il codice, separate da whitespace/newline, NON
+    # devono concatenarsi (prima: "54321777000"; ora solo la sequenza contigua).
+    assert sanitize_login_code("Login code: 54321\n777000") == "54321"
+    assert sanitize_login_code("code 54321 poi 999") == "54321"
+    # BLOCK (CodeRabbit): il marcatore "code"/"codice" richiede il word boundary
+    # su ENTRAMBI i lati. A sinistra esclude il SUFFISSO ("Barcode"/"encode"); a
+    # destra esclude il PREFISSO ("codebase"/"codeword"), dove il `\b` iniziale è
+    # comunque soddisfatto (inizio parola). Prima del boundary destro,
+    # "codebase 999 codice 12345" tornava "999" invece del vero "12345".
+    assert sanitize_login_code("Barcode 999 codice 12345") == "12345"
+    assert sanitize_login_code("encode 999 code 12345") == "12345"
+    assert sanitize_login_code("codebase 999 codice 12345") == "12345"
+    assert sanitize_login_code("codebase 999 code 12345") == "12345"
+    # BLOCK (Fugu): marcatore ATTACCATO alle cifre, senza separatore. Il `\b` a
+    # destra falliva (tra "e" e "1" non c'è boundary) e il fallback concatenava
+    # tutte le cifre ("id 999 code12345" -> "99912345"); il lookahead `(?![a-z])`
+    # lascia passare la cifra subito dopo il marcatore.
+    assert sanitize_login_code("code12345") == "12345"
+    assert sanitize_login_code("codice12345") == "12345"
+    assert sanitize_login_code("id 999 code12345") == "12345"
+    # BLOCK (GPT): l'underscore è `\w` ma non `[a-z]`; con `(?![a-z])` il token
+    # "code_foo" passava e il fallback tornava "99912345". `(?![a-z_])` esclude
+    # anche l'underscore: il marcatore deve essere un token a sé.
+    assert sanitize_login_code("code_foo 999 codice12345") == "12345"
+    # cifre non-ASCII (arabo-indiane) NON sono valide per Telegram => scartate
+    assert sanitize_login_code("١٢٣") == ""
+    assert sanitize_login_code(None) == ""
+
+
+def test_format_floodwait_wait_text_none_vs_zero():
+    # BLOCK (CodeRabbit): il testo d'attesa FloodWait è condiviso GUI/headless e
+    # distingue None (seconds mancante) da 0 via `is None`, non per falsyness.
+    assert format_floodwait_wait_text(42) == "42 secondi"
+    assert format_floodwait_wait_text(None) == "qualche secondo"
+    # seconds == 0 ("riprova subito") NON deve essere inghiottito come None:
+    # con `if seconds else` (falsy) diventerebbe erroneamente "qualche secondo".
+    assert format_floodwait_wait_text(0) == "0 secondi"
+
+
+def test_sign_in_sanitizes_pasted_code_at_source():
+    # BLOCK (F-1a login hardening): la sanitizzazione a sole cifre è nel listener,
+    # così vale per TUTTI i chiamanti (GUI + headless). Incollare l'intero
+    # messaggio 777000 "Login code: 54321" deve passare a client.sign_in "54321".
+    fake = _FakeClient(behavior="ok", session="S")
+    lis = _listener(fake)
+    lis.request_code("+39")
+    res = lis.sign_in("Login code: 54321")
+    assert res["ok"] is True
+    assert any(c[0] == "sign_in" and c[1].get("code") == "54321" for c in fake.calls), \
+        "sign_in deve ricevere solo le cifre, non il messaggio intero"
+
+
+def test_request_code_floodwait_returns_retry_after():
+    # BLOCK (F-1a): request_code riconosce il FloodWait e ritorna un errore
+    # strutturato con `retry_after` (secondi), così GUI e headless sanno dire
+    # "attendi N s, non rilanciare" invece di un errore opaco.
+    fake = _FakeClient(fail_on="flood")
+    lis = _listener(fake)
+    res = lis.request_code("+39")
+    assert res["ok"] is False
+    assert res["retry_after"] == 42
+    assert "FloodWait" in res["error"] and "42" in res["error"]
+
+
+def test_request_code_floodwait_none_seconds_no_literal_none():
+    # BLOCK (Fable): se FloodWaitError non ha `seconds`, il messaggio NON deve
+    # dire "attendi None secondi"; retry_after resta None (campo strutturato).
+    fake = _FakeClient(fail_on="flood", flood_seconds=None)
+    res = _listener(fake).request_code("+39")
+    assert res["ok"] is False
+    assert res["retry_after"] is None
+    assert "None" not in res["error"] and "FloodWait" in res["error"]
 
 
 def test_request_code_missing_phone():
@@ -472,22 +569,20 @@ def test_run_telegram_login_rejects_nonpositive_api_id(monkeypatch):
     # BLOCK (CodeRabbit): api_id "0" o negativo è config invalida (Telethon
     # fallirebbe dopo con errore opaco). Deve dare return 2 SENZA avviare il flow
     # né persistere. Prima del fix `int(api_id or 0)` accettava 0/-1.
+    # Stub definito UNA volta fuori dal loop (niente closure su var di loop —
+    # rilievo DeepSource): se il flow parte, fallisce il test.
+    def _must_not_run(*a, **k):
+        raise AssertionError("il flow non deve partire con api_id non valido")
+
+    monkeypatch.setattr(HeadlessApp, "_telegram_login_flow", staticmethod(_must_not_run))
+    monkeypatch.setenv("TELEGRAM_API_HASH", "HH")  # hash presente => niente prompt
     for bad in ("0", "-1", "abc"):
         db = _login_db({"api_id": "OLD", "api_hash": "OLDH", "session_string": "OLDS"})
         app = HeadlessApp.__new__(HeadlessApp)
         app.db = db
         monkeypatch.setattr(sys, "argv", ["headless_main.py", "--telegram-login", "--api-id", bad])
-        monkeypatch.setenv("TELEGRAM_API_HASH", "HH")  # hash presente => niente prompt
-        flow_called = {"v": False}
-
-        def _flow(*a, **k):
-            flow_called["v"] = True
-            return (0, "S")
-
-        monkeypatch.setattr(HeadlessApp, "_telegram_login_flow", staticmethod(_flow))
         rc = app._run_telegram_login()
         assert rc == 2, f"api_id={bad!r} deve dare exit 2"
-        assert flow_called["v"] is False, f"api_id={bad!r}: il flow non deve partire"
         assert db.saved is None, f"api_id={bad!r}: niente persistenza"
 
 

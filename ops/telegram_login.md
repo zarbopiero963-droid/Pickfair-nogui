@@ -75,9 +75,25 @@ python headless_main.py --telegram-login
   («aspetta N secondi, NON rilanciare»): rilanciare peggiora il flood **e invalida
   i codici precedenti** (causa tipica del "codice non valido" dopo molti tentativi).
 - **Digita SOLO le cifre** del codice (es. `12345`). Se incolli l'intero messaggio
-  di servizio (`Login code: 12345`) va bene lo stesso: il comando **estrae solo le
-  cifre**. Usa **sempre l'ULTIMO codice ricevuto** — ogni nuovo invio invalida i
+  di servizio (`Login code: 12345`) va bene lo stesso: le **sole cifre** vengono
+  estratte. Usa **sempre l'ULTIMO codice ricevuto** — ogni nuovo invio invalida i
   precedenti.
+
+> **Nota (F-1a):** sanitizzazione del codice e gestione del FloodWait valgono su
+> **entrambi** i percorsi di login, **headless e GUI**. La GUI
+> (`controllers/telegram_controller.py`) usa un proprio client Telethon e **non**
+> passa da `TelegramListener`, quindi l'hardening è applicato in due punti che
+> condividono l'unico helper `telegram_listener.sanitize_login_code`:
+> - **codice → sole cifre ASCII**, estratte dopo il marcatore `code`/`codice` se
+>   presente (così `777000 Login code: 54321` → `54321`; le cifre non-ASCII sono
+>   scartate perché Telegram le rifiuta);
+> - **FloodWait**: headless `request_code` ritorna `retry_after` (secondi, **può
+>   essere `None`** se Telethon non lo popola); la GUI (`send_code` **e**
+>   `verify_code`) mostra «attendi N secondi, non rilanciare» — o «qualche
+>   secondo» quando i secondi non sono noti. Il testo d'attesa è generato
+>   dall'unico helper `telegram_listener.format_floodwait_wait_text` (distingue
+>   `None` da `0` con `is None`). Su FloodWait il client Telethon locale della
+>   GUI viene comunque disconnesso (nessun socket orfano).
 
 Flusso interattivo (`HeadlessApp._telegram_login_flow`):
 
