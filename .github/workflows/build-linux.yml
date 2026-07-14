@@ -33,27 +33,23 @@ jobs:
         with:
           python-version: "3.11"
 
-      # Toolchain di build: se e' presente il lock hash-verificato
-      # (requirements-build-linux.lock, generato in CI da
-      # generate-linux-lockfile.yaml) lo si installa con --require-hashes — ogni
-      # pacchetto DEVE avere un hash pinnato o pip rifiuta l'install (niente
-      # sostituzioni a monte non verificate). Finche' il lock non e' committato
-      # si resta sul percorso legacy non pinnato, cosi' la PR che introduce il
-      # meccanismo resta verde prima di copiare il lock dalla Job Summary.
+      # Toolchain di build hash-verificata (FAIL-CLOSED): la toolchain si
+      # installa SOLO dal lock (requirements-build-linux.lock, generato in CI da
+      # generate-linux-lockfile.yaml) con --require-hashes — ogni pacchetto DEVE
+      # avere un hash pinnato o pip rifiuta l'install (niente sostituzioni a
+      # monte non verificate). Se il lock manca/e' stato rimosso si FALLISCE, NON
+      # si ripiega su un install non pinnato (che riaprirebbe la supply-chain).
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y python3-tk
           python -m pip install --upgrade pip
-          if [ -f requirements-build-linux.lock ]; then
-            echo ">> install hash-locked (requirements-build-linux.lock)"
-            python -m pip install --require-hashes -r requirements-build-linux.lock
-          else
-            echo ">> install legacy non pinnato (lock assente)"
-            pip install -r requirements.txt
-            pip install customtkinter
-            pip install "pyinstaller>=6,<7"
+          if [ ! -f requirements-build-linux.lock ]; then
+            echo "::error::requirements-build-linux.lock mancante: la toolchain di build e' hash-locked (fail-closed). Genera il lock con generate-linux-lockfile.yaml e committalo."
+            exit 1
           fi
+          echo ">> install hash-locked (requirements-build-linux.lock)"
+          python -m pip install --require-hashes -r requirements-build-linux.lock
 
       # Fail-closed: la GUI usa tkinter/customtkinter; se il Python che compila
       # NON vede Tk (python3-tk mancante), l'eseguibile partirebbe senza

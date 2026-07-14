@@ -7,12 +7,13 @@
 #   - GUI                     -> customtkinter
 #   - packaging onefile       -> pyinstaller
 #
-# Il lock (requirements-build-linux.lock) si genera SOLO in CI
-# (.github/workflows/generate-linux-lockfile.yaml) e si copia dalla Job Summary:
-# gli hash dei wheel sono specifici per piattaforma + versione di Python del
-# runner (ubuntu-latest / CPython 3.11), quindi un lock generato in locale
-# farebbe fallire `pip install --require-hashes` sul runner. Vedi
-# ops/linux_appimage.md ("Toolchain di build hash-locked").
+# Il lock (requirements-build-linux.lock) si genera con il workflow dedicato
+# (.github/workflows/generate-linux-lockfile.yaml) e si copia dalla Job Summary.
+# E' riproducibile bit-a-bit a prescindere dalla macchina (--generate-hashes su
+# tutti i file di distribuzione + --no-annotate per non embeddare il path
+# assoluto del checkout + resolver pinnato); il gate anti-stale del workflow ne
+# e' la fonte di verita'. Vedi ops/linux_appimage.md ("Toolchain di build
+# hash-locked").
 -r requirements-dev.txt
 customtkinter
 pyinstaller>=6,<7

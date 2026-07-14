@@ -44,31 +44,45 @@ def test_in_covers_full_build_toolchain():
     assert "pyinstaller" in text, "manca pyinstaller (packaging onefile)"
 
 
-def test_generate_workflow_is_deterministic_and_gated():
+def test_generate_workflow_is_deterministic_and_reproducible():
     wf = _read(GEN_WF)
     # resolver deterministico pinnato
     assert 'pip==24.3.1' in wf, "pip non pinnato (resolver non deterministico)"
     assert 'pip-tools==7.4.1' in wf, "pip-tools non pinnato (resolver non deterministico)"
     # generazione con hash
     assert "--generate-hashes" in wf, "il lock va generato con --generate-hashes"
-    # header path-independent
+    # riproducibilita' cross-machine: header senza path (CUSTOM_COMPILE_COMMAND)
+    # + niente annotazioni "# via -r <path assoluto>" (--no-annotate)
     assert "CUSTOM_COMPILE_COMMAND" in wf, "manca CUSTOM_COMPILE_COMMAND (header con path assoluto)"
+    assert "--no-annotate" in wf, "manca --no-annotate (i commenti # via embeddano il path assoluto del checkout)"
     # consegna via Job Summary (non commit dal workflow)
     assert "GITHUB_STEP_SUMMARY" in wf, "il lock va pubblicato nella Job Summary"
-    # gate anti-stale + anti-deletion
+    # anti-deletion funzionante: serve la history completa (fetch-depth: 0),
+    # altrimenti il checkout shallow rende la guardia un no-op silenzioso.
+    assert "fetch-depth: 0" in wf, "manca fetch-depth: 0 (anti-deletion bypassata su checkout shallow)"
+    # gate anti-stale + anti-deletion vs base
     assert "diff -u" in wf, "manca il gate anti-stale (diff con la rigenerazione)"
     assert "base.sha" in wf, "manca la guardia anti-deletion vs base ref"
 
 
-def test_build_workflow_consumes_lock_gated():
+def test_generate_workflow_triggers_on_transitive_requirements():
+    # Il .in include transitivamente requirements.txt/dev/test: un bump la' deve
+    # ri-triggerare l'anti-stale, altrimenti il lock diventa silenziosamente
+    # obsoleto (rilievo GPT-5.6 Terra / Fable 5).
+    wf = _read(GEN_WF)
+    for req in ("requirements.txt", "requirements-dev.txt", "requirements-test.txt"):
+        assert f'"{req}"' in wf, f"il trigger del workflow non include {req}"
+
+
+def test_build_workflow_consumes_lock_fail_closed():
     wf = _read(BUILD_WF)
     assert "--require-hashes" in wf, "build-linux non installa hash-locked"
     assert "requirements-build-linux.lock" in wf, "build-linux non referenzia il lock"
-    # gated sulla presenza del lock, con fallback legacy
-    assert "[ -f requirements-build-linux.lock ]" in wf, "il consumo del lock non e' gated sulla presenza"
-    assert 'pip install "pyinstaller>=6,<7"' in wf, "manca il fallback legacy (lock assente)"
-    # il build deve ri-triggerare quando il lock cambia
-    assert "requirements-build-linux.lock" in wf
+    # FAIL-CLOSED: senza il lock si fallisce, NON si ripiega su un install non
+    # pinnato (che riaprirebbe la supply-chain). Rilievo Fugu Ultra / GPT.
+    assert "[ ! -f requirements-build-linux.lock ]" in wf, "il build non e' fail-closed sull'assenza del lock"
+    assert 'pip install "pyinstaller>=6,<7"' not in wf, "non deve esserci un fallback legacy non pinnato"
+    # il build deve ri-triggerare quando il lock/.in cambia
     assert "requirements-build-linux.in" in wf
 
 
