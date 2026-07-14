@@ -616,7 +616,10 @@ class TelegramListener:
             # dire all'utente di attendere invece di rilanciare.
             if name == "FloodWaitError":
                 seconds = getattr(exc, "seconds", None)
-                msg = f"FloodWait: troppi tentativi, attendi {seconds} secondi prima di riprovare (non rilanciare)"
+                # seconds mancante/None: messaggio generico invece di "attendi None
+                # secondi" (rilievo Fable). `retry_after` resta il valore grezzo.
+                wait_txt = f"{seconds} secondi" if seconds else "qualche secondo"
+                msg = f"FloodWait: troppi tentativi, attendi {wait_txt} prima di riprovare (non rilanciare)"
                 self._emit_status("FAILED", msg)
                 return {"ok": False, "error": msg, "retry_after": seconds}
             # str(TimeoutError()) e' vuoto: fallback sul nome classe (rilievo Codacy).

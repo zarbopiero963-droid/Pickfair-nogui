@@ -51,12 +51,13 @@ class _FakeSession:
 class _FakeClient:
     """Client Telethon fittizio (metodi async) per pilotare il login."""
 
-    def __init__(self, *, behavior="ok", session="SESS", code_hash="HASH", password_ok=True, fail_on=None):
+    def __init__(self, *, behavior="ok", session="SESS", code_hash="HASH", password_ok=True, fail_on=None, flood_seconds=42):
         self.behavior = behavior  # ok | 2fa | invalid_code | expired_code
         self.session = _FakeSession(session)
         self.code_hash = code_hash
         self.password_ok = password_ok
-        self.fail_on = fail_on  # None | "connect" | "send_code"
+        self.fail_on = fail_on  # None | "connect" | "send_code" | "flood"
+        self.flood_seconds = flood_seconds
         self.calls = []
         self._authorized = False
 
@@ -73,7 +74,7 @@ class _FakeClient:
         if self.fail_on == "send_code":
             raise RuntimeError("send_code boom")
         if self.fail_on == "flood":
-            raise FloodWaitError(seconds=42)
+            raise FloodWaitError(seconds=self.flood_seconds)
         return SimpleNamespace(phone_code_hash=self.code_hash)
 
     async def is_user_authorized(self):
@@ -184,6 +185,16 @@ def test_request_code_floodwait_returns_retry_after():
     assert res["ok"] is False
     assert res["retry_after"] == 42
     assert "FloodWait" in res["error"] and "42" in res["error"]
+
+
+def test_request_code_floodwait_none_seconds_no_literal_none():
+    # BLOCK (Fable): se FloodWaitError non ha `seconds`, il messaggio NON deve
+    # dire "attendi None secondi"; retry_after resta None (campo strutturato).
+    fake = _FakeClient(fail_on="flood", flood_seconds=None)
+    res = _listener(fake).request_code("+39")
+    assert res["ok"] is False
+    assert res["retry_after"] is None
+    assert "None" not in res["error"] and "FloodWait" in res["error"]
 
 
 def test_request_code_missing_phone():
