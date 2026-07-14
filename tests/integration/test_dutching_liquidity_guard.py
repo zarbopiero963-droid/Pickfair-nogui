@@ -205,6 +205,8 @@ def test_blocks_when_insufficient(monkeypatch):
     res = _controller(_Runtime(book=_book(10.0), config=_cfg(warning_only=False))).precheck(_payload())
     assert res["ok"] is False, res
     assert res.get("liquidity_shortfall"), res
+    # schema coerente coi due modi: liquidity_warning presente anche nel blocco.
+    assert res.get("liquidity_warning") is True, res
 
 
 def test_no_block_when_sufficient(monkeypatch):

@@ -801,6 +801,7 @@ class DutchingController:
         if liquidity.get("shortfall") and not self._liquidity_warning_only(config):
             return self._fail(
                 "Liquidità insufficiente sul book per una o più gambe",
+                liquidity_warning=True,
                 liquidity_shortfall=liquidity.get("shortfall", []),
             )
 
