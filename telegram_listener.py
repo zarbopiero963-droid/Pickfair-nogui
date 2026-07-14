@@ -55,16 +55,17 @@ def sanitize_login_code(raw) -> str:
     # `\s` nel gruppo, altrimenti "Login code: 54321\n777000" concatenerebbe le
     # cifre successive in "54321777000" (rilievo Fugu, regressione parser).
     # Marcatore "code"/"codice" delimitato: `\b` a SINISTRA (esclude il suffisso
-    # "Barcode"/"encode") e lookahead negativo `(?![a-z])` a DESTRA (esclude il
-    # PREFISSO "codebase"/"codeword", dove il `\b` iniziale è comunque
-    # soddisfatto e da solo tornerebbe "999" su "codebase 999 codice 12345"
-    # — rilievo CodeRabbit, provato con esecuzione). NON si usa `\b` a destra:
-    # fallirebbe quando il marcatore è ATTACCATO alle cifre ("code12345"),
-    # perché tra "e" e "1" (entrambi `\w`) non c'è word boundary → nessun match
-    # → il fallback concatenerebbe TUTTE le cifre ("id 999 code12345" →
-    # "99912345") — rilievo Fugu. Il lookahead accetta cifra/":"/spazio dopo il
-    # marcatore ma rifiuta una lettera, coprendo entrambi i casi.
-    match = re.search(r"\bcod(?:e|ice)(?![a-z])\D*([0-9]+)", text, re.IGNORECASE)
+    # "Barcode"/"encode") e lookahead negativo `(?![a-z_])` a DESTRA (esclude il
+    # PREFISSO che continua il token — "codebase"/"codeword" con una lettera,
+    # "code_foo" con un underscore: entrambi `\w` ma NON un vero marcatore). Il
+    # `\b` iniziale da solo tornerebbe "999" su "codebase 999 codice 12345"
+    # (rilievo CodeRabbit) e su "code_foo 999 codice12345" (rilievo GPT). NON si
+    # usa `\b` a destra: fallirebbe col marcatore ATTACCATO alle cifre
+    # ("code12345"), perché tra "e" e "1" (entrambi `\w`) non c'è word boundary →
+    # nessun match → il fallback concatenerebbe TUTTE le cifre ("id 999
+    # code12345" → "99912345", rilievo Fugu). Il lookahead accetta cifra/":"/
+    # spazio dopo il marcatore ma rifiuta lettera/underscore, coprendo i casi.
+    match = re.search(r"\bcod(?:e|ice)(?![a-z_])\D*([0-9]+)", text, re.IGNORECASE)
     segment = match.group(1) if match else text
     return "".join(ch for ch in segment if ch in "0123456789")
 
