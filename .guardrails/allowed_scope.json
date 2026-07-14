@@ -4,6 +4,20 @@
     "max_files": 8
   },
   "tasks": {
+    "liquidity_block": {
+      "description": "#383 follow-up di PR2b (autorizzata dall'owner, safety-critical money-management => merge manuale owner). Trasforma il liquidity guard da OSSERVAZIONALE a BLOCCO reale (opt-in). (1) Corregge la DIREZIONE LADDER sul book reale (decisione owner): BACK -> availableToBack, LAY -> availableToLay (Betfair-standard, coerente con direct_best_price/betfair_client), invertendo ANCHE la regola di crossing (_liquidity_crosses: BACK book_price>=order_price, LAY <=). La versione osservazionale mirrorava il matcher del simulatore (BACK->availableToLay) che sul book reale legge il lato opposto. (2) BLOCCO in precheck: se shortfall e non warning_only => _fail prima dei side-effect (come book% gate); helper _liquidity_warning_only con fallback opt-in. (3) DEFAULT OPT-IN: trading_config.LIQUIDITY_WARNING_ONLY e RoserpinaConfig.liquidity_warning_only passano a True => il blocco parte in AVVISO, l'owner lo arma dalla GUI. (4) GUI: ri-espone la checkbox 'solo avviso' (⚠ togliere = BLOCCA) nel tab Roserpina (var/load/save gia' esistenti). Unita' LAY verificate: item['stake'] e' backer-stake (liability separata) => confronto omogeneo con le size del book, nessuna correzione. Fail-open su book mancante confermato. Test hard (blocco quando insufficiente, allow sufficiente, soglia block/allow, gambe LAY su availableToLay, avviso in warning-mode senza blocco, side-mapping BACK->availableToBack, filtro prezzo, fail-open, guard-off, helper fail-safe, round-trip config, GUI load/save/validazione).",
+      "allow_tests": true,
+      "files": [
+        "controllers/dutching_controller.py",
+        "core/system_state.py",
+        "trading_config.py",
+        "mini_gui.py",
+        "tests/integration/test_dutching_liquidity_guard.py",
+        "ops/config_console.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 8
+    },
     "gui_telegram_alert_config": {
       "description": "G3 del programma GUI-parametri (autorizzata dall'owner). Espone in un nuovo tab 'Alert' le impostazioni di routing/soglie delle notifiche Telegram finora solo-DB: alerts_enabled, alerts_chat_id/name, min_alert_severity (dropdown INFO/WARNING/ERROR/HIGH/CRITICAL), alert_cooldown_sec (>=0), alert_dedup_enabled, alert_format_rich. Sono GIA' enforced live (services/telegram_alerts_service.py: notify_alert/_should_send/cooldown/dedup/_format_alert_text): pura esposizione + validazione, NESSUNA modifica al backend (il service settings_service.py/setting_service.py load_telegram_config_row + save_telegram_alert_settings e' gia' completo). Il saver dedicato read-merge la riga telegram => credenziali di sessione preservate. Validazione: severita' vincolata dal dropdown, cooldown intero >=0, chat_id obbligatorio quando alerts_enabled. PR safety-relevant (off-switch di notifiche di safety) => merge manuale dell'owner; la checkbox principale ha label di warning. Test hard (load, save round-trip via kwargs, blocco severita'/cooldown invalidi, blocco enabled-senza-chat, disabled-consente-chat-vuota, servizio incompatibile/errore => nessun crash, round-trip contro SettingsService reale). Doc ops/config_console.md.",
       "allow_tests": true,

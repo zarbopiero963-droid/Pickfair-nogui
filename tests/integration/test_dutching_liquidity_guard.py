@@ -1,15 +1,18 @@
-"""PR2b — Liquidity guard OSSERVAZIONALE (warning-only) al submit dutching.
+"""#383 — Liquidity guard: BLOCCO reale (opt-in) al submit dutching.
 
-Decisione owner: in questa PR il guard NON blocca mai; calcola la liquidita'
-ESEGUIBILE per gamba (lato opposto del book, filtrata per prezzo eseguibile,
-mirror del matcher del codice) e la segnala come WARNING
-(`liquidity_warning`/`liquidity_shortfall` nel risultato del precheck). Il BLOCCO
-reale (con verifica della semantica esatta) e' rimandato a una PR di follow-up.
+Il guard calcola la liquidita' ESEGUIBILE per gamba sul book REALE (lato
+Betfair-standard: BACK -> availableToBack, LAY -> availableToLay, filtrata per
+prezzo eseguibile) e:
+- se `liquidity_warning_only=False` (blocco armato) => BLOCCA il submit;
+- se `liquidity_warning_only=True` (default opt-in) => solo AVVISO
+  (`liquidity_warning`/`liquidity_shortfall`).
+Book assente => FAIL-OPEN (nessuno shortfall => nessun blocco).
 
-Coperto: warning quando insufficiente (MAI blocco), nessun warning quando
-sufficiente, fail-open (book/selezione mancante), guard-off, filtro prezzo
-(livelli non eseguibili esclusi), side-mapping, helper fail-safe, round-trip
-config, wiring + validazione GUI.
+Coperto: blocco quando insufficiente (block mode), avviso senza blocco (warning
+mode), nessun blocco quando sufficiente, soglia block/allow, gambe LAY
+(availableToLay), fail-open (book/selezione mancante), guard-off, filtro prezzo,
+side-mapping (BACK legge availableToBack), helper fail-safe, round-trip config,
+wiring + validazione GUI.
 """
 from __future__ import annotations
 
@@ -47,7 +50,7 @@ class _Config:
     liquidity_guard_enabled = True
     liquidity_multiplier = 3.0
     min_liquidity_absolute = 50.0
-    liquidity_warning_only = False
+    liquidity_warning_only = False  # block mode di default in questi test
 
 
 class _RiskDesk:
@@ -89,17 +92,24 @@ class _Runtime:
         self.market_tracker = _MarketTracker(book)
 
 
-def _book(lay_size, selection_ids=(1, 2), lay_price=2.0):
-    # Gambe di test = BACK => il gate legge availableToLay (lato opposto).
-    # availableToBack e' volutamente ALTO: se il mapping fosse errato leggerebbe
-    # 9999 e non segnalerebbe mai.
+def _cfg(warning_only=False, guard_enabled=True):
+    c = _Config()
+    c.liquidity_warning_only = warning_only
+    c.liquidity_guard_enabled = guard_enabled
+    return c
+
+
+def _book(back_size, selection_ids=(1, 2), back_price=2.0):
+    # Gambe di test = BACK => il gate legge availableToBack (Betfair-standard).
+    # availableToLay e' volutamente ALTO: se il mapping fosse errato (lato sim)
+    # leggerebbe 9999 e non bloccherebbe/segnalerebbe mai.
     return {
         "runners": [
             {
                 "selectionId": sid,
                 "ex": {
-                    "availableToBack": [{"price": 2.0, "size": 9999.0}],
-                    "availableToLay": [{"price": float(lay_price), "size": float(lay_size)}],
+                    "availableToBack": [{"price": float(back_price), "size": float(back_size)}],
+                    "availableToLay": [{"price": 2.0, "size": 9999.0}],
                 },
             }
             for sid in selection_ids
@@ -108,21 +118,37 @@ def _book(lay_size, selection_ids=(1, 2), lay_price=2.0):
 
 
 def _book_two_levels():
-    # Un livello eseguibile piccolo (price 2.0) + uno enorme NON eseguibile
-    # (price 3.0, non incrocia un BACK@2.0). Solo il primo deve contare.
+    # BACK@2.0: un livello eseguibile (price 2.0, size 5) + uno NON eseguibile
+    # (price 1.5 < 2.0, size 9999). Solo il primo conta (BACK: book_price>=order).
     return {
         "runners": [
             {
                 "selectionId": sid,
                 "ex": {
-                    "availableToBack": [{"price": 2.0, "size": 9999.0}],
-                    "availableToLay": [
+                    "availableToBack": [
                         {"price": 2.0, "size": 5.0},
-                        {"price": 3.0, "size": 9999.0},
+                        {"price": 1.5, "size": 9999.0},
                     ],
+                    "availableToLay": [{"price": 2.0, "size": 9999.0}],
                 },
             }
             for sid in (1, 2)
+        ]
+    }
+
+
+def _lay_book(lay_size, selection_ids=(1, 2)):
+    # Gambe LAY => il gate legge availableToLay. availableToBack alto come decoy.
+    return {
+        "runners": [
+            {
+                "selectionId": sid,
+                "ex": {
+                    "availableToLay": [{"price": 2.0, "size": float(lay_size)}],
+                    "availableToBack": [{"price": 2.0, "size": 9999.0}],
+                },
+            }
+            for sid in selection_ids
         ]
     }
 
@@ -138,14 +164,25 @@ def _payload():
     }
 
 
-def _patch_calc(monkeypatch, book_pct=90.0):
+def _payload_lay():
+    return {
+        "market_id": "1.300",
+        "total_stake": 100.0,
+        "selections": [
+            {"selectionId": 1, "price": 2.0, "side": "LAY"},
+            {"selectionId": 2, "price": 2.0, "side": "LAY"},
+        ],
+    }
+
+
+def _patch_calc(monkeypatch, side="BACK", book_pct=90.0):
     def fake(selections, total_stake):
         _ = selections, total_stake
+        leg = {"price": 2.0, "stake": 50.0, "side": side}
+        if side == "LAY":
+            leg["liability"] = 50.0  # stake*(price-1)
         return (
-            [
-                {"selectionId": 1, "price": 2.0, "stake": 50.0, "side": "BACK"},
-                {"selectionId": 2, "price": 2.0, "stake": 50.0, "side": "BACK"},
-            ],
+            [dict(leg, selectionId=1), dict(leg, selectionId=2)],
             1.0,
             float(book_pct),
         )
@@ -160,68 +197,96 @@ def _controller(runtime):
 
 
 # ==========================================================================
-# 1) OSSERVAZIONE (warning-only): non blocca MAI, segnala lo shortfall
+# 1) BLOCCO (block mode: liquidity_warning_only=False)
 # ==========================================================================
-def test_warns_but_never_blocks_when_insufficient(monkeypatch):
-    # stake 50 * mult 3 = 150 richiesti; eseguibile (availableToLay@2.0) = 10.
+def test_blocks_when_insufficient(monkeypatch):
+    # stake 50 * mult 3 = 150 richiesti; eseguibile (availableToBack@2.0) = 10 => BLOCCA.
     _patch_calc(monkeypatch)
-    res = _controller(_Runtime(book=_book(10.0))).precheck(_payload())
-    assert res["ok"] is True, res           # OSSERVAZIONALE: mai blocco
+    res = _controller(_Runtime(book=_book(10.0), config=_cfg(warning_only=False))).precheck(_payload())
+    assert res["ok"] is False, res
+    assert res.get("liquidity_shortfall"), res
+
+
+def test_no_block_when_sufficient(monkeypatch):
+    _patch_calc(monkeypatch)
+    res = _controller(_Runtime(book=_book(1000.0), config=_cfg(warning_only=False))).precheck(_payload())
+    assert res["ok"] is True
+    assert res.get("liquidity_warning") is False
+
+
+def test_block_threshold_boundary(monkeypatch):
+    # required = 50*3 = 150; blocca se available < 150.
+    _patch_calc(monkeypatch)
+    assert _controller(_Runtime(book=_book(149.0), config=_cfg())).precheck(_payload())["ok"] is False
+    assert _controller(_Runtime(book=_book(150.0), config=_cfg())).precheck(_payload())["ok"] is True
+
+
+def test_lay_leg_reads_available_to_lay_and_blocks(monkeypatch):
+    # Gambe LAY: legge availableToLay (10 insufficiente). stake=backer-stake.
+    _patch_calc(monkeypatch, side="LAY")
+    res = _controller(_Runtime(book=_lay_book(10.0), config=_cfg(warning_only=False))).precheck(_payload_lay())
+    assert res["ok"] is False, res
+
+
+def test_lay_leg_sufficient_allows(monkeypatch):
+    _patch_calc(monkeypatch, side="LAY")
+    res = _controller(_Runtime(book=_lay_book(1000.0), config=_cfg(warning_only=False))).precheck(_payload_lay())
+    assert res["ok"] is True, res
+
+
+# ==========================================================================
+# 2) AVVISO (warning mode: liquidity_warning_only=True) => non blocca
+# ==========================================================================
+def test_warns_but_allows_in_warning_only_mode(monkeypatch):
+    _patch_calc(monkeypatch)
+    res = _controller(_Runtime(book=_book(10.0), config=_cfg(warning_only=True))).precheck(_payload())
+    assert res["ok"] is True, res
     assert res.get("liquidity_warning") is True
     assert res["liquidity_shortfall"], res
 
 
-def test_no_warning_when_sufficient(monkeypatch):
+def test_side_mapping_back_reads_available_to_back(monkeypatch):
+    # BACK legge availableToBack (10, insufficiente), NON availableToLay (9999).
     _patch_calc(monkeypatch)
-    res = _controller(_Runtime(book=_book(1000.0))).precheck(_payload())
-    assert res["ok"] is True
-    assert res.get("liquidity_warning") is False
-    assert res.get("liquidity_shortfall") == []
-
-
-def test_fail_open_when_book_missing(monkeypatch):
-    _patch_calc(monkeypatch)
-    res = _controller(_Runtime(book=None)).precheck(_payload())
-    assert res["ok"] is True
-    assert res.get("liquidity_warning") is False
-
-
-def test_fail_open_when_selection_absent(monkeypatch):
-    _patch_calc(monkeypatch)
-    res = _controller(_Runtime(book=_book(10.0, selection_ids=(999,)))).precheck(_payload())
-    assert res["ok"] is True
-    assert res.get("liquidity_warning") is False
-
-
-def test_guard_disabled_no_observation(monkeypatch):
-    _patch_calc(monkeypatch)
-    cfg = _Config()
-    cfg.liquidity_guard_enabled = False
-    res = _controller(_Runtime(book=_book(10.0), config=cfg)).precheck(_payload())
-    assert res["ok"] is True
-    assert res.get("liquidity_warning") is False
-    assert res.get("liquidity_shortfall") == []
+    res = _controller(_Runtime(book=_book(10.0), config=_cfg(warning_only=True))).precheck(_payload())
+    assert res.get("liquidity_warning") is True
 
 
 def test_price_filter_excludes_non_executable_levels(monkeypatch):
-    # Solo il livello eseguibile (5.0 @2.0) conta; il livello enorme non
-    # eseguibile (9999 @3.0) e' escluso => 5 < 150 => warning.
+    # Solo il livello eseguibile (5.0 @2.0) conta; il non eseguibile (9999 @1.5)
+    # e' escluso => 5 < 150 => warning.
     _patch_calc(monkeypatch)
-    res = _controller(_Runtime(book=_book_two_levels())).precheck(_payload())
-    assert res["ok"] is True
+    res = _controller(_Runtime(book=_book_two_levels(), config=_cfg(warning_only=True))).precheck(_payload())
     assert res.get("liquidity_warning") is True
     assert res["liquidity_shortfall"][0]["available"] == 5.0
 
 
-def test_side_mapping_back_reads_available_to_lay(monkeypatch):
-    # BACK legge availableToLay (10, insufficiente), NON availableToBack (9999).
+# ==========================================================================
+# 3) FAIL-OPEN e guard-off (mai blocco anche in block mode)
+# ==========================================================================
+def test_fail_open_when_book_missing_block_mode(monkeypatch):
     _patch_calc(monkeypatch)
-    res = _controller(_Runtime(book=_book(10.0))).precheck(_payload())
-    assert res.get("liquidity_warning") is True
+    res = _controller(_Runtime(book=None, config=_cfg(warning_only=False))).precheck(_payload())
+    assert res["ok"] is True
+    assert res.get("liquidity_warning") is False
+
+
+def test_fail_open_when_selection_absent_block_mode(monkeypatch):
+    _patch_calc(monkeypatch)
+    res = _controller(_Runtime(book=_book(10.0, selection_ids=(999,)), config=_cfg(warning_only=False))).precheck(_payload())
+    assert res["ok"] is True
+
+
+def test_guard_disabled_no_block(monkeypatch):
+    _patch_calc(monkeypatch)
+    res = _controller(_Runtime(book=_book(10.0), config=_cfg(warning_only=False, guard_enabled=False))).precheck(_payload())
+    assert res["ok"] is True
+    assert res.get("liquidity_warning") is False
+    assert res.get("liquidity_shortfall") == []
 
 
 # ==========================================================================
-# 2) Helper fail-safe
+# 4) Helper fail-safe
 # ==========================================================================
 @pytest.mark.parametrize(
     "raw,expected",
@@ -242,8 +307,23 @@ def test_min_liquidity_absolute_fail_safe(raw, expected):
     assert DutchingController._min_liquidity_absolute(cfg) == expected
 
 
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (None, bool(trading_config.LIQUIDITY_WARNING_ONLY)),  # default OPT-IN (True)
+        (True, True),
+        (False, False),
+    ],
+)
+def test_liquidity_warning_only_default(raw, expected):
+    from controllers.dutching_controller import DutchingController
+
+    cfg = SimpleNamespace() if raw is None else SimpleNamespace(liquidity_warning_only=raw)
+    assert DutchingController._liquidity_warning_only(cfg) is expected
+
+
 # ==========================================================================
-# 3) CONFIG round-trip sul servizio reale
+# 5) CONFIG round-trip sul servizio reale
 # ==========================================================================
 class _InMemoryDB:
     def __init__(self, initial=None):
@@ -264,14 +344,14 @@ def test_liquidity_config_round_trip():
             liquidity_guard_enabled=False,
             liquidity_multiplier=4.5,
             min_liquidity_absolute=0.0,
-            liquidity_warning_only=True,
+            liquidity_warning_only=False,
         )
     )
     rs = SettingsService(db).load_roserpina_config()
     assert rs.liquidity_guard_enabled is False
     assert rs.liquidity_multiplier == 4.5
     assert rs.min_liquidity_absolute == 0.0
-    assert rs.liquidity_warning_only is True
+    assert rs.liquidity_warning_only is False
 
 
 def test_liquidity_config_defaults_from_trading_config():
@@ -279,11 +359,13 @@ def test_liquidity_config_defaults_from_trading_config():
     assert rs.liquidity_guard_enabled == bool(trading_config.LIQUIDITY_GUARD_ENABLED)
     assert rs.liquidity_multiplier == float(trading_config.LIQUIDITY_MULTIPLIER)
     assert rs.min_liquidity_absolute == float(trading_config.MIN_LIQUIDITY_ABSOLUTE)
+    # Default opt-in: il blocco parte in avviso.
     assert rs.liquidity_warning_only == bool(trading_config.LIQUIDITY_WARNING_ONLY)
+    assert rs.liquidity_warning_only is True
 
 
 # ==========================================================================
-# 4) GUI wiring
+# 6) GUI wiring (checkbox "solo avviso" ri-esposta)
 # ==========================================================================
 class _CapturingService(FakeSettingsService):
     def __init__(self, *a, **k):
@@ -318,7 +400,8 @@ def test_gui_loads_liquidity_fields(monkeypatch):
         app.destroy()
 
 
-def test_gui_saves_liquidity_fields(monkeypatch):
+def test_gui_saves_liquidity_fields_arming_block(monkeypatch):
+    # Togliere "solo avviso" (=> False) arma il blocco reale.
     app = _make_gui(monkeypatch)
     try:
         app.rs_liq_multiplier_var.set("4")
