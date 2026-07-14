@@ -224,6 +224,38 @@ stato "non configurato" via GUI (per il watchdog e' irrilevante: None == attivo)
 automatiche: le checkbox critiche hanno label di **warning** e il merge di questa
 PR e' **manuale dell'owner** (safety-relevant), pur toccando solo GUI+test+doc.
 
+## Impostazioni Alert Telegram editabili in GUI (tab Alert) — G3
+
+Il routing e le soglie delle notifiche di alert su Telegram erano configurabili
+solo via DB. Ora il tab **Alert** le espone (distinte dalle credenziali di
+sessione nel tab Telegram). Effetto **LIVE** (il service rilegge ad ogni alert,
+nessun riavvio):
+
+- **Alert Telegram ATTIVI** (`alerts_enabled`) — ⚠ disattivarli sopprime anche
+  gli alert di anomalia/incidente su cui l'operatore fa affidamento.
+- **Chat ID destinazione** (`alerts_chat_id`, testo libero — **obbligatorio se
+  alert attivi**) e **Nome chat** (`alerts_chat_name`, facoltativo).
+- **Severita' minima** (`min_alert_severity`) — dropdown vincolato:
+  `INFO / WARNING / ERROR / HIGH / CRITICAL`.
+- **Cooldown anti-spam** (`alert_cooldown_sec`, intero `>= 0`).
+- **Deduplica** (`alert_dedup_enabled`) e **Formato ricco** (`alert_format_rich`).
+
+**Gia' enforced.** Consumati live da `services/telegram_alerts_service.py`
+(`notify_alert`, `_should_send`, cooldown/dedup, `_format_alert_text`). La PR e'
+pura **esposizione + validazione**: il service
+(`services/settings_service.py`/`setting_service.py`: `load_telegram_config_row`
++ `save_telegram_alert_settings`) e' gia' completo, **nessuna modifica al
+backend**. Il saver dedicato **read-merge** la riga telegram, quindi le
+credenziali di sessione **sono preservate**.
+
+**Validazione.** Severita' vincolata dal dropdown; cooldown intero `>= 0`;
+`chat_id` obbligatorio quando gli alert sono attivi (altrimenti il service farebbe
+un no-op silenzioso `alerts_chat_id_missing`).
+
+**Safety.** Espone un off-switch di notifiche di safety: la checkbox principale
+ha label di **warning** e il merge di questa PR e' **manuale dell'owner**
+(safety-relevant), pur toccando solo GUI+test+doc.
+
 ## Vincoli (safety)
 
 - Non modifica la logica dei gate (deploy gate, fail-closed #350): **espone e
