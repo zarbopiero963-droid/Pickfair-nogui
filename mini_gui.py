@@ -1142,19 +1142,22 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
     def _save_watchdog_settings(self):
         svc = self.settings_service
-        required = ("save_anomaly_enabled", "save_anomaly_alerts_enabled", "save_anomaly_actions_enabled")
-        if not all(hasattr(svc, m) for m in required):
+        if not hasattr(svc, "save_settings"):
             self._safe_show_error("Errore", "Servizio watchdog non disponibile.")
             return
         try:
-            # Toggle indipendenti a chiave singola: nessun campo protetto co-locato
-            # da preservare (a differenza della Simulazione). NB: salvando
+            # Scrittura ATOMICA dei tre toggle in UN solo save_settings: evita stati
+            # parziali del watchdog (GUI vs DB) se una scrittura fallisse a meta'.
+            # La coercizione int(bool(...)) rispecchia i metodi save_anomaly_* del
+            # service e le chiavi lette da load_anomaly_*. NB: salvando
             # anomaly_enabled si scrive un booleano ESPLICITO, che chiude lo stato
-            # tri-state "non configurato = default-ON" (True e None sono comunque
-            # equivalenti a watchdog attivo; solo togliere la spunta => disattiva).
-            svc.save_anomaly_enabled(bool(self.anomaly_enabled_var.get()))
-            svc.save_anomaly_alerts_enabled(bool(self.anomaly_alerts_enabled_var.get()))
-            svc.save_anomaly_actions_enabled(bool(self.anomaly_actions_enabled_var.get()))
+            # tri-state "non configurato = default-ON" (True e None restano entrambi
+            # = watchdog attivo; solo togliere la spunta => disattiva).
+            svc.save_settings({
+                "anomaly_enabled": int(bool(self.anomaly_enabled_var.get())),
+                "anomaly_alerts_enabled": int(bool(self.anomaly_alerts_enabled_var.get())),
+                "anomaly_actions_enabled": int(bool(self.anomaly_actions_enabled_var.get())),
+            })
         except Exception as exc:
             self._safe_show_error("Errore salvataggio Watchdog", str(exc))
             return

@@ -30,7 +30,8 @@ class _CapturingService(FakeSettingsService):
 
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
-        self.saved = {}
+        self.saved_settings = None
+        self.save_calls = 0
 
     def load_anomaly_enabled(self):
         return type(self).anomaly_enabled_return
@@ -41,14 +42,17 @@ class _CapturingService(FakeSettingsService):
     def load_anomaly_actions_enabled(self):
         return type(self).anomaly_actions_return
 
-    def save_anomaly_enabled(self, enabled):
-        self.saved["enabled"] = enabled
+    def save_settings(self, data):
+        # Scrittura ATOMICA: un solo save_settings con i tre toggle.
+        self.save_calls += 1
+        self.saved_settings = dict(data)
 
-    def save_anomaly_alerts_enabled(self, enabled):
-        self.saved["alerts"] = enabled
 
-    def save_anomaly_actions_enabled(self, enabled):
-        self.saved["actions"] = enabled
+class _ServiceSaveRaises(_CapturingService):
+    """save_settings solleva (es. errore DB transitorio)."""
+
+    def save_settings(self, data):
+        raise RuntimeError("write error simulato")
 
 
 class _ServiceEnabledTrue(_CapturingService):
@@ -108,27 +112,44 @@ def test_gui_saves_anomaly_toggles(monkeypatch):
         app.anomaly_alerts_enabled_var.set(True)
         app.anomaly_actions_enabled_var.set(True)
         app._save_watchdog_settings()
-        assert app.settings_service.saved == {"enabled": True, "alerts": True, "actions": True}
+        # Scrittura ATOMICA: UN solo save_settings con tutti e 3 i toggle (int).
+        assert app.settings_service.save_calls == 1
+        assert app.settings_service.saved_settings == {
+            "anomaly_enabled": 1,
+            "anomaly_alerts_enabled": 1,
+            "anomaly_actions_enabled": 1,
+        }
     finally:
         app.destroy()
 
 
 def test_gui_disable_persists_explicit_false(monkeypatch):
-    # Togliere la spunta al watchdog (partito ON via None) => persiste False.
+    # Togliere la spunta al watchdog (partito ON via None) => persiste 0 (False).
     app = _make(monkeypatch, _ServiceEnabledNone)
     try:
         assert bool(app.anomaly_enabled_var.get()) is True
         app.anomaly_enabled_var.set(False)
         app._save_watchdog_settings()
-        assert app.settings_service.saved.get("enabled") is False
+        assert app.settings_service.saved_settings["anomaly_enabled"] == 0
     finally:
         app.destroy()
 
 
 def test_gui_save_without_service_methods_no_crash(monkeypatch):
-    # Servizio privo dei save_anomaly_*: nessun crash, nessun salvataggio.
+    # Servizio privo di save_settings: nessun crash, nessun salvataggio.
     app = _make(monkeypatch, _ServiceNoAnomaly)
     try:
         app._save_watchdog_settings()  # non deve sollevare
+        assert not hasattr(app.settings_service, "saved_settings")
+    finally:
+        app.destroy()
+
+
+def test_gui_save_error_no_crash(monkeypatch):
+    # save_settings che solleva => gestito, nessun crash (errore all'utente).
+    app = _make(monkeypatch, _ServiceSaveRaises)
+    try:
+        app.anomaly_enabled_var.set(True)
+        app._save_watchdog_settings()  # non deve propagare l'eccezione
     finally:
         app.destroy()
