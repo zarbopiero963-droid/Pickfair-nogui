@@ -258,6 +258,7 @@ class SettingsService:
             liquidity_multiplier=self._f(data, "roserpina.liquidity_multiplier", trading_config.LIQUIDITY_MULTIPLIER),
             min_liquidity_absolute=self._f(data, "roserpina.min_liquidity_absolute", trading_config.MIN_LIQUIDITY_ABSOLUTE),
             liquidity_warning_only=self._b(data, "roserpina.liquidity_warning_only", trading_config.LIQUIDITY_WARNING_ONLY),
+            min_price=self._f(data, "roserpina.min_price", trading_config.MIN_PRICE),
         )
 
     def save_roserpina_config(self, config: RoserpinaConfig) -> None:
@@ -286,6 +287,7 @@ class SettingsService:
             "roserpina.liquidity_multiplier": config.liquidity_multiplier,
             "roserpina.min_liquidity_absolute": config.min_liquidity_absolute,
             "roserpina.liquidity_warning_only": int(bool(config.liquidity_warning_only)),
+            "roserpina.min_price": config.min_price,
         }
 
         # Preserve previously persisted hard-stop limits when caller omits these optional fields.

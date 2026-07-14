@@ -197,6 +197,25 @@ class DutchingController:
             pass
         return float(trading_config.MIN_LIQUIDITY_ABSOLUTE)
 
+    @staticmethod
+    def _min_price(config) -> float:
+        """Quota minima di strategia (floor editabile) con fallback FAIL-SAFE.
+
+        Clampata a >= 1.01 (minimo Betfair inviolabile): config assente / non
+        numerica / non finita / < 1.01 ricade su max(1.01, trading_config.MIN_PRICE).
+        NB: il floor hard `price <= 1.01` in validate() resta INDIPENDENTE e
+        immune-da-config; questo e' un floor di strategia SOPRA di esso.
+        """
+        raw = getattr(config, "min_price", None)
+        if raw is not None:
+            try:
+                val = float(raw)
+                if math.isfinite(val) and val >= 1.01:
+                    return val
+            except (TypeError, ValueError):
+                pass
+        return max(1.01, float(trading_config.MIN_PRICE))
+
     def _market_book(self, market_id):
         """Book di mercato dalla CACHE (market_tracker), SENZA I/O.
 
@@ -607,6 +626,9 @@ class DutchingController:
                 return self._fail("Nessuna selezione")
 
             seen_selection_ids = set()
+            # Floor di strategia editabile (default 1.02), SOPRA il minimo Betfair
+            # 1.01 hard-coded piu' sotto. Fail-safe: mai < 1.01.
+            min_price = self._min_price(self._config())
 
             for idx, selection in enumerate(selections, start=1):
                 if not isinstance(selection, dict):
@@ -634,6 +656,11 @@ class DutchingController:
 
                 if price <= 1.01:
                     return self._fail(f"Quota non valida alla selezione #{idx}: {price}")
+
+                if price < min_price:
+                    return self._fail(
+                        f"Quota {price} sotto il minimo configurato ({min_price}) alla selezione #{idx}"
+                    )
 
                 if "side" in selection:
                     side = self._resolve_selection_side(selection)
