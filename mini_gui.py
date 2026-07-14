@@ -228,6 +228,7 @@ from core.event_bus import EventBus
 from executor_manager import ExecutorManager
 from shutdown_manager import ShutdownManager
 
+import trading_config
 from services.settings_service import SettingsService
 from services.betfair_service import BetfairService
 from services.telegram_service import TelegramService
@@ -627,6 +628,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.rs_max_daily_loss_var = self._make_string_var("")
         self.rs_max_open_exposure_var = self._make_string_var("")
         self.rs_max_drawdown_hard_stop_var = self._make_string_var("")
+        # Book % (over-round): soglie avviso/blocco, applicate al submit dutching.
+        # Default allineati alle costanti di sistema (no valori hardcoded a parte).
+        self.rs_book_warning_var = self._make_string_var(str(trading_config.BOOK_WARNING))
+        self.rs_book_block_var = self._make_string_var(str(trading_config.BOOK_BLOCK))
         self.rs_allow_recovery_var = self._make_bool_var(True)
         self.rs_anti_dup_var = self._make_bool_var(True)
         self.rs_risk_profile_var = self._make_string_var("BALANCED")
@@ -954,6 +959,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._labeled_entry(outer, "Hard-stop: Perdita Giornaliera Max (€, vuoto=non impostato)", self.rs_max_daily_loss_var)
         self._labeled_entry(outer, "Hard-stop: Esposizione Aperta Max (€, vuoto=non impostato)", self.rs_max_open_exposure_var)
         self._labeled_entry(outer, "Hard-stop: Drawdown Max % (0-100, vuoto=non impostato)", self.rs_max_drawdown_hard_stop_var)
+        self._labeled_entry(outer, "Book Warning % (avviso over-round)", self.rs_book_warning_var)
+        self._labeled_entry(outer, "Book Block % (blocca submit se book >= soglia)", self.rs_book_block_var)
 
         rp = ctk.CTkFrame(outer)
         rp.pack(fill=tk.X, padx=12, pady=6)
@@ -1156,6 +1163,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 self.rs_max_daily_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_daily_loss", None)))
                 self.rs_max_open_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_open_exposure", None)))
                 self.rs_max_drawdown_hard_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_hard_stop_pct", None)))
+                self.rs_book_warning_var.set(str(getattr(rs, "book_warning", trading_config.BOOK_WARNING)))
+                self.rs_book_block_var.set(str(getattr(rs, "book_block", trading_config.BOOK_BLOCK)))
                 self.rs_allow_recovery_var.set(bool(getattr(rs, "allow_recovery", self.rs_allow_recovery_var.get())))
                 self.rs_anti_dup_var.set(bool(getattr(rs, "anti_duplication_enabled", self.rs_anti_dup_var.get())))
                 risk_profile = getattr(rs, "risk_profile", None)
@@ -1338,9 +1347,34 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             raise ValueError(f"{label}: la percentuale non puo' superare 100.")
         return parsed
 
+    @staticmethod
+    def _parse_book_pct(raw, label):
+        """Parsa una soglia book% dalla GUI: numerica, FINITA e > 0.
+
+        A differenza degli hard-stop, il campo book NON e' opzionale (ha sempre
+        un default): un valore vuoto / non numerico / nan / inf / <= 0 e' un
+        errore ESPLICITO che interrompe il salvataggio con messaggio chiaro, cosi'
+        non si persiste un valore incoerente col gate (che, lato runtime, lo
+        scarterebbe col fallback, mostrando pero' in GUI una soglia diversa da
+        quella realmente applicata — drift).
+        """
+        text = (raw or "").strip()
+        try:
+            val = float(text)
+        except (TypeError, ValueError):
+            raise ValueError(f"{label}: inserisci un numero valido.")
+        if not math.isfinite(val) or val <= 0.0:
+            raise ValueError(f"{label}: deve essere un numero finito maggiore di 0.")
+        return val
+
     def _save_roserpina_settings(self):
         try:
             from core.system_state import RoserpinaConfig, RiskProfile
+
+            book_warning = self._parse_book_pct(self.rs_book_warning_var.get(), "Book Warning %")
+            book_block = self._parse_book_pct(self.rs_book_block_var.get(), "Book Block %")
+            if book_warning > book_block:
+                raise ValueError("Book Warning % non puo' superare Book Block %.")
 
             cfg = RoserpinaConfig(
                 target_profit_cycle_pct=float(self.rs_target_var.get()),
@@ -1364,6 +1398,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 max_daily_loss=self._parse_hard_stop(self.rs_max_daily_loss_var.get(), "Perdita giornaliera max"),
                 max_open_exposure=self._parse_hard_stop(self.rs_max_open_exposure_var.get(), "Esposizione aperta max"),
                 max_drawdown_hard_stop_pct=self._parse_hard_stop(self.rs_max_drawdown_hard_stop_var.get(), "Drawdown max %", is_pct=True),
+                book_warning=book_warning,
+                book_block=book_block,
             )
             self.settings_service.save_roserpina_config(cfg)
         except Exception as exc:

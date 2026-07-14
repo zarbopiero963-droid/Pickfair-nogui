@@ -84,6 +84,27 @@ La GUI **non** setta `live_readiness_ok` ne' bypassa il deploy gate: si limita a
 scrivere gli stessi `roserpina.*` che il gate legge. Il valore reale con
 Betfair/LIVE resta verificato dal gate a runtime.
 
+## Book % gate (over-round) editabile in GUI (tab Roserpina) — PR2a
+
+Le soglie book% `book_warning` (default `trading_config.BOOK_WARNING`=105) e
+`book_block` (default `trading_config.BOOK_BLOCK`=110) sono editabili dal tab
+**Roserpina** (campi "Book Warning %" / "Book Block %"), oltre che via DB
+(`roserpina.book_warning` / `roserpina.book_block`).
+
+**Enforcement reale (enforce-first).** Prima queste costanti erano *dead* (il
+`book_pct` veniva calcolato ma mai confrontato: nessun blocco). Ora
+`controllers/dutching_controller.precheck` **blocca il submit** del dutching se
+`book_pct >= book_block`, eseguito **prima di ogni side-effect** (duplication
+acquire). Il flag non-bloccante `book_warning_exceeded` (`book_pct >=
+book_warning`) è aggiunto al risultato del precheck.
+
+**Fonte-dato + fallback fail-safe.** La soglia è letta da `RoserpinaConfig`
+(editabile da GUI); se il valore config è assente / non numerico / non finito /
+`<= 0`, si ricade sulla **costante di sicurezza** `trading_config.BOOK_BLOCK`:
+una config rotta o corrotta **non disattiva il gate** né lo sposta su un valore
+assurdo. Editare `book_block` a un valore alto è una scelta consapevole
+dell'operatore (allenta il gate); il fallback protegge solo i casi invalidi.
+
 ## Vincoli (safety)
 
 - Non modifica la logica dei gate (deploy gate, fail-closed #350): **espone e

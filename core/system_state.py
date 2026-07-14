@@ -74,3 +74,10 @@ class RoserpinaConfig:
     commission_pct: float = 4.5
     min_stake: float = 0.10
     max_stake_abs: float = 10000.0
+
+    # Book % (over-round) thresholds — editabili da GUI, applicati come gate reale
+    # al submit dutching (controllers/dutching_controller.precheck). Default
+    # allineati a trading_config.BOOK_WARNING/BOOK_BLOCK (fonte-dato del fallback
+    # fail-safe lato loader/enforcement).
+    book_warning: float = 105.0
+    book_block: float = 110.0

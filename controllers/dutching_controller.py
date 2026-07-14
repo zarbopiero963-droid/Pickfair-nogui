@@ -3,8 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import time
 from typing import Any, Dict, List, Optional
+
+import trading_config
 
 try:
     from dutching import calculate_dutching
@@ -147,6 +150,32 @@ class DutchingController:
 
     def _config(self):
         return getattr(self.runtime, "config", None)
+
+    @staticmethod
+    def _book_threshold(config, attr: str, fallback: float) -> float:
+        """Soglia book% dalla config (editabile da GUI) con fallback FAIL-SAFE.
+
+        Se il valore in config e' assente / non numerico / non finito / <= 0, si
+        ricade sulla costante `trading_config` (soglia di sicurezza): un backend
+        rotto o un valore corrotto NON deve disattivare il gate ne' spostarlo su
+        un valore assurdo.
+        """
+        raw = getattr(config, attr, None)
+        if raw is None:
+            return float(fallback)
+        try:
+            val = float(raw)
+            if math.isfinite(val) and val > 0.0:
+                return val
+        except (TypeError, ValueError):
+            pass
+        return float(fallback)
+
+    def _book_block_threshold(self, config) -> float:
+        return self._book_threshold(config, "book_block", trading_config.BOOK_BLOCK)
+
+    def _book_warning_threshold(self, config) -> float:
+        return self._book_threshold(config, "book_warning", trading_config.BOOK_WARNING)
 
     def _mode(self):
         return getattr(self.runtime, "mode", None)
@@ -532,6 +561,19 @@ class DutchingController:
         current_total_exposure = self._table_total_exposure()
         event_current_exposure = self._event_current_exposure(event_key)
 
+        # Book % guard (PR2a): blocca il submit se il book totale del dutching
+        # (over-round) raggiunge/supera la soglia di blocco configurata. Gate
+        # reale sul percorso di piazzamento, eseguito PRIMA di ogni side-effect
+        # (duplication acquire). Fonte-dato: RoserpinaConfig (editabile da GUI),
+        # con fallback fail-safe a trading_config.BOOK_BLOCK.
+        book_block = self._book_block_threshold(config)
+        if float(book_pct) >= book_block:
+            return self._fail(
+                f"Book troppo alto: {float(book_pct):.2f}% >= soglia di blocco {book_block:.2f}%",
+                book_pct=round(float(book_pct), 2),
+                book_block=round(book_block, 2),
+            )
+
         if duplication_guard and bool(getattr(config, "anti_duplication_enabled", True)):
             try:
                 if not duplication_guard.acquire(event_key):
@@ -589,6 +631,8 @@ class DutchingController:
             avg_profit_net=float(avg_net_profit),
             avg_profit_semantics="gross",
             book_pct=float(book_pct),
+            book_warning=round(self._book_warning_threshold(config), 2),
+            book_warning_exceeded=bool(float(book_pct) >= self._book_warning_threshold(config)),
             event_key=event_key,
             batch_id=batch_id,
             batch_exposure=float(batch_exposure),

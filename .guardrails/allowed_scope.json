@@ -4,6 +4,20 @@
     "max_files": 8
   },
   "tasks": {
+    "book_pct_gate": {
+      "description": "PR2a del programma GUI-parametri (autorizzata dall'owner, enforce-first). Le costanti BOOK_WARNING/BOOK_BLOCK erano DEAD (nessun enforcement: il book% veniva calcolato ma mai confrontato). Questa PR (1) CABLA un gate reale al submit dutching: controllers/dutching_controller.precheck blocca il piazzamento se book_pct >= soglia di blocco, eseguito PRIMA di ogni side-effect (duplication acquire); soglia letta da RoserpinaConfig con fallback FAIL-SAFE a trading_config.BOOK_BLOCK (config assente/corrotta non disattiva il gate). Aggiunge anche il flag non-bloccante book_warning_exceeded nel risultato. (2) Rende book_warning/book_block CONFIG-EDITABILI: nuovi campi RoserpinaConfig + chiavi DB roserpina.book_warning/roserpina.book_block in load/save_roserpina_config (fallback a trading_config). (3) Espone i due campi nel tab Roserpina della GUI. Owner ha autorizzato esplicitamente i file safety-critical. Test hard PASS+BLOCK (gate blocca >= soglia; non blocca sotto; config-editabile; fallback fail-safe blocca comunque un book alto con config rotta; round-trip config; wiring GUI). Doc ops/config_console.md nello stesso PR.",
+      "allow_tests": true,
+      "files": [
+        "core/system_state.py",
+        "services/setting_service.py",
+        "controllers/dutching_controller.py",
+        "mini_gui.py",
+        "tests/integration/test_dutching_book_guard.py",
+        "ops/config_console.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 8
+    },
     "gui_hard_stop_fields": {
       "description": "PR (autorizzata dall'owner: 'porta in GUI tutti i parametri, campi liberi'): espone i 3 hard-stop giornalieri (max_daily_loss, max_open_exposure, max_drawdown_hard_stop_pct) come campi EDITABILI nel tab Roserpina della GUI (mini_gui.py), oltre a DB/config.json. Erano gia' DB-backed, caricati/salvati (settings_service, INVARIATO) e validati dal gate LIVE _validate_live_hard_stop_config: mancava solo l'esposizione GUI. Semantica FAIL-CLOSED: campo vuoto = None => save preserva il valore persistito (non azzera un limite) e il gate resta bloccante se non configurato; valore presente = numerico finito > 0 (per la % anche <= 100) coerente col gate, altrimenti errore e nessuna scrittura (niente 0/negativi che aggirino il gate). La GUI NON setta live_readiness_ok ne' bypassa il deploy gate. NESSUNA modifica a core/, services/, trading_config, dutching, betfair, telegram, workflow: solo mini_gui.py (wiring GUI) + test + doc. Test hard PASS+BLOCK (logica pura _parse_hard_stop/_hard_stop_to_str + wiring save/load in test_mode: vuoto->None preservato, invalido->non salvato). Doc ops/config_console.md nello stesso PR.",
       "allow_tests": true,
