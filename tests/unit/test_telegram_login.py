@@ -7,6 +7,7 @@ codice ed emetteva un finto "AUTHORIZED". Ora fanno un login Telethon reale
 salva. La verifica end-to-end con l'API Telegram reale resta sul VPS.
 """
 
+import sys
 from types import SimpleNamespace
 
 from telegram_listener import TelegramListener
@@ -204,14 +205,15 @@ def _seq(*values):
 
 
 class _ScriptListener:
-    def __init__(self, request_ok=True, sign_in_results=None):
+    def __init__(self, request_ok=True, sign_in_results=None, request_error="boom"):
         self.request_ok = request_ok
+        self.request_error = request_error
         self.sign_in_results = list(sign_in_results or [])
         self.sign_in_calls = []
 
     def request_code(self, phone):
         self.phone = phone
-        return {"ok": True} if self.request_ok else {"ok": False, "error": "boom"}
+        return {"ok": True} if self.request_ok else {"ok": False, "error": self.request_error}
 
     def sign_in(self, code, password_2fa=None):
         self.sign_in_calls.append((code, password_2fa))
@@ -264,6 +266,60 @@ def test_login_flow_request_code_failure():
     assert ss is None
 
 
+def test_sanitize_login_code_extracts_digits():
+    # BLOCK (login UX, #371): il messaggio 777000 è "Login code: 12345"; incollarlo
+    # tutto dava "codice non valido". Ora si tengono solo le cifre.
+    assert HeadlessApp._sanitize_login_code("Login code: 12345") == "12345"
+    assert HeadlessApp._sanitize_login_code("  12345  ") == "12345"
+    assert HeadlessApp._sanitize_login_code("1 2 3 4 5") == "12345"
+    # nessuna cifra: ritorna il testo strip (errore comprensibile, non crash)
+    assert HeadlessApp._sanitize_login_code("  abc ") == "abc"
+    assert HeadlessApp._sanitize_login_code(None) == ""
+
+
+def test_login_flow_sanitizes_pasted_code():
+    # BLOCK: l'utente incolla l'intero messaggio; sign_in DEVE ricevere solo le
+    # cifre. Sul vecchio flow (nessuna sanitizzazione) sign_in riceveva
+    # "Login code: 12345" => codice non valido.
+    lis = _ScriptListener(sign_in_results=[{"ok": True, "session_string": "SS"}])
+    code, ss = HeadlessApp._telegram_login_flow(
+        lis, "1", "h",
+        prompt=_seq("+39", "Login code: 12345"),
+        prompt_secret=_seq(""),
+        out=lambda *_: None,
+    )
+    assert code == 0 and ss == "SS"
+    assert lis.sign_in_calls[0] == ("12345", None), "sign_in deve ricevere solo le cifre"
+
+
+def test_request_code_error_message_floodwait():
+    # FloodWait: messaggio esplicito "attesa + NON rilanciare" (evita il loop che
+    # invalida i codici). Errore generico: messaggio normale.
+    flood = HeadlessApp._request_code_error_message("A wait of 3600 seconds is required")
+    assert "NON rilanciare" in flood and "3600" in flood
+    assert "Invio codice fallito" in HeadlessApp._request_code_error_message("boom")
+
+
+def test_login_flow_floodwait_shows_wait_message():
+    # BLOCK: request_code fallito per FloodWait => l'utente vede il messaggio di
+    # attesa (non un errore opaco), il flow ritorna (2, None) e sign_in NON parte.
+    lis = _ScriptListener(request_ok=False, request_error="A wait of 42 seconds is required")
+    seen = []
+    code, ss = HeadlessApp._telegram_login_flow(
+        lis, "1", "h",
+        prompt=_seq("+39"), prompt_secret=_seq(""), out=seen.append,
+    )
+    assert code == 2 and ss is None
+    assert lis.sign_in_calls == [], "dopo un FloodWait il sign_in non deve partire"
+    assert any("NON rilanciare" in str(m) and "42" in str(m) for m in seen)
+
+
+def test_signin_error_message_invalid_code_guides_user():
+    msg = HeadlessApp._signin_error_message("invalid_code")
+    assert "ULTIMO codice" in msg and "solo le cifre" in msg
+    assert "Login non riuscito" in HeadlessApp._signin_error_message("not_authorized")
+
+
 def test_run_telegram_login_settings_read_error_returns_2():
     # BLOCK (CodeRabbit Major): se db.get_telegram_settings() solleva, il comando
     # --telegram-login deve rispettare il contratto 0/2 (return 2) e NON propagare
@@ -276,3 +332,256 @@ def test_run_telegram_login_settings_read_error_returns_2():
     app = HeadlessApp.__new__(HeadlessApp)
     app.db = _RaisingDB()
     assert app._run_telegram_login() == 2
+
+
+# ---- --telegram-login: credenziali headless via CLI/env (F-1 di #371) --------
+
+_resolve = HeadlessApp._resolve_telegram_credentials
+
+
+def test_resolve_creds_api_id_cli_wins_api_hash_from_env():
+    # api_id: flag CLI vince su env/DB. api_hash: da env (MAI da CLI).
+    api_id, api_hash, ext = _resolve(
+        ["--telegram-login", "--api-id", "111"],
+        {"TELEGRAM_API_ID": "222", "TELEGRAM_API_HASH": "H2"},
+        {"api_id": "999", "api_hash": "DBHASH"},
+    )
+    assert (api_id, api_hash, ext) == ("111", "H2", True)
+
+
+def test_resolve_creds_api_hash_never_read_from_cli():
+    # SECURITY (GPT/Fugu/Fable): --api-hash sulla CLI NON deve essere letto
+    # (esporrebbe il segreto in ps/history). Qui è passato in argv ma va IGNORATO:
+    # api_hash arriva dal DB, e non marca from_external.
+    _api_id, api_hash, ext = _resolve(
+        ["--telegram-login", "--api-hash", "SECRET_ON_CLI"],
+        {},
+        {"api_id": "55", "api_hash": "DBH"},
+    )
+    assert api_hash == "DBH"
+    assert ext is False
+
+
+def test_resolve_creds_env_fallback_when_no_cli():
+    api_id, api_hash, ext = _resolve(
+        ["--telegram-login"],
+        {"TELEGRAM_API_ID": "222", "TELEGRAM_API_HASH": "H2"},
+        {"api_id": "", "api_hash": ""},
+    )
+    assert (api_id, api_hash, ext) == ("222", "H2", True)
+
+
+def test_resolve_creds_db_when_no_external_is_not_flagged():
+    api_id, api_hash, ext = _resolve(
+        ["--telegram-login"], {}, {"api_id": "55", "api_hash": "DBH"}
+    )
+    assert (api_id, api_hash, ext) == ("55", "DBH", False)
+
+
+def test_resolve_creds_flag_does_not_swallow_next_option():
+    # BLOCK (CodeRabbit/Fable/Codacy): `--api-id --api-hash` NON deve prendere
+    # `--api-hash` come valore di api_id. Il valore è '' => fallback al DB.
+    api_id, _h, ext = _resolve(["--api-id", "--api-hash"], {}, {"api_id": "DBID"})
+    assert api_id == "DBID"
+    assert ext is False
+    # forma con '=' funziona
+    api_id2, _h2, ext2 = _resolve(["--api-id=333"], {}, {})
+    assert (api_id2, ext2) == ("333", True)
+
+
+def _login_db(settings=None):
+    class _DB:
+        def __init__(self):
+            self.saved = None
+            self._settings = dict(settings or {"api_id": "", "api_hash": "", "session_string": ""})
+
+        def get_telegram_settings(self):
+            return dict(self._settings)
+
+        def save_telegram_settings(self, payload):
+            self.saved = dict(payload)
+
+    return _DB()
+
+
+def test_run_telegram_login_persists_only_after_success(monkeypatch):
+    # BLOCK (Fable/Fugu/GLM): le credenziali CLI/env su un login RIUSCITO vengono
+    # salvate nel DB, complete di session_string. api_id da CLI, api_hash da env.
+    db = _login_db()
+    app = HeadlessApp.__new__(HeadlessApp)
+    app.db = db
+    monkeypatch.setattr(sys, "argv", ["headless_main.py", "--telegram-login", "--api-id", "12345"])
+    monkeypatch.setenv("TELEGRAM_API_HASH", "HH")
+    monkeypatch.setattr(HeadlessApp, "_telegram_login_flow", staticmethod(lambda *a, **k: (0, "SESS")))
+    rc = app._run_telegram_login()
+    assert rc == 0
+    assert db.saved is not None
+    assert db.saved.get("api_id") == "12345"
+    assert db.saved.get("api_hash") == "HH"
+    assert db.saved.get("session_string") == "SESS"
+
+
+def test_run_telegram_login_does_not_persist_on_failed_login(monkeypatch):
+    # BLOCK (persistenza pre-verifica): credenziali CLI/env ERRATE non devono
+    # sovrascrivere il DB se il login FALLISCE. Prima del fix la persistenza era
+    # pre-login => saved veniva scritto anche a login fallito.
+    db = _login_db({"api_id": "OLD", "api_hash": "OLDH", "session_string": "OLDS"})
+    app = HeadlessApp.__new__(HeadlessApp)
+    app.db = db
+    # api_id numerico VALIDO (CodeRabbit): con "BAD" `int()` solleverebbe prima del
+    # flow, facendo passare il test per il motivo sbagliato. Con "999" il flow
+    # viene davvero raggiunto e ritorna (2, None) = login fallito -> nessun save.
+    monkeypatch.setattr(sys, "argv", ["headless_main.py", "--telegram-login", "--api-id", "999"])
+    monkeypatch.setenv("TELEGRAM_API_HASH", "BADH")
+    flow_called = {"v": False}
+
+    def _flow(*a, **k):
+        flow_called["v"] = True
+        return (2, None)
+
+    monkeypatch.setattr(HeadlessApp, "_telegram_login_flow", staticmethod(_flow))
+    rc = app._run_telegram_login()
+    assert rc == 2
+    assert flow_called["v"] is True, "il flow di login deve essere davvero eseguito"
+    assert db.saved is None, "login fallito NON deve persistere/sovrascrivere le creds"
+
+
+def test_run_telegram_login_missing_api_id_returns_2(monkeypatch):
+    # Fable #2: api_id assente (no CLI/env/DB) => errore chiaro + return 2, senza
+    # costruire il listener con api_id=0 né avviare il flow di login.
+    db = _login_db({"api_id": "", "api_hash": "", "session_string": ""})
+    app = HeadlessApp.__new__(HeadlessApp)
+    app.db = db
+    monkeypatch.setattr(sys, "argv", ["headless_main.py", "--telegram-login"])
+    monkeypatch.delenv("TELEGRAM_API_ID", raising=False)
+    monkeypatch.setenv("TELEGRAM_API_HASH", "HH")  # hash presente => niente prompt
+    flow_called = {"v": False}
+
+    def _flow(*a, **k):
+        flow_called["v"] = True
+        return (0, "S")
+
+    monkeypatch.setattr(HeadlessApp, "_telegram_login_flow", staticmethod(_flow))
+    rc = app._run_telegram_login()
+    assert rc == 2
+    assert flow_called["v"] is False, "il guard api_id deve precedere il flow"
+    assert db.saved is None
+
+
+def test_run_telegram_login_rejects_nonpositive_api_id(monkeypatch):
+    # BLOCK (CodeRabbit): api_id "0" o negativo è config invalida (Telethon
+    # fallirebbe dopo con errore opaco). Deve dare return 2 SENZA avviare il flow
+    # né persistere. Prima del fix `int(api_id or 0)` accettava 0/-1.
+    for bad in ("0", "-1", "abc"):
+        db = _login_db({"api_id": "OLD", "api_hash": "OLDH", "session_string": "OLDS"})
+        app = HeadlessApp.__new__(HeadlessApp)
+        app.db = db
+        monkeypatch.setattr(sys, "argv", ["headless_main.py", "--telegram-login", "--api-id", bad])
+        monkeypatch.setenv("TELEGRAM_API_HASH", "HH")  # hash presente => niente prompt
+        flow_called = {"v": False}
+
+        def _flow(*a, **k):
+            flow_called["v"] = True
+            return (0, "S")
+
+        monkeypatch.setattr(HeadlessApp, "_telegram_login_flow", staticmethod(_flow))
+        rc = app._run_telegram_login()
+        assert rc == 2, f"api_id={bad!r} deve dare exit 2"
+        assert flow_called["v"] is False, f"api_id={bad!r}: il flow non deve partire"
+        assert db.saved is None, f"api_id={bad!r}: niente persistenza"
+
+
+def test_run_telegram_login_missing_api_hash_returns_2(monkeypatch):
+    # Simmetrico (GLM/Fable): api_id presente ma api_hash assente (env/DB vuoti) e
+    # input nascosto vuoto => return 2, senza avviare il flow né persistere.
+    db = _login_db({"api_id": "123", "api_hash": "", "session_string": ""})
+    app = HeadlessApp.__new__(HeadlessApp)
+    app.db = db
+    monkeypatch.setattr(sys, "argv", ["headless_main.py", "--telegram-login"])
+    monkeypatch.delenv("TELEGRAM_API_HASH", raising=False)
+    monkeypatch.setattr("getpass.getpass", lambda *a, **k: "")  # getpass vuoto
+    flow_called = {"v": False}
+
+    def _flow(*a, **k):
+        flow_called["v"] = True
+        return (0, "S")
+
+    monkeypatch.setattr(HeadlessApp, "_telegram_login_flow", staticmethod(_flow))
+    rc = app._run_telegram_login()
+    assert rc == 2
+    assert flow_called["v"] is False
+    assert db.saved is None
+
+
+def test_run_telegram_login_flow_exception_returns_2(monkeypatch):
+    # BLOCK (CodeRabbit): un'eccezione imprevista nel flusso di login NON deve
+    # propagare a main() (che la appiattirebbe a exit 1): il contratto documentato
+    # è exit 2 per login fallito. Prima del fix l'eccezione usciva da
+    # _run_telegram_login e _run_telegram_login() sollevava invece di ritornare 2.
+    db = _login_db({"api_id": "123", "api_hash": "HH", "session_string": ""})
+    app = HeadlessApp.__new__(HeadlessApp)
+    app.db = db
+    monkeypatch.setattr(sys, "argv", ["headless_main.py", "--telegram-login"])
+    monkeypatch.setenv("TELEGRAM_API_ID", "123")
+    monkeypatch.setenv("TELEGRAM_API_HASH", "HH")
+
+    def _boom(*a, **k):
+        raise RuntimeError("rete giù")
+
+    monkeypatch.setattr(HeadlessApp, "_telegram_login_flow", staticmethod(_boom))
+    rc = app._run_telegram_login()
+    assert rc == 2, "eccezione nel flow => exit 2 (non propagata, non exit 1)"
+    assert db.saved is None, "login fallito NON deve persistere"
+
+
+def test_run_telegram_login_getpass_exception_returns_2(monkeypatch):
+    # BLOCK (CodeRabbit): se getpass solleva (es. stdin chiuso su VPS non
+    # interattivo) mentre si chiede l'api_hash, il comando deve uscire 2, non
+    # propagare l'eccezione (che main() appiattirebbe a exit 1).
+    db = _login_db({"api_id": "123", "api_hash": "", "session_string": ""})
+    app = HeadlessApp.__new__(HeadlessApp)
+    app.db = db
+    monkeypatch.setattr(sys, "argv", ["headless_main.py", "--telegram-login"])
+    monkeypatch.setenv("TELEGRAM_API_ID", "123")
+    monkeypatch.delenv("TELEGRAM_API_HASH", raising=False)
+
+    def _boom(*a, **k):
+        raise EOFError("stdin chiuso")
+
+    monkeypatch.setattr("getpass.getpass", _boom)
+    flow_called = {"v": False}
+
+    def _flow(*a, **k):
+        flow_called["v"] = True
+        return (0, "S")
+
+    monkeypatch.setattr(HeadlessApp, "_telegram_login_flow", staticmethod(_flow))
+    rc = app._run_telegram_login()
+    assert rc == 2, "getpass che solleva => exit 2 (non propagata)"
+    assert flow_called["v"] is False, "senza api_hash il flow non parte"
+    assert db.saved is None
+
+
+def test_cli_flags_do_not_break_dispatch(monkeypatch):
+    # BLOCK (Fable final review): il comando documentato
+    #   python headless_main.py --telegram-login --api-id 123 --api-hash H
+    # DEVE dispatchare a _run_telegram_login. Il parser NON è argparse strict
+    # (scansione manuale `in sys.argv` che ignora i flag sconosciuti), quindi
+    # --api-id/--api-hash non fanno fallire né il dispatch né _parse_args.
+    # Se qualcuno introducesse un argparse strict, questo test fallirebbe
+    # (regressione del comando sul VPS, non coperta dai test che chiamano
+    # _run_telegram_login direttamente).
+    app = HeadlessApp.__new__(HeadlessApp)
+    app.settings_service = None
+    monkeypatch.setattr(
+        sys, "argv",
+        ["headless_main.py", "--telegram-login", "--api-id", "123", "--api-hash", "H"],
+    )
+    # dispatch: --telegram-login riconosciuto nonostante i flag extra
+    assert app._telegram_login_requested() is True
+    assert app._preflight_requested() is False
+    # _parse_args ignora i flag sconosciuti e ritorna un dict valido (no raise,
+    # no SystemExit da un eventuale argparse strict)
+    parsed = app._parse_args()
+    assert isinstance(parsed, dict)
+    assert "simulation_mode" in parsed and "execution_mode" in parsed

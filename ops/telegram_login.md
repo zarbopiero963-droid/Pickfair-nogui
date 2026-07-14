@@ -24,23 +24,77 @@ autenticarsi. Questo comando colma quel buco.
 
 ## Uso sul VPS: `--telegram-login`
 
-Prerequisito: `telegram.api_id` e `telegram.api_hash` già configurati nel DB
-(via GUI o direttamente nei settings).
+`api_id`/`api_hash` si prendono da <https://my.telegram.org> → *API development
+tools*. Precedenza di risoluzione:
+
+- **`api_id`** (non è un segreto): flag `--api-id` → env `TELEGRAM_API_ID` → DB.
+- **`api_hash`** (è un **segreto**): env `TELEGRAM_API_HASH` → DB → altrimenti
+  **chiesto con input nascosto** (`getpass`). **Non** si passa da riga di comando:
+  un `--api-hash` sarebbe visibile in `ps`/`/proc` e nella shell history.
+
+Le credenziali fornite da CLI/env — **incluso l'`api_hash` digitato all'input
+nascosto** — sono **persistite nel DB (cifrate) solo dopo un login riuscito**
+(così credenziali errate non sovrascrivono quelle valide). Il salvataggio **non**
+è silenzioso: se fallisce il login è comunque avvenuto ma il comando esce con
+codice `2` (vedi «Exit code» sotto), così lo script chiamante se ne accorge; i
+login successivi potrebbero richiedere di nuovo le credenziali.
 
 ```bash
+# api_id via flag, api_hash chiesto con input nascosto (consigliato)
+python headless_main.py --telegram-login --api-id 1234567
+
+# api_id + api_hash via env — leggi il segreto SENZA scriverlo (niente shell history)
+export TELEGRAM_API_ID=1234567
+read -rs TELEGRAM_API_HASH; export TELEGRAM_API_HASH   # incolla l'hash: non viene mostrato
+python headless_main.py --telegram-login
+# in alternativa: un file d'ambiente a permessi ristretti (systemd EnvironmentFile / `set -a; . ./tg.env`)
+
+# credenziali già nel DB (da GUI o da un login precedente)
 python headless_main.py --telegram-login
 ```
+
+> Il comando **non** legge `config.json` (per non incoraggiare segreti in un file
+> committato): usa flag/env/DB o l'input nascosto.
+
+### ⚠️ Dove arriva il codice + chiave di cifratura
+
+- Il codice di verifica arriva **in-app** nella chat di servizio **"Telegram"
+  (contatto ufficiale, id 777000)**, **non** via SMS, se hai già una sessione
+  Telegram attiva (app sul telefono / Telegram Web). Guarda lì.
+- `telegram.api_id`/`api_hash`/`session_string` sono **cifrati at-rest**
+  (elenco `_SECRET_FIELDS` in `database.py`). La chiave è **caricata** (non
+  derivata) da `PICKFAIR_SECRET_KEY` o dal file `~/.pickfair/db.key`
+  (`SecretCipher`). **Salva e fai il login con lo stesso utente e dalla stessa
+  directory** (il `pickfair.db` è relativo alla cwd), **senza `sudo`** (cambia
+  `HOME` → chiave diversa → decifratura fallita → campi "vuoti"). In alternativa
+  fissa la stessa `PICKFAIR_SECRET_KEY` per entrambi i passaggi. Nei log un
+  mismatch appare come `secret_cipher: decrypt failed`.
+- Usa il numero in **formato internazionale** (`+39...`). Richieste ripetute
+  troppo ravvicinate → `FloodWaitError`: attendi i secondi indicati e riprova una
+  sola volta. Il comando **riconosce il FloodWait** e stampa un avviso esplicito
+  («aspetta N secondi, NON rilanciare»): rilanciare peggiora il flood **e invalida
+  i codici precedenti** (causa tipica del "codice non valido" dopo molti tentativi).
+- **Digita SOLO le cifre** del codice (es. `12345`). Se incolli l'intero messaggio
+  di servizio (`Login code: 12345`) va bene lo stesso: il comando **estrae solo le
+  cifre**. Usa **sempre l'ULTIMO codice ricevuto** — ogni nuovo invio invalida i
+  precedenti.
 
 Flusso interattivo (`HeadlessApp._telegram_login_flow`):
 
 1. Chiede il **numero di telefono** (es. `+39...`) → invia il codice.
-2. Chiede il **codice di verifica** ricevuto su Telegram.
+2. Chiede il **codice di verifica** ricevuto su Telegram (**solo le cifre**;
+   incollare `Login code: 12345` è tollerato → tiene `12345`).
 3. Se l'account ha la **2FA**, chiede la **password** (input nascosto).
-4. Al successo **salva la `session_string`** nel DB (`save_telegram_settings`,
-   merge sui settings esistenti, `enabled=True`) ed esce con codice `0`.
+4. Al successo il flusso **ritorna la `session_string`**; è il comando
+   (`_run_telegram_login`, via `_telegram_persist_login`) a **salvarla nel DB**
+   (`save_telegram_settings`, merge sui settings esistenti, `enabled=True`) e a
+   uscire con codice `0`.
 
-Exit code: `0` login ok, `2` login fallito o credenziali mancanti. Il comando
-**non** avvia il runtime/trading: costruisce solo il DB e fa il login.
+Exit code: `0` login ok **e** configurazione salvata; `2` login fallito,
+credenziali mancanti/non valide, **oppure login riuscito ma persistenza fallita**
+(in quest'ultimo caso l'autenticazione è avvenuta ma la `session_string` non è
+stata scritta: rifai il login o salva da GUI). Il comando **non** avvia il
+runtime/trading: costruisce solo il DB e fa il login.
 
 Dopo il login, riavvia in modalità normale: il listener userà la
 `session_string` salvata (in `_runtime_async`, `is_user_authorized()` sarà True).
