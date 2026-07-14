@@ -970,7 +970,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._labeled_entry(outer, "Book Block % (blocca submit se book >= soglia)", self.rs_book_block_var)
         self._labeled_entry(outer, "Liquidity avviso: Moltiplicatore (richiesta = stake x N)", self.rs_liq_multiplier_var)
         self._labeled_entry(outer, "Liquidity avviso: Floor assoluto € (0 = nessun floor)", self.rs_liq_min_abs_var)
-        self._labeled_entry(outer, "Quota minima / Min Price (>= 1.01)", self.rs_min_price_var)
+        self._labeled_entry(outer, "Quota minima / Min Price (>= 1.02)", self.rs_min_price_var)
 
         rp = ctk.CTkFrame(outer)
         rp.pack(fill=tk.X, padx=12, pady=6)
@@ -1404,14 +1404,20 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
     @staticmethod
     def _parse_min_price(raw, label):
-        """Quota minima: numerica, finita, >= 1.01 (minimo Betfair inviolabile)."""
+        """Quota minima: numerica, finita, >= 1.02.
+
+        Il minimo realmente raggiungibile e' 1.02: il floor hard del controller
+        rifiuta `price <= 1.01` (1.01 e' il minimo Betfair, mai piazzabile qui),
+        quindi impostare 1.01 sarebbe identico a 1.02 e fuorviante. La GUI accetta
+        quindi solo `>= 1.02`.
+        """
         text = (raw or "").strip()
         try:
             val = float(text)
         except (TypeError, ValueError):
             raise ValueError(f"{label}: inserisci un numero valido.")
-        if not math.isfinite(val) or val < 1.01:
-            raise ValueError(f"{label}: deve essere un numero finito >= 1.01.")
+        if not math.isfinite(val) or val < 1.02:
+            raise ValueError(f"{label}: deve essere un numero finito >= 1.02.")
         return val
 
     def _save_roserpina_settings(self):

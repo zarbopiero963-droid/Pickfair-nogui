@@ -162,8 +162,10 @@ def test_gui_saves_min_price(monkeypatch):
         app.destroy()
 
 
-@pytest.mark.parametrize("bad", ["", "1.0", "1.005", "-1", "abc"])
+@pytest.mark.parametrize("bad", ["", "1.0", "1.01", "1.005", "-1", "abc"])
 def test_gui_save_blocks_invalid_min_price(monkeypatch, bad):
+    # La GUI accetta solo >= 1.02 (minimo realmente raggiungibile: 1.01 e'
+    # rifiutato dal floor hard del controller). 1.01 => niente save.
     app = _make_gui(monkeypatch)
     try:
         app.rs_min_price_var.set(bad)

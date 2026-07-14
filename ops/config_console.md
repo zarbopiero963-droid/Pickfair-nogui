@@ -162,7 +162,9 @@ dutching **SOPRA** il minimo Betfair inviolabile 1.01.
 **Fail-safe.** `_min_price` clampa a `max(1.01, trading_config.MIN_PRICE)` se la
 config e' assente / non numerica / non finita / `< 1.01`: una config rotta non
 puo' abbassare il floor sotto il minimo Betfair. Il floor hard 1.01 resta
-comunque un controllo indipendente. La validazione GUI richiede `>= 1.01`.
+comunque un controllo indipendente. La validazione GUI richiede `>= 1.02` (il
+minimo realmente raggiungibile: 1.01 e' rifiutato dal floor hard, quindi
+impostare 1.01 sarebbe identico a 1.02 e fuorviante).
 
 **Ambito.** Il floor di strategia si applica al **path dutching automatico**;
 `manual_bet()` resta col solo hard-floor 1.01 (una bet manuale e' una scelta
