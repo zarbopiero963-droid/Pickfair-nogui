@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import types
 
 _LOGGER = logging.getLogger(__name__)
@@ -619,6 +620,13 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.rs_commission_var = self._make_string_var("4.5")
         self.rs_min_stake_var = self._make_string_var("0.10")
         self.rs_max_abs_var = self._make_string_var("10000.0")
+        # Hard-stop giornalieri (safety-critical, prerequisiti del gate LIVE).
+        # Campo vuoto = "non impostato" (None): il salvataggio NON azzera il
+        # valore persistito e il gate LIVE resta fail-closed se non configurato
+        # (vedi _parse_hard_stop / _save_roserpina_settings).
+        self.rs_max_daily_loss_var = self._make_string_var("")
+        self.rs_max_open_exposure_var = self._make_string_var("")
+        self.rs_max_drawdown_hard_stop_var = self._make_string_var("")
         self.rs_allow_recovery_var = self._make_bool_var(True)
         self.rs_anti_dup_var = self._make_bool_var(True)
         self.rs_risk_profile_var = self._make_string_var("BALANCED")
@@ -943,6 +951,9 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._labeled_entry(outer, "Commission %", self.rs_commission_var)
         self._labeled_entry(outer, "Min Stake", self.rs_min_stake_var)
         self._labeled_entry(outer, "Max Stake Assoluto", self.rs_max_abs_var)
+        self._labeled_entry(outer, "Hard-stop: Perdita Giornaliera Max (€, vuoto=non impostato)", self.rs_max_daily_loss_var)
+        self._labeled_entry(outer, "Hard-stop: Esposizione Aperta Max (€, vuoto=non impostato)", self.rs_max_open_exposure_var)
+        self._labeled_entry(outer, "Hard-stop: Drawdown Max % (0-100, vuoto=non impostato)", self.rs_max_drawdown_hard_stop_var)
 
         rp = ctk.CTkFrame(outer)
         rp.pack(fill=tk.X, padx=12, pady=6)
@@ -1142,6 +1153,9 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 self.rs_commission_var.set(str(getattr(rs, "commission_pct", self.rs_commission_var.get())))
                 self.rs_min_stake_var.set(str(getattr(rs, "min_stake", self.rs_min_stake_var.get())))
                 self.rs_max_abs_var.set(str(getattr(rs, "max_stake_abs", self.rs_max_abs_var.get())))
+                self.rs_max_daily_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_daily_loss", None)))
+                self.rs_max_open_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_open_exposure", None)))
+                self.rs_max_drawdown_hard_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_hard_stop_pct", None)))
                 self.rs_allow_recovery_var.set(bool(getattr(rs, "allow_recovery", self.rs_allow_recovery_var.get())))
                 self.rs_anti_dup_var.set(bool(getattr(rs, "anti_duplication_enabled", self.rs_anti_dup_var.get())))
                 risk_profile = getattr(rs, "risk_profile", None)
@@ -1291,6 +1305,39 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         except Exception as exc:
             self._safe_show_error("Errore salvataggio Betfair", str(exc))
 
+    @staticmethod
+    def _hard_stop_to_str(value):
+        """Valore hard-stop -> stringa per la GUI: None => campo vuoto."""
+        if value is None:
+            return ""
+        return str(value)
+
+    @staticmethod
+    def _parse_hard_stop(raw, label, *, is_pct=False):
+        """Parsa un campo hard-stop dalla GUI in modo FAIL-CLOSED.
+
+        - vuoto => None: il save preserva il valore persistito (non azzera un
+          limite di sicurezza gia' configurato) e il gate LIVE resta bloccante
+          se il campo non e' impostato;
+        - valore presente: DEVE essere numerico, finito e > 0 (per la % anche
+          <= 100), coerente con `_validate_live_hard_stop_config` del deploy
+          gate (core/runtime_controller). Altrimenti solleva ValueError: il
+          salvataggio si interrompe con errore e nessun valore fasullo viene
+          scritto (niente 0/negativi che aggirerebbero il gate).
+        """
+        text = (raw or "").strip()
+        if not text:
+            return None
+        try:
+            parsed = float(text)
+        except (TypeError, ValueError):
+            raise ValueError(f"{label}: inserisci un numero valido (oppure lascia vuoto).")
+        if not math.isfinite(parsed) or parsed <= 0.0:
+            raise ValueError(f"{label}: deve essere un numero finito maggiore di 0.")
+        if is_pct and parsed > 100.0:
+            raise ValueError(f"{label}: la percentuale non puo' superare 100.")
+        return parsed
+
     def _save_roserpina_settings(self):
         try:
             from core.system_state import RoserpinaConfig, RiskProfile
@@ -1314,13 +1361,68 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 commission_pct=float(self.rs_commission_var.get()),
                 min_stake=float(self.rs_min_stake_var.get()),
                 max_stake_abs=float(self.rs_max_abs_var.get()),
+                max_daily_loss=self._parse_hard_stop(self.rs_max_daily_loss_var.get(), "Perdita giornaliera max"),
+                max_open_exposure=self._parse_hard_stop(self.rs_max_open_exposure_var.get(), "Esposizione aperta max"),
+                max_drawdown_hard_stop_pct=self._parse_hard_stop(self.rs_max_drawdown_hard_stop_var.get(), "Drawdown max %", is_pct=True),
             )
             self.settings_service.save_roserpina_config(cfg)
-            if hasattr(self.runtime, "reload_config"):
-                self.runtime.reload_config()
-            self._safe_show_info("OK", "Configurazione Roserpina salvata.")
         except Exception as exc:
+            # Errore nella COSTRUZIONE/validazione del config o nella PERSISTENZA:
+            # il salvataggio non e' avvenuto => errore generico, niente reload.
             self._safe_show_error("Errore salvataggio Roserpina", str(exc))
+            return
+
+        # Da qui il config e' PERSISTITO (su DB). Reload runtime e refresh dei
+        # campi sono passi POST-salvataggio: un loro errore NON deve essere
+        # riportato come "salvataggio fallito" (fuorviante: il dato e' gia' su DB)
+        # ne' saltare il refresh dei campi. Il reload runtime e' isolato: se
+        # fallisce, la config resta persistita e verra' applicata al prossimo
+        # reload/riavvio.
+        reload_error = None
+        if hasattr(self.runtime, "reload_config"):
+            try:
+                self.runtime.reload_config()
+            except Exception as exc:
+                reload_error = exc
+        # Riallinea i campi hard-stop al valore REALMENTE persistito: un campo
+        # lasciato vuoto (semantica preserve) torna a mostrare il limite
+        # conservato, evitando una divergenza UI/stato (un limite attivo ma
+        # invisibile). Refresh mirato ai soli hard-stop, per non toccare gli
+        # altri tab ne' la logica force-simulation di _load_initial_settings.
+        self._refresh_hard_stop_vars()
+        if reload_error is not None:
+            # Divergenza safety-critical: la config e' su DB ma il runtime NON e'
+            # stato riallineato. Il messaggio DEVE essere esplicito che i nuovi
+            # limiti (hard-stop/drawdown/esposizione) NON sono attivi a runtime —
+            # il bot opera ancora con i limiti PRECEDENTI — cosi' l'operatore non
+            # crede erroneamente che i nuovi limiti siano gia' in vigore.
+            self._safe_show_error(
+                "Reload runtime FALLITO — nuovi limiti NON attivi",
+                "La configurazione e' stata SALVATA su DB, ma il reload a runtime e' "
+                f"fallito ({reload_error}): il bot sta ancora operando con i limiti "
+                "PRECEDENTI, non con quelli appena salvati. Riavvia il bot (o ripeti "
+                "il salvataggio) per applicare i nuovi limiti prima di operare in LIVE.",
+            )
+        else:
+            self._safe_show_info("OK", "Configurazione Roserpina salvata.")
+
+    def _refresh_hard_stop_vars(self):
+        """Rilegge gli hard-stop persistiti e riallinea i campi GUI (post-save).
+
+        Serve a evitare che un campo lasciato vuoto (preserve) mostri "" mentre
+        il limite persistito e' ancora attivo: dopo il salvataggio i campi
+        riflettono il valore reale letto da `load_roserpina_config`.
+        """
+        # Best-effort e COMPLETAMENTE isolato: qualsiasi errore (load DB o .set
+        # Tk) non deve propagare nel callback di salvataggio ne' mascherare
+        # l'esito del save gia' avvenuto (rilievo Fugu Ultra / Fable 5).
+        try:
+            rs = self.settings_service.load_roserpina_config()
+            self.rs_max_daily_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_daily_loss", None)))
+            self.rs_max_open_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_open_exposure", None)))
+            self.rs_max_drawdown_hard_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_hard_stop_pct", None)))
+        except Exception:
+            return
 
     # =========================================================
     # LIVE / SIM

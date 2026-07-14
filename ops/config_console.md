@@ -62,6 +62,28 @@ segnale readiness noto, nessun errore di avvio.
 - [ ] **PR-C/D** — tab GUI (Go-Live Readiness + config) sopra lo stesso registry.
 - [ ] **PR-E** — logging in chiaro delle decisioni gate + preflight nel servizio.
 
+## Hard-stop giornalieri editabili in GUI (tab Roserpina)
+
+I tre hard-stop giornalieri — `max_daily_loss`, `max_open_exposure`,
+`max_drawdown_hard_stop_pct` (prerequisiti del gate LIVE
+`_validate_live_hard_stop_config`) — sono editabili dalla GUI nel tab
+**Roserpina** (`mini_gui.py`), oltre che via DB/`config.json`. Semantica
+**fail-closed**:
+
+- **campo vuoto = non impostato (`None`)**: il salvataggio **preserva** il
+  valore gia' persistito (`save_roserpina_config` scrive gli hard-stop solo se
+  non-`None`) e, se il campo non e' mai stato configurato, il gate LIVE resta
+  **bloccante** (`LIVE_HARD_STOP_CONFIG_MISSING`). Un campo vuoto non azzera un
+  limite di sicurezza e non produce un valore fasullo;
+- **valore presente**: deve essere numerico, finito e **> 0** (per il drawdown
+  `%` anche **≤ 100**), coerente con il gate; un valore non valido interrompe il
+  salvataggio con errore (nessuna scrittura), invece di far passare `0`/negativi
+  che aggirerebbero il gate.
+
+La GUI **non** setta `live_readiness_ok` ne' bypassa il deploy gate: si limita a
+scrivere gli stessi `roserpina.*` che il gate legge. Il valore reale con
+Betfair/LIVE resta verificato dal gate a runtime.
+
 ## Vincoli (safety)
 
 - Non modifica la logica dei gate (deploy gate, fail-closed #350): **espone e
