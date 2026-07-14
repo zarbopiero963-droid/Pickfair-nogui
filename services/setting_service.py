@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any, Dict
 
+import trading_config
+
 from core.system_state import (
     BetfairConfig,
     RiskProfile,
@@ -250,6 +252,8 @@ class SettingsService:
             commission_pct=self._f(data, "roserpina.commission_pct", 4.5),
             min_stake=self._f(data, "roserpina.min_stake", 0.10),
             max_stake_abs=self._f(data, "roserpina.max_stake_abs", 10000.0),
+            book_warning=self._f(data, "roserpina.book_warning", trading_config.BOOK_WARNING),
+            book_block=self._f(data, "roserpina.book_block", trading_config.BOOK_BLOCK),
         )
 
     def save_roserpina_config(self, config: RoserpinaConfig) -> None:
@@ -272,6 +276,8 @@ class SettingsService:
             "roserpina.commission_pct": config.commission_pct,
             "roserpina.min_stake": config.min_stake,
             "roserpina.max_stake_abs": config.max_stake_abs,
+            "roserpina.book_warning": config.book_warning,
+            "roserpina.book_block": config.book_block,
         }
 
         # Preserve previously persisted hard-stop limits when caller omits these optional fields.

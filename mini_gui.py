@@ -627,6 +627,9 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.rs_max_daily_loss_var = self._make_string_var("")
         self.rs_max_open_exposure_var = self._make_string_var("")
         self.rs_max_drawdown_hard_stop_var = self._make_string_var("")
+        # Book % (over-round): soglie avviso/blocco, applicate al submit dutching.
+        self.rs_book_warning_var = self._make_string_var("105.0")
+        self.rs_book_block_var = self._make_string_var("110.0")
         self.rs_allow_recovery_var = self._make_bool_var(True)
         self.rs_anti_dup_var = self._make_bool_var(True)
         self.rs_risk_profile_var = self._make_string_var("BALANCED")
@@ -954,6 +957,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._labeled_entry(outer, "Hard-stop: Perdita Giornaliera Max (€, vuoto=non impostato)", self.rs_max_daily_loss_var)
         self._labeled_entry(outer, "Hard-stop: Esposizione Aperta Max (€, vuoto=non impostato)", self.rs_max_open_exposure_var)
         self._labeled_entry(outer, "Hard-stop: Drawdown Max % (0-100, vuoto=non impostato)", self.rs_max_drawdown_hard_stop_var)
+        self._labeled_entry(outer, "Book Warning % (avviso over-round)", self.rs_book_warning_var)
+        self._labeled_entry(outer, "Book Block % (blocca submit se book >= soglia)", self.rs_book_block_var)
 
         rp = ctk.CTkFrame(outer)
         rp.pack(fill=tk.X, padx=12, pady=6)
@@ -1156,6 +1161,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 self.rs_max_daily_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_daily_loss", None)))
                 self.rs_max_open_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_open_exposure", None)))
                 self.rs_max_drawdown_hard_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_hard_stop_pct", None)))
+                self.rs_book_warning_var.set(str(getattr(rs, "book_warning", 105.0)))
+                self.rs_book_block_var.set(str(getattr(rs, "book_block", 110.0)))
                 self.rs_allow_recovery_var.set(bool(getattr(rs, "allow_recovery", self.rs_allow_recovery_var.get())))
                 self.rs_anti_dup_var.set(bool(getattr(rs, "anti_duplication_enabled", self.rs_anti_dup_var.get())))
                 risk_profile = getattr(rs, "risk_profile", None)
@@ -1364,6 +1371,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 max_daily_loss=self._parse_hard_stop(self.rs_max_daily_loss_var.get(), "Perdita giornaliera max"),
                 max_open_exposure=self._parse_hard_stop(self.rs_max_open_exposure_var.get(), "Esposizione aperta max"),
                 max_drawdown_hard_stop_pct=self._parse_hard_stop(self.rs_max_drawdown_hard_stop_var.get(), "Drawdown max %", is_pct=True),
+                book_warning=float(self.rs_book_warning_var.get()),
+                book_block=float(self.rs_book_block_var.get()),
             )
             self.settings_service.save_roserpina_config(cfg)
         except Exception as exc:
