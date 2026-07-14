@@ -330,13 +330,20 @@ class DutchingController:
         Il campo config `max_stake_pct` e' in scala PERCENTUALE (0-100, come gli
         altri `max_*_pct`); qui lo si converte in frazione. Fallback FAIL-SAFE a
         trading_config.MAX_STAKE_PCT (gia' una frazione, 0.30) se assente / non
-        numerico / non finito / <= 0. Warning-only: questa soglia NON blocca mai.
+        numerico / non finito / <= 0 / FUORI dal contratto 0-100. Warning-only:
+        questa soglia NON blocca mai.
+
+        Upper-bound 0-100 anche a RUNTIME (non solo in GUI): un valore > 100 (es.
+        da edit diretto del DB o config legacy) diventerebbe una frazione > 1
+        (200 => 2.0 = 200% del bankroll), soglia irraggiungibile che indebolisce
+        silenziosamente l'avviso. Fuori contratto => FAIL-SAFE costante, coerente
+        col rifiuto > 100 lato GUI e con la gestione degli altri valori invalidi.
         """
         raw = getattr(config, "max_stake_pct", None)
         if raw is not None:
             try:
                 pct = float(raw)
-                if math.isfinite(pct) and pct > 0.0:
+                if math.isfinite(pct) and 0.0 < pct <= 100.0:
                     return pct / 100.0
             except (TypeError, ValueError):
                 pass

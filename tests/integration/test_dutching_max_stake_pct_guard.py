@@ -182,9 +182,12 @@ def test_max_stake_pct_scale_and_failsafe():
     f = DutchingController._max_stake_pct
     assert f(SimpleNamespace(max_stake_pct=30.0)) == 0.30   # percentuale => frazione
     assert f(SimpleNamespace(max_stake_pct=50.0)) == 0.50
-    # assente / rotta => fallback costante (frazione)
+    assert f(SimpleNamespace(max_stake_pct=100.0)) == 1.0    # boundary superiore accettato
+    assert f(None) == float(trading_config.MAX_STAKE_PCT)    # config None => fail-safe, no TypeError
+    # assente / rotta / FUORI 0-100 => fallback costante (frazione). Il > 100 e'
+    # fail-safe anche a runtime (non solo GUI): non deve diventare frazione > 1.
     assert f(SimpleNamespace()) == float(trading_config.MAX_STAKE_PCT)
-    for bad in (0.0, -5.0, float("nan"), float("inf"), "abc"):
+    for bad in (0.0, -5.0, float("nan"), float("inf"), "abc", 100.01, 200.0, 1000.0):
         assert f(SimpleNamespace(max_stake_pct=bad)) == float(trading_config.MAX_STAKE_PCT)
 
 

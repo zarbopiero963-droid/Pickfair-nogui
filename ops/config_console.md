@@ -243,10 +243,14 @@ blocco cumulativo al 35%. **Warning-only per definizione**: nessuna checkbox
 **Scala + fail-safe.** Il campo config `max_stake_pct` e' in **scala percentuale**
 0-100 (come gli altri `max_*_pct`, es. 30.0); l'helper `_max_stake_pct` lo
 converte in frazione e ricade su `trading_config.MAX_STAKE_PCT` (frazione 0.30) se
-assente / non numerico / non finito / `<= 0`. Chiave DB `roserpina.max_stake_pct`
-(default `MAX_STAKE_PCT*100`). Validazione GUI: numero finito `> 0`. **FAIL-OPEN**
-su `bankroll <= 0` (nessun avviso). Non tocca `manual_bet` (gia' coperto da
-`max_single_bet` 18%).
+assente / non numerico / non finito / `<= 0` / **fuori dal contratto `0-100`**.
+L'upper-bound `<= 100` e' applicato **sia in GUI sia a runtime**: un valore `> 100`
+(es. da edit diretto del DB o config legacy) diventerebbe una frazione `> 1` (200
+=> 200% del bankroll), soglia irraggiungibile che disabiliterebbe silenziosamente
+l'avviso => trattato come invalido (FAIL-SAFE costante). Chiave DB
+`roserpina.max_stake_pct` (default `MAX_STAKE_PCT*100`). Validazione GUI: numero
+finito `> 0` e `<= 100`. **FAIL-OPEN** su `bankroll <= 0` (nessun avviso). Non
+tocca `manual_bet` (gia' coperto da `max_single_bet` 18%).
 
 ## Configurazione Simulazione editabile in GUI (tab Simulazione) — G1
 
