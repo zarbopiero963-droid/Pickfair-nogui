@@ -25,7 +25,7 @@ import pytest
 
 import trading_config
 from core.system_state import RoserpinaConfig
-from services.settings_service import SettingsService
+from services.setting_service import SettingsService
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_mini_gui_integration import _install_mini_gui_fakes, FakeSettingsService  # noqa: E402
