@@ -251,6 +251,17 @@ def test_leg_potential_win_semantics():
     assert DutchingController._leg_potential_win({"side": "BACK"}) == 0.0  # fail-safe
 
 
+def test_max_win_breaches_failsafe_non_numeric_selection_id():
+    # Un selectionId non numerico NON deve sollevare (romperebbe il gate); degrada a 0.
+    from controllers.dutching_controller import DutchingController
+
+    results = [{"selectionId": "abc", "price": 2.0, "stake": 100.0, "side": "BACK"}]  # payout 200
+    breaches = DutchingController._max_win_breaches(results, 50.0)
+    assert len(breaches) == 1
+    assert breaches[0]["selectionId"] == 0
+    assert breaches[0]["potential_win"] == 200.0
+
+
 # ==========================================================================
 # 3) ENFORCEMENT (manual_bet) — chiude la via non-gated
 # ==========================================================================
@@ -270,17 +281,27 @@ def test_manual_bet_blocks_over_cap_when_armed():
     ctrl = _controller(_runtime_with(max_win=50.0, warning_only=False), bus=bus)
     res = ctrl.manual_bet(_manual_payload(2.0, 100.0))
     assert res["ok"] is False and "oltre il cap" in res["error"]
-    assert bus.published == []
+    assert not bus.published
 
 
 def test_manual_bet_warns_does_not_block_by_default():
-    # default warning_only True => il bet passa (order pubblicato).
+    # default warning_only True => il bet passa (order pubblicato) MA lo sforamento
+    # e' OSSERVABILE nel risultato (max_win_warning + potential_win), non silenzioso.
     bus = _Bus()
     rt = _Runtime()
     rt.config.max_win = 50.0  # flag assente => opt-in
-    res = _controller(rt, bus=bus).manual_bet(_manual_payload(2.0, 100.0))
+    res = _controller(rt, bus=bus).manual_bet(_manual_payload(2.0, 100.0))  # payout 200
     assert res["ok"] is True, res
     assert any(topic == "CMD_QUICK_BET" for topic, _ in bus.published)
+    assert res["max_win_warning"] is True
+    assert res["potential_win"] == 200.0
+
+
+def test_manual_bet_no_warning_when_under_cap():
+    bus = _Bus()
+    res = _controller(_Runtime(), bus=bus).manual_bet(_manual_payload(2.0, 100.0))  # payout 200 < 10000
+    assert res["ok"] is True
+    assert res["max_win_warning"] is False
 
 
 def test_manual_bet_lay_uses_backer_stake():
