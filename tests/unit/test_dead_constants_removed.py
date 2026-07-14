@@ -1,9 +1,14 @@
 """
 G5 PR 1/5 — batch-delete costanti morte di trading_config.
 
-Test guard: asserisce l'ASSENZA delle 4 costanti rimosse (duplicati morti /
-inerti, lette da nessun modulo di esecuzione). Falliscono sul vecchio codice
-(dove le costanti esistevano) e bloccano una re-introduzione zombie.
+Test guard su due livelli:
+
+1. ASSENZA dei nomi rimossi in trading_config (falliscono sul vecchio codice
+   dove esistevano => BLOCK anti-reintroduzione zombie).
+2. PROVA GLOBALE (richiesta dai reviewer GPT-5.6 Terra / Fugu Ultra / Fable 5):
+   nessun modulo .py del repo referenzia le costanti rimosse, cosi' un
+   `from trading_config import <NAME>` residuo in un modulo non coperto dai
+   test non puo' sfuggire e causare ImportError a runtime.
 
 Motivazioni (evidenza file:riga nella mappatura Phase 0):
 - DEFAULT_COMMISSION      -> commissione reale = commission_pct (config/DB) +
@@ -16,8 +21,11 @@ Motivazioni (evidenza file:riga nella mappatura Phase 0):
                              core/safety_layer.validate_selection_prices.
 """
 
+import pathlib
+import re
+
 import trading_config
-import config_registry
+from config_registry import ConfigRegistry
 
 
 REMOVED_CONSTANTS = (
@@ -27,22 +35,40 @@ REMOVED_CONSTANTS = (
     "MAX_SPREAD_TICKS",
 )
 
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+_SKIP_DIRS = {
+    ".git",
+    "build",
+    "dist",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "node_modules",
+    ".eggs",
+    ".mypy_cache",
+    ".pytest_cache",
+}
+# Whole-word matcher per ciascun nome rimosso (evita substring accidentali).
+_REFERENCE_RE = re.compile(r"\b(" + "|".join(REMOVED_CONSTANTS) + r")\b")
+
 
 def test_dead_constants_are_absent():
     """Le 4 costanti morte non devono piu' esistere in trading_config."""
-    for name in REMOVED_CONSTANTS:
-        assert not hasattr(trading_config, name), (
-            f"trading_config.{name} e' un duplicato morto: non deve essere "
-            f"re-introdotto (usa la fonte reale documentata)."
-        )
+    present = [name for name in REMOVED_CONSTANTS if hasattr(trading_config, name)]
+    assert not present, (
+        f"Costanti morte ancora presenti in trading_config: {present}. "
+        f"Sono duplicati morti: non re-introdurle (usa la fonte reale documentata)."
+    )
 
 
 def test_enforce_candidates_are_preserved():
     """Le costanti da enforce-first nelle PR G5 successive restano presenti."""
-    for name in ("MAX_WIN", "MAX_STAKE_PCT", "AUTO_GREEN_DELAY_SEC", "PROFIT_EPSILON"):
-        assert hasattr(trading_config, name), (
-            f"trading_config.{name} e' un enforce-candidate: non va rimosso qui."
-        )
+    missing = [
+        name
+        for name in ("MAX_WIN", "MAX_STAKE_PCT", "AUTO_GREEN_DELAY_SEC", "PROFIT_EPSILON")
+        if not hasattr(trading_config, name)
+    ]
+    assert not missing, f"Enforce-candidate rimossi per errore: {missing}"
 
 
 def test_commission_invariant_source_intact():
@@ -52,18 +78,41 @@ def test_commission_invariant_source_intact():
     assert trading_config.BETFAIR_ITALY_COMMISSION_PCT == 4.5
 
 
-def test_config_registry_has_no_spread_ticks_entry():
-    """Il display registry non deve piu' referenziare MAX_SPREAD_TICKS.
+def test_registry_trading_entries_have_no_spread_ticks():
+    """Behavior-level: il registry non espone piu' l'entry MAX_SPREAD_TICKS.
 
-    Evita un getattr(trading_config, 'MAX_SPREAD_TICKS') su un nome rimosso
-    (che tornerebbe None -> voce 'Spread massimo (tick)' morta nella console).
+    Costruisce il ConfigRegistry reale e ispeziona le ConfigEntry restituite
+    (non il sorgente): robusto a formattazione/commenti e ai pyc-only, come
+    chiesto da Codacy/Greptile.
     """
-    import inspect
-
-    src = inspect.getsource(config_registry.ConfigRegistry._trading_entries)
-    assert "MAX_SPREAD_TICKS" not in src, (
-        "config_registry._trading_entries non deve piu' elencare MAX_SPREAD_TICKS."
+    reg = ConfigRegistry(settings_service=None)
+    keys = {entry.key for entry in reg._trading_entries()}
+    assert "trading.MAX_SPREAD_TICKS" not in keys, (
+        "Il registry non deve piu' produrre l'entry 'trading.MAX_SPREAD_TICKS'."
     )
-    # Le voci ancora enforce-candidate restano mostrate.
-    assert "MAX_WIN" in src
-    assert "MAX_STAKE_PCT" in src
+    # Le entry ancora enforce-candidate restano esposte.
+    assert "trading.MAX_WIN" in keys
+    assert "trading.MAX_STAKE_PCT" in keys
+
+
+def test_removed_constants_not_referenced_anywhere():
+    """Prova globale: nessun modulo .py del repo referenzia i nomi rimossi.
+
+    Encoda in CI il grep di Phase 0 (nessun consumer runtime) cosi' un import
+    residuo non coperto dai test verrebbe intercettato qui. Questo file guard e'
+    escluso (contiene i nomi di proposito).
+    """
+    self_path = pathlib.Path(__file__).resolve()
+    offenders: dict[str, list[str]] = {}
+    for py in _REPO_ROOT.rglob("*.py"):
+        if py.resolve() == self_path:
+            continue
+        if _SKIP_DIRS & set(py.relative_to(_REPO_ROOT).parts):
+            continue
+        text = py.read_text(encoding="utf-8", errors="ignore")
+        hits = sorted(set(_REFERENCE_RE.findall(text)))
+        if hits:
+            offenders[str(py.relative_to(_REPO_ROOT))] = hits
+    assert not offenders, (
+        f"Costanti rimosse ancora referenziate (rischio ImportError runtime): {offenders}"
+    )

@@ -17,7 +17,7 @@ MAX_WIN = 10000.0  # Vincita massima €10.000
 # NB: la commissione operativa reale e' sourced da `commission_pct`
 # (config/DB) con default 4.5 e invariante `BETFAIR_ITALY_COMMISSION_PCT`
 # enforced da `enforce_betfair_italy_commission_pct`. Non esiste piu' una
-# costante `DEFAULT_COMMISSION` separata (era duplicato morto, letto da nessuno).
+# costante di commissione duplicata separata (era dead code, letto da nessuno).
 BETFAIR_ITALY_COMMISSION_PCT = 4.5
 BETFAIR_ITALY_COMMISSION_TOLERANCE = 1e-9
 
