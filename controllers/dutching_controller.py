@@ -799,9 +799,13 @@ class DutchingController:
         # risultato). FAIL-OPEN su dato mancante (cache fredda => nessun blocco).
         liquidity = self._evaluate_liquidity_guard(config, payload, results)
         if liquidity.get("shortfall") and not self._liquidity_warning_only(config):
+            # Segnale di blocco AUTOREVOLE: ok=False. NON si aggiunge
+            # liquidity_warning (che nel path _ok indica la sola-osservazione):
+            # metterlo su un fail e' ambiguo per i consumer money-management
+            # (potrebbero leggerlo come "avviso procedibile"). Il blocco espone lo
+            # shortfall per diagnostica; ok=False prevale sempre.
             return self._fail(
                 "Liquidità insufficiente sul book per una o più gambe",
-                liquidity_warning=True,
                 liquidity_shortfall=liquidity.get("shortfall", []),
             )
 

@@ -205,8 +205,9 @@ def test_blocks_when_insufficient(monkeypatch):
     res = _controller(_Runtime(book=_book(10.0), config=_cfg(warning_only=False))).precheck(_payload())
     assert res["ok"] is False, res
     assert res.get("liquidity_shortfall"), res
-    # schema coerente coi due modi: liquidity_warning presente anche nel blocco.
-    assert res.get("liquidity_warning") is True, res
+    # ok=False e' il segnale di blocco autorevole. NON asseriamo liquidity_warning
+    # sul path di blocco: metterlo su un fail sarebbe ambiguo (nel path _ok indica
+    # la sola-osservazione). Il blocco espone solo lo shortfall per diagnostica.
 
 
 def test_no_block_when_sufficient(monkeypatch):
