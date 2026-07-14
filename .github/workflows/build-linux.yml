@@ -11,6 +11,8 @@ on:
       - "pickfair.spec"
       - "pyproject.toml"
       - "requirements.txt"
+      - "requirements-build-linux.in"
+      - "requirements-build-linux.lock"
       - "main.py"
       - "mini_gui.py"
       - "packaging/**"
@@ -31,14 +33,27 @@ jobs:
         with:
           python-version: "3.11"
 
+      # Toolchain di build: se e' presente il lock hash-verificato
+      # (requirements-build-linux.lock, generato in CI da
+      # generate-linux-lockfile.yaml) lo si installa con --require-hashes — ogni
+      # pacchetto DEVE avere un hash pinnato o pip rifiuta l'install (niente
+      # sostituzioni a monte non verificate). Finche' il lock non e' committato
+      # si resta sul percorso legacy non pinnato, cosi' la PR che introduce il
+      # meccanismo resta verde prima di copiare il lock dalla Job Summary.
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y python3-tk
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install customtkinter
-          pip install "pyinstaller>=6,<7"
+          if [ -f requirements-build-linux.lock ]; then
+            echo ">> install hash-locked (requirements-build-linux.lock)"
+            python -m pip install --require-hashes -r requirements-build-linux.lock
+          else
+            echo ">> install legacy non pinnato (lock assente)"
+            pip install -r requirements.txt
+            pip install customtkinter
+            pip install "pyinstaller>=6,<7"
+          fi
 
       # Fail-closed: la GUI usa tkinter/customtkinter; se il Python che compila
       # NON vede Tk (python3-tk mancante), l'eseguibile partirebbe senza
@@ -51,7 +66,8 @@ jobs:
       # a packaging regression is caught here and not only in the full test job.
       - name: Run packaging guardrail tests
         run: |
-          python -m pip install pytest
+          # pytest e' gia' nel lock (via requirements-dev); in legacy va aggiunto.
+          python -c "import pytest" 2>/dev/null || python -m pip install pytest
           python -m pytest tests/packaging -q
 
       # Nome artifact versionato+datato (dalla version di pyproject.toml), così i

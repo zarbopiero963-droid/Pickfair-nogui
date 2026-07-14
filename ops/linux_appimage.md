@@ -95,6 +95,55 @@ volutamente: si **ri-verifica** il nuovo binario e si aggiorna il valore pinnato
 in `.github/workflows/build-linux.yml` (step *Package GUI as AppImage*, env
 `APPIMAGETOOL_SHA256`). L'URL è sovrascrivibile con `APPIMAGETOOL_URL`.
 
+## Toolchain di build hash-locked (supply-chain)
+
+Il job `build` di `build-linux.yml` installa la sua toolchain (runtime + test
+runner + `customtkinter` + `pyinstaller`) da un **lock hash-verificato**, così
+un pacchetto sostituito a monte su PyPI non entra silenziosamente nel binario
+distribuito.
+
+- **`requirements-build-linux.in`** — l'input di alto livello: `-r
+  requirements-dev.txt` (runtime + pytest) + `customtkinter` + `pyinstaller`.
+- **`requirements-build-linux.lock`** — il lock generato con
+  `pip-compile --generate-hashes`: ogni dipendenza (transitive incluse) è
+  pinnata a versione **e** hash `sha256`.
+- **consumo** — `build-linux.yml` installa con
+  `pip install --require-hashes -r requirements-build-linux.lock`: pip
+  **rifiuta** qualsiasi pacchetto senza hash pinnato. Il consumo è *gated* sulla
+  presenza del lock: finché il lock non è committato, il build resta sul
+  percorso legacy non pinnato (così la PR che introduce il meccanismo è verde
+  prima di copiare il lock).
+
+### Perché il lock si genera SOLO in CI
+
+Gli hash dei wheel sono **specifici per piattaforma + versione di Python** del
+runner (`ubuntu-latest` / CPython 3.11). Un lock generato in locale (macOS,
+altra glibc, altra minor di Python) pinnerebbe hash diversi da quelli che il
+runner di build scarica → `--require-hashes` **fallirebbe** in CI. Quindi il
+lock si genera nel workflow dedicato e si copia dalla sua Job Summary.
+
+### Come (ri)generare il lock
+
+1. Apri/aggiorna la PR toccando `requirements-build-linux.in`: il workflow
+   **`Generate Linux Lockfile`** (`.github/workflows/generate-linux-lockfile.yaml`)
+   parte da solo. In alternativa lancialo a mano da *Actions → Generate Linux
+   Lockfile → Run workflow*.
+2. Apri il run → **Summary**: contiene il testo completo del lock (anche nel log
+   del job, fra `-----BEGIN LINUX LOCK-----` / `-----END LINUX LOCK-----`).
+3. Copia quel contenuto **tale e quale** in `requirements-build-linux.lock` alla
+   root del repo e committa nella stessa PR.
+4. Al push successivo il gate **anti-stale** del workflow rigenera il lock e lo
+   confronta bit-a-bit con quello committato: se differiscono (dipendenze
+   cambiate senza aggiornare il lock) la CI fallisce → rigenera e ricommitta.
+
+Il workflow pinna `pip==24.3.1` / `pip-tools==7.4.1` (resolver deterministico) e
+usa `CUSTOM_COMPILE_COMMAND` + input relativo per tenere l'header del lock
+**privo di path assoluti** del runner (riproducibilità). Una guardia
+**anti-deletion** impedisce che un lock già adottato sparisca in una PR
+(tornerebbe a install non verificati). Il lock NON è committato dal workflow: la
+consegna via Job Summary è voluta, così il lock passa da una revisione umana
+prima di entrare nel repo.
+
 ## Asset di packaging
 
 | File | Ruolo |
@@ -104,6 +153,8 @@ in `.github/workflows/build-linux.yml` (step *Package GUI as AppImage*, env
 | `packaging/pickfair.desktop` | voce menu applicazioni (Name/Exec/Icon) |
 | `packaging/pickfair.png` | icona 256×256 (**placeholder** — sostituibile) |
 | `packaging/make_icon.py` | rigenera l'icona placeholder |
+| `requirements-build-linux.in` | input dell'hash-lock della toolchain di build |
+| `requirements-build-linux.lock` | lock hash-verificato (generato in CI) |
 
 L'icona è un placeholder generato: per sostituirla con il logo vero, rimpiazza
 `packaging/pickfair.png` (256×256) — o aggiorna `make_icon.py` e rigenera con

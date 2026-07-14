@@ -21,6 +21,20 @@
       ],
       "max_files": 11
     },
+    "linux_build_deps_hash_lock": {
+      "description": "PR-B (autorizzata dall'owner, follow-up di linux_appimage_gui_packaging/#377): blinda la supply-chain del build Linux con un lock hash-verificato. Nuovo requirements-build-linux.in (-r requirements-dev.txt + customtkinter + pyinstaller) coperto da requirements-build-linux.lock (pip-compile --generate-hashes: ogni dip, transitive incluse, pinnata a versione+sha256). build-linux.yml installa con --require-hashes gated sulla presenza del lock (fallback legacy non pinnato finche' il lock non e' committato, cosi' la PR resta verde prima di copiare il lock). Nuovo workflow generate-linux-lockfile.yaml genera il lock SOLO in CI (gli hash dei wheel sono platform+python-specific: un lock locale farebbe fallire --require-hashes sul runner), lo pubblica nella Job Summary (non lo committa: revisione umana prima del commit), pinna il resolver (pip==24.3.1/pip-tools==7.4.1), usa CUSTOM_COMPILE_COMMAND + input relativo per un header senza path assoluti (riproducibilita'), e ha gate anti-stale (diff con la rigenerazione) + anti-deletion (il lock adottato non deve sparire vs base ref). Solo CI/build additivo: NESSUNA logica trading/gate/ordini/Betfair/Telegram/runtime toccata. Job Windows e binari/AppImage INVARIATI. Test strutturali statici (nessun install reale). Docs ops/linux_appimage.md nello stesso PR.",
+      "allow_tests": true,
+      "files": [
+        "requirements-build-linux.in",
+        "requirements-build-linux.lock",
+        ".github/workflows/generate-linux-lockfile.yaml",
+        ".github/workflows/build-linux.yml",
+        "tests/packaging/test_linux_lockfile.py",
+        "ops/linux_appimage.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 8
+    },
     "catalog_sync_betfair_listing_367": {
       "description": "#367 (blocco critico dal test LIVE VPS): CatalogSync chiamava list_soccer_events()/list_market_catalogue(market_types=...) inesistenti sul client Betfair (BetfairClient e SimulationBroker) -> AttributeError, 0 eventi/mercati/runner sincronizzati, trading bloccato in LIVE e SIM. Fix (approccio A, autorizzato dall'owner): esposti list_events e list_market_catalogue (con filtro marketTypeCodes) su BetfairClient riusando il pattern _post_jsonrpc esistente (stesso di get_market_book), e su SimulationBroker come no-op fail-safe (in SIM il catalogo arriva dai feed streaming, non via API). Riscritto services/catalog_sync_service.py sulle firme/formati Betfair reali (mapping event.id->event_id, marketId->market_id, runners[].selectionId, competition dal market catalogue). NON tocca la logica dei gate/ordini/money-management: solo discovery read-only del catalogo. Test hard PASS+BLOCK (mapping formato Betfair, filtro marketTypeCodes, regressione list_soccer_events non piu' usato, SIM no-crash). La verifica end-to-end con API Betfair reale resta sul VPS (owner/Manus) prima di chiudere #367.",
       "allow_tests": true,

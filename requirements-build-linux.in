@@ -1,0 +1,18 @@
+# Input hash-lock della toolchain di build Linux (build-linux.yml).
+#
+# Copre TUTTO cio' che il job "build" di build-linux.yml pip-installa, cosi' un
+# solo lock hash-verificato blinda l'intera toolchain di packaging:
+#   - runtime dell'app        -> requirements.txt      (via requirements-dev.txt)
+#   - test runner (packaging) -> pytest & co.          (via requirements-test.txt)
+#   - GUI                     -> customtkinter
+#   - packaging onefile       -> pyinstaller
+#
+# Il lock (requirements-build-linux.lock) si genera SOLO in CI
+# (.github/workflows/generate-linux-lockfile.yaml) e si copia dalla Job Summary:
+# gli hash dei wheel sono specifici per piattaforma + versione di Python del
+# runner (ubuntu-latest / CPython 3.11), quindi un lock generato in locale
+# farebbe fallire `pip install --require-hashes` sul runner. Vedi
+# ops/linux_appimage.md ("Toolchain di build hash-locked").
+-r requirements-dev.txt
+customtkinter
+pyinstaller>=6,<7
