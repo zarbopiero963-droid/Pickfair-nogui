@@ -187,6 +187,13 @@ def test_sanitize_login_code_ascii_and_marker():
     assert sanitize_login_code("encode 999 code 12345") == "12345"
     assert sanitize_login_code("codebase 999 codice 12345") == "12345"
     assert sanitize_login_code("codebase 999 code 12345") == "12345"
+    # BLOCK (Fugu): marcatore ATTACCATO alle cifre, senza separatore. Il `\b` a
+    # destra falliva (tra "e" e "1" non c'è boundary) e il fallback concatenava
+    # tutte le cifre ("id 999 code12345" -> "99912345"); il lookahead `(?![a-z])`
+    # lascia passare la cifra subito dopo il marcatore.
+    assert sanitize_login_code("code12345") == "12345"
+    assert sanitize_login_code("codice12345") == "12345"
+    assert sanitize_login_code("id 999 code12345") == "12345"
     # cifre non-ASCII (arabo-indiane) NON sono valide per Telegram => scartate
     assert sanitize_login_code("١٢٣") == ""
     assert sanitize_login_code(None) == ""

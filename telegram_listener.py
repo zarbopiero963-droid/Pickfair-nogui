@@ -54,14 +54,17 @@ def sanitize_login_code(raw) -> str:
     # Cattura SOLO la prima sequenza CONTIGUA di cifre dopo il marcatore: niente
     # `\s` nel gruppo, altrimenti "Login code: 54321\n777000" concatenerebbe le
     # cifre successive in "54321777000" (rilievo Fugu, regressione parser).
-    # `\b` su ENTRAMBI i lati del marcatore: "code"/"codice" deve essere una
-    # parola a sé (rilievo CodeRabbit, provato con esecuzione). Il solo boundary
-    # a sinistra non basta: "code" è anche il PREFISSO di "codebase"/"codeword",
-    # dove il `\b` iniziale è soddisfatto (inizio parola) e senza il boundary a
-    # destra "codebase 999 codice 12345" aggancerebbe "code" di "codebase" e
-    # tornerebbe "999". Il boundary a destra ("code" seguito da ":"/spazio, non
-    # da una lettera) esclude "codebase" e agganciac il vero "codice 12345".
-    match = re.search(r"\bcod(?:e|ice)\b\D*([0-9]+)", text, re.IGNORECASE)
+    # Marcatore "code"/"codice" delimitato: `\b` a SINISTRA (esclude il suffisso
+    # "Barcode"/"encode") e lookahead negativo `(?![a-z])` a DESTRA (esclude il
+    # PREFISSO "codebase"/"codeword", dove il `\b` iniziale è comunque
+    # soddisfatto e da solo tornerebbe "999" su "codebase 999 codice 12345"
+    # — rilievo CodeRabbit, provato con esecuzione). NON si usa `\b` a destra:
+    # fallirebbe quando il marcatore è ATTACCATO alle cifre ("code12345"),
+    # perché tra "e" e "1" (entrambi `\w`) non c'è word boundary → nessun match
+    # → il fallback concatenerebbe TUTTE le cifre ("id 999 code12345" →
+    # "99912345") — rilievo Fugu. Il lookahead accetta cifra/":"/spazio dopo il
+    # marcatore ma rifiuta una lettera, coprendo entrambi i casi.
+    match = re.search(r"\bcod(?:e|ice)(?![a-z])\D*([0-9]+)", text, re.IGNORECASE)
     segment = match.group(1) if match else text
     return "".join(ch for ch in segment if ch in "0123456789")
 
