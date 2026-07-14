@@ -43,7 +43,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y python3-tk
-          python -m pip install --upgrade pip
+          # NB: niente `pip install --upgrade pip` — scaricherebbe un pip NON
+          # pinnato/non-hash prima del lock, riaprendo la supply-chain che il
+          # fail-closed protegge (rilievo GPT-5.6 Terra). Si usa il pip
+          # preinstallato del runner (parte dell'immagine, gia' recente e con
+          # --require-hashes). Il lock e' l'unica sorgente della toolchain.
           if [ ! -f requirements-build-linux.lock ]; then
             echo "::error::requirements-build-linux.lock mancante: la toolchain di build e' hash-locked (fail-closed). Genera il lock con generate-linux-lockfile.yaml e committalo."
             exit 1
