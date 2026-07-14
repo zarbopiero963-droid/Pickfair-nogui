@@ -178,12 +178,15 @@ def test_sanitize_login_code_ascii_and_marker():
     # devono concatenarsi (prima: "54321777000"; ora solo la sequenza contigua).
     assert sanitize_login_code("Login code: 54321\n777000") == "54321"
     assert sanitize_login_code("code 54321 poi 999") == "54321"
-    # BLOCK (CodeRabbit): il marcatore "code"/"codice" richiede un word boundary
-    # a sinistra: NON deve agganciarsi al suffisso di "Barcode"/"encode"/"Unicode".
-    # Prima del `\b`, "Barcode 999 codice 12345" tornava "999" (il "code" di
-    # "Barcode" seguito da 999) invece del vero "12345".
+    # BLOCK (CodeRabbit): il marcatore "code"/"codice" richiede il word boundary
+    # su ENTRAMBI i lati. A sinistra esclude il SUFFISSO ("Barcode"/"encode"); a
+    # destra esclude il PREFISSO ("codebase"/"codeword"), dove il `\b` iniziale è
+    # comunque soddisfatto (inizio parola). Prima del boundary destro,
+    # "codebase 999 codice 12345" tornava "999" invece del vero "12345".
     assert sanitize_login_code("Barcode 999 codice 12345") == "12345"
     assert sanitize_login_code("encode 999 code 12345") == "12345"
+    assert sanitize_login_code("codebase 999 codice 12345") == "12345"
+    assert sanitize_login_code("codebase 999 code 12345") == "12345"
     # cifre non-ASCII (arabo-indiane) NON sono valide per Telegram => scartate
     assert sanitize_login_code("١٢٣") == ""
     assert sanitize_login_code(None) == ""
