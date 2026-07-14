@@ -51,7 +51,10 @@ def sanitize_login_code(raw) -> str:
     La password 2FA NON passa mai da qui (non è un codice numerico).
     """
     text = str(raw or "")
-    match = re.search(r"cod(?:e|ice)\D*([0-9][0-9\s]*)", text, re.IGNORECASE)
+    # Cattura SOLO la prima sequenza CONTIGUA di cifre dopo il marcatore: niente
+    # `\s` nel gruppo, altrimenti "Login code: 54321\n777000" concatenerebbe le
+    # cifre successive in "54321777000" (rilievo Fugu, regressione parser).
+    match = re.search(r"cod(?:e|ice)\D*([0-9]+)", text, re.IGNORECASE)
     segment = match.group(1) if match else text
     return "".join(ch for ch in segment if ch in "0123456789")
 

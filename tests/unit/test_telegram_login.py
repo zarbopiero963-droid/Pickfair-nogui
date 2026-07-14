@@ -170,6 +170,10 @@ def test_sanitize_login_code_ascii_and_marker():
     assert sanitize_login_code("12345") == "12345"
     # ALTRE cifre nel testo (id chat 777000) NON devono concatenarsi al codice
     assert sanitize_login_code("777000 Login code: 54321") == "54321"
+    # BLOCK (Fugu): cifre DOPO il codice, separate da whitespace/newline, NON
+    # devono concatenarsi (prima: "54321777000"; ora solo la sequenza contigua).
+    assert sanitize_login_code("Login code: 54321\n777000") == "54321"
+    assert sanitize_login_code("code 54321 poi 999") == "54321"
     # cifre non-ASCII (arabo-indiane) NON sono valide per Telegram => scartate
     assert sanitize_login_code("١٢٣") == ""
     assert sanitize_login_code(None) == ""
