@@ -287,8 +287,10 @@ with a commit: re-fire the labels and read the full-range.
 when the PR is stable and in theory ready to merge: the per-push reviewers
 (GPT-5.6 Terra, GLM 5.2) have COMPLETED and their real findings are handled (patched
 or answered in-thread with evidence). CodeRabbit is NOT a waiting gate: if it has
-completed handle its real findings, if it is in rate-limit/usage-quota/"processing"
-it is absent immediately and is NOT awaited. This way Fugu Ultra and Fable 5
+completed handle its real findings; if it is in rate-limit/usage-quota it is
+absent and is NOT awaited; if it is "processing" it is still reviewing — not
+awaited as a binding gate, but its real findings (if they arrive before you
+finalize) are handled, else deferred to post-merge. This way Fugu Ultra and Fable 5
 review a STABLE head and are not wasted on versions that will still change (each
 push to the strong reviewers costs). Sequence: work complete → push → GPT/GLM done
 and findings handled (CodeRabbit only if available) → stable head → fire
@@ -317,13 +319,26 @@ no wait and no cap-timer (see "Skip on unavailability"). The only binding final
 gate is the two strong label reviewers (Fugu Ultra + Fable 5): see "Final label
 gate".
 
+**Fail-closed preserved (anti-regression note).** Downgrading unavailable ADVISORY
+reviewers (CodeRabbit/Codex/Sourcery) to "absent" does NOT weaken fail-closed: they
+are NOT required CI checks and do NOT replace the binding gates. The BINDING gates
+are ALWAYS active and never skipped — (a) settled current-head CI checks and (b)
+the two strong label reviewers Fugu Ultra + Fable 5 (full-range, repeated until a
+clean outcome). Late findings from reviewers marked absent are covered by
+post-merge tracking (Issue + fix PR). If a BINDING reviewer (Fugu/Fable via label)
+is in usage-quota, DONE is NOT declared by skipping it: the AUTO-MERGE carve-out
+applies (auto-merge BLOCKED, the owner decides). The owner can also always merge
+manually (human override).
+
 **Event-driven review window (no fixed timer).** The four synchronous reviewers
 answer in ~1 min. **CodeRabbit is NOT a waiting gate**: if it has already
 COMPLETED, read and handle its real findings (inline + review body); if it is in
-rate-limit / usage-quota / "processing", treat it as ABSENT immediately (no wait,
-no cap-timer) and defer to post-merge tracking — do not stall on it. The AGENT's
-verdict (ready / DONE) does NOT depend on CodeRabbit: it depends on settled CI
-checks and the strong label gates (Fugu/Fable). The owner may merge manually at
+rate-limit / usage-quota, treat it as ABSENT (no wait, no cap-timer) and defer to
+post-merge tracking. If it is "processing" it is still reviewing: not awaited as a
+binding gate, but not "absent" either — if it completes before you finalize handle
+its findings, else post-merge; do not stall on it. The AGENT's verdict (ready /
+DONE) does NOT depend on CodeRabbit: it depends on settled CI checks and the strong
+label gates (Fugu/Fable). The owner may merge manually at
 any time.
 
 **Be frugal with pushes (API + CI cost).** Every push that updates the head pays
@@ -345,9 +360,11 @@ reviewers.** A reviewer that cannot review is NOT a gate and is NOT "pending":
 treat it as ABSENT and proceed (note that it did not review).
 - **Codex**: usage-limit => absent, skipped.
 - **Sourcery**: rate-limit => absent, skipped.
-- **CodeRabbit**: rate-limit / usage-quota / "processing" => absent immediately,
-  skipped (like Codex/Sourcery); do not wait, no cap-timer, defer to post-merge
-  tracking. If instead it has already completed, handle its real findings.
+- **CodeRabbit**: rate-limit / usage-quota => absent, skipped (like Codex/
+  Sourcery); do not wait, no cap-timer, defer to post-merge tracking. "processing"
+  = still reviewing: NOT "absent" but NOT a binding waiting gate (DONE rests on
+  settled CI checks + Fugu/Fable label); if it completes in time handle its real
+  findings, else post-merge. If it has already completed, handle its real findings.
 - **The 4 API workflows** (GPT-5.6 Terra, GLM 5.2, Fugu Ultra, Fable 5): if a round
   reports provider usage-quota / rate-limit, that reviewer is absent for that
   push => do not wait for it, do not count it in the check-completion gate, do

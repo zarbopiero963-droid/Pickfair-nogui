@@ -169,8 +169,10 @@ push-range: ri-lancia le label e leggi la full-range.
 label quando la PR è stabile e in teoria pronta al merge: i reviewer per-push
 (GPT-5.6 Terra, GLM 5.2) hanno COMPLETATO e i loro rilievi reali sono stati trattati
 (patch o evidenza in-thread). CodeRabbit NON è un gate d'attesa: se ha completato
-tratta i suoi rilievi reali, se è in rate-limit/usage-quota/«processing» è assente
-da subito e NON lo si aspetta. Così Fugu Ultra e Fable 5 revisionano un head
+tratta i suoi rilievi reali; se è in rate-limit/usage-quota è assente e NON lo si
+aspetta; se è «processing» sta ancora revisionando: non lo si aspetta come gate
+vincolante, ma i suoi rilievi reali — se arrivano prima di finalizzare — si
+trattano, altrimenti post-merge tracking. Così Fugu Ultra e Fable 5 revisionano un head
 STABILE e non si sprecano su versioni che cambieranno ancora (ogni push ai forti
 costa). Sequenza: lavoro completo → push → GPT/GLM finiti e finding trattati
 (CodeRabbit solo se disponibile) → head stabile → fai partire `final-fugu-review`
@@ -199,14 +201,27 @@ rate-limit/usage-quota è assente da SUBITO, nessuna attesa e nessun cap-timer
 (vedi «Skip per indisponibilità»). L'unico gate finale vincolante sono i due
 reviewer forti a label (Fugu Ultra + Fable 5): vedi «Gate finale a label».
 
+**Fail-closed preservato (nota anti-regressione).** Declassare ad «assente» i
+reviewer ADVISORY non disponibili (CodeRabbit/Codex/Sourcery) NON indebolisce il
+fail-closed: NON sono check CI richiesti e NON sostituiscono i gate vincolanti. I
+gate VINCOLANTI restano SEMPRE attivi e non si saltano mai — (a) i check CI
+current-head SETTLED e (b) i due reviewer forti a label Fugu Ultra + Fable 5
+(full-range, ripetuti fino a esito pulito). I rilievi tardivi dei reviewer
+advertiti come assenti sono coperti dal tracciamento post-merge (Issue + fix PR).
+Se un reviewer VINCOLANTE (Fugu/Fable a label) è in usage-quota, NON si dichiara
+DONE saltandolo: vale il carve-out AUTO-MERGE (auto-merge BLOCCATO, decide
+l'owner). L'owner può inoltre sempre mergiare a mano (override umano).
+
 **Finestra review event-driven (non a timer).** I quattro reviewer sincroni
 rispondono in ~1 min. **CodeRabbit NON è un gate d'attesa**: se ha già COMPLETATO
 leggi e tratta i suoi rilievi reali (inline + corpo review); se è in rate-limit /
-usage-quota / «processing», trattalo come ASSENTE da SUBITO (nessuna attesa,
-nessun cap-timer) e demanda al tracciamento post-merge — non restare in stallo su
-di lui. Il verdetto dell'AGENTE (pronto / DONE) NON dipende da CodeRabbit: dipende
-dai check CI settled e dai gate forti a label (Fugu/Fable). L'owner può mergiare a
-mano in qualsiasi momento.
+usage-quota, trattalo come ASSENTE (nessuna attesa, nessun cap-timer) e demanda al
+tracciamento post-merge. Se è «processing» sta ancora revisionando: non lo si
+aspetta come gate vincolante, ma non è 'assente' — se completa prima che finalizzi
+tratta i suoi rilievi, altrimenti post-merge; non restare in stallo su di lui. Il
+verdetto dell'AGENTE (pronto / DONE) NON dipende da CodeRabbit: dipende dai check
+CI settled e dai gate forti a label (Fugu/Fable). L'owner può mergiare a mano in
+qualsiasi momento.
 
 **Parsimonia push (costo API + minuti CI).** Ogni push che aggiorna il head
 paga i modelli (GPT/GLM sempre; Fugu/Fable su push core/critici). Accorpa i fix
@@ -228,9 +243,12 @@ reviewer.** Un reviewer che non può revisionare NON è un gate e NON è "pendin
 trattalo come ASSENTE e prosegui (annota che non ha revisionato).
 - **Codex**: usage-limit => assente, saltato.
 - **Sourcery**: rate-limit => assente, saltato.
-- **CodeRabbit**: rate-limit / usage-quota / «processing» => assente da SUBITO,
-  saltato (come Codex/Sourcery); non aspettarlo, nessun cap-timer, demanda al
-  tracciamento post-merge. Se invece ha già completato, tratta i suoi rilievi reali.
+- **CodeRabbit**: rate-limit / usage-quota => assente, saltato (come Codex/
+  Sourcery); non aspettarlo, nessun cap-timer, demanda al tracciamento post-merge.
+  «processing» = sta revisionando: NON è 'assente' ma NON è un gate d'attesa
+  vincolante (il DONE poggia su check CI settled + Fugu/Fable a label); se completa
+  in tempo tratta i rilievi reali, altrimenti post-merge. Se ha già completato,
+  tratta i rilievi reali.
 - **I 4 workflow API** (GPT-5.6 Terra, GLM 5.2, Fugu Ultra, Fable 5): se un giro
   riporta usage-quota / rate-limit del provider, quel reviewer è assente per quel
   push => non aspettarlo, non contarlo nel check-completion gate, non bloccare il
