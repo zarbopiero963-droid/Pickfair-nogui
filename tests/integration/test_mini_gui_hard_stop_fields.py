@@ -176,6 +176,35 @@ def test_save_writes_values_and_preserves_empty(monkeypatch):
         app.destroy()
 
 
+def test_reload_failure_after_save_is_not_reported_as_save_failure(monkeypatch):
+    # BLOCK/regressione (rilievo CodeRabbit): se reload_config() fallisce DOPO un
+    # save andato a buon fine, il salvataggio NON deve apparire come fallito (il
+    # dato e' su DB) e il refresh dei campi deve comunque avvenire.
+    app = _make_gui(monkeypatch)
+    try:
+        def _boom():
+            raise RuntimeError("reload boom")
+
+        app.runtime.reload_config = _boom
+
+        infos, errors = [], []
+        app._safe_show_info = lambda *a, **k: infos.append(a)
+        app._safe_show_error = lambda *a, **k: errors.append(a)
+
+        app.rs_max_daily_loss_var.set("300")
+        app._save_roserpina_settings()
+
+        # Il save e' avvenuto (persistito) nonostante il reload fallito.
+        assert app.settings_service.saved_cfg is not None
+        assert app.settings_service.saved_cfg.max_daily_loss == 300.0
+        # NON e' stato mostrato l'errore generico di "salvataggio fallito".
+        assert not any("Errore salvataggio Roserpina" in a[0] for a in errors), errors
+        # E' stato segnalato il reload fallito (con save ok), non un save-error.
+        assert any("reload runtime fallito" in a[0] for a in errors), errors
+    finally:
+        app.destroy()
+
+
 def test_save_blocks_on_invalid_hard_stop(monkeypatch):
     # BLOCK: un valore invalido interrompe il salvataggio PRIMA di scrivere,
     # cosi' nessun hard-stop fasullo raggiunge il gate.

@@ -1366,17 +1366,38 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 max_drawdown_hard_stop_pct=self._parse_hard_stop(self.rs_max_drawdown_hard_stop_var.get(), "Drawdown max %", is_pct=True),
             )
             self.settings_service.save_roserpina_config(cfg)
-            if hasattr(self.runtime, "reload_config"):
-                self.runtime.reload_config()
-            # Riallinea i campi hard-stop al valore REALMENTE persistito: un campo
-            # lasciato vuoto (semantica preserve) torna a mostrare il limite
-            # conservato, evitando una divergenza UI/stato (un limite attivo ma
-            # invisibile). Refresh mirato ai soli hard-stop, per non toccare gli
-            # altri tab ne' la logica force-simulation di _load_initial_settings.
-            self._refresh_hard_stop_vars()
-            self._safe_show_info("OK", "Configurazione Roserpina salvata.")
         except Exception as exc:
+            # Errore nella COSTRUZIONE/validazione del config o nella PERSISTENZA:
+            # il salvataggio non e' avvenuto => errore generico, niente reload.
             self._safe_show_error("Errore salvataggio Roserpina", str(exc))
+            return
+
+        # Da qui il config e' PERSISTITO (su DB). Reload runtime e refresh dei
+        # campi sono passi POST-salvataggio: un loro errore NON deve essere
+        # riportato come "salvataggio fallito" (fuorviante: il dato e' gia' su DB)
+        # ne' saltare il refresh dei campi. Il reload runtime e' isolato: se
+        # fallisce, la config resta persistita e verra' applicata al prossimo
+        # reload/riavvio.
+        reload_error = None
+        if hasattr(self.runtime, "reload_config"):
+            try:
+                self.runtime.reload_config()
+            except Exception as exc:
+                reload_error = exc
+        # Riallinea i campi hard-stop al valore REALMENTE persistito: un campo
+        # lasciato vuoto (semantica preserve) torna a mostrare il limite
+        # conservato, evitando una divergenza UI/stato (un limite attivo ma
+        # invisibile). Refresh mirato ai soli hard-stop, per non toccare gli
+        # altri tab ne' la logica force-simulation di _load_initial_settings.
+        self._refresh_hard_stop_vars()
+        if reload_error is not None:
+            self._safe_show_error(
+                "Roserpina salvata (reload runtime fallito)",
+                f"Config salvata su DB, ma il reload a runtime e' fallito: {reload_error}. "
+                "Sara' applicata al prossimo reload/riavvio.",
+            )
+        else:
+            self._safe_show_info("OK", "Configurazione Roserpina salvata.")
 
     def _refresh_hard_stop_vars(self):
         """Rilegge gli hard-stop persistiti e riallinea i campi GUI (post-save).
