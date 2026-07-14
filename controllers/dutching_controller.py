@@ -177,6 +177,137 @@ class DutchingController:
     def _book_warning_threshold(self, config) -> float:
         return self._book_threshold(config, "book_warning", trading_config.BOOK_WARNING)
 
+    # -- Liquidity guard (PR2b) -------------------------------------------
+    @staticmethod
+    def _min_liquidity_absolute(config) -> float:
+        """Floor assoluto di liquidita' dalla config, fallback FAIL-SAFE.
+
+        A differenza del multiplier (> 0), qui `0.0` e' LEGITTIMO (= nessun floor
+        assoluto). Si ricade sulla costante solo se il valore e' assente / non
+        numerico / non finito / negativo.
+        """
+        raw = getattr(config, "min_liquidity_absolute", None)
+        if raw is None:
+            return float(trading_config.MIN_LIQUIDITY_ABSOLUTE)
+        try:
+            val = float(raw)
+            if math.isfinite(val) and val >= 0.0:
+                return val
+        except (TypeError, ValueError):
+            pass
+        return float(trading_config.MIN_LIQUIDITY_ABSOLUTE)
+
+    def _market_book(self, market_id):
+        """Book di mercato: prima la cache (market_tracker, no I/O), poi lo
+        snapshot del service (I/O best-effort). Ritorna None se non disponibile.
+        """
+        tracker = getattr(self.runtime, "market_tracker", None)
+        if tracker is not None and hasattr(tracker, "get_market"):
+            try:
+                book = tracker.get_market(market_id)
+                if isinstance(book, dict) and book.get("runners"):
+                    return book
+            except Exception:
+                logger.exception("liquidity guard: market_tracker.get_market fallita")
+        service = getattr(self.runtime, "betfair_service", None)
+        if service is not None and hasattr(service, "get_market_book_snapshot"):
+            try:
+                return service.get_market_book_snapshot(market_id)
+            except Exception:
+                logger.exception("liquidity guard: get_market_book_snapshot fallita")
+        return None
+
+    def _available_liquidity(self, market_id, selection_id, side):
+        """Liquidita' disponibile per una gamba (somma delle size del lato
+        OPPOSTO del book, coerente col matching di core/simulation_order_book:
+        BACK matcha availableToLay, LAY matcha availableToBack).
+
+        Ritorna None se book/selezione non disponibili => il gate NON blocca
+        (fail-open su dato mancante, decisione owner).
+        """
+        book = self._market_book(market_id)
+        if not isinstance(book, dict):
+            return None
+        runners = book.get("runners")
+        if not isinstance(runners, list):
+            return None
+        ladder_key = "availableToLay" if str(side).upper() == "BACK" else "availableToBack"
+        try:
+            target = int(selection_id)
+        except (TypeError, ValueError):
+            return None
+        for runner in runners:
+            if not isinstance(runner, dict):
+                continue
+            try:
+                if int(runner.get("selectionId")) != target:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            ex = runner.get("ex") or {}
+            ladder = ex.get(ladder_key) or []
+            total = 0.0
+            for level in ladder:
+                try:
+                    total += float((level or {}).get("size", 0.0) or 0.0)
+                except (TypeError, ValueError, AttributeError):
+                    continue
+            return total
+        return None  # selezione non trovata nel book => fail-open
+
+    def _evaluate_liquidity_guard(self, config, payload, results) -> Dict[str, Any]:
+        """Valuta il liquidity guard sulle gambe del dutching.
+
+        Ritorna {block, warning, message, shortfall}. `guard_enabled=False`
+        esplicito disattiva il gate (scelta operatore rispettata). Per ogni
+        gamba con liquidita' NOTA: required = base * multiplier (base = stake;
+        per LAY = stake*(price-1)); insufficiente se available < min_absolute o
+        < required. Se ci sono shortfall: blocca, oppure avvisa se warning_only.
+        """
+        out: Dict[str, Any] = {"block": False, "warning": False, "message": "", "shortfall": []}
+        if not bool(getattr(config, "liquidity_guard_enabled", True)):
+            return out
+        multiplier = self._book_threshold(config, "liquidity_multiplier", trading_config.LIQUIDITY_MULTIPLIER)
+        min_abs = self._min_liquidity_absolute(config)
+        warning_only = bool(getattr(config, "liquidity_warning_only", trading_config.LIQUIDITY_WARNING_ONLY))
+        market_id = (payload or {}).get("market_id")
+        shortfall = []
+        for item in results or []:
+            try:
+                selection_id = int(item.get("selectionId"))
+                stake = float(item.get("stake", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if stake <= 0.0:
+                continue
+            side = str(item.get("side") or "BACK").upper()
+            try:
+                price = float(item.get("price", 1.0) or 1.0)
+            except (TypeError, ValueError):
+                price = 1.0
+            available = self._available_liquidity(market_id, selection_id, side)
+            if available is None:
+                continue  # FAIL-OPEN: dato mancante => non blocca
+            base_required = stake * (price - 1.0) if (side == "LAY" and price > 1.0) else stake
+            required = float(base_required) * float(multiplier)
+            if available < min_abs or available < required:
+                shortfall.append(
+                    {
+                        "selectionId": selection_id,
+                        "available": round(float(available), 2),
+                        "required": round(float(required), 2),
+                        "min_absolute": round(float(min_abs), 2),
+                    }
+                )
+        if shortfall:
+            if warning_only:
+                out["warning"] = True
+            else:
+                out["block"] = True
+                out["message"] = f"Liquidita' insufficiente su {len(shortfall)} gamba/e (liquidity guard)"
+            out["shortfall"] = shortfall
+        return out
+
     def _mode(self):
         return getattr(self.runtime, "mode", None)
 
@@ -574,6 +705,17 @@ class DutchingController:
                 book_block=round(book_block, 2),
             )
 
+        # Liquidity guard (PR2b): liquidita' disponibile per gamba, letta dal
+        # market book. FAIL-OPEN su dato mancante (non blocca); blocca — o avvisa
+        # se warning_only — solo con liquidita' NOTA e insufficiente. Eseguito
+        # PRIMA di ogni side-effect (duplication acquire).
+        liquidity = self._evaluate_liquidity_guard(config, payload, results)
+        if liquidity.get("block"):
+            return self._fail(
+                liquidity.get("message") or "Liquidita' insufficiente (liquidity guard)",
+                liquidity_shortfall=liquidity.get("shortfall", []),
+            )
+
         if duplication_guard and bool(getattr(config, "anti_duplication_enabled", True)):
             try:
                 if not duplication_guard.acquire(event_key):
@@ -633,6 +775,8 @@ class DutchingController:
             book_pct=float(book_pct),
             book_warning=round(self._book_warning_threshold(config), 2),
             book_warning_exceeded=bool(float(book_pct) >= self._book_warning_threshold(config)),
+            liquidity_warning=bool(liquidity.get("warning")),
+            liquidity_shortfall=liquidity.get("shortfall", []),
             event_key=event_key,
             batch_id=batch_id,
             batch_exposure=float(batch_exposure),

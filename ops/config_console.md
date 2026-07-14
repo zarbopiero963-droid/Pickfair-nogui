@@ -105,6 +105,37 @@ una config rotta o corrotta **non disattiva il gate** né lo sposta su un valore
 assurdo. Editare `book_block` a un valore alto è una scelta consapevole
 dell'operatore (allenta il gate); il fallback protegge solo i casi invalidi.
 
+## Liquidity guard editabile in GUI (tab Roserpina) — PR2b
+
+Le costanti liquidita' (`LIQUIDITY_GUARD_ENABLED`, `LIQUIDITY_MULTIPLIER`,
+`MIN_LIQUIDITY_ABSOLUTE`, `LIQUIDITY_WARNING_ONLY`) erano *dead*. Ora sono
+editabili dal tab **Roserpina** (2 campi numerici "Liquidity: Moltiplicatore" /
+"Liquidity: Floor assoluto €" + 2 toggle "Liquidity Guard Enabled" / "Liquidity
+Warning Only") e applicate come **gate reale** al submit dutching.
+
+**Enforcement** (`controllers/dutching_controller.precheck`, dopo il book% gate e
+**prima di ogni side-effect**): per ogni gamba legge la liquidita' disponibile
+dal **market book** — lato OPPOSTO (BACK → `availableToLay`, LAY →
+`availableToBack`, coerente con `simulation_order_book`) — sommando le `size`,
+via `runtime.market_tracker.get_market` (cache) con fallback
+`betfair_service.get_market_book_snapshot`. Richiesta = `stake * multiplier` (per
+LAY = `stake*(price-1) * multiplier`); **blocca** se `available < max(min_absolute,
+required)`, oppure **avvisa** (flag `liquidity_warning`/`liquidity_shortfall` nel
+risultato, nessun blocco) se `warning_only`.
+
+**FAIL-OPEN su dato mancante (decisione owner).** Se la liquidita' non e'
+ottenibile (book assente/freddo, snapshot fallito, selezione non nel book), il
+gate **non blocca**: un feed freddo non ferma mai le scommesse (gli altri gate —
+book%, esposizione, hard-stop — restano attivi). Il guard blocca solo con
+liquidita' **nota** e insufficiente.
+
+**Toggle e fail-safe.** `Liquidity Guard Enabled = False` (scelta esplicita
+dell'operatore) **disattiva** il gate — non e' trattato come dato corrotto. I
+valori numerici hanno fallback fail-safe alle costanti `trading_config`:
+`multiplier` deve essere `> 0`, `min_absolute` `>= 0` (0 = nessun floor assoluto).
+`MIN_LIQUIDITY` (trading_config) resta non usata (superata da
+`min_liquidity_absolute`) per evitare due floor concorrenti.
+
 ## Vincoli (safety)
 
 - Non modifica la logica dei gate (deploy gate, fail-closed #350): **espone e

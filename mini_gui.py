@@ -632,6 +632,11 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         # Default allineati alle costanti di sistema (no valori hardcoded a parte).
         self.rs_book_warning_var = self._make_string_var(str(trading_config.BOOK_WARNING))
         self.rs_book_block_var = self._make_string_var(str(trading_config.BOOK_BLOCK))
+        # Liquidity guard: 2 numerici + 2 toggle, applicati al submit dutching.
+        self.rs_liq_multiplier_var = self._make_string_var(str(trading_config.LIQUIDITY_MULTIPLIER))
+        self.rs_liq_min_abs_var = self._make_string_var(str(trading_config.MIN_LIQUIDITY_ABSOLUTE))
+        self.rs_liq_guard_enabled_var = self._make_bool_var(bool(trading_config.LIQUIDITY_GUARD_ENABLED))
+        self.rs_liq_warning_only_var = self._make_bool_var(bool(trading_config.LIQUIDITY_WARNING_ONLY))
         self.rs_allow_recovery_var = self._make_bool_var(True)
         self.rs_anti_dup_var = self._make_bool_var(True)
         self.rs_risk_profile_var = self._make_string_var("BALANCED")
@@ -961,6 +966,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._labeled_entry(outer, "Hard-stop: Drawdown Max % (0-100, vuoto=non impostato)", self.rs_max_drawdown_hard_stop_var)
         self._labeled_entry(outer, "Book Warning % (avviso over-round)", self.rs_book_warning_var)
         self._labeled_entry(outer, "Book Block % (blocca submit se book >= soglia)", self.rs_book_block_var)
+        self._labeled_entry(outer, "Liquidity: Moltiplicatore (richiesta = stake x N)", self.rs_liq_multiplier_var)
+        self._labeled_entry(outer, "Liquidity: Floor assoluto € (0 = nessun floor)", self.rs_liq_min_abs_var)
 
         rp = ctk.CTkFrame(outer)
         rp.pack(fill=tk.X, padx=12, pady=6)
@@ -976,6 +983,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         cb.pack(fill=tk.X, padx=12, pady=6)
         ctk.CTkCheckBox(cb, text="Allow Recovery", variable=self.rs_allow_recovery_var).pack(side=tk.LEFT, padx=8, pady=8)
         ctk.CTkCheckBox(cb, text="Anti Duplication Enabled", variable=self.rs_anti_dup_var).pack(side=tk.LEFT, padx=8, pady=8)
+        ctk.CTkCheckBox(cb, text="Liquidity Guard Enabled", variable=self.rs_liq_guard_enabled_var).pack(side=tk.LEFT, padx=8, pady=8)
+        ctk.CTkCheckBox(cb, text="Liquidity Warning Only", variable=self.rs_liq_warning_only_var).pack(side=tk.LEFT, padx=8, pady=8)
 
         self.btn_save_roserpina = ctk.CTkButton(
             outer,
@@ -1165,6 +1174,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 self.rs_max_drawdown_hard_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_hard_stop_pct", None)))
                 self.rs_book_warning_var.set(str(getattr(rs, "book_warning", trading_config.BOOK_WARNING)))
                 self.rs_book_block_var.set(str(getattr(rs, "book_block", trading_config.BOOK_BLOCK)))
+                self.rs_liq_multiplier_var.set(str(getattr(rs, "liquidity_multiplier", trading_config.LIQUIDITY_MULTIPLIER)))
+                self.rs_liq_min_abs_var.set(str(getattr(rs, "min_liquidity_absolute", trading_config.MIN_LIQUIDITY_ABSOLUTE)))
+                self.rs_liq_guard_enabled_var.set(bool(getattr(rs, "liquidity_guard_enabled", True)))
+                self.rs_liq_warning_only_var.set(bool(getattr(rs, "liquidity_warning_only", False)))
                 self.rs_allow_recovery_var.set(bool(getattr(rs, "allow_recovery", self.rs_allow_recovery_var.get())))
                 self.rs_anti_dup_var.set(bool(getattr(rs, "anti_duplication_enabled", self.rs_anti_dup_var.get())))
                 risk_profile = getattr(rs, "risk_profile", None)
@@ -1367,6 +1380,22 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             raise ValueError(f"{label}: deve essere un numero finito maggiore di 0.")
         return val
 
+    @staticmethod
+    def _parse_min_liquidity(raw, label):
+        """Floor liquidita' assoluto: numerico, finito, >= 0 (0 = nessun floor).
+
+        Diverso da `_parse_book_pct` (> 0): per il floor liquidita' lo 0 e' un
+        valore valido (nessun minimo assoluto).
+        """
+        text = (raw or "").strip()
+        try:
+            val = float(text)
+        except (TypeError, ValueError):
+            raise ValueError(f"{label}: inserisci un numero valido.")
+        if not math.isfinite(val) or val < 0.0:
+            raise ValueError(f"{label}: deve essere un numero finito >= 0.")
+        return val
+
     def _save_roserpina_settings(self):
         try:
             from core.system_state import RoserpinaConfig, RiskProfile
@@ -1375,6 +1404,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             book_block = self._parse_book_pct(self.rs_book_block_var.get(), "Book Block %")
             if book_warning > book_block:
                 raise ValueError("Book Warning % non puo' superare Book Block %.")
+            liq_multiplier = self._parse_book_pct(self.rs_liq_multiplier_var.get(), "Liquidity Moltiplicatore")
+            liq_min_abs = self._parse_min_liquidity(self.rs_liq_min_abs_var.get(), "Liquidity Floor assoluto")
 
             cfg = RoserpinaConfig(
                 target_profit_cycle_pct=float(self.rs_target_var.get()),
@@ -1400,6 +1431,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 max_drawdown_hard_stop_pct=self._parse_hard_stop(self.rs_max_drawdown_hard_stop_var.get(), "Drawdown max %", is_pct=True),
                 book_warning=book_warning,
                 book_block=book_block,
+                liquidity_guard_enabled=bool(self.rs_liq_guard_enabled_var.get()),
+                liquidity_multiplier=liq_multiplier,
+                min_liquidity_absolute=liq_min_abs,
+                liquidity_warning_only=bool(self.rs_liq_warning_only_var.get()),
             )
             self.settings_service.save_roserpina_config(cfg)
         except Exception as exc:
