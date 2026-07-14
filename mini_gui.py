@@ -1060,13 +1060,17 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                     "non sovrascrivere i campi protetti (commission_pct, enabled)."
                 )
             loaded = self.settings_service.load_simulation_config()
-            # Anche un reload che ritorna None / non-dict / dict vuoto e' un FAIL:
-            # non potendo preservare i campi protetti, si ABORTA (mai degradare a {}).
-            if not isinstance(loaded, dict) or not loaded:
+            # FAIL-CLOSED completo: il reload deve essere un dict che contiene
+            # ESPLICITAMENTE i campi protetti (commission_pct policy-lock 4.5,
+            # enabled). None / non-dict / vuoto / PARZIALE => non possiamo
+            # preservarli, quindi ABORTIAMO (mai degradare a un dict che li
+            # riscriverebbe coi default via save_simulation_config.get(...)).
+            _locked_keys = ("commission_pct", "enabled")
+            if not isinstance(loaded, dict) or any(k not in loaded for k in _locked_keys):
                 raise RuntimeError(
-                    "Config simulazione corrente vuota o non valida: salvataggio "
-                    "annullato per non sovrascrivere i campi protetti "
-                    "(commission_pct, enabled)."
+                    "Config simulazione corrente incompleta o non valida (campi "
+                    "protetti commission_pct/enabled assenti): salvataggio annullato "
+                    "per non sovrascriverli con i default."
                 )
             cfg = dict(loaded)
             cfg["starting_balance"] = balance

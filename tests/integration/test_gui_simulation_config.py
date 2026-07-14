@@ -52,6 +52,13 @@ class _LoadReturnsNoneService(_CapturingService):
         return None
 
 
+class _LoadReturnsPartialService(_CapturingService):
+    """Il reload ritorna un dict PARZIALE, privo dei campi protetti."""
+
+    def load_simulation_config(self):
+        return {"starting_balance": 1000.0, "partial_fill_enabled": True}
+
+
 def _make_gui(monkeypatch):
     mg = _install_mini_gui_fakes(monkeypatch, settings_service=_CapturingService)
     return mg.MiniPickfairGUI(test_mode=True)
@@ -116,6 +123,19 @@ def test_gui_save_aborts_when_load_fails(monkeypatch):
 def test_gui_save_aborts_when_load_returns_none(monkeypatch):
     # FAIL-CLOSED anche su reload FALSY (None/config assente): niente save.
     mg = _install_mini_gui_fakes(monkeypatch, settings_service=_LoadReturnsNoneService)
+    app = mg.MiniPickfairGUI(test_mode=True)
+    try:
+        app.sim_starting_balance_var.set("3000")
+        app._save_simulation_settings()
+        assert app.settings_service.saved_sim is None
+    finally:
+        app.destroy()
+
+
+def test_gui_save_aborts_when_load_partial(monkeypatch):
+    # FAIL-CLOSED anche su reload PARZIALE (dict privo dei campi protetti): niente
+    # save (non potremmo preservare commission_pct/enabled).
+    mg = _install_mini_gui_fakes(monkeypatch, settings_service=_LoadReturnsPartialService)
     app = mg.MiniPickfairGUI(test_mode=True)
     try:
         app.sim_starting_balance_var.set("3000")
