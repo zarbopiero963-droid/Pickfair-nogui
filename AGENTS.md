@@ -254,25 +254,49 @@ posture live in `docs/ai_audit_workflows.md`.
   added. On pushes touching only docs/tests both jobs start but exit without
   calling the model (zero cost); those are still covered by GPT-5.6 Terra/GLM.
 
-**Final label gate (mandatory pre-merge).** Even if a PR touched no core files
-(so the strong reviewers never fired on their own), before declaring it ready
-the agent MUST trigger the final reviews via label: `final-fugu-review` and
-`final-fable-review` (already created by the owner). With the GitHub MCP tools:
-remove and re-add the two labels on the PR (GitHub emits no new `labeled` event
-if a label is already present). Fire them ONCE, on a stable head, after: the
-work is complete, local checks were attempted, the branch is pushed, the PR is
-not draft.
+**Final label gate (mandatory pre-merge, REPEAT until clean).** Triggering the
+final reviews via label `final-fugu-review` and `final-fable-review` (already
+created by the owner) is **MANDATORY** before declaring ANY PR ready — even if it
+touched no core files (so the strong reviewers never fired on their own) and even
+if the "final review" workflows already ran on the push. With the GitHub MCP
+tools: **remove and re-add** the two labels on the PR (GitHub emits no new
+`labeled` event if a label is already present). Prerequisites before firing: work
+complete, local checks attempted, branch pushed, PR not draft.
+
+**Repeat the fire until Fugu/Fable come back with NO blockers (owner decision).**
+Every time the head changes (a fix, an alignment) re-fire the two labels on the
+new stable head and wait for their full-range outcome. The gate is satisfied ONLY
+when BOTH come back with no real blockers. A persistent false positive is NOT a
+real blocker (see the diff-only note): answer it with evidence, do not loop
+forever — if after the full-range fire only a structural false positive remains,
+declare ready and document it. If Fugu/Fable are in usage-quota (the workflow
+starts but the model does not answer), the "Auto-merge" carve-out applies:
+auto-merge BLOCKED, the owner decides.
+
+**Diff-only / push-range vs full-range note (learned on #393).** The reviewers
+are diff-only (no checkout, no execution). The **per-push** reviews (auto on every
+push: GPT/GLM always; Fugu/Fable on core files) see ONLY the latest commit of the
+range, so they can produce false positives on imports/consistency/"missing code"
+when the cited code lives in earlier commits. The **label** reviews instead run
+over the WHOLE PR range (`base…head`) and see the full diff, so they resolve those
+false positives. For the final verdict what counts is Fugu/Fable's **full-range
+label** review, not the per-push ones. Do not chase a push-range false positive
+with a commit: re-fire the labels and read the full-range.
 
 **Timing: the strong gates are the LAST pre-merge step.** Fire the two labels
-ONLY when the PR is stable and in theory ready to merge: the per-push reviewers
-(GPT-5.6 Terra, GLM 5.2) and CodeRabbit have COMPLETED, all their real findings are
-handled (patched or answered in-thread with evidence), no more responses are
-coming and there is nothing left to do. NOT before: this way Fugu Ultra and
-Fable 5 review a STABLE head and are not wasted on versions that will still
-change from the cheap reviewers' fixes (each push to the strong reviewers
-costs). Sequence: work complete → push → GPT/GLM + CodeRabbit done and findings
-handled → stable head → ONLY NOW fire `final-fugu-review` + `final-fable-review`
-→ wait for their outcome → merge per the "Auto-merge" section.
+when the PR is stable and in theory ready to merge: the per-push reviewers
+(GPT-5.6 Terra, GLM 5.2) have COMPLETED and their real findings are handled (patched
+or answered in-thread with evidence). CodeRabbit is NOT a waiting gate: if it has
+completed handle its real findings; if it is in rate-limit/usage-quota it is
+absent and is NOT awaited; if it is "processing" it is still reviewing — not
+awaited as a binding gate, but its real findings (if they arrive before you
+finalize) are handled, else deferred to post-merge. This way Fugu Ultra and Fable 5
+review a STABLE head and are not wasted on versions that will still change (each
+push to the strong reviewers costs). Sequence: work complete → push → GPT/GLM done
+and findings handled (CodeRabbit only if available) → stable head → fire
+`final-fugu-review` + `final-fable-review` → wait for the **full-range** outcome →
+if real blockers remain: fix, re-push and **RE-FIRE the labels**, repeat until
+both come back clean → merge per the "Auto-merge" section.
 
 **The agent never sees the API keys**: it only adds the label; secrets stay in
 GitHub Secrets and Actions stays read-only on the code (diff-only, no checkout
@@ -286,19 +310,36 @@ blockers, auto-merge is forbidden (fail-closed); otherwise auto-merge follows
 the gated policy in "Auto-merge (owner-authorized, gated)" below.
 
 **Who to wait for / not wait for.** Default coverage on every PR is the four API
-workflows (GPT-5.6 Terra, GLM 5.2, Fugu Ultra, Fable 5) plus CodeRabbit. Codex and
-Sourcery are NOT a gate: if they post usage-limit/rate-limit messages, treat
-them as ABSENT (not pending) — do not wait, do not count them in the
-check-completion gate, do not block DONE on them.
+workflows (GPT-5.6 Terra, GLM 5.2, Fugu Ultra, Fable 5) plus CodeRabbit. Codex,
+Sourcery **and CodeRabbit** are NOT a waiting gate: if they post usage-limit /
+rate-limit / usage-quota messages, treat them as ABSENT (not pending) — do not
+wait, do not count them in the check-completion gate, do not block DONE on them.
+Owner decision: **any** reviewer in rate-limit/usage-quota is absent immediately,
+no wait and no cap-timer (see "Skip on unavailability"). The only binding final
+gate is the two strong label reviewers (Fugu Ultra + Fable 5): see "Final label
+gate".
+
+**Fail-closed preserved (anti-regression note).** Downgrading unavailable ADVISORY
+reviewers (CodeRabbit/Codex/Sourcery) to "absent" does NOT weaken fail-closed: they
+are NOT required CI checks and do NOT replace the binding gates. The BINDING gates
+are ALWAYS active and never skipped — (a) settled current-head CI checks and (b)
+the two strong label reviewers Fugu Ultra + Fable 5 (full-range, repeated until a
+clean outcome). Late findings from reviewers marked absent are covered by
+post-merge tracking (Issue + fix PR). If a BINDING reviewer (Fugu/Fable via label)
+is in usage-quota, DONE is NOT declared by skipping it: the AUTO-MERGE carve-out
+applies (auto-merge BLOCKED, the owner decides). The owner can also always merge
+manually (human override).
 
 **Event-driven review window (no fixed timer).** The four synchronous reviewers
-answer in ~1 min; then wait for **CodeRabbit to COMPLETE** its review (actionable
-inline comments, or the "No actionable comments" summary), because it posts
-P1/Major findings minutes after the fast four. The wait is event-driven with an
-anti-stall **cap of ~15 min** from the last push to the PR head; past the cap,
-treat CodeRabbit as absent and defer to post-merge tracking. This gate governs
-when the AGENT declares ready — it does NOT block the owner, who may merge
-manually at any time.
+answer in ~1 min. **CodeRabbit is NOT a waiting gate**: if it has already
+COMPLETED, read and handle its real findings (inline + review body); if it is in
+rate-limit / usage-quota, treat it as ABSENT (no wait, no cap-timer) and defer to
+post-merge tracking. If it is "processing" it is still reviewing: not awaited as a
+binding gate, but not "absent" either — if it completes before you finalize handle
+its findings, else post-merge; do not stall on it. The AGENT's verdict (ready /
+DONE) does NOT depend on CodeRabbit: it depends on settled CI checks and the strong
+label gates (Fugu/Fable). The owner may merge manually at
+any time.
 
 **Be frugal with pushes (API + CI cost).** Every push that updates the head pays
 the models (GPT/GLM always; Fugu/Fable on core/critical pushes). Batch review
@@ -319,8 +360,11 @@ reviewers.** A reviewer that cannot review is NOT a gate and is NOT "pending":
 treat it as ABSENT and proceed (note that it did not review).
 - **Codex**: usage-limit => absent, skipped.
 - **Sourcery**: rate-limit => absent, skipped.
-- **CodeRabbit**: if it stays waiting / rate-limited BEYOND the ~15-min cap from
-  the last push => skip it and defer to post-merge tracking; do not stall.
+- **CodeRabbit**: rate-limit / usage-quota => absent, skipped (like Codex/
+  Sourcery); do not wait, no cap-timer, defer to post-merge tracking. "processing"
+  = still reviewing: NOT "absent" but NOT a binding waiting gate (DONE rests on
+  settled CI checks + Fugu/Fable label); if it completes in time handle its real
+  findings, else post-merge. If it has already completed, handle its real findings.
 - **The 4 API workflows** (GPT-5.6 Terra, GLM 5.2, Fugu Ultra, Fable 5): if a round
   reports provider usage-quota / rate-limit, that reviewer is absent for that
   push => do not wait for it, do not count it in the check-completion gate, do
