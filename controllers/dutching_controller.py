@@ -279,12 +279,23 @@ class DutchingController:
         except (TypeError, ValueError):
             return 0.0
         if side == "LAY":
-            if "liability" in item:
+            # Liability = rischio reale del LAY. La baseline e' SEMPRE ricalcolata da
+            # stake/price (stake*(quota-1)); il campo `liability` precomputato si usa
+            # solo se e' un float positivo finito, e comunque si prende il MAX col
+            # ricalcolo. Cosi' un precomputato assente / None / 0 / non-numerico /
+            # non-finito / sottostimato NON puo' mai abbassare il rischio sotto il
+            # valore reale (fail-CLOSED: il gate money-management non si aggira con
+            # una liability stale/corrotta — rilievo GPT-5.6 Terra + Fable 5 su #393).
+            recomputed = max(0.0, stake * max(0.0, price - 1.0))
+            raw_liability = item.get("liability")
+            if raw_liability is not None:
                 try:
-                    return max(0.0, float(item.get("liability", 0.0) or 0.0))
+                    liability = float(raw_liability)
+                    if math.isfinite(liability) and liability > 0.0:
+                        return max(recomputed, liability)
                 except (TypeError, ValueError):
-                    return 0.0
-            return max(0.0, stake * max(0.0, price - 1.0))
+                    pass
+            return recomputed
         return max(0.0, stake * price)
 
     @staticmethod

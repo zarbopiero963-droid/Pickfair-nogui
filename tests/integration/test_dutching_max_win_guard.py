@@ -195,6 +195,18 @@ def test_lay_liability_under_cap_passes(monkeypatch):
     assert res["max_win_warning"] is False
 
 
+def test_lay_liability_none_field_still_blocks(monkeypatch):
+    # FAIL-CLOSED end-to-end: un item LAY con liability=None NON deve sfuggire al
+    # cap: il gate ricalcola stake*(price-1)=800 e blocca (armato, cap 500).
+    _patch_results(
+        monkeypatch,
+        [{"selectionId": 7, "price": 5.0, "stake": 200.0, "side": "LAY", "liability": None}],
+    )
+    res = _controller(_runtime_with(max_win=500.0, warning_only=False)).precheck(_payload())
+    assert res["ok"] is False and "oltre il cap" in res["error"]
+    assert res["max_win_breaches"][0]["potential_win"] == 800.0
+
+
 def test_cap_is_per_leg_not_sum(monkeypatch):
     # Due gambe da payout 60 ciascuna: la somma (120) supera cap 100, ma nessuna
     # SINGOLA gamba lo supera => NON blocca (esiti mutuamente esclusivi).
@@ -256,13 +268,31 @@ def test_max_win_warning_only_parsing(raw, expected):
 def test_leg_potential_win_semantics():
     from controllers.dutching_controller import DutchingController
 
-    back = {"side": "BACK", "stake": 40.0, "price": 2.5}
-    lay = {"side": "LAY", "stake": 40.0, "price": 2.5}
-    lay_precomputed = {"side": "LAY", "stake": 40.0, "price": 2.5, "liability": 55.0}
-    assert DutchingController._leg_potential_win(back) == 100.0   # payout stake*price
-    assert DutchingController._leg_potential_win(lay) == 60.0     # liability stake*(price-1)
-    assert DutchingController._leg_potential_win(lay_precomputed) == 55.0  # usa campo liability
-    assert DutchingController._leg_potential_win({"side": "BACK"}) == 0.0  # fail-safe
+    f = DutchingController._leg_potential_win
+    assert f({"side": "BACK", "stake": 40.0, "price": 2.5}) == 100.0   # payout stake*price
+    assert f({"side": "LAY", "stake": 40.0, "price": 2.5}) == 60.0     # liability stake*(price-1)
+    assert f({"side": "BACK"}) == 0.0                                  # fail-safe
+    # precomputato valido e >= ricalcolo => usato; se < ricalcolo vince il ricalcolo (fail-closed)
+    assert f({"side": "LAY", "stake": 40.0, "price": 2.5, "liability": 70.0}) == 70.0
+    assert f({"side": "LAY", "stake": 40.0, "price": 2.5, "liability": 55.0}) == 60.0
+
+
+def test_leg_potential_win_lay_liability_failclosed():
+    # FAIL-CLOSED (rilievo convergente GPT-5.6 Terra + Fable 5 + Fugu Ultra): una
+    # liability precomputata None / 0 / non-numerica / non-finita / sottostimata NON
+    # deve abbassare il rischio LAY: si ricalcola stake*(price-1) e si prende il MAX.
+    from controllers.dutching_controller import DutchingController
+
+    f = DutchingController._leg_potential_win
+    base = {"side": "LAY", "stake": 200.0, "price": 5.0}  # ricalcolo = 800
+    assert f(base) == 800.0
+    assert f({**base, "liability": None}) == 800.0
+    assert f({**base, "liability": 0.0}) == 800.0
+    assert f({**base, "liability": "x"}) == 800.0
+    assert f({**base, "liability": float("nan")}) == 800.0
+    assert f({**base, "liability": float("inf")}) == 800.0
+    assert f({**base, "liability": 100.0}) == 800.0   # sottostimata => vince il ricalcolo
+    assert f({**base, "liability": 900.0}) == 900.0   # sovrastimata valida => piu' conservativa
 
 
 def test_max_win_breaches_failsafe_non_numeric_selection_id():
