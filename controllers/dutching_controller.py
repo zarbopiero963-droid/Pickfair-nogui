@@ -233,6 +233,67 @@ class DutchingController:
                 pass
         return max(1.01, float(trading_config.MIN_PRICE))
 
+    # -- Max Win cap (G5) --------------------------------------------------
+    @staticmethod
+    def _max_win(config) -> float:
+        """Cap vincita/payout per gamba dalla config (editabile GUI), fail-safe.
+
+        Riusa `_book_threshold` (numerico finito > 0, fallback FAIL-SAFE): un
+        backend rotto o un valore corrotto NON deve disattivare il cap ne'
+        spostarlo su un valore assurdo. Fallback = trading_config.MAX_WIN.
+        """
+        return DutchingController._book_threshold(config, "max_win", trading_config.MAX_WIN)
+
+    @staticmethod
+    def _max_win_warning_only(config) -> bool:
+        """True => cap in sola OSSERVAZIONE (avviso, mai blocco); False => BLOCCO.
+
+        Default OPT-IN (#383-style): config assente => True, cosi' il rilascio del
+        cap NON inizia a bloccare a sorpresa; l'owner lo arma dalla GUI
+        (warning_only=False). Parsing stringa robusto: "False"/"0"/"" NON valgono
+        True (un blocco armato salvato come stringa deve restare armato).
+        """
+        raw = getattr(config, "max_win_warning_only", None)
+        if raw is None:
+            return True
+        if isinstance(raw, str):
+            return raw.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(raw)
+
+    @staticmethod
+    def _leg_potential_win(item: Dict[str, Any]) -> float:
+        """Vincita/payout potenziale di UNA gamba, confrontabile con MAX_WIN.
+
+        BACK: payout lordo = stake * quota (importo restituito se la selezione
+        vince). LAY: vincita = backer-stake incassato (`stake`) se la selezione
+        perde (il rischio e' la liability, grandezza diversa). Fail-safe su campi
+        mancanti/non numerici => 0.0 (nessun falso blocco).
+        """
+        side = str(item.get("side", "BACK")).upper()
+        try:
+            stake = float(item.get("stake", 0.0) or 0.0)
+            price = float(item.get("price", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+        if side == "LAY":
+            return max(0.0, stake)
+        return max(0.0, stake * price)
+
+    def _max_win_breaches(self, results: List[Dict[str, Any]], max_win: float) -> List[Dict[str, Any]]:
+        """Gambe la cui vincita potenziale supera il cap (per-gamba, non somma)."""
+        breaches: List[Dict[str, Any]] = []
+        for item in results:
+            win = self._leg_potential_win(item)
+            if win > max_win + 1e-9:
+                breaches.append(
+                    {
+                        "selectionId": int(item.get("selectionId", 0) or 0),
+                        "potential_win": round(win, 2),
+                        "cap": round(max_win, 2),
+                    }
+                )
+        return breaches
+
     def _market_book(self, market_id):
         """Book di mercato dalla CACHE (market_tracker), SENZA I/O.
 
@@ -809,6 +870,22 @@ class DutchingController:
                 liquidity_shortfall=liquidity.get("shortfall", []),
             )
 
+        # MAX_WIN cap (G5) — enforce-first opt-in: blocca il submit se la vincita
+        # potenziale (BACK: stake*quota; LAY: backer-stake) di UNA gamba supera il
+        # cap configurato, PRIMA di ogni side-effect (duplication acquire), come il
+        # book%/liquidity gate. Per-gamba (esiti dutching mutuamente esclusivi =>
+        # si valuta la MAX, non la somma). In modalita' avviso (default opt-in) solo
+        # segnalazione (max_win_warning/max_win_breaches nel risultato, sotto).
+        # FAIL-SAFE: config rotta ricade su trading_config.MAX_WIN (cap sempre armato).
+        max_win = self._max_win(config)
+        max_win_breaches = self._max_win_breaches(results, max_win)
+        if max_win_breaches and not self._max_win_warning_only(config):
+            return self._fail(
+                f"Vincita potenziale oltre il cap {max_win:.2f}€ su una o più gambe",
+                max_win=round(max_win, 2),
+                max_win_breaches=max_win_breaches,
+            )
+
         if duplication_guard and bool(getattr(config, "anti_duplication_enabled", True)):
             try:
                 if not duplication_guard.acquire(event_key):
@@ -870,6 +947,9 @@ class DutchingController:
             book_warning_exceeded=bool(float(book_pct) >= self._book_warning_threshold(config)),
             liquidity_warning=bool(liquidity.get("warning")),
             liquidity_shortfall=liquidity.get("shortfall", []),
+            max_win=round(max_win, 2),
+            max_win_warning=bool(max_win_breaches),
+            max_win_breaches=max_win_breaches,
             event_key=event_key,
             batch_id=batch_id,
             batch_exposure=float(batch_exposure),
@@ -1106,6 +1186,20 @@ class DutchingController:
             event_key = str(payload.get("event_key") or f"manual_{market_id}_{selection_id}")
             duplication_guard = self._duplication_guard()
             config = self._config()
+
+            # MAX_WIN cap (G5) anche sul bet manuale (chiude la via non-gated,
+            # anti fat-finger), PRIMA di ogni side-effect. Payout potenziale: BACK
+            # = stake*quota; LAY = backer-stake (`stake`). Enforce-first opt-in: in
+            # modalita' avviso (default) non blocca. FAIL-SAFE su trading_config.MAX_WIN.
+            side = str(self._normalize_side(payload.get("bet_type", "BACK"))).upper()
+            potential_win = stake if side == "LAY" else stake * price
+            max_win = self._max_win(config)
+            if potential_win > max_win + 1e-9 and not self._max_win_warning_only(config):
+                return self._fail(
+                    f"Vincita potenziale {potential_win:.2f}€ oltre il cap {max_win:.2f}€",
+                    max_win=round(max_win, 2),
+                    potential_win=round(potential_win, 2),
+                )
 
             if duplication_guard and bool(getattr(config, "anti_duplication_enabled", True)):
                 if not duplication_guard.acquire(event_key):
