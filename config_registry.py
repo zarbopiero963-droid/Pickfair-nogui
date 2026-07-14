@@ -402,7 +402,6 @@ class ConfigRegistry:
             ("MIN_STAKE", "Stake minimo (floor software)"),
             ("MAX_WIN", "Vincita massima"),
             ("MAX_STAKE_PCT", "Max % stake su balance"),
-            ("MAX_SPREAD_TICKS", "Spread massimo (tick)"),
         ):
             value = getattr(trading_config, const, None)
             entries.append(
