@@ -236,3 +236,29 @@ def test_gui_saves_book_thresholds(monkeypatch):
         assert cfg.book_block == 109.0
     finally:
         app.destroy()
+
+
+@pytest.mark.parametrize("bad", ["", "0", "-5", "nan", "inf", "abc"])
+def test_gui_save_blocks_invalid_book_value(monkeypatch, bad):
+    # BLOCK (rilievo GLM/Fable/Fugu/Greptile): un valore book non valido NON deve
+    # essere persistito (niente drift GUI-vs-enforcement), ne' salvare a meta'.
+    app = _make_gui(monkeypatch)
+    try:
+        app.rs_book_block_var.set(bad)
+        app._save_roserpina_settings()
+        assert app.settings_service.saved_cfg is None, bad
+    finally:
+        app.destroy()
+
+
+def test_gui_save_blocks_warning_over_block(monkeypatch):
+    # BLOCK: warning > block e' incoerente (l'avviso non scatterebbe mai prima
+    # del blocco) => salvataggio rifiutato.
+    app = _make_gui(monkeypatch)
+    try:
+        app.rs_book_warning_var.set("115")
+        app.rs_book_block_var.set("110")
+        app._save_roserpina_settings()
+        assert app.settings_service.saved_cfg is None
+    finally:
+        app.destroy()

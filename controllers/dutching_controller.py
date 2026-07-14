@@ -161,6 +161,8 @@ class DutchingController:
         un valore assurdo.
         """
         raw = getattr(config, attr, None)
+        if raw is None:
+            return float(fallback)
         try:
             val = float(raw)
             if math.isfinite(val) and val > 0.0:
