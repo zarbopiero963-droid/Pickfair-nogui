@@ -276,7 +276,10 @@ def test_connect_error_fails_closed():
     result = listener.start()
     assert result["started"] is False
     assert listener.state == "FAILED"
-    assert "boom" in listener.last_error
+    # last_error e' operator-facing (status/telemetria): riporta il reason
+    # whitelisted col SOLO tipo d'eccezione, non il messaggio raw (che potrebbe
+    # contenere segreti). Il dettaglio completo e redatto resta nei log.
+    assert listener.last_error == "runtime_error: RuntimeError"
 
 
 @pytest.mark.unit

@@ -11,10 +11,11 @@
         "telegram_listener.py",
         "services/telegram_service.py",
         "tests/unit/test_telegram_logging_diagnostics.py",
+        "tests/unit/test_telegram_listener_runtime.py",
         "ops/incident_playbook.md",
         ".guardrails/allowed_scope.json"
       ],
-      "max_files": 6
+      "max_files": 7
     },
     "profit_epsilon_warning": {
       "description": "G5 del programma GUI-parametri (autorizzata dall'owner) - PR 5/5 (ULTIMA), enforce-first; file safety-critical autorizzati (dutching_controller). trading_config.PROFIT_EPSILON (0.50) era DEAD. La CABLA come WARNING NON-BLOCCANTE (decisione owner: 'solo avviso', mai blocco) sulla varianza di profitto NETTO tra gli esiti equalizzati del dutching. GRANDEZZA (decisione owner: 'netti, solo se equalize=ON'): spread = max(profitIfWinsNet) - min(profitIfWinsNet) tra gli esiti mutuamente esclusivi; profitti NETTI post-commission (cio' che _equalize_stakes_post_rounding minimizza). Il controller usa SEMPRE il calcolo equalizzato (calculate_dutching default equalize=True, mai sovrascritto nel controller), quindi lo spread misurato e' quello POST-equalizzazione => la condizione 'equalize=ON' e' intrinsecamente soddisfatta. SEMANTICA (controllers/dutching_controller.precheck): se spread > profit_epsilon (€, default 0.50) => profit_epsilon_warning + profit_spread + profit_epsilon nel risultato _ok, MAI un blocco (uno spread residuo alto dopo l'equalizzazione tradisce la premessa 'profitto garantito uguale'). FAIL-OPEN: netti incompleti (non uno per esito) o < 2 esiti => _profit_spread_net ritorna None => nessun avviso (mai spurio). FAIL-SAFE: helper _profit_epsilon riusa _book_threshold (finito > 0, fallback trading_config.PROFIT_EPSILON), config rotta non disattiva l'avviso. Importo ASSOLUTO in € (come MAX_WIN), non percentuale. Esposto in precheck (dove vivono stake_pct_warning/max_win_warning), NON in preview (coerente: preview non calcola gli altri warning config-based). CONFIG editabile: RoserpinaConfig.profit_epsilon (default 0.50) + chiave DB roserpina.profit_epsilon (load default PROFIT_EPSILON, save). GUI tab Roserpina: campo 'Profit epsilon (€)' (parser _parse_max_win, finito > 0). Non tocca dutching.py/order_manager/betfair/l'equalizzatore. Test hard (warna spread>0.50; non warna sotto; non blocca MAI anche con epsilon minuscolo; netti => profitIfWinsNet; fail-open netti incompleti/<2 esiti; config-editabile; helper fail-safe/fail-open; round-trip config; GUI load/save/validazione). Doc ops/config_console.md.",

@@ -215,8 +215,11 @@ def test_runtime_error_reason_redacts_leaked_secret(caplog):
     for secret in (_FAKE_SESSION, _FAKE_BOT, _FAKE_APIHASH, str(_FAKE_CHAT)):
         assert secret not in blob
     assert "[REDACTED]" in blob
-    # Fable: last_error (esposto via status/telemetria) è redatto alla sorgente
-    # dai segreti NOTI al listener.
+    # last_error è operator-facing: reason WHITELISTED col solo tipo d'eccezione,
+    # MAI il messaggio raw (che potrebbe contenere segreti di TERZI ignoti a
+    # _redact_sensitive). Così nessun segreto (noto o ignoto) raggiunge
+    # status()/telemetria via last_error.
+    assert listener.last_error == "runtime_error: RuntimeError"
     for secret in (_FAKE_SESSION, _FAKE_BOT, _FAKE_APIHASH, str(_FAKE_CHAT)):
         assert secret not in listener.last_error
     # BLOCK: il fallimento resta osservabile (reason presente, stato FAILED).

@@ -338,7 +338,12 @@ class TelegramListener:
                     "[TelegramListener] runtime thread crashed\n%s",
                     self._redact_sensitive(traceback.format_exc()),
                 )
-                self.mark_failed(f"runtime_error: {exc}")
+                # last_error e' operator-facing (status()/_emit_status): usa un
+                # reason WHITELISTED col SOLO tipo di eccezione, MAI il messaggio
+                # raw (che potrebbe contenere segreti di TERZI ignoti a
+                # _redact_sensitive, es. URL DB con password). Il dettaglio
+                # completo e redatto e' gia' nel log ERROR qui sopra.
+                self.mark_failed(f"runtime_error: {type(exc).__name__}")
         finally:
             if self._runtime_loop is loop:
                 self.active_network_resources = 0
