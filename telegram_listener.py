@@ -4,6 +4,7 @@ import asyncio
 import logging
 import re
 import threading
+import traceback
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -329,10 +330,14 @@ class TelegramListener:
             loop.run_until_complete(self._runtime_async())
         except Exception as exc:
             if not self.intentional_stop:
-                # Preserva il traceback del thread runtime crashato: mark_failed
-                # registra solo il reason sintetico, qui salviamo lo stack per
-                # poter diagnosticare la causa reale del crash.
-                logger.exception("[TelegramListener] runtime thread crashed")
+                # Preserva il traceback del thread runtime crashato per
+                # diagnosticare la causa reale, ma REDATTO: il testo
+                # dell'eccezione Telethon e' non controllato e potrebbe
+                # contenere un segreto (host/session/token).
+                logger.error(
+                    "[TelegramListener] runtime thread crashed\n%s",
+                    self._redact_sensitive(traceback.format_exc()),
+                )
                 self.mark_failed(f"runtime_error: {exc}")
         finally:
             if self._runtime_loop is loop:
@@ -495,13 +500,44 @@ class TelegramListener:
         self._emit_signal(signal)
         return signal
 
+    def _redact_sensitive(self, text: str) -> str:
+        """Redige dai log ogni credenziale/identificativo sensibile noto al
+        listener (token bot, session string, api_hash, api_id, telefono di
+        login, chat-id monitorati). Serve perche' alcuni reason (in
+        particolare ``runtime_error: <exc>``) inglobano il messaggio di
+        un'eccezione Telethon NON controllato che potrebbe contenere un
+        segreto: la garanzia "nessun segreto nei log" va imposta al confine
+        del logging, non solo sui reason a codice. Fail-safe: mai solleva."""
+        out = str(text)
+        try:
+            candidates = [
+                self.session_string,
+                self.bot_token,
+                self.api_hash,
+                self.api_id,
+                getattr(self, "_login_phone", None),
+            ]
+            candidates.extend(self.monitored_chats or [])
+            for cand in candidates:
+                secret = "" if cand is None else str(cand)
+                # Evita over-redaction su valori troppo corti (es. api_id di test).
+                if len(secret) >= 4 and secret in out:
+                    out = out.replace(secret, "[REDACTED]")
+        except Exception:  # pragma: no cover - la redazione non deve mai rompere il log
+            return "[REDACTION_ERROR]"
+        return out
+
     def mark_failed(self, error: str) -> None:
         self.last_error = str(error or "")
         # Diagnostica: TUTTI i fallimenti terminali passano da qui (timeout,
         # sessione non autorizzata, disconnessione inattesa, runtime_error,
         # reconnect_failed). Prima era silenzioso: un problema non lasciava mai
-        # il motivo nei log. Il reason e' un codice controllato (nessun segreto).
-        logger.error("[TelegramListener] mark_failed: %s", self.last_error or "listener_failure")
+        # il motivo nei log. Il reason viene REDATTO (il path runtime_error puo'
+        # inglobare testo d'eccezione non controllato -> possibile segreto).
+        logger.error(
+            "[TelegramListener] mark_failed: %s",
+            self._redact_sensitive(self.last_error or "listener_failure"),
+        )
         self.running = False
         self.reconnect_in_progress = False
         # Rilascia il contatore delle risorse di rete PRIMA della transizione a

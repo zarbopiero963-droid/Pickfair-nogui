@@ -22,9 +22,17 @@ contatori restano coerenti, e i segreti non finiscono nei log.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 import pytest
 
+from recovery.telegram_autoheal import (
+    TelegramAutohealAction,
+    TelegramAutohealDecision,
+    TelegramAutohealPolicy,
+    TelegramFailureClass,
+)
+from services.telegram_service import TelegramService
 from telegram_listener import TelegramListener
 
 
@@ -84,8 +92,8 @@ def test_runtime_crash_logs_traceback_and_marks_failed(caplog):
 
     crash = [r for r in caplog.records if "runtime thread crashed" in r.getMessage()]
     assert crash, "il crash del thread runtime non e' stato loggato"
-    # logger.exception => record con exc_info popolato (traceback preservato)
-    assert any(r.exc_info is not None for r in crash)
+    # Traceback preservato nel messaggio (redatto): lo stack del crash e' visibile.
+    assert any("Traceback" in r.getMessage() and "kaboom" in r.getMessage() for r in crash)
     # BLOCK: il crash sfocia comunque in mark_failed col reason runtime_error.
     assert listener.state == "FAILED"
     assert any("runtime_error" in m for m in _messages(caplog, "mark_failed"))
@@ -169,19 +177,41 @@ def test_failure_log_does_not_leak_secrets(caplog):
     assert "SECRET_BOT_TOKEN" not in blob
 
 
+@pytest.mark.unit
+def test_runtime_error_reason_redacts_leaked_secret(caplog):
+    """Il path reale del leak: un'eccezione runtime NON controllata che ingloba
+    session string / bot token / chat-id finisce in mark_failed(runtime_error)
+    e nel traceback. Entrambi devono uscire REDATTI."""
+    listener = _listener(
+        session_string="SUPERSECRETSESSION42",
+        bot_token="9988:SECRETBOTTOKEN",
+    )
+    listener.set_monitored_chats([-1009998887])
+
+    async def _boom():
+        raise RuntimeError(
+            "connect fallito sess=SUPERSECRETSESSION42 token=9988:SECRETBOTTOKEN chat=-1009998887"
+        )
+
+    listener._runtime_async = _boom  # type: ignore[assignment]
+    with caplog.at_level(logging.DEBUG, logger="telegram_listener"):
+        listener._runtime_main()
+
+    blob = "\n".join(r.getMessage() for r in caplog.records)
+    # Nessun segreto/identificativo in chiaro né nel reason né nel traceback.
+    assert "SUPERSECRETSESSION42" not in blob
+    assert "9988:SECRETBOTTOKEN" not in blob
+    assert "SECRETBOTTOKEN" not in blob
+    assert "-1009998887" not in blob
+    assert "[REDACTED]" in blob
+    # BLOCK: il fallimento resta osservabile (reason presente, stato FAILED).
+    assert any("runtime_error" in m for m in _messages(caplog, "mark_failed"))
+    assert listener.state == "FAILED"
+
+
 # ---------------------------------------------------------------------------
 # 5. autoheal (service) — lockout / restart loggati
 # ---------------------------------------------------------------------------
-from dataclasses import dataclass  # noqa: E402
-
-from recovery.telegram_autoheal import (  # noqa: E402
-    TelegramAutohealAction,
-    TelegramAutohealDecision,
-    TelegramFailureClass,
-)
-from services.telegram_service import TelegramService  # noqa: E402
-
-
 @dataclass
 class _TelegramCfg:
     enabled: bool = True
@@ -236,15 +266,13 @@ class _FakeTelethonClient:
             self._disconnected.set()
 
 
-class _FakePolicy:
-    """Policy deterministica: ritorna sempre la decisione data."""
-
-    lockout_sec = 300.0
-    restart_window_sec = 300.0
-    restart_cooldown_sec = 30.0
-    max_restarts_in_window = 3
+class _FakePolicy(TelegramAutohealPolicy):
+    """Policy deterministica: eredita i parametri reali (lockout_sec,
+    restart_window_sec, ...) e sovrascrive solo evaluate() per ritornare la
+    decisione data."""
 
     def __init__(self, decision):
+        super().__init__()
         self._decision = decision
 
     def now(self):

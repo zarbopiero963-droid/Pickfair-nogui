@@ -29,6 +29,7 @@ This playbook is for operator-driven incident handling.
 - [ ] Explicit manual decision documented (remain blocked / proceed)
 
 ## Telegram runtime diagnostics (dove guardare)
+
 Se il listener Telegram ha un problema, i log applicativi ora riportano il
 motivo (prima molti fallimenti erano silenziosi). Cerca questi prefissi:
 - `[TelegramListener] mark_failed: <reason>` — **ogni** fallimento terminale
