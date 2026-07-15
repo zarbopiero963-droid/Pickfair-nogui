@@ -298,9 +298,11 @@ def test_stale_deferred_release_does_not_clobber_re_reservation():
     rc = _RC(enabled=True)
     k = ("1.1", "7")
     acquired_a, gen_a = rc._auto_green_reserve(k)          # A prenota (gen0)
+    assert acquired_a is True                              # premessa: A prenota davvero
     assert rc._auto_green_arm_timer(k, _FakeTimer(1.0, lambda: None), gen_a) is True
     rc._cancel_pending_auto_green()                        # ALL: svuota + bump -> gen1
     acquired_b, gen_b = rc._auto_green_reserve(k)          # B ri-prenota (gen1)
+    assert acquired_b is True                              # premessa: B ri-prenota dopo l'ALL
     timer_b = _FakeTimer(1.0, lambda: None)
     assert rc._auto_green_arm_timer(k, timer_b, gen_b) is True
     # release STALE di A (vecchia gen): la prenotazione di B DEVE sopravvivere.
