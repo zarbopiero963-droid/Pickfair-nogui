@@ -58,6 +58,7 @@ class _RC:
     _auto_green_release = RuntimeController._auto_green_release
     _cashout_gates_still_open = RuntimeController._cashout_gates_still_open
     _deferred_cashout_route = RuntimeController._deferred_cashout_route
+    _publish_cashout_failed = RuntimeController._publish_cashout_failed
     _route_cashout_signal = RuntimeController._route_cashout_signal
 
     def __init__(self, *, enabled=False, sec=2.5, chain_wired=True):
@@ -128,6 +129,22 @@ def test_enabled_defers_on_timer_not_inline():
     assert rc.executed == [_sig()]
     # pending rilasciata dopo il fire
     assert rc._auto_green_pending == set()
+
+
+def test_timer_start_failure_falls_back_inline_and_releases(monkeypatch):
+    # Se lo scheduling del Timer solleva (thread esauriti), il cashout NON e' perso
+    # (route inline) e la pending-guard NON resta bloccata (Fugu/Greptile P1).
+    def _boom(*a, **k):
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(rc_mod.threading, "Timer", _boom)
+    rc = _RC(enabled=True)
+    rc._route_cashout_signal(_sig())
+    assert rc.executed == [_sig()]              # fallback inline: cashout eseguito
+    assert rc._auto_green_pending == set()      # chiave rilasciata, non bloccata
+    # e un successivo cashout sullo stesso target NON e' soppresso
+    rc._route_cashout_signal(_sig())
+    assert rc.executed == [_sig(), _sig()]
 
 
 def test_chain_not_wired_rejects_before_grace():
@@ -344,11 +361,29 @@ def test_gui_saves_auto_green_delay(monkeypatch):
 
 
 @pytest.mark.parametrize("bad", ["", "0", "-1", "nan", "inf", "abc", "31", "60"])
-def test_gui_save_blocks_invalid_delay(monkeypatch, bad):
+def test_gui_save_blocks_invalid_delay_when_enabled(monkeypatch, bad):
+    # Con grace ARMATO, un delay invalido blocca il salvataggio.
     app = _make_gui(monkeypatch)
     try:
+        app.rs_auto_green_delay_enabled_var.set(True)
         app.rs_auto_green_delay_sec_var.set(bad)
         app._save_roserpina_settings()
         assert app.settings_service.saved_cfg is None, bad
+    finally:
+        app.destroy()
+
+
+@pytest.mark.parametrize("bad", ["", "0", "abc", "60"])
+def test_gui_save_tolerates_invalid_delay_when_disabled(monkeypatch, bad):
+    # Con grace DISATTIVATO, un delay irrilevante NON blocca il salvataggio
+    # (Greptile P2): si salva con fallback alla costante.
+    app = _make_gui(monkeypatch)
+    try:
+        app.rs_auto_green_delay_enabled_var.set(False)
+        app.rs_auto_green_delay_sec_var.set(bad)
+        app._save_roserpina_settings()
+        assert app.settings_service.saved_cfg is not None, bad
+        assert app.settings_service.saved_cfg.auto_green_delay_enabled is False
+        assert app.settings_service.saved_cfg.auto_green_delay_sec == float(trading_config.AUTO_GREEN_DELAY_SEC)
     finally:
         app.destroy()

@@ -1871,9 +1871,18 @@ class RuntimeController:
             logger.info("[RuntimeController] cashout grace gia' in volo %s: skip duplicato", key)
             return
         logger.info("[RuntimeController] cashout grace %.3fs prima del green-up %s", delay, key)
-        timer = threading.Timer(delay, self._deferred_cashout_route, args=(signal, key))
-        timer.daemon = True
-        timer.start()
+        # Se lo scheduling del Timer fallisce (es. thread esauriti), NON perdere
+        # il cashout ne' lasciare la pending-guard bloccata: rilascia la chiave e
+        # instrada INLINE (fallback fail-closed, il cashout parte comunque, solo
+        # senza grace). Fugu/Greptile P1.
+        try:
+            timer = threading.Timer(delay, self._deferred_cashout_route, args=(signal, key))
+            timer.daemon = True
+            timer.start()
+        except Exception as exc:  # noqa: BLE001 - scheduling fallito: fallback inline, mai perdere il cashout
+            logger.exception("[RuntimeController] scheduling grace fallito %s: route inline", key)
+            self._auto_green_release(key)
+            self._execute_cashout_route(signal)
 
     def _deferred_cashout_route(self, signal: dict, key: tuple) -> None:
         """Esegue la route del cashout DOPO il grace, sul thread del ``Timer``.
@@ -1889,28 +1898,34 @@ class RuntimeController:
             ok, reason = self._cashout_gates_still_open(signal)
             if not ok:
                 logger.warning("[RuntimeController] cashout grace abortito %s: %s", key, reason)
-                self.bus.publish(CASHOUT_FAILED, {
-                    "reason": f"grace_aborted:{reason}",
-                    "status": "REJECTED",
-                    "bet_id": None,
-                    "matched": 0.0,
-                    "market_id": str(signal.get("market_id") or ""),
-                    "selection_id": signal.get("selection_id"),
-                })
+                self._publish_cashout_failed(signal, f"grace_aborted:{reason}", "REJECTED")
                 return
             self._execute_cashout_route(signal)
         except Exception as exc:  # noqa: BLE001 - il Timer inghiotte le eccezioni: pubblica sempre
             logger.exception("[RuntimeController] errore cashout differito (grace)")
-            self.bus.publish(CASHOUT_FAILED, {
-                "reason": f"grace_route_error:{exc}",
-                "status": "ERROR",
-                "bet_id": None,
-                "matched": 0.0,
-                "market_id": str(signal.get("market_id") or ""),
-                "selection_id": signal.get("selection_id"),
-            })
+            self._publish_cashout_failed(signal, f"grace_route_error:{exc}", "ERROR")
         finally:
             self._auto_green_release(key)
+
+    def _publish_cashout_failed(self, signal: dict, reason: str, status: str) -> None:
+        """Pubblica un ``CASHOUT_FAILED`` strutturato in modo EXCEPTION-SAFE.
+
+        Non solleva mai: se il ``bus.publish`` fallisse (es. bus in shutdown),
+        l'errore e' loggato ma non propagato, cosi' il chiamante nel path del
+        grace non finisce nel ramo except a ripubblicare (doppio CASHOUT_FAILED,
+        Greptile P2).
+        """
+        try:
+            self.bus.publish(CASHOUT_FAILED, {
+                "reason": reason,
+                "status": status,
+                "bet_id": None,
+                "matched": 0.0,
+                "market_id": str(signal.get("market_id") or "") if isinstance(signal, dict) else "",
+                "selection_id": signal.get("selection_id") if isinstance(signal, dict) else None,
+            })
+        except Exception:  # noqa: BLE001 - publish best-effort: mai propagare (evita doppia pubblicazione)
+            logger.exception("[RuntimeController] publish CASHOUT_FAILED fallito")
 
     def _auto_green_delay_seconds(self) -> float:
         """Secondi di grace auto-green prima della route del cashout (>=0).

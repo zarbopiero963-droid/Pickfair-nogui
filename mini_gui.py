@@ -1013,7 +1013,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._labeled_entry(outer, "Quota minima / Min Price (>= 1.02)", self.rs_min_price_var)
         self._labeled_entry(outer, "Max Win € (cap vincita/payout per gamba)", self.rs_max_win_var)
         self._labeled_entry(outer, "Max Stake % (avviso se esposizione operazione > % balance)", self.rs_max_stake_pct_var)
-        self._labeled_entry(outer, "Auto-green delay (s) — grace prima del cashout (0-30)", self.rs_auto_green_delay_sec_var)
+        self._labeled_entry(outer, "Auto-green delay (s) — grace prima del cashout (0.1-30)", self.rs_auto_green_delay_sec_var)
 
         rp = ctk.CTkFrame(outer)
         rp.pack(fill=tk.X, padx=12, pady=6)
@@ -1832,7 +1832,17 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             # l'avviso. Rifiuto esplicito, coerente con l'upper-bound di _parse_hard_stop.
             if max_stake_pct > 100.0:
                 raise ValueError("Max Stake %: deve essere compreso tra 0 e 100.")
-            auto_green_delay_sec = self._parse_delay_sec(self.rs_auto_green_delay_sec_var.get(), "Auto-green delay (s)")
+            # Il delay e' validato in modo STRETTO solo se il grace e' ARMATO: se
+            # disattivato, un valore irrilevante non deve bloccare il salvataggio
+            # dell'intero config (Greptile P2) => fallback alla costante.
+            auto_green_delay_enabled = bool(self.rs_auto_green_delay_enabled_var.get())
+            if auto_green_delay_enabled:
+                auto_green_delay_sec = self._parse_delay_sec(self.rs_auto_green_delay_sec_var.get(), "Auto-green delay (s)")
+            else:
+                try:
+                    auto_green_delay_sec = self._parse_delay_sec(self.rs_auto_green_delay_sec_var.get(), "Auto-green delay (s)")
+                except ValueError:
+                    auto_green_delay_sec = float(trading_config.AUTO_GREEN_DELAY_SEC)
 
             cfg = RoserpinaConfig(
                 target_profit_cycle_pct=float(self.rs_target_var.get()),
@@ -1866,7 +1876,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 max_win=max_win,
                 max_win_warning_only=bool(self.rs_max_win_warning_only_var.get()),
                 max_stake_pct=max_stake_pct,
-                auto_green_delay_enabled=bool(self.rs_auto_green_delay_enabled_var.get()),
+                auto_green_delay_enabled=auto_green_delay_enabled,
                 auto_green_delay_sec=auto_green_delay_sec,
             )
             self.settings_service.save_roserpina_config(cfg)
