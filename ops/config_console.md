@@ -252,6 +252,45 @@ l'avviso => trattato come invalido (FAIL-SAFE costante). Chiave DB
 finito `> 0` e `<= 100`. **FAIL-OPEN** su `bankroll <= 0` (nessun avviso). Non
 tocca `manual_bet` (gia' coperto da `max_single_bet` 18%).
 
+## Profit epsilon: avviso varianza profitto tra esiti (tab Roserpina) — G5
+
+`trading_config.PROFIT_EPSILON` (0.50) era *dead*. Ora il tab **Roserpina** espone
+il campo "**Profit epsilon (€)**": una tolleranza di **AVVISO** (mai un blocco) sulla
+**varianza di profitto NETTO tra gli esiti** equalizzati del dutching. In
+`controllers/dutching_controller.precheck`, se lo spread
+`max(profitIfWinsNet) - min(profitIfWinsNet)` tra gli esiti mutuamente esclusivi
+supera `profit_epsilon` (default €0.50), il risultato espone
+`profit_epsilon_warning=True` + `profit_spread` + `profit_epsilon`, **senza mai
+bloccare** il submit. Uno spread residuo alto dopo l'equalizzazione tradisce la
+premessa "profitto garantito uguale" (l'operatore vince sensibilmente di piu' su
+certi esiti).
+
+**Netti, post-equalizzazione.** Si misurano i profitti **netti** (post-commission,
+`profitIfWinsNet`, cio' che l'equalizzatore `_equalize_stakes_post_rounding`
+minimizza). Il controller usa **sempre** il calcolo equalizzato
+(`calculate_dutching` default `equalize=True`, mai sovrascritto), quindi lo spread e'
+quello **post-equalizzazione** (avviso solo con equalize attivo, come richiesto).
+
+**Importo assoluto in €** (come `Max Win`, non una percentuale). L'helper
+`_profit_epsilon` riusa `_book_threshold` (numerico finito `> 0`) e ricade su
+`trading_config.PROFIT_EPSILON` (0.50) se assente / non numerico / non finito /
+`<= 0` (**FAIL-SAFE**: config rotta non disattiva l'avviso). **FAIL-OPEN**:
+`_profit_spread_net` ritorna `None` (=> nessun avviso, `profit_spread=None`) se i
+netti non sono tutti presenti (uno per esito) o se ci sono meno di 2 esiti
+comparabili. Chiave DB `roserpina.profit_epsilon` (default `PROFIT_EPSILON`).
+Validazione GUI: numero finito `> 0`. Esposto in `precheck` (dove vivono
+`stake_pct_warning`/`max_win_warning`), non in `preview`. Non tocca `dutching.py`,
+l'equalizzatore, `order_manager` ne' Betfair.
+
+**Interruttore ON/OFF (checkbox).** La checkbox «**Profit epsilon: mostra avviso
+varianza profitto**» (chiave DB `roserpina.profit_epsilon_enabled`, campo
+`RoserpinaConfig.profit_epsilon_enabled`, default **True**) attiva/disattiva
+l'avviso: con la spunta tolta `profit_epsilon_warning` resta sempre `False` (avviso
+silenziato) senza toccare la soglia; `profit_spread` continua a essere esposto
+(informativo). Essendo l'avviso non-bloccante, il default e' **attivo** (OPT-OUT):
+l'helper `_profit_epsilon_enabled` ricade su `True` se la chiave e' assente/None e
+interpreta `false`/`0`/`no`/`off` come disattivazione.
+
 ## Auto-green: grace NON-bloccante prima del cashout (tab Roserpina) — G5
 
 `trading_config.AUTO_GREEN_DELAY_SEC` (2.5) era *dead*. Ora il tab **Roserpina**
