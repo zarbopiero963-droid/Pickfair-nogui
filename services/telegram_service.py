@@ -480,22 +480,28 @@ class TelegramService:
             failure_escalated=failure_escalated,
         )
         if decision.action == TelegramAutohealAction.SCHEDULE_RESTART:
-            restarted = self.restart()
-            # Diagnostica: log DOPO il restart, con l'esito, cosi' la riga
-            # riflette un'azione realmente avvenuta (se restart() sollevasse non
-            # registriamo un restart mai eseguito) — azione + motivo + classe +
-            # esito started.
+            # Diagnostica: logga la DECISIONE PRIMA di restart(), cosi' resta
+            # tracciata anche se restart() solleva (altrimenti il fallimento
+            # tornerebbe silenzioso — proprio il problema che questo log risolve).
             logger.warning(
-                "[TelegramService] autoheal SCHEDULE_RESTART (reason=%s, failure_class=%s, started=%s)",
+                "[TelegramService] autoheal SCHEDULE_RESTART (reason=%s, failure_class=%s)",
                 decision.reason,
                 decision.failure_class.value,
-                bool(dict(restarted).get("started")),
             )
+            restarted = self.restart()
+            # Accesso difensivo: restart() ha per contratto un dict, ma il path
+            # di logging non assume il tipo (evita TypeError su valori inattesi).
+            restarted_map = dict(restarted) if isinstance(restarted, dict) else {}
+            if not restarted_map.get("started"):
+                logger.error(
+                    "[TelegramService] autoheal restart NON avviato (reason=%s)",
+                    decision.reason,
+                )
             return {
                 "action": decision.action.value,
                 "reason": decision.reason,
                 "failure_class": decision.failure_class.value,
-                "restart_result": dict(restarted),
+                "restart_result": restarted_map,
             }
         return {
             "action": decision.action.value,

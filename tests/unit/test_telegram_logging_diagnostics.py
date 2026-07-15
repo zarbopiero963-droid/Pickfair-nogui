@@ -239,6 +239,21 @@ def test_redaction_word_boundary_no_false_match():
 
 
 @pytest.mark.unit
+def test_chat_id_redacted_in_absolute_and_channel_form():
+    """Fable #3: un chat-id negativo (-100<channel_id>) va redatto anche quando
+    Telethon/traceback lo espone senza segno o come channel_id nudo."""
+    listener = _listener()
+    listener.set_monitored_chats([-1009998887])
+    out = listener._redact_sensitive(
+        "signed -1009998887 | abs 1009998887 | channel 9998887 | end"
+    )
+    assert "-1009998887" not in out  # forma con segno
+    assert "1009998887" not in out   # forma assoluta
+    assert "9998887" not in out      # channel_id nudo (-100 rimosso)
+    assert out.count("[REDACTED]") >= 3
+
+
+@pytest.mark.unit
 def test_short_secret_does_not_corrupt_reason_code(caplog):
     """Guardia anti-regressione: un session_string corto che e' sottostringa di
     un reason legittimo (es. 'sess' in 'session_not_authorized') NON deve

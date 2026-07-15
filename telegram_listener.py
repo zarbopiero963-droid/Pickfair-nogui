@@ -530,9 +530,20 @@ class TelegramListener:
                 # sottostringa del reason "session_not_authorized").
                 if len(secret) >= 8 and secret in out:
                     out = out.replace(secret, "[REDACTED]")
-            numeric_ids = [self.api_id, *(self.monitored_chats or [])]
-            for cand in numeric_ids:
-                token = "" if cand is None else str(cand)
+            numeric_tokens: list[str] = []
+            if self.api_id is not None:
+                numeric_tokens.append(str(self.api_id))
+            for chat in (self.monitored_chats or []):
+                chat_s = str(chat)
+                numeric_tokens.append(chat_s)
+                if chat_s.startswith("-"):
+                    # Telethon/traceback possono esporre l'id senza segno o come
+                    # channel_id (formato -100<channel_id>): redigi anche quelle
+                    # varianti, altrimenti l'id passerebbe in chiaro.
+                    numeric_tokens.append(chat_s[1:])
+                    if chat_s.startswith("-100"):
+                        numeric_tokens.append(chat_s[4:])
+            for token in numeric_tokens:
                 # Solo id realistici (i chat-id/api_id reali non sono cortissimi);
                 # il confine di cifra evita match dentro numeri piu' lunghi.
                 if len(token.lstrip("-")) >= 4:
