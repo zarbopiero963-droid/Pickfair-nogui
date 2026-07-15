@@ -161,33 +161,49 @@ def test_chain_not_wired_rejects_before_grace():
 # ==========================================================================
 # 2) Pending-guard: un secondo grace sullo stesso target e' soppresso
 # ==========================================================================
-def test_duplicate_grace_coalesced_visibly_while_in_flight():
+def test_duplicate_grace_accorpato_solo_log():
     rc = _RC(enabled=True)
     rc._route_cashout_signal(_sig())            # arma il primo grace
-    rc._route_cashout_signal(_sig())            # stesso target => coalescing
+    rc._route_cashout_signal(_sig())            # stesso target => accorpato (solo log)
     assert len(_FakeTimer.instances) == 1        # un solo timer
-    # il duplicato e' VISIBILE (COALESCED), non uno scarto silenzioso
-    topic, payload = rc.published[-1]
-    assert topic == CASHOUT_FAILED
-    assert payload["status"] == "COALESCED"
-    assert payload["reason"].startswith("grace_coalesced:")
+    assert rc.published == []                     # NESSUN CASHOUT_FAILED (non e' un fallimento)
     # dopo il fire (release), un nuovo grace e' di nuovo ammesso
     _FakeTimer.instances[0].fire()
     rc._route_cashout_signal(_sig())
     assert len(_FakeTimer.instances) == 2
 
 
-def test_signal_snapshot_isolates_from_caller_mutation():
-    # Il payload differito e' una COPIA: mutare il dict del chiamante dopo lo
-    # scheduling non cambia market/selection della route differita.
+def test_cashout_all_routes_inline_no_grace():
+    # CASHOUT_ALL ("chiudi tutto") non e' mai ritardato: route inline, nessun timer.
+    rc = _RC(enabled=True)
+    sig = _sig(stype="CASHOUT_ALL", market="", sel="")
+    rc._route_cashout_signal(sig)
+    assert rc.executed == [sig]
+    assert _FakeTimer.instances == []
+
+
+def test_cross_type_same_target_no_double_schedule():
+    # Un CASHOUT_ALL inline + un CASHOUT singolo sullo stesso market: l'ALL non
+    # schedula timer (inline), il singolo grazia una sola volta => nessun doppio.
+    rc = _RC(enabled=True)
+    rc._route_cashout_signal(_sig(stype="CASHOUT_ALL", market="1.1", sel=""))  # inline
+    rc._route_cashout_signal(_sig(stype="CASHOUT", market="1.1", sel=7))       # grace
+    assert len(_FakeTimer.instances) == 1
+
+
+def test_signal_snapshot_deepcopy_isolates_from_caller_mutation():
+    # Il payload differito e' una COPIA PROFONDA: mutare il dict del chiamante
+    # dopo lo scheduling — anche strutture ANNIDATE — non cambia la route.
     rc = _RC(enabled=True)
     sig = _sig(market="1.1", sel=7)
+    sig["legs"] = [{"price": 2.0, "stake": 10.0}]     # struttura annidata
     rc._route_cashout_signal(sig)
-    sig["market_id"] = "9.9"                     # mutazione post-scheduling
-    sig["selection_id"] = 999
+    sig["market_id"] = "9.9"                            # mutazione top-level
+    sig["legs"][0]["price"] = 99.0                      # mutazione ANNIDATA
     _FakeTimer.instances[0].fire()
     assert rc.executed[0]["market_id"] == "1.1"
     assert rc.executed[0]["selection_id"] == 7
+    assert rc.executed[0]["legs"][0]["price"] == 2.0   # deepcopy: annidato isolato
 
 
 def test_pending_guard_acquire_release():
@@ -200,7 +216,9 @@ def test_pending_guard_acquire_release():
 
 
 def test_auto_green_key_shape():
-    assert _RC._auto_green_key({"signal_type": "cashout", "market_id": "1.9", "selection_id": 3}) == ("CASHOUT", "1.9", "3")
+    # Chiave = solo target (market, selection), indipendente dal signal_type.
+    assert _RC._auto_green_key({"signal_type": "cashout", "market_id": "1.9", "selection_id": 3}) == ("1.9", "3")
+    assert _RC._auto_green_key({"signal_type": "CASHOUT_ALL", "market_id": "1.9", "selection_id": 3}) == ("1.9", "3")
 
 
 # ==========================================================================

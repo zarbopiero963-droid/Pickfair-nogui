@@ -290,16 +290,20 @@ ritardare un cashout per un problema di configurazione).
 (load/save). Validazione GUI: parser dedicato `_parse_delay_sec` (finito `> 0`,
 `<= 30`). Il monitor automatico SL/TP (`AUTO_MONITOR`) non e' toccato.
 
-**Limiti noti / trade-off (opt-in, default OFF).**
-- **Applica a tutti i segnali `CASHOUT`/`CASHOUT_ALL`** (oggi Telegram/UI): armare
-  il grace ritarda anche un cashout manuale dello stesso target. Il payload
-  differito e' una **copia immutabile** del segnale (una mutazione del chiamante
-  non altera la route).
-- **Duplicato in grace**: una seconda richiesta sullo stesso `(tipo, market,
-  selection)` mentre il grace e' in volo viene **accorpata** (il primo grace
-  chiudera' quel target) e segnalata in modo **visibile** con un `CASHOUT_FAILED`
-  `status=COALESCED` (non uno scarto silenzioso).
-- **Shutdown/crash nella finestra di grace**: un cashout differito non ancora
+**Ambito e semantica (opt-in, default OFF).**
+- **Solo `CASHOUT` singolo.** Il grace si applica **soltanto** al cashout di un
+  singolo target. Il **`CASHOUT_ALL`** ("chiudi tutto", emergenza) va **sempre
+  inline**, mai ritardato: non lo si accorpa per `(market, selection)` (vuoti per
+  un ALL) e non puo' duplicarsi col CASHOUT singolo dello stesso target.
+- **Payload immutabile.** Il segnale differito e' una **copia profonda**
+  (`deepcopy`): una mutazione del chiamante durante la grace — anche di strutture
+  annidate (prezzi, legs) — non altera la route.
+- **Duplicato in grace.** Una seconda richiesta sullo **stesso target**
+  `(market, selection)` mentre il grace e' in volo viene **accorpata** (il primo
+  grace chiudera' quel target): la seconda e' ridondante, si logga a WARNING e
+  **non** si pubblica un `CASHOUT_FAILED` (semanticamente non e' un fallimento e
+  fuorviarebbe i sink/alert).
+- **Shutdown/crash nella finestra di grace.** Un cashout differito non ancora
   partito **non viene piazzato**; le posizioni aperte restano coperte dalla
   **riconciliazione** al riavvio (nessuna persistenza durabile dei timer: scelta
   proporzionata a una feature opt-in con default OFF). I timer sono limitati

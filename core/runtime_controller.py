@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import inspect
 import logging
 import math
@@ -1861,24 +1862,28 @@ class RuntimeController:
         # threading.Timer (non blocca il worker del bus) => book + green-up sono
         # ricalcolati FRESCHI dopo l'attesa. Default disarmato => route inline
         # (comportamento storico invariato).
+        #
+        # AMBITO: il grace si applica SOLO al CASHOUT di un singolo target. Un
+        # CASHOUT_ALL ("chiudi tutto", emergenza) va SEMPRE inline: non lo si
+        # ritarda e non lo si dedup-a per (market,selection) (che per un ALL sono
+        # vuoti) — evita di accorpare due ALL distinti o di duplicare col CASHOUT
+        # singolo dello stesso target (decisione owner 'B').
+        signal_type = str(signal.get("signal_type") or "").strip().upper()
         delay = self._auto_green_delay_seconds()
-        if delay <= 0.0:
+        if delay <= 0.0 or signal_type != "CASHOUT":
             self._execute_cashout_route(signal)
             return
 
-        # Snapshot IMMUTABILE del segnale prima di schedularlo: il dict verrebbe
-        # passato al Timer per riferimento e, se mutato durante la grace, la route
-        # partirebbe su market/selection/importo diversi dalla chiave verificata
-        # (Fugu). La copia disaccoppia il payload differito dal chiamante.
-        signal = dict(signal)
+        # Copia PROFONDA: isola il payload differito da qualunque mutazione del
+        # chiamante durante la grace (anche strutture annidate: prezzi, legs).
+        signal = copy.deepcopy(signal)
         key = self._auto_green_key(signal)
         if not self._auto_green_acquire(key):
-            # Duplicato sullo stesso target gia' in grace: NON e' uno scarto
-            # silenzioso. Il primo grace chiudera' quel target; qui si segnala in
-            # modo VISIBILE (COALESCED) cosi' bridge/operatore sanno che la seconda
-            # richiesta e' stata accorpata, non persa (Fugu/Fable).
-            logger.info("[RuntimeController] cashout grace gia' in volo %s: coalescing duplicato", key)
-            self._publish_cashout_failed(signal, f"grace_coalesced:{key}", "COALESCED")
+            # Duplicato sullo STESSO target gia' in grace: il primo grace chiudera'
+            # quel target, quindi la seconda richiesta e' ridondante e viene
+            # accorpata. Solo log (NON un CASHOUT_FAILED, che semanticamente e' un
+            # fallimento e potrebbe fuorviare sink/alert): il target sara' chiuso.
+            logger.warning("[RuntimeController] cashout grace gia' in volo %s: duplicato accorpato (skip)", key)
             return
         # Snapshot del mode all'enqueue: se durante la grace execution_mode cambia
         # (es. flip SIMULATION->LIVE), un cashout accettato sotto le regole del mode
@@ -1979,9 +1984,15 @@ class RuntimeController:
 
     @staticmethod
     def _auto_green_key(signal: dict) -> tuple:
-        """Chiave della pending-guard: tipo segnale + target (market/selection)."""
+        """Chiave della pending-guard: solo il TARGET ``(market, selection)``.
+
+        Indipendente dal ``signal_type``: un CASHOUT sullo stesso target non deve
+        mai essere schedulato due volte (un `signal_type` nella chiave avrebbe
+        lasciato passare due route sullo stesso target). Il grace e' cablato solo
+        per il CASHOUT singolo (il CASHOUT_ALL va inline), quindi qui il target e'
+        sempre valorizzato.
+        """
         return (
-            str(signal.get("signal_type") or "").upper(),
             str(signal.get("market_id") or ""),
             str(signal.get("selection_id") or ""),
         )
