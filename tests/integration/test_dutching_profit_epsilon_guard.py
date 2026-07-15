@@ -183,7 +183,7 @@ def test_guard_compares_exact_spread_not_rounded(monkeypatch):
     _patch_results(monkeypatch, _res([5.000, 5.504]))
     res = _controller().precheck(_payload())
     assert res["profit_epsilon_warning"] is True          # 0.504 > 0.50 => breach reale
-    assert res["profit_spread"] == 0.50                   # display arrotondato a centesimo
+    assert res["profit_spread"] == 0.504                  # display == spread esatto (no contraddizione)
     # Sotto soglia esatta => nessun avviso.
     _patch_results(monkeypatch, _res([5.000, 5.30]))
     res2 = _controller().precheck(_payload())
