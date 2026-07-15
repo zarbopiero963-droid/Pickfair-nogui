@@ -1870,32 +1870,44 @@ class RuntimeController:
         if not self._auto_green_acquire(key):
             logger.info("[RuntimeController] cashout grace gia' in volo %s: skip duplicato", key)
             return
+        # Snapshot del mode all'enqueue: se durante la grace execution_mode cambia
+        # (es. flip SIMULATION->LIVE), un cashout accettato sotto le regole del mode
+        # d'ingresso NON deve instradarsi sotto un mode diverso (CodeRabbit).
+        enqueue_mode = str(self.execution_mode).upper()
         logger.info("[RuntimeController] cashout grace %.3fs prima del green-up %s", delay, key)
         # Se lo scheduling del Timer fallisce (es. thread esauriti), NON perdere
         # il cashout ne' lasciare la pending-guard bloccata: rilascia la chiave e
         # instrada INLINE (fallback fail-closed, il cashout parte comunque, solo
         # senza grace). Fugu/Greptile P1.
         try:
-            timer = threading.Timer(delay, self._deferred_cashout_route, args=(signal, key))
+            timer = threading.Timer(delay, self._deferred_cashout_route, args=(signal, key, enqueue_mode))
             timer.daemon = True
             timer.start()
-        except Exception as exc:  # noqa: BLE001 - scheduling fallito: fallback inline, mai perdere il cashout
+        except Exception:  # noqa: BLE001 - scheduling fallito: fallback inline, mai perdere il cashout
             logger.exception("[RuntimeController] scheduling grace fallito %s: route inline", key)
-            self._auto_green_release(key)
-            self._execute_cashout_route(signal)
+            # Tieni la pending-guard DURANTE la route inline e rilasciala nel
+            # finally (dopo, anche su errore): rilasciarla prima aprirebbe una
+            # finestra in cui un duplicato concorrente sullo stesso target
+            # instrada un secondo cashout (GPT-5.6 Terra/Fable). _execute_cashout_route
+            # e' gia' exception-safe (pubblica CASHOUT_FAILED internamente).
+            try:
+                self._execute_cashout_route(signal)
+            finally:
+                self._auto_green_release(key)
 
-    def _deferred_cashout_route(self, signal: dict, key: tuple) -> None:
+    def _deferred_cashout_route(self, signal: dict, key: tuple, enqueue_mode: str = "") -> None:
         """Esegue la route del cashout DOPO il grace, sul thread del ``Timer``.
 
         Fail-closed: ri-verifica i gate live (emergency-stop incl. daily-loss
-        pending, session LIVE, runtime-active) DOPO l'attesa — nella finestra di
-        grace uno stop/una sessione invalida possono scattare. Il ``Timer``
+        pending, kill-switch, cambio execution_mode, session LIVE, runtime-active)
+        DOPO l'attesa — nella finestra di grace uno stop/una sessione invalida/un
+        cambio di mode possono scattare. Il ``Timer``
         inghiotte le eccezioni sul suo thread, quindi qualunque errore pubblica un
         ``CASHOUT_FAILED`` strutturato (mai scarto silenzioso). Rilascia sempre la
         pending-guard.
         """
         try:
-            ok, reason = self._cashout_gates_still_open(signal)
+            ok, reason = self._cashout_gates_still_open(signal, enqueue_mode)
             if not ok:
                 logger.warning("[RuntimeController] cashout grace abortito %s: %s", key, reason)
                 self._publish_cashout_failed(signal, f"grace_aborted:{reason}", "REJECTED")
@@ -1976,18 +1988,25 @@ class RuntimeController:
         with self._auto_green_pending_lock:
             self._auto_green_pending.discard(key)
 
-    def _cashout_gates_still_open(self, signal: dict) -> tuple:
+    def _cashout_gates_still_open(self, signal: dict, enqueue_mode: str = "") -> tuple:
         """Ri-verifica fail-closed dei gate live dopo il grace: (ok, reason).
 
         Copre i gate critici che possono scattare nella finestra d'attesa:
-        emergency-stop (incl. daily-loss pending, sotto lock), sessione LIVE
-        invalida, runtime non attivo. Il deploy-gate era gia' passato all'enqueue
-        e raramente cambia in <=30s; qui si proteggono gli stop reali.
+        emergency-stop (incl. daily-loss pending, sotto lock), kill-switch, cambio
+        di execution_mode rispetto all'enqueue, sessione LIVE invalida, runtime non
+        attivo. Il cambio di mode e' bloccante (CodeRabbit): un cashout accettato in
+        un mode non deve instradarsi sotto un mode diverso (es. SIMULATION->LIVE
+        durante la grace bypasserebbe il deploy-gate LIVE dell'enqueue).
         """
         with self._daily_loss_stop_lock:
             if self._emergency_stopped or self._daily_loss_pending_stop:
                 return False, "emergency_stop_active"
-        if str(self.execution_mode).upper() == "LIVE":
+        if self._is_kill_switch_active():
+            return False, "kill_switch_active"
+        current_mode = str(self.execution_mode).upper()
+        if enqueue_mode and current_mode != str(enqueue_mode).upper():
+            return False, f"execution_mode_changed:{enqueue_mode}->{current_mode}"
+        if current_mode == "LIVE":
             svc = self.betfair_service
             if svc is not None and getattr(svc, "_session_invalid", False):
                 return False, "session_invalid"

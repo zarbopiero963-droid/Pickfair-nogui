@@ -73,6 +73,7 @@ class _RC:
         self.betfair_service = SimpleNamespace(_session_invalid=False)
         self.mode = SimpleNamespace(value="ACTIVE")
         self._runtime_active_flag = True
+        self._kill_switch = False
         self._chain_wired = chain_wired
         # spie
         self.executed = []
@@ -88,6 +89,9 @@ class _RC:
 
     def _runtime_active(self):
         return self._runtime_active_flag
+
+    def _is_kill_switch_active(self):
+        return self._kill_switch
 
     def _execute_cashout_route(self, signal):
         self.executed.append(signal)
@@ -217,8 +221,28 @@ def test_deferred_aborts_on_session_invalid_live():
 
 def test_gates_open_when_all_clear():
     rc = _RC()
-    ok, reason = rc._cashout_gates_still_open(_sig())
+    ok, reason = rc._cashout_gates_still_open(_sig(), "SIMULATION")
     assert ok is True and reason == ""
+
+
+def test_deferred_aborts_on_kill_switch():
+    rc = _RC(enabled=True)
+    rc._route_cashout_signal(_sig())
+    rc._kill_switch = True                        # kill-switch armato durante la grace
+    _FakeTimer.instances[0].fire()
+    assert rc.executed == []
+    assert rc.published[-1][1]["reason"].startswith("grace_aborted:kill_switch_active")
+
+
+def test_deferred_aborts_on_execution_mode_flip():
+    # Mode all'enqueue = SIMULATION; durante la grace flippa a LIVE => abort
+    # (un cashout SIM non deve instradarsi live bypassando il deploy-gate).
+    rc = _RC(enabled=True)
+    rc._route_cashout_signal(_sig())              # enqueue_mode snapshot = SIMULATION
+    rc.execution_mode = "LIVE"
+    _FakeTimer.instances[0].fire()
+    assert rc.executed == []
+    assert rc.published[-1][1]["reason"].startswith("grace_aborted:execution_mode_changed")
 
 
 # ==========================================================================
