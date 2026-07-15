@@ -18,6 +18,21 @@
       ],
       "max_files": 8
     },
+    "auto_green_delay_grace": {
+      "description": "G5 del programma GUI-parametri (autorizzata dall'owner) - PR 4/5, enforce-first; file SAFETY-CRITICAL autorizzati (cashout_executor real-money placement + headless_main wiring) => merge MANUALE owner (Phase 0 ha stabilito che tocca il path di piazzamento green-up, quindi NON e' auto-merge come assumeva il roadmap). trading_config.AUTO_GREEN_DELAY_SEC (2.5) era DEAD (solo definita + test dead-constants); l'unico meccanismo di grace esistente (ai/ai_guardrail.auto_green_grace_sec) e' a sua volta dead/non cablato e hardcoded a 3.0. La CABLA come GRACE OPT-IN prima del piazzamento del bet di green-up in cashout_executor.on_cmd_execute_cashout: se auto_green_delay_enabled e' True, attende auto_green_delay_sec secondi DOPO la validazione fail-closed (payload invalido rigetta subito, nessuna attesa) e PRIMA di catturare il mode/place. DEFAULT OPT-IN: auto_green_delay_enabled=False => NESSUN cambiamento di comportamento (green-up immediato come oggi). FAIL-SAFE: auto_green_delay_sec assente/non-finito/<=0 => trading_config.AUTO_GREEN_DELAY_SEC (2.5). FAIL-OPEN/robusto: delay_provider che solleva => 0.0 (mai bloccare un cashout reale per un errore di lettura config); CLAMP a [0, 30]s per impedire che un typo di config (es. 3600) blocchi l'handler del bus. sleep_fn iniettabile per i test (nessun sleep reale in test). WIRING: headless_main passa delay_provider=lambda: settings_service.load_roserpina_config() (lettura live a cashout-time). CONFIG editabile: RoserpinaConfig.auto_green_delay_enabled (bool, default False) + auto_green_delay_sec (float, default 2.5 = AUTO_GREEN_DELAY_SEC) + chiavi DB roserpina.auto_green_delay_enabled/roserpina.auto_green_delay_sec in load/save. GUI tab Roserpina: checkbox 'Auto-green: grace prima del green-up (attiva ritardo)' + campo 'Auto-green delay (s)' (parser finito >0). Non tocca la matematica di green-up, order_router, betfair, la logica dei gate. Test hard PASS+BLOCK (disabled => nessun sleep, place immediato; enabled => sleep(sec) prima del place; payload invalido => nessun sleep e reject; fail-safe sec rotto => costante; clamp >30 e <=0; delay_provider che solleva => 0.0 no-crash; round-trip config; GUI load/save/validazione). Doc ops/config_console.md.",
+      "allow_tests": true,
+      "files": [
+        "core/system_state.py",
+        "services/setting_service.py",
+        "cashout_executor.py",
+        "headless_main.py",
+        "mini_gui.py",
+        "tests/unit/test_cashout_auto_green_delay.py",
+        "ops/config_console.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 8
+    },
     "reviewer_availability_label_gate_docs": {
       "description": "Governance-docs only (autorizzata dall'owner), NON-safety. Aggiorna CLAUDE.md + AGENTS.md con due regole owner: (1) DECLASSAMENTO UNIFORME reviewer non disponibili: qualunque reviewer in rate-limit/usage-quota - CodeRabbit INCLUSO, ora accanto a Codex/Sourcery - e' ASSENTE da subito, non-gate, nessuna attesa e nessun cap-timer ~15min; il verdetto DONE dell'agente dipende dai check CI settled e dai gate forti a label, non da CodeRabbit. Fail-closed preservato (nota GPT-5.6 Terra): 'processing' = sta revisionando, NON e' 'assente'; i gate VINCOLANTI (check CI settled + Fugu/Fable a label) non si saltano mai, quindi declassare i reviewer ADVISORY non li indebolisce. (2) GATE FORTI A LABEL OBBLIGATORIO E RIPETUTO: far partire final-fugu-review + final-fable-review (remove+riadd) e' obbligatorio pre-merge su ogni PR e va RIPETUTO su ogni head stabile FINCHE' Fugu/Fable non tornano SENZA bloccanti reali; un falso positivo persistente non e' un bloccante (si tratta con evidenza); se in usage-quota vale il carve-out AUTO-MERGE (merge owner). (3) NOTA diff-only/push-range vs full-range (appreso su #393): i reviewer sono diff-only; le review per-push vedono solo l'ultimo commit (falsi positivi su import/coerenza/codice-assente), la review a label gira sull'intera range base..head e li risolve => per il verdetto finale conta la full-range a label. Solo documentazione: nessuna modifica a codice/gate/runtime/test.",
       "allow_tests": false,

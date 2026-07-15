@@ -41,8 +41,10 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Dict, Optional
+import time
+from typing import Any, Callable, Dict, Optional
 
+import trading_config
 from core.trading_constants import (
     CASHOUT_FAILED,
     CASHOUT_SUCCESS,
@@ -51,16 +53,29 @@ from core.trading_constants import (
 
 logger = logging.getLogger(__name__)
 
+# Clamp di sicurezza sul grace auto-green: impedisce che un valore di config
+# patologico (es. un typo 3600) blocchi l'handler del bus per minuti. Il default
+# reale (trading_config.AUTO_GREEN_DELAY_SEC=2.5) e' ben dentro questo intervallo.
+_MAX_AUTO_GREEN_DELAY_SEC = 30.0
+
 
 class CashoutExecutor:
     """Piazza il bet di green-up per il cashout e pubblica l'esito sul bus."""
 
     _VALID_SIDES = {"BACK", "LAY"}
 
-    def __init__(self, bus: Any, order_router: Any, safety_layer: Optional[Any] = None) -> None:
+    def __init__(self, bus: Any, order_router: Any, safety_layer: Optional[Any] = None,
+                 *, delay_provider: Optional[Callable[[], Any]] = None,
+                 sleep_fn: Optional[Callable[[float], None]] = None) -> None:
         self.bus = bus
         self.order_router = order_router
         self.safety_layer = safety_layer
+        # Grace auto-green OPT-IN (G5). ``delay_provider`` restituisce la config
+        # corrente (RoserpinaConfig) letta LIVE a cashout-time; None => grace
+        # disattivato (comportamento storico: green-up immediato). ``sleep_fn``
+        # e' iniettabile per i test (nessun sleep reale).
+        self._delay_provider = delay_provider
+        self._sleep_fn = sleep_fn or time.sleep
 
     def wire(self) -> None:
         """Sottoscrive il consumer di ``CMD_EXECUTE_CASHOUT`` al bus."""
@@ -92,6 +107,16 @@ class CashoutExecutor:
             self._fail(f"campo_mancante:{exc}", status="REJECTED", payload=payload)
             return
 
+        # Grace auto-green OPT-IN (G5): attende SOLO se armato, DOPO la validazione
+        # fail-closed (un payload invalido rigetta subito, senza attesa) e PRIMA di
+        # catturare il mode/piazzare. Default disarmato => nessuna attesa. L'attesa
+        # e' bounded dal clamp; il green-up viene comunque piazzato dopo (mai
+        # strandato). fail-open: qualunque errore nel provider => nessuna attesa.
+        delay = self._auto_green_delay_seconds()
+        if delay > 0.0:
+            logger.info("[CashoutExecutor] grace auto-green %.3fs prima del green-up", delay)
+            self._sleep_fn(delay)
+
         # Cattura il mode SIM/LIVE PRIMA del place: l'OrderRouter sceglie il
         # broker via get_client() all'inizio di place(), quindi catturarlo qui
         # (nessun I/O tra questa riga e get_client) riflette il broker effettivo.
@@ -105,6 +130,33 @@ class CashoutExecutor:
             return
 
         self._handle_result(result if isinstance(result, dict) else {}, payload, sim)
+
+    def _auto_green_delay_seconds(self) -> float:
+        """Secondi di grace auto-green da applicare prima del green-up (>=0).
+
+        OPT-IN: ritorna 0.0 (nessuna attesa) se non c'e' ``delay_provider`` o se
+        ``auto_green_delay_enabled`` non e' True. FAIL-SAFE: ``auto_green_delay_sec``
+        assente/non-finito/<=0 => ``trading_config.AUTO_GREEN_DELAY_SEC``. CLAMP a
+        ``[0, _MAX_AUTO_GREEN_DELAY_SEC]`` (un typo di config non blocca il bus).
+        FAIL-OPEN: qualunque errore di lettura config => 0.0 (mai bloccare un
+        cashout reale per un problema di configurazione).
+        """
+        provider = self._delay_provider
+        if provider is None:
+            return 0.0
+        try:
+            config = provider()
+            if not bool(getattr(config, "auto_green_delay_enabled", False)):
+                return 0.0
+            raw = getattr(config, "auto_green_delay_sec", None)
+            sec = self._as_float(raw)
+            if not (math.isfinite(sec) and sec > 0.0):
+                sec = float(trading_config.AUTO_GREEN_DELAY_SEC)
+            if not math.isfinite(sec) or sec <= 0.0:
+                return 0.0
+            return min(sec, _MAX_AUTO_GREEN_DELAY_SEC)
+        except Exception:  # noqa: BLE001 - fail-open: config illeggibile non blocca il cashout
+            return 0.0
 
     @classmethod
     def _enforce_hard_invariants(cls, payload: Dict[str, Any]) -> None:

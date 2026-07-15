@@ -484,7 +484,13 @@ class HeadlessApp:
             raise RuntimeError("Bus/BetfairService non inizializzati per il wiring cashout")
 
         self.order_router = OrderRouter(self.betfair_service)
-        self.cashout_executor = CashoutExecutor(self.bus, self.order_router)
+        # Grace auto-green OPT-IN (G5): il provider legge la RoserpinaConfig LIVE a
+        # cashout-time; default disarmato (auto_green_delay_enabled=False) => green-up
+        # immediato come oggi. Fail-open nell'executor se il provider solleva.
+        self.cashout_executor = CashoutExecutor(
+            self.bus, self.order_router,
+            delay_provider=self._load_roserpina_config_or_none,
+        )
         self.cashout_executor.wire()
 
         self.cashout_request_bridge = CashoutRequestBridge(self.bus)
@@ -515,6 +521,22 @@ class HeadlessApp:
             "CashoutExecutor[CMD_EXECUTE_CASHOUT] -> OrderRouter; "
             "CashoutResidualHandler[CASHOUT_FAILED]"
         )
+
+    def _load_roserpina_config_or_none(self) -> Any:
+        """RoserpinaConfig corrente per il grace auto-green (G5), o None.
+
+        Provider passato a ``CashoutExecutor``: letto LIVE a cashout-time cosi' un
+        cambio via GUI ha effetto senza restart. Best-effort: se il
+        ``settings_service`` manca o solleva, ritorna None e l'executor fa
+        fail-open (nessun grace), senza mai bloccare un cashout reale.
+        """
+        try:
+            svc = self.settings_service
+            if svc is None:
+                return None
+            return svc.load_roserpina_config()
+        except Exception:  # noqa: BLE001 - fail-open: mai bloccare il cashout per la config
+            return None
 
     def _resolve_telegram_sender(self) -> Any:
         """Risolve il sender Telegram dal ``telegram_service`` (come telegram_alerts).

@@ -252,6 +252,35 @@ l'avviso => trattato come invalido (FAIL-SAFE costante). Chiave DB
 finito `> 0` e `<= 100`. **FAIL-OPEN** su `bankroll <= 0` (nessun avviso). Non
 tocca `manual_bet` (gia' coperto da `max_single_bet` 18%).
 
+## Auto-green: grace prima del green-up (tab Roserpina) — G5
+
+`trading_config.AUTO_GREEN_DELAY_SEC` (2.5) era *dead* (solo definita). Ora il tab
+**Roserpina** espone un **grace OPT-IN** prima del piazzamento del bet di green-up
+(auto-cashout): checkbox "**Auto-green: attiva grace prima del green-up**" +
+campo "**Auto-green delay (s)**".
+
+**Semantica.** In `cashout_executor.on_cmd_execute_cashout`, se
+`auto_green_delay_enabled` e' True il componente attende `auto_green_delay_sec`
+secondi **dopo** la validazione fail-closed (un payload invalido rigetta subito,
+senza attesa) e **prima** di catturare il mode e piazzare il green-up. Il bet di
+green-up viene comunque piazzato dopo l'attesa (mai strandato).
+
+**Default OPT-IN — nessun cambiamento a sorpresa.** `auto_green_delay_enabled`
+default **False** => green-up immediato come oggi; l'owner arma il ritardo dalla
+GUI. **FAIL-SAFE**: `auto_green_delay_sec` assente / non-finito / `<= 0` =>
+`trading_config.AUTO_GREEN_DELAY_SEC` (2.5). **CLAMP** a `[0, 30]s` a runtime (un
+typo di config non blocca l'handler del bus). **FAIL-OPEN**: se la config e'
+illeggibile (provider che solleva) => nessuna attesa (mai bloccare un cashout
+reale per un problema di configurazione).
+
+**Config + wiring.** `RoserpinaConfig.auto_green_delay_enabled` (False) +
+`auto_green_delay_sec` (2.5) + chiavi DB `roserpina.auto_green_delay_enabled` /
+`roserpina.auto_green_delay_sec` (load/save). `headless_main` passa a
+`CashoutExecutor` un `delay_provider` che rilegge la `RoserpinaConfig` **live** a
+cashout-time (un cambio via GUI ha effetto senza restart). Validazione GUI: numero
+finito `> 0` e `<= 30`. Non tocca la matematica di green-up, `order_router`,
+Betfair, ne' la logica dei gate.
+
 ## Configurazione Simulazione editabile in GUI (tab Simulazione) — G1
 
 I parametri del **broker simulato** erano configurabili solo via DB. Ora il tab

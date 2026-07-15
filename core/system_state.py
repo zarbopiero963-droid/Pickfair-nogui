@@ -117,3 +117,13 @@ class RoserpinaConfig:
     # => stake_pct_warning nel risultato, MAI un blocco. Distinto dal blocco
     # cumulativo max_total_exposure_pct (35%). FAIL-OPEN su bankroll<=0.
     max_stake_pct: float = 30.0
+
+    # Grace period OPT-IN prima del piazzamento del bet di green-up (auto-cashout),
+    # G5. auto_green_delay_enabled=False (default) => NESSUN cambiamento di
+    # comportamento (green-up immediato come oggi); l'owner arma il ritardo dalla
+    # GUI. auto_green_delay_sec default 2.5 = trading_config.AUTO_GREEN_DELAY_SEC.
+    # Semantica (cashout_executor.on_cmd_execute_cashout): se abilitato, attende i
+    # secondi DOPO la validazione fail-closed e PRIMA del place. FAIL-SAFE su sec
+    # assente/non-finito/<=0 => costante; clamp a [0, 30]s lato executor.
+    auto_green_delay_enabled: bool = False
+    auto_green_delay_sec: float = 2.5
