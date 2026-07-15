@@ -290,6 +290,22 @@ ritardare un cashout per un problema di configurazione).
 (load/save). Validazione GUI: parser dedicato `_parse_delay_sec` (finito `> 0`,
 `<= 30`). Il monitor automatico SL/TP (`AUTO_MONITOR`) non e' toccato.
 
+**Limiti noti / trade-off (opt-in, default OFF).**
+- **Applica a tutti i segnali `CASHOUT`/`CASHOUT_ALL`** (oggi Telegram/UI): armare
+  il grace ritarda anche un cashout manuale dello stesso target. Il payload
+  differito e' una **copia immutabile** del segnale (una mutazione del chiamante
+  non altera la route).
+- **Duplicato in grace**: una seconda richiesta sullo stesso `(tipo, market,
+  selection)` mentre il grace e' in volo viene **accorpata** (il primo grace
+  chiudera' quel target) e segnalata in modo **visibile** con un `CASHOUT_FAILED`
+  `status=COALESCED` (non uno scarto silenzioso).
+- **Shutdown/crash nella finestra di grace**: un cashout differito non ancora
+  partito **non viene piazzato**; le posizioni aperte restano coperte dalla
+  **riconciliazione** al riavvio (nessuna persistenza durabile dei timer: scelta
+  proporzionata a una feature opt-in con default OFF). I timer sono limitati
+  implicitamente dalla pending-guard (uno per target) e dal fallback inline su
+  esaurimento thread.
+
 ## Configurazione Simulazione editabile in GUI (tab Simulazione) — G1
 
 I parametri del **broker simulato** erano configurabili solo via DB. Ora il tab

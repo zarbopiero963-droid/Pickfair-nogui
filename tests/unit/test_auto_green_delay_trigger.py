@@ -161,15 +161,33 @@ def test_chain_not_wired_rejects_before_grace():
 # ==========================================================================
 # 2) Pending-guard: un secondo grace sullo stesso target e' soppresso
 # ==========================================================================
-def test_duplicate_grace_suppressed_while_in_flight():
+def test_duplicate_grace_coalesced_visibly_while_in_flight():
     rc = _RC(enabled=True)
     rc._route_cashout_signal(_sig())            # arma il primo grace
-    rc._route_cashout_signal(_sig())            # stesso target => soppresso
-    assert len(_FakeTimer.instances) == 1
+    rc._route_cashout_signal(_sig())            # stesso target => coalescing
+    assert len(_FakeTimer.instances) == 1        # un solo timer
+    # il duplicato e' VISIBILE (COALESCED), non uno scarto silenzioso
+    topic, payload = rc.published[-1]
+    assert topic == CASHOUT_FAILED
+    assert payload["status"] == "COALESCED"
+    assert payload["reason"].startswith("grace_coalesced:")
     # dopo il fire (release), un nuovo grace e' di nuovo ammesso
     _FakeTimer.instances[0].fire()
     rc._route_cashout_signal(_sig())
     assert len(_FakeTimer.instances) == 2
+
+
+def test_signal_snapshot_isolates_from_caller_mutation():
+    # Il payload differito e' una COPIA: mutare il dict del chiamante dopo lo
+    # scheduling non cambia market/selection della route differita.
+    rc = _RC(enabled=True)
+    sig = _sig(market="1.1", sel=7)
+    rc._route_cashout_signal(sig)
+    sig["market_id"] = "9.9"                     # mutazione post-scheduling
+    sig["selection_id"] = 999
+    _FakeTimer.instances[0].fire()
+    assert rc.executed[0]["market_id"] == "1.1"
+    assert rc.executed[0]["selection_id"] == 7
 
 
 def test_pending_guard_acquire_release():

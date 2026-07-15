@@ -1866,9 +1866,19 @@ class RuntimeController:
             self._execute_cashout_route(signal)
             return
 
+        # Snapshot IMMUTABILE del segnale prima di schedularlo: il dict verrebbe
+        # passato al Timer per riferimento e, se mutato durante la grace, la route
+        # partirebbe su market/selection/importo diversi dalla chiave verificata
+        # (Fugu). La copia disaccoppia il payload differito dal chiamante.
+        signal = dict(signal)
         key = self._auto_green_key(signal)
         if not self._auto_green_acquire(key):
-            logger.info("[RuntimeController] cashout grace gia' in volo %s: skip duplicato", key)
+            # Duplicato sullo stesso target gia' in grace: NON e' uno scarto
+            # silenzioso. Il primo grace chiudera' quel target; qui si segnala in
+            # modo VISIBILE (COALESCED) cosi' bridge/operatore sanno che la seconda
+            # richiesta e' stata accorpata, non persa (Fugu/Fable).
+            logger.info("[RuntimeController] cashout grace gia' in volo %s: coalescing duplicato", key)
+            self._publish_cashout_failed(signal, f"grace_coalesced:{key}", "COALESCED")
             return
         # Snapshot del mode all'enqueue: se durante la grace execution_mode cambia
         # (es. flip SIMULATION->LIVE), un cashout accettato sotto le regole del mode
