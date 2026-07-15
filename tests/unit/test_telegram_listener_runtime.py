@@ -208,6 +208,24 @@ def test_unexpected_disconnect_marks_failed():
     assert snap["client_alive"] is False
 
 
+@pytest.mark.unit
+def test_mark_failed_releases_active_network_resources():
+    # BUG (unit deterministico, senza timing): mark_failed lasciava
+    # active_network_resources>0 => un listener FAILED (disconnesso) riportava
+    # una risorsa di rete viva, incoerente con running=False/client_alive=False,
+    # finche' il finally di _runtime_main non lo azzerava piu' tardi. mark_failed
+    # deve rilasciare il contatore atomicamente con la transizione a FAILED.
+    listener = _make_listener(FakeTelethonClient())
+    listener.active_network_resources = 1   # simula un runtime CONNECTED in volo
+    listener.running = True
+    listener.mark_failed("disconnected_unexpectedly")
+    assert listener.state == "FAILED"
+    assert listener.active_network_resources == 0
+    snap = listener.runtime_snapshot()
+    assert snap["active_network_resources"] == 0
+    assert snap["client_alive"] is False
+
+
 # ---------------------------------------------------------------------------
 # BLOCK: fail-closed
 # ---------------------------------------------------------------------------

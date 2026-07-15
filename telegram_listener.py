@@ -489,6 +489,14 @@ class TelegramListener:
         self.last_error = str(error or "")
         self.running = False
         self.reconnect_in_progress = False
+        # Rilascia il contatore delle risorse di rete PRIMA della transizione a
+        # FAILED: un listener fallito (es. disconnessione inattesa) e' disconnesso,
+        # quindi non deve riportare una risorsa di rete viva. Senza questo, uno
+        # snapshot letto appena dopo aver visto FAILED osserva active_network_
+        # resources=1 (incoerente con running=False/client_alive=False) finche' il
+        # finally di _runtime_main non lo azzera piu' tardi. Allineato ai path
+        # terminali stop()/end_reconnect_attempt() che gia' azzerano il contatore.
+        self.active_network_resources = 0
         self._set_state("FAILED")
         self._emit_status("FAILED", self.last_error or "Listener failure")
 
