@@ -480,14 +480,17 @@ class TelegramService:
             failure_escalated=failure_escalated,
         )
         if decision.action == TelegramAutohealAction.SCHEDULE_RESTART:
-            # Diagnostica: rende visibile OGNI restart automatico deciso
-            # dall'autoheal (azione + motivo + classe di fallimento).
+            restarted = self.restart()
+            # Diagnostica: log DOPO il restart, con l'esito, cosi' la riga
+            # riflette un'azione realmente avvenuta (se restart() sollevasse non
+            # registriamo un restart mai eseguito) — azione + motivo + classe +
+            # esito started.
             logger.warning(
-                "[TelegramService] autoheal SCHEDULE_RESTART (reason=%s, failure_class=%s)",
+                "[TelegramService] autoheal SCHEDULE_RESTART (reason=%s, failure_class=%s, started=%s)",
                 decision.reason,
                 decision.failure_class.value,
+                bool(dict(restarted).get("started")),
             )
-            restarted = self.restart()
             return {
                 "action": decision.action.value,
                 "reason": decision.reason,

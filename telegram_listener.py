@@ -501,42 +501,58 @@ class TelegramListener:
         return signal
 
     def _redact_sensitive(self, text: str) -> str:
-        """Redige dai log ogni credenziale/identificativo sensibile noto al
-        listener (token bot, session string, api_hash, api_id, telefono di
-        login, chat-id monitorati). Serve perche' alcuni reason (in
+        """Redige le credenziali/identificativi NOTI al listener (token bot,
+        session string, api_hash, api_id, telefono di login, chat-id monitorati)
+        da una stringa destinata ai log. Serve perche' alcuni reason (in
         particolare ``runtime_error: <exc>``) inglobano il messaggio di
-        un'eccezione Telethon NON controllato che potrebbe contenere un
-        segreto: la garanzia "nessun segreto nei log" va imposta al confine
-        del logging, non solo sui reason a codice. Fail-safe: mai solleva."""
+        un'eccezione Telethon NON controllato. E' una DIFESA IN PROFONDITA' sui
+        segreti conosciuti, non una garanzia assoluta contro qualunque dato
+        sensibile arbitrario (es. credenziali di terzi in un messaggio di
+        errore). Fail-safe: non solleva mai.
+
+        - Segreti-stringa (session/token/api_hash/telefono): match diretto.
+        - Identificativi numerici (api_id, chat-id): match a CONFINE di cifra
+          (``(?<!\\d)...(?!\\d)``) per non corrompere numeri estranei nel
+          traceback (numeri di riga, offset, timestamp)."""
         out = str(text)
         try:
-            candidates = [
+            string_secrets = [
                 self.session_string,
                 self.bot_token,
                 self.api_hash,
-                self.api_id,
                 getattr(self, "_login_phone", None),
             ]
-            candidates.extend(self.monitored_chats or [])
-            for cand in candidates:
+            for cand in string_secrets:
                 secret = "" if cand is None else str(cand)
-                # Evita over-redaction su valori troppo corti (es. api_id di test).
-                if len(secret) >= 4 and secret in out:
+                # Soglia >=8: le credenziali Telegram reali sono lunghe (session
+                # ~350 char, bot token ~46, api_hash 32); valori piu' corti
+                # rischiano solo di corrompere testo legittimo (es. "sess"
+                # sottostringa del reason "session_not_authorized").
+                if len(secret) >= 8 and secret in out:
                     out = out.replace(secret, "[REDACTED]")
+            numeric_ids = [self.api_id, *(self.monitored_chats or [])]
+            for cand in numeric_ids:
+                token = "" if cand is None else str(cand)
+                # Solo id realistici (i chat-id/api_id reali non sono cortissimi);
+                # il confine di cifra evita match dentro numeri piu' lunghi.
+                if len(token.lstrip("-")) >= 4:
+                    out = re.sub(rf"(?<!\d){re.escape(token)}(?!\d)", "[REDACTED]", out)
         except Exception:  # pragma: no cover - la redazione non deve mai rompere il log
             return "[REDACTION_ERROR]"
         return out
 
     def mark_failed(self, error: str) -> None:
-        self.last_error = str(error or "")
+        # Redige il reason ALLA SORGENTE: last_error e' esposto anche via
+        # status()/_emit_status (UI/telemetria/notifiche), quindi redigere solo
+        # al log non basterebbe. Il path runtime_error puo' inglobare testo
+        # d'eccezione non controllato -> possibile segreto.
+        self.last_error = self._redact_sensitive(str(error or ""))
         # Diagnostica: TUTTI i fallimenti terminali passano da qui (timeout,
         # sessione non autorizzata, disconnessione inattesa, runtime_error,
         # reconnect_failed). Prima era silenzioso: un problema non lasciava mai
-        # il motivo nei log. Il reason viene REDATTO (il path runtime_error puo'
-        # inglobare testo d'eccezione non controllato -> possibile segreto).
+        # il motivo nei log.
         logger.error(
-            "[TelegramListener] mark_failed: %s",
-            self._redact_sensitive(self.last_error or "listener_failure"),
+            "[TelegramListener] mark_failed: %s", self.last_error or "listener_failure"
         )
         self.running = False
         self.reconnect_in_progress = False

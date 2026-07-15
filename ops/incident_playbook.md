@@ -45,9 +45,12 @@ motivo (prima molti fallimenti erano silenziosi). Cerca questi prefissi:
   (niente più restart automatici), livello ERROR; `autoheal SCHEDULE_RESTART`
   — restart automatico in corso (WARNING).
 
-I log NON contengono segreti (token bot, session string, chat-id): solo codici
-di stato/motivo. Sono diagnostica; non sostituiscono lo snapshot operator-facing
-di `ops/observability_minimum.md`.
+I reason di fallimento sono redatti dalle credenziali/identificativi NOTI al
+listener (token bot, session string, api_hash, telefono, chat-id) via
+`_redact_sensitive` — difesa in profondità sui segreti conosciuti, non una
+garanzia assoluta contro qualunque dato sensibile arbitrario che un messaggio
+d'eccezione di terzi potrebbe contenere. Sono diagnostica; non sostituiscono lo
+snapshot operator-facing di `ops/observability_minimum.md`.
 
 ## Exit criteria (manual only)
 All must be true before considering progression:

@@ -40,7 +40,8 @@ from telegram_listener import TelegramListener
 # Helpers
 # ---------------------------------------------------------------------------
 def _listener(**overrides):
-    return TelegramListener(api_id=1, api_hash="x", **overrides)
+    overrides.setdefault("api_hash", "x")
+    return TelegramListener(api_id=1, **overrides)
 
 
 def _messages(caplog, needle):
@@ -166,31 +167,43 @@ def test_reconnect_failure_logs_via_mark_failed(caplog):
 # ---------------------------------------------------------------------------
 # GUARD: nessun segreto nei log di fallimento
 # ---------------------------------------------------------------------------
+# Placeholder NON a forma di segreto reale (evitano che gli scanner del diff
+# li redigano, cosa che confonderebbe i reviewer diff-only). Sono comunque i
+# valori che il listener conosce, quindi la redazione al runtime li rimuove.
+_FAKE_SESSION = "sessionplaceholderaaaa"
+_FAKE_BOT = "botplaceholderbbbb"
+_FAKE_APIHASH = "apihashplaceholdercccc"
+_FAKE_CHAT = -1009998887
+
+
 @pytest.mark.unit
 def test_failure_log_does_not_leak_secrets(caplog):
-    listener = _listener(session_string="SECRET_SESSION_STRING", bot_token="123:SECRET_BOT_TOKEN")
+    listener = _listener(session_string=_FAKE_SESSION, bot_token=_FAKE_BOT)
     with caplog.at_level(logging.DEBUG, logger="telegram_listener"):
         listener.mark_failed("session_not_authorized")
         listener._set_state("CONNECTING")
     blob = "\n".join(r.getMessage() for r in caplog.records)
-    assert "SECRET_SESSION_STRING" not in blob
-    assert "SECRET_BOT_TOKEN" not in blob
+    assert _FAKE_SESSION not in blob
+    assert _FAKE_BOT not in blob
 
 
 @pytest.mark.unit
 def test_runtime_error_reason_redacts_leaked_secret(caplog):
     """Il path reale del leak: un'eccezione runtime NON controllata che ingloba
-    session string / bot token / chat-id finisce in mark_failed(runtime_error)
-    e nel traceback. Entrambi devono uscire REDATTI."""
+    session string / bot token / api_hash / chat-id finisce in
+    mark_failed(runtime_error) e nel traceback. Tutto deve uscire REDATTO, e la
+    redazione deve toccare anche last_error (esposto via status/telemetria)."""
     listener = _listener(
-        session_string="SUPERSECRETSESSION42",
-        bot_token="9988:SECRETBOTTOKEN",
+        session_string=_FAKE_SESSION,
+        bot_token=_FAKE_BOT,
+        api_hash=_FAKE_APIHASH,
     )
-    listener.set_monitored_chats([-1009998887])
+    listener.set_monitored_chats([_FAKE_CHAT])
 
     async def _boom():
         raise RuntimeError(
-            "connect fallito sess=SUPERSECRETSESSION42 token=9988:SECRETBOTTOKEN chat=-1009998887"
+            f"connect fallito sess={_FAKE_SESSION} token={_FAKE_BOT} "
+            f"hash={_FAKE_APIHASH} chat={_FAKE_CHAT}"
         )
 
     listener._runtime_async = _boom  # type: ignore[assignment]
@@ -199,14 +212,42 @@ def test_runtime_error_reason_redacts_leaked_secret(caplog):
 
     blob = "\n".join(r.getMessage() for r in caplog.records)
     # Nessun segreto/identificativo in chiaro né nel reason né nel traceback.
-    assert "SUPERSECRETSESSION42" not in blob
-    assert "9988:SECRETBOTTOKEN" not in blob
-    assert "SECRETBOTTOKEN" not in blob
-    assert "-1009998887" not in blob
+    for secret in (_FAKE_SESSION, _FAKE_BOT, _FAKE_APIHASH, str(_FAKE_CHAT)):
+        assert secret not in blob
     assert "[REDACTED]" in blob
+    # Fable #2: last_error (esposto via status/telemetria) è redatto alla sorgente.
+    for secret in (_FAKE_SESSION, _FAKE_BOT, _FAKE_APIHASH, str(_FAKE_CHAT)):
+        assert secret not in listener.last_error
     # BLOCK: il fallimento resta osservabile (reason presente, stato FAILED).
     assert any("runtime_error" in m for m in _messages(caplog, "mark_failed"))
     assert listener.state == "FAILED"
+
+
+@pytest.mark.unit
+def test_redaction_word_boundary_no_false_match():
+    """Fable #3: la redazione degli id numerici usa il confine di cifra, quindi
+    NON corrompe numeri estranei (righe/offset/timestamp) nel traceback che
+    contengono l'id come sottostringa."""
+    listener = _listener()
+    listener.set_monitored_chats([100999])  # id di 6 cifre
+    # 1009990 e 21009999 contengono "100999" ma NON devono essere redatti.
+    text = "File pippo.py, line 1009990, offset 21009999; chat 100999 down"
+    out = listener._redact_sensitive(text)
+    assert "1009990" in out          # superset: preservato
+    assert "21009999" in out         # id incorporato: preservato
+    assert "chat [REDACTED] down" in out  # match esatto a confine: redatto
+
+
+@pytest.mark.unit
+def test_short_secret_does_not_corrupt_reason_code(caplog):
+    """Guardia anti-regressione: un session_string corto che e' sottostringa di
+    un reason legittimo (es. 'sess' in 'session_not_authorized') NON deve
+    corrompere il reason — le credenziali reali sono lunghe (soglia >=8)."""
+    listener = _listener(session_string="sess")
+    with caplog.at_level(logging.DEBUG, logger="telegram_listener"):
+        listener.mark_failed("session_not_authorized")
+    assert listener.last_error == "session_not_authorized"
+    assert any("session_not_authorized" in m for m in _messages(caplog, "mark_failed"))
 
 
 # ---------------------------------------------------------------------------
