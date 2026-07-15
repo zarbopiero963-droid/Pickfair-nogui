@@ -145,6 +145,12 @@ class RuntimeController:
         # il CashoutRouter e' costruito fresco a ogni segnale.
         self._auto_green_pending: dict = {}
         self._auto_green_pending_lock = threading.Lock()
+        # Generazione monotona: un CASHOUT_ALL la incrementa => ogni grace gia'
+        # schedulato con una generazione precedente e' INVALIDATO (tombstone),
+        # anche se il suo Timer e' gia' partito nella finestra reserve->start e
+        # non e' piu' cancellabile. Il callback differito confronta la propria
+        # generazione con quella corrente e abortisce se stale.
+        self._auto_green_generation = 0
         # Pending-stop sincrono: armato sotto lock PRIMA di applicare il PnL del
         # settlement che sfonderebbe il limite, cosi' un SIGNAL_RECEIVED
         # concorrente (dispatch multi-worker) non piazza un ordine nella finestra
@@ -1893,7 +1899,8 @@ class RuntimeController:
         # chiamante durante la grace (anche strutture annidate: prezzi, legs).
         signal = copy.deepcopy(signal)
         key = self._auto_green_key(signal)
-        if not self._auto_green_acquire(key):
+        acquired, gen = self._auto_green_reserve(key)
+        if not acquired:
             # Duplicato sullo STESSO target gia' in grace: il primo grace chiudera'
             # quel target, quindi la seconda richiesta e' ridondante e viene
             # accorpata. Solo log (NON un CASHOUT_FAILED, che semanticamente e' un
@@ -1910,9 +1917,16 @@ class RuntimeController:
         # instrada INLINE (fallback fail-closed, il cashout parte comunque, solo
         # senza grace). Fugu/Greptile P1.
         try:
-            timer = threading.Timer(delay, self._deferred_cashout_route, args=(signal, key, enqueue_mode))
+            timer = threading.Timer(delay, self._deferred_cashout_route, args=(signal, key, enqueue_mode, gen))
             timer.daemon = True
-            self._auto_green_set_timer(key, timer)
+            # Arma il Timer SOLO se la prenotazione e' ancora valida (chiave
+            # presente E generazione invariata): un CASHOUT_ALL arrivato nella
+            # finestra reserve->arm ha gia' invalidato questo grace => NON avviare
+            # il Timer (l'ALL chiude il target inline). Deterministico, non affidato
+            # al solo re-check del callback (GPT/Fugu/Fable).
+            if not self._auto_green_arm_timer(key, timer, gen):
+                logger.info("[RuntimeController] grace %s invalidato da CASHOUT_ALL concorrente: skip", key)
+                return
             timer.start()
         except Exception:  # noqa: BLE001 - scheduling fallito: fallback inline, mai perdere il cashout
             logger.exception("[RuntimeController] scheduling grace fallito %s: route inline", key)
@@ -1926,7 +1940,8 @@ class RuntimeController:
             finally:
                 self._auto_green_release(key)
 
-    def _deferred_cashout_route(self, signal: dict, key: tuple, enqueue_mode: str = "") -> None:
+    def _deferred_cashout_route(self, signal: dict, key: tuple, enqueue_mode: str = "",
+                                gen: int = None) -> None:
         """Esegue la route del cashout DOPO il grace, sul thread del ``Timer``.
 
         Fail-closed: ri-verifica i gate live (emergency-stop incl. daily-loss
@@ -1938,6 +1953,13 @@ class RuntimeController:
         pending-guard.
         """
         try:
+            # Tombstone generazionale: se un CASHOUT_ALL ha bumpato la generazione
+            # dopo lo scheduling, questo grace e' invalidato (il target e' /verra'
+            # chiuso dall'ALL) => NON instradare, evita un secondo green-up. Backstop
+            # deterministico anche quando il Timer e' partito prima del cancel.
+            if gen is not None and self._auto_green_is_stale(gen):
+                logger.warning("[RuntimeController] grace %s invalidato (CASHOUT_ALL): skip route", key)
+                return
             ok, reason = self._cashout_gates_still_open(signal, enqueue_mode)
             if not ok:
                 logger.warning("[RuntimeController] cashout grace abortito %s: %s", key, reason)
@@ -2013,19 +2035,36 @@ class RuntimeController:
             str(signal.get("selection_id") or ""),
         )
 
-    def _auto_green_acquire(self, key: tuple) -> bool:
-        """True se nessun grace e' gia' in volo per ``key`` (e lo prenota)."""
-        with self._auto_green_pending_lock:
-            if key in self._auto_green_pending:
-                return False
-            self._auto_green_pending[key] = None  # prenotato; il Timer arriva dopo
-            return True
+    def _auto_green_reserve(self, key: tuple):
+        """Prenota atomicamente la ``key`` e restituisce ``(acquired, generation)``.
 
-    def _auto_green_set_timer(self, key: tuple, timer: Any) -> None:
-        """Associa il Timer alla chiave prenotata (per poterlo cancellare)."""
+        ``acquired=False`` se un grace e' gia' in volo per lo stesso target
+        (duplicato). La generazione catturata sotto lock lega questo grace allo
+        stato corrente: un CASHOUT_ALL successivo la incrementera' invalidandolo.
+        """
         with self._auto_green_pending_lock:
             if key in self._auto_green_pending:
+                return False, self._auto_green_generation
+            self._auto_green_pending[key] = None  # prenotato; il Timer arriva dopo
+            return True, self._auto_green_generation
+
+    def _auto_green_arm_timer(self, key: tuple, timer: Any, gen: int) -> bool:
+        """Registra il Timer SOLO se la prenotazione e' ancora valida.
+
+        True => armare (chiave ancora prenotata E generazione invariata). False =>
+        un CASHOUT_ALL concorrente ha gia' invalidato/rimosso la prenotazione: il
+        chiamante NON deve avviare il Timer (la chiave e' gia' stata scartata)."""
+        with self._auto_green_pending_lock:
+            if key in self._auto_green_pending and gen == self._auto_green_generation:
                 self._auto_green_pending[key] = timer
+                return True
+            self._auto_green_pending.pop(key, None)
+            return False
+
+    def _auto_green_is_stale(self, gen: int) -> bool:
+        """True se la generazione ``gen`` e' stata superata (CASHOUT_ALL nel mezzo)."""
+        with self._auto_green_pending_lock:
+            return gen != self._auto_green_generation
 
     def _auto_green_release(self, key: tuple) -> None:
         with self._auto_green_pending_lock:
@@ -2037,13 +2076,18 @@ class RuntimeController:
         gia' chiuso dall'ALL, anche se la chiusura dell'ALL e' ancora unmatched al
         fire (GPT-5.6 Terra/Fugu). ``Timer.cancel`` e' no-op se gia' partito; il
         callback resta comunque fail-closed (ri-check gate + recompute fresco)."""
-        # Difensivo: se lo stato del grace non e' inizializzato (nessun grace mai
-        # armato), non c'e' nulla da cancellare.
+        # Difensivo: se lo stato del grace non e' inizializzato (istanza bare),
+        # non c'e' nulla da fare.
         lock = getattr(self, "_auto_green_pending_lock", None)
-        pending = getattr(self, "_auto_green_pending", None)
-        if lock is None or not pending:
+        if lock is None:
             return
         with lock:
+            # BUMP della generazione: invalida OGNI grace gia' schedulato (anche
+            # quelli il cui Timer e' partito nella finestra reserve->arm e non e'
+            # tracciato/cancellabile) => il callback differito, o l'arm, vedra' la
+            # generazione avanzata e abortira'. Chiude la race in modo deterministico.
+            self._auto_green_generation = getattr(self, "_auto_green_generation", 0) + 1
+            pending = getattr(self, "_auto_green_pending", None) or {}
             timers = [t for t in pending.values() if t is not None]
             pending.clear()
         for t in timers:

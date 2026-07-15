@@ -58,8 +58,9 @@ class _RC:
     # _auto_green_key e' @staticmethod: copiandolo come attr di classe perderebbe
     # lo statico => ri-wrappa per non ricevere self.
     _auto_green_key = staticmethod(RuntimeController._auto_green_key)
-    _auto_green_acquire = RuntimeController._auto_green_acquire
-    _auto_green_set_timer = RuntimeController._auto_green_set_timer
+    _auto_green_reserve = RuntimeController._auto_green_reserve
+    _auto_green_arm_timer = RuntimeController._auto_green_arm_timer
+    _auto_green_is_stale = RuntimeController._auto_green_is_stale
     _auto_green_release = RuntimeController._auto_green_release
     _cancel_pending_auto_green = RuntimeController._cancel_pending_auto_green
     _cashout_gates_still_open = RuntimeController._cashout_gates_still_open
@@ -72,6 +73,7 @@ class _RC:
         self.config = SimpleNamespace(auto_green_delay_enabled=enabled, auto_green_delay_sec=sec)
         self._auto_green_pending = {}
         self._auto_green_pending_lock = threading.Lock()
+        self._auto_green_generation = 0
         self._daily_loss_stop_lock = threading.Lock()
         self._emergency_stopped = False
         self._daily_loss_pending_stop = False
@@ -234,13 +236,36 @@ def test_signal_snapshot_deepcopy_isolates_from_caller_mutation():
     assert rc.executed[0]["legs"][0]["price"] == 2.0   # deepcopy: annidato isolato
 
 
-def test_pending_guard_acquire_release():
+def test_pending_guard_reserve_release():
     rc = _RC()
-    k = ("CASHOUT", "1.1", "7")
-    assert rc._auto_green_acquire(k) is True
-    assert rc._auto_green_acquire(k) is False    # gia' in volo
+    k = ("1.1", "7")
+    assert rc._auto_green_reserve(k)[0] is True
+    assert rc._auto_green_reserve(k)[0] is False   # gia' in volo
     rc._auto_green_release(k)
-    assert rc._auto_green_acquire(k) is True      # riammesso dopo release
+    assert rc._auto_green_reserve(k)[0] is True     # riammesso dopo release
+
+
+def test_generational_tombstone_invalidates_pending_grace():
+    # Race reserve->start: dopo reserve ma prima di arm/start, un CASHOUT_ALL
+    # bumpa la generazione => arm rifiuta e il callback differito abortisce.
+    rc = _RC(enabled=True)
+    k = ("1.1", "7")
+    acquired, gen = rc._auto_green_reserve(k)
+    assert acquired is True
+    rc._cancel_pending_auto_green()                 # CASHOUT_ALL nel mezzo
+    # arm rifiuta (generazione avanzata) => non si avvia il timer
+    assert rc._auto_green_arm_timer(k, _FakeTimer(1.0, lambda: None), gen) is False
+    # e un callback differito con la vecchia gen si riconosce stale
+    assert rc._auto_green_is_stale(gen) is True
+
+
+def test_deferred_route_aborts_when_generation_stale():
+    rc = _RC(enabled=True)
+    rc._route_cashout_signal(_sig(market="1.1", sel=7))   # arma il grace
+    t = _FakeTimer.instances[0]
+    rc._cancel_pending_auto_green()                        # ALL invalida la gen
+    t.fire()                                               # il timer scatta comunque
+    assert rc.executed == []                               # route NON eseguita (stale)
 
 
 def test_auto_green_key_shape():
