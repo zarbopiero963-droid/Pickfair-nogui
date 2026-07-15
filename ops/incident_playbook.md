@@ -28,6 +28,26 @@ This playbook is for operator-driven incident handling.
 - [ ] Operator acknowledgement recorded
 - [ ] Explicit manual decision documented (remain blocked / proceed)
 
+## Telegram runtime diagnostics (dove guardare)
+Se il listener Telegram ha un problema, i log applicativi ora riportano il
+motivo (prima molti fallimenti erano silenziosi). Cerca questi prefissi:
+- `[TelegramListener] mark_failed: <reason>` — **ogni** fallimento terminale
+  (`connect_timeout`, `session_not_authorized`, `disconnected_unexpectedly`,
+  `runtime_error: …`, `reconnect_failed`, ecc.), livello ERROR.
+- `[TelegramListener] runtime thread crashed` — crash del thread runtime con
+  traceback completo (livello ERROR/exception).
+- `[TelegramListener] stato X -> Y` — transizioni di stato
+  (CONNECTING/CONNECTED/RECONNECTING/STOPPED/FAILED), livello INFO.
+- `[TelegramListener] reconnect tentativo #N avviato` / `reconnect riuscito`
+  — ciclo di riconnessione.
+- `[TelegramService] autoheal ENTER_FAILED_LOCKOUT` — recovery **sospeso**
+  (niente più restart automatici), livello ERROR; `autoheal SCHEDULE_RESTART`
+  — restart automatico in corso (WARNING).
+
+I log NON contengono segreti (token bot, session string, chat-id): solo codici
+di stato/motivo. Sono diagnostica; non sostituiscono lo snapshot operator-facing
+di `ops/observability_minimum.md`.
+
 ## Exit criteria (manual only)
 All must be true before considering progression:
 - snapshot `status` is `PASS`

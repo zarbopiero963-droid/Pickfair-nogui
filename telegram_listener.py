@@ -163,7 +163,13 @@ class TelegramListener:
         allowed_states = {"CREATED", "CONNECTING", "CONNECTED", "RECONNECTING", "STOPPED", "FAILED"}
         if new_state not in allowed_states:
             raise ValueError(f"Invalid Telegram listener state: {new_state}")
+        prev_state = self.state
         self.state = new_state
+        # Diagnostica: senza questa riga le transizioni (CONNECTED/RECONNECTING/
+        # FAILED/STOPPED) erano invisibili nei log e un'anomalia runtime non
+        # lasciava traccia. Solo il nome dello stato (nessun payload/segreto).
+        if new_state != prev_state:
+            logger.info("[TelegramListener] stato %s -> %s", prev_state, new_state)
 
     # =========================================================
     # EXTERNAL SETUP
@@ -323,6 +329,10 @@ class TelegramListener:
             loop.run_until_complete(self._runtime_async())
         except Exception as exc:
             if not self.intentional_stop:
+                # Preserva il traceback del thread runtime crashato: mark_failed
+                # registra solo il reason sintetico, qui salviamo lo stack per
+                # poter diagnosticare la causa reale del crash.
+                logger.exception("[TelegramListener] runtime thread crashed")
                 self.mark_failed(f"runtime_error: {exc}")
         finally:
             if self._runtime_loop is loop:
@@ -487,6 +497,11 @@ class TelegramListener:
 
     def mark_failed(self, error: str) -> None:
         self.last_error = str(error or "")
+        # Diagnostica: TUTTI i fallimenti terminali passano da qui (timeout,
+        # sessione non autorizzata, disconnessione inattesa, runtime_error,
+        # reconnect_failed). Prima era silenzioso: un problema non lasciava mai
+        # il motivo nei log. Il reason e' un codice controllato (nessun segreto).
+        logger.error("[TelegramListener] mark_failed: %s", self.last_error or "listener_failure")
         self.running = False
         self.reconnect_in_progress = False
         # Rilascia il contatore delle risorse di rete PRIMA della transizione a
@@ -505,6 +520,7 @@ class TelegramListener:
             return False
         self.reconnect_attempts += 1
         self.reconnect_in_progress = True
+        logger.warning("[TelegramListener] reconnect tentativo #%d avviato", self.reconnect_attempts)
         self._set_state("RECONNECTING")
         return True
 
@@ -512,6 +528,9 @@ class TelegramListener:
         self.reconnect_in_progress = False
         if success:
             self.last_error = ""
+            logger.info(
+                "[TelegramListener] reconnect riuscito dopo %d tentativi", self.reconnect_attempts
+            )
             # Keep this truthful for current architecture: no live network resource.
             self._set_state("STOPPED")
             self.running = False

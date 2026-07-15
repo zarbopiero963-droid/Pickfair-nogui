@@ -448,11 +448,21 @@ class TelegramService:
             self._lockout_active = True
             self._lockout_since_ts = now_ts
             self._lockout_reason = decision.reason
+            # Diagnostica: l'ingresso in lockout SOSPENDE il recovery (niente piu'
+            # restart automatici). Prima era invisibile: Telegram restava giu' e
+            # nei log non risultava perche' non si riprendeva.
+            logger.error(
+                "[TelegramService] autoheal ENTER_FAILED_LOCKOUT: recovery sospeso "
+                "(reason=%s, failure_class=%s)",
+                decision.reason,
+                decision.failure_class.value,
+            )
         elif self._lockout_active and self._lockout_since_ts is not None:
             if (now_ts - self._lockout_since_ts) >= self._autoheal_policy.lockout_sec:
                 self._lockout_active = False
                 self._lockout_since_ts = None
                 self._lockout_reason = ""
+                logger.info("[TelegramService] autoheal lockout scaduto: recovery riabilitato")
         return decision
 
     def run_autoheal_once(
@@ -470,6 +480,13 @@ class TelegramService:
             failure_escalated=failure_escalated,
         )
         if decision.action == TelegramAutohealAction.SCHEDULE_RESTART:
+            # Diagnostica: rende visibile OGNI restart automatico deciso
+            # dall'autoheal (azione + motivo + classe di fallimento).
+            logger.warning(
+                "[TelegramService] autoheal SCHEDULE_RESTART (reason=%s, failure_class=%s)",
+                decision.reason,
+                decision.failure_class.value,
+            )
             restarted = self.restart()
             return {
                 "action": decision.action.value,
