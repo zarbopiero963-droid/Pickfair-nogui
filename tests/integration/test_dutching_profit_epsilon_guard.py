@@ -172,18 +172,23 @@ def test_no_warning_when_spread_under_epsilon(monkeypatch):
     assert res["profit_spread"] == 0.30
 
 
-def test_spread_display_matches_decision_at_cent(monkeypatch):
-    # Spread reale 0.504 => arrotondato a 0.50: NON warna, e profit_spread mostrato
-    # 0.50 e' coerente col non-avviso (niente "0.50 con avviso attivo"). 0.506 =>
-    # 0.51 > 0.50 => warna, mostrato 0.51. Display e decisione coincidono (Fable).
+def test_guard_compares_exact_spread_not_rounded(monkeypatch):
+    # GUARD money-management: il confronto usa lo spread ESATTO, non arrotondato
+    # (GPT-5.6 Terra). Uno spread reale 0.504 SUPERA la tolleranza 0.50 => WARNA,
+    # anche se il valore mostrato (profit_spread) e' arrotondato a 0.50 per display.
+    # Non si nasconde mai uno sbilancio reale sub-centesimo (arrotondare prima del
+    # confronto alzerebbe la soglia effettiva fino a ~0.505). In produzione
+    # profitIfWinsNet e' gia' a precisione di centesimo, quindi display e decisione
+    # coincidono; la differenza emerge solo con input sub-centesimo come questo.
     _patch_results(monkeypatch, _res([5.000, 5.504]))
     res = _controller().precheck(_payload())
-    assert res["profit_spread"] == 0.50
-    assert res["profit_epsilon_warning"] is False
-    _patch_results(monkeypatch, _res([5.000, 5.506]))
+    assert res["profit_epsilon_warning"] is True          # 0.504 > 0.50 => breach reale
+    assert res["profit_spread"] == 0.50                   # display arrotondato a centesimo
+    # Sotto soglia esatta => nessun avviso.
+    _patch_results(monkeypatch, _res([5.000, 5.30]))
     res2 = _controller().precheck(_payload())
-    assert res2["profit_spread"] == 0.51
-    assert res2["profit_epsilon_warning"] is True
+    assert res2["profit_epsilon_warning"] is False
+    assert res2["profit_spread"] == 0.30
 
 
 def test_never_blocks_even_far_over_threshold(monkeypatch):

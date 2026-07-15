@@ -1033,14 +1033,17 @@ class DutchingController:
         profit_epsilon_enabled = self._profit_epsilon_enabled(config)
         profit_epsilon = self._profit_epsilon(config)
         raw_spread = self._profit_spread_net(results)
-        # Arrotonda a centesimo PRIMA del confronto: cosi' il valore mostrato
-        # (profit_spread) e la decisione (profit_epsilon_warning) coincidono — niente
-        # "0.50 con avviso attivo" per uno spread reale 0.504 (Fable). L'avviso scatta
-        # SOLO se abilitato dalla GUI (default on): disattivandolo l'owner lo silenzia
-        # senza toccare la soglia; profit_spread resta comunque esposto (informativo).
+        # GUARD MONEY-MANAGEMENT: il confronto usa lo spread ESATTO (raw), MAI
+        # arrotondato — arrotondare prima del confronto alzerebbe la soglia effettiva
+        # fino a ~€0.505 nascondendo uno sbilancio reale sub-centesimo (GPT-5.6 Terra).
+        # Il valore ESPOSTO (profit_spread) e' arrotondato a centesimo solo per il
+        # display; in produzione profitIfWinsNet e' gia' a precisione di centesimo
+        # (dutching _round_step), quindi display e decisione coincidono. L'avviso
+        # scatta SOLO se abilitato dalla GUI (default on): disattivarlo lo silenzia
+        # senza toccare la soglia; profit_spread resta esposto (informativo).
         profit_spread = round(float(raw_spread), 2) if raw_spread is not None else None
         profit_epsilon_warning = bool(
-            profit_epsilon_enabled and profit_spread is not None and profit_spread > profit_epsilon + 1e-9
+            profit_epsilon_enabled and raw_spread is not None and raw_spread > profit_epsilon + 1e-9
         )
 
         if bankroll > 0 and config is not None:
