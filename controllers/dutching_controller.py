@@ -1021,20 +1021,24 @@ class DutchingController:
             bankroll > 0 and batch_exposure > bankroll * max_stake_pct + 1e-9
         )
 
-        # PROFIT_EPSILON (G5) — WARNING opt-in NON-bloccante: segnala se la varianza
-        # di profitto NETTO tra gli esiti equalizzati (max - min su profitIfWinsNet)
-        # supera la tolleranza configurata (default €0.50). Uno spread residuo alto
-        # dopo l'equalizzazione tradisce la premessa "profitto garantito uguale"
-        # (l'operatore vince sensibilmente di piu' su certi esiti). Non BLOCCA MAI.
-        # FAIL-OPEN: netti incompleti / < 2 esiti => nessun avviso. FAIL-SAFE: config
-        # rotta => trading_config.PROFIT_EPSILON. Il controller usa sempre equalize=ON
+        # PROFIT_EPSILON (G5) — WARNING NON-bloccante, ATTIVO DI DEFAULT (opt-out via
+        # checkbox profit_epsilon_enabled): segnala se la varianza di profitto NETTO
+        # tra gli esiti equalizzati (max - min su profitIfWinsNet) supera la tolleranza
+        # configurata (default €0.50). Uno spread residuo alto dopo l'equalizzazione
+        # tradisce la premessa "profitto garantito uguale" (l'operatore vince
+        # sensibilmente di piu' su certi esiti). Non BLOCCA MAI. FAIL-OPEN: netti
+        # incompleti / < 2 esiti => nessun avviso. FAIL-SAFE: config rotta =>
+        # trading_config.PROFIT_EPSILON. Il controller usa sempre equalize=ON
         # (calculate_dutching default), quindi lo spread e' quello post-equalizzazione.
         profit_epsilon_enabled = self._profit_epsilon_enabled(config)
         profit_epsilon = self._profit_epsilon(config)
-        profit_spread = self._profit_spread_net(results)
-        # L'avviso scatta SOLO se abilitato dalla GUI (default on): disattivandolo
-        # l'owner silenzia l'avviso senza toccare la soglia. profit_spread resta
-        # comunque esposto (informativo, non-bloccante).
+        raw_spread = self._profit_spread_net(results)
+        # Arrotonda a centesimo PRIMA del confronto: cosi' il valore mostrato
+        # (profit_spread) e la decisione (profit_epsilon_warning) coincidono — niente
+        # "0.50 con avviso attivo" per uno spread reale 0.504 (Fable). L'avviso scatta
+        # SOLO se abilitato dalla GUI (default on): disattivandolo l'owner lo silenzia
+        # senza toccare la soglia; profit_spread resta comunque esposto (informativo).
+        profit_spread = round(float(raw_spread), 2) if raw_spread is not None else None
         profit_epsilon_warning = bool(
             profit_epsilon_enabled and profit_spread is not None and profit_spread > profit_epsilon + 1e-9
         )
@@ -1101,7 +1105,7 @@ class DutchingController:
             stake_pct_ratio=round(stake_pct_ratio, 4),
             profit_epsilon=round(profit_epsilon, 2),
             profit_epsilon_enabled=profit_epsilon_enabled,
-            profit_spread=(round(float(profit_spread), 2) if profit_spread is not None else None),
+            profit_spread=profit_spread,
             profit_epsilon_warning=profit_epsilon_warning,
             event_key=event_key,
             batch_id=batch_id,

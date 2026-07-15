@@ -172,6 +172,20 @@ def test_no_warning_when_spread_under_epsilon(monkeypatch):
     assert res["profit_spread"] == 0.30
 
 
+def test_spread_display_matches_decision_at_cent(monkeypatch):
+    # Spread reale 0.504 => arrotondato a 0.50: NON warna, e profit_spread mostrato
+    # 0.50 e' coerente col non-avviso (niente "0.50 con avviso attivo"). 0.506 =>
+    # 0.51 > 0.50 => warna, mostrato 0.51. Display e decisione coincidono (Fable).
+    _patch_results(monkeypatch, _res([5.000, 5.504]))
+    res = _controller().precheck(_payload())
+    assert res["profit_spread"] == 0.50
+    assert res["profit_epsilon_warning"] is False
+    _patch_results(monkeypatch, _res([5.000, 5.506]))
+    res2 = _controller().precheck(_payload())
+    assert res2["profit_spread"] == 0.51
+    assert res2["profit_epsilon_warning"] is True
+
+
 def test_never_blocks_even_far_over_threshold(monkeypatch):
     # Epsilon minuscolo (0.01) e spread 0.60: il warning NON blocca MAI.
     _patch_results(monkeypatch, _res([5.00, 5.60]))
