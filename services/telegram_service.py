@@ -489,9 +489,17 @@ class TelegramService:
                 decision.failure_class.value,
             )
             restarted = self.restart()
-            # restart() ritorna un dict per contratto (tutti i suoi path):
-            # ci fidiamo del contratto e NON mascheriamo un'eventuale
-            # violazione (un tipo inatteso deve emergere, non degradare a {}).
+            # restart() ritorna un dict per contratto. Se il contratto e' violato
+            # NON si maschera in silenzio (si LOGGA a ERROR) ma nemmeno si fa
+            # fail-hard nel path di recovery: si degrada in modo osservabile
+            # (restart_result vuoto) senza uccidere il loop di autoheal.
+            if not isinstance(restarted, dict):
+                logger.error(
+                    "[TelegramService] restart() ha restituito un tipo inatteso "
+                    "(%s) nel path autoheal; degrado a esito vuoto",
+                    type(restarted).__name__,
+                )
+                restarted = {}
             if not restarted.get("started"):
                 logger.error(
                     "[TelegramService] autoheal restart NON avviato (reason=%s)",

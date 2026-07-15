@@ -383,6 +383,38 @@ def test_autoheal_enter_lockout_logs_error(caplog):
 
 
 @pytest.mark.unit
+def test_autoheal_restart_non_dict_degrades_gracefully(caplog):
+    """Se restart() viola il contratto (ritorna non-dict), il path autoheal NON
+    crasha (no fail-hard nel recovery) ma logga a ERROR e degrada a esito vuoto."""
+    svc = _svc()
+    svc.start()
+    try:
+        svc._autoheal_policy = _FakePolicy(
+            TelegramAutohealDecision(
+                action=TelegramAutohealAction.SCHEDULE_RESTART,
+                reason="disconnect_recoverable",
+                failure_class=TelegramFailureClass.RECOVERABLE_DISCONNECT,
+                recovery_allowed=True,
+            )
+        )
+        svc.restart = lambda: None  # viola il contratto dict  # type: ignore[assignment]
+        with caplog.at_level(logging.DEBUG, logger="services.telegram_service"):
+            outcome = svc.run_autoheal_once(
+                checked_at_ts=1000.0,
+                startup_grace_active=False,
+                reconnect_grace_active=False,
+                failure_escalated=True,
+            )
+    finally:
+        svc.stop()
+
+    # Nessun crash: esito strutturato e degradato in modo osservabile.
+    assert outcome["action"] == "SCHEDULE_RESTART"
+    assert outcome["restart_result"] == {}
+    assert any("tipo inatteso" in m for m in _messages(caplog, "restart()"))
+
+
+@pytest.mark.unit
 def test_autoheal_schedule_restart_logs_warning(caplog):
     svc = _svc()
     svc.start()
