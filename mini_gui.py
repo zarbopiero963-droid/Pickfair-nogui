@@ -646,6 +646,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.rs_max_stake_pct_var = self._make_string_var(str(trading_config.MAX_STAKE_PCT * 100))
         # Profit epsilon: tolleranza AVVISO (mai blocco) varianza profitto netto tra esiti (€).
         self.rs_profit_epsilon_var = self._make_string_var(str(trading_config.PROFIT_EPSILON))
+        # Interruttore ON/OFF dell'avviso profit_epsilon (default attivo).
+        self.rs_profit_epsilon_enabled_var = self._make_bool_var(True)
         # Auto-green: grace OPT-IN prima di instradare il cashout (default disarmato) + secondi.
         self.rs_auto_green_delay_enabled_var = self._make_bool_var(False)
         self.rs_auto_green_delay_sec_var = self._make_string_var(str(trading_config.AUTO_GREEN_DELAY_SEC))
@@ -1044,6 +1046,9 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         # G5: grace OPT-IN prima di instradare il cashout (auto-green). Default
         # disarmato => route immediata come oggi; SPUNTARE arma il ritardo (s sopra).
         ctk.CTkCheckBox(cb, text="Auto-green: attiva grace prima del cashout (ritardo)", variable=self.rs_auto_green_delay_enabled_var).pack(side=tk.LEFT, padx=8, pady=8)
+        # G5: interruttore ON/OFF dell'avviso profit_epsilon (non-bloccante).
+        # Default spuntato => l'avviso e' attivo; TOGLIERE la spunta lo silenzia.
+        ctk.CTkCheckBox(cb, text="Profit epsilon: mostra avviso varianza profitto", variable=self.rs_profit_epsilon_enabled_var).pack(side=tk.LEFT, padx=8, pady=8)
 
         self.btn_save_roserpina = ctk.CTkButton(
             outer,
@@ -1493,6 +1498,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 self.rs_max_win_warning_only_var.set(bool(getattr(rs, "max_win_warning_only", True)))
                 self.rs_max_stake_pct_var.set(str(getattr(rs, "max_stake_pct", trading_config.MAX_STAKE_PCT * 100)))
                 self.rs_profit_epsilon_var.set(str(getattr(rs, "profit_epsilon", trading_config.PROFIT_EPSILON)))
+                self.rs_profit_epsilon_enabled_var.set(bool(getattr(rs, "profit_epsilon_enabled", True)))
                 self.rs_auto_green_delay_enabled_var.set(bool(getattr(rs, "auto_green_delay_enabled", False)))
                 self.rs_auto_green_delay_sec_var.set(str(getattr(rs, "auto_green_delay_sec", trading_config.AUTO_GREEN_DELAY_SEC)))
                 self.rs_allow_recovery_var.set(bool(getattr(rs, "allow_recovery", self.rs_allow_recovery_var.get())))
@@ -1883,6 +1889,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 max_win_warning_only=bool(self.rs_max_win_warning_only_var.get()),
                 max_stake_pct=max_stake_pct,
                 profit_epsilon=profit_epsilon,
+                profit_epsilon_enabled=bool(self.rs_profit_epsilon_enabled_var.get()),
                 auto_green_delay_enabled=auto_green_delay_enabled,
                 auto_green_delay_sec=auto_green_delay_sec,
             )

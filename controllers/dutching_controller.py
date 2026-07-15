@@ -257,6 +257,23 @@ class DutchingController:
         return DutchingController._book_threshold(config, "profit_epsilon", trading_config.PROFIT_EPSILON)
 
     @staticmethod
+    def _profit_epsilon_enabled(config) -> bool:
+        """True => avviso profit_epsilon ATTIVO (default). False solo se l'owner lo
+        disattiva dalla GUI.
+
+        Default OPT-OUT (``True`` quando la config e' assente/None): l'avviso e'
+        NON-bloccante (zero rischio), quindi resta attivo di default e la checkbox
+        fa da interruttore 'muto'. Parsing stringa robusto: 'false'/'0'/'no'/'off'/''
+        disattivano; qualunque altro valore (o un bool) segue il proprio truthiness.
+        """
+        raw = getattr(config, "profit_epsilon_enabled", None)
+        if raw is None:
+            return True
+        if isinstance(raw, str):
+            return raw.strip().lower() not in {"0", "false", "no", "off", ""}
+        return bool(raw)
+
+    @staticmethod
     def _profit_spread_net(results: List[Dict[str, Any]]):
         """Spread del profitto NETTO tra gli esiti = max - min su ``profitIfWinsNet``.
 
@@ -1012,10 +1029,14 @@ class DutchingController:
         # FAIL-OPEN: netti incompleti / < 2 esiti => nessun avviso. FAIL-SAFE: config
         # rotta => trading_config.PROFIT_EPSILON. Il controller usa sempre equalize=ON
         # (calculate_dutching default), quindi lo spread e' quello post-equalizzazione.
+        profit_epsilon_enabled = self._profit_epsilon_enabled(config)
         profit_epsilon = self._profit_epsilon(config)
         profit_spread = self._profit_spread_net(results)
+        # L'avviso scatta SOLO se abilitato dalla GUI (default on): disattivandolo
+        # l'owner silenzia l'avviso senza toccare la soglia. profit_spread resta
+        # comunque esposto (informativo, non-bloccante).
         profit_epsilon_warning = bool(
-            profit_spread is not None and profit_spread > profit_epsilon + 1e-9
+            profit_epsilon_enabled and profit_spread is not None and profit_spread > profit_epsilon + 1e-9
         )
 
         if bankroll > 0 and config is not None:
@@ -1079,6 +1100,7 @@ class DutchingController:
             stake_pct_warning=stake_pct_warning,
             stake_pct_ratio=round(stake_pct_ratio, 4),
             profit_epsilon=round(profit_epsilon, 2),
+            profit_epsilon_enabled=profit_epsilon_enabled,
             profit_spread=(round(float(profit_spread), 2) if profit_spread is not None else None),
             profit_epsilon_warning=profit_epsilon_warning,
             event_key=event_key,

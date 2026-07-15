@@ -125,6 +125,9 @@ class RoserpinaConfig:
     # profit_epsilon_warning nel risultato, MAI un blocco. FAIL-OPEN su netti
     # incompleti/<2 esiti; FAIL-SAFE su config rotta (ricade sulla costante).
     profit_epsilon: float = 0.50
+    # Interruttore ON/OFF dell'avviso profit_epsilon (G5). Default True: l'avviso
+    # (non-bloccante) e' attivo; l'owner lo silenzia dalla GUI mettendo False.
+    profit_epsilon_enabled: bool = True
 
     # Grace period OPT-IN prima di instradare l'auto-green (cashout), G5.
     # auto_green_delay_enabled=False (default) => NESSUN cambiamento di

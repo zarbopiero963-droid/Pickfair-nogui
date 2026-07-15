@@ -121,10 +121,12 @@ def _controller(runtime=None):
     return DutchingController(bus=None, runtime_controller=runtime or _Runtime())
 
 
-def _runtime_with(profit_epsilon=None):
+def _runtime_with(profit_epsilon=None, enabled=None):
     rt = _Runtime()
     if profit_epsilon is not None:
         rt.config.profit_epsilon = profit_epsilon
+    if enabled is not None:
+        rt.config.profit_epsilon_enabled = enabled
     return rt
 
 
@@ -139,6 +141,26 @@ def test_warns_when_profit_spread_over_epsilon(monkeypatch):
     assert res["profit_epsilon_warning"] is True
     assert res["profit_spread"] == 0.60
     assert res["profit_epsilon"] == round(float(trading_config.PROFIT_EPSILON), 2)
+
+
+def test_disabled_suppresses_warning(monkeypatch):
+    # Checkbox OFF (profit_epsilon_enabled=False): anche con spread 0.60 > 0.50 NON
+    # warna. profit_spread resta comunque esposto (informativo), profit_epsilon_enabled
+    # riportato nel risultato.
+    _patch_results(monkeypatch, _res([5.00, 5.60]))
+    res = _controller(_runtime_with(enabled=False)).precheck(_payload())
+    assert res["ok"] is True, res
+    assert res["profit_epsilon_warning"] is False
+    assert res["profit_epsilon_enabled"] is False
+    assert res["profit_spread"] == 0.60
+
+
+def test_enabled_by_default_warns(monkeypatch):
+    # Config senza profit_epsilon_enabled => default ON => warna (spread 0.60 > 0.50).
+    _patch_results(monkeypatch, _res([5.00, 5.60]))
+    res = _controller().precheck(_payload())
+    assert res["profit_epsilon_enabled"] is True
+    assert res["profit_epsilon_warning"] is True
 
 
 def test_no_warning_when_spread_under_epsilon(monkeypatch):
@@ -212,6 +234,20 @@ def test_profit_epsilon_helper_failsafe():
         assert f(SimpleNamespace(profit_epsilon=bad)) == float(trading_config.PROFIT_EPSILON)
 
 
+def test_profit_epsilon_enabled_helper():
+    from controllers.dutching_controller import DutchingController
+
+    f = DutchingController._profit_epsilon_enabled
+    assert f(None) is True                                   # config None => default ON
+    assert f(SimpleNamespace()) is True                      # attributo assente => ON
+    assert f(SimpleNamespace(profit_epsilon_enabled=True)) is True
+    assert f(SimpleNamespace(profit_epsilon_enabled=False)) is False
+    for off in ("0", "false", "False", "no", "off", ""):
+        assert f(SimpleNamespace(profit_epsilon_enabled=off)) is False
+    for on in ("1", "true", "yes", "on"):
+        assert f(SimpleNamespace(profit_epsilon_enabled=on)) is True
+
+
 def test_profit_spread_net_helper():
     from controllers.dutching_controller import DutchingController
 
@@ -252,6 +288,14 @@ def test_profit_epsilon_default_from_constant():
     assert reloaded.profit_epsilon == float(trading_config.PROFIT_EPSILON)
 
 
+def test_profit_epsilon_enabled_round_trip():
+    db = _InMemoryDB()
+    SettingsService(db).save_roserpina_config(RoserpinaConfig(table_count=3, profit_epsilon_enabled=False))
+    assert SettingsService(db).load_roserpina_config().profit_epsilon_enabled is False
+    # Default (assente) => True.
+    assert SettingsService(_InMemoryDB()).load_roserpina_config().profit_epsilon_enabled is True
+
+
 # ==========================================================================
 # 4) GUI wiring (tab Roserpina)
 # ==========================================================================
@@ -261,7 +305,7 @@ class _CapturingService(FakeSettingsService):
         self.saved_cfg = None
 
     def load_roserpina_config(self):
-        return SimpleNamespace(profit_epsilon=0.80)
+        return SimpleNamespace(profit_epsilon=0.80, profit_epsilon_enabled=False)
 
     def save_roserpina_config(self, cfg):
         self.saved_cfg = cfg
@@ -287,6 +331,27 @@ def test_gui_saves_profit_epsilon(monkeypatch):
         app._save_roserpina_settings()
         assert app.settings_service.saved_cfg is not None
         assert app.settings_service.saved_cfg.profit_epsilon == 0.25
+    finally:
+        app.destroy()
+
+
+def test_gui_loads_profit_epsilon_enabled(monkeypatch):
+    # Il service finto ritorna profit_epsilon_enabled=False => checkbox non spuntata.
+    app = _make_gui(monkeypatch)
+    try:
+        assert bool(app.rs_profit_epsilon_enabled_var.get()) is False
+    finally:
+        app.destroy()
+
+
+def test_gui_saves_profit_epsilon_enabled(monkeypatch):
+    app = _make_gui(monkeypatch)
+    try:
+        app.rs_profit_epsilon_enabled_var.set(True)
+        app.rs_profit_epsilon_var.set("0.5")
+        app._save_roserpina_settings()
+        assert app.settings_service.saved_cfg is not None
+        assert bool(app.settings_service.saved_cfg.profit_epsilon_enabled) is True
     finally:
         app.destroy()
 

@@ -282,6 +282,15 @@ Validazione GUI: numero finito `> 0`. Esposto in `precheck` (dove vivono
 `stake_pct_warning`/`max_win_warning`), non in `preview`. Non tocca `dutching.py`,
 l'equalizzatore, `order_manager` ne' Betfair.
 
+**Interruttore ON/OFF (checkbox).** La checkbox «**Profit epsilon: mostra avviso
+varianza profitto**» (chiave DB `roserpina.profit_epsilon_enabled`, campo
+`RoserpinaConfig.profit_epsilon_enabled`, default **True**) attiva/disattiva
+l'avviso: con la spunta tolta `profit_epsilon_warning` resta sempre `False` (avviso
+silenziato) senza toccare la soglia; `profit_spread` continua a essere esposto
+(informativo). Essendo l'avviso non-bloccante, il default e' **attivo** (OPT-OUT):
+l'helper `_profit_epsilon_enabled` ricade su `True` se la chiave e' assente/None e
+interpreta `false`/`0`/`no`/`off` come disattivazione.
+
 ## Auto-green: grace NON-bloccante prima del cashout (tab Roserpina) — G5
 
 `trading_config.AUTO_GREEN_DELAY_SEC` (2.5) era *dead*. Ora il tab **Roserpina**

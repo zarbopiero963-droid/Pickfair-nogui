@@ -265,6 +265,7 @@ class SettingsService:
             max_stake_pct=self._f(data, "roserpina.max_stake_pct", trading_config.MAX_STAKE_PCT * 100.0),
             # Tolleranza WARNING varianza profitto netto tra esiti, in € (G5).
             profit_epsilon=self._f(data, "roserpina.profit_epsilon", trading_config.PROFIT_EPSILON),
+            profit_epsilon_enabled=self._b(data, "roserpina.profit_epsilon_enabled", True),
             # Grace auto-green OPT-IN (G5): default disarmato; sec default = costante.
             auto_green_delay_enabled=self._b(data, "roserpina.auto_green_delay_enabled", False),
             auto_green_delay_sec=self._f(data, "roserpina.auto_green_delay_sec", trading_config.AUTO_GREEN_DELAY_SEC),
@@ -301,6 +302,7 @@ class SettingsService:
             "roserpina.max_win_warning_only": int(bool(config.max_win_warning_only)),
             "roserpina.max_stake_pct": config.max_stake_pct,
             "roserpina.profit_epsilon": config.profit_epsilon,
+            "roserpina.profit_epsilon_enabled": int(bool(config.profit_epsilon_enabled)),
             "roserpina.auto_green_delay_enabled": int(bool(config.auto_green_delay_enabled)),
             "roserpina.auto_green_delay_sec": config.auto_green_delay_sec,
         }
