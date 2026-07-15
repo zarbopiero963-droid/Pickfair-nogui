@@ -644,6 +644,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.rs_max_win_warning_only_var = self._make_bool_var(True)
         # Max Stake %: soglia di AVVISO (mai blocco) sull'esposizione dell'operazione.
         self.rs_max_stake_pct_var = self._make_string_var(str(trading_config.MAX_STAKE_PCT * 100))
+        # Profit epsilon: tolleranza AVVISO (mai blocco) varianza profitto netto tra esiti (€).
+        self.rs_profit_epsilon_var = self._make_string_var(str(trading_config.PROFIT_EPSILON))
         # Auto-green: grace OPT-IN prima di instradare il cashout (default disarmato) + secondi.
         self.rs_auto_green_delay_enabled_var = self._make_bool_var(False)
         self.rs_auto_green_delay_sec_var = self._make_string_var(str(trading_config.AUTO_GREEN_DELAY_SEC))
@@ -1013,6 +1015,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._labeled_entry(outer, "Quota minima / Min Price (>= 1.02)", self.rs_min_price_var)
         self._labeled_entry(outer, "Max Win € (cap vincita/payout per gamba)", self.rs_max_win_var)
         self._labeled_entry(outer, "Max Stake % (avviso se esposizione operazione > % balance)", self.rs_max_stake_pct_var)
+        self._labeled_entry(outer, "Profit epsilon € (avviso se varianza profitto tra esiti > tolleranza)", self.rs_profit_epsilon_var)
         self._labeled_entry(outer, "Auto-green delay (s) — grace prima del cashout (0.1-30)", self.rs_auto_green_delay_sec_var)
 
         rp = ctk.CTkFrame(outer)
@@ -1489,6 +1492,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 self.rs_max_win_var.set(str(getattr(rs, "max_win", trading_config.MAX_WIN)))
                 self.rs_max_win_warning_only_var.set(bool(getattr(rs, "max_win_warning_only", True)))
                 self.rs_max_stake_pct_var.set(str(getattr(rs, "max_stake_pct", trading_config.MAX_STAKE_PCT * 100)))
+                self.rs_profit_epsilon_var.set(str(getattr(rs, "profit_epsilon", trading_config.PROFIT_EPSILON)))
                 self.rs_auto_green_delay_enabled_var.set(bool(getattr(rs, "auto_green_delay_enabled", False)))
                 self.rs_auto_green_delay_sec_var.set(str(getattr(rs, "auto_green_delay_sec", trading_config.AUTO_GREEN_DELAY_SEC)))
                 self.rs_allow_recovery_var.set(bool(getattr(rs, "allow_recovery", self.rs_allow_recovery_var.get())))
@@ -1825,6 +1829,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             liq_min_abs = self._parse_min_liquidity(self.rs_liq_min_abs_var.get(), "Liquidity Floor assoluto")
             min_price = self._parse_min_price(self.rs_min_price_var.get(), "Quota minima")
             max_win = self._parse_max_win(self.rs_max_win_var.get(), "Max Win")
+            # Profit epsilon: tolleranza € > 0 (riusa _parse_max_win: finito, > 0, ha default).
+            profit_epsilon = self._parse_max_win(self.rs_profit_epsilon_var.get(), "Profit epsilon")
             max_stake_pct = self._parse_book_pct(self.rs_max_stake_pct_var.get(), "Max Stake %")
             # Contratto 0-100 (scala percentuale, come gli altri max_*_pct): un valore
             # > 100 verrebbe convertito a runtime in una frazione > 1 (es. 200 => 2.0 =
@@ -1876,6 +1882,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 max_win=max_win,
                 max_win_warning_only=bool(self.rs_max_win_warning_only_var.get()),
                 max_stake_pct=max_stake_pct,
+                profit_epsilon=profit_epsilon,
                 auto_green_delay_enabled=auto_green_delay_enabled,
                 auto_green_delay_sec=auto_green_delay_sec,
             )

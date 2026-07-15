@@ -245,6 +245,41 @@ class DutchingController:
         return DutchingController._book_threshold(config, "max_win", trading_config.MAX_WIN)
 
     @staticmethod
+    def _profit_epsilon(config) -> float:
+        """Tolleranza (in €) sulla varianza di profitto NETTO tra gli esiti (G5).
+
+        Importo ASSOLUTO in euro (come `max_win`), non una percentuale: riusa
+        `_book_threshold` (numerico finito > 0, fallback FAIL-SAFE) => un backend
+        rotto o un valore corrotto NON disattiva l'avviso ne' lo sposta su un
+        valore assurdo. Fallback = trading_config.PROFIT_EPSILON (0.50). Warning-
+        only: questa soglia NON blocca mai.
+        """
+        return DutchingController._book_threshold(config, "profit_epsilon", trading_config.PROFIT_EPSILON)
+
+    @staticmethod
+    def _profit_spread_net(results: List[Dict[str, Any]]):
+        """Spread del profitto NETTO tra gli esiti = max - min su ``profitIfWinsNet``.
+
+        FAIL-OPEN, coerente con `_min_net_profit`: ritorna ``None`` (=> nessun
+        avviso) se i profitti netti non sono TUTTI presenti/validi (uno per esito)
+        o se c'e' meno di un esito comparabile. Il controller usa sempre il calcolo
+        equalizzato (``calculate_dutching`` default ``equalize=True``, mai
+        sovrascritto), quindi lo spread misurato e' quello POST-equalizzazione, come
+        richiesto (avviso solo con equalize attivo).
+        """
+        net_values: List[float] = []
+        for item in results or []:
+            if not isinstance(item, dict) or "profitIfWinsNet" not in item:
+                continue
+            try:
+                net_values.append(float(item.get("profitIfWinsNet", 0.0) or 0.0))
+            except (TypeError, ValueError):
+                continue
+        if len(net_values) < 2 or len(net_values) != len(results or []):
+            return None
+        return max(net_values) - min(net_values)
+
+    @staticmethod
     def _max_win_warning_only(config) -> bool:
         """True => cap in sola OSSERVAZIONE (avviso, mai blocco); False => BLOCCO.
 
@@ -960,6 +995,20 @@ class DutchingController:
             bankroll > 0 and batch_exposure > bankroll * max_stake_pct + 1e-9
         )
 
+        # PROFIT_EPSILON (G5) — WARNING opt-in NON-bloccante: segnala se la varianza
+        # di profitto NETTO tra gli esiti equalizzati (max - min su profitIfWinsNet)
+        # supera la tolleranza configurata (default €0.50). Uno spread residuo alto
+        # dopo l'equalizzazione tradisce la premessa "profitto garantito uguale"
+        # (l'operatore vince sensibilmente di piu' su certi esiti). Non BLOCCA MAI.
+        # FAIL-OPEN: netti incompleti / < 2 esiti => nessun avviso. FAIL-SAFE: config
+        # rotta => trading_config.PROFIT_EPSILON. Il controller usa sempre equalize=ON
+        # (calculate_dutching default), quindi lo spread e' quello post-equalizzazione.
+        profit_epsilon = self._profit_epsilon(config)
+        profit_spread = self._profit_spread_net(results)
+        profit_epsilon_warning = bool(
+            profit_spread is not None and profit_spread > profit_epsilon + 1e-9
+        )
+
         if bankroll > 0 and config is not None:
             max_total_exposure = bankroll * (
                 float(getattr(config, "max_total_exposure_pct", 35.0)) / 100.0
@@ -1020,6 +1069,9 @@ class DutchingController:
             max_stake_pct=round(max_stake_pct, 4),
             stake_pct_warning=stake_pct_warning,
             stake_pct_ratio=round(stake_pct_ratio, 4),
+            profit_epsilon=round(profit_epsilon, 2),
+            profit_spread=(round(float(profit_spread), 2) if profit_spread is not None else None),
+            profit_epsilon_warning=profit_epsilon_warning,
             event_key=event_key,
             batch_id=batch_id,
             batch_exposure=float(batch_exposure),

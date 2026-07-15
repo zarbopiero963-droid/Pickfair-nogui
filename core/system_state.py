@@ -118,6 +118,14 @@ class RoserpinaConfig:
     # cumulativo max_total_exposure_pct (35%). FAIL-OPEN su bankroll<=0.
     max_stake_pct: float = 30.0
 
+    # Tolleranza WARNING (non blocca mai) sulla varianza di profitto NETTO tra gli
+    # esiti equalizzati del dutching, in EURO assoluti (G5). Default 0.50 =
+    # trading_config.PROFIT_EPSILON. Semantica (controllers/dutching_controller.
+    # precheck): se max(profitIfWinsNet)-min(profitIfWinsNet) > profit_epsilon =>
+    # profit_epsilon_warning nel risultato, MAI un blocco. FAIL-OPEN su netti
+    # incompleti/<2 esiti; FAIL-SAFE su config rotta (ricade sulla costante).
+    profit_epsilon: float = 0.50
+
     # Grace period OPT-IN prima di instradare l'auto-green (cashout), G5.
     # auto_green_delay_enabled=False (default) => NESSUN cambiamento di
     # comportamento (route immediata come oggi); l'owner arma il ritardo dalla
