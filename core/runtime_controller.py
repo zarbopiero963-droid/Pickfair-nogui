@@ -137,11 +137,13 @@ class RuntimeController:
         # Serializza il trigger della kill-switch da daily-loss: rende atomico
         # il check-and-stop dell'handler sotto dispatch EventBus concorrente.
         self._daily_loss_stop_lock = threading.Lock()
-        # Grace auto-green OPT-IN (G5): chiavi dei cashout con grace in volo, per
+        # Grace auto-green OPT-IN (G5): mappa chiave-target -> Timer in volo, per
         # sopprimere un secondo grace sullo stesso target (il dedup del bridge e'
-        # 2.0s < grace 2.5s => non basta). Vive sul controller perche' il
-        # CashoutRouter e' costruito fresco a ogni segnale.
-        self._auto_green_pending: set = set()
+        # 2.0s < grace 2.5s => non basta) E poter CANCELLARE i grace pendenti
+        # quando un CASHOUT_ALL chiude tutto inline (evita che un timer fissi un
+        # secondo green-up su un target gia' chiuso). Vive sul controller perche'
+        # il CashoutRouter e' costruito fresco a ogni segnale.
+        self._auto_green_pending: dict = {}
         self._auto_green_pending_lock = threading.Lock()
         # Pending-stop sincrono: armato sotto lock PRIMA di applicare il PnL del
         # settlement che sfonderebbe il limite, cosi' un SIGNAL_RECEIVED
@@ -1870,7 +1872,20 @@ class RuntimeController:
         # singolo dello stesso target (decisione owner 'B').
         signal_type = str(signal.get("signal_type") or "").strip().upper()
         delay = self._auto_green_delay_seconds()
-        if delay <= 0.0 or signal_type != "CASHOUT":
+        # CASHOUT_ALL ("chiudi tutto") va SEMPRE inline; inoltre CANCELLA i grace
+        # pendenti: chiudendo tutti i target, un timer singolo in volo fisserebbe
+        # un secondo green-up su una posizione gia' chiusa (race ALL vs grace,
+        # anche se la chiusura dell'ALL e' ancora unmatched al fire).
+        if signal_type == "CASHOUT_ALL":
+            self._cancel_pending_auto_green()
+            self._execute_cashout_route(signal)
+            return
+        # Solo il CASHOUT singolo con target VALORIZZATO (market E selection) puo'
+        # essere graziato: senza target valido la chiave collasserebbe e accorpare
+        # richieste diverse; in quel caso route inline (nessun grace, nessun dedup).
+        market_id = str(signal.get("market_id") or "")
+        selection_id = str(signal.get("selection_id") or "")
+        if delay <= 0.0 or signal_type != "CASHOUT" or not (market_id and selection_id):
             self._execute_cashout_route(signal)
             return
 
@@ -1897,6 +1912,7 @@ class RuntimeController:
         try:
             timer = threading.Timer(delay, self._deferred_cashout_route, args=(signal, key, enqueue_mode))
             timer.daemon = True
+            self._auto_green_set_timer(key, timer)
             timer.start()
         except Exception:  # noqa: BLE001 - scheduling fallito: fallback inline, mai perdere il cashout
             logger.exception("[RuntimeController] scheduling grace fallito %s: route inline", key)
@@ -1998,16 +2014,43 @@ class RuntimeController:
         )
 
     def _auto_green_acquire(self, key: tuple) -> bool:
-        """True se nessun grace e' gia' in volo per ``key`` (e lo registra)."""
+        """True se nessun grace e' gia' in volo per ``key`` (e lo prenota)."""
         with self._auto_green_pending_lock:
             if key in self._auto_green_pending:
                 return False
-            self._auto_green_pending.add(key)
+            self._auto_green_pending[key] = None  # prenotato; il Timer arriva dopo
             return True
+
+    def _auto_green_set_timer(self, key: tuple, timer: Any) -> None:
+        """Associa il Timer alla chiave prenotata (per poterlo cancellare)."""
+        with self._auto_green_pending_lock:
+            if key in self._auto_green_pending:
+                self._auto_green_pending[key] = timer
 
     def _auto_green_release(self, key: tuple) -> None:
         with self._auto_green_pending_lock:
-            self._auto_green_pending.discard(key)
+            self._auto_green_pending.pop(key, None)
+
+    def _cancel_pending_auto_green(self) -> None:
+        """Cancella TUTTI i grace pendenti (usato quando un CASHOUT_ALL chiude
+        tutto inline): un timer non deve fissare un secondo green-up su un target
+        gia' chiuso dall'ALL, anche se la chiusura dell'ALL e' ancora unmatched al
+        fire (GPT-5.6 Terra/Fugu). ``Timer.cancel`` e' no-op se gia' partito; il
+        callback resta comunque fail-closed (ri-check gate + recompute fresco)."""
+        # Difensivo: se lo stato del grace non e' inizializzato (nessun grace mai
+        # armato), non c'e' nulla da cancellare.
+        lock = getattr(self, "_auto_green_pending_lock", None)
+        pending = getattr(self, "_auto_green_pending", None)
+        if lock is None or not pending:
+            return
+        with lock:
+            timers = [t for t in pending.values() if t is not None]
+            pending.clear()
+        for t in timers:
+            try:
+                t.cancel()
+            except Exception:  # noqa: BLE001 - best-effort, mai crashare sul cancel
+                logger.exception("[RuntimeController] cancel timer grace fallito")
 
     def _cashout_gates_still_open(self, signal: dict, enqueue_mode: str = "") -> tuple:
         """Ri-verifica fail-closed dei gate live dopo il grace: (ok, reason).

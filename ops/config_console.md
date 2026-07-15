@@ -291,10 +291,13 @@ ritardare un cashout per un problema di configurazione).
 `<= 30`). Il monitor automatico SL/TP (`AUTO_MONITOR`) non e' toccato.
 
 **Ambito e semantica (opt-in, default OFF).**
-- **Solo `CASHOUT` singolo.** Il grace si applica **soltanto** al cashout di un
-  singolo target. Il **`CASHOUT_ALL`** ("chiudi tutto", emergenza) va **sempre
-  inline**, mai ritardato: non lo si accorpa per `(market, selection)` (vuoti per
-  un ALL) e non puo' duplicarsi col CASHOUT singolo dello stesso target.
+- **Solo `CASHOUT` singolo con target valido.** Il grace si applica **soltanto**
+  al cashout di un singolo target con `market` **e** `selection` valorizzati (una
+  richiesta senza target valido va inline, per non accorpare intenti diversi). Il
+  **`CASHOUT_ALL`** ("chiudi tutto", emergenza) va **sempre inline** e in piu'
+  **cancella tutti i grace pendenti**: chiudendo ogni target, un timer singolo in
+  volo fisserebbe un secondo green-up su una posizione gia' chiusa (race ALL vs
+  grace). Cosi' non c'e' doppio green-up ne' collisione di chiavi.
 - **Payload immutabile.** Il segnale differito e' una **copia profonda**
   (`deepcopy`): una mutazione del chiamante durante la grace — anche di strutture
   annidate (prezzi, legs) — non altera la route.

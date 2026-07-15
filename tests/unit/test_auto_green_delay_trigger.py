@@ -30,10 +30,14 @@ class _FakeTimer:
         self.args = tuple(args)
         self.daemon = False
         self.started = False
+        self.cancelled = False
         _FakeTimer.instances.append(self)
 
     def start(self):
         self.started = True
+
+    def cancel(self):
+        self.cancelled = True
 
     def fire(self):
         self.fn(*self.args)
@@ -55,7 +59,9 @@ class _RC:
     # lo statico => ri-wrappa per non ricevere self.
     _auto_green_key = staticmethod(RuntimeController._auto_green_key)
     _auto_green_acquire = RuntimeController._auto_green_acquire
+    _auto_green_set_timer = RuntimeController._auto_green_set_timer
     _auto_green_release = RuntimeController._auto_green_release
+    _cancel_pending_auto_green = RuntimeController._cancel_pending_auto_green
     _cashout_gates_still_open = RuntimeController._cashout_gates_still_open
     _deferred_cashout_route = RuntimeController._deferred_cashout_route
     _publish_cashout_failed = RuntimeController._publish_cashout_failed
@@ -64,7 +70,7 @@ class _RC:
     def __init__(self, *, enabled=False, sec=2.5, chain_wired=True):
         import threading
         self.config = SimpleNamespace(auto_green_delay_enabled=enabled, auto_green_delay_sec=sec)
-        self._auto_green_pending = set()
+        self._auto_green_pending = {}
         self._auto_green_pending_lock = threading.Lock()
         self._daily_loss_stop_lock = threading.Lock()
         self._emergency_stopped = False
@@ -132,7 +138,7 @@ def test_enabled_defers_on_timer_not_inline():
     t.fire()
     assert rc.executed == [_sig()]
     # pending rilasciata dopo il fire
-    assert rc._auto_green_pending == set()
+    assert rc._auto_green_pending == {}
 
 
 def test_timer_start_failure_falls_back_inline_and_releases(monkeypatch):
@@ -145,7 +151,7 @@ def test_timer_start_failure_falls_back_inline_and_releases(monkeypatch):
     rc = _RC(enabled=True)
     rc._route_cashout_signal(_sig())
     assert rc.executed == [_sig()]              # fallback inline: cashout eseguito
-    assert rc._auto_green_pending == set()      # chiave rilasciata, non bloccata
+    assert rc._auto_green_pending == {}      # chiave rilasciata, non bloccata
     # e un successivo cashout sullo stesso target NON e' soppresso
     rc._route_cashout_signal(_sig())
     assert rc.executed == [_sig(), _sig()]
@@ -191,6 +197,28 @@ def test_cross_type_same_target_no_double_schedule():
     assert len(_FakeTimer.instances) == 1
 
 
+def test_cashout_all_cancels_pending_grace_timers():
+    # CASHOUT singolo in grace, poi CASHOUT_ALL: l'ALL chiude tutto inline e
+    # CANCELLA il timer pendente => nessun secondo green-up su target gia' chiuso
+    # (race ALL vs grace, GPT-5.6 Terra/Fugu).
+    rc = _RC(enabled=True)
+    rc._route_cashout_signal(_sig(market="1.1", sel=7))     # arma il grace
+    t = _FakeTimer.instances[0]
+    rc._route_cashout_signal(_sig(stype="CASHOUT_ALL", market="", sel=""))  # ALL inline
+    assert t.cancelled is True                               # timer pendente cancellato
+    assert rc._auto_green_pending == {}                      # guardia svuotata
+    # l'ALL e' stato eseguito inline
+    assert any(s.get("signal_type") == "CASHOUT_ALL" for s in rc.executed)
+
+
+def test_cashout_without_target_routes_inline():
+    # Un CASHOUT senza selection valorizzata non viene graziato (chiave
+    # collasserebbe): route inline, nessun timer, nessun dedup.
+    rc = _RC(enabled=True)
+    rc._route_cashout_signal(_sig(market="1.1", sel=""))
+    assert rc.executed and _FakeTimer.instances == []
+
+
 def test_signal_snapshot_deepcopy_isolates_from_caller_mutation():
     # Il payload differito e' una COPIA PROFONDA: mutare il dict del chiamante
     # dopo lo scheduling — anche strutture ANNIDATE — non cambia la route.
@@ -233,7 +261,7 @@ def test_deferred_aborts_on_emergency_stop():
     topic, payload = rc.published[-1]
     assert topic == CASHOUT_FAILED
     assert payload["reason"].startswith("grace_aborted:emergency_stop_active")
-    assert rc._auto_green_pending == set()        # comunque rilasciata
+    assert rc._auto_green_pending == {}        # comunque rilasciata
 
 
 def test_deferred_aborts_on_runtime_inactive():
@@ -296,7 +324,7 @@ def test_deferred_route_exception_publishes_failed_and_releases():
     topic, payload = rc.published[-1]
     assert topic == CASHOUT_FAILED
     assert payload["reason"].startswith("grace_route_error:") and payload["status"] == "ERROR"
-    assert rc._auto_green_pending == set()
+    assert rc._auto_green_pending == {}
 
 
 # ==========================================================================
