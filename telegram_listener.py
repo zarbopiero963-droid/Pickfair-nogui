@@ -533,7 +533,9 @@ class TelegramListener:
             numeric_tokens: list[str] = []
             if self.api_id is not None:
                 numeric_tokens.append(str(self.api_id))
-            for chat in (self.monitored_chats or []):
+            # Snapshot: evita race se set_monitored_chats riassegna la lista da
+            # un altro thread durante un crash-log.
+            for chat in list(self.monitored_chats or []):
                 chat_s = str(chat)
                 numeric_tokens.append(chat_s)
                 if chat_s.startswith("-"):

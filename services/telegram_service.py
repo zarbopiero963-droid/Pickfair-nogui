@@ -489,10 +489,10 @@ class TelegramService:
                 decision.failure_class.value,
             )
             restarted = self.restart()
-            # Accesso difensivo: restart() ha per contratto un dict, ma il path
-            # di logging non assume il tipo (evita TypeError su valori inattesi).
-            restarted_map = dict(restarted) if isinstance(restarted, dict) else {}
-            if not restarted_map.get("started"):
+            # restart() ritorna un dict per contratto (tutti i suoi path):
+            # ci fidiamo del contratto e NON mascheriamo un'eventuale
+            # violazione (un tipo inatteso deve emergere, non degradare a {}).
+            if not restarted.get("started"):
                 logger.error(
                     "[TelegramService] autoheal restart NON avviato (reason=%s)",
                     decision.reason,
@@ -501,7 +501,7 @@ class TelegramService:
                 "action": decision.action.value,
                 "reason": decision.reason,
                 "failure_class": decision.failure_class.value,
-                "restart_result": restarted_map,
+                "restart_result": dict(restarted),
             }
         return {
             "action": decision.action.value,
