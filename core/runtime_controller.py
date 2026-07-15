@@ -1938,10 +1938,10 @@ class RuntimeController:
             try:
                 self._execute_cashout_route(signal)
             finally:
-                self._auto_green_release(key)
+                self._auto_green_release(key, gen)
 
-    def _deferred_cashout_route(self, signal: dict, key: tuple, enqueue_mode: str = "",
-                                gen: int = None) -> None:
+    def _deferred_cashout_route(self, signal: dict, key: tuple, enqueue_mode: str,
+                                gen: int) -> None:
         """Esegue la route del cashout DOPO il grace, sul thread del ``Timer``.
 
         Fail-closed: ri-verifica i gate live (emergency-stop incl. daily-loss
@@ -1970,7 +1970,7 @@ class RuntimeController:
             logger.exception("[RuntimeController] errore cashout differito (grace)")
             self._publish_cashout_failed(signal, f"grace_route_error:{exc}", "ERROR")
         finally:
-            self._auto_green_release(key)
+            self._auto_green_release(key, gen)
 
     def _publish_cashout_failed(self, signal: dict, reason: str, status: str) -> None:
         """Pubblica un ``CASHOUT_FAILED`` strutturato in modo EXCEPTION-SAFE.
@@ -2058,7 +2058,11 @@ class RuntimeController:
             if key in self._auto_green_pending and gen == self._auto_green_generation:
                 self._auto_green_pending[key] = timer
                 return True
-            self._auto_green_pending.pop(key, None)
+            # Stale (un CASHOUT_ALL ha bumpato la generazione): NON fare pop della
+            # chiave — la nostra prenotazione e' gia' stata rimossa dall'ALL e la
+            # entry eventualmente presente appartiene a una RI-prenotazione valida
+            # post-ALL (stesso target): un pop qui la cancellerebbe, scartando in
+            # silenzio un green-up legittimo (Fable). Ci si limita a non armare.
             return False
 
     def _auto_green_is_stale(self, gen: int) -> bool:
@@ -2066,8 +2070,21 @@ class RuntimeController:
         with self._auto_green_pending_lock:
             return gen != self._auto_green_generation
 
-    def _auto_green_release(self, key: tuple) -> None:
+    def _auto_green_release(self, key: tuple, gen: Optional[int] = None) -> None:
+        """Rilascia la pending-guard della ``key``.
+
+        Se ``gen`` e' passato, rilascia SOLO se la generazione e' ancora quella
+        (``gen == generazione corrente``): un rilascio *stale* — la nostra route
+        differita e' partita ma un CASHOUT_ALL ha nel frattempo bumpato la
+        generazione e un secondo CASHOUT singolo ha RI-prenotato lo stesso target
+        (gen+1) — NON deve fare pop, altrimenti scarterebbe in silenzio la
+        ri-prenotazione valida di B (stessa classe del clobber su ``arm``, sul path
+        di release). ``gen=None`` => pop incondizionato (normale/duplicato/test)."""
         with self._auto_green_pending_lock:
+            if gen is not None and gen != self._auto_green_generation:
+                # Stale: la entry (se presente) appartiene a una ri-prenotazione
+                # post-ALL, non a noi => non toccarla.
+                return
             self._auto_green_pending.pop(key, None)
 
     def _cancel_pending_auto_green(self) -> None:

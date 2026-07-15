@@ -268,6 +268,49 @@ def test_deferred_route_aborts_when_generation_stale():
     assert rc.executed == []                               # route NON eseguita (stale)
 
 
+def test_stale_arm_does_not_clobber_re_reservation():
+    # Sequenza reserve->ALL->re-reserve->arm-stale (Fugu/Fable): A prenota (gen0),
+    # un CASHOUT_ALL svuota+bumpa (gen1), B RI-prenota lo STESSO target (gen1).
+    # L'arm STALE di A (gen0) deve tornare False MA NON rimuovere la prenotazione
+    # di B — un pop qui scarterebbe in silenzio il green-up legittimo di B.
+    rc = _RC(enabled=True)
+    k = ("1.1", "7")
+    acquired_a, gen_a = rc._auto_green_reserve(k)          # A: gen0
+    assert acquired_a is True and gen_a == 0
+    rc._cancel_pending_auto_green()                        # CASHOUT_ALL: svuota + bump -> gen1
+    acquired_b, gen_b = rc._auto_green_reserve(k)          # B ri-prenota lo stesso target
+    assert acquired_b is True and gen_b == 1
+    # arm STALE di A: rifiutato E NON deve fare pop della prenotazione di B.
+    assert rc._auto_green_arm_timer(k, _FakeTimer(1.0, lambda: None), gen_a) is False
+    assert k in rc._auto_green_pending                     # B ancora prenotato
+    # B arma regolarmente sulla SUA generazione => e' il suo timer a restare.
+    timer_b = _FakeTimer(1.0, lambda: None)
+    assert rc._auto_green_arm_timer(k, timer_b, gen_b) is True
+    assert rc._auto_green_pending[k] is timer_b
+
+
+def test_stale_deferred_release_does_not_clobber_re_reservation():
+    # Stessa classe sul path di RELEASE: la route differita STALE di A (gen0)
+    # rilascia nel finally, ma un CASHOUT_ALL ha bumpato la generazione e B ha
+    # RI-prenotato+armato lo stesso target (gen1). Il release stale NON deve
+    # rimuovere il timer di B (altrimenti un ALL successivo non lo cancellerebbe,
+    # o un duplicato passerebbe => doppio green-up).
+    rc = _RC(enabled=True)
+    k = ("1.1", "7")
+    acquired_a, gen_a = rc._auto_green_reserve(k)          # A prenota (gen0)
+    assert rc._auto_green_arm_timer(k, _FakeTimer(1.0, lambda: None), gen_a) is True
+    rc._cancel_pending_auto_green()                        # ALL: svuota + bump -> gen1
+    acquired_b, gen_b = rc._auto_green_reserve(k)          # B ri-prenota (gen1)
+    timer_b = _FakeTimer(1.0, lambda: None)
+    assert rc._auto_green_arm_timer(k, timer_b, gen_b) is True
+    # release STALE di A (vecchia gen): la prenotazione di B DEVE sopravvivere.
+    rc._auto_green_release(k, gen_a)
+    assert rc._auto_green_pending.get(k) is timer_b
+    # un release con la generazione CORRENTE (B) libera invece regolarmente.
+    rc._auto_green_release(k, gen_b)
+    assert k not in rc._auto_green_pending
+
+
 def test_auto_green_key_shape():
     # Chiave = solo target (market, selection), indipendente dal signal_type.
     assert _RC._auto_green_key({"signal_type": "cashout", "market_id": "1.9", "selection_id": 3}) == ("1.9", "3")
