@@ -176,6 +176,19 @@ def test_fail_open_incomplete_net_profits(monkeypatch):
     assert res["profit_spread"] is None
 
 
+def test_fail_open_explicit_none_net(monkeypatch):
+    # Un esito con profitIfWinsNet=None ESPLICITO (chiave presente, valore None):
+    # netto assente => FAIL-OPEN (NON coerciito a 0.0 => nessuno spread fittizio, nessun
+    # avviso spurio). Fable/Greptile P2.
+    results = _res([5.00, 5.60])
+    results[1]["profitIfWinsNet"] = None
+    _patch_results(monkeypatch, results)
+    res = _controller().precheck(_payload())
+    assert res["ok"] is True
+    assert res["profit_epsilon_warning"] is False
+    assert res["profit_spread"] is None
+
+
 def test_fail_open_single_outcome(monkeypatch):
     # Meno di 2 esiti comparabili => nessuno spread => nessun warning.
     _patch_results(monkeypatch, _res([5.00]))
@@ -208,6 +221,10 @@ def test_profit_spread_net_helper():
     assert f(_res([5.0])) is None                       # < 2 esiti
     assert f(_res([5.0, 5.6], with_net=False)) is None  # netti incompleti
     assert f([]) is None
+    r_none = _res([5.0, 5.6]); r_none[1]["profitIfWinsNet"] = None
+    assert f(r_none) is None                            # None esplicito => fail-open
+    r_inf = _res([5.0, 5.6]); r_inf[1]["profitIfWinsNet"] = float("inf")
+    assert f(r_inf) is None                             # non-finito => fail-open
 
 
 # ==========================================================================

@@ -271,10 +271,19 @@ class DutchingController:
         for item in results or []:
             if not isinstance(item, dict) or "profitIfWinsNet" not in item:
                 continue
+            raw = item.get("profitIfWinsNet")
+            # Presente ma None => netto assente per l'esito: NON contarlo (sotto, il
+            # guard sulla lunghezza attiva il FAIL-OPEN). Coercirlo a 0.0 gonfierebbe
+            # lo spread con un profitto fittizio => avviso spurio (Fable/Greptile P2).
+            if raw is None:
+                continue
             try:
-                net_values.append(float(item.get("profitIfWinsNet", 0.0) or 0.0))
+                val = float(raw)
             except (TypeError, ValueError):
                 continue
+            if not math.isfinite(val):
+                continue
+            net_values.append(val)
         if len(net_values) < 2 or len(net_values) != len(results or []):
             return None
         return max(net_values) - min(net_values)
