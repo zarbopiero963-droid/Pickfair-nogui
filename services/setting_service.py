@@ -263,6 +263,9 @@ class SettingsService:
             max_win_warning_only=self._b(data, "roserpina.max_win_warning_only", True),
             # Scala percentuale (0-100): la costante MAX_STAKE_PCT e' frazione => *100.
             max_stake_pct=self._f(data, "roserpina.max_stake_pct", trading_config.MAX_STAKE_PCT * 100.0),
+            # Grace auto-green OPT-IN (G5): default disarmato; sec default = costante.
+            auto_green_delay_enabled=self._b(data, "roserpina.auto_green_delay_enabled", False),
+            auto_green_delay_sec=self._f(data, "roserpina.auto_green_delay_sec", trading_config.AUTO_GREEN_DELAY_SEC),
         )
 
     def save_roserpina_config(self, config: RoserpinaConfig) -> None:
@@ -295,6 +298,8 @@ class SettingsService:
             "roserpina.max_win": config.max_win,
             "roserpina.max_win_warning_only": int(bool(config.max_win_warning_only)),
             "roserpina.max_stake_pct": config.max_stake_pct,
+            "roserpina.auto_green_delay_enabled": int(bool(config.auto_green_delay_enabled)),
+            "roserpina.auto_green_delay_sec": config.auto_green_delay_sec,
         }
 
         # Preserve previously persisted hard-stop limits when caller omits these optional fields.

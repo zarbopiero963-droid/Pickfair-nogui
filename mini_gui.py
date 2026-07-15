@@ -644,6 +644,9 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.rs_max_win_warning_only_var = self._make_bool_var(True)
         # Max Stake %: soglia di AVVISO (mai blocco) sull'esposizione dell'operazione.
         self.rs_max_stake_pct_var = self._make_string_var(str(trading_config.MAX_STAKE_PCT * 100))
+        # Auto-green: grace OPT-IN prima di instradare il cashout (default disarmato) + secondi.
+        self.rs_auto_green_delay_enabled_var = self._make_bool_var(False)
+        self.rs_auto_green_delay_sec_var = self._make_string_var(str(trading_config.AUTO_GREEN_DELAY_SEC))
         # Simulazione: config del broker simulato (gia' enforced in betfair_service).
         self.sim_starting_balance_var = self._make_string_var("1000.0")
         self.sim_partial_fill_var = self._make_bool_var(True)
@@ -1010,6 +1013,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._labeled_entry(outer, "Quota minima / Min Price (>= 1.02)", self.rs_min_price_var)
         self._labeled_entry(outer, "Max Win € (cap vincita/payout per gamba)", self.rs_max_win_var)
         self._labeled_entry(outer, "Max Stake % (avviso se esposizione operazione > % balance)", self.rs_max_stake_pct_var)
+        self._labeled_entry(outer, "Auto-green delay (s) — grace prima del cashout (0.1-30)", self.rs_auto_green_delay_sec_var)
 
         rp = ctk.CTkFrame(outer)
         rp.pack(fill=tk.X, padx=12, pady=6)
@@ -1034,6 +1038,9 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         # vincita/payout potenziale di una gamba supera la soglia. "Solo avviso"
         # (default opt-in) lo tiene in osservazione; TOGLIERE la spunta arma il BLOCCO.
         ctk.CTkCheckBox(cb, text="Max Win: solo avviso (⚠ togliere = BLOCCA il submit)", variable=self.rs_max_win_warning_only_var).pack(side=tk.LEFT, padx=8, pady=8)
+        # G5: grace OPT-IN prima di instradare il cashout (auto-green). Default
+        # disarmato => route immediata come oggi; SPUNTARE arma il ritardo (s sopra).
+        ctk.CTkCheckBox(cb, text="Auto-green: attiva grace prima del cashout (ritardo)", variable=self.rs_auto_green_delay_enabled_var).pack(side=tk.LEFT, padx=8, pady=8)
 
         self.btn_save_roserpina = ctk.CTkButton(
             outer,
@@ -1482,6 +1489,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 self.rs_max_win_var.set(str(getattr(rs, "max_win", trading_config.MAX_WIN)))
                 self.rs_max_win_warning_only_var.set(bool(getattr(rs, "max_win_warning_only", True)))
                 self.rs_max_stake_pct_var.set(str(getattr(rs, "max_stake_pct", trading_config.MAX_STAKE_PCT * 100)))
+                self.rs_auto_green_delay_enabled_var.set(bool(getattr(rs, "auto_green_delay_enabled", False)))
+                self.rs_auto_green_delay_sec_var.set(str(getattr(rs, "auto_green_delay_sec", trading_config.AUTO_GREEN_DELAY_SEC)))
                 self.rs_allow_recovery_var.set(bool(getattr(rs, "allow_recovery", self.rs_allow_recovery_var.get())))
                 self.rs_anti_dup_var.set(bool(getattr(rs, "anti_duplication_enabled", self.rs_anti_dup_var.get())))
                 risk_profile = getattr(rs, "risk_profile", None)
@@ -1785,6 +1794,25 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             raise ValueError(f"{label}: deve essere un numero finito maggiore di 0.")
         return val
 
+    @staticmethod
+    def _parse_delay_sec(raw, label):
+        """Grace auto-green (secondi): numerico, finito, > 0 e <= 30.
+
+        Upper-bound 30 coerente col clamp runtime (core/runtime_controller): un
+        typo non deve ritardare un cashout per minuti. Parser dedicato (non
+        riusa _parse_max_win) per non legare i secondi alla logica del cap money.
+        """
+        text = (raw or "").strip()
+        try:
+            val = float(text)
+        except (TypeError, ValueError):
+            raise ValueError(f"{label}: inserisci un numero valido.")
+        if not math.isfinite(val) or val <= 0.0:
+            raise ValueError(f"{label}: deve essere un numero finito maggiore di 0.")
+        if val > 30.0:
+            raise ValueError(f"{label}: deve essere compreso tra 0 e 30.")
+        return val
+
     def _save_roserpina_settings(self):
         try:
             from core.system_state import RoserpinaConfig, RiskProfile
@@ -1804,6 +1832,17 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             # l'avviso. Rifiuto esplicito, coerente con l'upper-bound di _parse_hard_stop.
             if max_stake_pct > 100.0:
                 raise ValueError("Max Stake %: deve essere compreso tra 0 e 100.")
+            # Il delay e' validato in modo STRETTO solo se il grace e' ARMATO: se
+            # disattivato, un valore irrilevante non deve bloccare il salvataggio
+            # dell'intero config (Greptile P2) => fallback alla costante.
+            auto_green_delay_enabled = bool(self.rs_auto_green_delay_enabled_var.get())
+            if auto_green_delay_enabled:
+                auto_green_delay_sec = self._parse_delay_sec(self.rs_auto_green_delay_sec_var.get(), "Auto-green delay (s)")
+            else:
+                try:
+                    auto_green_delay_sec = self._parse_delay_sec(self.rs_auto_green_delay_sec_var.get(), "Auto-green delay (s)")
+                except ValueError:
+                    auto_green_delay_sec = float(trading_config.AUTO_GREEN_DELAY_SEC)
 
             cfg = RoserpinaConfig(
                 target_profit_cycle_pct=float(self.rs_target_var.get()),
@@ -1837,6 +1876,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 max_win=max_win,
                 max_win_warning_only=bool(self.rs_max_win_warning_only_var.get()),
                 max_stake_pct=max_stake_pct,
+                auto_green_delay_enabled=auto_green_delay_enabled,
+                auto_green_delay_sec=auto_green_delay_sec,
             )
             self.settings_service.save_roserpina_config(cfg)
         except Exception as exc:
