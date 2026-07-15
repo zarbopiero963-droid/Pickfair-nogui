@@ -27,7 +27,7 @@ from direct_best_price import SOURCE_FALLBACK_MASTER, resolve_direct_best_price
 from direct_unmatched_ttl import select_expired_unmatched
 from order_manager import TERMINAL_LIFECYCLE_EVENTS
 from services.streaming_feed import StreamingConfigError, StreamingFeed
-from trading_config import STRICT_LIVE_KEY_SOURCE_REQUIRED, enforce_betfair_italy_commission_pct
+from trading_config import AUTO_GREEN_DELAY_SEC, STRICT_LIVE_KEY_SOURCE_REQUIRED, enforce_betfair_italy_commission_pct
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +136,12 @@ class RuntimeController:
         # Serializza il trigger della kill-switch da daily-loss: rende atomico
         # il check-and-stop dell'handler sotto dispatch EventBus concorrente.
         self._daily_loss_stop_lock = threading.Lock()
+        # Grace auto-green OPT-IN (G5): chiavi dei cashout con grace in volo, per
+        # sopprimere un secondo grace sullo stesso target (il dedup del bridge e'
+        # 2.0s < grace 2.5s => non basta). Vive sul controller perche' il
+        # CashoutRouter e' costruito fresco a ogni segnale.
+        self._auto_green_pending: set = set()
+        self._auto_green_pending_lock = threading.Lock()
         # Pending-stop sincrono: armato sotto lock PRIMA di applicare il PnL del
         # settlement che sfonderebbe il limite, cosi' un SIGNAL_RECEIVED
         # concorrente (dispatch multi-worker) non piazza un ordine nella finestra
@@ -1851,6 +1857,136 @@ class RuntimeController:
             self._reject_signal(signal, "cashout_chain_not_wired")
             return
 
+        # Grace auto-green OPT-IN (G5): se armato, DIFFERISCI l'intera route su un
+        # threading.Timer (non blocca il worker del bus) => book + green-up sono
+        # ricalcolati FRESCHI dopo l'attesa. Default disarmato => route inline
+        # (comportamento storico invariato).
+        delay = self._auto_green_delay_seconds()
+        if delay <= 0.0:
+            self._execute_cashout_route(signal)
+            return
+
+        key = self._auto_green_key(signal)
+        if not self._auto_green_acquire(key):
+            logger.info("[RuntimeController] cashout grace gia' in volo %s: skip duplicato", key)
+            return
+        logger.info("[RuntimeController] cashout grace %.3fs prima del green-up %s", delay, key)
+        timer = threading.Timer(delay, self._deferred_cashout_route, args=(signal, key))
+        timer.daemon = True
+        timer.start()
+
+    def _deferred_cashout_route(self, signal: dict, key: tuple) -> None:
+        """Esegue la route del cashout DOPO il grace, sul thread del ``Timer``.
+
+        Fail-closed: ri-verifica i gate live (emergency-stop incl. daily-loss
+        pending, session LIVE, runtime-active) DOPO l'attesa — nella finestra di
+        grace uno stop/una sessione invalida possono scattare. Il ``Timer``
+        inghiotte le eccezioni sul suo thread, quindi qualunque errore pubblica un
+        ``CASHOUT_FAILED`` strutturato (mai scarto silenzioso). Rilascia sempre la
+        pending-guard.
+        """
+        try:
+            ok, reason = self._cashout_gates_still_open(signal)
+            if not ok:
+                logger.warning("[RuntimeController] cashout grace abortito %s: %s", key, reason)
+                self.bus.publish(CASHOUT_FAILED, {
+                    "reason": f"grace_aborted:{reason}",
+                    "status": "REJECTED",
+                    "bet_id": None,
+                    "matched": 0.0,
+                    "market_id": str(signal.get("market_id") or ""),
+                    "selection_id": signal.get("selection_id"),
+                })
+                return
+            self._execute_cashout_route(signal)
+        except Exception as exc:  # noqa: BLE001 - il Timer inghiotte le eccezioni: pubblica sempre
+            logger.exception("[RuntimeController] errore cashout differito (grace)")
+            self.bus.publish(CASHOUT_FAILED, {
+                "reason": f"grace_route_error:{exc}",
+                "status": "ERROR",
+                "bet_id": None,
+                "matched": 0.0,
+                "market_id": str(signal.get("market_id") or ""),
+                "selection_id": signal.get("selection_id"),
+            })
+        finally:
+            self._auto_green_release(key)
+
+    def _auto_green_delay_seconds(self) -> float:
+        """Secondi di grace auto-green prima della route del cashout (>=0).
+
+        OPT-IN: 0.0 se ``auto_green_delay_enabled`` non e' True. FAIL-SAFE:
+        ``auto_green_delay_sec`` assente/non-finito/<=0 => ``AUTO_GREEN_DELAY_SEC``.
+        CLAMP a ``[0, 30]``s (un typo di config non ritarda un cashout per minuti).
+        FAIL-OPEN: config illeggibile => 0.0 (mai ritardare un cashout per un
+        problema di configurazione).
+        """
+        try:
+            if not bool(getattr(self.config, "auto_green_delay_enabled", False)):
+                return 0.0
+            raw = getattr(self.config, "auto_green_delay_sec", None)
+            # FAIL-SAFE (non fail-open) sul valore: un sec non numerico/non-finito/
+            # <=0 ricade sulla COSTANTE, non su 0 — armato significa "voglio un
+            # grace", quindi un valore rotto usa il default, non lo disattiva.
+            try:
+                sec = float(raw)
+            except (TypeError, ValueError):
+                sec = float(AUTO_GREEN_DELAY_SEC)
+            if not (math.isfinite(sec) and sec > 0.0):
+                sec = float(AUTO_GREEN_DELAY_SEC)
+            if not math.isfinite(sec) or sec <= 0.0:
+                return 0.0
+            return min(sec, 30.0)
+        except Exception:  # noqa: BLE001 - fail-open: config illeggibile non ritarda il cashout
+            return 0.0
+
+    @staticmethod
+    def _auto_green_key(signal: dict) -> tuple:
+        """Chiave della pending-guard: tipo segnale + target (market/selection)."""
+        return (
+            str(signal.get("signal_type") or "").upper(),
+            str(signal.get("market_id") or ""),
+            str(signal.get("selection_id") or ""),
+        )
+
+    def _auto_green_acquire(self, key: tuple) -> bool:
+        """True se nessun grace e' gia' in volo per ``key`` (e lo registra)."""
+        with self._auto_green_pending_lock:
+            if key in self._auto_green_pending:
+                return False
+            self._auto_green_pending.add(key)
+            return True
+
+    def _auto_green_release(self, key: tuple) -> None:
+        with self._auto_green_pending_lock:
+            self._auto_green_pending.discard(key)
+
+    def _cashout_gates_still_open(self, signal: dict) -> tuple:
+        """Ri-verifica fail-closed dei gate live dopo il grace: (ok, reason).
+
+        Copre i gate critici che possono scattare nella finestra d'attesa:
+        emergency-stop (incl. daily-loss pending, sotto lock), sessione LIVE
+        invalida, runtime non attivo. Il deploy-gate era gia' passato all'enqueue
+        e raramente cambia in <=30s; qui si proteggono gli stop reali.
+        """
+        with self._daily_loss_stop_lock:
+            if self._emergency_stopped or self._daily_loss_pending_stop:
+                return False, "emergency_stop_active"
+        if str(self.execution_mode).upper() == "LIVE":
+            svc = self.betfair_service
+            if svc is not None and getattr(svc, "_session_invalid", False):
+                return False, "session_invalid"
+        if not self._runtime_active():
+            return False, f"runtime_non_attivo:{self.mode.value}"
+        return True, ""
+
+    def _execute_cashout_route(self, signal: dict) -> None:
+        """Costruisce il ``CashoutRouter`` coi servizi reali e instrada il segnale.
+
+        Estratto da ``_route_cashout_signal`` per essere invocabile sia inline
+        (default) sia differito dal grace auto-green. Fail-closed: un errore di
+        costruzione o routing pubblica un ``CASHOUT_FAILED`` strutturato.
+        """
         svc = self.betfair_service
         try:
             # is_simulation è un CALLABLE: l'adapter fa ``if self.is_simulation():``

@@ -252,6 +252,44 @@ l'avviso => trattato come invalido (FAIL-SAFE costante). Chiave DB
 finito `> 0` e `<= 100`. **FAIL-OPEN** su `bankroll <= 0` (nessun avviso). Non
 tocca `manual_bet` (gia' coperto da `max_single_bet` 18%).
 
+## Auto-green: grace NON-bloccante prima del cashout (tab Roserpina) — G5
+
+`trading_config.AUTO_GREEN_DELAY_SEC` (2.5) era *dead*. Ora il tab **Roserpina**
+espone un **grace OPT-IN** prima di instradare il cashout (auto-green): checkbox
+"**Auto-green: attiva grace prima del cashout**" + campo "**Auto-green delay
+(s)**".
+
+**Semantica — differita a monte, non-bloccante.** In
+`core/runtime_controller._route_cashout_signal`, se `auto_green_delay_enabled` e'
+True l'**intera** route del cashout (lettura book + calcolo green-up +
+`REQ_EXECUTE_CASHOUT`) e' **differita** di `auto_green_delay_sec` secondi su un
+`threading.Timer` daemon. Cosi' **il thread del bus non si blocca** e il prezzo di
+green-up e' **ricalcolato fresco dopo l'attesa** (il `CashoutRouter` rilegge il
+book all'inizio di `route()`). Questa e' la correzione del design bocciato in
+#397 (dove un `sleep` nell'executor bloccava il bus e piazzava un green-up a
+prezzo stale).
+
+**Default OPT-IN — nessun cambiamento a sorpresa.** `auto_green_delay_enabled`
+default **False** => route immediata come oggi; l'owner arma il ritardo dalla GUI.
+
+**Guardie fail-closed nel callback differito.** (1) *pending-guard* sul
+`RuntimeController` (il dedup del bridge e' 2.0s, piu' corto del grace: qui si
+sopprime un secondo grace sullo stesso target gia' in volo); (2) *ri-check dei
+gate live dopo l'attesa* (emergency-stop incl. daily-loss pending, sessione LIVE
+invalida, runtime non attivo) => `grace_aborted` -> `CASHOUT_FAILED`; (3)
+`try/except` totale (il `Timer` inghiotte le eccezioni) => `CASHOUT_FAILED`
+strutturato, mai scarto silenzioso; (4) release sempre della pending-guard.
+
+**Fail-safe / clamp / fail-open.** `auto_green_delay_sec` assente / non-finito /
+`<= 0` => `AUTO_GREEN_DELAY_SEC` (2.5); **CLAMP** a `[0, 30]s` (un typo non ritarda
+un cashout per minuti); config illeggibile => nessun ritardo (**FAIL-OPEN**: mai
+ritardare un cashout per un problema di configurazione).
+
+**Config + GUI.** `RoserpinaConfig.auto_green_delay_enabled` (False) +
+`auto_green_delay_sec` (2.5) + chiavi DB `roserpina.auto_green_delay_*`
+(load/save). Validazione GUI: parser dedicato `_parse_delay_sec` (finito `> 0`,
+`<= 30`). Il monitor automatico SL/TP (`AUTO_MONITOR`) non e' toccato.
+
 ## Configurazione Simulazione editabile in GUI (tab Simulazione) — G1
 
 I parametri del **broker simulato** erano configurabili solo via DB. Ora il tab

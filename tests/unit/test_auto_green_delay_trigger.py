@@ -1,0 +1,354 @@
+"""G5 PR 4/5 (redesign post-#397) — AUTO_GREEN_DELAY_SEC: grace NON-bloccante a monte.
+
+Decisione owner 'B': il grace prima del cashout va cablato in
+`core/runtime_controller._route_cashout_signal` come route DIFFERITA su
+`threading.Timer` (non blocca il bus; prezzo green-up ricalcolato FRESCO dopo
+l'attesa), OPT-IN e default disarmato.
+
+Qui si testano le unita' reali di RuntimeController montandole su un oggetto
+leggero (evita di costruire un controller completo): il dispatch inline vs
+differito, la pending-guard, il ri-check dei gate fail-closed, il fail-safe/clamp/
+fail-open dei secondi, e il round-trip config + GUI.
+"""
+from types import SimpleNamespace
+
+import pytest
+
+import trading_config
+import core.runtime_controller as rc_mod
+from core.runtime_controller import RuntimeController, CASHOUT_FAILED
+
+
+class _FakeTimer:
+    """Sostituto di threading.Timer: registra e NON parte da solo (fire manuale)."""
+
+    instances = []
+
+    def __init__(self, delay, fn, args=()):
+        self.delay = delay
+        self.fn = fn
+        self.args = tuple(args)
+        self.daemon = False
+        self.started = False
+        _FakeTimer.instances.append(self)
+
+    def start(self):
+        self.started = True
+
+    def fire(self):
+        self.fn(*self.args)
+
+
+@pytest.fixture(autouse=True)
+def _patch_timer(monkeypatch):
+    _FakeTimer.instances = []
+    monkeypatch.setattr(rc_mod.threading, "Timer", _FakeTimer)
+    yield
+
+
+class _RC:
+    """Oggetto minimale che RIUSA i metodi reali di RuntimeController."""
+
+    # metodi under-test (reali)
+    _auto_green_delay_seconds = RuntimeController._auto_green_delay_seconds
+    # _auto_green_key e' @staticmethod: copiandolo come attr di classe perderebbe
+    # lo statico => ri-wrappa per non ricevere self.
+    _auto_green_key = staticmethod(RuntimeController._auto_green_key)
+    _auto_green_acquire = RuntimeController._auto_green_acquire
+    _auto_green_release = RuntimeController._auto_green_release
+    _cashout_gates_still_open = RuntimeController._cashout_gates_still_open
+    _deferred_cashout_route = RuntimeController._deferred_cashout_route
+    _route_cashout_signal = RuntimeController._route_cashout_signal
+
+    def __init__(self, *, enabled=False, sec=2.5, chain_wired=True):
+        import threading
+        self.config = SimpleNamespace(auto_green_delay_enabled=enabled, auto_green_delay_sec=sec)
+        self._auto_green_pending = set()
+        self._auto_green_pending_lock = threading.Lock()
+        self._daily_loss_stop_lock = threading.Lock()
+        self._emergency_stopped = False
+        self._daily_loss_pending_stop = False
+        self.execution_mode = "SIMULATION"
+        self.betfair_service = SimpleNamespace(_session_invalid=False)
+        self.mode = SimpleNamespace(value="ACTIVE")
+        self._runtime_active_flag = True
+        self._chain_wired = chain_wired
+        # spie
+        self.executed = []
+        self.rejected = []
+        self.published = []
+
+    # stub delle dipendenze non under-test
+    def _cashout_chain_wired(self):
+        return self._chain_wired
+
+    def _reject_signal(self, signal, reason):
+        self.rejected.append((signal, reason))
+
+    def _runtime_active(self):
+        return self._runtime_active_flag
+
+    def _execute_cashout_route(self, signal):
+        self.executed.append(signal)
+
+    @property
+    def bus(self):
+        rc = self
+
+        class _Bus:
+            def publish(self, topic, payload):
+                rc.published.append((topic, payload))
+
+        return _Bus()
+
+
+def _sig(stype="CASHOUT", market="1.1", sel=7):
+    return {"signal_type": stype, "market_id": market, "selection_id": sel}
+
+
+# ==========================================================================
+# 1) Dispatch: disarmato => route INLINE (no Timer); armato => Timer differito
+# ==========================================================================
+def test_disabled_routes_inline_no_timer():
+    rc = _RC(enabled=False)
+    rc._route_cashout_signal(_sig())
+    assert rc.executed == [_sig()]              # route inline
+    assert _FakeTimer.instances == []           # nessun Timer
+
+
+def test_enabled_defers_on_timer_not_inline():
+    rc = _RC(enabled=True, sec=2.5)
+    rc._route_cashout_signal(_sig())
+    assert rc.executed == []                     # NON inline
+    assert len(_FakeTimer.instances) == 1
+    t = _FakeTimer.instances[0]
+    assert t.delay == 2.5 and t.daemon is True and t.started is True
+    # firing del timer => route eseguita coi gate aperti
+    t.fire()
+    assert rc.executed == [_sig()]
+    # pending rilasciata dopo il fire
+    assert rc._auto_green_pending == set()
+
+
+def test_chain_not_wired_rejects_before_grace():
+    rc = _RC(enabled=True, chain_wired=False)
+    rc._route_cashout_signal(_sig())
+    assert rc.rejected and rc.rejected[0][1] == "cashout_chain_not_wired"
+    assert _FakeTimer.instances == []
+
+
+# ==========================================================================
+# 2) Pending-guard: un secondo grace sullo stesso target e' soppresso
+# ==========================================================================
+def test_duplicate_grace_suppressed_while_in_flight():
+    rc = _RC(enabled=True)
+    rc._route_cashout_signal(_sig())            # arma il primo grace
+    rc._route_cashout_signal(_sig())            # stesso target => soppresso
+    assert len(_FakeTimer.instances) == 1
+    # dopo il fire (release), un nuovo grace e' di nuovo ammesso
+    _FakeTimer.instances[0].fire()
+    rc._route_cashout_signal(_sig())
+    assert len(_FakeTimer.instances) == 2
+
+
+def test_pending_guard_acquire_release():
+    rc = _RC()
+    k = ("CASHOUT", "1.1", "7")
+    assert rc._auto_green_acquire(k) is True
+    assert rc._auto_green_acquire(k) is False    # gia' in volo
+    rc._auto_green_release(k)
+    assert rc._auto_green_acquire(k) is True      # riammesso dopo release
+
+
+def test_auto_green_key_shape():
+    assert _RC._auto_green_key({"signal_type": "cashout", "market_id": "1.9", "selection_id": 3}) == ("CASHOUT", "1.9", "3")
+
+
+# ==========================================================================
+# 3) Ri-check gate fail-closed dopo l'attesa
+# ==========================================================================
+def test_deferred_aborts_on_emergency_stop():
+    rc = _RC(enabled=True)
+    rc._route_cashout_signal(_sig())
+    rc._emergency_stopped = True                 # stop scattato durante la grace
+    _FakeTimer.instances[0].fire()
+    assert rc.executed == []                      # route NON eseguita
+    topic, payload = rc.published[-1]
+    assert topic == CASHOUT_FAILED
+    assert payload["reason"].startswith("grace_aborted:emergency_stop_active")
+    assert rc._auto_green_pending == set()        # comunque rilasciata
+
+
+def test_deferred_aborts_on_runtime_inactive():
+    rc = _RC(enabled=True)
+    rc._route_cashout_signal(_sig())
+    rc._runtime_active_flag = False
+    _FakeTimer.instances[0].fire()
+    assert rc.executed == []
+    assert rc.published[-1][1]["reason"].startswith("grace_aborted:runtime_non_attivo")
+
+
+def test_deferred_aborts_on_session_invalid_live():
+    rc = _RC(enabled=True)
+    rc.execution_mode = "LIVE"
+    rc._route_cashout_signal(_sig())
+    rc.betfair_service._session_invalid = True
+    _FakeTimer.instances[0].fire()
+    assert rc.executed == []
+    assert rc.published[-1][1]["reason"].startswith("grace_aborted:session_invalid")
+
+
+def test_gates_open_when_all_clear():
+    rc = _RC()
+    ok, reason = rc._cashout_gates_still_open(_sig())
+    assert ok is True and reason == ""
+
+
+# ==========================================================================
+# 4) Eccezione nella route differita => CASHOUT_FAILED + release (Timer inghiotte)
+# ==========================================================================
+def test_deferred_route_exception_publishes_failed_and_releases():
+    rc = _RC(enabled=True)
+
+    def _boom(signal):
+        raise RuntimeError("place kaput")
+
+    rc._execute_cashout_route = _boom
+    rc._route_cashout_signal(_sig())
+    _FakeTimer.instances[0].fire()
+    topic, payload = rc.published[-1]
+    assert topic == CASHOUT_FAILED
+    assert payload["reason"].startswith("grace_route_error:") and payload["status"] == "ERROR"
+    assert rc._auto_green_pending == set()
+
+
+# ==========================================================================
+# 5) Helper _auto_green_delay_seconds: opt-in, fail-safe, clamp, fail-open
+# ==========================================================================
+def test_delay_seconds_disabled_zero():
+    assert _RC(enabled=False, sec=2.5)._auto_green_delay_seconds() == 0.0
+
+
+def test_delay_seconds_enabled_value():
+    assert _RC(enabled=True, sec=1.25)._auto_green_delay_seconds() == 1.25
+
+
+def test_delay_seconds_failsafe_to_constant():
+    const = float(trading_config.AUTO_GREEN_DELAY_SEC)
+    for bad in (None, 0.0, -3.0, float("nan"), float("inf"), "abc"):
+        assert _RC(enabled=True, sec=bad)._auto_green_delay_seconds() == const
+
+
+def test_delay_seconds_clamped_to_30():
+    assert _RC(enabled=True, sec=3600.0)._auto_green_delay_seconds() == 30.0
+    assert _RC(enabled=True, sec=30.0)._auto_green_delay_seconds() == 30.0
+
+
+def test_delay_seconds_fail_open_on_config_error():
+    rc = _RC(enabled=True)
+
+    class _Boom:
+        @property
+        def auto_green_delay_enabled(self):
+            raise RuntimeError("config illeggibile")
+
+    rc.config = _Boom()
+    assert rc._auto_green_delay_seconds() == 0.0
+
+
+# ==========================================================================
+# 6) CONFIG round-trip + GUI wiring
+# ==========================================================================
+def test_config_round_trip():
+    from core.system_state import RoserpinaConfig
+    from services.setting_service import SettingsService
+
+    class _DB:
+        def __init__(self):
+            self._s = {}
+
+        def get_settings(self):
+            return dict(self._s)
+
+        def save_settings(self, payload):
+            self._s.update(dict(payload or {}))
+
+    db = _DB()
+    SettingsService(db).save_roserpina_config(
+        RoserpinaConfig(table_count=3, auto_green_delay_enabled=True, auto_green_delay_sec=4.0)
+    )
+    r = SettingsService(db).load_roserpina_config()
+    assert r.auto_green_delay_enabled is True and r.auto_green_delay_sec == 4.0
+
+
+def test_config_default_disarmed():
+    from services.setting_service import SettingsService
+
+    class _Empty:
+        def get_settings(self):
+            return {}
+
+        def save_settings(self, payload):
+            pass
+
+    cfg = SettingsService(_Empty()).load_roserpina_config()
+    assert cfg.auto_green_delay_enabled is False
+    assert cfg.auto_green_delay_sec == float(trading_config.AUTO_GREEN_DELAY_SEC)
+
+
+# --- GUI (riusa l'harness fakes dell'integrazione) ---
+import os  # noqa: E402
+import sys  # noqa: E402
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "integration"))
+from test_mini_gui_integration import _install_mini_gui_fakes, FakeSettingsService  # noqa: E402
+
+
+class _CapturingService(FakeSettingsService):
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.saved_cfg = None
+
+    def load_roserpina_config(self):
+        return SimpleNamespace(auto_green_delay_enabled=True, auto_green_delay_sec=6.0)
+
+    def save_roserpina_config(self, cfg):
+        self.saved_cfg = cfg
+
+
+def _make_gui(monkeypatch):
+    mg = _install_mini_gui_fakes(monkeypatch, settings_service=_CapturingService)
+    return mg.MiniPickfairGUI(test_mode=True)
+
+
+def test_gui_loads_auto_green_delay(monkeypatch):
+    app = _make_gui(monkeypatch)
+    try:
+        assert app.rs_auto_green_delay_enabled_var.get() is True
+        assert app.rs_auto_green_delay_sec_var.get() == "6.0"
+    finally:
+        app.destroy()
+
+
+def test_gui_saves_auto_green_delay(monkeypatch):
+    app = _make_gui(monkeypatch)
+    try:
+        app.rs_auto_green_delay_enabled_var.set(True)
+        app.rs_auto_green_delay_sec_var.set("3")
+        app._save_roserpina_settings()
+        assert app.settings_service.saved_cfg is not None
+        assert app.settings_service.saved_cfg.auto_green_delay_enabled is True
+        assert app.settings_service.saved_cfg.auto_green_delay_sec == 3.0
+    finally:
+        app.destroy()
+
+
+@pytest.mark.parametrize("bad", ["", "0", "-1", "nan", "inf", "abc", "31", "60"])
+def test_gui_save_blocks_invalid_delay(monkeypatch, bad):
+    app = _make_gui(monkeypatch)
+    try:
+        app.rs_auto_green_delay_sec_var.set(bad)
+        app._save_roserpina_settings()
+        assert app.settings_service.saved_cfg is None, bad
+    finally:
+        app.destroy()
