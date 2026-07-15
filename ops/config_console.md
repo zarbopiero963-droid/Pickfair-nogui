@@ -275,8 +275,9 @@ default **False** => route immediata come oggi; l'owner arma il ritardo dalla GU
 **Guardie fail-closed nel callback differito.** (1) *pending-guard* sul
 `RuntimeController` (il dedup del bridge e' 2.0s, piu' corto del grace: qui si
 sopprime un secondo grace sullo stesso target gia' in volo); (2) *ri-check dei
-gate live dopo l'attesa* (emergency-stop incl. daily-loss pending, sessione LIVE
-invalida, runtime non attivo) => `grace_aborted` -> `CASHOUT_FAILED`; (3)
+gate live dopo l'attesa* (emergency-stop incl. daily-loss pending, kill-switch,
+cambio di execution_mode rispetto allo snapshot d'enqueue, sessione LIVE invalida,
+runtime non attivo) => `grace_aborted` -> `CASHOUT_FAILED`; (3)
 `try/except` totale (il `Timer` inghiotte le eccezioni) => `CASHOUT_FAILED`
 strutturato, mai scarto silenzioso; (4) release sempre della pending-guard.
 
