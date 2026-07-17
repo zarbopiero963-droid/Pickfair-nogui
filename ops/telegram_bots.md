@@ -67,8 +67,18 @@ transport.stop()
 Note di trasporto (PR-1):
 
 - **allow-list obbligatoria:** `chat_ids` vuota → `ValueError` (fail-closed).
+- **HTTPS obbligatorio:** `api_base` deve usare `https://` (il `bot_token` viaggia
+  nell'URL getUpdates; su `http://` transiterebbe in chiaro e un MITM potrebbe
+  iniettare update **falsi** nel pipeline di trading). `http://` è ammesso **solo**
+  con l'override esplicito `allow_insecure_http=True`, riservato a test locali
+  isolati — mai in produzione. Schema non-http(s) (`file://`, `ftp://`) → `ValueError`.
 - **`ok=False` → backoff:** una risposta getUpdates non-ok solleva `BotApiPollError`
-  e il loop applica backoff (niente polling stretto).
+  e il loop applica backoff (niente polling stretto). Stesso trattamento per un
+  batch non vuoto **senza `update_id` valido** (dati server malformati): si solleva
+  per il backoff invece di reincastrarsi in hot-loop (anti-wedge).
+- **nessun segreto nei log del loop:** su errore, `run()` logga tipo eccezione +
+  messaggio **redatto** (mai `exc_info`/traceback, che potrebbe contenere l'URL col
+  token non redatto).
 - **offset in-memory:** in PR-1 l'offset non è persistito; al riavvio Telegram può
   riconsegnare gli update non-ack (fino a 24h) → il **replay è neutralizzato dalla
   guardia anti-stale** di `handle_incoming` (data del messaggio). La persistenza

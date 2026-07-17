@@ -21,7 +21,7 @@ CHAT = -1001234567890
 _DATE = 1_700_000_000  # unix, deterministico
 
 
-def _msg_update(update_id, *, chat_id=CHAT, text="segnale", date=_DATE, kind="message"):
+def _msg_update(update_id, *, chat_id=CHAT, text: str | None = "segnale", date=_DATE, kind="message"):
     inner = {"message_id": update_id, "date": date, "chat": {"id": chat_id, "type": "channel"}}
     if text is not None:
         inner["text"] = text
@@ -101,6 +101,17 @@ def test_malformed_update_skipped_but_offset_advances():
 
 
 @pytest.mark.unit
+def test_batch_without_update_id_raises_anti_wedge():
+    # Batch NON vuoto ma senza ALCUN update_id valido: non c'e' nulla da ack,
+    # l'offset non puo' avanzare. Deve sollevare (=> run() fa backoff) invece di
+    # ritornare lo stesso offset e reincastrarsi in hot-loop.
+    updates = [{"message": {"text": "x", "date": _DATE, "chat": {"id": CHAT}}}]  # niente update_id
+    t = _transport(lambda *a: None, fetch=lambda o: _payload(updates))
+    with pytest.raises(BotApiPollError):
+        t.poll_once(0)
+
+
+@pytest.mark.unit
 def test_getupdates_not_ok_raises_for_backoff():
     # ok=False solleva (cosi' run() applica il backoff, niente hot-loop); l'offset
     # non viene consumato perche' poll_once non ritorna.
@@ -150,9 +161,9 @@ def test_callback_exception_is_isolated():
 def test_bot_token_never_in_error_or_logs(caplog):
     t = _transport(lambda *a: None,
                    fetch=lambda o: {"ok": False, "description": f"Unauthorized for bot {TOKEN}"})
-    with caplog.at_level(logging.DEBUG, logger="telegram_bot_transport"):
-        with pytest.raises(BotApiPollError) as ei:
-            t.poll_once(0)
+    with caplog.at_level(logging.DEBUG, logger="telegram_bot_transport"), \
+            pytest.raises(BotApiPollError) as ei:
+        t.poll_once(0)
     msg = str(ei.value)
     assert TOKEN not in msg
     assert "[REDACTED]" in msg
@@ -183,10 +194,25 @@ def test_empty_chat_ids_rejected():
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("bad_base", ["ftp://x", "file:///etc/passwd", "api.telegram.org"])
+@pytest.mark.parametrize(
+    "bad_base",
+    ["ftp://x", "file:///etc/passwd", "api.telegram.org", "http://api.telegram.org"],
+)
 def test_invalid_api_base_rejected(bad_base):
+    # http:// e' RIFIUTATO di default: il bot_token viaggia nell'URL getUpdates
+    # e su http andrebbe in chiaro (MITM -> update falsi nel trading).
     with pytest.raises(ValueError):
         TelegramBotApiTransport(TOKEN, [CHAT], lambda *a: None, api_base=bad_base)
+
+
+@pytest.mark.unit
+def test_http_allowed_only_with_explicit_insecure_override():
+    # http:// e' ammesso SOLO col flag esplicito e isolato (test locali).
+    t = TelegramBotApiTransport(
+        TOKEN, [CHAT], lambda *a: None,
+        api_base="http://localhost:8081", allow_insecure_http=True,
+    )
+    assert t._api_base == "http://localhost:8081"
 
 
 @pytest.mark.unit
@@ -201,6 +227,31 @@ def test_dispatch_failclosed_if_allowlist_emptied_at_runtime():
 # ---------------------------------------------------------------------------
 # Lifecycle
 # ---------------------------------------------------------------------------
+@pytest.mark.unit
+def test_run_survives_pollerror_with_backoff():
+    # BLOCK: un ok=False persistente NON deve uccidere il thread ne' degenerare in
+    # hot-loop. run() cattura BotApiPollError, applica backoff e continua il loop.
+    calls = []
+
+    def fetch(offset):
+        calls.append(offset)
+        return _payload([_msg_update(1)], ok=False)  # sempre non-ok => BotApiPollError
+
+    t = TelegramBotApiTransport(
+        TOKEN, [CHAT], lambda *a: None, fetch=fetch,
+        base_backoff_sec=0.01, max_backoff_sec=0.02,
+    )
+    t.start()
+    time.sleep(0.1)
+    alive_during = t._thread is not None and t._thread.is_alive()
+    t.stop(timeout=2.0)
+    # Il thread e' rimasto vivo nonostante l'errore ripetuto, ha ripollato (backoff)
+    # e si e' fermato in modo pulito su stop().
+    assert alive_during, "il thread non deve morire su BotApiPollError"
+    assert len(calls) >= 2, "il loop deve ripollare dopo il backoff, non uscire"
+    assert t._thread is not None and not t._thread.is_alive()
+
+
 @pytest.mark.unit
 def test_start_stop_halts_loop():
     calls = []

@@ -63,6 +63,7 @@ class TelegramBotApiTransport:
         *,
         fetch: Optional[Fetch] = None,
         api_base: str = _DEFAULT_API_BASE,
+        allow_insecure_http: bool = False,
         long_poll_timeout: int = 25,
         base_backoff_sec: float = 1.0,
         max_backoff_sec: float = 30.0,
@@ -76,10 +77,17 @@ class TelegramBotApiTransport:
         self.chat_ids = {int(c) for c in (chat_ids or [])}
         if not self.chat_ids:
             raise ValueError("chat_ids (allow-list) obbligatoria e non vuota")
-        # Solo schemi http(s): urlopen aprirebbe anche file://, ftp:// (l'URL e'
-        # costruito da api_base -> vincolo esplicito, fail-closed).
-        if not isinstance(api_base, str) or not api_base.startswith(("http://", "https://")):
-            raise ValueError("api_base deve usare schema http:// o https://")
+        # HTTPS obbligatorio: il bot_token viaggia nell'URL getUpdates; su http://
+        # transiterebbe in chiaro e un MITM potrebbe iniettare update FALSI nel
+        # pipeline di trading. `http://` e' ammesso SOLO via override esplicito e
+        # isolato (allow_insecure_http=True, per test locali), mai in produzione.
+        self._allow_insecure_http = bool(allow_insecure_http)
+        if not isinstance(api_base, str):
+            raise ValueError("api_base deve essere una stringa http(s)")
+        if not self._scheme_allowed(api_base):
+            raise ValueError(
+                "api_base deve usare HTTPS (http:// solo con allow_insecure_http=True)"
+            )
         self._on_message = on_message
         self._fetch: Fetch = fetch if fetch is not None else self._default_fetch
         self._api_base = api_base.rstrip("/")
@@ -90,6 +98,15 @@ class TelegramBotApiTransport:
         self._offset = 0
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+
+    def _scheme_allowed(self, url: str) -> bool:
+        """True se `url` usa uno schema consentito: sempre https://, e http://
+        SOLO con l'override esplicito allow_insecure_http (test isolati)."""
+        if not isinstance(url, str):
+            return False
+        if url.startswith("https://"):
+            return True
+        return self._allow_insecure_http and url.startswith("http://")
 
     # ------------------------------------------------------------------
     # Redazione segreti
@@ -184,14 +201,25 @@ class TelegramBotApiTransport:
         if not isinstance(results, list) or not results:
             return offset
         next_offset = offset
+        saw_valid_uid = False
         for update in results:
             uid = update.get("update_id") if isinstance(update, dict) else None
             if isinstance(uid, int) and not isinstance(uid, bool):
+                saw_valid_uid = True
                 next_offset = max(next_offset, uid + 1)
             try:
                 self._dispatch(update)
             except Exception:  # pragma: no cover - _dispatch e' gia' fail-open
                 logger.exception("[TelegramBotTransport] dispatch update fallito")
+        # Anti-wedge: se un batch NON vuoto non ha prodotto ALCUN update_id valido,
+        # l'offset non puo' avanzare (non c'e' nulla da ack) e la stessa getUpdates
+        # ritornerebbe lo stesso batch all'infinito in hot-loop. Telegram fornisce
+        # SEMPRE update_id: un batch senza => dati server malformati. Solleviamo
+        # cosi' run() applica il backoff (niente hot-loop) invece di reincastrarsi.
+        if not saw_valid_uid:
+            raise BotApiPollError(
+                "getUpdates: batch non vuoto senza update_id valido (anti-wedge)"
+            )
         return next_offset
 
     def run(self) -> None:
@@ -203,9 +231,16 @@ class TelegramBotApiTransport:
                 self._offset = self.poll_once(self._offset)
                 backoff = self._base_backoff
             except Exception as exc:
+                # Diagnostica SENZA segreti: tipo eccezione + messaggio REDATTO.
+                # Il messaggio (str(exc)) restituisce il "perche'" del fallimento
+                # (prima si loggava solo il nome della classe, perdendo la causa).
+                # exc_info/traceback NON usato di proposito: bypasserebbe la
+                # redazione e l'URL getUpdates col bot_token potrebbe comparire
+                # nel traceback urllib -> leak. Il tipo+messaggio redatto basta.
                 logger.error(
-                    "[TelegramBotTransport] poll fallito (%s); backoff %.1fs",
-                    self._redact(type(exc).__name__),
+                    "[TelegramBotTransport] poll fallito: %s: %s; backoff %.1fs",
+                    type(exc).__name__,
+                    self._redact(str(exc)),
                     backoff,
                 )
                 self._stop.wait(backoff)
@@ -240,6 +275,12 @@ class TelegramBotApiTransport:
         }
         # ATTENZIONE: l'URL contiene il bot_token -> non va MAI loggato.
         url = f"{self._api_base}/bot{self._bot_token}/getUpdates?" + urllib.parse.urlencode(params)
+        # Difesa al call-site (belt-and-suspenders vs api_base mutato a runtime):
+        # solo HTTPS (http:// unicamente con allow_insecure_http). urlopen
+        # aprirebbe anche file://, ftp://. Il messaggio d'errore NON include
+        # l'URL (conterrebbe il token).
+        if not self._scheme_allowed(url):
+            raise ValueError("URL getUpdates con schema non consentito (richiesto HTTPS)")
         req = urllib.request.Request(url, method="GET")
         with urllib.request.urlopen(req, timeout=self._long_poll_timeout + 10) as resp:
             return json.loads(resp.read().decode("utf-8"))
