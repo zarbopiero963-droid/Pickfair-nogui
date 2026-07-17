@@ -608,6 +608,135 @@ class Database:
                     ),
                 )
 
+    # ------------------------------------------------------------------
+    # Telegram multi-bot (Bot API, epica #374 PR-3) — SOLO persistenza.
+    # Ogni bot ha il proprio bot_token CIFRATO a riposo (enc:v1:) e il proprio
+    # set di chat. NON e' agganciato al runtime in questa PR: il path single-bot
+    # (telegram_chats -> monitored_chat_ids) resta invariato.
+    # ------------------------------------------------------------------
+    def save_telegram_bot(
+        self,
+        label: str,
+        bot_token: Optional[str],
+        *,
+        is_active: bool = True,
+        bot_id: Optional[int] = None,
+    ) -> int:
+        """Crea (bot_id=None) o aggiorna un bot Bot API. Ritorna l'id.
+
+        Il `bot_token` e' CIFRATO a riposo (enc:v1: via SecretCipher), come i
+        segreti nella tabella settings; un token vuoto viene salvato vuoto
+        (passthrough). In update, passare `None` come token PRESERVA quello
+        esistente (non lo azzera): evita di perdere il segreto aggiornando solo
+        label/stato. Il chiamante NON deve mai loggare il token.
+        """
+        now = self._utc_now()
+        label_str = str(label or "")
+        active = int(bool(is_active))
+        # Cifra il token UNA sola volta (niente logica duplicata tra insert/update
+        # -> nessun rischio di drift). `stored=None` significa "non toccare il
+        # token" e capita solo in update quando il token passato e' None (preserva).
+        stored: Optional[str] = None
+        if bot_token is not None:
+            token_str = str(bot_token or "")
+            stored = self._cipher.encrypt(token_str) if token_str else ""
+        if bot_id is None:
+            cur = self._execute(
+                "INSERT INTO telegram_bots(label, bot_token, is_active, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (label_str, stored or "", active, now, now),
+            )
+            return int(cur.lastrowid)
+        if stored is None:
+            # Update senza token: preserva quello esistente (aggiorna solo label/stato).
+            cur = self._execute(
+                "UPDATE telegram_bots SET label = ?, is_active = ?, updated_at = ? WHERE id = ?",
+                (label_str, active, now, int(bot_id)),
+            )
+        else:
+            cur = self._execute(
+                "UPDATE telegram_bots SET label = ?, bot_token = ?, is_active = ?, updated_at = ? "
+                "WHERE id = ?",
+                (label_str, stored, active, now, int(bot_id)),
+            )
+        # Contratto esplicito (fail-closed): un update su un bot_id inesistente
+        # colpisce 0 righe -> NON e' un successo silenzioso, solleva.
+        if getattr(cur, "rowcount", -1) == 0:
+            raise ValueError(f"telegram_bot id inesistente: {int(bot_id)}")
+        return int(bot_id)
+
+    def get_telegram_bots(self) -> List[Dict[str, Any]]:
+        """Tutti i bot col `bot_token` DECIFRATO (passthrough sul plaintext
+        legacy). ATTENZIONE: contiene il segreto in chiaro -> non loggare mai."""
+        rows = self._execute(
+            "SELECT id, label, bot_token, is_active, created_at, updated_at "
+            "FROM telegram_bots ORDER BY id",
+            fetch=True,
+            commit=False,
+        )
+        out: List[Dict[str, Any]] = []
+        for row in (rows or []):
+            stored = row["bot_token"] or ""
+            out.append(
+                {
+                    "id": int(row["id"]),
+                    "label": row["label"],
+                    "bot_token": self._cipher.decrypt(stored) if stored else "",
+                    "is_active": bool(row["is_active"]),
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                }
+            )
+        return out
+
+    def remove_telegram_bot(self, bot_id: int) -> None:
+        """Elimina un bot e le sue chat. Esplicito (non dipende da
+        PRAGMA foreign_keys): prima le chat-link, poi il bot, in transazione."""
+        with self.transaction() as conn:
+            conn.execute("DELETE FROM telegram_bot_chats WHERE bot_id = ?", (int(bot_id),))
+            conn.execute("DELETE FROM telegram_bots WHERE id = ?", (int(bot_id),))
+
+    def set_telegram_bot_chats(self, bot_id: int, chats: List[Dict[str, Any]]) -> None:
+        """Sostituisce l'intero set di chat di UN bot (swap atomico scoped al
+        bot_id): non tocca le chat degli altri bot. Robusto ai `chat_id`
+        duplicati nello stesso batch (upsert ON CONFLICT: l'ultima entry vince),
+        cosi' un input con doppioni non solleva IntegrityError sulla PK composta."""
+        with self.transaction() as conn:
+            conn.execute("DELETE FROM telegram_bot_chats WHERE bot_id = ?", (int(bot_id),))
+            for item in chats or []:
+                conn.execute(
+                    """
+                    INSERT INTO telegram_bot_chats(bot_id, chat_id, title, is_active)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(bot_id, chat_id) DO UPDATE SET
+                        title = excluded.title,
+                        is_active = excluded.is_active
+                    """,
+                    (
+                        int(bot_id),
+                        str(item.get("chat_id") or ""),
+                        str(item.get("title") or ""),
+                        int(bool(item.get("is_active", True))),
+                    ),
+                )
+
+    def get_telegram_bot_chats(self, bot_id: int) -> List[Dict[str, Any]]:
+        rows = self._execute(
+            "SELECT chat_id, title, is_active FROM telegram_bot_chats "
+            "WHERE bot_id = ? ORDER BY title, chat_id",
+            (int(bot_id),),
+            fetch=True,
+            commit=False,
+        )
+        return [
+            {
+                "chat_id": row["chat_id"],
+                "title": row["title"],
+                "is_active": bool(row["is_active"]),
+            }
+            for row in (rows or [])
+        ]
+
     # =========================================================
     # RECEIVED SIGNALS
     # =========================================================

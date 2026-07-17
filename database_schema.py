@@ -32,6 +32,35 @@ SCHEMA_DDL: tuple[str, ...] = (
     )
     """,
 
+    # ── telegram multi-bot (Bot API, epica #374 PR-3) ──────────────────
+    # Persistenza di N bot, ognuno col proprio bot_token (CIFRATO a riposo,
+    # formato enc:v1: via SecretCipher — la cifratura NON e' automatica su una
+    # colonna reale: la fa esplicitamente il CRUD in database.py) e il proprio
+    # set di chat. Tabelle ADDITIVE: `telegram_chats` legacy resta intatta, il
+    # runtime single-bot non cambia (nessun wiring in PR-3).
+    """
+    CREATE TABLE IF NOT EXISTS telegram_bots (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        label      TEXT NOT NULL DEFAULT '',
+        bot_token  TEXT NOT NULL DEFAULT '',
+        is_active  INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS telegram_bot_chats (
+        bot_id     INTEGER NOT NULL REFERENCES telegram_bots(id) ON DELETE CASCADE,
+        chat_id    TEXT NOT NULL,
+        title      TEXT DEFAULT '',
+        is_active  INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (bot_id, chat_id)
+    )
+    """,
+    # NB: nessun indice separato su bot_id: la PK composta (bot_id, chat_id) e'
+    # gia' indicizzata da SQLite con bot_id come colonna guida -> le query
+    # WHERE bot_id = ? la usano. Un indice extra sarebbe ridondante.
+
     # ── incoming signals ───────────────────────────────────────────────
     """
     CREATE TABLE IF NOT EXISTS received_signals (
