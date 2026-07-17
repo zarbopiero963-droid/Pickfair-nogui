@@ -273,6 +273,55 @@ def test_start_failure_raising_resets_handlers_registered():
     assert svc.handlers_registered == 0
 
 
+def test_start_failure_keeps_listener_if_runtime_thread_survives():
+    # BLOCK (GPT-5.6 Terra): se listener.start() avvia PARZIALMENTE un thread e poi
+    # solleva, l'orfano NON va nascosto azzerando il riferimento: il service tenta
+    # lo stop e, se il thread SOPRAVVIVE, TIENE il listener così il guard
+    # previous_runtime_still_alive lo vede e un retry NON crea un secondo runtime
+    # (niente doppio getUpdates/409, niente segnali di betting duplicati).
+    svc = _svc(_one_active_bot_db(), capture=[])
+
+    class _AliveThread:
+        def is_alive(self):
+            return True
+
+    class _PartialStartListener:
+        _runtime_thread = _AliveThread()
+
+        def __init__(self):
+            self.stop_called = False
+
+        def start(self):
+            raise RuntimeError("boom dopo partial start")
+
+        def stop(self):
+            self.stop_called = True  # stop tentato ma il thread resta vivo
+
+        def status(self):
+            return {}
+
+    holder = {}
+
+    def _build(*a, **k):
+        lst = _PartialStartListener()
+        holder["lst"] = lst
+        return lst
+
+    svc._build_botapi_runtime = _build  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError):
+        svc.start()
+    assert holder["lst"].stop_called is True     # stop tentato sul path di errore
+    assert svc.listener is holder["lst"]         # riferimento TENUTO (residuo non nascosto)
+    assert svc.handlers_registered == 1          # handler non azzerati: c'è un thread vivo
+    assert svc.state == "FAILED"
+
+    # Retry: il guard vede il thread vivo e blocca (nessun secondo listener).
+    r = svc.start()
+    assert r.get("reason") == "previous_runtime_still_alive"
+    assert r.get("started") is False
+
+
 def test_start_recovers_when_cached_state_is_stale_connected():
     # BLOCK (Fugu full-range): self.state cache "CONNECTED" stale dopo la morte del
     # transport NON deve far tornare already_running (bloccando il recovery). Il

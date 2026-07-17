@@ -73,10 +73,16 @@ sorgente (bot usable). Gli **errori REALI del DB propagano** (nessun degrado a
 (metodo `get_telegram_bots` assente, es. legacy) non è un errore di lettura ma
 "nessuna sorgente bot" → `(0, [])` → fail-closed `Configurazione incompleta`.
 
-Coerenza snapshot su fallimento di `start()`: `handlers_registered` è impostato
-**prima** di `listener.start()`; se lo start **solleva**, l'`except` azzera
-`handlers_registered` (runtime `FAILED` con `listener=None` ⇒ 0 handler), così lo
-snapshot resta coerente per invariant guard e monitoring.
+Coerenza snapshot e anti-orfano su fallimento di `start()`: `handlers_registered`
+è impostato **prima** di `listener.start()`. Se lo start **solleva** dopo aver
+(parzialmente) avviato un thread, l'`except` fa **best-effort stop** del listener e
+poi:
+- thread **morto** ⇒ `listener=None` + `handlers_registered=0` (snapshot pulito e
+  coerente: `FAILED` ⇒ 0 handler);
+- thread **ancora vivo** ⇒ **tiene** il riferimento al listener e
+  `handlers_registered=1` (residuo NON nascosto): il guard
+  `previous_runtime_still_alive` lo vede e **blocca un retry**, evitando un secondo
+  `getUpdates` (409) e segnali di betting duplicati.
 
 Coerenza health/invariant: un transport **sano** conta come **1 handler**
 (l'invariant guard richiede esattamente 1 handler quando `CONNECTED`). Lo stato

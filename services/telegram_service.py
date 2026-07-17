@@ -119,6 +119,28 @@ class TelegramService:
             },
         )
 
+    def _stop_partial_listener_on_start_failure(self) -> bool:
+        """Best-effort stop del listener dopo un'eccezione in start() (avvio
+        parziale). Ritorna True se un thread runtime SOPRAVVIVE comunque (orfano da
+        NON nascondere: il chiamante tiene il riferimento perché il guard
+        previous_runtime_still_alive lo veda e blocchi un retry, evitando un secondo
+        getUpdates/409 e segnali di betting duplicati). Fail-safe: eccezioni nello
+        stop non si propagano (siamo già sul path di errore)."""
+        lst = self.listener
+        if lst is None:
+            return False
+        stopper = getattr(lst, "stop", None)
+        if callable(stopper):
+            try:
+                stopper()
+            except Exception:  # pragma: no cover - lo stop non deve mascherare l'errore originale
+                pass
+        thread = getattr(lst, "_runtime_thread", None)
+        try:
+            return bool(thread is not None and thread.is_alive())
+        except Exception:  # pragma: no cover - is_alive difensivo
+            return False
+
     def _refresh_runtime_truth_from_listener(self) -> None:
         status_getter = getattr(self.listener, "status", None) if self.listener else None
         if callable(status_getter):
@@ -380,13 +402,20 @@ class TelegramService:
 
         except Exception as exc:
             self.connected = False
-            self.listener = None
-            # handlers_registered viene impostato PRIMA di listener.start() (1 sul
-            # path Bot API, 2 sul Telethon). Se start() solleva, il runtime è FAILED
-            # con listener=None: azzerare gli handler mantiene lo snapshot COERENTE
-            # (niente 'FAILED con handler registrati' su runtime morto, che
-            # confonderebbe invariant guard/monitoring).
-            self.handlers_registered = 0
+            # handlers_registered è impostato PRIMA di listener.start() (1 sul path
+            # Bot API, 2 sul Telethon). Se start() ha (parzialmente) avviato un
+            # thread e poi ha sollevato, NON basta perdere il riferimento: un thread
+            # orfano resterebbe vivo e un retry creerebbe un SECONDO listener (doppio
+            # getUpdates/409, segnali di betting duplicati). Best-effort stop, poi:
+            # - thread MORTO dopo lo stop => azzera listener+handler (snapshot pulito
+            #   e coerente: FAILED => 0 handler);
+            # - thread ANCORA VIVO => TIENI il riferimento (il guard
+            #   previous_runtime_still_alive lo vede e blocca il retry) e mantieni
+            #   handlers_registered=1 (residuo NON nascosto).
+            residual_alive = self._stop_partial_listener_on_start_failure()
+            if not residual_alive:
+                self.listener = None
+                self.handlers_registered = 0
             self.last_error = str(exc)
             self.intentional_stop = False
             self.reconnect_in_progress = False
