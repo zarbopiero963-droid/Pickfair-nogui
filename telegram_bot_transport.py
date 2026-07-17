@@ -308,7 +308,14 @@ class TelegramBotApiTransport:
 
     def stop(self, timeout: float = 5.0) -> None:
         self._stop.set()
-        thread = self._thread
+        # Lettura di `_thread` sotto `_health_lock`: coerente con l'assegnazione in
+        # start() e con health_snapshot() (nessuna lettura torn cross-thread mentre
+        # un eventuale restart riassegna il riferimento). Il join() resta FUORI dal
+        # lock: run() acquisisce `_health_lock` a ogni giro (aggiornamento del
+        # contatore fallimenti) => tenerlo durante il join deadlockerebbe il thread
+        # di polling che sta terminando.
+        with self._health_lock:
+            thread = self._thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=timeout)
 

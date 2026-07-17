@@ -295,3 +295,33 @@ def test_start_stop_halts_loop():
     t.stop(timeout=2.0)
     assert t._thread is not None and not t._thread.is_alive()
     assert len(calls) >= 1
+
+
+@pytest.mark.unit
+def test_stop_does_not_hold_health_lock_during_join():
+    # BLOCK: stop() legge _thread SOTTO _health_lock (coerente con start()/
+    # health_snapshot(), niente lettura torn su un restart concorrente) ma NON deve
+    # tenere il lock durante join(): run() acquisisce _health_lock a ogni giro
+    # (aggiornamento contatore fallimenti) => un join sotto lock deadlockerebbe il
+    # thread di polling in terminazione. Sonda: join() deve trovare il lock LIBERO.
+    t = _transport(lambda *a: None)
+    probe = {"acquired_join": None, "joined": False}
+
+    class _ProbeThread:
+        def is_alive(self):
+            return True
+
+        def join(self, timeout=None):
+            probe["joined"] = True
+            # Se stop() tenesse il lock durante il join, questo acquire fallirebbe.
+            got = t._health_lock.acquire(blocking=False)
+            probe["acquired_join"] = got
+            if got:
+                t._health_lock.release()
+
+    t._thread = _ProbeThread()  # type: ignore[assignment]
+    t.stop(timeout=1.0)
+    assert probe["joined"], "stop() deve leggere _thread e chiamarne join()"
+    assert probe["acquired_join"] is True, (
+        "il lock non deve essere tenuto durante join() (deadlock vs run())"
+    )

@@ -74,6 +74,12 @@ reagiscono invece di restare `CONNECTED` in silenzio (fail-open):
   (`bot_transport_persistent_poll_failure`). Un `restart` con token ancora
   invalido rifallisce → lockout autoheal → il problema resta **visibile**.
 
+La coppia `(thread_alive, _consecutive_failures)` è letta in modo **atomico** via
+`health_snapshot()` sotto un unico `_health_lock`; anche `start()` (assegnazione del
+thread) e `stop()` (lettura del riferimento prima del `join`, che resta **fuori**
+dal lock per non deadlockare il thread di polling) accedono a `_thread` sotto lo
+stesso lock → nessuno snapshot *torn* né race tra stop e restart concorrenti.
+
 L'idempotenza (`already_running`) è valutata **prima** della selezione sorgente: un
 runtime già attivo non rivaluta il gate, così un cambio di config a runtime (2° bot
 attivato, bot disattivato) non fa fallire/riavviare un runtime sano.
