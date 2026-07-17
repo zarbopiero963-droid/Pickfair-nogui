@@ -1162,7 +1162,13 @@ class TelegramModule:
         if tree is None or not tree.winfo_exists():
             return
         tree.delete(*tree.get_children())
-        for bot in self.db.get_telegram_bots():
+        bots = self.db.get_telegram_bots()
+        # Difesa: se il bot selezionato non esiste più (rimosso altrove), azzera la
+        # selezione stale così un successivo Salva non parte con un bot_id fantasma.
+        ids = {b.get("id") for b in bots}
+        if self.tg_selected_bot_id is not None and self._selected_bot_id() not in ids:
+            self.tg_selected_bot_id = None
+        for bot in bots:
             state = "Sì" if bot.get("is_active") else "No"
             has_token = "•••" if bot.get("bot_token") else "—"
             label = bot.get("label") or f"bot {bot['id']}"
@@ -1175,12 +1181,31 @@ class TelegramModule:
         bot_id = self._selected_bot_id()
         self.tg_bot_token_var.set("")  # mai il token in chiaro
         if bot_id is None:
+            # Nessuna selezione: pulisci anche label/stato (niente dati stale).
+            self.tg_bot_label_var.set("")
+            self.tg_bot_active_var.set(True)
             return
         for bot in self.db.get_telegram_bots():
             if bot.get("id") == bot_id:
                 self.tg_bot_label_var.set(bot.get("label") or "")
                 self.tg_bot_active_var.set(bool(bot.get("is_active")))
                 break
+
+    def _new_telegram_bot(self):
+        """Prepara l'editor per creare un NUOVO bot: deseleziona e pulisce i campi.
+        SENZA questo, dopo un salvataggio l'editor resta legato al bot appena
+        creato/selezionato e i Salva successivi lo AGGIORNEREBBERO invece di
+        creare altri bot -> il multi-bot sarebbe di fatto impossibile."""
+        self.tg_selected_bot_id = None
+        self.tg_bot_label_var.set("")
+        self.tg_bot_token_var.set("")
+        self.tg_bot_active_var.set(True)
+        tree = getattr(self, "tg_bots_tree", None)
+        if tree is not None and tree.winfo_exists():
+            try:
+                tree.selection_remove(tree.selection())
+            except Exception:  # pragma: no cover - deselezione best-effort
+                pass
 
     def _save_telegram_bot_from_ui(self):
         label = str(self.tg_bot_label_var.get() or "").strip()
@@ -1220,6 +1245,7 @@ class TelegramModule:
         self.tg_selected_bot_id = None
         self.tg_bot_label_var.set("")
         self.tg_bot_token_var.set("")
+        self.tg_bot_active_var.set(True)
         self._refresh_telegram_bots_tree()
 
     # =========================================================

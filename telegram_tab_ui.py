@@ -319,6 +319,15 @@ class TelegramTabUI:
         bot_btn_frame.pack(fill=tk.X, padx=10, pady=(6, 5))
         ctk.CTkButton(
             bot_btn_frame,
+            text="Nuovo",
+            command=self.app._new_telegram_bot,
+            fg_color=COLORS["button_primary"],
+            hover_color=COLORS["back_hover"],
+            corner_radius=6,
+            width=90,
+        ).pack(side=tk.LEFT, padx=2)
+        ctk.CTkButton(
+            bot_btn_frame,
             text="Salva/Aggiorna Bot",
             command=self.app._save_telegram_bot_from_ui,
             fg_color=COLORS["button_success"],
@@ -352,10 +361,10 @@ class TelegramTabUI:
 
         def _on_bot_select(_event=None):
             sel = self.app.tg_bots_tree.selection()
-            if not sel:
-                return
+            # Sincronizza lo stato anche sulla DESELEZIONE (sel vuota => None):
+            # evita che un id stale sopravviva a una deselezione.
             try:
-                self.app.tg_selected_bot_id = int(sel[0])
+                self.app.tg_selected_bot_id = int(sel[0]) if sel else None
             except (TypeError, ValueError):
                 self.app.tg_selected_bot_id = None
             if hasattr(self.app, "_load_selected_bot_into_editor"):

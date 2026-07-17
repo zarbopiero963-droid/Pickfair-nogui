@@ -143,3 +143,64 @@ def test_load_selected_bot_never_exposes_token(monkeypatch, db):
         assert app.tg_bot_token_var.get() == ""
     finally:
         app.destroy()
+
+
+def test_new_button_enables_creating_multiple_bots(monkeypatch, db):
+    # BLOCK del bug segnalato da GPT/Fugu/Fable: dopo il primo save la selezione
+    # resta sul bot creato; senza "Nuovo" (reset selezione) un secondo save
+    # AGGIORNEREBBE il bot 1 invece di crearne un altro -> multi-bot irraggiungibile.
+    app = _make(monkeypatch, db)
+    try:
+        app.tg_bot_label_var.set("Uno")
+        app.tg_bot_token_var.set(_SAMPLE)
+        app.tg_selected_bot_id = None
+        app._save_telegram_bot_from_ui()
+        assert len(db.get_telegram_bots()) == 1
+        assert app.tg_selected_bot_id is not None  # selezione ora sul bot 1
+
+        app._new_telegram_bot()  # reset editor per una nuova creazione
+        assert app.tg_selected_bot_id is None
+        assert app.tg_bot_label_var.get() == ""
+        assert app.tg_bot_token_var.get() == ""
+
+        app.tg_bot_label_var.set("Due")
+        app.tg_bot_token_var.set("altro-value-ddd")
+        app._save_telegram_bot_from_ui()
+        labels = sorted(b["label"] for b in db.get_telegram_bots())
+        assert labels == ["Due", "Uno"]  # DUE bot distinti, non un update
+    finally:
+        app.destroy()
+
+
+def test_deselect_clears_editor(monkeypatch, db):
+    app = _make(monkeypatch, db)
+    try:
+        bid = db.save_telegram_bot("B", _SAMPLE, is_active=False)
+        app.tg_selected_bot_id = bid
+        app._load_selected_bot_into_editor()
+        assert app.tg_bot_label_var.get() == "B"
+
+        # deseleziona (id None): l'editor si pulisce, niente dati stale
+        app.tg_selected_bot_id = None
+        app._load_selected_bot_into_editor()
+        assert app.tg_bot_label_var.get() == ""
+        assert app.tg_bot_token_var.get() == ""
+        assert bool(app.tg_bot_active_var.get()) is True
+    finally:
+        app.destroy()
+
+
+def test_save_on_stale_selection_is_failclosed(monkeypatch, db):
+    # Selezione stale su bot rimosso "altrove": save_telegram_bot(bot_id inesistente)
+    # -> ValueError (rowcount 0) gestito da _safe_show_error. Nessun bot fantasma.
+    app = _make(monkeypatch, db)
+    try:
+        bid = db.save_telegram_bot("B", _SAMPLE)
+        db.remove_telegram_bot(bid)
+        app.tg_selected_bot_id = bid  # stale
+        app.tg_bot_label_var.set("Zombie")
+        app.tg_bot_token_var.set("val-x")
+        app._save_telegram_bot_from_ui()
+        assert db.get_telegram_bots() == []  # fail-closed: nessuna riga creata/riassegnata
+    finally:
+        app.destroy()
