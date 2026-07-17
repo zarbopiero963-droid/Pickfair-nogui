@@ -1140,6 +1140,126 @@ class TelegramModule:
         messagebox.showinfo("Successo", "Chat aggiunte al monitoraggio.")
 
     # =========================================================
+    # MULTI-BOT (Bot API) — gestione GUI (epica #374 PR-4)
+    # SOLO persistenza via CRUD PR-3 (telegram_bots). Nessun wiring runtime:
+    # i bot configurati sono persistiti ma non ancora ascoltati (arriva nella
+    # PR di wiring). Il bot_token e' un segreto: mai loggato, entry mascherata,
+    # e in update NON si ricarica in chiaro (vuoto = preserva il token cifrato).
+    # =========================================================
+    def _selected_bot_id(self):
+        """Id del bot selezionato nell'editor (attributo settato dalla selezione
+        dell'albero in GUI reale, o direttamente nei test). None se assente."""
+        val = getattr(self, "tg_selected_bot_id", None)
+        if val is None:
+            return None
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            return None
+
+    def _prune_stale_bot_selection(self):
+        """Se il bot selezionato non esiste più (rimosso altrove), azzera la
+        selezione **e** l'editor (label/token/attivo): così nessun dato stale
+        sopravvive e un Salva successivo NON crea un bot con dati vecchi. Fonte
+        UNICA per l'id selezionato: `_selected_bot_id()`. Gira sempre (indipendente
+        dall'albero) -> testabile headless."""
+        sel = self._selected_bot_id()
+        if sel is None:
+            return
+        ids = {b.get("id") for b in self.db.get_telegram_bots(include_token=False)}
+        if sel not in ids:
+            self.tg_selected_bot_id = None
+            self._load_selected_bot_into_editor()  # id None -> pulisce l'editor
+
+    def _refresh_telegram_bots_tree(self):
+        self._prune_stale_bot_selection()
+        tree = getattr(self, "tg_bots_tree", None)
+        if tree is None or not tree.winfo_exists():
+            return
+        tree.delete(*tree.get_children())
+        # include_token=False: qui serve solo la PRESENZA del token (has_token),
+        # non il valore -> non decifriamo i segreti in memoria.
+        for bot in self.db.get_telegram_bots(include_token=False):
+            state = "Sì" if bot.get("is_active") else "No"
+            has_token = "•••" if bot.get("has_token") else "—"
+            label = bot.get("label") or f"bot {bot['id']}"
+            tree.insert("", tk.END, iid=str(bot["id"]), values=(label, has_token, state))
+
+    def _load_selected_bot_into_editor(self):
+        """Popola label/stato dell'editor dal bot selezionato. Il TOKEN non viene
+        MAI ricaricato in chiaro nella entry (resta vuoto = 'preserva'): non si
+        espone il segreto in UI."""
+        bot_id = self._selected_bot_id()
+        self.tg_bot_token_var.set("")  # mai il token in chiaro
+        if bot_id is None:
+            # Nessuna selezione: pulisci anche label/stato (niente dati stale).
+            self.tg_bot_label_var.set("")
+            self.tg_bot_active_var.set(True)
+            return
+        for bot in self.db.get_telegram_bots(include_token=False):
+            if bot.get("id") == bot_id:
+                self.tg_bot_label_var.set(bot.get("label") or "")
+                self.tg_bot_active_var.set(bool(bot.get("is_active")))
+                break
+
+    def _new_telegram_bot(self):
+        """Prepara l'editor per creare un NUOVO bot: deseleziona e pulisce i campi.
+        SENZA questo, dopo un salvataggio l'editor resta legato al bot appena
+        creato/selezionato e i Salva successivi lo AGGIORNEREBBERO invece di
+        creare altri bot -> il multi-bot sarebbe di fatto impossibile."""
+        self.tg_selected_bot_id = None
+        self.tg_bot_label_var.set("")
+        self.tg_bot_token_var.set("")
+        self.tg_bot_active_var.set(True)
+        tree = getattr(self, "tg_bots_tree", None)
+        if tree is not None and tree.winfo_exists():
+            try:
+                tree.selection_remove(tree.selection())
+            except Exception:  # pragma: no cover - deselezione best-effort
+                pass
+
+    def _save_telegram_bot_from_ui(self):
+        label = str(self.tg_bot_label_var.get() or "").strip()
+        token = str(self.tg_bot_token_var.get() or "").strip()
+        active = bool(self.tg_bot_active_var.get())
+        bot_id = self._selected_bot_id()
+        try:
+            if not label:
+                raise ValueError("Etichetta bot obbligatoria.")
+            if bot_id is None and not token:
+                # Creazione: un bot senza token non serve a nulla -> fail-closed.
+                raise ValueError("Bot token obbligatorio per un nuovo bot.")
+            # In update, token vuoto => None (preserva il token esistente cifrato);
+            # in creazione, token e' garantito non vuoto dal check sopra.
+            token_arg = token if token else None
+            new_id = self.db.save_telegram_bot(
+                label, token_arg, is_active=active, bot_id=bot_id
+            )
+        except Exception as exc:
+            self._safe_show_error("Errore salvataggio bot", str(exc))
+            return
+        # Non lasciare il token in chiaro nella entry dopo il salvataggio.
+        self.tg_bot_token_var.set("")
+        self.tg_selected_bot_id = int(new_id)
+        self._refresh_telegram_bots_tree()
+        self._safe_show_info("OK", f"Bot salvato (id {new_id}).")
+
+    def _remove_selected_telegram_bot(self):
+        bot_id = self._selected_bot_id()
+        if bot_id is None:
+            return
+        try:
+            self.db.remove_telegram_bot(bot_id)
+        except Exception as exc:
+            self._safe_show_error("Errore rimozione bot", str(exc))
+            return
+        self.tg_selected_bot_id = None
+        self.tg_bot_label_var.set("")
+        self.tg_bot_token_var.set("")
+        self.tg_bot_active_var.set(True)
+        self._refresh_telegram_bots_tree()
+
+    # =========================================================
     # ADVANCED SIGNAL PATTERNS
     # =========================================================
     def _open_pattern_form(self, current: dict | None = None) -> dict | None:

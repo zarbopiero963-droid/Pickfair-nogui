@@ -671,6 +671,15 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.alert_cooldown_var = self._make_string_var("300")
         self.alert_dedup_var = self._make_bool_var(True)
         self.alert_format_rich_var = self._make_bool_var(True)
+        # Multi-bot (Bot API, epica #374 PR-4): editor di gestione bot nella tab
+        # Telegram. Il token e' un SEGRETO: entry mascherata (show="*"), mai
+        # loggato, e in update NON viene ricaricato in chiaro (vuoto = preserva).
+        self.tg_bot_label_var = self._make_string_var("")
+        self.tg_bot_token_var = self._make_string_var("")
+        self.tg_bot_active_var = self._make_bool_var(True)
+        # Bot selezionato nell'editor (settato dal <<TreeviewSelect>> in GUI reale,
+        # settabile direttamente nei test headless). None = nessuna selezione.
+        self.tg_selected_bot_id = None
         self.rs_allow_recovery_var = self._make_bool_var(True)
         self.rs_anti_dup_var = self._make_bool_var(True)
         self.rs_risk_profile_var = self._make_string_var("BALANCED")

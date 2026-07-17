@@ -270,6 +270,110 @@ class TelegramTabUI:
         if hasattr(self.app, "_refresh_telegram_chats_tree"):
             self.app._refresh_telegram_chats_tree()
 
+        # ── Bot (Bot API) — gestione multi-bot (epica #374 PR-4) ──────────
+        bots_frame = ctk.CTkFrame(left_frame, fg_color=COLORS["bg_panel"], corner_radius=8)
+        bots_frame.pack(fill=tk.X, pady=(0, 5), padx=5)
+
+        ctk.CTkLabel(
+            bots_frame,
+            text="Bot (Bot API)",
+            font=FONTS["heading"],
+            text_color=COLORS["text_primary"],
+        ).pack(anchor=tk.W, padx=10, pady=(10, 0))
+        ctk.CTkLabel(
+            bots_frame,
+            text=(
+                "Bot multipli via Bot API (token BotFather). Il token è cifrato a "
+                "riposo e mascherato; in modifica lascialo VUOTO per non cambiarlo. "
+                "Nota: configurazione persistita, non ancora attiva a runtime."
+            ),
+            wraplength=520,
+            justify="left",
+            text_color=COLORS["text_secondary"],
+        ).pack(anchor=tk.W, padx=10, pady=(0, 6))
+
+        ctk.CTkLabel(bots_frame, text="Etichetta:", text_color=COLORS["text_secondary"]).pack(anchor=tk.W, padx=10)
+        ctk.CTkEntry(
+            bots_frame,
+            textvariable=self.app.tg_bot_label_var,
+            width=260,
+            fg_color=COLORS["bg_card"],
+            border_color=COLORS["border"],
+        ).pack(anchor=tk.W, padx=10)
+
+        ctk.CTkLabel(bots_frame, text="Bot Token (BotFather):", text_color=COLORS["text_secondary"]).pack(anchor=tk.W, padx=10, pady=(5, 0))
+        ctk.CTkEntry(
+            bots_frame,
+            textvariable=self.app.tg_bot_token_var,
+            width=320,
+            show="*",  # SEGRETO: entry mascherata (mai in chiaro, mai loggato)
+            fg_color=COLORS["bg_card"],
+            border_color=COLORS["border"],
+        ).pack(anchor=tk.W, padx=10)
+
+        ctk.CTkCheckBox(
+            bots_frame, text="Attivo", variable=self.app.tg_bot_active_var,
+        ).pack(anchor=tk.W, padx=10, pady=(6, 0))
+
+        bot_btn_frame = ctk.CTkFrame(bots_frame, fg_color="transparent")
+        bot_btn_frame.pack(fill=tk.X, padx=10, pady=(6, 5))
+        ctk.CTkButton(
+            bot_btn_frame,
+            text="Nuovo",
+            command=self.app._new_telegram_bot,
+            fg_color=COLORS["button_primary"],
+            hover_color=COLORS["back_hover"],
+            corner_radius=6,
+            width=90,
+        ).pack(side=tk.LEFT, padx=2)
+        ctk.CTkButton(
+            bot_btn_frame,
+            text="Salva/Aggiorna Bot",
+            command=self.app._save_telegram_bot_from_ui,
+            fg_color=COLORS["button_success"],
+            hover_color="#4caf50",
+            corner_radius=6,
+            width=150,
+        ).pack(side=tk.LEFT, padx=2)
+        ctk.CTkButton(
+            bot_btn_frame,
+            text="Rimuovi Bot",
+            command=self.app._remove_selected_telegram_bot,
+            fg_color=COLORS["button_danger"],
+            hover_color="#c62828",
+            corner_radius=6,
+            width=110,
+        ).pack(side=tk.LEFT, padx=2)
+
+        self.app.tg_bots_tree = ttk.Treeview(
+            bots_frame,
+            columns=("label", "token", "active"),
+            show="headings",
+            height=4,
+        )
+        self.app.tg_bots_tree.heading("label", text="Etichetta")
+        self.app.tg_bots_tree.heading("token", text="Token")
+        self.app.tg_bots_tree.heading("active", text="Attivo")
+        self.app.tg_bots_tree.column("label", width=200)
+        self.app.tg_bots_tree.column("token", width=60)
+        self.app.tg_bots_tree.column("active", width=60)
+        self.app.tg_bots_tree.pack(fill=tk.X, padx=10, pady=(0, 10))
+
+        def _on_bot_select(_event=None):
+            sel = self.app.tg_bots_tree.selection()
+            # Sincronizza lo stato anche sulla DESELEZIONE (sel vuota => None):
+            # evita che un id stale sopravviva a una deselezione.
+            try:
+                self.app.tg_selected_bot_id = int(sel[0]) if sel else None
+            except (TypeError, ValueError):
+                self.app.tg_selected_bot_id = None
+            if hasattr(self.app, "_load_selected_bot_into_editor"):
+                self.app._load_selected_bot_into_editor()
+
+        self.app.tg_bots_tree.bind("<<TreeviewSelect>>", _on_bot_select)
+        if hasattr(self.app, "_refresh_telegram_bots_tree"):
+            self.app._refresh_telegram_bots_tree()
+
         available_frame = ctk.CTkFrame(left_frame, fg_color=COLORS["bg_panel"], corner_radius=8)
         available_frame.pack(fill=tk.X, pady=(0, 5), padx=5)
 

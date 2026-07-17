@@ -665,9 +665,12 @@ class Database:
             raise ValueError(f"telegram_bot id inesistente: {int(bot_id)}")
         return int(bot_id)
 
-    def get_telegram_bots(self) -> List[Dict[str, Any]]:
-        """Tutti i bot col `bot_token` DECIFRATO (passthrough sul plaintext
-        legacy). ATTENZIONE: contiene il segreto in chiaro -> non loggare mai."""
+    def get_telegram_bots(self, include_token: bool = True) -> List[Dict[str, Any]]:
+        """Tutti i bot. Con `include_token=True` (default) il `bot_token` e'
+        DECIFRATO (segreto in chiaro -> non loggare mai). Con `include_token=False`
+        il token NON viene decifrato (`bot_token=""`): si evita di portare i
+        segreti in chiaro in memoria quando serve solo la loro PRESENZA (`has_token`,
+        es. refresh UI). `has_token` e' sempre presente e non richiede decifratura."""
         rows = self._execute(
             "SELECT id, label, bot_token, is_active, created_at, updated_at "
             "FROM telegram_bots ORDER BY id",
@@ -681,7 +684,8 @@ class Database:
                 {
                     "id": int(row["id"]),
                     "label": row["label"],
-                    "bot_token": self._cipher.decrypt(stored) if stored else "",
+                    "has_token": bool(stored),
+                    "bot_token": (self._cipher.decrypt(stored) if (include_token and stored) else ""),
                     "is_active": bool(row["is_active"]),
                     "created_at": row["created_at"],
                     "updated_at": row["updated_at"],
