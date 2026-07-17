@@ -89,5 +89,8 @@ Note di trasporto (PR-1):
 ## Sicurezza
 
 Il `bot_token` è una credenziale completa (chi lo possiede controlla il bot):
-va **cifrato a riposo** nel DB (previsto in PR-2, oggi `_SECRET_FIELDS` non lo
-copre) e mai committato/loggato.
+è **cifrato a riposo** nel DB — la chiave `telegram.bot_token` è in
+`_SECRET_FIELDS` (`database.py`), quindi `save_telegram_settings` la scrive
+cifrata (formato `enc:v1:…`) e `get_telegram_settings` la decifra in modo
+trasparente; il plaintext legacy eventualmente presente migra al primo salvataggio.
+Non va mai committato né loggato (il trasporto lo redige, vedi sopra).

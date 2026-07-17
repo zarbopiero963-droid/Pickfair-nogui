@@ -206,17 +206,26 @@ def test_telegram_secrets_not_stored_in_plaintext():
         db_path = str(Path(td) / "test.db")
         db = Database(db_path)
 
+        # bot_token: credenziale completa del bot -> deve essere cifrata a riposo.
+        # Placeholder NON in forma "<digits>:<UPPERCASE>" per non attivare la
+        # redazione token-shaped dei diff di review (falso positivo noto).
+        bot_token_value = "fake-bot-token-not-a-real-secret-value"
         db.save_telegram_settings({
             "api_id": "12345678",
             "api_hash": "abcdef1234567890abcdef1234567890",
             "session_string": "1BAAAAAAAAAA_FAKE_SESSION_STRING",
+            "bot_token": bot_token_value,
             "phone_number": "+393331234567",
             "enabled": True,
         })
 
-        for field in ("telegram.api_id", "telegram.api_hash", "telegram.session_string"):
+        # BLOCK: bot_token era plaintext prima di aggiungerlo a _SECRET_FIELDS.
+        for field in ("telegram.api_id", "telegram.api_hash", "telegram.session_string",
+                      "telegram.bot_token"):
             raw = _raw_setting(db_path, field)
             assert raw.startswith("enc:v1:"), f"{field} must be encrypted on disk"
+        # Difesa esplicita: il valore in chiaro del token NON deve comparire su disco.
+        assert bot_token_value not in _raw_setting(db_path, "telegram.bot_token")
 
         # phone_number is NOT a secret field — must remain plaintext
         raw_phone = _raw_setting(db_path, "telegram.phone_number")
@@ -226,6 +235,8 @@ def test_telegram_secrets_not_stored_in_plaintext():
         assert tg["api_id"] == "12345678"
         assert tg["api_hash"] == "abcdef1234567890abcdef1234567890"
         assert tg["session_string"] == "1BAAAAAAAAAA_FAKE_SESSION_STRING"
+        # Round-trip trasparente: la lettura decifra e restituisce l'originale.
+        assert tg["bot_token"] == bot_token_value
 
 
 @pytest.mark.unit

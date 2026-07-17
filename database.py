@@ -28,6 +28,11 @@ _SECRET_FIELDS: frozenset = frozenset({
     "telegram.api_id",
     "telegram.api_hash",
     "telegram.session_string",
+    # bot_token e' una credenziale completa del bot (chi lo possiede controlla il
+    # bot): va cifrata a riposo come session_string/api_hash. E' gia' letta/scritta
+    # via get/save_telegram_settings (chiave "telegram.bot_token"); aggiungerla qui
+    # la cifra in modo trasparente (il plaintext legacy migra al prossimo save).
+    "telegram.bot_token",
 })
 
 _DB_DURABILITY_PROFILES: Dict[str, Dict[str, str]] = {
