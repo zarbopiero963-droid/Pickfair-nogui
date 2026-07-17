@@ -420,6 +420,40 @@ def test_botapi_persistent_poll_failure_degrades_to_failed():
     assert svc.runtime_snapshot()["state"] == "CONNECTED"
 
 
+def test_botapi_start_does_not_overwrite_live_orphan_transport():
+    # BLOCK (Fable full-range): dopo uno start fallito con thread VIVO (transport
+    # orfano mantenuto), un retry di start() NON deve costruire un SECONDO
+    # transport sullo stesso token (409). Fail-closed finché non si fa stop().
+    built = []
+
+    class _StuckExplodingTransport:
+        def __init__(self):
+            self.stopped = False
+            self._thread = _FakeThread(lambda: not self.stopped)
+
+        def start(self):
+            raise RuntimeError("boom")  # start fallisce, ma il thread resta vivo
+
+        def stop(self, timeout=5.0):
+            pass
+
+    def factory(*_a):
+        t = _StuckExplodingTransport()
+        built.append(t)
+        return t
+
+    rt = TelegramBotApiRuntime(bot_token="tok", chat_ids=[123], transport_factory=factory)
+    out1 = rt.start()
+    assert out1["started"] is False
+    assert rt._transport is not None            # orfano mantenuto (thread vivo)
+    assert len(built) == 1
+
+    out2 = rt.start()                            # retry diretto sull'adapter
+    assert out2["started"] is False
+    assert "orphan" in out2["error"]
+    assert len(built) == 1                       # NESSUN secondo transport costruito
+
+
 def test_botapi_stop_success_clears_transport_and_is_idempotent():
     # Fable: uno stop riuscito azzera self._transport; un secondo stop resta
     # pulito (stopped:True), niente FAILED spurio su transport gia' fermo.

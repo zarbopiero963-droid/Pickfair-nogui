@@ -167,8 +167,16 @@ class TelegramBotApiRuntime:
         )
 
     def start(self) -> dict:
-        if self._started and self._transport_alive():
-            return {"started": True, "reason": "already_running"}
+        # Non costruire un SECONDO transport se ne esiste già uno VIVO: sarebbe un
+        # doppio getUpdates sullo stesso token (Telegram 409). Vale sia per un
+        # runtime già avviato (already_running) sia per un transport ORFANO
+        # rimasto vivo dopo uno start fallito — in tal caso fail-closed: il
+        # chiamante deve fare stop() prima di ritentare (difesa dell'adapter,
+        # oltre al guard previous_runtime_still_alive del service).
+        if self._transport_alive():
+            if self._started:
+                return {"started": True, "reason": "already_running"}
+            return {"started": False, "error": "bot_transport_orphan_alive"}
         self.intentional_stop = False
         # Avvio del transport fail-safe: se costruzione/start sollevano, NON si
         # dichiara CONNECTED (contratto duck-typed come TelegramListener.start,
