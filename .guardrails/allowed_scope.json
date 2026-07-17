@@ -70,6 +70,7 @@
       "allow_tests": true,
       "files": [
         "telegram_bot_runtime.py",
+        "telegram_bot_transport.py",
         "services/telegram_service.py",
         "tests/services/test_telegram_service_botapi.py",
         "ops/telegram_bots.md",

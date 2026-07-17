@@ -61,12 +61,22 @@ Selezione sorgente in `TelegramService.start()`:
   (l'orchestrazione N-bot arriva nella PR successiva: niente drop silenzioso);
 - niente di utilizzabile → **fail-closed** `Configurazione Telegram incompleta` (invariato).
 
-Coerenza health/invariant: un transport attivo conta come **1 handler** (l'invariant
-guard richiede esattamente 1 handler quando `CONNECTED`). Se il thread `getUpdates`
-muore in modo non intenzionale lo stato dell'adapter diventa **`FAILED`** (con
-`last_error`, `handlers_registered=0`): così l'invariant guard e l'**autoheal
-esistenti** rilevano la perdita di ingestione invece di restare `CONNECTED` in
-silenzio.
+Coerenza health/invariant: un transport **sano** conta come **1 handler**
+(l'invariant guard richiede esattamente 1 handler quando `CONNECTED`). Lo stato
+dell'adapter diventa **`FAILED`** (con `last_error`, `handlers_registered=0`) in
+due casi di **ingestione morta**, così l'invariant guard e l'**autoheal esistenti**
+reagiscono invece di restare `CONNECTED` in silenzio (fail-open):
+- il thread `getUpdates` muore in modo non intenzionale (`bot_transport_thread_dead`);
+- il thread è vivo ma i poll `getUpdates` falliscono in modo **permanente** (es.
+  `bot_token` 401 o 409 Conflict): il transport conta i fallimenti consecutivi
+  (`_consecutive_failures`, azzerato a ogni poll riuscito) e oltre la soglia
+  (`_MAX_CONSECUTIVE_FAILURES=5`) l'adapter degrada a `FAILED`
+  (`bot_transport_persistent_poll_failure`). Un `restart` con token ancora
+  invalido rifallisce → lockout autoheal → il problema resta **visibile**.
+
+L'idempotenza (`already_running`) è valutata **prima** della selezione sorgente: un
+runtime già attivo non rivaluta il gate, così un cambio di config a runtime (2° bot
+attivato, bot disattivato) non fa fallire/riavviare un runtime sano.
 
 Solo `chat_id` **numerici** (es. `-100…`) sono ascoltabili via `getUpdates` (che
 restituisce `chat.id` numerico): i `chat_id` non numerici (es. `@canale`) vengono
@@ -76,8 +86,9 @@ numeriche risulta **non utilizzabile** → fail-closed. La risoluzione di
 
 Il `bot_transport_factory` è iniettabile (come il `client_factory` Telethon) per i
 test headless. **Nessun effetto su money-management/ordini/Betfair/dutching/parsing.**
-L'orchestrazione N-bot, l'autoheal **per-bot** e un vero health-surface del transport
-(che rilevi il backoff permanente con thread vivo) sono rimandati.
+L'orchestrazione N-bot e l'autoheal **per-bot** sono rimandati alla PR successiva
+(il rilevamento del backoff permanente con thread vivo è invece già coperto qui
+dal contatore `_consecutive_failures`).
 
 ## GUI — gestione bot (PR-4, tab Telegram)
 

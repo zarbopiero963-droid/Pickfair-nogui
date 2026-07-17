@@ -189,6 +189,16 @@ class TelegramService:
                 out.append((bot, chat_ids))
         return out
 
+    def _running_chat_count(self) -> int:
+        """Numero di chat monitorate dal listener IN ESECUZIONE (Telethon o Bot
+        API), per le risposte `already_running` — evita di rivalutare il gate/la
+        selezione su un runtime sano. Fail-safe: 0 se non leggibile."""
+        try:
+            snap = self.listener.status() if self.listener else {}
+            return int(snap.get("monitored_chat_count", 0) or 0)
+        except Exception:  # pragma: no cover - degrado difensivo
+            return 0
+
     def _build_botapi_runtime(self, bot: dict, chat_ids: list) -> TelegramBotApiRuntime:
         """Costruisce l'adapter Bot API (path bot_token, PR-5a). Estratto da
         start() per tenerne bassa la complessità."""
@@ -233,10 +243,41 @@ class TelegramService:
                 "state": self.state,
             }
 
-        # Selezione sorgente di ingestione (epica #374 PR-5a). Il path Telethon
-        # userbot (api_id/api_hash) resta prioritario e INVARIATO. Solo quando le
+        # Idempotenza PRIMA della selezione sorgente (epica #374 PR-5a): un
+        # servizio GIÀ in esecuzione NON deve rivalutare il gate Bot API. Se la
+        # config DB cambiasse a runtime (2° bot attivato, bot disattivato), una
+        # start() ridondante che rivaluta il gate solleverebbe e forzerebbe FAILED
+        # su un runtime SANO (transport vivo), innescando un autoheal inutile con
+        # possibile perdita d'ingestione. Il conteggio chat qui viene dal listener
+        # in esecuzione (non da una nuova selezione).
+        if self.state in {"CONNECTING", "CONNECTED", "RECONNECTING"}:
+            return {
+                "started": True,
+                "reason": "already_running",
+                "chat_count": self._running_chat_count(),
+                "state": self.state,
+            }
+
+        if self.listener and str(getattr(self.listener, "state", "")) in {"CONNECTING", "CONNECTED", "RECONNECTING"}:
+            return {
+                "started": True,
+                "reason": "already_running",
+                "chat_count": self._running_chat_count(),
+                "state": self.state,
+            }
+
+        old_thread = getattr(self.listener, "_runtime_thread", None) if self.listener else None
+        if old_thread is not None and old_thread.is_alive():
+            self.last_error = "previous_runtime_still_alive"
+            self._set_state("FAILED")
+            self.connected = False
+            return {"started": False, "reason": "previous_runtime_still_alive", "state": self.state}
+
+        # Selezione sorgente di ingestione. Il path Telethon userbot
+        # (api_id/api_hash) resta prioritario e INVARIATO. Solo quando le
         # credenziali userbot mancano si tenta il path Bot API (bot_token), che
-        # NON richiede api_id/api_hash: è questo il gate rilassato.
+        # NON richiede api_id/api_hash: è questo il gate rilassato. Eseguito DOPO
+        # l'idempotenza => non fa mai fallire un runtime già attivo.
         bot_api_selection = None
         if not cfg.api_id or not cfg.api_hash:
             usable = self._usable_bot_api_bots()
@@ -257,37 +298,13 @@ class TelegramService:
                 self._set_state("FAILED")
                 raise RuntimeError(self.last_error)
 
-        # Conteggio chat coerente con la sorgente selezionata: sul path Bot API
-        # le chat vivono nel bot selezionato, NON in cfg.monitored_chat_ids (lista
-        # userbot, vuota qui). Riportare quest'ultima falserebbe a 0 la copertura
-        # nelle risposte "already_running".
+        # Conteggio chat della sorgente selezionata per la risposta di avvio:
+        # sul path Bot API le chat vivono nel bot selezionato, NON in
+        # cfg.monitored_chat_ids (lista userbot, vuota qui).
         active_chat_count = (
             len(bot_api_selection[1]) if bot_api_selection is not None
             else len(cfg.monitored_chat_ids)
         )
-
-        if self.state in {"CONNECTING", "CONNECTED", "RECONNECTING"}:
-            return {
-                "started": True,
-                "reason": "already_running",
-                "chat_count": active_chat_count,
-                "state": self.state,
-            }
-
-        if self.listener and str(getattr(self.listener, "state", "")) in {"CONNECTING", "CONNECTED", "RECONNECTING"}:
-            return {
-                "started": True,
-                "reason": "already_running",
-                "chat_count": active_chat_count,
-                "state": self.state,
-            }
-
-        old_thread = getattr(self.listener, "_runtime_thread", None) if self.listener else None
-        if old_thread is not None and old_thread.is_alive():
-            self.last_error = "previous_runtime_still_alive"
-            self._set_state("FAILED")
-            self.connected = False
-            return {"started": False, "reason": "previous_runtime_still_alive", "state": self.state}
 
         try:
             self.intentional_stop = False

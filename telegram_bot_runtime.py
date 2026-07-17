@@ -92,16 +92,36 @@ class TelegramBotApiRuntime:
         # muore in modo NON intenzionale, lo stato diventa FAILED (vedi property).
         self._state_base = "CREATED"
 
+    # Soglia di fallimenti getUpdates consecutivi oltre la quale il transport è
+    # considerato in ingestione morta (thread vivo ma nessun poll riuscito, es.
+    # bot_token 401 o 409 Conflict permanente). ~5 poll con backoff esponenziale
+    # ≈ decine di secondi di fallimento continuo prima di degradare.
+    _MAX_CONSECUTIVE_FAILURES = 5
+
     # ---- superficie compatibile con TelegramService.self.listener ----
     @property
     def state(self) -> str:
         """Stato effettivo. Avviato ma con thread getUpdates morto (non stop
-        intenzionale) => FAILED: così l'invariant guard ('CONNECTED richiede 1
+        intenzionale) => FAILED; oppure thread vivo ma in fallimento PERMANENTE
+        (401/409) => FAILED: così l'invariant guard ('CONNECTED richiede 1
         handler') e l'autoheal esistenti rilevano la perdita di ingestione,
-        invece di restare 'CONNECTED' per sempre in silenzio."""
+        invece di restare 'CONNECTED' per sempre in silenzio (fail-open)."""
         if self._state_base != "CONNECTED":
             return self._state_base
-        return "CONNECTED" if self._transport_alive() else "FAILED"
+        if not self._transport_alive():
+            return "FAILED"
+        if self._transport_persistently_failing():
+            return "FAILED"
+        return "CONNECTED"
+
+    def _transport_persistently_failing(self) -> bool:
+        """True se il transport ha accumulato troppi fallimenti getUpdates
+        consecutivi: thread vivo ma ingestione morta (fail-open da chiudere)."""
+        cf = getattr(self._transport, "_consecutive_failures", 0) if self._transport else 0
+        try:
+            return int(cf) >= self._MAX_CONSECUTIVE_FAILURES
+        except (TypeError, ValueError):  # pragma: no cover
+            return False
 
     @property
     def running(self) -> bool:
@@ -223,22 +243,32 @@ class TelegramBotApiRuntime:
     def status(self) -> dict:
         inner = self._sink.status()
         alive = self.running
+        degraded = bool(self._state_base == "CONNECTED" and self._transport_persistently_failing())
+        # "Sano" = thread vivo E non in fallimento permanente. Solo un transport
+        # sano conta come 1 handler (coerente con lo stato: degradato => FAILED).
+        healthy = bool(alive and not degraded)
+        if self._thread_dead_unexpectedly():
+            last_error = "bot_transport_thread_dead"
+        elif degraded:
+            last_error = "bot_transport_persistent_poll_failure"
+        else:
+            last_error = ""
         return {
             "state": self.state,
             "running": alive,
             "intentional_stop": bool(self.intentional_stop),
             "reconnect_attempts": 0,
             "reconnect_in_progress": False,
-            # Thread getUpdates morto in modo non intenzionale => errore esplicito
-            # (l'autoheal/invariant guard vedono FAILED + last_error, non un
-            # 'CONNECTED' muto).
-            "last_error": "bot_transport_thread_dead" if self._thread_dead_unexpectedly() else "",
+            # Ingestione morta (thread morto, o vivo ma in fallimento permanente)
+            # => errore esplicito: autoheal/invariant guard vedono FAILED +
+            # last_error, non un 'CONNECTED' muto (fail-open).
+            "last_error": last_error,
             "last_successful_message_ts": inner.get("last_successful_message_ts"),
             "listener_started": bool(self._started),
-            # UN transport attivo = UN handler: soddisfa l'invariant guard
-            # ("CONNECTED richiede esattamente 1 handler").
-            "handlers_registered": 1 if alive else 0,
-            "active_network_resources": 1 if alive else 0,
+            # UN transport SANO = UN handler: soddisfa l'invariant guard
+            # ("CONNECTED richiede esattamente 1 handler"); degradato => 0.
+            "handlers_registered": 1 if healthy else 0,
+            "active_network_resources": 1 if healthy else 0,
             "monitored_chat_count": len(self._chat_ids),
         }
 

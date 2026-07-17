@@ -378,6 +378,48 @@ def test_botapi_stop_failclosed_if_transport_thread_survives():
     assert rt._transport is not None      # riferimento mantenuto (thread ancora vivo)
 
 
+def test_already_running_botapi_not_reevaluated_on_config_change():
+    # BLOCK (Fugu/Fable full-range): un servizio GIÀ attivo via Bot API NON deve
+    # rivalutare il gate. Se la config cambia (2° bot attivato) una start()
+    # ridondante NON deve sollevare/andare FAILED: ritorna already_running.
+    db = _one_active_bot_db()
+    svc = _svc(db, capture=[])
+    r1 = svc.start()
+    assert r1["started"] is True and svc.state == "CONNECTED"
+
+    # "si attiva un secondo bot" nel DB (chat NUMERICA => usable)
+    db._bots.append({"id": 99, "label": "B2", "bot_token": "tok2", "is_active": True, "has_token": True})
+    db._chats[99] = [{"chat_id": "-100888", "is_active": True}]
+
+    r2 = svc.start()  # sul vecchio ordine: rivalutava il gate -> RuntimeError
+    assert r2["reason"] == "already_running"
+    assert svc.state == "CONNECTED"
+    assert r2["chat_count"] == 1  # conteggio dal listener in esecuzione
+
+
+def test_botapi_persistent_poll_failure_degrades_to_failed():
+    # BLOCK (Fugu full-range): un transport con thread VIVO ma getUpdates in
+    # fallimento permanente (401/409) non deve restare CONNECTED (fail-open):
+    # oltre la soglia lo stato degrada a FAILED con handler=0 e last_error, così
+    # l'invariant guard/autoheal rilevano l'ingestione morta.
+    cap = []
+    svc = _svc(_one_active_bot_db(), capture=cap)
+    svc.start()
+    assert svc.runtime_snapshot()["state"] == "CONNECTED"
+
+    # simula backoff permanente: molti fallimenti consecutivi, thread vivo
+    cap[0]._consecutive_failures = 5
+    snap = svc.runtime_snapshot()
+    assert snap["state"] == "FAILED"
+    assert snap["handlers_registered"] == 0
+    st = svc.listener.status()
+    assert st["last_error"] == "bot_transport_persistent_poll_failure"
+
+    # un poll riuscito azzera il contatore -> torna CONNECTED
+    cap[0]._consecutive_failures = 0
+    assert svc.runtime_snapshot()["state"] == "CONNECTED"
+
+
 def test_botapi_stop_success_clears_transport_and_is_idempotent():
     # Fable: uno stop riuscito azzera self._transport; un secondo stop resta
     # pulito (stopped:True), niente FAILED spurio su transport gia' fermo.

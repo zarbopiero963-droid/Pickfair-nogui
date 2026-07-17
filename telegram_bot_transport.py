@@ -110,6 +110,13 @@ class TelegramBotApiTransport:
         self._offset = 0
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        # Health-surface (epica #374 PR-5a): fallimenti getUpdates consecutivi.
+        # Un thread vivo ma in backoff PERMANENTE (es. bot_token 401 o 409
+        # Conflict) non riceve nulla: senza questo contatore il runtime resterebbe
+        # "CONNECTED" pur con ingestione morta (fail-open). Azzerato ad ogni poll
+        # riuscito, incrementato ad ogni fallimento; l'adapter lo legge per
+        # degradare lo stato oltre una soglia.
+        self._consecutive_failures = 0
 
     def _scheme_allowed(self, url: str) -> bool:
         """True se `url` usa uno schema consentito: sempre https://, e http://
@@ -249,7 +256,9 @@ class TelegramBotApiTransport:
             try:
                 self._offset = self.poll_once(self._offset)
                 backoff = self._base_backoff
+                self._consecutive_failures = 0  # poll riuscito: health OK
             except Exception as exc:
+                self._consecutive_failures += 1  # health-surface (vedi __init__)
                 # Diagnostica SENZA segreti: tipo eccezione + messaggio REDATTO.
                 # Il messaggio (str(exc)) restituisce il "perche'" del fallimento
                 # (prima si loggava solo il nome della classe, perdendo la causa).
