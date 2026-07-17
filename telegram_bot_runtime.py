@@ -27,7 +27,15 @@ from telegram_listener import TelegramListener
 
 
 class TelegramBotApiRuntime:
-    """Adapter listener-compatibile che ascolta via Bot API (un bot)."""
+    """Adapter listener-compatibile che ascolta via Bot API (un bot).
+
+    Concorrenza: come il path Telethon (`TelegramListener`), i metodi di lifecycle
+    (`start`/`stop`) sono invocati dal lifecycle SERIALIZZATO del `TelegramService`
+    (start al boot; `restart` fa stop→start in sequenza; il watchdog chiama
+    `run_autoheal_once`→`restart`) — non in parallelo. Non si introduce quindi un
+    lock qui; una sincronizzazione esplicita sarà valutata solo se/quando il
+    runtime multi-bot renderà i lifecycle concorrenti (rimandato alla PR N-bot).
+    """
 
     def __init__(
         self,
@@ -165,6 +173,10 @@ class TelegramBotApiRuntime:
             # il thread residuo verrà ritentato dallo stop fail-closed.
             if not self._transport_alive():
                 self._transport = None
+            # Simmetria col fail-closed di stop(): uno start fallito NON è uno stop
+            # intenzionale (il valore è già False dall'inizio di start(); esplicito
+            # per chiarezza), così il recovery non viene soppresso.
+            self.intentional_stop = False
             # SOLO il tipo dell'eccezione: il messaggio potrebbe (in teoria)
             # contenere dati sensibili -> mai propagarlo grezzo dal path col
             # bot_token.

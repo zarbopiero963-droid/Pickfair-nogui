@@ -84,16 +84,29 @@ class _BotDB:
         self.saved.append(dict(payload))
 
 
+class _FakeThread:
+    """Thread fittizio: `is_alive()` riflette il flag di stop del transport, così
+    `_transport_alive()` esercita il path del thread REALE (`_thread.is_alive()`),
+    non il fallback sul flag `stopped` — come in produzione (il transport reale
+    espone sempre un `_thread`)."""
+
+    def __init__(self, alive_fn):
+        self._alive_fn = alive_fn
+
+    def is_alive(self):
+        return bool(self._alive_fn())
+
+
 class _FakeTransport:
-    """Transport fake: cattura on_message, nessun thread reale."""
+    """Transport fake: cattura on_message; `_thread.is_alive()` segue `stopped`."""
 
     def __init__(self, bot_token, chat_ids, on_message):
         self.bot_token = bot_token
         self.chat_ids = chat_ids
         self.on_message = on_message
-        self._thread = None
         self.started = False
         self.stopped = False
+        self._thread = _FakeThread(lambda: not self.stopped)
 
     def start(self):
         self.started = True
@@ -332,11 +345,12 @@ def test_stop_stops_transport():
 
 
 class _StuckTransport:
-    """Transport fake che NON si ferma: `stopped` resta False (thread 'vivo')."""
+    """Transport fake che NON si ferma: `stopped` resta False => `_thread.is_alive()`
+    resta True (thread genuinamente 'vivo')."""
 
     def __init__(self, *a):
         self.stopped = False
-        self._thread = None
+        self._thread = _FakeThread(lambda: not self.stopped)
 
     def start(self):
         pass
@@ -388,13 +402,13 @@ def test_botapi_start_failure_stops_transport_no_leak():
     class _ExplodingTransport:
         def __init__(self):
             self.stopped = False
-            self._thread = None
+            self._thread = _FakeThread(lambda: not self.stopped)
 
         def start(self):
             raise RuntimeError("boom dopo partial start")
 
         def stop(self, timeout=5.0):
-            self.stopped = True
+            self.stopped = True  # stop efficace -> thread morto
 
     def factory(*_a):
         t = _ExplodingTransport()
@@ -419,8 +433,8 @@ def test_botapi_start_failure_keeps_transport_if_thread_survives():
     # service non lo vedrebbe e un retry aprirebbe un SECONDO getUpdates (409).
     class _StuckExplodingTransport:
         def __init__(self):
-            self.stopped = False  # stop() non ferma -> resta vivo
-            self._thread = None
+            self.stopped = False  # stop() non ferma -> _thread.is_alive() resta True
+            self._thread = _FakeThread(lambda: not self.stopped)
 
         def start(self):
             raise RuntimeError("boom")
