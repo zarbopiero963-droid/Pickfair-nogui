@@ -106,6 +106,7 @@ class _FakeTransport:
         self.on_message = on_message
         self.started = False
         self.stopped = False
+        self._consecutive_failures = 0
         self._thread = _FakeThread(lambda: not self.stopped)
 
     def start(self):
@@ -113,6 +114,11 @@ class _FakeTransport:
 
     def stop(self, timeout=5.0):
         self.stopped = True
+
+    def health_snapshot(self):
+        # Esercita il path ATOMICO dell'adapter (come il transport reale).
+        alive = bool(self._thread is not None and self._thread.is_alive())
+        return alive, int(self._consecutive_failures)
 
 
 def _next_gol_pattern():
@@ -206,6 +212,44 @@ def test_botapi_stale_message_does_not_emit_signal():
     cap[0].on_message(MSG_NEXT_GOL, -100999, old)
 
     assert "SIGNAL_RECEIVED" not in [t for t, _ in svc.bus.events]
+
+
+def test_botapi_selection_failclosed_on_chat_read_error():
+    # BLOCK (Fugu full-range): un errore DB leggendo le chat di un bot ATTIVO NON
+    # deve droppare silenziosamente la sorgente (rischio: avviare un set parziale
+    # bypassando il fail-closed multi-bot). start() fa fail-closed.
+    class _RaisingChatsDB(_BotDB):
+        def get_telegram_bot_chats(self, bot_id):
+            raise RuntimeError("db chats error")
+
+    db = _RaisingChatsDB(
+        bots=[{"id": 1, "label": "A", "bot_token": "tok-a", "is_active": True, "has_token": True}],
+    )
+    svc = _svc(db, capture=[])
+    with pytest.raises(RuntimeError) as exc:
+        svc.start()
+    assert "config_read_error" in str(exc.value)
+    assert svc.state == "FAILED"
+
+
+def test_start_recovers_when_cached_state_is_stale_connected():
+    # BLOCK (Fugu full-range): self.state cache "CONNECTED" stale dopo la morte del
+    # transport NON deve far tornare already_running (bloccando il recovery). Il
+    # refresh pre-idempotenza riallinea allo stato reale (FAILED) e start procede.
+    cap = []
+    svc = _svc(_one_active_bot_db(), capture=cap)
+    svc.start()
+    assert svc.state == "CONNECTED"
+
+    class _Dead:
+        def is_alive(self):
+            return False
+
+    cap[0]._thread = _Dead()   # transport morto
+    svc.state = "CONNECTED"    # cache stale (nessuno ha ancora rinfrescato)
+
+    r = svc.start()            # deve RECUPERARE, non tornare already_running
+    assert r.get("reason") != "already_running"
 
 
 def test_multi_active_bot_fails_closed():

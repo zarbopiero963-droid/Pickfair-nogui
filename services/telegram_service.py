@@ -174,16 +174,18 @@ class TelegramService:
         try:
             bots = self.db.get_telegram_bots(include_token=True) or []
         except Exception as exc:  # pragma: no cover - degrado difensivo
+            # Impossibile ELENCARE i bot: nessuna sorgente Bot API leggibile => []
+            # (start() cade nel fail-closed 'Configurazione incompleta').
             logger.warning("[TelegramService] lettura bot Bot API fallita: %s", exc)
             return out
         for bot in bots:
             if not bot.get("is_active") or not bot.get("bot_token"):
                 continue
-            try:
-                chats = self.db.get_telegram_bot_chats(bot["id"]) or []
-            except Exception as exc:  # pragma: no cover - degrado difensivo
-                logger.warning("[TelegramService] lettura chat bot fallita: %s", exc)
-                continue
+            # Errore leggendo le chat di un bot ATTIVO: NON si salta in silenzio
+            # (falserebbe il conteggio e potrebbe bypassare il fail-closed
+            # multi-bot avviando un set PARZIALE). Si propaga: start() fa
+            # fail-closed sull'intera selezione.
+            chats = self.db.get_telegram_bot_chats(bot["id"]) or []
             chat_ids = self._numeric_active_chat_ids(chats)
             if chat_ids:
                 out.append((bot, chat_ids))
@@ -243,6 +245,14 @@ class TelegramService:
                 "state": self.state,
             }
 
+        # Riallinea lo stato-cache col runtime REALE prima dell'idempotenza: uno
+        # `self.state` stale "CONNECTED" (dopo morte o degrado permanente del
+        # transport, non ancora rinfrescato) NON deve far tornare already_running
+        # su un runtime in realtà morto, impedendo il recovery. Il listener/adapter
+        # riporta lo stato effettivo (FAILED su ingestione morta).
+        if self.listener is not None:
+            self._refresh_runtime_truth_from_listener()
+
         # Idempotenza PRIMA della selezione sorgente (epica #374 PR-5a): un
         # servizio GIÀ in esecuzione NON deve rivalutare il gate Bot API. Se la
         # config DB cambiasse a runtime (2° bot attivato, bot disattivato), una
@@ -280,7 +290,17 @@ class TelegramService:
         # l'idempotenza => non fa mai fallire un runtime già attivo.
         bot_api_selection = None
         if not cfg.api_id or not cfg.api_hash:
-            usable = self._usable_bot_api_bots()
+            try:
+                usable = self._usable_bot_api_bots()
+            except Exception as exc:
+                # Errore DB nel determinare il set di bot: NON avviare un set
+                # parziale (fail-closed). Meglio non partire e ritentare che
+                # droppare silenziosamente una sorgente.
+                logger.warning("[TelegramService] selezione bot Bot API fallita: %s", exc)
+                self.last_error = "telegram_bot_config_read_error"
+                self.intentional_stop = False
+                self._set_state("FAILED")
+                raise RuntimeError(self.last_error)
             if len(usable) == 1:
                 bot_api_selection = usable[0]
             elif len(usable) > 1:

@@ -99,29 +99,43 @@ class TelegramBotApiRuntime:
     _MAX_CONSECUTIVE_FAILURES = 5
 
     # ---- superficie compatibile con TelegramService.self.listener ----
+    def _health_read(self) -> tuple:
+        """Ritorna (alive, degraded) da UNA lettura ATOMICA del transport quando
+        disponibile (`health_snapshot()` sotto lock del transport → la coppia
+        thread-vivo / fallimenti-consecutivi è coerente, niente stato torn
+        cross-thread). Fallback a letture separate per transport senza il metodo
+        (fake nei test). `degraded` = thread vivo ma troppi getUpdates falliti
+        consecutivi (ingestione morta → fail-open da chiudere)."""
+        t = self._transport
+        if t is None:
+            return False, False
+        snap = getattr(t, "health_snapshot", None)
+        if callable(snap):
+            alive, failures = snap()
+        else:  # pragma: no cover - solo fake di test senza health_snapshot
+            alive = self._transport_alive()
+            try:
+                failures = int(getattr(t, "_consecutive_failures", 0) or 0)
+            except (TypeError, ValueError):
+                failures = 0
+        degraded = bool(
+            self._state_base == "CONNECTED"
+            and alive
+            and int(failures) >= self._MAX_CONSECUTIVE_FAILURES
+        )
+        return bool(alive), degraded
+
     @property
     def state(self) -> str:
-        """Stato effettivo. Avviato ma con thread getUpdates morto (non stop
-        intenzionale) => FAILED; oppure thread vivo ma in fallimento PERMANENTE
-        (401/409) => FAILED: così l'invariant guard ('CONNECTED richiede 1
-        handler') e l'autoheal esistenti rilevano la perdita di ingestione,
-        invece di restare 'CONNECTED' per sempre in silenzio (fail-open)."""
+        """Stato effettivo. Avviato ma con thread getUpdates morto, o vivo ma in
+        fallimento PERMANENTE (401/409) => FAILED: così l'invariant guard
+        ('CONNECTED richiede 1 handler') e l'autoheal esistenti rilevano la perdita
+        di ingestione invece di un 'CONNECTED' muto (fail-open). Derivato da una
+        singola lettura atomica (`_health_read`) => coerente."""
         if self._state_base != "CONNECTED":
             return self._state_base
-        if not self._transport_alive():
-            return "FAILED"
-        if self._transport_persistently_failing():
-            return "FAILED"
-        return "CONNECTED"
-
-    def _transport_persistently_failing(self) -> bool:
-        """True se il transport ha accumulato troppi fallimenti getUpdates
-        consecutivi: thread vivo ma ingestione morta (fail-open da chiudere)."""
-        cf = getattr(self._transport, "_consecutive_failures", 0) if self._transport else 0
-        try:
-            return int(cf) >= self._MAX_CONSECUTIVE_FAILURES
-        except (TypeError, ValueError):  # pragma: no cover
-            return False
+        alive, degraded = self._health_read()
+        return "CONNECTED" if (alive and not degraded) else "FAILED"
 
     @property
     def running(self) -> bool:
@@ -132,9 +146,6 @@ class TelegramBotApiRuntime:
         if self._transport is None:
             return None
         return getattr(self._transport, "_thread", None)
-
-    def _thread_dead_unexpectedly(self) -> bool:
-        return self._state_base == "CONNECTED" and not self._transport_alive()
 
     def handle_incoming(self, *args, **kwargs):
         # Delega al sink (usato come on_message del transport, ma esposto anche
@@ -250,17 +261,12 @@ class TelegramBotApiRuntime:
 
     def status(self) -> dict:
         inner = self._sink.status()
-        # Snapshot ATOMICO: leggi liveness e fallimenti UNA sola volta e derivane
-        # TUTTI i campi (state/running/handlers/last_error). Altrimenti, se il
-        # thread muore o supera la soglia TRA due letture, lo snapshot potrebbe
-        # uscire incoerente (es. state="FAILED" con handlers_registered=1),
-        # violando l'invariant guard "CONNECTED => 1 handler".
-        alive = self._transport_alive()
-        degraded = bool(
-            self._state_base == "CONNECTED" and self._transport_persistently_failing()
-        )
-        # Stato derivato dagli stessi valori appena letti (non dalla property
-        # `state`, che rileggerebbe il transport in un istante diverso).
+        # Snapshot ATOMICO: liveness e fallimenti da UNA lettura (`_health_read`,
+        # coppia coerente sotto lock del transport). Da questi derivano TUTTI i
+        # campi (state/running/handlers/last_error): mai incoerenti tra loro (es.
+        # state="FAILED" con handlers=1), invariant guard "CONNECTED => 1 handler"
+        # sempre rispettato.
+        alive, degraded = self._health_read()
         if self._state_base != "CONNECTED":
             state = self._state_base
         elif not alive or degraded:

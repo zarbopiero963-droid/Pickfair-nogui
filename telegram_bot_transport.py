@@ -116,7 +116,21 @@ class TelegramBotApiTransport:
         # "CONNECTED" pur con ingestione morta (fail-open). Azzerato ad ogni poll
         # riuscito, incrementato ad ogni fallimento; l'adapter lo legge per
         # degradare lo stato oltre una soglia.
+        # `_health_lock` rende ATOMICA la lettura della coppia (thread_alive,
+        # consecutive_failures) via health_snapshot(): il thread di polling scrive
+        # il contatore sotto lock, il chiamante (watchdog/adapter) lo legge sotto
+        # lock, così lo snapshot non è mai torn (thread morto "tra" le due letture).
+        self._health_lock = threading.Lock()
         self._consecutive_failures = 0
+
+    def health_snapshot(self) -> tuple[bool, int]:
+        """Lettura ATOMICA di (thread_alive, consecutive_failures) sotto lock:
+        i due valori sono coerenti tra loro. Sostituisce l'accesso separato agli
+        attributi da parte dell'adapter (niente stato incoerente cross-thread)."""
+        with self._health_lock:
+            thread = self._thread
+            alive = bool(thread is not None and thread.is_alive())
+            return alive, int(self._consecutive_failures)
 
     def _scheme_allowed(self, url: str) -> bool:
         """True se `url` usa uno schema consentito: sempre https://, e http://
@@ -256,9 +270,11 @@ class TelegramBotApiTransport:
             try:
                 self._offset = self.poll_once(self._offset)
                 backoff = self._base_backoff
-                self._consecutive_failures = 0  # poll riuscito: health OK
+                with self._health_lock:
+                    self._consecutive_failures = 0  # poll riuscito: health OK
             except Exception as exc:
-                self._consecutive_failures += 1  # health-surface (vedi __init__)
+                with self._health_lock:
+                    self._consecutive_failures += 1  # health-surface (vedi __init__)
                 # Diagnostica SENZA segreti: tipo eccezione + messaggio REDATTO.
                 # Il messaggio (str(exc)) restituisce il "perche'" del fallimento
                 # (prima si loggava solo il nome della classe, perdendo la causa).
@@ -278,13 +294,17 @@ class TelegramBotApiTransport:
     # Lifecycle
     # ------------------------------------------------------------------
     def start(self) -> None:
-        if self._thread is not None and self._thread.is_alive():
-            return
-        self._stop.clear()
-        self._thread = threading.Thread(
-            target=self.run, name="telegram-bot-transport", daemon=True
-        )
-        self._thread.start()
+        # Assegnazione di `_thread` sotto lock: coerente con la lettura in
+        # health_snapshot() dal thread watchdog/adapter.
+        with self._health_lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            self._stop.clear()
+            self._consecutive_failures = 0
+            self._thread = threading.Thread(
+                target=self.run, name="telegram-bot-transport", daemon=True
+            )
+            self._thread.start()
 
     def stop(self, timeout: float = 5.0) -> None:
         self._stop.set()
