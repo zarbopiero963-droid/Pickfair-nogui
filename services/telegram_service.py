@@ -448,11 +448,21 @@ class TelegramService:
             self._lockout_active = True
             self._lockout_since_ts = now_ts
             self._lockout_reason = decision.reason
+            # Diagnostica: l'ingresso in lockout SOSPENDE il recovery (niente piu'
+            # restart automatici). Prima era invisibile: Telegram restava giu' e
+            # nei log non risultava perche' non si riprendeva.
+            logger.error(
+                "[TelegramService] autoheal ENTER_FAILED_LOCKOUT: recovery sospeso "
+                "(reason=%s, failure_class=%s)",
+                decision.reason,
+                decision.failure_class.value,
+            )
         elif self._lockout_active and self._lockout_since_ts is not None:
             if (now_ts - self._lockout_since_ts) >= self._autoheal_policy.lockout_sec:
                 self._lockout_active = False
                 self._lockout_since_ts = None
                 self._lockout_reason = ""
+                logger.info("[TelegramService] autoheal lockout scaduto: recovery riabilitato")
         return decision
 
     def run_autoheal_once(
@@ -470,7 +480,31 @@ class TelegramService:
             failure_escalated=failure_escalated,
         )
         if decision.action == TelegramAutohealAction.SCHEDULE_RESTART:
+            # Diagnostica: logga la DECISIONE PRIMA di restart(), cosi' resta
+            # tracciata anche se restart() solleva (altrimenti il fallimento
+            # tornerebbe silenzioso — proprio il problema che questo log risolve).
+            logger.warning(
+                "[TelegramService] autoheal SCHEDULE_RESTART (reason=%s, failure_class=%s)",
+                decision.reason,
+                decision.failure_class.value,
+            )
             restarted = self.restart()
+            # restart() ritorna un dict per contratto. Se il contratto e' violato
+            # NON si maschera in silenzio (si LOGGA a ERROR) ma nemmeno si fa
+            # fail-hard nel path di recovery: si degrada in modo osservabile
+            # (restart_result vuoto) senza uccidere il loop di autoheal.
+            if not isinstance(restarted, dict):
+                logger.error(
+                    "[TelegramService] restart() ha restituito un tipo inatteso "
+                    "(%s) nel path autoheal; degrado a esito vuoto",
+                    type(restarted).__name__,
+                )
+                restarted = {}
+            if not restarted.get("started"):
+                logger.error(
+                    "[TelegramService] autoheal restart NON avviato (reason=%s)",
+                    decision.reason,
+                )
             return {
                 "action": decision.action.value,
                 "reason": decision.reason,
