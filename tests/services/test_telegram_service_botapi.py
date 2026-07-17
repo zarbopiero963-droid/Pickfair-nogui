@@ -1,0 +1,266 @@
+"""PR-5a (epica #374) — wiring runtime del path Bot API in TelegramService.
+
+Quando mancano le credenziali userbot (api_id/api_hash) ma è configurato UN bot
+Bot API attivo con almeno una chat attiva, `TelegramService.start()` avvia il
+`TelegramBotApiRuntime` (transport HTTP getUpdates) invece del listener Telethon.
+Il path Telethon resta prioritario e invariato; con più bot attivi si fa
+fail-closed (l'orchestrazione N-bot arriva dopo).
+
+Test headless: il transport è iniettato via `bot_transport_factory` (come il
+`client_factory` del path Telethon), così NON serve rete né telethon. La pipeline
+di parsing (`handle_incoming` -> parse -> emit -> `_handle_signal` -> bus) è quella
+reale del listener, usato come sink.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from services.telegram_service import TelegramService
+from telegram_bot_runtime import TelegramBotApiRuntime
+from telegram_listener import TelegramListener
+
+pytestmark = pytest.mark.unit
+
+AUTHORIZED_CHAT = "-100999"
+
+MSG_NEXT_GOL = """🆚Reading v Burton Albion
+🏆English Sky Bet League 1
+⌚ time, 11m, 0 - 0
+
+🔥 P.Exc. NEXT GOL 🔊 ✅
+
+📊88.33%"""
+
+
+@dataclass
+class _Cfg:
+    enabled: bool = True
+    api_id: str = ""
+    api_hash: str = ""
+    session_string: str = ""
+    bot_token: str = ""
+    monitored_chat_ids: list | None = None
+
+
+class _Settings:
+    def __init__(self, cfg: _Cfg):
+        self.cfg = cfg
+
+    def load_telegram_config(self):
+        if self.cfg.monitored_chat_ids is None:
+            self.cfg.monitored_chat_ids = []
+        return self.cfg
+
+
+class _Bus:
+    def __init__(self):
+        self.events = []
+
+    def publish(self, topic, payload):
+        self.events.append((topic, dict(payload or {})))
+
+
+class _BotDB:
+    """DB fake: espone solo ciò che il path Bot API usa."""
+
+    def __init__(self, bots=None, chats_by_bot=None, patterns=None):
+        self._bots = bots or []
+        self._chats = chats_by_bot or {}
+        self._patterns = patterns or []
+        self.saved = []
+
+    def get_telegram_bots(self, include_token=True):
+        return [dict(b) for b in self._bots]
+
+    def get_telegram_bot_chats(self, bot_id):
+        return [dict(c) for c in self._chats.get(bot_id, [])]
+
+    def get_signal_patterns(self, enabled_only=True):
+        return [dict(p) for p in self._patterns]
+
+    def save_received_signal(self, payload):
+        self.saved.append(dict(payload))
+
+
+class _FakeTransport:
+    """Transport fake: cattura on_message, nessun thread reale."""
+
+    def __init__(self, bot_token, chat_ids, on_message):
+        self.bot_token = bot_token
+        self.chat_ids = chat_ids
+        self.on_message = on_message
+        self._thread = None
+        self.started = False
+        self.stopped = False
+
+    def start(self):
+        self.started = True
+
+    def stop(self, timeout=5.0):
+        self.stopped = True
+
+
+def _next_gol_pattern():
+    return [{
+        "id": 1, "name": "next-gol", "enabled": True, "pattern": "",
+        "keyword": "NEXT GOL", "market_type": "NEXT_GOAL",
+        "bet_side": "BACK", "selection_template": "Next Goal", "mm_auto": True,
+    }]
+
+
+def _one_active_bot_db(patterns=None):
+    return _BotDB(
+        bots=[{"id": 7, "label": "B", "bot_token": "fake-bot-value-xyz", "is_active": True, "has_token": True}],
+        chats_by_bot={7: [{"chat_id": AUTHORIZED_CHAT, "title": "c", "is_active": True}]},
+        patterns=patterns,
+    )
+
+
+def _svc(db, *, capture=None):
+    factory = None
+    if capture is not None:
+        def factory(bot_token, chat_ids, on_message):
+            t = _FakeTransport(bot_token, chat_ids, on_message)
+            capture.append(t)
+            return t
+    return TelegramService(
+        settings_service=_Settings(_Cfg()),
+        db=db,
+        bus=_Bus(),
+        bot_transport_factory=factory,
+    )
+
+
+def test_start_uses_botapi_when_no_telethon_creds():
+    # BLOCK del gate rilassato: senza api_id/api_hash ma con un bot Bot API
+    # attivo, start() DEVE avviare (sul vecchio codice sollevava
+    # "Configurazione Telegram incompleta").
+    cap = []
+    svc = _svc(_one_active_bot_db(), capture=cap)
+    result = svc.start()
+
+    assert result["started"] is True
+    assert result["state"] == "CONNECTED"
+    assert result["chat_count"] == 1
+    assert isinstance(svc.listener, TelegramBotApiRuntime)
+    # transport costruito col token decifrato e l'allow-list della chat, e avviato
+    assert len(cap) == 1 and cap[0].started is True
+    assert cap[0].bot_token == "fake-bot-value-xyz"
+    assert cap[0].chat_ids == [-100999]
+    assert svc.handlers_registered == 1
+
+
+def test_botapi_snapshot_is_invariant_coherent():
+    # La coerenza health: CONNECTED => esattamente 1 handler nel runtime_snapshot
+    # (l'invariant guard lo richiede). Il transport-fed listener non ha handler
+    # Telethon: l'adapter mappa "transport attivo" a 1 handler.
+    svc = _svc(_one_active_bot_db(), capture=[])
+    svc.start()
+    snap = svc.runtime_snapshot()
+    assert snap["state"] == "CONNECTED"
+    assert snap["handlers_registered"] == 1
+    assert snap["running"] is True
+
+
+def test_botapi_delivers_signal_to_bus():
+    cap = []
+    svc = _svc(_one_active_bot_db(patterns=_next_gol_pattern()), capture=cap)
+    svc.start()
+
+    # Simula un update consegnato dal transport (getUpdates) via on_message,
+    # che è handle_incoming del sink: parse -> emit -> _handle_signal -> bus.
+    fresh = datetime.now(timezone.utc) - timedelta(seconds=5)
+    cap[0].on_message(MSG_NEXT_GOL, -100999, fresh)
+
+    topics = [t for t, _ in svc.bus.events]
+    assert "SIGNAL_RECEIVED" in topics
+    payload = next(p for t, p in svc.bus.events if t == "SIGNAL_RECEIVED")
+    assert payload.get("market_type") == "NEXT_GOAL"
+
+
+def test_botapi_stale_message_does_not_emit_signal():
+    # BLOCK anti-stale preservato attraverso il transport: un backlog vecchio
+    # non genera segnale (riuso della guardia del listener).
+    cap = []
+    svc = _svc(_one_active_bot_db(patterns=_next_gol_pattern()), capture=cap)
+    svc.start()
+
+    old = datetime.now(timezone.utc) - timedelta(seconds=3600)
+    cap[0].on_message(MSG_NEXT_GOL, -100999, old)
+
+    assert "SIGNAL_RECEIVED" not in [t for t, _ in svc.bus.events]
+
+
+def test_multi_active_bot_fails_closed():
+    db = _BotDB(
+        bots=[
+            {"id": 1, "label": "A", "bot_token": "tok-a", "is_active": True, "has_token": True},
+            {"id": 2, "label": "B", "bot_token": "tok-b", "is_active": True, "has_token": True},
+        ],
+        chats_by_bot={
+            1: [{"chat_id": "-100111", "is_active": True}],
+            2: [{"chat_id": "-100222", "is_active": True}],
+        },
+    )
+    svc = _svc(db, capture=[])
+    with pytest.raises(RuntimeError) as exc:
+        svc.start()
+    assert "multi_bot_runtime_not_yet_supported" in str(exc.value)
+    assert svc.state == "FAILED"
+
+
+def test_no_creds_no_bots_still_fails_closed():
+    # Nessun userbot e nessun bot utilizzabile => fail-closed invariato.
+    svc = _svc(_BotDB(), capture=[])
+    with pytest.raises(RuntimeError) as exc:
+        svc.start()
+    assert "incompleta" in str(exc.value).lower()
+    assert svc.state == "FAILED"
+
+
+def test_bot_without_active_chat_is_not_usable():
+    # Un bot attivo ma senza chat ATTIVE non è utilizzabile => fail-closed.
+    db = _BotDB(
+        bots=[{"id": 3, "label": "C", "bot_token": "tok-c", "is_active": True, "has_token": True}],
+        chats_by_bot={3: [{"chat_id": "-100333", "is_active": False}]},
+    )
+    svc = _svc(db, capture=[])
+    with pytest.raises(RuntimeError) as exc:
+        svc.start()
+    assert "incompleta" in str(exc.value).lower()
+
+
+def test_telethon_path_selected_when_creds_present_no_botapi():
+    # Regressione: con credenziali userbot presenti si usa il path Telethon,
+    # MAI il transport Bot API, anche se un bot è configurato.
+    cap = []
+    db = _one_active_bot_db()
+    svc = TelegramService(
+        settings_service=_Settings(_Cfg(api_id="123", api_hash="hash", session_string="s")),
+        db=db,
+        bus=_Bus(),
+        client_factory=lambda *_a: None,
+        bot_transport_factory=lambda *a: cap.append(a) or _FakeTransport(*a),
+    )
+    try:
+        svc.start()  # può fallire su telethon assente in questo ambiente: irrilevante
+    except Exception:
+        pass
+    # Il fatto chiave: il transport Bot API NON è stato costruito (path Telethon).
+    assert cap == []
+    assert not isinstance(svc.listener, TelegramBotApiRuntime)
+
+
+def test_stop_stops_transport():
+    cap = []
+    svc = _svc(_one_active_bot_db(), capture=cap)
+    svc.start()
+    assert cap[0].stopped is False
+    out = svc.stop()
+    assert out["stopped"] is True
+    assert cap[0].stopped is True
+    assert svc.state == "STOPPED"
+    assert svc.listener is None

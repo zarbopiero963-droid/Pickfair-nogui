@@ -35,7 +35,37 @@ Un bot legge i messaggi **solo** nelle chat dove è stato aggiunto:
   assegna i `chat_id` al bot selezionato (scoped al `bot_id`). Persiste via CRUD
   PR-3 (`set/get_telegram_bot_chats`), **nessun wiring runtime**: le chat
   configurate non sono ancora ascoltate.
-- Le PR successive aggiungono il runtime multi-bot e il ritiro dell'userbot.
+- **PR-5a (questa):** **wiring runtime** — primo step. Quando mancano le
+  credenziali userbot (`api_id`/`api_hash`) ma è configurato **un** bot Bot API
+  attivo con ≥1 chat attiva, `TelegramService.start()` avvia il transport HTTP
+  `getUpdates` (PR-1) invece di Telethon: **gate rilassato** (niente
+  `api_id`/`api_hash` sul path bot_token). Il path Telethon resta prioritario e
+  invariato.
+- Le PR successive aggiungono l'orchestrazione **N-bot**, l'autoheal per-bot e il
+  ritiro dell'userbot.
+
+## Wiring runtime Bot API (PR-5a) — `TelegramBotApiRuntime`
+
+Modulo `telegram_bot_runtime.py`: `TelegramBotApiRuntime` è un **adapter
+listener-compatibile** (`state`, `running`, `_runtime_thread`, `start`/`stop`/
+`status`/`runtime_snapshot`) alimentato da `TelegramBotApiTransport` invece del
+client Telethon. I messaggi ricevuti passano per `TelegramListener.handle_incoming`
+(**riuso integrale**: allow-list, guardia anti-stale, parse, emit) verso gli stessi
+callback `on_signal`/`on_status`: il listener è usato solo come **sink** (mai
+avviato → nessun Telethon, nessun `api_id`/`api_hash`).
+
+Selezione sorgente in `TelegramService.start()`:
+- credenziali userbot presenti → **path Telethon** (invariato, prioritario);
+- userbot assenti + **un** bot Bot API attivo con ≥1 chat attiva → **path Bot API**;
+- userbot assenti + **più** bot attivi → **fail-closed** `multi_bot_runtime_not_yet_supported`
+  (l'orchestrazione N-bot arriva nella PR successiva: niente drop silenzioso);
+- niente di utilizzabile → **fail-closed** `Configurazione Telegram incompleta` (invariato).
+
+Coerenza health/invariant: un transport attivo conta come **1 handler** (l'invariant
+guard richiede esattamente 1 handler quando `CONNECTED`). Il `bot_transport_factory`
+è iniettabile (come il `client_factory` Telethon) per i test headless. **Nessun
+effetto su money-management/ordini/Betfair/dutching/parsing.** L'autoheal per-bot e
+un vero health-surface del transport sono rimandati.
 
 ## GUI — gestione bot (PR-4, tab Telegram)
 

@@ -13,6 +13,7 @@ from recovery.telegram_autoheal import (
     TelegramAutohealPolicy,
     TelegramAutohealSnapshot,
 )
+from telegram_bot_runtime import TelegramBotApiRuntime
 from telegram_listener import TelegramListener
 
 logger = logging.getLogger(__name__)
@@ -29,13 +30,17 @@ class TelegramService:
     - non contiene logica di trading
     """
 
-    def __init__(self, settings_service, db, bus, client_factory=None, connect_timeout: float = 10.0):
+    def __init__(self, settings_service, db, bus, client_factory=None, connect_timeout: float = 10.0, bot_transport_factory=None):
         self.settings_service = settings_service
         self.db = db
         self.bus = bus
         # Factory iniettabile del client Telegram (test/diagnostica);
         # None = client Telethon reale costruito dal listener.
         self._client_factory = client_factory
+        # Factory iniettabile del transport Bot API (test/diagnostica);
+        # None = TelegramBotApiTransport reale costruito dall'adapter.
+        # Firma: (bot_token, chat_ids, on_message) -> transport.
+        self._bot_transport_factory = bot_transport_factory
         self._connect_timeout = float(connect_timeout)
         self.listener: Optional[TelegramListener] = None
         self.connected = False
@@ -136,6 +141,35 @@ class TelegramService:
     # =========================================================
     # LIFECYCLE
     # =========================================================
+    def _usable_bot_api_bots(self) -> list:
+        """Bot Bot API utilizzabili a runtime (epica #374 PR-5a): attivi, con
+        token presente e con almeno una chat attiva. Ritorna una lista di
+        `(bot_dict, [chat_id_str])`. Read-only, fail-safe (errori DB => lista
+        vuota, così `start()` cade nel fail-closed 'Configurazione incompleta'
+        invece di sollevare qui)."""
+        out: list = []
+        try:
+            bots = self.db.get_telegram_bots(include_token=True) or []
+        except Exception as exc:  # pragma: no cover - degrado difensivo
+            logger.warning("[TelegramService] lettura bot Bot API fallita: %s", exc)
+            return out
+        for bot in bots:
+            if not bot.get("is_active") or not bot.get("bot_token"):
+                continue
+            try:
+                chats = self.db.get_telegram_bot_chats(bot["id"]) or []
+            except Exception as exc:  # pragma: no cover - degrado difensivo
+                logger.warning("[TelegramService] lettura chat bot fallita: %s", exc)
+                continue
+            chat_ids = [
+                str(c.get("chat_id"))
+                for c in chats
+                if c.get("is_active") and str(c.get("chat_id") or "").strip()
+            ]
+            if chat_ids:
+                out.append((bot, chat_ids))
+        return out
+
     def start(self) -> dict:
         cfg = self.settings_service.load_telegram_config()
 
@@ -149,11 +183,29 @@ class TelegramService:
                 "state": self.state,
             }
 
+        # Selezione sorgente di ingestione (epica #374 PR-5a). Il path Telethon
+        # userbot (api_id/api_hash) resta prioritario e INVARIATO. Solo quando le
+        # credenziali userbot mancano si tenta il path Bot API (bot_token), che
+        # NON richiede api_id/api_hash: è questo il gate rilassato.
+        bot_api_selection = None
         if not cfg.api_id or not cfg.api_hash:
-            self.last_error = "Configurazione Telegram incompleta"
-            self.intentional_stop = False
-            self._set_state("FAILED")
-            raise RuntimeError(self.last_error)
+            usable = self._usable_bot_api_bots()
+            if len(usable) == 1:
+                bot_api_selection = usable[0]
+            elif len(usable) > 1:
+                # PR-5a wira UN solo bot. Con più bot attivi NON si droppa
+                # silenziosamente nulla: fail-closed, l'orchestrazione N-bot
+                # arriva nella PR successiva.
+                self.last_error = "multi_bot_runtime_not_yet_supported"
+                self.intentional_stop = False
+                self._set_state("FAILED")
+                raise RuntimeError(self.last_error)
+            else:
+                # Né userbot né un bot Bot API utilizzabile: fail-closed come prima.
+                self.last_error = "Configurazione Telegram incompleta"
+                self.intentional_stop = False
+                self._set_state("FAILED")
+                raise RuntimeError(self.last_error)
 
         if self.state in {"CONNECTING", "CONNECTED", "RECONNECTING"}:
             return {
@@ -182,24 +234,41 @@ class TelegramService:
             self.intentional_stop = False
             self.reconnect_in_progress = False
             self._set_state("CONNECTING")
-            self.listener = TelegramListener(
-                api_id=int(cfg.api_id),
-                api_hash=cfg.api_hash,
-                session_string=cfg.session_string or None,
-                bot_token=getattr(cfg, "bot_token", None),
-                client_factory=self._client_factory,
-                connect_timeout=self._connect_timeout,
-            )
+            if bot_api_selection is not None:
+                # Path Bot API (PR-5a): adapter listener-compatibile alimentato dal
+                # transport HTTP getUpdates. Nessun Telethon, nessun api_id/api_hash.
+                bot, chat_ids = bot_api_selection
+                active_chat_count = len(chat_ids)
+                self.listener = TelegramBotApiRuntime(
+                    bot_token=bot["bot_token"],
+                    chat_ids=chat_ids,
+                    db=self.db,
+                    on_signal=self._handle_signal,
+                    on_status=self._handle_status,
+                    transport_factory=self._bot_transport_factory,
+                )
+                # Un bot Bot API attivo = un handler runtime.
+                self.handlers_registered = 1
+            else:
+                self.listener = TelegramListener(
+                    api_id=int(cfg.api_id),
+                    api_hash=cfg.api_hash,
+                    session_string=cfg.session_string or None,
+                    bot_token=getattr(cfg, "bot_token", None),
+                    client_factory=self._client_factory,
+                    connect_timeout=self._connect_timeout,
+                )
 
-            self.listener.set_database(self.db)
-            self.listener.set_monitored_chats(cfg.monitored_chat_ids)
-            self.listener.set_callbacks(
-                on_signal=self._handle_signal,
-                on_status=self._handle_status,
-            )
-            self.handlers_registered = sum(
-                1 for cb in (self._handle_signal, self._handle_status) if callable(cb)
-            )
+                self.listener.set_database(self.db)
+                self.listener.set_monitored_chats(cfg.monitored_chat_ids)
+                self.listener.set_callbacks(
+                    on_signal=self._handle_signal,
+                    on_status=self._handle_status,
+                )
+                self.handlers_registered = sum(
+                    1 for cb in (self._handle_signal, self._handle_status) if callable(cb)
+                )
+                active_chat_count = len(cfg.monitored_chat_ids)
 
             start_result = self.listener.start()
             started_ok = bool(start_result.get("started", False))
@@ -216,7 +285,7 @@ class TelegramService:
                 # listener_started (che il refresh riallinea al listener,
                 # dove resta True anche per una startup fallita).
                 "started": started_ok and not self.last_error,
-                "chat_count": len(cfg.monitored_chat_ids),
+                "chat_count": active_chat_count,
                 "state": self.state,
                 "connected": self.connected,
             }
