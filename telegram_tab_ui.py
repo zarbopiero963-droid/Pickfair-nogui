@@ -374,6 +374,78 @@ class TelegramTabUI:
         if hasattr(self.app, "_refresh_telegram_bots_tree"):
             self.app._refresh_telegram_bots_tree()
 
+        # ── Chat del bot selezionato (epica #374 PR-4b) ───────────────────
+        # Assegna i chat_id al bot selezionato: le chat sono scoped al bot_id.
+        ctk.CTkLabel(
+            bots_frame,
+            text="Chat del bot selezionato:",
+            font=FONTS["heading"],
+            text_color=COLORS["text_primary"],
+        ).pack(anchor=tk.W, padx=10, pady=(6, 0))
+        ctk.CTkLabel(
+            bots_frame,
+            text=(
+                "Seleziona un bot qui sopra, poi aggiungi le chat che deve "
+                "ascoltare. Configurazione persistita, non ancora attiva a runtime."
+            ),
+            wraplength=520,
+            justify="left",
+            text_color=COLORS["text_secondary"],
+        ).pack(anchor=tk.W, padx=10, pady=(0, 4))
+
+        ctk.CTkLabel(bots_frame, text="Chat ID:", text_color=COLORS["text_secondary"]).pack(anchor=tk.W, padx=10)
+        ctk.CTkEntry(
+            bots_frame,
+            textvariable=self.app.tg_bot_chat_id_var,
+            width=220,
+            fg_color=COLORS["bg_card"],
+            border_color=COLORS["border"],
+        ).pack(anchor=tk.W, padx=10)
+
+        ctk.CTkLabel(bots_frame, text="Titolo (opzionale):", text_color=COLORS["text_secondary"]).pack(anchor=tk.W, padx=10, pady=(5, 0))
+        ctk.CTkEntry(
+            bots_frame,
+            textvariable=self.app.tg_bot_chat_title_var,
+            width=260,
+            fg_color=COLORS["bg_card"],
+            border_color=COLORS["border"],
+        ).pack(anchor=tk.W, padx=10)
+
+        bot_chat_btn_frame = ctk.CTkFrame(bots_frame, fg_color="transparent")
+        bot_chat_btn_frame.pack(fill=tk.X, padx=10, pady=(6, 5))
+        ctk.CTkButton(
+            bot_chat_btn_frame,
+            text="Aggiungi Chat al Bot",
+            command=self.app._add_telegram_bot_chat_from_ui,
+            fg_color=COLORS["button_success"],
+            hover_color="#4caf50",
+            corner_radius=6,
+            width=170,
+        ).pack(side=tk.LEFT, padx=2)
+        ctk.CTkButton(
+            bot_chat_btn_frame,
+            text="Rimuovi Chat dal Bot",
+            command=self.app._remove_telegram_bot_chat,
+            fg_color=COLORS["button_danger"],
+            hover_color="#c62828",
+            corner_radius=6,
+            width=170,
+        ).pack(side=tk.LEFT, padx=2)
+
+        self.app.tg_bot_chats_tree = ttk.Treeview(
+            bots_frame,
+            columns=("name", "enabled"),
+            show="headings",
+            height=4,
+        )
+        self.app.tg_bot_chats_tree.heading("name", text="Chat")
+        self.app.tg_bot_chats_tree.heading("enabled", text="Attivo")
+        self.app.tg_bot_chats_tree.column("name", width=220)
+        self.app.tg_bot_chats_tree.column("enabled", width=60)
+        self.app.tg_bot_chats_tree.pack(fill=tk.X, padx=10, pady=(0, 10))
+        if hasattr(self.app, "_refresh_telegram_bot_chats_tree"):
+            self.app._refresh_telegram_bot_chats_tree()
+
         available_frame = ctk.CTkFrame(left_frame, fg_color=COLORS["bg_panel"], corner_radius=8)
         available_frame.pack(fill=tk.X, pady=(0, 5), padx=5)
 

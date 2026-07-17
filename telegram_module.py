@@ -1192,15 +1192,19 @@ class TelegramModule:
         bot_id = self._selected_bot_id()
         self.tg_bot_token_var.set("")  # mai il token in chiaro
         if bot_id is None:
-            # Nessuna selezione: pulisci anche label/stato (niente dati stale).
+            # Nessuna selezione: pulisci anche label/stato (niente dati stale) e
+            # svuota la vista chat (le chat sono scoped al bot).
             self.tg_bot_label_var.set("")
             self.tg_bot_active_var.set(True)
+            self._refresh_telegram_bot_chats_tree()
             return
         for bot in self.db.get_telegram_bots(include_token=False):
             if bot.get("id") == bot_id:
                 self.tg_bot_label_var.set(bot.get("label") or "")
                 self.tg_bot_active_var.set(bool(bot.get("is_active")))
                 break
+        # La vista chat segue sempre il bot selezionato (scoped al bot_id).
+        self._refresh_telegram_bot_chats_tree()
 
     def _new_telegram_bot(self):
         """Prepara l'editor per creare un NUOVO bot: deseleziona e pulisce i campi.
@@ -1217,6 +1221,7 @@ class TelegramModule:
                 tree.selection_remove(tree.selection())
             except Exception:  # pragma: no cover - deselezione best-effort
                 pass
+        self._refresh_telegram_bot_chats_tree()  # editor nuovo => vista chat vuota
 
     def _save_telegram_bot_from_ui(self):
         label = str(self.tg_bot_label_var.get() or "").strip()
@@ -1242,6 +1247,7 @@ class TelegramModule:
         self.tg_bot_token_var.set("")
         self.tg_selected_bot_id = int(new_id)
         self._refresh_telegram_bots_tree()
+        self._refresh_telegram_bot_chats_tree()  # mostra le chat del bot salvato
         self._safe_show_info("OK", f"Bot salvato (id {new_id}).")
 
     def _remove_selected_telegram_bot(self):
@@ -1258,6 +1264,91 @@ class TelegramModule:
         self.tg_bot_token_var.set("")
         self.tg_bot_active_var.set(True)
         self._refresh_telegram_bots_tree()
+        self._refresh_telegram_bot_chats_tree()
+
+    # =========================================================
+    # MULTI-BOT — chat per-bot (epica #374 PR-4b)
+    # Assegna i chat_id a CIASCUN bot: le chat sono scoped al bot_id (tabella
+    # telegram_bot_chats, CRUD PR-3 set/get_telegram_bot_chats). Ancora SOLO
+    # persistenza/GUI: il wiring runtime (ascolto per-bot) arriva nella PR di
+    # wiring. Nessun segreto qui (solo id/titolo chat).
+    # =========================================================
+    def _refresh_telegram_bot_chats_tree(self):
+        """Popola l'albero delle chat del bot selezionato. Nessun bot selezionato
+        => albero vuoto (le chat sono scoped al bot). Guarda l'esistenza
+        dell'albero -> no-op headless (testabile)."""
+        tree = getattr(self, "tg_bot_chats_tree", None)
+        if tree is None or not tree.winfo_exists():
+            return
+        tree.delete(*tree.get_children())
+        bot_id = self._selected_bot_id()
+        if bot_id is None:
+            return
+        for chat in self.db.get_telegram_bot_chats(bot_id):
+            state = "Sì" if chat.get("is_active") else "No"
+            title = chat.get("title") or str(chat.get("chat_id"))
+            tree.insert("", tk.END, iid=str(chat["chat_id"]), values=(title, state))
+
+    def _add_telegram_bot_chat_from_ui(self):
+        """Aggiunge/aggiorna una chat sul bot selezionato (scoped al bot_id).
+        Fail-closed: prima elimina una selezione stale (bot rimosso altrove), poi
+        richiede un bot selezionato e un chat_id non vuoto. Persistenza via
+        set_telegram_bot_chats (swap atomico dell'intero set scoped al bot):
+        reidrata le chat correnti, upserta quella nuova, riscrive tutto."""
+        self._prune_stale_bot_selection()
+        bot_id = self._selected_bot_id()
+        chat_id = str(self.tg_bot_chat_id_var.get() or "").strip()
+        title = str(self.tg_bot_chat_title_var.get() or "").strip()
+        try:
+            if bot_id is None:
+                raise ValueError("Seleziona prima un bot.")
+            if not chat_id:
+                raise ValueError("Chat id obbligatorio.")
+            # Reidrata il set corrente e upserta per chat_id (l'ultima vince):
+            # cosi' un chat_id gia' presente aggiorna il titolo invece di duplicare.
+            merged = {
+                str(c["chat_id"]): dict(c)
+                for c in self.db.get_telegram_bot_chats(bot_id)
+            }
+            merged[chat_id] = {"chat_id": chat_id, "title": title, "is_active": True}
+            self.db.set_telegram_bot_chats(bot_id, list(merged.values()))
+        except Exception as exc:
+            self._safe_show_error("Errore aggiunta chat bot", str(exc))
+            return
+        self.tg_bot_chat_id_var.set("")
+        self.tg_bot_chat_title_var.set("")
+        self._refresh_telegram_bot_chats_tree()
+
+    def _remove_telegram_bot_chat(self, chat_id=None):
+        """Rimuove una chat dal bot selezionato. `chat_id` esplicito (test/UI); se
+        None, legge la selezione dell'albero (UI reale). Persistenza scoped al bot:
+        reidrata il set corrente meno le chat rimosse e lo riscrive. Nessun bot
+        selezionato o nessun target => no-op."""
+        bot_id = self._selected_bot_id()
+        if bot_id is None:
+            return
+        if chat_id is not None:
+            targets = {str(chat_id)}
+        else:
+            tree = getattr(self, "tg_bot_chats_tree", None)
+            sel = tree.selection() if (tree is not None and tree.winfo_exists()) else ()
+            targets = {str(s) for s in sel}
+        if not targets:
+            return
+        # Guarda gli errori DB come gli altri handler UI del modulo
+        # (_add/_save/_remove bot): un errore (lock, schema) non deve propagare
+        # non gestito dal callback tkinter lasciando l'albero fuori sync col DB.
+        try:
+            remaining = [
+                c
+                for c in self.db.get_telegram_bot_chats(bot_id)
+                if str(c["chat_id"]) not in targets
+            ]
+            self.db.set_telegram_bot_chats(bot_id, remaining)
+        except Exception as exc:
+            self._safe_show_error("Errore rimozione chat bot", str(exc))
+            return
+        self._refresh_telegram_bot_chats_tree()
 
     # =========================================================
     # ADVANCED SIGNAL PATTERNS
