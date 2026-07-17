@@ -136,10 +136,15 @@ class TelegramService:
             except Exception:  # pragma: no cover - lo stop non deve mascherare l'errore originale
                 pass
         thread = getattr(lst, "_runtime_thread", None)
+        if thread is None:
+            return False  # nessun thread runtime => morto (safe: azzera il riferimento)
         try:
-            return bool(thread is not None and thread.is_alive())
-        except Exception:  # pragma: no cover - is_alive difensivo
-            return False
+            return bool(thread.is_alive())
+        except Exception:
+            # Incertezza sulla liveness (is_alive solleva) => FAIL-CLOSED: assumi il
+            # thread VIVO (tieni il listener, blocca il retry). Un fail-open qui
+            # riaprirebbe la duplicazione dei segnali di betting.
+            return True
 
     def _refresh_runtime_truth_from_listener(self) -> None:
         status_getter = getattr(self.listener, "status", None) if self.listener else None

@@ -322,6 +322,46 @@ def test_start_failure_keeps_listener_if_runtime_thread_survives():
     assert r.get("started") is False
 
 
+def test_start_failure_failclosed_when_liveness_check_raises():
+    # BLOCK (GPT-5.6 Terra): se la verifica di liveness del thread residuo SOLLEVA,
+    # il fallback deve essere FAIL-CLOSED (assumi il thread VIVO): si TIENE il
+    # listener e il retry resta bloccato. Un fail-open (assumere morto) azzererebbe
+    # il riferimento e riaprirebbe la duplicazione dei segnali di betting.
+    svc = _svc(_one_active_bot_db(), capture=[])
+
+    class _ExplodingThread:
+        def is_alive(self):
+            raise RuntimeError("is_alive boom")
+
+    class _PartialStartListener:
+        _runtime_thread = _ExplodingThread()
+
+        def start(self):
+            raise RuntimeError("boom dopo partial start")
+
+        def stop(self):
+            pass
+
+        def status(self):
+            return {}
+
+    holder = {}
+
+    def _build(*a, **k):
+        lst = _PartialStartListener()
+        holder["lst"] = lst
+        return lst
+
+    svc._build_botapi_runtime = _build  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError):
+        svc.start()
+    # Liveness incerta (is_alive solleva) => fail-closed: listener TENUTO, handler non azzerati.
+    assert svc.listener is holder["lst"]
+    assert svc.handlers_registered == 1
+    assert svc.state == "FAILED"
+
+
 def test_start_recovers_when_cached_state_is_stale_connected():
     # BLOCK (Fugu full-range): self.state cache "CONNECTED" stale dopo la morte del
     # transport NON deve far tornare already_running (bloccando il recovery). Il
