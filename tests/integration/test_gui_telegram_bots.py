@@ -190,6 +190,42 @@ def test_deselect_clears_editor(monkeypatch, db):
         app.destroy()
 
 
+def test_get_bots_without_token_returns_presence_not_plaintext(db):
+    # Hygiene: quando serve solo la PRESENZA del token (refresh UI) NON si
+    # decifra il segreto in memoria. include_token=False => bot_token="" ma
+    # has_token=True.
+    db.save_telegram_bot("B", _SAMPLE)
+    meta = db.get_telegram_bots(include_token=False)
+    assert meta[0]["has_token"] is True
+    assert meta[0]["bot_token"] == ""            # NON decifrato
+    full = db.get_telegram_bots()                 # default: decifra
+    assert full[0]["bot_token"] == _SAMPLE
+    assert full[0]["has_token"] is True
+
+
+def test_prune_stale_selection_clears_id_and_editor(monkeypatch, db):
+    # Fable: la difesa anti-stale deve azzerare id ED editor, così un Salva
+    # successivo non crea un bot con dati stale. Testabile senza albero.
+    app = _make(monkeypatch, db)
+    try:
+        bid = db.save_telegram_bot("B", _SAMPLE, is_active=True)
+        app.tg_selected_bot_id = bid
+        app._load_selected_bot_into_editor()
+        assert app.tg_bot_label_var.get() == "B"
+
+        db.remove_telegram_bot(bid)          # rimosso "altrove"
+        app._prune_stale_bot_selection()     # difesa (gira senza albero)
+        assert app.tg_selected_bot_id is None
+        assert app.tg_bot_label_var.get() == ""   # editor pulito (niente dati stale)
+        assert app.tg_bot_active_var.get() is True
+
+        # un Salva ora è una CREAZIONE con editor vuoto -> bloccato (label mancante)
+        app._save_telegram_bot_from_ui()
+        assert db.get_telegram_bots() == []
+    finally:
+        app.destroy()
+
+
 def test_save_on_stale_selection_is_failclosed(monkeypatch, db):
     # Selezione stale su bot rimosso "altrove": save_telegram_bot(bot_id inesistente)
     # -> ValueError (rowcount 0) gestito da _safe_show_error. Nessun bot fantasma.

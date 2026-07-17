@@ -1157,20 +1157,31 @@ class TelegramModule:
         except (TypeError, ValueError):
             return None
 
+    def _prune_stale_bot_selection(self):
+        """Se il bot selezionato non esiste più (rimosso altrove), azzera la
+        selezione **e** l'editor (label/token/attivo): così nessun dato stale
+        sopravvive e un Salva successivo NON crea un bot con dati vecchi. Fonte
+        UNICA per l'id selezionato: `_selected_bot_id()`. Gira sempre (indipendente
+        dall'albero) -> testabile headless."""
+        sel = self._selected_bot_id()
+        if sel is None:
+            return
+        ids = {b.get("id") for b in self.db.get_telegram_bots(include_token=False)}
+        if sel not in ids:
+            self.tg_selected_bot_id = None
+            self._load_selected_bot_into_editor()  # id None -> pulisce l'editor
+
     def _refresh_telegram_bots_tree(self):
+        self._prune_stale_bot_selection()
         tree = getattr(self, "tg_bots_tree", None)
         if tree is None or not tree.winfo_exists():
             return
         tree.delete(*tree.get_children())
-        bots = self.db.get_telegram_bots()
-        # Difesa: se il bot selezionato non esiste più (rimosso altrove), azzera la
-        # selezione stale così un successivo Salva non parte con un bot_id fantasma.
-        ids = {b.get("id") for b in bots}
-        if self.tg_selected_bot_id is not None and self._selected_bot_id() not in ids:
-            self.tg_selected_bot_id = None
-        for bot in bots:
+        # include_token=False: qui serve solo la PRESENZA del token (has_token),
+        # non il valore -> non decifriamo i segreti in memoria.
+        for bot in self.db.get_telegram_bots(include_token=False):
             state = "Sì" if bot.get("is_active") else "No"
-            has_token = "•••" if bot.get("bot_token") else "—"
+            has_token = "•••" if bot.get("has_token") else "—"
             label = bot.get("label") or f"bot {bot['id']}"
             tree.insert("", tk.END, iid=str(bot["id"]), values=(label, has_token, state))
 
@@ -1185,7 +1196,7 @@ class TelegramModule:
             self.tg_bot_label_var.set("")
             self.tg_bot_active_var.set(True)
             return
-        for bot in self.db.get_telegram_bots():
+        for bot in self.db.get_telegram_bots(include_token=False):
             if bot.get("id") == bot_id:
                 self.tg_bot_label_var.set(bot.get("label") or "")
                 self.tg_bot_active_var.set(bool(bot.get("is_active")))
