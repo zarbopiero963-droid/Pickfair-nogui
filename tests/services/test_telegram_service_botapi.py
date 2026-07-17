@@ -308,6 +308,17 @@ def test_non_numeric_chat_is_skipped_numeric_kept():
     assert cap[0].chat_ids == [-100777]  # @canale scartata, numerica tenuta
 
 
+def test_already_running_reports_botapi_chat_count():
+    # BLOCK (Greptile P1): una seconda start() mentre il servizio gira via Bot API
+    # riporta il chat_count del BOT selezionato, non 0 (lista userbot vuota).
+    cap = []
+    svc = _svc(_one_active_bot_db(), capture=cap)
+    svc.start()
+    again = svc.start()
+    assert again["reason"] == "already_running"
+    assert again["chat_count"] == 1  # vecchio codice: 0 (len(cfg.monitored_chat_ids))
+
+
 def test_stop_stops_transport():
     cap = []
     svc = _svc(_one_active_bot_db(), capture=cap)

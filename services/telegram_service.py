@@ -257,11 +257,20 @@ class TelegramService:
                 self._set_state("FAILED")
                 raise RuntimeError(self.last_error)
 
+        # Conteggio chat coerente con la sorgente selezionata: sul path Bot API
+        # le chat vivono nel bot selezionato, NON in cfg.monitored_chat_ids (lista
+        # userbot, vuota qui). Riportare quest'ultima falserebbe a 0 la copertura
+        # nelle risposte "already_running".
+        active_chat_count = (
+            len(bot_api_selection[1]) if bot_api_selection is not None
+            else len(cfg.monitored_chat_ids)
+        )
+
         if self.state in {"CONNECTING", "CONNECTED", "RECONNECTING"}:
             return {
                 "started": True,
                 "reason": "already_running",
-                "chat_count": len(cfg.monitored_chat_ids),
+                "chat_count": active_chat_count,
                 "state": self.state,
             }
 
@@ -269,7 +278,7 @@ class TelegramService:
             return {
                 "started": True,
                 "reason": "already_running",
-                "chat_count": len(cfg.monitored_chat_ids),
+                "chat_count": active_chat_count,
                 "state": self.state,
             }
 
@@ -288,7 +297,6 @@ class TelegramService:
                 # Path Bot API (PR-5a): adapter listener-compatibile alimentato dal
                 # transport HTTP getUpdates. Nessun Telethon, nessun api_id/api_hash.
                 bot, chat_ids = bot_api_selection
-                active_chat_count = len(chat_ids)
                 self.listener = self._build_botapi_runtime(bot, chat_ids)
                 # Un bot Bot API attivo = un handler runtime.
                 self.handlers_registered = 1
@@ -297,7 +305,6 @@ class TelegramService:
                 self.handlers_registered = sum(
                     1 for cb in (self._handle_signal, self._handle_status) if callable(cb)
                 )
-                active_chat_count = len(cfg.monitored_chat_ids)
 
             start_result = self.listener.start()
             started_ok = bool(start_result.get("started", False))
