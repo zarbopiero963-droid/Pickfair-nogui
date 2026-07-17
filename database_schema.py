@@ -57,7 +57,9 @@ SCHEMA_DDL: tuple[str, ...] = (
         PRIMARY KEY (bot_id, chat_id)
     )
     """,
-    "CREATE INDEX IF NOT EXISTS ix_telegram_bot_chats_bot ON telegram_bot_chats(bot_id)",
+    # NB: nessun indice separato su bot_id: la PK composta (bot_id, chat_id) e'
+    # gia' indicizzata da SQLite con bot_id come colonna guida -> le query
+    # WHERE bot_id = ? la usano. Un indice extra sarebbe ridondante.
 
     # ── incoming signals ───────────────────────────────────────────────
     """

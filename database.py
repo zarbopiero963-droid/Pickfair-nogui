@@ -626,34 +626,43 @@ class Database:
 
         Il `bot_token` e' CIFRATO a riposo (enc:v1: via SecretCipher), come i
         segreti nella tabella settings; un token vuoto viene salvato vuoto
-        (passthrough). In UPDATE, `bot_token=None` PRESERVA il token esistente
-        (non lo azzera): evita di perdere il segreto aggiornando solo
+        (passthrough). In update, passare `None` come token PRESERVA quello
+        esistente (non lo azzera): evita di perdere il segreto aggiornando solo
         label/stato. Il chiamante NON deve mai loggare il token.
         """
         now = self._utc_now()
-        if bot_id is None:
+        label_str = str(label or "")
+        active = int(bool(is_active))
+        # Cifra il token UNA sola volta (niente logica duplicata tra insert/update
+        # -> nessun rischio di drift). `stored=None` significa "non toccare il
+        # token" e capita solo in update quando il token passato e' None (preserva).
+        stored: Optional[str] = None
+        if bot_token is not None:
             token_str = str(bot_token or "")
             stored = self._cipher.encrypt(token_str) if token_str else ""
+        if bot_id is None:
             cur = self._execute(
                 "INSERT INTO telegram_bots(label, bot_token, is_active, created_at, updated_at) "
                 "VALUES (?, ?, ?, ?, ?)",
-                (str(label or ""), stored, int(bool(is_active)), now, now),
+                (label_str, stored or "", active, now, now),
             )
             return int(cur.lastrowid)
-        if bot_token is None:
-            # Preserva il token esistente: aggiorna solo label/stato.
-            self._execute(
+        if stored is None:
+            # Update senza token: preserva quello esistente (aggiorna solo label/stato).
+            cur = self._execute(
                 "UPDATE telegram_bots SET label = ?, is_active = ?, updated_at = ? WHERE id = ?",
-                (str(label or ""), int(bool(is_active)), now, int(bot_id)),
+                (label_str, active, now, int(bot_id)),
             )
-            return int(bot_id)
-        token_str = str(bot_token or "")
-        stored = self._cipher.encrypt(token_str) if token_str else ""
-        self._execute(
-            "UPDATE telegram_bots SET label = ?, bot_token = ?, is_active = ?, updated_at = ? "
-            "WHERE id = ?",
-            (str(label or ""), stored, int(bool(is_active)), now, int(bot_id)),
-        )
+        else:
+            cur = self._execute(
+                "UPDATE telegram_bots SET label = ?, bot_token = ?, is_active = ?, updated_at = ? "
+                "WHERE id = ?",
+                (label_str, stored, active, now, int(bot_id)),
+            )
+        # Contratto esplicito (fail-closed): un update su un bot_id inesistente
+        # colpisce 0 righe -> NON e' un successo silenzioso, solleva.
+        if getattr(cur, "rowcount", -1) == 0:
+            raise ValueError(f"telegram_bot id inesistente: {int(bot_id)}")
         return int(bot_id)
 
     def get_telegram_bots(self) -> List[Dict[str, Any]]:
@@ -689,7 +698,9 @@ class Database:
 
     def set_telegram_bot_chats(self, bot_id: int, chats: List[Dict[str, Any]]) -> None:
         """Sostituisce l'intero set di chat di UN bot (swap atomico scoped al
-        bot_id): non tocca le chat degli altri bot."""
+        bot_id): non tocca le chat degli altri bot. Robusto ai `chat_id`
+        duplicati nello stesso batch (upsert ON CONFLICT: l'ultima entry vince),
+        cosi' un input con doppioni non solleva IntegrityError sulla PK composta."""
         with self.transaction() as conn:
             conn.execute("DELETE FROM telegram_bot_chats WHERE bot_id = ?", (int(bot_id),))
             for item in chats or []:
@@ -697,11 +708,14 @@ class Database:
                     """
                     INSERT INTO telegram_bot_chats(bot_id, chat_id, title, is_active)
                     VALUES (?, ?, ?, ?)
+                    ON CONFLICT(bot_id, chat_id) DO UPDATE SET
+                        title = excluded.title,
+                        is_active = excluded.is_active
                     """,
                     (
                         int(bot_id),
-                        str(item.get("chat_id", "")),
-                        str(item.get("title", "")),
+                        str(item.get("chat_id") or ""),
+                        str(item.get("title") or ""),
                         int(bool(item.get("is_active", True))),
                     ),
                 )

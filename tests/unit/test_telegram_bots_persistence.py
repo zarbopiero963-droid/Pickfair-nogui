@@ -7,7 +7,7 @@ Copre lo strato di SOLA persistenza (nessun wiring runtime):
 - passthrough del plaintext legacy + migrazione al primo save;
 - chat per-bot isolate (scoped al bot_id);
 - rimozione bot che elimina anche le sue chat (senza toccare gli altri bot);
-- update con `bot_token=None` che PRESERVA il token esistente;
+- update con token `None` che PRESERVA il token esistente;
 - token vuoto salvato vuoto (non cifrato).
 
 I nomi/valori placeholder NON contengono "token"/"secret" (euristiche di
@@ -48,7 +48,7 @@ def test_bot_token_encrypted_at_rest_and_round_trip():
 
         # BLOCK: senza cifratura esplicita nel CRUD la colonna sarebbe plaintext.
         raw = _raw_bot_token(db_path, bot_id)
-        assert raw.startswith("enc:v1:"), "bot_token deve essere cifrato su disco"
+        assert raw and raw.startswith("enc:v1:"), "bot_token deve essere cifrato su disco"
         assert _SAMPLE not in raw, "il plaintext del token non deve comparire su disco"
 
         # Round-trip trasparente: get_telegram_bots decifra.
@@ -117,6 +117,51 @@ def test_update_with_none_token_preserves_existing():
         assert bots[0]["is_active"] is False
         assert bots[0]["bot_token"] == _SAMPLE, "il token deve essere preservato"
         assert raw_after == raw_before, "la colonna cifrata non deve cambiare"
+
+
+@pytest.mark.unit
+def test_update_with_empty_string_clears_token():
+    # Confine semantico None (preserva) vs "" (azzera) sul path di UPDATE:
+    # save con "" deve SOVRASCRIVERE il token cifrato esistente con vuoto.
+    with tempfile.TemporaryDirectory() as td:
+        db_path = str(Path(td) / "test.db")
+        db = Database(db_path)
+        bot_id = db.save_telegram_bot("bot", _SAMPLE)
+        assert _raw_bot_token(db_path, bot_id).startswith("enc:v1:")
+
+        db.save_telegram_bot("bot", "", bot_id=bot_id)  # "" = azzera (non None)
+        assert _raw_bot_token(db_path, bot_id) == ""
+        assert db.get_telegram_bots()[0]["bot_token"] == ""
+
+
+@pytest.mark.unit
+def test_update_nonexistent_bot_raises():
+    # Contratto esplicito: update di un bot_id inesistente non e' un no-op
+    # silenzioso -> solleva (fail-closed).
+    with tempfile.TemporaryDirectory() as td:
+        db_path = str(Path(td) / "test.db")
+        db = Database(db_path)
+        with pytest.raises(ValueError):
+            db.save_telegram_bot("fantasma", _SAMPLE, bot_id=99999)
+
+
+@pytest.mark.unit
+def test_set_bot_chats_deduplicates_same_chat_id():
+    # chat_id duplicato nello stesso batch NON deve sollevare IntegrityError
+    # sulla PK composta: upsert (l'ultima entry vince).
+    with tempfile.TemporaryDirectory() as td:
+        db_path = str(Path(td) / "test.db")
+        db = Database(db_path)
+        bot_id = db.save_telegram_bot("uno", _SAMPLE)
+        db.set_telegram_bot_chats(bot_id, [
+            {"chat_id": "-100999", "title": "primo", "is_active": True},
+            {"chat_id": "-100999", "title": "secondo", "is_active": False},  # duplicato
+        ])
+        chats = db.get_telegram_bot_chats(bot_id)
+        assert len(chats) == 1
+        assert chats[0]["chat_id"] == "-100999"
+        assert chats[0]["title"] == "secondo"      # ultima entry vince
+        assert chats[0]["is_active"] is False
 
 
 @pytest.mark.unit

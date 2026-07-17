@@ -45,7 +45,8 @@ intatta):
   set di chat; lo stesso `chat_id` può essere monitorato da bot diversi.
 
 CRUD (`database.py`): `save_telegram_bot(label, bot_token, *, is_active, bot_id)`
-(create/update; `bot_token=None` in update **preserva** il token esistente),
+(create/update; in update, passare `None` come token **preserva** quello
+esistente; un `bot_id` inesistente solleva `ValueError`),
 `get_telegram_bots()` (decifra il token — **non loggarlo mai**),
 `remove_telegram_bot(bot_id)` (elimina bot + sue chat, in transazione),
 `set_telegram_bot_chats(bot_id, chats)` (swap scoped al bot),
