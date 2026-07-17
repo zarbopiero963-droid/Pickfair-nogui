@@ -359,6 +359,40 @@ def test_botapi_stop_failclosed_if_transport_thread_survives():
     out = rt.stop()
     assert out["stopped"] is False
     assert "alive" in out["error"]
+    assert rt.state == "FAILED"  # stato runtime coerente col service (non CONNECTED)
+
+
+def test_botapi_start_failure_stops_transport_no_leak():
+    # BLOCK (GPT/Fugu): se transport.start() solleva dopo aver (potenzialmente)
+    # avviato il polling, il runtime deve FERMARE il transport (niente thread
+    # orfano -> niente secondo getUpdates su un retry) e riportare started:False.
+    holder = {}
+
+    class _ExplodingTransport:
+        def __init__(self):
+            self.stopped = False
+            self._thread = None
+
+        def start(self):
+            raise RuntimeError("boom dopo partial start")
+
+        def stop(self, timeout=5.0):
+            self.stopped = True
+
+    def factory(*_a):
+        t = _ExplodingTransport()
+        holder["t"] = t
+        return t
+
+    rt = TelegramBotApiRuntime(
+        bot_token="tok", chat_ids=[123], transport_factory=factory,
+    )
+    out = rt.start()
+    assert out["started"] is False
+    assert holder["t"].stopped is True   # transport fermato: nessun thread orfano
+    assert rt.state == "FAILED"
+    assert rt.running is False
+    assert out["error"] == "RuntimeError"  # solo il tipo, mai il messaggio grezzo
 
 
 def test_service_stop_failclosed_keeps_listener_if_transport_survives():
