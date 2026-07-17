@@ -89,5 +89,14 @@ Note di trasporto (PR-1):
 ## Sicurezza
 
 Il `bot_token` è una credenziale completa (chi lo possiede controlla il bot):
-va **cifrato a riposo** nel DB (previsto in PR-2, oggi `_SECRET_FIELDS` non lo
-copre) e mai committato/loggato.
+è **cifrato a riposo** nel DB — la chiave `telegram.bot_token` è in
+`_SECRET_FIELDS` (`database.py`), quindi `save_telegram_settings` la scrive
+cifrata (formato `enc:v1:…`) e `get_telegram_settings` la decifra in modo
+trasparente. Non va mai committato né loggato (il trasporto lo redige, vedi sopra).
+
+> **Migrazione dei token legacy (azione ops).** La cifratura scatta **in
+> scrittura**: un `telegram.bot_token` già presente **in chiaro** (salvato prima
+> di questa modifica) viene letto in passthrough e **resta in chiaro su disco
+> finché non lo si ri-salva**. La sola lettura NON lo migra. Per cifrare un token
+> legacy esistente: ri-salva le impostazioni Telegram una volta (dalla GUI o via
+> `save_telegram_settings`) — al primo save la riga passa a `enc:v1:…`.
