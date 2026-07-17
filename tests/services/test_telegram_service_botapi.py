@@ -360,6 +360,23 @@ def test_botapi_stop_failclosed_if_transport_thread_survives():
     assert out["stopped"] is False
     assert "alive" in out["error"]
     assert rt.state == "FAILED"  # stato runtime coerente col service (non CONNECTED)
+    assert rt.intentional_stop is False  # stop non avvenuto => recovery non soppresso
+    assert rt._transport is not None      # riferimento mantenuto (thread ancora vivo)
+
+
+def test_botapi_stop_success_clears_transport_and_is_idempotent():
+    # Fable: uno stop riuscito azzera self._transport; un secondo stop resta
+    # pulito (stopped:True), niente FAILED spurio su transport gia' fermo.
+    cap = []
+    svc = _svc(_one_active_bot_db(), capture=cap)
+    svc.start()
+    rt = svc.listener
+    out1 = rt.stop()
+    assert out1["stopped"] is True
+    assert rt._transport is None
+    out2 = rt.stop()
+    assert out2["stopped"] is True
+    assert rt.state == "STOPPED"
 
 
 def test_botapi_start_failure_stops_transport_no_leak():
@@ -393,6 +410,33 @@ def test_botapi_start_failure_stops_transport_no_leak():
     assert rt.state == "FAILED"
     assert rt.running is False
     assert out["error"] == "RuntimeError"  # solo il tipo, mai il messaggio grezzo
+    assert rt._transport is None  # thread morto dopo stop => riferimento azzerato
+
+
+def test_botapi_start_failure_keeps_transport_if_thread_survives():
+    # BLOCK (GPT/Fugu): se start() fallisce e il thread del transport resta VIVO,
+    # il riferimento NON va azzerato: altrimenti il guard _runtime_thread del
+    # service non lo vedrebbe e un retry aprirebbe un SECONDO getUpdates (409).
+    class _StuckExplodingTransport:
+        def __init__(self):
+            self.stopped = False  # stop() non ferma -> resta vivo
+            self._thread = None
+
+        def start(self):
+            raise RuntimeError("boom")
+
+        def stop(self, timeout=5.0):
+            pass
+
+    rt = TelegramBotApiRuntime(
+        bot_token="tok", chat_ids=[123],
+        transport_factory=lambda *a: _StuckExplodingTransport(),
+    )
+    out = rt.start()
+    assert out["started"] is False
+    assert rt.state == "FAILED"
+    assert rt._transport is not None      # KEPT (thread vivo): il guard del service lo vede
+    assert rt.running is False            # started=False anche se il transport è vivo
 
 
 def test_service_stop_failclosed_keeps_listener_if_transport_survives():

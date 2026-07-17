@@ -157,9 +157,14 @@ class TelegramBotApiRuntime:
                     self._transport.stop()
             except Exception:  # pragma: no cover - cleanup best-effort
                 pass
-            self._transport = None
             self._started = False
             self._state_base = "FAILED"
+            # Thread MORTO => azzera il riferimento. Thread ANCORA VIVO => MANTIENILO:
+            # così il guard del service (_runtime_thread) vede il thread e rifiuta
+            # di avviare un SECONDO getUpdates sullo stesso token (409 Conflict);
+            # il thread residuo verrà ritentato dallo stop fail-closed.
+            if not self._transport_alive():
+                self._transport = None
             # SOLO il tipo dell'eccezione: il messaggio potrebbe (in teoria)
             # contenere dati sensibili -> mai propagarlo grezzo dal path col
             # bot_token.
@@ -178,6 +183,9 @@ class TelegramBotApiRuntime:
                 if self._transport_alive():
                     # Stop sollevato E thread ancora vivo => fail-closed: lo stato
                     # runtime segue il service (FAILED), il listener NON va staccato.
+                    # `intentional_stop=False`: lo stop NON è avvenuto, quindi il
+                    # runtime NON è intenzionalmente fermo (recovery non soppresso).
+                    self.intentional_stop = False
                     self._state_base = "FAILED"
                     return {"stopped": False, "error": f"bot_transport_stop_failed:{type(exc).__name__}"}
                 # thread già morto ma stop ha sollevato: preserva la diagnostica.
@@ -187,8 +195,12 @@ class TelegramBotApiRuntime:
             # altrimenti il service stacca il listener e un restart creerebbe un
             # SECONDO getUpdates sullo stesso token (Telegram 409 Conflict).
             if self._transport_alive():
+                self.intentional_stop = False
                 self._state_base = "FAILED"
                 return {"stopped": False, "error": "bot_transport_thread_still_alive"}
+            # Stop riuscito: azzera stato E riferimento (nessun transport morto
+            # appeso -> uno stop successivo è pulito, niente FAILED spurio).
+            self._transport = None
             self._started = False
             self._state_base = "STOPPED"
             return {"stopped": True, "warning": stop_warning} if stop_warning else {"stopped": True}
