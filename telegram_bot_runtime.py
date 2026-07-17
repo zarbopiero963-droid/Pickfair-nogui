@@ -41,16 +41,24 @@ class TelegramBotApiRuntime:
         allow_insecure_http: bool = False,
         max_message_age_seconds: float = 300.0,
     ):
-        # Allow-list chat come int (lo schema salva chat_id TEXT). Fail-closed:
-        # senza almeno una chat il transport non saprebbe cosa ascoltare.
+        # Allow-list chat come int (lo schema salva chat_id TEXT). getUpdates
+        # restituisce chat.id NUMERICO: un chat_id non numerico (es. @canale) non
+        # è ascoltabile per questa via -> scartato (non fa crashare start()).
+        # Fail-closed: senza almeno una chat numerica valida il transport non
+        # saprebbe cosa ascoltare.
         ids: List[int] = []
         for c in chat_ids or []:
             s = str(c).strip()
             if not s:
                 continue
-            ids.append(int(s))
+            try:
+                ids.append(int(s))
+            except (TypeError, ValueError):
+                continue
         if not ids:
-            raise ValueError("TelegramBotApiRuntime richiede almeno una chat allow-list")
+            raise ValueError(
+                "TelegramBotApiRuntime richiede almeno una chat_id numerica valida"
+            )
         self._chat_ids = ids
 
         # Listener come SINK di parsing: mai avviato (nessun Telethon). Riusa
@@ -71,16 +79,34 @@ class TelegramBotApiRuntime:
         self._transport: Any = None
         self._started = False
         self.intentional_stop = False
-        self.state = "CREATED"
+        # Stato "base" (CREATED/CONNECTED/STOPPED). Lo `state` effettivo (property)
+        # deriva anche dalla liveness reale del thread getUpdates: se il thread
+        # muore in modo NON intenzionale, lo stato diventa FAILED (vedi property).
+        self._state_base = "CREATED"
 
     # ---- superficie compatibile con TelegramService.self.listener ----
+    @property
+    def state(self) -> str:
+        """Stato effettivo. Avviato ma con thread getUpdates morto (non stop
+        intenzionale) => FAILED: così l'invariant guard ('CONNECTED richiede 1
+        handler') e l'autoheal esistenti rilevano la perdita di ingestione,
+        invece di restare 'CONNECTED' per sempre in silenzio."""
+        if self._state_base != "CONNECTED":
+            return self._state_base
+        return "CONNECTED" if self._transport_alive() else "FAILED"
+
     @property
     def running(self) -> bool:
         return bool(self._started and self._transport_alive())
 
     @property
     def _runtime_thread(self):
+        if self._transport is None:
+            return None
         return getattr(self._transport, "_thread", None)
+
+    def _thread_dead_unexpectedly(self) -> bool:
+        return self._state_base == "CONNECTED" and not self._transport_alive()
 
     def handle_incoming(self, *args, **kwargs):
         # Delega al sink (usato come on_message del transport, ma esposto anche
@@ -116,7 +142,7 @@ class TelegramBotApiRuntime:
         self._transport = self._build_transport()
         self._transport.start()
         self._started = True
-        self.state = "CONNECTED"
+        self._state_base = "CONNECTED"
         return {"started": True}
 
     def stop(self) -> dict:
@@ -126,10 +152,10 @@ class TelegramBotApiRuntime:
                 self._transport.stop()
             except Exception as exc:  # pragma: no cover - stop best-effort
                 self._started = False
-                self.state = "STOPPED"
+                self._state_base = "STOPPED"
                 return {"stopped": True, "warning": str(exc)}
         self._started = False
-        self.state = "STOPPED"
+        self._state_base = "STOPPED"
         return {"stopped": True}
 
     def status(self) -> dict:
@@ -141,7 +167,10 @@ class TelegramBotApiRuntime:
             "intentional_stop": bool(self.intentional_stop),
             "reconnect_attempts": 0,
             "reconnect_in_progress": False,
-            "last_error": "",
+            # Thread getUpdates morto in modo non intenzionale => errore esplicito
+            # (l'autoheal/invariant guard vedono FAILED + last_error, non un
+            # 'CONNECTED' muto).
+            "last_error": "bot_transport_thread_dead" if self._thread_dead_unexpectedly() else "",
             "last_successful_message_ts": inner.get("last_successful_message_ts"),
             "listener_started": bool(self._started),
             # UN transport attivo = UN handler: soddisfa l'invariant guard

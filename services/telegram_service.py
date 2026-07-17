@@ -42,7 +42,9 @@ class TelegramService:
         # Firma: (bot_token, chat_ids, on_message) -> transport.
         self._bot_transport_factory = bot_transport_factory
         self._connect_timeout = float(connect_timeout)
-        self.listener: Optional[TelegramListener] = None
+        # Il listener può essere il TelegramListener (path Telethon userbot) o
+        # l'adapter Bot API (path bot_token, PR-5a): stessa superficie runtime.
+        self.listener: Optional[TelegramListener | TelegramBotApiRuntime] = None
         self.connected = False
         self.last_error = ""
         self.state = "CREATED"
@@ -141,10 +143,31 @@ class TelegramService:
     # =========================================================
     # LIFECYCLE
     # =========================================================
+    @staticmethod
+    def _numeric_active_chat_ids(chats: list) -> list:
+        """chat_id NUMERICI e attivi di un bot. getUpdates restituisce chat.id
+        numerico: un chat_id non numerico (es. `@canale`) non è ascoltabile per
+        questa via -> scartato (la risoluzione di `@username` è rimandata). Fa
+        anche da validazione fail-closed: un bot con sole chat non numeriche
+        risulta senza chat utilizzabili (=> non usable)."""
+        out = []
+        for c in chats or []:
+            if not c.get("is_active"):
+                continue
+            s = str(c.get("chat_id") or "").strip()
+            if not s:
+                continue
+            try:
+                int(s)
+            except (TypeError, ValueError):
+                continue
+            out.append(s)
+        return out
+
     def _usable_bot_api_bots(self) -> list:
         """Bot Bot API utilizzabili a runtime (epica #374 PR-5a): attivi, con
-        token presente e con almeno una chat attiva. Ritorna una lista di
-        `(bot_dict, [chat_id_str])`. Read-only, fail-safe (errori DB => lista
+        token presente e con almeno una chat NUMERICA attiva. Ritorna una lista
+        di `(bot_dict, [chat_id_str])`. Read-only, fail-safe (errori DB => lista
         vuota, così `start()` cade nel fail-closed 'Configurazione incompleta'
         invece di sollevare qui)."""
         out: list = []
@@ -161,14 +184,41 @@ class TelegramService:
             except Exception as exc:  # pragma: no cover - degrado difensivo
                 logger.warning("[TelegramService] lettura chat bot fallita: %s", exc)
                 continue
-            chat_ids = [
-                str(c.get("chat_id"))
-                for c in chats
-                if c.get("is_active") and str(c.get("chat_id") or "").strip()
-            ]
+            chat_ids = self._numeric_active_chat_ids(chats)
             if chat_ids:
                 out.append((bot, chat_ids))
         return out
+
+    def _build_botapi_runtime(self, bot: dict, chat_ids: list) -> TelegramBotApiRuntime:
+        """Costruisce l'adapter Bot API (path bot_token, PR-5a). Estratto da
+        start() per tenerne bassa la complessità."""
+        return TelegramBotApiRuntime(
+            bot_token=bot["bot_token"],
+            chat_ids=chat_ids,
+            db=self.db,
+            on_signal=self._handle_signal,
+            on_status=self._handle_status,
+            transport_factory=self._bot_transport_factory,
+        )
+
+    def _build_telethon_listener(self, cfg) -> TelegramListener:
+        """Costruisce e configura il listener Telethon userbot (path invariato).
+        Estratto da start() per tenerne bassa la complessità."""
+        listener = TelegramListener(
+            api_id=int(cfg.api_id),
+            api_hash=cfg.api_hash,
+            session_string=cfg.session_string or None,
+            bot_token=getattr(cfg, "bot_token", None),
+            client_factory=self._client_factory,
+            connect_timeout=self._connect_timeout,
+        )
+        listener.set_database(self.db)
+        listener.set_monitored_chats(cfg.monitored_chat_ids)
+        listener.set_callbacks(
+            on_signal=self._handle_signal,
+            on_status=self._handle_status,
+        )
+        return listener
 
     def start(self) -> dict:
         cfg = self.settings_service.load_telegram_config()
@@ -239,32 +289,11 @@ class TelegramService:
                 # transport HTTP getUpdates. Nessun Telethon, nessun api_id/api_hash.
                 bot, chat_ids = bot_api_selection
                 active_chat_count = len(chat_ids)
-                self.listener = TelegramBotApiRuntime(
-                    bot_token=bot["bot_token"],
-                    chat_ids=chat_ids,
-                    db=self.db,
-                    on_signal=self._handle_signal,
-                    on_status=self._handle_status,
-                    transport_factory=self._bot_transport_factory,
-                )
+                self.listener = self._build_botapi_runtime(bot, chat_ids)
                 # Un bot Bot API attivo = un handler runtime.
                 self.handlers_registered = 1
             else:
-                self.listener = TelegramListener(
-                    api_id=int(cfg.api_id),
-                    api_hash=cfg.api_hash,
-                    session_string=cfg.session_string or None,
-                    bot_token=getattr(cfg, "bot_token", None),
-                    client_factory=self._client_factory,
-                    connect_timeout=self._connect_timeout,
-                )
-
-                self.listener.set_database(self.db)
-                self.listener.set_monitored_chats(cfg.monitored_chat_ids)
-                self.listener.set_callbacks(
-                    on_signal=self._handle_signal,
-                    on_status=self._handle_status,
-                )
+                self.listener = self._build_telethon_listener(cfg)
                 self.handlers_registered = sum(
                     1 for cb in (self._handle_signal, self._handle_status) if callable(cb)
                 )

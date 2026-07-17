@@ -20,7 +20,6 @@ import pytest
 
 from services.telegram_service import TelegramService
 from telegram_bot_runtime import TelegramBotApiRuntime
-from telegram_listener import TelegramListener
 
 pytestmark = pytest.mark.unit
 
@@ -119,13 +118,16 @@ def _one_active_bot_db(patterns=None):
     )
 
 
+def _make_factory(capture):
+    def factory(bot_token, chat_ids, on_message):
+        t = _FakeTransport(bot_token, chat_ids, on_message)
+        capture.append(t)
+        return t
+    return factory
+
+
 def _svc(db, *, capture=None):
-    factory = None
-    if capture is not None:
-        def factory(bot_token, chat_ids, on_message):
-            t = _FakeTransport(bot_token, chat_ids, on_message)
-            capture.append(t)
-            return t
+    factory = _make_factory(capture) if capture is not None else None
     return TelegramService(
         settings_service=_Settings(_Cfg()),
         db=db,
@@ -175,10 +177,9 @@ def test_botapi_delivers_signal_to_bus():
     fresh = datetime.now(timezone.utc) - timedelta(seconds=5)
     cap[0].on_message(MSG_NEXT_GOL, -100999, fresh)
 
-    topics = [t for t, _ in svc.bus.events]
-    assert "SIGNAL_RECEIVED" in topics
-    payload = next(p for t, p in svc.bus.events if t == "SIGNAL_RECEIVED")
-    assert payload.get("market_type") == "NEXT_GOAL"
+    payloads = [p for t, p in svc.bus.events if t == "SIGNAL_RECEIVED"]
+    assert payloads, "atteso un SIGNAL_RECEIVED sul bus"
+    assert payloads[0].get("market_type") == "NEXT_GOAL"
 
 
 def test_botapi_stale_message_does_not_emit_signal():
@@ -252,6 +253,59 @@ def test_telethon_path_selected_when_creds_present_no_botapi():
     # Il fatto chiave: il transport Bot API NON è stato costruito (path Telethon).
     assert cap == []
     assert not isinstance(svc.listener, TelegramBotApiRuntime)
+
+
+def test_transport_thread_death_reports_failed_not_silent_connected():
+    # BLOCK (GPT/Fugu/Fable): se il thread getUpdates muore, lo stato NON resta
+    # CONNECTED silenziosamente. Diventa FAILED con last_error e 0 handler, così
+    # l'invariant guard e l'autoheal esistenti rilevano la perdita di ingestione.
+    # Sul vecchio codice (state statico) lo snapshot restava CONNECTED.
+    cap = []
+    svc = _svc(_one_active_bot_db(), capture=cap)
+    svc.start()
+    assert svc.runtime_snapshot()["state"] == "CONNECTED"
+
+    class _DeadThread:
+        def is_alive(self):
+            return False
+
+    cap[0]._thread = _DeadThread()  # simula morte del thread del transport
+    snap = svc.runtime_snapshot()
+    assert snap["state"] == "FAILED"
+    assert snap["running"] is False
+    assert snap["handlers_registered"] == 0
+    assert snap["last_error"]  # non vuoto -> l'autoheal ha di che agire
+
+
+def test_bot_with_only_non_numeric_chat_is_failclosed():
+    # BLOCK (Fable/Fugu/Codacy): un chat_id non numerico (es. @canale) non è
+    # ascoltabile via getUpdates. Un bot con SOLE chat non numeriche è "non
+    # usable" => fail-closed pulito ('incompleta'), NON un crash a start().
+    db = _BotDB(
+        bots=[{"id": 9, "label": "D", "bot_token": "tok-d", "is_active": True, "has_token": True}],
+        chats_by_bot={9: [{"chat_id": "@miocanale", "is_active": True}]},
+    )
+    svc = _svc(db, capture=[])
+    with pytest.raises(RuntimeError) as exc:
+        svc.start()
+    assert "incompleta" in str(exc.value).lower()
+    assert svc.state == "FAILED"
+
+
+def test_non_numeric_chat_is_skipped_numeric_kept():
+    # Un bot con una chat numerica valida + una @canale: usa solo la numerica.
+    db = _BotDB(
+        bots=[{"id": 10, "label": "E", "bot_token": "tok-e", "is_active": True, "has_token": True}],
+        chats_by_bot={10: [
+            {"chat_id": "@canale", "is_active": True},
+            {"chat_id": "-100777", "is_active": True},
+        ]},
+    )
+    cap = []
+    svc = _svc(db, capture=cap)
+    result = svc.start()
+    assert result["started"] is True
+    assert cap[0].chat_ids == [-100777]  # @canale scartata, numerica tenuta
 
 
 def test_stop_stops_transport():

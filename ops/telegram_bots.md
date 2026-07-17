@@ -62,10 +62,22 @@ Selezione sorgente in `TelegramService.start()`:
 - niente di utilizzabile → **fail-closed** `Configurazione Telegram incompleta` (invariato).
 
 Coerenza health/invariant: un transport attivo conta come **1 handler** (l'invariant
-guard richiede esattamente 1 handler quando `CONNECTED`). Il `bot_transport_factory`
-è iniettabile (come il `client_factory` Telethon) per i test headless. **Nessun
-effetto su money-management/ordini/Betfair/dutching/parsing.** L'autoheal per-bot e
-un vero health-surface del transport sono rimandati.
+guard richiede esattamente 1 handler quando `CONNECTED`). Se il thread `getUpdates`
+muore in modo non intenzionale lo stato dell'adapter diventa **`FAILED`** (con
+`last_error`, `handlers_registered=0`): così l'invariant guard e l'**autoheal
+esistenti** rilevano la perdita di ingestione invece di restare `CONNECTED` in
+silenzio.
+
+Solo `chat_id` **numerici** (es. `-100…`) sono ascoltabili via `getUpdates` (che
+restituisce `chat.id` numerico): i `chat_id` non numerici (es. `@canale`) vengono
+**scartati** in selezione (`_numeric_active_chat_ids`); un bot con sole chat non
+numeriche risulta **non utilizzabile** → fail-closed. La risoluzione di
+`@username` è rimandata.
+
+Il `bot_transport_factory` è iniettabile (come il `client_factory` Telethon) per i
+test headless. **Nessun effetto su money-management/ordini/Betfair/dutching/parsing.**
+L'orchestrazione N-bot, l'autoheal **per-bot** e un vero health-surface del transport
+(che rilevi il backoff permanente con thread vivo) sono rimandati.
 
 ## GUI — gestione bot (PR-4, tab Telegram)
 
