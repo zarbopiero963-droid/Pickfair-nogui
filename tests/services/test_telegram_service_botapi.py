@@ -232,6 +232,23 @@ def test_botapi_selection_failclosed_on_chat_read_error():
     assert svc.state == "FAILED"
 
 
+def test_botapi_selection_failclosed_on_bots_list_error():
+    # BLOCK (rilievo GPT-5.6 Terra + Fable full-range): un errore DB nell'ELENCARE i
+    # bot NON deve essere degradato a "0 bot attivi" (che, con un bot usable letto
+    # separatamente, riavvierebbe un singolo bot droppando il 2° attivo). Con la
+    # lettura UNICA di _select_bot_api_source() l'errore PROPAGA => start() fa
+    # fail-closed 'telegram_bot_config_read_error', non un avvio silenzioso.
+    class _RaisingBotsDB(_BotDB):
+        def get_telegram_bots(self, include_token=True):
+            raise RuntimeError("db bots error")
+
+    svc = _svc(_RaisingBotsDB(), capture=[])
+    with pytest.raises(RuntimeError) as exc:
+        svc.start()
+    assert "config_read_error" in str(exc.value)
+    assert svc.state == "FAILED"
+
+
 def test_start_recovers_when_cached_state_is_stale_connected():
     # BLOCK (Fugu full-range): self.state cache "CONNECTED" stale dopo la morte del
     # transport NON deve far tornare already_running (bloccando il recovery). Il

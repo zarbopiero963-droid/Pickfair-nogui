@@ -164,54 +164,34 @@ class TelegramService:
             out.append(s)
         return out
 
-    def _usable_bot_api_bots(self) -> list:
-        """Bot Bot API utilizzabili a runtime (epica #374 PR-5a): attivi, con
-        token presente e con almeno una chat NUMERICA attiva. Ritorna una lista
-        di `(bot_dict, [chat_id_str])`. Read-only. Politica errori DB
-        DIFFERENZIATA:
-        - errore nell'ELENCARE i bot (`get_telegram_bots`) => lista vuota
-          (fail-safe): `start()` cade nel fail-closed 'Configurazione incompleta'
-          invece di sollevare qui;
-        - errore nel leggere le chat di un bot ATTIVO
-          (`get_telegram_bot_chats`) => PROPAGA (fail-closed): non si avvia un set
-          PARZIALE né si falsa il conteggio bot (che bypasserebbe il fail-closed
-          multi-bot); `start()` fa fail-closed sull'intera selezione."""
-        out: list = []
-        try:
-            bots = self.db.get_telegram_bots(include_token=True) or []
-        except Exception as exc:  # pragma: no cover - degrado difensivo
-            # Impossibile ELENCARE i bot: nessuna sorgente Bot API leggibile => []
-            # (start() cade nel fail-closed 'Configurazione incompleta').
-            logger.warning("[TelegramService] lettura bot Bot API fallita: %s", exc)
-            return out
+    def _select_bot_api_source(self) -> tuple:
+        """Legge i bot Bot API in UNA sola lettura e ritorna `(active_count, usable)`
+        (epica #374 PR-5a):
+        - `active_count`: numero di bot ATTIVI con token — il gate multi-bot fa
+          fail-closed su >1 attivo (niente drop silenzioso di una sorgente attiva),
+          A PRESCINDERE dall'usabilità delle chat;
+        - `usable`: lista `(bot_dict, [chat_id_str])` dei bot attivi con >=1 chat
+          NUMERICA attiva (per la selezione della sorgente).
+
+        Read-only. Gli errori DB **PROPAGANO** (nessun degrado a 0/[] che aprirebbe
+        un buco nel fail-closed: un conteggio azzerato per errore riavvierebbe un
+        singolo bot droppando il 2°): `start()` cattura e fa fail-closed
+        'telegram_bot_config_read_error'. Un'UNICA lettura evita incoerenze tra il
+        conteggio (gate) e la selezione (sorgente) — due letture separate potrebbero
+        divergere. Il token viene letto perché serve comunque a costruire il runtime
+        del bot selezionato (nessuna estrazione extra di segreti solo per contare)."""
+        bots = self.db.get_telegram_bots(include_token=True) or []
+        active_count = 0
+        usable: list = []
         for bot in bots:
             if not bot.get("is_active") or not bot.get("bot_token"):
                 continue
-            # Errore leggendo le chat di un bot ATTIVO: NON si salta in silenzio
-            # (falserebbe il conteggio e potrebbe bypassare il fail-closed
-            # multi-bot avviando un set PARZIALE). Si propaga: start() fa
-            # fail-closed sull'intera selezione.
+            active_count += 1
             chats = self.db.get_telegram_bot_chats(bot["id"]) or []
             chat_ids = self._numeric_active_chat_ids(chats)
             if chat_ids:
-                out.append((bot, chat_ids))
-        return out
-
-    def _active_bot_api_bot_count(self) -> int:
-        """Numero di bot Bot API ATTIVI e con token, INDIPENDENTEMENTE dall'usabilità
-        delle loro chat. Il gate multi-bot conta i bot ATTIVI, NON gli usable: con
-        >1 bot attivo configurato si fa fail-closed (multi_bot_runtime_not_yet_
-        supported) SENZA avviare silenziosamente il solo bot usable — altrimenti un
-        2° bot attivo ma non-usable (es. sole chat non numeriche `@canale`) verrebbe
-        DROPPATO in silenzio, perdendo una sorgente segnali configurata (contraddice
-        il contratto fail-closed). Read-only, fail-safe: errore DB nell'ELENCARE i
-        bot => 0 (start() cade nel fail-closed 'Configurazione incompleta')."""
-        try:
-            bots = self.db.get_telegram_bots(include_token=True) or []
-        except Exception as exc:  # pragma: no cover - degrado difensivo
-            logger.warning("[TelegramService] conteggio bot attivi fallito: %s", exc)
-            return 0
-        return sum(1 for b in bots if b.get("is_active") and b.get("bot_token"))
+                usable.append((bot, chat_ids))
+        return active_count, usable
 
     def _running_chat_count(self) -> int:
         """Numero di chat monitorate dal listener IN ESECUZIONE (Telethon o Bot
@@ -313,11 +293,11 @@ class TelegramService:
         bot_api_selection = None
         if not cfg.api_id or not cfg.api_hash:
             try:
-                # Il gate multi-bot conta i bot ATTIVI (non gli usable): un 2° bot
-                # attivo ma non-usable (es. sole chat non numeriche) NON deve essere
-                # droppato in silenzio avviando il solo bot usable.
-                active_count = self._active_bot_api_bot_count()
-                usable = self._usable_bot_api_bots()
+                # UNA lettura => (active_count, usable) coerenti. Il gate multi-bot
+                # conta i bot ATTIVI (non gli usable): un 2° bot attivo ma non-usable
+                # (es. sole chat non numeriche) NON deve essere droppato in silenzio
+                # avviando il solo bot usable. Errori DB PROPAGANO qui sotto.
+                active_count, usable = self._select_bot_api_source()
             except Exception as exc:
                 # Errore DB nel determinare il set di bot: NON avviare un set
                 # parziale (fail-closed). Meglio non partire e ritentare che

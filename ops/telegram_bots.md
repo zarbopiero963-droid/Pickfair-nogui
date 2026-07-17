@@ -65,6 +65,12 @@ Selezione sorgente in `TelegramService.start()`:
   nella PR successiva;
 - niente di utilizzabile → **fail-closed** `Configurazione Telegram incompleta` (invariato).
 
+Conteggio e selezione derivano da **un'unica lettura** DB (`_select_bot_api_source`
+→ `(active_count, usable)`): evita incoerenze tra il gate (bot attivi) e la
+sorgente (bot usable). Gli **errori DB propagano** (nessun degrado a `0`/`[]`, che
+riaprirebbe il drop silenzioso): `start()` li cattura e fa **fail-closed**
+`telegram_bot_config_read_error`.
+
 Coerenza health/invariant: un transport **sano** conta come **1 handler**
 (l'invariant guard richiede esattamente 1 handler quando `CONNECTED`). Lo stato
 dell'adapter diventa **`FAILED`** (con `last_error`, `handlers_registered=0`) in
