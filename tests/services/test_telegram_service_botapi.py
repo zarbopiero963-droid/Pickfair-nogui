@@ -454,6 +454,35 @@ def test_botapi_start_does_not_overwrite_live_orphan_transport():
     assert len(built) == 1                       # NESSUN secondo transport costruito
 
 
+def test_botapi_status_snapshot_is_internally_coherent():
+    # BLOCK (Fugu full-range): lo snapshot di status() deve essere COERENTE —
+    # state, handlers_registered e running derivano da UNA sola lettura di
+    # liveness/fallimenti, così non escono mai valori incoerenti (es. state
+    # FAILED con handlers=1). Copre i tre stati: sano, degradato, thread morto.
+    cap = []
+    svc = _svc(_one_active_bot_db(), capture=cap)
+    svc.start()
+
+    class _Dead:
+        def is_alive(self):
+            return False
+
+    # sano: CONNECTED <=> 1 handler
+    s = svc.listener.status()
+    assert s["state"] == "CONNECTED" and s["handlers_registered"] == 1 and s["running"] is True
+
+    # degradato (fallimento permanente, thread vivo): FAILED + 0 handler
+    cap[0]._consecutive_failures = 5
+    s = svc.listener.status()
+    assert s["state"] == "FAILED" and s["handlers_registered"] == 0
+
+    # thread morto: FAILED + 0 handler + running False
+    cap[0]._consecutive_failures = 0
+    cap[0]._thread = _Dead()
+    s = svc.listener.status()
+    assert s["state"] == "FAILED" and s["handlers_registered"] == 0 and s["running"] is False
+
+
 def test_botapi_stop_success_clears_transport_and_is_idempotent():
     # Fable: uno stop riuscito azzera self._transport; un secondo stop resta
     # pulito (stopped:True), niente FAILED spurio su transport gia' fermo.

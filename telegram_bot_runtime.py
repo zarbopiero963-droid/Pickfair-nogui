@@ -250,31 +250,44 @@ class TelegramBotApiRuntime:
 
     def status(self) -> dict:
         inner = self._sink.status()
-        alive = self.running
-        degraded = bool(self._state_base == "CONNECTED" and self._transport_persistently_failing())
-        # "Sano" = thread vivo E non in fallimento permanente. Solo un transport
-        # sano conta come 1 handler (coerente con lo stato: degradato => FAILED).
-        healthy = bool(alive and not degraded)
-        if self._thread_dead_unexpectedly():
+        # Snapshot ATOMICO: leggi liveness e fallimenti UNA sola volta e derivane
+        # TUTTI i campi (state/running/handlers/last_error). Altrimenti, se il
+        # thread muore o supera la soglia TRA due letture, lo snapshot potrebbe
+        # uscire incoerente (es. state="FAILED" con handlers_registered=1),
+        # violando l'invariant guard "CONNECTED => 1 handler".
+        alive = self._transport_alive()
+        degraded = bool(
+            self._state_base == "CONNECTED" and self._transport_persistently_failing()
+        )
+        # Stato derivato dagli stessi valori appena letti (non dalla property
+        # `state`, che rileggerebbe il transport in un istante diverso).
+        if self._state_base != "CONNECTED":
+            state = self._state_base
+        elif not alive or degraded:
+            state = "FAILED"
+        else:
+            state = "CONNECTED"
+        # "Sano" = avviato, thread vivo E non in fallimento permanente. Solo un
+        # transport sano conta come 1 handler (coerente con state CONNECTED).
+        healthy = bool(self._started and alive and not degraded)
+        running = bool(self._started and alive)
+        if self._state_base == "CONNECTED" and not alive:
             last_error = "bot_transport_thread_dead"
         elif degraded:
             last_error = "bot_transport_persistent_poll_failure"
         else:
             last_error = ""
         return {
-            "state": self.state,
-            "running": alive,
+            "state": state,
+            "running": running,
             "intentional_stop": bool(self.intentional_stop),
             "reconnect_attempts": 0,
             "reconnect_in_progress": False,
-            # Ingestione morta (thread morto, o vivo ma in fallimento permanente)
-            # => errore esplicito: autoheal/invariant guard vedono FAILED +
-            # last_error, non un 'CONNECTED' muto (fail-open).
             "last_error": last_error,
             "last_successful_message_ts": inner.get("last_successful_message_ts"),
             "listener_started": bool(self._started),
             # UN transport SANO = UN handler: soddisfa l'invariant guard
-            # ("CONNECTED richiede esattamente 1 handler"); degradato => 0.
+            # ("CONNECTED richiede esattamente 1 handler"); degradato/morto => 0.
             "handlers_registered": 1 if healthy else 0,
             "active_network_resources": 1 if healthy else 0,
             "monitored_chat_count": len(self._chat_ids),
