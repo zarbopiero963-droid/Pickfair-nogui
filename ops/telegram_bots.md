@@ -22,10 +22,34 @@ Un bot legge i messaggi **solo** nelle chat dove è stato aggiunto:
 
 ## Stato (roadmap #374)
 
-- **PR-1 (questo modulo):** `telegram_bot_transport.py` — trasporto `getUpdates`
-  long-poll di **un** bot. Isolato e **opt-in**: non è ancora agganciato al
-  runtime, il path userbot resta invariato. Le PR successive aggiungono schema
-  config multi-bot, GUI, runtime multi-bot e il ritiro dell'userbot.
+- **PR-1:** `telegram_bot_transport.py` — trasporto `getUpdates` long-poll di
+  **un** bot. Isolato e **opt-in**, non agganciato al runtime.
+- **PR-2:** `bot_token` cifrato a riposo (`telegram.bot_token` in `_SECRET_FIELDS`).
+- **PR-3 (questa):** persistenza **multi-bot** nel DB (schema `telegram_bots` +
+  `telegram_bot_chats`). SOLO dati/CRUD, **nessun wiring runtime**: il path
+  single-bot (`telegram_chats` → `monitored_chat_ids`) resta invariato.
+- Le PR successive aggiungono GUI, runtime multi-bot e il ritiro dell'userbot.
+
+## Persistenza multi-bot (PR-3) — `telegram_bots` / `telegram_bot_chats`
+
+Due tabelle **additive** (`CREATE TABLE IF NOT EXISTS`, `telegram_chats` legacy
+intatta):
+
+- `telegram_bots(id, label, bot_token, is_active, created_at, updated_at)` — un
+  record per bot. Il **`bot_token` è cifrato a riposo** (`enc:v1:` via
+  `SecretCipher`): la cifratura di una colonna reale **non** è automatica (l'hook
+  `_SECRET_FIELDS` copre solo la tabella `settings`), quindi la fa **esplicita**
+  il CRUD in `database.py`. Il plaintext legacy migra al primo `save`.
+- `telegram_bot_chats(bot_id, chat_id, title, is_active)` — link table (PK
+  composta `(bot_id, chat_id)`, `ON DELETE CASCADE`): ogni bot ha il **proprio**
+  set di chat; lo stesso `chat_id` può essere monitorato da bot diversi.
+
+CRUD (`database.py`): `save_telegram_bot(label, bot_token, *, is_active, bot_id)`
+(create/update; `bot_token=None` in update **preserva** il token esistente),
+`get_telegram_bots()` (decifra il token — **non loggarlo mai**),
+`remove_telegram_bot(bot_id)` (elimina bot + sue chat, in transazione),
+`set_telegram_bot_chats(bot_id, chats)` (swap scoped al bot),
+`get_telegram_bot_chats(bot_id)`.
 
 ## `telegram_bot_transport.TelegramBotApiTransport`
 
