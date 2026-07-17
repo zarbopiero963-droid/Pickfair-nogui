@@ -57,8 +57,12 @@ avviato → nessun Telethon, nessun `api_id`/`api_hash`).
 Selezione sorgente in `TelegramService.start()`:
 - credenziali userbot presenti → **path Telethon** (invariato, prioritario);
 - userbot assenti + **un** bot Bot API attivo con ≥1 chat attiva → **path Bot API**;
-- userbot assenti + **più** bot attivi → **fail-closed** `multi_bot_runtime_not_yet_supported`
-  (l'orchestrazione N-bot arriva nella PR successiva: niente drop silenzioso);
+- userbot assenti + **più di un bot ATTIVO** configurato → **fail-closed**
+  `multi_bot_runtime_not_yet_supported`. Il conteggio è sui bot **attivi** (con
+  token), NON sugli *usable*: così un 2° bot attivo ma non-usable (es. sole chat
+  non numeriche `@canale`) **non** viene droppato in silenzio avviando il solo bot
+  usable — la sorgente configurata resterebbe muta. L'orchestrazione N-bot arriva
+  nella PR successiva;
 - niente di utilizzabile → **fail-closed** `Configurazione Telegram incompleta` (invariato).
 
 Coerenza health/invariant: un transport **sano** conta come **1 handler**

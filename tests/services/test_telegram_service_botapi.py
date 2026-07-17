@@ -270,6 +270,30 @@ def test_multi_active_bot_fails_closed():
     assert svc.state == "FAILED"
 
 
+def test_second_active_but_unusable_bot_still_fails_closed():
+    # BLOCK (rilievo Fable full-range): il gate multi-bot conta i bot ATTIVI, non
+    # gli usable. Con 2 bot ATTIVI di cui uno non-usable (bot B: sole chat non
+    # numeriche `@canale`), il vecchio codice contava len(usable)==1 e avviava il
+    # solo bot A, DROPPANDO in silenzio la sorgente attiva B (perdita segnali,
+    # contro il contratto fail-closed). Ora active_count==2 => fail-closed
+    # multi_bot_runtime_not_yet_supported (nessun avvio silenzioso a singolo bot).
+    db = _BotDB(
+        bots=[
+            {"id": 1, "label": "A", "bot_token": "tok-a", "is_active": True, "has_token": True},
+            {"id": 2, "label": "B", "bot_token": "tok-b", "is_active": True, "has_token": True},
+        ],
+        chats_by_bot={
+            1: [{"chat_id": "-100111", "is_active": True}],   # usable
+            2: [{"chat_id": "@canale", "is_active": True}],   # attivo ma NON usable
+        },
+    )
+    svc = _svc(db, capture=[])
+    with pytest.raises(RuntimeError) as exc:
+        svc.start()
+    assert "multi_bot_runtime_not_yet_supported" in str(exc.value)
+    assert svc.state == "FAILED"
+
+
 def test_no_creds_no_bots_still_fails_closed():
     # Nessun userbot e nessun bot utilizzabile => fail-closed invariato.
     svc = _svc(_BotDB(), capture=[])

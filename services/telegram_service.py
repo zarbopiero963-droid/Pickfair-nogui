@@ -197,6 +197,22 @@ class TelegramService:
                 out.append((bot, chat_ids))
         return out
 
+    def _active_bot_api_bot_count(self) -> int:
+        """Numero di bot Bot API ATTIVI e con token, INDIPENDENTEMENTE dall'usabilità
+        delle loro chat. Il gate multi-bot conta i bot ATTIVI, NON gli usable: con
+        >1 bot attivo configurato si fa fail-closed (multi_bot_runtime_not_yet_
+        supported) SENZA avviare silenziosamente il solo bot usable — altrimenti un
+        2° bot attivo ma non-usable (es. sole chat non numeriche `@canale`) verrebbe
+        DROPPATO in silenzio, perdendo una sorgente segnali configurata (contraddice
+        il contratto fail-closed). Read-only, fail-safe: errore DB nell'ELENCARE i
+        bot => 0 (start() cade nel fail-closed 'Configurazione incompleta')."""
+        try:
+            bots = self.db.get_telegram_bots(include_token=True) or []
+        except Exception as exc:  # pragma: no cover - degrado difensivo
+            logger.warning("[TelegramService] conteggio bot attivi fallito: %s", exc)
+            return 0
+        return sum(1 for b in bots if b.get("is_active") and b.get("bot_token"))
+
     def _running_chat_count(self) -> int:
         """Numero di chat monitorate dal listener IN ESECUZIONE (Telethon o Bot
         API), per le risposte `already_running` — evita di rivalutare il gate/la
@@ -297,6 +313,10 @@ class TelegramService:
         bot_api_selection = None
         if not cfg.api_id or not cfg.api_hash:
             try:
+                # Il gate multi-bot conta i bot ATTIVI (non gli usable): un 2° bot
+                # attivo ma non-usable (es. sole chat non numeriche) NON deve essere
+                # droppato in silenzio avviando il solo bot usable.
+                active_count = self._active_bot_api_bot_count()
                 usable = self._usable_bot_api_bots()
             except Exception as exc:
                 # Errore DB nel determinare il set di bot: NON avviare un set
@@ -307,18 +327,19 @@ class TelegramService:
                 self.intentional_stop = False
                 self._set_state("FAILED")
                 raise RuntimeError(self.last_error)
-            if len(usable) == 1:
-                bot_api_selection = usable[0]
-            elif len(usable) > 1:
-                # PR-5a wira UN solo bot. Con più bot attivi NON si droppa
-                # silenziosamente nulla: fail-closed, l'orchestrazione N-bot
-                # arriva nella PR successiva.
+            if active_count > 1:
+                # PR-5a wira UN solo bot. Con più bot ATTIVI configurati NON si
+                # droppa silenziosamente nulla — nemmeno se solo uno è usable:
+                # fail-closed, l'orchestrazione N-bot arriva nella PR successiva.
                 self.last_error = "multi_bot_runtime_not_yet_supported"
                 self.intentional_stop = False
                 self._set_state("FAILED")
                 raise RuntimeError(self.last_error)
+            elif len(usable) == 1:
+                bot_api_selection = usable[0]
             else:
                 # Né userbot né un bot Bot API utilizzabile: fail-closed come prima.
+                # (active_count<=1 qui: 0 bot attivi, o 1 bot attivo ma non usable.)
                 self.last_error = "Configurazione Telegram incompleta"
                 self.intentional_stop = False
                 self._set_state("FAILED")
