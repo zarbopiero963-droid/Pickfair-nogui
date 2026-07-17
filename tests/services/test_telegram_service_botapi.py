@@ -329,3 +329,49 @@ def test_stop_stops_transport():
     assert cap[0].stopped is True
     assert svc.state == "STOPPED"
     assert svc.listener is None
+
+
+class _StuckTransport:
+    """Transport fake che NON si ferma: `stopped` resta False (thread 'vivo')."""
+
+    def __init__(self, *a):
+        self.stopped = False
+        self._thread = None
+
+    def start(self):
+        pass
+
+    def stop(self, timeout=5.0):
+        pass  # non ferma -> resta vivo
+
+
+def test_botapi_stop_failclosed_if_transport_thread_survives():
+    # BLOCK (CodeRabbit critical): se il thread del transport non termina allo
+    # stop, l'adapter NON deve dichiarare stopped:True. Altrimenti il service
+    # stacca il listener e un restart crea un SECONDO getUpdates sullo stesso
+    # token -> Telegram 409 Conflict. Contratto fail-closed come il path Telethon.
+    rt = TelegramBotApiRuntime(
+        bot_token="tok",
+        chat_ids=[123],
+        transport_factory=lambda *a: _StuckTransport(),
+    )
+    rt.start()
+    out = rt.stop()
+    assert out["stopped"] is False
+    assert "alive" in out["error"]
+
+
+def test_service_stop_failclosed_keeps_listener_if_transport_survives():
+    # A livello service: stop con transport ancora vivo => stopped:False e il
+    # listener NON viene staccato (nessun secondo runtime possibile).
+    svc = TelegramService(
+        settings_service=_Settings(_Cfg()),
+        db=_one_active_bot_db(),
+        bus=_Bus(),
+        bot_transport_factory=lambda *a: _StuckTransport(),
+    )
+    svc.start()
+    out = svc.stop()
+    assert out["stopped"] is False
+    assert svc.listener is not None  # fail-closed: non staccato
+    assert svc.state == "FAILED"

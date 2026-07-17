@@ -118,11 +118,14 @@ class TelegramBotApiRuntime:
         if t is None:
             return False
         thread = getattr(t, "_thread", None)
-        if thread is None:
-            # Transport senza thread introspezionabile (es. fake nei test):
-            # considerato vivo se è stato avviato e non fermato.
-            return self._started
-        return bool(thread.is_alive())
+        if thread is not None:
+            return bool(thread.is_alive())
+        # Transport senza thread introspezionabile (es. fake nei test): usa il
+        # flag `stopped` se esposto (liveness reale), altrimenti considera vivo
+        # se avviato.
+        if hasattr(t, "stopped"):
+            return not bool(getattr(t, "stopped"))
+        return self._started
 
     def _build_transport(self):
         on_message = self._sink.handle_incoming
@@ -139,8 +142,16 @@ class TelegramBotApiRuntime:
         if self._started and self._transport_alive():
             return {"started": True, "reason": "already_running"}
         self.intentional_stop = False
-        self._transport = self._build_transport()
-        self._transport.start()
+        # Avvio del transport fail-safe: se costruzione/start sollevano, NON si
+        # dichiara CONNECTED (contratto duck-typed come TelegramListener.start,
+        # che ritorna un esito invece di propagare).
+        try:
+            self._transport = self._build_transport()
+            self._transport.start()
+        except Exception as exc:
+            self._started = False
+            self._state_base = "FAILED"
+            return {"started": False, "error": str(exc)}
         self._started = True
         self._state_base = "CONNECTED"
         return {"started": True}
@@ -151,9 +162,16 @@ class TelegramBotApiRuntime:
             try:
                 self._transport.stop()
             except Exception as exc:  # pragma: no cover - stop best-effort
-                self._started = False
-                self._state_base = "STOPPED"
-                return {"stopped": True, "warning": str(exc)}
+                # Stop sollevato: se il thread è ancora vivo => fail-closed
+                # (il service NON deve staccare il listener).
+                if self._transport_alive():
+                    return {"stopped": False, "error": f"bot_transport_stop_failed: {exc}"}
+            # Contratto fail-closed come il path Telethon: se il thread del
+            # transport è ancora vivo dopo lo stop, NON dichiarare stopped —
+            # altrimenti il service stacca il listener e un restart creerebbe un
+            # SECONDO getUpdates sullo stesso token (Telegram 409 Conflict).
+            if self._transport_alive():
+                return {"stopped": False, "error": "bot_transport_thread_still_alive"}
         self._started = False
         self._state_base = "STOPPED"
         return {"stopped": True}
