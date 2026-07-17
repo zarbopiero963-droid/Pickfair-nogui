@@ -28,12 +28,14 @@ Un bot legge i messaggi **solo** nelle chat dove è stato aggiunto:
 - **PR-3:** persistenza **multi-bot** nel DB (schema `telegram_bots` +
   `telegram_bot_chats`). SOLO dati/CRUD, **nessun wiring runtime**: il path
   single-bot (`telegram_chats` → `monitored_chat_ids`) resta invariato.
-- **PR-4 (questa):** **GUI** — gestione bot (aggiungi/seleziona/rimuovi bot con
+- **PR-4:** **GUI** — gestione bot (aggiungi/seleziona/rimuovi bot con
   token mascherato) nella tab Telegram. Persiste via CRUD PR-3, **nessun wiring
-  runtime**: i bot configurati non sono ancora ascoltati. L'editor chat per-bot
-  arriva in **PR-4b**.
-- Le PR successive aggiungono l'editor chat per-bot, il runtime multi-bot e il
-  ritiro dell'userbot.
+  runtime**: i bot configurati non sono ancora ascoltati.
+- **PR-4b (questa):** **GUI** — editor **chat per-bot** nella tab Telegram:
+  assegna i `chat_id` al bot selezionato (scoped al `bot_id`). Persiste via CRUD
+  PR-3 (`set/get_telegram_bot_chats`), **nessun wiring runtime**: le chat
+  configurate non sono ancora ascoltate.
+- Le PR successive aggiungono il runtime multi-bot e il ritiro dell'userbot.
 
 ## GUI — gestione bot (PR-4, tab Telegram)
 
@@ -50,6 +52,23 @@ vuoto in update significa «preserva il token esistente» (`save_telegram_bot(..
 bot_token=None, bot_id=...)`). Fail-closed: creazione bloccata senza etichetta o
 senza token. **Nessun effetto runtime**: i bot sono persistiti ma non ancora
 attivati (arriva nella PR di wiring).
+
+## GUI — editor chat per-bot (PR-4b, tab Telegram)
+
+Sotto-sezione **«Chat del bot selezionato»** dentro la sezione «Bot (Bot API)»:
+entry `chat_id` + titolo (opzionale), pulsanti **Aggiungi Chat al Bot** /
+**Rimuovi Chat dal Bot**, e un albero delle chat del bot. Le chat sono **scoped
+al `bot_id` selezionato**: la vista segue sempre il bot corrente (aggiornata su
+selezione/nuovo/salva/rimuovi bot). La **logica** vive sul mixin `TelegramModule`
+(`_add_telegram_bot_chat_from_ui`, `_remove_telegram_bot_chat`,
+`_refresh_telegram_bot_chats_tree`) → testabile headless; i widget in
+`telegram_tab_ui.py`.
+
+Fail-closed: l'aggiunta **pota prima una selezione stale** (bot rimosso altrove)
+e richiede un bot selezionato **e** un `chat_id` non vuoto — così non si creano
+chat orfane. Riaggiungere lo stesso `chat_id` **aggiorna il titolo** (upsert, via
+reidratazione del set corrente + `set_telegram_bot_chats`, swap atomico scoped al
+bot). **Nessun effetto runtime**: le chat sono persistite ma non ancora ascoltate.
 
 ## Persistenza multi-bot (PR-3) — `telegram_bots` / `telegram_bot_chats`
 

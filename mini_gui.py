@@ -680,6 +680,11 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         # Bot selezionato nell'editor (settato dal <<TreeviewSelect>> in GUI reale,
         # settabile direttamente nei test headless). None = nessuna selezione.
         self.tg_selected_bot_id = None
+        # Editor chat per-bot (epica #374 PR-4b): assegna i chat_id al bot
+        # selezionato. Le chat sono scoped al bot_id (tabella telegram_bot_chats):
+        # nessun segreto qui, solo id/titolo della chat.
+        self.tg_bot_chat_id_var = self._make_string_var("")
+        self.tg_bot_chat_title_var = self._make_string_var("")
         self.rs_allow_recovery_var = self._make_bool_var(True)
         self.rs_anti_dup_var = self._make_bool_var(True)
         self.rs_risk_profile_var = self._make_string_var("BALANCED")
