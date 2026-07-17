@@ -179,8 +179,16 @@ class TelegramService:
         'telegram_bot_config_read_error'. Un'UNICA lettura evita incoerenze tra il
         conteggio (gate) e la selezione (sorgente) — due letture separate potrebbero
         divergere. Il token viene letto perché serve comunque a costruire il runtime
-        del bot selezionato (nessuna estrazione extra di segreti solo per contare)."""
-        bots = self.db.get_telegram_bots(include_token=True) or []
+        del bot selezionato (nessuna estrazione extra di segreti solo per contare).
+
+        Un DB senza supporto Bot API (metodo `get_telegram_bots` ASSENTE, es. legacy/
+        minimal) NON è un errore di lettura: significa "nessuna sorgente bot" =>
+        `(0, [])` => `start()` cade nel fail-closed 'Configurazione incompleta'. La
+        propagazione riguarda solo gli errori REALI del metodo quando esiste."""
+        getter = getattr(self.db, "get_telegram_bots", None)
+        if not callable(getter):
+            return 0, []
+        bots = getter(include_token=True) or []
         active_count = 0
         usable: list = []
         for bot in bots:
@@ -373,6 +381,12 @@ class TelegramService:
         except Exception as exc:
             self.connected = False
             self.listener = None
+            # handlers_registered viene impostato PRIMA di listener.start() (1 sul
+            # path Bot API, 2 sul Telethon). Se start() solleva, il runtime è FAILED
+            # con listener=None: azzerare gli handler mantiene lo snapshot COERENTE
+            # (niente 'FAILED con handler registrati' su runtime morto, che
+            # confonderebbe invariant guard/monitoring).
+            self.handlers_registered = 0
             self.last_error = str(exc)
             self.intentional_stop = False
             self.reconnect_in_progress = False

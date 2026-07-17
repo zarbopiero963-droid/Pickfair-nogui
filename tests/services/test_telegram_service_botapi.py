@@ -249,6 +249,30 @@ def test_botapi_selection_failclosed_on_bots_list_error():
     assert svc.state == "FAILED"
 
 
+def test_start_failure_raising_resets_handlers_registered():
+    # BLOCK (Fable full-range): handlers_registered=1 è impostato PRIMA di
+    # listener.start(). Se start() SOLLEVA, l'except deve azzerare
+    # handlers_registered: un runtime FAILED con listener=None NON deve riportare
+    # handler registrati (snapshot incoerente per invariant guard/monitoring).
+    svc = _svc(_one_active_bot_db(), capture=[])
+
+    class _RaisingListener:
+        _runtime_thread = None
+
+        def start(self):
+            raise RuntimeError("boom in start")
+
+        def status(self):  # pragma: no cover - non raggiunto (start solleva prima)
+            return {}
+
+    # Sostituisce la costruzione dell'adapter con un listener che solleva su start().
+    svc._build_botapi_runtime = lambda *a, **k: _RaisingListener()  # type: ignore[assignment]
+    with pytest.raises(RuntimeError):
+        svc.start()
+    assert svc.state == "FAILED"
+    assert svc.handlers_registered == 0
+
+
 def test_start_recovers_when_cached_state_is_stale_connected():
     # BLOCK (Fugu full-range): self.state cache "CONNECTED" stale dopo la morte del
     # transport NON deve far tornare already_running (bloccando il recovery). Il

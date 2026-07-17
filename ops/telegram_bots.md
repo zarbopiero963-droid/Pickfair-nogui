@@ -67,9 +67,16 @@ Selezione sorgente in `TelegramService.start()`:
 
 Conteggio e selezione derivano da **un'unica lettura** DB (`_select_bot_api_source`
 → `(active_count, usable)`): evita incoerenze tra il gate (bot attivi) e la
-sorgente (bot usable). Gli **errori DB propagano** (nessun degrado a `0`/`[]`, che
-riaprirebbe il drop silenzioso): `start()` li cattura e fa **fail-closed**
-`telegram_bot_config_read_error`.
+sorgente (bot usable). Gli **errori REALI del DB propagano** (nessun degrado a
+`0`/`[]`, che riaprirebbe il drop silenzioso): `start()` li cattura e fa
+**fail-closed** `telegram_bot_config_read_error`. Un DB **senza** supporto Bot API
+(metodo `get_telegram_bots` assente, es. legacy) non è un errore di lettura ma
+"nessuna sorgente bot" → `(0, [])` → fail-closed `Configurazione incompleta`.
+
+Coerenza snapshot su fallimento di `start()`: `handlers_registered` è impostato
+**prima** di `listener.start()`; se lo start **solleva**, l'`except` azzera
+`handlers_registered` (runtime `FAILED` con `listener=None` ⇒ 0 handler), così lo
+snapshot resta coerente per invariant guard e monitoring.
 
 Coerenza health/invariant: un transport **sano** conta come **1 handler**
 (l'invariant guard richiede esattamente 1 handler quando `CONNECTED`). Lo stato
