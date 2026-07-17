@@ -25,10 +25,31 @@ Un bot legge i messaggi **solo** nelle chat dove è stato aggiunto:
 - **PR-1:** `telegram_bot_transport.py` — trasporto `getUpdates` long-poll di
   **un** bot. Isolato e **opt-in**, non agganciato al runtime.
 - **PR-2:** `bot_token` cifrato a riposo (`telegram.bot_token` in `_SECRET_FIELDS`).
-- **PR-3 (questa):** persistenza **multi-bot** nel DB (schema `telegram_bots` +
+- **PR-3:** persistenza **multi-bot** nel DB (schema `telegram_bots` +
   `telegram_bot_chats`). SOLO dati/CRUD, **nessun wiring runtime**: il path
   single-bot (`telegram_chats` → `monitored_chat_ids`) resta invariato.
-- Le PR successive aggiungono GUI, runtime multi-bot e il ritiro dell'userbot.
+- **PR-4 (questa):** **GUI** — gestione bot (aggiungi/seleziona/rimuovi bot con
+  token mascherato) nella tab Telegram. Persiste via CRUD PR-3, **nessun wiring
+  runtime**: i bot configurati non sono ancora ascoltati. L'editor chat per-bot
+  arriva in **PR-4b**.
+- Le PR successive aggiungono l'editor chat per-bot, il runtime multi-bot e il
+  ritiro dell'userbot.
+
+## GUI — gestione bot (PR-4, tab Telegram)
+
+Sezione **«Bot (Bot API)»** nella tab Telegram: etichetta + **bot_token
+mascherato** (`show="*"`), checkbox Attivo, pulsanti Salva/Aggiorna e Rimuovi, e
+un albero dei bot. La **logica** vive sul mixin `TelegramModule`
+(`_save_telegram_bot_from_ui`, `_remove_selected_telegram_bot`,
+`_load_selected_bot_into_editor`, `_refresh_telegram_bots_tree`) → testabile
+headless; i widget in `telegram_tab_ui.py`.
+
+Disciplina segreti (obbligatoria): il `bot_token` è mascherato in input, **mai
+loggato**, e **in modifica NON viene ricaricato in chiaro** nell'entry — lasciarlo
+vuoto in update significa «preserva il token esistente» (`save_telegram_bot(...,
+bot_token=None, bot_id=...)`). Fail-closed: creazione bloccata senza etichetta o
+senza token. **Nessun effetto runtime**: i bot sono persistiti ma non ancora
+attivati (arriva nella PR di wiring).
 
 ## Persistenza multi-bot (PR-3) — `telegram_bots` / `telegram_bot_chats`
 
