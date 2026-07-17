@@ -167,9 +167,15 @@ class TelegramService:
     def _usable_bot_api_bots(self) -> list:
         """Bot Bot API utilizzabili a runtime (epica #374 PR-5a): attivi, con
         token presente e con almeno una chat NUMERICA attiva. Ritorna una lista
-        di `(bot_dict, [chat_id_str])`. Read-only, fail-safe (errori DB => lista
-        vuota, così `start()` cade nel fail-closed 'Configurazione incompleta'
-        invece di sollevare qui)."""
+        di `(bot_dict, [chat_id_str])`. Read-only. Politica errori DB
+        DIFFERENZIATA:
+        - errore nell'ELENCARE i bot (`get_telegram_bots`) => lista vuota
+          (fail-safe): `start()` cade nel fail-closed 'Configurazione incompleta'
+          invece di sollevare qui;
+        - errore nel leggere le chat di un bot ATTIVO
+          (`get_telegram_bot_chats`) => PROPAGA (fail-closed): non si avvia un set
+          PARZIALE né si falsa il conteggio bot (che bypasserebbe il fail-closed
+          multi-bot); `start()` fa fail-closed sull'intera selezione."""
         out: list = []
         try:
             bots = self.db.get_telegram_bots(include_token=True) or []
