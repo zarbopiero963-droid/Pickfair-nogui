@@ -260,3 +260,37 @@ def test_legacy_plaintext_migration_on_read():
         settings = db.get_settings()
         assert settings.get("password") == "legacy_plain", \
             "legacy plaintext must be returned transparently"
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_legacy_plaintext_bot_token_reads_then_migrates_on_save():
+    """Un bot_token legacy in chiaro (salvato prima di entrare in _SECRET_FIELDS)
+    deve leggersi senza errori (passthrough) e cifrarsi al primo save."""
+    with tempfile.TemporaryDirectory() as td:
+        db_path = str(Path(td) / "test.db")
+        db = Database(db_path)
+
+        legacy_token = "legacy-plaintext-bot-token-value"
+        # Riga legacy in chiaro scritta direttamente (simula pre-cifratura).
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            "INSERT INTO settings(key, value) VALUES('telegram.bot_token', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (legacy_token,),
+        )
+        conn.commit()
+        conn.close()
+
+        # 1) La lettura NON deve sollevare e deve restituire il plaintext (passthrough).
+        assert _raw_setting(db_path, "telegram.bot_token") == legacy_token  # ancora in chiaro
+        tg = db.get_telegram_settings()
+        assert tg["bot_token"] == legacy_token
+
+        # 2) Migrazione al primo save: la riga passa a enc:v1: e non contiene piu' il plaintext.
+        db.save_telegram_settings({"bot_token": legacy_token, "enabled": True})
+        raw = _raw_setting(db_path, "telegram.bot_token")
+        assert raw.startswith("enc:v1:")
+        assert legacy_token not in raw
+        # Round-trip trasparente dopo la migrazione.
+        assert db.get_telegram_settings()["bot_token"] == legacy_token
