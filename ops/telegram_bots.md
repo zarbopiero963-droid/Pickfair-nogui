@@ -75,10 +75,16 @@ reagiscono invece di restare `CONNECTED` in silenzio (fail-open):
   invalido rifallisce → lockout autoheal → il problema resta **visibile**.
 
 La coppia `(thread_alive, _consecutive_failures)` è letta in modo **atomico** via
-`health_snapshot()` sotto un unico `_health_lock`; anche `start()` (assegnazione del
-thread) e `stop()` (lettura del riferimento prima del `join`, che resta **fuori**
-dal lock per non deadlockare il thread di polling) accedono a `_thread` sotto lo
-stesso lock → nessuno snapshot *torn* né race tra stop e restart concorrenti.
+`health_snapshot()` sotto `_health_lock`; anche `start()` e `stop()` accedono a
+`_thread` sotto lo stesso lock → nessuno snapshot *torn*. In più, l'INTERO
+lifecycle `start()`/`stop()` è serializzato da un secondo lock dedicato
+`_lifecycle_lock`: la sequenza di `stop()` (set-stop → lettura thread → `join`) è
+**atomica** rispetto a `start()`, quindi un restart concorrente **non può**
+rimpiazzare `_thread` e riavviare il polling mentre `stop()` fa `join` del thread
+precedente (niente transport vivo dopo uno stop richiesto). Il `join` avviene
+**dentro** `_lifecycle_lock` ma **fuori** da `_health_lock`: `run()` acquisisce
+solo `_health_lock` (contatore fallimenti) e mai il lifecycle lock, quindi tenere
+il lifecycle lock durante il `join` è sicuro (nessun deadlock).
 
 L'idempotenza (`already_running`) è valutata **prima** della selezione sorgente: un
 runtime già attivo non rivaluta il gate, così un cambio di config a runtime (2° bot

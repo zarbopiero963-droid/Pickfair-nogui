@@ -122,6 +122,16 @@ class TelegramBotApiTransport:
         # lock, così lo snapshot non è mai torn (thread morto "tra" le due letture).
         self._health_lock = threading.Lock()
         self._consecutive_failures = 0
+        # `_lifecycle_lock` serializza l'INTERO lifecycle start()/stop() come
+        # operazione atomica: senza di esso il solo `_health_lock` protegge la
+        # lettura di `_thread` ma NON l'interleaving stop/restart. Uno stop()
+        # concorrente a uno start() potrebbe: (a) stop() setta `_stop` e legge il
+        # thread vecchio, (b) start() `_stop.clear()` + spawn di un nuovo thread,
+        # (c) stop() fa join SOLO del vecchio => il polling resterebbe VIVO dopo uno
+        # stop richiesto (fail-open: il bot continua a ingerire segnali). Il join
+        # avviene DENTRO `_lifecycle_lock` ma FUORI da `_health_lock` (run()
+        # acquisisce solo `_health_lock`, mai il lifecycle => niente deadlock).
+        self._lifecycle_lock = threading.Lock()
 
     def health_snapshot(self) -> tuple[bool, int]:
         """Lettura ATOMICA di (thread_alive, consecutive_failures) sotto lock:
@@ -294,30 +304,39 @@ class TelegramBotApiTransport:
     # Lifecycle
     # ------------------------------------------------------------------
     def start(self) -> None:
-        # Assegnazione di `_thread` sotto lock: coerente con la lettura in
-        # health_snapshot() dal thread watchdog/adapter.
-        with self._health_lock:
-            if self._thread is not None and self._thread.is_alive():
-                return
-            self._stop.clear()
-            self._consecutive_failures = 0
-            self._thread = threading.Thread(
-                target=self.run, name="telegram-bot-transport", daemon=True
-            )
-            self._thread.start()
+        # Intero start() sotto `_lifecycle_lock` => non può interleavare con uno
+        # stop() in corso (serializzazione del lifecycle). L'assegnazione di
+        # `_thread` è inoltre sotto `_health_lock`: coerente con la lettura in
+        # health_snapshot()/stop() dal thread watchdog/adapter.
+        with self._lifecycle_lock:
+            with self._health_lock:
+                if self._thread is not None and self._thread.is_alive():
+                    return
+                self._stop.clear()
+                self._consecutive_failures = 0
+                self._thread = threading.Thread(
+                    target=self.run, name="telegram-bot-transport", daemon=True
+                )
+                self._thread.start()
 
     def stop(self, timeout: float = 5.0) -> None:
-        self._stop.set()
-        # Lettura di `_thread` sotto `_health_lock`: coerente con l'assegnazione in
-        # start() e con health_snapshot() (nessuna lettura torn cross-thread mentre
-        # un eventuale restart riassegna il riferimento). Il join() resta FUORI dal
-        # lock: run() acquisisce `_health_lock` a ogni giro (aggiornamento del
-        # contatore fallimenti) => tenerlo durante il join deadlockerebbe il thread
-        # di polling che sta terminando.
-        with self._health_lock:
-            thread = self._thread
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=timeout)
+        # Intero stop() sotto `_lifecycle_lock`: la sequenza set-stop → lettura
+        # thread → join è ATOMICA rispetto a start(), quindi un restart concorrente
+        # non può rimpiazzare `_thread` e riavviare il polling mentre stop() fa join
+        # del thread precedente (niente transport vivo dopo uno stop richiesto).
+        with self._lifecycle_lock:
+            self._stop.set()
+            # Lettura di `_thread` sotto `_health_lock`: coerente con
+            # l'assegnazione in start() e con health_snapshot() (nessuna lettura
+            # torn cross-thread). Il join() resta FUORI da `_health_lock` (ma dentro
+            # `_lifecycle_lock`): run() acquisisce `_health_lock` a ogni giro
+            # (contatore fallimenti) => tenerlo durante il join deadlockerebbe il
+            # thread di polling in terminazione; run() NON acquisisce mai il
+            # lifecycle lock, quindi tenerlo durante il join è sicuro.
+            with self._health_lock:
+                thread = self._thread
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=timeout)
 
     # ------------------------------------------------------------------
     # Fetch HTTP di default (produzione; i test iniettano un fake)
