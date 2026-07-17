@@ -47,6 +47,11 @@ Fetch = Callable[[int], Any]
 _DEFAULT_API_BASE = "https://api.telegram.org"
 
 
+class BotApiPollError(Exception):
+    """getUpdates ha risposto senza `ok: true`. Sollevata da poll_once cosi' che
+    il loop (run) attivi il backoff invece di ripollare stretto (hot-loop)."""
+
+
 class TelegramBotApiTransport:
     """Long-poll `getUpdates` di un singolo bot, con consegna a una callback."""
 
@@ -66,7 +71,15 @@ class TelegramBotApiTransport:
             raise ValueError("bot_token obbligatorio")
         self._bot_token = bot_token
         # Allow-list dei chat_id (difesa in profondita', come il filtro Telethon).
+        # OBBLIGATORIA e NON VUOTA (fail-closed): senza allow-list il trasporto
+        # consegnerebbe segnali da qualunque chat al pipeline di trading.
         self.chat_ids = {int(c) for c in (chat_ids or [])}
+        if not self.chat_ids:
+            raise ValueError("chat_ids (allow-list) obbligatoria e non vuota")
+        # Solo schemi http(s): urlopen aprirebbe anche file://, ftp:// (l'URL e'
+        # costruito da api_base -> vincolo esplicito, fail-closed).
+        if not isinstance(api_base, str) or not api_base.startswith(("http://", "https://")):
+            raise ValueError("api_base deve usare schema http:// o https://")
         self._on_message = on_message
         self._fetch: Fetch = fetch if fetch is not None else self._default_fetch
         self._api_base = api_base.rstrip("/")
@@ -139,10 +152,14 @@ class TelegramBotApiTransport:
         if extracted is None:
             return
         text, chat_id, message_date = extracted
-        if self.chat_ids and chat_id not in self.chat_ids:
+        # Fail-closed: allow-list VUOTA => scarta tutto (una config mancante non
+        # deve consegnare segnali da qualunque chat al parser/trading).
+        if not self.chat_ids or chat_id not in self.chat_ids:
             logger.warning(
-                "[TelegramBotTransport] messaggio da chat non autorizzata %s scartato",
+                "[TelegramBotTransport] messaggio da chat non autorizzata %s scartato "
+                "(allow-list %s)",
                 chat_id,
+                "vuota" if not self.chat_ids else "attiva",
             )
             return
         try:
@@ -159,11 +176,10 @@ class TelegramBotApiTransport:
         (anche malformato): un update rotto non deve reincastrare il loop."""
         payload = self._fetch(offset)
         if not isinstance(payload, dict) or not payload.get("ok"):
-            logger.warning(
-                "[TelegramBotTransport] getUpdates non ok: %s",
-                self._redact((payload or {}).get("description") if isinstance(payload, dict) else payload),
-            )
-            return offset
+            # Solleva (non ritorna) cosi' run() applica il backoff: un ok=False
+            # persistente NON deve degenerare in polling stretto verso Telegram.
+            desc = (payload or {}).get("description") if isinstance(payload, dict) else payload
+            raise BotApiPollError(self._redact(f"getUpdates non ok: {desc}"))
         results = payload.get("result")
         if not isinstance(results, list) or not results:
             return offset

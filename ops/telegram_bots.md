@@ -55,14 +55,26 @@ Costruzione (esempio, non ancora wired in produzione):
 from telegram_bot_transport import TelegramBotApiTransport
 
 transport = TelegramBotApiTransport(
-    bot_token="123456:ABC...",          # da BotFather
-    chat_ids=[-1001234567890],          # chat proprie (bot admin/membro)
+    bot_token=IL_TUO_TOKEN_BOTFATHER,   # credenziale bot (da BotFather)
+    chat_ids=[-1001234567890],          # chat proprie (bot admin/membro) — OBBLIGATORIA e non vuota
     on_message=listener.handle_incoming,  # stesso contratto dell'userbot
 )
 transport.start()   # avvia il long-poll in un thread dedicato
 # ...
 transport.stop()
 ```
+
+Note di trasporto (PR-1):
+
+- **allow-list obbligatoria:** `chat_ids` vuota → `ValueError` (fail-closed).
+- **`ok=False` → backoff:** una risposta getUpdates non-ok solleva `BotApiPollError`
+  e il loop applica backoff (niente polling stretto).
+- **offset in-memory:** in PR-1 l'offset non è persistito; al riavvio Telegram può
+  riconsegnare gli update non-ack (fino a 24h) → il **replay è neutralizzato dalla
+  guardia anti-stale** di `handle_incoming` (data del messaggio). La persistenza
+  dell'offset è prevista in **PR-2** (schema config/DB).
+- **token nei log:** non abilitare il debug di `http.client`/`urllib` in produzione
+  (l'URL getUpdates contiene il token); il modulo non logga mai l'URL.
 
 ## Sicurezza
 

@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from telegram_bot_transport import TelegramBotApiTransport
+from telegram_bot_transport import BotApiPollError, TelegramBotApiTransport
 
 TOKEN = "123456:SECRETBOTTOKENVALUE"
 CHAT = -1001234567890
@@ -101,11 +101,12 @@ def test_malformed_update_skipped_but_offset_advances():
 
 
 @pytest.mark.unit
-def test_getupdates_not_ok_keeps_offset():
-    got = []
-    t = _transport(lambda *a: got.append(a), fetch=lambda o: _payload([_msg_update(9)], ok=False))
-    assert t.poll_once(3) == 3   # offset invariato
-    assert not got
+def test_getupdates_not_ok_raises_for_backoff():
+    # ok=False solleva (cosi' run() applica il backoff, niente hot-loop); l'offset
+    # non viene consumato perche' poll_once non ritorna.
+    t = _transport(lambda *a: None, fetch=lambda o: _payload([_msg_update(9)], ok=False))
+    with pytest.raises(BotApiPollError):
+        t.poll_once(3)
 
 
 # ---------------------------------------------------------------------------
@@ -146,14 +147,17 @@ def test_callback_exception_is_isolated():
 
 
 @pytest.mark.unit
-def test_bot_token_never_in_logs(caplog):
+def test_bot_token_never_in_error_or_logs(caplog):
     t = _transport(lambda *a: None,
                    fetch=lambda o: {"ok": False, "description": f"Unauthorized for bot {TOKEN}"})
     with caplog.at_level(logging.DEBUG, logger="telegram_bot_transport"):
-        t.poll_once(0)
+        with pytest.raises(BotApiPollError) as ei:
+            t.poll_once(0)
+    msg = str(ei.value)
+    assert TOKEN not in msg
+    assert "[REDACTED]" in msg
     blob = "\n".join(r.getMessage() for r in caplog.records)
     assert TOKEN not in blob
-    assert "[REDACTED]" in blob
 
 
 @pytest.mark.unit
@@ -168,6 +172,30 @@ def test_redact_helper():
 def test_missing_token_rejected():
     with pytest.raises(ValueError):
         TelegramBotApiTransport("", [CHAT], lambda *a: None)
+
+
+@pytest.mark.unit
+def test_empty_chat_ids_rejected():
+    # Allow-list obbligatoria e non vuota (fail-closed): niente config = niente
+    # consegna, non "consegna tutto".
+    with pytest.raises(ValueError):
+        TelegramBotApiTransport(TOKEN, [], lambda *a: None)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("bad_base", ["ftp://x", "file:///etc/passwd", "api.telegram.org"])
+def test_invalid_api_base_rejected(bad_base):
+    with pytest.raises(ValueError):
+        TelegramBotApiTransport(TOKEN, [CHAT], lambda *a: None, api_base=bad_base)
+
+
+@pytest.mark.unit
+def test_dispatch_failclosed_if_allowlist_emptied_at_runtime():
+    got = []
+    t = _transport(lambda *a: got.append(a), fetch=lambda o: _payload([_msg_update(1)]))
+    t.chat_ids = set()  # svuotata a runtime -> difesa: scarta tutto
+    t.poll_once(0)
+    assert not got
 
 
 # ---------------------------------------------------------------------------
