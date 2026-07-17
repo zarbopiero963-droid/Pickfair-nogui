@@ -71,6 +71,18 @@ class TelegramBotApiTransport:
         if not bot_token or not isinstance(bot_token, str):
             raise ValueError("bot_token obbligatorio")
         self._bot_token = bot_token
+        # Bersagli di redazione: il token in chiaro E le sue forme percent-encoded.
+        # Il token finisce nell'URL getUpdates; un HTTPError/URLError urllib puo'
+        # riportare l'URL con il ':' del token codificato come %3A (o l'intero token
+        # quotato) -> senza queste varianti la redazione mancherebbe il segreto.
+        targets = {bot_token}
+        try:
+            targets.add(urllib.parse.quote(bot_token, safe=""))
+            targets.add(urllib.parse.quote(bot_token))
+        except Exception:  # pragma: no cover - quoting difensivo, non deve rompere
+            pass
+        # Ordina dal piu' lungo cosi' la variante piu' specifica viene redatta prima.
+        self._redact_targets = sorted((t for t in targets if t), key=len, reverse=True)
         # Allow-list dei chat_id (difesa in profondita', come il filtro Telethon).
         # OBBLIGATORIA e NON VUOTA (fail-closed): senza allow-list il trasporto
         # consegnerebbe segnali da qualunque chat al pipeline di trading.
@@ -116,8 +128,9 @@ class TelegramBotApiTransport:
         getUpdates lo contiene). Fail-safe: non solleva mai."""
         out = str(text)
         try:
-            if self._bot_token and self._bot_token in out:
-                out = out.replace(self._bot_token, "[REDACTED]")
+            for secret in self._redact_targets:
+                if secret and secret in out:
+                    out = out.replace(secret, "[REDACTED]")
         except Exception:  # pragma: no cover - la redazione non deve rompere il log
             return "[REDACTION_ERROR]"
         return out
@@ -200,6 +213,14 @@ class TelegramBotApiTransport:
         results = payload.get("result")
         if not isinstance(results, list) or not results:
             return offset
+        # Pass 1 (ackability): calcola il prossimo offset PRIMA di consegnare.
+        # Anti-wedge: se un batch NON vuoto non ha ALCUN update_id valido, l'offset
+        # non puo' avanzare (nulla da ack) e la stessa getUpdates ritornerebbe lo
+        # stesso batch all'infinito. Telegram fornisce SEMPRE update_id: un batch
+        # senza => dati server malformati. Solleviamo **prima** di dispatchare, cosi'
+        # gli update non-ackabili NON vengono consegnati (evitando che a ogni retry
+        # gli stessi messaggi rientrino nel pipeline di trading = replay-loop) e
+        # run() applica il backoff invece di reincastrarsi.
         next_offset = offset
         saw_valid_uid = False
         for update in results:
@@ -207,19 +228,17 @@ class TelegramBotApiTransport:
             if isinstance(uid, int) and not isinstance(uid, bool):
                 saw_valid_uid = True
                 next_offset = max(next_offset, uid + 1)
-            try:
-                self._dispatch(update)
-            except Exception:  # pragma: no cover - _dispatch e' gia' fail-open
-                logger.exception("[TelegramBotTransport] dispatch update fallito")
-        # Anti-wedge: se un batch NON vuoto non ha prodotto ALCUN update_id valido,
-        # l'offset non puo' avanzare (non c'e' nulla da ack) e la stessa getUpdates
-        # ritornerebbe lo stesso batch all'infinito in hot-loop. Telegram fornisce
-        # SEMPRE update_id: un batch senza => dati server malformati. Solleviamo
-        # cosi' run() applica il backoff (niente hot-loop) invece di reincastrarsi.
         if not saw_valid_uid:
             raise BotApiPollError(
                 "getUpdates: batch non vuoto senza update_id valido (anti-wedge)"
             )
+        # Pass 2 (dispatch): solo ora, con l'offset gia' avanzato (ack garantito),
+        # consegniamo. Un dispatch fallito non blocca l'avanzamento (fail-open).
+        for update in results:
+            try:
+                self._dispatch(update)
+            except Exception:  # pragma: no cover - _dispatch e' gia' fail-open
+                logger.exception("[TelegramBotTransport] dispatch update fallito")
         return next_offset
 
     def run(self) -> None:

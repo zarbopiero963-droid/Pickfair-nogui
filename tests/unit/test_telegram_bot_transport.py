@@ -106,9 +106,14 @@ def test_batch_without_update_id_raises_anti_wedge():
     # l'offset non puo' avanzare. Deve sollevare (=> run() fa backoff) invece di
     # ritornare lo stesso offset e reincastrarsi in hot-loop.
     updates = [{"message": {"text": "x", "date": _DATE, "chat": {"id": CHAT}}}]  # niente update_id
-    t = _transport(lambda *a: None, fetch=lambda o: _payload(updates))
+    got = []
+    t = _transport(lambda *a: got.append(a), fetch=lambda o: _payload(updates))
     with pytest.raises(BotApiPollError):
         t.poll_once(0)
+    # CRUCIALE (replay-loop): un batch non-ackabile NON deve essere consegnato
+    # PRIMA di sollevare, altrimenti gli stessi update rientrerebbero nel pipeline
+    # di trading a ogni retry post-backoff (segnali/ordini duplicati).
+    assert not got, "update non-ackabili non devono essere dispatchati prima del raise"
 
 
 @pytest.mark.unit
@@ -180,6 +185,22 @@ def test_redact_helper():
 
 
 @pytest.mark.unit
+def test_redact_covers_percent_encoded_token():
+    # Difesa in profondita': un HTTPError/URLError urllib puo' riportare l'URL con
+    # il token percent-encoded (il ':' -> %3A). La redazione deve coprire anche
+    # quella forma, non solo il token in chiaro, altrimenti il segreto trapelerebbe.
+    import urllib.parse
+
+    t = _transport(lambda *a: None)
+    encoded = urllib.parse.quote(TOKEN, safe="")
+    assert encoded != TOKEN  # il ':' viene codificato -> forma diversa
+    redacted = t._redact(f"<urlopen error for https://api.telegram.org/bot{encoded}/getUpdates>")
+    assert encoded not in redacted
+    assert TOKEN not in redacted
+    assert "[REDACTED]" in redacted
+
+
+@pytest.mark.unit
 def test_missing_token_rejected():
     with pytest.raises(ValueError):
         TelegramBotApiTransport("", [CHAT], lambda *a: None)
@@ -242,13 +263,18 @@ def test_run_survives_pollerror_with_backoff():
         base_backoff_sec=0.01, max_backoff_sec=0.02,
     )
     t.start()
-    time.sleep(0.1)
+    # Attesa basata su CONDIZIONE (niente sleep fisso -> niente flakiness su CI
+    # lenti, es. Windows): aspetta che il loop abbia ripollato >= 2 volte, con
+    # timeout di sicurezza. Un thread morto su BotApiPollError non arriverebbe a 2.
+    deadline = time.monotonic() + 3.0
+    while len(calls) < 2 and time.monotonic() < deadline:
+        time.sleep(0.005)
     alive_during = t._thread is not None and t._thread.is_alive()
     t.stop(timeout=2.0)
     # Il thread e' rimasto vivo nonostante l'errore ripetuto, ha ripollato (backoff)
     # e si e' fermato in modo pulito su stop().
-    assert alive_during, "il thread non deve morire su BotApiPollError"
     assert len(calls) >= 2, "il loop deve ripollare dopo il backoff, non uscire"
+    assert alive_during, "il thread non deve morire su BotApiPollError"
     assert t._thread is not None and not t._thread.is_alive()
 
 
