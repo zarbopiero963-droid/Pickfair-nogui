@@ -153,6 +153,32 @@ def test_remove_chat_noop_without_selected_bot(monkeypatch, db):
         app.destroy()
 
 
+def test_remove_chat_db_error_is_surfaced_not_propagated(monkeypatch, db):
+    # BLOCK (Greptile P1 / Codacy): la rimozione deve guardare gli errori DB
+    # come gli altri handler UI (_add/_save/_remove bot) e mostrarli via
+    # _safe_show_error, NON propagare l'eccezione dal callback tkinter. Sul
+    # vecchio codice (senza try/except) questo test solleverebbe.
+    app = _make(monkeypatch, db)
+    try:
+        bid = db.save_telegram_bot("B", "fake-bot-value-not-real-abc")
+        db.set_telegram_bot_chats(bid, [{"chat_id": "-100x", "title": "x"}])
+        app.tg_selected_bot_id = bid
+
+        seen = {}
+        monkeypatch.setattr(app, "_safe_show_error", lambda *a, **k: seen.setdefault("err", a))
+
+        def _boom(*a, **k):
+            raise RuntimeError("db locked")
+
+        monkeypatch.setattr(app.db, "set_telegram_bot_chats", _boom)
+
+        # NON deve sollevare: l'errore e' catturato e mostrato all'utente.
+        app._remove_telegram_bot_chat("-100x")
+        assert "err" in seen  # _safe_show_error invocato con l'errore
+    finally:
+        app.destroy()
+
+
 def test_add_chat_on_stale_bot_is_failclosed(monkeypatch, db):
     # BLOCK: bot selezionato ma rimosso "altrove" (selezione stale). L'aggiunta
     # deve pulire la selezione stale (prune) e bloccare => nessuna chat orfana.

@@ -1335,12 +1335,19 @@ class TelegramModule:
             targets = {str(s) for s in sel}
         if not targets:
             return
-        remaining = [
-            c
-            for c in self.db.get_telegram_bot_chats(bot_id)
-            if str(c["chat_id"]) not in targets
-        ]
-        self.db.set_telegram_bot_chats(bot_id, remaining)
+        # Guarda gli errori DB come gli altri handler UI del modulo
+        # (_add/_save/_remove bot): un errore (lock, schema) non deve propagare
+        # non gestito dal callback tkinter lasciando l'albero fuori sync col DB.
+        try:
+            remaining = [
+                c
+                for c in self.db.get_telegram_bot_chats(bot_id)
+                if str(c["chat_id"]) not in targets
+            ]
+            self.db.set_telegram_bot_chats(bot_id, remaining)
+        except Exception as exc:
+            self._safe_show_error("Errore rimozione chat bot", str(exc))
+            return
         self._refresh_telegram_bot_chats_tree()
 
     # =========================================================
